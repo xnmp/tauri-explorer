@@ -1,10 +1,10 @@
 /**
  * Tests for API client - file operations.
- * Issue: tauri-explorer-4v1
+ * Issue: tauri-explorer-4v1, tauri-explorer-jql
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { fetchDirectory } from "$lib/api/files";
+import { fetchDirectory, createDirectory } from "$lib/api/files";
 
 describe("fetchDirectory", () => {
   const originalFetch = globalThis.fetch;
@@ -115,5 +115,90 @@ describe("fetchDirectory", () => {
     expect(globalThis.fetch).toHaveBeenCalledWith(
       expect.stringContaining(encodeURIComponent("/test path"))
     );
+  });
+});
+
+describe("createDirectory", () => {
+  const originalFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("returns created entry on success", async () => {
+    const mockEntry = {
+      name: "new_folder",
+      path: "/test/new_folder",
+      kind: "directory",
+      size: 0,
+      modified: "2025-01-01T00:00:00",
+    };
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: () => Promise.resolve(mockEntry),
+    });
+
+    const result = await createDirectory("/test", "new_folder");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.name).toBe("new_folder");
+      expect(result.data.kind).toBe("directory");
+    }
+  });
+
+  it("sends correct request body", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: () => Promise.resolve({ name: "test" }),
+    });
+
+    await createDirectory("/parent", "child");
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/files/mkdir"),
+      expect.objectContaining({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: "/parent", name: "child" }),
+      })
+    );
+  });
+
+  it("returns error on HTTP 409 (already exists)", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: () => Promise.resolve({ detail: "Directory already exists" }),
+    });
+
+    const result = await createDirectory("/test", "existing");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBe("Directory already exists");
+    }
+  });
+
+  it("returns error on HTTP 404 (parent not found)", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      json: () => Promise.resolve({ detail: "Parent directory not found" }),
+    });
+
+    const result = await createDirectory("/nonexistent", "folder");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBe("Parent directory not found");
+    }
   });
 });

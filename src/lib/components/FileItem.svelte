@@ -1,10 +1,11 @@
 <!--
   FileItem component - displays a single file or directory entry.
-  Issue: tauri-explorer-iw0
+  Issue: tauri-explorer-iw0, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-x25
 -->
 <script lang="ts">
   import type { FileEntry } from "$lib/domain/file";
   import { formatSize } from "$lib/domain/file";
+  import { explorer } from "$lib/state/explorer.svelte";
 
   interface Props {
     entry: FileEntry;
@@ -12,9 +13,36 @@
   }
 
   let { entry, onclick }: Props = $props();
+
+  function handleContextMenu(event: MouseEvent) {
+    event.preventDefault();
+    explorer.startRename(entry);
+  }
+
+  function handleKeydown(event: KeyboardEvent) {
+    if (event.key === "Delete") {
+      event.preventDefault();
+      explorer.startDelete(entry);
+    } else if (event.key === "F2") {
+      event.preventDefault();
+      explorer.startRename(entry);
+    } else if (event.key === "c" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      explorer.copyToClipboard(entry);
+    } else if (event.key === "x" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      explorer.cutToClipboard(entry);
+    }
+  }
 </script>
 
-<button class="file-item" class:directory={entry.kind === "directory"} {onclick}>
+<button
+  class="file-item"
+  class:directory={entry.kind === "directory"}
+  {onclick}
+  oncontextmenu={handleContextMenu}
+  onkeydown={handleKeydown}
+>
   <span class="icon">{entry.kind === "directory" ? "📁" : "📄"}</span>
   <span class="name">{entry.name}</span>
   <span class="size">{formatSize(entry.size)}</span>

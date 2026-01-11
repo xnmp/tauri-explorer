@@ -1,6 +1,6 @@
 <!--
   Toolbar component - navigation and view controls.
-  Issue: tauri-explorer-iw0
+  Issue: tauri-explorer-iw0, tauri-explorer-jql
 -->
 <script lang="ts">
   import { explorer } from "$lib/state/explorer.svelte";
@@ -10,6 +10,9 @@
   <div class="nav-buttons">
     <button onclick={() => explorer.goUp()} title="Go up">
       <span>↑</span>
+    </button>
+    <button onclick={() => explorer.openNewFolderDialog()} title="New folder">
+      <span>+ Folder</span>
     </button>
   </div>
 

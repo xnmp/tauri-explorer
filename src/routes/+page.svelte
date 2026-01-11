@@ -1,6 +1,6 @@
 <!--
   Main Explorer page.
-  Issue: tauri-explorer-iw0
+  Issue: tauri-explorer-iw0, tauri-explorer-jql, tauri-explorer-bae, tauri-explorer-h3n
 -->
 <script lang="ts">
   import { onMount } from "svelte";
@@ -8,6 +8,9 @@
   import Toolbar from "$lib/components/Toolbar.svelte";
   import Breadcrumbs from "$lib/components/Breadcrumbs.svelte";
   import FileList from "$lib/components/FileList.svelte";
+  import NewFolderDialog from "$lib/components/NewFolderDialog.svelte";
+  import RenameDialog from "$lib/components/RenameDialog.svelte";
+  import DeleteDialog from "$lib/components/DeleteDialog.svelte";
 
   onMount(() => {
     // Navigate to home directory on load
@@ -21,6 +24,10 @@
   <Breadcrumbs />
   <FileList />
 </main>
+
+<NewFolderDialog />
+<RenameDialog />
+<DeleteDialog />
 
 <style>
   :global(*) {

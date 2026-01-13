@@ -1,5 +1,6 @@
 ## General 
 * Use "Beads" for issue tracking - run `bd quickstart` for details. Do not modify or create files unless they have an associated Beads issue. 
+* Use beads to create both high level issues (~epics) and low level issues. Be liberal in issue creation and dependency assignment
 * Code with TDD in mind - where possible use a test suite and write tests before implementation. 
 
 ## The Project

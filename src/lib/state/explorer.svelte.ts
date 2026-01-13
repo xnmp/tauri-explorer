@@ -114,6 +114,10 @@ function createExplorerState() {
     }
   }
 
+  function refresh() {
+    navigateTo(state.currentPath);
+  }
+
   function openNewFolderDialog() {
     state.newFolderDialogOpen = true;
   }
@@ -240,6 +244,7 @@ function createExplorerState() {
     toggleHidden,
     setSorting,
     goUp,
+    refresh,
     openNewFolderDialog,
     closeNewFolderDialog,
     createFolder,

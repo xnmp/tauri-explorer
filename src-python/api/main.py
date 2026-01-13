@@ -13,7 +13,7 @@ app = FastAPI(title="Explorer API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Tauri webview
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
 

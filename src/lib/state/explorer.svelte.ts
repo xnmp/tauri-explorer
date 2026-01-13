@@ -35,6 +35,9 @@ interface ExplorerState {
   renamingEntry: FileEntry | null;
   deletingEntry: FileEntry | null;
   clipboard: ClipboardState | null;
+  selectedEntry: FileEntry | null;
+  contextMenuOpen: boolean;
+  contextMenuPosition: { x: number; y: number } | null;
 }
 
 function createExplorerState() {
@@ -51,6 +54,9 @@ function createExplorerState() {
     renamingEntry: null,
     deletingEntry: null,
     clipboard: null,
+    selectedEntry: null,
+    contextMenuOpen: false,
+    contextMenuPosition: null,
   });
 
   // Derived: processed entries with sorting and filtering
@@ -203,31 +209,46 @@ function createExplorerState() {
     state.clipboard = null;
   }
 
+  function selectEntry(entry: FileEntry | null) {
+    state.selectedEntry = entry;
+  }
+
+  function clearSelection() {
+    state.selectedEntry = null;
+  }
+
+  function openContextMenu(x: number, y: number, entry?: FileEntry) {
+    if (entry) {
+      state.selectedEntry = entry;
+    }
+    state.contextMenuPosition = { x, y };
+    state.contextMenuOpen = true;
+  }
+
+  function closeContextMenu() {
+    state.contextMenuOpen = false;
+    state.contextMenuPosition = null;
+  }
+
   async function paste(): Promise<string | null> {
     if (!state.clipboard) return "Nothing in clipboard";
     if (!state.currentPath) return "No current directory";
 
     const { entry, operation } = state.clipboard;
+    const isCut = operation === "cut";
+    const pasteOperation = isCut ? moveEntry : copyEntry;
 
-    if (operation === "copy") {
-      const result = await copyEntry(entry.path, state.currentPath);
-      if (result.ok) {
-        state.entries = [...state.entries, result.data];
-        return null;
-      } else {
-        return result.error;
-      }
-    } else {
-      // cut = move
-      const result = await moveEntry(entry.path, state.currentPath);
-      if (result.ok) {
-        state.entries = [...state.entries, result.data];
-        state.clipboard = null; // Clear clipboard after cut
-        return null;
-      } else {
-        return result.error;
-      }
+    const result = await pasteOperation(entry.path, state.currentPath);
+
+    if (!result.ok) {
+      return result.error;
     }
+
+    state.entries = [...state.entries, result.data];
+    if (isCut) {
+      state.clipboard = null;
+    }
+    return null;
   }
 
   return {
@@ -258,6 +279,10 @@ function createExplorerState() {
     cutToClipboard,
     clearClipboard,
     paste,
+    selectEntry,
+    clearSelection,
+    openContextMenu,
+    closeContextMenu,
   };
 }
 

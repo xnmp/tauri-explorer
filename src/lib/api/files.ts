@@ -188,3 +188,51 @@ export async function moveEntry(
     return { ok: false, error: String(err) };
   }
 }
+
+/**
+ * Open a file in the system's default application.
+ *
+ * @param path - Full path to file to open
+ * @returns Result indicating success or error message
+ */
+export async function openFile(path: string): Promise<ApiResult<void>> {
+  try {
+    const response = await fetch(`${API_BASE}/files/open`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      const detail = body.detail ?? `HTTP ${response.status}`;
+      return { ok: false, error: detail };
+    }
+
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
+ * Get the user's home directory path.
+ *
+ * @returns Result with home directory path or error message
+ */
+export async function getHomeDirectory(): Promise<ApiResult<string>> {
+  try {
+    const response = await fetch(`${API_BASE}/files/home`);
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      const detail = body.detail ?? `HTTP ${response.status}`;
+      return { ok: false, error: detail };
+    }
+
+    const data = await response.json();
+    return { ok: true, data: data.path };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}

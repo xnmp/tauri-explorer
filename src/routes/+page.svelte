@@ -6,28 +6,38 @@
   import { onMount } from "svelte";
   import { explorer } from "$lib/state/explorer.svelte";
   import NavigationBar from "$lib/components/NavigationBar.svelte";
-  import Toolbar from "$lib/components/Toolbar.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import FileList from "$lib/components/FileList.svelte";
+  import ContextMenu from "$lib/components/ContextMenu.svelte";
   import NewFolderDialog from "$lib/components/NewFolderDialog.svelte";
   import RenameDialog from "$lib/components/RenameDialog.svelte";
   import DeleteDialog from "$lib/components/DeleteDialog.svelte";
 
-  onMount(() => {
-    const home = "/home";
-    explorer.navigateTo(home);
+  onMount(async () => {
+    // Get the actual home directory from the backend
+    try {
+      const response = await fetch("http://localhost:8000/api/home");
+      if (response.ok) {
+        const data = await response.json();
+        explorer.navigateTo(data.path);
+      } else {
+        explorer.navigateTo("/home");
+      }
+    } catch (e) {
+      explorer.navigateTo("/home");
+    }
   });
 </script>
 
 <main class="explorer">
   <NavigationBar />
-  <Toolbar />
   <div class="main-content">
     <Sidebar />
     <FileList />
   </div>
 </main>
 
+<ContextMenu />
 <NewFolderDialog />
 <RenameDialog />
 <DeleteDialog />

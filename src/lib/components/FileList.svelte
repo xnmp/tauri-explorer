@@ -4,36 +4,69 @@
 -->
 <script lang="ts">
   import { explorer } from "$lib/state/explorer.svelte";
+  import { openFile } from "$lib/api/files";
   import FileItem from "./FileItem.svelte";
+
+  import type { FileEntry } from "$lib/domain/file";
 
   let pasteError = $state<string | null>(null);
   let pasteSuccess = $state(false);
 
-  function handleClick(entry: { kind: string; path: string }) {
+  const BACKGROUND_CLASSES = ["file-rows", "content", "details-view"];
+
+  function isBackgroundClick(target: HTMLElement): boolean {
+    return BACKGROUND_CLASSES.some((cls) => target.classList.contains(cls));
+  }
+
+  function handleClick(entry: FileEntry): void {
+    explorer.selectEntry(entry);
+  }
+
+  async function handleDoubleClick(entry: FileEntry): Promise<void> {
     if (entry.kind === "directory") {
       explorer.navigateTo(entry.path);
+    } else {
+      const result = await openFile(entry.path);
+      if (!result.ok) {
+        console.error("Failed to open file:", result.error);
+      }
     }
   }
 
-  async function handleKeydown(event: KeyboardEvent) {
-    if (event.key === "v" && (event.ctrlKey || event.metaKey)) {
-      if (explorer.state.clipboard) {
-        event.preventDefault();
-        const error = await explorer.paste();
-        if (error) {
-          pasteError = error;
-          setTimeout(() => (pasteError = null), 3000);
-        } else {
-          pasteSuccess = true;
-          setTimeout(() => (pasteSuccess = false), 1500);
-        }
+  function handleBackgroundClick(event: MouseEvent): void {
+    if (isBackgroundClick(event.target as HTMLElement)) {
+      explorer.clearSelection();
+    }
+  }
+
+  function handleBackgroundContextMenu(event: MouseEvent): void {
+    if (isBackgroundClick(event.target as HTMLElement)) {
+      event.preventDefault();
+      explorer.clearSelection();
+      explorer.openContextMenu(event.clientX, event.clientY);
+    }
+  }
+
+  async function handleKeydown(event: KeyboardEvent): Promise<void> {
+    const isPasteShortcut = event.key === "v" && (event.ctrlKey || event.metaKey);
+
+    if (isPasteShortcut && explorer.state.clipboard) {
+      event.preventDefault();
+      const error = await explorer.paste();
+
+      if (error) {
+        pasteError = error;
+        setTimeout(() => (pasteError = null), 3000);
+      } else {
+        pasteSuccess = true;
+        setTimeout(() => (pasteSuccess = false), 1500);
       }
     }
   }
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="file-list" onkeydown={handleKeydown} tabindex="-1">
+<div class="file-list" onkeydown={handleKeydown} onclick={handleBackgroundClick} oncontextmenu={handleBackgroundContextMenu} tabindex="-1">
   <!-- Clipboard indicator -->
   {#if explorer.state.clipboard}
     <div class="clipboard-banner" class:cut={explorer.state.clipboard.operation === "cut"}>
@@ -164,7 +197,12 @@
         <div class="file-rows">
           {#each explorer.displayEntries as entry, i (entry.path)}
             <div class="file-row-wrapper" style="--index: {i}">
-              <FileItem {entry} onclick={() => handleClick(entry)} />
+              <FileItem
+                {entry}
+                onclick={() => handleClick(entry)}
+                ondblclick={() => handleDoubleClick(entry)}
+                selected={explorer.state.selectedEntry?.path === entry.path}
+              />
             </div>
           {/each}
         </div>

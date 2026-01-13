@@ -3,6 +3,8 @@
 Issue: tauri-explorer-p1f, tauri-explorer-jql, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-x25
 """
 
+import platform
+import subprocess
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
@@ -41,6 +43,24 @@ class MoveRequest(BaseModel):
 
     source: str  # Full path to source file/directory
     dest_dir: str  # Destination directory
+
+
+class OpenRequest(BaseModel):
+    """Request body for open endpoint."""
+
+    path: str  # Full path to file to open
+
+
+@router.get("/home")
+def get_home_directory():
+    """Get the user's home directory path.
+
+    Returns:
+        JSON with the home directory path
+    """
+    import os
+    home = os.path.expanduser("~")
+    return {"path": home}
 
 
 @router.get("/list")
@@ -176,3 +196,34 @@ def move(request: MoveRequest):
         raise HTTPException(409, "Target already exists")
     except PermissionError:
         raise HTTPException(403, "Permission denied")
+
+
+@router.post("/open")
+def open_file(request: OpenRequest):
+    """Open a file in the system's default application.
+
+    Args:
+        request: OpenRequest with path
+
+    Returns:
+        Success message
+    """
+    path = Path(request.path)
+    if not path.exists():
+        raise HTTPException(404, "File not found")
+
+    try:
+        system = platform.system()
+        if system == "Windows":
+            # Use os.startfile on Windows
+            import os
+            os.startfile(str(path))
+        elif system == "Darwin":
+            # macOS
+            subprocess.Popen(["open", str(path)])
+        else:
+            # Linux and other Unix-like systems
+            subprocess.Popen(["xdg-open", str(path)])
+        return {"success": True, "path": str(path)}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to open file: {str(e)}")

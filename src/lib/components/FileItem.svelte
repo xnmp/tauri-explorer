@@ -10,9 +10,11 @@
   interface Props {
     entry: FileEntry;
     onclick: () => void;
+    ondblclick: () => void;
+    selected?: boolean;
   }
 
-  let { entry, onclick }: Props = $props();
+  let { entry, onclick, ondblclick, selected = false }: Props = $props();
 
   // Check if this item is in clipboard (for visual feedback)
   const isInClipboard = $derived(
@@ -24,22 +26,28 @@
 
   function handleContextMenu(event: MouseEvent) {
     event.preventDefault();
-    explorer.startRename(entry);
+    event.stopPropagation();
+    explorer.openContextMenu(event.clientX, event.clientY, entry);
   }
 
   function handleKeydown(event: KeyboardEvent) {
-    if (event.key === "Delete") {
+    const hasModifier = event.ctrlKey || event.metaKey;
+
+    const keyActions: Record<string, () => void> = {
+      Delete: () => explorer.startDelete(entry),
+      F2: () => explorer.startRename(entry),
+    };
+
+    const modifierKeyActions: Record<string, () => void> = {
+      c: () => explorer.copyToClipboard(entry),
+      x: () => explorer.cutToClipboard(entry),
+    };
+
+    const action = keyActions[event.key] ?? (hasModifier ? modifierKeyActions[event.key] : undefined);
+
+    if (action) {
       event.preventDefault();
-      explorer.startDelete(entry);
-    } else if (event.key === "F2") {
-      event.preventDefault();
-      explorer.startRename(entry);
-    } else if (event.key === "c" && (event.ctrlKey || event.metaKey)) {
-      event.preventDefault();
-      explorer.copyToClipboard(entry);
-    } else if (event.key === "x" && (event.ctrlKey || event.metaKey)) {
-      event.preventDefault();
-      explorer.cutToClipboard(entry);
+      action();
     }
   }
 
@@ -67,7 +75,9 @@
   class:directory={entry.kind === "directory"}
   class:cut={isCut}
   class:in-clipboard={isInClipboard}
+  class:selected
   {onclick}
+  {ondblclick}
   oncontextmenu={handleContextMenu}
   onkeydown={handleKeydown}
 >
@@ -171,6 +181,16 @@
     border-color: var(--accent);
     background: var(--subtle-fill-secondary);
     box-shadow: 0 0 0 1px var(--accent);
+  }
+
+  /* Selected state */
+  .file-item.selected {
+    background: var(--subtle-fill-secondary);
+    border-color: var(--accent);
+  }
+
+  .file-item.selected:hover {
+    background: var(--subtle-fill-tertiary);
   }
 
   /* Cut items appear faded */

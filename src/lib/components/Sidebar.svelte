@@ -2,19 +2,31 @@
   Sidebar component - Windows 11 File Explorer Navigation Pane
 -->
 <script lang="ts">
+  import { onMount } from "svelte";
   import { explorer } from "$lib/state/explorer.svelte";
+  import { getHomeDirectory } from "$lib/api/files";
 
-  const quickAccessFolders = [
-    { name: "Downloads", icon: "download", path: "/home/downloads", pinned: true },
-    { name: "Documents", icon: "document", path: "/home/documents", pinned: true },
-    { name: "Pictures", icon: "picture", path: "/home/pictures", pinned: true },
-    { name: "Videos", icon: "video", path: "/home/videos", pinned: false },
-    { name: "Music", icon: "music", path: "/home/music", pinned: false },
-  ];
+  let homeDir = $state("/home");
+
+  onMount(async () => {
+    const result = await getHomeDirectory();
+    if (result.ok) {
+      homeDir = result.data;
+    }
+  });
+
+  // Quick access folders use dynamic home directory
+  const quickAccessFolders = $derived([
+    { name: "Downloads", icon: "download", path: `${homeDir}/Downloads`, pinned: true },
+    { name: "Documents", icon: "document", path: `${homeDir}/Documents`, pinned: true },
+    { name: "Pictures", icon: "picture", path: `${homeDir}/Pictures`, pinned: true },
+    { name: "Videos", icon: "video", path: `${homeDir}/Videos`, pinned: false },
+    { name: "Music", icon: "music", path: `${homeDir}/Music`, pinned: false },
+  ]);
 
   const drives = [
     { name: "Local Disk (C:)", icon: "drive", path: "/", usage: 65 },
-    { name: "Data (D:)", icon: "drive", path: "/data", usage: 42 },
+    { name: "Data (D:)", icon: "drive", path: "/mnt", usage: 42 },
   ];
 
   let quickAccessExpanded = $state(true);
@@ -24,7 +36,7 @@
 <div class="sidebar">
   <!-- Home / Gallery / Cloud sections -->
   <div class="nav-section top-section">
-    <button class="nav-item" onclick={() => explorer.navigateTo("/home")}>
+    <button class="nav-item" onclick={() => explorer.navigateTo(homeDir)}>
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
         <path d="M8 1.5L14.5 7V14C14.5 14.2761 14.2761 14.5 14 14.5H10V10C10 9.72386 9.77614 9.5 9.5 9.5H6.5C6.22386 9.5 6 9.72386 6 10V14.5H2C1.72386 14.5 1.5 14.2761 1.5 14V7L8 1.5Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
       </svg>

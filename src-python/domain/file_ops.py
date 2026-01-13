@@ -113,8 +113,53 @@ def delete_entry(path: Path) -> None:
         path.unlink()
 
 
+def _generate_copy_name(dest_dir: Path, source_name: str, is_directory: bool) -> Path:
+    """Generate a unique copy name like 'name - Copy.ext' or 'name - Copy (2).ext'.
+
+    Args:
+        dest_dir: Destination directory
+        source_name: Original file/directory name
+        is_directory: Whether the source is a directory
+
+    Returns:
+        Path with unique name that doesn't exist
+    """
+    if is_directory:
+        base_name = source_name
+        extension = ""
+    else:
+        # Split name and extension
+        if "." in source_name:
+            parts = source_name.rsplit(".", 1)
+            base_name = parts[0]
+            extension = f".{parts[1]}"
+        else:
+            base_name = source_name
+            extension = ""
+
+    # Try "name - Copy.ext" first
+    copy_name = f"{base_name} - Copy{extension}"
+    target = dest_dir / copy_name
+    if not target.exists():
+        return target
+
+    # Try "name - Copy (n).ext" for n = 2, 3, 4, ...
+    counter = 2
+    while True:
+        copy_name = f"{base_name} - Copy ({counter}){extension}"
+        target = dest_dir / copy_name
+        if not target.exists():
+            return target
+        counter += 1
+        if counter > 1000:  # Safety limit
+            raise FileExistsError("Too many copies exist")
+
+
 def copy_entry(source: Path, dest_dir: Path) -> dict:
     """Copy a file or directory to a destination directory.
+
+    If copying to the same directory where source exists, creates a copy
+    with name like 'file - Copy.ext' (Windows Explorer behavior).
 
     Issue: tauri-explorer-x25
 
@@ -127,7 +172,6 @@ def copy_entry(source: Path, dest_dir: Path) -> dict:
 
     Raises:
         FileNotFoundError: If source or dest_dir doesn't exist
-        FileExistsError: If target already exists
     """
     if not source.exists():
         raise FileNotFoundError(f"Source does not exist: {source}")
@@ -137,8 +181,9 @@ def copy_entry(source: Path, dest_dir: Path) -> dict:
 
     target = dest_dir / source.name
 
+    # If target exists, generate a "name - Copy" style name
     if target.exists():
-        raise FileExistsError(f"Target already exists: {target}")
+        target = _generate_copy_name(dest_dir, source.name, source.is_dir())
 
     if source.is_dir():
         shutil.copytree(source, target)

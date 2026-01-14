@@ -6,12 +6,48 @@
   import { explorer } from "$lib/state/explorer.svelte";
 
   let searchQuery = $state("");
-  let historyIndex = $state(0);
+  let editingPath = $state(false);
+  let editedPath = $state("");
+  let pathInputRef: HTMLInputElement | null = null;
 
   function handleSearch(event: Event) {
     event.preventDefault();
     // TODO: Implement search functionality
     console.log("Search:", searchQuery);
+  }
+
+  function startPathEdit() {
+    editedPath = explorer.state.currentPath;
+    editingPath = true;
+    // Focus input after DOM update
+    setTimeout(() => pathInputRef?.select(), 0);
+  }
+
+  function cancelPathEdit() {
+    editingPath = false;
+    editedPath = "";
+  }
+
+  function confirmPathEdit() {
+    if (editedPath.trim()) {
+      explorer.navigateTo(editedPath.trim());
+    }
+    editingPath = false;
+    editedPath = "";
+  }
+
+  function handlePathKeydown(event: KeyboardEvent) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      confirmPathEdit();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      cancelPathEdit();
+    }
+  }
+
+  function copyPathToClipboard() {
+    navigator.clipboard.writeText(explorer.state.currentPath);
   }
 </script>
 
@@ -62,40 +98,57 @@
     </button>
   </div>
 
-  <div class="breadcrumbs-container">
-    <div class="computer-icon">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <rect x="2" y="3" width="12" height="8" rx="1" stroke="currentColor" stroke-width="1.25"/>
-        <path d="M5 13H11M8 11V13" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
-      </svg>
-    </div>
-
-    <button class="crumb root" onclick={() => explorer.navigateTo("/")} aria-label="Home">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <path d="M7 1.5L13 6.5V12.5C13 12.7761 12.7761 13 12.5 13H9V9C9 8.72386 8.77614 8.5 8.5 8.5H5.5C5.22386 8.5 5 8.72386 5 9V13H1.5C1.22386 13 1 12.7761 1 12.5V6.5L7 1.5Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
-      </svg>
-    </button>
-
-    {#each explorer.breadcrumbs as segment, i (segment.path)}
-      <span class="chevron">
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-          <path d="M3 2L6 5L3 8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="breadcrumbs-container" class:editing={editingPath} onclick={editingPath ? undefined : startPathEdit}>
+    {#if editingPath}
+      <!-- Editable path input -->
+      <input
+        type="text"
+        class="path-input"
+        bind:value={editedPath}
+        bind:this={pathInputRef}
+        onkeydown={handlePathKeydown}
+        onblur={cancelPathEdit}
+        placeholder="Enter path..."
+      />
+    {:else}
+      <!-- Breadcrumb view -->
+      <div class="computer-icon">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <rect x="2" y="3" width="12" height="8" rx="1" stroke="currentColor" stroke-width="1.25"/>
+          <path d="M5 13H11M8 11V13" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
         </svg>
-      </span>
-      <button
-        class="crumb"
-        class:current={i === explorer.breadcrumbs.length - 1}
-        onclick={() => explorer.navigateTo(segment.path)}
-      >
-        {segment.name}
-      </button>
-    {/each}
+      </div>
 
-    <button class="dropdown-toggle" aria-label="Show path options">
-      <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-        <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    </button>
+      <button class="crumb root" onclick={(e) => { e.stopPropagation(); explorer.navigateTo("/"); }} aria-label="Home">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M7 1.5L13 6.5V12.5C13 12.7761 12.7761 13 12.5 13H9V9C9 8.72386 8.77614 8.5 8.5 8.5H5.5C5.22386 8.5 5 8.72386 5 9V13H1.5C1.22386 13 1 12.7761 1 12.5V6.5L7 1.5Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+        </svg>
+      </button>
+
+      {#each explorer.breadcrumbs as segment, i (segment.path)}
+        <span class="chevron">
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+            <path d="M3 2L6 5L3 8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </span>
+        <button
+          class="crumb"
+          class:current={i === explorer.breadcrumbs.length - 1}
+          onclick={(e) => { e.stopPropagation(); explorer.navigateTo(segment.path); }}
+        >
+          {segment.name}
+        </button>
+      {/each}
+
+      <button class="dropdown-toggle" onclick={(e) => { e.stopPropagation(); copyPathToClipboard(); }} title="Copy path to clipboard" aria-label="Copy path">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+          <rect x="4" y="4" width="6" height="7" rx="1" stroke="currentColor" stroke-width="1"/>
+          <path d="M8 4V2.5C8 2.22386 7.77614 2 7.5 2H3C2.72386 2 2.5 2.22386 2.5 2.5V8C2.5 8.27614 2.72386 8.5 3 8.5H4" stroke="currentColor" stroke-width="1"/>
+        </svg>
+      </button>
+    {/if}
   </div>
 
   <div class="search-container">
@@ -186,6 +239,30 @@
   .breadcrumbs-container:focus-within {
     border-color: var(--accent);
     background: var(--control-fill-secondary);
+  }
+
+  .breadcrumbs-container:not(.editing) {
+    cursor: text;
+  }
+
+  .breadcrumbs-container:not(.editing):hover {
+    background: var(--control-fill-secondary);
+  }
+
+  .path-input {
+    flex: 1;
+    height: 100%;
+    border: none;
+    background: transparent;
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--text-primary);
+    outline: none;
+    padding: 0;
+  }
+
+  .path-input::placeholder {
+    color: var(--text-tertiary);
   }
 
   .computer-icon {

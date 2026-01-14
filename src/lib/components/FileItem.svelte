@@ -9,12 +9,16 @@
 
   interface Props {
     entry: FileEntry;
-    onclick: () => void;
+    onclick: (event: MouseEvent) => void;
     ondblclick: () => void;
     selected?: boolean;
   }
 
   let { entry, onclick, ondblclick, selected = false }: Props = $props();
+
+  function handleClick(event: MouseEvent) {
+    onclick(event);
+  }
 
   // Check if this item is in clipboard (for visual feedback)
   const isInClipboard = $derived(
@@ -76,7 +80,7 @@
   class:cut={isCut}
   class:in-clipboard={isInClipboard}
   class:selected
-  {onclick}
+  onclick={handleClick}
   {ondblclick}
   oncontextmenu={handleContextMenu}
   onkeydown={handleKeydown}

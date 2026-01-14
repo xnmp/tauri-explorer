@@ -7,12 +7,14 @@
   import type { FileEntry } from "$lib/domain/file";
 
   function withSelectedEntry(action: (entry: FileEntry) => void): void {
-    const entry = explorer.state.selectedEntry;
-    if (entry) {
-      action(entry);
+    const entries = explorer.getSelectedEntries();
+    if (entries.length > 0) {
+      action(entries[0]);
     }
     explorer.closeContextMenu();
   }
+
+  const hasSelection = $derived(explorer.state.selectedPaths.size > 0);
 
   function handleCut(): void {
     withSelectedEntry((entry) => explorer.cutToClipboard(entry));
@@ -59,7 +61,7 @@
     style="left: {explorer.state.contextMenuPosition.x}px; top: {explorer.state.contextMenuPosition.y}px;"
     role="menu"
   >
-    {#if explorer.state.selectedEntry}
+    {#if hasSelection}
       <!-- File/folder operations -->
       <button class="menu-item" onclick={handleCut} role="menuitem">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">

@@ -296,15 +296,22 @@ class TestCopyEntry:
         with pytest.raises(FileNotFoundError):
             copy_entry(source, tmp_path / "nonexistent")
 
-    def test_copy_target_exists(self, tmp_path: Path):
+    def test_copy_target_exists_creates_copy_name(self, tmp_path: Path):
+        """When target exists, creates 'name - Copy.ext' instead of raising."""
         source = tmp_path / "source.txt"
         source.write_text("content")
         dest_dir = tmp_path / "dest"
         dest_dir.mkdir()
         (dest_dir / "source.txt").write_text("existing")
 
-        with pytest.raises(FileExistsError):
-            copy_entry(source, dest_dir)
+        result = copy_entry(source, dest_dir)
+
+        # Original target should be untouched
+        assert (dest_dir / "source.txt").read_text() == "existing"
+        # New copy created with "- Copy" suffix
+        assert (dest_dir / "source - Copy.txt").exists()
+        assert (dest_dir / "source - Copy.txt").read_text() == "content"
+        assert result["name"] == "source - Copy.txt"
 
 
 class TestMoveEntry:

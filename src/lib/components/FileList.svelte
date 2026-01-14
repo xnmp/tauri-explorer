@@ -6,20 +6,34 @@
   import { explorer } from "$lib/state/explorer.svelte";
   import { openFile } from "$lib/api/files";
   import FileItem from "./FileItem.svelte";
+  import VirtualList from "./VirtualList.svelte";
 
   import type { FileEntry } from "$lib/domain/file";
 
   let pasteError = $state<string | null>(null);
   let pasteSuccess = $state(false);
 
-  const BACKGROUND_CLASSES = ["file-rows", "content", "details-view"];
+  // Marquee selection state
+  let isDragging = $state(false);
+  let dragStart = $state<{ x: number; y: number } | null>(null);
+  let dragCurrent = $state<{ x: number; y: number } | null>(null);
+  let contentRef = $state<HTMLElement | null>(null);
+  let ctrlKeyHeld = $state(false);
+
+  const ITEM_HEIGHT = 32;
+  const HEADER_HEIGHT = 32; // Column headers height
+
+  const BACKGROUND_CLASSES = ["file-rows", "content", "details-view", "virtual-viewport", "virtual-spacer-top", "virtual-spacer-bottom"];
 
   function isBackgroundClick(target: HTMLElement): boolean {
     return BACKGROUND_CLASSES.some((cls) => target.classList.contains(cls));
   }
 
-  function handleClick(entry: FileEntry): void {
-    explorer.selectEntry(entry);
+  function handleClick(entry: FileEntry, event: MouseEvent): void {
+    explorer.selectEntry(entry, {
+      ctrlKey: event.ctrlKey || event.metaKey,
+      shiftKey: event.shiftKey,
+    });
   }
 
   async function handleDoubleClick(entry: FileEntry): Promise<void> {
@@ -34,9 +48,84 @@
   }
 
   function handleBackgroundClick(event: MouseEvent): void {
-    if (isBackgroundClick(event.target as HTMLElement)) {
+    // Only clear selection on click if not ending a drag
+    if (isBackgroundClick(event.target as HTMLElement) && !isDragging) {
       explorer.clearSelection();
     }
+  }
+
+  // Marquee selection derived values
+  const marqueeRect = $derived.by(() => {
+    if (!dragStart || !dragCurrent) return null;
+    return {
+      left: Math.min(dragStart.x, dragCurrent.x),
+      top: Math.min(dragStart.y, dragCurrent.y),
+      width: Math.abs(dragCurrent.x - dragStart.x),
+      height: Math.abs(dragCurrent.y - dragStart.y),
+    };
+  });
+
+  function handleMarqueeStart(event: MouseEvent): void {
+    if (!isBackgroundClick(event.target as HTMLElement)) return;
+    if (event.button !== 0) return; // Only left click
+
+    const rect = contentRef?.getBoundingClientRect();
+    if (!rect) return;
+
+    isDragging = true;
+    ctrlKeyHeld = event.ctrlKey || event.metaKey;
+    dragStart = {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    };
+    dragCurrent = { ...dragStart };
+
+    // Prevent text selection during drag
+    event.preventDefault();
+  }
+
+  function handleMarqueeMove(event: MouseEvent): void {
+    if (!isDragging || !contentRef) return;
+
+    const rect = contentRef.getBoundingClientRect();
+    dragCurrent = {
+      x: Math.max(0, Math.min(event.clientX - rect.left, rect.width)),
+      y: Math.max(0, event.clientY - rect.top),
+    };
+
+    // Calculate which indices are in the selection rectangle
+    updateMarqueeSelection();
+  }
+
+  function handleMarqueeEnd(): void {
+    if (isDragging) {
+      isDragging = false;
+      dragStart = null;
+      dragCurrent = null;
+    }
+  }
+
+  function updateMarqueeSelection(): void {
+    if (!marqueeRect || !contentRef) return;
+
+    const scrollTop = contentRef.querySelector('.virtual-viewport')?.scrollTop ?? 0;
+
+    // Calculate file indices that intersect with the marquee
+    const marqueeTop = marqueeRect.top + scrollTop - HEADER_HEIGHT;
+    const marqueeBottom = marqueeTop + marqueeRect.height;
+
+    const startIndex = Math.max(0, Math.floor(marqueeTop / ITEM_HEIGHT));
+    const endIndex = Math.min(
+      explorer.displayEntries.length - 1,
+      Math.floor(marqueeBottom / ITEM_HEIGHT)
+    );
+
+    const indices: number[] = [];
+    for (let i = startIndex; i <= endIndex; i++) {
+      indices.push(i);
+    }
+
+    explorer.selectByIndices(indices, ctrlKeyHeld);
   }
 
   function handleBackgroundContextMenu(event: MouseEvent): void {
@@ -64,6 +153,9 @@
     }
   }
 </script>
+
+<!-- Global mouse events for marquee -->
+<svelte:window onmousemove={handleMarqueeMove} onmouseup={handleMarqueeEnd} />
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="file-list" onkeydown={handleKeydown} onclick={handleBackgroundClick} oncontextmenu={handleBackgroundContextMenu} tabindex="-1">
@@ -114,7 +206,8 @@
   {/if}
 
   <!-- Main content with column headers -->
-  <div class="content">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="content" bind:this={contentRef} onmousedown={handleMarqueeStart}>
     {#if explorer.state.loading}
       <div class="status">
         <div class="spinner"></div>
@@ -194,19 +287,29 @@
           </button>
         </div>
 
-        <div class="file-rows">
-          {#each explorer.displayEntries as entry, i (entry.path)}
-            <div class="file-row-wrapper" style="--index: {i}">
-              <FileItem
-                {entry}
-                onclick={() => handleClick(entry)}
-                ondblclick={() => handleDoubleClick(entry)}
-                selected={explorer.state.selectedEntry?.path === entry.path}
-              />
-            </div>
-          {/each}
-        </div>
+        <VirtualList
+          items={explorer.displayEntries}
+          itemHeight={32}
+          getKey={(entry) => entry.path}
+        >
+          {#snippet children(entry, index)}
+            <FileItem
+              {entry}
+              onclick={(event) => handleClick(entry, event)}
+              ondblclick={() => handleDoubleClick(entry)}
+              selected={explorer.isSelected(entry)}
+            />
+          {/snippet}
+        </VirtualList>
       </div>
+    {/if}
+
+    <!-- Marquee selection rectangle -->
+    {#if isDragging && marqueeRect}
+      <div
+        class="marquee-rect"
+        style="left: {marqueeRect.left}px; top: {marqueeRect.top}px; width: {marqueeRect.width}px; height: {marqueeRect.height}px;"
+      ></div>
     {/if}
   </div>
 </div>
@@ -229,6 +332,17 @@
     flex-direction: column;
     flex: 1;
     overflow-y: auto;
+    position: relative;
+  }
+
+  /* Marquee selection rectangle */
+  .marquee-rect {
+    position: absolute;
+    background: rgba(0, 120, 212, 0.15);
+    border: 1px solid var(--accent);
+    border-radius: 2px;
+    pointer-events: none;
+    z-index: 10;
   }
 
   /* Details View */
@@ -283,13 +397,6 @@
 
   .sort-indicator {
     opacity: 0.7;
-  }
-
-  .file-rows {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    padding: 4px 8px;
   }
 
   /* Clipboard banner */
@@ -449,22 +556,5 @@
 
   @keyframes spin {
     to { transform: rotate(360deg); }
-  }
-
-  /* File row wrapper for staggered animation */
-  .file-row-wrapper {
-    animation: itemIn 150ms cubic-bezier(0, 0, 0, 1) backwards;
-    animation-delay: calc(var(--index) * 15ms);
-  }
-
-  @keyframes itemIn {
-    from {
-      opacity: 0;
-      transform: translateY(4px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
   }
 </style>

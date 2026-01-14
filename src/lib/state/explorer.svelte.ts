@@ -35,7 +35,8 @@ interface ExplorerState {
   renamingEntry: FileEntry | null;
   deletingEntry: FileEntry | null;
   clipboard: ClipboardState | null;
-  selectedEntry: FileEntry | null;
+  selectedPaths: Set<string>;
+  selectionAnchorIndex: number | null;
   contextMenuOpen: boolean;
   contextMenuPosition: { x: number; y: number } | null;
 }
@@ -54,7 +55,8 @@ function createExplorerState() {
     renamingEntry: null,
     deletingEntry: null,
     clipboard: null,
-    selectedEntry: null,
+    selectedPaths: new Set(),
+    selectionAnchorIndex: null,
     contextMenuOpen: false,
     contextMenuPosition: null,
   });
@@ -209,17 +211,79 @@ function createExplorerState() {
     state.clipboard = null;
   }
 
-  function selectEntry(entry: FileEntry | null) {
-    state.selectedEntry = entry;
+  interface SelectOptions {
+    ctrlKey?: boolean;
+    shiftKey?: boolean;
+  }
+
+  function selectEntry(entry: FileEntry, options: SelectOptions = {}) {
+    const entryIndex = displayEntries.findIndex((e) => e.path === entry.path);
+    if (entryIndex === -1) return;
+
+    if (options.shiftKey && state.selectionAnchorIndex !== null) {
+      // Shift+click: select range from anchor to clicked item
+      const start = Math.min(state.selectionAnchorIndex, entryIndex);
+      const end = Math.max(state.selectionAnchorIndex, entryIndex);
+      const newSelection = new Set<string>();
+      for (let i = start; i <= end; i++) {
+        newSelection.add(displayEntries[i].path);
+      }
+      state.selectedPaths = newSelection;
+      // Don't update anchor on shift+click
+    } else if (options.ctrlKey) {
+      // Ctrl+click: toggle selection
+      const newSelection = new Set(state.selectedPaths);
+      if (newSelection.has(entry.path)) {
+        newSelection.delete(entry.path);
+      } else {
+        newSelection.add(entry.path);
+      }
+      state.selectedPaths = newSelection;
+      state.selectionAnchorIndex = entryIndex;
+    } else {
+      // Normal click: single select
+      state.selectedPaths = new Set([entry.path]);
+      state.selectionAnchorIndex = entryIndex;
+    }
   }
 
   function clearSelection() {
-    state.selectedEntry = null;
+    state.selectedPaths = new Set();
+    state.selectionAnchorIndex = null;
+  }
+
+  function isSelected(entry: FileEntry): boolean {
+    return state.selectedPaths.has(entry.path);
+  }
+
+  function getSelectedEntries(): FileEntry[] {
+    return displayEntries.filter((e) => state.selectedPaths.has(e.path));
+  }
+
+  function selectByIndices(indices: number[], addToSelection: boolean = false) {
+    const pathsToSelect = indices
+      .filter((i) => i >= 0 && i < displayEntries.length)
+      .map((i) => displayEntries[i].path);
+
+    if (addToSelection) {
+      const newSelection = new Set(state.selectedPaths);
+      for (const path of pathsToSelect) {
+        newSelection.add(path);
+      }
+      state.selectedPaths = newSelection;
+    } else {
+      state.selectedPaths = new Set(pathsToSelect);
+    }
   }
 
   function openContextMenu(x: number, y: number, entry?: FileEntry) {
     if (entry) {
-      state.selectedEntry = entry;
+      // If right-clicked entry is not selected, select only it
+      if (!state.selectedPaths.has(entry.path)) {
+        state.selectedPaths = new Set([entry.path]);
+        const entryIndex = displayEntries.findIndex((e) => e.path === entry.path);
+        state.selectionAnchorIndex = entryIndex;
+      }
     }
     state.contextMenuPosition = { x, y };
     state.contextMenuOpen = true;
@@ -281,6 +345,9 @@ function createExplorerState() {
     paste,
     selectEntry,
     clearSelection,
+    isSelected,
+    getSelectedEntries,
+    selectByIndices,
     openContextMenu,
     closeContextMenu,
   };

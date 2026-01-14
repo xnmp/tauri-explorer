@@ -238,7 +238,8 @@ class TestCopy:
 
         assert response.status_code == 404
 
-    def test_copy_target_exists(self, tmp_path: Path):
+    def test_copy_target_exists_creates_copy_name(self, tmp_path: Path):
+        """When target exists, creates 'name - Copy.ext' instead of error."""
         source = tmp_path / "source.txt"
         source.write_text("content")
         dest_dir = tmp_path / "dest"
@@ -250,7 +251,10 @@ class TestCopy:
             json={"source": str(source), "dest_dir": str(dest_dir)},
         )
 
-        assert response.status_code == 409
+        assert response.status_code == 201
+        data = response.json()
+        assert data["name"] == "source - Copy.txt"
+        assert (dest_dir / "source - Copy.txt").exists()
 
 
 class TestMove:

@@ -72,6 +72,12 @@
     const rect = contentRef?.getBoundingClientRect();
     if (!rect) return;
 
+    // Blur any focused element (e.g., path bar input) before starting marquee
+    // This must happen before preventDefault() which would prevent the blur event
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+
     isDragging = true;
     ctrlKeyHeld = event.ctrlKey || event.metaKey;
     dragStart = {

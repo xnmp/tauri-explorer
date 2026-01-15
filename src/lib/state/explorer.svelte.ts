@@ -39,6 +39,9 @@ interface ExplorerState {
   selectionAnchorIndex: number | null;
   contextMenuOpen: boolean;
   contextMenuPosition: { x: number; y: number } | null;
+  // Navigation history
+  history: string[];
+  historyIndex: number;
 }
 
 function createExplorerState() {
@@ -59,6 +62,8 @@ function createExplorerState() {
     selectionAnchorIndex: null,
     contextMenuOpen: false,
     contextMenuPosition: null,
+    history: [],
+    historyIndex: -1,
   });
 
   // Derived: processed entries with sorting and filtering
@@ -84,8 +89,12 @@ function createExplorerState() {
     return result;
   });
 
-  // Actions
-  async function navigateTo(path: string) {
+  // Derived: navigation state
+  const canGoBack = $derived(state.historyIndex > 0);
+  const canGoForward = $derived(state.historyIndex < state.history.length - 1);
+
+  // Internal: navigate without modifying history (used by goBack/goForward)
+  async function navigateInternal(path: string): Promise<boolean> {
     state.loading = true;
     state.error = null;
 
@@ -94,11 +103,44 @@ function createExplorerState() {
     if (result.ok) {
       state.currentPath = result.data.path;
       state.entries = [...result.data.entries];
+      state.loading = false;
+      return true;
     } else {
       state.error = result.error;
+      state.loading = false;
+      return false;
     }
+  }
 
-    state.loading = false;
+  // Actions
+  async function navigateTo(path: string) {
+    const success = await navigateInternal(path);
+
+    if (success) {
+      // Truncate forward history and push new path
+      const newHistory = state.history.slice(0, state.historyIndex + 1);
+      newHistory.push(state.currentPath);
+      state.history = newHistory;
+      state.historyIndex = newHistory.length - 1;
+    }
+  }
+
+  async function goBack() {
+    if (!canGoBack) return;
+    const prevPath = state.history[state.historyIndex - 1];
+    const success = await navigateInternal(prevPath);
+    if (success) {
+      state.historyIndex--;
+    }
+  }
+
+  async function goForward() {
+    if (!canGoForward) return;
+    const nextPath = state.history[state.historyIndex + 1];
+    const success = await navigateInternal(nextPath);
+    if (success) {
+      state.historyIndex++;
+    }
   }
 
   function toggleHidden() {
@@ -325,7 +367,15 @@ function createExplorerState() {
     get breadcrumbs() {
       return breadcrumbs;
     },
+    get canGoBack() {
+      return canGoBack;
+    },
+    get canGoForward() {
+      return canGoForward;
+    },
     navigateTo,
+    goBack,
+    goForward,
     toggleHidden,
     setSorting,
     goUp,

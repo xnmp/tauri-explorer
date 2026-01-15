@@ -10,22 +10,47 @@
   import FileList from "$lib/components/FileList.svelte";
   import ContextMenu from "$lib/components/ContextMenu.svelte";
   import NewFolderDialog from "$lib/components/NewFolderDialog.svelte";
-  import RenameDialog from "$lib/components/RenameDialog.svelte";
   import DeleteDialog from "$lib/components/DeleteDialog.svelte";
 
-  onMount(async () => {
+  function handleKeydown(event: KeyboardEvent) {
+    // Navigation shortcuts
+    if (event.altKey && event.key === "ArrowLeft") {
+      event.preventDefault();
+      explorer.goBack();
+    } else if (event.altKey && event.key === "ArrowRight") {
+      event.preventDefault();
+      explorer.goForward();
+    } else if (event.altKey && event.key === "ArrowUp") {
+      event.preventDefault();
+      explorer.goUp();
+    } else if (event.key === "F5") {
+      event.preventDefault();
+      explorer.refresh();
+    }
+  }
+
+  onMount(() => {
+    // Global keyboard shortcuts
+    window.addEventListener("keydown", handleKeydown);
+
     // Get the actual home directory from the backend
-    try {
-      const response = await fetch("http://localhost:8000/api/home");
-      if (response.ok) {
-        const data = await response.json();
-        explorer.navigateTo(data.path);
-      } else {
+    (async () => {
+      try {
+        const response = await fetch("http://localhost:8000/api/home");
+        if (response.ok) {
+          const data = await response.json();
+          explorer.navigateTo(data.path);
+        } else {
+          explorer.navigateTo("/home");
+        }
+      } catch (e) {
         explorer.navigateTo("/home");
       }
-    } catch (e) {
-      explorer.navigateTo("/home");
-    }
+    })();
+
+    return () => {
+      window.removeEventListener("keydown", handleKeydown);
+    };
   });
 </script>
 
@@ -39,7 +64,6 @@
 
 <ContextMenu />
 <NewFolderDialog />
-<RenameDialog />
 <DeleteDialog />
 
 <style>

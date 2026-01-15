@@ -56,7 +56,8 @@
     <button
       class="nav-btn"
       title="Back (Alt+Left)"
-      disabled
+      disabled={!explorer.canGoBack}
+      onclick={() => explorer.goBack()}
       aria-label="Go back"
     >
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -67,7 +68,8 @@
     <button
       class="nav-btn"
       title="Forward (Alt+Right)"
-      disabled
+      disabled={!explorer.canGoForward}
+      onclick={() => explorer.goForward()}
       aria-label="Go forward"
     >
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">

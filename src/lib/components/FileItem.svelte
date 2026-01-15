@@ -16,7 +16,95 @@
 
   let { entry, onclick, ondblclick, selected = false }: Props = $props();
 
+  // Inline rename state
+  let renameInputRef: HTMLInputElement | null = null;
+  let editedName = $state("");
+  let renameError = $state<string | null>(null);
+  let submittingRename = $state(false);
+
+  // Check if this entry is being renamed
+  const isRenaming = $derived(explorer.state.renamingEntry?.path === entry.path);
+
+  // When rename mode starts, initialize and focus the input
+  $effect(() => {
+    if (isRenaming && renameInputRef) {
+      editedName = entry.name;
+      renameError = null;
+      // Focus and select filename (without extension for files)
+      setTimeout(() => {
+        renameInputRef?.focus();
+        if (entry.kind === "file") {
+          const lastDot = entry.name.lastIndexOf(".");
+          if (lastDot > 0) {
+            renameInputRef?.setSelectionRange(0, lastDot);
+          } else {
+            renameInputRef?.select();
+          }
+        } else {
+          renameInputRef?.select();
+        }
+      }, 0);
+    }
+  });
+
+  async function confirmRename() {
+    if (submittingRename) return;
+
+    const trimmedName = editedName.trim();
+    if (!trimmedName) {
+      renameError = "Name cannot be empty";
+      return;
+    }
+
+    if (trimmedName === entry.name) {
+      explorer.cancelRename();
+      return;
+    }
+
+    submittingRename = true;
+    renameError = null;
+
+    const result = await explorer.rename(trimmedName);
+
+    submittingRename = false;
+
+    if (result) {
+      renameError = result;
+    }
+  }
+
+  function cancelRename() {
+    editedName = "";
+    renameError = null;
+    explorer.cancelRename();
+  }
+
+  function handleRenameKeydown(event: KeyboardEvent) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
+      confirmRename();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      cancelRename();
+    }
+  }
+
+  function handleRenameBlur() {
+    // Confirm on blur (like Windows Explorer)
+    if (editedName.trim() && editedName.trim() !== entry.name) {
+      confirmRename();
+    } else {
+      cancelRename();
+    }
+  }
+
   function handleClick(event: MouseEvent) {
+    if (isRenaming) {
+      event.stopPropagation();
+      return;
+    }
     onclick(event);
   }
 
@@ -35,6 +123,8 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
+    if (isRenaming) return; // Don't handle item-level shortcuts when renaming
+
     const hasModifier = event.ctrlKey || event.metaKey;
 
     const keyActions: Record<string, () => void> = {
@@ -116,8 +206,24 @@
         </svg>
       {/if}
     </div>
-    <span class="name">{entry.name}</span>
-    {#if isInClipboard}
+    {#if isRenaming}
+      <!-- svelte-ignore a11y_autofocus -->
+      <input
+        type="text"
+        class="rename-input"
+        class:error={!!renameError}
+        bind:value={editedName}
+        bind:this={renameInputRef}
+        onkeydown={handleRenameKeydown}
+        onblur={handleRenameBlur}
+        onclick={(e) => e.stopPropagation()}
+        disabled={submittingRename}
+        autofocus
+      />
+    {:else}
+      <span class="name">{entry.name}</span>
+    {/if}
+    {#if isInClipboard && !isRenaming}
       <div class="clipboard-badge" aria-label={isCut ? "Cut" : "Copied"}>
         {#if isCut}
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
@@ -259,6 +365,35 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     flex: 1;
+  }
+
+  /* Inline rename input */
+  .rename-input {
+    flex: 1;
+    min-width: 0;
+    padding: 2px 6px;
+    font-size: 13px;
+    font-family: inherit;
+    font-weight: 400;
+    color: var(--text-primary);
+    background: var(--control-fill);
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    outline: none;
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+
+  .rename-input:focus {
+    background: var(--control-fill-secondary);
+  }
+
+  .rename-input:disabled {
+    opacity: 0.6;
+  }
+
+  .rename-input.error {
+    border-color: var(--system-critical);
+    box-shadow: 0 0 0 1px var(--system-critical);
   }
 
   /* Date, Type, Size cells */

@@ -145,6 +145,17 @@
     }
   }
 
+  // Drag handlers - allow dragging folders to bookmarks
+  function handleDragStart(event: DragEvent) {
+    if (!event.dataTransfer) return;
+
+    // Set drag data with file info
+    event.dataTransfer.setData("application/x-explorer-path", entry.path);
+    event.dataTransfer.setData("application/x-explorer-name", entry.name);
+    event.dataTransfer.setData("application/x-explorer-kind", entry.kind);
+    event.dataTransfer.effectAllowed = "copyLink";
+  }
+
   // Format modified date - Windows 11 style: M/D/YYYY h:mm AM/PM
   function formatDate(isoString: string): string {
     const date = new Date(isoString);
@@ -397,6 +408,8 @@
   {ondblclick}
   oncontextmenu={handleContextMenu}
   onkeydown={handleKeydown}
+  draggable="true"
+  ondragstart={handleDragStart}
 >
   <!-- Name column -->
   <div class="name-cell">

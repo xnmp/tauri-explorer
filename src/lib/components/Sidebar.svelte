@@ -1,12 +1,28 @@
 <!--
   Sidebar component - Windows 11 File Explorer Navigation Pane
+  Issue: tauri-explorer-sm3p, tauri-explorer-39wl
 -->
 <script lang="ts">
   import { onMount } from "svelte";
   import { explorer } from "$lib/state/explorer.svelte";
   import { getHomeDirectory } from "$lib/api/files";
+  import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 
   let homeDir = $state("/home");
+  let isDragOver = $state(false);
+
+  // Resizable sidebar state
+  const SIDEBAR_WIDTH_KEY = "explorer-sidebar-width";
+  const MIN_WIDTH = 180;
+  const MAX_WIDTH = 400;
+  const DEFAULT_WIDTH = 240;
+
+  let savedWidth = typeof localStorage !== "undefined"
+    ? parseInt(localStorage.getItem(SIDEBAR_WIDTH_KEY) || String(DEFAULT_WIDTH), 10)
+    : DEFAULT_WIDTH;
+
+  let sidebarWidth = $state(Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, savedWidth)));
+  let isResizing = $state(false);
 
   onMount(async () => {
     const result = await getHomeDirectory();
@@ -31,10 +47,84 @@
 
   let quickAccessExpanded = $state(true);
   let thisPcExpanded = $state(true);
+
+  // Drag and drop handlers for adding bookmarks
+  function handleDragOver(event: DragEvent) {
+    // Only accept folder drops
+    if (event.dataTransfer?.types.includes("application/x-explorer-kind")) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "link";
+      isDragOver = true;
+    }
+  }
+
+  function handleDragLeave(event: DragEvent) {
+    // Only reset if leaving the drop zone entirely
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const x = event.clientX;
+    const y = event.clientY;
+    if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
+      isDragOver = false;
+    }
+  }
+
+  function handleDrop(event: DragEvent) {
+    event.preventDefault();
+    isDragOver = false;
+
+    if (!event.dataTransfer) return;
+
+    const kind = event.dataTransfer.getData("application/x-explorer-kind");
+    const path = event.dataTransfer.getData("application/x-explorer-path");
+    const name = event.dataTransfer.getData("application/x-explorer-name");
+
+    // Only allow directories to be bookmarked
+    if (kind === "directory" && path) {
+      bookmarksStore.addBookmark(path, name);
+    }
+  }
+
+  function removeBookmark(event: MouseEvent, path: string) {
+    event.stopPropagation();
+    bookmarksStore.removeBookmark(path);
+  }
+
+  // Resize handlers
+  function startResize(event: MouseEvent) {
+    event.preventDefault();
+    isResizing = true;
+
+    const startX = event.clientX;
+    const startWidth = sidebarWidth;
+
+    function onMouseMove(e: MouseEvent) {
+      const delta = e.clientX - startX;
+      const newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startWidth + delta));
+      sidebarWidth = newWidth;
+    }
+
+    function onMouseUp() {
+      isResizing = false;
+      // Save width to localStorage
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
+      }
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    document.body.style.cursor = "ew-resize";
+    document.body.style.userSelect = "none";
+  }
 </script>
 
-<div class="sidebar">
-  <!-- Home / Gallery / Cloud sections -->
+<div class="sidebar-container" class:resizing={isResizing} style="width: {sidebarWidth}px">
+  <div class="sidebar">
+    <!-- Home / Gallery / Cloud sections -->
   <div class="nav-section top-section">
     <button class="nav-item" onclick={() => explorer.navigateTo(homeDir)}>
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
@@ -63,7 +153,15 @@
   <div class="divider"></div>
 
   <!-- Quick access -->
-  <div class="nav-section">
+  <div
+    class="nav-section quick-access"
+    class:drag-over={isDragOver}
+    ondragover={handleDragOver}
+    ondragleave={handleDragLeave}
+    ondrop={handleDrop}
+    role="region"
+    aria-label="Quick access - drop folders here to bookmark"
+  >
     <button
       class="section-header"
       onclick={() => quickAccessExpanded = !quickAccessExpanded}
@@ -73,10 +171,14 @@
         <path d="M4 3L7 6L4 9" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
       <span>Quick access</span>
+      {#if isDragOver}
+        <span class="drop-hint">Drop to pin</span>
+      {/if}
     </button>
 
     {#if quickAccessExpanded}
       <div class="section-content">
+        <!-- Default system folders -->
         {#each quickAccessFolders as folder}
           <button class="nav-item folder-item" onclick={() => explorer.navigateTo(folder.path)}>
             {#if folder.icon === "download"}
@@ -111,6 +213,37 @@
               </svg>
             {/if}
           </button>
+        {/each}
+
+        <!-- User bookmarks -->
+        {#each bookmarksStore.list as bookmark}
+          <div
+            class="nav-item folder-item user-bookmark"
+            onclick={() => explorer.navigateTo(bookmark.path)}
+            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); explorer.navigateTo(bookmark.path); }}}
+            role="button"
+            tabindex="0"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: #ffb900">
+              <path
+                d="M2 5.5C2 4.67157 2.67157 4 3.5 4H6.17157C6.43679 4 6.69114 4.10536 6.87868 4.29289L8.12132 5.53553C8.30886 5.72307 8.56321 5.82843 8.82843 5.82843H13C13.8284 5.82843 14.5 6.5 14.5 7.32843V12.5C14.5 13.3284 13.8284 14 13 14H3C2.17157 14 1.5 13.3284 1.5 12.5V5.5"
+                stroke="currentColor"
+                stroke-width="1.25"
+                fill="currentColor"
+                fill-opacity="0.15"
+              />
+            </svg>
+            <span>{bookmark.name}</span>
+            <button
+              class="remove-bookmark"
+              onclick={(e) => removeBookmark(e, bookmark.path)}
+              title="Unpin from Quick access"
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path d="M3 3L9 9M9 3L3 9" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+              </svg>
+            </button>
+          </div>
         {/each}
       </div>
     {/if}
@@ -153,17 +286,51 @@
       </div>
     {/if}
   </div>
+  </div>
+  <!-- Resize handle -->
+  <div
+    class="resize-handle"
+    onmousedown={startResize}
+    role="separator"
+    aria-orientation="vertical"
+    aria-label="Resize sidebar"
+  ></div>
 </div>
 
 <style>
+  .sidebar-container {
+    display: flex;
+    flex-shrink: 0;
+    position: relative;
+  }
+
+  .sidebar-container.resizing {
+    user-select: none;
+  }
+
   .sidebar {
-    width: 240px;
+    flex: 1;
     background: var(--background-card-secondary);
     border-right: 1px solid var(--divider);
     overflow-y: auto;
-    flex-shrink: 0;
     display: flex;
     flex-direction: column;
+  }
+
+  .resize-handle {
+    position: absolute;
+    right: -3px;
+    top: 0;
+    bottom: 0;
+    width: 6px;
+    cursor: ew-resize;
+    z-index: 10;
+    transition: background var(--transition-fast);
+  }
+
+  .resize-handle:hover,
+  .sidebar-container.resizing .resize-handle {
+    background: var(--accent);
   }
 
   .nav-section {
@@ -311,5 +478,54 @@
     background: var(--accent);
     border-radius: 2px;
     transition: width 0.3s ease;
+  }
+
+  /* Drag and drop styles */
+  .quick-access.drag-over {
+    background: var(--accent);
+    background: rgba(0, 120, 212, 0.1);
+    border-radius: 6px;
+    outline: 2px dashed var(--accent);
+    outline-offset: -2px;
+  }
+
+  .drop-hint {
+    margin-left: auto;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--accent);
+    background: rgba(0, 120, 212, 0.15);
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+
+  /* User bookmark styles */
+  .user-bookmark {
+    position: relative;
+  }
+
+  .user-bookmark .remove-bookmark {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    padding: 0;
+    transition: all var(--transition-fast);
+  }
+
+  .user-bookmark:hover .remove-bookmark {
+    display: flex;
+  }
+
+  .user-bookmark .remove-bookmark:hover {
+    background: var(--subtle-fill-secondary);
+    color: var(--system-critical);
   }
 </style>

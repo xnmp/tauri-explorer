@@ -1,6 +1,6 @@
 /**
  * Explorer state management using Svelte 5 runes.
- * Issue: tauri-explorer-gcl, tauri-explorer-jql, tauri-explorer-h3n, tauri-explorer-x25
+ * Issue: tauri-explorer-gcl, tauri-explorer-jql, tauri-explorer-h3n, tauri-explorer-x25, tauri-explorer-bhw5
  */
 
 import {
@@ -23,6 +23,11 @@ interface ClipboardState {
   operation: "copy" | "cut";
 }
 
+/** Undoable action types */
+type UndoAction =
+  | { type: "rename"; path: string; oldName: string; newName: string }
+  | { type: "move"; sourcePath: string; destPath: string; originalDir: string };
+
 interface ExplorerState {
   currentPath: string;
   entries: FileEntry[];
@@ -42,6 +47,8 @@ interface ExplorerState {
   // Navigation history
   history: string[];
   historyIndex: number;
+  // Undo stack
+  undoStack: UndoAction[];
 }
 
 function createExplorerState() {
@@ -64,6 +71,7 @@ function createExplorerState() {
     contextMenuPosition: null,
     history: [],
     historyIndex: -1,
+    undoStack: [],
   });
 
   // Derived: processed entries with sorting and filtering
@@ -92,6 +100,7 @@ function createExplorerState() {
   // Derived: navigation state
   const canGoBack = $derived(state.historyIndex > 0);
   const canGoForward = $derived(state.historyIndex < state.history.length - 1);
+  const canUndo = $derived(state.undoStack.length > 0);
 
   // Internal: navigate without modifying history (used by goBack/goForward)
   async function navigateInternal(path: string): Promise<boolean> {
@@ -202,12 +211,20 @@ function createExplorerState() {
   async function rename(newName: string): Promise<string | null> {
     if (!state.renamingEntry) return "No entry selected for rename";
 
-    const result = await renameEntry(state.renamingEntry.path, newName);
+    const oldName = state.renamingEntry.name;
+    const oldPath = state.renamingEntry.path;
+    const result = await renameEntry(oldPath, newName);
 
     if (result.ok) {
+      // Push to undo stack
+      state.undoStack = [
+        ...state.undoStack,
+        { type: "rename", path: result.data.path, oldName, newName },
+      ];
+
       // Update entry in list
       state.entries = state.entries.map((e) =>
-        e.path === state.renamingEntry?.path ? result.data : e
+        e.path === oldPath ? result.data : e
       );
       state.renamingEntry = null;
       return null;
@@ -344,17 +361,56 @@ function createExplorerState() {
     const isCut = operation === "cut";
     const pasteOperation = isCut ? moveEntry : copyEntry;
 
+    // Extract original directory from source path
+    const originalDir = entry.path.substring(0, entry.path.lastIndexOf("/")) || "/";
+
     const result = await pasteOperation(entry.path, state.currentPath);
 
     if (!result.ok) {
       return result.error;
     }
 
-    state.entries = [...state.entries, result.data];
+    // Push move operation to undo stack (cut/paste = move)
     if (isCut) {
-      state.clipboard = null;
+      state.undoStack = [
+        ...state.undoStack,
+        {
+          type: "move",
+          sourcePath: entry.path,
+          destPath: result.data.path,
+          originalDir,
+        },
+      ];
     }
+
+    state.entries = [...state.entries, result.data];
+    state.clipboard = null;
     return null;
+  }
+
+  async function undo(): Promise<string | null> {
+    if (state.undoStack.length === 0) return "Nothing to undo";
+
+    const action = state.undoStack[state.undoStack.length - 1];
+
+    const result = await executeUndo(action);
+    if (!result.ok) return result.error;
+
+    // Only remove from stack after successful undo
+    state.undoStack = state.undoStack.slice(0, -1);
+    await navigateInternal(state.currentPath);
+    return null;
+  }
+
+  async function executeUndo(
+    action: UndoAction
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    switch (action.type) {
+      case "rename":
+        return renameEntry(action.path, action.oldName);
+      case "move":
+        return moveEntry(action.destPath, action.originalDir);
+    }
   }
 
   return {
@@ -372,6 +428,9 @@ function createExplorerState() {
     },
     get canGoForward() {
       return canGoForward;
+    },
+    get canUndo() {
+      return canUndo;
     },
     navigateTo,
     goBack,
@@ -400,6 +459,7 @@ function createExplorerState() {
     selectByIndices,
     openContextMenu,
     closeContextMenu,
+    undo,
   };
 }
 

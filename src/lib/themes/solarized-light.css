@@ -1,0 +1,76 @@
+/**
+ * Solarized Light Theme
+ *
+ * Based on Ethan Schoonover's Solarized color palette.
+ * Warm cream/beige tones that are easy on the eyes.
+ * Great for long reading sessions.
+ *
+ * Solarized palette reference:
+ * - base03:  #002b36  (darkest)
+ * - base02:  #073642
+ * - base01:  #586e75
+ * - base00:  #657b83
+ * - base0:   #839496
+ * - base1:   #93a1a1
+ * - base2:   #eee8d5
+ * - base3:   #fdf6e3  (lightest)
+ *
+ * To create your own theme:
+ * 1. Copy this file and rename it
+ * 2. Modify the color values below
+ * 3. Import it in theme.svelte.ts and add to the themes list
+ */
+
+[data-theme="solarized-light"] {
+  /* Accent colors - Solarized blue */
+  --accent: #268bd2;
+  --accent-light: #2aa198;
+  --accent-dark: #073642;
+
+  /* Text colors - Solarized base tones */
+  --text-primary: #657b83;
+  --text-secondary: #839496;
+  --text-tertiary: #93a1a1;
+  --text-on-accent: #fdf6e3;
+
+  /* Background colors - Warm cream tones */
+  --background-solid: #fdf6e3;
+  --background-mica: rgba(253, 246, 227, 0.95);
+  --background-acrylic: rgba(238, 232, 213, 0.85);
+  --background-card: rgba(238, 232, 213, 0.6);
+  --background-card-secondary: rgba(238, 232, 213, 0.4);
+
+  /* Surface/border colors */
+  --surface-stroke: rgba(101, 123, 131, 0.15);
+  --surface-stroke-flyout: rgba(101, 123, 131, 0.1);
+  --divider: rgba(101, 123, 131, 0.2);
+
+  /* Control/input backgrounds */
+  --control-fill: rgba(238, 232, 213, 0.7);
+  --control-fill-secondary: rgba(238, 232, 213, 0.5);
+  --control-fill-tertiary: rgba(238, 232, 213, 0.3);
+  --control-fill-disabled: rgba(238, 232, 213, 0.3);
+
+  /* Subtle hover/active fills */
+  --subtle-fill: transparent;
+  --subtle-fill-secondary: rgba(101, 123, 131, 0.08);
+  --subtle-fill-tertiary: rgba(101, 123, 131, 0.05);
+
+  /* Control borders */
+  --control-stroke: rgba(101, 123, 131, 0.2);
+  --control-stroke-secondary: rgba(101, 123, 131, 0.3);
+
+  /* Focus indicators */
+  --focus-stroke-outer: #268bd2;
+  --focus-stroke-inner: #fdf6e3;
+
+  /* System status colors - Solarized accents */
+  --system-critical: #dc322f;
+  --system-success: #859900;
+  --system-caution: #b58900;
+
+  /* Shadows - Softer, warmer shadows */
+  --shadow-flyout: 0 8px 16px rgba(0, 43, 54, 0.12);
+  --shadow-dialog: 0 32px 64px rgba(0, 43, 54, 0.2), 0 2px 21px rgba(0, 43, 54, 0.14);
+  --shadow-tooltip: 0 4px 8px rgba(0, 43, 54, 0.12);
+}

@@ -1,0 +1,64 @@
+/**
+ * Light Theme - Windows 11 Style
+ *
+ * To create your own theme:
+ * 1. Copy this file and rename it (e.g., my-theme.css)
+ * 2. Modify the color values below
+ * 3. Import it in theme.svelte.ts and add to the themes list
+ *
+ * Color format: Use hex (#ffffff), rgb(255,255,255), or rgba(255,255,255,0.5)
+ */
+
+[data-theme="light"] {
+  /* Accent colors - your brand/highlight color */
+  --accent: #0078d4;
+  --accent-light: #60cdff;
+  --accent-dark: #005a9e;
+
+  /* Text colors */
+  --text-primary: #1a1a1a;
+  --text-secondary: #5d5d5d;
+  --text-tertiary: #8a8a8a;
+  --text-on-accent: #ffffff;
+
+  /* Background colors */
+  --background-solid: #f3f3f3;
+  --background-mica: rgba(243, 243, 243, 0.85);
+  --background-acrylic: rgba(255, 255, 255, 0.7);
+  --background-card: rgba(255, 255, 255, 0.7);
+  --background-card-secondary: rgba(249, 249, 249, 0.5);
+
+  /* Surface/border colors */
+  --surface-stroke: rgba(0, 0, 0, 0.0578);
+  --surface-stroke-flyout: rgba(0, 0, 0, 0.0326);
+  --divider: rgba(0, 0, 0, 0.0803);
+
+  /* Control/input backgrounds */
+  --control-fill: rgba(255, 255, 255, 0.7);
+  --control-fill-secondary: rgba(249, 249, 249, 0.5);
+  --control-fill-tertiary: rgba(249, 249, 249, 0.3);
+  --control-fill-disabled: rgba(249, 249, 249, 0.3);
+
+  /* Subtle hover/active fills */
+  --subtle-fill: transparent;
+  --subtle-fill-secondary: rgba(0, 0, 0, 0.0373);
+  --subtle-fill-tertiary: rgba(0, 0, 0, 0.0241);
+
+  /* Control borders */
+  --control-stroke: rgba(0, 0, 0, 0.0578);
+  --control-stroke-secondary: rgba(0, 0, 0, 0.1622);
+
+  /* Focus indicators */
+  --focus-stroke-outer: #000000;
+  --focus-stroke-inner: #ffffff;
+
+  /* System status colors */
+  --system-critical: #c42b1c;
+  --system-success: #0f7b0f;
+  --system-caution: #9d5d00;
+
+  /* Shadows */
+  --shadow-flyout: 0 8px 16px rgba(0, 0, 0, 0.14);
+  --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.24), 0 2px 21px rgba(0, 0, 0, 0.18);
+  --shadow-tooltip: 0 4px 8px rgba(0, 0, 0, 0.14);
+}

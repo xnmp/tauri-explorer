@@ -6,6 +6,7 @@
   import { onMount } from "svelte";
   import { explorer } from "$lib/state/explorer.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
+  import "$lib/themes/index.css";
   import NavigationBar from "$lib/components/NavigationBar.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import FileList from "$lib/components/FileList.svelte";
@@ -86,50 +87,6 @@
     --font-size-subtitle: 16px;
     --font-size-title: 20px;
 
-    /* Light theme - Windows 11 palette */
-    --accent: #0078d4;
-    --accent-light: #60cdff;
-    --accent-dark: #005a9e;
-
-    --text-primary: #1a1a1a;
-    --text-secondary: #5d5d5d;
-    --text-tertiary: #8a8a8a;
-    --text-on-accent: #ffffff;
-
-    --background-solid: #f3f3f3;
-    --background-mica: rgba(243, 243, 243, 0.85);
-    --background-acrylic: rgba(255, 255, 255, 0.7);
-    --background-card: rgba(255, 255, 255, 0.7);
-    --background-card-secondary: rgba(249, 249, 249, 0.5);
-
-    --surface-stroke: rgba(0, 0, 0, 0.0578);
-    --surface-stroke-flyout: rgba(0, 0, 0, 0.0326);
-    --divider: rgba(0, 0, 0, 0.0803);
-
-    --control-fill: rgba(255, 255, 255, 0.7);
-    --control-fill-secondary: rgba(249, 249, 249, 0.5);
-    --control-fill-tertiary: rgba(249, 249, 249, 0.3);
-    --control-fill-disabled: rgba(249, 249, 249, 0.3);
-
-    --subtle-fill: transparent;
-    --subtle-fill-secondary: rgba(0, 0, 0, 0.0373);
-    --subtle-fill-tertiary: rgba(0, 0, 0, 0.0241);
-
-    --control-stroke: rgba(0, 0, 0, 0.0578);
-    --control-stroke-secondary: rgba(0, 0, 0, 0.1622);
-
-    --focus-stroke-outer: #000000;
-    --focus-stroke-inner: #ffffff;
-
-    --system-critical: #c42b1c;
-    --system-success: #0f7b0f;
-    --system-caution: #9d5d00;
-
-    /* Shadows - Windows 11 elevation */
-    --shadow-flyout: 0 8px 16px rgba(0, 0, 0, 0.14);
-    --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.24), 0 2px 21px rgba(0, 0, 0, 0.18);
-    --shadow-tooltip: 0 4px 8px rgba(0, 0, 0, 0.14);
-
     /* Radii */
     --radius-sm: 4px;
     --radius-md: 8px;
@@ -148,51 +105,6 @@
     --spacing-xl: 24px;
   }
 
-  @media (prefers-color-scheme: dark) {
-    :global(:root) {
-      /* Dark theme - Windows 11 palette */
-      --accent: #60cdff;
-      --accent-light: #98ecff;
-      --accent-dark: #0078d4;
-
-      --text-primary: #ffffff;
-      --text-secondary: #c5c5c5;
-      --text-tertiary: #9d9d9d;
-      --text-on-accent: #000000;
-
-      --background-solid: #202020;
-      --background-mica: rgba(32, 32, 32, 0.9);
-      --background-acrylic: rgba(44, 44, 44, 0.96);
-      --background-card: rgba(255, 255, 255, 0.0512);
-      --background-card-secondary: rgba(255, 255, 255, 0.0326);
-
-      --surface-stroke: rgba(255, 255, 255, 0.0698);
-      --surface-stroke-flyout: rgba(255, 255, 255, 0.093);
-      --divider: rgba(255, 255, 255, 0.0837);
-
-      --control-fill: rgba(255, 255, 255, 0.0605);
-      --control-fill-secondary: rgba(255, 255, 255, 0.0837);
-      --control-fill-tertiary: rgba(255, 255, 255, 0.0326);
-      --control-fill-disabled: rgba(255, 255, 255, 0.0419);
-
-      --subtle-fill: transparent;
-      --subtle-fill-secondary: rgba(255, 255, 255, 0.0605);
-      --subtle-fill-tertiary: rgba(255, 255, 255, 0.0419);
-
-      --control-stroke: rgba(255, 255, 255, 0.093);
-      --control-stroke-secondary: rgba(255, 255, 255, 0.0698);
-
-      --focus-stroke-outer: #ffffff;
-      --focus-stroke-inner: #000000;
-
-      --system-critical: #ff99a4;
-      --system-success: #6ccb5f;
-      --system-caution: #fce100;
-
-      --shadow-flyout: 0 8px 16px rgba(0, 0, 0, 0.26);
-      --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.32), 0 2px 21px rgba(0, 0, 0, 0.24);
-    }
-  }
 
   :global(body) {
     font-family: var(--font-family);
@@ -260,15 +172,6 @@
     z-index: 0;
   }
 
-  @media (prefers-color-scheme: dark) {
-    .explorer::before {
-      background: linear-gradient(
-        180deg,
-        rgba(255, 255, 255, 0.02) 0%,
-        transparent 50%
-      );
-    }
-  }
 
   .main-content {
     display: flex;

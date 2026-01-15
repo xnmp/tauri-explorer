@@ -84,7 +84,7 @@
     ctrlKeyHeld = event.ctrlKey || event.metaKey;
     dragStart = {
       x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
+      y: Math.max(HEADER_HEIGHT, event.clientY - rect.top),
     };
     dragCurrent = { ...dragStart };
 
@@ -98,7 +98,7 @@
     const rect = contentRef.getBoundingClientRect();
     dragCurrent = {
       x: Math.max(0, Math.min(event.clientX - rect.left, rect.width)),
-      y: Math.max(0, event.clientY - rect.top),
+      y: Math.max(HEADER_HEIGHT, event.clientY - rect.top),
     };
 
     // Calculate which indices are in the selection rectangle

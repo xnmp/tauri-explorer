@@ -1,6 +1,6 @@
 <!--
   DeleteDialog component - Windows 11 Fluent Design
-  Issue: tauri-explorer-h3n
+  Issue: tauri-explorer-h3n, tauri-explorer-w0eo
 -->
 <script lang="ts">
   import { explorer } from "$lib/state/explorer.svelte";
@@ -63,9 +63,9 @@
         <h2 id="dialog-title">Delete {explorer.state.deletingEntry.kind === "directory" ? "folder" : "file"}?</h2>
 
         <p id="dialog-description" class="message">
-          <strong>{explorer.state.deletingEntry.name}</strong> will be permanently deleted.
+          <strong>{explorer.state.deletingEntry.name}</strong> will be moved to the Recycle Bin.
           {#if explorer.state.deletingEntry.kind === "directory"}
-            <span class="warning">All files and folders inside will also be deleted.</span>
+            <span class="info">All files and folders inside will also be moved.</span>
           {/if}
         </p>
 
@@ -177,15 +177,15 @@
     word-break: break-all;
   }
 
-  .warning {
+  .info {
     display: block;
     margin-top: var(--spacing-sm);
     padding: var(--spacing-sm) var(--spacing-md);
-    background: linear-gradient(135deg, rgba(196, 43, 28, 0.08), rgba(196, 43, 28, 0.04));
-    border: 1px solid rgba(196, 43, 28, 0.15);
+    background: linear-gradient(135deg, rgba(0, 120, 212, 0.08), rgba(0, 120, 212, 0.04));
+    border: 1px solid rgba(0, 120, 212, 0.15);
     border-radius: var(--radius-sm);
     font-size: var(--font-size-caption);
-    color: var(--system-critical);
+    color: var(--text-secondary);
   }
 
   .error-message {

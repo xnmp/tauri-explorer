@@ -102,23 +102,22 @@ export async function renameEntry(
 }
 
 /**
- * Delete a file or directory.
- * Issue: tauri-explorer-h3n
+ * Delete a file or directory by moving it to the system trash/recycle bin.
+ * Issue: tauri-explorer-h3n, tauri-explorer-w0eo
+ *
+ * Uses Tauri command for cross-platform trash support:
+ * - Windows: Recycle Bin
+ * - macOS: Trash
+ * - Linux: Freedesktop Trash
  *
  * @param path - Full path to file/directory to delete
  * @returns Result indicating success or error message
  */
 export async function deleteEntry(path: string): Promise<ApiResult<void>> {
   try {
-    const url = `${API_BASE}/files/delete?path=${encodeURIComponent(path)}`;
-    const response = await fetch(url, { method: "DELETE" });
-
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      const detail = body.detail ?? `HTTP ${response.status}`;
-      return { ok: false, error: detail };
-    }
-
+    // Use Tauri command for trash support
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("move_to_trash", { path });
     return { ok: true, data: undefined };
   } catch (err) {
     return { ok: false, error: String(err) };

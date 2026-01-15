@@ -14,20 +14,47 @@
   import NewFolderDialog from "$lib/components/NewFolderDialog.svelte";
   import DeleteDialog from "$lib/components/DeleteDialog.svelte";
 
-  function handleKeydown(event: KeyboardEvent) {
-    // Navigation shortcuts
-    if (event.altKey && event.key === "ArrowLeft") {
-      event.preventDefault();
-      explorer.goBack();
-    } else if (event.altKey && event.key === "ArrowRight") {
-      event.preventDefault();
-      explorer.goForward();
-    } else if (event.altKey && event.key === "ArrowUp") {
-      event.preventDefault();
-      explorer.goUp();
-    } else if (event.key === "F5") {
+  async function handleKeydown(event: KeyboardEvent): Promise<void> {
+    const isModifier = event.ctrlKey || event.metaKey;
+    const selected = explorer.getSelectedEntries()[0];
+
+    // Alt + Arrow: Navigation
+    if (event.altKey) {
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        explorer.goBack();
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        explorer.goForward();
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        explorer.goUp();
+      }
+      return;
+    }
+
+    // F5: Refresh
+    if (event.key === "F5") {
       event.preventDefault();
       explorer.refresh();
+      return;
+    }
+
+    // Modifier shortcuts (Ctrl/Cmd + key)
+    if (!isModifier) return;
+
+    if (event.key === "z") {
+      event.preventDefault();
+      explorer.undo();
+    } else if (event.key === "c" && selected) {
+      event.preventDefault();
+      explorer.copyToClipboard(selected);
+    } else if (event.key === "x" && selected) {
+      event.preventDefault();
+      explorer.cutToClipboard(selected);
+    } else if (event.key === "v" && explorer.state.clipboard) {
+      event.preventDefault();
+      await explorer.paste();
     }
   }
 

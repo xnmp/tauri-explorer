@@ -9,3 +9,9 @@ Plagiarism inspirtaition:
 * Linear - this is polished af
 
 Made with Svelte, SvelteKit, Rust (which framework i dunno)
+
+
+Future issues:
+* How to handle persistent storage?
+- user settings
+- bookmarks

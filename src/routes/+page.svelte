@@ -7,6 +7,7 @@
   import { explorer } from "$lib/state/explorer.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import "$lib/themes/index.css";
+  import TitleBar from "$lib/components/TitleBar.svelte";
   import NavigationBar from "$lib/components/NavigationBar.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import FileList from "$lib/components/FileList.svelte";
@@ -87,6 +88,7 @@
 </script>
 
 <main class="explorer">
+  <TitleBar />
   <NavigationBar />
   <div class="main-content">
     <Sidebar />

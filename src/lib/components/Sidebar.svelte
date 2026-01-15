@@ -170,21 +170,6 @@
       <span>Home</span>
     </button>
 
-    <button class="nav-item" disabled>
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
-        <rect x="2" y="3" width="12" height="10" rx="1" stroke="currentColor" stroke-width="1.25"/>
-        <path d="M2 6H14M5 3V6M11 3V6" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
-      </svg>
-      <span>Gallery</span>
-    </button>
-
-    <button class="nav-item" disabled>
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
-        <circle cx="8" cy="6" r="3.5" stroke="currentColor" stroke-width="1.25"/>
-        <path d="M3 12C3 10 5 8.5 8 8.5C11 8.5 13 10 13 12" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
-      </svg>
-      <span>OneDrive - Personal</span>
-    </button>
   </div>
 
   <div class="divider"></div>

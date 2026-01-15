@@ -1,6 +1,7 @@
 /// Explorer app entry point.
 /// Issue: tauri-explorer-rzs, tauri-explorer-w0eo
 use std::path::PathBuf;
+use tauri::Manager;
 
 /// Move a file or directory to the system trash/recycle bin.
 /// Cross-platform: Windows Recycle Bin, macOS Trash, Linux Freedesktop Trash.
@@ -35,7 +36,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![move_to_trash, move_multiple_to_trash])
-        .setup(|_app| {
+        .setup(|app| {
             #[cfg(debug_assertions)]
             {
                 println!("[Explorer] Dev mode: expecting API at http://127.0.0.1:8008");
@@ -43,6 +44,31 @@ pub fn run() {
                     "[Explorer] Run: cd src-python && uv run uvicorn api.main:app --port 8008"
                 );
             }
+
+            // Apply rounded corners on Windows 11
+            #[cfg(target_os = "windows")]
+            {
+                use windows::Win32::Foundation::HWND;
+                use windows::Win32::Graphics::Dwm::{
+                    DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE,
+                    DWM_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+                };
+
+                if let Some(window) = app.get_webview_window("main") {
+                    if let Ok(hwnd) = window.hwnd() {
+                        let preference = DWMWCP_ROUND;
+                        unsafe {
+                            let _ = DwmSetWindowAttribute(
+                                HWND(hwnd.0 as *mut std::ffi::c_void),
+                                DWMWA_WINDOW_CORNER_PREFERENCE,
+                                &preference as *const DWM_WINDOW_CORNER_PREFERENCE as *const _,
+                                std::mem::size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
+                            );
+                        }
+                    }
+                }
+            }
+
             Ok(())
         })
         .run(tauri::generate_context!())

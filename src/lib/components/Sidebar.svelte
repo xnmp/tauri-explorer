@@ -89,6 +89,43 @@
     bookmarksStore.removeBookmark(path);
   }
 
+  // Bookmark reordering state
+  let draggedBookmarkIndex = $state<number | null>(null);
+  let dropTargetIndex = $state<number | null>(null);
+
+  function handleBookmarkDragStart(event: DragEvent, index: number) {
+    if (!event.dataTransfer) return;
+    draggedBookmarkIndex = index;
+    event.dataTransfer.setData("application/x-bookmark-index", String(index));
+    event.dataTransfer.effectAllowed = "move";
+  }
+
+  function handleBookmarkDragOver(event: DragEvent, index: number) {
+    // Only accept bookmark reordering drags
+    if (draggedBookmarkIndex === null) return;
+    event.preventDefault();
+    event.dataTransfer!.dropEffect = "move";
+    dropTargetIndex = index;
+  }
+
+  function handleBookmarkDragLeave() {
+    dropTargetIndex = null;
+  }
+
+  function handleBookmarkDrop(event: DragEvent, toIndex: number) {
+    event.preventDefault();
+    if (draggedBookmarkIndex !== null && draggedBookmarkIndex !== toIndex) {
+      bookmarksStore.reorderBookmarks(draggedBookmarkIndex, toIndex);
+    }
+    draggedBookmarkIndex = null;
+    dropTargetIndex = null;
+  }
+
+  function handleBookmarkDragEnd() {
+    draggedBookmarkIndex = null;
+    dropTargetIndex = null;
+  }
+
   // Resize handlers
   function startResize(event: MouseEvent) {
     event.preventDefault();
@@ -216,11 +253,19 @@
         {/each}
 
         <!-- User bookmarks -->
-        {#each bookmarksStore.list as bookmark}
+        {#each bookmarksStore.list as bookmark, index}
           <div
             class="nav-item folder-item user-bookmark"
+            class:dragging={draggedBookmarkIndex === index}
+            class:drop-target={dropTargetIndex === index && draggedBookmarkIndex !== index}
             onclick={() => explorer.navigateTo(bookmark.path)}
             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); explorer.navigateTo(bookmark.path); }}}
+            draggable="true"
+            ondragstart={(e) => handleBookmarkDragStart(e, index)}
+            ondragover={(e) => handleBookmarkDragOver(e, index)}
+            ondragleave={handleBookmarkDragLeave}
+            ondrop={(e) => handleBookmarkDrop(e, index)}
+            ondragend={handleBookmarkDragEnd}
             role="button"
             tabindex="0"
           >
@@ -482,7 +527,6 @@
 
   /* Drag and drop styles */
   .quick-access.drag-over {
-    background: var(--accent);
     background: rgba(0, 120, 212, 0.1);
     border-radius: 6px;
     outline: 2px dashed var(--accent);
@@ -527,5 +571,15 @@
   .user-bookmark .remove-bookmark:hover {
     background: var(--subtle-fill-secondary);
     color: var(--system-critical);
+  }
+
+  /* Bookmark drag-to-reorder styles */
+  .user-bookmark.dragging {
+    opacity: 0.5;
+  }
+
+  .user-bookmark.drop-target {
+    background: var(--subtle-fill-secondary);
+    box-shadow: 0 -2px 0 0 var(--accent);
   }
 </style>

@@ -6,6 +6,7 @@
   import type { FileEntry } from "$lib/domain/file";
   import { formatSize } from "$lib/domain/file";
   import { explorer } from "$lib/state/explorer.svelte";
+  import { moveEntry } from "$lib/api/files";
 
   interface Props {
     entry: FileEntry;
@@ -145,7 +146,9 @@
     }
   }
 
-  // Drag handlers - allow dragging folders to bookmarks
+  // Drag handlers - allow dragging files/folders
+  let isDropTarget = $state(false);
+
   function handleDragStart(event: DragEvent) {
     if (!event.dataTransfer) return;
 
@@ -153,7 +156,44 @@
     event.dataTransfer.setData("application/x-explorer-path", entry.path);
     event.dataTransfer.setData("application/x-explorer-name", entry.name);
     event.dataTransfer.setData("application/x-explorer-kind", entry.kind);
-    event.dataTransfer.effectAllowed = "copyLink";
+    event.dataTransfer.effectAllowed = "move";
+  }
+
+  // Drop handlers - allow dropping files/folders into directories
+  function handleDragOver(event: DragEvent) {
+    // Only accept drops on directories
+    if (entry.kind !== "directory") return;
+    if (!event.dataTransfer?.types.includes("application/x-explorer-path")) return;
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    isDropTarget = true;
+  }
+
+  function handleDragLeave() {
+    isDropTarget = false;
+  }
+
+  async function handleDrop(event: DragEvent) {
+    event.preventDefault();
+    isDropTarget = false;
+
+    if (entry.kind !== "directory") return;
+    if (!event.dataTransfer) return;
+
+    const sourcePath = event.dataTransfer.getData("application/x-explorer-path");
+    if (!sourcePath || sourcePath === entry.path) return;
+
+    // Don't allow moving a folder into itself or its children
+    if (entry.path.startsWith(sourcePath + "/")) return;
+
+    const result = await moveEntry(sourcePath, entry.path);
+    if (result.ok) {
+      // Refresh the file list to reflect the move
+      explorer.refresh();
+    } else {
+      console.error("Failed to move:", result.error);
+    }
   }
 
   // Format modified date - Windows 11 style: M/D/YYYY h:mm AM/PM
@@ -404,12 +444,16 @@
   class:cut={isCut}
   class:in-clipboard={isInClipboard}
   class:selected
+  class:drop-target={isDropTarget}
   onclick={handleClick}
   {ondblclick}
   oncontextmenu={handleContextMenu}
   onkeydown={handleKeydown}
   draggable="true"
   ondragstart={handleDragStart}
+  ondragover={handleDragOver}
+  ondragleave={handleDragLeave}
+  ondrop={handleDrop}
 >
   <!-- Name column -->
   <div class="name-cell">
@@ -618,15 +662,6 @@
     color: #ffb900;
   }
 
-  /* File colors */
-  .file-body {
-    opacity: 0.15;
-  }
-
-  .file-corner {
-    opacity: 0.25;
-  }
-
   .file-item:not(.directory) .icon {
     color: var(--text-secondary);
   }
@@ -707,6 +742,13 @@
     background: var(--system-caution);
   }
 
+  /* Drop target state - for drag-to-move */
+  .file-item.drop-target {
+    background: rgba(0, 120, 212, 0.15);
+    border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+
   /* Dark mode folder color adjustment */
   @media (prefers-color-scheme: dark) {
     .directory .icon {
@@ -715,14 +757,6 @@
 
     .file-item:not(.directory) .icon {
       color: var(--text-tertiary);
-    }
-
-    .file-body {
-      opacity: 0.12;
-    }
-
-    .file-corner {
-      opacity: 0.2;
     }
   }
 </style>

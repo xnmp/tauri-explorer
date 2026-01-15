@@ -1,6 +1,6 @@
 <!--
   FileList component - Windows 11 Fluent Design
-  Issue: tauri-explorer-iw0, tauri-explorer-x25
+  Issue: tauri-explorer-iw0, tauri-explorer-x25, tauri-explorer-as45
 -->
 <script lang="ts">
   import { explorer } from "$lib/state/explorer.svelte";
@@ -15,6 +15,7 @@
 
   // Marquee selection state
   let isDragging = $state(false);
+  let dragJustEnded = $state(false); // Track if drag just ended to prevent click from clearing selection
   let dragStart = $state<{ x: number; y: number } | null>(null);
   let dragCurrent = $state<{ x: number; y: number } | null>(null);
   let contentRef = $state<HTMLElement | null>(null);
@@ -49,7 +50,8 @@
 
   function handleBackgroundClick(event: MouseEvent): void {
     // Only clear selection on click if not ending a drag
-    if (isBackgroundClick(event.target as HTMLElement) && !isDragging) {
+    // dragJustEnded prevents the click event that fires after mouseup from clearing the selection
+    if (isBackgroundClick(event.target as HTMLElement) && !isDragging && !dragJustEnded) {
       explorer.clearSelection();
     }
   }
@@ -105,9 +107,18 @@
 
   function handleMarqueeEnd(): void {
     if (isDragging) {
+      // Finalize selection before resetting state
+      updateMarqueeSelection();
       isDragging = false;
       dragStart = null;
       dragCurrent = null;
+
+      // Set flag to prevent the subsequent click event from clearing the selection
+      // The click event fires after mouseup, so we need to briefly ignore it
+      dragJustEnded = true;
+      requestAnimationFrame(() => {
+        dragJustEnded = false;
+      });
     }
   }
 

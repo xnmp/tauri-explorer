@@ -461,6 +461,7 @@
   .nav-item:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+    pointer-events: none;
   }
 
   .nav-item:focus-visible {

@@ -24,6 +24,39 @@
   const ITEM_HEIGHT = 32;
   const HEADER_HEIGHT = 32; // Column headers height
 
+  // Column resize state
+  const MIN_COL_WIDTH = 60;
+  let columnWidths = $state({ date: 180, type: 120, size: 90 });
+  let isResizing = $state(false);
+  let resizeColumn = $state<"date" | "type" | "size" | null>(null);
+  let resizeStartX = $state(0);
+  let resizeStartWidth = $state(0);
+
+  function startColumnResize(column: "date" | "type" | "size", event: MouseEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    isResizing = true;
+    resizeColumn = column;
+    resizeStartX = event.clientX;
+    resizeStartWidth = columnWidths[column];
+  }
+
+  function handleColumnResize(event: MouseEvent): void {
+    if (!isResizing || !resizeColumn) return;
+    const delta = event.clientX - resizeStartX;
+    const newWidth = Math.max(MIN_COL_WIDTH, resizeStartWidth + delta);
+    columnWidths = { ...columnWidths, [resizeColumn]: newWidth };
+  }
+
+  function endColumnResize(): void {
+    isResizing = false;
+    resizeColumn = null;
+  }
+
+  const gridTemplateColumns = $derived(
+    `1fr ${columnWidths.date}px ${columnWidths.type}px ${columnWidths.size}px`
+  );
+
   const BACKGROUND_CLASSES = ["file-rows", "content", "details-view", "virtual-viewport", "virtual-spacer-top", "virtual-spacer-bottom"];
 
   function isBackgroundClick(target: HTMLElement): boolean {
@@ -171,8 +204,11 @@
   }
 </script>
 
-<!-- Global mouse events for marquee -->
-<svelte:window onmousemove={handleMarqueeMove} onmouseup={handleMarqueeEnd} />
+<!-- Global mouse events for marquee and column resize -->
+<svelte:window
+  onmousemove={(e) => { handleMarqueeMove(e); handleColumnResize(e); }}
+  onmouseup={() => { handleMarqueeEnd(); endColumnResize(); }}
+/>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="file-list" onkeydown={handleKeydown} onclick={handleBackgroundClick} oncontextmenu={handleBackgroundContextMenu} tabindex="-1">
@@ -249,42 +285,54 @@
       </div>
     {:else}
       <!-- Details View with Column Headers -->
-      <div class="details-view">
-        <div class="column-headers">
-          <button
-            class="column-header name-column"
-            onclick={() => explorer.setSorting("name")}
-            class:active={explorer.state.sortBy === "name"}
-          >
-            <span>Name</span>
-            {#if explorer.state.sortBy === "name"}
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="sort-indicator">
-                {#if explorer.state.sortAscending}
-                  <path d="M5 2V8M5 2L2 5M5 2L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-                {:else}
-                  <path d="M5 8V2M5 8L2 5M5 8L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-                {/if}
-              </svg>
-            {/if}
-          </button>
-          <button
-            class="column-header date-column"
-            onclick={() => explorer.setSorting("modified")}
-            class:active={explorer.state.sortBy === "modified"}
-          >
-            <span>Date modified</span>
-            {#if explorer.state.sortBy === "modified"}
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="sort-indicator">
-                {#if explorer.state.sortAscending}
-                  <path d="M5 2V8M5 2L2 5M5 2L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-                {:else}
-                  <path d="M5 8V2M5 8L2 5M5 8L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-                {/if}
-              </svg>
-            {/if}
-          </button>
-          <div class="column-header type-column">
-            <span>Type</span>
+      <div class="details-view" class:resizing={isResizing} style="--col-date: {columnWidths.date}px; --col-type: {columnWidths.type}px; --col-size: {columnWidths.size}px;">
+        <div class="column-headers" style="grid-template-columns: {gridTemplateColumns};">
+          <div class="column-header-wrapper">
+            <button
+              class="column-header name-column"
+              onclick={() => explorer.setSorting("name")}
+              class:active={explorer.state.sortBy === "name"}
+            >
+              <span>Name</span>
+              {#if explorer.state.sortBy === "name"}
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="sort-indicator">
+                  {#if explorer.state.sortAscending}
+                    <path d="M5 2V8M5 2L2 5M5 2L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+                  {:else}
+                    <path d="M5 8V2M5 8L2 5M5 8L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+                  {/if}
+                </svg>
+              {/if}
+            </button>
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="column-resize-handle" onmousedown={(e) => startColumnResize("date", e)}></div>
+          </div>
+          <div class="column-header-wrapper">
+            <button
+              class="column-header date-column"
+              onclick={() => explorer.setSorting("modified")}
+              class:active={explorer.state.sortBy === "modified"}
+            >
+              <span>Date modified</span>
+              {#if explorer.state.sortBy === "modified"}
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="sort-indicator">
+                  {#if explorer.state.sortAscending}
+                    <path d="M5 2V8M5 2L2 5M5 2L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+                  {:else}
+                    <path d="M5 8V2M5 8L2 5M5 8L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+                  {/if}
+                </svg>
+              {/if}
+            </button>
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="column-resize-handle" onmousedown={(e) => startColumnResize("type", e)}></div>
+          </div>
+          <div class="column-header-wrapper">
+            <div class="column-header type-column">
+              <span>Type</span>
+            </div>
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="column-resize-handle" onmousedown={(e) => startColumnResize("size", e)}></div>
           </div>
           <button
             class="column-header size-column"
@@ -371,14 +419,40 @@
 
   .column-headers {
     display: grid;
-    grid-template-columns: 1fr 180px 160px 100px;
-    gap: 8px;
+    gap: 0;
     padding: 6px 16px;
     background: var(--background-card-secondary);
     border-bottom: 1px solid var(--divider);
     position: sticky;
     top: 0;
     z-index: 5;
+  }
+
+  .column-header-wrapper {
+    display: flex;
+    align-items: center;
+    position: relative;
+  }
+
+  .column-resize-handle {
+    position: absolute;
+    right: -4px;
+    top: 0;
+    width: 8px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 10;
+  }
+
+  .column-resize-handle:hover,
+  .details-view.resizing .column-resize-handle {
+    background: var(--accent);
+    opacity: 0.3;
+  }
+
+  .details-view.resizing {
+    cursor: col-resize;
+    user-select: none;
   }
 
   .column-header {
@@ -396,6 +470,8 @@
     cursor: pointer;
     transition: all var(--transition-fast);
     text-align: left;
+    flex: 1;
+    min-width: 0;
   }
 
   .column-header:hover {

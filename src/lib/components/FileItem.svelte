@@ -579,8 +579,8 @@
 <style>
   .file-item {
     display: grid;
-    grid-template-columns: 1fr 180px 160px 100px;
-    gap: 8px;
+    grid-template-columns: 1fr var(--col-date, 180px) var(--col-type, 120px) var(--col-size, 90px);
+    gap: 0;
     align-items: center;
     padding: 4px 16px;
     background: transparent;

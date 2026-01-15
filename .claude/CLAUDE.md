@@ -14,6 +14,7 @@
 * If unsure how to do something that needs research, use the research-scout subagent to research the best ways to proceed. 
 * After implementing features, use the `test-fixer` subagent to get the tests passing, use the `code-simplifier` subagent to condense the code, and the `ui-tester` to test that the feature is working. 
 * For each feature, after running the `code-simplifier`, a verifying that the tests are all passing, and that the ui works as expected, run `git commit`
+* Use the `bug-fixer` subagent to fix bugs. 
 * Every once in a while, use the `frontend-aesthetic-enhancer` to make it look nicer and the `architecture-reviewer` to structure the code better.
 * Ensure that closed issues are well documented with all the findings and changes with enough detail to bring a new developer up to speed relatively quickly.
 

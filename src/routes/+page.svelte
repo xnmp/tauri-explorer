@@ -6,6 +6,7 @@
   import { onMount } from "svelte";
   import { explorer } from "$lib/state/explorer.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
+  import { getHomeDirectory } from "$lib/api/files";
   import "$lib/themes/index.css";
   import TitleBar from "$lib/components/TitleBar.svelte";
   import NavigationBar from "$lib/components/NavigationBar.svelte";
@@ -68,15 +69,10 @@
 
     // Get the actual home directory from the backend
     (async () => {
-      try {
-        const response = await fetch("http://localhost:8000/api/home");
-        if (response.ok) {
-          const data = await response.json();
-          explorer.navigateTo(data.path);
-        } else {
-          explorer.navigateTo("/home");
-        }
-      } catch (e) {
+      const result = await getHomeDirectory();
+      if (result.ok) {
+        explorer.navigateTo(result.data);
+      } else {
         explorer.navigateTo("/home");
       }
     })();

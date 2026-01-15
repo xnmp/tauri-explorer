@@ -4,8 +4,7 @@
  */
 
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
-
-const API_BASE = "http://127.0.0.1:8008/api";
+import { config } from "$lib/config";
 
 export type ApiResult<T> =
   | { ok: true; data: T }
@@ -21,7 +20,7 @@ export async function fetchDirectory(
   path: string
 ): Promise<ApiResult<DirectoryListing>> {
   try {
-    const url = `${API_BASE}/files/list?path=${encodeURIComponent(path)}`;
+    const url = `${config.apiBaseUrl}/files/list?path=${encodeURIComponent(path)}`;
     const response = await fetch(url);
 
     if (!response.ok) {
@@ -50,7 +49,7 @@ export async function createDirectory(
   name: string
 ): Promise<ApiResult<FileEntry>> {
   try {
-    const response = await fetch(`${API_BASE}/files/mkdir`, {
+    const response = await fetch(`${config.apiBaseUrl}/files/mkdir`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: parentPath, name }),
@@ -82,7 +81,7 @@ export async function renameEntry(
   newName: string
 ): Promise<ApiResult<FileEntry>> {
   try {
-    const response = await fetch(`${API_BASE}/files/rename`, {
+    const response = await fetch(`${config.apiBaseUrl}/files/rename`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path, new_name: newName }),
@@ -137,7 +136,7 @@ export async function copyEntry(
   destDir: string
 ): Promise<ApiResult<FileEntry>> {
   try {
-    const response = await fetch(`${API_BASE}/files/copy`, {
+    const response = await fetch(`${config.apiBaseUrl}/files/copy`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ source, dest_dir: destDir }),
@@ -169,7 +168,7 @@ export async function moveEntry(
   destDir: string
 ): Promise<ApiResult<FileEntry>> {
   try {
-    const response = await fetch(`${API_BASE}/files/move`, {
+    const response = await fetch(`${config.apiBaseUrl}/files/move`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ source, dest_dir: destDir }),
@@ -196,7 +195,7 @@ export async function moveEntry(
  */
 export async function openFile(path: string): Promise<ApiResult<void>> {
   try {
-    const response = await fetch(`${API_BASE}/files/open`, {
+    const response = await fetch(`${config.apiBaseUrl}/files/open`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path }),
@@ -221,7 +220,7 @@ export async function openFile(path: string): Promise<ApiResult<void>> {
  */
 export async function getHomeDirectory(): Promise<ApiResult<string>> {
   try {
-    const response = await fetch(`${API_BASE}/files/home`);
+    const response = await fetch(`${config.apiBaseUrl}/files/home`);
 
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));

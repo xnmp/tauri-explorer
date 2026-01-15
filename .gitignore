@@ -14,3 +14,7 @@ __pycache__/
 .venv/
 .pytest_cache/
 *.png
+
+# Playwright
+/playwright-report/
+/test-results/

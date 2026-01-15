@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
   import { explorer } from "$lib/state/explorer.svelte";
+  import ThemeSwitcher from "./ThemeSwitcher.svelte";
 
   let searchQuery = $state("");
   let editingPath = $state(false);
@@ -169,6 +170,8 @@
       </div>
     </form>
   </div>
+
+  <ThemeSwitcher />
 </div>
 
 <style>

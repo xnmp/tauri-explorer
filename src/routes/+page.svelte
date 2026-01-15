@@ -5,6 +5,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { explorer } from "$lib/state/explorer.svelte";
+  import { themeStore } from "$lib/state/theme.svelte";
   import NavigationBar from "$lib/components/NavigationBar.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import FileList from "$lib/components/FileList.svelte";
@@ -30,6 +31,9 @@
   }
 
   onMount(() => {
+    // Initialize theme from saved preference
+    themeStore.initTheme();
+
     // Global keyboard shortcuts
     window.addEventListener("keydown", handleKeydown);
 

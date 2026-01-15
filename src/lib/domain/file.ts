@@ -68,15 +68,23 @@ export function filterHidden(
 }
 
 /**
- * Format file size for display.
+ * Format file size for display - Windows 11 style.
  * Returns empty string for 0 (directories).
+ * Shows whole numbers without decimals (e.g., "1 KB" instead of "1.0 KB").
  */
 export function formatSize(bytes: number): string {
   if (bytes === 0) return "";
 
-  const units = ["B", "KB", "MB", "GB"];
+  const units = ["bytes", "KB", "MB", "GB", "TB"];
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
   const value = bytes / Math.pow(1024, i);
 
-  return `${value.toFixed(1)} ${units[i]}`;
+  // For bytes, show exact count
+  if (i === 0) {
+    return `${bytes} ${bytes === 1 ? "byte" : "bytes"}`;
+  }
+
+  // For larger units, show whole numbers when appropriate
+  const formatted = value % 1 === 0 ? value.toFixed(0) : value.toFixed(1);
+  return `${formatted} ${units[i]}`;
 }

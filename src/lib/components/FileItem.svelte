@@ -145,22 +145,245 @@
     }
   }
 
-  // Format modified date
+  // Format modified date - Windows 11 style: M/D/YYYY h:mm AM/PM
   function formatDate(isoString: string): string {
     const date = new Date(isoString);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    return date.toLocaleString(undefined, {
+      month: "numeric",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit"
+    });
+  }
 
-    if (diffDays === 0) {
-      return date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-    } else if (diffDays === 1) {
-      return "Yesterday";
-    } else if (diffDays < 7) {
-      return date.toLocaleDateString(undefined, { weekday: "short" });
-    } else {
-      return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  // Get descriptive file type from extension - Windows 11 style
+  function getFileType(entry: FileEntry): string {
+    if (entry.kind === "directory") {
+      return "File folder";
     }
+
+    const ext = entry.name.split(".").pop()?.toLowerCase() || "";
+
+    const typeMap: Record<string, string> = {
+      // Documents
+      txt: "Text Document",
+      doc: "Microsoft Word Document",
+      docx: "Microsoft Word Document",
+      pdf: "Adobe Acrobat Document",
+      rtf: "Rich Text Format",
+      odt: "OpenDocument Text",
+
+      // Spreadsheets
+      xls: "Microsoft Excel Worksheet",
+      xlsx: "Microsoft Excel Worksheet",
+      csv: "CSV File",
+      ods: "OpenDocument Spreadsheet",
+
+      // Presentations
+      ppt: "Microsoft PowerPoint Presentation",
+      pptx: "Microsoft PowerPoint Presentation",
+      odp: "OpenDocument Presentation",
+
+      // Images
+      jpg: "JPEG Image",
+      jpeg: "JPEG Image",
+      png: "PNG Image",
+      gif: "GIF Image",
+      bmp: "BMP Image",
+      svg: "SVG Image",
+      webp: "WebP Image",
+      ico: "Icon",
+
+      // Archives
+      zip: "Compressed (zipped) Folder",
+      rar: "WinRAR Archive",
+      "7z": "7-Zip Archive",
+      tar: "TAR Archive",
+      gz: "GZ Archive",
+
+      // Code
+      js: "JavaScript File",
+      ts: "TypeScript File",
+      jsx: "React JavaScript File",
+      tsx: "React TypeScript File",
+      py: "Python File",
+      java: "Java File",
+      cpp: "C++ Source File",
+      c: "C Source File",
+      h: "C/C++ Header File",
+      cs: "C# Source File",
+      go: "Go Source File",
+      rs: "Rust Source File",
+      php: "PHP File",
+      rb: "Ruby File",
+      swift: "Swift Source File",
+      kt: "Kotlin Source File",
+
+      // Web
+      html: "HTML Document",
+      htm: "HTML Document",
+      css: "Cascading Style Sheet",
+      scss: "SCSS File",
+      sass: "Sass File",
+      less: "LESS File",
+      json: "JSON File",
+      xml: "XML Document",
+      yaml: "YAML File",
+      yml: "YAML File",
+
+      // Executables & Scripts
+      exe: "Application",
+      msi: "Windows Installer Package",
+      bat: "Windows Batch File",
+      cmd: "Windows Command Script",
+      ps1: "PowerShell Script",
+      sh: "Shell Script",
+      bash: "Bash Script",
+
+      // System
+      dll: "Dynamic Link Library",
+      sys: "System File",
+      ini: "Configuration Settings",
+      cfg: "Configuration File",
+      conf: "Configuration File",
+      reg: "Registration Entries",
+
+      // Media
+      mp3: "MP3 Audio File",
+      wav: "WAV Audio File",
+      flac: "FLAC Audio File",
+      ogg: "OGG Audio File",
+      mp4: "MP4 Video",
+      avi: "AVI Video",
+      mkv: "MKV Video",
+      mov: "QuickTime Movie",
+      wmv: "Windows Media Video",
+
+      // Fonts
+      ttf: "TrueType Font",
+      otf: "OpenType Font",
+      woff: "Web Open Font Format",
+      woff2: "Web Open Font Format 2",
+
+      // Data
+      db: "Database File",
+      sql: "SQL File",
+      sqlite: "SQLite Database",
+
+      // Misc
+      md: "Markdown Document",
+      log: "Log File",
+      tmp: "Temporary File",
+    };
+
+    return typeMap[ext] || (ext ? `${ext.toUpperCase()} File` : "File");
+  }
+
+  // Get icon color based on file extension - Windows 11 style colors
+  function getFileIconColor(entry: FileEntry): string {
+    if (entry.kind === "directory") {
+      return ""; // Handled by folder-specific styling
+    }
+
+    const ext = entry.name.split(".").pop()?.toLowerCase() || "";
+
+    const colorMap: Record<string, string> = {
+      // Documents - Blue
+      txt: "#2b579a", doc: "#2b579a", docx: "#2b579a", rtf: "#2b579a", odt: "#2b579a",
+
+      // PDF - Red
+      pdf: "#d13438",
+
+      // Spreadsheets - Green
+      xls: "#217346", xlsx: "#217346", csv: "#217346", ods: "#217346",
+
+      // Presentations - Orange
+      ppt: "#d24726", pptx: "#d24726", odp: "#d24726",
+
+      // Images - Teal/Cyan
+      jpg: "#008272", jpeg: "#008272", png: "#008272", gif: "#008272",
+      bmp: "#008272", svg: "#008272", webp: "#008272", ico: "#008272",
+
+      // Archives - Purple
+      zip: "#744da9", rar: "#744da9", "7z": "#744da9", tar: "#744da9", gz: "#744da9",
+
+      // Code - Yellow/Gold
+      js: "#f7df1e", ts: "#3178c6", jsx: "#61dafb", tsx: "#3178c6",
+      py: "#3776ab", java: "#ed8b00", cpp: "#659ad2", c: "#a8b9cc",
+      h: "#a8b9cc", cs: "#68217a", go: "#00add8", rs: "#dea584",
+      php: "#777bb4", rb: "#cc342d", swift: "#f05138", kt: "#7f52ff",
+
+      // Web - Orange/Blue
+      html: "#e44d26", htm: "#e44d26", css: "#264de4", scss: "#cf649a",
+      sass: "#cf649a", less: "#1d365d", json: "#f5a623", xml: "#f16529",
+      yaml: "#cb171e", yml: "#cb171e",
+
+      // Executables - Gray/Blue
+      exe: "#0078d4", msi: "#0078d4", bat: "#4d4d4d", cmd: "#4d4d4d",
+      ps1: "#012456", sh: "#4eaa25", bash: "#4eaa25",
+
+      // System - Gray
+      dll: "#6d6d6d", sys: "#6d6d6d", ini: "#6d6d6d", cfg: "#6d6d6d",
+      conf: "#6d6d6d", reg: "#0078d4",
+
+      // Media - Pink/Purple
+      mp3: "#f472b6", wav: "#f472b6", flac: "#f472b6", ogg: "#f472b6",
+      mp4: "#a855f7", avi: "#a855f7", mkv: "#a855f7", mov: "#a855f7", wmv: "#a855f7",
+
+      // Fonts - Gray
+      ttf: "#6d6d6d", otf: "#6d6d6d", woff: "#6d6d6d", woff2: "#6d6d6d",
+
+      // Data - Teal
+      db: "#0d9488", sql: "#0d9488", sqlite: "#0d9488",
+
+      // Misc
+      md: "#083fa1", log: "#6d6d6d", tmp: "#9ca3af",
+    };
+
+    return colorMap[ext] || "#6d6d6d"; // Default gray
+  }
+
+  // Get file icon category for different SVG paths
+  type IconCategory = "document" | "image" | "archive" | "code" | "media" | "executable" | "default";
+
+  function getFileIconCategory(entry: FileEntry): IconCategory {
+    if (entry.kind === "directory") return "default";
+
+    const ext = entry.name.split(".").pop()?.toLowerCase() || "";
+
+    const categories: Record<string, IconCategory> = {
+      // Documents
+      txt: "document", doc: "document", docx: "document", pdf: "document",
+      rtf: "document", odt: "document", xls: "document", xlsx: "document",
+      csv: "document", ods: "document", ppt: "document", pptx: "document",
+      odp: "document", md: "document",
+
+      // Images
+      jpg: "image", jpeg: "image", png: "image", gif: "image",
+      bmp: "image", svg: "image", webp: "image", ico: "image",
+
+      // Archives
+      zip: "archive", rar: "archive", "7z": "archive", tar: "archive", gz: "archive",
+
+      // Code
+      js: "code", ts: "code", jsx: "code", tsx: "code", py: "code",
+      java: "code", cpp: "code", c: "code", h: "code", cs: "code",
+      go: "code", rs: "code", php: "code", rb: "code", swift: "code",
+      kt: "code", html: "code", htm: "code", css: "code", scss: "code",
+      sass: "code", less: "code", json: "code", xml: "code", yaml: "code",
+      yml: "code", sql: "code",
+
+      // Media
+      mp3: "media", wav: "media", flac: "media", ogg: "media",
+      mp4: "media", avi: "media", mkv: "media", mov: "media", wmv: "media",
+
+      // Executables
+      exe: "executable", msi: "executable", bat: "executable", cmd: "executable",
+      ps1: "executable", sh: "executable", bash: "executable",
+    };
+
+    return categories[ext] || "default";
   }
 </script>
 
@@ -192,18 +415,56 @@
           />
         </svg>
       {:else}
-        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-          <path
-            d="M4 3C4 2.44772 4.44772 2 5 2H10L15 7V15C15 15.5523 14.5523 16 14 16H5C4.44772 16 4 15.5523 4 15V3Z"
-            fill="currentColor"
-            class="file-body"
-          />
-          <path
-            d="M10 2V6C10 6.55228 10.4477 7 11 7H15L10 2Z"
-            fill="currentColor"
-            class="file-corner"
-          />
-        </svg>
+        {@const iconColor = getFileIconColor(entry)}
+        {@const iconCategory = getFileIconCategory(entry)}
+        {#if iconCategory === "image"}
+          <!-- Image file icon -->
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+            <rect x="3" y="3" width="12" height="12" rx="1.5" fill={iconColor} fill-opacity="0.15"/>
+            <rect x="3" y="3" width="12" height="12" rx="1.5" stroke={iconColor} stroke-width="1.25"/>
+            <circle cx="6.5" cy="6.5" r="1.5" fill={iconColor}/>
+            <path d="M3 12L6 9L8.5 11.5L11 8L15 12V13.5C15 14.3284 14.3284 15 13.5 15H4.5C3.67157 15 3 14.3284 3 13.5V12Z" fill={iconColor} fill-opacity="0.4"/>
+          </svg>
+        {:else if iconCategory === "archive"}
+          <!-- Archive file icon -->
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+            <path d="M4 3C4 2.44772 4.44772 2 5 2H13C13.5523 2 14 2.44772 14 3V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" fill={iconColor} fill-opacity="0.15"/>
+            <path d="M4 3C4 2.44772 4.44772 2 5 2H13C13.5523 2 14 2.44772 14 3V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" stroke={iconColor} stroke-width="1.25"/>
+            <rect x="7" y="4" width="4" height="2" rx="0.5" fill={iconColor}/>
+            <rect x="7" y="7" width="4" height="2" rx="0.5" fill={iconColor}/>
+            <rect x="7" y="10" width="4" height="3" rx="0.5" fill={iconColor}/>
+          </svg>
+        {:else if iconCategory === "code"}
+          <!-- Code file icon -->
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+            <path d="M4 3C4 2.44772 4.44772 2 5 2H10L14 6V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" fill={iconColor} fill-opacity="0.15"/>
+            <path d="M4 3C4 2.44772 4.44772 2 5 2H10L14 6V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" stroke={iconColor} stroke-width="1.25"/>
+            <path d="M10 2V5C10 5.55228 10.4477 6 11 6H14" stroke={iconColor} stroke-width="1.25"/>
+            <path d="M7.5 9L6 10.5L7.5 12M10.5 9L12 10.5L10.5 12" stroke={iconColor} stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        {:else if iconCategory === "media"}
+          <!-- Media file icon -->
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+            <rect x="3" y="4" width="12" height="10" rx="1.5" fill={iconColor} fill-opacity="0.15"/>
+            <rect x="3" y="4" width="12" height="10" rx="1.5" stroke={iconColor} stroke-width="1.25"/>
+            <path d="M7 7V11L11 9L7 7Z" fill={iconColor}/>
+          </svg>
+        {:else if iconCategory === "executable"}
+          <!-- Executable file icon -->
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+            <rect x="3" y="3" width="12" height="12" rx="2" fill={iconColor} fill-opacity="0.15"/>
+            <rect x="3" y="3" width="12" height="12" rx="2" stroke={iconColor} stroke-width="1.25"/>
+            <path d="M6 9H12M9 6V12" stroke={iconColor} stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        {:else}
+          <!-- Default document icon -->
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+            <path d="M4 3C4 2.44772 4.44772 2 5 2H10L15 7V15C15 15.5523 14.5523 16 14 16H5C4.44772 16 4 15.5523 4 15V3Z" fill={iconColor} fill-opacity="0.15"/>
+            <path d="M4 3C4 2.44772 4.44772 2 5 2H10L15 7V15C15 15.5523 14.5523 16 14 16H5C4.44772 16 4 15.5523 4 15V3Z" stroke={iconColor} stroke-width="1.25"/>
+            <path d="M10 2V6C10 6.55228 10.4477 7 11 7H15" stroke={iconColor} stroke-width="1.25"/>
+            <path d="M6.5 10H11.5M6.5 12.5H10" stroke={iconColor} stroke-width="1" stroke-linecap="round"/>
+          </svg>
+        {/if}
       {/if}
     </div>
     {#if isRenaming}
@@ -245,7 +506,7 @@
 
   <!-- Type column -->
   <div class="type-cell">
-    {entry.kind === "directory" ? "File folder" : "File"}
+    {getFileType(entry)}
   </div>
 
   <!-- Size column -->
@@ -331,17 +592,17 @@
     flex-shrink: 0;
   }
 
-  /* Folder colors */
+  /* Folder colors - Windows 11 vibrant golden yellow */
   .folder-back {
-    opacity: 0.6;
+    opacity: 0.65;
   }
 
   .folder-front {
-    opacity: 0.9;
+    opacity: 1;
   }
 
   .directory .icon {
-    color: #f9d86e;
+    color: #ffb900;
   }
 
   /* File colors */
@@ -436,7 +697,7 @@
   /* Dark mode folder color adjustment */
   @media (prefers-color-scheme: dark) {
     .directory .icon {
-      color: #f7d56c;
+      color: #ffc83d;
     }
 
     .file-item:not(.directory) .icon {

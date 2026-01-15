@@ -17,11 +17,11 @@
 
   // Quick access folders use dynamic home directory
   const quickAccessFolders = $derived([
-    { name: "Downloads", icon: "download", path: `${homeDir}/Downloads`, pinned: true },
-    { name: "Documents", icon: "document", path: `${homeDir}/Documents`, pinned: true },
-    { name: "Pictures", icon: "picture", path: `${homeDir}/Pictures`, pinned: true },
-    { name: "Videos", icon: "video", path: `${homeDir}/Videos`, pinned: false },
-    { name: "Music", icon: "music", path: `${homeDir}/Music`, pinned: false },
+    { name: "Downloads", icon: "download", path: `${homeDir}/Downloads`, pinned: true, color: "#0078d4" },
+    { name: "Documents", icon: "document", path: `${homeDir}/Documents`, pinned: true, color: "#2b579a" },
+    { name: "Pictures", icon: "picture", path: `${homeDir}/Pictures`, pinned: true, color: "#008272" },
+    { name: "Videos", icon: "video", path: `${homeDir}/Videos`, pinned: false, color: "#a855f7" },
+    { name: "Music", icon: "music", path: `${homeDir}/Music`, pinned: false, color: "#f472b6" },
   ]);
 
   const drives = [
@@ -80,27 +80,27 @@
         {#each quickAccessFolders as folder}
           <button class="nav-item folder-item" onclick={() => explorer.navigateTo(folder.path)}>
             {#if folder.icon === "download"}
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: {folder.color}">
                 <path d="M8 2V10M8 10L5 7M8 10L11 7M3 12H13" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
             {:else if folder.icon === "document"}
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: {folder.color}">
                 <path d="M4 2C4 1.44772 4.44772 1 5 1H11L15 5V14C15 14.5523 14.5523 15 14 15H5C4.44772 15 4 14.5523 4 14V2Z" stroke="currentColor" stroke-width="1.25"/>
                 <path d="M11 1V4C11 4.55228 11.4477 5 12 5H15" stroke="currentColor" stroke-width="1.25"/>
               </svg>
             {:else if folder.icon === "picture"}
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: {folder.color}">
                 <rect x="2" y="3" width="12" height="10" rx="1" stroke="currentColor" stroke-width="1.25"/>
                 <circle cx="5.5" cy="6.5" r="1" fill="currentColor"/>
                 <path d="M2 10L5 7L8 10L11 7L14 10V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V10Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
               </svg>
             {:else if folder.icon === "video"}
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: {folder.color}">
                 <rect x="2" y="4" width="9" height="8" rx="1" stroke="currentColor" stroke-width="1.25"/>
                 <path d="M11 7L14 5V11L11 9" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
               </svg>
             {:else if folder.icon === "music"}
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: {folder.color}">
                 <path d="M6 11.5C6 12.3284 5.32843 13 4.5 13C3.67157 13 3 12.3284 3 11.5C3 10.6716 3.67157 10 4.5 10C5.32843 10 6 10.6716 6 11.5ZM6 11.5V3L13 2V9.5M13 9.5C13 10.3284 12.3284 11 11.5 11C10.6716 11 10 10.3284 10 9.5C10 8.67157 10.6716 8 11.5 8C12.3284 8 13 8.67157 13 9.5Z" stroke="currentColor" stroke-width="1.25"/>
               </svg>
             {/if}
@@ -257,9 +257,16 @@
   }
 
   .nav-icon {
-    color: var(--text-secondary);
     flex-shrink: 0;
   }
+
+  /* Top section icons */
+  .top-section .nav-item:nth-child(1) .nav-icon { color: #0078d4; } /* Home - Blue */
+  .top-section .nav-item:nth-child(2) .nav-icon { color: #008272; } /* Gallery - Teal */
+  .top-section .nav-item:nth-child(3) .nav-icon { color: #0078d4; } /* OneDrive - Blue */
+
+  /* Drive icons */
+  .drive-item .nav-icon { color: #6d6d6d; }
 
   .folder-item {
     position: relative;

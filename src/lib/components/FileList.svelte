@@ -11,6 +11,7 @@
   import VirtualList from "./VirtualList.svelte";
   import { useColumnResize } from "$lib/composables/use-column-resize.svelte";
   import { useMarqueeSelection } from "$lib/composables/use-marquee-selection.svelte";
+  import { getFileIconColor, getFileIconCategory } from "$lib/domain/file-types";
 
   import type { FileEntry } from "$lib/domain/file";
 
@@ -377,6 +378,8 @@
       <!-- Tiles View (Grid) -->
       <div class="tiles-view file-rows">
         {#each explorer.displayEntries as entry (entry.path)}
+          {@const iconColor = getFileIconColor(entry)}
+          {@const iconCategory = getFileIconCategory(entry)}
           <button
             class="tile-item"
             class:directory={entry.kind === "directory"}
@@ -389,10 +392,46 @@
                 <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
                   <path d="M6 15C6 13.3431 7.34315 12 9 12H17.7574C18.553 12 19.3161 12.3161 19.8787 12.8787L21 14H39C40.6569 14 42 15.3431 42 17V36C42 37.6569 40.6569 39 39 39H9C7.34315 39 6 37.6569 6 36V15Z" fill="#ffb900"/>
                 </svg>
+              {:else if iconCategory === "image"}
+                <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                  <rect x="6" y="6" width="36" height="36" rx="4" fill={iconColor} fill-opacity="0.15"/>
+                  <rect x="6" y="6" width="36" height="36" rx="4" stroke={iconColor} stroke-width="2"/>
+                  <circle cx="16" cy="16" r="4" fill={iconColor}/>
+                  <path d="M6 33L15 24L22 31L30 21L42 33V38C42 40.2091 40.2091 42 38 42H10C7.79086 42 6 40.2091 6 38V33Z" fill={iconColor} fill-opacity="0.4"/>
+                </svg>
+              {:else if iconCategory === "archive"}
+                <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                  <path d="M10 6C10 4.34315 11.3431 3 13 3H35C36.6569 3 38 4.34315 38 6V42C38 43.6569 36.6569 45 35 45H13C11.3431 45 10 43.6569 10 42V6Z" fill={iconColor} fill-opacity="0.15"/>
+                  <path d="M10 6C10 4.34315 11.3431 3 13 3H35C36.6569 3 38 4.34315 38 6V42C38 43.6569 36.6569 45 35 45H13C11.3431 45 10 43.6569 10 42V6Z" stroke={iconColor} stroke-width="2"/>
+                  <rect x="18" y="9" width="12" height="6" rx="1" fill={iconColor}/>
+                  <rect x="18" y="18" width="12" height="6" rx="1" fill={iconColor}/>
+                  <rect x="18" y="27" width="12" height="9" rx="1" fill={iconColor}/>
+                </svg>
+              {:else if iconCategory === "code"}
+                <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                  <path d="M10 6C10 4.34315 11.3431 3 13 3H27L38 14V42C38 43.6569 36.6569 45 35 45H13C11.3431 45 10 43.6569 10 42V6Z" fill={iconColor} fill-opacity="0.15"/>
+                  <path d="M10 6C10 4.34315 11.3431 3 13 3H27L38 14V42C38 43.6569 36.6569 45 35 45H13C11.3431 45 10 43.6569 10 42V6Z" stroke={iconColor} stroke-width="2"/>
+                  <path d="M27 3V11C27 12.6569 28.3431 14 30 14H38" stroke={iconColor} stroke-width="2"/>
+                  <path d="M18 24L13 29L18 34M30 24L35 29L30 34" stroke={iconColor} stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              {:else if iconCategory === "media"}
+                <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                  <rect x="6" y="10" width="36" height="28" rx="4" fill={iconColor} fill-opacity="0.15"/>
+                  <rect x="6" y="10" width="36" height="28" rx="4" stroke={iconColor} stroke-width="2"/>
+                  <path d="M19 18V30L32 24L19 18Z" fill={iconColor}/>
+                </svg>
+              {:else if iconCategory === "executable"}
+                <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                  <rect x="6" y="6" width="36" height="36" rx="6" fill={iconColor} fill-opacity="0.15"/>
+                  <rect x="6" y="6" width="36" height="36" rx="6" stroke={iconColor} stroke-width="2"/>
+                  <path d="M15 24H33M24 15V33" stroke={iconColor} stroke-width="3" stroke-linecap="round"/>
+                </svg>
               {:else}
                 <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-                  <path d="M12 6C12 4.34315 13.3431 3 15 3H27L39 15V42C39 43.6569 37.6569 45 36 45H15C13.3431 45 12 43.6569 12 42V6Z" fill="var(--background-card)" stroke="var(--text-tertiary)" stroke-width="1.5"/>
-                  <path d="M27 3V12C27 13.6569 28.3431 15 30 15H39" stroke="var(--text-tertiary)" stroke-width="1.5"/>
+                  <path d="M10 6C10 4.34315 11.3431 3 13 3H27L40 16V42C40 43.6569 38.6569 45 37 45H13C11.3431 45 10 43.6569 10 42V6Z" fill={iconColor} fill-opacity="0.15"/>
+                  <path d="M10 6C10 4.34315 11.3431 3 13 3H27L40 16V42C40 43.6569 38.6569 45 37 45H13C11.3431 45 10 43.6569 10 42V6Z" stroke={iconColor} stroke-width="2"/>
+                  <path d="M27 3V13C27 14.6569 28.3431 16 30 16H40" stroke={iconColor} stroke-width="2"/>
+                  <path d="M16 27H32M16 33H28" stroke={iconColor} stroke-width="2" stroke-linecap="round"/>
                 </svg>
               {/if}
             </div>
@@ -743,7 +782,9 @@
   /* Tiles View */
   .tiles-view {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(100px, 120px));
+    grid-auto-rows: min-content;
+    align-content: start;
     gap: 8px;
     padding: 16px;
     overflow-y: auto;
@@ -765,6 +806,7 @@
     font-size: 12px;
     color: var(--text-primary);
     transition: all var(--transition-fast);
+    height: fit-content;
   }
 
   .tile-item:hover {

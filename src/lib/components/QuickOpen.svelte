@@ -6,6 +6,19 @@
   import { fuzzySearch, openFile, type SearchResult } from "$lib/api/files";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { explorer as defaultExplorer } from "$lib/state/explorer.svelte";
+  import { getFileIconColor, getFileIconCategory, type IconCategory } from "$lib/domain/file-types";
+  import type { FileEntry } from "$lib/domain/file";
+
+  // Helper to convert SearchResult to FileEntry-like object for icon functions
+  function toFileEntry(result: SearchResult): FileEntry {
+    return {
+      name: result.name,
+      path: result.path,
+      kind: result.kind,
+      size: 0,
+      modified: "",
+    };
+  }
 
   interface Props {
     open: boolean;
@@ -161,10 +174,51 @@
                     <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="#FFB900"/>
                   </svg>
                 {:else}
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
-                    <path d="M4 2C4 1.44772 4.44772 1 5 1H9L13 5V14C13 14.5523 12.5523 15 12 15H5C4.44772 15 4 14.5523 4 14V2Z" stroke="currentColor" stroke-width="1.25"/>
-                    <path d="M9 1V4C9 4.55228 9.44772 5 10 5H13" stroke="currentColor" stroke-width="1.25"/>
-                  </svg>
+                  {@const entry = toFileEntry(result)}
+                  {@const iconColor = getFileIconColor(entry)}
+                  {@const iconCategory = getFileIconCategory(entry)}
+                  {#if iconCategory === "image"}
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
+                      <rect x="2" y="2" width="12" height="12" rx="1.5" fill={iconColor} fill-opacity="0.15"/>
+                      <rect x="2" y="2" width="12" height="12" rx="1.5" stroke={iconColor} stroke-width="1"/>
+                      <circle cx="5.5" cy="5.5" r="1.25" fill={iconColor}/>
+                      <path d="M2 11L5 8L7.5 10.5L10 7L14 11V12.5C14 13.3284 13.3284 14 12.5 14H3.5C2.67157 14 2 13.3284 2 12.5V11Z" fill={iconColor} fill-opacity="0.4"/>
+                    </svg>
+                  {:else if iconCategory === "archive"}
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
+                      <path d="M3 2C3 1.44772 3.44772 1 4 1H12C12.5523 1 13 1.44772 13 2V14C13 14.5523 12.5523 15 12 15H4C3.44772 15 3 14.5523 3 14V2Z" fill={iconColor} fill-opacity="0.15"/>
+                      <path d="M3 2C3 1.44772 3.44772 1 4 1H12C12.5523 1 13 1.44772 13 2V14C13 14.5523 12.5523 15 12 15H4C3.44772 15 3 14.5523 3 14V2Z" stroke={iconColor} stroke-width="1"/>
+                      <rect x="6" y="3" width="4" height="2" rx="0.5" fill={iconColor}/>
+                      <rect x="6" y="6" width="4" height="2" rx="0.5" fill={iconColor}/>
+                      <rect x="6" y="9" width="4" height="3" rx="0.5" fill={iconColor}/>
+                    </svg>
+                  {:else if iconCategory === "code"}
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
+                      <path d="M3 2C3 1.44772 3.44772 1 4 1H9L13 5V14C13 14.5523 12.5523 15 12 15H4C3.44772 15 3 14.5523 3 14V2Z" fill={iconColor} fill-opacity="0.15"/>
+                      <path d="M3 2C3 1.44772 3.44772 1 4 1H9L13 5V14C13 14.5523 12.5523 15 12 15H4C3.44772 15 3 14.5523 3 14V2Z" stroke={iconColor} stroke-width="1"/>
+                      <path d="M9 1V4C9 4.55228 9.44772 5 10 5H13" stroke={iconColor} stroke-width="1"/>
+                      <path d="M6 8L4.5 9.5L6 11M10 8L11.5 9.5L10 11" stroke={iconColor} stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  {:else if iconCategory === "media"}
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
+                      <rect x="2" y="3" width="12" height="10" rx="1.5" fill={iconColor} fill-opacity="0.15"/>
+                      <rect x="2" y="3" width="12" height="10" rx="1.5" stroke={iconColor} stroke-width="1"/>
+                      <path d="M6 6V10L10 8L6 6Z" fill={iconColor}/>
+                    </svg>
+                  {:else if iconCategory === "executable"}
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
+                      <rect x="2" y="2" width="12" height="12" rx="2" fill={iconColor} fill-opacity="0.15"/>
+                      <rect x="2" y="2" width="12" height="12" rx="2" stroke={iconColor} stroke-width="1"/>
+                      <path d="M5 8H11M8 5V11" stroke={iconColor} stroke-width="1.25" stroke-linecap="round"/>
+                    </svg>
+                  {:else}
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
+                      <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" fill={iconColor} fill-opacity="0.15"/>
+                      <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" stroke={iconColor} stroke-width="1"/>
+                      <path d="M9 1V5C9 5.55228 9.44772 6 10 6H14" stroke={iconColor} stroke-width="1"/>
+                      <path d="M5.5 9H10.5M5.5 11.5H9" stroke={iconColor} stroke-width="0.75" stroke-linecap="round"/>
+                    </svg>
+                  {/if}
                 {/if}
                 <div class="result-content">
                   <span class="result-name">{result.name}</span>
@@ -307,20 +361,20 @@
   }
 
   .result-item.selected .result-path,
-  .result-item.selected .result-score,
-  .result-item.selected .file-icon {
+  .result-item.selected .result-score {
     color: var(--text-on-accent);
     opacity: 0.8;
   }
 
   .file-icon,
   .folder-icon {
-    color: var(--text-tertiary);
     flex-shrink: 0;
   }
 
-  .folder-icon {
-    color: #FFB900;
+  /* When selected, make file icons use white with transparency */
+  .result-item.selected .file-icon {
+    filter: brightness(0) invert(1);
+    opacity: 0.9;
   }
 
   .result-content {

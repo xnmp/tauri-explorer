@@ -11,6 +11,8 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { setPaneNavigationContext } from "$lib/state/pane-context";
   import { registerAllCommands } from "$lib/state/command-definitions";
+  import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
+  import { copyEntry } from "$lib/api/files";
   import "$lib/themes/index.css";
   import TitleBar from "$lib/components/TitleBar.svelte";
   import SharedToolbar from "$lib/components/SharedToolbar.svelte";
@@ -48,6 +50,28 @@
     navigateTo,
     getActiveExplorer: getActiveExplorer as () => ExplorerInstance,
     refreshAllPanes,
+  });
+
+  // Handle external file drops into the app
+  async function handleExternalDrop(paths: string[]): Promise<void> {
+    const explorer = getActiveExplorer();
+    if (!explorer) return;
+
+    const destDir = explorer.state.currentPath;
+
+    for (const path of paths) {
+      const result = await copyEntry(path, destDir);
+      if (!result.ok) {
+        console.error("Failed to copy dropped file:", result.error);
+      }
+    }
+
+    // Refresh to show newly copied files
+    refreshAllPanes();
+  }
+
+  const externalDrop = useExternalDrop((paths) => {
+    handleExternalDrop(paths);
   });
 
   function handleKeydown(event: KeyboardEvent): void {
@@ -119,6 +143,9 @@
     // Register all commands for the command palette
     registerAllCommands();
 
+    // Setup external file drop handling
+    externalDrop.setup();
+
     // Global keyboard shortcuts
     window.addEventListener("keydown", handleKeydown);
 
@@ -137,6 +164,7 @@
       window.removeEventListener("keydown", handleKeydown);
       window.removeEventListener("open-quick-open", handleOpenQuickOpen);
       window.removeEventListener("open-command-palette", handleOpenCommandPalette);
+      externalDrop.cleanup();
     };
   });
 </script>

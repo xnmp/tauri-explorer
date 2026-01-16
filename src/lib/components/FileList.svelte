@@ -4,7 +4,8 @@
 -->
 <script lang="ts">
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
-  import { openFile } from "$lib/api/files";
+  import { getPaneNavigationContext } from "$lib/state/pane-context";
+  import { openFile, moveEntry } from "$lib/api/files";
   import FileItem from "./FileItem.svelte";
   import VirtualList from "./VirtualList.svelte";
 
@@ -16,8 +17,14 @@
 
   let { explorer = defaultExplorer }: Props = $props();
 
+  // Get pane context for cross-pane operations
+  const paneNav = getPaneNavigationContext();
+
   let pasteError = $state<string | null>(null);
   let pasteSuccess = $state(false);
+
+  // Drop target state for dropping files into current directory
+  let isDropTarget = $state(false);
 
   // Marquee selection state
   let isDragging = $state(false);
@@ -210,6 +217,60 @@
       }
     }
   }
+
+  // Drop handlers for dropping files into current directory
+  function handleListDragOver(event: DragEvent): void {
+    if (!event.dataTransfer?.types.includes("application/x-explorer-path")) return;
+
+    // Check if target is a file item (let FileItem handle its own drops)
+    const target = event.target as HTMLElement;
+    if (target.closest(".file-item")) return;
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    isDropTarget = true;
+  }
+
+  function handleListDragLeave(event: DragEvent): void {
+    // Only clear if leaving the file list entirely
+    const relatedTarget = event.relatedTarget as HTMLElement | null;
+    if (relatedTarget && contentRef?.contains(relatedTarget)) return;
+    isDropTarget = false;
+  }
+
+  async function handleListDrop(event: DragEvent): Promise<void> {
+    isDropTarget = false;
+
+    // Check if target is a file item (let FileItem handle its own drops)
+    const target = event.target as HTMLElement;
+    if (target.closest(".file-item")) return;
+
+    if (!event.dataTransfer) return;
+
+    const sourcePath = event.dataTransfer.getData("application/x-explorer-path");
+    if (!sourcePath) return;
+
+    // Don't allow dropping into the same directory it's already in
+    const currentPath = explorer.state.currentPath;
+    const sourceDir = sourcePath.substring(0, sourcePath.lastIndexOf("/"));
+    if (sourceDir === currentPath) return;
+
+    event.preventDefault();
+
+    const result = await moveEntry(sourcePath, currentPath);
+    if (result.ok) {
+      // Refresh all panes to reflect the move
+      if (paneNav) {
+        paneNav.refreshAllPanes();
+      } else {
+        explorer.refresh();
+      }
+    } else {
+      console.error("Failed to move:", result.error);
+      pasteError = result.error;
+      setTimeout(() => (pasteError = null), 3000);
+    }
+  }
 </script>
 
 <!-- Global mouse events for marquee and column resize -->
@@ -268,7 +329,15 @@
 
   <!-- Main content with column headers -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="content" bind:this={contentRef} onmousedown={handleMarqueeStart}>
+  <div
+    class="content"
+    class:drop-target={isDropTarget}
+    bind:this={contentRef}
+    onmousedown={handleMarqueeStart}
+    ondragover={handleListDragOver}
+    ondragleave={handleListDragLeave}
+    ondrop={handleListDrop}
+  >
     {#if explorer.state.loading}
       <div class="status">
         <div class="spinner"></div>
@@ -465,6 +534,12 @@
     flex: 1;
     overflow-y: auto;
     position: relative;
+    transition: background var(--transition-fast), box-shadow var(--transition-fast);
+  }
+
+  .content.drop-target {
+    background: rgba(0, 120, 212, 0.08);
+    box-shadow: inset 0 0 0 2px var(--accent);
   }
 
   /* Marquee selection rectangle */

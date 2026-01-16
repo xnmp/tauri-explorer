@@ -87,9 +87,6 @@ function createExplorerState() {
     // Context menu state (from global contextMenuStore)
     contextMenuOpen: contextMenuStore.isOpen,
     contextMenuPosition: contextMenuStore.position,
-    // Deprecated fields for backward compatibility
-    clipboard: null,
-    undoStack: [] as const,
   });
 
   // ===================

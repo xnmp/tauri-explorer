@@ -15,6 +15,13 @@ function createDialogStore() {
   let activeDialog = $state<DialogType>(null);
   let targetEntry = $state<FileEntry | null>(null);
 
+  function closeIfActive(dialogType: DialogType): void {
+    if (activeDialog === dialogType) {
+      activeDialog = null;
+      targetEntry = null;
+    }
+  }
+
   return {
     // Accessors
     get activeDialog() {
@@ -46,10 +53,7 @@ function createDialogStore() {
     },
 
     closeNewFolder(): void {
-      if (activeDialog === "newFolder") {
-        activeDialog = null;
-        targetEntry = null;
-      }
+      closeIfActive("newFolder");
     },
 
     startRename(entry: FileEntry): void {
@@ -58,10 +62,7 @@ function createDialogStore() {
     },
 
     cancelRename(): void {
-      if (activeDialog === "rename") {
-        activeDialog = null;
-        targetEntry = null;
-      }
+      closeIfActive("rename");
     },
 
     startDelete(entry: FileEntry): void {
@@ -70,15 +71,9 @@ function createDialogStore() {
     },
 
     cancelDelete(): void {
-      if (activeDialog === "delete") {
-        activeDialog = null;
-        targetEntry = null;
-      }
+      closeIfActive("delete");
     },
 
-    /**
-     * Close any open dialog. Useful for cleanup.
-     */
     closeAll(): void {
       activeDialog = null;
       targetEntry = null;

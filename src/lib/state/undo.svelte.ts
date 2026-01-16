@@ -60,6 +60,10 @@ async function executeUndo(
       return renameEntry(action.path, action.oldName);
     case "move":
       return moveEntry(action.destPath, action.originalDir);
+    default: {
+      const _exhaustive: never = action;
+      return { ok: false, error: `Unknown undo action type: ${(_exhaustive as UndoAction).type}` };
+    }
   }
 }
 

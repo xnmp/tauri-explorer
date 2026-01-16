@@ -111,11 +111,8 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     const startIndex = Math.max(0, Math.floor(marqueeTop / config.itemHeight));
     const endIndex = Math.min(totalItems - 1, Math.floor(marqueeBottom / config.itemHeight));
 
-    const indices: number[] = [];
-    for (let i = startIndex; i <= endIndex; i++) {
-      indices.push(i);
-    }
-    return indices;
+    if (startIndex > endIndex) return [];
+    return Array.from({ length: endIndex - startIndex + 1 }, (_, i) => startIndex + i);
   }
 
   return {

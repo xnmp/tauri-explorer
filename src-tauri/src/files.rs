@@ -77,7 +77,7 @@ fn metadata_to_entry(path: &Path, metadata: &fs::Metadata) -> FileEntry {
     let modified = metadata
         .modified()
         .ok()
-        .and_then(|t| DateTime::<Local>::from(t).format("%Y-%m-%dT%H:%M:%S").to_string().into())
+        .map(|t| DateTime::<Local>::from(t).format("%Y-%m-%dT%H:%M:%S").to_string())
         .unwrap_or_default();
 
     FileEntry {
@@ -314,7 +314,7 @@ pub fn move_entry(source: String, dest_dir: String) -> Result<FileEntry, FileErr
     }
 
     // Try a simple rename first (works if same filesystem)
-    if let Err(_) = fs::rename(&source_path, &target) {
+    if fs::rename(&source_path, &target).is_err() {
         // Fall back to copy + delete for cross-filesystem moves
         if source_path.is_dir() {
             let options = fs_extra::dir::CopyOptions::new();

@@ -57,13 +57,10 @@ pub fn run() {
             // Search
             search::fuzzy_search,
         ])
-        .setup(|app| {
-            // Suppress unused warning on non-Windows platforms
-            let _ = &app;
-
+        .setup(|#[allow(unused)] app| {
             #[cfg(debug_assertions)]
             {
-                println!("[Explorer] Rust backend ready - no Python dependency needed");
+                println!("[Explorer] Rust backend ready");
             }
 
             // Apply rounded corners on Windows 11

@@ -124,7 +124,7 @@ pub fn fuzzy_search(query: String, root: String, limit: usize) -> Result<SearchR
     let mut scored: Vec<(u32, usize)> = entries
         .iter()
         .enumerate()
-        .filter_map(|(idx, (_rel_path, name, _is_dir))| {
+        .filter_map(|(idx, (_, name, _))| {
             let mut buf = Vec::new();
             let haystack = Utf32Str::new(name, &mut buf);
             pattern.score(haystack, &mut matcher).map(|score| (score, idx))

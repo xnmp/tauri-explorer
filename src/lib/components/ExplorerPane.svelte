@@ -1,12 +1,14 @@
 <!--
   ExplorerPane component - A self-contained file explorer pane
   Each pane has its own explorer state and can be used in single or dual pane layouts.
+  Issue: tauri-explorer-auj (tabs integration)
 -->
 <script lang="ts">
-  import { setContext, onMount } from "svelte";
+  import { setContext, onMount, getContext } from "svelte";
   import { createExplorerState, type ExplorerInstance } from "$lib/state/explorer.svelte";
   import { clipboardStore } from "$lib/state/clipboard.svelte";
   import { paneManager } from "$lib/state/panes.svelte";
+  import { tabsManager } from "$lib/state/tabs.svelte";
   import { getHomeDirectory } from "$lib/api/files";
   import type { PaneId } from "$lib/state/types";
   import NavigationBar from "./NavigationBar.svelte";
@@ -14,19 +16,22 @@
   import ContextMenu from "./ContextMenu.svelte";
   import NewFolderDialog from "./NewFolderDialog.svelte";
   import DeleteDialog from "./DeleteDialog.svelte";
+  import TabBar from "./TabBar.svelte";
 
   interface Props {
     paneId: PaneId;
-    explorerInstance?: ExplorerInstance;
   }
 
-  let { paneId, explorerInstance }: Props = $props();
+  let { paneId }: Props = $props();
 
-  // Create or use provided explorer instance
-  const paneExplorer = explorerInstance ?? createExplorerState();
+  // Get active tab's explorer from tabs manager
+  const activeExplorer = $derived(tabsManager.getActiveExplorer(paneId));
+  const paneExplorer = $derived(activeExplorer ?? createExplorerState());
 
-  // Provide explorer to child components via context
-  setContext("pane-explorer", paneExplorer);
+  // Provide explorer to child components via context (reactive via $derived)
+  $effect(() => {
+    setContext("pane-explorer", paneExplorer);
+  });
   setContext("pane-id", paneId);
 
   const isActive = $derived(paneManager.state.activePaneId === paneId);
@@ -88,9 +93,12 @@
   }
 
   onMount(async () => {
-    // Initialize this pane with home directory
-    const result = await getHomeDirectory();
-    paneExplorer.navigateTo(result.ok ? result.data : "/home");
+    // Initialize tabs for this pane with home directory if not already initialized
+    if (tabsManager.getTabs(paneId).length === 0) {
+      const result = await getHomeDirectory();
+      const homePath = result.ok ? result.data : "/home";
+      tabsManager.initPane(paneId, homePath);
+    }
   });
 </script>
 
@@ -106,11 +114,14 @@
   onclick={handleFocus}
   onkeydown={handleKeydown}
 >
-  <NavigationBar explorer={paneExplorer} />
-  <FileList explorer={paneExplorer} />
-  <ContextMenu explorer={paneExplorer} />
-  <NewFolderDialog explorer={paneExplorer} />
-  <DeleteDialog explorer={paneExplorer} />
+  <TabBar {paneId} />
+  {#if paneExplorer}
+    <NavigationBar explorer={paneExplorer} />
+    <FileList explorer={paneExplorer} />
+    <ContextMenu explorer={paneExplorer} />
+    <NewFolderDialog explorer={paneExplorer} />
+    <DeleteDialog explorer={paneExplorer} />
+  {/if}
 </section>
 
 <style>

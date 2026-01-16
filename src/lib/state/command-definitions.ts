@@ -8,6 +8,7 @@
 
 import { registerCommands, type Command } from "./commands.svelte";
 import { paneManager } from "./panes.svelte";
+import { tabsManager } from "./tabs.svelte";
 import { settingsStore } from "./settings.svelte";
 import { themeStore } from "./theme.svelte";
 import { bookmarksStore } from "./bookmarks.svelte";
@@ -15,7 +16,7 @@ import type { ViewMode } from "./types";
 
 /** Get the active explorer instance for commands */
 function getActiveExplorer() {
-  return paneManager.getActivePane();
+  return tabsManager.getActiveExplorer(paneManager.activePaneId);
 }
 
 /** Navigation commands */
@@ -280,6 +281,43 @@ const bookmarkCommands: Command[] = [
   },
 ];
 
+/** Tab commands */
+const tabCommands: Command[] = [
+  {
+    id: "tabs.newTab",
+    label: "New Tab",
+    category: "general",
+    shortcut: "Ctrl+T",
+    handler: () => {
+      tabsManager.createTab(paneManager.activePaneId);
+    },
+  },
+  {
+    id: "tabs.closeTab",
+    label: "Close Tab",
+    category: "general",
+    shortcut: "Ctrl+W",
+    handler: () => tabsManager.closeActiveTab(paneManager.activePaneId),
+    when: () => tabsManager.getTabs(paneManager.activePaneId).length > 1,
+  },
+  {
+    id: "tabs.nextTab",
+    label: "Next Tab",
+    category: "general",
+    shortcut: "Ctrl+Tab",
+    handler: () => tabsManager.nextTab(paneManager.activePaneId),
+    when: () => tabsManager.getTabs(paneManager.activePaneId).length > 1,
+  },
+  {
+    id: "tabs.prevTab",
+    label: "Previous Tab",
+    category: "general",
+    shortcut: "Ctrl+Shift+Tab",
+    handler: () => tabsManager.prevTab(paneManager.activePaneId),
+    when: () => tabsManager.getTabs(paneManager.activePaneId).length > 1,
+  },
+];
+
 /** General commands */
 const generalCommands: Command[] = [
   {
@@ -312,6 +350,7 @@ export function registerAllCommands(): void {
     ...selectionCommands,
     ...viewCommands,
     ...bookmarkCommands,
+    ...tabCommands,
     ...generalCommands,
   ]);
 }

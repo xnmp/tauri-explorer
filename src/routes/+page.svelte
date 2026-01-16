@@ -1,13 +1,14 @@
 <!--
   Main Explorer page - Windows 11 Fluent Design
-  Issue: tauri-explorer-iw0, tauri-explorer-jql, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-w3t, tauri-explorer-npjh, tauri-explorer-1ex
+  Issue: tauri-explorer-iw0, tauri-explorer-jql, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-w3t, tauri-explorer-npjh, tauri-explorer-1ex, tauri-explorer-auj
 -->
 <script lang="ts">
   import { onMount, setContext } from "svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { paneManager } from "$lib/state/panes.svelte";
-  import { createExplorerState, type ExplorerInstance } from "$lib/state/explorer.svelte";
+  import { tabsManager } from "$lib/state/tabs.svelte";
+  import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { setPaneNavigationContext } from "$lib/state/pane-context";
   import { registerAllCommands } from "$lib/state/command-definitions";
   import "$lib/themes/index.css";
@@ -24,27 +25,27 @@
   let commandPaletteVisible = $state(false);
   let settingsVisible = $state(false);
 
-  // Create explorer instances at the page level
-  const leftExplorer = createExplorerState();
-  const rightExplorer = createExplorerState();
-
-  // Provide navigation context for all child components
-  function getActiveExplorer(): ExplorerInstance {
-    return paneManager.activePaneId === "left" ? leftExplorer : rightExplorer;
+  // Get active explorer from tabs manager
+  function getActiveExplorer(): ExplorerInstance | undefined {
+    return tabsManager.getActiveExplorer(paneManager.activePaneId);
   }
 
   function navigateTo(path: string) {
-    getActiveExplorer().navigateTo(path);
+    getActiveExplorer()?.navigateTo(path);
   }
 
   function refreshAllPanes() {
-    leftExplorer.refresh();
-    rightExplorer.refresh();
+    // Refresh all tabs in both panes
+    for (const paneId of ["left", "right"] as const) {
+      for (const tab of tabsManager.getTabs(paneId)) {
+        tab.explorer.refresh();
+      }
+    }
   }
 
   setPaneNavigationContext({
     navigateTo,
-    getActiveExplorer,
+    getActiveExplorer: getActiveExplorer as () => ExplorerInstance,
     refreshAllPanes,
   });
 
@@ -72,6 +73,34 @@
       return;
     }
 
+    // Ctrl+T: New tab
+    if (event.key === "t" && isModifier && !event.shiftKey) {
+      event.preventDefault();
+      tabsManager.createTab(paneManager.activePaneId);
+      return;
+    }
+
+    // Ctrl+W: Close tab
+    if (event.key === "w" && isModifier && !event.shiftKey) {
+      event.preventDefault();
+      tabsManager.closeActiveTab(paneManager.activePaneId);
+      return;
+    }
+
+    // Ctrl+Tab: Next tab
+    if (event.key === "Tab" && isModifier && !event.shiftKey) {
+      event.preventDefault();
+      tabsManager.nextTab(paneManager.activePaneId);
+      return;
+    }
+
+    // Ctrl+Shift+Tab: Previous tab
+    if (event.key === "Tab" && isModifier && event.shiftKey) {
+      event.preventDefault();
+      tabsManager.prevTab(paneManager.activePaneId);
+      return;
+    }
+
     // Ctrl+\ or Ctrl+|: Toggle dual pane
     // Use both key and code for better cross-platform support
     const isBackslash = event.key === "\\" || event.key === "|" || event.code === "Backslash";
@@ -85,10 +114,6 @@
   onMount(() => {
     // Initialize theme from saved preference
     themeStore.initTheme();
-
-    // Register explorer instances for command access
-    paneManager.registerExplorer("left", leftExplorer);
-    paneManager.registerExplorer("right", rightExplorer);
 
     // Register all commands for the command palette
     registerAllCommands();
@@ -124,7 +149,7 @@
     {#if settingsStore.showSidebar}
       <Sidebar />
     {/if}
-    <PaneContainer {leftExplorer} {rightExplorer} />
+    <PaneContainer />
   </div>
 </main>
 

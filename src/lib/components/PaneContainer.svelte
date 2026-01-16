@@ -1,18 +1,11 @@
 <!--
   PaneContainer component - Dual pane layout container
   Handles split view with resizable divider between panes.
+  Issue: tauri-explorer-auj (tabs integration)
 -->
 <script lang="ts">
   import { paneManager } from "$lib/state/panes.svelte";
-  import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import ExplorerPane from "./ExplorerPane.svelte";
-
-  interface Props {
-    leftExplorer: ExplorerInstance;
-    rightExplorer: ExplorerInstance;
-  }
-
-  let { leftExplorer, rightExplorer }: Props = $props();
 
   // Resize state
   let isResizing = $state(false);
@@ -48,7 +41,7 @@
   style={paneManager.dualPaneEnabled ? `--split-ratio: ${paneManager.splitRatio}` : ""}
 >
   <div class="pane left-pane">
-    <ExplorerPane paneId="left" explorerInstance={leftExplorer} />
+    <ExplorerPane paneId="left" />
   </div>
 
   {#if paneManager.dualPaneEnabled}
@@ -64,7 +57,7 @@
     </div>
 
     <div class="pane right-pane">
-      <ExplorerPane paneId="right" explorerInstance={rightExplorer} />
+      <ExplorerPane paneId="right" />
     </div>
   {/if}
 </div>

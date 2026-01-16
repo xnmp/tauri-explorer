@@ -1,10 +1,11 @@
 <!--
   Main Explorer page - Windows 11 Fluent Design
-  Issue: tauri-explorer-iw0, tauri-explorer-jql, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-w3t
+  Issue: tauri-explorer-iw0, tauri-explorer-jql, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-w3t, tauri-explorer-npjh
 -->
 <script lang="ts">
   import { onMount, setContext } from "svelte";
   import { themeStore } from "$lib/state/theme.svelte";
+  import { settingsStore } from "$lib/state/settings.svelte";
   import { paneManager } from "$lib/state/panes.svelte";
   import { createExplorerState, type ExplorerInstance } from "$lib/state/explorer.svelte";
   import { setPaneNavigationContext } from "$lib/state/pane-context";
@@ -14,9 +15,11 @@
   import Sidebar from "$lib/components/Sidebar.svelte";
   import PaneContainer from "$lib/components/PaneContainer.svelte";
   import QuickOpen from "$lib/components/QuickOpen.svelte";
+  import SettingsDialog from "$lib/components/SettingsDialog.svelte";
 
-  // QuickOpen state
+  // Dialog states
   let quickOpenVisible = $state(false);
+  let settingsVisible = $state(false);
 
   // Create explorer instances at the page level
   const leftExplorer = createExplorerState();
@@ -44,6 +47,13 @@
 
   function handleKeydown(event: KeyboardEvent): void {
     const isModifier = event.ctrlKey || event.metaKey;
+
+    // Ctrl+,: Open settings
+    if (event.key === "," && isModifier) {
+      event.preventDefault();
+      settingsVisible = true;
+      return;
+    }
 
     // Ctrl+P: Quick open file search
     if (event.key === "p" && isModifier) {
@@ -74,14 +84,19 @@
 
 <main class="explorer">
   <TitleBar />
-  <SharedToolbar />
+  {#if settingsStore.showToolbar}
+    <SharedToolbar />
+  {/if}
   <div class="main-content">
-    <Sidebar />
+    {#if settingsStore.showSidebar}
+      <Sidebar />
+    {/if}
     <PaneContainer {leftExplorer} {rightExplorer} />
   </div>
 </main>
 
 <QuickOpen bind:open={quickOpenVisible} onClose={() => quickOpenVisible = false} />
+<SettingsDialog bind:open={settingsVisible} onClose={() => settingsVisible = false} />
 
 <style>
   /* Windows 11 Fluent Design System */

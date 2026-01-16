@@ -28,9 +28,9 @@
   --accent-dark: #073642;
 
   /* Text colors - Solarized base tones */
-  --text-primary: #657b83;
-  --text-secondary: #839496;
-  --text-tertiary: #93a1a1;
+  --text-primary: #002b36;    /* Shifted from base00 to base01 */
+  --text-secondary: #073642;  /* Shifted from base0 to base00 */
+  --text-tertiary: #586e75;   /* Shifted from base1 to base0 */
   --text-on-accent: #fdf6e3;
 
   /* Background colors - Warm cream tones */

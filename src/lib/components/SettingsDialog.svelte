@@ -187,7 +187,7 @@
     width: 500px;
     max-width: 90vw;
     max-height: 80vh;
-    background: var(--background-card);
+    background: var(--background-solid);
     border: 1px solid var(--surface-stroke);
     border-radius: var(--radius-lg);
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);

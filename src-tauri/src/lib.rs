@@ -1,5 +1,9 @@
-/// Explorer app entry point.
-/// Issue: tauri-explorer-rzs, tauri-explorer-w0eo
+//! Tauri Explorer app entry point.
+//! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6
+
+mod files;
+mod search;
+
 use std::path::PathBuf;
 
 #[cfg(target_os = "windows")]
@@ -37,17 +41,29 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![move_to_trash, move_multiple_to_trash])
+        .invoke_handler(tauri::generate_handler![
+            // Trash operations
+            move_to_trash,
+            move_multiple_to_trash,
+            // File operations
+            files::list_directory,
+            files::get_home_directory,
+            files::create_directory,
+            files::rename_entry,
+            files::copy_entry,
+            files::move_entry,
+            files::open_file,
+            files::delete_entry_permanent,
+            // Search
+            search::fuzzy_search,
+        ])
         .setup(|app| {
             // Suppress unused warning on non-Windows platforms
             let _ = &app;
 
             #[cfg(debug_assertions)]
             {
-                println!("[Explorer] Dev mode: expecting API at http://127.0.0.1:8008");
-                println!(
-                    "[Explorer] Run: cd src-python && uv run uvicorn api.main:app --port 8008"
-                );
+                println!("[Explorer] Rust backend ready - no Python dependency needed");
             }
 
             // Apply rounded corners on Windows 11

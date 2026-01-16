@@ -1,17 +1,17 @@
 /**
  * API client for file operations.
- * Issue: tauri-explorer-4v1, tauri-explorer-jql, tauri-explorer-h3n, tauri-explorer-x25
+ * Issue: tauri-explorer-nv2y - Migrated from Python FastAPI to Rust Tauri commands
  */
 
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
-import { config } from "$lib/config";
+import { invoke } from "@tauri-apps/api/core";
 
 export type ApiResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: string };
 
 /**
- * Fetch directory listing from the API.
+ * Fetch directory listing from Tauri backend.
  *
  * @param path - Absolute path to directory
  * @returns Result with DirectoryListing or error message
@@ -20,16 +20,7 @@ export async function fetchDirectory(
   path: string
 ): Promise<ApiResult<DirectoryListing>> {
   try {
-    const url = `${config.apiBaseUrl}/files/list?path=${encodeURIComponent(path)}`;
-    const response = await fetch(url);
-
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      const detail = body.detail ?? `HTTP ${response.status}`;
-      return { ok: false, error: detail };
-    }
-
-    const data: DirectoryListing = await response.json();
+    const data = await invoke<DirectoryListing>("list_directory", { path });
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: String(err) };
@@ -38,7 +29,6 @@ export async function fetchDirectory(
 
 /**
  * Create a new directory.
- * Issue: tauri-explorer-jql
  *
  * @param parentPath - Path to parent directory
  * @param name - Name of new directory
@@ -49,19 +39,10 @@ export async function createDirectory(
   name: string
 ): Promise<ApiResult<FileEntry>> {
   try {
-    const response = await fetch(`${config.apiBaseUrl}/files/mkdir`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: parentPath, name }),
+    const data = await invoke<FileEntry>("create_directory", {
+      parentPath,
+      name,
     });
-
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      const detail = body.detail ?? `HTTP ${response.status}`;
-      return { ok: false, error: detail };
-    }
-
-    const data: FileEntry = await response.json();
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: String(err) };
@@ -70,7 +51,6 @@ export async function createDirectory(
 
 /**
  * Rename a file or directory.
- * Issue: tauri-explorer-bae
  *
  * @param path - Full path to file/directory
  * @param newName - New name (just the name, not full path)
@@ -81,19 +61,7 @@ export async function renameEntry(
   newName: string
 ): Promise<ApiResult<FileEntry>> {
   try {
-    const response = await fetch(`${config.apiBaseUrl}/files/rename`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path, new_name: newName }),
-    });
-
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      const detail = body.detail ?? `HTTP ${response.status}`;
-      return { ok: false, error: detail };
-    }
-
-    const data: FileEntry = await response.json();
+    const data = await invoke<FileEntry>("rename_entry", { path, newName });
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: String(err) };
@@ -102,7 +70,6 @@ export async function renameEntry(
 
 /**
  * Delete a file or directory by moving it to the system trash/recycle bin.
- * Issue: tauri-explorer-h3n, tauri-explorer-w0eo
  *
  * Uses Tauri command for cross-platform trash support:
  * - Windows: Recycle Bin
@@ -114,8 +81,6 @@ export async function renameEntry(
  */
 export async function deleteEntry(path: string): Promise<ApiResult<void>> {
   try {
-    // Use Tauri command for trash support
-    const { invoke } = await import("@tauri-apps/api/core");
     await invoke("move_to_trash", { path });
     return { ok: true, data: undefined };
   } catch (err) {
@@ -125,7 +90,6 @@ export async function deleteEntry(path: string): Promise<ApiResult<void>> {
 
 /**
  * Copy a file or directory to a destination.
- * Issue: tauri-explorer-x25
  *
  * @param source - Full path to source file/directory
  * @param destDir - Destination directory path
@@ -136,19 +100,7 @@ export async function copyEntry(
   destDir: string
 ): Promise<ApiResult<FileEntry>> {
   try {
-    const response = await fetch(`${config.apiBaseUrl}/files/copy`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source, dest_dir: destDir }),
-    });
-
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      const detail = body.detail ?? `HTTP ${response.status}`;
-      return { ok: false, error: detail };
-    }
-
-    const data: FileEntry = await response.json();
+    const data = await invoke<FileEntry>("copy_entry", { source, destDir });
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: String(err) };
@@ -157,7 +109,6 @@ export async function copyEntry(
 
 /**
  * Move a file or directory to a destination.
- * Issue: tauri-explorer-x25
  *
  * @param source - Full path to source file/directory
  * @param destDir - Destination directory path
@@ -168,19 +119,7 @@ export async function moveEntry(
   destDir: string
 ): Promise<ApiResult<FileEntry>> {
   try {
-    const response = await fetch(`${config.apiBaseUrl}/files/move`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source, dest_dir: destDir }),
-    });
-
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      const detail = body.detail ?? `HTTP ${response.status}`;
-      return { ok: false, error: detail };
-    }
-
-    const data: FileEntry = await response.json();
+    const data = await invoke<FileEntry>("move_entry", { source, destDir });
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: String(err) };
@@ -195,18 +134,7 @@ export async function moveEntry(
  */
 export async function openFile(path: string): Promise<ApiResult<void>> {
   try {
-    const response = await fetch(`${config.apiBaseUrl}/files/open`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path }),
-    });
-
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      const detail = body.detail ?? `HTTP ${response.status}`;
-      return { ok: false, error: detail };
-    }
-
+    await invoke("open_file", { path });
     return { ok: true, data: undefined };
   } catch (err) {
     return { ok: false, error: String(err) };
@@ -220,16 +148,8 @@ export async function openFile(path: string): Promise<ApiResult<void>> {
  */
 export async function getHomeDirectory(): Promise<ApiResult<string>> {
   try {
-    const response = await fetch(`${config.apiBaseUrl}/files/home`);
-
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      const detail = body.detail ?? `HTTP ${response.status}`;
-      return { ok: false, error: detail };
-    }
-
-    const data = await response.json();
-    return { ok: true, data: data.path };
+    const path = await invoke<string>("get_home_directory");
+    return { ok: true, data: path };
   } catch (err) {
     return { ok: false, error: String(err) };
   }
@@ -237,7 +157,6 @@ export async function getHomeDirectory(): Promise<ApiResult<string>> {
 
 /**
  * Search result from fuzzy file search.
- * Issue: tauri-explorer-w3t
  */
 export interface SearchResult {
   name: string;
@@ -247,9 +166,12 @@ export interface SearchResult {
   kind: "file" | "directory";
 }
 
+interface SearchResponse {
+  results: SearchResult[];
+}
+
 /**
  * Fuzzy search for files recursively in a directory.
- * Issue: tauri-explorer-w3t, tauri-explorer-rxx
  *
  * @param query - Search query
  * @param root - Root directory to search in
@@ -262,21 +184,12 @@ export async function fuzzySearch(
   limit: number = 20
 ): Promise<ApiResult<SearchResult[]>> {
   try {
-    const params = new URLSearchParams({
+    const response = await invoke<SearchResponse>("fuzzy_search", {
       query,
       root,
-      limit: String(limit),
+      limit,
     });
-    const response = await fetch(`${config.apiBaseUrl}/files/search?${params}`);
-
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      const detail = body.detail ?? `HTTP ${response.status}`;
-      return { ok: false, error: detail };
-    }
-
-    const data = await response.json();
-    return { ok: true, data: data.results };
+    return { ok: true, data: response.results };
   } catch (err) {
     return { ok: false, error: String(err) };
   }

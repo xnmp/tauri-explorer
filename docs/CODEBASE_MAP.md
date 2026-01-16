@@ -10,7 +10,9 @@ total_tokens: 224031
 
 ## System Overview
 
-A cross-platform file explorer built with **Svelte 5 + SvelteKit** (frontend), **Python FastAPI** (file operations API), and **Tauri + Rust** (native integrations). Design follows **Windows 11 Fluent Design System** aesthetics.
+A cross-platform file explorer built with **Svelte 5 + SvelteKit** (frontend) and **Tauri + Rust** (backend). Design follows **Windows 11 Fluent Design System** aesthetics.
+
+> **Note**: Backend migrated from Python FastAPI to Rust Tauri commands (Issue: tauri-explorer-nv2y). All file operations now use direct IPC instead of HTTP.
 
 ```mermaid
 graph TB
@@ -21,25 +23,27 @@ graph TB
         API["API Client"]
     end
 
-    subgraph Backend["Backend Services"]
-        Python["Python FastAPI<br/>:8008"]
-        Tauri["Tauri Commands<br/>(Rust)"]
+    subgraph Backend["Tauri Backend (Rust)"]
+        Files["File Operations"]
+        Search["Fuzzy Search"]
+        Trash["Trash Integration"]
     end
 
     subgraph System["Operating System"]
         FS[(File System)]
-        Trash[(Trash/Recycle)]
+        TrashBin[(Trash/Recycle)]
         Shell[Shell Commands]
     end
 
     Pages --> Components
     Components --> State
     Components --> API
-    API -->|HTTP| Python
-    Components -->|invoke| Tauri
-    Python --> FS
-    Tauri --> Trash
-    Tauri --> Shell
+    API -->|invoke| Files
+    API -->|invoke| Search
+    API -->|invoke| Trash
+    Files --> FS
+    Search --> FS
+    Trash --> TrashBin
 ```
 
 ### Architecture Decisions
@@ -49,7 +53,7 @@ graph TB
 | UI Framework | Svelte 5 (runes) | Reactive components with fine-grained reactivity |
 | App Framework | SvelteKit (SPA) | Routing, build tooling, static adapter for Tauri |
 | Desktop Runtime | Tauri 2 | Native window, IPC, system integration |
-| File Operations | Python FastAPI | CRUD operations, fuzzy search |
+| File Operations | Rust (Tauri commands) | CRUD operations, fuzzy search (jwalk + nucleo) |
 | Native Integration | Rust | Trash API, DPI awareness, window styling |
 
 ---
@@ -107,27 +111,17 @@ tauri-explorer/
 │   │   │   ├── light.css         # Light theme variables
 │   │   │   ├── ocean-blue.css    # Ocean blue theme
 │   │   │   └── solarized-light.css  # Solarized light theme
-│   │   └── config.ts             # API configuration (base URL)
+│   │   └── config.ts             # Application configuration
 │   ├── routes/
 │   │   ├── +layout.ts            # SvelteKit config (SSR disabled)
 │   │   └── +page.svelte          # Main application shell
 │   └── app.html                  # HTML template
 │
-├── src-python/                   # Python backend
-│   ├── api/
-│   │   ├── main.py               # FastAPI app entry, CORS config
-│   │   └── routes/
-│   │       └── files.py          # File operation endpoints
-│   ├── domain/
-│   │   ├── file_entry.py         # FileEntry dataclass, list_directory
-│   │   └── file_ops.py           # create, rename, delete, copy, move
-│   └── tests/
-│       ├── test_api.py           # API integration tests
-│       └── test_domain.py        # Domain unit tests
-│
-├── src-tauri/                    # Tauri Rust backend
+├── src-tauri/                    # Tauri Rust backend (all file operations)
 │   ├── src/
-│   │   ├── lib.rs                # Tauri commands (trash, window styling)
+│   │   ├── lib.rs                # Tauri app setup, command registration
+│   │   ├── files.rs              # File operations (list, create, rename, copy, move)
+│   │   ├── search.rs             # Fuzzy search with nucleo + jwalk
 │   │   └── main.rs               # Binary entry point
 │   ├── capabilities/
 │   │   └── default.json          # Security permissions
@@ -304,39 +298,34 @@ type ApiResult<T> = {ok: true, data: T} | {ok: false, error: string}
 
 ---
 
-### Python Backend
-
-#### API Endpoints
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/files/home` | GET | Get user's home directory |
-| `/api/files/list` | GET | List directory contents |
-| `/api/files/mkdir` | POST | Create new directory |
-| `/api/files/rename` | POST | Rename file/directory |
-| `/api/files/delete` | DELETE | Delete file/directory |
-| `/api/files/copy` | POST | Copy file/directory |
-| `/api/files/move` | POST | Move file/directory |
-| `/api/files/open` | POST | Open file in default app |
-| `/api/files/search` | GET | Fuzzy search files/folders |
-
-#### Domain Layer
-
-| File | Purpose | Key Exports |
-|------|---------|-------------|
-| `file_entry.py` | Immutable file metadata | `FileEntry` (dataclass), `list_directory()` |
-| `file_ops.py` | File write operations | `create_directory()`, `rename_entry()`, `delete_entry()`, `copy_entry()`, `move_entry()` |
-
----
-
 ### Tauri Rust Backend
 
-#### Commands (callable from frontend)
+#### Commands (callable from frontend via `invoke`)
 
-| Command | Purpose |
-|---------|---------|
-| `move_to_trash(path)` | Move single file to OS trash |
-| `move_multiple_to_trash(paths)` | Batch trash operation |
+| Command | Purpose | Module |
+|---------|---------|--------|
+| `list_directory(path)` | List directory contents | `files.rs` |
+| `get_home_directory()` | Get user's home directory | `files.rs` |
+| `create_directory(parent_path, name)` | Create new directory | `files.rs` |
+| `rename_entry(path, new_name)` | Rename file/directory | `files.rs` |
+| `copy_entry(source, dest_dir)` | Copy file/directory | `files.rs` |
+| `move_entry(source, dest_dir)` | Move file/directory | `files.rs` |
+| `open_file(path)` | Open file in default app | `files.rs` |
+| `delete_entry_permanent(path)` | Permanent delete (not trash) | `files.rs` |
+| `move_to_trash(path)` | Move single file to OS trash | `lib.rs` |
+| `move_multiple_to_trash(paths)` | Batch trash operation | `lib.rs` |
+| `fuzzy_search(query, root, limit)` | Fuzzy search files/folders | `search.rs` |
+
+#### Key Rust Crates
+
+| Crate | Purpose |
+|-------|---------|
+| `jwalk` | Parallel directory traversal |
+| `nucleo-matcher` | Fast fuzzy matching |
+| `chrono` | Date/time formatting |
+| `fs_extra` | Advanced copy/move operations |
+| `opener` | Open files with default app |
+| `trash` | Cross-platform trash/recycle bin |
 
 #### Platform-Specific Features
 
@@ -355,14 +344,14 @@ sequenceDiagram
     participant FileList
     participant Explorer
     participant API
-    participant Python
+    participant Rust
 
     User->>FileList: Double-click folder
     FileList->>Explorer: navigateTo(path)
     Explorer->>Explorer: pushToHistory()
     Explorer->>API: fetchDirectory(path)
-    API->>Python: GET /api/files/list
-    Python-->>API: FileEntry[]
+    API->>Rust: invoke("list_directory")
+    Rust-->>API: FileEntry[]
     API-->>Explorer: ApiResult<DirectoryListing>
     Explorer->>Explorer: Update entries, path
     Explorer-->>FileList: Reactive update
@@ -430,8 +419,8 @@ sequenceDiagram
 ### Error Handling
 
 - **Frontend**: Result type (`{ok, data} | {ok, error}`)
-- **Python**: Exceptions mapped to HTTP status codes
-- **Tauri**: `Result<T, String>` for IPC serialization
+- **Rust Backend**: `Result<T, FileError>` with thiserror for typed errors
+- **Tauri IPC**: Errors serialized as strings for frontend consumption
 
 ### File Naming
 
@@ -461,7 +450,7 @@ sequenceDiagram
 
 ### File Operations
 
-10. **Delete uses OS trash** - not permanent deletion (via Tauri, not Python API)
+10. **Delete uses OS trash** - not permanent deletion (via Tauri trash crate)
 11. **Copy auto-generates names** - `file.txt` becomes `file - Copy.txt` on conflict
 12. **Move raises error on conflict** - unlike copy, doesn't auto-rename
 13. **Search is relative to current directory** - not global filesystem
@@ -474,9 +463,9 @@ sequenceDiagram
 
 ### Backend
 
-17. **Python search limited to 10k files** - prevents memory exhaustion
+17. **Rust search limited to 10k files** - prevents memory exhaustion (configurable in search.rs)
 18. **Tauri `move_multiple_to_trash` validates ALL paths before deleting ANY** (fail-fast)
-19. **CORS wide open** (`"*"`) - safe because localhost-only in Tauri webview
+19. **Direct IPC** - no HTTP server, no CORS concerns
 
 ---
 
@@ -484,12 +473,12 @@ sequenceDiagram
 
 ### To Add a New File Operation
 
-1. **Backend**: Add endpoint in `src-python/api/routes/files.py`
-2. **Backend**: Add domain function in `src-python/domain/file_ops.py`
-3. **Frontend**: Add API function in `src/lib/api/files.ts`
+1. **Rust**: Add command in `src-tauri/src/files.rs` with `#[tauri::command]`
+2. **Rust**: Register command in `src-tauri/src/lib.rs` invoke_handler
+3. **Frontend**: Add API function in `src/lib/api/files.ts` using `invoke()`
 4. **Frontend**: Add state method in `src/lib/state/explorer.svelte.ts`
 5. **Frontend**: Add UI trigger in `ContextMenu.svelte` or `FileItem.svelte`
-6. **Tests**: Add tests in `src-python/tests/` and `tests/api/`
+6. **Tests**: Add tests in `src-tauri/` (Rust) and `tests/api/` (TS)
 
 ### To Add a New Component
 
@@ -522,16 +511,16 @@ sequenceDiagram
 ### To Run Tests
 
 ```bash
-# Unit tests (Vitest)
+# Frontend unit tests (Vitest)
 bun test              # Watch mode
 bun test:run          # Single run
+
+# Rust backend tests
+cd src-tauri && cargo test
 
 # E2E tests (Playwright)
 bun test:e2e          # Headless
 bun test:e2e:ui       # Interactive UI
-
-# Python tests
-cd src-python && pytest
 
 # Type checking
 bun check
@@ -540,10 +529,7 @@ bun check
 ### To Start Development
 
 ```bash
-# Terminal 1: Python API
-cd src-python && uv run uvicorn api.main:app --port 8008 --reload
-
-# Terminal 2: Tauri + Vite
+# Single terminal - Tauri handles everything
 bun tauri dev
 ```
 
@@ -556,10 +542,10 @@ bun tauri dev
 | Category | Files | Test Count |
 |----------|-------|------------|
 | E2E (Playwright) | 3 | 31 |
-| Unit - API | 1 | 10 |
+| Unit - API | 1 | 17 |
 | Unit - Domain | 1 | 11 |
-| Python - API | 1 | ~15 |
-| Python - Domain | 1 | ~20 |
+| Rust - Files | 1 | 4 |
+| Rust - Search | 1 | 3 |
 
 ### Coverage Gaps
 
@@ -609,20 +595,19 @@ Explorer now focuses on: navigation, directory loading, and selection (~250 line
 | `@playwright/test` | ^1.57.0 | E2E testing |
 | `vitest` | ^2.0.0 | Unit testing |
 
-### Python
-
-| Package | Version | Purpose |
-|---------|---------|---------|
-| `fastapi` | >=0.115.0 | REST API framework |
-| `uvicorn` | >=0.32.0 | ASGI server |
-| `rapidfuzz` | >=3.0.0 | Fuzzy string matching |
-
 ### Rust
 
 | Crate | Version | Purpose |
 |-------|---------|---------|
 | `tauri` | 2 | Desktop runtime |
 | `trash` | 5 | Cross-platform trash |
+| `chrono` | 0.4 | Date/time handling |
+| `dirs` | 5 | System directories |
+| `fs_extra` | 1.3 | Advanced file operations |
+| `opener` | 0.7 | Open files with default app |
+| `nucleo-matcher` | 0.3 | Fuzzy matching |
+| `jwalk` | 0.8 | Parallel directory traversal |
+| `thiserror` | 2 | Error handling |
 | `windows` | 0.58 | Win32 APIs (Windows only) |
 
 ---

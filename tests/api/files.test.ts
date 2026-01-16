@@ -1,20 +1,22 @@
 /**
  * Tests for API client - file operations.
- * Issue: tauri-explorer-4v1, tauri-explorer-jql
+ * Issue: tauri-explorer-nv2y - Updated to test Tauri invoke commands
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { fetchDirectory, createDirectory } from "$lib/api/files";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+// Mock Tauri's invoke function
+const mockInvoke = vi.fn();
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (...args: unknown[]) => mockInvoke(...args),
+}));
+
+// Import after mocking
+import { fetchDirectory, createDirectory, renameEntry, copyEntry, moveEntry, deleteEntry, openFile, getHomeDirectory, fuzzySearch } from "$lib/api/files";
 
 describe("fetchDirectory", () => {
-  const originalFetch = globalThis.fetch;
-
   beforeEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
+    vi.clearAllMocks();
   });
 
   it("returns data on success", async () => {
@@ -31,13 +33,11 @@ describe("fetchDirectory", () => {
       ],
     };
 
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve(mockResponse),
-    });
+    mockInvoke.mockResolvedValue(mockResponse);
 
     const result = await fetchDirectory("/test");
 
+    expect(mockInvoke).toHaveBeenCalledWith("list_directory", { path: "/test" });
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.data.path).toBe("/test");
@@ -46,87 +46,32 @@ describe("fetchDirectory", () => {
     }
   });
 
-  it("returns error on HTTP 404", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 404,
-      json: () => Promise.resolve({ detail: "Directory not found" }),
-    });
+  it("returns error on invoke failure", async () => {
+    mockInvoke.mockRejectedValue("Path not found: /missing");
 
     const result = await fetchDirectory("/missing");
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toBe("Directory not found");
+      expect(result.error).toContain("Path not found");
     }
   });
 
-  it("returns error on HTTP 403", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 403,
-      json: () => Promise.resolve({ detail: "Permission denied" }),
-    });
+  it("handles permission denied errors", async () => {
+    mockInvoke.mockRejectedValue("Permission denied: /restricted");
 
     const result = await fetchDirectory("/restricted");
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toBe("Permission denied");
+      expect(result.error).toContain("Permission denied");
     }
-  });
-
-  it("handles network errors", async () => {
-    globalThis.fetch = vi.fn().mockRejectedValue(new Error("Network error"));
-
-    const result = await fetchDirectory("/test");
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toContain("Network error");
-    }
-  });
-
-  it("handles JSON parse errors gracefully", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 500,
-      json: () => Promise.reject(new Error("Invalid JSON")),
-    });
-
-    const result = await fetchDirectory("/test");
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toContain("500");
-    }
-  });
-
-  it("encodes path parameter correctly", async () => {
-    const mockResponse = { path: "/test path", entries: [] };
-
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve(mockResponse),
-    });
-
-    await fetchDirectory("/test path");
-
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      expect.stringContaining(encodeURIComponent("/test path"))
-    );
   });
 });
 
 describe("createDirectory", () => {
-  const originalFetch = globalThis.fetch;
-
   beforeEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
+    vi.clearAllMocks();
   });
 
   it("returns created entry on success", async () => {
@@ -138,14 +83,14 @@ describe("createDirectory", () => {
       modified: "2025-01-01T00:00:00",
     };
 
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 201,
-      json: () => Promise.resolve(mockEntry),
-    });
+    mockInvoke.mockResolvedValue(mockEntry);
 
     const result = await createDirectory("/test", "new_folder");
 
+    expect(mockInvoke).toHaveBeenCalledWith("create_directory", {
+      parentPath: "/test",
+      name: "new_folder",
+    });
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.data.name).toBe("new_folder");
@@ -153,52 +98,232 @@ describe("createDirectory", () => {
     }
   });
 
-  it("sends correct request body", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 201,
-      json: () => Promise.resolve({ name: "test" }),
-    });
-
-    await createDirectory("/parent", "child");
-
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      expect.stringContaining("/api/files/mkdir"),
-      expect.objectContaining({
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: "/parent", name: "child" }),
-      })
-    );
-  });
-
-  it("returns error on HTTP 409 (already exists)", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 409,
-      json: () => Promise.resolve({ detail: "Directory already exists" }),
-    });
+  it("returns error when directory already exists", async () => {
+    mockInvoke.mockRejectedValue("Path already exists: /test/existing");
 
     const result = await createDirectory("/test", "existing");
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toBe("Directory already exists");
+      expect(result.error).toContain("already exists");
     }
   });
 
-  it("returns error on HTTP 404 (parent not found)", async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 404,
-      json: () => Promise.resolve({ detail: "Parent directory not found" }),
-    });
+  it("returns error when parent not found", async () => {
+    mockInvoke.mockRejectedValue("Path not found: /nonexistent");
 
     const result = await createDirectory("/nonexistent", "folder");
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toBe("Parent directory not found");
+      expect(result.error).toContain("not found");
+    }
+  });
+});
+
+describe("renameEntry", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns renamed entry on success", async () => {
+    const mockEntry = {
+      name: "new_name.txt",
+      path: "/test/new_name.txt",
+      kind: "file",
+      size: 100,
+      modified: "2025-01-01T00:00:00",
+    };
+
+    mockInvoke.mockResolvedValue(mockEntry);
+
+    const result = await renameEntry("/test/old_name.txt", "new_name.txt");
+
+    expect(mockInvoke).toHaveBeenCalledWith("rename_entry", {
+      path: "/test/old_name.txt",
+      newName: "new_name.txt",
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.name).toBe("new_name.txt");
+    }
+  });
+
+  it("returns error on failure", async () => {
+    mockInvoke.mockRejectedValue("Target already exists: /test/new_name.txt");
+
+    const result = await renameEntry("/test/file.txt", "new_name.txt");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("already exists");
+    }
+  });
+});
+
+describe("copyEntry", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns copied entry on success", async () => {
+    const mockEntry = {
+      name: "file.txt",
+      path: "/dest/file.txt",
+      kind: "file",
+      size: 100,
+      modified: "2025-01-01T00:00:00",
+    };
+
+    mockInvoke.mockResolvedValue(mockEntry);
+
+    const result = await copyEntry("/source/file.txt", "/dest");
+
+    expect(mockInvoke).toHaveBeenCalledWith("copy_entry", {
+      source: "/source/file.txt",
+      destDir: "/dest",
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.path).toBe("/dest/file.txt");
+    }
+  });
+});
+
+describe("moveEntry", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns moved entry on success", async () => {
+    const mockEntry = {
+      name: "file.txt",
+      path: "/dest/file.txt",
+      kind: "file",
+      size: 100,
+      modified: "2025-01-01T00:00:00",
+    };
+
+    mockInvoke.mockResolvedValue(mockEntry);
+
+    const result = await moveEntry("/source/file.txt", "/dest");
+
+    expect(mockInvoke).toHaveBeenCalledWith("move_entry", {
+      source: "/source/file.txt",
+      destDir: "/dest",
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.path).toBe("/dest/file.txt");
+    }
+  });
+});
+
+describe("deleteEntry", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns success when file deleted", async () => {
+    mockInvoke.mockResolvedValue(undefined);
+
+    const result = await deleteEntry("/test/file.txt");
+
+    expect(mockInvoke).toHaveBeenCalledWith("move_to_trash", {
+      path: "/test/file.txt",
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("returns error when file not found", async () => {
+    mockInvoke.mockRejectedValue("Path does not exist: /test/missing.txt");
+
+    const result = await deleteEntry("/test/missing.txt");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("does not exist");
+    }
+  });
+});
+
+describe("openFile", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns success when file opened", async () => {
+    mockInvoke.mockResolvedValue(undefined);
+
+    const result = await openFile("/test/file.txt");
+
+    expect(mockInvoke).toHaveBeenCalledWith("open_file", {
+      path: "/test/file.txt",
+    });
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe("getHomeDirectory", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns home directory path", async () => {
+    mockInvoke.mockResolvedValue("/home/user");
+
+    const result = await getHomeDirectory();
+
+    expect(mockInvoke).toHaveBeenCalledWith("get_home_directory");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toBe("/home/user");
+    }
+  });
+});
+
+describe("fuzzySearch", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns search results on success", async () => {
+    const mockResponse = {
+      results: [
+        {
+          name: "hello.txt",
+          path: "/test/hello.txt",
+          relativePath: "hello.txt",
+          score: 100,
+          kind: "file",
+        },
+      ],
+    };
+
+    mockInvoke.mockResolvedValue(mockResponse);
+
+    const result = await fuzzySearch("hello", "/test", 10);
+
+    expect(mockInvoke).toHaveBeenCalledWith("fuzzy_search", {
+      query: "hello",
+      root: "/test",
+      limit: 10,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].name).toBe("hello.txt");
+    }
+  });
+
+  it("returns empty results when no matches", async () => {
+    mockInvoke.mockResolvedValue({ results: [] });
+
+    const result = await fuzzySearch("zzzznotfound", "/test", 10);
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toHaveLength(0);
     }
   });
 });

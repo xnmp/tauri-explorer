@@ -102,20 +102,21 @@ describe("formatSize", () => {
     expect(formatSize(0)).toBe("");
   });
 
-  it("formats bytes correctly", () => {
-    expect(formatSize(500)).toBe("500.0 B");
+  it("formats bytes correctly - Windows 11 style", () => {
+    expect(formatSize(1)).toBe("1 byte");
+    expect(formatSize(500)).toBe("500 bytes");
   });
 
-  it("formats kilobytes correctly", () => {
-    expect(formatSize(1024)).toBe("1.0 KB");
+  it("formats kilobytes correctly - whole numbers without decimals", () => {
+    expect(formatSize(1024)).toBe("1 KB");
     expect(formatSize(1536)).toBe("1.5 KB");
   });
 
   it("formats megabytes correctly", () => {
-    expect(formatSize(1048576)).toBe("1.0 MB");
+    expect(formatSize(1048576)).toBe("1 MB");
   });
 
   it("formats gigabytes correctly", () => {
-    expect(formatSize(1073741824)).toBe("1.0 GB");
+    expect(formatSize(1073741824)).toBe("1 GB");
   });
 });

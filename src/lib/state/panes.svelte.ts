@@ -4,6 +4,7 @@
  */
 
 import type { PaneId, PaneLayoutState } from "./types";
+import type { ExplorerInstance } from "./explorer.svelte";
 
 function createPaneManager() {
   let state = $state<PaneLayoutState>({
@@ -11,6 +12,25 @@ function createPaneManager() {
     splitRatio: 0.5,
     dualPaneEnabled: false,
   });
+
+  // Explorer instance registry for command access
+  const explorers = new Map<PaneId, ExplorerInstance>();
+
+  function registerExplorer(paneId: PaneId, explorer: ExplorerInstance) {
+    explorers.set(paneId, explorer);
+  }
+
+  function unregisterExplorer(paneId: PaneId) {
+    explorers.delete(paneId);
+  }
+
+  function getActivePane(): ExplorerInstance | undefined {
+    return explorers.get(state.activePaneId);
+  }
+
+  function getPane(paneId: PaneId): ExplorerInstance | undefined {
+    return explorers.get(paneId);
+  }
 
   function setActivePane(paneId: PaneId) {
     state.activePaneId = paneId;
@@ -61,6 +81,10 @@ function createPaneManager() {
     disableDualPane,
     setSplitRatio,
     switchPane,
+    registerExplorer,
+    unregisterExplorer,
+    getActivePane,
+    getPane,
   };
 }
 

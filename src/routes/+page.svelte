@@ -1,6 +1,6 @@
 <!--
   Main Explorer page - Windows 11 Fluent Design
-  Issue: tauri-explorer-iw0, tauri-explorer-jql, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-w3t, tauri-explorer-npjh
+  Issue: tauri-explorer-iw0, tauri-explorer-jql, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-w3t, tauri-explorer-npjh, tauri-explorer-1ex
 -->
 <script lang="ts">
   import { onMount, setContext } from "svelte";
@@ -9,16 +9,19 @@
   import { paneManager } from "$lib/state/panes.svelte";
   import { createExplorerState, type ExplorerInstance } from "$lib/state/explorer.svelte";
   import { setPaneNavigationContext } from "$lib/state/pane-context";
+  import { registerAllCommands } from "$lib/state/command-definitions";
   import "$lib/themes/index.css";
   import TitleBar from "$lib/components/TitleBar.svelte";
   import SharedToolbar from "$lib/components/SharedToolbar.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import PaneContainer from "$lib/components/PaneContainer.svelte";
   import QuickOpen from "$lib/components/QuickOpen.svelte";
+  import CommandPalette from "$lib/components/CommandPalette.svelte";
   import SettingsDialog from "$lib/components/SettingsDialog.svelte";
 
   // Dialog states
   let quickOpenVisible = $state(false);
+  let commandPaletteVisible = $state(false);
   let settingsVisible = $state(false);
 
   // Create explorer instances at the page level
@@ -55,8 +58,15 @@
       return;
     }
 
+    // Ctrl+Shift+P: Command palette
+    if (event.key === "P" && isModifier && event.shiftKey) {
+      event.preventDefault();
+      commandPaletteVisible = true;
+      return;
+    }
+
     // Ctrl+P: Quick open file search
-    if (event.key === "p" && isModifier) {
+    if (event.key === "p" && isModifier && !event.shiftKey) {
       event.preventDefault();
       quickOpenVisible = true;
       return;
@@ -76,11 +86,31 @@
     // Initialize theme from saved preference
     themeStore.initTheme();
 
+    // Register explorer instances for command access
+    paneManager.registerExplorer("left", leftExplorer);
+    paneManager.registerExplorer("right", rightExplorer);
+
+    // Register all commands for the command palette
+    registerAllCommands();
+
     // Global keyboard shortcuts
     window.addEventListener("keydown", handleKeydown);
 
+    // Event-based dialog opening (for commands)
+    function handleOpenQuickOpen() {
+      quickOpenVisible = true;
+    }
+    function handleOpenCommandPalette() {
+      commandPaletteVisible = true;
+    }
+
+    window.addEventListener("open-quick-open", handleOpenQuickOpen);
+    window.addEventListener("open-command-palette", handleOpenCommandPalette);
+
     return () => {
       window.removeEventListener("keydown", handleKeydown);
+      window.removeEventListener("open-quick-open", handleOpenQuickOpen);
+      window.removeEventListener("open-command-palette", handleOpenCommandPalette);
     };
   });
 </script>
@@ -99,6 +129,7 @@
 </main>
 
 <QuickOpen open={quickOpenVisible} onClose={() => quickOpenVisible = false} />
+<CommandPalette open={commandPaletteVisible} onClose={() => commandPaletteVisible = false} />
 <SettingsDialog open={settingsVisible} onClose={() => settingsVisible = false} />
 
 <style>

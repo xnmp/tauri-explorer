@@ -9,7 +9,7 @@
  * 3. Add the theme to availableThemes below
  */
 
-export type ThemeId = "light" | "dark" | "solarized-light";
+export type ThemeId = "light" | "dark" | "solarized-light" | "ocean-blue";
 
 interface ThemeColors {
   backgroundSolid: string;
@@ -55,6 +55,16 @@ const availableThemes: ThemeInfo[] = [
       backgroundSolid: "#fdf6e3",
       divider: "rgba(101, 123, 131, 0.2)",
       accent: "#268bd2",
+    },
+  },
+  {
+    id: "ocean-blue",
+    name: "Ocean Blue",
+    description: "Relaxing deep blue tones",
+    colors: {
+      backgroundSolid: "#0f2233",
+      divider: "rgba(94, 183, 224, 0.12)",
+      accent: "#5eb7e0",
     },
   },
 ];

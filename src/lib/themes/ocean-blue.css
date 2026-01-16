@@ -1,0 +1,60 @@
+/**
+ * Ocean Blue Theme - Relaxing blue tones
+ *
+ * A calming dark blue theme inspired by deep ocean waters.
+ * Uses soft blue-gray tones that are easy on the eyes.
+ */
+
+[data-theme="ocean-blue"] {
+  /* Accent colors - soft cyan/teal */
+  --accent: #5eb7e0;
+  --accent-light: #8fd4f0;
+  --accent-dark: #3498c8;
+
+  /* Text colors - warm white with blue tint */
+  --text-primary: #e8f0f5;
+  --text-secondary: #a8c4d4;
+  --text-tertiary: #7a9db5;
+  --text-on-accent: #0a1929;
+
+  /* Background colors - deep ocean blues */
+  --background-solid: #0f2233;
+  --background-mica: rgba(15, 34, 51, 0.96);
+  --background-acrylic: rgba(20, 45, 65, 0.92);
+  --background-card: rgba(30, 60, 85, 0.5);
+  --background-card-secondary: rgba(25, 50, 72, 0.45);
+
+  /* Surface/border colors - subtle blue glow */
+  --surface-stroke: rgba(94, 183, 224, 0.15);
+  --surface-stroke-flyout: rgba(94, 183, 224, 0.2);
+  --divider: rgba(94, 183, 224, 0.12);
+
+  /* Control/input backgrounds - soft blue tints */
+  --control-fill: rgba(94, 183, 224, 0.1);
+  --control-fill-secondary: rgba(94, 183, 224, 0.15);
+  --control-fill-tertiary: rgba(94, 183, 224, 0.07);
+  --control-fill-disabled: rgba(94, 183, 224, 0.05);
+
+  /* Subtle hover/active fills */
+  --subtle-fill: transparent;
+  --subtle-fill-secondary: rgba(94, 183, 224, 0.1);
+  --subtle-fill-tertiary: rgba(94, 183, 224, 0.06);
+
+  /* Control borders */
+  --control-stroke: rgba(94, 183, 224, 0.18);
+  --control-stroke-secondary: rgba(94, 183, 224, 0.12);
+
+  /* Focus indicators */
+  --focus-stroke-outer: #5eb7e0;
+  --focus-stroke-inner: #0a1929;
+
+  /* System status colors */
+  --system-critical: #ff7b7b;
+  --system-success: #7be0a0;
+  --system-caution: #f0d060;
+
+  /* Shadows - deep ocean shadows */
+  --shadow-flyout: 0 8px 20px rgba(0, 15, 30, 0.5);
+  --shadow-dialog: 0 32px 64px rgba(0, 15, 30, 0.6), 0 4px 24px rgba(0, 15, 30, 0.4);
+  --shadow-tooltip: 0 4px 12px rgba(0, 15, 30, 0.5);
+}

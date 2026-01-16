@@ -244,6 +244,7 @@ export interface SearchResult {
   path: string;
   relativePath: string;
   score: number;
+  kind: "file" | "directory";
 }
 
 /**

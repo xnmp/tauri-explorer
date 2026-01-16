@@ -83,18 +83,19 @@
   }
 
   async function selectResult(result: SearchResult): Promise<void> {
-    // Check if it's a file or navigate to its parent directory
-    const path = result.path;
-    const parentDir = path.substring(0, path.lastIndexOf("/"));
-
-    // Navigate to parent directory and potentially open file
     const explorer = paneNav?.getActiveExplorer() ?? defaultExplorer;
 
-    // Try to open the file
-    const openResult = await openFile(path);
-    if (!openResult.ok) {
-      // If can't open (might be a special file), navigate to its location
-      explorer.navigateTo(parentDir);
+    if (result.kind === "directory") {
+      // Navigate to the directory
+      explorer.navigateTo(result.path);
+    } else {
+      // Try to open the file
+      const openResult = await openFile(result.path);
+      if (!openResult.ok) {
+        // If can't open (might be a special file), navigate to its parent directory
+        const parentDir = result.path.substring(0, result.path.lastIndexOf("/"));
+        explorer.navigateTo(parentDir);
+      }
     }
 
     onClose();
@@ -149,20 +150,31 @@
               <li
                 class="result-item"
                 class:selected={index === selectedIndex}
+                class:is-directory={result.kind === "directory"}
                 role="option"
                 aria-selected={index === selectedIndex}
                 onclick={() => selectResult(result)}
                 onmouseenter={() => selectedIndex = index}
               >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
-                  <path d="M4 2C4 1.44772 4.44772 1 5 1H9L13 5V14C13 14.5523 12.5523 15 12 15H5C4.44772 15 4 14.5523 4 14V2Z" stroke="currentColor" stroke-width="1.25"/>
-                  <path d="M9 1V4C9 4.55228 9.44772 5 10 5H13" stroke="currentColor" stroke-width="1.25"/>
-                </svg>
+                {#if result.kind === "directory"}
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="folder-icon">
+                    <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="#FFB900"/>
+                  </svg>
+                {:else}
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
+                    <path d="M4 2C4 1.44772 4.44772 1 5 1H9L13 5V14C13 14.5523 12.5523 15 12 15H5C4.44772 15 4 14.5523 4 14V2Z" stroke="currentColor" stroke-width="1.25"/>
+                    <path d="M9 1V4C9 4.55228 9.44772 5 10 5H13" stroke="currentColor" stroke-width="1.25"/>
+                  </svg>
+                {/if}
                 <div class="result-content">
                   <span class="result-name">{result.name}</span>
                   <span class="result-path">{result.relativePath}</span>
                 </div>
-                <span class="result-score">{Math.round(result.score)}%</span>
+                {#if result.kind === "directory"}
+                  <span class="result-kind">folder</span>
+                {:else}
+                  <span class="result-score">{Math.round(result.score)}%</span>
+                {/if}
               </li>
             {/each}
           </ul>
@@ -301,9 +313,14 @@
     opacity: 0.8;
   }
 
-  .file-icon {
+  .file-icon,
+  .folder-icon {
     color: var(--text-tertiary);
     flex-shrink: 0;
+  }
+
+  .folder-icon {
+    color: #FFB900;
   }
 
   .result-content {
@@ -330,7 +347,8 @@
     white-space: nowrap;
   }
 
-  .result-score {
+  .result-score,
+  .result-kind {
     font-size: 11px;
     color: var(--text-tertiary);
     padding: 2px 6px;
@@ -339,8 +357,23 @@
     flex-shrink: 0;
   }
 
-  .result-item.selected .result-score {
+  .result-kind {
+    color: #B38F00;
+    background: rgba(255, 185, 0, 0.15);
+  }
+
+  .result-item.selected .result-score,
+  .result-item.selected .result-kind {
     background: rgba(255, 255, 255, 0.2);
+  }
+
+  .result-item.is-directory {
+    border-left: 2px solid #FFB900;
+    padding-left: 10px;
+  }
+
+  .result-item.selected.is-directory {
+    border-left-color: rgba(255, 255, 255, 0.5);
   }
 
   .no-results {

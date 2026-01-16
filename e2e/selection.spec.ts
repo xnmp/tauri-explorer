@@ -52,8 +52,8 @@ test.describe("Selection", () => {
       await file.click();
       await expect(file).toHaveClass(/selected/);
 
-      // Click on empty space in file list
-      await page.locator(".file-list .content, .details-view").click({ position: { x: 10, y: 400 } });
+      // Click on empty space in file list content area
+      await page.locator(".file-list .content").first().click({ position: { x: 10, y: 400 } });
 
       await expect(file).not.toHaveClass(/selected/);
     });
@@ -95,16 +95,27 @@ test.describe("Selection", () => {
 
   test.describe("Drag Selection (Marquee)", () => {
     test("drag in empty space creates selection rectangle", async ({ page }) => {
-      const fileList = page.locator(".content, .details-view");
+      // The content div is the container for the file list content
+      // We need to start the drag from a background element (content, details-view, or virtual-spacer)
+      const content = page.locator(".file-list .content").first();
+      const box = await content.boundingBox();
+      if (!box) {
+        test.skip();
+        return;
+      }
 
-      // Start drag in empty space
-      await fileList.hover({ position: { x: 50, y: 100 } });
+      // Start drag from the bottom of the content area, below the file items
+      // This ensures we hit the virtual-spacer-bottom or empty content area
+      const startX = box.x + 50;
+      const startY = box.y + box.height - 50; // Near the bottom
+
+      await page.mouse.move(startX, startY);
       await page.mouse.down();
-      await page.mouse.move(200, 300);
+      await page.mouse.move(startX + 100, startY - 100);
 
       // Check for marquee rectangle
       const marquee = page.locator(".marquee-rect");
-      await expect(marquee).toBeVisible();
+      await expect(marquee).toBeVisible({ timeout: 2000 });
 
       await page.mouse.up();
     });
@@ -117,15 +128,26 @@ test.describe("Selection", () => {
         return;
       }
 
-      const fileList = page.locator(".content, .details-view");
-      const box = await fileList.boundingBox();
-      if (!box) return;
+      // Get the content area which contains the file list
+      const content = page.locator(".file-list .content").first();
+      const box = await content.boundingBox();
+      if (!box) {
+        test.skip();
+        return;
+      }
 
-      // Drag across multiple files
-      await page.mouse.move(box.x + 10, box.y + 50);
+      // Start from bottom empty area and drag up to select files
+      const startX = box.x + 50;
+      const startY = box.y + box.height - 20; // Near the bottom (empty space)
+
+      await page.mouse.move(startX, startY);
       await page.mouse.down();
-      await page.mouse.move(box.x + box.width - 10, box.y + 150);
+      // Drag up to where the files are (toward the top)
+      await page.mouse.move(startX + 200, box.y + 100);
       await page.mouse.up();
+
+      // Wait a moment for selection to register
+      await page.waitForTimeout(100);
 
       // At least one file should be selected
       const selectedCount = await page.locator(".file-item.selected").count();

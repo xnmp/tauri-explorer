@@ -35,8 +35,8 @@ test.describe("File Operations", () => {
       const contextMenu = page.locator(".context-menu");
       await expect(contextMenu).toBeVisible();
 
-      // Click elsewhere
-      await page.locator(".file-list").click({ position: { x: 10, y: 10 } });
+      // Click on the backdrop which closes the menu
+      await page.locator(".context-menu-backdrop").click();
       await expect(contextMenu).not.toBeVisible();
     });
 
@@ -101,23 +101,34 @@ test.describe("File Operations", () => {
       await page.keyboard.press("F2");
 
       // Should show rename input
-      const renameInput = page.locator(".rename-input, input[type='text']").first();
+      const renameInput = page.locator(".rename-input");
       await expect(renameInput).toBeVisible();
     });
 
     test("Escape cancels rename", async ({ page }) => {
       const file = page.locator(".file-item").first();
-      const originalName = await file.locator(".file-name").textContent();
+      const originalName = await file.locator(".name").textContent();
 
+      // Focus the file item and press F2
       await file.click();
+      await file.focus();
       await page.keyboard.press("F2");
 
-      // Type something
-      await page.keyboard.type("new-name");
+      // Wait for rename input to appear
+      const renameInput = page.locator(".rename-input");
+      await expect(renameInput).toBeVisible();
+
+      // Type something then cancel
+      await renameInput.fill("new-name");
       await page.keyboard.press("Escape");
 
-      // Name should be unchanged
-      const currentName = await file.locator(".file-name").textContent();
+      // Wait for rename input to disappear and name span to reappear
+      await expect(renameInput).not.toBeVisible({ timeout: 2000 });
+
+      // Name should be unchanged - need to re-query for the updated element
+      const updatedFile = page.locator(".file-item").first();
+      await expect(updatedFile.locator(".name")).toBeVisible();
+      const currentName = await updatedFile.locator(".name").textContent();
       expect(currentName).toBe(originalName);
     });
   });
@@ -129,8 +140,8 @@ test.describe("File Operations", () => {
 
       await page.keyboard.press("Delete");
 
-      // Delete dialog should appear
-      const dialog = page.locator(".delete-dialog, [role='dialog']");
+      // Delete dialog should appear (uses role="alertdialog")
+      const dialog = page.locator("[role='alertdialog']");
       await expect(dialog).toBeVisible();
     });
 
@@ -140,7 +151,7 @@ test.describe("File Operations", () => {
 
       await page.keyboard.press("Delete");
 
-      const dialog = page.locator(".delete-dialog, [role='dialog']");
+      const dialog = page.locator("[role='alertdialog']");
       await expect(dialog).toBeVisible();
 
       // Click cancel
@@ -151,8 +162,8 @@ test.describe("File Operations", () => {
 
   test.describe("New Folder", () => {
     test("right-click on empty space shows New folder option", async ({ page }) => {
-      // Click empty space
-      await page.locator(".file-list .content, .details-view").click({
+      // Click empty space in content area
+      await page.locator(".file-list .content").first().click({
         button: "right",
         position: { x: 10, y: 400 },
       });

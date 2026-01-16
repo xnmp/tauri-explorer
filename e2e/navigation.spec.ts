@@ -3,8 +3,14 @@ import { test, expect } from "@playwright/test";
 test.describe("Navigation", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
-    // Wait for app to load
+    // Wait for app to load and file items to be visible
     await page.waitForSelector(".file-list");
+    await page.locator(".file-item").first().waitFor({ timeout: 5000 });
+    // Ensure breadcrumbs are populated
+    await page.waitForFunction(() => {
+      const bc = document.querySelector('.breadcrumbs-container');
+      return bc && bc.textContent && bc.textContent.trim().length > 0;
+    });
   });
 
   test.describe("Initial Load", () => {
@@ -37,9 +43,9 @@ test.describe("Navigation", () => {
 
   test.describe("Folder Navigation", () => {
     test("double-click on folder navigates into it", async ({ page }) => {
-      // Find a folder
-      const folder = page.locator(".file-item").filter({ has: page.locator(".folder-icon") }).first();
-      const folderName = await folder.locator(".file-name").textContent();
+      // Find a folder (folders have .directory class)
+      const folder = page.locator(".file-item.directory").first();
+      const folderName = await folder.locator(".name").textContent();
 
       // Double-click to navigate
       await folder.dblclick();
@@ -47,14 +53,14 @@ test.describe("Navigation", () => {
       // Wait for navigation
       await page.waitForTimeout(500);
 
-      // Path should contain the folder name
-      const pathBar = page.locator(".path-display, .path-bar");
-      await expect(pathBar).toContainText(folderName || "");
+      // Breadcrumbs should contain the folder name
+      const breadcrumbs = page.locator(".breadcrumbs-container");
+      await expect(breadcrumbs).toContainText(folderName || "");
     });
 
     test("single-click on folder only selects it", async ({ page }) => {
-      const folder = page.locator(".file-item").filter({ has: page.locator(".folder-icon") }).first();
-      const initialPath = await page.locator(".path-display, .path-bar").textContent();
+      const folder = page.locator(".file-item.directory").first();
+      const initialBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
 
       // Single click
       await folder.click();
@@ -63,15 +69,15 @@ test.describe("Navigation", () => {
       await expect(folder).toHaveClass(/selected/);
 
       // Path should NOT change
-      const newPath = await page.locator(".path-display, .path-bar").textContent();
-      expect(newPath).toBe(initialPath);
+      const newBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
+      expect(newBreadcrumbs).toBe(initialBreadcrumbs);
     });
 
     test("back button works after navigation", async ({ page }) => {
-      const initialPath = await page.locator(".path-display, .path-bar").textContent();
+      const initialBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
 
       // Navigate into a folder
-      const folder = page.locator(".file-item").filter({ has: page.locator(".folder-icon") }).first();
+      const folder = page.locator(".file-item.directory").first();
       await folder.dblclick();
       await page.waitForTimeout(500);
 
@@ -80,25 +86,25 @@ test.describe("Navigation", () => {
       await page.waitForTimeout(500);
 
       // Should be back at initial path
-      const currentPath = await page.locator(".path-display, .path-bar").textContent();
-      expect(currentPath).toBe(initialPath);
+      const currentBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
+      expect(currentBreadcrumbs).toBe(initialBreadcrumbs);
     });
 
     test("up button navigates to parent directory", async ({ page }) => {
       // Navigate into a folder first
-      const folder = page.locator(".file-item").filter({ has: page.locator(".folder-icon") }).first();
+      const folder = page.locator(".file-item.directory").first();
       await folder.dblclick();
       await page.waitForTimeout(500);
 
-      const pathBefore = await page.locator(".path-display, .path-bar").textContent();
+      const breadcrumbsBefore = await page.locator(".breadcrumbs-container").textContent();
 
       // Click up button
       await page.locator('button[title*="Up"], button[aria-label*="parent"]').click();
       await page.waitForTimeout(500);
 
       // Path should be shorter (parent)
-      const pathAfter = await page.locator(".path-display, .path-bar").textContent();
-      expect(pathAfter?.length).toBeLessThan(pathBefore?.length || 0);
+      const breadcrumbsAfter = await page.locator(".breadcrumbs-container").textContent();
+      expect(breadcrumbsAfter?.length).toBeLessThan(breadcrumbsBefore?.length || 0);
     });
   });
 
@@ -117,10 +123,10 @@ test.describe("Navigation", () => {
     });
 
     test("Alt+Left goes back", async ({ page }) => {
-      const initialPath = await page.locator(".path-display, .path-bar").textContent();
+      const initialBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
 
       // Navigate forward
-      const folder = page.locator(".file-item").filter({ has: page.locator(".folder-icon") }).first();
+      const folder = page.locator(".file-item.directory").first();
       await folder.dblclick();
       await page.waitForTimeout(500);
 
@@ -128,8 +134,8 @@ test.describe("Navigation", () => {
       await page.keyboard.press("Alt+ArrowLeft");
       await page.waitForTimeout(500);
 
-      const currentPath = await page.locator(".path-display, .path-bar").textContent();
-      expect(currentPath).toBe(initialPath);
+      const currentBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
+      expect(currentBreadcrumbs).toBe(initialBreadcrumbs);
     });
   });
 });

@@ -1,6 +1,6 @@
 <!--
   Main Explorer page - Windows 11 Fluent Design
-  Issue: tauri-explorer-iw0, tauri-explorer-jql, tauri-explorer-bae, tauri-explorer-h3n
+  Issue: tauri-explorer-iw0, tauri-explorer-jql, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-w3t
 -->
 <script lang="ts">
   import { onMount, setContext } from "svelte";
@@ -13,6 +13,10 @@
   import SharedToolbar from "$lib/components/SharedToolbar.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import PaneContainer from "$lib/components/PaneContainer.svelte";
+  import QuickOpen from "$lib/components/QuickOpen.svelte";
+
+  // QuickOpen state
+  let quickOpenVisible = $state(false);
 
   // Create explorer instances at the page level
   const leftExplorer = createExplorerState();
@@ -39,9 +43,17 @@
   });
 
   function handleKeydown(event: KeyboardEvent): void {
+    const isModifier = event.ctrlKey || event.metaKey;
+
+    // Ctrl+P: Quick open file search
+    if (event.key === "p" && isModifier) {
+      event.preventDefault();
+      quickOpenVisible = true;
+      return;
+    }
+
     // Ctrl+\ or Ctrl+|: Toggle dual pane
-    const isToggleDualPane = (event.key === "\\" || event.key === "|") && (event.ctrlKey || event.metaKey);
-    if (isToggleDualPane) {
+    if ((event.key === "\\" || event.key === "|") && isModifier) {
       event.preventDefault();
       paneManager.toggleDualPane();
     }
@@ -68,6 +80,8 @@
     <PaneContainer {leftExplorer} {rightExplorer} />
   </div>
 </main>
+
+<QuickOpen bind:open={quickOpenVisible} onClose={() => quickOpenVisible = false} />
 
 <style>
   /* Windows 11 Fluent Design System */

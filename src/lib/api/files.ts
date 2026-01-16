@@ -234,3 +234,49 @@ export async function getHomeDirectory(): Promise<ApiResult<string>> {
     return { ok: false, error: String(err) };
   }
 }
+
+/**
+ * Search result from fuzzy file search.
+ * Issue: tauri-explorer-w3t
+ */
+export interface SearchResult {
+  name: string;
+  path: string;
+  relativePath: string;
+  score: number;
+}
+
+/**
+ * Fuzzy search for files recursively in a directory.
+ * Issue: tauri-explorer-w3t, tauri-explorer-rxx
+ *
+ * @param query - Search query
+ * @param root - Root directory to search in
+ * @param limit - Maximum number of results
+ * @returns Result with matching files or error message
+ */
+export async function fuzzySearch(
+  query: string,
+  root: string,
+  limit: number = 20
+): Promise<ApiResult<SearchResult[]>> {
+  try {
+    const params = new URLSearchParams({
+      query,
+      root,
+      limit: String(limit),
+    });
+    const response = await fetch(`${config.apiBaseUrl}/files/search?${params}`);
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      const detail = body.detail ?? `HTTP ${response.status}`;
+      return { ok: false, error: detail };
+    }
+
+    const data = await response.json();
+    return { ok: true, data: data.results };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}

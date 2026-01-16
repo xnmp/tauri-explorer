@@ -1,15 +1,19 @@
 """File endpoints.
 
 Issue: tauri-explorer-p1f, tauri-explorer-jql, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-x25
+Issue: tauri-explorer-w3t (fuzzy search)
 """
 
+import os
 import platform
 import subprocess
 from pathlib import Path
+from typing import Iterator
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
+from rapidfuzz import fuzz, process
 
 from domain.file_entry import list_directory
 from domain.file_ops import create_directory, delete_entry, rename_entry, copy_entry, move_entry
@@ -227,3 +231,94 @@ def open_file(request: OpenRequest):
         return {"success": True, "path": str(path)}
     except Exception as e:
         raise HTTPException(500, f"Failed to open file: {str(e)}")
+
+
+# Directories to skip during recursive search (for performance)
+SKIP_DIRS = {
+    ".git", ".svn", ".hg",
+    "node_modules", "__pycache__", ".venv", "venv",
+    ".cache", ".npm", ".cargo",
+    "target", "build", "dist", "out",
+    ".idea", ".vscode",
+}
+
+
+def walk_files(root: Path, max_files: int = 10000) -> Iterator[str]:
+    """Recursively walk directory yielding relative file paths.
+
+    Skips common non-user directories for performance.
+    """
+    count = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        # Filter out directories we want to skip (modifies in-place)
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
+
+        rel_dir = Path(dirpath).relative_to(root)
+
+        for filename in filenames:
+            if filename.startswith("."):
+                continue
+            if count >= max_files:
+                return
+            rel_path = str(rel_dir / filename) if str(rel_dir) != "." else filename
+            yield rel_path
+            count += 1
+
+
+@router.get("/search")
+def fuzzy_search(
+    query: str = Query(..., description="Search query", min_length=1),
+    root: str = Query(..., description="Root directory to search"),
+    limit: int = Query(20, description="Max results to return", ge=1, le=100),
+):
+    """Fuzzy search for files recursively in a directory.
+
+    Issue: tauri-explorer-w3t, tauri-explorer-rxx
+
+    Uses rapidfuzz for fast fuzzy matching. Returns files sorted by match score.
+
+    Args:
+        query: The search query (fuzzy matched against file names)
+        root: Root directory to search in
+        limit: Maximum number of results to return
+
+    Returns:
+        List of matching files with scores and full paths
+    """
+    root_path = Path(root)
+    if not root_path.exists():
+        raise HTTPException(404, "Directory not found")
+    if not root_path.is_dir():
+        raise HTTPException(400, "Path is not a directory")
+
+    # Collect all file paths
+    files = list(walk_files(root_path))
+
+    if not files:
+        return {"results": []}
+
+    # Use rapidfuzz to find best matches
+    # We match against just the filename for better UX, but return full relative path
+    file_names = [Path(f).name for f in files]
+
+    # Use partial ratio for substring matching (like fzf)
+    matches = process.extract(
+        query,
+        file_names,
+        scorer=fuzz.partial_ratio,
+        limit=limit,
+        score_cutoff=40,  # Minimum score threshold
+    )
+
+    results = []
+    for match_name, score, idx in matches:
+        rel_path = files[idx]
+        full_path = str(root_path / rel_path)
+        results.append({
+            "name": match_name,
+            "path": full_path,
+            "relativePath": rel_path,
+            "score": score,
+        })
+
+    return {"results": results}

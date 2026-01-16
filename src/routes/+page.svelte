@@ -19,6 +19,7 @@
   import QuickOpen from "$lib/components/QuickOpen.svelte";
   import CommandPalette from "$lib/components/CommandPalette.svelte";
   import SettingsDialog from "$lib/components/SettingsDialog.svelte";
+  import ProgressDialog from "$lib/components/ProgressDialog.svelte";
 
   // Dialog states
   let quickOpenVisible = $state(false);
@@ -156,6 +157,7 @@
 <QuickOpen open={quickOpenVisible} onClose={() => quickOpenVisible = false} />
 <CommandPalette open={commandPaletteVisible} onClose={() => commandPaletteVisible = false} />
 <SettingsDialog open={settingsVisible} onClose={() => settingsVisible = false} />
+<ProgressDialog />
 
 <style>
   /* Windows 11 Fluent Design System */

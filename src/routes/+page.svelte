@@ -63,9 +63,12 @@
     }
 
     // Ctrl+\ or Ctrl+|: Toggle dual pane
-    if ((event.key === "\\" || event.key === "|") && isModifier) {
+    // Use both key and code for better cross-platform support
+    const isBackslash = event.key === "\\" || event.key === "|" || event.code === "Backslash";
+    if (isBackslash && isModifier) {
       event.preventDefault();
       paneManager.toggleDualPane();
+      return;
     }
   }
 

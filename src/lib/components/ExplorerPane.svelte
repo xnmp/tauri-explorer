@@ -120,8 +120,11 @@
     overflow: hidden;
     background: var(--background-card);
     border-radius: var(--radius-md);
-    outline: 2px solid transparent;
-    transition: outline-color var(--transition-fast);
+    border: 2px solid transparent;
+    transition:
+      border-color var(--transition-fast),
+      box-shadow var(--transition-fast),
+      opacity var(--transition-fast);
   }
 
   .explorer-pane:focus {
@@ -129,16 +132,17 @@
   }
 
   .explorer-pane.active {
-    outline-color: var(--accent);
+    border-color: var(--accent);
+    box-shadow: 0 0 8px -2px var(--accent);
   }
 
   .explorer-pane.inactive {
-    opacity: 0.6;
-    filter: saturate(0.7);
+    opacity: 0.7;
+    border-color: var(--divider);
   }
 
   .explorer-pane.inactive:hover {
-    opacity: 0.8;
-    filter: saturate(0.85);
+    opacity: 0.85;
+    border-color: var(--text-tertiary);
   }
 </style>

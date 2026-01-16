@@ -1,10 +1,12 @@
 <!--
   Context Menu component - Windows 11 Fluent Design
   Right-click menu for file operations
+  Issue: tauri-explorer-83z
 -->
 <script lang="ts">
   import { explorer } from "$lib/state/explorer.svelte";
   import type { FileEntry } from "$lib/domain/file";
+  import type { ViewMode } from "$lib/state/types";
 
   function withSelectedEntry(action: (entry: FileEntry) => void): void {
     const entries = explorer.getSelectedEntries();
@@ -42,11 +44,22 @@
     explorer.closeContextMenu();
   }
 
+  function handleSetViewMode(mode: ViewMode): void {
+    explorer.setViewMode(mode);
+    explorer.closeContextMenu();
+  }
+
   function handleKeydown(event: KeyboardEvent): void {
     if (event.key === "Escape") {
       explorer.closeContextMenu();
     }
   }
+
+  const viewModes: { id: ViewMode; label: string }[] = [
+    { id: "details", label: "Details" },
+    { id: "list", label: "List" },
+    { id: "tiles", label: "Tiles" },
+  ];
 </script>
 
 <svelte:window on:keydown={handleKeydown} />
@@ -123,6 +136,39 @@
       </svg>
       <span>New folder</span>
     </button>
+
+    <div class="menu-divider"></div>
+
+    <!-- View options -->
+    <div class="menu-section-label">View</div>
+    {#each viewModes as mode}
+      <button
+        class="menu-item"
+        class:selected={explorer.state.viewMode === mode.id}
+        onclick={() => handleSetViewMode(mode.id)}
+        role="menuitemradio"
+        aria-checked={explorer.state.viewMode === mode.id}
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          {#if mode.id === "details"}
+            <path d="M2 4H14M2 8H14M2 12H14" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+          {:else if mode.id === "list"}
+            <path d="M3 4H4M6 4H13M3 8H4M6 8H13M3 12H4M6 12H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          {:else}
+            <rect x="2" y="2" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+            <rect x="9" y="2" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+            <rect x="2" y="9" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+            <rect x="9" y="9" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+          {/if}
+        </svg>
+        <span>{mode.label}</span>
+        {#if explorer.state.viewMode === mode.id}
+          <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        {/if}
+      </button>
+    {/each}
   </div>
 {/if}
 
@@ -209,5 +255,23 @@
     height: 1px;
     margin: 4px 8px;
     background: var(--divider);
+  }
+
+  .menu-section-label {
+    padding: 6px 12px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .menu-item.selected {
+    background: var(--subtle-fill-tertiary);
+  }
+
+  .check-icon {
+    color: var(--accent);
+    margin-left: auto;
   }
 </style>

@@ -1,37 +1,10 @@
 <!--
   Toolbar component - Windows 11 File Explorer Command Bar
-  Issue: tauri-explorer-iw0, tauri-explorer-jql, tauri-explorer-83z
+  Issue: tauri-explorer-iw0, tauri-explorer-jql
 -->
 <script lang="ts">
   import { explorer } from "$lib/state/explorer.svelte";
-  import type { ViewMode } from "$lib/state/types";
-
-  let viewDropdownOpen = $state(false);
-
-  function toggleViewDropdown() {
-    viewDropdownOpen = !viewDropdownOpen;
-  }
-
-  function selectViewMode(mode: ViewMode) {
-    explorer.setViewMode(mode);
-    viewDropdownOpen = false;
-  }
-
-  function handleClickOutside(event: MouseEvent) {
-    const target = event.target as HTMLElement;
-    if (!target.closest('.view-dropdown-container')) {
-      viewDropdownOpen = false;
-    }
-  }
-
-  const viewModes: { id: ViewMode; label: string; icon: string }[] = [
-    { id: "details", label: "Details", icon: "details" },
-    { id: "list", label: "List", icon: "list" },
-    { id: "tiles", label: "Tiles", icon: "tiles" },
-  ];
 </script>
-
-<svelte:window onclick={handleClickOutside} />
 
 <div class="toolbar">
   <!-- New dropdown -->
@@ -132,7 +105,7 @@
 
   <div class="separator"></div>
 
-  <!-- View controls -->
+  <!-- Sort control -->
   <div class="command-group">
     <button class="cmd-button" title="Sort">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -143,65 +116,6 @@
         <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </button>
-
-    <div class="view-dropdown-container">
-      <button class="cmd-button" class:active={viewDropdownOpen} title="View" onclick={toggleViewDropdown}>
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          {#if explorer.state.viewMode === "details"}
-            <path d="M2 4H14M2 8H14M2 12H14" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
-          {:else if explorer.state.viewMode === "list"}
-            <path d="M3 4H4M6 4H13M3 8H4M6 8H13M3 12H4M6 12H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-          {:else}
-            <rect x="2" y="2" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-            <rect x="9" y="2" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-            <rect x="2" y="9" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-            <rect x="9" y="9" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-          {/if}
-        </svg>
-        <span class="cmd-label">View</span>
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="dropdown-arrow">
-          <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </button>
-
-      {#if viewDropdownOpen}
-        <div class="view-dropdown" role="menu">
-          {#each viewModes as mode}
-            <button
-              class="view-option"
-              class:selected={explorer.state.viewMode === mode.id}
-              onclick={() => selectViewMode(mode.id)}
-              role="menuitem"
-            >
-              <span class="view-icon">
-                {#if mode.id === "details"}
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                    <path d="M2 4H14M2 8H14M2 12H14" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
-                  </svg>
-                {:else if mode.id === "list"}
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                    <path d="M3 4H4M6 4H13M3 8H4M6 8H13M3 12H4M6 12H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-                  </svg>
-                {:else}
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                    <rect x="2" y="2" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-                    <rect x="9" y="2" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-                    <rect x="2" y="9" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-                    <rect x="9" y="9" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-                  </svg>
-                {/if}
-              </span>
-              <span class="view-label">{mode.label}</span>
-              {#if explorer.state.viewMode === mode.id}
-                <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
-                  <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-              {/if}
-            </button>
-          {/each}
-        </div>
-      {/if}
-    </div>
   </div>
 
   <div class="separator"></div>
@@ -335,75 +249,5 @@
   .preview-toggle {
     padding-left: 8px;
     padding-right: 8px;
-  }
-
-  /* View dropdown */
-  .view-dropdown-container {
-    position: relative;
-  }
-
-  .cmd-button.active {
-    background: var(--subtle-fill-secondary);
-  }
-
-  .view-dropdown {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    margin-top: 4px;
-    min-width: 140px;
-    background: var(--background-acrylic);
-    backdrop-filter: blur(20px);
-    border: 1px solid var(--surface-stroke-flyout);
-    border-radius: 8px;
-    box-shadow: var(--shadow-flyout);
-    padding: 4px;
-    z-index: 100;
-  }
-
-  .view-option {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    width: 100%;
-    padding: 8px 10px;
-    background: transparent;
-    border: none;
-    border-radius: 4px;
-    color: var(--text-primary);
-    font-family: inherit;
-    font-size: 13px;
-    cursor: pointer;
-    text-align: left;
-    transition: background var(--transition-fast);
-  }
-
-  .view-option:hover {
-    background: var(--subtle-fill-secondary);
-  }
-
-  .view-option.selected {
-    background: var(--subtle-fill-tertiary);
-  }
-
-  .view-icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
-    color: var(--text-secondary);
-  }
-
-  .view-option.selected .view-icon {
-    color: var(--accent);
-  }
-
-  .view-label {
-    flex: 1;
-  }
-
-  .check-icon {
-    color: var(--accent);
   }
 </style>

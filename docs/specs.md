@@ -18,9 +18,11 @@
 * back button / up button 
 * breadcrumbs like in explorer
 * undo/redo (just hotkeys)
+
+* progress bars for long operations, allowing to cancel
 * minor things
 	* hide / show hidden files and dot files
-* progress bars for long operations, allowing to cancel
+
 
 **Features** 
 * dual pane

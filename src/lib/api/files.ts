@@ -302,3 +302,85 @@ export async function cancelDirectoryListing(listingId: number): Promise<ApiResu
     return { ok: false, error: String(err) };
   }
 }
+
+// ===================
+// Thumbnail Generation
+// Issue: tauri-explorer-im3m
+// ===================
+
+/**
+ * Get the path to a cached thumbnail for an image file.
+ * Generates the thumbnail if not already cached.
+ *
+ * @param path - Full path to image file
+ * @param size - Optional thumbnail size (default 128)
+ * @returns Result with cached thumbnail path or error
+ */
+export async function getThumbnail(
+  path: string,
+  size?: number
+): Promise<ApiResult<string>> {
+  try {
+    const thumbnailPath = await invoke<string>("get_thumbnail", { path, size });
+    return { ok: true, data: thumbnailPath };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
+ * Get thumbnail as base64 data URI.
+ * More efficient for display as it avoids additional file reads.
+ *
+ * @param path - Full path to image file
+ * @param size - Optional thumbnail size (default 128)
+ * @returns Result with data URI (data:image/jpeg;base64,...) or error
+ */
+export async function getThumbnailData(
+  path: string,
+  size?: number
+): Promise<ApiResult<string>> {
+  try {
+    const dataUri = await invoke<string>("get_thumbnail_data", { path, size });
+    return { ok: true, data: dataUri };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
+ * Thumbnail cache statistics.
+ */
+export interface ThumbnailCacheStats {
+  count: number;
+  totalSize: number;
+  path: string;
+}
+
+/**
+ * Clear the thumbnail cache.
+ *
+ * @returns Result with bytes cleared or error
+ */
+export async function clearThumbnailCache(): Promise<ApiResult<number>> {
+  try {
+    const bytesCleared = await invoke<number>("clear_thumbnail_cache");
+    return { ok: true, data: bytesCleared };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
+ * Get thumbnail cache statistics.
+ *
+ * @returns Result with cache stats or error
+ */
+export async function getThumbnailCacheStats(): Promise<ApiResult<ThumbnailCacheStats>> {
+  try {
+    const stats = await invoke<ThumbnailCacheStats>("get_thumbnail_cache_stats");
+    return { ok: true, data: stats };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}

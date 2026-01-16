@@ -1,6 +1,6 @@
 <!--
   FileList component - Windows 11 Fluent Design
-  Issue: tauri-explorer-iw0, tauri-explorer-x25, tauri-explorer-as45, tauri-explorer-1k9k
+  Issue: tauri-explorer-iw0, tauri-explorer-x25, tauri-explorer-as45, tauri-explorer-1k9k, tauri-explorer-im3m
 -->
 <script lang="ts">
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
@@ -9,9 +9,10 @@
   import { openFile, moveEntry } from "$lib/api/files";
   import FileItem from "./FileItem.svelte";
   import VirtualList from "./VirtualList.svelte";
+  import ThumbnailImage from "./ThumbnailImage.svelte";
   import { useColumnResize } from "$lib/composables/use-column-resize.svelte";
   import { useMarqueeSelection } from "$lib/composables/use-marquee-selection.svelte";
-  import { getFileIconColor, getFileIconCategory } from "$lib/domain/file-types";
+  import { getFileIconColor, getFileIconCategory, isImageFile } from "$lib/domain/file-types";
 
   import type { FileEntry } from "$lib/domain/file";
 
@@ -392,7 +393,11 @@
                 <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
                   <path d="M6 15C6 13.3431 7.34315 12 9 12H17.7574C18.553 12 19.3161 12.3161 19.8787 12.8787L21 14H39C40.6569 14 42 15.3431 42 17V36C42 37.6569 40.6569 39 39 39H9C7.34315 39 6 37.6569 6 36V15Z" fill="#ffb900"/>
                 </svg>
+              {:else if isImageFile(entry)}
+                <!-- Show actual image thumbnail for supported formats -->
+                <ThumbnailImage path={entry.path} size={48} fallbackColor={iconColor} />
               {:else if iconCategory === "image"}
+                <!-- Non-thumbnailable image (e.g., SVG, ICO) -->
                 <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
                   <rect x="6" y="6" width="36" height="36" rx="4" fill={iconColor} fill-opacity="0.15"/>
                   <rect x="6" y="6" width="36" height="36" rx="4" stroke={iconColor} stroke-width="2"/>

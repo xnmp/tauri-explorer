@@ -239,6 +239,16 @@ export function getFileIconCategory(entry: FileEntry): IconCategory {
   return ICON_CATEGORY_MAP[ext] || "default";
 }
 
+/** Image extensions that support thumbnail generation */
+const THUMBNAIL_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp"]);
+
+/** Check if a file is an image that supports thumbnails */
+export function isImageFile(entry: FileEntry): boolean {
+  if (entry.kind === "directory") return false;
+  const ext = getExtension(entry.name);
+  return THUMBNAIL_EXTENSIONS.has(ext);
+}
+
 /** Format modified date - Windows 11 style: M/D/YYYY h:mm AM/PM */
 export function formatDate(isoString: string): string {
   const date = new Date(isoString);

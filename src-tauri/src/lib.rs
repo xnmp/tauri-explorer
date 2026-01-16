@@ -1,8 +1,9 @@
 //! Tauri Explorer app entry point.
-//! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6
+//! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6, tauri-explorer-im3m
 
 mod files;
 mod search;
+mod thumbnails;
 
 use std::path::PathBuf;
 
@@ -61,6 +62,11 @@ pub fn run() {
             search::fuzzy_search,
             search::start_streaming_search,
             search::cancel_search,
+            // Thumbnails
+            thumbnails::get_thumbnail,
+            thumbnails::get_thumbnail_data,
+            thumbnails::clear_thumbnail_cache,
+            thumbnails::get_thumbnail_cache_stats,
         ])
         .setup(|#[allow(unused)] app| {
             #[cfg(debug_assertions)]

@@ -1,9 +1,10 @@
 <!--
   DeleteDialog component - Windows 11 Fluent Design
-  Issue: tauri-explorer-h3n, tauri-explorer-w0eo
+  Issue: tauri-explorer-h3n, tauri-explorer-w0eo, tauri-explorer-1k9k
 -->
 <script lang="ts">
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
+  import { dialogStore } from "$lib/state/dialogs.svelte";
 
   interface Props {
     explorer?: ExplorerInstance;
@@ -29,7 +30,7 @@
 
   function handleCancel() {
     error = null;
-    explorer.cancelDelete();
+    dialogStore.cancelDelete();
   }
 
   function handleKeydown(event: KeyboardEvent) {
@@ -45,7 +46,7 @@
   }
 </script>
 
-{#if explorer.state.deletingEntry}
+{#if dialogStore.deletingEntry}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
     class="overlay"
@@ -66,11 +67,11 @@
       </div>
 
       <div class="dialog-content">
-        <h2 id="dialog-title">Delete {explorer.state.deletingEntry.kind === "directory" ? "folder" : "file"}?</h2>
+        <h2 id="dialog-title">Delete {dialogStore.deletingEntry?.kind === "directory" ? "folder" : "file"}?</h2>
 
         <p id="dialog-description" class="message">
-          <strong>{explorer.state.deletingEntry.name}</strong> will be moved to the Recycle Bin.
-          {#if explorer.state.deletingEntry.kind === "directory"}
+          <strong>{dialogStore.deletingEntry?.name}</strong> will be moved to the Recycle Bin.
+          {#if dialogStore.deletingEntry?.kind === "directory"}
             <span class="info">All files and folders inside will also be moved.</span>
           {/if}
         </p>

@@ -1,11 +1,12 @@
 <!--
   Context Menu component - Windows 11 Fluent Design
   Right-click menu for file operations
-  Issue: tauri-explorer-83z
+  Issue: tauri-explorer-83z, tauri-explorer-1k9k
 -->
 <script lang="ts">
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
   import { clipboardStore } from "$lib/state/clipboard.svelte";
+  import { contextMenuStore } from "$lib/state/context-menu.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import type { ViewMode } from "$lib/state/types";
 
@@ -20,7 +21,7 @@
     if (entries.length > 0) {
       action(entries[0]);
     }
-    explorer.closeContextMenu();
+    contextMenuStore.close();
   }
 
   const hasSelection = $derived(explorer.state.selectedPaths.size > 0);
@@ -35,7 +36,7 @@
 
   async function handlePaste(): Promise<void> {
     await explorer.paste();
-    explorer.closeContextMenu();
+    contextMenuStore.close();
   }
 
   function handleRename(): void {
@@ -48,17 +49,17 @@
 
   function handleNewFolder(): void {
     explorer.openNewFolderDialog();
-    explorer.closeContextMenu();
+    contextMenuStore.close();
   }
 
   function handleSetViewMode(mode: ViewMode): void {
     explorer.setViewMode(mode);
-    explorer.closeContextMenu();
+    contextMenuStore.close();
   }
 
   function handleKeydown(event: KeyboardEvent): void {
     if (event.key === "Escape") {
-      explorer.closeContextMenu();
+      contextMenuStore.close();
     }
   }
 
@@ -71,14 +72,14 @@
 
 <svelte:window on:keydown={handleKeydown} />
 
-{#if explorer.state.contextMenuOpen && explorer.state.contextMenuPosition}
+{#if contextMenuStore.isOpen && contextMenuStore.position}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div class="context-menu-backdrop" onclick={() => explorer.closeContextMenu()}></div>
+  <div class="context-menu-backdrop" onclick={() => contextMenuStore.close()}></div>
 
   <div
     class="context-menu"
-    style="left: {explorer.state.contextMenuPosition.x}px; top: {explorer.state.contextMenuPosition.y}px;"
+    style="left: {contextMenuStore.position.x}px; top: {contextMenuStore.position.y}px;"
     role="menu"
   >
     {#if hasSelection}

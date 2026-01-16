@@ -1,17 +1,24 @@
 <!--
   RenameDialog component - Windows 11 Fluent Design
-  Issue: tauri-explorer-bae
+  Issue: tauri-explorer-bae, tauri-explorer-1k9k
 -->
 <script lang="ts">
-  import { explorer } from "$lib/state/explorer.svelte";
+  import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
+  import { dialogStore } from "$lib/state/dialogs.svelte";
+
+  interface Props {
+    explorer?: ExplorerInstance;
+  }
+
+  let { explorer = defaultExplorer }: Props = $props();
 
   let newName = $state("");
   let error = $state<string | null>(null);
   let submitting = $state(false);
 
   $effect(() => {
-    if (explorer.state.renamingEntry) {
-      newName = explorer.state.renamingEntry.name;
+    if (dialogStore.renamingEntry) {
+      newName = dialogStore.renamingEntry.name;
       error = null;
     }
   });
@@ -24,8 +31,8 @@
       return;
     }
 
-    if (newName.trim() === explorer.state.renamingEntry?.name) {
-      explorer.cancelRename();
+    if (newName.trim() === dialogStore.renamingEntry?.name) {
+      dialogStore.cancelRename();
       return;
     }
 
@@ -44,7 +51,7 @@
   function handleCancel() {
     newName = "";
     error = null;
-    explorer.cancelRename();
+    dialogStore.cancelRename();
   }
 
   function handleKeydown(event: KeyboardEvent) {
@@ -60,7 +67,7 @@
   }
 </script>
 
-{#if explorer.state.renamingEntry}
+{#if dialogStore.renamingEntry}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
     class="overlay"
@@ -75,8 +82,8 @@
       <div class="dialog-header">
         <h2 id="dialog-title">Rename</h2>
         <p class="dialog-subtitle">
-          {explorer.state.renamingEntry.kind === "directory" ? "Folder" : "File"}:
-          <strong>{explorer.state.renamingEntry.name}</strong>
+          {dialogStore.renamingEntry?.kind === "directory" ? "Folder" : "File"}:
+          <strong>{dialogStore.renamingEntry?.name}</strong>
         </p>
       </div>
 

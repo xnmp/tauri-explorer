@@ -95,8 +95,8 @@
   </div>
 </main>
 
-<QuickOpen bind:open={quickOpenVisible} onClose={() => quickOpenVisible = false} />
-<SettingsDialog bind:open={settingsVisible} onClose={() => settingsVisible = false} />
+<QuickOpen open={quickOpenVisible} onClose={() => quickOpenVisible = false} />
+<SettingsDialog open={settingsVisible} onClose={() => settingsVisible = false} />
 
 <style>
   /* Windows 11 Fluent Design System */

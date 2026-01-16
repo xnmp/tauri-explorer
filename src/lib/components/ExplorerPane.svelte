@@ -71,11 +71,11 @@
     // Modifier shortcuts (Ctrl/Cmd + key)
     if (!isModifier) return;
 
-    const modifierActions: Record<string, () => void | Promise<void>> = {
+    const modifierActions: Record<string, () => void | Promise<unknown>> = {
       z: () => paneExplorer.undo(),
-      c: () => selected && paneExplorer.copyToClipboard(selected),
-      x: () => selected && paneExplorer.cutToClipboard(selected),
-      v: () => clipboardStore.hasContent && paneExplorer.paste(),
+      c: () => { if (selected) paneExplorer.copyToClipboard(selected); },
+      x: () => { if (selected) paneExplorer.cutToClipboard(selected); },
+      v: () => { if (clipboardStore.hasContent) return paneExplorer.paste(); },
     };
 
     const action = modifierActions[event.key];

@@ -1,6 +1,6 @@
 <!--
-  Custom Title Bar - Windows 11 style
-  Issue: tauri-explorer-adtw
+  Custom Title Bar - Windows 11 style (compact)
+  Issue: tauri-explorer-adtw, tauri-explorer-ikiq
 -->
 <script lang="ts">
   import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
@@ -142,7 +142,7 @@
   .titlebar {
     display: flex;
     align-items: center;
-    height: 36px;
+    height: 32px;
     background: var(--background-card);
     user-select: none;
     flex-shrink: 0;
@@ -150,7 +150,7 @@
 
   .tab-area {
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     height: 100%;
     padding-left: 8px;
     gap: 2px;
@@ -159,12 +159,12 @@
   .tab {
     display: flex;
     align-items: center;
-    gap: 8px;
-    height: 28px;
-    padding: 0 8px 0 10px;
+    gap: 6px;
+    height: 24px;
+    padding: 0 6px 0 8px;
     background: var(--background-card-secondary);
-    border-radius: 6px 6px 0 0;
-    font-size: 12px;
+    border-radius: 5px 5px 0 0;
+    font-size: 11px;
     color: var(--text-primary);
   }
 
@@ -183,11 +183,11 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 20px;
-    height: 20px;
+    width: 16px;
+    height: 16px;
     background: transparent;
     border: none;
-    border-radius: 4px;
+    border-radius: 3px;
     color: var(--text-tertiary);
     cursor: pointer;
     opacity: 0;
@@ -207,8 +207,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
+    margin-bottom: 4px;
     background: transparent;
     border: none;
     border-radius: 4px;
@@ -236,7 +237,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 46px;
+    width: 44px;
     height: 100%;
     background: transparent;
     border: none;

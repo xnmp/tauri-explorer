@@ -1,11 +1,12 @@
 /**
  * Explorer state management using Svelte 5 runes.
- * Issue: tauri-explorer-gcl, tauri-explorer-jql, tauri-explorer-h3n, tauri-explorer-x25, tauri-explorer-bhw5
+ * Issue: tauri-explorer-gcl, tauri-explorer-jql, tauri-explorer-h3n, tauri-explorer-x25, tauri-explorer-bhw5, tauri-explorer-u7bg
  *
  * Refactored to use extracted utilities for:
  * - Types (types.ts)
  * - Selection logic (selection.ts)
  * - Navigation/history (navigation.ts)
+ * - Clipboard (clipboard.svelte.ts) - shared between panes
  */
 
 import {
@@ -20,6 +21,7 @@ import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/
 import type { ExplorerState, SelectOptions, UndoAction, ViewMode } from "./types";
 import * as selection from "./selection";
 import * as navigation from "./navigation";
+import { clipboardStore } from "./clipboard.svelte";
 
 function createExplorerState() {
   // Reactive state using $state rune
@@ -53,10 +55,13 @@ function createExplorerState() {
     contextMenuOpen: false,
     contextMenuPosition: null,
 
-    // Clipboard & Undo
-    clipboard: null,
+    // Undo (clipboard is now global via clipboardStore)
+    clipboard: null, // Deprecated: use clipboardStore directly
     undoStack: [],
   });
+
+  // Clipboard is now global - expose through state for backward compatibility
+  const clipboard = $derived(clipboardStore.content);
 
   // ===================
   // Derived State
@@ -295,26 +300,27 @@ function createExplorerState() {
   }
 
   // ===================
-  // Clipboard Actions
+  // Clipboard Actions (uses global clipboardStore for cross-pane support)
   // ===================
 
   function copyToClipboard(entry: FileEntry) {
-    state.clipboard = { entry, operation: "copy" };
+    clipboardStore.copy(entry);
   }
 
   function cutToClipboard(entry: FileEntry) {
-    state.clipboard = { entry, operation: "cut" };
+    clipboardStore.cut(entry);
   }
 
   function clearClipboard() {
-    state.clipboard = null;
+    clipboardStore.clear();
   }
 
   async function paste(): Promise<string | null> {
-    if (!state.clipboard) return "Nothing in clipboard";
+    const clipboardContent = clipboardStore.content;
+    if (!clipboardContent) return "Nothing in clipboard";
     if (!state.currentPath) return "No current directory";
 
-    const { entry, operation } = state.clipboard;
+    const { entry, operation } = clipboardContent;
     const isCut = operation === "cut";
     const pasteOperation = isCut ? moveEntry : copyEntry;
     const originalDir = entry.path.substring(0, entry.path.lastIndexOf("/")) || "/";
@@ -333,10 +339,11 @@ function createExplorerState() {
           originalDir,
         },
       ];
+      // Clear clipboard after cut operation
+      clipboardStore.clear();
     }
 
     state.entries = [...state.entries, result.data];
-    state.clipboard = null;
     return null;
   }
 

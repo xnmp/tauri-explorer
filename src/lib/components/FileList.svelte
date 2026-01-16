@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
+  import { clipboardStore } from "$lib/state/clipboard.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { openFile, moveEntry } from "$lib/api/files";
   import FileItem from "./FileItem.svelte";
@@ -204,7 +205,7 @@
   async function handleKeydown(event: KeyboardEvent): Promise<void> {
     const isPasteShortcut = event.key === "v" && (event.ctrlKey || event.metaKey);
 
-    if (isPasteShortcut && explorer.state.clipboard) {
+    if (isPasteShortcut && clipboardStore.hasContent) {
       event.preventDefault();
       const error = await explorer.paste();
 
@@ -281,24 +282,24 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="file-list" onkeydown={handleKeydown} onclick={handleBackgroundClick} oncontextmenu={handleBackgroundContextMenu} tabindex="-1">
-  <!-- Clipboard indicator -->
-  {#if explorer.state.clipboard}
-    <div class="clipboard-banner" class:cut={explorer.state.clipboard.operation === "cut"}>
+  <!-- Clipboard indicator (uses global clipboardStore for cross-pane support) -->
+  {#if clipboardStore.content}
+    <div class="clipboard-banner" class:cut={clipboardStore.isCut}>
       <div class="clipboard-content">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          {#if explorer.state.clipboard.operation === "cut"}
+          {#if clipboardStore.isCut}
             <path d="M6 3L3 6L6 9M10 3L13 6L10 9M4 6H12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
           {:else}
             <path d="M4 4H12M4 4V12C4 12.5523 4.44772 13 5 13H11C11.5523 13 12 12.5523 12 12V4M4 4L5 2H11L12 4M7 7V10M9 7V10" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
           {/if}
         </svg>
         <span class="clipboard-text">
-          <strong>{explorer.state.clipboard.operation === "cut" ? "Cut" : "Copied"}:</strong>
-          {explorer.state.clipboard.entry.name}
+          <strong>{clipboardStore.isCut ? "Cut" : "Copied"}:</strong>
+          {clipboardStore.content.entry.name}
         </span>
         <span class="clipboard-hint">Ctrl+V to paste</span>
       </div>
-      <button class="clipboard-clear" onclick={() => explorer.clearClipboard()} aria-label="Clear clipboard">
+      <button class="clipboard-clear" onclick={() => clipboardStore.clear()} aria-label="Clear clipboard">
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
           <path d="M3 3L9 9M9 3L3 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
         </svg>

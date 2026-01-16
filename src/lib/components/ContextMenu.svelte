@@ -5,6 +5,7 @@
 -->
 <script lang="ts">
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
+  import { clipboardStore } from "$lib/state/clipboard.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import type { ViewMode } from "$lib/state/types";
 
@@ -122,7 +123,7 @@
     {/if}
 
     <!-- Always available options -->
-    {#if explorer.state.clipboard}
+    {#if clipboardStore.hasContent}
       <button class="menu-item" onclick={handlePaste} role="menuitem">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
           <rect x="4" y="4" width="9" height="10" rx="1" stroke="currentColor" stroke-width="1.25"/>

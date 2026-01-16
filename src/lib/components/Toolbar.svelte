@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
   import { explorer } from "$lib/state/explorer.svelte";
+  import { clipboardStore } from "$lib/state/clipboard.svelte";
 </script>
 
 <div class="toolbar">
@@ -50,7 +51,7 @@
 
     <button
       class="cmd-icon-button"
-      disabled={!explorer.state.clipboard}
+      disabled={!clipboardStore.hasContent}
       onclick={() => explorer.paste()}
       title="Paste (Ctrl+V)"
       aria-label="Paste"

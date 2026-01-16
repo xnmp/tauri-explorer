@@ -7,6 +7,7 @@
   import { formatSize } from "$lib/domain/file";
   import { getFileType, getFileIconColor, getFileIconCategory, formatDate, type IconCategory } from "$lib/domain/file-types";
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
+  import { clipboardStore } from "$lib/state/clipboard.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { moveEntry } from "$lib/api/files";
 
@@ -117,10 +118,10 @@
 
   // Check if this item is in clipboard (for visual feedback)
   const isInClipboard = $derived(
-    explorer.state.clipboard?.entry.path === entry.path
+    clipboardStore.content?.entry.path === entry.path
   );
   const isCut = $derived(
-    isInClipboard && explorer.state.clipboard?.operation === "cut"
+    isInClipboard && clipboardStore.isCut
   );
 
   function handleContextMenu(event: MouseEvent) {

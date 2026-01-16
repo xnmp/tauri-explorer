@@ -5,6 +5,7 @@
 <script lang="ts">
   import { setContext, onMount } from "svelte";
   import { createExplorerState, type ExplorerInstance } from "$lib/state/explorer.svelte";
+  import { clipboardStore } from "$lib/state/clipboard.svelte";
   import { paneManager } from "$lib/state/panes.svelte";
   import { getHomeDirectory } from "$lib/api/files";
   import type { PaneId } from "$lib/state/types";
@@ -74,7 +75,7 @@
       z: () => paneExplorer.undo(),
       c: () => selected && paneExplorer.copyToClipboard(selected),
       x: () => selected && paneExplorer.cutToClipboard(selected),
-      v: () => paneExplorer.state.clipboard && paneExplorer.paste(),
+      v: () => clipboardStore.hasContent && paneExplorer.paste(),
     };
 
     const action = modifierActions[event.key];

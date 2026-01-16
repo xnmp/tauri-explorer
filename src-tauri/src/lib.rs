@@ -54,8 +54,13 @@ pub fn run() {
             files::move_entry,
             files::open_file,
             files::delete_entry_permanent,
+            // Streaming directory listing
+            files::start_streaming_directory,
+            files::cancel_directory_listing,
             // Search
             search::fuzzy_search,
+            search::start_streaming_search,
+            search::cancel_search,
         ])
         .setup(|#[allow(unused)] app| {
             #[cfg(debug_assertions)]

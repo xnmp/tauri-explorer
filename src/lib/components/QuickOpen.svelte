@@ -1,9 +1,16 @@
 <!--
   QuickOpen component - VSCode-style Ctrl+P file search
-  Issue: tauri-explorer-w3t, tauri-explorer-btz
+  Issue: tauri-explorer-w3t, tauri-explorer-btz, tauri-explorer-az6w
 -->
 <script lang="ts">
-  import { fuzzySearch, openFile, type SearchResult } from "$lib/api/files";
+  import {
+    startStreamingSearch,
+    cancelSearch,
+    openFile,
+    type SearchResult,
+    type SearchResultsEvent,
+  } from "$lib/api/files";
+  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { explorer as defaultExplorer } from "$lib/state/explorer.svelte";
   import { getFileIconColor, getFileIconCategory, type IconCategory } from "$lib/domain/file-types";
@@ -38,34 +45,89 @@
   // Debounce timer for search
   let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // Streaming search state
+  let activeSearchId: number | null = null;
+  let unlisten: UnlistenFn | null = null;
+  let totalScanned = $state(0);
+
   // Get root directory from active explorer
   function getRootPath(): string {
     const explorer = paneNav?.getActiveExplorer() ?? defaultExplorer;
     return explorer.state.currentPath;
   }
 
-  // Debounced search
+  // Cancel active search and cleanup listener
+  async function cancelActiveSearch(): Promise<void> {
+    if (activeSearchId !== null) {
+      await cancelSearch(activeSearchId);
+      activeSearchId = null;
+    }
+    if (unlisten) {
+      unlisten();
+      unlisten = null;
+    }
+  }
+
+  // Setup event listener for streaming search results
+  async function setupSearchListener(searchId: number): Promise<void> {
+    // Clean up any existing listener
+    if (unlisten) {
+      unlisten();
+    }
+
+    unlisten = await listen<SearchResultsEvent>("search-results", (event) => {
+      const payload = event.payload;
+
+      // Only handle events for our active search
+      if (payload.searchId !== searchId || activeSearchId !== searchId) {
+        return;
+      }
+
+      // Update results with latest batch
+      results = payload.results;
+      totalScanned = payload.totalScanned;
+
+      // Reset selection if needed
+      if (selectedIndex >= results.length) {
+        selectedIndex = Math.max(0, results.length - 1);
+      }
+
+      // Stop loading when search is done
+      if (payload.done) {
+        loading = false;
+      }
+    });
+  }
+
+  // Debounced streaming search
   function handleInput(): void {
     if (searchTimer) clearTimeout(searchTimer);
 
     if (!query.trim()) {
+      cancelActiveSearch();
       results = [];
       selectedIndex = 0;
+      totalScanned = 0;
+      loading = false;
       return;
     }
 
     loading = true;
     searchTimer = setTimeout(async () => {
+      // Cancel any previous search
+      await cancelActiveSearch();
+
       const root = getRootPath();
-      const result = await fuzzySearch(query, root, 20);
+      const result = await startStreamingSearch(query, root, 20);
+
       if (result.ok) {
-        results = result.data;
-        selectedIndex = 0;
+        activeSearchId = result.data;
+        await setupSearchListener(result.data);
       } else {
         results = [];
+        loading = false;
       }
-      loading = false;
-    }, 100); // 100ms debounce for snappiness
+    }, 50); // Shorter debounce for streaming - results come in progressively
   }
 
   function handleKeydown(event: KeyboardEvent): void {
@@ -126,9 +188,14 @@
 
   // Cleanup on close
   $effect(() => {
-    if (!open && searchTimer) {
-      clearTimeout(searchTimer);
-      searchTimer = null;
+    if (!open) {
+      if (searchTimer) {
+        clearTimeout(searchTimer);
+        searchTimer = null;
+      }
+      // Cancel any active streaming search
+      cancelActiveSearch();
+      totalScanned = 0;
     }
   });
 </script>
@@ -152,7 +219,12 @@
           oninput={handleInput}
         />
         {#if loading}
-          <div class="spinner"></div>
+          <div class="search-status">
+            {#if totalScanned > 0}
+              <span class="scanned-count">{totalScanned.toLocaleString()} scanned</span>
+            {/if}
+            <div class="spinner"></div>
+          </div>
         {/if}
       </div>
 
@@ -312,6 +384,18 @@
   }
 
   .search-input::placeholder {
+    color: var(--text-tertiary);
+  }
+
+  .search-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .scanned-count {
+    font-size: 11px;
     color: var(--text-tertiary);
   }
 

@@ -19,7 +19,12 @@ import {
   deleteEntry,
   copyEntry,
   moveEntry,
+  startStreamingDirectory,
+  cancelDirectoryListing,
+  extractListingId,
+  type DirectoryEntriesEvent,
 } from "$lib/api/files";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/domain/file";
 import type { SelectOptions, ViewMode } from "./types";
 import * as selection from "./selection";
@@ -104,19 +109,81 @@ function createExplorerState() {
   const canUndo = $derived(undoStore.canUndo);
 
   // ===================
+  // Streaming Directory State
+  // ===================
+
+  let activeListingId: number | null = null;
+  let directoryUnlisten: UnlistenFn | null = null;
+
+  async function cleanupDirectoryListener() {
+    if (activeListingId !== null) {
+      await cancelDirectoryListing(activeListingId);
+      activeListingId = null;
+    }
+    if (directoryUnlisten) {
+      directoryUnlisten();
+      directoryUnlisten = null;
+    }
+  }
+
+  async function setupDirectoryListener(listingId: number, expectedPath: string) {
+    // Clean up any existing listener
+    if (directoryUnlisten) {
+      directoryUnlisten();
+    }
+
+    directoryUnlisten = await listen<DirectoryEntriesEvent>("directory-entries", (event) => {
+      const payload = event.payload;
+
+      // Only handle events for our active listing
+      if (payload.listingId !== listingId || activeListingId !== listingId) {
+        return;
+      }
+
+      // Verify this is for the correct path
+      if (payload.path !== expectedPath) {
+        return;
+      }
+
+      // Append new entries to existing list
+      coreState.entries = [...coreState.entries, ...payload.entries];
+
+      // Stop loading when done
+      if (payload.done) {
+        coreState.loading = false;
+        activeListingId = null;
+      }
+    });
+  }
+
+  // ===================
   // Navigation Actions
   // ===================
 
   async function navigateInternal(path: string): Promise<boolean> {
+    // Cancel any active listing from previous navigation
+    await cleanupDirectoryListener();
+
     coreState.loading = true;
     coreState.error = null;
 
-    const result = await fetchDirectory(path);
+    // Use streaming directory listing for potentially large directories
+    const result = await startStreamingDirectory(path);
 
     if (result.ok) {
-      coreState.currentPath = result.data.path;
+      const { path: actualPath, listingId } = extractListingId(result.data.path);
+      coreState.currentPath = actualPath;
       coreState.entries = [...result.data.entries];
-      coreState.loading = false;
+
+      // If there's a listing ID, more entries will come via events
+      if (listingId !== null) {
+        activeListingId = listingId;
+        await setupDirectoryListener(listingId, actualPath);
+        // Keep loading true until all entries received
+      } else {
+        // Small directory - all entries received, done loading
+        coreState.loading = false;
+      }
       return true;
     } else {
       coreState.error = result.error;
@@ -224,6 +291,11 @@ function createExplorerState() {
       coreState.selectedPaths,
       addToSelection
     );
+  }
+
+  function selectAll() {
+    coreState.selectedPaths = new Set(displayEntries.map((e) => e.path));
+    coreState.selectionAnchorIndex = 0;
   }
 
   // ===================
@@ -419,6 +491,7 @@ function createExplorerState() {
     isSelected,
     getSelectedEntries,
     selectByIndices,
+    selectAll,
     // Dialogs
     openNewFolderDialog,
     closeNewFolderDialog,

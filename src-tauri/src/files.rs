@@ -1,10 +1,14 @@
 //! File operations module for Tauri commands.
-//! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6
+//! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6, tauri-explorer-3b5s
 
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use tauri::{AppHandle, Emitter};
 use thiserror::Error;
 
 /// File system entry representation.
@@ -360,6 +364,159 @@ pub fn delete_entry_permanent(path: String) -> Result<(), FileError> {
         fs::remove_file(&file_path)?;
     }
 
+    Ok(())
+}
+
+// ===================
+// Streaming Directory Listing
+// Issue: tauri-explorer-3b5s
+// ===================
+
+/// Event payload for streaming directory entries.
+#[derive(Debug, Clone, Serialize)]
+pub struct DirectoryEntriesEvent {
+    #[serde(rename = "listingId")]
+    pub listing_id: u64,
+    pub path: String,
+    pub entries: Vec<FileEntry>,
+    pub done: bool,
+    #[serde(rename = "totalCount")]
+    pub total_count: usize,
+}
+
+/// Global state for active directory listings
+static NEXT_LISTING_ID: AtomicU64 = AtomicU64::new(1);
+static ACTIVE_LISTINGS: OnceLock<Mutex<HashMap<u64, Arc<AtomicBool>>>> = OnceLock::new();
+
+fn get_active_listings() -> &'static Mutex<HashMap<u64, Arc<AtomicBool>>> {
+    ACTIVE_LISTINGS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Start streaming directory listing.
+/// Returns first batch immediately and emits remaining entries via events.
+/// For small directories (< batch_size), this behaves like regular list_directory.
+#[tauri::command]
+pub fn start_streaming_directory(
+    app: AppHandle,
+    path: String,
+) -> Result<DirectoryListing, String> {
+    let dir_path = PathBuf::from(&path);
+    let batch_size = 100; // First batch size and subsequent event batch size
+
+    if !dir_path.exists() {
+        return Err(format!("Path not found: {}", path));
+    }
+
+    if !dir_path.is_dir() {
+        return Err(format!("Not a directory: {}", path));
+    }
+
+    let read_dir = fs::read_dir(&dir_path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::PermissionDenied {
+            format!("Permission denied: {}", path)
+        } else {
+            e.to_string()
+        }
+    })?;
+
+    // Collect all entries first (needed for sorting)
+    let mut all_entries: Vec<FileEntry> = Vec::new();
+
+    for entry_result in read_dir {
+        let entry = match entry_result {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let metadata = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+
+        all_entries.push(metadata_to_entry(&entry.path(), &metadata));
+    }
+
+    // Sort: directories first, then by name case-insensitively
+    all_entries.sort_by(|a, b| {
+        let a_is_dir = matches!(a.kind, FileKind::Directory);
+        let b_is_dir = matches!(b.kind, FileKind::Directory);
+
+        match (a_is_dir, b_is_dir) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+        }
+    });
+
+    let total_count = all_entries.len();
+
+    // If small directory, return everything immediately
+    if total_count <= batch_size {
+        return Ok(DirectoryListing {
+            path,
+            entries: all_entries,
+        });
+    }
+
+    // Split into first batch and remaining
+    let first_batch: Vec<FileEntry> = all_entries.drain(..batch_size).collect();
+    let remaining = all_entries; // Now contains the rest
+
+    // Create listing ID and cancellation flag
+    let listing_id = NEXT_LISTING_ID.fetch_add(1, Ordering::SeqCst);
+    let cancelled = Arc::new(AtomicBool::new(false));
+    {
+        let mut listings = get_active_listings().lock().unwrap();
+        listings.insert(listing_id, cancelled.clone());
+    }
+
+    // Spawn background thread to emit remaining entries
+    let path_clone = path.clone();
+    std::thread::spawn(move || {
+        let mut offset = batch_size;
+
+        for chunk in remaining.chunks(batch_size) {
+            if cancelled.load(Ordering::Relaxed) {
+                break;
+            }
+
+            let _ = app.emit(
+                "directory-entries",
+                DirectoryEntriesEvent {
+                    listing_id,
+                    path: path_clone.clone(),
+                    entries: chunk.to_vec(),
+                    done: offset + chunk.len() >= total_count,
+                    total_count,
+                },
+            );
+
+            offset += chunk.len();
+
+            // Small delay to let UI render
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        // Cleanup
+        let mut listings = get_active_listings().lock().unwrap();
+        listings.remove(&listing_id);
+    });
+
+    // Return first batch immediately with listing_id hint in path
+    // Frontend can use this to correlate events
+    Ok(DirectoryListing {
+        path: format!("{}|listing:{}", path, listing_id),
+        entries: first_batch,
+    })
+}
+
+/// Cancel an active directory listing.
+#[tauri::command]
+pub fn cancel_directory_listing(listing_id: u64) -> Result<(), String> {
+    let listings = get_active_listings().lock().unwrap();
+    if let Some(cancelled) = listings.get(&listing_id) {
+        cancelled.store(true, Ordering::Relaxed);
+    }
     Ok(())
 }
 

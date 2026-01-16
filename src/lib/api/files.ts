@@ -194,3 +194,111 @@ export async function fuzzySearch(
     return { ok: false, error: String(err) };
   }
 }
+
+/**
+ * Event payload for streaming search results.
+ */
+export interface SearchResultsEvent {
+  searchId: number;
+  results: SearchResult[];
+  done: boolean;
+  totalScanned: number;
+}
+
+/**
+ * Start a streaming fuzzy search that emits results incrementally.
+ * Listen for 'search-results' events to receive results.
+ *
+ * @param query - Search query
+ * @param root - Root directory to search in
+ * @param limit - Maximum number of results
+ * @returns Result with search ID or error message
+ */
+export async function startStreamingSearch(
+  query: string,
+  root: string,
+  limit: number = 20
+): Promise<ApiResult<number>> {
+  try {
+    const searchId = await invoke<number>("start_streaming_search", {
+      query,
+      root,
+      limit,
+    });
+    return { ok: true, data: searchId };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
+ * Cancel an active streaming search.
+ *
+ * @param searchId - ID of the search to cancel
+ * @returns Result indicating success or error message
+ */
+export async function cancelSearch(searchId: number): Promise<ApiResult<void>> {
+  try {
+    await invoke("cancel_search", { searchId });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
+ * Event payload for streaming directory entries.
+ */
+export interface DirectoryEntriesEvent {
+  listingId: number;
+  path: string;
+  entries: FileEntry[];
+  done: boolean;
+  totalCount: number;
+}
+
+/**
+ * Start streaming directory listing.
+ * Returns first batch immediately, remaining entries emitted via 'directory-entries' events.
+ * For small directories (<100 files), returns everything in one response.
+ *
+ * @param path - Absolute path to directory
+ * @returns Result with initial DirectoryListing (path may include listing ID for event correlation)
+ */
+export async function startStreamingDirectory(
+  path: string
+): Promise<ApiResult<DirectoryListing>> {
+  try {
+    const data = await invoke<DirectoryListing>("start_streaming_directory", { path });
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
+ * Extract listing ID from streaming directory response path.
+ * Returns null if path doesn't contain a listing ID (small directory).
+ */
+export function extractListingId(pathWithId: string): { path: string; listingId: number | null } {
+  const match = pathWithId.match(/^(.+)\|listing:(\d+)$/);
+  if (match) {
+    return { path: match[1], listingId: parseInt(match[2], 10) };
+  }
+  return { path: pathWithId, listingId: null };
+}
+
+/**
+ * Cancel an active directory listing.
+ *
+ * @param listingId - ID of the listing to cancel
+ * @returns Result indicating success or error message
+ */
+export async function cancelDirectoryListing(listingId: number): Promise<ApiResult<void>> {
+  try {
+    await invoke("cancel_directory_listing", { listingId });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}

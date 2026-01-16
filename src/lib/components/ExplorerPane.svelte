@@ -73,6 +73,7 @@
     if (!isModifier) return;
 
     const modifierActions: Record<string, () => void | Promise<unknown>> = {
+      a: () => paneExplorer.selectAll(),
       z: () => paneExplorer.undo(),
       c: () => { if (selected) paneExplorer.copyToClipboard(selected); },
       x: () => { if (selected) paneExplorer.cutToClipboard(selected); },

@@ -26,11 +26,8 @@ export function calculateSelection(
     // Shift+click: select range from anchor to clicked item
     const start = Math.min(anchorIndex, clickedIndex);
     const end = Math.max(anchorIndex, clickedIndex);
-    const newSelection = new Set<string>();
-    for (let i = start; i <= end; i++) {
-      newSelection.add(displayEntries[i].path);
-    }
-    return { selectedPaths: newSelection, anchorIndex }; // Keep anchor unchanged
+    const rangePaths = displayEntries.slice(start, end + 1).map((e) => e.path);
+    return { selectedPaths: new Set(rangePaths), anchorIndex };
   }
 
   if (options.ctrlKey) {

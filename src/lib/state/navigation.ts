@@ -86,10 +86,7 @@ export function parseBreadcrumbs(
 export function getParentPath(
   breadcrumbs: { name: string; path: string }[]
 ): string | null {
-  if (breadcrumbs.length > 1) {
-    return breadcrumbs[breadcrumbs.length - 2].path;
-  } else if (breadcrumbs.length === 1) {
-    return "/";
-  }
+  if (breadcrumbs.length > 1) return breadcrumbs[breadcrumbs.length - 2].path;
+  if (breadcrumbs.length === 1) return "/";
   return null;
 }

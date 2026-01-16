@@ -132,7 +132,7 @@ function createExplorerState() {
   }
 
   function refresh() {
-    navigateTo(state.currentPath);
+    navigateInternal(state.currentPath);
   }
 
   // ===================

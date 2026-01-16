@@ -431,4 +431,11 @@ function createExplorerState() {
   };
 }
 
+/** Factory function for creating explorer instances (used for multi-pane) */
+export { createExplorerState };
+
+/** Type for the explorer instance */
+export type ExplorerInstance = ReturnType<typeof createExplorerState>;
+
+/** Default singleton explorer for single-pane mode */
 export const explorer = createExplorerState();

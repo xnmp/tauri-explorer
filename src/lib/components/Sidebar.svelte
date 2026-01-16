@@ -4,9 +4,21 @@
 -->
 <script lang="ts">
   import { onMount } from "svelte";
-  import { explorer } from "$lib/state/explorer.svelte";
+  import { explorer as defaultExplorer } from "$lib/state/explorer.svelte";
+  import { getPaneNavigationContext } from "$lib/state/pane-context";
+  import { paneManager } from "$lib/state/panes.svelte";
   import { getHomeDirectory } from "$lib/api/files";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
+
+  // Use pane navigation context if available, fallback to default explorer
+  const paneNav = getPaneNavigationContext();
+  const navigateTo = (path: string) => {
+    if (paneNav) {
+      paneNav.navigateTo(path);
+    } else {
+      defaultExplorer.navigateTo(path);
+    }
+  };
 
   let homeDir = $state("/home");
   let isDragOver = $state(false);
@@ -163,13 +175,32 @@
   <div class="sidebar">
     <!-- Home / Gallery / Cloud sections -->
   <div class="nav-section top-section">
-    <button class="nav-item" onclick={() => explorer.navigateTo(homeDir)}>
+    <button class="nav-item" onclick={() => navigateTo(homeDir)}>
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
         <path d="M8 1.5L14.5 7V14C14.5 14.2761 14.2761 14.5 14 14.5H10V10C10 9.72386 9.77614 9.5 9.5 9.5H6.5C6.22386 9.5 6 9.72386 6 10V14.5H2C1.72386 14.5 1.5 14.2761 1.5 14V7L8 1.5Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
       </svg>
       <span>Home</span>
     </button>
 
+    <button
+      class="nav-item dual-pane-toggle"
+      class:active={paneManager.dualPaneEnabled}
+      onclick={() => paneManager.toggleDualPane()}
+      title="Toggle dual pane (Ctrl+\)"
+    >
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
+        {#if paneManager.dualPaneEnabled}
+          <!-- Dual pane active icon -->
+          <rect x="1.5" y="2.5" width="5.5" height="11" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+          <rect x="9" y="2.5" width="5.5" height="11" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+        {:else}
+          <!-- Single pane icon -->
+          <rect x="2" y="2.5" width="12" height="11" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+          <path d="M8 2.5V13.5" stroke="currentColor" stroke-width="1.25" stroke-dasharray="2 2"/>
+        {/if}
+      </svg>
+      <span>{paneManager.dualPaneEnabled ? "Single Pane" : "Dual Pane"}</span>
+    </button>
   </div>
 
   <div class="divider"></div>
@@ -202,7 +233,7 @@
       <div class="section-content">
         <!-- Default system folders -->
         {#each quickAccessFolders as folder}
-          <button class="nav-item folder-item" onclick={() => explorer.navigateTo(folder.path)}>
+          <button class="nav-item folder-item" onclick={() => navigateTo(folder.path)}>
             {#if folder.icon === "download"}
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: {folder.color}">
                 <path d="M8 2V10M8 10L5 7M8 10L11 7M3 12H13" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
@@ -243,8 +274,8 @@
             class="nav-item folder-item user-bookmark"
             class:dragging={draggedBookmarkIndex === index}
             class:drop-target={dropTargetIndex === index && draggedBookmarkIndex !== index}
-            onclick={() => explorer.navigateTo(bookmark.path)}
-            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); explorer.navigateTo(bookmark.path); }}}
+            onclick={() => navigateTo(bookmark.path)}
+            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateTo(bookmark.path); }}}
             draggable="true"
             ondragstart={(e) => handleBookmarkDragStart(e, index)}
             ondragover={(e) => handleBookmarkDragOver(e, index)}
@@ -297,7 +328,7 @@
     {#if thisPcExpanded}
       <div class="section-content">
         {#each drives as drive}
-          <button class="nav-item drive-item" onclick={() => explorer.navigateTo(drive.path)}>
+          <button class="nav-item drive-item" onclick={() => navigateTo(drive.path)}>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
               <rect x="2" y="4" width="12" height="8" rx="1" stroke="currentColor" stroke-width="1.25"/>
               <circle cx="4.5" cy="8" r="0.75" fill="currentColor"/>
@@ -460,8 +491,19 @@
 
   /* Top section icons */
   .top-section .nav-item:nth-child(1) .nav-icon { color: #0078d4; } /* Home - Blue */
-  .top-section .nav-item:nth-child(2) .nav-icon { color: #008272; } /* Gallery - Teal */
-  .top-section .nav-item:nth-child(3) .nav-icon { color: #0078d4; } /* OneDrive - Blue */
+
+  /* Dual pane toggle */
+  .dual-pane-toggle .nav-icon {
+    color: var(--text-secondary);
+  }
+
+  .dual-pane-toggle.active {
+    background: var(--subtle-fill-secondary);
+  }
+
+  .dual-pane-toggle.active .nav-icon {
+    color: var(--accent);
+  }
 
   /* Drive icons */
   .drive-item .nav-icon { color: #6d6d6d; }

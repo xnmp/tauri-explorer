@@ -3,60 +3,47 @@
   Issue: tauri-explorer-iw0, tauri-explorer-jql, tauri-explorer-bae, tauri-explorer-h3n
 -->
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { explorer } from "$lib/state/explorer.svelte";
+  import { onMount, setContext } from "svelte";
   import { themeStore } from "$lib/state/theme.svelte";
-  import { getHomeDirectory } from "$lib/api/files";
+  import { paneManager } from "$lib/state/panes.svelte";
+  import { createExplorerState, type ExplorerInstance } from "$lib/state/explorer.svelte";
+  import { setPaneNavigationContext } from "$lib/state/pane-context";
   import "$lib/themes/index.css";
   import TitleBar from "$lib/components/TitleBar.svelte";
-  import NavigationBar from "$lib/components/NavigationBar.svelte";
+  import SharedToolbar from "$lib/components/SharedToolbar.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
-  import FileList from "$lib/components/FileList.svelte";
-  import ContextMenu from "$lib/components/ContextMenu.svelte";
-  import NewFolderDialog from "$lib/components/NewFolderDialog.svelte";
-  import DeleteDialog from "$lib/components/DeleteDialog.svelte";
+  import PaneContainer from "$lib/components/PaneContainer.svelte";
 
-  async function handleKeydown(event: KeyboardEvent): Promise<void> {
-    const isModifier = event.ctrlKey || event.metaKey;
-    const selected = explorer.getSelectedEntries()[0];
+  // Create explorer instances at the page level
+  const leftExplorer = createExplorerState();
+  const rightExplorer = createExplorerState();
 
-    // Alt + Arrow: Navigation
-    if (event.altKey) {
-      if (event.key === "ArrowLeft") {
-        event.preventDefault();
-        explorer.goBack();
-      } else if (event.key === "ArrowRight") {
-        event.preventDefault();
-        explorer.goForward();
-      } else if (event.key === "ArrowUp") {
-        event.preventDefault();
-        explorer.goUp();
-      }
-      return;
-    }
+  // Provide navigation context for all child components
+  function getActiveExplorer(): ExplorerInstance {
+    return paneManager.activePaneId === "left" ? leftExplorer : rightExplorer;
+  }
 
-    // F5: Refresh
-    if (event.key === "F5") {
-      event.preventDefault();
-      explorer.refresh();
-      return;
-    }
+  function navigateTo(path: string) {
+    getActiveExplorer().navigateTo(path);
+  }
 
-    // Modifier shortcuts (Ctrl/Cmd + key)
-    if (!isModifier) return;
+  function refreshAllPanes() {
+    leftExplorer.refresh();
+    rightExplorer.refresh();
+  }
 
-    if (event.key === "z") {
+  setPaneNavigationContext({
+    navigateTo,
+    getActiveExplorer,
+    refreshAllPanes,
+  });
+
+  function handleKeydown(event: KeyboardEvent): void {
+    // Ctrl+\ or Ctrl+|: Toggle dual pane
+    const isToggleDualPane = (event.key === "\\" || event.key === "|") && (event.ctrlKey || event.metaKey);
+    if (isToggleDualPane) {
       event.preventDefault();
-      explorer.undo();
-    } else if (event.key === "c" && selected) {
-      event.preventDefault();
-      explorer.copyToClipboard(selected);
-    } else if (event.key === "x" && selected) {
-      event.preventDefault();
-      explorer.cutToClipboard(selected);
-    } else if (event.key === "v" && explorer.state.clipboard) {
-      event.preventDefault();
-      await explorer.paste();
+      paneManager.toggleDualPane();
     }
   }
 
@@ -67,16 +54,6 @@
     // Global keyboard shortcuts
     window.addEventListener("keydown", handleKeydown);
 
-    // Get the actual home directory from the backend
-    (async () => {
-      const result = await getHomeDirectory();
-      if (result.ok) {
-        explorer.navigateTo(result.data);
-      } else {
-        explorer.navigateTo("/home");
-      }
-    })();
-
     return () => {
       window.removeEventListener("keydown", handleKeydown);
     };
@@ -85,16 +62,12 @@
 
 <main class="explorer">
   <TitleBar />
-  <NavigationBar />
+  <SharedToolbar />
   <div class="main-content">
     <Sidebar />
-    <FileList />
+    <PaneContainer {leftExplorer} {rightExplorer} />
   </div>
 </main>
-
-<ContextMenu />
-<NewFolderDialog />
-<DeleteDialog />
 
 <style>
   /* Windows 11 Fluent Design System */

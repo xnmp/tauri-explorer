@@ -60,3 +60,13 @@ export interface SelectOptions {
   ctrlKey?: boolean;
   shiftKey?: boolean;
 }
+
+/** Pane identifiers for dual pane layout */
+export type PaneId = "left" | "right";
+
+/** Pane layout configuration */
+export interface PaneLayoutState {
+  activePaneId: PaneId;
+  splitRatio: number; // 0-1, position of divider
+  dualPaneEnabled: boolean;
+}

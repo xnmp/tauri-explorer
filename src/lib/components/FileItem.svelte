@@ -6,7 +6,8 @@
   import type { FileEntry } from "$lib/domain/file";
   import { formatSize } from "$lib/domain/file";
   import { getFileType, getFileIconColor, getFileIconCategory, formatDate, type IconCategory } from "$lib/domain/file-types";
-  import { explorer } from "$lib/state/explorer.svelte";
+  import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
+  import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { moveEntry } from "$lib/api/files";
 
   interface Props {
@@ -14,9 +15,13 @@
     onclick: (event: MouseEvent) => void;
     ondblclick: () => void;
     selected?: boolean;
+    explorer?: ExplorerInstance;
   }
 
-  let { entry, onclick, ondblclick, selected = false }: Props = $props();
+  let { entry, onclick, ondblclick, selected = false, explorer = defaultExplorer }: Props = $props();
+
+  // Get pane context for cross-pane operations
+  const paneNav = getPaneNavigationContext();
 
   // Inline rename state
   let renameInputRef: HTMLInputElement | null = null;
@@ -190,8 +195,12 @@
 
     const result = await moveEntry(sourcePath, entry.path);
     if (result.ok) {
-      // Refresh the file list to reflect the move
-      explorer.refresh();
+      // Refresh all panes to reflect the move (handles cross-pane moves)
+      if (paneNav) {
+        paneNav.refreshAllPanes();
+      } else {
+        explorer.refresh();
+      }
     } else {
       console.error("Failed to move:", result.error);
     }
@@ -339,7 +348,7 @@
 <style>
   .file-item {
     display: grid;
-    grid-template-columns: 1fr var(--col-date, 180px) var(--col-type, 120px) var(--col-size, 90px);
+    grid-template-columns: var(--col-name, 300px) var(--col-date, 180px) var(--col-type, 120px) var(--col-size, 90px);
     gap: 0;
     align-items: center;
     padding: 4px 16px;

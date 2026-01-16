@@ -4,9 +4,15 @@
   Issue: tauri-explorer-83z
 -->
 <script lang="ts">
-  import { explorer } from "$lib/state/explorer.svelte";
+  import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import type { ViewMode } from "$lib/state/types";
+
+  interface Props {
+    explorer?: ExplorerInstance;
+  }
+
+  let { explorer = defaultExplorer }: Props = $props();
 
   function withSelectedEntry(action: (entry: FileEntry) => void): void {
     const entries = explorer.getSelectedEntries();

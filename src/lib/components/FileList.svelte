@@ -3,12 +3,18 @@
   Issue: tauri-explorer-iw0, tauri-explorer-x25, tauri-explorer-as45
 -->
 <script lang="ts">
-  import { explorer } from "$lib/state/explorer.svelte";
+  import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
   import { openFile } from "$lib/api/files";
   import FileItem from "./FileItem.svelte";
   import VirtualList from "./VirtualList.svelte";
 
   import type { FileEntry } from "$lib/domain/file";
+
+  interface Props {
+    explorer?: ExplorerInstance;
+  }
+
+  let { explorer = defaultExplorer }: Props = $props();
 
   let pasteError = $state<string | null>(null);
   let pasteSuccess = $state(false);
@@ -25,14 +31,15 @@
   const HEADER_HEIGHT = 32; // Column headers height
 
   // Column resize state
-  const MIN_COL_WIDTH = 60;
-  let columnWidths = $state({ date: 180, type: 120, size: 90 });
+  const MIN_COL_WIDTH = 80;
+  const MIN_NAME_WIDTH = 150;
+  let columnWidths = $state({ name: 300, date: 180, type: 140, size: 100 });
   let isResizing = $state(false);
-  let resizeColumn = $state<"date" | "type" | "size" | null>(null);
+  let resizeColumn = $state<"name" | "date" | "type" | "size" | null>(null);
   let resizeStartX = $state(0);
   let resizeStartWidth = $state(0);
 
-  function startColumnResize(column: "date" | "type" | "size", event: MouseEvent): void {
+  function startColumnResize(column: "name" | "date" | "type" | "size", event: MouseEvent): void {
     event.preventDefault();
     event.stopPropagation();
     isResizing = true;
@@ -44,7 +51,8 @@
   function handleColumnResize(event: MouseEvent): void {
     if (!isResizing || !resizeColumn) return;
     const delta = event.clientX - resizeStartX;
-    const newWidth = Math.max(MIN_COL_WIDTH, resizeStartWidth + delta);
+    const minWidth = resizeColumn === "name" ? MIN_NAME_WIDTH : MIN_COL_WIDTH;
+    const newWidth = Math.max(minWidth, resizeStartWidth + delta);
     columnWidths = { ...columnWidths, [resizeColumn]: newWidth };
   }
 
@@ -54,7 +62,7 @@
   }
 
   const gridTemplateColumns = $derived(
-    `1fr ${columnWidths.date}px ${columnWidths.type}px ${columnWidths.size}px`
+    `${columnWidths.name}px ${columnWidths.date}px ${columnWidths.type}px ${columnWidths.size}px`
   );
 
   const BACKGROUND_CLASSES = ["file-rows", "content", "details-view", "virtual-viewport", "virtual-spacer-top", "virtual-spacer-bottom"];
@@ -285,7 +293,7 @@
       </div>
     {:else if explorer.state.viewMode === "details"}
       <!-- Details View with Column Headers -->
-      <div class="details-view" class:resizing={isResizing} style="--col-date: {columnWidths.date}px; --col-type: {columnWidths.type}px; --col-size: {columnWidths.size}px;">
+      <div class="details-view" class:resizing={isResizing} style="--col-name: {columnWidths.name}px; --col-date: {columnWidths.date}px; --col-type: {columnWidths.type}px; --col-size: {columnWidths.size}px;">
         <div class="column-headers" style="grid-template-columns: {gridTemplateColumns};">
           <div class="column-header-wrapper">
             <button
@@ -305,7 +313,7 @@
               {/if}
             </button>
             <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="column-resize-handle" onmousedown={(e) => startColumnResize("date", e)}></div>
+            <div class="column-resize-handle" onmousedown={(e) => startColumnResize("name", e)}></div>
           </div>
           <div class="column-header-wrapper">
             <button
@@ -325,31 +333,35 @@
               {/if}
             </button>
             <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="column-resize-handle" onmousedown={(e) => startColumnResize("type", e)}></div>
+            <div class="column-resize-handle" onmousedown={(e) => startColumnResize("date", e)}></div>
           </div>
           <div class="column-header-wrapper">
             <div class="column-header type-column">
               <span>Type</span>
             </div>
             <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="column-resize-handle" onmousedown={(e) => startColumnResize("type", e)}></div>
+          </div>
+          <div class="column-header-wrapper">
+            <button
+              class="column-header size-column"
+              onclick={() => explorer.setSorting("size")}
+              class:active={explorer.state.sortBy === "size"}
+            >
+              <span>Size</span>
+              {#if explorer.state.sortBy === "size"}
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="sort-indicator">
+                  {#if explorer.state.sortAscending}
+                    <path d="M5 2V8M5 2L2 5M5 2L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+                  {:else}
+                    <path d="M5 8V2M5 8L2 5M5 8L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+                  {/if}
+                </svg>
+              {/if}
+            </button>
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="column-resize-handle" onmousedown={(e) => startColumnResize("size", e)}></div>
           </div>
-          <button
-            class="column-header size-column"
-            onclick={() => explorer.setSorting("size")}
-            class:active={explorer.state.sortBy === "size"}
-          >
-            <span>Size</span>
-            {#if explorer.state.sortBy === "size"}
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="sort-indicator">
-                {#if explorer.state.sortAscending}
-                  <path d="M5 2V8M5 2L2 5M5 2L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-                {:else}
-                  <path d="M5 8V2M5 8L2 5M5 8L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-                {/if}
-              </svg>
-            {/if}
-          </button>
         </div>
 
         <VirtualList
@@ -360,6 +372,7 @@
           {#snippet children(entry, index)}
             <FileItem
               {entry}
+              {explorer}
               onclick={(event) => handleClick(entry, event)}
               ondblclick={() => handleDoubleClick(entry)}
               selected={explorer.isSelected(entry)}

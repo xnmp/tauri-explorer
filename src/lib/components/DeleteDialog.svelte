@@ -3,7 +3,13 @@
   Issue: tauri-explorer-h3n, tauri-explorer-w0eo
 -->
 <script lang="ts">
-  import { explorer } from "$lib/state/explorer.svelte";
+  import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
+
+  interface Props {
+    explorer?: ExplorerInstance;
+  }
+
+  let { explorer = defaultExplorer }: Props = $props();
 
   let error = $state<string | null>(null);
   let deleting = $state(false);

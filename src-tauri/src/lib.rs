@@ -1,6 +1,8 @@
 /// Explorer app entry point.
 /// Issue: tauri-explorer-rzs, tauri-explorer-w0eo
 use std::path::PathBuf;
+
+#[cfg(target_os = "windows")]
 use tauri::Manager;
 
 /// Move a file or directory to the system trash/recycle bin.
@@ -37,6 +39,9 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![move_to_trash, move_multiple_to_trash])
         .setup(|app| {
+            // Suppress unused warning on non-Windows platforms
+            let _ = &app;
+
             #[cfg(debug_assertions)]
             {
                 println!("[Explorer] Dev mode: expecting API at http://127.0.0.1:8008");

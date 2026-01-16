@@ -1,9 +1,10 @@
 <!--
   NewFolderDialog component - Windows 11 Fluent Design
-  Issue: tauri-explorer-jql
+  Issue: tauri-explorer-jql, tauri-explorer-1k9k
 -->
 <script lang="ts">
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
+  import { dialogStore } from "$lib/state/dialogs.svelte";
 
   interface Props {
     explorer?: ExplorerInstance;
@@ -40,7 +41,7 @@
   function handleCancel() {
     folderName = "";
     error = null;
-    explorer.closeNewFolderDialog();
+    dialogStore.closeNewFolder();
   }
 
   function handleKeydown(event: KeyboardEvent) {
@@ -56,7 +57,7 @@
   }
 </script>
 
-{#if explorer.state.newFolderDialogOpen}
+{#if dialogStore.isNewFolderOpen}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
     class="overlay"

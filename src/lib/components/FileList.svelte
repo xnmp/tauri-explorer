@@ -1,6 +1,6 @@
 <!--
   FileList component - Windows 11 Fluent Design
-  Issue: tauri-explorer-iw0, tauri-explorer-x25, tauri-explorer-as45
+  Issue: tauri-explorer-iw0, tauri-explorer-x25, tauri-explorer-as45, tauri-explorer-1k9k
 -->
 <script lang="ts">
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
@@ -9,6 +9,8 @@
   import { openFile, moveEntry } from "$lib/api/files";
   import FileItem from "./FileItem.svelte";
   import VirtualList from "./VirtualList.svelte";
+  import { useColumnResize } from "$lib/composables/use-column-resize.svelte";
+  import { useMarqueeSelection } from "$lib/composables/use-marquee-selection.svelte";
 
   import type { FileEntry } from "$lib/domain/file";
 
@@ -27,57 +29,14 @@
   // Drop target state for dropping files into current directory
   let isDropTarget = $state(false);
 
-  // Marquee selection state
-  let isDragging = $state(false);
-  let dragJustEnded = $state(false); // Track if drag just ended to prevent click from clearing selection
-  let dragStart = $state<{ x: number; y: number } | null>(null);
-  let dragCurrent = $state<{ x: number; y: number } | null>(null);
+  // Content container ref
   let contentRef = $state<HTMLElement | null>(null);
-  let ctrlKeyHeld = $state(false);
 
-  const ITEM_HEIGHT = 32;
-  const HEADER_HEIGHT = 32; // Column headers height
+  // Column resize composable
+  const columnResize = useColumnResize();
 
-  // Column resize state
-  const MIN_COL_WIDTH = 80;
-  const MIN_NAME_WIDTH = 150;
-  let columnWidths = $state({ name: 300, date: 180, type: 140, size: 100 });
-  let isResizing = $state(false);
-  let resizeColumn = $state<"name" | "date" | "type" | "size" | null>(null);
-  let resizeStartX = $state(0);
-  let resizeStartWidth = $state(0);
-
-  function startColumnResize(column: "name" | "date" | "type" | "size", event: MouseEvent): void {
-    event.preventDefault();
-    event.stopPropagation();
-    isResizing = true;
-    resizeColumn = column;
-    resizeStartX = event.clientX;
-    resizeStartWidth = columnWidths[column];
-  }
-
-  function handleColumnResize(event: MouseEvent): void {
-    if (!isResizing || !resizeColumn) return;
-    const delta = event.clientX - resizeStartX;
-    const minWidth = resizeColumn === "name" ? MIN_NAME_WIDTH : MIN_COL_WIDTH;
-    const newWidth = Math.max(minWidth, resizeStartWidth + delta);
-    columnWidths = { ...columnWidths, [resizeColumn]: newWidth };
-  }
-
-  function endColumnResize(): void {
-    isResizing = false;
-    resizeColumn = null;
-  }
-
-  const gridTemplateColumns = $derived(
-    `${columnWidths.name}px ${columnWidths.date}px ${columnWidths.type}px ${columnWidths.size}px`
-  );
-
-  const BACKGROUND_CLASSES = ["file-rows", "content", "details-view", "virtual-viewport", "virtual-spacer-top", "virtual-spacer-bottom"];
-
-  function isBackgroundClick(target: HTMLElement): boolean {
-    return BACKGROUND_CLASSES.some((cls) => target.classList.contains(cls));
-  }
+  // Marquee selection composable
+  const marquee = useMarqueeSelection();
 
   function handleClick(entry: FileEntry, event: MouseEvent): void {
     explorer.selectEntry(entry, {
@@ -99,103 +58,40 @@
 
   function handleBackgroundClick(event: MouseEvent): void {
     // Only clear selection on click if not ending a drag
-    // dragJustEnded prevents the click event that fires after mouseup from clearing the selection
-    if (isBackgroundClick(event.target as HTMLElement) && !isDragging && !dragJustEnded) {
+    if (marquee.isBackgroundClick(event.target as HTMLElement) && !marquee.isDragging && !marquee.dragJustEnded) {
       explorer.clearSelection();
     }
   }
 
-  // Marquee selection derived values
-  const marqueeRect = $derived.by(() => {
-    if (!dragStart || !dragCurrent) return null;
-    return {
-      left: Math.min(dragStart.x, dragCurrent.x),
-      top: Math.min(dragStart.y, dragCurrent.y),
-      width: Math.abs(dragCurrent.x - dragStart.x),
-      height: Math.abs(dragCurrent.y - dragStart.y),
-    };
-  });
-
   function handleMarqueeStart(event: MouseEvent): void {
-    if (!isBackgroundClick(event.target as HTMLElement)) return;
-    if (event.button !== 0) return; // Only left click
-
     const rect = contentRef?.getBoundingClientRect();
     if (!rect) return;
-
-    // Blur any focused element (e.g., path bar input) before starting marquee
-    // This must happen before preventDefault() which would prevent the blur event
-    if (document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur();
-    }
-
-    isDragging = true;
-    ctrlKeyHeld = event.ctrlKey || event.metaKey;
-    dragStart = {
-      x: event.clientX - rect.left,
-      y: Math.max(HEADER_HEIGHT, event.clientY - rect.top),
-    };
-    dragCurrent = { ...dragStart };
-
-    // Prevent text selection during drag
-    event.preventDefault();
+    marquee.start(event, rect);
   }
 
   function handleMarqueeMove(event: MouseEvent): void {
-    if (!isDragging || !contentRef) return;
-
-    const rect = contentRef.getBoundingClientRect();
-    dragCurrent = {
-      x: Math.max(0, Math.min(event.clientX - rect.left, rect.width)),
-      y: Math.max(HEADER_HEIGHT, event.clientY - rect.top),
-    };
-
-    // Calculate which indices are in the selection rectangle
+    const rect = contentRef?.getBoundingClientRect();
+    if (!rect) return;
+    marquee.move(event, rect);
     updateMarqueeSelection();
   }
 
   function handleMarqueeEnd(): void {
-    if (isDragging) {
-      // Finalize selection before resetting state
+    if (marquee.isDragging) {
       updateMarqueeSelection();
-      isDragging = false;
-      dragStart = null;
-      dragCurrent = null;
-
-      // Set flag to prevent the subsequent click event from clearing the selection
-      // The click event fires after mouseup, so we need to briefly ignore it
-      dragJustEnded = true;
-      requestAnimationFrame(() => {
-        dragJustEnded = false;
-      });
     }
+    marquee.end();
   }
 
   function updateMarqueeSelection(): void {
-    if (!marqueeRect || !contentRef) return;
-
+    if (!marquee.marqueeRect || !contentRef) return;
     const scrollTop = contentRef.querySelector('.virtual-viewport')?.scrollTop ?? 0;
-
-    // Calculate file indices that intersect with the marquee
-    const marqueeTop = marqueeRect.top + scrollTop - HEADER_HEIGHT;
-    const marqueeBottom = marqueeTop + marqueeRect.height;
-
-    const startIndex = Math.max(0, Math.floor(marqueeTop / ITEM_HEIGHT));
-    const endIndex = Math.min(
-      explorer.displayEntries.length - 1,
-      Math.floor(marqueeBottom / ITEM_HEIGHT)
-    );
-
-    const indices: number[] = [];
-    for (let i = startIndex; i <= endIndex; i++) {
-      indices.push(i);
-    }
-
-    explorer.selectByIndices(indices, ctrlKeyHeld);
+    const indices = marquee.getSelectedIndices(scrollTop, explorer.displayEntries.length);
+    explorer.selectByIndices(indices, marquee.ctrlKeyHeld);
   }
 
   function handleBackgroundContextMenu(event: MouseEvent): void {
-    if (isBackgroundClick(event.target as HTMLElement)) {
+    if (marquee.isBackgroundClick(event.target as HTMLElement)) {
       event.preventDefault();
       explorer.clearSelection();
       explorer.openContextMenu(event.clientX, event.clientY);
@@ -276,8 +172,8 @@
 
 <!-- Global mouse events for marquee and column resize -->
 <svelte:window
-  onmousemove={(e) => { handleMarqueeMove(e); handleColumnResize(e); }}
-  onmouseup={() => { handleMarqueeEnd(); endColumnResize(); }}
+  onmousemove={(e) => { handleMarqueeMove(e); columnResize.handleResize(e); }}
+  onmouseup={() => { handleMarqueeEnd(); columnResize.endResize(); }}
 />
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -363,8 +259,8 @@
       </div>
     {:else if explorer.state.viewMode === "details"}
       <!-- Details View with Column Headers -->
-      <div class="details-view" class:resizing={isResizing} style="--col-name: {columnWidths.name}px; --col-date: {columnWidths.date}px; --col-type: {columnWidths.type}px; --col-size: {columnWidths.size}px;">
-        <div class="column-headers" style="grid-template-columns: {gridTemplateColumns};">
+      <div class="details-view" class:resizing={columnResize.isResizing} style="--col-name: {columnResize.columnWidths.name}px; --col-date: {columnResize.columnWidths.date}px; --col-type: {columnResize.columnWidths.type}px; --col-size: {columnResize.columnWidths.size}px;">
+        <div class="column-headers" style="grid-template-columns: {columnResize.gridTemplateColumns};">
           <div class="column-header-wrapper">
             <button
               class="column-header name-column"
@@ -383,7 +279,7 @@
               {/if}
             </button>
             <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="column-resize-handle" onmousedown={(e) => startColumnResize("name", e)}></div>
+            <div class="column-resize-handle" onmousedown={(e) => columnResize.startResize("name", e)}></div>
           </div>
           <div class="column-header-wrapper">
             <button
@@ -403,14 +299,14 @@
               {/if}
             </button>
             <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="column-resize-handle" onmousedown={(e) => startColumnResize("date", e)}></div>
+            <div class="column-resize-handle" onmousedown={(e) => columnResize.startResize("date", e)}></div>
           </div>
           <div class="column-header-wrapper">
             <div class="column-header type-column">
               <span>Type</span>
             </div>
             <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="column-resize-handle" onmousedown={(e) => startColumnResize("type", e)}></div>
+            <div class="column-resize-handle" onmousedown={(e) => columnResize.startResize("type", e)}></div>
           </div>
           <div class="column-header-wrapper">
             <button
@@ -430,7 +326,7 @@
               {/if}
             </button>
             <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="column-resize-handle" onmousedown={(e) => startColumnResize("size", e)}></div>
+            <div class="column-resize-handle" onmousedown={(e) => columnResize.startResize("size", e)}></div>
           </div>
         </div>
 
@@ -507,10 +403,10 @@
     {/if}
 
     <!-- Marquee selection rectangle -->
-    {#if isDragging && marqueeRect}
+    {#if marquee.isDragging && marquee.marqueeRect}
       <div
         class="marquee-rect"
-        style="left: {marqueeRect.left}px; top: {marqueeRect.top}px; width: {marqueeRect.width}px; height: {marqueeRect.height}px;"
+        style="left: {marquee.marqueeRect.left}px; top: {marquee.marqueeRect.top}px; width: {marquee.marqueeRect.width}px; height: {marquee.marqueeRect.height}px;"
       ></div>
     {/if}
   </div>

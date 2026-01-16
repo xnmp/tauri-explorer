@@ -31,6 +31,7 @@
 
   const isActive = $derived(paneManager.state.activePaneId === paneId);
   const isInactive = $derived(paneManager.dualPaneEnabled && !isActive);
+  const showActiveBorder = $derived(paneManager.dualPaneEnabled && isActive);
 
   function handleFocus() {
     paneManager.setActivePane(paneId);
@@ -95,7 +96,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <section
   class="explorer-pane"
-  class:active={isActive}
+  class:active={showActiveBorder}
   class:inactive={isInactive}
   role="region"
   aria-label="{paneId} file browser pane"
@@ -120,7 +121,7 @@
     overflow: hidden;
     background: var(--background-card);
     border-radius: var(--radius-md);
-    border: 2px solid transparent;
+    border: 1px solid transparent;
     transition:
       border-color var(--transition-fast),
       box-shadow var(--transition-fast),
@@ -131,18 +132,20 @@
     outline: none;
   }
 
+  /* Active border only shows in dual pane mode */
   .explorer-pane.active {
     border-color: var(--accent);
-    box-shadow: 0 0 8px -2px var(--accent);
+    box-shadow: 0 0 6px -2px var(--accent);
   }
 
+  /* Inactive pane in dual pane mode */
   .explorer-pane.inactive {
-    opacity: 0.7;
+    opacity: 0.75;
     border-color: var(--divider);
   }
 
   .explorer-pane.inactive:hover {
-    opacity: 0.85;
+    opacity: 0.9;
     border-color: var(--text-tertiary);
   }
 </style>

@@ -283,7 +283,7 @@
         </svg>
         <span>This folder is empty</span>
       </div>
-    {:else}
+    {:else if explorer.state.viewMode === "details"}
       <!-- Details View with Column Headers -->
       <div class="details-view" class:resizing={isResizing} style="--col-date: {columnWidths.date}px; --col-type: {columnWidths.type}px; --col-size: {columnWidths.size}px;">
         <div class="column-headers" style="grid-template-columns: {gridTemplateColumns};">
@@ -366,6 +366,60 @@
             />
           {/snippet}
         </VirtualList>
+      </div>
+    {:else if explorer.state.viewMode === "list"}
+      <!-- Compact List View -->
+      <div class="list-view file-rows">
+        {#each explorer.displayEntries as entry (entry.path)}
+          <button
+            class="list-item"
+            class:directory={entry.kind === "directory"}
+            class:selected={explorer.isSelected(entry)}
+            onclick={(e) => handleClick(entry, e)}
+            ondblclick={() => handleDoubleClick(entry)}
+          >
+            <span class="list-icon">
+              {#if entry.kind === "directory"}
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="#ffb900"/>
+                </svg>
+              {:else}
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path d="M4 2C4 1.44772 4.44772 1 5 1H9L13 5V14C13 14.5523 12.5523 15 12 15H5C4.44772 15 4 14.5523 4 14V2Z" stroke="var(--text-tertiary)" stroke-width="1.25"/>
+                  <path d="M9 1V4C9 4.55228 9.44772 5 10 5H13" stroke="var(--text-tertiary)" stroke-width="1.25"/>
+                </svg>
+              {/if}
+            </span>
+            <span class="list-name">{entry.name}</span>
+          </button>
+        {/each}
+      </div>
+    {:else}
+      <!-- Tiles View (Grid) -->
+      <div class="tiles-view file-rows">
+        {#each explorer.displayEntries as entry (entry.path)}
+          <button
+            class="tile-item"
+            class:directory={entry.kind === "directory"}
+            class:selected={explorer.isSelected(entry)}
+            onclick={(e) => handleClick(entry, e)}
+            ondblclick={() => handleDoubleClick(entry)}
+          >
+            <div class="tile-icon">
+              {#if entry.kind === "directory"}
+                <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                  <path d="M6 15C6 13.3431 7.34315 12 9 12H17.7574C18.553 12 19.3161 12.3161 19.8787 12.8787L21 14H39C40.6569 14 42 15.3431 42 17V36C42 37.6569 40.6569 39 39 39H9C7.34315 39 6 37.6569 6 36V15Z" fill="#ffb900"/>
+                </svg>
+              {:else}
+                <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                  <path d="M12 6C12 4.34315 13.3431 3 15 3H27L39 15V42C39 43.6569 37.6569 45 36 45H15C13.3431 45 12 43.6569 12 42V6Z" fill="var(--background-card)" stroke="var(--text-tertiary)" stroke-width="1.5"/>
+                  <path d="M27 3V12C27 13.6569 28.3431 15 30 15H39" stroke="var(--text-tertiary)" stroke-width="1.5"/>
+                </svg>
+              {/if}
+            </div>
+            <span class="tile-name">{entry.name}</span>
+          </button>
+        {/each}
       </div>
     {/if}
 
@@ -649,5 +703,107 @@
 
   @keyframes spin {
     to { transform: rotate(360deg); }
+  }
+
+  /* List View */
+  .list-view {
+    display: flex;
+    flex-direction: column;
+    padding: 8px;
+    gap: 2px;
+    overflow-y: auto;
+    flex: 1;
+  }
+
+  .list-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--text-primary);
+    transition: all var(--transition-fast);
+  }
+
+  .list-item:hover {
+    background: var(--subtle-fill-secondary);
+  }
+
+  .list-item.selected {
+    background: var(--subtle-fill-secondary);
+    border-color: var(--accent);
+  }
+
+  .list-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+  }
+
+  .list-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Tiles View */
+  .tiles-view {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 8px;
+    padding: 16px;
+    overflow-y: auto;
+    flex: 1;
+  }
+
+  .tile-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 8px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    text-align: center;
+    font-family: inherit;
+    font-size: 12px;
+    color: var(--text-primary);
+    transition: all var(--transition-fast);
+  }
+
+  .tile-item:hover {
+    background: var(--subtle-fill-secondary);
+  }
+
+  .tile-item.selected {
+    background: var(--subtle-fill-secondary);
+    border-color: var(--accent);
+  }
+
+  .tile-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+  }
+
+  .tile-name {
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.3;
   }
 </style>

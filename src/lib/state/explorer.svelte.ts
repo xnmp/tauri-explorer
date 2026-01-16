@@ -17,7 +17,7 @@ import {
   moveEntry,
 } from "$lib/api/files";
 import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/domain/file";
-import type { ExplorerState, SelectOptions, UndoAction } from "./types";
+import type { ExplorerState, SelectOptions, UndoAction, ViewMode } from "./types";
 import * as selection from "./selection";
 import * as navigation from "./navigation";
 
@@ -38,6 +38,7 @@ function createExplorerState() {
     showHidden: false,
     sortBy: "name",
     sortAscending: true,
+    viewMode: "details",
 
     // Selection
     selectedPaths: new Set(),
@@ -150,6 +151,10 @@ function createExplorerState() {
       state.sortBy = by;
       state.sortAscending = true;
     }
+  }
+
+  function setViewMode(mode: ViewMode) {
+    state.viewMode = mode;
   }
 
   // ===================
@@ -395,6 +400,7 @@ function createExplorerState() {
     // View
     toggleHidden,
     setSorting,
+    setViewMode,
     // Selection
     selectEntry,
     clearSelection,

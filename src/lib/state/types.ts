@@ -5,6 +5,9 @@
 
 import type { FileEntry, SortField } from "$lib/domain/file";
 
+/** Available view modes for the file list */
+export type ViewMode = "details" | "list" | "tiles";
+
 /** Clipboard state for copy/cut operations */
 export interface ClipboardState {
   entry: FileEntry;
@@ -32,6 +35,7 @@ export interface ExplorerState {
   showHidden: boolean;
   sortBy: SortField;
   sortAscending: boolean;
+  viewMode: ViewMode;
 
   // Selection
   selectedPaths: Set<string>;

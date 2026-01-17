@@ -1,11 +1,11 @@
 <!--
   Custom Title Bar - Windows 11 style (compact)
-  Issue: tauri-explorer-adtw, tauri-explorer-ikiq
+  Issue: tauri-explorer-adtw, tauri-explorer-ikiq, tauri-explorer-ldfx
 -->
 <script lang="ts">
   import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
-  import { explorer } from "$lib/state/explorer.svelte";
+  import WindowTabBar from "./WindowTabBar.svelte";
 
   // Check if running in Tauri environment
   const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -18,14 +18,6 @@
     // Running in browser without Tauri runtime
   }
   let isMaximized = $state(false);
-
-  // Get current folder name for the tab
-  const folderName = $derived(() => {
-    const path = explorer.state.currentPath;
-    if (!path) return "Explorer";
-    const parts = path.split("/").filter(Boolean);
-    return parts[parts.length - 1] || "Explorer";
-  });
 
   onMount(() => {
     if (!appWindow) return;
@@ -56,9 +48,12 @@
 
   // Handle window dragging manually for better compatibility
   async function handleDragStart(event: MouseEvent) {
-    // Only drag on left click and not on buttons
+    // Only drag on left click
     if (event.button !== 0) return;
-    if ((event.target as HTMLElement).closest('button')) return;
+
+    const target = event.target as HTMLElement;
+    // Don't drag when clicking on interactive elements (buttons, tabs)
+    if (target.closest('button') || target.closest('.tab-area')) return;
 
     // Double-click to maximize/restore
     if (event.detail === 2) {
@@ -73,25 +68,8 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="titlebar" onmousedown={handleDragStart}>
-  <!-- Tab area -->
-  <div class="tab-area">
-    <div class="tab active">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="tab-icon">
-        <path d="M2 3.5C2 2.67 2.67 2 3.5 2H6.17L8 3.83H12.5C13.33 3.83 14 4.5 14 5.33V12.5C14 13.33 13.33 14 12.5 14H3.5C2.67 14 2 13.33 2 12.5V3.5Z" fill="#FFB900"/>
-      </svg>
-      <span class="tab-title">{folderName()}</span>
-      <button class="tab-close" onclick={(e) => e.stopPropagation()} aria-label="Close tab">
-        <svg width="10" height="10" viewBox="0 0 10 10">
-          <path d="M2 2L8 8M8 2L2 8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
-        </svg>
-      </button>
-    </div>
-    <button class="new-tab-btn" aria-label="New tab">
-      <svg width="12" height="12" viewBox="0 0 12 12">
-        <path d="M6 2V10M2 6H10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-      </svg>
-    </button>
-  </div>
+  <!-- Window-level tab bar -->
+  <WindowTabBar />
 
   <!-- Spacer for drag region -->
   <div class="spacer"></div>
@@ -146,81 +124,6 @@
     background: var(--background-card);
     user-select: none;
     flex-shrink: 0;
-  }
-
-  .tab-area {
-    display: flex;
-    align-items: flex-end;
-    height: 100%;
-    padding-left: 8px;
-    gap: 2px;
-  }
-
-  .tab {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    height: 24px;
-    padding: 0 6px 0 8px;
-    background: var(--background-card-secondary);
-    border-radius: 5px 5px 0 0;
-    font-size: 11px;
-    color: var(--text-primary);
-  }
-
-  .tab-icon {
-    flex-shrink: 0;
-  }
-
-  .tab-title {
-    max-width: 180px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .tab-close {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
-    background: transparent;
-    border: none;
-    border-radius: 3px;
-    color: var(--text-tertiary);
-    cursor: pointer;
-    opacity: 0;
-    transition: all var(--transition-fast);
-  }
-
-  .tab:hover .tab-close {
-    opacity: 1;
-  }
-
-  .tab-close:hover {
-    background: var(--subtle-fill-secondary);
-    color: var(--text-primary);
-  }
-
-  .new-tab-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    margin-bottom: 4px;
-    background: transparent;
-    border: none;
-    border-radius: 4px;
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-  }
-
-  .new-tab-btn:hover {
-    background: var(--subtle-fill-secondary);
-    color: var(--text-primary);
   }
 
   .spacer {

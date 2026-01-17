@@ -55,3 +55,4 @@ Continuing work on [focus area].
 ```
 
 Keep it focused and actionable. Include architecture details that would help a new session understand the codebase quickly.
+DO NOT commit this file to git history.

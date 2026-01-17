@@ -1,22 +1,19 @@
 <!--
   ExplorerPane component - A self-contained file explorer pane
   Each pane has its own explorer state and can be used in single or dual pane layouts.
-  Issue: tauri-explorer-auj (tabs integration)
+  Issue: tauri-explorer-auj, tauri-explorer-ldfx (window-level tabs)
 -->
 <script lang="ts">
-  import { setContext, onMount, getContext } from "svelte";
-  import { createExplorerState, type ExplorerInstance } from "$lib/state/explorer.svelte";
+  import { setContext } from "svelte";
+  import { createExplorerState } from "$lib/state/explorer.svelte";
   import { clipboardStore } from "$lib/state/clipboard.svelte";
-  import { paneManager } from "$lib/state/panes.svelte";
-  import { tabsManager } from "$lib/state/tabs.svelte";
-  import { getHomeDirectory } from "$lib/api/files";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import type { PaneId } from "$lib/state/types";
   import NavigationBar from "./NavigationBar.svelte";
   import FileList from "./FileList.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import NewFolderDialog from "./NewFolderDialog.svelte";
   import DeleteDialog from "./DeleteDialog.svelte";
-  import TabBar from "./TabBar.svelte";
 
   interface Props {
     paneId: PaneId;
@@ -24,9 +21,8 @@
 
   let { paneId }: Props = $props();
 
-  // Get active tab's explorer from tabs manager
-  const activeExplorer = $derived(tabsManager.getActiveExplorer(paneId));
-  const paneExplorer = $derived(activeExplorer ?? createExplorerState());
+  // Get explorer from window tabs manager
+  const paneExplorer = $derived(windowTabsManager.getExplorer(paneId) ?? createExplorerState());
 
   // Provide explorer to child components via context (reactive via $derived)
   $effect(() => {
@@ -34,12 +30,13 @@
   });
   setContext("pane-id", paneId);
 
-  const isActive = $derived(paneManager.state.activePaneId === paneId);
-  const isInactive = $derived(paneManager.dualPaneEnabled && !isActive);
-  const showActiveBorder = $derived(paneManager.dualPaneEnabled && isActive);
+  const isActive = $derived(windowTabsManager.activePaneId === paneId);
+  const dualPaneEnabled = $derived(windowTabsManager.dualPaneEnabled);
+  const isInactive = $derived(dualPaneEnabled && !isActive);
+  const showActiveBorder = $derived(dualPaneEnabled && isActive);
 
   function handleFocus() {
-    paneManager.setActivePane(paneId);
+    windowTabsManager.setActivePane(paneId);
   }
 
   async function handleKeydown(event: KeyboardEvent): Promise<void> {
@@ -70,7 +67,7 @@
 
     if (event.key === "F6" || (event.key === "Tab" && !event.shiftKey && isModifier)) {
       event.preventDefault();
-      paneManager.switchPane();
+      windowTabsManager.switchPane();
       return;
     }
 
@@ -95,14 +92,7 @@
     }
   }
 
-  onMount(async () => {
-    // Initialize tabs for this pane with home directory if not already initialized
-    if (tabsManager.getTabs(paneId).length === 0) {
-      const result = await getHomeDirectory();
-      const homePath = result.ok ? result.data : "/home";
-      tabsManager.initPane(paneId, homePath);
-    }
-  });
+  // Note: Tab initialization is handled at page level by windowTabsManager
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -117,7 +107,6 @@
   onclick={handleFocus}
   onkeydown={handleKeydown}
 >
-  <TabBar {paneId} />
   {#if paneExplorer}
     <NavigationBar explorer={paneExplorer} />
     <FileList explorer={paneExplorer} />

@@ -7,8 +7,7 @@
  */
 
 import { registerCommands, type Command } from "./commands.svelte";
-import { paneManager } from "./panes.svelte";
-import { tabsManager } from "./tabs.svelte";
+import { windowTabsManager } from "./window-tabs.svelte";
 import { settingsStore } from "./settings.svelte";
 import { themeStore } from "./theme.svelte";
 import { bookmarksStore } from "./bookmarks.svelte";
@@ -16,7 +15,7 @@ import type { ViewMode } from "./types";
 
 /** Get the active explorer instance for commands */
 function getActiveExplorer() {
-  return tabsManager.getActiveExplorer(paneManager.activePaneId);
+  return windowTabsManager.getActiveExplorer();
 }
 
 /** Navigation commands */
@@ -226,15 +225,15 @@ const viewCommands: Command[] = [
     label: "Toggle Dual Pane",
     category: "view",
     shortcut: "F6",
-    handler: () => paneManager.toggleDualPane(),
+    handler: () => windowTabsManager.toggleDualPane(),
   },
   {
     id: "view.switchPane",
     label: "Switch Pane",
     category: "view",
     shortcut: "Ctrl+Tab",
-    handler: () => paneManager.switchPane(),
-    when: () => paneManager.dualPaneEnabled,
+    handler: () => windowTabsManager.switchPane(),
+    when: () => windowTabsManager.dualPaneEnabled,
   },
   {
     id: "view.toggleTheme",
@@ -289,7 +288,7 @@ const tabCommands: Command[] = [
     category: "general",
     shortcut: "Ctrl+T",
     handler: () => {
-      tabsManager.createTab(paneManager.activePaneId);
+      windowTabsManager.createTab();
     },
   },
   {
@@ -297,24 +296,24 @@ const tabCommands: Command[] = [
     label: "Close Tab",
     category: "general",
     shortcut: "Ctrl+W",
-    handler: () => tabsManager.closeActiveTab(paneManager.activePaneId),
-    when: () => tabsManager.getTabs(paneManager.activePaneId).length > 1,
+    handler: () => windowTabsManager.closeActiveTab(),
+    when: () => windowTabsManager.tabs.length > 1,
   },
   {
     id: "tabs.nextTab",
     label: "Next Tab",
     category: "general",
     shortcut: "Ctrl+Tab",
-    handler: () => tabsManager.nextTab(paneManager.activePaneId),
-    when: () => tabsManager.getTabs(paneManager.activePaneId).length > 1,
+    handler: () => windowTabsManager.nextTab(),
+    when: () => windowTabsManager.tabs.length > 1,
   },
   {
     id: "tabs.prevTab",
     label: "Previous Tab",
     category: "general",
     shortcut: "Ctrl+Shift+Tab",
-    handler: () => tabsManager.prevTab(paneManager.activePaneId),
-    when: () => tabsManager.getTabs(paneManager.activePaneId).length > 1,
+    handler: () => windowTabsManager.prevTab(),
+    when: () => windowTabsManager.tabs.length > 1,
   },
 ];
 

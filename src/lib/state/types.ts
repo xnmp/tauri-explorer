@@ -70,3 +70,28 @@ export interface PaneLayoutState {
   splitRatio: number; // 0-1, position of divider
   dualPaneEnabled: boolean;
 }
+
+/**
+ * Window-level tab that contains the full dual-pane layout state.
+ * Each tab independently tracks both panes, active pane, and layout settings.
+ */
+export interface WindowTab {
+  id: string;
+  panes: {
+    left: WindowTabPane;
+    right: WindowTabPane;
+  };
+  activePaneId: PaneId;
+  dualPaneEnabled: boolean; // Per-tab: one tab can be single-pane, another dual-pane
+  splitRatio: number; // Per-tab: each tab remembers its divider position
+}
+
+/**
+ * Pane state within a window tab.
+ * References an explorer instance by ID for state management.
+ */
+export interface WindowTabPane {
+  explorerId: string;
+  path: string;
+  title: string;
+}

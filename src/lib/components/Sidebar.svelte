@@ -6,7 +6,7 @@
   import { onMount } from "svelte";
   import { explorer as defaultExplorer } from "$lib/state/explorer.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
-  import { paneManager } from "$lib/state/panes.svelte";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { getHomeDirectory } from "$lib/api/files";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 
@@ -184,12 +184,12 @@
 
     <button
       class="nav-item dual-pane-toggle"
-      class:active={paneManager.dualPaneEnabled}
-      onclick={() => paneManager.toggleDualPane()}
+      class:active={windowTabsManager.dualPaneEnabled}
+      onclick={() => windowTabsManager.toggleDualPane()}
       title="Toggle dual pane (Ctrl+\)"
     >
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
-        {#if paneManager.dualPaneEnabled}
+        {#if windowTabsManager.dualPaneEnabled}
           <!-- Dual pane active icon -->
           <rect x="1.5" y="2.5" width="5.5" height="11" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
           <rect x="9" y="2.5" width="5.5" height="11" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
@@ -199,7 +199,7 @@
           <path d="M8 2.5V13.5" stroke="currentColor" stroke-width="1.25" stroke-dasharray="2 2"/>
         {/if}
       </svg>
-      <span>{paneManager.dualPaneEnabled ? "Single Pane" : "Dual Pane"}</span>
+      <span>{windowTabsManager.dualPaneEnabled ? "Single Pane" : "Dual Pane"}</span>
     </button>
   </div>
 

@@ -1,57 +1,63 @@
 <!--
-  TabBar component - VSCode-style tabs for each pane
-  Issue: tauri-explorer-so0
+  WindowTabBar component - VSCode-style tabs at window level
+  Issue: tauri-explorer-ldfx
+
+  Each tab contains the full dual-pane layout state.
+  Tab title shows active pane's folder name.
 -->
 <script lang="ts">
-  import { tabsManager, type Tab } from "$lib/state/tabs.svelte";
-  import type { PaneId } from "$lib/state/types";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 
-  interface Props {
-    paneId: PaneId;
-  }
-
-  let { paneId }: Props = $props();
-
-  const tabs = $derived(tabsManager.getTabs(paneId));
-  const activeTabId = $derived(tabsManager.panes[paneId].activeTabId);
+  const tabs = $derived(windowTabsManager.tabs);
+  const activeTabId = $derived(windowTabsManager.activeTabId);
 
   function handleTabClick(tabId: string): void {
-    tabsManager.setActiveTab(paneId, tabId);
+    windowTabsManager.setActiveTab(tabId);
   }
 
   function handleTabClose(event: MouseEvent, tabId: string): void {
     event.stopPropagation();
-    tabsManager.closeTab(paneId, tabId);
+    windowTabsManager.closeTab(tabId);
   }
 
   function handleTabMiddleClick(event: MouseEvent, tabId: string): void {
     if (event.button === 1) {
       event.preventDefault();
-      tabsManager.closeTab(paneId, tabId);
+      windowTabsManager.closeTab(tabId);
     }
   }
 
   function handleNewTab(): void {
-    tabsManager.createTab(paneId);
+    windowTabsManager.createTab();
+  }
+
+  function handleTabKeydown(event: KeyboardEvent, tabId: string): void {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      windowTabsManager.setActiveTab(tabId);
+    }
   }
 </script>
 
-<div class="tab-bar" role="tablist">
+<div class="tab-area" role="tablist">
   {#each tabs as tab (tab.id)}
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    {@const title = windowTabsManager.getTabTitle(tab)}
+    {@const tooltip = windowTabsManager.getTabTooltip(tab)}
     <div
       class="tab"
       class:active={tab.id === activeTabId}
       role="tab"
+      tabindex="0"
       aria-selected={tab.id === activeTabId}
       onclick={() => handleTabClick(tab.id)}
+      onkeydown={(e) => handleTabKeydown(e, tab.id)}
       onauxclick={(e) => handleTabMiddleClick(e, tab.id)}
-      title={tab.path}
+      title={tooltip}
     >
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" class="tab-icon">
-        <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="#FFB900"/>
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="tab-icon">
+        <path d="M2 3.5C2 2.67 2.67 2 3.5 2H6.17L8 3.83H12.5C13.33 3.83 14 4.5 14 5.33V12.5C14 13.33 13.33 14 12.5 14H3.5C2.67 14 2 13.33 2 12.5V3.5Z" fill="#FFB900"/>
       </svg>
-      <span class="tab-title">{tab.title}</span>
+      <span class="tab-title">{title}</span>
       {#if tabs.length > 1}
         <button
           class="tab-close"
@@ -59,8 +65,8 @@
           aria-label="Close tab"
           title="Close"
         >
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-            <path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <svg width="10" height="10" viewBox="0 0 10 10">
+            <path d="M2 2L8 8M8 2L2 8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
           </svg>
         </button>
       {/if}
@@ -73,26 +79,25 @@
     aria-label="New tab"
     title="New Tab (Ctrl+T)"
   >
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-      <path d="M8 3V13M3 8H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+    <svg width="12" height="12" viewBox="0 0 12 12">
+      <path d="M6 2V10M2 6H10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
     </svg>
   </button>
 </div>
 
 <style>
-  .tab-bar {
+  .tab-area {
     display: flex;
-    align-items: center;
+    align-items: flex-end;
+    height: 100%;
+    padding-left: 8px;
     gap: 2px;
-    padding: 4px 8px;
-    background: var(--background-card-secondary, rgba(0, 0, 0, 0.02));
-    border-bottom: 1px solid var(--divider);
     overflow-x: auto;
     scrollbar-width: none;
     -ms-overflow-style: none;
   }
 
-  .tab-bar::-webkit-scrollbar {
+  .tab-area::-webkit-scrollbar {
     display: none;
   }
 
@@ -100,18 +105,16 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 10px;
+    height: 24px;
+    padding: 0 6px 0 8px;
     background: transparent;
-    border: none;
-    border-radius: var(--radius-sm);
-    font-family: inherit;
-    font-size: 12px;
+    border-radius: 5px 5px 0 0;
+    font-size: 11px;
     color: var(--text-secondary);
     cursor: pointer;
     transition: all var(--transition-fast);
     flex-shrink: 0;
     max-width: 200px;
-    position: relative;
   }
 
   .tab:hover {
@@ -120,19 +123,8 @@
   }
 
   .tab.active {
-    background: var(--subtle-fill-tertiary);
+    background: var(--background-card-secondary);
     color: var(--text-primary);
-  }
-
-  .tab.active::after {
-    content: "";
-    position: absolute;
-    bottom: 0;
-    left: 8px;
-    right: 8px;
-    height: 2px;
-    background: var(--accent);
-    border-radius: 1px 1px 0 0;
   }
 
   .tab-icon {
@@ -140,6 +132,7 @@
   }
 
   .tab-title {
+    max-width: 140px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -151,16 +144,14 @@
     justify-content: center;
     width: 16px;
     height: 16px;
-    padding: 0;
     background: transparent;
     border: none;
-    border-radius: 2px;
+    border-radius: 3px;
     color: var(--text-tertiary);
     cursor: pointer;
     opacity: 0;
     transition: all var(--transition-fast);
     flex-shrink: 0;
-    margin-left: 2px;
   }
 
   .tab:hover .tab-close,
@@ -179,15 +170,14 @@
     justify-content: center;
     width: 24px;
     height: 24px;
-    padding: 0;
+    margin-bottom: 4px;
     background: transparent;
     border: none;
-    border-radius: var(--radius-sm);
-    color: var(--text-tertiary);
+    border-radius: 4px;
+    color: var(--text-secondary);
     cursor: pointer;
     transition: all var(--transition-fast);
     flex-shrink: 0;
-    margin-left: 4px;
   }
 
   .new-tab-btn:hover {

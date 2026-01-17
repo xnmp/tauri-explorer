@@ -3,17 +3,16 @@
   Issue: tauri-explorer-iw0, tauri-explorer-jql, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-w3t, tauri-explorer-npjh, tauri-explorer-1ex, tauri-explorer-auj
 -->
 <script lang="ts">
-  import { onMount, setContext } from "svelte";
+  import { onMount } from "svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { paneManager } from "$lib/state/panes.svelte";
-  import { tabsManager } from "$lib/state/tabs.svelte";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { clipboardStore } from "$lib/state/clipboard.svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { setPaneNavigationContext } from "$lib/state/pane-context";
   import { registerAllCommands } from "$lib/state/command-definitions";
   import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
-  import { copyEntry } from "$lib/api/files";
+  import { copyEntry, getHomeDirectory } from "$lib/api/files";
   import "$lib/themes/index.css";
   import TitleBar from "$lib/components/TitleBar.svelte";
   import SharedToolbar from "$lib/components/SharedToolbar.svelte";
@@ -29,9 +28,9 @@
   let commandPaletteVisible = $state(false);
   let settingsVisible = $state(false);
 
-  // Get active explorer from tabs manager
+  // Get active explorer from window tabs manager
   function getActiveExplorer(): ExplorerInstance | undefined {
-    return tabsManager.getActiveExplorer(paneManager.activePaneId);
+    return windowTabsManager.getActiveExplorer();
   }
 
   function navigateTo(path: string) {
@@ -39,11 +38,9 @@
   }
 
   function refreshAllPanes() {
-    // Refresh all tabs in both panes
+    // Refresh both panes in active tab
     for (const paneId of ["left", "right"] as const) {
-      for (const tab of tabsManager.getTabs(paneId)) {
-        tab.explorer.refresh();
-      }
+      windowTabsManager.getExplorer(paneId)?.refresh();
     }
   }
 
@@ -145,28 +142,28 @@
     // Ctrl+T: New tab
     if (event.key === "t" && isModifier && !event.shiftKey) {
       event.preventDefault();
-      tabsManager.createTab(paneManager.activePaneId);
+      windowTabsManager.createTab();
       return;
     }
 
     // Ctrl+W: Close tab
     if (event.key === "w" && isModifier && !event.shiftKey) {
       event.preventDefault();
-      tabsManager.closeActiveTab(paneManager.activePaneId);
+      windowTabsManager.closeActiveTab();
       return;
     }
 
     // Ctrl+Tab: Next tab
     if (event.key === "Tab" && isModifier && !event.shiftKey) {
       event.preventDefault();
-      tabsManager.nextTab(paneManager.activePaneId);
+      windowTabsManager.nextTab();
       return;
     }
 
     // Ctrl+Shift+Tab: Previous tab
     if (event.key === "Tab" && isModifier && event.shiftKey) {
       event.preventDefault();
-      tabsManager.prevTab(paneManager.activePaneId);
+      windowTabsManager.prevTab();
       return;
     }
 
@@ -175,7 +172,7 @@
     const isBackslash = event.key === "\\" || event.key === "|" || event.code === "Backslash";
     if (isBackslash && isModifier) {
       event.preventDefault();
-      paneManager.toggleDualPane();
+      windowTabsManager.toggleDualPane();
       return;
     }
   }
@@ -183,6 +180,13 @@
   onMount(() => {
     // Initialize theme from saved preference
     themeStore.initTheme();
+
+    // Initialize window tabs with home directory (async)
+    (async () => {
+      const homeResult = await getHomeDirectory();
+      const homePath = homeResult.ok ? homeResult.data : "/home";
+      windowTabsManager.init(homePath);
+    })();
 
     // Register all commands for the command palette
     registerAllCommands();

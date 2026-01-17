@@ -1,11 +1,15 @@
 <!--
   PaneContainer component - Dual pane layout container
   Handles split view with resizable divider between panes.
-  Issue: tauri-explorer-auj (tabs integration)
+  Issue: tauri-explorer-auj, tauri-explorer-ldfx (window-level tabs)
 -->
 <script lang="ts">
-  import { paneManager } from "$lib/state/panes.svelte";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import ExplorerPane from "./ExplorerPane.svelte";
+
+  // Get layout state from active window tab
+  const dualPaneEnabled = $derived(windowTabsManager.dualPaneEnabled);
+  const splitRatio = $derived(windowTabsManager.splitRatio);
 
   // Resize state
   let isResizing = $state(false);
@@ -20,7 +24,7 @@
     if (!isResizing || !containerRef) return;
     const rect = containerRef.getBoundingClientRect();
     const ratio = (event.clientX - rect.left) / rect.width;
-    paneManager.setSplitRatio(ratio);
+    windowTabsManager.setSplitRatio(ratio);
   }
 
   function endResize() {
@@ -35,16 +39,16 @@
 
 <div
   class="pane-container"
-  class:dual-pane={paneManager.dualPaneEnabled}
+  class:dual-pane={dualPaneEnabled}
   class:resizing={isResizing}
   bind:this={containerRef}
-  style={paneManager.dualPaneEnabled ? `--split-ratio: ${paneManager.splitRatio}` : ""}
+  style={dualPaneEnabled ? `--split-ratio: ${splitRatio}` : ""}
 >
   <div class="pane left-pane">
     <ExplorerPane paneId="left" />
   </div>
 
-  {#if paneManager.dualPaneEnabled}
+  {#if dualPaneEnabled}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
       class="pane-divider"

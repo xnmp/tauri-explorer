@@ -6,7 +6,7 @@
 <script lang="ts">
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { explorer as defaultExplorer } from "$lib/state/explorer.svelte";
-  import { paneManager } from "$lib/state/panes.svelte";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import ThemeSwitcher from "./ThemeSwitcher.svelte";
 
   // Get active explorer from pane context, or fall back to default
@@ -32,15 +32,17 @@
     getExplorer().refresh();
   }
 
-  // Reactive getters for button states - re-evaluate when active pane changes
+  // Reactive getters for button states - re-evaluate when active pane/tab changes
   const canGoBack = $derived.by(() => {
     // Access activePaneId to trigger re-evaluation when pane changes
-    paneManager.activePaneId;
+    windowTabsManager.activePaneId;
+    windowTabsManager.activeTabId;
     return getExplorer().canGoBack;
   });
 
   const canGoForward = $derived.by(() => {
-    paneManager.activePaneId;
+    windowTabsManager.activePaneId;
+    windowTabsManager.activeTabId;
     return getExplorer().canGoForward;
   });
 

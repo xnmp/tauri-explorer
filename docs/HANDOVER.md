@@ -1,31 +1,27 @@
 # Session Handover
 
-Continuing work on **ripgrep integration with Ctrl+Shift+F for content search**.
+**Previous session summary:** Completed all P1 issues and ripgrep content search feature. All merged to main.
 
-**Previous session summary:** Completed window-level tabs feature (each tab contains full dual-pane layout state). Fixed tab switching in Tauri app and reactive tab title updates. Merged to main.
+**Completed this session:**
+- Ctrl+H shortcut for toggling hidden files (tauri-explorer-zgf)
+- Hidden files preference persistence to localStorage (tauri-explorer-klo)
+- Keyboard navigation: Arrow keys, Enter, Delete, F2 (tauri-explorer-ac7y)
+- Tab persistence across sessions (tauri-explorer-qcq5)
+- Ripgrep content search with Ctrl+Shift+F (tauri-explorer-evim, tauri-explorer-3a1q)
 
 **Key context:**
-- Branch: `main` (clean, ready for new feature branch)
+- Branch: `main` (all features merged)
 - All 68 tests pass
-- Related issues: `tauri-explorer-3a1q` (ripgrep), `tauri-explorer-evim` (Ctrl+Shift+F dialog), `tauri-explorer-en98` (results preview)
-- EPIC: `tauri-explorer-raf` (Search in Files)
+- Content search backend: `src-tauri/src/content_search.rs`
+- Content search UI: `src/lib/components/ContentSearchDialog.svelte`
 
-**Current state:**
-- Fuzzy file NAME search exists (`src-tauri/src/search.rs`) using nucleo + jwalk
-- NO content search yet - this is the feature to build
-- No search dialog UI exists
+**Next steps (P2 issues):**
+- Search results preview pane (tauri-explorer-en98)
+- Tab reordering via drag (tauri-explorer-4x9f)
+- Multi-file copy/cut support (tauri-explorer-jrfg)
+- Recent files tracking (tauri-explorer-omkn, tauri-explorer-kwe)
 
-**User requirement:** Stream results with fzf-style fuzzy filtering:
-```bash
-rg --column --line-number --no-heading --color=always --smart-case -- "${*:-}" | fzf --ansi
-```
-
-**Next steps:**
-1. Create branch `feature/ripgrep-search`
-2. Add ripgrep integration to Rust backend (streaming results)
-3. Create search dialog UI (Ctrl+Shift+F)
-4. Integrate fzf-style fuzzy filtering on results
-5. Show results with filename, line number, context preview
+Run `bd list --priority 2` to see all P2 issues.
 
 ---
 
@@ -62,10 +58,11 @@ Pattern: Singleton managers using Svelte 5 runes (`$state`, `$derived`). Export 
 
 ```
 src-tauri/src/
-├── lib.rs          # Tauri command registration
-├── files.rs        # Directory listing, file ops
-├── search.rs       # Fuzzy file NAME search (nucleo + jwalk)
-└── thumbnails.rs   # Image thumbnail generation
+├── lib.rs            # Tauri command registration
+├── files.rs          # Directory listing, file ops
+├── search.rs         # Fuzzy file NAME search (nucleo + jwalk)
+├── content_search.rs # Ripgrep content search (streaming)
+└── thumbnails.rs     # Image thumbnail generation
 ```
 
 **Streaming pattern:** See `start_streaming_search` in search.rs:

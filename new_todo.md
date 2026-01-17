@@ -1,2 +1,2 @@
 # New Todo Items
-<!-- Add new tasks here to be converted to beads issues --> 
+<!-- Add new tasks here to be converted to beads issues -->

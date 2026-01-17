@@ -1,101 +1,116 @@
 # Session Handover
 
-**Previous session summary:** Fixed the mock API detection bug (tauri-explorer-5jci). The Tauri app was showing mock data instead of real filesystem data.
+Continuing work on **ripgrep integration with Ctrl+Shift+F for content search**.
+
+**Previous session summary:** Completed window-level tabs feature (each tab contains full dual-pane layout state). Fixed tab switching in Tauri app and reactive tab title updates. Merged to main.
 
 **Key context:**
-- Branch: `feature/command-palette`
-- Beads issue tracker: use `bd` CLI for issue management
-- All unit tests pass (68 tests)
-- TypeScript check passes
+- Branch: `main` (clean, ready for new feature branch)
+- All 68 tests pass
+- Related issues: `tauri-explorer-3a1q` (ripgrep), `tauri-explorer-evim` (Ctrl+Shift+F dialog), `tauri-explorer-en98` (results preview)
+- EPIC: `tauri-explorer-raf` (Search in Files)
 
-**FIXED: Mock API Detection Bug**
+**Current state:**
+- Fuzzy file NAME search exists (`src-tauri/src/search.rs`) using nucleo + jwalk
+- NO content search yet - this is the feature to build
+- No search dialog UI exists
 
-Root cause: The `isTauri()` function in `src/lib/api/mock-invoke.ts` was checking for `window.__TAURI__` (Tauri v1), but the project uses Tauri v2 which uses `window.__TAURI_INTERNALS__` instead.
-
-The fix was a one-line change:
-```typescript
-// Before (Tauri v1):
-return typeof window !== "undefined" && "__TAURI__" in window;
-
-// After (Tauri v2):
-return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+**User requirement:** Stream results with fzf-style fuzzy filtering:
+```bash
+rg --column --line-number --no-heading --color=always --smart-case -- "${*:-}" | fzf --ansi
 ```
 
-The TitleBar.svelte component already had the correct check, which served as a reference.
-
 **Next steps:**
-- Verify the fix by running `bun tauri dev` and checking that real filesystem data loads
-- Address pre-existing E2E test failures (18 tests failing, unrelated to this fix)
+1. Create branch `feature/ripgrep-search`
+2. Add ripgrep integration to Rust backend (streaming results)
+3. Create search dialog UI (Ctrl+Shift+F)
+4. Integrate fzf-style fuzzy filtering on results
+5. Show results with filename, line number, context preview
 
 ---
 
 ## Architecture & Learnings
 
-### Relevant Files for This Fix
-```
-src/lib/api/
-├── files.ts          # API client - line 11 has the problematic invoke selection
-├── mock-invoke.ts    # isTauri() detection and mock data
-```
+### State Management
 
-### The Problem in Detail
-```typescript
-// files.ts - CURRENT (buggy)
-import { invoke as tauriInvoke } from "@tauri-apps/api/core";
-import { isTauri, mockInvoke } from "./mock-invoke";
-
-// This line executes at module load time
-const invoke = isTauri() ? tauriInvoke : mockInvoke;
-
-// mock-invoke.ts
-export function isTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI__" in window;
-}
-```
-
-**Issue:** Tauri's `__TAURI__` global may not be injected until after the JS bundle starts executing, causing `isTauri()` to return `false` even in the Tauri app.
-
-### Potential Fixes
-
-**Option 1: Lazy evaluation (recommended)**
-```typescript
-// Make invoke a function that checks each time
-async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  if (isTauri()) {
-    return tauriInvoke<T>(cmd, args);
-  }
-  return mockInvoke<T>(cmd, args);
-}
-```
-
-**Option 2: Use Vite environment variable**
-```typescript
-// vite.config.ts sets VITE_TAURI based on build target
-const invoke = import.meta.env.VITE_TAURI ? tauriInvoke : mockInvoke;
-```
-
-**Option 3: Check for Tauri IPC**
-```typescript
-export function isTauri(): boolean {
-  return typeof window !== "undefined" &&
-         window.__TAURI_INTERNALS__ !== undefined;
-}
-```
-
-### Testing Commands
-```bash
-bun run check          # TypeScript + Svelte check
-bun run test:run       # Unit tests (should pass)
-bun tauri dev          # Run actual Tauri app - verify real data loads
-npx playwright test    # E2E tests - verify mock data loads
-```
-
-### State Management (for context)
 ```
 src/lib/state/
-├── explorer.svelte.ts   # Per-pane state, calls API functions
-├── tabs.svelte.ts       # Tab management
-└── ...other stores
+├── window-tabs.svelte.ts   # Window-level tabs (each tab = full dual-pane state)
+├── explorer.svelte.ts      # Per-pane file browser state
+├── clipboard.svelte.ts     # Cut/copy/paste
+├── settings.svelte.ts      # User preferences
+├── theme.svelte.ts         # Theme management
+└── command-definitions.ts  # Keyboard shortcuts
 ```
 
-The explorer state calls functions from `files.ts`, which uses the `invoke` variable. All API calls flow through this single point, so fixing it here fixes the entire app.
+Pattern: Singleton managers using Svelte 5 runes (`$state`, `$derived`). Export a single instance.
+
+### Component Hierarchy
+
+```
++page.svelte
+├── TitleBar (with WindowTabBar)
+├── SharedToolbar
+└── main-content
+    ├── Sidebar
+    └── PaneContainer
+        ├── ExplorerPane (left)
+        └── ExplorerPane (right)
+```
+
+### Backend (Rust/Tauri)
+
+```
+src-tauri/src/
+├── lib.rs          # Tauri command registration
+├── files.rs        # Directory listing, file ops
+├── search.rs       # Fuzzy file NAME search (nucleo + jwalk)
+└── thumbnails.rs   # Image thumbnail generation
+```
+
+**Streaming pattern:** See `start_streaming_search` in search.rs:
+- Returns search ID immediately
+- Spawns background thread
+- Emits `search-results` events with batched results
+- Supports cancellation via `AtomicBool`
+
+### Key Patterns
+
+**Tauri v2 detection:**
+```typescript
+const isTauri = "__TAURI_INTERNALS__" in window;  // NOT __TAURI__ (v1)
+```
+
+**Mock invoke for browser testing:**
+```typescript
+// src/lib/api/files.ts - lazy detection with caching
+let cachedIsTauri: boolean | null = null;
+async function invoke<T>(cmd, args?) {
+  if (cachedIsTauri === null) cachedIsTauri = isTauri();
+  return cachedIsTauri ? tauriInvoke(cmd, args) : mockInvoke(cmd, args);
+}
+```
+
+**Keyboard shortcuts:** Add to `command-definitions.ts`, handler called from `+page.svelte`.
+
+### Testing Commands
+
+```bash
+bun run check        # TypeScript + Svelte
+bun run test:run     # Unit tests (68 tests)
+bun tauri dev        # Run Tauri app
+npx playwright test  # E2E tests (browser mock mode)
+```
+
+### Workflow (from CLAUDE.md)
+
+1. Create beads issue before modifying files
+2. Create feature branch
+3. Implement → commit → test-fixer → commit → code-simplifier → commit → ui-tester
+4. Merge to main when tests pass and UI works
+
+### Gotchas
+
+- TitleBar `handleDragStart` intercepts mousedown - exclude interactive elements via `.closest()`
+- Template `{@const}` isn't reactive - call functions directly in template for reactive updates
+- Avoid `$effect` where `$derived` or direct function calls work

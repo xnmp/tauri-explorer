@@ -244,6 +244,13 @@ const viewCommands: Command[] = [
       themeStore.setTheme(current === "dark" ? "light" : "dark");
     },
   },
+  {
+    id: "view.toggleHidden",
+    label: "Toggle Hidden Files",
+    category: "view",
+    shortcut: "Ctrl+H",
+    handler: () => getActiveExplorer()?.toggleHidden(),
+  },
 ];
 
 /** Bookmark commands */

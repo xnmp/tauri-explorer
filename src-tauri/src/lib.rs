@@ -1,6 +1,7 @@
 //! Tauri Explorer app entry point.
 //! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6, tauri-explorer-im3m
 
+mod content_search;
 mod files;
 mod search;
 mod thumbnails;
@@ -63,6 +64,9 @@ pub fn run() {
             search::fuzzy_search,
             search::start_streaming_search,
             search::cancel_search,
+            // Content search (ripgrep)
+            content_search::start_content_search,
+            content_search::cancel_content_search,
             // Thumbnails
             thumbnails::get_thumbnail,
             thumbnails::get_thumbnail_data,

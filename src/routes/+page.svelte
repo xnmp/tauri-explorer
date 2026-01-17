@@ -22,11 +22,13 @@
   import CommandPalette from "$lib/components/CommandPalette.svelte";
   import SettingsDialog from "$lib/components/SettingsDialog.svelte";
   import ProgressDialog from "$lib/components/ProgressDialog.svelte";
+  import ContentSearchDialog from "$lib/components/ContentSearchDialog.svelte";
 
   // Dialog states
   let quickOpenVisible = $state(false);
   let commandPaletteVisible = $state(false);
   let settingsVisible = $state(false);
+  let contentSearchVisible = $state(false);
 
   // Get active explorer from window tabs manager
   function getActiveExplorer(): ExplorerInstance | undefined {
@@ -123,12 +125,26 @@
         explorer?.selectAll();
         return;
       }
+
+      // Ctrl+H: Toggle hidden files
+      if (normalizedKey === "h") {
+        event.preventDefault();
+        explorer?.toggleHidden();
+        return;
+      }
     }
 
     // Ctrl+Shift+P: Command palette
     if (event.key === "P" && isModifier && event.shiftKey) {
       event.preventDefault();
       commandPaletteVisible = true;
+      return;
+    }
+
+    // Ctrl+Shift+F: Content search in files
+    if (event.key === "F" && isModifier && event.shiftKey) {
+      event.preventDefault();
+      contentSearchVisible = true;
       return;
     }
 
@@ -204,9 +220,13 @@
     function handleOpenCommandPalette() {
       commandPaletteVisible = true;
     }
+    function handleOpenContentSearch() {
+      contentSearchVisible = true;
+    }
 
     window.addEventListener("open-quick-open", handleOpenQuickOpen);
     window.addEventListener("open-command-palette", handleOpenCommandPalette);
+    window.addEventListener("open-content-search", handleOpenContentSearch);
 
     // Save tabs before window closes
     function handleBeforeUnload() {
@@ -223,6 +243,7 @@
       window.removeEventListener("keydown", handleKeydown);
       window.removeEventListener("open-quick-open", handleOpenQuickOpen);
       window.removeEventListener("open-command-palette", handleOpenCommandPalette);
+      window.removeEventListener("open-content-search", handleOpenContentSearch);
       window.removeEventListener("beforeunload", handleBeforeUnload);
       clearInterval(saveInterval);
       externalDrop.cleanup();
@@ -245,6 +266,7 @@
 
 <QuickOpen open={quickOpenVisible} onClose={() => quickOpenVisible = false} />
 <CommandPalette open={commandPaletteVisible} onClose={() => commandPaletteVisible = false} />
+<ContentSearchDialog open={contentSearchVisible} onClose={() => contentSearchVisible = false} />
 <SettingsDialog open={settingsVisible} onClose={() => settingsVisible = false} />
 <ProgressDialog />
 

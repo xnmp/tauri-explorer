@@ -203,6 +203,12 @@ const mockCommands: Record<string, CommandHandler> = {
 
   cancel_directory_listing: () => {},
 
+  start_content_search: () => {
+    return 1; // Mock search ID
+  },
+
+  cancel_content_search: () => {},
+
   get_thumbnail: () => {
     throw new Error("Thumbnails not available in mock mode");
   },

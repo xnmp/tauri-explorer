@@ -399,3 +399,86 @@ export async function getThumbnailCacheStats(): Promise<ApiResult<ThumbnailCache
     return { ok: false, error: String(err) };
   }
 }
+
+// ===================
+// Content Search (ripgrep)
+// Issue: tauri-explorer-3a1q
+// ===================
+
+/**
+ * A single match within a file.
+ */
+export interface ContentMatch {
+  lineNumber: number;
+  column: number;
+  lineContent: string;
+  matchStart: number;
+  matchEnd: number;
+}
+
+/**
+ * Search result for a single file containing matches.
+ */
+export interface ContentSearchResult {
+  path: string;
+  relativePath: string;
+  matches: ContentMatch[];
+}
+
+/**
+ * Event payload for streaming content search results.
+ */
+export interface ContentSearchEvent {
+  searchId: number;
+  results: ContentSearchResult[];
+  done: boolean;
+  filesSearched: number;
+  totalMatches: number;
+}
+
+/**
+ * Start a streaming content search using ripgrep.
+ * Listen for 'content-search-results' events to receive results.
+ *
+ * @param query - Search query (text or regex pattern)
+ * @param root - Root directory to search in
+ * @param caseSensitive - Whether search is case-sensitive
+ * @param regexMode - Whether to treat query as regex pattern
+ * @param maxResults - Maximum number of results
+ * @returns Result with search ID or error message
+ */
+export async function startContentSearch(
+  query: string,
+  root: string,
+  caseSensitive: boolean = false,
+  regexMode: boolean = false,
+  maxResults: number = 100
+): Promise<ApiResult<number>> {
+  try {
+    const searchId = await invoke<number>("start_content_search", {
+      query,
+      root,
+      caseSensitive,
+      regexMode,
+      maxResults,
+    });
+    return { ok: true, data: searchId };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
+ * Cancel an active content search.
+ *
+ * @param searchId - ID of the search to cancel
+ * @returns Result indicating success or error message
+ */
+export async function cancelContentSearch(searchId: number): Promise<ApiResult<void>> {
+  try {
+    await invoke("cancel_content_search", { searchId });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}

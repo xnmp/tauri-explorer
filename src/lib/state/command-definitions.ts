@@ -343,6 +343,15 @@ const generalCommands: Command[] = [
       window.dispatchEvent(new CustomEvent("open-command-palette"));
     },
   },
+  {
+    id: "general.openContentSearch",
+    label: "Search in Files",
+    category: "general",
+    shortcut: "Ctrl+Shift+F",
+    handler: () => {
+      window.dispatchEvent(new CustomEvent("open-content-search"));
+    },
+  },
 ];
 
 /** Register all commands */

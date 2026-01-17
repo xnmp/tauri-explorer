@@ -39,7 +39,6 @@
   let selectedIndex = $state(0);
   let loading = $state(false);
   let inputRef = $state<HTMLInputElement | null>(null);
-  let filterRef = $state<HTMLInputElement | null>(null);
 
   // Stats
   let filesSearched = $state(0);
@@ -301,7 +300,6 @@
               class="filter-input"
               placeholder="Filter results..."
               bind:value={filterQuery}
-              bind:this={filterRef}
             />
           </div>
         {/if}

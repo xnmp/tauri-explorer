@@ -134,7 +134,7 @@ fn perform_content_search(
     app: &AppHandle,
     search_id: u64,
     query: &str,
-    root_path: &PathBuf,
+    root_path: &std::path::Path,
     case_sensitive: bool,
     regex_mode: bool,
     max_results: usize,

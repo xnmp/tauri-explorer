@@ -13,6 +13,29 @@
 import type { PaneId, WindowTab, WindowTabPane } from "./types";
 import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
 
+const STORAGE_KEY = "explorer-tabs";
+
+/** Serializable tab state for persistence */
+interface PersistedPane {
+  path: string;
+}
+
+interface PersistedTab {
+  id: string;
+  panes: {
+    left: PersistedPane;
+    right: PersistedPane;
+  };
+  activePaneId: PaneId;
+  dualPaneEnabled: boolean;
+  splitRatio: number;
+}
+
+interface PersistedTabState {
+  tabs: PersistedTab[];
+  activeTabId: string | null;
+}
+
 /** Generate unique IDs for tabs and explorers */
 function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -31,6 +54,42 @@ function createWindowTabsManager() {
   // Window tabs state
   let tabs = $state<WindowTab[]>([]);
   let activeTabId = $state<string | null>(null);
+
+  /** Save current tab state to localStorage */
+  function saveState(): void {
+    if (typeof localStorage === "undefined") return;
+
+    const persistedTabs: PersistedTab[] = tabs.map((tab) => ({
+      id: tab.id,
+      panes: {
+        left: { path: getPanePath(tab.panes.left) },
+        right: { path: getPanePath(tab.panes.right) },
+      },
+      activePaneId: tab.activePaneId,
+      dualPaneEnabled: tab.dualPaneEnabled,
+      splitRatio: tab.splitRatio,
+    }));
+
+    const state: PersistedTabState = {
+      tabs: persistedTabs,
+      activeTabId,
+    };
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }
+
+  /** Load tab state from localStorage */
+  function loadState(): PersistedTabState | null {
+    if (typeof localStorage === "undefined") return null;
+
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (!saved) return null;
+      return JSON.parse(saved) as PersistedTabState;
+    } catch {
+      return null;
+    }
+  }
 
   /** Get the currently active tab */
   const activeTab = $derived(tabs.find((t) => t.id === activeTabId) ?? null);
@@ -103,12 +162,47 @@ function createWindowTabsManager() {
     newTabs.splice(insertIndex, 0, tab);
     tabs = newTabs;
     activeTabId = tab.id;
+    saveState();
 
     return tab;
   }
 
-  /** Initialize with a single tab */
+  /** Restore tabs from a persisted state */
+  function restoreFromState(state: PersistedTabState): void {
+    explorers.clear();
+
+    const restoredTabs: WindowTab[] = state.tabs.map((persistedTab) => {
+      const tab: WindowTab = {
+        id: persistedTab.id,
+        panes: {
+          left: createPane(persistedTab.panes.left.path),
+          right: createPane(persistedTab.panes.right.path),
+        },
+        activePaneId: persistedTab.activePaneId,
+        dualPaneEnabled: persistedTab.dualPaneEnabled,
+        splitRatio: persistedTab.splitRatio,
+      };
+      return tab;
+    });
+
+    tabs = restoredTabs;
+    activeTabId = state.activeTabId;
+  }
+
+  /** Initialize - restores from localStorage or creates a new tab */
   function init(initialPath: string): WindowTab {
+    // Try to restore from localStorage
+    const savedState = loadState();
+    if (savedState && savedState.tabs.length > 0) {
+      restoreFromState(savedState);
+      const restored = tabs.find((t) => t.id === activeTabId) ?? tabs[0];
+      if (restored && !activeTabId) {
+        activeTabId = restored.id;
+      }
+      return restored;
+    }
+
+    // No saved state, create new
     explorers.clear();
     tabs = [];
     activeTabId = null;
@@ -142,6 +236,7 @@ function createWindowTabsManager() {
 
     tabs = newTabs;
     activeTabId = newActiveId;
+    saveState();
   }
 
   /** Close the active tab */
@@ -155,6 +250,7 @@ function createWindowTabsManager() {
   function setActiveTab(tabId: string): void {
     if (tabs.some((t) => t.id === tabId)) {
       activeTabId = tabId;
+      saveState();
     }
   }
 
@@ -165,6 +261,7 @@ function createWindowTabsManager() {
     const currentIndex = tabs.findIndex((t) => t.id === activeTabId);
     const nextIndex = (currentIndex + 1) % tabs.length;
     activeTabId = tabs[nextIndex].id;
+    saveState();
   }
 
   /** Move to previous tab (wraps around) */
@@ -174,6 +271,7 @@ function createWindowTabsManager() {
     const currentIndex = tabs.findIndex((t) => t.id === activeTabId);
     const prevIndex = (currentIndex - 1 + tabs.length) % tabs.length;
     activeTabId = tabs[prevIndex].id;
+    saveState();
   }
 
   /** Get explorer instance for a pane in the active tab */
@@ -192,6 +290,7 @@ function createWindowTabsManager() {
   function updateActiveTab(updates: Partial<WindowTab>): void {
     if (!activeTabId) return;
     tabs = tabs.map((t) => (t.id === activeTabId ? { ...t, ...updates } : t));
+    saveState();
   }
 
   /** Set the active pane in the active tab */
@@ -244,6 +343,7 @@ function createWindowTabsManager() {
     newTabs.splice(toIndex, 0, moved);
 
     tabs = newTabs;
+    saveState();
   }
 
   return {
@@ -292,6 +392,9 @@ function createWindowTabsManager() {
     enableDualPane,
     disableDualPane,
     setSplitRatio,
+
+    // Persistence
+    save: saveState,
   };
 }
 

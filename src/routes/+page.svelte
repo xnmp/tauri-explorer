@@ -208,10 +208,23 @@
     window.addEventListener("open-quick-open", handleOpenQuickOpen);
     window.addEventListener("open-command-palette", handleOpenCommandPalette);
 
+    // Save tabs before window closes
+    function handleBeforeUnload() {
+      windowTabsManager.save();
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    // Save tabs periodically (every 30 seconds) to catch navigation changes
+    const saveInterval = setInterval(() => {
+      windowTabsManager.save();
+    }, 30000);
+
     return () => {
       window.removeEventListener("keydown", handleKeydown);
       window.removeEventListener("open-quick-open", handleOpenQuickOpen);
       window.removeEventListener("open-command-palette", handleOpenCommandPalette);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      clearInterval(saveInterval);
       externalDrop.cleanup();
     };
   });

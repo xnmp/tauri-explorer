@@ -315,15 +315,9 @@ function createWindowTabsManager() {
     });
   }
 
-  /** Enable dual pane mode in the active tab */
-  function enableDualPane(): void {
-    if (activeTab?.dualPaneEnabled) return;
-    toggleDualPane();
-  }
-
-  /** Disable dual pane mode in the active tab */
-  function disableDualPane(): void {
-    if (!activeTab?.dualPaneEnabled) return;
+  /** Set dual pane mode in the active tab */
+  function setDualPane(enabled: boolean): void {
+    if (!activeTab || activeTab.dualPaneEnabled === enabled) return;
     toggleDualPane();
   }
 
@@ -389,8 +383,7 @@ function createWindowTabsManager() {
     setActivePane,
     switchPane,
     toggleDualPane,
-    enableDualPane,
-    disableDualPane,
+    setDualPane,
     setSplitRatio,
 
     // Persistence

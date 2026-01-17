@@ -47,8 +47,7 @@ interface ExplorerCoreState {
   loading: boolean;
   error: string | null;
 
-  // View options
-  showHidden: boolean;
+  // View options (showHidden is in settingsStore, shared across panes)
   sortBy: SortField;
   sortAscending: boolean;
   viewMode: ViewMode;
@@ -72,7 +71,6 @@ function createExplorerState() {
     error: null,
 
     // View options
-    showHidden: false,
     sortBy: "name",
     sortAscending: true,
     viewMode: "details",

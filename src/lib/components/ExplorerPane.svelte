@@ -41,26 +41,26 @@
   }
 
   async function handleKeydown(event: KeyboardEvent): Promise<void> {
-    const isModifier = event.ctrlKey || event.metaKey;
+    const hasModifier = event.ctrlKey || event.metaKey;
     const selected = paneExplorer.getSelectedEntries()[0];
     const entries = paneExplorer.displayEntries;
 
-    // Alt + Arrow: Navigation (go back/forward/up)
-    if (event.altKey) {
-      const altActions: Record<string, () => void> = {
-        ArrowLeft: () => paneExplorer.goBack(),
-        ArrowRight: () => paneExplorer.goForward(),
-        ArrowUp: () => paneExplorer.goUp(),
-      };
-      const action = altActions[event.key];
-      if (action) {
+    // Alt + Arrow: Navigation history
+    if (event.altKey && !hasModifier) {
+      if (event.key === "ArrowLeft") {
         event.preventDefault();
-        action();
+        paneExplorer.goBack();
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        paneExplorer.goForward();
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        paneExplorer.goUp();
       }
       return;
     }
 
-    // Arrow key navigation in file list (without Alt)
+    // Arrow key navigation in file list
     if (event.key === "ArrowUp" || event.key === "ArrowDown") {
       event.preventDefault();
       if (entries.length === 0) return;
@@ -69,12 +69,9 @@
         ? entries.findIndex((e) => e.path === selected.path)
         : -1;
 
-      let newIndex: number;
-      if (event.key === "ArrowUp") {
-        newIndex = currentIndex <= 0 ? entries.length - 1 : currentIndex - 1;
-      } else {
-        newIndex = currentIndex >= entries.length - 1 ? 0 : currentIndex + 1;
-      }
+      const newIndex = event.key === "ArrowUp"
+        ? (currentIndex <= 0 ? entries.length - 1 : currentIndex - 1)
+        : (currentIndex >= entries.length - 1 ? 0 : currentIndex + 1);
 
       paneExplorer.selectEntry(entries[newIndex], { ctrlKey: false, shiftKey: event.shiftKey });
       return;
@@ -105,37 +102,40 @@
       return;
     }
 
-    // Function keys
+    // F5: Refresh
     if (event.key === "F5") {
       event.preventDefault();
       paneExplorer.refresh();
       return;
     }
 
-    if (event.key === "F6" || (event.key === "Tab" && !event.shiftKey && isModifier)) {
+    // F6 or Ctrl+Tab: Switch pane
+    if (event.key === "F6" || (hasModifier && event.key === "Tab" && !event.shiftKey)) {
       event.preventDefault();
       windowTabsManager.switchPane();
       return;
     }
 
     // Modifier shortcuts (Ctrl/Cmd + key)
-    if (!isModifier) return;
+    if (!hasModifier) return;
 
-    // Normalize key to lowercase for consistent comparison (handles Caps Lock)
-    const normalizedKey = event.key.toLowerCase();
+    const key = event.key.toLowerCase();
 
-    const modifierActions: Record<string, () => void | Promise<unknown>> = {
-      a: () => paneExplorer.selectAll(),
-      z: () => paneExplorer.undo(),
-      c: () => { if (selected) paneExplorer.copyToClipboard(selected); },
-      x: () => { if (selected) paneExplorer.cutToClipboard(selected); },
-      v: () => { if (clipboardStore.hasContent) return paneExplorer.paste(); },
-    };
-
-    const action = modifierActions[normalizedKey];
-    if (action) {
+    if (key === "a") {
       event.preventDefault();
-      await action();
+      paneExplorer.selectAll();
+    } else if (key === "z") {
+      event.preventDefault();
+      await paneExplorer.undo();
+    } else if (key === "c" && selected) {
+      event.preventDefault();
+      paneExplorer.copyToClipboard(selected);
+    } else if (key === "x" && selected) {
+      event.preventDefault();
+      paneExplorer.cutToClipboard(selected);
+    } else if (key === "v" && clipboardStore.hasContent) {
+      event.preventDefault();
+      await paneExplorer.paste();
     }
   }
 

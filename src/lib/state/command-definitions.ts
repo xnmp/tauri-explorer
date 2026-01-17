@@ -294,9 +294,7 @@ const tabCommands: Command[] = [
     label: "New Tab",
     category: "general",
     shortcut: "Ctrl+T",
-    handler: () => {
-      windowTabsManager.createTab();
-    },
+    handler: () => void windowTabsManager.createTab(),
   },
   {
     id: "tabs.closeTab",

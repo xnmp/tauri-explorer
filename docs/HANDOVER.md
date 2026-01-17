@@ -1,126 +1,100 @@
 # Session Handover
 
-Continuing work on P1 issues after completing P0 keyboard shortcut fix.
+Continuing work on fixing the mock API detection issue - mocked endpoints are being used by the Tauri app when they should only be used for browser E2E testing.
 
-**Previous session summary:**
-- Converted 4 new_todo.md items to beads issues
-- Fixed P0 bug: keyboard shortcuts broken when Caps Lock enabled
-- Added Tauri API mocks for browser-based E2E testing
+**Previous session summary:** Fixed P0 keyboard shortcuts bug (Caps Lock issue) and added Tauri API mocks for browser-based E2E testing. The mock detection has a bug where it may incorrectly use mocks in the actual Tauri app.
 
 **Key context:**
-- Branch: `feature/command-palette` with all recent feature work
+- Branch: `feature/command-palette`
+- The `isTauri()` check in `src/lib/api/mock-invoke.ts` uses `window.__TAURI__`
+- The invoke selection happens at module load time (files.ts line 11), which may execute before Tauri injects `__TAURI__`
 - Beads issue tracker: use `bd` CLI for issue management
-- Keyboard shortcuts now normalize keys to lowercase for consistent matching
-
-**Completed this session:**
-- tauri-explorer-gnvv [P0] - Fixed keyboard shortcuts (Caps Lock issue)
-- Added mock-invoke.ts for E2E testing without Tauri backend
-- Added keyboard.ts domain module with normalization utilities
-- Added e2e/keyboard.spec.ts with comprehensive shortcut tests
-
-**Current P1 issues (6 remaining):**
-```
-tauri-explorer-ldfx - Move tabs above pane level (window-level tabs)
-tauri-explorer-ac7y - Keyboard navigation in file list
-tauri-explorer-qcq5 - Persist tabs across sessions
-tauri-explorer-klo  - Persist hidden files preference
-tauri-explorer-zgf  - Ctrl+H shortcut for hidden files toggle
-tauri-explorer-u5a  - Ctrl+Y/Ctrl+Shift+Z to redo
-```
 
 **Current state:**
-- All tests passing (68 vitest + 21 keyboard tests)
-- TypeScript check passes (0 errors, 10 warnings)
-- E2E tests run with mock data in browser
+- Mock invoke works for E2E tests but incorrectly activates in Tauri app
+- All unit tests pass (89 tests)
+- TypeScript check passes (0 errors)
+
+**The bug (files.ts line 11):**
+```javascript
+const invoke = isTauri() ? tauriInvoke : mockInvoke;
+```
+This runs at module load time. If `window.__TAURI__` isn't set yet, it falls back to mock.
 
 **Next steps:**
-1. Implement Ctrl+H shortcut for hidden files toggle (quick win)
-2. Implement Ctrl+Y/Ctrl+Shift+Z for redo (quick win)
-3. Add keyboard navigation in file list (arrows, Page Up/Down)
-4. Persist hidden files preference (localStorage)
-5. Persist tabs across sessions (localStorage)
-6. Move tabs above pane level (architectural change - biggest)
-
-**Relevant files:**
-- `src/lib/domain/keyboard.ts` - keyboard utilities
-- `src/lib/components/ExplorerPane.svelte` - pane-level shortcuts
-- `src/lib/components/FileList.svelte` - file list keyboard handling
-- `src/lib/state/settings.svelte.ts` - user preferences
-- `src/lib/state/tabs.svelte.ts` - tab management
-- `src/lib/api/mock-invoke.ts` - mock Tauri API for testing
+1. Make the Tauri detection lazy (check on each invoke call, not at module load)
+2. Alternative: Check `import.meta.env` or use Vite environment variables
+3. Test that real Tauri app uses real invoke, browser uses mock
 
 ---
 
-## Architecture Overview
+## Architecture & Learnings
 
-### State Management Pattern (Svelte 5 Runes)
+### Relevant Files for This Fix
 ```
-src/lib/state/
-├── explorer.svelte.ts   # Per-pane explorer state (entries, selection, navigation)
-├── tabs.svelte.ts       # Tab management (each pane has tabs, each tab has an explorer)
-├── panes.svelte.ts      # Dual-pane management (left/right, active pane)
-├── clipboard.svelte.ts  # GLOBAL - shared clipboard across panes
-├── dialogs.svelte.ts    # GLOBAL - rename/delete/new folder dialogs
-├── context-menu.svelte.ts # GLOBAL - right-click context menu
-├── undo.svelte.ts       # GLOBAL - undo stack for file operations
-├── commands.svelte.ts   # Command registry for command palette
-├── settings.svelte.ts   # User preferences (theme, sidebar, toolbar visibility)
-└── theme.svelte.ts      # Theme management (light/dark/system)
+src/lib/api/
+├── files.ts          # API client - line 11 has the problematic invoke selection
+├── mock-invoke.ts    # isTauri() detection and mock data
 ```
 
-**Key pattern:** Per-pane state (explorer) vs global state (clipboard, undo, dialogs). The explorer.svelte.ts exposes a `state` derived that merges core state with global store references for backward compatibility.
+### The Problem in Detail
+```typescript
+// files.ts - CURRENT (buggy)
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { isTauri, mockInvoke } from "./mock-invoke";
 
-### Keyboard Shortcut Handling
-```
-src/lib/domain/keyboard.ts     # Key normalization utilities
-+page.svelte                   # Global shortcuts (Ctrl+P, Ctrl+Shift+P, Ctrl+T, Ctrl+W, Ctrl+\)
-ExplorerPane.svelte            # Pane-level (Ctrl+Z/C/X/V, Alt+arrows, F5, F6)
-FileItem.svelte                # Item-level (F2, Delete, Ctrl+C/X)
-FileList.svelte                # Ctrl+V paste handling
-```
+// This line executes at module load time
+const invoke = isTauri() ? tauriInvoke : mockInvoke;
 
-**Important:** Always normalize `event.key` to lowercase for modifier shortcuts to handle Caps Lock.
-
-### Current Tab/Pane Hierarchy
-```
-+page.svelte
-└── PaneContainer
-    ├── ExplorerPane (left)
-    │   ├── TabBar (tabs for this pane)
-    │   ├── NavigationBar
-    │   └── FileList (shows active tab's explorer)
-    └── ExplorerPane (right, if dual-pane enabled)
+// mock-invoke.ts
+export function isTauri(): boolean {
+  return typeof window !== "undefined" && "__TAURI__" in window;
+}
 ```
 
-**Note:** P1 issue tauri-explorer-ldfx proposes moving tabs to window level (above panes), so each tab contains the full dual-pane layout.
+**Issue:** Tauri's `__TAURI__` global may not be injected until after the JS bundle starts executing, causing `isTauri()` to return `false` even in the Tauri app.
 
-### Tauri Backend (Rust)
+### Potential Fixes
+
+**Option 1: Lazy evaluation (recommended)**
+```typescript
+// Make invoke a function that checks each time
+async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  if (isTauri()) {
+    return tauriInvoke<T>(cmd, args);
+  }
+  return mockInvoke<T>(cmd, args);
+}
 ```
-src-tauri/src/
-├── lib.rs        # Plugin registration, trash commands
-├── files.rs      # Directory listing, file operations, streaming
-├── search.rs     # Fuzzy search with nucleo-matcher, streaming search
-└── thumbnails.rs # Image thumbnail generation with caching
+
+**Option 2: Use Vite environment variable**
+```typescript
+// vite.config.ts sets VITE_TAURI based on build target
+const invoke = import.meta.env.VITE_TAURI ? tauriInvoke : mockInvoke;
 ```
 
-**IPC Pattern:** Frontend uses `invoke()` from `@tauri-apps/api/core`. For browser testing, mock-invoke.ts provides fake data.
+**Option 3: Check for Tauri IPC**
+```typescript
+export function isTauri(): boolean {
+  return typeof window !== "undefined" &&
+         window.__TAURI_INTERNALS__ !== undefined;
+}
+```
 
----
-
-## Testing Commands
+### Testing Commands
 ```bash
 bun run check          # TypeScript + Svelte check
-bun run test:run       # All vitest tests (89 tests)
-bun run bench:render   # Rendering performance benchmarks
-npx playwright test    # E2E tests with mock data
-npx playwright test e2e/keyboard.spec.ts  # Keyboard shortcut tests
+bun run test:run       # Unit tests (should pass)
+bun tauri dev          # Run actual Tauri app - verify real data loads
+npx playwright test    # E2E tests - verify mock data loads
 ```
 
-## Beads Workflow
-```bash
-bd list --status open --priority P1  # See P1 issues
-bd show <id>                          # Issue details
-bd update <id> --status in_progress   # Start working
-bd close <id> --reason "..."          # Close with explanation
-bd create --title "..." --priority P0 --type bug  # Create new issue
+### State Management (for context)
 ```
+src/lib/state/
+├── explorer.svelte.ts   # Per-pane state, calls API functions
+├── tabs.svelte.ts       # Tab management
+└── ...other stores
+```
+
+The explorer state calls functions from `files.ts`, which uses the `invoke` variable. All API calls flow through this single point, so fixing it here fixes the entire app.

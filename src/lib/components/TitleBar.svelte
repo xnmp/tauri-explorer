@@ -48,9 +48,12 @@
 
   // Handle window dragging manually for better compatibility
   async function handleDragStart(event: MouseEvent) {
-    // Only drag on left click and not on buttons
+    // Only drag on left click
     if (event.button !== 0) return;
-    if ((event.target as HTMLElement).closest('button')) return;
+
+    const target = event.target as HTMLElement;
+    // Don't drag when clicking on interactive elements (buttons, tabs)
+    if (target.closest('button') || target.closest('.tab-area')) return;
 
     // Double-click to maximize/restore
     if (event.detail === 2) {

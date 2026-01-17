@@ -41,8 +41,6 @@
 
 <div class="tab-area" role="tablist">
   {#each tabs as tab (tab.id)}
-    {@const title = windowTabsManager.getTabTitle(tab)}
-    {@const tooltip = windowTabsManager.getTabTooltip(tab)}
     <div
       class="tab"
       class:active={tab.id === activeTabId}
@@ -52,12 +50,12 @@
       onclick={() => handleTabClick(tab.id)}
       onkeydown={(e) => handleTabKeydown(e, tab.id)}
       onauxclick={(e) => handleTabMiddleClick(e, tab.id)}
-      title={tooltip}
+      title={windowTabsManager.getTabTooltip(tab)}
     >
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="tab-icon">
         <path d="M2 3.5C2 2.67 2.67 2 3.5 2H6.17L8 3.83H12.5C13.33 3.83 14 4.5 14 5.33V12.5C14 13.33 13.33 14 12.5 14H3.5C2.67 14 2 13.33 2 12.5V3.5Z" fill="#FFB900"/>
       </svg>
-      <span class="tab-title">{title}</span>
+      <span class="tab-title">{windowTabsManager.getTabTitle(tab)}</span>
       {#if tabs.length > 1}
         <button
           class="tab-close"

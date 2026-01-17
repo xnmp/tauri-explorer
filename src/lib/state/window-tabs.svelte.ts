@@ -35,18 +35,26 @@ function createWindowTabsManager() {
   /** Get the currently active tab */
   const activeTab = $derived(tabs.find((t) => t.id === activeTabId) ?? null);
 
-  /** Get tab title (shows active pane's folder name) */
+  /** Get tab title (shows active pane's folder name) - derived from explorer's current path */
   function getTabTitle(tab: WindowTab): string {
     const pane = tab.panes[tab.activePaneId];
-    return pane.title || "Explorer";
+    const explorer = explorers.get(pane.explorerId);
+    if (!explorer) return pane.title || "Explorer";
+    return extractFolderName(explorer.state.currentPath);
+  }
+
+  /** Get path for a pane from its explorer */
+  function getPanePath(pane: WindowTabPane): string {
+    const explorer = explorers.get(pane.explorerId);
+    return explorer?.state.currentPath ?? pane.path;
   }
 
   /** Get tooltip for tab (shows both pane paths when dual-pane) */
   function getTabTooltip(tab: WindowTab): string {
     if (!tab.dualPaneEnabled) {
-      return tab.panes[tab.activePaneId].path;
+      return getPanePath(tab.panes[tab.activePaneId]);
     }
-    return `Left: ${tab.panes.left.path}\nRight: ${tab.panes.right.path}`;
+    return `Left: ${getPanePath(tab.panes.left)}\nRight: ${getPanePath(tab.panes.right)}`;
   }
 
   /** Create a new explorer and register it */
@@ -70,12 +78,11 @@ function createWindowTabsManager() {
 
   /** Create a new window tab */
   function createTab(initialPath?: string): WindowTab {
-    const defaultPath = initialPath ?? "/home";
+    const defaultPath = "/home";
 
-    // Get path from current active tab if available
-    const currentTab = tabs.find((t) => t.id === activeTabId);
-    const leftPath = initialPath ?? currentTab?.panes.left.path ?? defaultPath;
-    const rightPath = currentTab?.panes.right.path ?? defaultPath;
+    // Inherit paths from active tab's explorers, or use provided/default path
+    const leftPath = initialPath ?? (activeTab ? getPanePath(activeTab.panes.left) : defaultPath);
+    const rightPath = activeTab ? getPanePath(activeTab.panes.right) : defaultPath;
 
     const tab: WindowTab = {
       id: generateId("tab"),
@@ -84,8 +91,8 @@ function createWindowTabsManager() {
         right: createPane(rightPath),
       },
       activePaneId: "left",
-      dualPaneEnabled: currentTab?.dualPaneEnabled ?? false,
-      splitRatio: currentTab?.splitRatio ?? 0.5,
+      dualPaneEnabled: activeTab?.dualPaneEnabled ?? false,
+      splitRatio: activeTab?.splitRatio ?? 0.5,
     };
 
     // Insert after active tab or at end
@@ -102,15 +109,9 @@ function createWindowTabsManager() {
 
   /** Initialize with a single tab */
   function init(initialPath: string): WindowTab {
-    // Clean up any existing explorers
-    for (const explorer of explorers.values()) {
-      // Explorers don't have cleanup, but we clear the registry
-    }
     explorers.clear();
-
     tabs = [];
     activeTabId = null;
-
     return createTab(initialPath);
   }
 
@@ -177,107 +178,59 @@ function createWindowTabsManager() {
 
   /** Get explorer instance for a pane in the active tab */
   function getExplorer(paneId: PaneId): ExplorerInstance | undefined {
-    const tab = tabs.find((t) => t.id === activeTabId);
-    if (!tab) return undefined;
-    const explorerId = tab.panes[paneId].explorerId;
-    return explorers.get(explorerId);
+    if (!activeTab) return undefined;
+    return explorers.get(activeTab.panes[paneId].explorerId);
   }
 
   /** Get the active explorer (from active pane in active tab) */
   function getActiveExplorer(): ExplorerInstance | undefined {
-    const tab = tabs.find((t) => t.id === activeTabId);
-    if (!tab) return undefined;
-    return getExplorer(tab.activePaneId);
+    if (!activeTab) return undefined;
+    return getExplorer(activeTab.activePaneId);
+  }
+
+  /** Update the active tab with partial changes */
+  function updateActiveTab(updates: Partial<WindowTab>): void {
+    if (!activeTabId) return;
+    tabs = tabs.map((t) => (t.id === activeTabId ? { ...t, ...updates } : t));
   }
 
   /** Set the active pane in the active tab */
   function setActivePane(paneId: PaneId): void {
-    const tabIndex = tabs.findIndex((t) => t.id === activeTabId);
-    if (tabIndex === -1) return;
-
-    const tab = tabs[tabIndex];
-    if (tab.activePaneId === paneId) return;
-
-    tabs = tabs.map((t) =>
-      t.id === activeTabId ? { ...t, activePaneId: paneId } : t
-    );
+    if (activeTab?.activePaneId === paneId) return;
+    updateActiveTab({ activePaneId: paneId });
   }
 
   /** Switch to the other pane in the active tab */
   function switchPane(): void {
-    const tab = tabs.find((t) => t.id === activeTabId);
-    if (!tab || !tab.dualPaneEnabled) return;
-
-    setActivePane(tab.activePaneId === "left" ? "right" : "left");
+    if (!activeTab?.dualPaneEnabled) return;
+    setActivePane(activeTab.activePaneId === "left" ? "right" : "left");
   }
 
   /** Toggle dual pane mode in the active tab */
   function toggleDualPane(): void {
-    const tabIndex = tabs.findIndex((t) => t.id === activeTabId);
-    if (tabIndex === -1) return;
-
-    const tab = tabs[tabIndex];
-    const newDualPaneEnabled = !tab.dualPaneEnabled;
-
-    tabs = tabs.map((t) =>
-      t.id === activeTabId
-        ? {
-            ...t,
-            dualPaneEnabled: newDualPaneEnabled,
-            // Reset to left pane when disabling dual pane
-            activePaneId: newDualPaneEnabled ? t.activePaneId : "left",
-          }
-        : t
-    );
+    if (!activeTab) return;
+    const enabling = !activeTab.dualPaneEnabled;
+    updateActiveTab({
+      dualPaneEnabled: enabling,
+      activePaneId: enabling ? activeTab.activePaneId : "left",
+    });
   }
 
   /** Enable dual pane mode in the active tab */
   function enableDualPane(): void {
-    const tab = tabs.find((t) => t.id === activeTabId);
-    if (!tab || tab.dualPaneEnabled) return;
+    if (activeTab?.dualPaneEnabled) return;
     toggleDualPane();
   }
 
   /** Disable dual pane mode in the active tab */
   function disableDualPane(): void {
-    const tab = tabs.find((t) => t.id === activeTabId);
-    if (!tab || !tab.dualPaneEnabled) return;
+    if (!activeTab?.dualPaneEnabled) return;
     toggleDualPane();
   }
 
   /** Set split ratio in the active tab */
   function setSplitRatio(ratio: number): void {
-    const tabIndex = tabs.findIndex((t) => t.id === activeTabId);
-    if (tabIndex === -1) return;
-
-    const clampedRatio = Math.max(0.2, Math.min(0.8, ratio));
-
-    tabs = tabs.map((t) =>
-      t.id === activeTabId ? { ...t, splitRatio: clampedRatio } : t
-    );
-  }
-
-  /** Update pane path and title when navigation happens */
-  function updatePanePath(paneId: PaneId, path: string): void {
-    const tabIndex = tabs.findIndex((t) => t.id === activeTabId);
-    if (tabIndex === -1) return;
-
-    const title = extractFolderName(path);
-
-    tabs = tabs.map((t) => {
-      if (t.id !== activeTabId) return t;
-      return {
-        ...t,
-        panes: {
-          ...t.panes,
-          [paneId]: {
-            ...t.panes[paneId],
-            path,
-            title,
-          },
-        },
-      };
-    });
+    updateActiveTab({ splitRatio: Math.max(0.2, Math.min(0.8, ratio)) });
   }
 
   /** Reorder tabs */
@@ -339,7 +292,6 @@ function createWindowTabsManager() {
     enableDualPane,
     disableDualPane,
     setSplitRatio,
-    updatePanePath,
   };
 }
 

@@ -24,6 +24,11 @@
   // Get pane context for cross-pane operations
   const paneNav = getPaneNavigationContext();
 
+  // Slow-click-to-rename state (Windows Explorer behavior)
+  let wasSelectedOnMouseDown = false;
+  let renameClickTimeout: ReturnType<typeof setTimeout> | null = null;
+  let nameClickPending = false;
+
   // Inline rename state
   let renameInputRef: HTMLInputElement | null = null;
   let editedName = $state("");
@@ -108,12 +113,51 @@
     }
   }
 
+  // Track if item was selected before mousedown (for slow-click-to-rename)
+  function handleMouseDown() {
+    wasSelectedOnMouseDown = selected;
+  }
+
   function handleClick(event: MouseEvent) {
     if (isRenaming) {
       event.stopPropagation();
       return;
     }
+
+    // Clear any pending rename timeout
+    if (renameClickTimeout) {
+      clearTimeout(renameClickTimeout);
+      renameClickTimeout = null;
+    }
+
+    // Check if click was on the name area (for slow-click-to-rename)
+    const target = event.target as HTMLElement;
+    const isNameClick = target.classList.contains("name") || target.closest(".name-cell");
+
+    // If item was already selected before this click, on the name area,
+    // and it's a simple left click (no modifiers), schedule rename
+    if (wasSelectedOnMouseDown && isNameClick && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+      nameClickPending = true;
+      renameClickTimeout = setTimeout(() => {
+        if (nameClickPending) {
+          explorer.startRename(entry);
+        }
+        nameClickPending = false;
+        renameClickTimeout = null;
+      }, 500); // 500ms delay to distinguish from double-click
+    }
+
     onclick(event);
+  }
+
+  // Cancel slow-click-to-rename on double-click
+  function handleDoubleClick() {
+    if (renameClickTimeout) {
+      clearTimeout(renameClickTimeout);
+      renameClickTimeout = null;
+    }
+    nameClickPending = false;
+    ondblclick();
   }
 
   // Check if this item is in clipboard (for visual feedback)
@@ -215,8 +259,9 @@
   class:in-clipboard={isInClipboard}
   class:selected
   class:drop-target={isDropTarget}
+  onmousedown={handleMouseDown}
   onclick={handleClick}
-  {ondblclick}
+  ondblclick={handleDoubleClick}
   oncontextmenu={handleContextMenu}
   onkeydown={handleKeydown}
   draggable="true"

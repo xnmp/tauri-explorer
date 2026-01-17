@@ -32,10 +32,11 @@ export function useExternalDrop(onDrop: DropHandler) {
     try {
       const webview = getCurrentWebview();
       unlisten = await webview.onDragDropEvent((event) => {
-        if (event.payload.type === "over") {
+        const eventType = event.payload.type;
+        if (eventType === "over") {
           state.isDragging = true;
           state.dropPosition = event.payload.position;
-        } else if (event.payload.type === "drop") {
+        } else if (eventType === "drop") {
           state.isDragging = false;
 
           const paths = event.payload.paths;
@@ -46,7 +47,8 @@ export function useExternalDrop(onDrop: DropHandler) {
           }
 
           state.dropPosition = null;
-        } else if (event.payload.type === "cancelled") {
+        } else {
+          // Handle leave/cancelled events
           state.isDragging = false;
           state.dropPosition = null;
         }

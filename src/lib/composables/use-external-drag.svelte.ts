@@ -14,7 +14,7 @@ import { startDrag } from "@crabnebula/tauri-plugin-drag";
  * @param paths - Array of absolute file paths to drag
  * @param iconPath - Optional path to preview icon
  */
-export async function startExternalDrag(paths: string[], iconPath?: string): Promise<void> {
+export async function startExternalDrag(paths: string[], iconPath: string = ""): Promise<void> {
   try {
     await startDrag({
       item: paths,

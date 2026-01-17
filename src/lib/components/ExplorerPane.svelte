@@ -77,6 +77,9 @@
     // Modifier shortcuts (Ctrl/Cmd + key)
     if (!isModifier) return;
 
+    // Normalize key to lowercase for consistent comparison (handles Caps Lock)
+    const normalizedKey = event.key.toLowerCase();
+
     const modifierActions: Record<string, () => void | Promise<unknown>> = {
       a: () => paneExplorer.selectAll(),
       z: () => paneExplorer.undo(),
@@ -85,7 +88,7 @@
       v: () => { if (clipboardStore.hasContent) return paneExplorer.paste(); },
     };
 
-    const action = modifierActions[event.key];
+    const action = modifierActions[normalizedKey];
     if (action) {
       event.preventDefault();
       await action();

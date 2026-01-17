@@ -179,17 +179,20 @@
 
     const hasModifier = event.ctrlKey || event.metaKey;
 
+    // Special keys (Delete, F2) - use exact match
     const keyActions: Record<string, () => void> = {
       Delete: () => explorer.startDelete(entry),
       F2: () => explorer.startRename(entry),
     };
 
+    // Modifier keys - normalize to lowercase for consistent comparison (handles Caps Lock)
     const modifierKeyActions: Record<string, () => void> = {
       c: () => explorer.copyToClipboard(entry),
       x: () => explorer.cutToClipboard(entry),
     };
 
-    const action = keyActions[event.key] ?? (hasModifier ? modifierKeyActions[event.key] : undefined);
+    const normalizedKey = event.key.toLowerCase();
+    const action = keyActions[event.key] ?? (hasModifier ? modifierKeyActions[normalizedKey] : undefined);
 
     if (action) {
       event.preventDefault();

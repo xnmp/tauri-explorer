@@ -101,7 +101,9 @@
   }
 
   async function handleKeydown(event: KeyboardEvent): Promise<void> {
-    const isPasteShortcut = event.key === "v" && (event.ctrlKey || event.metaKey);
+    // Normalize key to lowercase for consistent comparison (handles Caps Lock)
+    const normalizedKey = event.key.toLowerCase();
+    const isPasteShortcut = normalizedKey === "v" && (event.ctrlKey || event.metaKey);
 
     if (isPasteShortcut && clipboardStore.hasContent) {
       event.preventDefault();

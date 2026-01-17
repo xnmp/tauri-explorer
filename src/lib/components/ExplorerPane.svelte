@@ -9,6 +9,7 @@
   import { clipboardStore } from "$lib/state/clipboard.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import type { PaneId } from "$lib/state/types";
+  import { openFile } from "$lib/api/files";
   import NavigationBar from "./NavigationBar.svelte";
   import FileList from "./FileList.svelte";
   import ContextMenu from "./ContextMenu.svelte";
@@ -42,8 +43,9 @@
   async function handleKeydown(event: KeyboardEvent): Promise<void> {
     const isModifier = event.ctrlKey || event.metaKey;
     const selected = paneExplorer.getSelectedEntries()[0];
+    const entries = paneExplorer.displayEntries;
 
-    // Alt + Arrow: Navigation
+    // Alt + Arrow: Navigation (go back/forward/up)
     if (event.altKey) {
       const altActions: Record<string, () => void> = {
         ArrowLeft: () => paneExplorer.goBack(),
@@ -55,6 +57,51 @@
         event.preventDefault();
         action();
       }
+      return;
+    }
+
+    // Arrow key navigation in file list (without Alt)
+    if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+      event.preventDefault();
+      if (entries.length === 0) return;
+
+      const currentIndex = selected
+        ? entries.findIndex((e) => e.path === selected.path)
+        : -1;
+
+      let newIndex: number;
+      if (event.key === "ArrowUp") {
+        newIndex = currentIndex <= 0 ? entries.length - 1 : currentIndex - 1;
+      } else {
+        newIndex = currentIndex >= entries.length - 1 ? 0 : currentIndex + 1;
+      }
+
+      paneExplorer.selectEntry(entries[newIndex], { ctrlKey: false, shiftKey: event.shiftKey });
+      return;
+    }
+
+    // Enter: Open selected item
+    if (event.key === "Enter" && selected) {
+      event.preventDefault();
+      if (selected.kind === "directory") {
+        paneExplorer.navigateTo(selected.path);
+      } else {
+        openFile(selected.path);
+      }
+      return;
+    }
+
+    // Delete: Delete selected item
+    if (event.key === "Delete" && selected) {
+      event.preventDefault();
+      paneExplorer.startDelete(selected);
+      return;
+    }
+
+    // F2: Rename selected item
+    if (event.key === "F2" && selected) {
+      event.preventDefault();
+      paneExplorer.startRename(selected);
       return;
     }
 

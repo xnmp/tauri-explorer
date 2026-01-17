@@ -9,12 +9,14 @@
 export interface Settings {
   showToolbar: boolean;
   showSidebar: boolean;
+  showHidden: boolean;
   // Future: hotkey customization
 }
 
 const DEFAULT_SETTINGS: Settings = {
   showToolbar: true,
   showSidebar: true,
+  showHidden: false,
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -58,6 +60,10 @@ function createSettingsStore() {
     update({ showSidebar: !settings.showSidebar });
   }
 
+  function toggleHidden(): void {
+    update({ showHidden: !settings.showHidden });
+  }
+
   function reset(): void {
     settings = { ...DEFAULT_SETTINGS };
     saveSettings(settings);
@@ -73,9 +79,13 @@ function createSettingsStore() {
     get showSidebar() {
       return settings.showSidebar;
     },
+    get showHidden() {
+      return settings.showHidden;
+    },
     update,
     toggleToolbar,
     toggleSidebar,
+    toggleHidden,
     reset,
   };
 }

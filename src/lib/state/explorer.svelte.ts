@@ -33,6 +33,7 @@ import { clipboardStore } from "./clipboard.svelte";
 import { dialogStore } from "./dialogs.svelte";
 import { contextMenuStore } from "./context-menu.svelte";
 import { undoStore } from "./undo.svelte";
+import { settingsStore } from "./settings.svelte";
 
 /** Core explorer state (per-pane) */
 interface ExplorerCoreState {
@@ -99,7 +100,7 @@ function createExplorerState() {
   // ===================
 
   const displayEntries = $derived.by(() => {
-    const filtered = filterHidden(coreState.entries, coreState.showHidden);
+    const filtered = filterHidden(coreState.entries, settingsStore.showHidden);
     return sortEntries(filtered, coreState.sortBy, coreState.sortAscending);
   });
 
@@ -239,7 +240,7 @@ function createExplorerState() {
   // ===================
 
   function toggleHidden() {
-    coreState.showHidden = !coreState.showHidden;
+    settingsStore.toggleHidden();
   }
 
   function setSorting(by: SortField) {

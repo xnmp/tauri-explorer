@@ -6,7 +6,6 @@
 
 ## The Project
 * This project is building a cross-platform explorer app using Tauri and Svelte. 
-* Please read [Specs](@docs/specs.md) for the specs. 
 * Please create implementation plans before converting into issues in Beads
 * At the beginning of each session, convert the tasks in [new_todo](@new_todo.md) into beads issues (edit the md file to remove issues that have been converted), together with priorities. 
 * Read the specs to implement features

@@ -13,9 +13,10 @@ Generate a concise handover document that I can paste as the opening prompt in a
 ## Information to Include
 
 1. **What We Worked On** - Brief summary of the main tasks/features from this session
-2. **Key Decisions Made** - Important architectural, design, or implementation choices  
+2. **Key Decisions Made** - Important architectural, design, or implementation choices
 3. **Current State** - Where things stand now (what's working, what's broken, what's in progress)
 4. **Relevant Context for Next Session** - Filter what you include based on the stated focus above. Only include details that are relevant to "$ARGUMENTS"
+5. **Architecture & Learnings** - Include any important architectural information, patterns, gotchas, or implementation details learned during this session that would help the next session be productive
 
 ## Context to Gather
 
@@ -39,6 +40,18 @@ Continuing work on [focus area].
 **Current state:** [what's working/broken/in-progress]
 
 **Next steps:** [what to do now]
+
+---
+
+## Architecture & Learnings
+
+[Include sections covering:]
+- State management patterns and file organization
+- Key component hierarchies
+- Backend structure (Rust/Tauri)
+- Implementation patterns discovered
+- Common gotchas and their solutions
+- Testing commands and workflows
 ```
 
-Keep it focused and actionable. Only include details relevant to the next session's focus.
+Keep it focused and actionable. Include architecture details that would help a new session understand the codebase quickly.

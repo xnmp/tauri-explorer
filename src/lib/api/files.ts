@@ -4,7 +4,11 @@
  */
 
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { isTauri, mockInvoke } from "./mock-invoke";
+
+// Use real Tauri invoke in Tauri, mock invoke in browser for E2E testing
+const invoke = isTauri() ? tauriInvoke : mockInvoke;
 
 export type ApiResult<T> =
   | { ok: true; data: T }

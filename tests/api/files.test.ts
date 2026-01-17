@@ -11,6 +11,12 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => mockInvoke(...args),
 }));
 
+// Mock isTauri to return true so the Tauri invoke is used
+vi.mock("$lib/api/mock-invoke", () => ({
+  isTauri: () => true,
+  mockInvoke: vi.fn(),
+}));
+
 // Import after mocking
 import { fetchDirectory, createDirectory, renameEntry, copyEntry, moveEntry, deleteEntry, openFile, getHomeDirectory, fuzzySearch } from "$lib/api/files";
 

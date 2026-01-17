@@ -8,6 +8,7 @@
   import { settingsStore } from "$lib/state/settings.svelte";
   import { paneManager } from "$lib/state/panes.svelte";
   import { tabsManager } from "$lib/state/tabs.svelte";
+  import { clipboardStore } from "$lib/state/clipboard.svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { setPaneNavigationContext } from "$lib/state/pane-context";
   import { registerAllCommands } from "$lib/state/command-definitions";
@@ -74,14 +75,57 @@
     handleExternalDrop(paths);
   });
 
-  function handleKeydown(event: KeyboardEvent): void {
+  async function handleKeydown(event: KeyboardEvent): Promise<void> {
     const isModifier = event.ctrlKey || event.metaKey;
+
+    // Skip if focus is in an input field
+    const target = event.target as HTMLElement;
+    const isInputField = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
 
     // Ctrl+,: Open settings
     if (event.key === "," && isModifier) {
       event.preventDefault();
       settingsVisible = true;
       return;
+    }
+
+    // Clipboard shortcuts (Ctrl+C/X/V/Z) - only when not in input field
+    // Normalize key to lowercase for consistent comparison (handles Caps Lock)
+    const normalizedKey = event.key.toLowerCase();
+
+    if (isModifier && !isInputField) {
+      const explorer = getActiveExplorer();
+      const selected = explorer?.getSelectedEntries()[0];
+
+      if (normalizedKey === "c" && selected) {
+        event.preventDefault();
+        explorer?.copyToClipboard(selected);
+        return;
+      }
+
+      if (normalizedKey === "x" && selected) {
+        event.preventDefault();
+        explorer?.cutToClipboard(selected);
+        return;
+      }
+
+      if (normalizedKey === "v" && clipboardStore.hasContent) {
+        event.preventDefault();
+        await explorer?.paste();
+        return;
+      }
+
+      if (normalizedKey === "z") {
+        event.preventDefault();
+        await explorer?.undo();
+        return;
+      }
+
+      if (normalizedKey === "a") {
+        event.preventDefault();
+        explorer?.selectAll();
+        return;
+      }
     }
 
     // Ctrl+Shift+P: Command palette

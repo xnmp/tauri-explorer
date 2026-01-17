@@ -7,8 +7,19 @@ import type { DirectoryListing, FileEntry } from "$lib/domain/file";
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { isTauri, mockInvoke } from "./mock-invoke";
 
-// Use real Tauri invoke in Tauri, mock invoke in browser for E2E testing
-const invoke = isTauri() ? tauriInvoke : mockInvoke;
+// Cached Tauri detection - starts null, set on first invoke call.
+// Once detected, no further checks are needed.
+let cachedIsTauri: boolean | null = null;
+
+// Lazy invoke with cached detection.
+// First call checks isTauri() (handles late __TAURI__ injection), then caches result.
+async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  if (cachedIsTauri === null) {
+    cachedIsTauri = isTauri();
+  }
+  const invoker = cachedIsTauri ? tauriInvoke<T> : mockInvoke<T>;
+  return args !== undefined ? invoker(cmd, args) : invoker(cmd);
+}
 
 export type ApiResult<T> =
   | { ok: true; data: T }

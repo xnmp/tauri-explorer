@@ -5,9 +5,10 @@
 
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
 
-// Check if we're running in Tauri
+// Check if we're running in Tauri v2
+// Note: Tauri v2 uses __TAURI_INTERNALS__, not __TAURI__ (v1)
 export function isTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI__" in window;
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
 // Helper to create ISO date string

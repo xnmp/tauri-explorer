@@ -1,30 +1,31 @@
 # Session Handover
 
-Continuing work on fixing the mock API detection issue - mocked endpoints are being used by the Tauri app when they should only be used for browser E2E testing.
-
-**Previous session summary:** Fixed P0 keyboard shortcuts bug (Caps Lock issue) and added Tauri API mocks for browser-based E2E testing. The mock detection has a bug where it may incorrectly use mocks in the actual Tauri app.
+**Previous session summary:** Fixed the mock API detection bug (tauri-explorer-5jci). The Tauri app was showing mock data instead of real filesystem data.
 
 **Key context:**
 - Branch: `feature/command-palette`
-- The `isTauri()` check in `src/lib/api/mock-invoke.ts` uses `window.__TAURI__`
-- The invoke selection happens at module load time (files.ts line 11), which may execute before Tauri injects `__TAURI__`
 - Beads issue tracker: use `bd` CLI for issue management
+- All unit tests pass (68 tests)
+- TypeScript check passes
 
-**Current state:**
-- Mock invoke works for E2E tests but incorrectly activates in Tauri app
-- All unit tests pass (89 tests)
-- TypeScript check passes (0 errors)
+**FIXED: Mock API Detection Bug**
 
-**The bug (files.ts line 11):**
-```javascript
-const invoke = isTauri() ? tauriInvoke : mockInvoke;
+Root cause: The `isTauri()` function in `src/lib/api/mock-invoke.ts` was checking for `window.__TAURI__` (Tauri v1), but the project uses Tauri v2 which uses `window.__TAURI_INTERNALS__` instead.
+
+The fix was a one-line change:
+```typescript
+// Before (Tauri v1):
+return typeof window !== "undefined" && "__TAURI__" in window;
+
+// After (Tauri v2):
+return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 ```
-This runs at module load time. If `window.__TAURI__` isn't set yet, it falls back to mock.
+
+The TitleBar.svelte component already had the correct check, which served as a reference.
 
 **Next steps:**
-1. Make the Tauri detection lazy (check on each invoke call, not at module load)
-2. Alternative: Check `import.meta.env` or use Vite environment variables
-3. Test that real Tauri app uses real invoke, browser uses mock
+- Verify the fix by running `bun tauri dev` and checking that real filesystem data loads
+- Address pre-existing E2E test failures (18 tests failing, unrelated to this fix)
 
 ---
 

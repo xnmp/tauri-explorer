@@ -209,6 +209,7 @@
     --radius-sm: 4px;
     --radius-md: 8px;
     --radius-lg: 12px;
+    --radius-window: 8px;
 
     /* Transitions */
     --transition-fast: 67ms cubic-bezier(0, 0, 0, 1);
@@ -223,6 +224,13 @@
     --spacing-xl: 24px;
   }
 
+  /* Window frame styling for transparent decorationless window */
+  :global(html) {
+    background: transparent;
+    border-radius: var(--radius-window);
+    overflow: hidden;
+  }
+
 
   :global(body) {
     font-family: var(--font-family);
@@ -232,6 +240,16 @@
     background: var(--background-solid);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    /* Window frame with border for transparent window */
+    border-radius: var(--radius-window);
+    border: 1px solid var(--surface-stroke);
+    overflow: hidden;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    margin: 0;
   }
 
   /* Selection styling */

@@ -1,5 +1,5 @@
 //! Tauri Explorer app entry point.
-//! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6, tauri-explorer-im3m
+//! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6, tauri-explorer-im3m, tauri-explorer-bo8l
 
 mod content_search;
 mod files;
@@ -7,9 +7,6 @@ mod search;
 mod thumbnails;
 
 use std::path::PathBuf;
-
-#[cfg(target_os = "windows")]
-use tauri::Manager;
 
 /// Move a file or directory to the system trash/recycle bin.
 /// Cross-platform: Windows Recycle Bin, macOS Trash, Linux Freedesktop Trash.
@@ -73,36 +70,14 @@ pub fn run() {
             thumbnails::clear_thumbnail_cache,
             thumbnails::get_thumbnail_cache_stats,
         ])
-        .setup(|#[allow(unused)] app| {
+        .setup(|_app| {
             #[cfg(debug_assertions)]
             {
                 println!("[Explorer] Rust backend ready");
             }
-
-            // Apply rounded corners on Windows 11
-            #[cfg(target_os = "windows")]
-            {
-                use windows::Win32::Foundation::HWND;
-                use windows::Win32::Graphics::Dwm::{
-                    DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE,
-                    DWM_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
-                };
-
-                if let Some(window) = app.get_webview_window("main") {
-                    if let Ok(hwnd) = window.hwnd() {
-                        let preference = DWMWCP_ROUND;
-                        unsafe {
-                            let _ = DwmSetWindowAttribute(
-                                HWND(hwnd.0 as *mut std::ffi::c_void),
-                                DWMWA_WINDOW_CORNER_PREFERENCE,
-                                &preference as *const DWM_WINDOW_CORNER_PREFERENCE as *const _,
-                                std::mem::size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
-                            );
-                        }
-                    }
-                }
-            }
-
+            // Note: Window rounded corners and borders are handled via CSS
+            // with transparent: true and shadow: false in tauri.conf.json
+            // DWM APIs don't work with decorations: false windows
             Ok(())
         })
         .run(tauri::generate_context!())

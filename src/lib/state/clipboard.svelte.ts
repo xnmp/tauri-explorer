@@ -1,17 +1,30 @@
 /**
  * Global clipboard state for cross-pane file operations.
- * Issue: tauri-explorer-u7bg
+ * Issue: tauri-explorer-u7bg, tauri-explorer-za55, tauri-explorer-rdra
  *
- * This enables copy/cut/paste between dual panes.
+ * This enables copy/cut/paste between dual panes and with external apps.
+ * Now integrates with the OS clipboard for copying files to/from
+ * other applications like Windows Explorer, macOS Finder, etc.
  */
 
 import type { FileEntry } from "$lib/domain/file";
+import {
+  osClipboardHasFiles,
+  osClipboardReadFiles,
+  osClipboardWriteFiles,
+} from "$lib/api/os-clipboard";
 
 export type ClipboardOperation = "copy" | "cut";
 
 export interface ClipboardContent {
   entry: FileEntry;
   operation: ClipboardOperation;
+}
+
+/** Content from OS clipboard (external apps). */
+export interface OsClipboardContent {
+  paths: string[];
+  operation: "copy"; // External sources are always copy
 }
 
 function createClipboardStore() {
@@ -28,12 +41,22 @@ function createClipboardStore() {
       return content?.operation === "cut";
     },
 
-    copy(entry: FileEntry): void {
+    /**
+     * Copy a file to clipboard (internal + OS clipboard).
+     */
+    async copy(entry: FileEntry): Promise<void> {
       content = { entry, operation: "copy" };
+      // Also write to OS clipboard for external app paste
+      await osClipboardWriteFiles([entry.path]);
     },
 
-    cut(entry: FileEntry): void {
+    /**
+     * Cut a file (internal only - OS clipboard doesn't support cut).
+     */
+    async cut(entry: FileEntry): Promise<void> {
       content = { entry, operation: "cut" };
+      // Write to OS clipboard as copy (cut is app-specific behavior)
+      await osClipboardWriteFiles([entry.path]);
     },
 
     clear(): void {
@@ -55,6 +78,23 @@ function createClipboardStore() {
       }
 
       return result;
+    },
+
+    /**
+     * Check if OS clipboard has files from external sources.
+     */
+    async hasOsFiles(): Promise<boolean> {
+      return osClipboardHasFiles();
+    },
+
+    /**
+     * Read files from OS clipboard (from external apps).
+     * Returns paths of files copied in external apps.
+     */
+    async readOsFiles(): Promise<OsClipboardContent | null> {
+      const paths = await osClipboardReadFiles();
+      if (paths.length === 0) return null;
+      return { paths, operation: "copy" };
     },
   };
 }

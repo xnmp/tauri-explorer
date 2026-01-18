@@ -12,6 +12,7 @@
     "core:window:allow-is-maximized",
     "opener:default",
     "shell:allow-spawn",
-    "shell:allow-execute"
+    "shell:allow-execute",
+    "clipboard-x:default"
   ]
 }

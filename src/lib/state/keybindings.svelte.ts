@@ -53,13 +53,9 @@ function saveUserShortcuts(): void {
   if (typeof localStorage === "undefined") return;
 
   // Only save non-null entries (user customizations)
-  const toSave: UserKeybindings = {};
-  for (const [commandId, shortcut] of Object.entries(userShortcuts)) {
-    if (shortcut !== null) {
-      toSave[commandId] = shortcut;
-    }
-  }
-
+  const toSave = Object.fromEntries(
+    Object.entries(userShortcuts).filter(([_, shortcut]) => shortcut !== null)
+  );
   localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
 }
 
@@ -145,17 +141,11 @@ function createKeybindingsStore() {
    * Get all keybindings (for UI display).
    */
   function getAllBindings(): Keybinding[] {
-    const bindings: Keybinding[] = [];
-
-    for (const commandId of Object.keys(defaultShortcuts)) {
-      bindings.push({
-        commandId,
-        defaultShortcut: defaultShortcuts[commandId],
-        userShortcut: userShortcuts[commandId] ?? null,
-      });
-    }
-
-    return bindings;
+    return Object.keys(defaultShortcuts).map((commandId) => ({
+      commandId,
+      defaultShortcut: defaultShortcuts[commandId],
+      userShortcut: userShortcuts[commandId] ?? null,
+    }));
   }
 
   /**

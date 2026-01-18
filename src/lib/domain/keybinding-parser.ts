@@ -31,8 +31,11 @@ const DISPLAY_NAMES: Record<string, string> = {
   Tab: "Tab",
 };
 
+/** Modifier keys in ParsedShortcut (excludes "key") */
+type ModifierKey = "ctrl" | "shift" | "alt" | "meta";
+
 /** Modifier key aliases (for parsing user input) */
-const MODIFIER_ALIASES: Record<string, keyof ParsedShortcut> = {
+const MODIFIER_ALIASES: Record<string, ModifierKey> = {
   ctrl: "ctrl",
   control: "ctrl",
   cmd: "meta",
@@ -44,6 +47,30 @@ const MODIFIER_ALIASES: Record<string, keyof ParsedShortcut> = {
   option: "alt",
   opt: "alt",
   shift: "shift",
+};
+
+/** Key name aliases (maps user-friendly names to event.key values) */
+const KEY_ALIASES: Record<string, string> = {
+  left: "ArrowLeft",
+  right: "ArrowRight",
+  up: "ArrowUp",
+  down: "ArrowDown",
+  space: " ",
+  spacebar: " ",
+  esc: "Escape",
+  escape: "Escape",
+  del: "Delete",
+  enter: "Enter",
+  return: "Enter",
+};
+
+/** Reverse map: event.key values to shortcut string format */
+const KEY_TO_SHORTCUT: Record<string, string> = {
+  ArrowLeft: "Left",
+  ArrowRight: "Right",
+  ArrowUp: "Up",
+  ArrowDown: "Down",
+  " ": "Space",
 };
 
 /**
@@ -83,23 +110,9 @@ export function parseShortcut(shortcut: string): ParsedShortcut | null {
     }
 
     // Last part (or only non-modifier part) is the key
-    // Normalize directional keys
-    if (lowerPart === "left") {
-      result.key = "ArrowLeft";
-    } else if (lowerPart === "right") {
-      result.key = "ArrowRight";
-    } else if (lowerPart === "up") {
-      result.key = "ArrowUp";
-    } else if (lowerPart === "down") {
-      result.key = "ArrowDown";
-    } else if (lowerPart === "space" || lowerPart === "spacebar") {
-      result.key = " ";
-    } else if (lowerPart === "esc" || lowerPart === "escape") {
-      result.key = "Escape";
-    } else if (lowerPart === "del") {
-      result.key = "Delete";
-    } else if (lowerPart === "enter" || lowerPart === "return") {
-      result.key = "Enter";
+    const aliasedKey = KEY_ALIASES[lowerPart];
+    if (aliasedKey) {
+      result.key = aliasedKey;
     } else if (part.length === 1) {
       // Single character - store as lowercase for consistent matching
       result.key = part.toLowerCase();
@@ -179,18 +192,15 @@ export function formatShortcut(shortcut: string): string {
   return parts.join("+");
 }
 
+/** Modifier keys that should be ignored when pressed alone */
+const MODIFIER_KEYS = new Set(["Control", "Shift", "Alt", "Meta"]);
+
 /**
  * Convert a KeyboardEvent to a shortcut string.
  * Useful for recording new keybindings.
  */
 export function eventToShortcutString(event: KeyboardEvent): string | null {
-  // Ignore modifier-only key presses
-  if (
-    event.key === "Control" ||
-    event.key === "Shift" ||
-    event.key === "Alt" ||
-    event.key === "Meta"
-  ) {
+  if (MODIFIER_KEYS.has(event.key)) {
     return null;
   }
 
@@ -200,16 +210,9 @@ export function eventToShortcutString(event: KeyboardEvent): string | null {
   if (event.shiftKey) parts.push("Shift");
   if (event.altKey) parts.push("Alt");
 
-  // Format the key
-  let key = event.key;
-
-  // Normalize arrow keys
-  if (key === "ArrowLeft") key = "Left";
-  else if (key === "ArrowRight") key = "Right";
-  else if (key === "ArrowUp") key = "Up";
-  else if (key === "ArrowDown") key = "Down";
-  else if (key === " ") key = "Space";
-  else if (key.length === 1) key = key.toUpperCase();
+  // Format the key using lookup or uppercase for single chars
+  const key = KEY_TO_SHORTCUT[event.key] ??
+    (event.key.length === 1 ? event.key.toUpperCase() : event.key);
 
   parts.push(key);
 

@@ -1,10 +1,11 @@
 <!--
   SettingsDialog component - Application settings
-  Issue: tauri-explorer-npjh.1
+  Issue: tauri-explorer-npjh.1, tauri-explorer-oytv
 -->
 <script lang="ts">
   import { settingsStore } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
+  import KeybindingsSettings from "./KeybindingsSettings.svelte";
 
   interface Props {
     open: boolean;
@@ -102,64 +103,8 @@
         <!-- Keyboard Shortcuts Section -->
         <section class="settings-section">
           <h3 class="section-title">Keyboard Shortcuts</h3>
-          <div class="shortcuts-list">
-            <div class="shortcut-row">
-              <span class="shortcut-action">Open Settings</span>
-              <kbd>Ctrl</kbd><span class="plus">+</span><kbd>,</kbd>
-            </div>
-            <div class="shortcut-row">
-              <span class="shortcut-action">Quick Open (Search Files)</span>
-              <kbd>Ctrl</kbd><span class="plus">+</span><kbd>P</kbd>
-            </div>
-            <div class="shortcut-row">
-              <span class="shortcut-action">Toggle Dual Pane</span>
-              <kbd>Ctrl</kbd><span class="plus">+</span><kbd>\</kbd>
-            </div>
-            <div class="shortcut-row">
-              <span class="shortcut-action">Switch Pane</span>
-              <kbd>F6</kbd>
-            </div>
-            <div class="shortcut-row">
-              <span class="shortcut-action">Go Back</span>
-              <kbd>Alt</kbd><span class="plus">+</span><kbd>←</kbd>
-            </div>
-            <div class="shortcut-row">
-              <span class="shortcut-action">Go Forward</span>
-              <kbd>Alt</kbd><span class="plus">+</span><kbd>→</kbd>
-            </div>
-            <div class="shortcut-row">
-              <span class="shortcut-action">Go Up</span>
-              <kbd>Alt</kbd><span class="plus">+</span><kbd>↑</kbd>
-            </div>
-            <div class="shortcut-row">
-              <span class="shortcut-action">Refresh</span>
-              <kbd>F5</kbd>
-            </div>
-            <div class="shortcut-row">
-              <span class="shortcut-action">Copy</span>
-              <kbd>Ctrl</kbd><span class="plus">+</span><kbd>C</kbd>
-            </div>
-            <div class="shortcut-row">
-              <span class="shortcut-action">Cut</span>
-              <kbd>Ctrl</kbd><span class="plus">+</span><kbd>X</kbd>
-            </div>
-            <div class="shortcut-row">
-              <span class="shortcut-action">Paste</span>
-              <kbd>Ctrl</kbd><span class="plus">+</span><kbd>V</kbd>
-            </div>
-            <div class="shortcut-row">
-              <span class="shortcut-action">Undo</span>
-              <kbd>Ctrl</kbd><span class="plus">+</span><kbd>Z</kbd>
-            </div>
-            <div class="shortcut-row">
-              <span class="shortcut-action">Delete</span>
-              <kbd>Delete</kbd>
-            </div>
-            <div class="shortcut-row">
-              <span class="shortcut-action">Rename</span>
-              <kbd>F2</kbd>
-            </div>
-          </div>
+          <p class="section-hint">Click on a shortcut to change it. Press Escape to cancel.</p>
+          <KeybindingsSettings />
         </section>
       </div>
     </div>
@@ -184,9 +129,9 @@
   }
 
   .settings-dialog {
-    width: 500px;
+    width: 600px;
     max-width: 90vw;
-    max-height: 80vh;
+    max-height: 85vh;
     background: var(--background-solid);
     border: 1px solid var(--surface-stroke);
     border-radius: var(--radius-lg);
@@ -260,9 +205,15 @@
     font-size: 14px;
     font-weight: 600;
     color: var(--text-primary);
-    margin: 0 0 12px 0;
+    margin: 0 0 8px 0;
     padding-bottom: 8px;
     border-bottom: 1px solid var(--divider);
+  }
+
+  .section-hint {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    margin: 0 0 12px 0;
   }
 
   .setting-row {
@@ -364,45 +315,5 @@
   .toggle input:focus-visible + .toggle-slider {
     outline: 2px solid var(--focus-stroke-outer);
     outline-offset: 2px;
-  }
-
-  /* Keyboard shortcuts */
-  .shortcuts-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .shortcut-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 0;
-  }
-
-  .shortcut-action {
-    font-size: 13px;
-    color: var(--text-secondary);
-  }
-
-  .shortcut-row kbd {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 24px;
-    height: 24px;
-    padding: 0 8px;
-    background: var(--subtle-fill-tertiary);
-    border: 1px solid var(--control-stroke);
-    border-radius: 4px;
-    font-family: inherit;
-    font-size: 12px;
-    color: var(--text-secondary);
-  }
-
-  .plus {
-    margin: 0 4px;
-    color: var(--text-tertiary);
-    font-size: 12px;
   }
 </style>

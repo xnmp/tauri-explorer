@@ -1,17 +1,20 @@
 //! Content search module using grep crate (ripgrep library).
-//! Issue: tauri-explorer-3a1q
+//! Issue: tauri-explorer-3a1q, tauri-explorer-5w06
 
 use grep_matcher::Matcher;
 use grep_regex::RegexMatcher;
 use grep_searcher::sinks::UTF8;
 use grep_searcher::Searcher;
-use ignore::WalkBuilder;
+use ignore::{WalkBuilder, WalkState};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use tauri::{AppHandle, Emitter};
+
+/// Maximum matches to collect per file to prevent runaway processing
+const MAX_MATCHES_PER_FILE: usize = 50;
 
 /// A single match within a file.
 #[derive(Debug, Clone, Serialize)]
@@ -155,108 +158,153 @@ fn perform_content_search(
     }
     .map_err(|e| format!("Invalid search pattern: {}", e))?;
 
-    let mut searcher = Searcher::new();
-    let mut all_results: Vec<ContentSearchResult> = Vec::new();
-    let mut files_searched = 0;
-    let mut total_matches = 0;
-    let batch_size = 10; // Emit results every N files with matches
+    let matcher = Arc::new(matcher);
 
-    // Use ignore crate for efficient directory walking (respects .gitignore)
+    // Shared counters for parallel access
+    let files_searched = Arc::new(AtomicUsize::new(0));
+    let total_matches = Arc::new(AtomicUsize::new(0));
+
+    // Channel for collecting results from parallel workers
+    let (tx, rx) = mpsc::channel::<ContentSearchResult>();
+
+    // Use parallel walker for multi-core file processing
     let walker = WalkBuilder::new(root_path)
-        .hidden(true) // Skip hidden files
-        .git_ignore(true) // Respect .gitignore
+        .hidden(true)
+        .git_ignore(true)
         .git_global(true)
         .git_exclude(true)
-        .build();
+        .threads(num_cpus::get().min(8)) // Use available cores, cap at 8
+        .build_parallel();
 
-    for entry in walker {
-        // Check for cancellation
+    let root_path = root_path.to_path_buf();
+
+    // Spawn parallel workers
+    let cancelled_clone = cancelled.clone();
+    let files_searched_clone = files_searched.clone();
+    let total_matches_clone = total_matches.clone();
+
+    std::thread::spawn(move || {
+        walker.run(|| {
+            let matcher = matcher.clone();
+            let cancelled = cancelled_clone.clone();
+            let tx = tx.clone();
+            let root_path = root_path.clone();
+            let files_searched = files_searched_clone.clone();
+            let total_matches = total_matches_clone.clone();
+
+            Box::new(move |entry| {
+                // Check for cancellation
+                if cancelled.load(Ordering::Relaxed) {
+                    return WalkState::Quit;
+                }
+
+                // Check global max results
+                if total_matches.load(Ordering::Relaxed) >= max_results {
+                    return WalkState::Quit;
+                }
+
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(_) => return WalkState::Continue,
+                };
+
+                let path = entry.path();
+
+                // Skip directories
+                if path.is_dir() {
+                    return WalkState::Continue;
+                }
+
+                // Skip binary files
+                if is_binary_file(path) {
+                    return WalkState::Continue;
+                }
+
+                files_searched.fetch_add(1, Ordering::Relaxed);
+
+                // Search the file with per-file match limit
+                let mut file_matches: Vec<ContentMatch> = Vec::new();
+                let mut searcher = Searcher::new();
+
+                let _ = searcher.search_path(
+                    matcher.as_ref(),
+                    path,
+                    UTF8(|line_num, line| {
+                        // Check per-file limit
+                        if file_matches.len() >= MAX_MATCHES_PER_FILE {
+                            return Ok(false); // Stop searching this file
+                        }
+
+                        let mut byte_offset = 0;
+                        while let Ok(Some(m)) = matcher.find(&line.as_bytes()[byte_offset..]) {
+                            if file_matches.len() >= MAX_MATCHES_PER_FILE {
+                                return Ok(false);
+                            }
+
+                            let match_start = byte_offset + m.start();
+                            let match_end = byte_offset + m.end();
+
+                            file_matches.push(ContentMatch {
+                                line_number: line_num,
+                                column: (match_start + 1) as u64,
+                                line_content: line.trim_end().to_string(),
+                                match_start,
+                                match_end,
+                            });
+
+                            byte_offset = match_end;
+                            if byte_offset >= line.len() {
+                                break;
+                            }
+                        }
+                        Ok(true)
+                    }),
+                );
+
+                if !file_matches.is_empty() {
+                    let relative_path = path
+                        .strip_prefix(&root_path)
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|_| path.to_string_lossy().to_string());
+
+                    total_matches.fetch_add(file_matches.len(), Ordering::Relaxed);
+
+                    let _ = tx.send(ContentSearchResult {
+                        path: path.to_string_lossy().to_string(),
+                        relative_path,
+                        matches: file_matches,
+                    });
+                }
+
+                WalkState::Continue
+            })
+        });
+        // tx drops here, signaling channel close
+    });
+
+    // Collect results and emit batches (runs in original thread)
+    let mut pending_results: Vec<ContentSearchResult> = Vec::new();
+    let batch_size = 10;
+
+    while let Ok(result) = rx.recv() {
         if cancelled.load(Ordering::Relaxed) {
             break;
         }
 
-        // Check if we've hit max results
-        if total_matches >= max_results {
-            break;
-        }
+        pending_results.push(result);
 
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        let path = entry.path();
-
-        // Skip directories
-        if path.is_dir() {
-            continue;
-        }
-
-        // Skip binary files (simple heuristic based on extension)
-        if is_binary_file(path) {
-            continue;
-        }
-
-        files_searched += 1;
-
-        // Search the file
-        let mut file_matches: Vec<ContentMatch> = Vec::new();
-
-        let search_result = searcher.search_path(
-            &matcher,
-            path,
-            UTF8(|line_num, line| {
-                // Find all matches in the line
-                let mut byte_offset = 0;
-                while let Ok(Some(m)) = matcher.find(&line.as_bytes()[byte_offset..]) {
-                    let match_start = byte_offset + m.start();
-                    let match_end = byte_offset + m.end();
-
-                    file_matches.push(ContentMatch {
-                        line_number: line_num,
-                        column: (match_start + 1) as u64,
-                        line_content: line.trim_end().to_string(),
-                        match_start,
-                        match_end,
-                    });
-
-                    byte_offset = match_end;
-                    if byte_offset >= line.len() {
-                        break;
-                    }
-                }
-                Ok(true)
-            }),
-        );
-
-        if search_result.is_ok() && !file_matches.is_empty() {
-            let relative_path = path
-                .strip_prefix(root_path)
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|_| path.to_string_lossy().to_string());
-
-            total_matches += file_matches.len();
-
-            all_results.push(ContentSearchResult {
-                path: path.to_string_lossy().to_string(),
-                relative_path,
-                matches: file_matches,
-            });
-
-            // Emit intermediate results
-            if all_results.len() >= batch_size {
-                let _ = app.emit(
-                    "content-search-results",
-                    ContentSearchEvent {
-                        search_id,
-                        results: all_results.clone(),
-                        done: false,
-                        files_searched,
-                        total_matches,
-                    },
-                );
-                all_results.clear();
-            }
+        // Emit batch when threshold reached (delta only, not accumulated)
+        if pending_results.len() >= batch_size {
+            let _ = app.emit(
+                "content-search-results",
+                ContentSearchEvent {
+                    search_id,
+                    results: std::mem::take(&mut pending_results), // Move, don't clone
+                    done: false,
+                    files_searched: files_searched.load(Ordering::Relaxed),
+                    total_matches: total_matches.load(Ordering::Relaxed),
+                },
+            );
         }
     }
 
@@ -266,10 +314,10 @@ fn perform_content_search(
             "content-search-results",
             ContentSearchEvent {
                 search_id,
-                results: all_results,
+                results: pending_results, // Move remaining results
                 done: true,
-                files_searched,
-                total_matches,
+                files_searched: files_searched.load(Ordering::Relaxed),
+                total_matches: total_matches.load(Ordering::Relaxed),
             },
         );
     }

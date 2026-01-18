@@ -5,7 +5,7 @@
 <script lang="ts">
   import { getAllCommands, getCategoryLabel, type Command, type CommandCategory } from "$lib/state/commands.svelte";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
-  import { eventToShortcutString, formatShortcut } from "$lib/domain/keybinding-parser";
+  import { eventToShortcutString } from "$lib/domain/keybinding-parser";
 
   /** Currently recording shortcut for this command ID */
   let recordingCommandId = $state<string | null>(null);
@@ -16,34 +16,32 @@
   /** Search filter */
   let searchQuery = $state("");
 
-  /** Get all commands with shortcuts, grouped by category */
-  const commandsWithShortcuts = $derived.by(() => {
-    const commands = getAllCommands().filter(cmd => cmd.shortcut);
+  /** Commands with shortcuts, filtered by search and grouped by category */
+  const groupedCommands = $derived.by(() => {
+    let commands = getAllCommands().filter(cmd => cmd.shortcut);
 
     // Apply search filter
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      return commands.filter(cmd =>
+    const query = searchQuery.trim().toLowerCase();
+    if (query) {
+      commands = commands.filter(cmd =>
         cmd.label.toLowerCase().includes(query) ||
         getCategoryLabel(cmd.category).toLowerCase().includes(query) ||
         (keybindingsStore.getDisplayShortcut(cmd.id) || "").toLowerCase().includes(query)
       );
     }
 
-    return commands;
-  });
-
-  /** Group commands by category */
-  const groupedCommands = $derived.by(() => {
+    // Group by category
     const groups = new Map<CommandCategory, Command[]>();
-
-    for (const cmd of commandsWithShortcuts) {
+    for (const cmd of commands) {
       const existing = groups.get(cmd.category) || [];
       groups.set(cmd.category, [...existing, cmd]);
     }
 
     return groups;
   });
+
+  /** Total filtered command count for empty state */
+  const filteredCount = $derived([...groupedCommands.values()].reduce((sum, cmds) => sum + cmds.length, 0));
 
   /** Start recording a new shortcut */
   function startRecording(commandId: string): void {
@@ -88,22 +86,7 @@
     conflictInfo = null;
   }
 
-  /** Reset a single shortcut to default */
-  function resetShortcut(commandId: string): void {
-    keybindingsStore.resetToDefault(commandId);
-  }
-
-  /** Reset all shortcuts to defaults */
-  function resetAllShortcuts(): void {
-    keybindingsStore.resetAllToDefaults();
-  }
-
-  /** Check if command has a custom shortcut */
-  function isCustomized(commandId: string): boolean {
-    return keybindingsStore.hasCustomShortcut(commandId);
-  }
-
-  /** Format shortcut for display, splitting into parts */
+  /** Get shortcut display parts (e.g., ["Ctrl", "P"]) */
   function getShortcutParts(commandId: string): string[] {
     const shortcut = keybindingsStore.getDisplayShortcut(commandId);
     return shortcut ? shortcut.split("+") : [];
@@ -118,7 +101,7 @@
       placeholder="Search shortcuts..."
       bind:value={searchQuery}
     />
-    <button class="reset-all-btn" onclick={resetAllShortcuts}>
+    <button class="reset-all-btn" onclick={() => keybindingsStore.resetAllToDefaults()}>
       Reset All
     </button>
   </div>
@@ -131,7 +114,7 @@
         {#each commands as cmd (cmd.id)}
           {@const parts = getShortcutParts(cmd.id)}
           {@const isRecording = recordingCommandId === cmd.id}
-          {@const hasCustom = isCustomized(cmd.id)}
+          {@const hasCustom = keybindingsStore.hasCustomShortcut(cmd.id)}
 
           <div class="shortcut-row" class:recording={isRecording} class:customized={hasCustom}>
             <span class="shortcut-action">{cmd.label}</span>
@@ -162,7 +145,7 @@
                 {#if hasCustom}
                   <button
                     class="reset-btn"
-                    onclick={() => resetShortcut(cmd.id)}
+                    onclick={() => keybindingsStore.resetToDefault(cmd.id)}
                     title="Reset to default"
                   >
                     ↺
@@ -175,7 +158,7 @@
       </div>
     {/each}
 
-    {#if commandsWithShortcuts.length === 0}
+    {#if filteredCount === 0}
       <div class="no-results">No shortcuts found</div>
     {/if}
   </div>

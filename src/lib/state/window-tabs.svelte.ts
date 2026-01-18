@@ -16,11 +16,11 @@ import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
 const STORAGE_KEY = "explorer-tabs";
 
 /** Serializable tab state for persistence */
-interface PersistedPane {
+export interface PersistedPane {
   path: string;
 }
 
-interface PersistedTab {
+export interface PersistedTab {
   id: string;
   panes: {
     left: PersistedPane;
@@ -31,18 +31,18 @@ interface PersistedTab {
   splitRatio: number;
 }
 
-interface PersistedTabState {
+export interface PersistedTabState {
   tabs: PersistedTab[];
   activeTabId: string | null;
 }
 
 /** Generate unique IDs for tabs and explorers */
-function generateId(prefix: string): string {
+export function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 /** Extract folder name from path for tab title */
-function extractFolderName(path: string): string {
+export function extractFolderName(path: string): string {
   const parts = path.split(/[/\\]/).filter(Boolean);
   return parts.length > 0 ? parts[parts.length - 1] : path || "Explorer";
 }
@@ -390,5 +390,8 @@ function createWindowTabsManager() {
     save: saveState,
   };
 }
+
+/** Factory for creating window tabs managers - exported for testing */
+export { createWindowTabsManager };
 
 export const windowTabsManager = createWindowTabsManager();

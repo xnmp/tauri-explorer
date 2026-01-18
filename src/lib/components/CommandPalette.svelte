@@ -1,6 +1,6 @@
 <!--
   CommandPalette component - VSCode-style Ctrl+Shift+P command palette
-  Issue: tauri-explorer-0dk, tauri-explorer-dfx
+  Issue: tauri-explorer-0dk, tauri-explorer-dfx, tauri-explorer-npjh.4
 -->
 <script lang="ts">
   import {
@@ -9,6 +9,7 @@
     getRecentCommands,
     executeCommand,
     getCategoryLabel,
+    getCommandShortcut,
     type Command,
     type CommandCategory,
   } from "$lib/state/commands.svelte";
@@ -53,7 +54,7 @@
   function fuzzyScore(cmd: Command, query: string): number {
     const label = cmd.label.toLowerCase();
     const category = getCategoryLabel(cmd.category).toLowerCase();
-    const shortcut = (cmd.shortcut || "").toLowerCase();
+    const shortcut = (getCommandShortcut(cmd.id) || "").toLowerCase();
 
     let score = 0;
 
@@ -183,6 +184,7 @@
           <ul class="commands-list" role="listbox">
             {#each flatCommands as cmd, index (cmd.id)}
               {@const isSelected = index === selectedIndex}
+              {@const displayShortcut = getCommandShortcut(cmd.id)}
               <li
                 class="command-item"
                 class:selected={isSelected}
@@ -193,9 +195,9 @@
               >
                 <span class="command-category">{getCategoryLabel(cmd.category)}</span>
                 <span class="command-label">{cmd.label}</span>
-                {#if cmd.shortcut}
+                {#if displayShortcut}
                   <span class="command-shortcut">
-                    {#each cmd.shortcut.split("+") as key, keyIndex}
+                    {#each displayShortcut.split("+") as key, keyIndex}
                       {#if keyIndex > 0}+{/if}
                       <kbd>{key}</kbd>
                     {/each}

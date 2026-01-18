@@ -1,18 +1,26 @@
 /**
  * Command registry system for command palette.
- * Issue: tauri-explorer-abm
+ * Issue: tauri-explorer-abm, tauri-explorer-npjh.4
  *
  * Provides a centralized registry for all app commands that can be
  * executed via command palette, keyboard shortcuts, or menus.
  */
 
+import { keybindingsStore } from "./keybindings.svelte";
+
 export interface Command {
   id: string;
   label: string;
   category: CommandCategory;
+  /** Default shortcut - actual binding comes from keybindingsStore */
   shortcut?: string;
   handler: () => void | Promise<void>;
   when?: () => boolean;
+}
+
+/** Get the effective display shortcut for a command */
+export function getCommandShortcut(commandId: string): string | undefined {
+  return keybindingsStore.getDisplayShortcut(commandId);
 }
 
 export type CommandCategory =

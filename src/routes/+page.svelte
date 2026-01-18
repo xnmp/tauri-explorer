@@ -1,6 +1,6 @@
 <!--
   Main Explorer page - Windows 11 Fluent Design
-  Issue: tauri-explorer-iw0, tauri-explorer-jql, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-w3t, tauri-explorer-npjh, tauri-explorer-1ex, tauri-explorer-auj
+  Issue: tauri-explorer-iw0, tauri-explorer-jql, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-w3t, tauri-explorer-npjh, tauri-explorer-1ex, tauri-explorer-auj, tauri-explorer-npjh.4
 -->
 <script lang="ts">
   import { onMount } from "svelte";
@@ -11,6 +11,8 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { setPaneNavigationContext } from "$lib/state/pane-context";
   import { registerAllCommands } from "$lib/state/command-definitions";
+  import { executeCommand } from "$lib/state/commands.svelte";
+  import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
   import { copyEntry, getHomeDirectory } from "$lib/api/files";
   import "$lib/themes/index.css";
@@ -77,118 +79,35 @@
   async function handleKeydown(event: KeyboardEvent): Promise<void> {
     const isModifier = event.ctrlKey || event.metaKey;
 
-    // Skip if focus is in an input field
+    // Skip if focus is in an input field (except for special cases)
     const target = event.target as HTMLElement;
     const isInputField = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
 
-    // Ctrl+,: Open settings
+    // Ctrl+,: Open settings (hardcoded, not customizable)
     if (event.key === "," && isModifier) {
       event.preventDefault();
       settingsVisible = true;
       return;
     }
 
-    // Clipboard shortcuts (Ctrl+C/X/V/Z) - only when not in input field
-    // Normalize key to lowercase for consistent comparison (handles Caps Lock)
-    const normalizedKey = event.key.toLowerCase();
-
-    if (isModifier && !isInputField) {
-      const explorer = getActiveExplorer();
-      const selected = explorer?.getSelectedEntries()[0];
-
-      if (normalizedKey === "c" && selected) {
-        event.preventDefault();
-        explorer?.copyToClipboard(selected);
-        return;
-      }
-
-      if (normalizedKey === "x" && selected) {
-        event.preventDefault();
-        explorer?.cutToClipboard(selected);
-        return;
-      }
-
-      if (normalizedKey === "v" && clipboardStore.hasContent) {
-        event.preventDefault();
-        await explorer?.paste();
-        return;
-      }
-
-      if (normalizedKey === "z") {
-        event.preventDefault();
-        await explorer?.undo();
-        return;
-      }
-
-      if (normalizedKey === "a") {
-        event.preventDefault();
-        explorer?.selectAll();
-        return;
-      }
-
-      // Ctrl+H: Toggle hidden files
-      if (normalizedKey === "h") {
-        event.preventDefault();
-        explorer?.toggleHidden();
-        return;
-      }
-    }
-
-    // Ctrl+Shift+P: Command palette
-    if (event.key === "P" && isModifier && event.shiftKey) {
-      event.preventDefault();
-      commandPaletteVisible = true;
-      return;
-    }
-
-    // Ctrl+Shift+F: Content search in files
-    if (event.key === "F" && isModifier && event.shiftKey) {
-      event.preventDefault();
-      contentSearchVisible = true;
-      return;
-    }
-
-    // Ctrl+P: Quick open file search
-    if (event.key === "p" && isModifier && !event.shiftKey) {
-      event.preventDefault();
-      quickOpenVisible = true;
-      return;
-    }
-
-    // Ctrl+T: New tab
-    if (event.key === "t" && isModifier && !event.shiftKey) {
-      event.preventDefault();
-      windowTabsManager.createTab();
-      return;
-    }
-
-    // Ctrl+W: Close tab
-    if (event.key === "w" && isModifier && !event.shiftKey) {
-      event.preventDefault();
-      windowTabsManager.closeActiveTab();
-      return;
-    }
-
-    // Ctrl+Tab: Next tab
-    if (event.key === "Tab" && isModifier && !event.shiftKey) {
-      event.preventDefault();
-      windowTabsManager.nextTab();
-      return;
-    }
-
-    // Ctrl+Shift+Tab: Previous tab
-    if (event.key === "Tab" && isModifier && event.shiftKey) {
-      event.preventDefault();
-      windowTabsManager.prevTab();
-      return;
-    }
-
-    // Ctrl+\ or Ctrl+|: Toggle dual pane
-    // Use both key and code for better cross-platform support
+    // Ctrl+\ or Ctrl+|: Toggle dual pane (hardcoded due to special key handling)
     const isBackslash = event.key === "\\" || event.key === "|" || event.code === "Backslash";
     if (isBackslash && isModifier) {
       event.preventDefault();
       windowTabsManager.toggleDualPane();
+      return;
+    }
+
+    // Skip dynamic shortcut handling if in input field
+    if (isInputField) {
+      return;
+    }
+
+    // Find matching command from keybindings store
+    const matchingCommandId = keybindingsStore.findMatchingCommand(event);
+    if (matchingCommandId) {
+      event.preventDefault();
+      await executeCommand(matchingCommandId);
       return;
     }
   }

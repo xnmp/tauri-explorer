@@ -1,12 +1,13 @@
 /**
  * Command definitions for the command palette.
- * Issue: tauri-explorer-abm
+ * Issue: tauri-explorer-abm, tauri-explorer-npjh.4
  *
  * Registers all available app commands. Commands are grouped by category
  * and include keyboard shortcuts where applicable.
  */
 
 import { registerCommands, type Command } from "./commands.svelte";
+import { keybindingsStore } from "./keybindings.svelte";
 import { windowTabsManager } from "./window-tabs.svelte";
 import { settingsStore } from "./settings.svelte";
 import { themeStore } from "./theme.svelte";
@@ -356,7 +357,7 @@ const generalCommands: Command[] = [
 
 /** Register all commands */
 export function registerAllCommands(): void {
-  registerCommands([
+  const allCommands = [
     ...navigationCommands,
     ...fileCommands,
     ...editCommands,
@@ -365,5 +366,17 @@ export function registerAllCommands(): void {
     ...bookmarkCommands,
     ...tabCommands,
     ...generalCommands,
-  ]);
+  ];
+
+  // Register commands with the command registry
+  registerCommands(allCommands);
+
+  // Register default shortcuts with the keybindings store
+  const defaultShortcuts: Record<string, string> = {};
+  for (const cmd of allCommands) {
+    if (cmd.shortcut) {
+      defaultShortcuts[cmd.id] = cmd.shortcut;
+    }
+  }
+  keybindingsStore.registerDefaults(defaultShortcuts);
 }

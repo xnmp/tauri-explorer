@@ -3,6 +3,7 @@
   Issue: tauri-explorer-oytv
 -->
 <script lang="ts">
+  import { onMount, onDestroy } from "svelte";
   import { getAllCommands, getCategoryLabel, type Command, type CommandCategory } from "$lib/state/commands.svelte";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { eventToShortcutString } from "$lib/domain/keybinding-parser";
@@ -55,12 +56,16 @@
     conflictInfo = null;
   }
 
-  /** Handle keyboard event during recording */
+  /**
+   * Handle keyboard event during recording.
+   * Uses capture phase to intercept events before they reach other handlers.
+   */
   function handleRecordKeydown(event: KeyboardEvent): void {
     if (!recordingCommandId) return;
 
     event.preventDefault();
     event.stopPropagation();
+    event.stopImmediatePropagation();
 
     // Escape cancels recording
     if (event.key === "Escape") {
@@ -91,9 +96,19 @@
     const shortcut = keybindingsStore.getDisplayShortcut(commandId);
     return shortcut ? shortcut.split("+") : [];
   }
+
+  // Use window-level event listener in capture phase when recording
+  // This ensures we intercept keyboard events before any other handler
+  onMount(() => {
+    window.addEventListener("keydown", handleRecordKeydown, true);
+  });
+
+  onDestroy(() => {
+    window.removeEventListener("keydown", handleRecordKeydown, true);
+  });
 </script>
 
-<div class="keybindings-settings" onkeydown={handleRecordKeydown}>
+<div class="keybindings-settings">
   <div class="keybindings-header">
     <input
       type="text"

@@ -120,10 +120,26 @@
   .titlebar {
     display: flex;
     align-items: center;
-    height: 32px;
+    height: 36px;
     background: var(--background-card);
     user-select: none;
     flex-shrink: 0;
+    position: relative;
+    border-bottom: 1px solid var(--surface-stroke);
+  }
+
+  /* Subtle gradient overlay for depth */
+  .titlebar::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      180deg,
+      var(--control-fill-tertiary) 0%,
+      transparent 100%
+    );
+    opacity: 0.4;
+    pointer-events: none;
   }
 
   .spacer {
@@ -134,28 +150,48 @@
   .window-controls {
     display: flex;
     height: 100%;
+    position: relative;
+    z-index: 1;
   }
 
   .control-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 44px;
+    width: 46px;
     height: 100%;
     background: transparent;
     border: none;
-    color: var(--text-primary);
+    color: var(--text-secondary);
     cursor: pointer;
-    transition: background var(--transition-fast);
+    transition: all var(--transition-normal);
+    position: relative;
+  }
+
+  .control-btn svg {
+    transition: transform var(--transition-normal);
   }
 
   .control-btn:hover {
-    background: var(--subtle-fill-secondary);
+    background: var(--control-fill-secondary);
+    color: var(--text-primary);
+  }
+
+  .control-btn:hover svg {
+    transform: scale(1.1);
+  }
+
+  .control-btn:active svg {
+    transform: scale(0.9);
   }
 
   .control-btn.close:hover {
     background: #c42b1c;
     color: white;
+  }
+
+  .control-btn.close:hover svg {
+    transform: scale(1.15);
   }
 
   .control-btn:focus-visible {

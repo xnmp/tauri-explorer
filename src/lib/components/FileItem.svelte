@@ -210,7 +210,7 @@
     event.dataTransfer.setData("application/x-explorer-path", entry.path);
     event.dataTransfer.setData("application/x-explorer-name", entry.name);
     event.dataTransfer.setData("application/x-explorer-kind", entry.kind);
-    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.effectAllowed = "all";
   }
 
   // Drop handlers - allow dropping files/folders into directories

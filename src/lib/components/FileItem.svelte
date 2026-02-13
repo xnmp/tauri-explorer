@@ -10,6 +10,7 @@
   import { clipboardStore } from "$lib/state/clipboard.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { moveEntry } from "$lib/api/files";
+  import { dragState } from "$lib/state/drag.svelte";
 
   interface Props {
     entry: FileEntry;
@@ -206,11 +207,14 @@
   function handleDragStart(event: DragEvent) {
     if (!event.dataTransfer) return;
 
-    // Set drag data with file info
+    // Set drag data with file info (both dataTransfer and shared state)
     event.dataTransfer.setData("application/x-explorer-path", entry.path);
     event.dataTransfer.setData("application/x-explorer-name", entry.name);
     event.dataTransfer.setData("application/x-explorer-kind", entry.kind);
     event.dataTransfer.effectAllowed = "all";
+
+    // Also set shared drag state (dataTransfer is unreliable in some webviews)
+    dragState.start({ path: entry.path, name: entry.name, kind: entry.kind });
   }
 
   // Drop handlers - allow dropping files/folders into directories

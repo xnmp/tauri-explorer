@@ -9,6 +9,7 @@
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { getHomeDirectory } from "$lib/api/files";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
+  import { dragState } from "$lib/state/drag.svelte";
 
   // Use pane navigation context if available, fallback to default explorer
   const paneNav = getPaneNavigationContext();
@@ -36,12 +37,67 @@
   let sidebarWidth = $state(Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, savedWidth)));
   let isResizing = $state(false);
 
+  let quickAccessEl: HTMLDivElement | undefined;
+
   onMount(async () => {
     const result = await getHomeDirectory();
     if (result.ok) {
       homeDir = result.data;
     }
+
+    // The HTML5 drop event does not fire in this app due to Svelte 5 event
+    // delegation interfering with the browser's DnD state machine. Instead,
+    // we detect drops by checking isDragOver when the drag ends: if the user
+    // releases over Quick Access, treat it as a drop.
+    if (quickAccessEl) {
+      quickAccessEl.addEventListener("dragenter", onQuickAccessDragEnter);
+      quickAccessEl.addEventListener("dragover", onQuickAccessDragOver);
+      quickAccessEl.addEventListener("dragleave", onQuickAccessDragLeave);
+    }
+    document.addEventListener("dragend", onDragEnd);
+
+    return () => {
+      if (quickAccessEl) {
+        quickAccessEl.removeEventListener("dragenter", onQuickAccessDragEnter);
+        quickAccessEl.removeEventListener("dragover", onQuickAccessDragOver);
+        quickAccessEl.removeEventListener("dragleave", onQuickAccessDragLeave);
+      }
+      document.removeEventListener("dragend", onDragEnd);
+    };
   });
+
+  function onQuickAccessDragEnter(event: DragEvent) {
+    if (dragState.current) {
+      event.preventDefault();
+    }
+  }
+
+  function onQuickAccessDragOver(event: DragEvent) {
+    if (dragState.current) {
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "link";
+      isDragOver = true;
+    }
+  }
+
+  function onQuickAccessDragLeave(event: DragEvent) {
+    const rect = quickAccessEl!.getBoundingClientRect();
+    if (event.clientX < rect.left || event.clientX > rect.right ||
+        event.clientY < rect.top || event.clientY > rect.bottom) {
+      isDragOver = false;
+    }
+  }
+
+  function onDragEnd() {
+    if (isDragOver && dragState.current) {
+      const { kind, path, name } = dragState.current;
+      if (kind === "directory" && path) {
+        bookmarksStore.addBookmark(path, name);
+      }
+    }
+    isDragOver = false;
+    dragState.clear();
+  }
 
   // Quick access folders use dynamic home directory
   const quickAccessFolders = $derived([
@@ -60,41 +116,9 @@
   let quickAccessExpanded = $state(true);
   let thisPcExpanded = $state(true);
 
-  // Drag and drop handlers for adding bookmarks
-  function handleDragOver(event: DragEvent) {
-    // Only accept folder drops
-    if (event.dataTransfer?.types.includes("application/x-explorer-kind")) {
-      event.preventDefault();
-      event.dataTransfer.dropEffect = "link";
-      isDragOver = true;
-    }
-  }
-
-  function handleDragLeave(event: DragEvent) {
-    // Only reset if leaving the drop zone entirely
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    const x = event.clientX;
-    const y = event.clientY;
-    if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
-      isDragOver = false;
-    }
-  }
-
-  function handleDrop(event: DragEvent) {
-    event.preventDefault();
-    isDragOver = false;
-
-    if (!event.dataTransfer) return;
-
-    const kind = event.dataTransfer.getData("application/x-explorer-kind");
-    const path = event.dataTransfer.getData("application/x-explorer-path");
-    const name = event.dataTransfer.getData("application/x-explorer-name");
-
-    // Only allow directories to be bookmarked
-    if (kind === "directory" && path) {
-      bookmarksStore.addBookmark(path, name);
-    }
-  }
+  // Note: DnD handlers for Quick Access bookmarking are attached as native
+  // listeners in onMount (see nativeDragEnter/Over/Leave/Drop) to bypass
+  // Svelte 5 event delegation which can break HTML5 drag-and-drop.
 
   function removeBookmark(event: MouseEvent, path: string) {
     event.stopPropagation();
@@ -113,11 +137,17 @@
   }
 
   function handleBookmarkDragOver(event: DragEvent, index: number) {
-    // Only accept bookmark reordering drags
-    if (draggedBookmarkIndex === null) return;
-    event.preventDefault();
-    event.dataTransfer!.dropEffect = "move";
-    dropTargetIndex = index;
+    // Accept bookmark reordering
+    if (draggedBookmarkIndex !== null) {
+      event.preventDefault();
+      event.dataTransfer!.dropEffect = "move";
+      dropTargetIndex = index;
+      return;
+    }
+    // Also accept file drops (let them bubble to parent .quick-access handler)
+    if (event.dataTransfer?.types.includes("application/x-explorer-kind")) {
+      event.preventDefault();
+    }
   }
 
   function handleBookmarkDragLeave() {
@@ -125,8 +155,10 @@
   }
 
   function handleBookmarkDrop(event: DragEvent, toIndex: number) {
+    // Only handle bookmark reordering; let file drops bubble to parent
+    if (draggedBookmarkIndex === null) return;
     event.preventDefault();
-    if (draggedBookmarkIndex !== null && draggedBookmarkIndex !== toIndex) {
+    if (draggedBookmarkIndex !== toIndex) {
       bookmarksStore.reorderBookmarks(draggedBookmarkIndex, toIndex);
     }
     draggedBookmarkIndex = null;
@@ -207,11 +239,9 @@
 
   <!-- Quick access -->
   <div
+    bind:this={quickAccessEl}
     class="nav-section quick-access"
     class:drag-over={isDragOver}
-    ondragover={handleDragOver}
-    ondragleave={handleDragLeave}
-    ondrop={handleDrop}
     role="region"
     aria-label="Quick access - drop folders here to bookmark"
   >

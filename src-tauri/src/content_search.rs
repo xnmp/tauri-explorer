@@ -282,29 +282,55 @@ fn perform_content_search(
         // tx drops here, signaling channel close
     });
 
-    // Collect results and emit batches (runs in original thread)
+    // Collect results and emit time-based batches (runs in original thread).
+    // Time-based batching reduces event frequency to ~10/sec, preventing
+    // the frontend from doing O(n) reactive work on every batch.
     let mut pending_results: Vec<ContentSearchResult> = Vec::new();
-    let batch_size = 10;
+    let batch_interval = std::time::Duration::from_millis(100);
+    let mut last_emit = std::time::Instant::now();
 
-    while let Ok(result) = rx.recv() {
-        if cancelled.load(Ordering::Relaxed) {
-            break;
+    loop {
+        // Use recv_timeout so we emit even when results trickle in slowly
+        match rx.recv_timeout(batch_interval) {
+            Ok(result) => {
+                pending_results.push(result);
+
+                // Emit if enough time has passed
+                if last_emit.elapsed() >= batch_interval {
+                    let _ = app.emit(
+                        "content-search-results",
+                        ContentSearchEvent {
+                            search_id,
+                            results: std::mem::take(&mut pending_results),
+                            done: false,
+                            files_searched: files_searched.load(Ordering::Relaxed),
+                            total_matches: total_matches.load(Ordering::Relaxed),
+                        },
+                    );
+                    last_emit = std::time::Instant::now();
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // Flush any pending results on timeout
+                if !pending_results.is_empty() {
+                    let _ = app.emit(
+                        "content-search-results",
+                        ContentSearchEvent {
+                            search_id,
+                            results: std::mem::take(&mut pending_results),
+                            done: false,
+                            files_searched: files_searched.load(Ordering::Relaxed),
+                            total_matches: total_matches.load(Ordering::Relaxed),
+                        },
+                    );
+                    last_emit = std::time::Instant::now();
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
 
-        pending_results.push(result);
-
-        // Emit batch when threshold reached (delta only, not accumulated)
-        if pending_results.len() >= batch_size {
-            let _ = app.emit(
-                "content-search-results",
-                ContentSearchEvent {
-                    search_id,
-                    results: std::mem::take(&mut pending_results), // Move, don't clone
-                    done: false,
-                    files_searched: files_searched.load(Ordering::Relaxed),
-                    total_matches: total_matches.load(Ordering::Relaxed),
-                },
-            );
+        if cancelled.load(Ordering::Relaxed) {
+            break;
         }
     }
 
@@ -314,7 +340,7 @@ fn perform_content_search(
             "content-search-results",
             ContentSearchEvent {
                 search_id,
-                results: pending_results, // Move remaining results
+                results: pending_results,
                 done: true,
                 files_searched: files_searched.load(Ordering::Relaxed),
                 total_matches: total_matches.load(Ordering::Relaxed),

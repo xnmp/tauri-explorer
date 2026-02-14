@@ -39,17 +39,24 @@
   let selectedIndex = $state(0);
   let loading = $state(false);
   let inputRef = $state<HTMLInputElement | null>(null);
+  let listRef = $state<HTMLUListElement | null>(null);
 
   // Stats
   let filesSearched = $state(0);
   let totalMatches = $state(0);
 
-  // Debounce timer for search
-  let searchTimer: ReturnType<typeof setTimeout> | null = null;
-
   // Streaming search state
   let activeSearchId: number | null = null;
   let unlisten: UnlistenFn | null = null;
+
+  // Deduplication set - persists across batches, avoids O(n) rebuild
+  let seenPaths = new Set<string>();
+
+  // Virtual scroll state
+  const ITEM_HEIGHT = 28;
+  const FILE_HEADER_HEIGHT = 36;
+  let scrollTop = $state(0);
+  let containerHeight = $state(400);
 
   // Flatten results with filter applied
   let flattenedResults = $derived.by(() => {
@@ -59,7 +66,6 @@
     for (const file of results) {
       let isFirst = true;
       for (const match of file.matches) {
-        // Apply client-side filter
         if (filterLower && !match.lineContent.toLowerCase().includes(filterLower) &&
             !file.relativePath.toLowerCase().includes(filterLower)) {
           continue;
@@ -77,6 +83,53 @@
 
     return flattened;
   });
+
+  // Compute virtual scroll window - only render visible items
+  let virtualWindow = $derived.by(() => {
+    const items = flattenedResults;
+    if (items.length === 0) return { startIndex: 0, endIndex: 0, offsetY: 0, totalHeight: 0 };
+
+    // Estimate total height (file headers are taller)
+    let totalHeight = 0;
+    const offsets: number[] = [];
+    for (let i = 0; i < items.length; i++) {
+      offsets.push(totalHeight);
+      totalHeight += items[i].isFirstInFile ? FILE_HEADER_HEIGHT : ITEM_HEIGHT;
+    }
+
+    // Find first visible item via binary search
+    let lo = 0, hi = items.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (offsets[mid] + (items[mid].isFirstInFile ? FILE_HEADER_HEIGHT : ITEM_HEIGHT) <= scrollTop) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+
+    const overscan = 10;
+    const startIndex = Math.max(0, lo - overscan);
+
+    // Find last visible item
+    const viewEnd = scrollTop + containerHeight;
+    let endIndex = lo;
+    while (endIndex < items.length && offsets[endIndex] < viewEnd) {
+      endIndex++;
+    }
+    endIndex = Math.min(items.length, endIndex + overscan);
+
+    return {
+      startIndex,
+      endIndex,
+      offsetY: offsets[startIndex] ?? 0,
+      totalHeight,
+    };
+  });
+
+  let visibleItems = $derived(
+    flattenedResults.slice(virtualWindow.startIndex, virtualWindow.endIndex)
+  );
 
   // Get root directory from active explorer
   function getRootPath(): string {
@@ -109,11 +162,15 @@
         return;
       }
 
-      // Merge results
-      const existingPaths = new Set(results.map(r => r.path));
-      const newResults = payload.results.filter(r => !existingPaths.has(r.path));
+      // Deduplicate using persistent set (O(batch) instead of O(total))
+      const newResults = payload.results.filter(r => {
+        if (seenPaths.has(r.path)) return false;
+        seenPaths.add(r.path);
+        return true;
+      });
+
       if (newResults.length > 0) {
-        results = [...results, ...newResults];
+        results.push(...newResults);
       }
 
       filesSearched = payload.filesSearched;
@@ -136,11 +193,12 @@
 
     loading = true;
     results = [];
+    seenPaths = new Set();
     selectedIndex = 0;
     filesSearched = 0;
     totalMatches = 0;
+    scrollTop = 0;
 
-    // Cancel any previous search
     cancelActiveSearch().then(async () => {
       const root = getRootPath();
       const result = await startContentSearch(query, root, caseSensitive, regexMode, 500);
@@ -187,16 +245,27 @@
   }
 
   function scrollToSelected(): void {
-    const container = document.querySelector('.results-list');
-    const selected = container?.querySelector('.result-item.selected');
-    selected?.scrollIntoView({ block: 'nearest' });
+    if (!listRef) return;
+    // Estimate the offset of the selected item
+    let offset = 0;
+    for (let i = 0; i < selectedIndex; i++) {
+      offset += flattenedResults[i].isFirstInFile ? FILE_HEADER_HEIGHT : ITEM_HEIGHT;
+    }
+    const itemH = flattenedResults[selectedIndex]?.isFirstInFile ? FILE_HEADER_HEIGHT : ITEM_HEIGHT;
+
+    // Scroll so the selected item is visible
+    const container = listRef.parentElement;
+    if (!container) return;
+    if (offset < container.scrollTop) {
+      container.scrollTop = offset;
+    } else if (offset + itemH > container.scrollTop + container.clientHeight) {
+      container.scrollTop = offset + itemH - container.clientHeight;
+    }
   }
 
   async function selectResult(result: FlattenedResult): Promise<void> {
-    // Open file in default app, then navigate to parent folder
     const openResult = await openFile(result.filePath);
     if (!openResult.ok) {
-      // Navigate to file's directory
       const explorer = paneNav?.getActiveExplorer() ?? defaultExplorer;
       const parentDir = result.filePath.substring(0, result.filePath.lastIndexOf("/"));
       explorer.navigateTo(parentDir);
@@ -219,15 +288,23 @@
       .replace(/"/g, "&quot;");
   }
 
+  function handleScroll(e: Event): void {
+    const target = e.target as HTMLElement;
+    scrollTop = target.scrollTop;
+    containerHeight = target.clientHeight;
+  }
+
   // Focus input when dialog opens
   $effect(() => {
     if (open && inputRef) {
       query = "";
       filterQuery = "";
       results = [];
+      seenPaths = new Set();
       selectedIndex = 0;
       filesSearched = 0;
       totalMatches = 0;
+      scrollTop = 0;
       setTimeout(() => inputRef?.focus(), 0);
     }
   });
@@ -235,10 +312,6 @@
   // Cleanup on close
   $effect(() => {
     if (!open) {
-      if (searchTimer) {
-        clearTimeout(searchTimer);
-        searchTimer = null;
-      }
       cancelActiveSearch();
     }
   });
@@ -305,7 +378,7 @@
         {/if}
       </div>
 
-      <div class="results-container">
+      <div class="results-container" onscroll={handleScroll}>
         {#if loading}
           <div class="search-status">
             <div class="spinner"></div>
@@ -314,33 +387,37 @@
         {/if}
 
         {#if flattenedResults.length > 0}
-          <ul class="results-list" role="listbox">
-            {#each flattenedResults as result, index (result.filePath + ':' + result.match.lineNumber + ':' + result.match.column)}
-              <li
-                class="result-item"
-                class:selected={index === selectedIndex}
-                class:file-header={result.isFirstInFile}
-                role="option"
-                aria-selected={index === selectedIndex}
-                onclick={() => selectResult(result)}
-                onmouseenter={() => selectedIndex = index}
-              >
-                {#if result.isFirstInFile}
-                  <div class="file-path">
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" class="file-icon">
-                      <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" fill="var(--accent)" fill-opacity="0.15"/>
-                      <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" stroke="var(--accent)" stroke-width="1"/>
-                      <path d="M9 1V5C9 5.55228 9.44772 6 10 6H14" stroke="var(--accent)" stroke-width="1"/>
-                    </svg>
-                    <span class="file-name">{result.relativePath}</span>
+          <ul class="results-list" bind:this={listRef} style="height: {virtualWindow.totalHeight}px; position: relative;">
+            <div style="position: absolute; top: 0; left: 0; right: 0; transform: translateY({virtualWindow.offsetY}px);">
+              {#each visibleItems as result, i (result.filePath + ':' + result.match.lineNumber + ':' + result.match.column)}
+                {@const globalIndex = virtualWindow.startIndex + i}
+                <li
+                  class="result-item"
+                  class:selected={globalIndex === selectedIndex}
+                  class:file-header={result.isFirstInFile}
+                  role="option"
+                  aria-selected={globalIndex === selectedIndex}
+                  onclick={() => selectResult(result)}
+                  onmouseenter={() => selectedIndex = globalIndex}
+                  style="height: {result.isFirstInFile ? FILE_HEADER_HEIGHT : ITEM_HEIGHT}px;"
+                >
+                  {#if result.isFirstInFile}
+                    <div class="file-path">
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" class="file-icon">
+                        <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" fill="var(--accent)" fill-opacity="0.15"/>
+                        <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" stroke="var(--accent)" stroke-width="1"/>
+                        <path d="M9 1V5C9 5.55228 9.44772 6 10 6H14" stroke="var(--accent)" stroke-width="1"/>
+                      </svg>
+                      <span class="file-name">{result.relativePath}</span>
+                    </div>
+                  {/if}
+                  <div class="match-row">
+                    <span class="line-number">{result.match.lineNumber}</span>
+                    <span class="line-content">{@html highlightMatch(result.match.lineContent, result.match.matchStart, result.match.matchEnd)}</span>
                   </div>
-                {/if}
-                <div class="match-row">
-                  <span class="line-number">{result.match.lineNumber}</span>
-                  <span class="line-content">{@html highlightMatch(result.match.lineContent, result.match.matchStart, result.match.matchEnd)}</span>
-                </div>
-              </li>
-            {/each}
+                </li>
+              {/each}
+            </div>
           </ul>
         {:else if query && !loading && results.length === 0}
           <div class="no-results">No matches found</div>
@@ -550,14 +627,16 @@
   .results-list {
     list-style: none;
     margin: 0;
-    padding: 8px;
+    padding: 0;
+    overflow: hidden;
   }
 
   .result-item {
     padding: 4px 8px;
     border-radius: var(--radius-sm);
     cursor: pointer;
-    transition: background var(--transition-fast);
+    box-sizing: border-box;
+    overflow: hidden;
   }
 
   .result-item:hover,
@@ -572,18 +651,13 @@
 
   .result-item.file-header {
     padding-top: 8px;
-    margin-top: 4px;
-  }
-
-  .result-item.file-header:first-child {
-    margin-top: 0;
   }
 
   .file-path {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 4px;
+    margin-bottom: 2px;
   }
 
   .file-icon {

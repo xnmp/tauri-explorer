@@ -26,6 +26,12 @@ export interface ThemeInfo {
 /** Strip CSS string quotes: "Foo" -> Foo */
 const unquote = (s: string): string => s.trim().replace(/^["']|["']$/g, "");
 
+/** Parse int with a fallback for NaN (avoids falsy-zero pitfall with ||) */
+const intOr = (s: string, fallback: number): number => {
+  const n = parseInt(s, 10);
+  return Number.isNaN(n) ? fallback : n;
+};
+
 /**
  * Scan loaded stylesheets for [data-theme="..."] rules and extract
  * metadata from CSS custom properties (--theme-name, --theme-description, etc.).
@@ -57,7 +63,7 @@ function discoverThemes(): ThemeInfo[] {
         id,
         name: unquote(name),
         description: unquote(s.getPropertyValue("--theme-description")),
-        order: parseInt(s.getPropertyValue("--theme-order"), 10) || 999,
+        order: intOr(s.getPropertyValue("--theme-order"), 999),
         colors: {
           backgroundSolid: s.getPropertyValue("--background-solid").trim(),
           divider: s.getPropertyValue("--divider").trim(),

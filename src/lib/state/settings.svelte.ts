@@ -10,13 +10,18 @@ export interface Settings {
   showToolbar: boolean;
   showSidebar: boolean;
   showHidden: boolean;
-  // Future: hotkey customization
+  zoomLevel: number; // percentage, e.g. 100 = 100%
 }
+
+const MIN_ZOOM = 50;
+const MAX_ZOOM = 200;
+const ZOOM_STEP = 10;
 
 const DEFAULT_SETTINGS: Settings = {
   showToolbar: true,
   showSidebar: true,
   showHidden: false,
+  zoomLevel: 100,
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -64,6 +69,18 @@ function createSettingsStore() {
     update({ showHidden: !settings.showHidden });
   }
 
+  function zoomIn(): void {
+    update({ zoomLevel: Math.min(MAX_ZOOM, settings.zoomLevel + ZOOM_STEP) });
+  }
+
+  function zoomOut(): void {
+    update({ zoomLevel: Math.max(MIN_ZOOM, settings.zoomLevel - ZOOM_STEP) });
+  }
+
+  function zoomReset(): void {
+    update({ zoomLevel: DEFAULT_SETTINGS.zoomLevel });
+  }
+
   function reset(): void {
     settings = { ...DEFAULT_SETTINGS };
     saveSettings(settings);
@@ -82,10 +99,16 @@ function createSettingsStore() {
     get showHidden() {
       return settings.showHidden;
     },
+    get zoomLevel() {
+      return settings.zoomLevel;
+    },
     update,
     toggleToolbar,
     toggleSidebar,
     toggleHidden,
+    zoomIn,
+    zoomOut,
+    zoomReset,
     reset,
   };
 }

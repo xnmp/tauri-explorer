@@ -112,6 +112,11 @@
     }
   }
 
+  // Apply zoom level reactively
+  $effect(() => {
+    document.documentElement.style.zoom = `${settingsStore.zoomLevel}%`;
+  });
+
   onMount(() => {
     // Initialize theme from saved preference
     themeStore.initTheme();

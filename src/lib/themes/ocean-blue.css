@@ -6,6 +6,11 @@
  */
 
 [data-theme="ocean-blue"] {
+  /* Theme metadata */
+  --theme-name: "Ocean Blue";
+  --theme-description: "Relaxing deep blue tones";
+  --theme-order: 3;
+
   /* Accent colors - soft cyan/teal */
   --accent: #5eb7e0;
   --accent-light: #8fd4f0;

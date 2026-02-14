@@ -3,11 +3,11 @@
   Issue: tauri-explorer-l7lv
 -->
 <script lang="ts">
-  import { themeStore, type ThemeId } from "$lib/state/theme.svelte";
+  import { themeStore } from "$lib/state/theme.svelte";
 
   let isOpen = $state(false);
 
-  function handleSelect(themeId: ThemeId) {
+  function handleSelect(themeId: string) {
     themeStore.setTheme(themeId);
     isOpen = false;
   }

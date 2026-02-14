@@ -1,0 +1,71 @@
+/**
+ * Rapture Theme - Ghostty terminal color scheme
+ * Issue: tauri-jvdk
+ *
+ * Deep navy dark theme with pastel neon accents.
+ * Based on the Rapture color palette from Ghostty/iTerm2.
+ *
+ * Key palette:
+ *   bg: #111e2a   fg: #c0c9e5   selection: #304b66
+ *   red: #fc644d   green: #7afde1   yellow: #fff09b
+ *   blue: #6c9bf5  magenta: #ff4fa1  cyan: #64e0ff
+ */
+
+[data-theme="rapture"] {
+  /* Theme metadata */
+  --theme-name: "Rapture";
+  --theme-description: "Deep navy with pastel neon accents";
+  --theme-order: 4;
+
+  /* Accent colors - cyan from the Rapture palette */
+  --accent: #64e0ff;
+  --accent-light: #7afde1;
+  --accent-dark: #4bb8d4;
+
+  /* Text colors - from Rapture foreground */
+  --text-primary: #c0c9e5;
+  --text-secondary: #8a95b8;
+  --text-tertiary: #5e6a8a;
+  --text-on-accent: #111e2a;
+
+  /* Background colors - from Rapture background */
+  --background-solid: #111e2a;
+  --background-mica: rgba(17, 30, 42, 0.96);
+  --background-acrylic: rgba(22, 38, 54, 0.92);
+  --background-card: rgba(48, 75, 102, 0.3);
+  --background-card-secondary: rgba(48, 75, 102, 0.2);
+
+  /* Surface/border colors */
+  --surface-stroke: rgba(192, 201, 229, 0.12);
+  --surface-stroke-flyout: rgba(192, 201, 229, 0.18);
+  --divider: rgba(192, 201, 229, 0.1);
+
+  /* Control/input backgrounds */
+  --control-fill: rgba(192, 201, 229, 0.08);
+  --control-fill-secondary: rgba(192, 201, 229, 0.12);
+  --control-fill-tertiary: rgba(192, 201, 229, 0.05);
+  --control-fill-disabled: rgba(192, 201, 229, 0.04);
+
+  /* Subtle hover/active fills - selection blue tint */
+  --subtle-fill: transparent;
+  --subtle-fill-secondary: rgba(48, 75, 102, 0.4);
+  --subtle-fill-tertiary: rgba(48, 75, 102, 0.25);
+
+  /* Control borders */
+  --control-stroke: rgba(192, 201, 229, 0.15);
+  --control-stroke-secondary: rgba(192, 201, 229, 0.1);
+
+  /* Focus indicators */
+  --focus-stroke-outer: #64e0ff;
+  --focus-stroke-inner: #111e2a;
+
+  /* System status colors - from Rapture ANSI colors */
+  --system-critical: #fc644d;
+  --system-success: #7afde1;
+  --system-caution: #fff09b;
+
+  /* Shadows */
+  --shadow-flyout: 0 8px 20px rgba(0, 10, 20, 0.5);
+  --shadow-dialog: 0 32px 64px rgba(0, 10, 20, 0.6), 0 4px 24px rgba(0, 10, 20, 0.4);
+  --shadow-tooltip: 0 4px 12px rgba(0, 10, 20, 0.5);
+}

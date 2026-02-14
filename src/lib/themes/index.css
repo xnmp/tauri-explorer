@@ -5,7 +5,7 @@
  * To add a new theme:
  * 1. Create a new CSS file in this directory (copy an existing one as template)
  * 2. Add an @import line below
- * 3. Add the theme to the availableThemes array in theme.svelte.ts
+ * Themes are auto-discovered from CSS at runtime.
  */
 
 @import "./light.css";

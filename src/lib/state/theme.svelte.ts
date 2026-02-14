@@ -23,14 +23,21 @@ export interface ThemeInfo {
   colors: ThemeColors;
 }
 
-/** Strip CSS string quotes: "Foo" -> Foo */
-const unquote = (s: string): string => s.trim().replace(/^["']|["']$/g, "");
+/** Read a CSS custom property value, trimmed. */
+function cssValue(style: CSSStyleDeclaration, prop: string): string {
+  return style.getPropertyValue(prop).trim();
+}
 
-/** Parse int with a fallback for NaN (avoids falsy-zero pitfall with ||) */
-const intOr = (s: string, fallback: number): number => {
+/** Strip CSS string quotes: "Foo" -> Foo */
+function unquote(s: string): string {
+  return s.replace(/^["']|["']$/g, "");
+}
+
+/** Parse int with a fallback (parseInt returns NaN for empty/missing values). */
+function intOr(s: string, fallback: number): number {
   const n = parseInt(s, 10);
   return Number.isNaN(n) ? fallback : n;
-};
+}
 
 /**
  * Scan loaded stylesheets for [data-theme="..."] rules and extract
@@ -54,20 +61,20 @@ function discoverThemes(): ThemeInfo[] {
       if (!match) continue;
 
       const id = match[1];
-      const s = rule.style;
+      const style = rule.style;
 
-      const name = s.getPropertyValue("--theme-name");
+      const name = cssValue(style, "--theme-name");
       if (!name) continue; // not a theme rule (or missing metadata)
 
       themes.push({
         id,
         name: unquote(name),
-        description: unquote(s.getPropertyValue("--theme-description")),
-        order: intOr(s.getPropertyValue("--theme-order"), 999),
+        description: unquote(cssValue(style, "--theme-description")),
+        order: intOr(cssValue(style, "--theme-order"), 999),
         colors: {
-          backgroundSolid: s.getPropertyValue("--background-solid").trim(),
-          divider: s.getPropertyValue("--divider").trim(),
-          accent: s.getPropertyValue("--accent").trim(),
+          backgroundSolid: cssValue(style, "--background-solid"),
+          divider: cssValue(style, "--divider"),
+          accent: cssValue(style, "--accent"),
         },
       });
     }

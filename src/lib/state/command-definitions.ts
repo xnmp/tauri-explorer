@@ -252,6 +252,27 @@ const viewCommands: Command[] = [
     shortcut: "Ctrl+H",
     handler: () => getActiveExplorer()?.toggleHidden(),
   },
+  {
+    id: "view.zoomIn",
+    label: "Zoom In",
+    category: "view",
+    shortcut: "Alt+=",
+    handler: () => settingsStore.zoomIn(),
+  },
+  {
+    id: "view.zoomOut",
+    label: "Zoom Out",
+    category: "view",
+    shortcut: "Alt+-",
+    handler: () => settingsStore.zoomOut(),
+  },
+  {
+    id: "view.zoomReset",
+    label: "Reset Zoom",
+    category: "view",
+    shortcut: "Alt+0",
+    handler: () => settingsStore.zoomReset(),
+  },
 ];
 
 /** Bookmark commands */

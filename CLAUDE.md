@@ -1,8 +1,14 @@
-## General 
-* Use "Beads" for issue tracking - run `bd quickstart` for details - please do this before anything else. Do not modify or create files unless they have an associated Beads issue. 
+## General
+* Use "Beads" for issue tracking - run `bd quickstart` for details - please do this before anything else. Do not modify or create files unless they have an associated Beads issue.
 * Use beads to create both high level issues (~epics) and low level issues. Be liberal in issue creation and dependency assignment.
 * When working on an issue, mark it as "in_progress"
-* Code with TDD in mind - where possible use a test suite and write tests before implementation. 
+* Code with TDD in mind - where possible use a test suite and write tests before implementation.
+
+## Multi-Worktree Setup
+* Multiple agents may be working on this repo concurrently via separate git worktrees (e.g. `worktree-2`, `worktree-3`).
+* Each worktree has a default branch matching its suffix (e.g. `worktree-2` uses `main-2`).
+* **If you are on a secondary worktree (not the primary repo), rebase your default branch onto `main` before doing anything else** — e.g. `git rebase main` from `main-2`. This ensures you pick up changes merged by other agents.
+* After rebasing, continue with the normal workflow (check beads, convert todos, etc.).
 
 ## The Project
 * This project is building a cross-platform explorer app using Tauri and Svelte. 

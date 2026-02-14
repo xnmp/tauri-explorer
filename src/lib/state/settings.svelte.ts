@@ -78,7 +78,7 @@ function createSettingsStore() {
   }
 
   function zoomReset(): void {
-    update({ zoomLevel: 100 });
+    update({ zoomLevel: DEFAULT_SETTINGS.zoomLevel });
   }
 
   function reset(): void {

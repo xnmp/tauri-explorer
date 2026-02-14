@@ -4,12 +4,17 @@
  * To create your own theme:
  * 1. Copy this file and rename it (e.g., my-theme.css)
  * 2. Modify the color values below
- * 3. Import it in theme.svelte.ts and add to the themes list
+ * 3. Add @import to index.css - theme is auto-discovered at runtime
  *
  * Color format: Use hex (#ffffff), rgb(255,255,255), or rgba(255,255,255,0.5)
  */
 
 [data-theme="light"] {
+  /* Theme metadata */
+  --theme-name: "Light";
+  --theme-description: "Clean white theme (default)";
+  --theme-order: 0;
+
   /* Accent colors - your brand/highlight color */
   --accent: #0078d4;
   --accent-light: #60cdff;

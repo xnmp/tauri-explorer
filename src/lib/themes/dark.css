@@ -7,10 +7,15 @@
  * To create your own theme:
  * 1. Copy this file and rename it (e.g., my-theme.css)
  * 2. Modify the color values below
- * 3. Import it in theme.svelte.ts and add to the themes list
+ * 3. Add @import to index.css - theme is auto-discovered at runtime
  */
 
 [data-theme="dark"] {
+  /* Theme metadata */
+  --theme-name: "Dark";
+  --theme-description: "Comfortable dark mode";
+  --theme-order: 1;
+
   /* Accent colors */
   --accent: #60cdff;
   --accent-light: #98ecff;

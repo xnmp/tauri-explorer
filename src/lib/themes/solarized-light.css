@@ -18,10 +18,15 @@
  * To create your own theme:
  * 1. Copy this file and rename it
  * 2. Modify the color values below
- * 3. Import it in theme.svelte.ts and add to the themes list
+ * 3. Add @import to index.css - theme is auto-discovered at runtime
  */
 
 [data-theme="solarized-light"] {
+  /* Theme metadata */
+  --theme-name: "Solarized Light";
+  --theme-description: "Warm cream tones, easy on the eyes";
+  --theme-order: 2;
+
   /* Accent colors - Solarized blue */
   --accent: #268bd2;
   --accent-light: #2aa198;

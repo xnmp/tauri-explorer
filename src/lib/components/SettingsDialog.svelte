@@ -61,7 +61,7 @@
             <select
               class="theme-select"
               value={themeStore.currentThemeId}
-              onchange={(e) => themeStore.setTheme(e.currentTarget.value as any)}
+              onchange={(e) => themeStore.setTheme(e.currentTarget.value)}
             >
               {#each themeStore.availableThemes as theme (theme.id)}
                 <option value={theme.id}>{theme.name}</option>

@@ -22,6 +22,7 @@
 * Use the `bug-fixer` subagent to fix bugs. 
 * Every once in a while, use the `frontend-aesthetic-enhancer` to make it look nicer and the `architecture-reviewer` to structure the code better.
 * Ensure that closed issues are well documented with all the findings and changes with enough detail to bring a new developer up to speed relatively quickly.
+* After closing each issue, append any important lessons learnt (gotchas, non-obvious behaviors, workarounds, debugging insights) to [lessons_learnt](docs/lessons_learnt.md). Include the issue ID, a brief summary, and the key takeaways. Skip if the issue was trivial with nothing noteworthy.
 
 ## Performance Testing Workflow
 After completing any performance-related issue (EPIC: Performance Optimization or its children):

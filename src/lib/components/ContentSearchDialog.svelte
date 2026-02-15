@@ -70,10 +70,11 @@
   let totalFlattenedCount = $state(0);
 
   // Flatten a single batch of new results (O(batch) not O(total))
+  // newResults are already deduped -- each file here is new, so first match is always isFirstInFile
   function flattenBatch(newResults: ContentSearchResult[], filterLower: string): FlattenedResult[] {
     const batch: FlattenedResult[] = [];
     for (const file of newResults) {
-      let isFirst = !seenPaths.has(file.path);
+      let isFirst = true;
       for (const match of file.matches) {
         if (filterLower && !match.lineContent.toLowerCase().includes(filterLower) &&
             !file.relativePath.toLowerCase().includes(filterLower)) {

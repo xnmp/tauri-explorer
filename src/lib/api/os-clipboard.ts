@@ -2,22 +2,21 @@
  * OS Clipboard API for file operations.
  * Issue: tauri-explorer-za55, tauri-explorer-rdra
  *
- * Integrates with the system clipboard to allow copying files
- * to/from external applications (Explorer, Finder, etc.)
+ * Write uses tauri-plugin-clipboard-x (works cross-platform).
+ * Read uses custom Tauri commands that parse Linux clipboard formats
+ * (x-special/gnome-copied-files, text/uri-list) via wl-paste/xclip.
  */
 
-import {
-  hasFiles,
-  readFiles,
-  writeFiles,
-} from "tauri-plugin-clipboard-x-api";
+import { invoke } from "@tauri-apps/api/core";
+import { writeFiles } from "tauri-plugin-clipboard-x-api";
 
 /**
  * Check if the OS clipboard contains files.
+ * Uses custom Tauri command for Linux MIME type support.
  */
 export async function osClipboardHasFiles(): Promise<boolean> {
   try {
-    return await hasFiles();
+    return await invoke<boolean>("clipboard_has_files");
   } catch (error) {
     console.error("Failed to check OS clipboard:", error);
     return false;
@@ -26,16 +25,12 @@ export async function osClipboardHasFiles(): Promise<boolean> {
 
 /**
  * Read file paths from the OS clipboard.
- * Returns empty array if no files or on error.
+ * Uses custom Tauri command that reads x-special/gnome-copied-files
+ * and text/uri-list formats via wl-paste (Wayland) or xclip (X11).
  */
 export async function osClipboardReadFiles(): Promise<string[]> {
   try {
-    const hasFileContent = await hasFiles();
-    if (!hasFileContent) {
-      return [];
-    }
-    const result = await readFiles();
-    return result.paths;
+    return await invoke<string[]>("clipboard_read_files");
   } catch (error) {
     console.error("Failed to read files from OS clipboard:", error);
     return [];
@@ -44,7 +39,7 @@ export async function osClipboardReadFiles(): Promise<string[]> {
 
 /**
  * Write file paths to the OS clipboard.
- * This allows the files to be pasted in other applications.
+ * Uses tauri-plugin-clipboard-x (works for paste in external apps).
  */
 export async function osClipboardWriteFiles(filePaths: string[]): Promise<boolean> {
   try {

@@ -20,6 +20,9 @@
     relativePath: string;
     match: ContentMatch;
     isFirstInFile: boolean;
+    isShowMore?: boolean;
+    hiddenCount?: number;
+    totalFileMatches?: number;
   }
 
   interface Props {
@@ -60,6 +63,10 @@
 
   // Pagination constants
   const PAGE_SIZE = 200;
+  const COLLAPSED_LIMIT = 5;
+
+  // Track which files the user has expanded (show all matches)
+  let expandedFiles = $state<Set<string>>(new Set());
 
   // Non-reactive backing store for all flattened results (appended to incrementally)
   let allFlattened: FlattenedResult[] = [];
@@ -69,52 +76,77 @@
   let pageEnd = $state(PAGE_SIZE);
   let totalFlattenedCount = $state(0);
 
+  // Flatten a file's matches, respecting collapsed limit
+  function flattenFile(file: ContentSearchResult, filterLower: string, isFirstFile: boolean): FlattenedResult[] {
+    const isExpanded = expandedFiles.has(file.path);
+    const filtered: ContentMatch[] = [];
+    for (const match of file.matches) {
+      if (filterLower && !match.lineContent.toLowerCase().includes(filterLower) &&
+          !file.relativePath.toLowerCase().includes(filterLower)) {
+        continue;
+      }
+      filtered.push(match);
+    }
+    if (filtered.length === 0) return [];
+
+    const limit = isExpanded ? filtered.length : Math.min(COLLAPSED_LIMIT, filtered.length);
+    const items: FlattenedResult[] = [];
+    for (let i = 0; i < limit; i++) {
+      items.push({
+        filePath: file.path,
+        relativePath: file.relativePath,
+        match: filtered[i],
+        isFirstInFile: i === 0 && isFirstFile,
+        totalFileMatches: filtered.length,
+      });
+    }
+
+    // Add "show more" row if collapsed and there are hidden matches
+    if (!isExpanded && filtered.length > COLLAPSED_LIMIT) {
+      items.push({
+        filePath: file.path,
+        relativePath: file.relativePath,
+        match: filtered[0], // placeholder, not rendered
+        isFirstInFile: false,
+        isShowMore: true,
+        hiddenCount: filtered.length - COLLAPSED_LIMIT,
+        totalFileMatches: filtered.length,
+      });
+    }
+    return items;
+  }
+
   // Flatten a single batch of new results (O(batch) not O(total))
   // newResults are already deduped -- each file here is new, so first match is always isFirstInFile
   function flattenBatch(newResults: ContentSearchResult[], filterLower: string): FlattenedResult[] {
     const batch: FlattenedResult[] = [];
     for (const file of newResults) {
-      let isFirst = true;
-      for (const match of file.matches) {
-        if (filterLower && !match.lineContent.toLowerCase().includes(filterLower) &&
-            !file.relativePath.toLowerCase().includes(filterLower)) {
-          continue;
-        }
-        batch.push({
-          filePath: file.path,
-          relativePath: file.relativePath,
-          match,
-          isFirstInFile: isFirst,
-        });
-        isFirst = false;
-      }
+      batch.push(...flattenFile(file, filterLower, true));
     }
     return batch;
   }
 
-  // Rebuild allFlattened from scratch (used when filter changes)
+  // Rebuild allFlattened from scratch (used when filter changes or expand/collapse toggles)
   function rebuildFlattened(filterLower: string): void {
     const rebuilt: FlattenedResult[] = [];
     for (const file of results) {
-      let isFirst = true;
-      for (const match of file.matches) {
-        if (filterLower && !match.lineContent.toLowerCase().includes(filterLower) &&
-            !file.relativePath.toLowerCase().includes(filterLower)) {
-          continue;
-        }
-        rebuilt.push({
-          filePath: file.path,
-          relativePath: file.relativePath,
-          match,
-          isFirstInFile: isFirst,
-        });
-        isFirst = false;
-      }
+      rebuilt.push(...flattenFile(file, filterLower, true));
     }
     allFlattened = rebuilt;
     totalFlattenedCount = allFlattened.length;
     pageEnd = PAGE_SIZE;
     updatePage();
+  }
+
+  function toggleFileExpanded(filePath: string): void {
+    const next = new Set(expandedFiles);
+    if (next.has(filePath)) {
+      next.delete(filePath);
+    } else {
+      next.add(filePath);
+    }
+    expandedFiles = next;
+    rebuildFlattened(filterQuery.toLowerCase());
   }
 
   function updatePage(): void {
@@ -129,6 +161,7 @@
     allFlattened = [];
     flattenedResults = [];
     seenPaths = new Set();
+    expandedFiles = new Set();
     selectedIndex = 0;
     pageEnd = PAGE_SIZE;
     totalFlattenedCount = 0;
@@ -314,7 +347,12 @@
         if (event.target === inputRef) {
           startSearch();
         } else if (flattenedResults[selectedIndex]) {
-          selectResult(flattenedResults[selectedIndex]);
+          const selected = flattenedResults[selectedIndex];
+          if (selected.isShowMore) {
+            toggleFileExpanded(selected.filePath);
+          } else {
+            selectResult(selected);
+          }
         }
         break;
     }
@@ -465,33 +503,59 @@
         {#if flattenedResults.length > 0}
           <ul class="results-list" bind:this={listRef} style="height: {virtualWindow.totalHeight}px; position: relative;">
             <div style="position: absolute; top: 0; left: 0; right: 0; transform: translateY({virtualWindow.offsetY}px);">
-              {#each visibleItems as result, i (result.filePath + ':' + result.match.lineNumber + ':' + result.match.column)}
+              {#each visibleItems as result, i (result.filePath + ':' + (result.isShowMore ? 'more' : result.match.lineNumber + ':' + result.match.column))}
                 {@const globalIndex = virtualWindow.startIndex + i}
-                <li
-                  class="result-item"
-                  class:selected={globalIndex === selectedIndex}
-                  class:file-header={result.isFirstInFile}
-                  role="option"
-                  aria-selected={globalIndex === selectedIndex}
-                  onclick={() => selectResult(result)}
-                  onmouseenter={() => selectedIndex = globalIndex}
-                  style="height: {result.isFirstInFile ? FILE_HEADER_HEIGHT : ITEM_HEIGHT}px;"
-                >
-                  {#if result.isFirstInFile}
-                    <div class="file-path">
-                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" class="file-icon">
-                        <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" fill="var(--accent)" fill-opacity="0.15"/>
-                        <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" stroke="var(--accent)" stroke-width="1"/>
-                        <path d="M9 1V5C9 5.55228 9.44772 6 10 6H14" stroke="var(--accent)" stroke-width="1"/>
-                      </svg>
-                      <span class="file-name">{result.relativePath}</span>
+                {#if result.isShowMore}
+                  <li
+                    class="result-item show-more-row"
+                    class:selected={globalIndex === selectedIndex}
+                    role="option"
+                    aria-selected={globalIndex === selectedIndex}
+                    onclick={() => toggleFileExpanded(result.filePath)}
+                    onmouseenter={() => selectedIndex = globalIndex}
+                    style="height: {ITEM_HEIGHT}px;"
+                  >
+                    <span class="show-more-text">{result.hiddenCount} more matches...</span>
+                  </li>
+                {:else}
+                  <li
+                    class="result-item"
+                    class:selected={globalIndex === selectedIndex}
+                    class:file-header={result.isFirstInFile}
+                    role="option"
+                    aria-selected={globalIndex === selectedIndex}
+                    onclick={() => selectResult(result)}
+                    onmouseenter={() => selectedIndex = globalIndex}
+                    style="height: {result.isFirstInFile ? FILE_HEADER_HEIGHT : ITEM_HEIGHT}px;"
+                  >
+                    {#if result.isFirstInFile}
+                      <div class="file-path">
+                        <!-- svelte-ignore a11y_click_events_have_key_events -->
+                        <!-- svelte-ignore a11y_no_static_element_interactions -->
+                        <span
+                          class="expand-chevron"
+                          class:expanded={expandedFiles.has(result.filePath)}
+                          onclick={(e: MouseEvent) => { e.stopPropagation(); toggleFileExpanded(result.filePath); }}
+                        >
+                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                            <path d="M3 2L7 5L3 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                          </svg>
+                        </span>
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" class="file-icon">
+                          <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" fill="var(--accent)" fill-opacity="0.15"/>
+                          <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" stroke="var(--accent)" stroke-width="1"/>
+                          <path d="M9 1V5C9 5.55228 9.44772 6 10 6H14" stroke="var(--accent)" stroke-width="1"/>
+                        </svg>
+                        <span class="file-name">{result.relativePath}</span>
+                        <span class="match-count">{result.totalFileMatches}</span>
+                      </div>
+                    {/if}
+                    <div class="match-row">
+                      <span class="line-number">{result.match.lineNumber}</span>
+                      <span class="line-content">{@html highlightMatch(result.match.lineContent, result.match.matchStart, result.match.matchEnd)}</span>
                     </div>
-                  {/if}
-                  <div class="match-row">
-                    <span class="line-number">{result.match.lineNumber}</span>
-                    <span class="line-content">{@html highlightMatch(result.match.lineContent, result.match.matchStart, result.match.matchEnd)}</span>
-                  </div>
-                </li>
+                  </li>
+                {/if}
               {/each}
             </div>
           </ul>
@@ -732,8 +796,34 @@
   .file-path {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     margin-bottom: 2px;
+  }
+
+  .expand-chevron {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    transition: transform 120ms ease;
+    border-radius: 3px;
+  }
+
+  .expand-chevron:hover {
+    color: var(--text-secondary);
+    background: var(--subtle-fill-secondary);
+  }
+
+  .expand-chevron.expanded {
+    transform: rotate(90deg);
+  }
+
+  .result-item.selected .expand-chevron {
+    color: var(--text-on-accent);
   }
 
   .file-icon {
@@ -749,7 +839,44 @@
     white-space: nowrap;
   }
 
+  .match-count {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    background: var(--subtle-fill-secondary);
+    padding: 0 6px;
+    border-radius: 8px;
+    flex-shrink: 0;
+    line-height: 18px;
+  }
+
+  .result-item.selected .match-count {
+    color: var(--text-on-accent);
+    background: rgba(255, 255, 255, 0.2);
+  }
+
   .result-item.selected .file-name {
+    color: var(--text-on-accent);
+  }
+
+  .show-more-row {
+    display: flex;
+    align-items: center;
+    padding-left: 48px;
+  }
+
+  .show-more-text {
+    font-size: 12px;
+    color: var(--accent);
+    cursor: pointer;
+    font-style: italic;
+  }
+
+  .show-more-row:hover .show-more-text,
+  .show-more-row.selected .show-more-text {
+    text-decoration: underline;
+  }
+
+  .result-item.selected .show-more-text {
     color: var(--text-on-accent);
   }
 

@@ -168,6 +168,7 @@
     filesSearched = 0;
     totalMatches = 0;
     scrollTop = 0;
+    loading = false;
   }
 
   // React to filter changes by rebuilding
@@ -561,7 +562,7 @@
           </ul>
         {:else if query && !loading && results.length === 0}
           <div class="no-results">No matches found</div>
-        {:else if !query}
+        {:else if !query && !loading}
           <div class="no-results hint">Enter a search term and press Enter or click Search</div>
         {/if}
       </div>

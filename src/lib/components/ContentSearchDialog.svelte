@@ -57,7 +57,7 @@
 
   // Virtual scroll state
   const ITEM_HEIGHT = 28;
-  const FILE_HEADER_HEIGHT = 36;
+  const FILE_HEADER_HEIGHT = 52;
   let scrollTop = $state(0);
   let containerHeight = $state(400);
 
@@ -778,6 +778,9 @@
     cursor: pointer;
     box-sizing: border-box;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
   }
 
   .result-item:hover,
@@ -791,14 +794,16 @@
   }
 
   .result-item.file-header {
-    padding-top: 8px;
+    padding-top: 6px;
+    padding-bottom: 4px;
   }
 
   .file-path {
     display: flex;
     align-items: center;
     gap: 6px;
-    margin-bottom: 2px;
+    margin-bottom: 4px;
+    min-height: 20px;
   }
 
   .expand-chevron {
@@ -887,6 +892,8 @@
     gap: 12px;
     font-family: 'SF Mono', Monaco, Consolas, monospace;
     font-size: 12px;
+    line-height: 18px;
+    min-height: 18px;
   }
 
   .line-number {

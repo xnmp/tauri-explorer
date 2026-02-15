@@ -105,7 +105,7 @@
     const normalizedKey = event.key.toLowerCase();
     const isPasteShortcut = normalizedKey === "v" && (event.ctrlKey || event.metaKey);
 
-    if (isPasteShortcut && clipboardStore.hasContent) {
+    if (isPasteShortcut) {
       event.preventDefault();
       const error = await explorer.paste();
 

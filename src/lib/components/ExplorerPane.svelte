@@ -133,7 +133,7 @@
     } else if (key === "x" && selected) {
       event.preventDefault();
       paneExplorer.cutToClipboard(selected);
-    } else if (key === "v" && clipboardStore.hasContent) {
+    } else if (key === "v") {
       event.preventDefault();
       await paneExplorer.paste();
     }

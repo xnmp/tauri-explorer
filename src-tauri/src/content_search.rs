@@ -1,10 +1,10 @@
 //! Content search module using grep crate (ripgrep library).
-//! Issue: tauri-explorer-3a1q, tauri-explorer-5w06
+//! Issue: tauri-explorer-3a1q, tauri-explorer-5w06, tauri-pkc4, tauri-dbiw
 
 use grep_matcher::Matcher;
-use grep_regex::RegexMatcher;
+use grep_regex::RegexMatcherBuilder;
 use grep_searcher::sinks::UTF8;
-use grep_searcher::Searcher;
+use grep_searcher::{BinaryDetection, MmapChoice, SearcherBuilder};
 use ignore::{WalkBuilder, WalkState};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -15,6 +15,9 @@ use tauri::{AppHandle, Emitter};
 
 /// Maximum matches to collect per file to prevent runaway processing
 const MAX_MATCHES_PER_FILE: usize = 50;
+
+/// Maximum characters to include in line_content before truncation
+const MAX_LINE_LENGTH: usize = 300;
 
 /// A single match within a file.
 #[derive(Debug, Clone, Serialize)]
@@ -86,7 +89,7 @@ pub fn start_content_search(
     }
 
     let search_id = NEXT_CONTENT_SEARCH_ID.fetch_add(1, Ordering::SeqCst);
-    let max_results = max_results.min(1000).max(1);
+    let max_results = max_results.min(5000).max(1);
 
     // Create cancellation flag
     let cancelled = Arc::new(AtomicBool::new(false));
@@ -147,16 +150,14 @@ fn perform_content_search(
     let pattern = if regex_mode {
         query.to_string()
     } else {
-        // Escape regex special characters for literal search
         regex::escape(query)
     };
 
-    let matcher = if case_sensitive {
-        RegexMatcher::new(&pattern)
-    } else {
-        RegexMatcher::new_line_matcher(&format!("(?i){}", pattern))
-    }
-    .map_err(|e| format!("Invalid search pattern: {}", e))?;
+    let matcher = RegexMatcherBuilder::new()
+        .case_insensitive(!case_sensitive)
+        .line_terminator(Some(b'\n'))
+        .build(&pattern)
+        .map_err(|e| format!("Invalid search pattern: {}", e))?;
 
     let matcher = Arc::new(matcher);
 
@@ -192,6 +193,13 @@ fn perform_content_search(
             let files_searched = files_searched_clone.clone();
             let total_matches = total_matches_clone.clone();
 
+            // Create searcher once per worker thread: avoids buffer re-allocation per file.
+            // mmap avoids read syscalls; binary_detection::quit stops on first NUL byte.
+            let mut searcher = SearcherBuilder::new()
+                .binary_detection(BinaryDetection::quit(b'\x00'))
+                .memory_map(unsafe { MmapChoice::auto() })
+                .build();
+
             Box::new(move |entry| {
                 // Check for cancellation
                 if cancelled.load(Ordering::Relaxed) {
@@ -215,7 +223,7 @@ fn perform_content_search(
                     return WalkState::Continue;
                 }
 
-                // Skip binary files
+                // Fast pre-filter: skip known-binary extensions before opening the file
                 if is_binary_file(path) {
                     return WalkState::Continue;
                 }
@@ -224,7 +232,6 @@ fn perform_content_search(
 
                 // Search the file with per-file match limit
                 let mut file_matches: Vec<ContentMatch> = Vec::new();
-                let mut searcher = Searcher::new();
 
                 let _ = searcher.search_path(
                     matcher.as_ref(),
@@ -232,7 +239,7 @@ fn perform_content_search(
                     UTF8(|line_num, line| {
                         // Check per-file limit
                         if file_matches.len() >= MAX_MATCHES_PER_FILE {
-                            return Ok(false); // Stop searching this file
+                            return Ok(false);
                         }
 
                         let mut byte_offset = 0;
@@ -244,12 +251,26 @@ fn perform_content_search(
                             let match_start = byte_offset + m.start();
                             let match_end = byte_offset + m.end();
 
+                            // Truncate long lines before IPC serialization
+                            let trimmed = line.trim_end();
+                            let (line_content, clamped_start, clamped_end) =
+                                if trimmed.len() > MAX_LINE_LENGTH {
+                                    let end = trimmed.floor_char_boundary(MAX_LINE_LENGTH);
+                                    (
+                                        format!("{}...", &trimmed[..end]),
+                                        match_start.min(end),
+                                        match_end.min(end),
+                                    )
+                                } else {
+                                    (trimmed.to_string(), match_start, match_end)
+                                };
+
                             file_matches.push(ContentMatch {
                                 line_number: line_num,
-                                column: (match_start + 1) as u64,
-                                line_content: line.trim_end().to_string(),
-                                match_start,
-                                match_end,
+                                column: (clamped_start + 1) as u64,
+                                line_content,
+                                match_start: clamped_start,
+                                match_end: clamped_end,
                             });
 
                             byte_offset = match_end;
@@ -283,19 +304,18 @@ fn perform_content_search(
     });
 
     // Collect results and emit time-based batches (runs in original thread).
-    // Time-based batching reduces event frequency to ~10/sec, preventing
-    // the frontend from doing O(n) reactive work on every batch.
+    // Adaptive batching: 50ms for fast first-paint, 150ms steady state to reduce event frequency.
     let mut pending_results: Vec<ContentSearchResult> = Vec::new();
-    let batch_interval = std::time::Duration::from_millis(100);
+    let mut batch_interval = std::time::Duration::from_millis(50);
+    let steady_interval = std::time::Duration::from_millis(150);
     let mut last_emit = std::time::Instant::now();
+    let mut first_batch_sent = false;
 
     loop {
-        // Use recv_timeout so we emit even when results trickle in slowly
         match rx.recv_timeout(batch_interval) {
             Ok(result) => {
                 pending_results.push(result);
 
-                // Emit if enough time has passed
                 if last_emit.elapsed() >= batch_interval {
                     let _ = app.emit(
                         "content-search-results",
@@ -308,10 +328,15 @@ fn perform_content_search(
                         },
                     );
                     last_emit = std::time::Instant::now();
+
+                    // Switch to steady interval after first batch for lower event frequency
+                    if !first_batch_sent {
+                        first_batch_sent = true;
+                        batch_interval = steady_interval;
+                    }
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                // Flush any pending results on timeout
                 if !pending_results.is_empty() {
                     let _ = app.emit(
                         "content-search-results",
@@ -324,6 +349,11 @@ fn perform_content_search(
                         },
                     );
                     last_emit = std::time::Instant::now();
+
+                    if !first_batch_sent {
+                        first_batch_sent = true;
+                        batch_interval = steady_interval;
+                    }
                 }
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -380,6 +410,7 @@ pub fn cancel_content_search(search_id: u64) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use grep_matcher::Matcher;
     use std::fs::File;
     use std::io::Write;
     use tempfile::tempdir;
@@ -406,5 +437,104 @@ mod tests {
         let json = serde_json::to_string(&m).unwrap();
         assert!(json.contains("\"lineNumber\":10"));
         assert!(json.contains("\"lineContent\":\"hello world\""));
+    }
+
+    #[test]
+    fn test_searcher_builder_with_mmap_and_binary_detection() {
+        let dir = tempdir().unwrap();
+
+        // Create a text file with searchable content
+        let text_path = dir.path().join("test.txt");
+        let mut f = File::create(&text_path).unwrap();
+        writeln!(f, "hello world").unwrap();
+        writeln!(f, "goodbye world").unwrap();
+
+        // Create a binary file (contains NUL bytes)
+        let bin_path = dir.path().join("test.bin");
+        let mut f = File::create(&bin_path).unwrap();
+        f.write_all(b"hello\x00binary\x00data").unwrap();
+
+        let matcher = RegexMatcherBuilder::new()
+            .case_insensitive(true)
+            .line_terminator(Some(b'\n'))
+            .build("hello")
+            .unwrap();
+
+        let mut searcher = SearcherBuilder::new()
+            .binary_detection(BinaryDetection::quit(b'\x00'))
+            .memory_map(unsafe { MmapChoice::auto() })
+            .build();
+
+        // Text file: should find matches
+        let mut text_matches = 0;
+        let _ = searcher.search_path(
+            &matcher,
+            &text_path,
+            UTF8(|_line_num, _line| {
+                text_matches += 1;
+                Ok(true)
+            }),
+        );
+        assert_eq!(text_matches, 1);
+
+        // Binary file: should quit early on NUL byte (may find 0 or 1 match
+        // depending on whether NUL appears before or after the match)
+        let mut bin_matches = 0;
+        let _ = searcher.search_path(
+            &matcher,
+            &bin_path,
+            UTF8(|_line_num, _line| {
+                bin_matches += 1;
+                Ok(true)
+            }),
+        );
+        // Binary detection should prevent normal multi-line searching
+        assert!(bin_matches <= 1);
+    }
+
+    #[test]
+    fn test_line_truncation() {
+        let long_line = "a".repeat(500);
+        let trimmed = long_line.trim_end();
+        if trimmed.len() > MAX_LINE_LENGTH {
+            let end = trimmed.floor_char_boundary(MAX_LINE_LENGTH);
+            let truncated = format!("{}...", &trimmed[..end]);
+            assert_eq!(truncated.len(), MAX_LINE_LENGTH + 3); // 300 + "..."
+        }
+    }
+
+    #[test]
+    fn test_regex_matcher_builder_case_insensitive() {
+        let matcher = RegexMatcherBuilder::new()
+            .case_insensitive(true)
+            .line_terminator(Some(b'\n'))
+            .build("hello")
+            .unwrap();
+
+        // Should match regardless of case
+        let hay = b"Hello World";
+        let m = matcher.find(hay).unwrap();
+        assert!(m.is_some());
+
+        let hay = b"HELLO WORLD";
+        let m = matcher.find(hay).unwrap();
+        assert!(m.is_some());
+    }
+
+    #[test]
+    fn test_regex_matcher_builder_case_sensitive() {
+        let matcher = RegexMatcherBuilder::new()
+            .case_insensitive(false)
+            .line_terminator(Some(b'\n'))
+            .build("hello")
+            .unwrap();
+
+        let hay = b"Hello World";
+        let m = matcher.find(hay).unwrap();
+        assert!(m.is_none());
+
+        let hay = b"hello world";
+        let m = matcher.find(hay).unwrap();
+        assert!(m.is_some());
     }
 }

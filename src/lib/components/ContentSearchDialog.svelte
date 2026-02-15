@@ -1,6 +1,6 @@
 <!--
   ContentSearchDialog - Ctrl+Shift+F content search using ripgrep
-  Issue: tauri-explorer-evim, tauri-explorer-3a1q, tauri-explorer-en98
+  Issue: tauri-explorer-evim, tauri-explorer-3a1q, tauri-explorer-en98, tauri-nczo
 -->
 <script lang="ts">
   import {
@@ -58,20 +58,28 @@
   let scrollTop = $state(0);
   let containerHeight = $state(400);
 
-  // Flatten results with filter applied
-  let flattenedResults = $derived.by(() => {
-    const flattened: FlattenedResult[] = [];
-    const filterLower = filterQuery.toLowerCase();
+  // Pagination constants
+  const PAGE_SIZE = 200;
 
-    for (const file of results) {
-      let isFirst = true;
+  // Non-reactive backing store for all flattened results (appended to incrementally)
+  let allFlattened: FlattenedResult[] = [];
+
+  // Reactive page slice -- only this triggers UI updates
+  let flattenedResults = $state<FlattenedResult[]>([]);
+  let pageEnd = $state(PAGE_SIZE);
+  let totalFlattenedCount = $state(0);
+
+  // Flatten a single batch of new results (O(batch) not O(total))
+  function flattenBatch(newResults: ContentSearchResult[], filterLower: string): FlattenedResult[] {
+    const batch: FlattenedResult[] = [];
+    for (const file of newResults) {
+      let isFirst = !allFlattened.some(r => r.filePath === file.path);
       for (const match of file.matches) {
         if (filterLower && !match.lineContent.toLowerCase().includes(filterLower) &&
             !file.relativePath.toLowerCase().includes(filterLower)) {
           continue;
         }
-
-        flattened.push({
+        batch.push({
           filePath: file.path,
           relativePath: file.relativePath,
           match,
@@ -80,24 +88,67 @@
         isFirst = false;
       }
     }
+    return batch;
+  }
 
-    return flattened;
+  // Rebuild allFlattened from scratch (used when filter changes)
+  function rebuildFlattened(filterLower: string): void {
+    const rebuilt: FlattenedResult[] = [];
+    for (const file of results) {
+      let isFirst = true;
+      for (const match of file.matches) {
+        if (filterLower && !match.lineContent.toLowerCase().includes(filterLower) &&
+            !file.relativePath.toLowerCase().includes(filterLower)) {
+          continue;
+        }
+        rebuilt.push({
+          filePath: file.path,
+          relativePath: file.relativePath,
+          match,
+          isFirstInFile: isFirst,
+        });
+        isFirst = false;
+      }
+    }
+    allFlattened = rebuilt;
+    totalFlattenedCount = allFlattened.length;
+    pageEnd = PAGE_SIZE;
+    updatePage();
+  }
+
+  function updatePage(): void {
+    flattenedResults = allFlattened.slice(0, pageEnd);
+  }
+
+  // React to filter changes by rebuilding
+  let prevFilter = "";
+  $effect(() => {
+    const f = filterQuery;
+    if (f !== prevFilter) {
+      prevFilter = f;
+      rebuildFlattened(f.toLowerCase());
+    }
   });
 
-  // Compute virtual scroll window - only render visible items
+  // Cached offsets array -- recomputed only when flattenedResults changes, not on scroll
+  let cachedOffsets = $derived.by(() => {
+    const items = flattenedResults;
+    const offsets: number[] = new Array(items.length);
+    let cumulative = 0;
+    for (let i = 0; i < items.length; i++) {
+      offsets[i] = cumulative;
+      cumulative += items[i].isFirstInFile ? FILE_HEADER_HEIGHT : ITEM_HEIGHT;
+    }
+    return { offsets, totalHeight: cumulative };
+  });
+
+  // Compute virtual scroll window using cached offsets
   let virtualWindow = $derived.by(() => {
     const items = flattenedResults;
+    const { offsets, totalHeight } = cachedOffsets;
     if (items.length === 0) return { startIndex: 0, endIndex: 0, offsetY: 0, totalHeight: 0 };
 
-    // Estimate total height (file headers are taller)
-    let totalHeight = 0;
-    const offsets: number[] = [];
-    for (let i = 0; i < items.length; i++) {
-      offsets.push(totalHeight);
-      totalHeight += items[i].isFirstInFile ? FILE_HEADER_HEIGHT : ITEM_HEIGHT;
-    }
-
-    // Find first visible item via binary search
+    // Binary search for first visible item
     let lo = 0, hi = items.length - 1;
     while (lo < hi) {
       const mid = (lo + hi) >>> 1;
@@ -111,7 +162,6 @@
     const overscan = 10;
     const startIndex = Math.max(0, lo - overscan);
 
-    // Find last visible item
     const viewEnd = scrollTop + containerHeight;
     let endIndex = lo;
     while (endIndex < items.length && offsets[endIndex] < viewEnd) {
@@ -171,6 +221,15 @@
 
       if (newResults.length > 0) {
         results.push(...newResults);
+
+        // Incremental flatten: only process new batch, append to backing store
+        const filterLower = filterQuery.toLowerCase();
+        const batch = flattenBatch(newResults, filterLower);
+        if (batch.length > 0) {
+          allFlattened.push(...batch);
+          totalFlattenedCount = allFlattened.length;
+          updatePage();
+        }
       }
 
       filesSearched = payload.filesSearched;
@@ -193,15 +252,20 @@
 
     loading = true;
     results = [];
+    allFlattened = [];
+    flattenedResults = [];
     seenPaths = new Set();
     selectedIndex = 0;
+    pageEnd = PAGE_SIZE;
+    totalFlattenedCount = 0;
     filesSearched = 0;
     totalMatches = 0;
     scrollTop = 0;
+    prevFilter = filterQuery;
 
     cancelActiveSearch().then(async () => {
       const root = getRootPath();
-      const result = await startContentSearch(query, root, caseSensitive, regexMode, 500);
+      const result = await startContentSearch(query, root, caseSensitive, regexMode, 2000);
 
       if (result.ok) {
         activeSearchId = result.data;
@@ -246,14 +310,13 @@
 
   function scrollToSelected(): void {
     if (!listRef) return;
-    // Estimate the offset of the selected item
-    let offset = 0;
-    for (let i = 0; i < selectedIndex; i++) {
-      offset += flattenedResults[i].isFirstInFile ? FILE_HEADER_HEIGHT : ITEM_HEIGHT;
-    }
+    const { offsets } = cachedOffsets;
+    if (selectedIndex >= offsets.length) return;
+
+    // O(1) offset lookup via cached array
+    const offset = offsets[selectedIndex];
     const itemH = flattenedResults[selectedIndex]?.isFirstInFile ? FILE_HEADER_HEIGHT : ITEM_HEIGHT;
 
-    // Scroll so the selected item is visible
     const container = listRef.parentElement;
     if (!container) return;
     if (offset < container.scrollTop) {
@@ -292,6 +355,14 @@
     const target = e.target as HTMLElement;
     scrollTop = target.scrollTop;
     containerHeight = target.clientHeight;
+
+    // Infinite scroll: load next page when near bottom
+    if (target.scrollTop + target.clientHeight >= target.scrollHeight - 100) {
+      if (pageEnd < allFlattened.length) {
+        pageEnd = Math.min(pageEnd + PAGE_SIZE, allFlattened.length);
+        updatePage();
+      }
+    }
   }
 
   // Focus input when dialog opens
@@ -299,9 +370,14 @@
     if (open && inputRef) {
       query = "";
       filterQuery = "";
+      prevFilter = "";
       results = [];
+      allFlattened = [];
+      flattenedResults = [];
       seenPaths = new Set();
       selectedIndex = 0;
+      pageEnd = PAGE_SIZE;
+      totalFlattenedCount = 0;
       filesSearched = 0;
       totalMatches = 0;
       scrollTop = 0;
@@ -429,7 +505,7 @@
       <div class="footer">
         <div class="stats">
           {#if results.length > 0}
-            <span>{flattenedResults.length} matches in {results.length} files</span>
+            <span>{flattenedResults.length}{#if totalFlattenedCount > flattenedResults.length} of {totalFlattenedCount}{/if} matches in {results.length} files</span>
           {/if}
         </div>
         <div class="shortcuts">

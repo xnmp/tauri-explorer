@@ -452,7 +452,7 @@ export async function startContentSearch(
   root: string,
   caseSensitive: boolean = false,
   regexMode: boolean = false,
-  maxResults: number = 100
+  maxResults: number = 500
 ): Promise<ApiResult<number>> {
   try {
     const searchId = await invoke<number>("start_content_search", {

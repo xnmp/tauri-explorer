@@ -304,59 +304,35 @@ fn perform_content_search(
     });
 
     // Collect results and emit time-based batches (runs in original thread).
-    // Adaptive batching: 50ms for fast first-paint, 150ms steady state to reduce event frequency.
+    // Adaptive batching: 50ms for fast first-paint, then 150ms steady state.
     let mut pending_results: Vec<ContentSearchResult> = Vec::new();
     let mut batch_interval = std::time::Duration::from_millis(50);
     let steady_interval = std::time::Duration::from_millis(150);
     let mut last_emit = std::time::Instant::now();
-    let mut first_batch_sent = false;
 
     loop {
-        match rx.recv_timeout(batch_interval) {
+        let should_flush = match rx.recv_timeout(batch_interval) {
             Ok(result) => {
                 pending_results.push(result);
-
-                if last_emit.elapsed() >= batch_interval {
-                    let _ = app.emit(
-                        "content-search-results",
-                        ContentSearchEvent {
-                            search_id,
-                            results: std::mem::take(&mut pending_results),
-                            done: false,
-                            files_searched: files_searched.load(Ordering::Relaxed),
-                            total_matches: total_matches.load(Ordering::Relaxed),
-                        },
-                    );
-                    last_emit = std::time::Instant::now();
-
-                    // Switch to steady interval after first batch for lower event frequency
-                    if !first_batch_sent {
-                        first_batch_sent = true;
-                        batch_interval = steady_interval;
-                    }
-                }
+                last_emit.elapsed() >= batch_interval
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                if !pending_results.is_empty() {
-                    let _ = app.emit(
-                        "content-search-results",
-                        ContentSearchEvent {
-                            search_id,
-                            results: std::mem::take(&mut pending_results),
-                            done: false,
-                            files_searched: files_searched.load(Ordering::Relaxed),
-                            total_matches: total_matches.load(Ordering::Relaxed),
-                        },
-                    );
-                    last_emit = std::time::Instant::now();
-
-                    if !first_batch_sent {
-                        first_batch_sent = true;
-                        batch_interval = steady_interval;
-                    }
-                }
-            }
+            Err(mpsc::RecvTimeoutError::Timeout) => true,
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        };
+
+        if should_flush && !pending_results.is_empty() {
+            let _ = app.emit(
+                "content-search-results",
+                ContentSearchEvent {
+                    search_id,
+                    results: std::mem::take(&mut pending_results),
+                    done: false,
+                    files_searched: files_searched.load(Ordering::Relaxed),
+                    total_matches: total_matches.load(Ordering::Relaxed),
+                },
+            );
+            last_emit = std::time::Instant::now();
+            batch_interval = steady_interval;
         }
 
         if cancelled.load(Ordering::Relaxed) {

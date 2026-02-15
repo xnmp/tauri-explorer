@@ -73,7 +73,7 @@
   function flattenBatch(newResults: ContentSearchResult[], filterLower: string): FlattenedResult[] {
     const batch: FlattenedResult[] = [];
     for (const file of newResults) {
-      let isFirst = !allFlattened.some(r => r.filePath === file.path);
+      let isFirst = !seenPaths.has(file.path);
       for (const match of file.matches) {
         if (filterLower && !match.lineContent.toLowerCase().includes(filterLower) &&
             !file.relativePath.toLowerCase().includes(filterLower)) {
@@ -118,6 +118,22 @@
 
   function updatePage(): void {
     flattenedResults = allFlattened.slice(0, pageEnd);
+  }
+
+  function resetSearchState(): void {
+    query = "";
+    filterQuery = "";
+    prevFilter = "";
+    results = [];
+    allFlattened = [];
+    flattenedResults = [];
+    seenPaths = new Set();
+    selectedIndex = 0;
+    pageEnd = PAGE_SIZE;
+    totalFlattenedCount = 0;
+    filesSearched = 0;
+    totalMatches = 0;
+    scrollTop = 0;
   }
 
   // React to filter changes by rebuilding
@@ -250,18 +266,13 @@
       return;
     }
 
+    const currentQuery = query;
+    const currentFilter = filterQuery;
+    resetSearchState();
+    query = currentQuery;
+    filterQuery = currentFilter;
+    prevFilter = currentFilter;
     loading = true;
-    results = [];
-    allFlattened = [];
-    flattenedResults = [];
-    seenPaths = new Set();
-    selectedIndex = 0;
-    pageEnd = PAGE_SIZE;
-    totalFlattenedCount = 0;
-    filesSearched = 0;
-    totalMatches = 0;
-    scrollTop = 0;
-    prevFilter = filterQuery;
 
     cancelActiveSearch().then(async () => {
       const root = getRootPath();
@@ -368,19 +379,7 @@
   // Focus input when dialog opens
   $effect(() => {
     if (open && inputRef) {
-      query = "";
-      filterQuery = "";
-      prevFilter = "";
-      results = [];
-      allFlattened = [];
-      flattenedResults = [];
-      seenPaths = new Set();
-      selectedIndex = 0;
-      pageEnd = PAGE_SIZE;
-      totalFlattenedCount = 0;
-      filesSearched = 0;
-      totalMatches = 0;
-      scrollTop = 0;
+      resetSearchState();
       setTimeout(() => inputRef?.focus(), 0);
     }
   });

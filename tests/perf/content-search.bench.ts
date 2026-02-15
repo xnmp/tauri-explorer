@@ -105,17 +105,23 @@ function computeOffsets(items: FlattenedResult[], itemHeight: number, headerHeig
   return { offsets, totalHeight: cumulative };
 }
 
+// --- Shared test fixtures ---
+
+const smallResults = generateSearchResults(50, 10);  // 500 items
+const smallFlattened = flattenResults(smallResults);
+const smallBatch = generateSearchResults(5, 10);     // 50 new items
+
+const largeResults = generateSearchResults(200, 10); // 2000 items
+const largeFlattened = flattenResults(largeResults);
+const largeOffsets = computeOffsets(largeFlattened, 28, 36);
+
 // --- Benchmarks ---
 
 describe("Content Search: Incremental Flatten", () => {
-  const existingResults = generateSearchResults(50, 10); // 500 items
-  const existingFlattened = flattenResults(existingResults);
-  const newBatch = generateSearchResults(5, 10); // 50 new items
-
   it("appends 50 new results onto 500 existing under 0.5ms", () => {
     const result = benchmark(
       "flattenBatch-50-onto-500",
-      () => flattenBatchIncremental(existingFlattened, newBatch),
+      () => flattenBatchIncremental(smallFlattened, smallBatch),
       200
     );
     console.log(formatResult(result));
@@ -125,23 +131,19 @@ describe("Content Search: Incremental Flatten", () => {
   it("full re-flatten of 500 items (filter change baseline)", () => {
     const result = benchmark(
       "fullFlatten-500",
-      () => flattenResults(existingResults),
+      () => flattenResults(smallResults),
       200
     );
     console.log(formatResult(result));
-    // Full flatten should still be fast enough for filter changes
     assertPerformance(result, 2);
   });
 });
 
 describe("Content Search: Offset Computation", () => {
-  const results2000 = generateSearchResults(200, 10);
-  const flattened2000 = flattenResults(results2000);
-
   it("computes offsets for 2000 items under 1ms", () => {
     const result = benchmark(
       "computeOffsets-2000",
-      () => computeOffsets(flattened2000, 28, 36),
+      () => computeOffsets(largeFlattened, 28, 36),
       200
     );
     console.log(formatResult(result));
@@ -149,7 +151,7 @@ describe("Content Search: Offset Computation", () => {
   });
 
   it("computes offsets for 500 items under 0.3ms", () => {
-    const items500 = flattened2000.slice(0, 500);
+    const items500 = largeFlattened.slice(0, 500);
     const result = benchmark(
       "computeOffsets-500",
       () => computeOffsets(items500, 28, 36),
@@ -161,13 +163,10 @@ describe("Content Search: Offset Computation", () => {
 });
 
 describe("Content Search: Page Slice", () => {
-  const results2000 = generateSearchResults(200, 10);
-  const flattened2000 = flattenResults(results2000);
-
   it("slices page of 200 items from 2000 under 0.1ms", () => {
     const result = benchmark(
       "pageSlice-200-from-2000",
-      () => flattened2000.slice(0, 200),
+      () => largeFlattened.slice(0, 200),
       500
     );
     console.log(formatResult(result));
@@ -177,7 +176,7 @@ describe("Content Search: Page Slice", () => {
   it("slices mid-range page under 0.1ms", () => {
     const result = benchmark(
       "pageSlice-mid-200-from-2000",
-      () => flattened2000.slice(800, 1000),
+      () => largeFlattened.slice(800, 1000),
       500
     );
     console.log(formatResult(result));
@@ -186,17 +185,13 @@ describe("Content Search: Page Slice", () => {
 });
 
 describe("Content Search: scrollToSelected O(1) lookup", () => {
-  const results2000 = generateSearchResults(200, 10);
-  const flattened2000 = flattenResults(results2000);
-  const { offsets } = computeOffsets(flattened2000, 28, 36);
-
   it("O(1) offset lookup is near-instant", () => {
     const indices = [0, 100, 500, 999, 1500, 1999];
     const result = benchmark(
       "offsetLookup-O1",
       () => {
         for (const idx of indices) {
-          const _offset = offsets[idx];
+          const _offset = largeOffsets.offsets[idx];
         }
       },
       1000

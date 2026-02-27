@@ -1,10 +1,11 @@
-//! OS clipboard file reading for Linux.
-//! Issue: tauri-explorer-rdra
+//! OS clipboard file operations for Linux.
+//! Issue: tauri-explorer-rdra, tauri-gkfr
 //!
 //! Linux file managers use MIME types like `x-special/gnome-copied-files`
-//! and `text/uri-list` that `tauri-plugin-clipboard-x` doesn't read.
-//! This module shells out to `wl-paste` (Wayland) or `xclip` (X11) to
-//! read file URIs directly.
+//! and `text/uri-list` that `tauri-plugin-clipboard-x` doesn't handle
+//! reliably (its `clipboard-rs` backend is X11-only, broken on Wayland).
+//! This module shells out to `wl-paste`/`wl-copy` (Wayland) or
+//! `xclip` (X11) to read and write file URIs directly.
 
 use std::process::Command;
 
@@ -108,6 +109,81 @@ fn read_clipboard_file_paths() -> Vec<String> {
     Vec::new()
 }
 
+/// Percent-encode a file path for use in `file://` URIs.
+fn percent_encode_path(path: &str) -> String {
+    let mut result = String::with_capacity(path.len() * 2);
+    for b in path.bytes() {
+        match b {
+            // Unreserved characters (RFC 3986) + '/' (path separator)
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                result.push(b as char);
+            }
+            _ => {
+                result.push('%');
+                result.push_str(&format!("{:02X}", b));
+            }
+        }
+    }
+    result
+}
+
+/// Build file URIs from paths.
+fn paths_to_uris(paths: &[String]) -> Vec<String> {
+    paths
+        .iter()
+        .map(|p| format!("file://{}", percent_encode_path(p)))
+        .collect()
+}
+
+/// Write clipboard data with a specific MIME type using native tools.
+/// Uses wl-copy on Wayland, xclip on X11.
+fn write_mime(mime: &str, data: &[u8]) -> bool {
+    let mut child = if is_wayland() {
+        match Command::new("wl-copy")
+            .args(["--type", mime])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(_) => return false,
+        }
+    } else {
+        match Command::new("xclip")
+            .args(["-i", "-selection", "clipboard", "-t", mime])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(_) => return false,
+        }
+    };
+
+    if let Some(ref mut stdin) = child.stdin {
+        use std::io::Write;
+        if stdin.write_all(data).is_err() {
+            return false;
+        }
+    }
+    // Drop stdin to signal EOF
+    child.stdin.take();
+
+    child.wait().map(|s| s.success()).unwrap_or(false)
+}
+
+/// Write file paths to the OS clipboard in formats understood by
+/// GTK file managers (Thunar, Nautilus, Nemo, Caja, etc.).
+fn write_clipboard_file_paths(paths: &[String]) -> bool {
+    if paths.is_empty() {
+        return false;
+    }
+
+    let uris = paths_to_uris(paths);
+
+    // x-special/gnome-copied-files: "copy\nfile:///path1\nfile:///path2"
+    let gnome_data = format!("copy\n{}", uris.join("\n"));
+    write_mime("x-special/gnome-copied-files", gnome_data.as_bytes())
+}
+
 #[tauri::command]
 pub fn clipboard_has_files() -> bool {
     !read_clipboard_file_paths().is_empty()
@@ -116,6 +192,11 @@ pub fn clipboard_has_files() -> bool {
 #[tauri::command]
 pub fn clipboard_read_files() -> Vec<String> {
     read_clipboard_file_paths()
+}
+
+#[tauri::command]
+pub fn clipboard_write_files(paths: Vec<String>) -> bool {
+    write_clipboard_file_paths(&paths)
 }
 
 #[cfg(test)]
@@ -170,5 +251,36 @@ mod tests {
         assert_eq!(percent_decode("/path/to/file"), "/path/to/file");
         assert_eq!(percent_decode("/path%20with%20spaces"), "/path with spaces");
         assert_eq!(percent_decode("%2Ftmp%2Ftest"), "/tmp/test");
+    }
+
+    #[test]
+    fn percent_encode_path_basic() {
+        assert_eq!(percent_encode_path("/home/user/file.txt"), "/home/user/file.txt");
+    }
+
+    #[test]
+    fn percent_encode_path_spaces() {
+        assert_eq!(percent_encode_path("/home/user/My Documents"), "/home/user/My%20Documents");
+    }
+
+    #[test]
+    fn percent_encode_roundtrip() {
+        let original = "/home/user/My Documents/file#name.txt";
+        let encoded = percent_encode_path(original);
+        let decoded = percent_decode(&encoded);
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn paths_to_uris_basic() {
+        let paths = vec![
+            "/home/user/doc.txt".to_string(),
+            "/tmp/test file.txt".to_string(),
+        ];
+        let uris = paths_to_uris(&paths);
+        assert_eq!(uris, vec![
+            "file:///home/user/doc.txt",
+            "file:///tmp/test%20file.txt",
+        ]);
     }
 }

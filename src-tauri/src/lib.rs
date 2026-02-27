@@ -76,6 +76,7 @@ pub fn run() {
             // Clipboard (Linux native)
             clipboard::clipboard_has_files,
             clipboard::clipboard_read_files,
+            clipboard::clipboard_write_files,
             // Thumbnails
             thumbnails::get_thumbnail,
             thumbnails::get_thumbnail_data,

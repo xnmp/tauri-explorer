@@ -8,7 +8,6 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import { writeFiles } from "tauri-plugin-clipboard-x-api";
 
 /**
  * Check if the OS clipboard contains files.
@@ -39,12 +38,12 @@ export async function osClipboardReadFiles(): Promise<string[]> {
 
 /**
  * Write file paths to the OS clipboard.
- * Uses tauri-plugin-clipboard-x (works for paste in external apps).
+ * Uses custom Tauri command that writes x-special/gnome-copied-files
+ * via wl-copy (Wayland) or xclip (X11) for native file manager support.
  */
 export async function osClipboardWriteFiles(filePaths: string[]): Promise<boolean> {
   try {
-    await writeFiles(filePaths);
-    return true;
+    return await invoke<boolean>("clipboard_write_files", { paths: filePaths });
   } catch (error) {
     console.error("Failed to write files to OS clipboard:", error);
     return false;

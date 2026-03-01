@@ -34,9 +34,6 @@ function createClipboardStore() {
     get content() {
       return content;
     },
-    get hasContent() {
-      return content !== null;
-    },
     get isCut() {
       return content?.operation === "cut";
     },

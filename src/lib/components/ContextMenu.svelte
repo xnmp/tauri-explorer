@@ -5,7 +5,6 @@
 -->
 <script lang="ts">
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
-  import { clipboardStore } from "$lib/state/clipboard.svelte";
   import { contextMenuStore } from "$lib/state/context-menu.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import type { ViewMode } from "$lib/state/types";
@@ -124,18 +123,16 @@
     {/if}
 
     <!-- Always available options -->
-    {#if clipboardStore.hasContent}
-      <button class="menu-item" onclick={handlePaste} role="menuitem">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <rect x="4" y="4" width="9" height="10" rx="1" stroke="currentColor" stroke-width="1.25"/>
-          <path d="M6 4V3C6 2.44772 6.44772 2 7 2H10C10.5523 2 11 2.44772 11 3V4" stroke="currentColor" stroke-width="1.25"/>
-          <path d="M7 8H10M8.5 6.5V9.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
-        </svg>
-        <span>Paste</span>
-        <span class="shortcut">Ctrl+V</span>
-      </button>
-      <div class="menu-divider"></div>
-    {/if}
+    <button class="menu-item" onclick={handlePaste} role="menuitem">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <rect x="4" y="4" width="9" height="10" rx="1" stroke="currentColor" stroke-width="1.25"/>
+        <path d="M6 4V3C6 2.44772 6.44772 2 7 2H10C10.5523 2 11 2.44772 11 3V4" stroke="currentColor" stroke-width="1.25"/>
+        <path d="M7 8H10M8.5 6.5V9.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+      </svg>
+      <span>Paste</span>
+      <span class="shortcut">Ctrl+V</span>
+    </button>
+    <div class="menu-divider"></div>
 
     <button class="menu-item" onclick={handleNewFolder} role="menuitem">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">

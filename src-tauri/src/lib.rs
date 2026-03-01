@@ -1,6 +1,7 @@
 //! Tauri Explorer app entry point.
 //! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6, tauri-explorer-im3m, tauri-explorer-bo8l
 
+mod clipboard;
 mod content_search;
 mod files;
 mod search;
@@ -72,6 +73,10 @@ pub fn run() {
             // Content search (ripgrep)
             content_search::start_content_search,
             content_search::cancel_content_search,
+            // Clipboard (Linux native)
+            clipboard::clipboard_has_files,
+            clipboard::clipboard_read_files,
+            clipboard::clipboard_write_files,
             // Thumbnails
             thumbnails::get_thumbnail,
             thumbnails::get_thumbnail_data,

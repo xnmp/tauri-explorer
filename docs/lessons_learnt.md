@@ -4,6 +4,16 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## tauri-explorer-rdra / tauri-explorer-za55: OS Clipboard Integration
+
+**Key takeaways:**
+
+- When implementing dual clipboard support (internal app clipboard + OS system clipboard), make sure UI guards check **both** sources. The paste handlers were gated on `clipboardStore.hasContent` which only checked the internal clipboard, silently blocking the OS clipboard fallback path that was already correctly implemented in `paste()`.
+- `tauri-plugin-clipboard-x` requires both the Rust crate (`tauri-plugin-clipboard-x = "2"` in Cargo.toml) **and** the JS API bindings package (`tauri-plugin-clipboard-x-api` in package.json). Missing the npm package causes module resolution failures at build time.
+- Context menus should always show "Paste" (like native file explorers) rather than conditionally hiding it — the paste handler already returns appropriate error messages when nothing is available.
+
+---
+
 ## tauri-ygaq: Content Search Performance Optimization
 
 **Key takeaways:**

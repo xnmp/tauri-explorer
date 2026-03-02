@@ -536,3 +536,42 @@ export async function cancelContentSearch(searchId: number): Promise<ApiResult<v
     return { ok: false, error: String(err) };
   }
 }
+
+// ===================
+// Archive Operations
+// Issue: tauri-explorer-0xr, tauri-explorer-kez
+// ===================
+
+/**
+ * Compress files/directories into a ZIP archive.
+ *
+ * @param paths - List of file/directory paths to compress
+ * @returns Result with path to created ZIP file or error
+ */
+export async function compressToZip(paths: string[]): Promise<ApiResult<string>> {
+  try {
+    const zipPath = await invoke<string>("compress_to_zip", { paths });
+    return { ok: true, data: zipPath };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
+ * Extract a ZIP archive.
+ *
+ * @param archivePath - Path to the archive file
+ * @param extractHere - If true, extract to archive's directory; if false, extract to new folder
+ * @returns Result with extraction destination path or error
+ */
+export async function extractArchive(
+  archivePath: string,
+  extractHere: boolean = false
+): Promise<ApiResult<string>> {
+  try {
+    const destPath = await invoke<string>("extract_archive", { archivePath, extractHere });
+    return { ok: true, data: destPath };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}

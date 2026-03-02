@@ -7,6 +7,7 @@
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
   import { contextMenuStore } from "$lib/state/context-menu.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
+  import { compressToZip, extractArchive } from "$lib/api/files";
   import type { FileEntry } from "$lib/domain/file";
   import type { ViewMode } from "$lib/state/types";
 
@@ -74,6 +75,37 @@
     if (event.key === "Escape") {
       contextMenuStore.close();
     }
+  }
+
+  const ARCHIVE_EXTENSIONS = new Set(["zip", "jar", "war", "ear"]);
+
+  const selectedArchive = $derived.by((): FileEntry | null => {
+    const entries = explorer.getSelectedEntries();
+    if (entries.length !== 1 || entries[0].kind !== "file") return null;
+    const ext = entries[0].name.split(".").pop()?.toLowerCase() ?? "";
+    return ARCHIVE_EXTENSIONS.has(ext) ? entries[0] : null;
+  });
+
+  async function handleExtractHere(): Promise<void> {
+    if (!selectedArchive) return;
+    await extractArchive(selectedArchive.path, true);
+    explorer.refresh();
+    contextMenuStore.close();
+  }
+
+  async function handleExtractToFolder(): Promise<void> {
+    if (!selectedArchive) return;
+    await extractArchive(selectedArchive.path, false);
+    explorer.refresh();
+    contextMenuStore.close();
+  }
+
+  async function handleCompress(): Promise<void> {
+    const selected = explorer.getSelectedEntries();
+    if (selected.length === 0) return;
+    await compressToZip(selected.map((e) => e.path));
+    explorer.refresh();
+    contextMenuStore.close();
   }
 
   const viewModes: { id: ViewMode; label: string }[] = [
@@ -151,6 +183,34 @@
           </button>
         {/if}
       {/if}
+
+      {#if selectedArchive}
+        <div class="menu-divider"></div>
+        <button class="menu-item" onclick={handleExtractHere} role="menuitem">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.25"/>
+            <path d="M8 5V11M5 8L8 11L11 8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span>Extract Here</span>
+        </button>
+        <button class="menu-item" onclick={handleExtractToFolder} role="menuitem">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.25"/>
+            <path d="M8 5V11M5 8L8 11L11 8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span>Extract to Folder</span>
+        </button>
+      {/if}
+
+      <div class="menu-divider"></div>
+
+      <button class="menu-item" onclick={handleCompress} role="menuitem">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <rect x="2" y="2" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.25"/>
+          <path d="M8 11V5M5 8L8 5L11 8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span>Compress to ZIP</span>
+      </button>
 
       <div class="menu-divider"></div>
     {/if}

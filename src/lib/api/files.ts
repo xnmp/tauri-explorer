@@ -239,6 +239,30 @@ export async function fuzzySearch(
 }
 
 /**
+ * Size estimation for file operations progress.
+ */
+export interface SizeEstimate {
+  fileCount: number;
+  totalBytes: number;
+}
+
+/**
+ * Estimate total file count and size for a list of paths.
+ * Recursively walks directories. Used for progress estimation.
+ *
+ * @param paths - List of file/directory paths
+ * @returns Result with size estimate or error
+ */
+export async function estimateSize(paths: string[]): Promise<ApiResult<SizeEstimate>> {
+  try {
+    const data = await invoke<SizeEstimate>("estimate_size", { paths });
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
  * Event payload for streaming search results.
  */
 export interface SearchResultsEvent {

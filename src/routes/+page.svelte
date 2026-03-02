@@ -121,11 +121,12 @@
     // Initialize theme from saved preference
     themeStore.initTheme();
 
-    // Initialize window tabs with home directory (async)
+    // Initialize window tabs with directory from query param or home
     (async () => {
+      const urlPath = new URLSearchParams(window.location.search).get("path");
       const homeResult = await getHomeDirectory();
       const homePath = homeResult.ok ? homeResult.data : "/home";
-      windowTabsManager.init(homePath);
+      windowTabsManager.init(urlPath || homePath);
     })();
 
     // Register all commands for the command palette

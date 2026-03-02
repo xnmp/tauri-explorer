@@ -6,6 +6,7 @@
  * and include keyboard shortcuts where applicable.
  */
 
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { registerCommands, type Command } from "./commands.svelte";
 import { keybindingsStore } from "./keybindings.svelte";
 import { windowTabsManager } from "./window-tabs.svelte";
@@ -13,6 +14,22 @@ import { settingsStore } from "./settings.svelte";
 import { themeStore } from "./theme.svelte";
 import { bookmarksStore } from "./bookmarks.svelte";
 import type { ViewMode } from "./types";
+
+/** Open a new explorer window at the given path */
+function openNewWindow(path: string): void {
+  const label = "explorer-" + Date.now();
+  const baseUrl = window.location.origin + window.location.pathname;
+  const url = `${baseUrl}?path=${encodeURIComponent(path)}`;
+  new WebviewWindow(label, {
+    url,
+    width: 1200,
+    height: 800,
+    decorations: false,
+    transparent: true,
+    shadow: false,
+    dragDropEnabled: false,
+  });
+}
 
 /** Get the active explorer instance for commands */
 function getActiveExplorer() {
@@ -315,6 +332,21 @@ const bookmarkCommands: Command[] = [
   },
 ];
 
+/** Window commands */
+const windowCommands: Command[] = [
+  {
+    id: "window.newWindow",
+    label: "New Window",
+    category: "general",
+    shortcut: "Ctrl+N",
+    handler: () => {
+      const explorer = getActiveExplorer();
+      const path = explorer?.state.currentPath || "/home";
+      openNewWindow(path);
+    },
+  },
+];
+
 /** Tab commands */
 const tabCommands: Command[] = [
   {
@@ -391,6 +423,7 @@ export function registerAllCommands(): void {
     ...selectionCommands,
     ...viewCommands,
     ...bookmarkCommands,
+    ...windowCommands,
     ...tabCommands,
     ...generalCommands,
   ];

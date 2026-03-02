@@ -741,7 +741,7 @@
     font-family: inherit;
     font-size: 13px;
     color: var(--text-primary);
-    transition: all var(--transition-fast);
+    transition: background var(--transition-fast), border-color var(--transition-fast);
   }
 
   .list-item:hover {
@@ -794,7 +794,7 @@
     font-family: inherit;
     font-size: 12px;
     color: var(--text-primary);
-    transition: all var(--transition-fast);
+    transition: background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
     height: fit-content;
   }
 

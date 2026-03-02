@@ -12,7 +12,7 @@
   let recordingCommandId = $state<string | null>(null);
 
   /** Conflict info when recording */
-  let conflictInfo = $state<{ commandId: string; label: string } | null>(null);
+  let conflictInfo = $state<{ commandId: string; label: string; shortcut: string } | null>(null);
 
   /** Search filter */
   let searchQuery = $state("");
@@ -81,14 +81,28 @@
     const conflicts = keybindingsStore.findConflicts(shortcutString, recordingCommandId);
     if (conflicts.length > 0) {
       const conflictCmd = getAllCommands().find(c => c.id === conflicts[0]);
-      conflictInfo = conflictCmd ? { commandId: conflicts[0], label: conflictCmd.label } : null;
+      conflictInfo = conflictCmd
+        ? { commandId: conflicts[0], label: conflictCmd.label, shortcut: shortcutString }
+        : null;
       return;
     }
 
     // Apply the new shortcut
-    keybindingsStore.setShortcut(recordingCommandId, shortcutString);
+    applyShortcut(recordingCommandId, shortcutString);
+  }
+
+  /** Apply a shortcut and end recording */
+  function applyShortcut(commandId: string, shortcut: string): void {
+    keybindingsStore.setShortcut(commandId, shortcut);
     recordingCommandId = null;
     conflictInfo = null;
+  }
+
+  /** Override a conflicting shortcut: unbind the conflict, then assign to current command */
+  function overrideConflict(): void {
+    if (!conflictInfo || !recordingCommandId) return;
+    keybindingsStore.setShortcut(conflictInfo.commandId, null); // Unbind conflicting command
+    applyShortcut(recordingCommandId, conflictInfo.shortcut);
   }
 
   /** Get shortcut display parts (e.g., ["Ctrl", "P"]) */
@@ -142,7 +156,10 @@
                 </div>
                 {#if conflictInfo}
                   <div class="conflict-warning">
-                    Conflicts with "{conflictInfo.label}"
+                    <span>Conflicts with "{conflictInfo.label}"</span>
+                    <button class="override-btn" onclick={overrideConflict}>
+                      Override
+                    </button>
                   </div>
                 {/if}
               {:else}
@@ -392,12 +409,32 @@
   }
 
   .conflict-warning {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     font-size: 11px;
     color: var(--system-critical);
     background: rgba(255, 0, 0, 0.1);
     padding: 4px 8px;
     border-radius: var(--radius-sm);
     margin-top: 4px;
+  }
+
+  .override-btn {
+    padding: 2px 8px;
+    background: var(--system-critical);
+    border: none;
+    border-radius: var(--radius-sm);
+    font-family: inherit;
+    font-size: 10px;
+    color: white;
+    cursor: pointer;
+    transition: opacity var(--transition-fast);
+    white-space: nowrap;
+  }
+
+  .override-btn:hover {
+    opacity: 0.8;
   }
 
   .no-results {

@@ -195,7 +195,9 @@
         </svg>
         <span class="clipboard-text">
           <strong>{clipboardStore.isCut ? "Cut" : "Copied"}:</strong>
-          {clipboardStore.content.entry.name}
+          {clipboardStore.count === 1
+            ? clipboardStore.content.entries[0].name
+            : `${clipboardStore.count} items`}
         </span>
         <span class="clipboard-hint">Ctrl+V to paste</span>
       </div>

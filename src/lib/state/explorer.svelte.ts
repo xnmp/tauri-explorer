@@ -397,12 +397,12 @@ function createExplorerState() {
   // Clipboard Actions (uses global clipboardStore for cross-pane support)
   // ===================
 
-  async function copyToClipboard(entry: FileEntry) {
-    await clipboardStore.copy(entry);
+  async function copyToClipboard(entries: FileEntry[]) {
+    await clipboardStore.copy(entries);
   }
 
-  async function cutToClipboard(entry: FileEntry) {
-    await clipboardStore.cut(entry);
+  async function cutToClipboard(entries: FileEntry[]) {
+    await clipboardStore.cut(entries);
   }
 
   function clearClipboard() {
@@ -416,29 +416,36 @@ function createExplorerState() {
     const clipboardContent = clipboardStore.content;
 
     if (clipboardContent) {
-      // Use internal clipboard (our app's copy/cut)
-      const { entry, operation } = clipboardContent;
+      const { entries, operation } = clipboardContent;
       const isCut = operation === "cut";
       const pasteOperation = isCut ? moveEntry : copyEntry;
-      const originalDir = entry.path.substring(0, entry.path.lastIndexOf("/")) || "/";
+      const errors: string[] = [];
+      const newEntries: FileEntry[] = [];
 
-      const result = await pasteOperation(entry.path, coreState.currentPath);
+      for (const entry of entries) {
+        const originalDir = entry.path.substring(0, entry.path.lastIndexOf("/")) || "/";
+        const result = await pasteOperation(entry.path, coreState.currentPath);
 
-      if (!result.ok) return result.error;
-
-      if (isCut) {
-        undoStore.push({
-          type: "move",
-          sourcePath: entry.path,
-          destPath: result.data.path,
-          originalDir,
-        });
-        // Clear clipboard after cut operation
-        clipboardStore.clear();
+        if (result.ok) {
+          newEntries.push(result.data);
+          if (isCut) {
+            undoStore.push({
+              type: "move",
+              sourcePath: entry.path,
+              destPath: result.data.path,
+              originalDir,
+            });
+          }
+        } else {
+          errors.push(`${entry.name}: ${result.error}`);
+        }
       }
 
-      coreState.entries = [...coreState.entries, result.data];
-      return null;
+      if (isCut) clipboardStore.clear();
+      if (newEntries.length > 0) {
+        coreState.entries = [...coreState.entries, ...newEntries];
+      }
+      return errors.length > 0 ? `Failed: ${errors.join(", ")}` : null;
     }
 
     // Fall back to OS clipboard (files from external apps)
@@ -447,7 +454,6 @@ function createExplorerState() {
       return "Nothing in clipboard";
     }
 
-    // Copy files from OS clipboard
     const errors: string[] = [];
     const newEntries: FileEntry[] = [];
 
@@ -464,11 +470,7 @@ function createExplorerState() {
       coreState.entries = [...coreState.entries, ...newEntries];
     }
 
-    if (errors.length > 0) {
-      return `Some files failed to paste: ${errors.join(", ")}`;
-    }
-
-    return null;
+    return errors.length > 0 ? `Failed: ${errors.join(", ")}` : null;
   }
 
   // ===================

@@ -26,11 +26,13 @@
   const hasSelection = $derived(explorer.state.selectedPaths.size > 0);
 
   function handleCut(): void {
-    withSelectedEntry((entry) => explorer.cutToClipboard(entry));
+    const selected = explorer.getSelectedEntries();
+    if (selected.length > 0) explorer.cutToClipboard(selected);
   }
 
   function handleCopy(): void {
-    withSelectedEntry((entry) => explorer.copyToClipboard(entry));
+    const selected = explorer.getSelectedEntries();
+    if (selected.length > 0) explorer.copyToClipboard(selected);
   }
 
   async function handlePaste(): Promise<void> {

@@ -42,7 +42,8 @@
 
   async function handleKeydown(event: KeyboardEvent): Promise<void> {
     const hasModifier = event.ctrlKey || event.metaKey;
-    const selected = paneExplorer.getSelectedEntries()[0];
+    const selectedEntries = paneExplorer.getSelectedEntries();
+    const selected = selectedEntries[0];
     const entries = paneExplorer.displayEntries;
 
     // Alt + Arrow: Navigation history
@@ -127,12 +128,12 @@
     } else if (key === "z") {
       event.preventDefault();
       await paneExplorer.undo();
-    } else if (key === "c" && selected) {
+    } else if (key === "c" && selectedEntries.length > 0) {
       event.preventDefault();
-      paneExplorer.copyToClipboard(selected);
-    } else if (key === "x" && selected) {
+      paneExplorer.copyToClipboard(selectedEntries);
+    } else if (key === "x" && selectedEntries.length > 0) {
       event.preventDefault();
-      paneExplorer.cutToClipboard(selected);
+      paneExplorer.cutToClipboard(selectedEntries);
     } else if (key === "v") {
       event.preventDefault();
       await paneExplorer.paste();

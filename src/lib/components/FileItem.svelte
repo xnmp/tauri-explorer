@@ -188,8 +188,8 @@
 
     // Modifier keys - normalize to lowercase for consistent comparison (handles Caps Lock)
     const modifierKeyActions: Record<string, () => void> = {
-      c: () => explorer.copyToClipboard(entry),
-      x: () => explorer.cutToClipboard(entry),
+      c: () => explorer.copyToClipboard(explorer.getSelectedEntries()),
+      x: () => explorer.cutToClipboard(explorer.getSelectedEntries()),
     };
 
     const normalizedKey = event.key.toLowerCase();

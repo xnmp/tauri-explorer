@@ -257,6 +257,12 @@ export function isTextFile(entry: FileEntry): boolean {
   return category === "code" || category === "document" || ext === "txt" || ext === "md" || ext === "log" || ext === "cfg" || ext === "ini" || ext === "toml" || ext === "conf";
 }
 
+/** Check if a file is a PDF */
+export function isPdfFile(entry: FileEntry): boolean {
+  if (entry.kind === "directory") return false;
+  return getExtension(entry.name) === "pdf";
+}
+
 /** Format modified date - Windows 11 style: M/D/YYYY h:mm AM/PM */
 export function formatDate(isoString: string): string {
   const date = new Date(isoString);

@@ -232,13 +232,15 @@ export interface SearchResultsEvent {
 export async function startStreamingSearch(
   query: string,
   root: string,
-  limit: number = 20
+  limit: number = 20,
+  boostPrefix?: string,
 ): Promise<ApiResult<number>> {
   try {
     const searchId = await invoke<number>("start_streaming_search", {
       query,
       root,
       limit,
+      boostPrefix: boostPrefix ?? null,
     });
     return { ok: true, data: searchId };
   } catch (err) {

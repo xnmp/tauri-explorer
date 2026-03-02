@@ -7,6 +7,7 @@
     startStreamingSearch,
     cancelSearch,
     openFile,
+    getHomeDirectory,
     type SearchResult,
     type SearchResultsEvent,
   } from "$lib/api/files";
@@ -49,11 +50,23 @@
   let activeSearchId: number | null = null;
   let unlisten: UnlistenFn | null = null;
   let totalScanned = $state(0);
+  let homeDir: string | null = null;
 
-  // Get root directory from active explorer
-  function getRootPath(): string {
+  // Get current working directory from active explorer
+  function getCwdPath(): string {
     const explorer = paneNav?.getActiveExplorer() ?? defaultExplorer;
     return explorer.state.currentPath;
+  }
+
+  // Get home directory (cached)
+  async function getSearchRoot(): Promise<string> {
+    if (homeDir) return homeDir;
+    const result = await getHomeDirectory();
+    if (result.ok) {
+      homeDir = result.data;
+      return result.data;
+    }
+    return getCwdPath();
   }
 
   // Cancel active search and cleanup listener
@@ -117,8 +130,10 @@
       // Cancel any previous search
       await cancelActiveSearch();
 
-      const root = getRootPath();
-      const result = await startStreamingSearch(query, root, 20);
+      // Search from home directory, boost results under CWD
+      const root = await getSearchRoot();
+      const boostPrefix = getCwdPath();
+      const result = await startStreamingSearch(query, root, 20, boostPrefix);
 
       if (result.ok) {
         activeSearchId = result.data;

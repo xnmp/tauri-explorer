@@ -183,12 +183,14 @@ pub fn fuzzy_search(query: String, root: String, limit: usize) -> Result<SearchR
 
 /// Start a streaming fuzzy search that emits results incrementally.
 /// Returns a search ID that can be used to cancel the search.
+/// `boost_prefix` is an optional path prefix; results under it get a score bonus.
 #[tauri::command]
 pub fn start_streaming_search(
     app: AppHandle,
     query: String,
     root: String,
     limit: usize,
+    boost_prefix: Option<String>,
 ) -> Result<u64, String> {
     let root_path = PathBuf::from(&root);
 
@@ -209,6 +211,8 @@ pub fn start_streaming_search(
         let mut searches = get_active_searches().lock().unwrap();
         searches.insert(search_id, cancelled.clone());
     }
+
+    let boost_path = boost_prefix.map(PathBuf::from);
 
     // Spawn search in background thread
     std::thread::spawn(move || {
@@ -281,6 +285,7 @@ pub fn start_streaming_search(
                     &mut matcher,
                     limit,
                     total_scanned,
+                    boost_path.as_ref(),
                 );
             }
         }
@@ -297,6 +302,7 @@ pub fn start_streaming_search(
                 &mut matcher,
                 limit,
                 total_scanned,
+                boost_path.as_ref(),
             );
         }
 
@@ -331,7 +337,11 @@ fn process_batch(
     matcher: &mut Matcher,
     limit: usize,
     total_scanned: usize,
+    boost_prefix: Option<&PathBuf>,
 ) {
+    // Score boost for results under the priority prefix (e.g. CWD)
+    const BOOST_SCORE: u32 = 100;
+
     // Score entries in this batch
     let mut new_results: Vec<SearchResult> = pending
         .iter()
@@ -340,11 +350,21 @@ fn process_batch(
             let haystack = Utf32Str::new(name, &mut buf);
             pattern.score(haystack, matcher).map(|score| {
                 let full_path = root_path.join(relative_path);
+                // Boost score for results under the priority prefix
+                let boosted_score = if let Some(prefix) = boost_prefix {
+                    if full_path.starts_with(prefix) {
+                        score.saturating_add(BOOST_SCORE)
+                    } else {
+                        score
+                    }
+                } else {
+                    score
+                };
                 SearchResult {
                     name: name.clone(),
                     path: full_path.to_string_lossy().to_string(),
                     relative_path: relative_path.clone(),
-                    score,
+                    score: boosted_score,
                     kind: if *is_dir {
                         "directory".to_string()
                     } else {

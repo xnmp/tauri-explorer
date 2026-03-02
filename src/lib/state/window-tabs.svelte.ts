@@ -47,6 +47,18 @@ export function extractFolderName(path: string): string {
   return parts.length > 0 ? parts[parts.length - 1] : path || "Explorer";
 }
 
+/** Snapshot of a closed tab for restoration via Ctrl+Shift+T */
+interface ClosedTabSnapshot {
+  leftPath: string;
+  rightPath: string;
+  activePaneId: PaneId;
+  dualPaneEnabled: boolean;
+  splitRatio: number;
+  closedAt: number; // insertion index
+}
+
+const MAX_CLOSED_TABS = 20;
+
 function createWindowTabsManager() {
   // Explorer instances registry (keyed by explorerId)
   const explorers = new Map<string, ExplorerInstance>();
@@ -54,6 +66,9 @@ function createWindowTabsManager() {
   // Window tabs state
   let tabs = $state<WindowTab[]>([]);
   let activeTabId = $state<string | null>(null);
+
+  // Stack of recently closed tabs for Ctrl+Shift+T restoration
+  const closedTabStack: ClosedTabSnapshot[] = [];
 
   /** Save current tab state to localStorage */
   function saveState(): void {
@@ -224,6 +239,19 @@ function createWindowTabsManager() {
 
     const tab = tabs[tabIndex];
 
+    // Snapshot closed tab for Ctrl+Shift+T restoration
+    closedTabStack.push({
+      leftPath: getPanePath(tab.panes.left),
+      rightPath: getPanePath(tab.panes.right),
+      activePaneId: tab.activePaneId,
+      dualPaneEnabled: tab.dualPaneEnabled,
+      splitRatio: tab.splitRatio,
+      closedAt: tabIndex,
+    });
+    if (closedTabStack.length > MAX_CLOSED_TABS) {
+      closedTabStack.shift();
+    }
+
     // Clean up explorers for this tab
     explorers.delete(tab.panes.left.explorerId);
     explorers.delete(tab.panes.right.explorerId);
@@ -240,6 +268,32 @@ function createWindowTabsManager() {
     tabs = newTabs;
     activeTabId = newActiveId;
     saveState();
+  }
+
+  /** Restore the most recently closed tab. Returns true if a tab was restored. */
+  function restoreClosedTab(): boolean {
+    const snapshot = closedTabStack.pop();
+    if (!snapshot) return false;
+
+    const tab: WindowTab = {
+      id: generateId("tab"),
+      panes: {
+        left: createPane(snapshot.leftPath),
+        right: createPane(snapshot.rightPath),
+      },
+      activePaneId: snapshot.activePaneId,
+      dualPaneEnabled: snapshot.dualPaneEnabled,
+      splitRatio: snapshot.splitRatio,
+    };
+
+    // Insert at the original position (or end if tabs have been rearranged)
+    const insertIndex = Math.min(snapshot.closedAt, tabs.length);
+    const newTabs = [...tabs];
+    newTabs.splice(insertIndex, 0, tab);
+    tabs = newTabs;
+    activeTabId = tab.id;
+    saveState();
+    return true;
   }
 
   /** Close the active tab */
@@ -371,6 +425,10 @@ function createWindowTabsManager() {
     createTab,
     closeTab,
     closeActiveTab,
+    restoreClosedTab,
+    get canRestoreTab() {
+      return closedTabStack.length > 0;
+    },
     setActiveTab,
     nextTab,
     prevTab,

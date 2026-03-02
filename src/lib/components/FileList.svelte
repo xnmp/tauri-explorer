@@ -477,7 +477,7 @@
     display: flex;
     flex-direction: column;
     flex: 1;
-    overflow-y: auto;
+    overflow: auto;
     position: relative;
     transition: background var(--transition-fast), box-shadow var(--transition-fast);
   }
@@ -502,6 +502,7 @@
     display: flex;
     flex-direction: column;
     flex: 1;
+    min-width: fit-content;
   }
 
   .column-headers {

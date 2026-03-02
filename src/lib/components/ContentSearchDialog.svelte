@@ -56,8 +56,8 @@
   let seenPaths = new Set<string>();
 
   // Virtual scroll state
-  const ITEM_HEIGHT = 28;
-  const FILE_HEADER_HEIGHT = 52;
+  const ITEM_HEIGHT = 30;
+  const FILE_HEADER_HEIGHT = 54;
   let scrollTop = $state(0);
   let containerHeight = $state(400);
 
@@ -773,7 +773,7 @@
   }
 
   .result-item {
-    padding: 4px 8px;
+    padding: 0 8px;
     border-radius: var(--radius-sm);
     cursor: pointer;
     box-sizing: border-box;
@@ -888,12 +888,12 @@
 
   .match-row {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 12px;
     font-family: 'SF Mono', Monaco, Consolas, monospace;
     font-size: 12px;
-    line-height: 18px;
-    min-height: 18px;
+    line-height: 20px;
+    min-height: 20px;
   }
 
   .line-number {

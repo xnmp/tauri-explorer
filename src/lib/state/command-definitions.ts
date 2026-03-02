@@ -150,8 +150,8 @@ const editCommands: Command[] = [
     shortcut: "Ctrl+C",
     handler: () => {
       const explorer = getActiveExplorer();
-      const selected = explorer?.getSelectedEntries()[0];
-      if (selected) explorer?.copyToClipboard(selected);
+      const selected = explorer?.getSelectedEntries() ?? [];
+      if (selected.length > 0) explorer?.copyToClipboard(selected);
     },
     when: () => (getActiveExplorer()?.getSelectedEntries().length ?? 0) > 0,
   },
@@ -162,8 +162,8 @@ const editCommands: Command[] = [
     shortcut: "Ctrl+X",
     handler: () => {
       const explorer = getActiveExplorer();
-      const selected = explorer?.getSelectedEntries()[0];
-      if (selected) explorer?.cutToClipboard(selected);
+      const selected = explorer?.getSelectedEntries() ?? [];
+      if (selected.length > 0) explorer?.cutToClipboard(selected);
     },
     when: () => (getActiveExplorer()?.getSelectedEntries().length ?? 0) > 0,
   },

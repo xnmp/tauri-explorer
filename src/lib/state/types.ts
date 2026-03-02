@@ -10,7 +10,7 @@ export type ViewMode = "details" | "list" | "tiles";
 
 /** Clipboard state for copy/cut operations */
 export interface ClipboardState {
-  entry: FileEntry;
+  entries: FileEntry[];
   operation: "copy" | "cut";
 }
 

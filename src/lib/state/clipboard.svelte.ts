@@ -1,10 +1,9 @@
 /**
  * Global clipboard state for cross-pane file operations.
- * Issue: tauri-explorer-u7bg, tauri-explorer-za55, tauri-explorer-rdra
+ * Issue: tauri-explorer-u7bg, tauri-explorer-za55, tauri-explorer-rdra, tauri-explorer-jrfg
  *
  * This enables copy/cut/paste between dual panes and with external apps.
- * Now integrates with the OS clipboard for copying files to/from
- * other applications like Windows Explorer, macOS Finder, etc.
+ * Supports multiple files for batch copy/cut/paste operations.
  */
 
 import type { FileEntry } from "$lib/domain/file";
@@ -17,7 +16,7 @@ import {
 export type ClipboardOperation = "copy" | "cut";
 
 export interface ClipboardContent {
-  entry: FileEntry;
+  entries: FileEntry[];
   operation: ClipboardOperation;
 }
 
@@ -37,23 +36,26 @@ function createClipboardStore() {
     get isCut() {
       return content?.operation === "cut";
     },
-
-    /**
-     * Copy a file to clipboard (internal + OS clipboard).
-     */
-    async copy(entry: FileEntry): Promise<void> {
-      content = { entry, operation: "copy" };
-      // Also write to OS clipboard for external app paste
-      await osClipboardWriteFiles([entry.path]);
+    get count() {
+      return content?.entries.length ?? 0;
     },
 
     /**
-     * Cut a file (internal only - OS clipboard doesn't support cut).
+     * Copy files to clipboard (internal + OS clipboard).
      */
-    async cut(entry: FileEntry): Promise<void> {
-      content = { entry, operation: "cut" };
-      // Write to OS clipboard as copy (cut is app-specific behavior)
-      await osClipboardWriteFiles([entry.path]);
+    async copy(entries: FileEntry[]): Promise<void> {
+      if (entries.length === 0) return;
+      content = { entries, operation: "copy" };
+      await osClipboardWriteFiles(entries.map((e) => e.path));
+    },
+
+    /**
+     * Cut files (internal + OS clipboard as copy).
+     */
+    async cut(entries: FileEntry[]): Promise<void> {
+      if (entries.length === 0) return;
+      content = { entries, operation: "cut" };
+      await osClipboardWriteFiles(entries.map((e) => e.path));
     },
 
     clear(): void {
@@ -62,32 +64,20 @@ function createClipboardStore() {
 
     /**
      * Take the clipboard content (clears cut items, keeps copy items).
-     * Returns null if clipboard is empty.
      */
     take(): ClipboardContent | null {
       if (!content) return null;
-
       const result = content;
-
-      // Clear clipboard for cut operations (can only paste once)
       if (content.operation === "cut") {
         content = null;
       }
-
       return result;
     },
 
-    /**
-     * Check if OS clipboard has files from external sources.
-     */
     async hasOsFiles(): Promise<boolean> {
       return osClipboardHasFiles();
     },
 
-    /**
-     * Read files from OS clipboard (from external apps).
-     * Returns paths of files copied in external apps.
-     */
     async readOsFiles(): Promise<OsClipboardContent | null> {
       const paths = await osClipboardReadFiles();
       if (paths.length === 0) return null;

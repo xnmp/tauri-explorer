@@ -163,7 +163,7 @@
 
   // Check if this item is in clipboard (for visual feedback)
   const isInClipboard = $derived(
-    clipboardStore.content?.entry.path === entry.path
+    clipboardStore.content?.entries.some((e) => e.path === entry.path) ?? false
   );
   const isCut = $derived(
     isInClipboard && clipboardStore.isCut

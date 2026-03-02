@@ -28,6 +28,24 @@
   let pasteError = $state<string | null>(null);
   let pasteSuccess = $state(false);
 
+  // Clipboard toast: shows briefly when files are copied/cut
+  let clipboardToast = $state<{ message: string; isCut: boolean } | null>(null);
+  let clipboardToastTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Watch clipboard changes and show toast
+  $effect(() => {
+    const content = clipboardStore.content;
+    if (content) {
+      const label = content.entries.length === 1
+        ? content.entries[0].name
+        : `${content.entries.length} items`;
+      const isCut = content.operation === "cut";
+      clipboardToast = { message: `${isCut ? "Cut" : "Copied"}: ${label}`, isCut };
+      if (clipboardToastTimer) clearTimeout(clipboardToastTimer);
+      clipboardToastTimer = setTimeout(() => { clipboardToast = null; }, 3000);
+    }
+  });
+
   // Drop target state for dropping files into current directory
   let isDropTarget = $state(false);
 
@@ -182,30 +200,17 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="file-list" onkeydown={handleKeydown} onclick={handleBackgroundClick} oncontextmenu={handleBackgroundContextMenu} tabindex="-1">
-  <!-- Clipboard indicator (uses global clipboardStore for cross-pane support) -->
-  {#if clipboardStore.content}
-    <div class="clipboard-banner" class:cut={clipboardStore.isCut}>
-      <div class="clipboard-content">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          {#if clipboardStore.isCut}
-            <path d="M6 3L3 6L6 9M10 3L13 6L10 9M4 6H12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-          {:else}
-            <path d="M4 4H12M4 4V12C4 12.5523 4.44772 13 5 13H11C11.5523 13 12 12.5523 12 12V4M4 4L5 2H11L12 4M7 7V10M9 7V10" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-          {/if}
-        </svg>
-        <span class="clipboard-text">
-          <strong>{clipboardStore.isCut ? "Cut" : "Copied"}:</strong>
-          {clipboardStore.count === 1
-            ? clipboardStore.content.entries[0].name
-            : `${clipboardStore.count} items`}
-        </span>
-        <span class="clipboard-hint">Ctrl+V to paste</span>
-      </div>
-      <button class="clipboard-clear" onclick={() => clipboardStore.clear()} aria-label="Clear clipboard">
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-          <path d="M3 3L9 9M9 3L3 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-        </svg>
-      </button>
+  <!-- Clipboard toast notification -->
+  {#if clipboardToast}
+    <div class="toast clipboard" class:cut={clipboardToast.isCut} role="status">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        {#if clipboardToast.isCut}
+          <path d="M6 3L3 6L6 9M10 3L13 6L10 9M4 6H12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        {:else}
+          <path d="M4 4H12M4 4V12C4 12.5523 4.44772 13 5 13H11C11.5523 13 12 12.5523 12 12V4M4 4L5 2H11L12 4M7 7V10M9 7V10" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+        {/if}
+      </svg>
+      <span>{clipboardToast.message} — Ctrl+V to paste</span>
     </div>
   {/if}
 
@@ -580,71 +585,13 @@
     opacity: 0.7;
   }
 
-  /* Clipboard banner */
-  .clipboard-banner {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: var(--spacing-sm) var(--spacing-md);
-    background: linear-gradient(135deg, rgba(0, 120, 212, 0.08), rgba(0, 120, 212, 0.04));
-    border-bottom: 1px solid rgba(0, 120, 212, 0.15);
+  /* Clipboard toast */
+  .toast.clipboard {
     color: var(--accent);
-    animation: slideDown 200ms cubic-bezier(0, 0, 0, 1);
   }
 
-  .clipboard-banner.cut {
-    background: linear-gradient(135deg, rgba(157, 93, 0, 0.08), rgba(157, 93, 0, 0.04));
-    border-color: rgba(157, 93, 0, 0.15);
+  .toast.clipboard.cut {
     color: var(--system-caution);
-  }
-
-  @keyframes slideDown {
-    from {
-      opacity: 0;
-      transform: translateY(-100%);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  .clipboard-content {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-sm);
-    font-size: var(--font-size-caption);
-  }
-
-  .clipboard-text {
-    color: var(--text-primary);
-  }
-
-  .clipboard-hint {
-    color: var(--text-tertiary);
-    padding-left: var(--spacing-sm);
-    border-left: 1px solid var(--divider);
-    margin-left: var(--spacing-xs);
-  }
-
-  .clipboard-clear {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    padding: 0;
-    background: transparent;
-    border: none;
-    border-radius: var(--radius-sm);
-    color: var(--text-tertiary);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-  }
-
-  .clipboard-clear:hover {
-    background: var(--subtle-fill-secondary);
-    color: var(--text-primary);
   }
 
   /* Toast notifications */

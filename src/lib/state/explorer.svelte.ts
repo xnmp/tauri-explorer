@@ -31,6 +31,7 @@ import * as selection from "./selection";
 import * as navigation from "./navigation";
 import { clipboardStore } from "./clipboard.svelte";
 import { dialogStore } from "./dialogs.svelte";
+import { recentFilesStore } from "./recent-files.svelte";
 import { contextMenuStore } from "./context-menu.svelte";
 import { undoStore } from "./undo.svelte";
 import { settingsStore } from "./settings.svelte";
@@ -201,6 +202,10 @@ function createExplorerState() {
       );
       coreState.history = newHistory.history;
       coreState.historyIndex = newHistory.historyIndex;
+
+      // Track directory navigation in recent files
+      const name = path.split("/").filter(Boolean).pop() || path;
+      recentFilesStore.add(path, name, "directory");
     }
   }
 

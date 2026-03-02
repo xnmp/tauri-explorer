@@ -11,6 +11,7 @@
     type SearchResult,
     type SearchResultsEvent,
   } from "$lib/api/files";
+  import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { explorer as defaultExplorer } from "$lib/state/explorer.svelte";
@@ -51,6 +52,17 @@
   let unlisten: UnlistenFn | null = null;
   let totalScanned = $state(0);
   let homeDir: string | null = null;
+
+  // Show recent files when query is empty
+  const recentResults = $derived<SearchResult[]>(
+    recentFilesStore.list.map((entry) => ({
+      name: entry.name,
+      path: entry.path,
+      relativePath: entry.path,
+      score: 0,
+      kind: entry.kind,
+    }))
+  );
 
   // Get current working directory from active explorer
   function getCwdPath(): string {
@@ -145,6 +157,11 @@
     }, 50); // Shorter debounce for streaming - results come in progressively
   }
 
+  // Active display list: search results when querying, recent files otherwise
+  const displayResults = $derived(
+    query.trim() ? results : recentResults.slice(0, 10)
+  );
+
   function handleKeydown(event: KeyboardEvent): void {
     switch (event.key) {
       case "Escape":
@@ -153,20 +170,20 @@
         break;
       case "ArrowDown":
         event.preventDefault();
-        if (results.length > 0) {
-          selectedIndex = (selectedIndex + 1) % results.length;
+        if (displayResults.length > 0) {
+          selectedIndex = (selectedIndex + 1) % displayResults.length;
         }
         break;
       case "ArrowUp":
         event.preventDefault();
-        if (results.length > 0) {
-          selectedIndex = (selectedIndex - 1 + results.length) % results.length;
+        if (displayResults.length > 0) {
+          selectedIndex = (selectedIndex - 1 + displayResults.length) % displayResults.length;
         }
         break;
       case "Enter":
         event.preventDefault();
-        if (results[selectedIndex]) {
-          selectResult(results[selectedIndex]);
+        if (displayResults[selectedIndex]) {
+          selectResult(displayResults[selectedIndex]);
         }
         break;
     }
@@ -176,13 +193,12 @@
     const explorer = paneNav?.getActiveExplorer() ?? defaultExplorer;
 
     if (result.kind === "directory") {
-      // Navigate to the directory
       explorer.navigateTo(result.path);
     } else {
-      // Try to open the file
       const openResult = await openFile(result.path);
-      if (!openResult.ok) {
-        // If can't open (might be a special file), navigate to its parent directory
+      if (openResult.ok) {
+        recentFilesStore.add(result.path, result.name, "file");
+      } else {
         const parentDir = result.path.substring(0, result.path.lastIndexOf("/"));
         explorer.navigateTo(parentDir);
       }
@@ -321,6 +337,40 @@
           </ul>
         {:else if query && !loading}
           <div class="no-results">No matching files found</div>
+        {:else if !query && recentResults.length > 0}
+          <div class="section-label">Recent</div>
+          <ul class="results-list" role="listbox">
+            {#each recentResults.slice(0, 10) as result, index (result.path)}
+              <li
+                class="result-item"
+                class:selected={index === selectedIndex}
+                class:is-directory={result.kind === "directory"}
+                role="option"
+                aria-selected={index === selectedIndex}
+                onclick={() => selectResult(result)}
+                onmouseenter={() => selectedIndex = index}
+              >
+                {#if result.kind === "directory"}
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="folder-icon">
+                    <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="#FFB900"/>
+                  </svg>
+                {:else}
+                  {@const entry = toFileEntry(result)}
+                  {@const iconColor = getFileIconColor(entry)}
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
+                    <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" fill={iconColor} fill-opacity="0.15"/>
+                    <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" stroke={iconColor} stroke-width="1"/>
+                    <path d="M9 1V5C9 5.55228 9.44772 6 10 6H14" stroke={iconColor} stroke-width="1"/>
+                  </svg>
+                {/if}
+                <div class="result-content">
+                  <span class="result-name">{result.name}</span>
+                  <span class="result-path">{result.relativePath}</span>
+                </div>
+                <span class="result-kind recent-badge">recent</span>
+              </li>
+            {/each}
+          </ul>
         {:else if !query}
           <div class="no-results hint">Start typing to search files...</div>
         {/if}
@@ -527,6 +577,21 @@
 
   .result-item.selected.is-directory {
     border-left-color: rgba(255, 255, 255, 0.5);
+  }
+
+  .section-label {
+    padding: 8px 16px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-tertiary);
+  }
+
+  .recent-badge {
+    color: var(--text-tertiary);
+    background: var(--subtle-fill-secondary);
+    font-size: 10px;
   }
 
   .no-results {

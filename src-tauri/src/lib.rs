@@ -1,6 +1,7 @@
 //! Tauri Explorer app entry point.
 //! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6, tauri-explorer-im3m, tauri-explorer-bo8l
 
+mod archive;
 mod clipboard;
 mod content_search;
 mod files;
@@ -85,6 +86,9 @@ pub fn run() {
             thumbnails::get_thumbnail_data,
             thumbnails::clear_thumbnail_cache,
             thumbnails::get_thumbnail_cache_stats,
+            // Archive operations
+            archive::compress_to_zip,
+            archive::extract_archive,
         ])
         .setup(|_app| {
             #[cfg(debug_assertions)]

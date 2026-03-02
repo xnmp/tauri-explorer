@@ -39,24 +39,24 @@
   }
 </script>
 
-<div class="tab-area" role="tablist">
-  {#each tabs as tab (tab.id)}
-    <div
-      class="tab"
-      class:active={tab.id === activeTabId}
-      role="tab"
-      tabindex="0"
-      aria-selected={tab.id === activeTabId}
-      onclick={() => handleTabClick(tab.id)}
-      onkeydown={(e) => handleTabKeydown(e, tab.id)}
-      onauxclick={(e) => handleTabMiddleClick(e, tab.id)}
-      title={windowTabsManager.getTabTooltip(tab)}
-    >
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="tab-icon">
-        <path d="M2 3.5C2 2.67 2.67 2 3.5 2H6.17L8 3.83H12.5C13.33 3.83 14 4.5 14 5.33V12.5C14 13.33 13.33 14 12.5 14H3.5C2.67 14 2 13.33 2 12.5V3.5Z"/>
-      </svg>
-      <span class="tab-title">{windowTabsManager.getTabTitle(tab)}</span>
-      {#if tabs.length > 1}
+{#if tabs.length > 1}
+  <div class="tab-area" role="tablist">
+    {#each tabs as tab (tab.id)}
+      <div
+        class="tab"
+        class:active={tab.id === activeTabId}
+        role="tab"
+        tabindex="0"
+        aria-selected={tab.id === activeTabId}
+        onclick={() => handleTabClick(tab.id)}
+        onkeydown={(e) => handleTabKeydown(e, tab.id)}
+        onauxclick={(e) => handleTabMiddleClick(e, tab.id)}
+        title={windowTabsManager.getTabTooltip(tab)}
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="tab-icon">
+          <path d="M2 3.5C2 2.67 2.67 2 3.5 2H6.17L8 3.83H12.5C13.33 3.83 14 4.5 14 5.33V12.5C14 13.33 13.33 14 12.5 14H3.5C2.67 14 2 13.33 2 12.5V3.5Z"/>
+        </svg>
+        <span class="tab-title">{windowTabsManager.getTabTitle(tab)}</span>
         <button
           class="tab-close"
           onclick={(e) => handleTabClose(e, tab.id)}
@@ -67,21 +67,21 @@
             <path d="M2 2L8 8M8 2L2 8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
           </svg>
         </button>
-      {/if}
-    </div>
-  {/each}
+      </div>
+    {/each}
 
-  <button
-    class="new-tab-btn"
-    onclick={handleNewTab}
-    aria-label="New tab"
-    title="New Tab (Ctrl+T)"
-  >
-    <svg width="12" height="12" viewBox="0 0 12 12">
-      <path d="M6 2V10M2 6H10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-    </svg>
-  </button>
-</div>
+    <button
+      class="new-tab-btn"
+      onclick={handleNewTab}
+      aria-label="New tab"
+      title="New Tab (Ctrl+T)"
+    >
+      <svg width="12" height="12" viewBox="0 0 12 12">
+        <path d="M6 2V10M2 6H10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+    </button>
+  </div>
+{/if}
 
 <style>
   .tab-area {

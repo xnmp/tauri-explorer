@@ -41,9 +41,14 @@
 
 <div class="thumbnail-container" style="--size: {size}px">
   {#if loading}
-    <div class="thumbnail-loading">
-      <div class="spinner"></div>
-    </div>
+    <!-- Show file type icon as placeholder while thumbnail loads -->
+    <svg width={size} height={size} viewBox="0 0 48 48" fill="none" class="thumbnail-placeholder">
+      <rect x="6" y="6" width="36" height="36" rx="4" fill={fallbackColor} fill-opacity="0.1"/>
+      <rect x="6" y="6" width="36" height="36" rx="4" stroke={fallbackColor} stroke-width="1.5" stroke-opacity="0.3"/>
+      <circle cx="16" cy="16" r="4" fill={fallbackColor} fill-opacity="0.3"/>
+      <path d="M6 33L15 24L22 31L30 21L42 33V38C42 40.2091 40.2091 42 38 42H10C7.79086 42 6 40.2091 6 38V33Z" fill={fallbackColor} fill-opacity="0.2"/>
+    </svg>
+    <div class="loading-overlay"><div class="spinner"></div></div>
   {:else if error || !thumbnailUrl}
     <!-- Fallback to image icon SVG -->
     <svg width={size} height={size} viewBox="0 0 48 48" fill="none" class="thumbnail-fallback">
@@ -73,19 +78,24 @@
     overflow: hidden;
     border-radius: var(--radius-sm, 4px);
     background: var(--subtle-fill-secondary, rgba(0, 0, 0, 0.03));
+    position: relative;
   }
 
-  .thumbnail-loading {
+  .thumbnail-placeholder {
+    opacity: 0.6;
+  }
+
+  .loading-overlay {
+    position: absolute;
+    inset: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 100%;
-    height: 100%;
   }
 
   .spinner {
-    width: 20px;
-    height: 20px;
+    width: 16px;
+    height: 16px;
     border: 2px solid var(--divider, #e0e0e0);
     border-top-color: var(--accent, #0078d4);
     border-radius: 50%;

@@ -124,6 +124,8 @@
   });
 
   onMount(() => {
+    performance.mark("app-mount-start");
+
     // Initialize theme from saved preference
     themeStore.initTheme();
 
@@ -133,10 +135,16 @@
       const homeResult = await getHomeDirectory();
       const homePath = homeResult.ok ? homeResult.data : "/home";
       windowTabsManager.init(urlPath || homePath);
+      performance.mark("app-first-dir");
+      if (import.meta.env.DEV) {
+        performance.measure("startup-to-first-dir", "app-mount-start", "app-first-dir");
+        const m = performance.getEntriesByName("startup-to-first-dir")[0];
+        console.log(`[Perf] Startup to first directory: ${m.duration.toFixed(0)}ms`);
+      }
     })();
 
-    // Register all commands for the command palette
-    registerAllCommands();
+    // Register all commands for the command palette (deferred to next tick)
+    queueMicrotask(() => registerAllCommands());
 
     // Setup external file drop handling
     externalDrop.setup();

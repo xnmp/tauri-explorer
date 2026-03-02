@@ -13,6 +13,7 @@ import { windowTabsManager } from "./window-tabs.svelte";
 import { settingsStore } from "./settings.svelte";
 import { themeStore } from "./theme.svelte";
 import { bookmarksStore } from "./bookmarks.svelte";
+import { recentFilesStore } from "./recent-files.svelte";
 import type { ViewMode } from "./types";
 
 /** Open a new explorer window at the given path */
@@ -389,6 +390,25 @@ const tabCommands: Command[] = [
   },
 ];
 
+/** Recent files commands */
+const recentCommands: Command[] = [
+  {
+    id: "recent.openRecent",
+    label: "Open Recent...",
+    category: "general",
+    handler: () => {
+      window.dispatchEvent(new CustomEvent("open-recent-files"));
+    },
+  },
+  {
+    id: "recent.clearHistory",
+    label: "Clear Recent Files",
+    category: "general",
+    handler: () => recentFilesStore.clear(),
+    when: () => recentFilesStore.count > 0,
+  },
+];
+
 /** General commands */
 const generalCommands: Command[] = [
   {
@@ -430,6 +450,7 @@ export function registerAllCommands(): void {
     ...selectionCommands,
     ...viewCommands,
     ...bookmarkCommands,
+    ...recentCommands,
     ...windowCommands,
     ...tabCommands,
     ...generalCommands,

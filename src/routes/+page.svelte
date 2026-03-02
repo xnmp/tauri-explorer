@@ -149,9 +149,14 @@
       contentSearchVisible = true;
     }
 
+    function handleOpenRecentFiles() {
+      quickOpenVisible = true; // Recent files shown in QuickOpen when query is empty
+    }
+
     window.addEventListener("open-quick-open", handleOpenQuickOpen);
     window.addEventListener("open-command-palette", handleOpenCommandPalette);
     window.addEventListener("open-content-search", handleOpenContentSearch);
+    window.addEventListener("open-recent-files", handleOpenRecentFiles);
 
     // Save tabs before window closes
     function handleBeforeUnload() {
@@ -169,6 +174,7 @@
       window.removeEventListener("open-quick-open", handleOpenQuickOpen);
       window.removeEventListener("open-command-palette", handleOpenCommandPalette);
       window.removeEventListener("open-content-search", handleOpenContentSearch);
+      window.removeEventListener("open-recent-files", handleOpenRecentFiles);
       window.removeEventListener("beforeunload", handleBeforeUnload);
       clearInterval(saveInterval);
       externalDrop.cleanup();

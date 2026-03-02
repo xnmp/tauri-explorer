@@ -5,6 +5,7 @@
 <script lang="ts">
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
   import { clipboardStore } from "$lib/state/clipboard.svelte";
+  import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { openFile, moveEntry } from "$lib/api/files";
   import FileItem from "./FileItem.svelte";
@@ -70,7 +71,9 @@
       explorer.navigateTo(entry.path);
     } else {
       const result = await openFile(entry.path);
-      if (!result.ok) {
+      if (result.ok) {
+        recentFilesStore.add(entry.path, entry.name, "file");
+      } else {
         console.error("Failed to open file:", result.error);
       }
     }

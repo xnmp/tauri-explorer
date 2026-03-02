@@ -157,6 +157,22 @@ export async function openFile(path: string): Promise<ApiResult<void>> {
 }
 
 /**
+ * Read a text file's contents.
+ *
+ * @param path - Full path to file
+ * @param maxBytes - Maximum file size in bytes (default 1MB)
+ * @returns Result with file content or error message
+ */
+export async function readTextFile(path: string, maxBytes?: number): Promise<ApiResult<string>> {
+  try {
+    const content = await invoke<string>("read_text_file", { path, maxBytes: maxBytes ?? null });
+    return { ok: true, data: content };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
  * Get the user's home directory path.
  *
  * @returns Result with home directory path or error message

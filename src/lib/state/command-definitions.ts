@@ -264,6 +264,13 @@ const viewCommands: Command[] = [
     handler: () => settingsStore.toggleWindowControls(),
   },
   {
+    id: "view.togglePreviewPane",
+    label: "Toggle Preview Pane",
+    category: "view",
+    shortcut: "Alt+P",
+    handler: () => settingsStore.togglePreviewPane(),
+  },
+  {
     id: "view.toggleDualPane",
     label: "Toggle Dual Pane",
     category: "view",

@@ -249,6 +249,14 @@ export function isImageFile(entry: FileEntry): boolean {
   return THUMBNAIL_EXTENSIONS.has(ext);
 }
 
+/** Check if a file is a text/code file that can be previewed */
+export function isTextFile(entry: FileEntry): boolean {
+  if (entry.kind === "directory") return false;
+  const ext = getExtension(entry.name);
+  const category = ICON_CATEGORY_MAP[ext];
+  return category === "code" || category === "document" || ext === "txt" || ext === "md" || ext === "log" || ext === "cfg" || ext === "ini" || ext === "toml" || ext === "conf";
+}
+
 /** Format modified date - Windows 11 style: M/D/YYYY h:mm AM/PM */
 export function formatDate(isoString: string): string {
   const date = new Date(isoString);

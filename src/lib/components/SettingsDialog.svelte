@@ -98,6 +98,21 @@
               <span class="toggle-slider"></span>
             </label>
           </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Show Window Controls</span>
+              <span class="setting-description">Display minimize, maximize and close buttons</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.showWindowControls}
+                onchange={() => settingsStore.toggleWindowControls()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
         </section>
 
         <!-- Keyboard Shortcuts Section -->

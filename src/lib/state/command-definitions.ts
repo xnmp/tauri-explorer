@@ -222,6 +222,12 @@ const viewCommands: Command[] = [
     handler: () => settingsStore.toggleToolbar(),
   },
   {
+    id: "view.toggleWindowControls",
+    label: "Toggle Window Controls",
+    category: "view",
+    handler: () => settingsStore.toggleWindowControls(),
+  },
+  {
     id: "view.toggleDualPane",
     label: "Toggle Dual Pane",
     category: "view",

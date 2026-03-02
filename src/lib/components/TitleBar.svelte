@@ -6,6 +6,11 @@
   import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
   import WindowTabBar from "./WindowTabBar.svelte";
+  import { settingsStore } from "$lib/state/settings.svelte";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+
+  const showTabBar = $derived(windowTabsManager.tabs.length > 1);
+  const showTitleBar = $derived(showTabBar || settingsStore.showWindowControls);
 
   // Check if running in Tauri environment
   const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -66,6 +71,7 @@
   }
 </script>
 
+{#if showTitleBar}
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="titlebar" onmousedown={handleDragStart}>
   <!-- Window-level tab bar -->
@@ -75,46 +81,49 @@
   <div class="spacer"></div>
 
   <!-- Window controls -->
-  <div class="window-controls">
-    <button
-      class="control-btn"
-      onclick={handleMinimize}
-      title="Minimize"
-      aria-label="Minimize"
-    >
-      <svg width="10" height="10" viewBox="0 0 10 10">
-        <path d="M0 5H10" stroke="currentColor" stroke-width="1"/>
-      </svg>
-    </button>
-    <button
-      class="control-btn"
-      onclick={handleMaximize}
-      title={isMaximized ? "Restore" : "Maximize"}
-      aria-label={isMaximized ? "Restore" : "Maximize"}
-    >
-      {#if isMaximized}
+  {#if settingsStore.showWindowControls}
+    <div class="window-controls">
+      <button
+        class="control-btn"
+        onclick={handleMinimize}
+        title="Minimize"
+        aria-label="Minimize"
+      >
         <svg width="10" height="10" viewBox="0 0 10 10">
-          <rect x="2" y="2" width="6" height="6" stroke="currentColor" stroke-width="1" fill="none"/>
-          <path d="M2 2V1H9V8H8" stroke="currentColor" stroke-width="1" fill="none"/>
+          <path d="M0 5H10" stroke="currentColor" stroke-width="1"/>
         </svg>
-      {:else}
+      </button>
+      <button
+        class="control-btn"
+        onclick={handleMaximize}
+        title={isMaximized ? "Restore" : "Maximize"}
+        aria-label={isMaximized ? "Restore" : "Maximize"}
+      >
+        {#if isMaximized}
+          <svg width="10" height="10" viewBox="0 0 10 10">
+            <rect x="2" y="2" width="6" height="6" stroke="currentColor" stroke-width="1" fill="none"/>
+            <path d="M2 2V1H9V8H8" stroke="currentColor" stroke-width="1" fill="none"/>
+          </svg>
+        {:else}
+          <svg width="10" height="10" viewBox="0 0 10 10">
+            <rect x="1" y="1" width="8" height="8" stroke="currentColor" stroke-width="1" fill="none"/>
+          </svg>
+        {/if}
+      </button>
+      <button
+        class="control-btn close"
+        onclick={handleClose}
+        title="Close"
+        aria-label="Close"
+      >
         <svg width="10" height="10" viewBox="0 0 10 10">
-          <rect x="1" y="1" width="8" height="8" stroke="currentColor" stroke-width="1" fill="none"/>
+          <path d="M1 1L9 9M9 1L1 9" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
         </svg>
-      {/if}
-    </button>
-    <button
-      class="control-btn close"
-      onclick={handleClose}
-      title="Close"
-      aria-label="Close"
-    >
-      <svg width="10" height="10" viewBox="0 0 10 10">
-        <path d="M1 1L9 9M9 1L1 9" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
-      </svg>
-    </button>
-  </div>
+      </button>
+    </div>
+  {/if}
 </div>
+{/if}
 
 <style>
   .titlebar {

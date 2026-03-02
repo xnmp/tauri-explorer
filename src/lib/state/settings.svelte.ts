@@ -10,6 +10,7 @@ export interface Settings {
   showToolbar: boolean;
   showSidebar: boolean;
   showHidden: boolean;
+  showWindowControls: boolean;
   zoomLevel: number; // percentage, e.g. 100 = 100%
 }
 
@@ -21,6 +22,7 @@ const DEFAULT_SETTINGS: Settings = {
   showToolbar: true,
   showSidebar: true,
   showHidden: false,
+  showWindowControls: true,
   zoomLevel: 100,
 };
 
@@ -69,6 +71,10 @@ function createSettingsStore() {
     update({ showHidden: !settings.showHidden });
   }
 
+  function toggleWindowControls(): void {
+    update({ showWindowControls: !settings.showWindowControls });
+  }
+
   function zoomIn(): void {
     update({ zoomLevel: Math.min(MAX_ZOOM, settings.zoomLevel + ZOOM_STEP) });
   }
@@ -99,6 +105,9 @@ function createSettingsStore() {
     get showHidden() {
       return settings.showHidden;
     },
+    get showWindowControls() {
+      return settings.showWindowControls;
+    },
     get zoomLevel() {
       return settings.zoomLevel;
     },
@@ -106,6 +115,7 @@ function createSettingsStore() {
     toggleToolbar,
     toggleSidebar,
     toggleHidden,
+    toggleWindowControls,
     zoomIn,
     zoomOut,
     zoomReset,

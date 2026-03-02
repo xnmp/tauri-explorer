@@ -37,6 +37,48 @@
       windowTabsManager.setActiveTab(tabId);
     }
   }
+
+  // Tab drag-and-drop reordering
+  let dragTabId = $state<string | null>(null);
+  let dropTargetTabId = $state<string | null>(null);
+
+  function handleTabDragStart(event: DragEvent, tabId: string): void {
+    dragTabId = tabId;
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", tabId);
+    }
+  }
+
+  function handleTabDragOver(event: DragEvent, tabId: string): void {
+    if (!dragTabId || dragTabId === tabId) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    dropTargetTabId = tabId;
+  }
+
+  function handleTabDragLeave(): void {
+    dropTargetTabId = null;
+  }
+
+  function handleTabDrop(event: DragEvent, tabId: string): void {
+    event.preventDefault();
+    if (!dragTabId || dragTabId === tabId) return;
+
+    const fromIndex = tabs.findIndex((t) => t.id === dragTabId);
+    const toIndex = tabs.findIndex((t) => t.id === tabId);
+    if (fromIndex >= 0 && toIndex >= 0) {
+      windowTabsManager.reorderTabs(fromIndex, toIndex);
+    }
+
+    dragTabId = null;
+    dropTargetTabId = null;
+  }
+
+  function handleTabDragEnd(): void {
+    dragTabId = null;
+    dropTargetTabId = null;
+  }
 </script>
 
 {#if tabs.length > 1}
@@ -45,6 +87,8 @@
       <div
         class="tab"
         class:active={tab.id === activeTabId}
+        class:drag-over={dropTargetTabId === tab.id}
+        class:dragging={dragTabId === tab.id}
         role="tab"
         tabindex="0"
         aria-selected={tab.id === activeTabId}
@@ -52,6 +96,12 @@
         onkeydown={(e) => handleTabKeydown(e, tab.id)}
         onauxclick={(e) => handleTabMiddleClick(e, tab.id)}
         title={windowTabsManager.getTabTooltip(tab)}
+        draggable="true"
+        ondragstart={(e) => handleTabDragStart(e, tab.id)}
+        ondragover={(e) => handleTabDragOver(e, tab.id)}
+        ondragleave={handleTabDragLeave}
+        ondrop={(e) => handleTabDrop(e, tab.id)}
+        ondragend={handleTabDragEnd}
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="tab-icon">
           <path d="M2 3.5C2 2.67 2.67 2 3.5 2H6.17L8 3.83H12.5C13.33 3.83 14 4.5 14 5.33V12.5C14 13.33 13.33 14 12.5 14H3.5C2.67 14 2 13.33 2 12.5V3.5Z"/>
@@ -184,6 +234,15 @@
   .tab.active::after,
   .tab:last-of-type::after {
     opacity: 0;
+  }
+
+  .tab.dragging {
+    opacity: 0.5;
+  }
+
+  .tab.drag-over {
+    border-color: var(--accent);
+    background: var(--subtle-fill-secondary);
   }
 
   .tab.active {

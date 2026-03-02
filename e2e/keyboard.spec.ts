@@ -47,7 +47,7 @@ test.describe("Keyboard Shortcuts", () => {
     await page.waitForTimeout(100);
 
     // Check clipboard banner appears
-    const clipboardBanner = page.locator(".clipboard-banner");
+    const clipboardBanner = page.locator(".toast.clipboard");
     await expect(clipboardBanner).toBeVisible({ timeout: 2000 });
 
     // Banner should show "Copied"
@@ -65,7 +65,7 @@ test.describe("Keyboard Shortcuts", () => {
     await page.waitForTimeout(100);
 
     // Check clipboard banner appears with cut styling
-    const clipboardBanner = page.locator(".clipboard-banner.cut");
+    const clipboardBanner = page.locator(".toast.clipboard.cut");
     await expect(clipboardBanner).toBeVisible({ timeout: 2000 });
 
     // Banner should show "Cut"
@@ -80,7 +80,7 @@ test.describe("Keyboard Shortcuts", () => {
     await page.waitForTimeout(100);
 
     // Verify clipboard banner is visible
-    const clipboardBanner = page.locator(".clipboard-banner");
+    const clipboardBanner = page.locator(".toast.clipboard");
     await expect(clipboardBanner).toBeVisible();
 
     // Press Ctrl+V to paste - the file-list needs focus for paste handler

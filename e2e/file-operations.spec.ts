@@ -60,7 +60,7 @@ test.describe("File Operations", () => {
       await page.keyboard.press("Control+c");
 
       // Clipboard banner should appear
-      const banner = page.locator(".clipboard-banner");
+      const banner = page.locator(".toast.clipboard");
       await expect(banner).toBeVisible();
       await expect(banner).toContainText("Copied");
     });
@@ -75,21 +75,20 @@ test.describe("File Operations", () => {
       await expect(file).toHaveClass(/cut/);
 
       // Clipboard banner should show "Cut"
-      const banner = page.locator(".clipboard-banner");
+      const banner = page.locator(".toast.clipboard");
       await expect(banner).toContainText("Cut");
     });
 
-    test("clear clipboard button works", async ({ page }) => {
+    test("clipboard toast auto-dismisses", async ({ page }) => {
       const file = page.locator(".file-item").first();
       await file.click();
       await page.keyboard.press("Control+c");
 
-      const banner = page.locator(".clipboard-banner");
-      await expect(banner).toBeVisible();
+      const toast = page.locator(".toast.clipboard");
+      await expect(toast).toBeVisible();
 
-      // Click clear button
-      await page.locator(".clipboard-clear").click();
-      await expect(banner).not.toBeVisible();
+      // Toast should auto-dismiss after 3 seconds
+      await expect(toast).not.toBeVisible({ timeout: 5000 });
     });
   });
 

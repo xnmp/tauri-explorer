@@ -36,6 +36,38 @@ import { contextMenuStore } from "./context-menu.svelte";
 import { undoStore } from "./undo.svelte";
 import { settingsStore } from "./settings.svelte";
 
+/** Per-directory sort preference persistence */
+const SORT_STORAGE_KEY = "explorer-sort-prefs";
+const MAX_SORT_ENTRIES = 200;
+
+interface SortPref { sortBy: SortField; sortAscending: boolean; }
+
+function loadSortPrefs(): Record<string, SortPref> {
+  if (typeof localStorage === "undefined") return {};
+  try {
+    const saved = localStorage.getItem(SORT_STORAGE_KEY);
+    return saved ? JSON.parse(saved) : {};
+  } catch { return {}; }
+}
+
+function saveSortPref(path: string, pref: SortPref): void {
+  if (typeof localStorage === "undefined") return;
+  const prefs = loadSortPrefs();
+  prefs[path] = pref;
+  // Evict oldest entries if over limit
+  const keys = Object.keys(prefs);
+  if (keys.length > MAX_SORT_ENTRIES) {
+    for (const key of keys.slice(0, keys.length - MAX_SORT_ENTRIES)) {
+      delete prefs[key];
+    }
+  }
+  localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify(prefs));
+}
+
+function getSortPref(path: string): SortPref | undefined {
+  return loadSortPrefs()[path];
+}
+
 /** Core explorer state (per-pane) */
 interface ExplorerCoreState {
   // Navigation
@@ -176,6 +208,13 @@ function createExplorerState() {
       coreState.currentPath = actualPath;
       coreState.entries = [...result.data.entries];
 
+      // Restore saved sort preference for this directory
+      const savedSort = getSortPref(actualPath);
+      if (savedSort) {
+        coreState.sortBy = savedSort.sortBy;
+        coreState.sortAscending = savedSort.sortAscending;
+      }
+
       // If there's a listing ID, more entries will come via events
       if (listingId !== null) {
         activeListingId = listingId;
@@ -254,6 +293,11 @@ function createExplorerState() {
       coreState.sortBy = by;
       coreState.sortAscending = true;
     }
+    // Persist sort preference for this directory
+    saveSortPref(coreState.currentPath, {
+      sortBy: coreState.sortBy,
+      sortAscending: coreState.sortAscending,
+    });
   }
 
   function setViewMode(mode: ViewMode) {

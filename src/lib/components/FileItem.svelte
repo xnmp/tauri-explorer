@@ -9,7 +9,7 @@
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
   import { clipboardStore } from "$lib/state/clipboard.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
-  import { moveEntry } from "$lib/api/files";
+  import { moveEntry, copyEntry } from "$lib/api/files";
   import { dragState } from "$lib/state/drag.svelte";
 
   interface Props {
@@ -203,6 +203,7 @@
 
   // Drag handlers - allow dragging files/folders
   let isDropTarget = $state(false);
+  let isCopyDrop = $state(false);
 
   function handleDragStart(event: DragEvent) {
     if (!event.dataTransfer) return;
@@ -224,17 +225,22 @@
     if (!event.dataTransfer?.types.includes("application/x-explorer-path")) return;
 
     event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
+    // Ctrl held = copy, otherwise move
+    const copying = event.ctrlKey;
+    event.dataTransfer.dropEffect = copying ? "copy" : "move";
     isDropTarget = true;
+    isCopyDrop = copying;
   }
 
   function handleDragLeave() {
     isDropTarget = false;
+    isCopyDrop = false;
   }
 
   async function handleDrop(event: DragEvent) {
     event.preventDefault();
     isDropTarget = false;
+    isCopyDrop = false;
 
     if (entry.kind !== "directory") return;
     if (!event.dataTransfer) return;
@@ -242,19 +248,24 @@
     const sourcePath = event.dataTransfer.getData("application/x-explorer-path");
     if (!sourcePath || sourcePath === entry.path) return;
 
-    // Don't allow moving a folder into itself or its children
+    // Don't allow moving/copying a folder into itself or its children
     if (entry.path.startsWith(sourcePath + "/")) return;
 
-    const result = await moveEntry(sourcePath, entry.path);
+    // Ctrl held = copy, otherwise move
+    const isCopyOp = event.ctrlKey;
+    const result = isCopyOp
+      ? await copyEntry(sourcePath, entry.path)
+      : await moveEntry(sourcePath, entry.path);
+
     if (result.ok) {
-      // Refresh all panes to reflect the move (handles cross-pane moves)
+      // Refresh all panes to reflect the operation
       if (paneNav) {
         paneNav.refreshAllPanes();
       } else {
         explorer.refresh();
       }
     } else {
-      console.error("Failed to move:", result.error);
+      console.error(`Failed to ${isCopyOp ? "copy" : "move"}:`, result.error);
     }
   }
 </script>
@@ -267,6 +278,7 @@
   class:in-clipboard={isInClipboard}
   class:selected
   class:drop-target={isDropTarget}
+  class:copy-drop={isCopyDrop}
   onmousedown={handleMouseDown}
   onclick={handleClick}
   ondblclick={handleDoubleClick}
@@ -579,6 +591,13 @@
     background: rgba(0, 120, 212, 0.15);
     border-color: var(--accent);
     box-shadow: inset 0 0 0 1px var(--accent);
+  }
+
+  /* Copy drop visual - green tint when Ctrl held */
+  .file-item.drop-target.copy-drop {
+    background: rgba(16, 185, 129, 0.15);
+    border-color: #10b981;
+    box-shadow: inset 0 0 0 1px #10b981;
   }
 
   /* Dark mode folder color adjustment */

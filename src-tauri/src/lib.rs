@@ -62,6 +62,7 @@ pub fn run() {
             files::copy_entry,
             files::move_entry,
             files::open_file,
+            files::read_text_file,
             files::delete_entry_permanent,
             // Streaming directory listing
             files::start_streaming_directory,

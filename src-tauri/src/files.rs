@@ -348,6 +348,35 @@ pub fn open_file(path: String) -> Result<(), FileError> {
         .map_err(|e| FileError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))
 }
 
+/// Read a text file's contents with a size limit (default 1MB).
+/// Returns the file content as a string. Binary files will fail gracefully.
+#[tauri::command]
+pub fn read_text_file(path: String, max_bytes: Option<u64>) -> Result<String, FileError> {
+    let file_path = PathBuf::from(&path);
+
+    if !file_path.exists() {
+        return Err(FileError::NotFound(path));
+    }
+
+    let limit = max_bytes.unwrap_or(1_048_576); // 1MB default
+    let metadata = fs::metadata(&file_path)?;
+
+    if metadata.len() > limit {
+        return Err(FileError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("File too large: {} bytes (limit: {})", metadata.len(), limit),
+        )));
+    }
+
+    let content = fs::read(&file_path)?;
+    String::from_utf8(content).map_err(|_| {
+        FileError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "File contains invalid UTF-8 (likely binary)",
+        ))
+    })
+}
+
 /// Delete a file or directory permanently (not to trash).
 /// For trash, use the existing move_to_trash command.
 #[tauri::command]

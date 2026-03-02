@@ -209,10 +209,13 @@ function createWindowTabsManager() {
     return createTab(initialPath);
   }
 
-  /** Close a tab by ID */
+  /** Close a tab by ID. Closes the window if it's the last tab. */
   function closeTab(tabId: string): void {
     if (tabs.length <= 1) {
-      // Don't close the last tab
+      // Close the window when closing the last tab
+      import("@tauri-apps/api/window")
+        .then(({ getCurrentWindow }) => getCurrentWindow().close())
+        .catch(() => {}); // Not in Tauri runtime
       return;
     }
 

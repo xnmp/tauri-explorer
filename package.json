@@ -16,6 +16,8 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:perf": "playwright test e2e/performance.spec.ts",
+    "perf:check": "npx tsx scripts/perf-check.ts",
+    "perf:baseline": "npx tsx scripts/perf-check.ts --update",
     "tauri": "tauri"
   },
   "license": "MIT",

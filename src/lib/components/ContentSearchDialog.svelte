@@ -296,7 +296,20 @@
     });
   }
 
+  // Debounced auto-search: triggers search as user types
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  const DEBOUNCE_MS = 300;
+
+  function handleInput(): void {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    if (!query.trim()) return;
+    debounceTimer = setTimeout(() => {
+      startSearch();
+    }, DEBOUNCE_MS);
+  }
+
   function startSearch(): void {
+    if (debounceTimer) clearTimeout(debounceTimer);
     if (!query.trim()) {
       return;
     }
@@ -449,13 +462,14 @@
             placeholder="Search in files..."
             bind:value={query}
             bind:this={inputRef}
+            oninput={handleInput}
             onkeydown={(e) => e.key === 'Enter' && startSearch()}
           />
           <div class="search-options">
             <button
               class="option-btn"
               class:active={caseSensitive}
-              onclick={() => caseSensitive = !caseSensitive}
+              onclick={() => { caseSensitive = !caseSensitive; if (query.trim()) startSearch(); }}
               title="Match Case (Alt+C)"
             >
               Aa
@@ -463,7 +477,7 @@
             <button
               class="option-btn"
               class:active={regexMode}
-              onclick={() => regexMode = !regexMode}
+              onclick={() => { regexMode = !regexMode; if (query.trim()) startSearch(); }}
               title="Use Regex (Alt+R)"
             >
               .*
@@ -563,7 +577,7 @@
         {:else if query && !loading && results.length === 0}
           <div class="no-results">No matches found</div>
         {:else if !query && !loading}
-          <div class="no-results hint">Enter a search term and press Enter or click Search</div>
+          <div class="no-results hint">Start typing to search in files</div>
         {/if}
       </div>
 

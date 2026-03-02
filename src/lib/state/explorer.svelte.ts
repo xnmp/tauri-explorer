@@ -107,6 +107,7 @@ function createExplorerState() {
   const canGoBack = $derived(navigation.canGoBack(coreState.historyIndex));
   const canGoForward = $derived(navigation.canGoForward(coreState.history, coreState.historyIndex));
   const canUndo = $derived(undoStore.canUndo);
+  const canRedo = $derived(undoStore.canRedo);
 
   // ===================
   // Streaming Directory State
@@ -491,6 +492,15 @@ function createExplorerState() {
     return null;
   }
 
+  async function redo(): Promise<string | null> {
+    const error = await undoStore.redo();
+    if (error) return error;
+
+    // Refresh current directory to reflect redo
+    await navigateInternal(coreState.currentPath);
+    return null;
+  }
+
   // ===================
   // Public API
   // ===================
@@ -513,6 +523,9 @@ function createExplorerState() {
     },
     get canUndo() {
       return canUndo;
+    },
+    get canRedo() {
+      return canRedo;
     },
     // Navigation
     navigateTo,
@@ -550,8 +563,9 @@ function createExplorerState() {
     cutToClipboard,
     clearClipboard,
     paste,
-    // Undo
+    // Undo/Redo
     undo,
+    redo,
   };
 }
 

@@ -186,6 +186,24 @@ const editCommands: Command[] = [
       await getActiveExplorer()?.undo();
     },
   },
+  {
+    id: "edit.redo",
+    label: "Redo",
+    category: "edit",
+    shortcut: "Ctrl+Y",
+    handler: async () => {
+      await getActiveExplorer()?.redo();
+    },
+  },
+  {
+    id: "edit.redo2",
+    label: "Redo (Alt)",
+    category: "edit",
+    shortcut: "Ctrl+Shift+Z",
+    handler: async () => {
+      await getActiveExplorer()?.redo();
+    },
+  },
 ];
 
 /** Selection commands */

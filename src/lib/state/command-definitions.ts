@@ -362,7 +362,6 @@ const tabCommands: Command[] = [
     category: "general",
     shortcut: "Ctrl+W",
     handler: () => windowTabsManager.closeActiveTab(),
-    when: () => windowTabsManager.tabs.length > 1,
   },
   {
     id: "tabs.nextTab",

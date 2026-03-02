@@ -14,6 +14,7 @@ import { settingsStore } from "./settings.svelte";
 import { themeStore } from "./theme.svelte";
 import { bookmarksStore } from "./bookmarks.svelte";
 import { recentFilesStore } from "./recent-files.svelte";
+import { copyEntry, moveEntry } from "$lib/api/files";
 import type { ViewMode } from "./types";
 
 /** Open a new explorer window at the given path */
@@ -358,6 +359,59 @@ const bookmarkCommands: Command[] = [
   },
 ];
 
+/** Cross-pane file operation commands */
+const crossPaneCommands: Command[] = [
+  {
+    id: "pane.copyToOther",
+    label: "Copy to Other Pane",
+    category: "file",
+    shortcut: "F5",
+    handler: async () => {
+      if (!windowTabsManager.dualPaneEnabled) return;
+      const activePaneId = windowTabsManager.activePaneId;
+      const otherPaneId = activePaneId === "left" ? "right" : "left";
+      const activeExplorer = windowTabsManager.getExplorer(activePaneId);
+      const otherExplorer = windowTabsManager.getExplorer(otherPaneId);
+      if (!activeExplorer || !otherExplorer) return;
+
+      const selected = activeExplorer.getSelectedEntries();
+      if (selected.length === 0) return;
+
+      const destDir = otherExplorer.state.currentPath;
+      for (const entry of selected) {
+        await copyEntry(entry.path, destDir);
+      }
+      otherExplorer.refresh();
+    },
+    when: () => windowTabsManager.dualPaneEnabled,
+  },
+  {
+    id: "pane.moveToOther",
+    label: "Move to Other Pane",
+    category: "file",
+    shortcut: "F6",
+    handler: async () => {
+      if (!windowTabsManager.dualPaneEnabled) return;
+      const activePaneId = windowTabsManager.activePaneId;
+      const otherPaneId = activePaneId === "left" ? "right" : "left";
+      const activeExplorer = windowTabsManager.getExplorer(activePaneId);
+      const otherExplorer = windowTabsManager.getExplorer(otherPaneId);
+      if (!activeExplorer || !otherExplorer) return;
+
+      const selected = activeExplorer.getSelectedEntries();
+      if (selected.length === 0) return;
+
+      const destDir = otherExplorer.state.currentPath;
+      for (const entry of selected) {
+        await moveEntry(entry.path, destDir);
+      }
+      activeExplorer.refresh();
+      otherExplorer.refresh();
+    },
+    when: () => windowTabsManager.dualPaneEnabled,
+  },
+];
+
 /** Window commands */
 const windowCommands: Command[] = [
   {
@@ -498,6 +552,7 @@ export function registerAllCommands(): void {
     ...recentCommands,
     ...windowCommands,
     ...tabCommands,
+    ...crossPaneCommands,
     ...workspaceCommands,
     ...generalCommands,
   ];

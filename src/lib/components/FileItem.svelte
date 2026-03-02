@@ -262,6 +262,7 @@
 <button
   class="file-item"
   class:directory={entry.kind === "directory"}
+  class:hidden-entry={entry.name.startsWith(".")}
   class:cut={isCut}
   class:in-clipboard={isInClipboard}
   class:selected
@@ -444,6 +445,15 @@
   }
 
   /* Cut items appear faded */
+  .file-item.hidden-entry {
+    opacity: 0.55;
+  }
+
+  .file-item.hidden-entry:hover,
+  .file-item.hidden-entry.selected {
+    opacity: 0.8;
+  }
+
   .file-item.cut {
     opacity: 0.5;
   }

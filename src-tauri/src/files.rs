@@ -406,6 +406,81 @@ pub fn open_file(path: String) -> Result<(), FileError> {
         .map_err(|e| FileError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))
 }
 
+/// Open a file with a specified application.
+#[tauri::command]
+pub fn open_file_with(path: String, app: String) -> Result<(), FileError> {
+    let file_path = PathBuf::from(&path);
+
+    if !file_path.exists() {
+        return Err(FileError::NotFound(path));
+    }
+
+    std::process::Command::new(&app)
+        .arg(&file_path)
+        .spawn()
+        .map_err(|e| FileError::Io(e))?;
+
+    Ok(())
+}
+
+/// Open a terminal at a directory path.
+#[tauri::command]
+pub fn open_in_terminal(path: String) -> Result<(), FileError> {
+    let dir_path = PathBuf::from(&path);
+
+    if !dir_path.exists() {
+        return Err(FileError::NotFound(path));
+    }
+
+    // Use the directory itself or its parent for files
+    let dir = if dir_path.is_dir() {
+        dir_path
+    } else {
+        dir_path.parent().map(|p| p.to_path_buf()).unwrap_or(dir_path)
+    };
+
+    #[cfg(target_os = "linux")]
+    {
+        // Try common Linux terminal emulators
+        let terminals = ["kitty", "alacritty", "gnome-terminal", "konsole", "xterm"];
+        for term in &terminals {
+            if std::process::Command::new(term)
+                .arg("--working-directory")
+                .arg(&dir)
+                .spawn()
+                .is_ok()
+            {
+                return Ok(());
+            }
+        }
+        // Fallback: use x-terminal-emulator
+        std::process::Command::new("x-terminal-emulator")
+            .current_dir(&dir)
+            .spawn()
+            .map_err(|e| FileError::Io(e))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .args(["-a", "Terminal"])
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| FileError::Io(e))?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/c", "start", "cmd.exe"])
+            .current_dir(&dir)
+            .spawn()
+            .map_err(|e| FileError::Io(e))?;
+    }
+
+    Ok(())
+}
+
 /// Read a text file's contents with a size limit (default 1MB).
 /// Returns the file content as a string. Binary files will fail gracefully.
 #[tauri::command]

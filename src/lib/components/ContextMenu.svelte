@@ -7,7 +7,7 @@
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
   import { contextMenuStore } from "$lib/state/context-menu.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
-  import { compressToZip, extractArchive } from "$lib/api/files";
+  import { compressToZip, extractArchive, openFile, openInTerminal } from "$lib/api/files";
   import type { FileEntry } from "$lib/domain/file";
   import type { ViewMode } from "$lib/state/types";
 
@@ -108,6 +108,25 @@
     contextMenuStore.close();
   }
 
+  /** The single selected file (not directory) for Open With */
+  const selectedFile = $derived.by((): FileEntry | null => {
+    const entries = explorer.getSelectedEntries();
+    if (entries.length !== 1 || entries[0].kind !== "file") return null;
+    return entries[0];
+  });
+
+  async function handleOpenDefault(): Promise<void> {
+    if (!selectedFile) return;
+    await openFile(selectedFile.path);
+    contextMenuStore.close();
+  }
+
+  async function handleOpenInTerminal(): Promise<void> {
+    const path = selectedDirectory?.path ?? explorer.state.currentPath;
+    await openInTerminal(path);
+    contextMenuStore.close();
+  }
+
   const viewModes: { id: ViewMode; label: string }[] = [
     { id: "details", label: "Details" },
     { id: "list", label: "List" },
@@ -128,6 +147,19 @@
     role="menu"
   >
     {#if hasSelection}
+      {#if selectedFile}
+        <!-- Open file with default application -->
+        <button class="menu-item" onclick={handleOpenDefault} role="menuitem">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M3 2H8L10 4H13C13.5523 4 14 4.44772 14 5V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V3C2 2.44772 2.44772 2 3 2Z" stroke="currentColor" stroke-width="1.25"/>
+            <path d="M6 8L8 10L10 8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span>Open</span>
+          <span class="shortcut">Enter</span>
+        </button>
+        <div class="menu-divider"></div>
+      {/if}
+
       <!-- File/folder operations -->
       <button class="menu-item" onclick={handleCut} role="menuitem">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -233,6 +265,15 @@
         <path d="M8 7.5V10.5M6.5 9H9.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
       </svg>
       <span>New folder</span>
+    </button>
+
+    <button class="menu-item" onclick={handleOpenInTerminal} role="menuitem">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <rect x="2" y="3" width="12" height="10" rx="1" stroke="currentColor" stroke-width="1.25"/>
+        <path d="M4 7L6 9L4 11" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M8 11H12" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+      </svg>
+      <span>Open in Terminal</span>
     </button>
 
     <div class="menu-divider"></div>

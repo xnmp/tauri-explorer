@@ -157,6 +157,37 @@ export async function openFile(path: string): Promise<ApiResult<void>> {
 }
 
 /**
+ * Open a file with a specific application.
+ *
+ * @param path - Full path to file to open
+ * @param app - Application command to open with
+ * @returns Result indicating success or error message
+ */
+export async function openFileWith(path: string, app: string): Promise<ApiResult<void>> {
+  try {
+    await invoke("open_file_with", { path, app });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
+ * Open a terminal at a directory path.
+ *
+ * @param path - Path (directory or file, uses parent for files)
+ * @returns Result indicating success or error message
+ */
+export async function openInTerminal(path: string): Promise<ApiResult<void>> {
+  try {
+    await invoke("open_in_terminal", { path });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
  * Write text content to a new file.
  */
 export async function writeTextFile(path: string, content: string): Promise<ApiResult<FileEntry>> {

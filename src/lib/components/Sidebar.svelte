@@ -38,6 +38,7 @@
   let isResizing = $state(false);
 
   let quickAccessEl: HTMLDivElement | undefined;
+  let dragPollInterval: ReturnType<typeof setInterval> | null = null;
 
   onMount(async () => {
     const result = await getHomeDirectory();
@@ -54,6 +55,7 @@
       quickAccessEl.addEventListener("dragover", onQuickAccessDragOver);
       quickAccessEl.addEventListener("dragleave", onQuickAccessDragLeave);
     }
+    document.addEventListener("dragstart", onDragStartPoll);
     document.addEventListener("dragend", onDragEnd);
 
     return () => {
@@ -62,9 +64,50 @@
         quickAccessEl.removeEventListener("dragover", onQuickAccessDragOver);
         quickAccessEl.removeEventListener("dragleave", onQuickAccessDragLeave);
       }
+      document.removeEventListener("dragstart", onDragStartPoll);
       document.removeEventListener("dragend", onDragEnd);
+      stopDragPoll();
     };
   });
+
+  // Track the last known drag cursor position via the drag event.
+  // In WebKitGTK, dragover doesn't fire on the sidebar, so we track
+  // the cursor from the document-level drag event and poll to update isDragOver.
+  let lastDragX = 0;
+  let lastDragY = 0;
+
+  function onDragStartPoll() {
+    // Start polling cursor position against Quick Access bounds
+    stopDragPoll();
+    dragPollInterval = setInterval(() => {
+      if (!quickAccessEl || !dragState.current) {
+        stopDragPoll();
+        return;
+      }
+      if (lastDragX === 0 && lastDragY === 0) return;
+      const el = document.elementFromPoint(lastDragX, lastDragY);
+      isDragOver = quickAccessEl.contains(el);
+    }, 100);
+    document.addEventListener("drag", onDragMove);
+  }
+
+  function onDragMove(event: DragEvent) {
+    // During HTML5 drag, drag events fire on the source element with cursor coords
+    if (event.clientX > 0 || event.clientY > 0) {
+      lastDragX = event.clientX;
+      lastDragY = event.clientY;
+    }
+  }
+
+  function stopDragPoll() {
+    if (dragPollInterval) {
+      clearInterval(dragPollInterval);
+      dragPollInterval = null;
+    }
+    document.removeEventListener("drag", onDragMove);
+    lastDragX = 0;
+    lastDragY = 0;
+  }
 
   function onQuickAccessDragEnter(event: DragEvent) {
     if (dragState.current) {
@@ -88,8 +131,17 @@
     }
   }
 
-  function onDragEnd() {
-    if (isDragOver && dragState.current) {
+  function onDragEnd(event: DragEvent) {
+    // Check if drag ended over the Quick Access area.
+    // Use both isDragOver (works in Chrome) and elementFromPoint fallback
+    // (works in WebKitGTK where dragover doesn't fire on sidebar elements).
+    let overQuickAccess = isDragOver;
+    if (!overQuickAccess && quickAccessEl && event.clientX > 0 && event.clientY > 0) {
+      const el = document.elementFromPoint(event.clientX, event.clientY);
+      overQuickAccess = quickAccessEl.contains(el);
+    }
+
+    if (overQuickAccess && dragState.current) {
       const { kind, path, name } = dragState.current;
       if (kind === "directory" && path) {
         bookmarksStore.addBookmark(path, name);
@@ -97,6 +149,7 @@
     }
     isDragOver = false;
     dragState.clear();
+    stopDragPoll();
   }
 
   // Quick access folders use dynamic home directory

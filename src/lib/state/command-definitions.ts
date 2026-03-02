@@ -109,6 +109,19 @@ const fileCommands: Command[] = [
     when: () => (getActiveExplorer()?.getSelectedEntries().length ?? 0) > 0,
   },
   {
+    id: "file.bulkRename",
+    label: "Bulk Rename...",
+    category: "file",
+    handler: () => {
+      const explorer = getActiveExplorer();
+      const selected = explorer?.getSelectedEntries() ?? [];
+      if (selected.length >= 2) {
+        window.dispatchEvent(new CustomEvent("open-bulk-rename", { detail: { entries: selected } }));
+      }
+    },
+    when: () => (getActiveExplorer()?.getSelectedEntries().length ?? 0) >= 2,
+  },
+  {
     id: "file.delete",
     label: "Delete",
     category: "file",

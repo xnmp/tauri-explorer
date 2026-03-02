@@ -6,6 +6,7 @@
 <script lang="ts">
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
   import { contextMenuStore } from "$lib/state/context-menu.svelte";
+  import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import type { ViewMode } from "$lib/state/types";
 
@@ -24,6 +25,17 @@
   }
 
   const hasSelection = $derived(explorer.state.selectedPaths.size > 0);
+
+  /** Check if the single selected entry is a bookmarkable directory */
+  const selectedDirectory = $derived.by((): FileEntry | null => {
+    const entries = explorer.getSelectedEntries();
+    if (entries.length !== 1) return null;
+    return entries[0].kind === "directory" ? entries[0] : null;
+  });
+
+  const isBookmarked = $derived(
+    selectedDirectory ? bookmarksStore.hasBookmark(selectedDirectory.path) : false
+  );
 
   function handleCut(): void {
     const selected = explorer.getSelectedEntries();
@@ -120,6 +132,25 @@
         <span>Delete</span>
         <span class="shortcut">Del</span>
       </button>
+
+      {#if selectedDirectory}
+        <div class="menu-divider"></div>
+        {#if isBookmarked}
+          <button class="menu-item" onclick={() => { bookmarksStore.removeBookmark(selectedDirectory.path); contextMenuStore.close(); }} role="menuitem">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M4 2V13L8 10L12 13V2H4Z" fill="currentColor" fill-opacity="0.3" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+            </svg>
+            <span>Remove Bookmark</span>
+          </button>
+        {:else}
+          <button class="menu-item" onclick={() => { bookmarksStore.addBookmark(selectedDirectory.path, selectedDirectory.name); contextMenuStore.close(); }} role="menuitem">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M4 2V13L8 10L12 13V2H4Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+            </svg>
+            <span>Add to Bookmarks</span>
+          </button>
+        {/if}
+      {/if}
 
       <div class="menu-divider"></div>
     {/if}

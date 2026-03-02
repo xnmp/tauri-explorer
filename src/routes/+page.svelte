@@ -26,6 +26,8 @@
   import ProgressDialog from "$lib/components/ProgressDialog.svelte";
   import ContentSearchDialog from "$lib/components/ContentSearchDialog.svelte";
   import WorkspaceDialog from "$lib/components/WorkspaceDialog.svelte";
+  import BulkRenameDialog from "$lib/components/BulkRenameDialog.svelte";
+  import type { FileEntry } from "$lib/domain/file";
 
   // Dialog states
   let quickOpenVisible = $state(false);
@@ -33,6 +35,8 @@
   let settingsVisible = $state(false);
   let contentSearchVisible = $state(false);
   let workspaceDialogVisible = $state(false);
+  let bulkRenameVisible = $state(false);
+  let bulkRenameEntries = $state<FileEntry[]>([]);
 
   // Get active explorer from window tabs manager
   function getActiveExplorer(): ExplorerInstance | undefined {
@@ -157,12 +161,20 @@
     function handleOpenWorkspaces() {
       workspaceDialogVisible = true;
     }
+    function handleOpenBulkRename(e: Event) {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.entries) {
+        bulkRenameEntries = detail.entries;
+        bulkRenameVisible = true;
+      }
+    }
 
     window.addEventListener("open-quick-open", handleOpenQuickOpen);
     window.addEventListener("open-command-palette", handleOpenCommandPalette);
     window.addEventListener("open-content-search", handleOpenContentSearch);
     window.addEventListener("open-recent-files", handleOpenRecentFiles);
     window.addEventListener("open-workspaces", handleOpenWorkspaces);
+    window.addEventListener("open-bulk-rename", handleOpenBulkRename);
 
     // Save tabs before window closes
     function handleBeforeUnload() {
@@ -182,6 +194,7 @@
       window.removeEventListener("open-content-search", handleOpenContentSearch);
       window.removeEventListener("open-recent-files", handleOpenRecentFiles);
       window.removeEventListener("open-workspaces", handleOpenWorkspaces);
+      window.removeEventListener("open-bulk-rename", handleOpenBulkRename);
       window.removeEventListener("beforeunload", handleBeforeUnload);
       clearInterval(saveInterval);
       externalDrop.cleanup();
@@ -207,6 +220,12 @@
 <ContentSearchDialog open={contentSearchVisible} onClose={() => contentSearchVisible = false} />
 <SettingsDialog open={settingsVisible} onClose={() => settingsVisible = false} />
 <WorkspaceDialog open={workspaceDialogVisible} onClose={() => workspaceDialogVisible = false} />
+<BulkRenameDialog
+  open={bulkRenameVisible}
+  entries={bulkRenameEntries}
+  onClose={() => bulkRenameVisible = false}
+  onComplete={() => refreshAllPanes()}
+/>
 <ProgressDialog />
 
 <style>

@@ -370,6 +370,21 @@ function createWindowTabsManager() {
       dualPaneEnabled: enabling,
       activePaneId: enabling ? activeTab.activePaneId : "left",
     });
+
+    // When enabling dual pane, if right pane shows same path as left,
+    // navigate it to the parent directory for a more useful default
+    if (enabling) {
+      const leftExplorer = getExplorer("left");
+      const rightExplorer = getExplorer("right");
+      if (leftExplorer && rightExplorer) {
+        const leftPath = leftExplorer.state.currentPath;
+        const rightPath = rightExplorer.state.currentPath;
+        if (leftPath === rightPath) {
+          const parentPath = leftPath.substring(0, leftPath.lastIndexOf("/")) || "/";
+          rightExplorer.navigateTo(parentPath);
+        }
+      }
+    }
   }
 
   /** Set dual pane mode in the active tab */

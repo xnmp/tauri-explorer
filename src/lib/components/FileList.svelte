@@ -121,6 +121,26 @@
     }
   }
 
+  // Type-ahead selection: typing letters jumps to matching file
+  let typeAheadBuffer = "";
+  let typeAheadTimer: ReturnType<typeof setTimeout> | null = null;
+  const TYPE_AHEAD_TIMEOUT = 800;
+
+  function handleTypeAhead(key: string): void {
+    if (typeAheadTimer) clearTimeout(typeAheadTimer);
+    typeAheadBuffer += key.toLowerCase();
+    typeAheadTimer = setTimeout(() => { typeAheadBuffer = ""; }, TYPE_AHEAD_TIMEOUT);
+
+    // Find the first entry matching the typed prefix
+    const entries = explorer.displayEntries;
+    const match = entries.find((e) =>
+      e.name.toLowerCase().startsWith(typeAheadBuffer)
+    );
+    if (match) {
+      explorer.selectEntry(match, {});
+    }
+  }
+
   async function handleKeydown(event: KeyboardEvent): Promise<void> {
     // Normalize key to lowercase for consistent comparison (handles Caps Lock)
     const normalizedKey = event.key.toLowerCase();
@@ -137,6 +157,15 @@
         pasteSuccess = true;
         setTimeout(() => (pasteSuccess = false), 1500);
       }
+      return;
+    }
+
+    // Type-ahead: single printable character without modifiers
+    if (
+      event.key.length === 1 &&
+      !event.ctrlKey && !event.metaKey && !event.altKey
+    ) {
+      handleTypeAhead(event.key);
     }
   }
 

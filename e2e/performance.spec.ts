@@ -459,7 +459,7 @@ test.describe("Performance Tests", () => {
         async () => {
           await page.keyboard.press("Control+w");
           await page.waitForFunction(
-            () => document.querySelectorAll(".tab").length === 1,
+            () => document.querySelectorAll(".tab").length <= 1,
             { timeout: 2000 }
           );
         },

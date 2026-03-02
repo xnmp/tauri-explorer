@@ -93,10 +93,52 @@ fn metadata_to_entry(path: &Path, metadata: &fs::Metadata) -> FileEntry {
     }
 }
 
+// ===================
+// Directory Listing Cache
+// Issue: tauri-explorer-jag7
+// ===================
+
+use std::time::Instant;
+
+struct CachedListing {
+    entries: Vec<FileEntry>,
+    cached_at: Instant,
+}
+
+const CACHE_TTL_SECS: u64 = 5;
+const MAX_CACHE_ENTRIES: usize = 50;
+
+static DIR_CACHE: OnceLock<Mutex<HashMap<String, CachedListing>>> = OnceLock::new();
+
+fn get_dir_cache() -> &'static Mutex<HashMap<String, CachedListing>> {
+    DIR_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Invalidate cache for a specific directory.
+#[tauri::command]
+pub fn invalidate_dir_cache(path: String) -> Result<(), String> {
+    let mut cache = get_dir_cache().lock().unwrap();
+    cache.remove(&path);
+    Ok(())
+}
+
 /// List directory contents.
 /// Directories are sorted before files, and items are sorted case-insensitively by name.
 #[tauri::command]
 pub fn list_directory(path: String) -> Result<DirectoryListing, FileError> {
+    // Check cache first
+    {
+        let cache = get_dir_cache().lock().unwrap();
+        if let Some(cached) = cache.get(&path) {
+            if cached.cached_at.elapsed().as_secs() < CACHE_TTL_SECS {
+                return Ok(DirectoryListing {
+                    path: path.clone(),
+                    entries: cached.entries.clone(),
+                });
+            }
+        }
+    }
+
     let dir_path = PathBuf::from(&path);
 
     if !dir_path.exists() {
@@ -142,6 +184,22 @@ pub fn list_directory(path: String) -> Result<DirectoryListing, FileError> {
             _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
         }
     });
+
+    // Update cache
+    {
+        let mut cache = get_dir_cache().lock().unwrap();
+        // Evict expired entries if cache is full
+        if cache.len() >= MAX_CACHE_ENTRIES {
+            cache.retain(|_, v| v.cached_at.elapsed().as_secs() < CACHE_TTL_SECS);
+        }
+        cache.insert(
+            path.clone(),
+            CachedListing {
+                entries: entries.clone(),
+                cached_at: Instant::now(),
+            },
+        );
+    }
 
     Ok(DirectoryListing { path, entries })
 }

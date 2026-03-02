@@ -57,6 +57,7 @@ pub fn run() {
             move_multiple_to_trash,
             // File operations
             files::list_directory,
+            files::invalidate_dir_cache,
             files::get_home_directory,
             files::create_directory,
             files::rename_entry,

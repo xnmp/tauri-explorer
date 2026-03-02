@@ -426,7 +426,7 @@
     width: 100%;
     font-family: inherit;
     color: var(--text-primary);
-    transition: all var(--transition-fast);
+    transition: background var(--transition-fast), border-color var(--transition-fast), opacity var(--transition-fast);
     position: relative;
     min-height: 32px;
   }

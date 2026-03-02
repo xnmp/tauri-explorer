@@ -157,6 +157,18 @@ export async function openFile(path: string): Promise<ApiResult<void>> {
 }
 
 /**
+ * Write text content to a new file.
+ */
+export async function writeTextFile(path: string, content: string): Promise<ApiResult<FileEntry>> {
+  try {
+    const data = await invoke<FileEntry>("write_text_file", { path, content });
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
  * Read a text file's contents.
  *
  * @param path - Full path to file

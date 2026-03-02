@@ -63,6 +63,7 @@ pub fn run() {
             files::move_entry,
             files::open_file,
             files::read_text_file,
+            files::write_text_file,
             files::delete_entry_permanent,
             // Streaming directory listing
             files::start_streaming_directory,

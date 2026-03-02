@@ -5,8 +5,9 @@
 <script lang="ts">
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { getThumbnailData, readTextFile } from "$lib/api/files";
-  import { isImageFile, isTextFile, getFileType, formatDate } from "$lib/domain/file-types";
+  import { isImageFile, isTextFile, isPdfFile, getFileType, formatDate } from "$lib/domain/file-types";
   import { formatSize, type FileEntry } from "$lib/domain/file";
+  import { isTauri } from "$lib/api/mock-invoke";
 
   /** Currently selected file from the active explorer */
   const selectedFile = $derived.by((): FileEntry | null => {
@@ -19,6 +20,7 @@
   // Preview content state
   let previewImageUrl = $state<string | null>(null);
   let previewText = $state<string | null>(null);
+  let previewPdfUrl = $state<string | null>(null);
   let previewLoading = $state(false);
   let previewError = $state<string | null>(null);
   let lastPreviewPath = $state<string | null>(null);
@@ -30,6 +32,7 @@
       lastPreviewPath = null;
       previewImageUrl = null;
       previewText = null;
+      previewPdfUrl = null;
       previewError = null;
       previewLoading = false;
       return;
@@ -42,8 +45,24 @@
     lastPreviewPath = file.path;
     previewImageUrl = null;
     previewText = null;
+    previewPdfUrl = null;
     previewError = null;
     previewLoading = true;
+
+    if (isPdfFile(file)) {
+      if (isTauri()) {
+        try {
+          const { convertFileSrc } = await import("@tauri-apps/api/core");
+          previewPdfUrl = convertFileSrc(file.path);
+        } catch {
+          previewError = "Cannot preview PDF";
+        }
+      } else {
+        previewError = "PDF preview requires Tauri runtime";
+      }
+      previewLoading = false;
+      return;
+    }
 
     if (isImageFile(file)) {
       const result = await getThumbnailData(file.path, 512);
@@ -86,6 +105,10 @@
       {#if previewLoading}
         <div class="preview-loading">
           <div class="spinner"></div>
+        </div>
+      {:else if previewPdfUrl}
+        <div class="preview-pdf-container">
+          <iframe src={previewPdfUrl} title={selectedFile.name} class="preview-pdf"></iframe>
         </div>
       {:else if previewImageUrl}
         <div class="preview-image-container">
@@ -197,6 +220,17 @@
 
   @keyframes spin {
     to { transform: rotate(360deg); }
+  }
+
+  .preview-pdf-container {
+    flex: 1;
+    display: flex;
+  }
+
+  .preview-pdf {
+    width: 100%;
+    height: 100%;
+    border: none;
   }
 
   .preview-image-container {

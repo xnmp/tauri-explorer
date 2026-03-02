@@ -70,10 +70,8 @@ function createWindowTabsManager() {
   // Stack of recently closed tabs for Ctrl+Shift+T restoration
   const closedTabStack: ClosedTabSnapshot[] = [];
 
-  /** Save current tab state to localStorage */
-  function saveState(): void {
-    if (typeof localStorage === "undefined") return;
-
+  /** Capture the current tab state as a serializable snapshot */
+  function captureState(): PersistedTabState {
     const persistedTabs: PersistedTab[] = tabs.map((tab) => ({
       id: tab.id,
       panes: {
@@ -85,12 +83,13 @@ function createWindowTabsManager() {
       splitRatio: tab.splitRatio,
     }));
 
-    const state: PersistedTabState = {
-      tabs: persistedTabs,
-      activeTabId,
-    };
+    return { tabs: persistedTabs, activeTabId };
+  }
 
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  /** Save current tab state to localStorage */
+  function saveState(): void {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(captureState()));
   }
 
   /** Load tab state from localStorage */
@@ -464,6 +463,8 @@ function createWindowTabsManager() {
 
     // Persistence
     save: saveState,
+    captureState,
+    restoreFromState,
   };
 }
 

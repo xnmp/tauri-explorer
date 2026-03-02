@@ -434,6 +434,26 @@ const recentCommands: Command[] = [
   },
 ];
 
+/** Workspace commands */
+const workspaceCommands: Command[] = [
+  {
+    id: "workspace.open",
+    label: "Workspaces: Manage...",
+    category: "general",
+    handler: () => {
+      window.dispatchEvent(new CustomEvent("open-workspaces"));
+    },
+  },
+  {
+    id: "workspace.saveQuick",
+    label: "Workspaces: Save Current Layout",
+    category: "general",
+    handler: () => {
+      window.dispatchEvent(new CustomEvent("open-workspaces"));
+    },
+  },
+];
+
 /** General commands */
 const generalCommands: Command[] = [
   {
@@ -478,6 +498,7 @@ export function registerAllCommands(): void {
     ...recentCommands,
     ...windowCommands,
     ...tabCommands,
+    ...workspaceCommands,
     ...generalCommands,
   ];
 

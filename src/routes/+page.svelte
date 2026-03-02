@@ -25,12 +25,14 @@
   import SettingsDialog from "$lib/components/SettingsDialog.svelte";
   import ProgressDialog from "$lib/components/ProgressDialog.svelte";
   import ContentSearchDialog from "$lib/components/ContentSearchDialog.svelte";
+  import WorkspaceDialog from "$lib/components/WorkspaceDialog.svelte";
 
   // Dialog states
   let quickOpenVisible = $state(false);
   let commandPaletteVisible = $state(false);
   let settingsVisible = $state(false);
   let contentSearchVisible = $state(false);
+  let workspaceDialogVisible = $state(false);
 
   // Get active explorer from window tabs manager
   function getActiveExplorer(): ExplorerInstance | undefined {
@@ -152,11 +154,15 @@
     function handleOpenRecentFiles() {
       quickOpenVisible = true; // Recent files shown in QuickOpen when query is empty
     }
+    function handleOpenWorkspaces() {
+      workspaceDialogVisible = true;
+    }
 
     window.addEventListener("open-quick-open", handleOpenQuickOpen);
     window.addEventListener("open-command-palette", handleOpenCommandPalette);
     window.addEventListener("open-content-search", handleOpenContentSearch);
     window.addEventListener("open-recent-files", handleOpenRecentFiles);
+    window.addEventListener("open-workspaces", handleOpenWorkspaces);
 
     // Save tabs before window closes
     function handleBeforeUnload() {
@@ -175,6 +181,7 @@
       window.removeEventListener("open-command-palette", handleOpenCommandPalette);
       window.removeEventListener("open-content-search", handleOpenContentSearch);
       window.removeEventListener("open-recent-files", handleOpenRecentFiles);
+      window.removeEventListener("open-workspaces", handleOpenWorkspaces);
       window.removeEventListener("beforeunload", handleBeforeUnload);
       clearInterval(saveInterval);
       externalDrop.cleanup();
@@ -199,6 +206,7 @@
 <CommandPalette open={commandPaletteVisible} onClose={() => commandPaletteVisible = false} />
 <ContentSearchDialog open={contentSearchVisible} onClose={() => contentSearchVisible = false} />
 <SettingsDialog open={settingsVisible} onClose={() => settingsVisible = false} />
+<WorkspaceDialog open={workspaceDialogVisible} onClose={() => workspaceDialogVisible = false} />
 <ProgressDialog />
 
 <style>

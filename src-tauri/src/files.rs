@@ -377,6 +377,20 @@ pub fn read_text_file(path: String, max_bytes: Option<u64>) -> Result<String, Fi
     })
 }
 
+/// Write text content to a new file.
+#[tauri::command]
+pub fn write_text_file(path: String, content: String) -> Result<FileEntry, FileError> {
+    let file_path = PathBuf::from(&path);
+
+    if file_path.exists() {
+        return Err(FileError::AlreadyExists(path));
+    }
+
+    fs::write(&file_path, content.as_bytes())?;
+    let metadata = fs::metadata(&file_path)?;
+    Ok(metadata_to_entry(&file_path, &metadata))
+}
+
 /// Delete a file or directory permanently (not to trash).
 /// For trash, use the existing move_to_trash command.
 #[tauri::command]

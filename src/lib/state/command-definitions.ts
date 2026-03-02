@@ -14,7 +14,7 @@ import { settingsStore } from "./settings.svelte";
 import { themeStore } from "./theme.svelte";
 import { bookmarksStore } from "./bookmarks.svelte";
 import { recentFilesStore } from "./recent-files.svelte";
-import { copyEntry, moveEntry } from "$lib/api/files";
+import { copyEntry, moveEntry, writeTextFile } from "$lib/api/files";
 import type { ViewMode } from "./types";
 
 /** Open a new explorer window at the given path */
@@ -216,6 +216,26 @@ const editCommands: Command[] = [
     shortcut: "Ctrl+Shift+Z",
     handler: async () => {
       await getActiveExplorer()?.redo();
+    },
+  },
+  {
+    id: "edit.pasteAsTextFile",
+    label: "Paste Clipboard as Text File",
+    category: "edit",
+    handler: async () => {
+      const explorer = getActiveExplorer();
+      if (!explorer) return;
+      try {
+        const text = await navigator.clipboard.readText();
+        if (!text) return;
+        const dir = explorer.state.currentPath;
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+        const path = `${dir}/pasted-${timestamp}.txt`;
+        await writeTextFile(path, text);
+        explorer.refresh();
+      } catch {
+        // Clipboard access denied or empty
+      }
     },
   },
 ];

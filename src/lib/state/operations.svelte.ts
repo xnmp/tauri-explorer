@@ -20,6 +20,7 @@ export interface Operation {
   startTime: number;
   bytesProcessed?: number;
   totalBytes?: number;
+  retryHandler?: () => Promise<void>;
 }
 
 function generateOperationId(): string {
@@ -34,7 +35,8 @@ function createOperationsManager() {
   function startOperation(
     type: OperationType,
     sourcePath: string,
-    destPath?: string
+    destPath?: string,
+    retryHandler?: () => Promise<void>
   ): Operation {
     const fileName = sourcePath.split(/[/\\]/).pop() || sourcePath;
 
@@ -47,6 +49,7 @@ function createOperationsManager() {
       progress: 0,
       status: "running",
       startTime: Date.now(),
+      retryHandler,
     };
 
     operations = [...operations, operation];
@@ -97,6 +100,24 @@ function createOperationsManager() {
         ? { ...op, status: "error", error }
         : op
     );
+  }
+
+  /** Retry a failed operation */
+  async function retryOperation(operationId: string): Promise<void> {
+    const op = operations.find((o) => o.id === operationId);
+    if (!op || op.status !== "error" || !op.retryHandler) return;
+
+    operations = operations.map((o) =>
+      o.id === operationId
+        ? { ...o, status: "running", progress: 0, error: undefined }
+        : o
+    );
+
+    try {
+      await op.retryHandler();
+    } catch (err) {
+      failOperation(operationId, String(err));
+    }
   }
 
   /** Cancel an operation */
@@ -169,6 +190,7 @@ function createOperationsManager() {
     updateProgress,
     completeOperation,
     failOperation,
+    retryOperation,
     cancelOperation,
     cancelAllOperations,
     cleanupCompletedOperations,

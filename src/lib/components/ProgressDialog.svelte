@@ -14,6 +14,10 @@
   const showDialog = $derived(operationsManager.showProgressDialog);
   const hasActive = $derived(operationsManager.hasActiveOperations);
 
+  function handleRetry(op: Operation): void {
+    operationsManager.retryOperation(op.id);
+  }
+
   function handleCancel(op: Operation): void {
     operationsManager.cancelOperation(op.id);
   }
@@ -164,6 +168,28 @@
                   class="action-btn cancel"
                   onclick={() => handleCancel(op)}
                   title="Cancel"
+                >
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                    <path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                  </svg>
+                </button>
+              {:else if op.status === "error" && op.retryHandler}
+                <button
+                  class="action-btn retry"
+                  onclick={() => handleRetry(op)}
+                  title="Retry"
+                >
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                    <path d="M2 8C2 4.69 4.69 2 8 2C10.22 2 12.16 3.21 13.2 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                    <path d="M14 8C14 11.31 11.31 14 8 14C5.78 14 3.84 12.79 2.8 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                    <path d="M13 2V5H10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M3 14V11H6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+                <button
+                  class="action-btn clear"
+                  onclick={() => handleClear(op)}
+                  title="Dismiss"
                 >
                   <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
                     <path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
@@ -434,5 +460,14 @@
   .action-btn.cancel:hover {
     background: rgba(220, 53, 69, 0.1);
     color: var(--error, #dc3545);
+  }
+
+  .action-btn.retry {
+    color: var(--accent);
+  }
+
+  .action-btn.retry:hover {
+    background: rgba(0, 120, 212, 0.1);
+    color: var(--accent);
   }
 </style>

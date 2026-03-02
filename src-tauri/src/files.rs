@@ -410,6 +410,50 @@ pub fn delete_entry_permanent(path: String) -> Result<(), FileError> {
     Ok(())
 }
 
+/// Estimate total file count and size for a list of paths.
+/// Recursively walks directories. Used for progress estimation before copy/move.
+#[derive(Debug, Serialize)]
+pub struct SizeEstimate {
+    #[serde(rename = "fileCount")]
+    pub file_count: u64,
+    #[serde(rename = "totalBytes")]
+    pub total_bytes: u64,
+}
+
+#[tauri::command]
+pub fn estimate_size(paths: Vec<String>) -> Result<SizeEstimate, FileError> {
+    let mut file_count: u64 = 0;
+    let mut total_bytes: u64 = 0;
+
+    for path_str in &paths {
+        let path = PathBuf::from(path_str);
+        if !path.exists() {
+            return Err(FileError::NotFound(path_str.clone()));
+        }
+        estimate_path_size(&path, &mut file_count, &mut total_bytes);
+    }
+
+    Ok(SizeEstimate {
+        file_count,
+        total_bytes,
+    })
+}
+
+fn estimate_path_size(path: &Path, file_count: &mut u64, total_bytes: &mut u64) {
+    if path.is_file() {
+        *file_count += 1;
+        if let Ok(metadata) = fs::metadata(path) {
+            *total_bytes += metadata.len();
+        }
+    } else if path.is_dir() {
+        if let Ok(entries) = fs::read_dir(path) {
+            for entry in entries.flatten() {
+                estimate_path_size(&entry.path(), file_count, total_bytes);
+            }
+        }
+    }
+}
+
 // ===================
 // Streaming Directory Listing
 // Issue: tauri-explorer-3b5s
@@ -627,5 +671,19 @@ mod tests {
             name2.file_name().unwrap().to_str().unwrap(),
             "test - Copy (2).txt"
         );
+    }
+
+    #[test]
+    fn test_estimate_size() {
+        let dir = tempdir().unwrap();
+        // Create a file with known size
+        fs::write(dir.path().join("file1.txt"), "hello").unwrap();
+        fs::write(dir.path().join("file2.txt"), "world!").unwrap();
+        fs::create_dir(dir.path().join("subdir")).unwrap();
+        fs::write(dir.path().join("subdir/nested.txt"), "abc").unwrap();
+
+        let result = estimate_size(vec![dir.path().to_string_lossy().to_string()]).unwrap();
+        assert_eq!(result.file_count, 3);
+        assert_eq!(result.total_bytes, 14); // 5 + 6 + 3
     }
 }

@@ -65,6 +65,7 @@ pub fn run() {
             files::read_text_file,
             files::write_text_file,
             files::delete_entry_permanent,
+            files::estimate_size,
             // Streaming directory listing
             files::start_streaming_directory,
             files::cancel_directory_listing,

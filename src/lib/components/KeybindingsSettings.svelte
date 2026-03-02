@@ -117,6 +117,36 @@
     window.addEventListener("keydown", handleRecordKeydown, true);
   });
 
+  let importInput: HTMLInputElement;
+
+  function exportKeybindings(): void {
+    const data = JSON.stringify(keybindingsStore.userShortcuts, null, 2);
+    const blob = new Blob([data], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "keybindings.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function handleImport(event: Event): void {
+    const file = (event.target as HTMLInputElement).files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const shortcuts = JSON.parse(reader.result as string) as Record<string, string | null>;
+        for (const [commandId, shortcut] of Object.entries(shortcuts)) {
+          keybindingsStore.setShortcut(commandId, shortcut);
+        }
+      } catch {
+        // Invalid JSON - silently ignore
+      }
+    };
+    reader.readAsText(file);
+  }
+
   onDestroy(() => {
     window.removeEventListener("keydown", handleRecordKeydown, true);
   });
@@ -130,6 +160,13 @@
       placeholder="Search shortcuts..."
       bind:value={searchQuery}
     />
+    <button class="header-btn" onclick={exportKeybindings} title="Export keybindings to file">
+      Export
+    </button>
+    <button class="header-btn" onclick={() => importInput.click()} title="Import keybindings from file">
+      Import
+    </button>
+    <input type="file" accept=".json" bind:this={importInput} onchange={handleImport} style="display:none" />
     <button class="reset-all-btn" onclick={() => keybindingsStore.resetAllToDefaults()}>
       Reset All
     </button>
@@ -228,6 +265,24 @@
 
   .search-input::placeholder {
     color: var(--text-tertiary);
+  }
+
+  .header-btn {
+    padding: 8px 12px;
+    background: var(--control-fill);
+    border: 1px solid var(--control-stroke);
+    border-radius: var(--radius-sm);
+    font-family: inherit;
+    font-size: 12px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    white-space: nowrap;
+  }
+
+  .header-btn:hover {
+    background: var(--control-fill-secondary);
+    color: var(--text-primary);
   }
 
   .reset-all-btn {

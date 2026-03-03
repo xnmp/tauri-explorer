@@ -1,6 +1,6 @@
 <!--
   ThumbnailImage component - Lazy-loaded image thumbnail
-  Issue: tauri-explorer-im3m
+  Issue: tauri-explorer-im3m, tauri-1rzt
 -->
 <script lang="ts">
   import { getThumbnailData } from "$lib/api/files";
@@ -16,10 +16,32 @@
   let thumbnailUrl = $state<string | null>(null);
   let loading = $state(false);
   let error = $state(false);
+  let visible = $state(false);
+  let containerEl: HTMLDivElement | undefined = $state();
 
-  // Load thumbnail when component mounts or path changes
+  // Use IntersectionObserver to only load when visible
   $effect(() => {
-    loadThumbnail();
+    if (!containerEl) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          visible = true;
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "200px" }
+    );
+
+    observer.observe(containerEl);
+    return () => observer.disconnect();
+  });
+
+  // Load thumbnail when visible and path changes
+  $effect(() => {
+    if (visible && path) {
+      loadThumbnail();
+    }
   });
 
   async function loadThumbnail() {
@@ -39,8 +61,8 @@
   }
 </script>
 
-<div class="thumbnail-container" style="--size: {size}px">
-  {#if loading}
+<div class="thumbnail-container" style="--size: {size}px" bind:this={containerEl}>
+  {#if loading || !visible}
     <!-- Show file type icon as placeholder while thumbnail loads -->
     <svg width={size} height={size} viewBox="0 0 48 48" fill="none" class="thumbnail-placeholder">
       <rect x="6" y="6" width="36" height="36" rx="4" fill={fallbackColor} fill-opacity="0.1"/>
@@ -48,7 +70,9 @@
       <circle cx="16" cy="16" r="4" fill={fallbackColor} fill-opacity="0.3"/>
       <path d="M6 33L15 24L22 31L30 21L42 33V38C42 40.2091 40.2091 42 38 42H10C7.79086 42 6 40.2091 6 38V33Z" fill={fallbackColor} fill-opacity="0.2"/>
     </svg>
-    <div class="loading-overlay"><div class="spinner"></div></div>
+    {#if loading}
+      <div class="loading-overlay"><div class="spinner"></div></div>
+    {/if}
   {:else if error || !thumbnailUrl}
     <!-- Fallback to image icon SVG -->
     <svg width={size} height={size} viewBox="0 0 48 48" fill="none" class="thumbnail-fallback">

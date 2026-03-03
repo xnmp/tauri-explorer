@@ -3,7 +3,7 @@
 //!
 //! Provides fast, cached thumbnail generation for image files.
 
-use image::{ImageReader, ImageFormat};
+use image::{ImageReader, ImageFormat, DynamicImage};
 use sha2::{Sha256, Digest};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -77,6 +77,14 @@ fn generate_and_cache_thumbnail(
     // Generate thumbnail using fast Lanczos3 sampling
     let thumbnail = img.thumbnail(size, size);
 
+    // Convert RGBA to RGB for JPEG compatibility (PNG images have alpha)
+    let thumbnail = match thumbnail {
+        DynamicImage::ImageRgba8(_) | DynamicImage::ImageRgba16(_) | DynamicImage::ImageRgba32F(_) => {
+            DynamicImage::ImageRgb8(thumbnail.to_rgb8())
+        }
+        other => other,
+    };
+
     // Save to cache as JPEG for smaller size and fast loading
     let cache_path = cache_dir.join(format!("{}.jpg", cache_key));
     thumbnail
@@ -149,6 +157,14 @@ pub fn get_thumbnail_data(path: String, size: Option<u32>) -> Result<String, Str
 
     // Generate thumbnail
     let thumbnail = img.thumbnail(size, size);
+
+    // Convert RGBA to RGB for JPEG compatibility (PNG images have alpha)
+    let thumbnail = match thumbnail {
+        DynamicImage::ImageRgba8(_) | DynamicImage::ImageRgba16(_) | DynamicImage::ImageRgba32F(_) => {
+            DynamicImage::ImageRgb8(thumbnail.to_rgb8())
+        }
+        other => other,
+    };
 
     // Encode to JPEG in memory
     let mut buffer = Cursor::new(Vec::new());

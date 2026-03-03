@@ -3,6 +3,7 @@
 
 mod archive;
 mod clipboard;
+mod config;
 mod content_search;
 pub mod error;
 mod files;
@@ -99,6 +100,10 @@ pub fn run() {
             // Archive operations
             archive::compress_to_zip,
             archive::extract_archive,
+            // Config file persistence
+            config::read_config_file,
+            config::write_config_file,
+            config::get_config_dir,
         ])
         .setup(|_app| {
             #[cfg(debug_assertions)]

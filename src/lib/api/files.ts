@@ -664,3 +664,33 @@ export async function extractArchive(
     return { ok: false, error: String(err) };
   }
 }
+
+// ===================
+// Config File Persistence
+// Issue: tauri-ti0l
+// ===================
+
+/**
+ * Read a JSON config file from the app config directory.
+ * Returns empty string if file doesn't exist.
+ */
+export async function readConfigFile(filename: string): Promise<ApiResult<string>> {
+  try {
+    const data = await invoke<string>("read_config_file", { filename });
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
+ * Write a JSON config file to the app config directory.
+ */
+export async function writeConfigFile(filename: string, data: string): Promise<ApiResult<void>> {
+  try {
+    await invoke("write_config_file", { filename, data });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}

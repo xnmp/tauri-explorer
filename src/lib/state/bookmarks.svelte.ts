@@ -1,12 +1,14 @@
 /**
  * Bookmarks state management using Svelte 5 runes.
- * Issue: tauri-explorer-sm3p
+ * Issue: tauri-explorer-sm3p, tauri-ti0l
  *
  * Stores user-pinned folders that appear in the sidebar Quick Access section.
- * Bookmarks are persisted to localStorage.
+ * Persisted to a config file (~/.config/tauri-explorer/bookmarks.json) with
+ * localStorage as synchronous fallback for immediate state.
  */
 
 import { loadPersisted, savePersisted } from "./persisted";
+import { readConfigFile, writeConfigFile } from "$lib/api/files";
 
 export interface Bookmark {
   name: string;
@@ -16,12 +18,42 @@ export interface Bookmark {
 }
 
 const STORAGE_KEY = "explorer-bookmarks";
+const CONFIG_FILENAME = "bookmarks.json";
 
 function createBookmarksState() {
   let bookmarks = $state<Bookmark[]>(loadPersisted(STORAGE_KEY, []));
 
   function save() {
+    // Write-through: save to both localStorage (sync) and config file (async)
     savePersisted(STORAGE_KEY, bookmarks);
+    writeConfigFile(CONFIG_FILENAME, JSON.stringify(bookmarks, null, 2)).catch((err) => {
+      console.warn("Failed to save bookmarks to config file:", err);
+    });
+  }
+
+  /**
+   * Load bookmarks from config file, migrating from localStorage if needed.
+   * Called once during app initialization.
+   */
+  async function init() {
+    try {
+      const result = await readConfigFile(CONFIG_FILENAME);
+      if (result.ok && result.data) {
+        const loaded = JSON.parse(result.data) as Bookmark[];
+        if (Array.isArray(loaded) && loaded.length > 0) {
+          bookmarks = loaded;
+          savePersisted(STORAGE_KEY, bookmarks);
+          return;
+        }
+      }
+    } catch {
+      // Config file doesn't exist or is invalid - fall through
+    }
+
+    // If config file was empty but localStorage has data, migrate
+    if (bookmarks.length > 0) {
+      writeConfigFile(CONFIG_FILENAME, JSON.stringify(bookmarks, null, 2)).catch(() => {});
+    }
   }
 
   function addBookmark(path: string, name?: string) {
@@ -69,6 +101,7 @@ function createBookmarksState() {
     get list() {
       return bookmarks;
     },
+    init,
     addBookmark,
     removeBookmark,
     hasBookmark,

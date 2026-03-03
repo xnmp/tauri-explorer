@@ -6,6 +6,8 @@
  * Bookmarks are persisted to localStorage.
  */
 
+import { loadPersisted, savePersisted } from "./persisted";
+
 export interface Bookmark {
   name: string;
   path: string;
@@ -16,17 +18,10 @@ export interface Bookmark {
 const STORAGE_KEY = "explorer-bookmarks";
 
 function createBookmarksState() {
-  // Load saved bookmarks from localStorage
-  const saved = typeof localStorage !== "undefined"
-    ? localStorage.getItem(STORAGE_KEY)
-    : null;
-
-  let bookmarks = $state<Bookmark[]>(saved ? JSON.parse(saved) : []);
+  let bookmarks = $state<Bookmark[]>(loadPersisted(STORAGE_KEY, []));
 
   function save() {
-    if (typeof localStorage !== "undefined") {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(bookmarks));
-    }
+    savePersisted(STORAGE_KEY, bookmarks);
   }
 
   function addBookmark(path: string, name?: string) {

@@ -12,6 +12,7 @@
  * - Undo (undo.svelte.ts) - global undo stack
  */
 
+import { loadPersisted, savePersisted } from "./persisted";
 import {
   fetchDirectory,
   createDirectory,
@@ -43,15 +44,10 @@ const MAX_SORT_ENTRIES = 200;
 interface SortPref { sortBy: SortField; sortAscending: boolean; }
 
 function loadSortPrefs(): Record<string, SortPref> {
-  if (typeof localStorage === "undefined") return {};
-  try {
-    const saved = localStorage.getItem(SORT_STORAGE_KEY);
-    return saved ? JSON.parse(saved) : {};
-  } catch { return {}; }
+  return loadPersisted(SORT_STORAGE_KEY, {});
 }
 
 function saveSortPref(path: string, pref: SortPref): void {
-  if (typeof localStorage === "undefined") return;
   const prefs = loadSortPrefs();
   prefs[path] = pref;
   // Evict oldest entries if over limit
@@ -61,7 +57,7 @@ function saveSortPref(path: string, pref: SortPref): void {
       delete prefs[key];
     }
   }
-  localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify(prefs));
+  savePersisted(SORT_STORAGE_KEY, prefs);
 }
 
 function getSortPref(path: string): SortPref | undefined {

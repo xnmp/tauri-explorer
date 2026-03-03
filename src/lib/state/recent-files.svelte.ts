@@ -6,6 +6,8 @@
  * Persisted to localStorage with a max capacity.
  */
 
+import { loadPersisted, savePersisted } from "./persisted";
+
 export interface RecentEntry {
   name: string;
   path: string;
@@ -17,16 +19,10 @@ const STORAGE_KEY = "explorer-recent-files";
 const MAX_ENTRIES = 50;
 
 function createRecentFilesState() {
-  const saved = typeof localStorage !== "undefined"
-    ? localStorage.getItem(STORAGE_KEY)
-    : null;
-
-  let entries = $state<RecentEntry[]>(saved ? JSON.parse(saved) : []);
+  let entries = $state<RecentEntry[]>(loadPersisted(STORAGE_KEY, []));
 
   function save() {
-    if (typeof localStorage !== "undefined") {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
-    }
+    savePersisted(STORAGE_KEY, entries);
   }
 
   function add(path: string, name: string, kind: "file" | "directory") {

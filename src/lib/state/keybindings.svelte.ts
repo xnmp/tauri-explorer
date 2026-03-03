@@ -7,6 +7,7 @@
  */
 
 import { matchesShortcutString, formatShortcut } from "$lib/domain/keybinding-parser";
+import { loadPersisted, savePersisted } from "./persisted";
 
 /** A single keybinding entry */
 export interface Keybinding {
@@ -26,37 +27,16 @@ let defaultShortcuts = $state<Record<string, string>>({});
 /** User's custom shortcuts (overrides defaults) */
 let userShortcuts = $state<UserKeybindings>({});
 
-/**
- * Load user keybindings from localStorage.
- */
 function loadUserShortcuts(): UserKeybindings {
-  if (typeof localStorage === "undefined") {
-    return {};
-  }
-
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      return JSON.parse(saved);
-    }
-  } catch {
-    // Ignore parse errors
-  }
-
-  return {};
+  return loadPersisted(STORAGE_KEY, {});
 }
 
-/**
- * Save user keybindings to localStorage.
- */
 function saveUserShortcuts(): void {
-  if (typeof localStorage === "undefined") return;
-
   // Only save non-null entries (user customizations)
   const toSave = Object.fromEntries(
     Object.entries(userShortcuts).filter(([_, shortcut]) => shortcut !== null)
   );
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+  savePersisted(STORAGE_KEY, toSave);
 }
 
 /**

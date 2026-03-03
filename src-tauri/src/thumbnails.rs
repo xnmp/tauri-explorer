@@ -3,7 +3,7 @@
 //!
 //! Provides fast, cached thumbnail generation for image files.
 
-use image::{ImageReader, ImageFormat, DynamicImage};
+use image::{DynamicImage, ImageFormat, ImageReader};
 use sha2::{Sha256, Digest};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -20,7 +20,10 @@ fn get_cache_dir() -> Option<PathBuf> {
     dirs::cache_dir().map(|p| p.join("tauri-explorer").join("thumbnails"))
 }
 
-/// Generate a cache key (hash) for a file path + modification time
+/// Cache version - bump when thumbnail generation logic changes to invalidate stale cache
+const CACHE_VERSION: u8 = 2;
+
+/// Generate a cache key (hash) for a file path + modification time + cache version
 fn generate_cache_key(path: &Path) -> Option<String> {
     let metadata = fs::metadata(path).ok()?;
     let modified = metadata.modified().ok()?;
@@ -32,6 +35,7 @@ fn generate_cache_key(path: &Path) -> Option<String> {
     let mut hasher = Sha256::new();
     hasher.update(path.to_string_lossy().as_bytes());
     hasher.update(modified_secs.to_le_bytes());
+    hasher.update([CACHE_VERSION]);
 
     Some(hex::encode(hasher.finalize()))
 }
@@ -68,22 +72,17 @@ fn generate_and_cache_thumbnail(
     fs::create_dir_all(&cache_dir)
         .map_err(|e| format!("Failed to create cache directory: {}", e))?;
 
-    // Load and decode image
+    // Load and decode image (with_guessed_format for robust format detection)
     let img = ImageReader::open(source_path)
         .map_err(|e| format!("Failed to open image: {}", e))?
+        .with_guessed_format()
+        .map_err(|e| format!("Failed to guess image format: {}", e))?
         .decode()
         .map_err(|e| format!("Failed to decode image: {}", e))?;
 
     // Generate thumbnail using fast Lanczos3 sampling
-    let thumbnail = img.thumbnail(size, size);
-
-    // Convert RGBA to RGB for JPEG compatibility (PNG images have alpha)
-    let thumbnail = match thumbnail {
-        DynamicImage::ImageRgba8(_) | DynamicImage::ImageRgba16(_) | DynamicImage::ImageRgba32F(_) => {
-            DynamicImage::ImageRgb8(thumbnail.to_rgb8())
-        }
-        other => other,
-    };
+    // Always convert to RGB8 for JPEG output (PNG/GIF may have alpha channels)
+    let thumbnail = img.thumbnail(size, size).to_rgb8();
 
     // Save to cache as JPEG for smaller size and fast loading
     let cache_path = cache_dir.join(format!("{}.jpg", cache_key));
@@ -149,26 +148,20 @@ pub fn get_thumbnail_data(path: String, size: Option<u32>) -> Result<String, Str
         return Ok(format!("data:image/jpeg;base64,{}", base64_encode(&data)));
     }
 
-    // Load and decode image
+    // Load and decode image (with_guessed_format for robust format detection)
     let img = ImageReader::open(&source_path)
         .map_err(|e| format!("Failed to open image: {}", e))?
+        .with_guessed_format()
+        .map_err(|e| format!("Failed to guess image format: {}", e))?
         .decode()
         .map_err(|e| format!("Failed to decode image: {}", e))?;
 
-    // Generate thumbnail
-    let thumbnail = img.thumbnail(size, size);
-
-    // Convert RGBA to RGB for JPEG compatibility (PNG images have alpha)
-    let thumbnail = match thumbnail {
-        DynamicImage::ImageRgba8(_) | DynamicImage::ImageRgba16(_) | DynamicImage::ImageRgba32F(_) => {
-            DynamicImage::ImageRgb8(thumbnail.to_rgb8())
-        }
-        other => other,
-    };
+    // Generate thumbnail, always convert to RGB8 for JPEG output
+    let thumbnail = img.thumbnail(size, size).to_rgb8();
 
     // Encode to JPEG in memory
     let mut buffer = Cursor::new(Vec::new());
-    thumbnail
+    DynamicImage::ImageRgb8(thumbnail)
         .write_to(&mut buffer, ImageFormat::Jpeg)
         .map_err(|e| format!("Failed to encode thumbnail: {}", e))?;
 
@@ -320,5 +313,56 @@ mod tests {
         assert_eq!(base64_encode(b"Hello"), "SGVsbG8=");
         assert_eq!(base64_encode(b"Hi"), "SGk=");
         assert_eq!(base64_encode(b""), "");
+    }
+
+    #[test]
+    fn test_png_thumbnail_generation() {
+        // Create a real RGBA PNG image using the image crate
+        let dir = tempdir().unwrap();
+        let png_path = dir.path().join("test_rgba.png");
+
+        let img = image::RgbaImage::from_fn(100, 100, |x, y| {
+            if (x + y) % 2 == 0 {
+                image::Rgba([255, 0, 0, 255]) // red opaque
+            } else {
+                image::Rgba([0, 0, 255, 128]) // blue semi-transparent
+            }
+        });
+        img.save(&png_path).unwrap();
+
+        // Test get_thumbnail_data succeeds for PNG
+        let result = get_thumbnail_data(png_path.to_string_lossy().to_string(), Some(64));
+        assert!(result.is_ok(), "PNG thumbnail generation failed: {:?}", result.err());
+        let data_uri = result.unwrap();
+        assert!(data_uri.starts_with("data:image/jpeg;base64,"), "Expected JPEG data URI, got: {}", &data_uri[..50]);
+    }
+
+    #[test]
+    fn test_png_thumbnail_from_actual_file() {
+        // Test with an actual PNG file from the project icons
+        let icon_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("icons/icon.png");
+        if !icon_path.exists() {
+            return; // Skip if not available
+        }
+
+        let result = get_thumbnail_data(icon_path.to_string_lossy().to_string(), Some(64));
+        assert!(result.is_ok(), "Real PNG thumbnail failed: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_jpg_thumbnail_generation() {
+        // Create a real RGB JPEG image
+        let dir = tempdir().unwrap();
+        let jpg_path = dir.path().join("test.jpg");
+
+        let img = image::RgbImage::from_fn(100, 100, |x, _y| {
+            image::Rgb([(x % 256) as u8, 128, 64])
+        });
+        img.save(&jpg_path).unwrap();
+
+        let result = get_thumbnail_data(jpg_path.to_string_lossy().to_string(), Some(64));
+        assert!(result.is_ok(), "JPEG thumbnail generation failed: {:?}", result.err());
+        let data_uri = result.unwrap();
+        assert!(data_uri.starts_with("data:image/jpeg;base64,"));
     }
 }

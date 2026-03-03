@@ -56,12 +56,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
-## tauri-6yzm: Paste Duplicates 3 Times
+## tauri-6yzm / tauri-o5ny: Paste Duplicates 3 Times
 
 **Key takeaways:**
 
-- Keyboard shortcuts can fire through multiple layers: component `onkeydown` → parent component `onkeydown` → global `window.addEventListener("keydown")`. `preventDefault()` does NOT prevent bubbling. Use `stopPropagation()` or `stopImmediatePropagation()` to prevent duplicate handling.
-- In this codebase, Ctrl+V was caught by FileList, ExplorerPane, AND the global keybinding system, causing paste to execute 3 times.
+- Keyboard shortcuts can fire through multiple layers: component `onkeydown` → parent `onkeydown` → global `window.addEventListener("keydown")`. `preventDefault()` does NOT prevent bubbling. `stopPropagation()` is a band-aid, not a fix.
+- The proper solution: have ONE canonical handler (the global keybinding system via `command-definitions.ts`) and remove all duplicates from component-level keydown handlers. Only keep handlers in components for shortcuts that need local state context (e.g., ArrowUp/Down for list navigation needs current selection index).
+- For UI feedback (toasts) that was previously in the inline handler: use reactive state. `paste()` writes to `explorer.pasteResult`, and FileList observes it via `$effect`. This decouples feedback from the shortcut handler entirely.
 
 ---
 

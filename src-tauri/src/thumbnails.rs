@@ -3,6 +3,8 @@
 //!
 //! Provides fast, cached thumbnail generation for image files.
 
+use base64::Engine as _;
+use crate::error::AppError;
 use image::{DynamicImage, ImageFormat, ImageReader};
 use sha2::{Sha256, Digest};
 use std::fs;
@@ -65,20 +67,17 @@ fn generate_and_cache_thumbnail(
     source_path: &Path,
     cache_key: &str,
     size: u32,
-) -> Result<PathBuf, String> {
-    let cache_dir = get_cache_dir().ok_or("Failed to get cache directory")?;
+) -> Result<PathBuf, AppError> {
+    let cache_dir = get_cache_dir().ok_or(AppError::Other("Failed to get cache directory".into()))?;
 
     // Create cache directory if it doesn't exist
-    fs::create_dir_all(&cache_dir)
-        .map_err(|e| format!("Failed to create cache directory: {}", e))?;
+    fs::create_dir_all(&cache_dir)?;
 
     // Load and decode image (with_guessed_format for robust format detection)
-    let img = ImageReader::open(source_path)
-        .map_err(|e| format!("Failed to open image: {}", e))?
-        .with_guessed_format()
-        .map_err(|e| format!("Failed to guess image format: {}", e))?
+    let img = ImageReader::open(source_path)?
+        .with_guessed_format()?
         .decode()
-        .map_err(|e| format!("Failed to decode image: {}", e))?;
+        .map_err(|e| AppError::Other(format!("Failed to decode image: {}", e)))?;
 
     // Generate thumbnail using fast Lanczos3 sampling
     // Always convert to RGB8 for JPEG output (PNG/GIF may have alpha channels)
@@ -88,7 +87,7 @@ fn generate_and_cache_thumbnail(
     let cache_path = cache_dir.join(format!("{}.jpg", cache_key));
     thumbnail
         .save_with_format(&cache_path, ImageFormat::Jpeg)
-        .map_err(|e| format!("Failed to save thumbnail: {}", e))?;
+        .map_err(|e| AppError::Other(format!("Failed to save thumbnail: {}", e)))?;
 
     Ok(cache_path)
 }
@@ -96,21 +95,21 @@ fn generate_and_cache_thumbnail(
 /// Get or generate thumbnail for an image file.
 /// Returns the path to the cached thumbnail.
 #[tauri::command]
-pub fn get_thumbnail(path: String, size: Option<u32>) -> Result<String, String> {
+pub fn get_thumbnail(path: String, size: Option<u32>) -> Result<String, AppError> {
     let source_path = PathBuf::from(&path);
     let size = size.unwrap_or(THUMBNAIL_SIZE);
 
     if !source_path.exists() {
-        return Err(format!("File not found: {}", path));
+        return Err(AppError::NotFound(path));
     }
 
     if !is_supported_image(&source_path) {
-        return Err(format!("Unsupported image format: {}", path));
+        return Err(AppError::InvalidPath(format!("Unsupported image format: {}", path)));
     }
 
     // Generate cache key
     let cache_key = generate_cache_key(&source_path)
-        .ok_or_else(|| format!("Failed to generate cache key for: {}", path))?;
+        .ok_or_else(|| AppError::Other(format!("Failed to generate cache key for: {}", path)))?;
 
     // Check if thumbnail is already cached
     if let Some(cached_path) = get_cached_thumbnail(&cache_key) {
@@ -125,36 +124,33 @@ pub fn get_thumbnail(path: String, size: Option<u32>) -> Result<String, String> 
 /// Get thumbnail as base64-encoded data URI.
 /// More efficient for small thumbnails as it avoids file I/O.
 #[tauri::command]
-pub fn get_thumbnail_data(path: String, size: Option<u32>) -> Result<String, String> {
+pub fn get_thumbnail_data(path: String, size: Option<u32>) -> Result<String, AppError> {
     let source_path = PathBuf::from(&path);
     let size = size.unwrap_or(THUMBNAIL_SIZE);
 
     if !source_path.exists() {
-        return Err(format!("File not found: {}", path));
+        return Err(AppError::NotFound(path));
     }
 
     if !is_supported_image(&source_path) {
-        return Err(format!("Unsupported image format: {}", path));
+        return Err(AppError::InvalidPath(format!("Unsupported image format: {}", path)));
     }
 
     // Generate cache key
     let cache_key = generate_cache_key(&source_path)
-        .ok_or_else(|| format!("Failed to generate cache key for: {}", path))?;
+        .ok_or_else(|| AppError::Other(format!("Failed to generate cache key for: {}", path)))?;
 
     // Check if thumbnail is already cached
     if let Some(cached_path) = get_cached_thumbnail(&cache_key) {
-        let data = fs::read(&cached_path)
-            .map_err(|e| format!("Failed to read cached thumbnail: {}", e))?;
-        return Ok(format!("data:image/jpeg;base64,{}", base64_encode(&data)));
+        let data = fs::read(&cached_path)?;
+        return Ok(format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(&data)));
     }
 
     // Load and decode image (with_guessed_format for robust format detection)
-    let img = ImageReader::open(&source_path)
-        .map_err(|e| format!("Failed to open image: {}", e))?
-        .with_guessed_format()
-        .map_err(|e| format!("Failed to guess image format: {}", e))?
+    let img = ImageReader::open(&source_path)?
+        .with_guessed_format()?
         .decode()
-        .map_err(|e| format!("Failed to decode image: {}", e))?;
+        .map_err(|e| AppError::Other(format!("Failed to decode image: {}", e)))?;
 
     // Generate thumbnail, always convert to RGB8 for JPEG output
     let thumbnail = img.thumbnail(size, size).to_rgb8();
@@ -163,7 +159,7 @@ pub fn get_thumbnail_data(path: String, size: Option<u32>) -> Result<String, Str
     let mut buffer = Cursor::new(Vec::new());
     DynamicImage::ImageRgb8(thumbnail)
         .write_to(&mut buffer, ImageFormat::Jpeg)
-        .map_err(|e| format!("Failed to encode thumbnail: {}", e))?;
+        .map_err(|e| AppError::Other(format!("Failed to encode thumbnail: {}", e)))?;
 
     let data = buffer.into_inner();
 
@@ -175,45 +171,13 @@ pub fn get_thumbnail_data(path: String, size: Option<u32>) -> Result<String, Str
         let _ = fs::write(&cache_path, &data);
     }
 
-    Ok(format!("data:image/jpeg;base64,{}", base64_encode(&data)))
-}
-
-/// Simple base64 encoding
-fn base64_encode(data: &[u8]) -> String {
-    use std::fmt::Write;
-    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-    let mut result = String::new();
-    let chunks = data.chunks(3);
-
-    for chunk in chunks {
-        let b0 = chunk[0] as usize;
-        let b1 = chunk.get(1).copied().unwrap_or(0) as usize;
-        let b2 = chunk.get(2).copied().unwrap_or(0) as usize;
-
-        let _ = result.write_char(ALPHABET[b0 >> 2] as char);
-        let _ = result.write_char(ALPHABET[((b0 & 0x03) << 4) | (b1 >> 4)] as char);
-
-        if chunk.len() > 1 {
-            let _ = result.write_char(ALPHABET[((b1 & 0x0f) << 2) | (b2 >> 6)] as char);
-        } else {
-            let _ = result.write_char('=');
-        }
-
-        if chunk.len() > 2 {
-            let _ = result.write_char(ALPHABET[b2 & 0x3f] as char);
-        } else {
-            let _ = result.write_char('=');
-        }
-    }
-
-    result
+    Ok(format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(&data)))
 }
 
 /// Clear the thumbnail cache
 #[tauri::command]
-pub fn clear_thumbnail_cache() -> Result<u64, String> {
-    let cache_dir = get_cache_dir().ok_or("Failed to get cache directory")?;
+pub fn clear_thumbnail_cache() -> Result<u64, AppError> {
+    let cache_dir = get_cache_dir().ok_or(AppError::Other("Failed to get cache directory".into()))?;
 
     if !cache_dir.exists() {
         return Ok(0);
@@ -221,7 +185,7 @@ pub fn clear_thumbnail_cache() -> Result<u64, String> {
 
     let mut cleared = 0u64;
 
-    for entry in fs::read_dir(&cache_dir).map_err(|e| e.to_string())? {
+    for entry in fs::read_dir(&cache_dir).map_err(AppError::Io)? {
         if let Ok(entry) = entry {
             if let Ok(metadata) = entry.metadata() {
                 if metadata.is_file() {
@@ -238,8 +202,8 @@ pub fn clear_thumbnail_cache() -> Result<u64, String> {
 
 /// Get cache statistics
 #[tauri::command]
-pub fn get_thumbnail_cache_stats() -> Result<ThumbnailCacheStats, String> {
-    let cache_dir = get_cache_dir().ok_or("Failed to get cache directory")?;
+pub fn get_thumbnail_cache_stats() -> Result<ThumbnailCacheStats, AppError> {
+    let cache_dir = get_cache_dir().ok_or(AppError::Other("Failed to get cache directory".into()))?;
 
     if !cache_dir.exists() {
         return Ok(ThumbnailCacheStats {
@@ -252,7 +216,7 @@ pub fn get_thumbnail_cache_stats() -> Result<ThumbnailCacheStats, String> {
     let mut count = 0;
     let mut total_size = 0u64;
 
-    for entry in fs::read_dir(&cache_dir).map_err(|e| e.to_string())? {
+    for entry in fs::read_dir(&cache_dir).map_err(AppError::Io)? {
         if let Ok(entry) = entry {
             if let Ok(metadata) = entry.metadata() {
                 if metadata.is_file() {
@@ -310,9 +274,11 @@ mod tests {
 
     #[test]
     fn test_base64_encode() {
-        assert_eq!(base64_encode(b"Hello"), "SGVsbG8=");
-        assert_eq!(base64_encode(b"Hi"), "SGk=");
-        assert_eq!(base64_encode(b""), "");
+        use base64::Engine as _;
+        let encode = |data: &[u8]| base64::engine::general_purpose::STANDARD.encode(data);
+        assert_eq!(encode(b"Hello"), "SGVsbG8=");
+        assert_eq!(encode(b"Hi"), "SGk=");
+        assert_eq!(encode(b""), "");
     }
 
     #[test]

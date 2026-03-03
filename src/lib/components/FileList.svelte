@@ -13,6 +13,7 @@
   import ThumbnailImage from "./ThumbnailImage.svelte";
   import { useColumnResize } from "$lib/composables/use-column-resize.svelte";
   import { useMarqueeSelection } from "$lib/composables/use-marquee-selection.svelte";
+  import { useTypeAhead } from "$lib/composables/use-type-ahead.svelte";
   import { getFileIconColor, getFileIconCategory, isImageFile } from "$lib/domain/file-types";
 
   import type { FileEntry } from "$lib/domain/file";
@@ -74,6 +75,12 @@
   // Marquee selection composable
   const marquee = useMarqueeSelection();
 
+  // Type-ahead selection composable
+  const typeAhead = useTypeAhead(
+    () => explorer.displayEntries,
+    (entry) => explorer.selectEntry(entry, {}),
+  );
+
   function handleClick(entry: FileEntry, event: MouseEvent): void {
     explorer.selectEntry(entry, {
       ctrlKey: event.ctrlKey || event.metaKey,
@@ -125,7 +132,7 @@
     if (!marquee.marqueeRect || !contentRef) return;
 
     let indices: number[];
-    if (explorer.state.viewMode === "tiles") {
+    if (explorer.viewMode === "tiles") {
       // Tiles use CSS grid - need DOM-based hit testing
       indices = marquee.getSelectedIndicesFromDOM(contentRef, ".tile-item");
     } else {
@@ -143,34 +150,8 @@
     }
   }
 
-  // Type-ahead selection: typing letters jumps to matching file
-  let typeAheadBuffer = "";
-  let typeAheadTimer: ReturnType<typeof setTimeout> | null = null;
-  const TYPE_AHEAD_TIMEOUT = 800;
-
-  function handleTypeAhead(key: string): void {
-    if (typeAheadTimer) clearTimeout(typeAheadTimer);
-    typeAheadBuffer += key.toLowerCase();
-    typeAheadTimer = setTimeout(() => { typeAheadBuffer = ""; }, TYPE_AHEAD_TIMEOUT);
-
-    // Find the first entry matching the typed prefix
-    const entries = explorer.displayEntries;
-    const match = entries.find((e) =>
-      e.name.toLowerCase().startsWith(typeAheadBuffer)
-    );
-    if (match) {
-      explorer.selectEntry(match, {});
-    }
-  }
-
   function handleKeydown(event: KeyboardEvent): void {
-    // Type-ahead: single printable character without modifiers
-    if (
-      event.key.length === 1 &&
-      !event.ctrlKey && !event.metaKey && !event.altKey
-    ) {
-      handleTypeAhead(event.key);
-    }
+    typeAhead.handleKeydown(event);
   }
 
   // Drop handlers for dropping files into current directory
@@ -206,7 +187,7 @@
     if (!sourcePath) return;
 
     // Don't allow dropping into the same directory it's already in
-    const currentPath = explorer.state.currentPath;
+    const currentPath = explorer.currentPath;
     const sourceDir = sourcePath.substring(0, sourcePath.lastIndexOf("/"));
     if (sourceDir === currentPath) return;
 
@@ -247,19 +228,19 @@
     ondragleave={handleListDragLeave}
     ondrop={handleListDrop}
   >
-    {#if explorer.state.loading}
+    {#if explorer.loading}
       <div class="status">
         <div class="spinner"></div>
         <span>Loading...</span>
       </div>
-    {:else if explorer.state.error}
+    {:else if explorer.error}
       <div class="status error-state">
         <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
           <circle cx="24" cy="24" r="20" stroke="currentColor" stroke-width="2" opacity="0.3"/>
           <path d="M24 16V26M24 32V30" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
         </svg>
         <span class="error-title">Unable to access folder</span>
-        <span class="error-message">{explorer.state.error}</span>
+        <span class="error-message">{explorer.error}</span>
       </div>
     {:else if explorer.displayEntries.length === 0}
       <div class="status empty-state">
@@ -269,7 +250,7 @@
         </svg>
         <span>This folder is empty</span>
       </div>
-    {:else if explorer.state.viewMode === "details"}
+    {:else if explorer.viewMode === "details"}
       <!-- Details View with Column Headers -->
       <div class="details-view" class:resizing={columnResize.isResizing} style="--col-name: {columnResize.columnWidths.name}px; --col-date: {columnResize.columnWidths.date}px; --col-type: {columnResize.columnWidths.type}px; --col-size: {columnResize.columnWidths.size}px;">
         <div class="column-headers" style="grid-template-columns: {columnResize.gridTemplateColumns};">
@@ -277,12 +258,12 @@
             <button
               class="column-header name-column"
               onclick={() => explorer.setSorting("name")}
-              class:active={explorer.state.sortBy === "name"}
+              class:active={explorer.sortBy === "name"}
             >
               <span>Name</span>
-              {#if explorer.state.sortBy === "name"}
+              {#if explorer.sortBy === "name"}
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="sort-indicator">
-                  {#if explorer.state.sortAscending}
+                  {#if explorer.sortAscending}
                     <path d="M5 2V8M5 2L2 5M5 2L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
                   {:else}
                     <path d="M5 8V2M5 8L2 5M5 8L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
@@ -297,12 +278,12 @@
             <button
               class="column-header date-column"
               onclick={() => explorer.setSorting("modified")}
-              class:active={explorer.state.sortBy === "modified"}
+              class:active={explorer.sortBy === "modified"}
             >
               <span>Date modified</span>
-              {#if explorer.state.sortBy === "modified"}
+              {#if explorer.sortBy === "modified"}
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="sort-indicator">
-                  {#if explorer.state.sortAscending}
+                  {#if explorer.sortAscending}
                     <path d="M5 2V8M5 2L2 5M5 2L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
                   {:else}
                     <path d="M5 8V2M5 8L2 5M5 8L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
@@ -324,12 +305,12 @@
             <button
               class="column-header size-column"
               onclick={() => explorer.setSorting("size")}
-              class:active={explorer.state.sortBy === "size"}
+              class:active={explorer.sortBy === "size"}
             >
               <span>Size</span>
-              {#if explorer.state.sortBy === "size"}
+              {#if explorer.sortBy === "size"}
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="sort-indicator">
-                  {#if explorer.state.sortAscending}
+                  {#if explorer.sortAscending}
                     <path d="M5 2V8M5 2L2 5M5 2L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
                   {:else}
                     <path d="M5 8V2M5 8L2 5M5 8L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
@@ -358,7 +339,7 @@
           {/snippet}
         </VirtualList>
       </div>
-    {:else if explorer.state.viewMode === "list"}
+    {:else if explorer.viewMode === "list"}
       <!-- Compact List View -->
       <div class="list-view file-rows">
         {#each explorer.displayEntries as entry (entry.path)}

@@ -26,7 +26,7 @@
     contextMenuStore.close();
   }
 
-  const hasSelection = $derived(explorer.state.selectedPaths.size > 0);
+  const hasSelection = $derived(explorer.selectedPaths.size > 0);
 
   /** Check if the single selected entry is a bookmarkable directory */
   const selectedDirectory = $derived.by((): FileEntry | null => {
@@ -127,7 +127,7 @@
   }
 
   async function handleOpenInTerminal(): Promise<void> {
-    const path = selectedDirectory?.path ?? explorer.state.currentPath;
+    const path = selectedDirectory?.path ?? explorer.currentPath;
     await openInTerminal(path, settingsStore.terminalApp);
     contextMenuStore.close();
   }
@@ -288,10 +288,10 @@
     {#each viewModes as mode}
       <button
         class="menu-item"
-        class:selected={explorer.state.viewMode === mode.id}
+        class:selected={explorer.viewMode === mode.id}
         onclick={() => handleSetViewMode(mode.id)}
         role="menuitemradio"
-        aria-checked={explorer.state.viewMode === mode.id}
+        aria-checked={explorer.viewMode === mode.id}
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
           {#if mode.id === "details"}
@@ -306,7 +306,7 @@
           {/if}
         </svg>
         <span>{mode.label}</span>
-        {#if explorer.state.viewMode === mode.id}
+        {#if explorer.viewMode === mode.id}
           <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
             <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>

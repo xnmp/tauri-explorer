@@ -8,6 +8,7 @@
  */
 
 import type { PersistedTabState } from "./window-tabs.svelte";
+import { loadPersisted, savePersisted } from "./persisted";
 
 export interface Workspace {
   id: string;
@@ -25,18 +26,11 @@ function generateId(): string {
 }
 
 function loadWorkspaces(): Workspace[] {
-  if (typeof localStorage === "undefined") return [];
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? JSON.parse(saved) : [];
-  } catch {
-    return [];
-  }
+  return loadPersisted(STORAGE_KEY, []);
 }
 
-function saveWorkspaces(workspaces: Workspace[]): void {
-  if (typeof localStorage === "undefined") return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(workspaces));
+function saveWorkspaces(ws: Workspace[]): void {
+  savePersisted(STORAGE_KEY, ws);
 }
 
 function createWorkspacesStore() {

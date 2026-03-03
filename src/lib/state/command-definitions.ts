@@ -14,6 +14,7 @@ import { settingsStore } from "./settings.svelte";
 import { themeStore } from "./theme.svelte";
 import { bookmarksStore } from "./bookmarks.svelte";
 import { recentFilesStore } from "./recent-files.svelte";
+import { dialogStore } from "./dialogs.svelte";
 import { copyEntry, moveEntry, writeTextFile } from "$lib/api/files";
 import type { ViewMode } from "./types";
 
@@ -80,7 +81,7 @@ const navigationCommands: Command[] = [
     id: "navigation.refresh",
     label: "Refresh",
     category: "navigation",
-    shortcut: "F5",
+    shortcut: "Ctrl+R",
     handler: () => getActiveExplorer()?.refresh(),
   },
 ];
@@ -116,7 +117,7 @@ const fileCommands: Command[] = [
       const explorer = getActiveExplorer();
       const selected = explorer?.getSelectedEntries() ?? [];
       if (selected.length >= 2) {
-        window.dispatchEvent(new CustomEvent("open-bulk-rename", { detail: { entries: selected } }));
+        dialogStore.openBulkRename(selected);
       }
     },
     when: () => (getActiveExplorer()?.getSelectedEntries().length ?? 0) >= 2,
@@ -228,7 +229,7 @@ const editCommands: Command[] = [
       try {
         const text = await navigator.clipboard.readText();
         if (!text) return;
-        const dir = explorer.state.currentPath;
+        const dir = explorer.currentPath;
         const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
         const path = `${dir}/pasted-${timestamp}.txt`;
         await writeTextFile(path, text);
@@ -308,14 +309,14 @@ const viewCommands: Command[] = [
     id: "view.toggleDualPane",
     label: "Toggle Dual Pane",
     category: "view",
-    shortcut: "F6",
+    shortcut: "Ctrl+Shift+D",
     handler: () => windowTabsManager.toggleDualPane(),
   },
   {
     id: "view.switchPane",
     label: "Switch Pane",
     category: "view",
-    shortcut: "Ctrl+Tab",
+    shortcut: "Alt+Right",
     handler: () => windowTabsManager.switchPane(),
     when: () => windowTabsManager.dualPaneEnabled,
   },
@@ -367,12 +368,12 @@ const bookmarkCommands: Command[] = [
     handler: () => {
       const explorer = getActiveExplorer();
       if (explorer) {
-        bookmarksStore.addBookmark(explorer.state.currentPath);
+        bookmarksStore.addBookmark(explorer.currentPath);
       }
     },
     when: () => {
       const explorer = getActiveExplorer();
-      return explorer ? !bookmarksStore.hasBookmark(explorer.state.currentPath) : false;
+      return explorer ? !bookmarksStore.hasBookmark(explorer.currentPath) : false;
     },
   },
   {
@@ -382,12 +383,12 @@ const bookmarkCommands: Command[] = [
     handler: () => {
       const explorer = getActiveExplorer();
       if (explorer) {
-        bookmarksStore.removeBookmark(explorer.state.currentPath);
+        bookmarksStore.removeBookmark(explorer.currentPath);
       }
     },
     when: () => {
       const explorer = getActiveExplorer();
-      return explorer ? bookmarksStore.hasBookmark(explorer.state.currentPath) : false;
+      return explorer ? bookmarksStore.hasBookmark(explorer.currentPath) : false;
     },
   },
 ];
@@ -509,7 +510,7 @@ const recentCommands: Command[] = [
     label: "Open Recent...",
     category: "general",
     handler: () => {
-      window.dispatchEvent(new CustomEvent("open-recent-files"));
+      dialogStore.openQuickOpen();
     },
   },
   {
@@ -528,7 +529,7 @@ const workspaceCommands: Command[] = [
     label: "Workspaces: Manage...",
     category: "general",
     handler: () => {
-      window.dispatchEvent(new CustomEvent("open-workspaces"));
+      dialogStore.openWorkspace();
     },
   },
   {
@@ -536,7 +537,7 @@ const workspaceCommands: Command[] = [
     label: "Workspaces: Save Current Layout",
     category: "general",
     handler: () => {
-      window.dispatchEvent(new CustomEvent("open-workspaces"));
+      dialogStore.openWorkspace();
     },
   },
 ];
@@ -549,8 +550,7 @@ const generalCommands: Command[] = [
     category: "general",
     shortcut: "Ctrl+P",
     handler: () => {
-      // This will be handled by the QuickOpen component
-      window.dispatchEvent(new CustomEvent("open-quick-open"));
+      dialogStore.openQuickOpen();
     },
   },
   {
@@ -559,7 +559,7 @@ const generalCommands: Command[] = [
     category: "general",
     shortcut: "Ctrl+Shift+P",
     handler: () => {
-      window.dispatchEvent(new CustomEvent("open-command-palette"));
+      dialogStore.openCommandPalette();
     },
   },
   {
@@ -568,7 +568,7 @@ const generalCommands: Command[] = [
     category: "general",
     shortcut: "Ctrl+Shift+F",
     handler: () => {
-      window.dispatchEvent(new CustomEvent("open-content-search"));
+      dialogStore.openContentSearch();
     },
   },
 ];
@@ -601,4 +601,31 @@ export function registerAllCommands(): void {
     }
   }
   keybindingsStore.registerDefaults(defaultShortcuts);
+
+  // Warn about shortcut conflicts at startup (dev only)
+  if (import.meta.env.DEV) {
+    validateShortcutConflicts(allCommands);
+  }
+}
+
+/** Log warnings for commands sharing the same shortcut without `when` guards */
+function validateShortcutConflicts(commands: Command[]): void {
+  const byShortcut = new Map<string, Command[]>();
+  for (const cmd of commands) {
+    if (!cmd.shortcut) continue;
+    const key = cmd.shortcut.toLowerCase();
+    const group = byShortcut.get(key) ?? [];
+    group.push(cmd);
+    byShortcut.set(key, group);
+  }
+  for (const [shortcut, group] of byShortcut) {
+    if (group.length <= 1) continue;
+    const unguarded = group.filter((c) => !c.when);
+    if (unguarded.length > 1) {
+      console.warn(
+        `[keybindings] Shortcut conflict: "${shortcut}" is bound to multiple commands without 'when' guards:`,
+        unguarded.map((c) => c.id),
+      );
+    }
+  }
 }

@@ -12,6 +12,7 @@
  * - Undo (undo.svelte.ts) - global undo stack
  */
 
+import { loadPersisted, savePersisted } from "./persisted";
 import {
   fetchDirectory,
   createDirectory,
@@ -22,7 +23,6 @@ import {
   moveEntry,
   startStreamingDirectory,
   cancelDirectoryListing,
-  extractListingId,
   type DirectoryEntriesEvent,
 } from "$lib/api/files";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -44,15 +44,10 @@ const MAX_SORT_ENTRIES = 200;
 interface SortPref { sortBy: SortField; sortAscending: boolean; }
 
 function loadSortPrefs(): Record<string, SortPref> {
-  if (typeof localStorage === "undefined") return {};
-  try {
-    const saved = localStorage.getItem(SORT_STORAGE_KEY);
-    return saved ? JSON.parse(saved) : {};
-  } catch { return {}; }
+  return loadPersisted(SORT_STORAGE_KEY, {});
 }
 
 function saveSortPref(path: string, pref: SortPref): void {
-  if (typeof localStorage === "undefined") return;
   const prefs = loadSortPrefs();
   prefs[path] = pref;
   // Evict oldest entries if over limit
@@ -62,7 +57,7 @@ function saveSortPref(path: string, pref: SortPref): void {
       delete prefs[key];
     }
   }
-  localStorage.setItem(SORT_STORAGE_KEY, JSON.stringify(prefs));
+  savePersisted(SORT_STORAGE_KEY, prefs);
 }
 
 function getSortPref(path: string): SortPref | undefined {
@@ -114,18 +109,8 @@ function createExplorerState() {
     selectionAnchorIndex: null,
   });
 
-  // Backward-compatible state accessor that includes global stores
-  // This allows existing components to access dialog/context menu state via explorer.state
-  const state = $derived({
-    ...coreState,
-    // Dialog state (from global dialogStore)
-    newFolderDialogOpen: dialogStore.isNewFolderOpen,
-    renamingEntry: dialogStore.renamingEntry,
-    deletingEntry: dialogStore.deletingEntry,
-    // Context menu state (from global contextMenuStore)
-    contextMenuOpen: contextMenuStore.isOpen,
-    contextMenuPosition: contextMenuStore.position,
-  });
+  // Read-only state accessor for components that need the raw state bag
+  const state = $derived({ ...coreState });
 
   // ===================
   // Derived State
@@ -205,12 +190,12 @@ function createExplorerState() {
     const result = await startStreamingDirectory(path);
 
     if (result.ok) {
-      const { path: actualPath, listingId } = extractListingId(result.data.path);
-      coreState.currentPath = actualPath;
+      coreState.currentPath = result.data.path;
+      const listingId = result.data.listing_id;
       coreState.entries = [...result.data.entries];
 
       // Restore saved sort preference for this directory
-      const savedSort = getSortPref(actualPath);
+      const savedSort = getSortPref(result.data.path);
       if (savedSort) {
         coreState.sortBy = savedSort.sortBy;
         coreState.sortAscending = savedSort.sortAscending;
@@ -219,7 +204,7 @@ function createExplorerState() {
       // If there's a listing ID, more entries will come via events
       if (listingId !== null) {
         activeListingId = listingId;
-        await setupDirectoryListener(listingId, actualPath);
+        await setupDirectoryListener(listingId, result.data.path);
         // Keep loading true until all entries received
       } else {
         // Small directory - all entries received, done loading
@@ -585,8 +570,32 @@ function createExplorerState() {
   // ===================
 
   return {
+    // Raw state bag (prefer top-level getters below)
     get state() {
       return state;
+    },
+
+    // Top-level state getters (preferred over state.*)
+    get currentPath() {
+      return coreState.currentPath;
+    },
+    get loading() {
+      return coreState.loading;
+    },
+    get error() {
+      return coreState.error;
+    },
+    get viewMode() {
+      return coreState.viewMode;
+    },
+    get sortBy() {
+      return coreState.sortBy;
+    },
+    get sortAscending() {
+      return coreState.sortAscending;
+    },
+    get selectedPaths() {
+      return coreState.selectedPaths;
     },
     get displayEntries() {
       return displayEntries;
@@ -606,6 +615,7 @@ function createExplorerState() {
     get canRedo() {
       return canRedo;
     },
+
     // Navigation
     navigateTo,
     goBack,

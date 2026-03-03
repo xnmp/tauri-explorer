@@ -1,14 +1,13 @@
 //! Fuzzy search module for Tauri commands.
 //! Issue: tauri-explorer-az6w, tauri-explorer-nv2y
 
+use crate::error::AppError;
 use jwalk::WalkDir;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use serde::Serialize;
-use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter};
 
 /// Directories to skip during recursive search (for performance).
@@ -59,13 +58,8 @@ pub struct SearchResultsEvent {
     pub total_scanned: usize,
 }
 
-/// Global state for active searches
-static NEXT_SEARCH_ID: AtomicU64 = AtomicU64::new(1);
-static ACTIVE_SEARCHES: OnceLock<Mutex<HashMap<u64, Arc<AtomicBool>>>> = OnceLock::new();
-
-fn get_active_searches() -> &'static Mutex<HashMap<u64, Arc<AtomicBool>>> {
-    ACTIVE_SEARCHES.get_or_init(|| Mutex::new(HashMap::new()))
-}
+/// Registry for active searches
+static SEARCHES: crate::task_registry::TaskRegistry = crate::task_registry::TaskRegistry::new();
 
 /// Check if a directory should be skipped.
 fn should_skip_dir(name: &str) -> bool {
@@ -75,15 +69,15 @@ fn should_skip_dir(name: &str) -> bool {
 /// Fuzzy search for files and directories recursively (non-streaming version).
 /// Uses nucleo for fast fuzzy matching and jwalk for parallel traversal.
 #[tauri::command]
-pub fn fuzzy_search(query: String, root: String, limit: usize) -> Result<SearchResponse, String> {
+pub fn fuzzy_search(query: String, root: String, limit: usize) -> Result<SearchResponse, AppError> {
     let root_path = PathBuf::from(&root);
 
     if !root_path.exists() {
-        return Err("Directory not found".to_string());
+        return Err(AppError::NotFound(root));
     }
 
     if !root_path.is_dir() {
-        return Err("Path is not a directory".to_string());
+        return Err(AppError::InvalidPath(format!("Not a directory: {}", root)));
     }
 
     let limit = limit.min(100).max(1);
@@ -191,26 +185,19 @@ pub fn start_streaming_search(
     root: String,
     limit: usize,
     boost_prefix: Option<String>,
-) -> Result<u64, String> {
+) -> Result<u64, AppError> {
     let root_path = PathBuf::from(&root);
 
     if !root_path.exists() {
-        return Err("Directory not found".to_string());
+        return Err(AppError::NotFound(root));
     }
 
     if !root_path.is_dir() {
-        return Err("Path is not a directory".to_string());
+        return Err(AppError::InvalidPath(format!("Not a directory: {}", root)));
     }
 
     let limit = limit.min(100).max(1);
-    let search_id = NEXT_SEARCH_ID.fetch_add(1, Ordering::SeqCst);
-
-    // Create cancellation flag
-    let cancelled = Arc::new(AtomicBool::new(false));
-    {
-        let mut searches = get_active_searches().lock().unwrap();
-        searches.insert(search_id, cancelled.clone());
-    }
+    let (search_id, cancelled) = SEARCHES.start();
 
     let boost_path = boost_prefix.map(PathBuf::from);
 
@@ -319,9 +306,7 @@ pub fn start_streaming_search(
             );
         }
 
-        // Clean up
-        let mut searches = get_active_searches().lock().unwrap();
-        searches.remove(&search_id);
+        SEARCHES.cleanup(search_id);
     });
 
     Ok(search_id)
@@ -400,12 +385,8 @@ fn process_batch(
 
 /// Cancel an active streaming search.
 #[tauri::command]
-pub fn cancel_search(search_id: u64) -> Result<(), String> {
-    let searches = get_active_searches().lock().unwrap();
-    if let Some(cancelled) = searches.get(&search_id) {
-        cancelled.store(true, Ordering::Relaxed);
-    }
-    // Search already completed or doesn't exist - that's fine
+pub fn cancel_search(search_id: u64) -> Result<(), AppError> {
+    SEARCHES.cancel(search_id);
     Ok(())
 }
 

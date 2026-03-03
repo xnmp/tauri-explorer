@@ -235,7 +235,7 @@
   // Get root directory from active explorer
   function getRootPath(): string {
     const explorer = paneNav?.getActiveExplorer() ?? defaultExplorer;
-    return explorer.state.currentPath;
+    return explorer.currentPath;
   }
 
   // Cancel active search and cleanup listener

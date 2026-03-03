@@ -12,6 +12,7 @@
 
 import type { PaneId, WindowTab, WindowTabPane } from "./types";
 import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
+import { loadPersisted, savePersisted } from "./persisted";
 
 const STORAGE_KEY = "explorer-tabs";
 
@@ -88,21 +89,12 @@ function createWindowTabsManager() {
 
   /** Save current tab state to localStorage */
   function saveState(): void {
-    if (typeof localStorage === "undefined") return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(captureState()));
+    savePersisted(STORAGE_KEY, captureState());
   }
 
   /** Load tab state from localStorage */
   function loadState(): PersistedTabState | null {
-    if (typeof localStorage === "undefined") return null;
-
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (!saved) return null;
-      return JSON.parse(saved) as PersistedTabState;
-    } catch {
-      return null;
-    }
+    return loadPersisted<PersistedTabState | null>(STORAGE_KEY, null);
   }
 
   /** Get the currently active tab */
@@ -113,7 +105,7 @@ function createWindowTabsManager() {
     const pane = tab.panes[tab.activePaneId];
     const explorer = explorers.get(pane.explorerId);
     if (!explorer) return pane.title || "Explorer";
-    return extractFolderName(explorer.state.currentPath);
+    return extractFolderName(explorer.currentPath);
   }
 
   /** Get path for a pane from its explorer */

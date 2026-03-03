@@ -1,6 +1,7 @@
 //! Archive operations (compress/extract) for Tauri commands.
 //! Issue: tauri-explorer-0xr, tauri-explorer-kez
 
+use crate::error::AppError;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -12,15 +13,15 @@ use zip::write::FileOptions;
 /// If a single directory is selected, names the ZIP after that directory.
 /// If multiple items, names it "Archive.zip" (with dedup).
 #[tauri::command]
-pub fn compress_to_zip(paths: Vec<String>) -> Result<String, String> {
+pub fn compress_to_zip(paths: Vec<String>) -> Result<String, AppError> {
     if paths.is_empty() {
-        return Err("No paths provided".to_string());
+        return Err(AppError::Other("No paths provided".into()));
     }
 
     let first_path = PathBuf::from(&paths[0]);
     let parent_dir = first_path
         .parent()
-        .ok_or("Cannot determine parent directory")?;
+        .ok_or(AppError::InvalidPath("Cannot determine parent directory".into()))?;
 
     // Determine output filename
     let base_name = if paths.len() == 1 {
@@ -34,8 +35,7 @@ pub fn compress_to_zip(paths: Vec<String>) -> Result<String, String> {
 
     let zip_path = find_unique_path(parent_dir, &base_name, "zip");
 
-    let file = fs::File::create(&zip_path)
-        .map_err(|e| format!("Failed to create ZIP file: {}", e))?;
+    let file = fs::File::create(&zip_path)?;
     let mut zip_writer = zip::ZipWriter::new(file);
     let options = FileOptions::<()>::default()
         .compression_method(zip::CompressionMethod::Deflated);
@@ -56,7 +56,7 @@ pub fn compress_to_zip(paths: Vec<String>) -> Result<String, String> {
 
     zip_writer
         .finish()
-        .map_err(|e| format!("Failed to finalize ZIP: {}", e))?;
+        .map_err(|e| AppError::Other(format!("Failed to finalize ZIP: {}", e)))?;
 
     Ok(zip_path.to_string_lossy().to_string())
 }
@@ -70,15 +70,15 @@ pub fn compress_to_zip(paths: Vec<String>) -> Result<String, String> {
 pub fn extract_archive(
     archive_path: String,
     extract_here: bool,
-) -> Result<String, String> {
+) -> Result<String, AppError> {
     let archive = PathBuf::from(&archive_path);
     if !archive.exists() {
-        return Err(format!("Archive not found: {}", archive_path));
+        return Err(AppError::NotFound(archive_path));
     }
 
     let parent_dir = archive
         .parent()
-        .ok_or("Cannot determine parent directory")?;
+        .ok_or(AppError::InvalidPath("Cannot determine parent directory".into()))?;
 
     let dest = if extract_here {
         parent_dir.to_path_buf()
@@ -88,44 +88,38 @@ pub fn extract_archive(
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| "extracted".to_string());
         let dest = find_unique_path(parent_dir, &folder_name, "");
-        fs::create_dir_all(&dest)
-            .map_err(|e| format!("Failed to create destination directory: {}", e))?;
+        fs::create_dir_all(&dest)?;
         dest
     };
 
-    let file = fs::File::open(&archive)
-        .map_err(|e| format!("Failed to open archive: {}", e))?;
+    let file = fs::File::open(&archive)?;
     let mut zip = zip::ZipArchive::new(file)
-        .map_err(|e| format!("Failed to read ZIP archive: {}", e))?;
+        .map_err(|e| AppError::Other(format!("Failed to read ZIP archive: {}", e)))?;
 
     for i in 0..zip.len() {
         let mut entry = zip
             .by_index(i)
-            .map_err(|e| format!("Failed to read ZIP entry: {}", e))?;
+            .map_err(|e| AppError::Other(format!("Failed to read ZIP entry: {}", e)))?;
 
         let entry_path = dest.join(
             entry
                 .enclosed_name()
-                .ok_or_else(|| format!("Invalid entry name in archive"))?,
+                .ok_or_else(|| AppError::InvalidPath("Invalid entry name in archive".into()))?,
         );
 
         // Security: ensure we don't extract outside dest
         if !entry_path.starts_with(&dest) {
-            return Err("ZIP entry contains path traversal".to_string());
+            return Err(AppError::InvalidPath("ZIP entry contains path traversal".into()));
         }
 
         if entry.is_dir() {
-            fs::create_dir_all(&entry_path)
-                .map_err(|e| format!("Failed to create directory: {}", e))?;
+            fs::create_dir_all(&entry_path)?;
         } else {
             if let Some(parent) = entry_path.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| format!("Failed to create parent directory: {}", e))?;
+                fs::create_dir_all(parent)?;
             }
-            let mut outfile = fs::File::create(&entry_path)
-                .map_err(|e| format!("Failed to create file: {}", e))?;
-            std::io::copy(&mut entry, &mut outfile)
-                .map_err(|e| format!("Failed to write file: {}", e))?;
+            let mut outfile = fs::File::create(&entry_path)?;
+            std::io::copy(&mut entry, &mut outfile)?;
         }
     }
 
@@ -137,17 +131,14 @@ fn add_file_to_zip(
     path: &Path,
     name: &str,
     options: FileOptions<()>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     zip.start_file(name, options)
-        .map_err(|e| format!("Failed to add file to ZIP: {}", e))?;
+        .map_err(|e| AppError::Other(format!("Failed to add file to ZIP: {}", e)))?;
 
-    let mut file = fs::File::open(path)
-        .map_err(|e| format!("Failed to open {}: {}", path.display(), e))?;
+    let mut file = fs::File::open(path)?;
     let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer)
-        .map_err(|e| format!("Failed to read {}: {}", path.display(), e))?;
-    zip.write_all(&buffer)
-        .map_err(|e| format!("Failed to write to ZIP: {}", e))?;
+    file.read_to_end(&mut buffer)?;
+    zip.write_all(&buffer)?;
 
     Ok(())
 }
@@ -157,12 +148,11 @@ fn add_directory_to_zip(
     dir: &Path,
     prefix: &str,
     options: FileOptions<()>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     zip.add_directory(format!("{}/", prefix), options)
-        .map_err(|e| format!("Failed to add directory to ZIP: {}", e))?;
+        .map_err(|e| AppError::Other(format!("Failed to add directory to ZIP: {}", e)))?;
 
-    let entries = fs::read_dir(dir)
-        .map_err(|e| format!("Failed to read directory {}: {}", dir.display(), e))?;
+    let entries = fs::read_dir(dir)?;
 
     for entry in entries.flatten() {
         let entry_path = entry.path();

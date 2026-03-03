@@ -216,6 +216,41 @@ describe("keybindingsStore", () => {
       const event = createKeyboardEvent({ key: "C", ctrlKey: true });
       expect(keybindingsStore.findMatchingCommand(event as unknown as KeyboardEvent)).toBe("edit.copy");
     });
+
+    it("respects isAvailable predicate when provided", () => {
+      keybindingsStore.registerDefaults({
+        "command.available": "Ctrl+A",
+        "command.unavailable": "Ctrl+B",
+      });
+
+      const eventA = createKeyboardEvent({ key: "a", ctrlKey: true });
+      const eventB = createKeyboardEvent({ key: "b", ctrlKey: true });
+
+      // With predicate that makes only command.available available
+      const isAvailable = (commandId: string) => commandId === "command.available";
+
+      expect(keybindingsStore.findMatchingCommand(eventA as unknown as KeyboardEvent, isAvailable)).toBe("command.available");
+      expect(keybindingsStore.findMatchingCommand(eventB as unknown as KeyboardEvent, isAvailable)).toBeUndefined();
+    });
+
+    it("finds first available command when isAvailable predicate provided", () => {
+      keybindingsStore.registerDefaults({
+        "command.first": "Ctrl+C",
+        "command.second": "Ctrl+C", // Intentional duplicate for testing
+      });
+
+      const event = createKeyboardEvent({ key: "c", ctrlKey: true });
+
+      // Make only second command available
+      const isAvailable = (commandId: string) => commandId === "command.second";
+
+      expect(keybindingsStore.findMatchingCommand(event as unknown as KeyboardEvent, isAvailable)).toBe("command.second");
+    });
+
+    it("works without isAvailable predicate (backward compatibility)", () => {
+      const event = createKeyboardEvent({ key: "c", ctrlKey: true });
+      expect(keybindingsStore.findMatchingCommand(event as unknown as KeyboardEvent)).toBe("edit.copy");
+    });
   });
 
   describe("findConflicts", () => {

@@ -16,7 +16,7 @@
   let pathInputRef: HTMLInputElement | null = null;
 
   function startPathEdit() {
-    editedPath = explorer.state.currentPath;
+    editedPath = explorer.currentPath;
     editingPath = true;
     // Focus input after DOM update
     setTimeout(() => pathInputRef?.select(), 0);
@@ -46,7 +46,7 @@
   }
 
   function copyPathToClipboard() {
-    navigator.clipboard.writeText(explorer.state.currentPath);
+    navigator.clipboard.writeText(explorer.currentPath);
   }
 </script>
 

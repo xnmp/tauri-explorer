@@ -46,18 +46,22 @@
     const selected = selectedEntries[0];
     const entries = paneExplorer.displayEntries;
 
-    // Alt + Arrow: Navigation history
-    if (event.altKey && !hasModifier) {
+    // Ctrl+Alt + Arrow: Navigation history
+    if (event.altKey && hasModifier) {
       if (event.key === "ArrowLeft") {
         event.preventDefault();
         paneExplorer.goBack();
       } else if (event.key === "ArrowRight") {
         event.preventDefault();
         paneExplorer.goForward();
-      } else if (event.key === "ArrowUp") {
-        event.preventDefault();
-        paneExplorer.goUp();
       }
+      return;
+    }
+
+    // Alt + ArrowUp: Go up
+    if (event.altKey && !hasModifier && event.key === "ArrowUp") {
+      event.preventDefault();
+      paneExplorer.goUp();
       return;
     }
 

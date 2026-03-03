@@ -135,6 +135,22 @@
 
           <div class="setting-row">
             <div class="setting-info">
+              <span class="setting-label">Background Opacity</span>
+              <span class="setting-description">Window background transparency ({settingsStore.backgroundOpacity}%)</span>
+            </div>
+            <input
+              class="range-input"
+              type="range"
+              min="20"
+              max="100"
+              step="5"
+              value={settingsStore.backgroundOpacity}
+              oninput={(e) => settingsStore.update({ backgroundOpacity: Number(e.currentTarget.value) })}
+            />
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
               <span class="setting-label">Terminal Application</span>
               <span class="setting-description">Command to open terminal (empty = auto-detect)</span>
             </div>
@@ -316,6 +332,12 @@
 
   .text-input::placeholder {
     color: var(--text-tertiary);
+  }
+
+  .range-input {
+    width: 140px;
+    accent-color: var(--accent);
+    cursor: pointer;
   }
 
   .theme-select {

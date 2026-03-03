@@ -17,6 +17,7 @@ export interface Settings {
   confirmDelete: boolean;
   zoomLevel: number; // percentage, e.g. 100 = 100%
   terminalApp: string; // terminal emulator command, empty = auto-detect
+  backgroundOpacity: number; // 0-100, percentage of background opacity
 }
 
 const MIN_ZOOM = 50;
@@ -32,6 +33,7 @@ const DEFAULT_SETTINGS: Settings = {
   confirmDelete: true,
   zoomLevel: 100,
   terminalApp: "",
+  backgroundOpacity: 100,
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -121,6 +123,9 @@ function createSettingsStore() {
     },
     get terminalApp() {
       return settings.terminalApp;
+    },
+    get backgroundOpacity() {
+      return settings.backgroundOpacity;
     },
     update,
     toggleToolbar,

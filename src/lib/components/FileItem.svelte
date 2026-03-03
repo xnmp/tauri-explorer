@@ -446,10 +446,12 @@
     box-shadow: 0 0 0 1px var(--accent);
   }
 
-  /* Selected state */
+  /* Selected state - unified look for multi-selection */
   .file-item.selected {
     background: var(--subtle-fill-secondary);
-    border-color: var(--accent);
+    border-color: transparent;
+    border-left: 2px solid var(--accent);
+    border-radius: 0 4px 4px 0;
   }
 
   .file-item.selected:hover {

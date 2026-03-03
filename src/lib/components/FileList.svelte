@@ -781,7 +781,9 @@
 
   .list-item.selected {
     background: var(--subtle-fill-secondary);
-    border-color: var(--accent);
+    border-color: transparent;
+    border-left: 2px solid var(--accent);
+    border-radius: 0 4px 4px 0;
   }
 
   .list-icon {
@@ -840,7 +842,9 @@
 
   .tile-item.selected {
     background: var(--subtle-fill-secondary);
-    border-color: var(--accent);
+    border-color: transparent;
+    border-bottom: 2px solid var(--accent);
+    border-radius: 6px 6px 2px 2px;
   }
 
   .tile-item.selected:hover {

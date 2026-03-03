@@ -1,0 +1,84 @@
+/**
+ * Hacker Theme - Arch Linux terminal aesthetic
+ * Issue: tauri-pghn
+ *
+ * Green-on-black terminal style inspired by classic hacker movies,
+ * Arch Linux ricing, and htop/ranger. Monospace fonts throughout.
+ *
+ * Key palette:
+ *   bg: #0a0a0a   fg: #00ff41   dim: #00aa2a
+ *   accent: #00ff41  warn: #ffcc00  error: #ff3333
+ */
+
+[data-theme="hacker"] {
+  /* Theme metadata */
+  --theme-name: "Hacker";
+  --theme-description: "Green-on-black terminal aesthetic";
+  --theme-order: 5;
+
+  /* Override font to monospace for full terminal feel */
+  --font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "Source Code Pro", monospace;
+
+  /* Accent colors - neon green */
+  --accent: #00ff41;
+  --accent-light: #66ff8e;
+  --accent-dark: #00aa2a;
+
+  /* Text colors - terminal green palette */
+  --text-primary: #00ff41;
+  --text-secondary: #00cc33;
+  --text-tertiary: #008822;
+  --text-on-accent: #0a0a0a;
+
+  /* Background colors - near-black */
+  --background-solid: #0a0a0a;
+  --background-mica: rgba(10, 10, 10, 0.98);
+  --background-acrylic: rgba(15, 15, 15, 0.95);
+  --background-card: rgba(0, 255, 65, 0.04);
+  --background-card-secondary: rgba(0, 255, 65, 0.02);
+
+  /* Surface/border colors - faint green glow */
+  --surface-stroke: rgba(0, 255, 65, 0.12);
+  --surface-stroke-flyout: rgba(0, 255, 65, 0.18);
+  --divider: rgba(0, 255, 65, 0.1);
+
+  /* Control/input backgrounds */
+  --control-fill: rgba(0, 255, 65, 0.06);
+  --control-fill-secondary: rgba(0, 255, 65, 0.1);
+  --control-fill-tertiary: rgba(0, 255, 65, 0.04);
+  --control-fill-disabled: rgba(0, 255, 65, 0.02);
+
+  /* Subtle hover/active fills */
+  --subtle-fill: transparent;
+  --subtle-fill-secondary: rgba(0, 255, 65, 0.08);
+  --subtle-fill-tertiary: rgba(0, 255, 65, 0.05);
+
+  /* Control borders */
+  --control-stroke: rgba(0, 255, 65, 0.15);
+  --control-stroke-secondary: rgba(0, 255, 65, 0.1);
+
+  /* Focus indicators */
+  --focus-stroke-outer: #00ff41;
+  --focus-stroke-inner: #0a0a0a;
+
+  /* System status colors */
+  --system-critical: #ff3333;
+  --system-success: #00ff41;
+  --system-caution: #ffcc00;
+
+  /* Shadows - green glow */
+  --shadow-flyout: 0 8px 20px rgba(0, 0, 0, 0.6), 0 0 8px rgba(0, 255, 65, 0.1);
+  --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.7), 0 0 16px rgba(0, 255, 65, 0.08);
+  --shadow-tooltip: 0 4px 12px rgba(0, 0, 0, 0.5);
+
+  /* Icon colors - all green to match terminal aesthetic */
+  --icon-folder: #00ff41;
+  --icon-file-tint: #00cc33;
+
+  /* Breadcrumb style - powerline segments */
+  --breadcrumb-separator-color: #00aa2a;
+  --breadcrumb-segment-bg: rgba(0, 255, 65, 0.1);
+  --breadcrumb-segment-bg-hover: rgba(0, 255, 65, 0.18);
+  --breadcrumb-chevron-display: none;
+  --breadcrumb-powerline-display: flex;
+}

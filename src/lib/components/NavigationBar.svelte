@@ -123,9 +123,13 @@
       </button>
 
       {#each explorer.breadcrumbs as segment, i (segment.path)}
-        <span class="chevron">
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+        <span class="separator">
+          <svg class="chevron-icon" width="10" height="10" viewBox="0 0 10 10" fill="none">
             <path d="M3 2L6 5L3 8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <svg class="powerline-icon" width="8" height="20" viewBox="0 0 8 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 0L8 10L0 20" fill="currentColor" fill-opacity="0.15"/>
+            <path d="M0 0L8 10L0 20" stroke="currentColor" stroke-width="0.5" stroke-opacity="0.3"/>
           </svg>
         </span>
         <button
@@ -247,7 +251,7 @@
     align-items: center;
     gap: 4px;
     padding: 2px 6px;
-    background: transparent;
+    background: var(--breadcrumb-segment-bg, transparent);
     border: none;
     border-radius: 3px;
     font-family: inherit;
@@ -266,7 +270,7 @@
   }
 
   .crumb:hover {
-    background: var(--subtle-fill-secondary);
+    background: var(--breadcrumb-segment-bg-hover, var(--subtle-fill-secondary));
   }
 
   .crumb:active {
@@ -277,11 +281,23 @@
     font-weight: 500;
   }
 
-  .chevron {
+  /* Separator - contains both chevron and powerline icons */
+  .separator {
     display: flex;
     align-items: center;
-    color: var(--text-tertiary);
+    color: var(--breadcrumb-separator-color, var(--text-tertiary));
     flex-shrink: 0;
+  }
+
+  /* Default: show chevron, hide powerline */
+  .separator .chevron-icon {
+    display: var(--breadcrumb-chevron-display, flex);
+  }
+
+  .separator .powerline-icon {
+    display: var(--breadcrumb-powerline-display, none);
+    height: 20px;
+    width: 8px;
   }
 
   .dropdown-toggle {

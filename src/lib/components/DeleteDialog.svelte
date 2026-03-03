@@ -36,6 +36,8 @@
   function handleKeydown(event: KeyboardEvent) {
     if (event.key === "Escape") {
       handleCancel();
+    } else if (event.key === "Enter" && !deleting) {
+      handleConfirm();
     }
   }
 

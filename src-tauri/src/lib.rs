@@ -88,6 +88,8 @@ pub fn run() {
             clipboard::clipboard_has_files,
             clipboard::clipboard_read_files,
             clipboard::clipboard_write_files,
+            clipboard::clipboard_has_image,
+            clipboard::clipboard_paste_image,
             // Thumbnails
             thumbnails::get_thumbnail,
             thumbnails::get_thumbnail_data,

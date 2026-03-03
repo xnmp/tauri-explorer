@@ -572,6 +572,37 @@ export async function cancelContentSearch(searchId: number): Promise<ApiResult<v
 }
 
 // ===================
+// Clipboard Image Paste
+// Issue: tauri-ttbb
+// ===================
+
+/**
+ * Check if the OS clipboard contains image data.
+ */
+export async function clipboardHasImage(): Promise<boolean> {
+  try {
+    return await invoke<boolean>("clipboard_has_image");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Paste clipboard image to a file in the given directory.
+ *
+ * @param directory - Directory to save the image in
+ * @returns Result with the created file path or error
+ */
+export async function clipboardPasteImage(directory: string): Promise<ApiResult<string>> {
+  try {
+    const path = await invoke<string>("clipboard_paste_image", { directory });
+    return { ok: true, data: path };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+// ===================
 // Archive Operations
 // Issue: tauri-explorer-0xr, tauri-explorer-kez
 // ===================

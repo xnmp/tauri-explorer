@@ -7,12 +7,12 @@
   import { themeStore } from "$lib/state/theme.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { clipboardStore } from "$lib/state/clipboard.svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { setPaneNavigationContext } from "$lib/state/pane-context";
   import { registerAllCommands } from "$lib/state/command-definitions";
   import { executeCommand, getCommand } from "$lib/state/commands.svelte";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
+  import { dialogStore } from "$lib/state/dialogs.svelte";
   import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
   import { copyEntry, getHomeDirectory } from "$lib/api/files";
   import "$lib/themes/index.css";
@@ -27,16 +27,6 @@
   import ContentSearchDialog from "$lib/components/ContentSearchDialog.svelte";
   import WorkspaceDialog from "$lib/components/WorkspaceDialog.svelte";
   import BulkRenameDialog from "$lib/components/BulkRenameDialog.svelte";
-  import type { FileEntry } from "$lib/domain/file";
-
-  // Dialog states
-  let quickOpenVisible = $state(false);
-  let commandPaletteVisible = $state(false);
-  let settingsVisible = $state(false);
-  let contentSearchVisible = $state(false);
-  let workspaceDialogVisible = $state(false);
-  let bulkRenameVisible = $state(false);
-  let bulkRenameEntries = $state<FileEntry[]>([]);
 
   // Get active explorer from window tabs manager
   function getActiveExplorer(): ExplorerInstance | undefined {
@@ -92,7 +82,7 @@
     // Ctrl+,: Open settings (hardcoded, not customizable)
     if (event.key === "," && isModifier) {
       event.preventDefault();
-      settingsVisible = true;
+      dialogStore.openSettings();
       return;
     }
 
@@ -157,38 +147,6 @@
     // Global keyboard shortcuts
     window.addEventListener("keydown", handleKeydown);
 
-    // Event-based dialog opening (for commands)
-    function handleOpenQuickOpen() {
-      quickOpenVisible = true;
-    }
-    function handleOpenCommandPalette() {
-      commandPaletteVisible = true;
-    }
-    function handleOpenContentSearch() {
-      contentSearchVisible = true;
-    }
-
-    function handleOpenRecentFiles() {
-      quickOpenVisible = true; // Recent files shown in QuickOpen when query is empty
-    }
-    function handleOpenWorkspaces() {
-      workspaceDialogVisible = true;
-    }
-    function handleOpenBulkRename(e: Event) {
-      const detail = (e as CustomEvent).detail;
-      if (detail?.entries) {
-        bulkRenameEntries = detail.entries;
-        bulkRenameVisible = true;
-      }
-    }
-
-    window.addEventListener("open-quick-open", handleOpenQuickOpen);
-    window.addEventListener("open-command-palette", handleOpenCommandPalette);
-    window.addEventListener("open-content-search", handleOpenContentSearch);
-    window.addEventListener("open-recent-files", handleOpenRecentFiles);
-    window.addEventListener("open-workspaces", handleOpenWorkspaces);
-    window.addEventListener("open-bulk-rename", handleOpenBulkRename);
-
     // Save tabs before window closes
     function handleBeforeUnload() {
       windowTabsManager.save();
@@ -202,12 +160,6 @@
 
     return () => {
       window.removeEventListener("keydown", handleKeydown);
-      window.removeEventListener("open-quick-open", handleOpenQuickOpen);
-      window.removeEventListener("open-command-palette", handleOpenCommandPalette);
-      window.removeEventListener("open-content-search", handleOpenContentSearch);
-      window.removeEventListener("open-recent-files", handleOpenRecentFiles);
-      window.removeEventListener("open-workspaces", handleOpenWorkspaces);
-      window.removeEventListener("open-bulk-rename", handleOpenBulkRename);
       window.removeEventListener("beforeunload", handleBeforeUnload);
       clearInterval(saveInterval);
       externalDrop.cleanup();
@@ -228,15 +180,15 @@
   </div>
 </main>
 
-<QuickOpen open={quickOpenVisible} onClose={() => quickOpenVisible = false} />
-<CommandPalette open={commandPaletteVisible} onClose={() => commandPaletteVisible = false} />
-<ContentSearchDialog open={contentSearchVisible} onClose={() => contentSearchVisible = false} />
-<SettingsDialog open={settingsVisible} onClose={() => settingsVisible = false} />
-<WorkspaceDialog open={workspaceDialogVisible} onClose={() => workspaceDialogVisible = false} />
+<QuickOpen open={dialogStore.isQuickOpenOpen} onClose={() => dialogStore.closeQuickOpen()} />
+<CommandPalette open={dialogStore.isCommandPaletteOpen} onClose={() => dialogStore.closeCommandPalette()} />
+<ContentSearchDialog open={dialogStore.isContentSearchOpen} onClose={() => dialogStore.closeContentSearch()} />
+<SettingsDialog open={dialogStore.isSettingsOpen} onClose={() => dialogStore.closeSettings()} />
+<WorkspaceDialog open={dialogStore.isWorkspaceOpen} onClose={() => dialogStore.closeWorkspace()} />
 <BulkRenameDialog
-  open={bulkRenameVisible}
-  entries={bulkRenameEntries}
-  onClose={() => bulkRenameVisible = false}
+  open={dialogStore.isBulkRenameOpen}
+  entries={dialogStore.bulkRenameEntries}
+  onClose={() => dialogStore.closeBulkRename()}
   onComplete={() => refreshAllPanes()}
 />
 <ProgressDialog />

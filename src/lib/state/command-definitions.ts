@@ -14,6 +14,7 @@ import { settingsStore } from "./settings.svelte";
 import { themeStore } from "./theme.svelte";
 import { bookmarksStore } from "./bookmarks.svelte";
 import { recentFilesStore } from "./recent-files.svelte";
+import { dialogStore } from "./dialogs.svelte";
 import { copyEntry, moveEntry, writeTextFile } from "$lib/api/files";
 import type { ViewMode } from "./types";
 
@@ -116,7 +117,7 @@ const fileCommands: Command[] = [
       const explorer = getActiveExplorer();
       const selected = explorer?.getSelectedEntries() ?? [];
       if (selected.length >= 2) {
-        window.dispatchEvent(new CustomEvent("open-bulk-rename", { detail: { entries: selected } }));
+        dialogStore.openBulkRename(selected);
       }
     },
     when: () => (getActiveExplorer()?.getSelectedEntries().length ?? 0) >= 2,
@@ -509,7 +510,7 @@ const recentCommands: Command[] = [
     label: "Open Recent...",
     category: "general",
     handler: () => {
-      window.dispatchEvent(new CustomEvent("open-recent-files"));
+      dialogStore.openQuickOpen();
     },
   },
   {
@@ -528,7 +529,7 @@ const workspaceCommands: Command[] = [
     label: "Workspaces: Manage...",
     category: "general",
     handler: () => {
-      window.dispatchEvent(new CustomEvent("open-workspaces"));
+      dialogStore.openWorkspace();
     },
   },
   {
@@ -536,7 +537,7 @@ const workspaceCommands: Command[] = [
     label: "Workspaces: Save Current Layout",
     category: "general",
     handler: () => {
-      window.dispatchEvent(new CustomEvent("open-workspaces"));
+      dialogStore.openWorkspace();
     },
   },
 ];
@@ -549,8 +550,7 @@ const generalCommands: Command[] = [
     category: "general",
     shortcut: "Ctrl+P",
     handler: () => {
-      // This will be handled by the QuickOpen component
-      window.dispatchEvent(new CustomEvent("open-quick-open"));
+      dialogStore.openQuickOpen();
     },
   },
   {
@@ -559,7 +559,7 @@ const generalCommands: Command[] = [
     category: "general",
     shortcut: "Ctrl+Shift+P",
     handler: () => {
-      window.dispatchEvent(new CustomEvent("open-command-palette"));
+      dialogStore.openCommandPalette();
     },
   },
   {
@@ -568,7 +568,7 @@ const generalCommands: Command[] = [
     category: "general",
     shortcut: "Ctrl+Shift+F",
     handler: () => {
-      window.dispatchEvent(new CustomEvent("open-content-search"));
+      dialogStore.openContentSearch();
     },
   },
 ];

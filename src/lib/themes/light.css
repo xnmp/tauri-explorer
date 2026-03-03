@@ -66,4 +66,8 @@
   --shadow-flyout: 0 8px 16px rgba(0, 0, 0, 0.14);
   --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.24), 0 2px 21px rgba(0, 0, 0, 0.18);
   --shadow-tooltip: 0 4px 8px rgba(0, 0, 0, 0.14);
+
+  /* Icon colors - themeable */
+  --icon-folder: #ffb900;
+  /* --icon-file-tint: unset; when set, overrides all file icon colors */
 }

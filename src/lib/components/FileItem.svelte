@@ -267,7 +267,7 @@
 >
   <!-- Name column -->
   <div class="name-cell">
-    <div class="icon" aria-hidden="true">
+    <div class="icon" style:--file-icon-color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined} aria-hidden="true">
       {#if entry.kind === "directory"}
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
           <path
@@ -282,54 +282,53 @@
           />
         </svg>
       {:else}
-        {@const iconColor = getFileIconColor(entry)}
         {@const iconCategory = getFileIconCategory(entry)}
         {#if iconCategory === "image"}
           <!-- Image file icon -->
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-            <rect x="3" y="3" width="12" height="12" rx="1.5" fill={iconColor} fill-opacity="0.15"/>
-            <rect x="3" y="3" width="12" height="12" rx="1.5" stroke={iconColor} stroke-width="1.25"/>
-            <circle cx="6.5" cy="6.5" r="1.5" fill={iconColor}/>
-            <path d="M3 12L6 9L8.5 11.5L11 8L15 12V13.5C15 14.3284 14.3284 15 13.5 15H4.5C3.67157 15 3 14.3284 3 13.5V12Z" fill={iconColor} fill-opacity="0.4"/>
+            <rect x="3" y="3" width="12" height="12" rx="1.5" fill="currentColor" fill-opacity="0.15"/>
+            <rect x="3" y="3" width="12" height="12" rx="1.5" stroke="currentColor" stroke-width="1.25"/>
+            <circle cx="6.5" cy="6.5" r="1.5" fill="currentColor"/>
+            <path d="M3 12L6 9L8.5 11.5L11 8L15 12V13.5C15 14.3284 14.3284 15 13.5 15H4.5C3.67157 15 3 14.3284 3 13.5V12Z" fill="currentColor" fill-opacity="0.4"/>
           </svg>
         {:else if iconCategory === "archive"}
           <!-- Archive file icon -->
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-            <path d="M4 3C4 2.44772 4.44772 2 5 2H13C13.5523 2 14 2.44772 14 3V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" fill={iconColor} fill-opacity="0.15"/>
-            <path d="M4 3C4 2.44772 4.44772 2 5 2H13C13.5523 2 14 2.44772 14 3V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" stroke={iconColor} stroke-width="1.25"/>
-            <rect x="7" y="4" width="4" height="2" rx="0.5" fill={iconColor}/>
-            <rect x="7" y="7" width="4" height="2" rx="0.5" fill={iconColor}/>
-            <rect x="7" y="10" width="4" height="3" rx="0.5" fill={iconColor}/>
+            <path d="M4 3C4 2.44772 4.44772 2 5 2H13C13.5523 2 14 2.44772 14 3V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" fill="currentColor" fill-opacity="0.15"/>
+            <path d="M4 3C4 2.44772 4.44772 2 5 2H13C13.5523 2 14 2.44772 14 3V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" stroke="currentColor" stroke-width="1.25"/>
+            <rect x="7" y="4" width="4" height="2" rx="0.5" fill="currentColor"/>
+            <rect x="7" y="7" width="4" height="2" rx="0.5" fill="currentColor"/>
+            <rect x="7" y="10" width="4" height="3" rx="0.5" fill="currentColor"/>
           </svg>
         {:else if iconCategory === "code"}
           <!-- Code file icon -->
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-            <path d="M4 3C4 2.44772 4.44772 2 5 2H10L14 6V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" fill={iconColor} fill-opacity="0.15"/>
-            <path d="M4 3C4 2.44772 4.44772 2 5 2H10L14 6V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" stroke={iconColor} stroke-width="1.25"/>
-            <path d="M10 2V5C10 5.55228 10.4477 6 11 6H14" stroke={iconColor} stroke-width="1.25"/>
-            <path d="M7.5 9L6 10.5L7.5 12M10.5 9L12 10.5L10.5 12" stroke={iconColor} stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M4 3C4 2.44772 4.44772 2 5 2H10L14 6V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" fill="currentColor" fill-opacity="0.15"/>
+            <path d="M4 3C4 2.44772 4.44772 2 5 2H10L14 6V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" stroke="currentColor" stroke-width="1.25"/>
+            <path d="M10 2V5C10 5.55228 10.4477 6 11 6H14" stroke="currentColor" stroke-width="1.25"/>
+            <path d="M7.5 9L6 10.5L7.5 12M10.5 9L12 10.5L10.5 12" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         {:else if iconCategory === "media"}
           <!-- Media file icon -->
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-            <rect x="3" y="4" width="12" height="10" rx="1.5" fill={iconColor} fill-opacity="0.15"/>
-            <rect x="3" y="4" width="12" height="10" rx="1.5" stroke={iconColor} stroke-width="1.25"/>
-            <path d="M7 7V11L11 9L7 7Z" fill={iconColor}/>
+            <rect x="3" y="4" width="12" height="10" rx="1.5" fill="currentColor" fill-opacity="0.15"/>
+            <rect x="3" y="4" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.25"/>
+            <path d="M7 7V11L11 9L7 7Z" fill="currentColor"/>
           </svg>
         {:else if iconCategory === "executable"}
           <!-- Executable file icon -->
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-            <rect x="3" y="3" width="12" height="12" rx="2" fill={iconColor} fill-opacity="0.15"/>
-            <rect x="3" y="3" width="12" height="12" rx="2" stroke={iconColor} stroke-width="1.25"/>
-            <path d="M6 9H12M9 6V12" stroke={iconColor} stroke-width="1.5" stroke-linecap="round"/>
+            <rect x="3" y="3" width="12" height="12" rx="2" fill="currentColor" fill-opacity="0.15"/>
+            <rect x="3" y="3" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.25"/>
+            <path d="M6 9H12M9 6V12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
           </svg>
         {:else}
           <!-- Default document icon -->
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-            <path d="M4 3C4 2.44772 4.44772 2 5 2H10L15 7V15C15 15.5523 14.5523 16 14 16H5C4.44772 16 4 15.5523 4 15V3Z" fill={iconColor} fill-opacity="0.15"/>
-            <path d="M4 3C4 2.44772 4.44772 2 5 2H10L15 7V15C15 15.5523 14.5523 16 14 16H5C4.44772 16 4 15.5523 4 15V3Z" stroke={iconColor} stroke-width="1.25"/>
-            <path d="M10 2V6C10 6.55228 10.4477 7 11 7H15" stroke={iconColor} stroke-width="1.25"/>
-            <path d="M6.5 10H11.5M6.5 12.5H10" stroke={iconColor} stroke-width="1" stroke-linecap="round"/>
+            <path d="M4 3C4 2.44772 4.44772 2 5 2H10L15 7V15C15 15.5523 14.5523 16 14 16H5C4.44772 16 4 15.5523 4 15V3Z" fill="currentColor" fill-opacity="0.15"/>
+            <path d="M4 3C4 2.44772 4.44772 2 5 2H10L15 7V15C15 15.5523 14.5523 16 14 16H5C4.44772 16 4 15.5523 4 15V3Z" stroke="currentColor" stroke-width="1.25"/>
+            <path d="M10 2V6C10 6.55228 10.4477 7 11 7H15" stroke="currentColor" stroke-width="1.25"/>
+            <path d="M6.5 10H11.5M6.5 12.5H10" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
           </svg>
         {/if}
       {/if}
@@ -470,7 +469,7 @@
     flex-shrink: 0;
   }
 
-  /* Folder colors - Windows 11 vibrant golden yellow */
+  /* Folder colors - themed via CSS variable */
   .folder-back {
     opacity: 0.65;
   }
@@ -480,11 +479,12 @@
   }
 
   .directory .icon {
-    color: #ffb900;
+    color: var(--icon-folder, #ffb900);
   }
 
+  /* File icon colors - theme can override via --icon-file-tint */
   .file-item:not(.directory) .icon {
-    color: var(--text-secondary);
+    color: var(--icon-file-tint, var(--file-icon-color, var(--text-secondary)));
   }
 
   /* Name */
@@ -577,14 +577,4 @@
     box-shadow: inset 0 0 0 1px #10b981;
   }
 
-  /* Dark mode folder color adjustment */
-  @media (prefers-color-scheme: dark) {
-    .directory .icon {
-      color: #ffc83d;
-    }
-
-    .file-item:not(.directory) .icon {
-      color: var(--text-tertiary);
-    }
-  }
 </style>

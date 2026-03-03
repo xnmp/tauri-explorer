@@ -113,6 +113,66 @@
               <span class="toggle-slider"></span>
             </label>
           </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Show Status Bar</span>
+              <span class="setting-description">Display file info bar at the bottom (Alt+M U)</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.showStatusBar}
+                onchange={() => settingsStore.toggleStatusBar()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </section>
+
+        <!-- Navigation Bar Section -->
+        <section class="settings-section">
+          <h3 class="section-title">Navigation Bar Buttons</h3>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Back</span>
+              <span class="setting-description">Show the back navigation button</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" checked={settingsStore.navBarButtons.back} onchange={() => settingsStore.toggleNavButton("back")} />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Forward</span>
+              <span class="setting-description">Show the forward navigation button</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" checked={settingsStore.navBarButtons.forward} onchange={() => settingsStore.toggleNavButton("forward")} />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Up</span>
+              <span class="setting-description">Show the go-up-one-level button</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" checked={settingsStore.navBarButtons.up} onchange={() => settingsStore.toggleNavButton("up")} />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Refresh</span>
+              <span class="setting-description">Show the refresh/reload button</span>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" checked={settingsStore.navBarButtons.refresh} onchange={() => settingsStore.toggleNavButton("refresh")} />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
         </section>
 
         <!-- Behavior Section -->

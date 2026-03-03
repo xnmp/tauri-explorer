@@ -6,6 +6,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
+  import { settingsStore } from "$lib/state/settings.svelte";
 
   interface Props {
     explorer?: ExplorerInstance;
@@ -55,51 +56,59 @@
 <div class="navigation-bar">
   <!-- Navigation controls next to address bar -->
   <div class="nav-controls">
-    <button
-      class="nav-btn"
-      title="Back (Alt+Left)"
-      disabled={!explorer.canGoBack}
-      onclick={() => explorer.goBack()}
-      aria-label="Go back"
-    >
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <path d="M10 13L5 8L10 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    </button>
+    {#if settingsStore.navBarButtons.back}
+      <button
+        class="nav-btn"
+        title="Back (Alt+Left)"
+        disabled={!explorer.canGoBack}
+        onclick={() => explorer.goBack()}
+        aria-label="Go back"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M10 13L5 8L10 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    {/if}
 
-    <button
-      class="nav-btn"
-      title="Forward (Alt+Right)"
-      disabled={!explorer.canGoForward}
-      onclick={() => explorer.goForward()}
-      aria-label="Go forward"
-    >
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <path d="M6 3L11 8L6 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    </button>
+    {#if settingsStore.navBarButtons.forward}
+      <button
+        class="nav-btn"
+        title="Forward (Alt+Right)"
+        disabled={!explorer.canGoForward}
+        onclick={() => explorer.goForward()}
+        aria-label="Go forward"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M6 3L11 8L6 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    {/if}
 
-    <button
-      class="nav-btn"
-      onclick={() => explorer.goUp()}
-      title="Up (Alt+Up)"
-      aria-label="Go up one level"
-    >
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <path d="M8 13V4M8 4L4 8M8 4L12 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    </button>
+    {#if settingsStore.navBarButtons.up}
+      <button
+        class="nav-btn"
+        onclick={() => explorer.goUp()}
+        title="Up (Alt+Up)"
+        aria-label="Go up one level"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M8 13V4M8 4L4 8M8 4L12 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    {/if}
 
-    <button
-      class="nav-btn"
-      onclick={() => explorer.refresh()}
-      title="Refresh (F5)"
-      aria-label="Refresh"
-    >
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <path d="M13.5 8C13.5 10.7614 11.2614 13 8.5 13C5.73858 13 3.5 10.7614 3.5 8C3.5 5.23858 5.73858 3 8.5 3C10.5 3 12.2 4.2 13 5.8M13 3V5.8M13 5.8H10.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    </button>
+    {#if settingsStore.navBarButtons.refresh}
+      <button
+        class="nav-btn"
+        onclick={() => explorer.refresh()}
+        title="Refresh (F5)"
+        aria-label="Refresh"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M13.5 8C13.5 10.7614 11.2614 13 8.5 13C5.73858 13 3.5 10.7614 3.5 8C3.5 5.23858 5.73858 3 8.5 3C10.5 3 12.2 4.2 13 5.8M13 3V5.8M13 5.8H10.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    {/if}
   </div>
 
   <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -123,9 +132,13 @@
       </button>
 
       {#each explorer.breadcrumbs as segment, i (segment.path)}
-        <span class="chevron">
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+        <span class="separator">
+          <svg class="chevron-icon" width="10" height="10" viewBox="0 0 10 10" fill="none">
             <path d="M3 2L6 5L3 8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <svg class="powerline-icon" width="8" height="20" viewBox="0 0 8 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 0L8 10L0 20" fill="currentColor" fill-opacity="0.15"/>
+            <path d="M0 0L8 10L0 20" stroke="currentColor" stroke-width="0.5" stroke-opacity="0.3"/>
           </svg>
         </span>
         <button
@@ -247,7 +260,7 @@
     align-items: center;
     gap: 4px;
     padding: 2px 6px;
-    background: transparent;
+    background: var(--breadcrumb-segment-bg, transparent);
     border: none;
     border-radius: 3px;
     font-family: inherit;
@@ -266,7 +279,7 @@
   }
 
   .crumb:hover {
-    background: var(--subtle-fill-secondary);
+    background: var(--breadcrumb-segment-bg-hover, var(--subtle-fill-secondary));
   }
 
   .crumb:active {
@@ -277,11 +290,23 @@
     font-weight: 500;
   }
 
-  .chevron {
+  /* Separator - contains both chevron and powerline icons */
+  .separator {
     display: flex;
     align-items: center;
-    color: var(--text-tertiary);
+    color: var(--breadcrumb-separator-color, var(--text-tertiary));
     flex-shrink: 0;
+  }
+
+  /* Default: show chevron, hide powerline */
+  .separator .chevron-icon {
+    display: var(--breadcrumb-chevron-display, flex);
+  }
+
+  .separator .powerline-icon {
+    display: var(--breadcrumb-powerline-display, none);
+    height: 20px;
+    width: 8px;
   }
 
   .dropdown-toggle {

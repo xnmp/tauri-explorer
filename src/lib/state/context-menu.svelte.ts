@@ -1,11 +1,13 @@
 /**
  * Global context menu state management using Svelte 5 runes.
- * Issue: tauri-explorer-1k9k
+ * Issue: tauri-explorer-1k9k, tauri-obxi
  *
  * Extracted from explorer.svelte.ts to reduce god-object complexity.
  * Manages context menu visibility and position.
  * Only one context menu can be open at a time.
  */
+
+import { adjustForZoom } from "$lib/domain/zoom";
 
 export interface ContextMenuPosition {
   x: number;
@@ -27,7 +29,7 @@ function createContextMenuStore() {
 
     // Actions
     open(x: number, y: number): void {
-      position = { x, y };
+      position = adjustForZoom(x, y);
       isOpen = true;
     },
 

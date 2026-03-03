@@ -17,6 +17,7 @@ import {
   createDirectory,
   renameEntry as apiRenameEntry,
   deleteEntry,
+  deleteMultipleEntries,
   copyEntry,
   moveEntry,
   startStreamingDirectory,
@@ -367,8 +368,10 @@ function createExplorerState() {
     dialogStore.cancelRename();
   }
 
-  function startDelete(entry: FileEntry) {
-    dialogStore.startDelete(entry);
+  function startDelete(entries: FileEntry | FileEntry[]) {
+    const arr = Array.isArray(entries) ? entries : [entries];
+    if (arr.length === 0) return;
+    dialogStore.startDelete(arr);
   }
 
   function cancelDelete() {
@@ -430,13 +433,20 @@ function createExplorerState() {
   }
 
   async function confirmDelete(): Promise<string | null> {
-    const deletingEntry = dialogStore.deletingEntry;
-    if (!deletingEntry) return "No entry selected for delete";
+    const entries = dialogStore.deletingEntries;
+    if (entries.length === 0) return "No entries selected for delete";
 
-    const result = await deleteEntry(deletingEntry.path);
+    const paths = entries.map((e) => e.path);
+    const result = entries.length === 1
+      ? await deleteEntry(paths[0])
+      : await deleteMultipleEntries(paths);
 
     if (result.ok) {
-      coreState.entries = coreState.entries.filter((e) => e.path !== deletingEntry.path);
+      const deletedPaths = new Set(paths);
+      coreState.entries = coreState.entries.filter((e) => !deletedPaths.has(e.path));
+      coreState.selectedPaths = new Set(
+        [...coreState.selectedPaths].filter((p) => !deletedPaths.has(p))
+      );
       dialogStore.cancelDelete();
       return null;
     }

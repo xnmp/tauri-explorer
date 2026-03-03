@@ -93,10 +93,10 @@
       return;
     }
 
-    // Delete: Delete selected item
-    if (event.key === "Delete" && selected) {
+    // Delete: Delete selected item(s)
+    if (event.key === "Delete" && selectedEntries.length > 0) {
       event.preventDefault();
-      paneExplorer.startDelete(selected);
+      paneExplorer.startDelete(selectedEntries);
       return;
     }
 

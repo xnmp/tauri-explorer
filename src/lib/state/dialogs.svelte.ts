@@ -14,11 +14,13 @@ export type DialogType = "newFolder" | "rename" | "delete" | null;
 function createDialogStore() {
   let activeDialog = $state<DialogType>(null);
   let targetEntry = $state<FileEntry | null>(null);
+  let targetEntries = $state<FileEntry[]>([]);
 
   function closeIfActive(dialogType: DialogType): void {
     if (activeDialog === dialogType) {
       activeDialog = null;
       targetEntry = null;
+      targetEntries = [];
     }
   }
 
@@ -45,6 +47,9 @@ function createDialogStore() {
     get deletingEntry() {
       return activeDialog === "delete" ? targetEntry : null;
     },
+    get deletingEntries() {
+      return activeDialog === "delete" ? targetEntries : [];
+    },
 
     // Actions
     openNewFolder(): void {
@@ -65,9 +70,10 @@ function createDialogStore() {
       closeIfActive("rename");
     },
 
-    startDelete(entry: FileEntry): void {
+    startDelete(entries: FileEntry[]): void {
       activeDialog = "delete";
-      targetEntry = entry;
+      targetEntries = entries;
+      targetEntry = entries.length === 1 ? entries[0] : null;
     },
 
     cancelDelete(): void {
@@ -77,6 +83,7 @@ function createDialogStore() {
     closeAll(): void {
       activeDialog = null;
       targetEntry = null;
+      targetEntries = [];
     },
   };
 }

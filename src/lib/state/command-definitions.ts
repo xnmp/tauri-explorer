@@ -128,8 +128,8 @@ const fileCommands: Command[] = [
     shortcut: "Delete",
     handler: () => {
       const explorer = getActiveExplorer();
-      const selected = explorer?.getSelectedEntries()[0];
-      if (selected) {
+      const selected = explorer?.getSelectedEntries();
+      if (selected && selected.length > 0) {
         explorer?.startDelete(selected);
       }
     },

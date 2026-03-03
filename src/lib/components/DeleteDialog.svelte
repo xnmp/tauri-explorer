@@ -48,7 +48,11 @@
   }
 </script>
 
-{#if dialogStore.deletingEntry}
+{#if dialogStore.deletingEntries.length > 0}
+  {@const entries = dialogStore.deletingEntries}
+  {@const isMultiple = entries.length > 1}
+  {@const singleEntry = entries[0]}
+  {@const hasFolders = entries.some((e) => e.kind === "directory")}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
     class="overlay"
@@ -69,14 +73,31 @@
       </div>
 
       <div class="dialog-content">
-        <h2 id="dialog-title">Delete {dialogStore.deletingEntry?.kind === "directory" ? "folder" : "file"}?</h2>
-
-        <p id="dialog-description" class="message">
-          <strong>{dialogStore.deletingEntry?.name}</strong> will be moved to the Recycle Bin.
-          {#if dialogStore.deletingEntry?.kind === "directory"}
-            <span class="info">All files and folders inside will also be moved.</span>
-          {/if}
-        </p>
+        {#if isMultiple}
+          <h2 id="dialog-title">Delete {entries.length} items?</h2>
+          <p id="dialog-description" class="message">
+            These {entries.length} items will be moved to the Recycle Bin.
+            {#if hasFolders}
+              <span class="info">Folders and all their contents will also be moved.</span>
+            {/if}
+          </p>
+          <div class="entry-list">
+            {#each entries.slice(0, 5) as entry}
+              <span class="entry-name">{entry.name}</span>
+            {/each}
+            {#if entries.length > 5}
+              <span class="entry-more">and {entries.length - 5} more...</span>
+            {/if}
+          </div>
+        {:else}
+          <h2 id="dialog-title">Delete {singleEntry.kind === "directory" ? "folder" : "file"}?</h2>
+          <p id="dialog-description" class="message">
+            <strong>{singleEntry.name}</strong> will be moved to the Recycle Bin.
+            {#if singleEntry.kind === "directory"}
+              <span class="info">All files and folders inside will also be moved.</span>
+            {/if}
+          </p>
+        {/if}
 
         {#if error}
           <p class="error-message" role="alert">
@@ -97,7 +118,7 @@
           {#if deleting}
             <span class="spinner"></span>
           {/if}
-          Delete
+          Delete{#if isMultiple} ({entries.length}){/if}
         </button>
       </div>
     </div>
@@ -195,6 +216,33 @@
     border-radius: var(--radius-sm);
     font-size: var(--font-size-caption);
     color: var(--text-secondary);
+  }
+
+  .entry-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: var(--spacing-sm);
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--subtle-fill-secondary);
+    border-radius: var(--radius-sm);
+    max-height: 120px;
+    overflow-y: auto;
+    text-align: left;
+  }
+
+  .entry-name {
+    font-size: var(--font-size-caption);
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .entry-more {
+    font-size: var(--font-size-caption);
+    color: var(--text-tertiary);
+    font-style: italic;
   }
 
   .error-message {

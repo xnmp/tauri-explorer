@@ -14,6 +14,7 @@ export interface Settings {
   showPreviewPane: boolean;
   confirmDelete: boolean;
   zoomLevel: number; // percentage, e.g. 100 = 100%
+  terminalApp: string; // terminal emulator command, empty = auto-detect
 }
 
 const MIN_ZOOM = 50;
@@ -28,6 +29,7 @@ const DEFAULT_SETTINGS: Settings = {
   showPreviewPane: false,
   confirmDelete: true,
   zoomLevel: 100,
+  terminalApp: "",
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -128,6 +130,9 @@ function createSettingsStore() {
     },
     get zoomLevel() {
       return settings.zoomLevel;
+    },
+    get terminalApp() {
+      return settings.terminalApp;
     },
     update,
     toggleToolbar,

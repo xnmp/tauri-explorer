@@ -7,6 +7,7 @@
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
   import { contextMenuStore } from "$lib/state/context-menu.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
+  import { settingsStore } from "$lib/state/settings.svelte";
   import { compressToZip, extractArchive, openFile, openInTerminal } from "$lib/api/files";
   import type { FileEntry } from "$lib/domain/file";
   import type { ViewMode } from "$lib/state/types";
@@ -127,7 +128,7 @@
 
   async function handleOpenInTerminal(): Promise<void> {
     const path = selectedDirectory?.path ?? explorer.state.currentPath;
-    await openInTerminal(path);
+    await openInTerminal(path, settingsStore.terminalApp);
     contextMenuStore.close();
   }
 

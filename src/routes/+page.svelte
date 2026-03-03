@@ -123,6 +123,12 @@
     document.documentElement.style.zoom = `${settingsStore.zoomLevel}%`;
   });
 
+  // Apply background opacity reactively (for window transparency)
+  $effect(() => {
+    const opacity = settingsStore.backgroundOpacity / 100;
+    document.documentElement.style.setProperty("--bg-opacity", String(opacity));
+  });
+
   onMount(() => {
     performance.mark("app-mount-start");
 
@@ -259,7 +265,7 @@
     font-size: var(--font-size-body);
     line-height: 1.43;
     color: var(--text-primary);
-    background: var(--background-solid);
+    background: color-mix(in srgb, var(--background-solid) calc(var(--bg-opacity, 1) * 100%), transparent);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     /* Window frame with border for transparent window */
@@ -311,7 +317,7 @@
     display: flex;
     flex-direction: column;
     height: 100vh;
-    background: var(--background-mica);
+    background: color-mix(in srgb, var(--background-mica) calc(var(--bg-opacity, 1) * 100%), transparent);
     backdrop-filter: blur(60px) saturate(125%);
     -webkit-backdrop-filter: blur(60px) saturate(125%);
   }

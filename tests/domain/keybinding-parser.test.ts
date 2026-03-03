@@ -10,6 +10,8 @@ import {
   matchesShortcutString,
   formatShortcut,
   eventToShortcutString,
+  isChordShortcut,
+  parseChord,
   type ParsedShortcut,
 } from "$lib/domain/keybinding-parser";
 
@@ -392,4 +394,69 @@ describe("real-world shortcuts", () => {
       expect(matchesShortcutString(event as unknown as KeyboardEvent, shortcut.string)).toBe(true);
     });
   }
+});
+
+describe("isChordShortcut", () => {
+  it("identifies chord shortcuts", () => {
+    expect(isChordShortcut("Alt+M T")).toBe(true);
+    expect(isChordShortcut("Ctrl+K Ctrl+C")).toBe(true);
+  });
+
+  it("identifies non-chord shortcuts", () => {
+    expect(isChordShortcut("Ctrl+C")).toBe(false);
+    expect(isChordShortcut("F5")).toBe(false);
+    expect(isChordShortcut("Alt+Left")).toBe(false);
+  });
+});
+
+describe("parseChord", () => {
+  it("parses Alt+M T chord", () => {
+    const chord = parseChord("Alt+M T");
+    expect(chord).not.toBeNull();
+    expect(chord!.prefix).toEqual({
+      key: "m",
+      ctrl: false,
+      shift: false,
+      alt: true,
+      meta: false,
+    });
+    expect(chord!.suffix).toEqual({
+      key: "t",
+      ctrl: false,
+      shift: false,
+      alt: false,
+      meta: false,
+    });
+  });
+
+  it("parses Ctrl+K Ctrl+C chord", () => {
+    const chord = parseChord("Ctrl+K Ctrl+C");
+    expect(chord).not.toBeNull();
+    expect(chord!.prefix.ctrl).toBe(true);
+    expect(chord!.prefix.key).toBe("k");
+    expect(chord!.suffix.ctrl).toBe(true);
+    expect(chord!.suffix.key).toBe("c");
+  });
+
+  it("returns null for non-chord string", () => {
+    expect(parseChord("Ctrl+C")).toBeNull();
+  });
+});
+
+describe("chord formatting", () => {
+  it("formats chord shortcut with space separator", () => {
+    expect(formatShortcut("Alt+M T")).toBe("Alt+M T");
+  });
+
+  it("formats complex chord", () => {
+    expect(formatShortcut("Ctrl+K Ctrl+C")).toBe("Ctrl+K Ctrl+C");
+  });
+});
+
+describe("matchesShortcutString with chords", () => {
+  it("does NOT match chord shortcuts as single-key shortcuts", () => {
+    // Pressing Alt+M should NOT match "Alt+M T" as a single shortcut
+    const event = createKeyboardEvent({ key: "m", altKey: true });
+    expect(matchesShortcutString(event as unknown as KeyboardEvent, "Alt+M T")).toBe(false);
+  });
 });

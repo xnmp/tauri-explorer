@@ -27,3 +27,31 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 - `floor_char_boundary()` (stable in Rust 1.93) is essential for truncating strings at valid UTF-8 boundaries.
 
 ---
+
+## tauri-qbx6: PNG Image Previews Not Working
+
+**Key takeaways:**
+
+- The `image` crate's JPEG encoder doesn't handle RGBA (transparency) images. When generating thumbnails from PNG files, you must convert `DynamicImage::ImageRgba8` to `DynamicImage::ImageRgb8` before writing to JPEG format, otherwise the encoder may fail or produce corrupt output.
+- Match on `DynamicImage::ImageRgba8(_) | ImageRgba16(_) | ImageRgba32F(_)` to cover all RGBA variants.
+
+---
+
+## tauri-1rzt: Laggy Image Previews
+
+**Key takeaways:**
+
+- In tiles view, every `ThumbnailImage` component fires its `$effect` on mount, causing N concurrent Tauri IPC calls for N images. `IntersectionObserver` with a `rootMargin` of `200px` defers loading until thumbnails are near the viewport, dramatically reducing initial load.
+- The observer should be disconnected after first intersection (`observer.disconnect()` inside the callback) to avoid ongoing observation overhead.
+
+---
+
+## tauri-phud: Delete Multiple Selected Files
+
+**Key takeaways:**
+
+- The Rust backend already had `move_multiple_to_trash` using `trash::delete_all()` but it was never wired to the frontend. Always check existing backend capabilities before adding new commands.
+- When extending a single-entity dialog to support multiple entities, adding a parallel array (`targetEntries`) alongside the existing `targetEntry` maintains backward compatibility while enabling batch operations.
+- After batch deletion, remember to also clean up `selectedPaths` to remove references to deleted files.
+
+---

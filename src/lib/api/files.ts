@@ -193,9 +193,9 @@ export async function openFileWith(path: string, app: string): Promise<ApiResult
  * @param path - Path (directory or file, uses parent for files)
  * @returns Result indicating success or error message
  */
-export async function openInTerminal(path: string): Promise<ApiResult<void>> {
+export async function openInTerminal(path: string, terminal?: string): Promise<ApiResult<void>> {
   try {
-    await invoke("open_in_terminal", { path });
+    await invoke("open_in_terminal", { path, terminal: terminal || null });
     return { ok: true, data: undefined };
   } catch (err) {
     return { ok: false, error: String(err) };

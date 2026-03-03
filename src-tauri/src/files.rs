@@ -424,8 +424,9 @@ pub fn open_file_with(path: String, app: String) -> Result<(), FileError> {
 }
 
 /// Open a terminal at a directory path.
+/// If `terminal` is non-empty, use that command; otherwise auto-detect.
 #[tauri::command]
-pub fn open_in_terminal(path: String) -> Result<(), FileError> {
+pub fn open_in_terminal(path: String, terminal: Option<String>) -> Result<(), FileError> {
     let dir_path = PathBuf::from(&path);
 
     if !dir_path.exists() {
@@ -439,10 +440,25 @@ pub fn open_in_terminal(path: String) -> Result<(), FileError> {
         dir_path.parent().map(|p| p.to_path_buf()).unwrap_or(dir_path)
     };
 
+    // Try user-configured terminal first
+    if let Some(ref term) = terminal {
+        if !term.is_empty() {
+            if std::process::Command::new(term)
+                .arg("--working-directory")
+                .arg(&dir)
+                .spawn()
+                .is_ok()
+            {
+                return Ok(());
+            }
+            // Fall through to auto-detect if configured terminal fails
+        }
+    }
+
     #[cfg(target_os = "linux")]
     {
-        // Try common Linux terminal emulators
-        let terminals = ["kitty", "alacritty", "gnome-terminal", "konsole", "xterm"];
+        // Try common Linux terminal emulators (ghostty first)
+        let terminals = ["ghostty", "kitty", "alacritty", "gnome-terminal", "konsole", "xterm"];
         for term in &terminals {
             if std::process::Command::new(term)
                 .arg("--working-directory")

@@ -132,6 +132,20 @@
               <span class="toggle-slider"></span>
             </label>
           </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Terminal Application</span>
+              <span class="setting-description">Command to open terminal (empty = auto-detect)</span>
+            </div>
+            <input
+              class="text-input"
+              type="text"
+              value={settingsStore.terminalApp}
+              placeholder="ghostty"
+              onchange={(e) => settingsStore.update({ terminalApp: e.currentTarget.value })}
+            />
+          </div>
         </section>
 
         <!-- Keyboard Shortcuts Section -->
@@ -276,6 +290,31 @@
 
   .setting-description {
     font-size: 12px;
+    color: var(--text-tertiary);
+  }
+
+  .text-input {
+    padding: 6px 12px;
+    width: 160px;
+    background: var(--control-fill);
+    border: 1px solid var(--control-stroke);
+    border-radius: var(--radius-sm);
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--text-primary);
+    outline: none;
+    transition: all var(--transition-fast);
+  }
+
+  .text-input:hover {
+    background: var(--control-fill-secondary);
+  }
+
+  .text-input:focus {
+    border-color: var(--accent);
+  }
+
+  .text-input::placeholder {
     color: var(--text-tertiary);
   }
 

@@ -10,6 +10,7 @@
   import { settingsStore } from "$lib/state/settings.svelte";
   import { compressToZip, extractArchive, openFile, openInTerminal } from "$lib/api/files";
   import type { FileEntry } from "$lib/domain/file";
+  import { getZoomFactor } from "$lib/domain/zoom";
   import type { ViewMode } from "$lib/state/types";
 
   interface Props {
@@ -137,6 +138,27 @@
     { id: "list", label: "List" },
     { id: "tiles", label: "Tiles" },
   ];
+
+  let menuEl: HTMLDivElement | undefined = $state();
+
+  // Clamp menu position to viewport after rendering
+  $effect(() => {
+    if (!menuEl || !contextMenuStore.isOpen) return;
+    const rect = menuEl.getBoundingClientRect();
+    const zoom = getZoomFactor();
+    const vw = window.innerWidth / zoom;
+    const vh = window.innerHeight / zoom;
+    const menuW = rect.width / zoom;
+    const menuH = rect.height / zoom;
+    const pad = 4;
+    let { x, y } = contextMenuStore.position!;
+    if (x + menuW > vw - pad) x = vw - menuW - pad;
+    if (y + menuH > vh - pad) y = vh - menuH - pad;
+    if (x < pad) x = pad;
+    if (y < pad) y = pad;
+    menuEl.style.left = `${x}px`;
+    menuEl.style.top = `${y}px`;
+  });
 </script>
 
 <svelte:window on:keydown={handleKeydown} />
@@ -147,6 +169,7 @@
   <div class="context-menu-backdrop" onclick={() => contextMenuStore.close()}></div>
 
   <div
+    bind:this={menuEl}
     class="context-menu"
     style="left: {contextMenuStore.position.x}px; top: {contextMenuStore.position.y}px;"
     role="menu"

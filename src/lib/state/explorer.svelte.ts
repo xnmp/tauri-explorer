@@ -353,6 +353,21 @@ function createExplorerState() {
     dialogStore.cancelRename();
   }
 
+  /** If any deleted path is the current directory or an ancestor, navigate up. */
+  function navigateAwayIfNeeded(deletedPaths: Set<string>): void {
+    const current = coreState.currentPath;
+    const shouldNavigateAway = [...deletedPaths].some(
+      (dp) => current === dp || current.startsWith(dp + "/")
+    );
+    if (shouldNavigateAway) {
+      // Navigate to the parent of the current directory
+      const parentPath = navigation.getParentPath(breadcrumbs);
+      if (parentPath) {
+        navigateTo(parentPath);
+      }
+    }
+  }
+
   async function startDelete(entries: FileEntry | FileEntry[]) {
     const arr = Array.isArray(entries) ? entries : [entries];
     if (arr.length === 0) return;
@@ -370,6 +385,7 @@ function createExplorerState() {
         coreState.selectedPaths = new Set(
           [...coreState.selectedPaths].filter((p) => !deletedPaths.has(p))
         );
+        navigateAwayIfNeeded(deletedPaths);
       }
       return;
     }
@@ -453,6 +469,7 @@ function createExplorerState() {
         [...coreState.selectedPaths].filter((p) => !deletedPaths.has(p))
       );
       dialogStore.cancelDelete();
+      navigateAwayIfNeeded(deletedPaths);
       return null;
     }
     return result.error;

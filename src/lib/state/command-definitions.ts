@@ -15,7 +15,7 @@ import { themeStore } from "./theme.svelte";
 import { bookmarksStore } from "./bookmarks.svelte";
 import { recentFilesStore } from "./recent-files.svelte";
 import { dialogStore } from "./dialogs.svelte";
-import { copyEntry, moveEntry, writeTextFile, openInTerminal } from "$lib/api/files";
+import { copyEntry, moveEntry, writeTextFile, openInTerminal, clipboardPasteImage } from "$lib/api/files";
 import type { ViewMode } from "./types";
 
 /** Open a new explorer window at the given path */
@@ -236,6 +236,20 @@ const editCommands: Command[] = [
         explorer.refresh();
       } catch {
         // Clipboard access denied or empty
+      }
+    },
+  },
+  {
+    id: "edit.pasteImage",
+    label: "Paste Image from Clipboard",
+    category: "edit",
+    shortcut: "Ctrl+Shift+V",
+    handler: async () => {
+      const explorer = getActiveExplorer();
+      if (!explorer) return;
+      const result = await clipboardPasteImage(explorer.currentPath);
+      if (result.ok) {
+        explorer.refresh();
       }
     },
   },

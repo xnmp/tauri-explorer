@@ -184,6 +184,89 @@ fn write_clipboard_file_paths(paths: &[String]) -> bool {
     write_mime("x-special/gnome-copied-files", gnome_data.as_bytes())
 }
 
+/// Read raw image data (PNG) from the OS clipboard.
+/// Returns the raw bytes or None if no image is available.
+fn read_clipboard_image() -> Option<Vec<u8>> {
+    let output = if is_wayland() {
+        Command::new("wl-paste")
+            .args(["--no-newline", "--type", "image/png"])
+            .output()
+            .ok()?
+    } else {
+        Command::new("xclip")
+            .args(["-o", "-selection", "clipboard", "-t", "image/png"])
+            .output()
+            .ok()?
+    };
+
+    if !output.status.success() || output.stdout.is_empty() {
+        return None;
+    }
+
+    // Verify it looks like PNG data (magic bytes)
+    if output.stdout.len() < 8 || &output.stdout[..4] != b"\x89PNG" {
+        return None;
+    }
+
+    Some(output.stdout)
+}
+
+/// Check if the clipboard contains image data.
+#[tauri::command]
+pub fn clipboard_has_image() -> bool {
+    let output = if is_wayland() {
+        Command::new("wl-paste")
+            .args(["--list-types"])
+            .output()
+            .ok()
+    } else {
+        Command::new("xclip")
+            .args(["-o", "-selection", "clipboard", "-t", "TARGETS"])
+            .output()
+            .ok()
+    };
+
+    match output {
+        Some(o) if o.status.success() => {
+            let types = String::from_utf8_lossy(&o.stdout);
+            types.contains("image/png") || types.contains("image/jpeg")
+        }
+        _ => false,
+    }
+}
+
+/// Paste clipboard image data to a file in the given directory.
+/// Returns the path of the created file, or an error.
+#[tauri::command]
+pub fn clipboard_paste_image(directory: String) -> Result<String, String> {
+    let data = read_clipboard_image().ok_or("No image data in clipboard")?;
+
+    let dir = std::path::Path::new(&directory);
+    if !dir.is_dir() {
+        return Err(format!("Not a directory: {}", directory));
+    }
+
+    // Generate a timestamped filename
+    let now = chrono::Local::now();
+    let filename = format!("clipboard-{}.png", now.format("%Y%m%d-%H%M%S"));
+    let filepath = dir.join(&filename);
+
+    // Avoid overwriting existing files
+    if filepath.exists() {
+        // Add milliseconds to disambiguate
+        let filename = format!("clipboard-{}.png", now.format("%Y%m%d-%H%M%S-%3f"));
+        let filepath = dir.join(&filename);
+        std::fs::write(&filepath, &data)
+            .map_err(|e| format!("Failed to write image: {}", e))?;
+        return Ok(filepath.to_string_lossy().to_string());
+    }
+
+    std::fs::write(&filepath, &data)
+        .map_err(|e| format!("Failed to write image: {}", e))?;
+
+    Ok(filepath.to_string_lossy().to_string())
+}
+
 #[tauri::command]
 pub fn clipboard_has_files() -> bool {
     !read_clipboard_file_paths().is_empty()

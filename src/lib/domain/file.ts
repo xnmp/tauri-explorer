@@ -13,6 +13,8 @@ export interface FileEntry {
   readonly kind: FileKind;
   readonly size: number;
   readonly modified: string; // ISO 8601
+  readonly is_symlink?: boolean;
+  readonly symlink_target?: string;
 }
 
 export interface DirectoryListing {

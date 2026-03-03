@@ -396,9 +396,25 @@
           >
             <div class="tile-icon">
               {#if entry.kind === "directory"}
-                <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
-                  <path d="M4 14C4 11.7909 5.79086 10 8 10H16.3431C17.404 10 18.4214 10.4214 19.1716 11.1716L21 13H40C42.2091 13 44 14.7909 44 17V37C44 39.2091 42.2091 41 40 41H8C5.79086 41 4 39.2091 4 37V14Z" fill="#ffb900"/>
-                  <path d="M4 17H44V37C44 39.2091 42.2091 41 40 41H8C5.79086 41 4 39.2091 4 37V17Z" fill="#ffc83d" opacity="0.7"/>
+                <svg width="64" height="64" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <defs>
+                    <linearGradient id="folderBack" x1="24" y1="10" x2="24" y2="41" gradientUnits="userSpaceOnUse">
+                      <stop stop-color="#ffd660"/>
+                      <stop offset="1" stop-color="#e8a800"/>
+                    </linearGradient>
+                    <linearGradient id="folderFront" x1="24" y1="18" x2="24" y2="42" gradientUnits="userSpaceOnUse">
+                      <stop stop-color="#ffe08a"/>
+                      <stop offset="1" stop-color="#f0b400"/>
+                    </linearGradient>
+                  </defs>
+                  <!-- Back panel -->
+                  <path d="M4 14C4 11.79 5.79 10 8 10H16.34C17.4 10 18.42 10.42 19.17 11.17L22 14H40C42.21 14 44 15.79 44 18V37C44 39.21 42.21 41 40 41H8C5.79 41 4 39.21 4 37V14Z" fill="url(#folderBack)"/>
+                  <!-- Shadow strip between back and front -->
+                  <rect x="4" y="18" width="40" height="2" fill="#d4960a" opacity="0.3" rx="0.5"/>
+                  <!-- Front panel -->
+                  <path d="M2 22C2 20.34 3.34 19 5 19H43C44.66 19 46 20.34 46 22V39C46 40.66 44.66 42 43 42H5C3.34 42 2 40.66 2 39V22Z" fill="url(#folderFront)"/>
+                  <!-- Top highlight -->
+                  <path d="M2 22C2 20.34 3.34 19 5 19H43C44.66 19 46 20.34 46 22V23H2V22Z" fill="white" opacity="0.25"/>
                 </svg>
               {:else if isImageFile(entry)}
                 <ThumbnailImage path={entry.path} size={64} fallbackColor={iconColor} />
@@ -438,10 +454,16 @@
                 </svg>
               {:else}
                 <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
-                  <path d="M10 6C10 4.34315 11.3431 3 13 3H27L40 16V42C40 43.6569 38.6569 45 37 45H13C11.3431 45 10 43.6569 10 42V6Z" fill={iconColor} fill-opacity="0.15"/>
-                  <path d="M10 6C10 4.34315 11.3431 3 13 3H27L40 16V42C40 43.6569 38.6569 45 37 45H13C11.3431 45 10 43.6569 10 42V6Z" stroke={iconColor} stroke-width="1.5"/>
-                  <path d="M27 3V13C27 14.6569 28.3431 16 30 16H40" stroke={iconColor} stroke-width="1.5"/>
-                  <path d="M16 27H32M16 33H28" stroke={iconColor} stroke-width="2" stroke-linecap="round"/>
+                  <!-- Shadow -->
+                  <path d="M11 7C11 5.34 12.34 4 14 4H28L41 17V43C41 44.66 39.66 46 38 46H14C12.34 46 11 44.66 11 43V7Z" fill="black" opacity="0.06"/>
+                  <!-- Page body -->
+                  <path d="M10 6C10 4.34 11.34 3 13 3H27L40 16V42C40 43.66 38.66 45 37 45H13C11.34 45 10 43.66 10 42V6Z" fill="white"/>
+                  <path d="M10 6C10 4.34 11.34 3 13 3H27L40 16V42C40 43.66 38.66 45 37 45H13C11.34 45 10 43.66 10 42V6Z" stroke={iconColor} stroke-width="1.5" stroke-opacity="0.5"/>
+                  <!-- Corner fold -->
+                  <path d="M27 3V13C27 14.66 28.34 16 30 16H40" stroke={iconColor} stroke-width="1.5" stroke-opacity="0.5"/>
+                  <path d="M27 3V12C27 14.21 28.79 16 31 16H40L27 3Z" fill={iconColor} fill-opacity="0.12"/>
+                  <!-- Content lines -->
+                  <path d="M16 25H32M16 30H28M16 35H24" stroke={iconColor} stroke-width="1.5" stroke-linecap="round" stroke-opacity="0.6"/>
                 </svg>
               {/if}
             </div>

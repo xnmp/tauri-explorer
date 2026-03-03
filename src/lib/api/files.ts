@@ -572,6 +572,30 @@ export async function cancelContentSearch(searchId: number): Promise<ApiResult<v
 }
 
 // ===================
+// Symlink Operations
+// Issue: tauri-vozb
+// ===================
+
+/**
+ * Create a symbolic link.
+ *
+ * @param targetPath - Path that the symlink points to
+ * @param linkPath - Path where the symlink will be created
+ * @returns Result with the created symlink entry or error
+ */
+export async function createSymlink(
+  targetPath: string,
+  linkPath: string
+): Promise<ApiResult<FileEntry>> {
+  try {
+    const data = await invoke<FileEntry>("create_symlink", { targetPath, linkPath });
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+// ===================
 // Clipboard Image Paste
 // Issue: tauri-ttbb
 // ===================

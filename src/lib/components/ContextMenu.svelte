@@ -8,7 +8,7 @@
   import { contextMenuStore } from "$lib/state/context-menu.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { compressToZip, extractArchive, openFile, openInTerminal } from "$lib/api/files";
+  import { compressToZip, extractArchive, openFile, openInTerminal, createSymlink } from "$lib/api/files";
   import type { FileEntry } from "$lib/domain/file";
   import { getZoomFactor } from "$lib/domain/zoom";
   import type { ViewMode } from "$lib/state/types";
@@ -111,6 +111,19 @@
     if (selected.length === 0) return;
     await compressToZip(selected.map((e) => e.path));
     explorer.refresh();
+    contextMenuStore.close();
+  }
+
+  async function handleCreateSymlink(): Promise<void> {
+    const entries = explorer.getSelectedEntries();
+    if (entries.length !== 1) return;
+    const entry = entries[0];
+    const linkName = `${entry.name} - Link`;
+    const linkPath = `${explorer.currentPath}/${linkName}`;
+    const result = await createSymlink(entry.path, linkPath);
+    if (result.ok) {
+      explorer.refresh();
+    }
     contextMenuStore.close();
   }
 
@@ -290,6 +303,15 @@
         </svg>
         <span>Compress to ZIP</span>
       </button>
+
+      {#if explorer.getSelectedEntries().length === 1}
+        <button class="menu-item" onclick={handleCreateSymlink} role="menuitem">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M10 4L4 10M4 4V10H10" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span>Create Symlink</span>
+        </button>
+      {/if}
 
       <div class="menu-divider"></div>
     {/if}

@@ -19,6 +19,10 @@ pub struct FileEntry {
     pub kind: FileKind,
     pub size: u64,
     pub modified: String, // ISO 8601
+    #[serde(default)]
+    pub is_symlink: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symlink_target: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,7 +40,7 @@ pub struct DirectoryListing {
     pub listing_id: Option<u64>,
 }
 
-/// Convert metadata to FileEntry.
+/// Convert metadata to FileEntry, detecting symlinks.
 fn metadata_to_entry(path: &Path, metadata: &fs::Metadata) -> FileEntry {
     let name = path
         .file_name()
@@ -57,12 +61,23 @@ fn metadata_to_entry(path: &Path, metadata: &fs::Metadata) -> FileEntry {
         .map(|t| DateTime::<Local>::from(t).format("%Y-%m-%dT%H:%M:%S").to_string())
         .unwrap_or_default();
 
+    // Check if entry is a symlink (symlink_metadata doesn't follow links)
+    let sym_meta = fs::symlink_metadata(path).ok();
+    let is_symlink = sym_meta.as_ref().map_or(false, |m| m.file_type().is_symlink());
+    let symlink_target = if is_symlink {
+        fs::read_link(path).ok().map(|t| t.to_string_lossy().to_string())
+    } else {
+        None
+    };
+
     FileEntry {
         name,
         path: path.to_string_lossy().to_string(),
         kind,
         size,
         modified,
+        is_symlink,
+        symlink_target,
     }
 }
 
@@ -559,6 +574,38 @@ pub fn delete_entry_permanent(path: String) -> Result<(), AppError> {
     }
 
     Ok(())
+}
+
+/// Create a symbolic link.
+///
+/// Creates a symlink at `link_path` pointing to `target_path`.
+#[tauri::command]
+pub fn create_symlink(target_path: String, link_path: String) -> Result<FileEntry, AppError> {
+    let target = PathBuf::from(&target_path);
+    let link = PathBuf::from(&link_path);
+
+    if !target.exists() {
+        return Err(AppError::NotFound(target_path));
+    }
+
+    if link.exists() {
+        return Err(AppError::AlreadyExists(link_path));
+    }
+
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&target, &link)?;
+
+    #[cfg(windows)]
+    {
+        if target.is_dir() {
+            std::os::windows::fs::symlink_dir(&target, &link)?;
+        } else {
+            std::os::windows::fs::symlink_file(&target, &link)?;
+        }
+    }
+
+    let metadata = fs::metadata(&link)?;
+    Ok(metadata_to_entry(&link, &metadata))
 }
 
 /// Estimate total file count and size for a list of paths.

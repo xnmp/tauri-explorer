@@ -8,6 +8,14 @@
 
 import { loadPersisted, savePersisted } from "./persisted";
 
+/** Which navigation bar buttons to display */
+export interface NavBarButtons {
+  back: boolean;
+  forward: boolean;
+  up: boolean;
+  refresh: boolean;
+}
+
 export interface Settings {
   showToolbar: boolean;
   showSidebar: boolean;
@@ -18,6 +26,7 @@ export interface Settings {
   zoomLevel: number; // percentage, e.g. 100 = 100%
   terminalApp: string; // terminal emulator command, empty = auto-detect
   backgroundOpacity: number; // 0-100, percentage of background opacity
+  navBarButtons: NavBarButtons;
 }
 
 const MIN_ZOOM = 50;
@@ -34,6 +43,12 @@ const DEFAULT_SETTINGS: Settings = {
   zoomLevel: 100,
   terminalApp: "",
   backgroundOpacity: 100,
+  navBarButtons: {
+    back: true,
+    forward: true,
+    up: true,
+    refresh: false, // omitted by default per tauri-k4ec
+  },
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -126,6 +141,17 @@ function createSettingsStore() {
     },
     get backgroundOpacity() {
       return settings.backgroundOpacity;
+    },
+    get navBarButtons() {
+      return settings.navBarButtons;
+    },
+    toggleNavButton(button: keyof NavBarButtons): void {
+      update({
+        navBarButtons: {
+          ...settings.navBarButtons,
+          [button]: !settings.navBarButtons[button],
+        },
+      });
     },
     update,
     toggleToolbar,

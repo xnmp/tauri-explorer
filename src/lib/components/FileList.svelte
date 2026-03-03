@@ -148,6 +148,7 @@
 
     if (isPasteShortcut) {
       event.preventDefault();
+      event.stopImmediatePropagation(); // Prevent duplicate paste from ExplorerPane and global keybindings
       const error = await explorer.paste();
 
       if (error) {

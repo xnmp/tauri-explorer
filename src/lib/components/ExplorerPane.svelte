@@ -132,18 +132,23 @@
 
     if (key === "a") {
       event.preventDefault();
+      event.stopPropagation(); // Prevent duplicate from global keybindings
       paneExplorer.selectAll();
     } else if (key === "z") {
       event.preventDefault();
+      event.stopPropagation();
       await paneExplorer.undo();
     } else if (key === "c" && selectedEntries.length > 0) {
       event.preventDefault();
+      event.stopPropagation();
       paneExplorer.copyToClipboard(selectedEntries);
     } else if (key === "x" && selectedEntries.length > 0) {
       event.preventDefault();
+      event.stopPropagation();
       paneExplorer.cutToClipboard(selectedEntries);
     } else if (key === "v") {
       event.preventDefault();
+      event.stopPropagation();
       await paneExplorer.paste();
     }
   }

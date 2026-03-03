@@ -14,7 +14,7 @@
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
-  import { copyEntry, getHomeDirectory } from "$lib/api/files";
+  import { copyEntry, moveEntry, getHomeDirectory } from "$lib/api/files";
   import "$lib/themes/index.css";
   import TitleBar from "$lib/components/TitleBar.svelte";
   import SharedToolbar from "$lib/components/SharedToolbar.svelte";
@@ -51,21 +51,28 @@
     refreshAllPanes,
   });
 
-  // Handle external file drops into the app
+  // Track Ctrl key state for external drop modifier detection.
+  // Tauri's onDragDropEvent doesn't include keyboard modifiers,
+  // so we track them globally via keydown/keyup.
+  let ctrlKeyHeld = false;
+
+  // Handle external file drops into the app.
+  // Default: move (matches internal drag behavior). Ctrl held: copy.
   async function handleExternalDrop(paths: string[]): Promise<void> {
     const explorer = getActiveExplorer();
     if (!explorer) return;
 
     const destDir = explorer.currentPath;
+    const operation = ctrlKeyHeld ? copyEntry : moveEntry;
+    const opName = ctrlKeyHeld ? "copy" : "move";
 
     for (const path of paths) {
-      const result = await copyEntry(path, destDir);
+      const result = await operation(path, destDir);
       if (!result.ok) {
-        console.error("Failed to copy dropped file:", result.error);
+        console.error(`Failed to ${opName} dropped file:`, result.error);
       }
     }
 
-    // Refresh to show newly copied files
     refreshAllPanes();
   }
 
@@ -156,6 +163,12 @@
     // Setup external file drop handling
     externalDrop.setup();
 
+    // Track Ctrl key for external drop modifier detection
+    function trackCtrlDown(e: KeyboardEvent) { ctrlKeyHeld = e.ctrlKey; }
+    function trackCtrlUp(e: KeyboardEvent) { ctrlKeyHeld = e.ctrlKey; }
+    window.addEventListener("keydown", trackCtrlDown, true);
+    window.addEventListener("keyup", trackCtrlUp, true);
+
     // Global keyboard shortcuts
     window.addEventListener("keydown", handleKeydown);
 
@@ -178,6 +191,8 @@
     }, 30000);
 
     return () => {
+      window.removeEventListener("keydown", trackCtrlDown, true);
+      window.removeEventListener("keyup", trackCtrlUp, true);
       window.removeEventListener("keydown", handleKeydown);
       window.removeEventListener("contextmenu", handleContextMenu);
       window.removeEventListener("beforeunload", handleBeforeUnload);

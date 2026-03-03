@@ -36,6 +36,7 @@ import { recentFilesStore } from "./recent-files.svelte";
 import { contextMenuStore } from "./context-menu.svelte";
 import { undoStore } from "./undo.svelte";
 import { settingsStore } from "./settings.svelte";
+import { frecencyStore } from "./frecency.svelte";
 
 /** Per-directory sort preference persistence */
 const SORT_STORAGE_KEY = "explorer-sort-prefs";
@@ -232,9 +233,10 @@ function createExplorerState() {
       coreState.history = newHistory.history;
       coreState.historyIndex = newHistory.historyIndex;
 
-      // Track directory navigation in recent files
+      // Track directory navigation in recent files and frecency
       const name = path.split("/").filter(Boolean).pop() || path;
       recentFilesStore.add(path, name, "directory");
+      frecencyStore.recordAccess(path);
     }
   }
 

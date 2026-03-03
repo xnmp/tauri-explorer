@@ -180,7 +180,7 @@ test.describe("Keyboard Shortcuts Settings UI", () => {
     await openSettings(page);
 
     // Find the Copy command shortcut
-    const copyRow = page.locator(".shortcut-row", { hasText: "Copy" }).first();
+    const copyRow = page.locator(".shortcut-row", { has: page.locator(".shortcut-action", { hasText: /^Copy$/ }) });
     await expect(copyRow).toBeVisible();
 
     const shortcutBtn = copyRow.locator(".shortcut-btn");
@@ -226,7 +226,7 @@ test.describe("Keyboard Shortcuts Settings UI", () => {
     await openSettings(page);
 
     // Find a shortcut row (not the Paste row)
-    const copyRow = page.locator(".shortcut-row", { hasText: "Copy" }).first();
+    const copyRow = page.locator(".shortcut-row", { has: page.locator(".shortcut-action", { hasText: /^Copy$/ }) });
     await expect(copyRow).toBeVisible();
 
     const shortcutBtn = copyRow.locator(".shortcut-btn");
@@ -261,7 +261,7 @@ test.describe("Keyboard Shortcuts Settings UI", () => {
     await openSettings(page);
 
     // First, customize a shortcut
-    const copyRow = page.locator(".shortcut-row", { hasText: "Copy" }).first();
+    const copyRow = page.locator(".shortcut-row", { has: page.locator(".shortcut-action", { hasText: /^Copy$/ }) });
     const shortcutBtn = copyRow.locator(".shortcut-btn");
 
     // Record original value
@@ -355,7 +355,7 @@ test.describe("Keyboard Shortcuts Settings UI", () => {
     await openSettings(page);
 
     // Customize a shortcut
-    const copyRow = page.locator(".shortcut-row", { hasText: "Copy" }).first();
+    const copyRow = page.locator(".shortcut-row", { has: page.locator(".shortcut-action", { hasText: /^Copy$/ }) });
     const shortcutBtn = copyRow.locator(".shortcut-btn");
 
     await shortcutBtn.click();
@@ -378,7 +378,7 @@ test.describe("Keyboard Shortcuts Settings UI", () => {
     await openSettings(page);
 
     // The customization should persist
-    const reopenedCopyRow = page.locator(".shortcut-row", { hasText: "Copy" }).first();
+    const reopenedCopyRow = page.locator(".shortcut-row", { has: page.locator(".shortcut-action", { hasText: /^Copy$/ }) });
     const reopenedShortcutBtn = reopenedCopyRow.locator(".shortcut-btn");
     await expect(reopenedShortcutBtn).toContainText("Y");
     await expect(reopenedShortcutBtn).toContainText("Shift");
@@ -399,7 +399,7 @@ test.describe("Keyboard Shortcuts Settings UI", () => {
     await openSettings(page);
 
     // Customize a shortcut
-    const copyRow = page.locator(".shortcut-row", { hasText: "Copy" }).first();
+    const copyRow = page.locator(".shortcut-row", { has: page.locator(".shortcut-action", { hasText: /^Copy$/ }) });
 
     // Initially should not have customized class
     await expect(copyRow).not.toHaveClass(/customized/);

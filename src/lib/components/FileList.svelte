@@ -232,41 +232,6 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="file-list" onkeydown={handleKeydown} onclick={handleBackgroundClick} oncontextmenu={handleBackgroundContextMenu} tabindex="-1">
-  <!-- Clipboard toast notification -->
-  {#if clipboardToast}
-    <div class="toast clipboard" class:cut={clipboardToast.isCut} role="status">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        {#if clipboardToast.isCut}
-          <path d="M6 3L3 6L6 9M10 3L13 6L10 9M4 6H12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-        {:else}
-          <path d="M4 4H12M4 4V12C4 12.5523 4.44772 13 5 13H11C11.5523 13 12 12.5523 12 12V4M4 4L5 2H11L12 4M7 7V10M9 7V10" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-        {/if}
-      </svg>
-      <span>{clipboardToast.message} — Ctrl+V to paste</span>
-    </div>
-  {/if}
-
-  <!-- Toast notifications -->
-  {#if pasteError}
-    <div class="toast error" role="alert">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.25"/>
-        <path d="M8 5V8.5M8 11V10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-      </svg>
-      <span>{pasteError}</span>
-    </div>
-  {/if}
-
-  {#if pasteSuccess}
-    <div class="toast success" role="status">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.25"/>
-        <path d="M5.5 8L7 9.5L10.5 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-      <span>Pasted successfully</span>
-    </div>
-  {/if}
-
   <!-- Main content with column headers -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
@@ -495,6 +460,40 @@
       ></div>
     {/if}
   </div>
+
+  <!-- Toast notifications (bottom-right floating) -->
+  {#if clipboardToast}
+    <div class="toast clipboard" class:cut={clipboardToast.isCut} role="status">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        {#if clipboardToast.isCut}
+          <path d="M6 3L3 6L6 9M10 3L13 6L10 9M4 6H12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        {:else}
+          <path d="M4 4H12M4 4V12C4 12.5523 4.44772 13 5 13H11C11.5523 13 12 12.5523 12 12V4M4 4L5 2H11L12 4M7 7V10M9 7V10" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+        {/if}
+      </svg>
+      <span>{clipboardToast.message} — Ctrl+V to paste</span>
+    </div>
+  {/if}
+
+  {#if pasteError}
+    <div class="toast error" role="alert">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.25"/>
+        <path d="M8 5V8.5M8 11V10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <span>{pasteError}</span>
+    </div>
+  {/if}
+
+  {#if pasteSuccess}
+    <div class="toast success" role="status">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.25"/>
+        <path d="M5.5 8L7 9.5L10.5 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span>Pasted successfully</span>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -632,7 +631,10 @@
     align-items: center;
     gap: var(--spacing-sm);
     padding: var(--spacing-sm) var(--spacing-md);
-    margin: var(--spacing-sm) var(--spacing-sm) 0;
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    z-index: 100;
     background: var(--background-acrylic);
     backdrop-filter: blur(20px);
     border: 1px solid var(--surface-stroke);
@@ -645,7 +647,7 @@
   @keyframes toastIn {
     from {
       opacity: 0;
-      transform: translateY(-8px);
+      transform: translateY(8px);
     }
     to {
       opacity: 1;

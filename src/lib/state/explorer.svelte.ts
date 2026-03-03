@@ -429,6 +429,8 @@ function createExplorerState() {
     if (result.ok) {
       undoStore.push({ type: "rename", path: result.data.path, oldName, newName });
       coreState.entries = coreState.entries.map((e) => (e.path === oldPath ? result.data : e));
+      // Update clipboard if renamed file was in it (fixes stale path after rename)
+      clipboardStore.updatePath(oldPath, result.data);
       dialogStore.cancelRename();
       return null;
     }

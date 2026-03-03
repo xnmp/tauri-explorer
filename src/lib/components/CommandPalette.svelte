@@ -3,6 +3,7 @@
   Issue: tauri-explorer-0dk, tauri-explorer-dfx, tauri-explorer-npjh.4
 -->
 <script lang="ts">
+  import { tick } from "svelte";
   import {
     getAllCommands,
     getAvailableCommands,
@@ -137,10 +138,10 @@
   }
 
   function scrollToSelected(): void {
-    setTimeout(() => {
+    tick().then(() => {
       const selected = document.querySelector(".command-item.selected");
       selected?.scrollIntoView({ block: "nearest" });
-    }, 0);
+    });
   }
 
   async function executeSelected(cmd: Command): Promise<void> {
@@ -157,7 +158,7 @@
     if (open && inputRef) {
       query = "";
       selectedIndex = 0;
-      setTimeout(() => inputRef?.focus(), 0);
+      tick().then(() => inputRef?.focus());
     }
   });
 </script>

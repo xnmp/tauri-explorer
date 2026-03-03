@@ -3,6 +3,7 @@
   Issue: tauri-explorer-w3t, tauri-explorer-btz, tauri-explorer-az6w
 -->
 <script lang="ts">
+  import { tick } from "svelte";
   import {
     startStreamingSearch,
     cancelSearch,
@@ -213,7 +214,7 @@
       query = "";
       results = [];
       selectedIndex = 0;
-      setTimeout(() => inputRef?.focus(), 0);
+      tick().then(() => inputRef?.focus());
     }
   });
 

@@ -3,6 +3,7 @@
   Issue: tauri-explorer-iw0, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-x25
 -->
 <script lang="ts">
+  import { tick } from "svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { formatSize } from "$lib/domain/file";
   import { getFileType, getFileIconColor, getFileIconCategory, formatDate, type IconCategory } from "$lib/domain/file-types";
@@ -46,7 +47,7 @@
       editedName = entry.name;
       renameError = null;
       // Focus and select filename (without extension for files)
-      setTimeout(() => {
+      tick().then(() => {
         renameInputRef?.focus();
         if (entry.kind === "file") {
           const lastDot = entry.name.lastIndexOf(".");
@@ -58,7 +59,7 @@
         } else {
           renameInputRef?.select();
         }
-      }, 0);
+      });
     }
   });
 

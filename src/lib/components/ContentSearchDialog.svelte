@@ -3,6 +3,7 @@
   Issue: tauri-explorer-evim, tauri-explorer-3a1q, tauri-explorer-en98, tauri-nczo
 -->
 <script lang="ts">
+  import { tick } from "svelte";
   import {
     startContentSearch,
     cancelContentSearch,
@@ -433,7 +434,7 @@
   $effect(() => {
     if (open && inputRef) {
       resetSearchState();
-      setTimeout(() => inputRef?.focus(), 0);
+      tick().then(() => inputRef?.focus());
     }
   });
 

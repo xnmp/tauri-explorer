@@ -102,10 +102,15 @@
     // Find matching command from keybindings store, skipping commands whose `when` guard fails.
     // This ensures that when multiple commands share a shortcut (e.g. F5 for refresh vs copy-to-other-pane),
     // the first available one is selected rather than the first registered one.
+    // Chord shortcuts (e.g., "Alt+M T") return "chord:waiting" when the prefix is matched.
     const matchingCommandId = keybindingsStore.findMatchingCommand(event, (id) => {
       const cmd = getCommand(id);
       return !cmd?.when || cmd.when();
     });
+    if (matchingCommandId === "chord:waiting") {
+      event.preventDefault();
+      return;
+    }
     if (matchingCommandId) {
       event.preventDefault();
       await executeCommand(matchingCommandId);

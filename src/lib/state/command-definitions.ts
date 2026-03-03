@@ -15,7 +15,7 @@ import { themeStore } from "./theme.svelte";
 import { bookmarksStore } from "./bookmarks.svelte";
 import { recentFilesStore } from "./recent-files.svelte";
 import { dialogStore } from "./dialogs.svelte";
-import { copyEntry, moveEntry, writeTextFile } from "$lib/api/files";
+import { copyEntry, moveEntry, writeTextFile, openInTerminal } from "$lib/api/files";
 import type { ViewMode } from "./types";
 
 /** Open a new explorer window at the given path */
@@ -284,12 +284,14 @@ const viewCommands: Command[] = [
     id: "view.toggleSidebar",
     label: "Toggle Sidebar",
     category: "view",
+    shortcut: "Alt+M E",
     handler: () => settingsStore.toggleSidebar(),
   },
   {
     id: "view.toggleToolbar",
     label: "Toggle Toolbar",
     category: "view",
+    shortcut: "Alt+M B",
     handler: () => settingsStore.toggleToolbar(),
   },
   {
@@ -542,6 +544,22 @@ const workspaceCommands: Command[] = [
   },
 ];
 
+/** Terminal command */
+const terminalCommands: Command[] = [
+  {
+    id: "general.openTerminal",
+    label: "Open Terminal Here",
+    category: "general",
+    shortcut: "Alt+M T",
+    handler: () => {
+      const explorer = getActiveExplorer();
+      if (explorer) {
+        openInTerminal(explorer.state.currentPath);
+      }
+    },
+  },
+];
+
 /** General commands */
 const generalCommands: Command[] = [
   {
@@ -586,6 +604,7 @@ export function registerAllCommands(): void {
     ...windowCommands,
     ...tabCommands,
     ...crossPaneCommands,
+    ...terminalCommands,
     ...workspaceCommands,
     ...generalCommands,
   ];

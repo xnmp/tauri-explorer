@@ -6,7 +6,14 @@
  * Each command can have a custom shortcut that overrides the default.
  */
 
-import { matchesShortcutString, formatShortcut } from "$lib/domain/keybinding-parser";
+import {
+  matchesShortcutString,
+  matchesShortcut,
+  formatShortcut,
+  isChordShortcut,
+  parseChord,
+  type ParsedChord,
+} from "$lib/domain/keybinding-parser";
 import { loadPersisted, savePersisted } from "./persisted";
 
 /** A single keybinding entry */
@@ -26,6 +33,11 @@ let defaultShortcuts = $state<Record<string, string>>({});
 
 /** User's custom shortcuts (overrides defaults) */
 let userShortcuts = $state<UserKeybindings>({});
+
+/** Chord state: when a prefix key is pressed, we wait for the suffix */
+let activeChordPrefix = $state<string | null>(null);
+let chordTimeoutId: ReturnType<typeof setTimeout> | null = null;
+const CHORD_TIMEOUT_MS = 1500;
 
 function loadUserShortcuts(): UserKeybindings {
   return loadPersisted(STORAGE_KEY, {});
@@ -128,16 +140,80 @@ function createKeybindingsStore() {
     }));
   }
 
+  /** Cancel active chord waiting state */
+  function cancelChord(): void {
+    activeChordPrefix = null;
+    if (chordTimeoutId) {
+      clearTimeout(chordTimeoutId);
+      chordTimeoutId = null;
+    }
+  }
+
+  /** Cache of parsed chord shortcuts (built lazily) */
+  let chordCache = new Map<string, ParsedChord>();
+
+  function getChordForCommand(commandId: string): ParsedChord | null {
+    const shortcut = getShortcut(commandId);
+    if (!shortcut || !isChordShortcut(shortcut)) return null;
+
+    if (chordCache.has(commandId)) return chordCache.get(commandId)!;
+    const parsed = parseChord(shortcut);
+    if (parsed) chordCache.set(commandId, parsed);
+    return parsed;
+  }
+
   /**
    * Find which command matches a keyboard event.
    * Returns the command ID if found, undefined otherwise.
-   * Optionally accepts a predicate to skip commands that aren't currently available
-   * (e.g. those whose `when` guard returns false).
+   * Returns "chord:waiting" if a chord prefix was matched and we're waiting for suffix.
+   * Optionally accepts a predicate to skip commands that aren't currently available.
    */
   function findMatchingCommand(
     event: KeyboardEvent,
     isAvailable?: (commandId: string) => boolean,
   ): string | undefined {
+    // If we're in chord-waiting mode, check suffix keys
+    if (activeChordPrefix !== null) {
+      const prefix = activeChordPrefix;
+      cancelChord();
+
+      for (const commandId of Object.keys(defaultShortcuts)) {
+        const shortcut = getShortcut(commandId);
+        if (!shortcut || !isChordShortcut(shortcut)) continue;
+
+        // Check if this chord's prefix matches the one we stored
+        const chord = getChordForCommand(commandId);
+        if (!chord) continue;
+
+        // The prefix was already matched; now check if the suffix matches this event
+        const prefixStr = shortcut.substring(0, shortcut.indexOf(" ")).trim();
+        if (prefixStr.toLowerCase() !== prefix.toLowerCase()) continue;
+
+        if (matchesShortcut(event, chord.suffix)) {
+          if (!isAvailable || isAvailable(commandId)) {
+            return commandId;
+          }
+        }
+      }
+      // Suffix didn't match any chord — fall through to normal matching
+      return undefined;
+    }
+
+    // Check chord prefixes first
+    for (const commandId of Object.keys(defaultShortcuts)) {
+      const chord = getChordForCommand(commandId);
+      if (!chord) continue;
+
+      if (matchesShortcut(event, chord.prefix)) {
+        // A chord prefix was matched — enter waiting mode
+        const shortcut = getShortcut(commandId)!;
+        activeChordPrefix = shortcut.substring(0, shortcut.indexOf(" ")).trim();
+        chordTimeoutId = setTimeout(cancelChord, CHORD_TIMEOUT_MS);
+        return "chord:waiting";
+      }
+    }
+
+    // Normal single-key shortcut matching
     for (const commandId of Object.keys(defaultShortcuts)) {
       const shortcut = getShortcut(commandId);
       if (shortcut && matchesShortcutString(event, shortcut)) {
@@ -175,6 +251,8 @@ function createKeybindingsStore() {
   function _clearForTesting(): void {
     defaultShortcuts = {};
     userShortcuts = {};
+    chordCache = new Map();
+    cancelChord();
   }
 
   return {
@@ -189,7 +267,18 @@ function createKeybindingsStore() {
     getAllBindings,
     findMatchingCommand,
     findConflicts,
+    cancelChord,
     _clearForTesting,
+
+    /** Whether a chord prefix is active (waiting for suffix key) */
+    get isChordActive() {
+      return activeChordPrefix !== null;
+    },
+
+    /** The active chord prefix string (for status bar display) */
+    get activeChordPrefix() {
+      return activeChordPrefix;
+    },
 
     /** Get the raw user shortcuts (for debugging/inspection) */
     get userShortcuts() {

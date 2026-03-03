@@ -6,6 +6,7 @@
   import { tick } from "svelte";
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
   import { clipboardStore } from "$lib/state/clipboard.svelte";
+  import { toastStore } from "$lib/state/toast.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { openFile, moveEntry } from "$lib/api/files";
@@ -28,13 +29,6 @@
   // Get pane context for cross-pane operations
   const paneNav = getPaneNavigationContext();
 
-  let pasteError = $state<string | null>(null);
-  let pasteSuccess = $state(false);
-
-  // Clipboard toast: shows briefly when files are copied/cut
-  let clipboardToast = $state<{ message: string; isCut: boolean } | null>(null);
-  let clipboardToastTimer: ReturnType<typeof setTimeout> | null = null;
-
   // Watch clipboard changes and show toast
   $effect(() => {
     const content = clipboardStore.content;
@@ -43,24 +37,18 @@
         ? content.entries[0].name
         : `${content.entries.length} items`;
       const isCut = content.operation === "cut";
-      clipboardToast = { message: `${isCut ? "Cut" : "Copied"}: ${label}`, isCut };
-      if (clipboardToastTimer) clearTimeout(clipboardToastTimer);
-      clipboardToastTimer = setTimeout(() => { clipboardToast = null; }, 3000);
+      toastStore.clipboard(`${isCut ? "Cut" : "Copied"}: ${label}`, isCut);
     }
   });
 
   // Watch paste results for toast feedback
-  let pasteResultTimer: ReturnType<typeof setTimeout> | null = null;
   $effect(() => {
     const result = explorer.pasteResult;
     if (!result) return;
-    if (pasteResultTimer) clearTimeout(pasteResultTimer);
     if (result.error) {
-      pasteError = result.error;
-      pasteResultTimer = setTimeout(() => { pasteError = null; }, 3000);
+      toastStore.error(result.error);
     } else {
-      pasteSuccess = true;
-      pasteResultTimer = setTimeout(() => { pasteSuccess = false; }, 1500);
+      toastStore.success("Pasted successfully");
     }
   });
 
@@ -279,8 +267,7 @@
       }
     } else {
       console.error("Failed to move:", result.error);
-      pasteError = result.error;
-      setTimeout(() => (pasteError = null), 3000);
+      toastStore.error(result.error);
     }
   }
 </script>
@@ -566,38 +553,24 @@
   </div>
 
   <!-- Toast notifications (bottom-right floating) -->
-  {#if clipboardToast}
-    <div class="toast clipboard" class:cut={clipboardToast.isCut} role="status">
+  {#each toastStore.toasts as toast (toast.id)}
+    <div class="toast {toast.type}" class:cut={toast.isCut} role={toast.type === "error" ? "alert" : "status"}>
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        {#if clipboardToast.isCut}
+        {#if toast.type === "clipboard" && toast.isCut}
           <path d="M6 3L3 6L6 9M10 3L13 6L10 9M4 6H12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-        {:else}
+        {:else if toast.type === "clipboard"}
           <path d="M4 4H12M4 4V12C4 12.5523 4.44772 13 5 13H11C11.5523 13 12 12.5523 12 12V4M4 4L5 2H11L12 4M7 7V10M9 7V10" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+        {:else if toast.type === "error"}
+          <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.25"/>
+          <path d="M8 5V8.5M8 11V10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        {:else}
+          <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.25"/>
+          <path d="M5.5 8L7 9.5L10.5 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         {/if}
       </svg>
-      <span>{clipboardToast.message} — Ctrl+V to paste</span>
+      <span>{toast.message}{#if toast.type === "clipboard"} — Ctrl+V to paste{/if}</span>
     </div>
-  {/if}
-
-  {#if pasteError}
-    <div class="toast error" role="alert">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.25"/>
-        <path d="M8 5V8.5M8 11V10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-      </svg>
-      <span>{pasteError}</span>
-    </div>
-  {/if}
-
-  {#if pasteSuccess}
-    <div class="toast success" role="status">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.25"/>
-        <path d="M5.5 8L7 9.5L10.5 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-      <span>Pasted successfully</span>
-    </div>
-  {/if}
+  {/each}
 </div>
 
 <style>

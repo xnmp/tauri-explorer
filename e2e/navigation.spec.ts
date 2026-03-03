@@ -130,8 +130,8 @@ test.describe("Navigation", () => {
       await folder.dblclick();
       await page.waitForTimeout(500);
 
-      // Alt+Left to go back
-      await page.keyboard.press("Alt+ArrowLeft");
+      // Ctrl+Alt+Left to go back
+      await page.keyboard.press("Control+Alt+ArrowLeft");
       await page.waitForTimeout(500);
 
       const currentBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();

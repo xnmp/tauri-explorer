@@ -184,8 +184,8 @@ test.describe("Keyboard Shortcuts", () => {
       const newPath = await page.locator(".breadcrumbs-container").textContent();
       expect(newPath).not.toBe(initialPath);
 
-      // Press Alt+Left to go back
-      await page.keyboard.press("Alt+ArrowLeft");
+      // Press Ctrl+Alt+Left to go back
+      await page.keyboard.press("Control+Alt+ArrowLeft");
       await page.waitForTimeout(200);
 
       // Should be back at initial path

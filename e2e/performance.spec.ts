@@ -125,7 +125,7 @@ test.describe("Performance Tests", () => {
       const metric = await measureTime(
         "back-navigation",
         async () => {
-          await page.keyboard.press("Alt+ArrowLeft");
+          await page.keyboard.press("Control+Alt+ArrowLeft");
           await page.waitForFunction(
             () => document.querySelectorAll(".file-item").length > 0,
             { timeout: 5000 }

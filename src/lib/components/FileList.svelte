@@ -81,6 +81,43 @@
     (entry) => explorer.selectEntry(entry, {}),
   );
 
+  // Progressive rendering for tiles view to avoid UI freeze
+  const TILE_CHUNK = 60;
+  let tileRenderLimit = $state(TILE_CHUNK);
+  let tileRafId: number | null = null;
+
+  // Reset and progressively render tiles when entries or view mode change
+  $effect(() => {
+    // Track dependencies
+    const entries = explorer.displayEntries;
+    const mode = explorer.viewMode;
+
+    if (tileRafId) cancelAnimationFrame(tileRafId);
+
+    if (mode !== "tiles" || entries.length <= TILE_CHUNK) {
+      tileRenderLimit = entries.length;
+      return;
+    }
+
+    tileRenderLimit = TILE_CHUNK;
+
+    function renderMore() {
+      tileRenderLimit = Math.min(tileRenderLimit + TILE_CHUNK, entries.length);
+      if (tileRenderLimit < entries.length) {
+        tileRafId = requestAnimationFrame(renderMore);
+      }
+    }
+    tileRafId = requestAnimationFrame(renderMore);
+
+    return () => {
+      if (tileRafId) cancelAnimationFrame(tileRafId);
+    };
+  });
+
+  const visibleTileEntries = $derived(
+    explorer.displayEntries.slice(0, tileRenderLimit)
+  );
+
   function handleClick(entry: FileEntry, event: MouseEvent): void {
     explorer.selectEntry(entry, {
       ctrlKey: event.ctrlKey || event.metaKey,
@@ -367,9 +404,9 @@
         {/each}
       </div>
     {:else}
-      <!-- Tiles View (Grid) -->
+      <!-- Tiles View (Grid) - progressively rendered to avoid UI freeze -->
       <div class="tiles-view file-rows">
-        {#each explorer.displayEntries as entry (entry.path)}
+        {#each visibleTileEntries as entry (entry.path)}
           {@const iconColor = getFileIconColor(entry)}
           {@const iconCategory = getFileIconCategory(entry)}
           <button

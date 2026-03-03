@@ -4,6 +4,7 @@
   Issue: tauri-u00y
 -->
 <script lang="ts">
+  import { tick } from "svelte";
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
 
   interface Props {
@@ -20,7 +21,7 @@
     editedPath = explorer.currentPath;
     editingPath = true;
     // Focus input after DOM update
-    setTimeout(() => pathInputRef?.select(), 0);
+    tick().then(() => pathInputRef?.select());
   }
 
   function cancelPathEdit() {

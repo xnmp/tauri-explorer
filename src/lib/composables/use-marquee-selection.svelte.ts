@@ -38,7 +38,8 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
   const config = { ...DEFAULT_OPTIONS, ...options };
 
   let isDragging = $state(false);
-  let dragJustEnded = $state(false);
+  let dragEndTime = 0;
+  const DRAG_END_GRACE_MS = 50;
   let dragStart = $state<{ x: number; y: number } | null>(null);
   let dragCurrent = $state<{ x: number; y: number } | null>(null);
   let ctrlKeyHeld = $state(false);
@@ -97,11 +98,8 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     dragStart = null;
     dragCurrent = null;
 
-    // Prevent subsequent click from clearing selection
-    dragJustEnded = true;
-    requestAnimationFrame(() => {
-      dragJustEnded = false;
-    });
+    // Record end time so click handlers can ignore the immediate click
+    dragEndTime = performance.now();
   }
 
   /**
@@ -156,7 +154,7 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
       return isDragging;
     },
     get dragJustEnded() {
-      return dragJustEnded;
+      return performance.now() - dragEndTime < DRAG_END_GRACE_MS;
     },
     get ctrlKeyHeld() {
       return ctrlKeyHeld;

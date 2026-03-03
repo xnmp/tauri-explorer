@@ -18,6 +18,7 @@
   import { explorer as defaultExplorer } from "$lib/state/explorer.svelte";
   import { getFileIconColor, getFileIconCategory, type IconCategory } from "$lib/domain/file-types";
   import type { FileEntry } from "$lib/domain/file";
+  import { frecencyStore } from "$lib/state/frecency.svelte";
 
   // Helper to convert SearchResult to FileEntry-like object for icon functions
   function toFileEntry(result: SearchResult): FileEntry {
@@ -53,6 +54,22 @@
   let unlisten: UnlistenFn | null = null;
   let totalScanned = $state(0);
   let homeDir: string | null = null;
+
+  // Frecency weight relative to fuzzy score (how much frecency influences ranking)
+  const FRECENCY_WEIGHT = 50;
+
+  /** Re-rank search results by combining fuzzy score with frecency. */
+  function rankWithFrecency(searchResults: SearchResult[]): SearchResult[] {
+    if (searchResults.length === 0) return searchResults;
+    const scoreMap = frecencyStore.getScoreMap();
+    // Create ranked copies with boosted scores
+    const ranked = searchResults.map((r) => {
+      const frecency = scoreMap.get(r.path) ?? 0;
+      return { ...r, score: r.score + Math.round(frecency * FRECENCY_WEIGHT) };
+    });
+    ranked.sort((a, b) => b.score - a.score);
+    return ranked;
+  }
 
   // Show recent files when query is empty
   const recentResults = $derived<SearchResult[]>(
@@ -109,8 +126,8 @@
         return;
       }
 
-      // Update results with latest batch
-      results = payload.results;
+      // Update results with latest batch, boosted by frecency
+      results = rankWithFrecency(payload.results);
       totalScanned = payload.totalScanned;
 
       // Reset selection if needed
@@ -192,6 +209,9 @@
 
   async function selectResult(result: SearchResult): Promise<void> {
     const explorer = paneNav?.getActiveExplorer() ?? defaultExplorer;
+
+    // Record access for frecency ranking
+    frecencyStore.recordAccess(result.path);
 
     if (result.kind === "directory") {
       explorer.navigateTo(result.path);

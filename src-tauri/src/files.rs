@@ -397,6 +397,44 @@ pub fn open_file_with(path: String, app: String) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Spawn a terminal emulator at the given directory, using the correct
+/// arguments for each known terminal. Returns true on success.
+fn try_spawn_terminal(term: &str, dir: &std::path::Path) -> bool {
+    // Extract just the binary name for matching (handles full paths like /usr/bin/kitty)
+    let bin = std::path::Path::new(term)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(term);
+
+    let result = match bin {
+        // ghostty and gnome-terminal use --working-directory=PATH (= syntax)
+        "ghostty" | "gnome-terminal" => std::process::Command::new(term)
+            .arg(format!("--working-directory={}", dir.display()))
+            .spawn(),
+        // kitty uses --directory
+        "kitty" => std::process::Command::new(term)
+            .arg("--directory")
+            .arg(dir)
+            .spawn(),
+        // konsole uses --workdir
+        "konsole" => std::process::Command::new(term)
+            .arg("--workdir")
+            .arg(dir)
+            .spawn(),
+        // alacritty uses --working-directory
+        "alacritty" => std::process::Command::new(term)
+            .arg("--working-directory")
+            .arg(dir)
+            .spawn(),
+        // xterm and others: use current_dir as universal fallback
+        _ => std::process::Command::new(term)
+            .current_dir(dir)
+            .spawn(),
+    };
+
+    result.is_ok()
+}
+
 /// Open a terminal at a directory path.
 /// If `terminal` is non-empty, use that command; otherwise auto-detect.
 #[tauri::command]
@@ -414,15 +452,10 @@ pub fn open_in_terminal(path: String, terminal: Option<String>) -> Result<(), Ap
         dir_path.parent().map(|p| p.to_path_buf()).unwrap_or(dir_path)
     };
 
-    // Try user-configured terminal first
+    // Try user-configured terminal first (use current_dir which works universally)
     if let Some(ref term) = terminal {
         if !term.is_empty() {
-            if std::process::Command::new(term)
-                .arg("--working-directory")
-                .arg(&dir)
-                .spawn()
-                .is_ok()
-            {
+            if try_spawn_terminal(term, &dir) {
                 return Ok(());
             }
             // Fall through to auto-detect if configured terminal fails
@@ -431,15 +464,10 @@ pub fn open_in_terminal(path: String, terminal: Option<String>) -> Result<(), Ap
 
     #[cfg(target_os = "linux")]
     {
-        // Try common Linux terminal emulators (ghostty first)
+        // Try common Linux terminal emulators with their correct arguments
         let terminals = ["ghostty", "kitty", "alacritty", "gnome-terminal", "konsole", "xterm"];
         for term in &terminals {
-            if std::process::Command::new(term)
-                .arg("--working-directory")
-                .arg(&dir)
-                .spawn()
-                .is_ok()
-            {
+            if try_spawn_terminal(term, &dir) {
                 return Ok(());
             }
         }

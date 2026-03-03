@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::Ordering;
+use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter};
 use thiserror::Error;
 
@@ -622,13 +622,8 @@ pub struct DirectoryEntriesEvent {
     pub total_count: usize,
 }
 
-/// Global state for active directory listings
-static NEXT_LISTING_ID: AtomicU64 = AtomicU64::new(1);
-static ACTIVE_LISTINGS: OnceLock<Mutex<HashMap<u64, Arc<AtomicBool>>>> = OnceLock::new();
-
-fn get_active_listings() -> &'static Mutex<HashMap<u64, Arc<AtomicBool>>> {
-    ACTIVE_LISTINGS.get_or_init(|| Mutex::new(HashMap::new()))
-}
+/// Registry for active directory listings
+static LISTINGS: crate::task_registry::TaskRegistry = crate::task_registry::TaskRegistry::new();
 
 /// Start streaming directory listing.
 /// Returns first batch immediately and emits remaining entries via events.
@@ -702,12 +697,7 @@ pub fn start_streaming_directory(
     let remaining = all_entries; // Now contains the rest
 
     // Create listing ID and cancellation flag
-    let listing_id = NEXT_LISTING_ID.fetch_add(1, Ordering::SeqCst);
-    let cancelled = Arc::new(AtomicBool::new(false));
-    {
-        let mut listings = get_active_listings().lock().unwrap();
-        listings.insert(listing_id, cancelled.clone());
-    }
+    let (listing_id, cancelled) = LISTINGS.start();
 
     // Spawn background thread to emit remaining entries
     let path_clone = path.clone();
@@ -736,9 +726,7 @@ pub fn start_streaming_directory(
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
 
-        // Cleanup
-        let mut listings = get_active_listings().lock().unwrap();
-        listings.remove(&listing_id);
+        LISTINGS.cleanup(listing_id);
     });
 
     // Return first batch immediately with listing_id as a separate field
@@ -752,10 +740,7 @@ pub fn start_streaming_directory(
 /// Cancel an active directory listing.
 #[tauri::command]
 pub fn cancel_directory_listing(listing_id: u64) -> Result<(), String> {
-    let listings = get_active_listings().lock().unwrap();
-    if let Some(cancelled) = listings.get(&listing_id) {
-        cancelled.store(true, Ordering::Relaxed);
-    }
+    LISTINGS.cancel(listing_id);
     Ok(())
 }
 

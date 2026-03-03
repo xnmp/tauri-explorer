@@ -7,10 +7,9 @@ use grep_searcher::sinks::UTF8;
 use grep_searcher::{BinaryDetection, MmapChoice, SearcherBuilder};
 use ignore::{WalkBuilder, WalkState};
 use serde::Serialize;
-use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc};
 use tauri::{AppHandle, Emitter};
 
 /// Maximum matches to collect per file to prevent runaway processing
@@ -55,13 +54,8 @@ pub struct ContentSearchEvent {
     pub total_matches: usize,
 }
 
-/// Global state for active content searches
-static NEXT_CONTENT_SEARCH_ID: AtomicU64 = AtomicU64::new(1);
-static ACTIVE_CONTENT_SEARCHES: OnceLock<Mutex<HashMap<u64, Arc<AtomicBool>>>> = OnceLock::new();
-
-fn get_active_content_searches() -> &'static Mutex<HashMap<u64, Arc<AtomicBool>>> {
-    ACTIVE_CONTENT_SEARCHES.get_or_init(|| Mutex::new(HashMap::new()))
-}
+/// Registry for active content searches
+static CONTENT_SEARCHES: crate::task_registry::TaskRegistry = crate::task_registry::TaskRegistry::new();
 
 /// Start a streaming content search using ripgrep.
 /// Returns search ID immediately, emits results via 'content-search-results' events.
@@ -88,15 +82,8 @@ pub fn start_content_search(
         return Err("Search query cannot be empty".to_string());
     }
 
-    let search_id = NEXT_CONTENT_SEARCH_ID.fetch_add(1, Ordering::SeqCst);
+    let (search_id, cancelled) = CONTENT_SEARCHES.start();
     let max_results = max_results.min(5000).max(1);
-
-    // Create cancellation flag
-    let cancelled = Arc::new(AtomicBool::new(false));
-    {
-        let mut searches = get_active_content_searches().lock().unwrap();
-        searches.insert(search_id, cancelled.clone());
-    }
 
     // Spawn search in background thread
     std::thread::spawn(move || {
@@ -111,11 +98,7 @@ pub fn start_content_search(
             &cancelled,
         );
 
-        // Clean up
-        {
-            let mut searches = get_active_content_searches().lock().unwrap();
-            searches.remove(&search_id);
-        }
+        CONTENT_SEARCHES.cleanup(search_id);
 
         if let Err(e) = result {
             // Emit error event
@@ -376,10 +359,7 @@ fn is_binary_file(path: &std::path::Path) -> bool {
 /// Cancel an active content search.
 #[tauri::command]
 pub fn cancel_content_search(search_id: u64) -> Result<(), String> {
-    let searches = get_active_content_searches().lock().unwrap();
-    if let Some(cancelled) = searches.get(&search_id) {
-        cancelled.store(true, Ordering::Relaxed);
-    }
+    CONTENT_SEARCHES.cancel(search_id);
     Ok(())
 }
 

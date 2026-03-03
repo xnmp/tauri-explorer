@@ -6,6 +6,7 @@ mod clipboard;
 mod content_search;
 mod files;
 mod search;
+pub mod task_registry;
 mod thumbnails;
 
 use std::path::PathBuf;

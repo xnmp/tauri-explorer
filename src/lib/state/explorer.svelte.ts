@@ -109,18 +109,8 @@ function createExplorerState() {
     selectionAnchorIndex: null,
   });
 
-  // Backward-compatible state accessor that includes global stores
-  // This allows existing components to access dialog/context menu state via explorer.state
-  const state = $derived({
-    ...coreState,
-    // Dialog state (from global dialogStore)
-    newFolderDialogOpen: dialogStore.isNewFolderOpen,
-    renamingEntry: dialogStore.renamingEntry,
-    deletingEntry: dialogStore.deletingEntry,
-    // Context menu state (from global contextMenuStore)
-    contextMenuOpen: contextMenuStore.isOpen,
-    contextMenuPosition: contextMenuStore.position,
-  });
+  // Read-only state accessor for components that need the raw state bag
+  const state = $derived({ ...coreState });
 
   // ===================
   // Derived State
@@ -580,8 +570,32 @@ function createExplorerState() {
   // ===================
 
   return {
+    // Raw state bag (prefer top-level getters below)
     get state() {
       return state;
+    },
+
+    // Top-level state getters (preferred over state.*)
+    get currentPath() {
+      return coreState.currentPath;
+    },
+    get loading() {
+      return coreState.loading;
+    },
+    get error() {
+      return coreState.error;
+    },
+    get viewMode() {
+      return coreState.viewMode;
+    },
+    get sortBy() {
+      return coreState.sortBy;
+    },
+    get sortAscending() {
+      return coreState.sortAscending;
+    },
+    get selectedPaths() {
+      return coreState.selectedPaths;
     },
     get displayEntries() {
       return displayEntries;
@@ -601,6 +615,7 @@ function createExplorerState() {
     get canRedo() {
       return canRedo;
     },
+
     // Navigation
     navigateTo,
     goBack,

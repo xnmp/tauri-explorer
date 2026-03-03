@@ -229,7 +229,7 @@ const editCommands: Command[] = [
       try {
         const text = await navigator.clipboard.readText();
         if (!text) return;
-        const dir = explorer.state.currentPath;
+        const dir = explorer.currentPath;
         const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
         const path = `${dir}/pasted-${timestamp}.txt`;
         await writeTextFile(path, text);
@@ -368,12 +368,12 @@ const bookmarkCommands: Command[] = [
     handler: () => {
       const explorer = getActiveExplorer();
       if (explorer) {
-        bookmarksStore.addBookmark(explorer.state.currentPath);
+        bookmarksStore.addBookmark(explorer.currentPath);
       }
     },
     when: () => {
       const explorer = getActiveExplorer();
-      return explorer ? !bookmarksStore.hasBookmark(explorer.state.currentPath) : false;
+      return explorer ? !bookmarksStore.hasBookmark(explorer.currentPath) : false;
     },
   },
   {
@@ -383,12 +383,12 @@ const bookmarkCommands: Command[] = [
     handler: () => {
       const explorer = getActiveExplorer();
       if (explorer) {
-        bookmarksStore.removeBookmark(explorer.state.currentPath);
+        bookmarksStore.removeBookmark(explorer.currentPath);
       }
     },
     when: () => {
       const explorer = getActiveExplorer();
-      return explorer ? bookmarksStore.hasBookmark(explorer.state.currentPath) : false;
+      return explorer ? bookmarksStore.hasBookmark(explorer.currentPath) : false;
     },
   },
 ];

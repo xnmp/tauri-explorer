@@ -105,7 +105,7 @@ function createWindowTabsManager() {
     const pane = tab.panes[tab.activePaneId];
     const explorer = explorers.get(pane.explorerId);
     if (!explorer) return pane.title || "Explorer";
-    return extractFolderName(explorer.state.currentPath);
+    return extractFolderName(explorer.currentPath);
   }
 
   /** Get path for a pane from its explorer */

@@ -8,6 +8,7 @@
   import { getFileType, getFileIconColor, getFileIconCategory, formatDate, type IconCategory } from "$lib/domain/file-types";
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
   import { clipboardStore } from "$lib/state/clipboard.svelte";
+  import { dialogStore } from "$lib/state/dialogs.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { moveEntry, copyEntry } from "$lib/api/files";
   import { dragState } from "$lib/state/drag.svelte";
@@ -37,7 +38,7 @@
   let submittingRename = $state(false);
 
   // Check if this entry is being renamed
-  const isRenaming = $derived(explorer.state.renamingEntry?.path === entry.path);
+  const isRenaming = $derived(dialogStore.renamingEntry?.path === entry.path);
 
   // When rename mode starts, initialize and focus the input
   $effect(() => {

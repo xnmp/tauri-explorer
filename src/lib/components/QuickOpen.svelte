@@ -67,7 +67,7 @@
   // Get current working directory from active explorer
   function getCwdPath(): string {
     const explorer = paneNav?.getActiveExplorer() ?? defaultExplorer;
-    return explorer.state.currentPath;
+    return explorer.currentPath;
   }
 
   // Get home directory (cached)

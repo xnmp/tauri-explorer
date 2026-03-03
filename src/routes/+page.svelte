@@ -55,7 +55,7 @@
     const explorer = getActiveExplorer();
     if (!explorer) return;
 
-    const destDir = explorer.state.currentPath;
+    const destDir = explorer.currentPath;
 
     for (const path of paths) {
       const result = await copyEntry(path, destDir);

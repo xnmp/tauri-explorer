@@ -3,6 +3,7 @@
 //!
 //! Provides fast, cached thumbnail generation for image files.
 
+use base64::Engine as _;
 use image::{DynamicImage, ImageFormat, ImageReader};
 use sha2::{Sha256, Digest};
 use std::fs;
@@ -145,7 +146,7 @@ pub fn get_thumbnail_data(path: String, size: Option<u32>) -> Result<String, Str
     if let Some(cached_path) = get_cached_thumbnail(&cache_key) {
         let data = fs::read(&cached_path)
             .map_err(|e| format!("Failed to read cached thumbnail: {}", e))?;
-        return Ok(format!("data:image/jpeg;base64,{}", base64_encode(&data)));
+        return Ok(format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(&data)));
     }
 
     // Load and decode image (with_guessed_format for robust format detection)
@@ -175,39 +176,7 @@ pub fn get_thumbnail_data(path: String, size: Option<u32>) -> Result<String, Str
         let _ = fs::write(&cache_path, &data);
     }
 
-    Ok(format!("data:image/jpeg;base64,{}", base64_encode(&data)))
-}
-
-/// Simple base64 encoding
-fn base64_encode(data: &[u8]) -> String {
-    use std::fmt::Write;
-    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-    let mut result = String::new();
-    let chunks = data.chunks(3);
-
-    for chunk in chunks {
-        let b0 = chunk[0] as usize;
-        let b1 = chunk.get(1).copied().unwrap_or(0) as usize;
-        let b2 = chunk.get(2).copied().unwrap_or(0) as usize;
-
-        let _ = result.write_char(ALPHABET[b0 >> 2] as char);
-        let _ = result.write_char(ALPHABET[((b0 & 0x03) << 4) | (b1 >> 4)] as char);
-
-        if chunk.len() > 1 {
-            let _ = result.write_char(ALPHABET[((b1 & 0x0f) << 2) | (b2 >> 6)] as char);
-        } else {
-            let _ = result.write_char('=');
-        }
-
-        if chunk.len() > 2 {
-            let _ = result.write_char(ALPHABET[b2 & 0x3f] as char);
-        } else {
-            let _ = result.write_char('=');
-        }
-    }
-
-    result
+    Ok(format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(&data)))
 }
 
 /// Clear the thumbnail cache
@@ -310,9 +279,11 @@ mod tests {
 
     #[test]
     fn test_base64_encode() {
-        assert_eq!(base64_encode(b"Hello"), "SGVsbG8=");
-        assert_eq!(base64_encode(b"Hi"), "SGk=");
-        assert_eq!(base64_encode(b""), "");
+        use base64::Engine as _;
+        let encode = |data: &[u8]| base64::engine::general_purpose::STANDARD.encode(data);
+        assert_eq!(encode(b"Hello"), "SGVsbG8=");
+        assert_eq!(encode(b"Hi"), "SGk=");
+        assert_eq!(encode(b""), "");
     }
 
     #[test]

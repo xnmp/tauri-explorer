@@ -46,6 +46,34 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## tauri-qz5t: Copy/Paste Folder with Files Not Working
+
+**Key takeaways:**
+
+- `fs_extra::dir::copy(src, dest, options)` with default `CopyOptions` copies `src` INTO `dest` as `dest/source_name/`. If `dest/source_name/` already exists, it fails because `overwrite` and `skip_exist` default to false.
+- For same-directory copies (where collision handling renames to "name - Copy"), passing `target.parent()` to `fs_extra` still creates the original name, conflicting with the source. Fix: `fs::create_dir_all(target)` + `content_only = true` to copy contents directly into the renamed target.
+- Same issue exists in cross-filesystem `move_entry` fallback.
+
+---
+
+## tauri-6yzm: Paste Duplicates 3 Times
+
+**Key takeaways:**
+
+- Keyboard shortcuts can fire through multiple layers: component `onkeydown` → parent component `onkeydown` → global `window.addEventListener("keydown")`. `preventDefault()` does NOT prevent bubbling. Use `stopPropagation()` or `stopImmediatePropagation()` to prevent duplicate handling.
+- In this codebase, Ctrl+V was caught by FileList, ExplorerPane, AND the global keybinding system, causing paste to execute 3 times.
+
+---
+
+## tauri-n5sr: Tiles View Drag Selection Mismatch
+
+**Key takeaways:**
+
+- Marquee selection using `getSelectedIndices(scrollTop, totalItems)` with `index = floor(marqueeTop / itemHeight)` only works for linear lists with fixed row height. CSS grid layouts (tiles view) need DOM-based hit testing using `getBoundingClientRect()` and AABB intersection.
+- `getBoundingClientRect()` returns viewport-relative coordinates, automatically accounting for scroll position.
+
+---
+
 ## tauri-phud: Delete Multiple Selected Files
 
 **Key takeaways:**

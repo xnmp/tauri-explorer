@@ -166,7 +166,26 @@
 {#if contextMenuStore.isOpen && contextMenuStore.position}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div class="context-menu-backdrop" onclick={() => contextMenuStore.close()}></div>
+  <div
+    class="context-menu-backdrop"
+    onclick={() => contextMenuStore.close()}
+    oncontextmenu={(e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      contextMenuStore.close();
+      // Re-dispatch contextmenu to the element under the cursor so the
+      // app context menu reopens at the new position.
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      if (el) {
+        el.dispatchEvent(new MouseEvent("contextmenu", {
+          bubbles: true,
+          clientX: e.clientX,
+          clientY: e.clientY,
+          button: 2,
+        }));
+      }
+    }}
+  ></div>
 
   <div
     bind:this={menuEl}

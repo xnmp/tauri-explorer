@@ -147,6 +147,13 @@
     // Global keyboard shortcuts
     window.addEventListener("keydown", handleKeydown);
 
+    // Prevent the browser's native context menu globally.
+    // The app provides its own context menu via ContextMenu.svelte.
+    function handleContextMenu(event: MouseEvent) {
+      event.preventDefault();
+    }
+    window.addEventListener("contextmenu", handleContextMenu);
+
     // Save tabs before window closes
     function handleBeforeUnload() {
       windowTabsManager.save();
@@ -160,6 +167,7 @@
 
     return () => {
       window.removeEventListener("keydown", handleKeydown);
+      window.removeEventListener("contextmenu", handleContextMenu);
       window.removeEventListener("beforeunload", handleBeforeUnload);
       clearInterval(saveInterval);
       externalDrop.cleanup();

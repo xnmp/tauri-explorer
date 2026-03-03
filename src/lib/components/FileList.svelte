@@ -396,57 +396,78 @@
           >
             <div class="tile-icon">
               {#if entry.kind === "directory"}
-                <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-                  <path d="M6 15C6 13.3431 7.34315 12 9 12H17.7574C18.553 12 19.3161 12.3161 19.8787 12.8787L21 14H39C40.6569 14 42 15.3431 42 17V36C42 37.6569 40.6569 39 39 39H9C7.34315 39 6 37.6569 6 36V15Z" fill="#ffb900"/>
+                <svg width="64" height="64" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <defs>
+                    <linearGradient id="folderBack" x1="24" y1="10" x2="24" y2="41" gradientUnits="userSpaceOnUse">
+                      <stop stop-color="#ffd660"/>
+                      <stop offset="1" stop-color="#e8a800"/>
+                    </linearGradient>
+                    <linearGradient id="folderFront" x1="24" y1="18" x2="24" y2="42" gradientUnits="userSpaceOnUse">
+                      <stop stop-color="#ffe08a"/>
+                      <stop offset="1" stop-color="#f0b400"/>
+                    </linearGradient>
+                  </defs>
+                  <!-- Back panel -->
+                  <path d="M4 14C4 11.79 5.79 10 8 10H16.34C17.4 10 18.42 10.42 19.17 11.17L22 14H40C42.21 14 44 15.79 44 18V37C44 39.21 42.21 41 40 41H8C5.79 41 4 39.21 4 37V14Z" fill="url(#folderBack)"/>
+                  <!-- Shadow strip between back and front -->
+                  <rect x="4" y="18" width="40" height="2" fill="#d4960a" opacity="0.3" rx="0.5"/>
+                  <!-- Front panel -->
+                  <path d="M2 22C2 20.34 3.34 19 5 19H43C44.66 19 46 20.34 46 22V39C46 40.66 44.66 42 43 42H5C3.34 42 2 40.66 2 39V22Z" fill="url(#folderFront)"/>
+                  <!-- Top highlight -->
+                  <path d="M2 22C2 20.34 3.34 19 5 19H43C44.66 19 46 20.34 46 22V23H2V22Z" fill="white" opacity="0.25"/>
                 </svg>
               {:else if isImageFile(entry)}
-                <!-- Show actual image thumbnail for supported formats -->
-                <ThumbnailImage path={entry.path} size={48} fallbackColor={iconColor} />
+                <ThumbnailImage path={entry.path} size={64} fallbackColor={iconColor} />
               {:else if iconCategory === "image"}
-                <!-- Non-thumbnailable image (e.g., SVG, ICO) -->
-                <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
                   <rect x="6" y="6" width="36" height="36" rx="4" fill={iconColor} fill-opacity="0.15"/>
-                  <rect x="6" y="6" width="36" height="36" rx="4" stroke={iconColor} stroke-width="2"/>
+                  <rect x="6" y="6" width="36" height="36" rx="4" stroke={iconColor} stroke-width="1.5"/>
                   <circle cx="16" cy="16" r="4" fill={iconColor}/>
                   <path d="M6 33L15 24L22 31L30 21L42 33V38C42 40.2091 40.2091 42 38 42H10C7.79086 42 6 40.2091 6 38V33Z" fill={iconColor} fill-opacity="0.4"/>
                 </svg>
               {:else if iconCategory === "archive"}
-                <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
                   <path d="M10 6C10 4.34315 11.3431 3 13 3H35C36.6569 3 38 4.34315 38 6V42C38 43.6569 36.6569 45 35 45H13C11.3431 45 10 43.6569 10 42V6Z" fill={iconColor} fill-opacity="0.15"/>
-                  <path d="M10 6C10 4.34315 11.3431 3 13 3H35C36.6569 3 38 4.34315 38 6V42C38 43.6569 36.6569 45 35 45H13C11.3431 45 10 43.6569 10 42V6Z" stroke={iconColor} stroke-width="2"/>
+                  <path d="M10 6C10 4.34315 11.3431 3 13 3H35C36.6569 3 38 4.34315 38 6V42C38 43.6569 36.6569 45 35 45H13C11.3431 45 10 43.6569 10 42V6Z" stroke={iconColor} stroke-width="1.5"/>
                   <rect x="18" y="9" width="12" height="6" rx="1" fill={iconColor}/>
                   <rect x="18" y="18" width="12" height="6" rx="1" fill={iconColor}/>
                   <rect x="18" y="27" width="12" height="9" rx="1" fill={iconColor}/>
                 </svg>
               {:else if iconCategory === "code"}
-                <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
                   <path d="M10 6C10 4.34315 11.3431 3 13 3H27L38 14V42C38 43.6569 36.6569 45 35 45H13C11.3431 45 10 43.6569 10 42V6Z" fill={iconColor} fill-opacity="0.15"/>
-                  <path d="M10 6C10 4.34315 11.3431 3 13 3H27L38 14V42C38 43.6569 36.6569 45 35 45H13C11.3431 45 10 43.6569 10 42V6Z" stroke={iconColor} stroke-width="2"/>
-                  <path d="M27 3V11C27 12.6569 28.3431 14 30 14H38" stroke={iconColor} stroke-width="2"/>
+                  <path d="M10 6C10 4.34315 11.3431 3 13 3H27L38 14V42C38 43.6569 36.6569 45 35 45H13C11.3431 45 10 43.6569 10 42V6Z" stroke={iconColor} stroke-width="1.5"/>
+                  <path d="M27 3V11C27 12.6569 28.3431 14 30 14H38" stroke={iconColor} stroke-width="1.5"/>
                   <path d="M18 24L13 29L18 34M30 24L35 29L30 34" stroke={iconColor} stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
               {:else if iconCategory === "media"}
-                <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
                   <rect x="6" y="10" width="36" height="28" rx="4" fill={iconColor} fill-opacity="0.15"/>
-                  <rect x="6" y="10" width="36" height="28" rx="4" stroke={iconColor} stroke-width="2"/>
+                  <rect x="6" y="10" width="36" height="28" rx="4" stroke={iconColor} stroke-width="1.5"/>
                   <path d="M19 18V30L32 24L19 18Z" fill={iconColor}/>
                 </svg>
               {:else if iconCategory === "executable"}
-                <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+                <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
                   <rect x="6" y="6" width="36" height="36" rx="6" fill={iconColor} fill-opacity="0.15"/>
-                  <rect x="6" y="6" width="36" height="36" rx="6" stroke={iconColor} stroke-width="2"/>
+                  <rect x="6" y="6" width="36" height="36" rx="6" stroke={iconColor} stroke-width="1.5"/>
                   <path d="M15 24H33M24 15V33" stroke={iconColor} stroke-width="3" stroke-linecap="round"/>
                 </svg>
               {:else}
-                <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-                  <path d="M10 6C10 4.34315 11.3431 3 13 3H27L40 16V42C40 43.6569 38.6569 45 37 45H13C11.3431 45 10 43.6569 10 42V6Z" fill={iconColor} fill-opacity="0.15"/>
-                  <path d="M10 6C10 4.34315 11.3431 3 13 3H27L40 16V42C40 43.6569 38.6569 45 37 45H13C11.3431 45 10 43.6569 10 42V6Z" stroke={iconColor} stroke-width="2"/>
-                  <path d="M27 3V13C27 14.6569 28.3431 16 30 16H40" stroke={iconColor} stroke-width="2"/>
-                  <path d="M16 27H32M16 33H28" stroke={iconColor} stroke-width="2" stroke-linecap="round"/>
+                <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
+                  <!-- Shadow -->
+                  <path d="M11 7C11 5.34 12.34 4 14 4H28L41 17V43C41 44.66 39.66 46 38 46H14C12.34 46 11 44.66 11 43V7Z" fill="black" opacity="0.06"/>
+                  <!-- Page body -->
+                  <path d="M10 6C10 4.34 11.34 3 13 3H27L40 16V42C40 43.66 38.66 45 37 45H13C11.34 45 10 43.66 10 42V6Z" fill="white"/>
+                  <path d="M10 6C10 4.34 11.34 3 13 3H27L40 16V42C40 43.66 38.66 45 37 45H13C11.34 45 10 43.66 10 42V6Z" stroke={iconColor} stroke-width="1.5" stroke-opacity="0.5"/>
+                  <!-- Corner fold -->
+                  <path d="M27 3V13C27 14.66 28.34 16 30 16H40" stroke={iconColor} stroke-width="1.5" stroke-opacity="0.5"/>
+                  <path d="M27 3V12C27 14.21 28.79 16 31 16H40L27 3Z" fill={iconColor} fill-opacity="0.12"/>
+                  <!-- Content lines -->
+                  <path d="M16 25H32M16 30H28M16 35H24" stroke={iconColor} stroke-width="1.5" stroke-linecap="round" stroke-opacity="0.6"/>
                 </svg>
               {/if}
             </div>
-            <span class="tile-name">{entry.name}</span>
+            <span class="tile-name" title={entry.name}>{entry.name}</span>
           </button>
         {/each}
       </div>
@@ -773,11 +794,11 @@
   /* Tiles View */
   .tiles-view {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(100px, 120px));
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
     grid-auto-rows: min-content;
     align-content: start;
-    gap: 8px;
-    padding: 16px;
+    gap: 4px;
+    padding: 12px;
     overflow-y: auto;
     flex: 1;
   }
@@ -786,22 +807,27 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 8px;
-    padding: 12px 8px;
+    gap: 6px;
+    padding: 10px 6px 8px;
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 8px;
+    border-radius: 6px;
     cursor: pointer;
     text-align: center;
     font-family: inherit;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-primary);
-    transition: background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+    transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
     height: fit-content;
+    min-width: 0;
   }
 
   .tile-item:hover {
     background: var(--subtle-fill-secondary);
+  }
+
+  .tile-item:active {
+    transform: scale(0.97);
   }
 
   .tile-item.selected {
@@ -809,19 +835,28 @@
     border-color: var(--accent);
   }
 
+  .tile-item.selected:hover {
+    background: var(--subtle-fill-tertiary);
+  }
+
   .tile-icon {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 48px;
-    height: 48px;
+    width: 64px;
+    height: 64px;
+    flex-shrink: 0;
   }
 
   .tile-name {
     width: 100%;
     overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
     text-overflow: ellipsis;
-    white-space: nowrap;
+    white-space: normal;
     line-height: 1.3;
+    word-break: break-all;
   }
 </style>

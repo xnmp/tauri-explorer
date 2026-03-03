@@ -555,7 +555,7 @@
   /* Marquee selection rectangle */
   .marquee-rect {
     position: absolute;
-    background: rgba(0, 120, 212, 0.15);
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
     border: 1px solid var(--accent);
     border-radius: 2px;
     pointer-events: none;

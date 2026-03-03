@@ -109,6 +109,9 @@ function createExplorerState() {
     selectionAnchorIndex: null,
   });
 
+  // Inline folder creation state
+  let isCreatingFolder = $state(false);
+
   // Read-only state accessor for components that need the raw state bag
   const state = $derived({ ...coreState });
 
@@ -428,10 +431,21 @@ function createExplorerState() {
 
     if (result.ok) {
       coreState.entries = [...coreState.entries, result.data];
+      isCreatingFolder = false;
       dialogStore.closeNewFolder();
       return null;
     }
     return result.error;
+  }
+
+  /** Start inline folder creation (shows editable placeholder in file list) */
+  function startInlineNewFolder(): void {
+    isCreatingFolder = true;
+  }
+
+  /** Cancel inline folder creation */
+  function cancelInlineNewFolder(): void {
+    isCreatingFolder = false;
   }
 
   async function rename(newName: string): Promise<string | null> {
@@ -662,6 +676,12 @@ function createExplorerState() {
     // Context menu
     openContextMenu,
     closeContextMenu,
+    // Inline folder creation
+    get isCreatingFolder() {
+      return isCreatingFolder;
+    },
+    startInlineNewFolder,
+    cancelInlineNewFolder,
     // File operations
     createFolder,
     rename,

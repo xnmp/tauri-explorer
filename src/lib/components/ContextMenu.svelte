@@ -68,7 +68,7 @@
   }
 
   function handleNewFolder(): void {
-    explorer.openNewFolderDialog();
+    explorer.startInlineNewFolder();
     contextMenuStore.close();
   }
 

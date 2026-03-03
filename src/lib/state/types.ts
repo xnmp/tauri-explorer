@@ -20,13 +20,6 @@ export interface SelectOptions {
 /** Pane identifiers for dual pane layout */
 export type PaneId = "left" | "right";
 
-/** Pane layout configuration */
-export interface PaneLayoutState {
-  activePaneId: PaneId;
-  splitRatio: number; // 0-1, position of divider
-  dualPaneEnabled: boolean;
-}
-
 /**
  * Window-level tab that contains the full dual-pane layout state.
  * Each tab independently tracks both panes, active pane, and layout settings.

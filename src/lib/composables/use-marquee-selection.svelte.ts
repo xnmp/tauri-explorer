@@ -32,6 +32,8 @@ const DEFAULT_OPTIONS: Required<MarqueeOptions> = {
   ],
 };
 
+import { getZoomFactor } from "$lib/domain/zoom";
+
 export function useMarqueeSelection(options: MarqueeOptions = {}) {
   const config = { ...DEFAULT_OPTIONS, ...options };
 
@@ -66,9 +68,12 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
 
     isDragging = true;
     ctrlKeyHeld = event.ctrlKey || event.metaKey;
+    // Compensate for CSS zoom: clientX/Y are physical pixels in WebKitGTK,
+    // but containerRect is in CSS (zoomed) pixels.
+    const zoom = getZoomFactor();
     dragStart = {
-      x: event.clientX - containerRect.left,
-      y: Math.max(config.headerHeight, event.clientY - containerRect.top),
+      x: event.clientX / zoom - containerRect.left,
+      y: Math.max(config.headerHeight, event.clientY / zoom - containerRect.top),
     };
     dragCurrent = { ...dragStart };
 
@@ -78,9 +83,10 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
   function move(event: MouseEvent, containerRect: DOMRect): void {
     if (!isDragging) return;
 
+    const zoom = getZoomFactor();
     dragCurrent = {
-      x: Math.max(0, Math.min(event.clientX - containerRect.left, containerRect.width)),
-      y: Math.max(config.headerHeight, event.clientY - containerRect.top),
+      x: Math.max(0, Math.min(event.clientX / zoom - containerRect.left, containerRect.width)),
+      y: Math.max(config.headerHeight, event.clientY / zoom - containerRect.top),
     };
   }
 

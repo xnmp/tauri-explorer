@@ -14,6 +14,14 @@
 
   let error = $state<string | null>(null);
   let deleting = $state(false);
+  let overlayEl: HTMLDivElement | undefined = $state();
+
+  // Auto-focus overlay when dialog opens so keydown events are captured
+  $effect(() => {
+    if (overlayEl) {
+      overlayEl.focus();
+    }
+  });
 
   async function handleConfirm() {
     deleting = true;
@@ -61,6 +69,7 @@
     aria-labelledby="dialog-title"
     aria-describedby="dialog-description"
     tabindex="-1"
+    bind:this={overlayEl}
     onkeydown={handleKeydown}
     onclick={handleBackdropClick}
   >

@@ -60,7 +60,7 @@ const navigationCommands: Command[] = [
     id: "navigation.goUp",
     label: "Go Up",
     category: "navigation",
-    shortcut: "Alt+Up",
+    shortcut: "Ctrl+Alt+Up",
     handler: () => getActiveExplorer()?.goUp(),
     when: () => (getActiveExplorer()?.breadcrumbs.length ?? 0) > 1,
   },

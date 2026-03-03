@@ -15,6 +15,7 @@
   import ContextMenu from "./ContextMenu.svelte";
   import NewFolderDialog from "./NewFolderDialog.svelte";
   import DeleteDialog from "./DeleteDialog.svelte";
+  import { dialogStore } from "$lib/state/dialogs.svelte";
 
   interface Props {
     paneId: PaneId;
@@ -41,6 +42,9 @@
   }
 
   async function handleKeydown(event: KeyboardEvent): Promise<void> {
+    // Don't process keyboard shortcuts when a dialog is open
+    if (dialogStore.activeDialog) return;
+
     const hasModifier = event.ctrlKey || event.metaKey;
     const selectedEntries = paneExplorer.getSelectedEntries();
     const selected = selectedEntries[0];
@@ -58,8 +62,8 @@
       return;
     }
 
-    // Alt + ArrowUp: Go up
-    if (event.altKey && !hasModifier && event.key === "ArrowUp") {
+    // Ctrl+Alt + ArrowUp: Go up
+    if (event.altKey && hasModifier && event.key === "ArrowUp") {
       event.preventDefault();
       paneExplorer.goUp();
       return;

@@ -1,10 +1,36 @@
 <!--
-  ThumbnailImage component - Lazy-loaded image thumbnail
-  Issue: tauri-explorer-im3m, tauri-1rzt
+  ThumbnailImage component - Lazy-loaded image thumbnail with concurrency control
+  Issue: tauri-explorer-im3m, tauri-1rzt, tauri-nag1
 -->
-<script lang="ts">
+<script lang="ts" module>
   import { getThumbnailData } from "$lib/api/files";
 
+  // Global concurrency limiter - max 4 concurrent thumbnail loads
+  const MAX_CONCURRENT = 4;
+  let activeCount = 0;
+  const queue: Array<() => void> = [];
+
+  function acquireSlot(): Promise<void> {
+    if (activeCount < MAX_CONCURRENT) {
+      activeCount++;
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      queue.push(() => {
+        activeCount++;
+        resolve();
+      });
+    });
+  }
+
+  function releaseSlot(): void {
+    activeCount--;
+    const next = queue.shift();
+    if (next) next();
+  }
+</script>
+
+<script lang="ts">
   interface Props {
     path: string;
     size?: number;
@@ -49,12 +75,17 @@
     error = false;
     thumbnailUrl = null;
 
-    const result = await getThumbnailData(path, size);
+    await acquireSlot();
+    try {
+      const result = await getThumbnailData(path, size);
 
-    if (result.ok) {
-      thumbnailUrl = result.data;
-    } else {
-      error = true;
+      if (result.ok) {
+        thumbnailUrl = result.data;
+      } else {
+        error = true;
+      }
+    } finally {
+      releaseSlot();
     }
 
     loading = false;

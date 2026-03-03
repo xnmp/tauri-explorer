@@ -13,6 +13,7 @@
   import ThumbnailImage from "./ThumbnailImage.svelte";
   import { useColumnResize } from "$lib/composables/use-column-resize.svelte";
   import { useMarqueeSelection } from "$lib/composables/use-marquee-selection.svelte";
+  import { useTypeAhead } from "$lib/composables/use-type-ahead.svelte";
   import { getFileIconColor, getFileIconCategory, isImageFile } from "$lib/domain/file-types";
 
   import type { FileEntry } from "$lib/domain/file";
@@ -73,6 +74,12 @@
 
   // Marquee selection composable
   const marquee = useMarqueeSelection();
+
+  // Type-ahead selection composable
+  const typeAhead = useTypeAhead(
+    () => explorer.displayEntries,
+    (entry) => explorer.selectEntry(entry, {}),
+  );
 
   function handleClick(entry: FileEntry, event: MouseEvent): void {
     explorer.selectEntry(entry, {
@@ -143,34 +150,8 @@
     }
   }
 
-  // Type-ahead selection: typing letters jumps to matching file
-  let typeAheadBuffer = "";
-  let typeAheadTimer: ReturnType<typeof setTimeout> | null = null;
-  const TYPE_AHEAD_TIMEOUT = 800;
-
-  function handleTypeAhead(key: string): void {
-    if (typeAheadTimer) clearTimeout(typeAheadTimer);
-    typeAheadBuffer += key.toLowerCase();
-    typeAheadTimer = setTimeout(() => { typeAheadBuffer = ""; }, TYPE_AHEAD_TIMEOUT);
-
-    // Find the first entry matching the typed prefix
-    const entries = explorer.displayEntries;
-    const match = entries.find((e) =>
-      e.name.toLowerCase().startsWith(typeAheadBuffer)
-    );
-    if (match) {
-      explorer.selectEntry(match, {});
-    }
-  }
-
   function handleKeydown(event: KeyboardEvent): void {
-    // Type-ahead: single printable character without modifiers
-    if (
-      event.key.length === 1 &&
-      !event.ctrlKey && !event.metaKey && !event.altKey
-    ) {
-      handleTypeAhead(event.key);
-    }
+    typeAhead.handleKeydown(event);
   }
 
   // Drop handlers for dropping files into current directory

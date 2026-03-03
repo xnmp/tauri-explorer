@@ -46,14 +46,14 @@
       homeDir = result.data;
     }
 
-    // The HTML5 drop event does not fire in this app due to Svelte 5 event
-    // delegation interfering with the browser's DnD state machine. Instead,
-    // we detect drops by checking isDragOver when the drag ends: if the user
-    // releases over Quick Access, treat it as a drop.
+    // Native DnD listeners bypass Svelte 5 event delegation which can
+    // interfere with the HTML5 drag-and-drop state machine. We attach
+    // dragenter/dragover/dragleave/drop directly on the Quick Access element.
     if (quickAccessEl) {
       quickAccessEl.addEventListener("dragenter", onQuickAccessDragEnter);
       quickAccessEl.addEventListener("dragover", onQuickAccessDragOver);
       quickAccessEl.addEventListener("dragleave", onQuickAccessDragLeave);
+      quickAccessEl.addEventListener("drop", onQuickAccessDrop);
     }
     document.addEventListener("dragstart", onDragStartPoll);
     document.addEventListener("dragend", onDragEnd);
@@ -63,6 +63,7 @@
         quickAccessEl.removeEventListener("dragenter", onQuickAccessDragEnter);
         quickAccessEl.removeEventListener("dragover", onQuickAccessDragOver);
         quickAccessEl.removeEventListener("dragleave", onQuickAccessDragLeave);
+        quickAccessEl.removeEventListener("drop", onQuickAccessDrop);
       }
       document.removeEventListener("dragstart", onDragStartPoll);
       document.removeEventListener("dragend", onDragEnd);
@@ -129,6 +130,20 @@
         event.clientY < rect.top || event.clientY > rect.bottom) {
       isDragOver = false;
     }
+  }
+
+  function onQuickAccessDrop(event: DragEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (dragState.current) {
+      const { kind, path, name } = dragState.current;
+      if (kind === "directory" && path) {
+        bookmarksStore.addBookmark(path, name);
+      }
+    }
+    isDragOver = false;
+    dragState.clear();
+    stopDragPoll();
   }
 
   function onDragEnd(event: DragEvent) {

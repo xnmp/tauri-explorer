@@ -104,6 +104,21 @@ export async function deleteEntry(path: string): Promise<ApiResult<void>> {
 }
 
 /**
+ * Move multiple files/directories to the system trash.
+ *
+ * @param paths - Array of full paths to delete
+ * @returns Result indicating success or error message
+ */
+export async function deleteMultipleEntries(paths: string[]): Promise<ApiResult<void>> {
+  try {
+    await invoke("move_multiple_to_trash", { paths });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
  * Copy a file or directory to a destination.
  *
  * @param source - Full path to source file/directory

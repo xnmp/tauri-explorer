@@ -58,7 +58,11 @@
   }
 
   function handleDelete(): void {
-    withSelectedEntry((entry) => explorer.startDelete(entry));
+    const entries = explorer.getSelectedEntries();
+    if (entries.length > 0) {
+      explorer.startDelete(entries);
+    }
+    contextMenuStore.close();
   }
 
   function handleNewFolder(): void {

@@ -47,6 +47,21 @@
     }
   });
 
+  // Watch paste results for toast feedback
+  let pasteResultTimer: ReturnType<typeof setTimeout> | null = null;
+  $effect(() => {
+    const result = explorer.pasteResult;
+    if (!result) return;
+    if (pasteResultTimer) clearTimeout(pasteResultTimer);
+    if (result.error) {
+      pasteError = result.error;
+      pasteResultTimer = setTimeout(() => { pasteError = null; }, 3000);
+    } else {
+      pasteSuccess = true;
+      pasteResultTimer = setTimeout(() => { pasteSuccess = false; }, 1500);
+    }
+  });
+
   // Drop target state for dropping files into current directory
   let isDropTarget = $state(false);
 
@@ -148,26 +163,7 @@
     }
   }
 
-  async function handleKeydown(event: KeyboardEvent): Promise<void> {
-    // Normalize key to lowercase for consistent comparison (handles Caps Lock)
-    const normalizedKey = event.key.toLowerCase();
-    const isPasteShortcut = normalizedKey === "v" && (event.ctrlKey || event.metaKey);
-
-    if (isPasteShortcut) {
-      event.preventDefault();
-      event.stopImmediatePropagation(); // Prevent duplicate paste from ExplorerPane and global keybindings
-      const error = await explorer.paste();
-
-      if (error) {
-        pasteError = error;
-        setTimeout(() => (pasteError = null), 3000);
-      } else {
-        pasteSuccess = true;
-        setTimeout(() => (pasteSuccess = false), 1500);
-      }
-      return;
-    }
-
+  function handleKeydown(event: KeyboardEvent): void {
     // Type-ahead: single printable character without modifiers
     if (
       event.key.length === 1 &&

@@ -6,10 +6,8 @@
 <script lang="ts">
   import { setContext } from "svelte";
   import { createExplorerState } from "$lib/state/explorer.svelte";
-  import { clipboardStore } from "$lib/state/clipboard.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import type { PaneId } from "$lib/state/types";
-  import { openFile } from "$lib/api/files";
   import NavigationBar from "./NavigationBar.svelte";
   import FileList from "./FileList.svelte";
   import ContextMenu from "./ContextMenu.svelte";
@@ -41,39 +39,18 @@
     windowTabsManager.setActivePane(paneId);
   }
 
-  async function handleKeydown(event: KeyboardEvent): Promise<void> {
+  function handleKeydown(event: KeyboardEvent): void {
     // Don't process keyboard shortcuts when a dialog is open
     if (dialogStore.activeDialog) return;
 
-    const hasModifier = event.ctrlKey || event.metaKey;
-    const selectedEntries = paneExplorer.getSelectedEntries();
-    const selected = selectedEntries[0];
-    const entries = paneExplorer.displayEntries;
-
-    // Ctrl+Alt + Arrow: Navigation history
-    if (event.altKey && hasModifier) {
-      if (event.key === "ArrowLeft") {
-        event.preventDefault();
-        paneExplorer.goBack();
-      } else if (event.key === "ArrowRight") {
-        event.preventDefault();
-        paneExplorer.goForward();
-      }
-      return;
-    }
-
-    // Ctrl+Alt + ArrowUp: Go up
-    if (event.altKey && hasModifier && event.key === "ArrowUp") {
-      event.preventDefault();
-      paneExplorer.goUp();
-      return;
-    }
-
-    // Arrow key navigation in file list
+    // Arrow key navigation in file list (not in global command system
+    // because it needs current selection context and shift-key handling)
     if (event.key === "ArrowUp" || event.key === "ArrowDown") {
       event.preventDefault();
+      const entries = paneExplorer.displayEntries;
       if (entries.length === 0) return;
 
+      const selected = paneExplorer.getSelectedEntries()[0];
       const currentIndex = selected
         ? entries.findIndex((e) => e.path === selected.path)
         : -1;
@@ -83,74 +60,9 @@
         : (currentIndex >= entries.length - 1 ? 0 : currentIndex + 1);
 
       paneExplorer.selectEntry(entries[newIndex], { ctrlKey: false, shiftKey: event.shiftKey });
-      return;
     }
-
-    // Enter: Open selected item
-    if (event.key === "Enter" && selected) {
-      event.preventDefault();
-      if (selected.kind === "directory") {
-        paneExplorer.navigateTo(selected.path);
-      } else {
-        openFile(selected.path);
-      }
-      return;
-    }
-
-    // Delete: Delete selected item(s)
-    if (event.key === "Delete" && selectedEntries.length > 0) {
-      event.preventDefault();
-      paneExplorer.startDelete(selectedEntries);
-      return;
-    }
-
-    // F2: Rename selected item
-    if (event.key === "F2" && selected) {
-      event.preventDefault();
-      paneExplorer.startRename(selected);
-      return;
-    }
-
-    // F5: Refresh
-    if (event.key === "F5") {
-      event.preventDefault();
-      paneExplorer.refresh();
-      return;
-    }
-
-    // F6 or Ctrl+Tab: Switch pane
-    if (event.key === "F6" || (hasModifier && event.key === "Tab" && !event.shiftKey)) {
-      event.preventDefault();
-      windowTabsManager.switchPane();
-      return;
-    }
-
-    // Modifier shortcuts (Ctrl/Cmd + key)
-    if (!hasModifier) return;
-
-    const key = event.key.toLowerCase();
-
-    if (key === "a") {
-      event.preventDefault();
-      event.stopPropagation(); // Prevent duplicate from global keybindings
-      paneExplorer.selectAll();
-    } else if (key === "z") {
-      event.preventDefault();
-      event.stopPropagation();
-      await paneExplorer.undo();
-    } else if (key === "c" && selectedEntries.length > 0) {
-      event.preventDefault();
-      event.stopPropagation();
-      paneExplorer.copyToClipboard(selectedEntries);
-    } else if (key === "x" && selectedEntries.length > 0) {
-      event.preventDefault();
-      event.stopPropagation();
-      paneExplorer.cutToClipboard(selectedEntries);
-    } else if (key === "v") {
-      event.preventDefault();
-      event.stopPropagation();
-      await paneExplorer.paste();
-    }
+    // All other shortcuts (Ctrl+C/X/V/Z/A, Delete, F2, F5, F6, Enter, etc.)
+    // are handled by the global keybinding system in command-definitions.ts
   }
 
   // Note: Tab initialization is handled at page level by windowTabsManager

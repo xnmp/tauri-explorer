@@ -487,6 +487,9 @@ function createExplorerState() {
     clipboardStore.clear();
   }
 
+  // Paste result for UI feedback (observed by FileList for toasts)
+  let pasteResult = $state<{ error: string | null; timestamp: number } | null>(null);
+
   async function paste(): Promise<string | null> {
     if (!coreState.currentPath) return "No current directory";
 
@@ -523,7 +526,9 @@ function createExplorerState() {
       if (newEntries.length > 0) {
         coreState.entries = [...coreState.entries, ...newEntries];
       }
-      return errors.length > 0 ? `Failed: ${errors.join(", ")}` : null;
+      const error = errors.length > 0 ? `Failed: ${errors.join(", ")}` : null;
+      pasteResult = { error, timestamp: Date.now() };
+      return error;
     }
 
     // Fall back to OS clipboard (files from external apps)
@@ -548,7 +553,9 @@ function createExplorerState() {
       coreState.entries = [...coreState.entries, ...newEntries];
     }
 
-    return errors.length > 0 ? `Failed: ${errors.join(", ")}` : null;
+    const error = errors.length > 0 ? `Failed: ${errors.join(", ")}` : null;
+    pasteResult = { error, timestamp: Date.now() };
+    return error;
   }
 
   // ===================
@@ -635,6 +642,9 @@ function createExplorerState() {
     cutToClipboard,
     clearClipboard,
     paste,
+    get pasteResult() {
+      return pasteResult;
+    },
     // Undo/Redo
     undo,
     redo,

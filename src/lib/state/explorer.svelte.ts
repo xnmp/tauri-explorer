@@ -368,9 +368,27 @@ function createExplorerState() {
     dialogStore.cancelRename();
   }
 
-  function startDelete(entries: FileEntry | FileEntry[]) {
+  async function startDelete(entries: FileEntry | FileEntry[]) {
     const arr = Array.isArray(entries) ? entries : [entries];
     if (arr.length === 0) return;
+
+    if (!settingsStore.confirmDelete) {
+      // Skip dialog, delete immediately
+      const paths = arr.map((e) => e.path);
+      const result = arr.length === 1
+        ? await deleteEntry(paths[0])
+        : await deleteMultipleEntries(paths);
+
+      if (result.ok) {
+        const deletedPaths = new Set(paths);
+        coreState.entries = coreState.entries.filter((e) => !deletedPaths.has(e.path));
+        coreState.selectedPaths = new Set(
+          [...coreState.selectedPaths].filter((p) => !deletedPaths.has(p))
+        );
+      }
+      return;
+    }
+
     dialogStore.startDelete(arr);
   }
 

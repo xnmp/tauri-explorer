@@ -108,8 +108,15 @@
 
   function updateMarqueeSelection(): void {
     if (!marquee.marqueeRect || !contentRef) return;
-    const scrollTop = contentRef.querySelector('.virtual-viewport')?.scrollTop ?? 0;
-    const indices = marquee.getSelectedIndices(scrollTop, explorer.displayEntries.length);
+
+    let indices: number[];
+    if (explorer.state.viewMode === "tiles") {
+      // Tiles use CSS grid - need DOM-based hit testing
+      indices = marquee.getSelectedIndicesFromDOM(contentRef, ".tile-item");
+    } else {
+      const scrollTop = contentRef.querySelector('.virtual-viewport')?.scrollTop ?? 0;
+      indices = marquee.getSelectedIndices(scrollTop, explorer.displayEntries.length);
+    }
     explorer.selectByIndices(indices, marquee.ctrlKeyHeld);
   }
 

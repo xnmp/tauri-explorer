@@ -25,6 +25,7 @@ const DEFAULT_OPTIONS: Required<MarqueeOptions> = {
     "file-rows",
     "content",
     "details-view",
+    "tiles-view",
     "virtual-viewport",
     "virtual-spacer-top",
     "virtual-spacer-bottom",
@@ -115,6 +116,35 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     return Array.from({ length: endIndex - startIndex + 1 }, (_, i) => startIndex + i);
   }
 
+  /**
+   * Calculate selected indices by checking DOM element positions against the marquee.
+   * Works for grid layouts (tiles view) where items aren't in a linear list.
+   * @param container The scrollable container element
+   * @param itemSelector CSS selector for item elements
+   */
+  function getSelectedIndicesFromDOM(container: HTMLElement, itemSelector: string): number[] {
+    if (!marqueeRect) return [];
+
+    const containerRect = container.getBoundingClientRect();
+    const mLeft = marqueeRect.left + containerRect.left;
+    const mTop = marqueeRect.top + containerRect.top;
+    const mRight = mLeft + marqueeRect.width;
+    const mBottom = mTop + marqueeRect.height;
+
+    const items = container.querySelectorAll(itemSelector);
+    const indices: number[] = [];
+
+    for (let i = 0; i < items.length; i++) {
+      const rect = items[i].getBoundingClientRect();
+      // Check AABB intersection
+      if (rect.right > mLeft && rect.left < mRight && rect.bottom > mTop && rect.top < mBottom) {
+        indices.push(i);
+      }
+    }
+
+    return indices;
+  }
+
   return {
     get isDragging() {
       return isDragging;
@@ -133,5 +163,6 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     move,
     end,
     getSelectedIndices,
+    getSelectedIndicesFromDOM,
   };
 }

@@ -4,6 +4,7 @@
 mod archive;
 mod clipboard;
 mod content_search;
+pub mod error;
 mod files;
 mod search;
 pub mod task_registry;
@@ -11,31 +12,33 @@ mod thumbnails;
 
 use std::path::PathBuf;
 
+use error::AppError;
+
 /// Move a file or directory to the system trash/recycle bin.
 /// Cross-platform: Windows Recycle Bin, macOS Trash, Linux Freedesktop Trash.
 #[tauri::command]
-fn move_to_trash(path: String) -> Result<(), String> {
+fn move_to_trash(path: String) -> Result<(), AppError> {
     let pathbuf = PathBuf::from(&path);
 
     if !pathbuf.exists() {
-        return Err(format!("Path does not exist: {}", path));
+        return Err(AppError::NotFound(path));
     }
 
-    trash::delete(&pathbuf).map_err(|e| format!("Failed to move to trash: {}", e))
+    trash::delete(&pathbuf).map_err(|e| AppError::Other(format!("Failed to move to trash: {}", e)))
 }
 
 /// Move multiple files/directories to trash.
 #[tauri::command]
-fn move_multiple_to_trash(paths: Vec<String>) -> Result<(), String> {
+fn move_multiple_to_trash(paths: Vec<String>) -> Result<(), AppError> {
     let pathbufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
 
     for (i, path) in pathbufs.iter().enumerate() {
         if !path.exists() {
-            return Err(format!("Path does not exist: {}", paths[i]));
+            return Err(AppError::NotFound(paths[i].clone()));
         }
     }
 
-    trash::delete_all(&pathbufs).map_err(|e| format!("Failed to move items to trash: {}", e))
+    trash::delete_all(&pathbufs).map_err(|e| AppError::Other(format!("Failed to move items to trash: {}", e)))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

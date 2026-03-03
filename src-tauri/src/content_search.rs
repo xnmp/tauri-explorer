@@ -1,6 +1,7 @@
 //! Content search module using grep crate (ripgrep library).
 //! Issue: tauri-explorer-3a1q, tauri-explorer-5w06, tauri-pkc4, tauri-dbiw
 
+use crate::error::AppError;
 use grep_matcher::Matcher;
 use grep_regex::RegexMatcherBuilder;
 use grep_searcher::sinks::UTF8;
@@ -67,19 +68,19 @@ pub fn start_content_search(
     case_sensitive: bool,
     regex_mode: bool,
     max_results: usize,
-) -> Result<u64, String> {
+) -> Result<u64, AppError> {
     let root_path = PathBuf::from(&root);
 
     if !root_path.exists() {
-        return Err("Directory not found".to_string());
+        return Err(AppError::NotFound(root));
     }
 
     if !root_path.is_dir() {
-        return Err("Path is not a directory".to_string());
+        return Err(AppError::InvalidPath(format!("Not a directory: {}", root)));
     }
 
     if query.is_empty() {
-        return Err("Search query cannot be empty".to_string());
+        return Err(AppError::Other("Search query cannot be empty".into()));
     }
 
     let (search_id, cancelled) = CONTENT_SEARCHES.start();
@@ -128,7 +129,7 @@ fn perform_content_search(
     regex_mode: bool,
     max_results: usize,
     cancelled: &Arc<AtomicBool>,
-) -> Result<(), String> {
+) -> Result<(), AppError> {
     // Build the regex matcher
     let pattern = if regex_mode {
         query.to_string()
@@ -140,7 +141,7 @@ fn perform_content_search(
         .case_insensitive(!case_sensitive)
         .line_terminator(Some(b'\n'))
         .build(&pattern)
-        .map_err(|e| format!("Invalid search pattern: {}", e))?;
+        .map_err(|e| AppError::Other(format!("Invalid search pattern: {}", e)))?;
 
     let matcher = Arc::new(matcher);
 
@@ -358,7 +359,7 @@ fn is_binary_file(path: &std::path::Path) -> bool {
 
 /// Cancel an active content search.
 #[tauri::command]
-pub fn cancel_content_search(search_id: u64) -> Result<(), String> {
+pub fn cancel_content_search(search_id: u64) -> Result<(), AppError> {
     CONTENT_SEARCHES.cancel(search_id);
     Ok(())
 }

@@ -1,6 +1,7 @@
 //! Fuzzy search module for Tauri commands.
 //! Issue: tauri-explorer-az6w, tauri-explorer-nv2y
 
+use crate::error::AppError;
 use jwalk::WalkDir;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
@@ -68,15 +69,15 @@ fn should_skip_dir(name: &str) -> bool {
 /// Fuzzy search for files and directories recursively (non-streaming version).
 /// Uses nucleo for fast fuzzy matching and jwalk for parallel traversal.
 #[tauri::command]
-pub fn fuzzy_search(query: String, root: String, limit: usize) -> Result<SearchResponse, String> {
+pub fn fuzzy_search(query: String, root: String, limit: usize) -> Result<SearchResponse, AppError> {
     let root_path = PathBuf::from(&root);
 
     if !root_path.exists() {
-        return Err("Directory not found".to_string());
+        return Err(AppError::NotFound(root));
     }
 
     if !root_path.is_dir() {
-        return Err("Path is not a directory".to_string());
+        return Err(AppError::InvalidPath(format!("Not a directory: {}", root)));
     }
 
     let limit = limit.min(100).max(1);
@@ -184,15 +185,15 @@ pub fn start_streaming_search(
     root: String,
     limit: usize,
     boost_prefix: Option<String>,
-) -> Result<u64, String> {
+) -> Result<u64, AppError> {
     let root_path = PathBuf::from(&root);
 
     if !root_path.exists() {
-        return Err("Directory not found".to_string());
+        return Err(AppError::NotFound(root));
     }
 
     if !root_path.is_dir() {
-        return Err("Path is not a directory".to_string());
+        return Err(AppError::InvalidPath(format!("Not a directory: {}", root)));
     }
 
     let limit = limit.min(100).max(1);
@@ -384,7 +385,7 @@ fn process_batch(
 
 /// Cancel an active streaming search.
 #[tauri::command]
-pub fn cancel_search(search_id: u64) -> Result<(), String> {
+pub fn cancel_search(search_id: u64) -> Result<(), AppError> {
     SEARCHES.cancel(search_id);
     Ok(())
 }

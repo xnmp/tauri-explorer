@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter};
-use thiserror::Error;
+use crate::error::AppError;
 
 /// File system entry representation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,34 +34,6 @@ pub struct DirectoryListing {
     pub path: String,
     pub entries: Vec<FileEntry>,
     pub listing_id: Option<u64>,
-}
-
-/// Error types for file operations.
-#[derive(Debug, Error)]
-pub enum FileError {
-    #[error("Path not found: {0}")]
-    NotFound(String),
-
-    #[error("Permission denied: {0}")]
-    PermissionDenied(String),
-
-    #[error("Path already exists: {0}")]
-    AlreadyExists(String),
-
-    #[error("Invalid path: {0}")]
-    InvalidPath(String),
-
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-}
-
-impl Serialize for FileError {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(&self.to_string())
-    }
 }
 
 /// Convert metadata to FileEntry.
@@ -117,7 +89,7 @@ fn get_dir_cache() -> &'static Mutex<HashMap<String, CachedListing>> {
 
 /// Invalidate cache for a specific directory.
 #[tauri::command]
-pub fn invalidate_dir_cache(path: String) -> Result<(), String> {
+pub fn invalidate_dir_cache(path: String) -> Result<(), AppError> {
     let mut cache = get_dir_cache().lock().unwrap();
     cache.remove(&path);
     Ok(())
@@ -126,7 +98,7 @@ pub fn invalidate_dir_cache(path: String) -> Result<(), String> {
 /// List directory contents.
 /// Directories are sorted before files, and items are sorted case-insensitively by name.
 #[tauri::command]
-pub fn list_directory(path: String) -> Result<DirectoryListing, FileError> {
+pub fn list_directory(path: String) -> Result<DirectoryListing, AppError> {
     // Check cache first
     {
         let cache = get_dir_cache().lock().unwrap();
@@ -144,20 +116,20 @@ pub fn list_directory(path: String) -> Result<DirectoryListing, FileError> {
     let dir_path = PathBuf::from(&path);
 
     if !dir_path.exists() {
-        return Err(FileError::NotFound(path.clone()));
+        return Err(AppError::NotFound(path.clone()));
     }
 
     if !dir_path.is_dir() {
-        return Err(FileError::InvalidPath(format!("Not a directory: {}", path)));
+        return Err(AppError::InvalidPath(format!("Not a directory: {}", path)));
     }
 
     let mut entries = Vec::new();
 
     let read_dir = fs::read_dir(&dir_path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::PermissionDenied {
-            FileError::PermissionDenied(path.clone())
+            AppError::PermissionDenied(path.clone())
         } else {
-            FileError::Io(e)
+            AppError::Io(e)
         }
     })?;
 
@@ -208,22 +180,22 @@ pub fn list_directory(path: String) -> Result<DirectoryListing, FileError> {
 
 /// Get the user's home directory.
 #[tauri::command]
-pub fn get_home_directory() -> Result<String, FileError> {
+pub fn get_home_directory() -> Result<String, AppError> {
     dirs::home_dir()
         .map(|p| p.to_string_lossy().to_string())
-        .ok_or_else(|| FileError::NotFound("Home directory not found".to_string()))
+        .ok_or_else(|| AppError::NotFound("Home directory not found".to_string()))
 }
 
 /// Create a new directory.
 #[tauri::command]
-pub fn create_directory(parent_path: String, name: String) -> Result<FileEntry, FileError> {
+pub fn create_directory(parent_path: String, name: String) -> Result<FileEntry, AppError> {
     if name.is_empty() {
-        return Err(FileError::InvalidPath("Directory name cannot be empty".to_string()));
+        return Err(AppError::InvalidPath("Directory name cannot be empty".to_string()));
     }
 
     let parent = PathBuf::from(&parent_path);
     if !parent.exists() {
-        return Err(FileError::NotFound(format!(
+        return Err(AppError::NotFound(format!(
             "Parent directory does not exist: {}",
             parent_path
         )));
@@ -231,7 +203,7 @@ pub fn create_directory(parent_path: String, name: String) -> Result<FileEntry, 
 
     let new_path = parent.join(&name);
     if new_path.exists() {
-        return Err(FileError::AlreadyExists(new_path.to_string_lossy().to_string()));
+        return Err(AppError::AlreadyExists(new_path.to_string_lossy().to_string()));
     }
 
     fs::create_dir(&new_path)?;
@@ -242,23 +214,23 @@ pub fn create_directory(parent_path: String, name: String) -> Result<FileEntry, 
 
 /// Rename a file or directory.
 #[tauri::command]
-pub fn rename_entry(path: String, new_name: String) -> Result<FileEntry, FileError> {
+pub fn rename_entry(path: String, new_name: String) -> Result<FileEntry, AppError> {
     if new_name.is_empty() {
-        return Err(FileError::InvalidPath("New name cannot be empty".to_string()));
+        return Err(AppError::InvalidPath("New name cannot be empty".to_string()));
     }
 
     let source = PathBuf::from(&path);
     if !source.exists() {
-        return Err(FileError::NotFound(path.clone()));
+        return Err(AppError::NotFound(path.clone()));
     }
 
     let parent = source.parent().ok_or_else(|| {
-        FileError::InvalidPath(format!("Cannot get parent directory of: {}", path))
+        AppError::InvalidPath(format!("Cannot get parent directory of: {}", path))
     })?;
 
     let target = parent.join(&new_name);
     if target.exists() {
-        return Err(FileError::AlreadyExists(target.to_string_lossy().to_string()));
+        return Err(AppError::AlreadyExists(target.to_string_lossy().to_string()));
     }
 
     fs::rename(&source, &target)?;
@@ -302,16 +274,16 @@ fn generate_copy_name(dest_dir: &Path, source_name: &str, is_directory: bool) ->
 
 /// Copy a file or directory.
 #[tauri::command]
-pub fn copy_entry(source: String, dest_dir: String) -> Result<FileEntry, FileError> {
+pub fn copy_entry(source: String, dest_dir: String) -> Result<FileEntry, AppError> {
     let source_path = PathBuf::from(&source);
     let dest_dir_path = PathBuf::from(&dest_dir);
 
     if !source_path.exists() {
-        return Err(FileError::NotFound(source.clone()));
+        return Err(AppError::NotFound(source.clone()));
     }
 
     if !dest_dir_path.exists() {
-        return Err(FileError::NotFound(format!(
+        return Err(AppError::NotFound(format!(
             "Destination directory does not exist: {}",
             dest_dir
         )));
@@ -319,7 +291,7 @@ pub fn copy_entry(source: String, dest_dir: String) -> Result<FileEntry, FileErr
 
     let source_name = source_path
         .file_name()
-        .ok_or_else(|| FileError::InvalidPath("Invalid source path".to_string()))?
+        .ok_or_else(|| AppError::InvalidPath("Invalid source path".to_string()))?
         .to_string_lossy()
         .to_string();
 
@@ -337,7 +309,7 @@ pub fn copy_entry(source: String, dest_dir: String) -> Result<FileEntry, FileErr
         options.content_only = true;
         options.overwrite = false;
         fs_extra::dir::copy(&source_path, &target, &options)
-            .map_err(|e| FileError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            .map_err(|e| AppError::Other(e.to_string()))?;
     } else {
         fs::copy(&source_path, &target)?;
     }
@@ -348,16 +320,16 @@ pub fn copy_entry(source: String, dest_dir: String) -> Result<FileEntry, FileErr
 
 /// Move a file or directory.
 #[tauri::command]
-pub fn move_entry(source: String, dest_dir: String) -> Result<FileEntry, FileError> {
+pub fn move_entry(source: String, dest_dir: String) -> Result<FileEntry, AppError> {
     let source_path = PathBuf::from(&source);
     let dest_dir_path = PathBuf::from(&dest_dir);
 
     if !source_path.exists() {
-        return Err(FileError::NotFound(source.clone()));
+        return Err(AppError::NotFound(source.clone()));
     }
 
     if !dest_dir_path.exists() {
-        return Err(FileError::NotFound(format!(
+        return Err(AppError::NotFound(format!(
             "Destination directory does not exist: {}",
             dest_dir
         )));
@@ -365,14 +337,14 @@ pub fn move_entry(source: String, dest_dir: String) -> Result<FileEntry, FileErr
 
     let source_name = source_path
         .file_name()
-        .ok_or_else(|| FileError::InvalidPath("Invalid source path".to_string()))?
+        .ok_or_else(|| AppError::InvalidPath("Invalid source path".to_string()))?
         .to_string_lossy()
         .to_string();
 
     let target = dest_dir_path.join(&source_name);
 
     if target.exists() {
-        return Err(FileError::AlreadyExists(target.to_string_lossy().to_string()));
+        return Err(AppError::AlreadyExists(target.to_string_lossy().to_string()));
     }
 
     // Try a simple rename first (works if same filesystem)
@@ -383,7 +355,7 @@ pub fn move_entry(source: String, dest_dir: String) -> Result<FileEntry, FileErr
             let mut options = fs_extra::dir::CopyOptions::new();
             options.content_only = true;
             fs_extra::dir::copy(&source_path, &target, &options)
-                .map_err(|e| FileError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+                .map_err(|e| AppError::Other(e.to_string()))?;
             fs::remove_dir_all(&source_path)?;
         } else {
             fs::copy(&source_path, &target)?;
@@ -397,30 +369,30 @@ pub fn move_entry(source: String, dest_dir: String) -> Result<FileEntry, FileErr
 
 /// Open a file with the system's default application.
 #[tauri::command]
-pub fn open_file(path: String) -> Result<(), FileError> {
+pub fn open_file(path: String) -> Result<(), AppError> {
     let file_path = PathBuf::from(&path);
 
     if !file_path.exists() {
-        return Err(FileError::NotFound(path));
+        return Err(AppError::NotFound(path));
     }
 
     opener::open(&file_path)
-        .map_err(|e| FileError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))
+        .map_err(|e| AppError::Other(e.to_string()))
 }
 
 /// Open a file with a specified application.
 #[tauri::command]
-pub fn open_file_with(path: String, app: String) -> Result<(), FileError> {
+pub fn open_file_with(path: String, app: String) -> Result<(), AppError> {
     let file_path = PathBuf::from(&path);
 
     if !file_path.exists() {
-        return Err(FileError::NotFound(path));
+        return Err(AppError::NotFound(path));
     }
 
     std::process::Command::new(&app)
         .arg(&file_path)
         .spawn()
-        .map_err(|e| FileError::Io(e))?;
+        .map_err(|e| AppError::Io(e))?;
 
     Ok(())
 }
@@ -428,11 +400,11 @@ pub fn open_file_with(path: String, app: String) -> Result<(), FileError> {
 /// Open a terminal at a directory path.
 /// If `terminal` is non-empty, use that command; otherwise auto-detect.
 #[tauri::command]
-pub fn open_in_terminal(path: String, terminal: Option<String>) -> Result<(), FileError> {
+pub fn open_in_terminal(path: String, terminal: Option<String>) -> Result<(), AppError> {
     let dir_path = PathBuf::from(&path);
 
     if !dir_path.exists() {
-        return Err(FileError::NotFound(path));
+        return Err(AppError::NotFound(path));
     }
 
     // Use the directory itself or its parent for files
@@ -475,7 +447,7 @@ pub fn open_in_terminal(path: String, terminal: Option<String>) -> Result<(), Fi
         std::process::Command::new("x-terminal-emulator")
             .current_dir(&dir)
             .spawn()
-            .map_err(|e| FileError::Io(e))?;
+            .map_err(|e| AppError::Io(e))?;
     }
 
     #[cfg(target_os = "macos")]
@@ -484,7 +456,7 @@ pub fn open_in_terminal(path: String, terminal: Option<String>) -> Result<(), Fi
             .args(["-a", "Terminal"])
             .arg(&dir)
             .spawn()
-            .map_err(|e| FileError::Io(e))?;
+            .map_err(|e| AppError::Io(e))?;
     }
 
     #[cfg(target_os = "windows")]
@@ -493,7 +465,7 @@ pub fn open_in_terminal(path: String, terminal: Option<String>) -> Result<(), Fi
             .args(["/c", "start", "cmd.exe"])
             .current_dir(&dir)
             .spawn()
-            .map_err(|e| FileError::Io(e))?;
+            .map_err(|e| AppError::Io(e))?;
     }
 
     Ok(())
@@ -502,18 +474,18 @@ pub fn open_in_terminal(path: String, terminal: Option<String>) -> Result<(), Fi
 /// Read a text file's contents with a size limit (default 1MB).
 /// Returns the file content as a string. Binary files will fail gracefully.
 #[tauri::command]
-pub fn read_text_file(path: String, max_bytes: Option<u64>) -> Result<String, FileError> {
+pub fn read_text_file(path: String, max_bytes: Option<u64>) -> Result<String, AppError> {
     let file_path = PathBuf::from(&path);
 
     if !file_path.exists() {
-        return Err(FileError::NotFound(path));
+        return Err(AppError::NotFound(path));
     }
 
     let limit = max_bytes.unwrap_or(1_048_576); // 1MB default
     let metadata = fs::metadata(&file_path)?;
 
     if metadata.len() > limit {
-        return Err(FileError::Io(std::io::Error::new(
+        return Err(AppError::Io(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!("File too large: {} bytes (limit: {})", metadata.len(), limit),
         )));
@@ -521,7 +493,7 @@ pub fn read_text_file(path: String, max_bytes: Option<u64>) -> Result<String, Fi
 
     let content = fs::read(&file_path)?;
     String::from_utf8(content).map_err(|_| {
-        FileError::Io(std::io::Error::new(
+        AppError::Io(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "File contains invalid UTF-8 (likely binary)",
         ))
@@ -530,11 +502,11 @@ pub fn read_text_file(path: String, max_bytes: Option<u64>) -> Result<String, Fi
 
 /// Write text content to a new file.
 #[tauri::command]
-pub fn write_text_file(path: String, content: String) -> Result<FileEntry, FileError> {
+pub fn write_text_file(path: String, content: String) -> Result<FileEntry, AppError> {
     let file_path = PathBuf::from(&path);
 
     if file_path.exists() {
-        return Err(FileError::AlreadyExists(path));
+        return Err(AppError::AlreadyExists(path));
     }
 
     fs::write(&file_path, content.as_bytes())?;
@@ -545,11 +517,11 @@ pub fn write_text_file(path: String, content: String) -> Result<FileEntry, FileE
 /// Delete a file or directory permanently (not to trash).
 /// For trash, use the existing move_to_trash command.
 #[tauri::command]
-pub fn delete_entry_permanent(path: String) -> Result<(), FileError> {
+pub fn delete_entry_permanent(path: String) -> Result<(), AppError> {
     let file_path = PathBuf::from(&path);
 
     if !file_path.exists() {
-        return Err(FileError::NotFound(path));
+        return Err(AppError::NotFound(path));
     }
 
     if file_path.is_dir() {
@@ -572,14 +544,14 @@ pub struct SizeEstimate {
 }
 
 #[tauri::command]
-pub fn estimate_size(paths: Vec<String>) -> Result<SizeEstimate, FileError> {
+pub fn estimate_size(paths: Vec<String>) -> Result<SizeEstimate, AppError> {
     let mut file_count: u64 = 0;
     let mut total_bytes: u64 = 0;
 
     for path_str in &paths {
         let path = PathBuf::from(path_str);
         if !path.exists() {
-            return Err(FileError::NotFound(path_str.clone()));
+            return Err(AppError::NotFound(path_str.clone()));
         }
         estimate_path_size(&path, &mut file_count, &mut total_bytes);
     }
@@ -632,23 +604,23 @@ static LISTINGS: crate::task_registry::TaskRegistry = crate::task_registry::Task
 pub fn start_streaming_directory(
     app: AppHandle,
     path: String,
-) -> Result<DirectoryListing, String> {
+) -> Result<DirectoryListing, AppError> {
     let dir_path = PathBuf::from(&path);
     let batch_size = 100; // First batch size and subsequent event batch size
 
     if !dir_path.exists() {
-        return Err(format!("Path not found: {}", path));
+        return Err(AppError::NotFound(path));
     }
 
     if !dir_path.is_dir() {
-        return Err(format!("Not a directory: {}", path));
+        return Err(AppError::InvalidPath(format!("Not a directory: {}", path)));
     }
 
     let read_dir = fs::read_dir(&dir_path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::PermissionDenied {
-            format!("Permission denied: {}", path)
+            AppError::PermissionDenied(path.clone())
         } else {
-            e.to_string()
+            AppError::Io(e)
         }
     })?;
 
@@ -739,7 +711,7 @@ pub fn start_streaming_directory(
 
 /// Cancel an active directory listing.
 #[tauri::command]
-pub fn cancel_directory_listing(listing_id: u64) -> Result<(), String> {
+pub fn cancel_directory_listing(listing_id: u64) -> Result<(), AppError> {
     LISTINGS.cancel(listing_id);
     Ok(())
 }

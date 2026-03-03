@@ -15,6 +15,7 @@ import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
 import { loadPersisted, savePersisted } from "./persisted";
 
 const STORAGE_KEY = "explorer-tabs";
+const CLOSED_TABS_KEY = "explorer-closed-tabs";
 
 /** Serializable tab state for persistence */
 export interface PersistedPane {
@@ -68,8 +69,13 @@ function createWindowTabsManager() {
   let tabs = $state<WindowTab[]>([]);
   let activeTabId = $state<string | null>(null);
 
-  // Stack of recently closed tabs for Ctrl+Shift+T restoration
-  const closedTabStack: ClosedTabSnapshot[] = [];
+  // Stack of recently closed tabs for Ctrl+Shift+T restoration (persisted)
+  const closedTabStack: ClosedTabSnapshot[] = loadPersisted<ClosedTabSnapshot[]>(CLOSED_TABS_KEY, []);
+
+  /** Persist the closed tab stack to localStorage */
+  function saveClosedTabs(): void {
+    savePersisted(CLOSED_TABS_KEY, closedTabStack);
+  }
 
   /** Capture the current tab state as a serializable snapshot */
   function captureState(): PersistedTabState {
@@ -215,22 +221,8 @@ function createWindowTabsManager() {
     return createTab(initialPath);
   }
 
-  /** Close a tab by ID. Closes the window if it's the last tab. */
-  function closeTab(tabId: string): void {
-    if (tabs.length <= 1) {
-      // Close the window when closing the last tab
-      import("@tauri-apps/api/window")
-        .then(({ getCurrentWindow }) => getCurrentWindow().close())
-        .catch(() => {}); // Not in Tauri runtime
-      return;
-    }
-
-    const tabIndex = tabs.findIndex((t) => t.id === tabId);
-    if (tabIndex === -1) return;
-
-    const tab = tabs[tabIndex];
-
-    // Snapshot closed tab for Ctrl+Shift+T restoration
+  /** Snapshot a tab for Ctrl+Shift+T restoration */
+  function snapshotTab(tab: WindowTab, tabIndex: number): void {
     closedTabStack.push({
       leftPath: getPanePath(tab.panes.left),
       rightPath: getPanePath(tab.panes.right),
@@ -241,6 +233,26 @@ function createWindowTabsManager() {
     });
     if (closedTabStack.length > MAX_CLOSED_TABS) {
       closedTabStack.shift();
+    }
+    saveClosedTabs();
+  }
+
+  /** Close a tab by ID. Closes the window if it's the last tab. */
+  function closeTab(tabId: string): void {
+    const tabIndex = tabs.findIndex((t) => t.id === tabId);
+    if (tabIndex === -1) return;
+
+    const tab = tabs[tabIndex];
+
+    // Snapshot before closing (even if it's the last tab)
+    snapshotTab(tab, tabIndex);
+
+    if (tabs.length <= 1) {
+      // Close the window when closing the last tab
+      import("@tauri-apps/api/window")
+        .then(({ getCurrentWindow }) => getCurrentWindow().close())
+        .catch(() => {}); // Not in Tauri runtime
+      return;
     }
 
     // Clean up explorers for this tab
@@ -265,6 +277,7 @@ function createWindowTabsManager() {
   function restoreClosedTab(): boolean {
     const snapshot = closedTabStack.pop();
     if (!snapshot) return false;
+    saveClosedTabs();
 
     const tab: WindowTab = {
       id: generateId("tab"),

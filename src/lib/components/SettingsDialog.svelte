@@ -115,6 +115,25 @@
           </div>
         </section>
 
+        <!-- Behavior Section -->
+        <section class="settings-section">
+          <h3 class="section-title">Behavior</h3>
+          <div class="setting-item">
+            <div class="setting-label">
+              <span>Confirm before deleting</span>
+              <span class="setting-description">Show confirmation dialog when moving files to trash</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.confirmDelete}
+                onchange={() => settingsStore.toggleConfirmDelete()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </section>
+
         <!-- Keyboard Shortcuts Section -->
         <section class="settings-section">
           <h3 class="section-title">Keyboard Shortcuts</h3>

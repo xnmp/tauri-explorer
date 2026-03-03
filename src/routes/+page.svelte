@@ -210,7 +210,7 @@
   });
 </script>
 
-<main class="explorer">
+<main class="explorer" class:no-titlebar={windowTabsManager.tabs.length <= 1 && !settingsStore.showWindowControls}>
   <TitleBar />
   {#if settingsStore.showToolbar}
     <SharedToolbar />
@@ -242,6 +242,11 @@
     box-sizing: border-box;
     margin: 0;
     padding: 0;
+  }
+
+  :global(button) {
+    appearance: none;
+    -webkit-appearance: none;
   }
 
   :global(:root) {
@@ -339,6 +344,10 @@
     background: var(--background-mica);
     backdrop-filter: blur(60px) saturate(125%);
     -webkit-backdrop-filter: blur(60px) saturate(125%);
+  }
+
+  .explorer.no-titlebar {
+    padding-top: 6px;
   }
 
   /* Mica effect gradient overlay */

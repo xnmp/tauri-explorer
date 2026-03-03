@@ -12,6 +12,7 @@ export interface Settings {
   showHidden: boolean;
   showWindowControls: boolean;
   showPreviewPane: boolean;
+  confirmDelete: boolean;
   zoomLevel: number; // percentage, e.g. 100 = 100%
 }
 
@@ -25,6 +26,7 @@ const DEFAULT_SETTINGS: Settings = {
   showHidden: false,
   showWindowControls: true,
   showPreviewPane: false,
+  confirmDelete: true,
   zoomLevel: 100,
 };
 
@@ -81,6 +83,10 @@ function createSettingsStore() {
     update({ showPreviewPane: !settings.showPreviewPane });
   }
 
+  function toggleConfirmDelete(): void {
+    update({ confirmDelete: !settings.confirmDelete });
+  }
+
   function zoomIn(): void {
     update({ zoomLevel: Math.min(MAX_ZOOM, settings.zoomLevel + ZOOM_STEP) });
   }
@@ -117,6 +123,9 @@ function createSettingsStore() {
     get showPreviewPane() {
       return settings.showPreviewPane;
     },
+    get confirmDelete() {
+      return settings.confirmDelete;
+    },
     get zoomLevel() {
       return settings.zoomLevel;
     },
@@ -126,6 +135,7 @@ function createSettingsStore() {
     toggleHidden,
     toggleWindowControls,
     togglePreviewPane,
+    toggleConfirmDelete,
     zoomIn,
     zoomOut,
     zoomReset,

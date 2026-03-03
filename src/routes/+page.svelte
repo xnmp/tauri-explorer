@@ -175,7 +175,7 @@
   });
 </script>
 
-<main class="explorer" class:no-titlebar={windowTabsManager.tabs.length <= 1 && !settingsStore.showWindowControls}>
+<main class="explorer" class:no-titlebar={windowTabsManager.tabs.length <= 1}>
   <TitleBar />
   {#if settingsStore.showToolbar}
     <SharedToolbar />

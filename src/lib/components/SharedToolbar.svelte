@@ -1,50 +1,14 @@
 <!--
-  SharedToolbar component - Shared controls for all panes
-  Contains navigation buttons, search, and theme switcher.
-  Actions are applied to the currently focused pane.
+  SharedToolbar component - Search, theme, and window controls
+  Navigation buttons have moved to per-pane NavigationBar.
+  Window controls moved here from TitleBar.
+  Issue: tauri-2e92, tauri-u00y
 -->
 <script lang="ts">
-  import { getPaneNavigationContext } from "$lib/state/pane-context";
-  import { explorer as defaultExplorer } from "$lib/state/explorer.svelte";
-  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+  import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
+  import { onMount } from "svelte";
+  import { settingsStore } from "$lib/state/settings.svelte";
   import ThemeSwitcher from "./ThemeSwitcher.svelte";
-
-  // Get active explorer from pane context, or fall back to default
-  const paneNav = getPaneNavigationContext();
-
-  function getExplorer() {
-    return paneNav?.getActiveExplorer() ?? defaultExplorer;
-  }
-
-  function goBack() {
-    getExplorer().goBack();
-  }
-
-  function goForward() {
-    getExplorer().goForward();
-  }
-
-  function goUp() {
-    getExplorer().goUp();
-  }
-
-  function refresh() {
-    getExplorer().refresh();
-  }
-
-  // Reactive getters for button states - re-evaluate when active pane/tab changes
-  const canGoBack = $derived.by(() => {
-    // Access activePaneId to trigger re-evaluation when pane changes
-    windowTabsManager.activePaneId;
-    windowTabsManager.activeTabId;
-    return getExplorer().canGoBack;
-  });
-
-  const canGoForward = $derived.by(() => {
-    windowTabsManager.activePaneId;
-    windowTabsManager.activeTabId;
-    return getExplorer().canGoForward;
-  });
 
   // Search state
   let searchQuery = $state("");
@@ -54,57 +18,48 @@
     // TODO: Implement search functionality
     console.log("Search:", searchQuery);
   }
+
+  // Window controls
+  const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+  let appWindow: Window | null = null;
+  try {
+    if (isTauri) {
+      appWindow = getCurrentWindow();
+    }
+  } catch {
+    // Running in browser without Tauri runtime
+  }
+  let isMaximized = $state(false);
+
+  onMount(() => {
+    if (!appWindow) return;
+
+    let unlisten: (() => void) | undefined;
+
+    (async () => {
+      isMaximized = await appWindow.isMaximized();
+      unlisten = await appWindow.onResized(async () => {
+        isMaximized = await appWindow!.isMaximized();
+      });
+    })();
+
+    return () => unlisten?.();
+  });
+
+  async function handleMinimize() {
+    await appWindow?.minimize();
+  }
+
+  async function handleMaximize() {
+    await appWindow?.toggleMaximize();
+  }
+
+  async function handleClose() {
+    await appWindow?.close();
+  }
 </script>
 
 <div class="shared-toolbar">
-  <div class="nav-controls">
-    <button
-      class="nav-btn"
-      title="Back (Alt+Left)"
-      disabled={!canGoBack}
-      onclick={goBack}
-      aria-label="Go back"
-    >
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <path d="M10 13L5 8L10 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    </button>
-
-    <button
-      class="nav-btn"
-      title="Forward (Alt+Right)"
-      disabled={!canGoForward}
-      onclick={goForward}
-      aria-label="Go forward"
-    >
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <path d="M6 3L11 8L6 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    </button>
-
-    <button
-      class="nav-btn"
-      onclick={goUp}
-      title="Up (Alt+Up)"
-      aria-label="Go up one level"
-    >
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <path d="M8 13V4M8 4L4 8M8 4L12 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    </button>
-
-    <button
-      class="nav-btn"
-      onclick={refresh}
-      title="Refresh (F5)"
-      aria-label="Refresh"
-    >
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <path d="M13.5 8C13.5 10.7614 11.2614 13 8.5 13C5.73858 13 3.5 10.7614 3.5 8C3.5 5.23858 5.73858 3 8.5 3C10.5 3 12.2 4.2 13 5.8M13 3V5.8M13 5.8H10.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-    </button>
-  </div>
-
   <div class="spacer"></div>
 
   <div class="search-container">
@@ -125,6 +80,48 @@
   </div>
 
   <ThemeSwitcher />
+
+  {#if settingsStore.showWindowControls}
+    <div class="window-controls">
+      <button
+        class="control-btn"
+        onclick={handleMinimize}
+        title="Minimize"
+        aria-label="Minimize"
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10">
+          <path d="M0 5H10" stroke="currentColor" stroke-width="1"/>
+        </svg>
+      </button>
+      <button
+        class="control-btn"
+        onclick={handleMaximize}
+        title={isMaximized ? "Restore" : "Maximize"}
+        aria-label={isMaximized ? "Restore" : "Maximize"}
+      >
+        {#if isMaximized}
+          <svg width="10" height="10" viewBox="0 0 10 10">
+            <rect x="2" y="2" width="6" height="6" stroke="currentColor" stroke-width="1" fill="none"/>
+            <path d="M2 2V1H9V8H8" stroke="currentColor" stroke-width="1" fill="none"/>
+          </svg>
+        {:else}
+          <svg width="10" height="10" viewBox="0 0 10 10">
+            <rect x="1" y="1" width="8" height="8" stroke="currentColor" stroke-width="1" fill="none"/>
+          </svg>
+        {/if}
+      </button>
+      <button
+        class="control-btn close"
+        onclick={handleClose}
+        title="Close"
+        aria-label="Close"
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10">
+          <path d="M1 1L9 9M9 1L1 9" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -138,46 +135,6 @@
     height: 44px;
     position: relative;
     z-index: 10;
-  }
-
-  .nav-controls {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-  }
-
-  .nav-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    padding: 0;
-    background: transparent;
-    border: none;
-    border-radius: 4px;
-    color: var(--text-primary);
-    cursor: pointer;
-    transition: background var(--transition-fast);
-  }
-
-  .nav-btn:hover:not(:disabled) {
-    background: var(--subtle-fill-secondary);
-  }
-
-  .nav-btn:active:not(:disabled) {
-    background: var(--subtle-fill-tertiary);
-    transform: scale(0.96);
-  }
-
-  .nav-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-
-  .nav-btn:focus-visible {
-    outline: 2px solid var(--focus-stroke-outer);
-    outline-offset: 1px;
   }
 
   .spacer {
@@ -224,5 +181,45 @@
 
   .search-input::placeholder {
     color: var(--text-tertiary);
+  }
+
+  /* Window controls in toolbar */
+  .window-controls {
+    display: flex;
+    height: 100%;
+    margin-left: 4px;
+  }
+
+  .control-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 32px;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-normal);
+    border-radius: 4px;
+  }
+
+  .control-btn:hover {
+    background: var(--control-fill-secondary);
+    color: var(--text-primary);
+  }
+
+  .control-btn:active {
+    transform: scale(0.95);
+  }
+
+  .control-btn.close:hover {
+    background: #c42b1c;
+    color: white;
+  }
+
+  .control-btn:focus-visible {
+    outline: 2px solid var(--focus-stroke-outer);
+    outline-offset: -2px;
   }
 </style>

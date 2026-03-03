@@ -14,6 +14,7 @@
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
+  import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { copyEntry, moveEntry, getHomeDirectory } from "$lib/api/files";
   import "$lib/themes/index.css";
   import TitleBar from "$lib/components/TitleBar.svelte";
@@ -156,6 +157,9 @@
         console.log(`[Perf] Startup to first directory: ${m.duration.toFixed(0)}ms`);
       }
     })();
+
+    // Load bookmarks from config file (async, non-blocking)
+    bookmarksStore.init();
 
     // Register all commands for the command palette (deferred to next tick)
     queueMicrotask(() => registerAllCommands());

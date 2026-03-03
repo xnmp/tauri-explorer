@@ -225,7 +225,24 @@ const mockCommands: Record<string, CommandHandler> = {
     totalSize: 0,
     path: "/tmp/thumbnails",
   }),
+
+  // Config file persistence (in-memory mock)
+  read_config_file: (args) => {
+    const filename = args.filename as string;
+    return mockConfigFiles[filename] ?? "";
+  },
+
+  write_config_file: (args) => {
+    const filename = args.filename as string;
+    const data = args.data as string;
+    mockConfigFiles[filename] = data;
+  },
+
+  get_config_dir: () => "/home/user/.config/tauri-explorer",
 };
+
+// In-memory config file store for mock mode
+const mockConfigFiles: Record<string, string> = {};
 
 /**
  * Mock invoke function for browser-based testing.

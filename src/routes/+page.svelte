@@ -11,7 +11,7 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { setPaneNavigationContext } from "$lib/state/pane-context";
   import { registerAllCommands } from "$lib/state/command-definitions";
-  import { executeCommand } from "$lib/state/commands.svelte";
+  import { executeCommand, getCommand } from "$lib/state/commands.svelte";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
   import { copyEntry, getHomeDirectory } from "$lib/api/files";
@@ -109,8 +109,13 @@
       return;
     }
 
-    // Find matching command from keybindings store
-    const matchingCommandId = keybindingsStore.findMatchingCommand(event);
+    // Find matching command from keybindings store, skipping commands whose `when` guard fails.
+    // This ensures that when multiple commands share a shortcut (e.g. F5 for refresh vs copy-to-other-pane),
+    // the first available one is selected rather than the first registered one.
+    const matchingCommandId = keybindingsStore.findMatchingCommand(event, (id) => {
+      const cmd = getCommand(id);
+      return !cmd?.when || cmd.when();
+    });
     if (matchingCommandId) {
       event.preventDefault();
       await executeCommand(matchingCommandId);

@@ -80,7 +80,7 @@ const navigationCommands: Command[] = [
     id: "navigation.refresh",
     label: "Refresh",
     category: "navigation",
-    shortcut: "F5",
+    shortcut: "Ctrl+R",
     handler: () => getActiveExplorer()?.refresh(),
   },
 ];
@@ -308,14 +308,14 @@ const viewCommands: Command[] = [
     id: "view.toggleDualPane",
     label: "Toggle Dual Pane",
     category: "view",
-    shortcut: "F6",
+    shortcut: "Ctrl+Shift+D",
     handler: () => windowTabsManager.toggleDualPane(),
   },
   {
     id: "view.switchPane",
     label: "Switch Pane",
     category: "view",
-    shortcut: "Ctrl+Tab",
+    shortcut: "Alt+Right",
     handler: () => windowTabsManager.switchPane(),
     when: () => windowTabsManager.dualPaneEnabled,
   },
@@ -601,4 +601,31 @@ export function registerAllCommands(): void {
     }
   }
   keybindingsStore.registerDefaults(defaultShortcuts);
+
+  // Warn about shortcut conflicts at startup (dev only)
+  if (import.meta.env.DEV) {
+    validateShortcutConflicts(allCommands);
+  }
+}
+
+/** Log warnings for commands sharing the same shortcut without `when` guards */
+function validateShortcutConflicts(commands: Command[]): void {
+  const byShortcut = new Map<string, Command[]>();
+  for (const cmd of commands) {
+    if (!cmd.shortcut) continue;
+    const key = cmd.shortcut.toLowerCase();
+    const group = byShortcut.get(key) ?? [];
+    group.push(cmd);
+    byShortcut.set(key, group);
+  }
+  for (const [shortcut, group] of byShortcut) {
+    if (group.length <= 1) continue;
+    const unguarded = group.filter((c) => !c.when);
+    if (unguarded.length > 1) {
+      console.warn(
+        `[keybindings] Shortcut conflict: "${shortcut}" is bound to multiple commands without 'when' guards:`,
+        unguarded.map((c) => c.id),
+      );
+    }
+  }
 }

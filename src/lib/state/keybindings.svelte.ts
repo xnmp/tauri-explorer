@@ -151,13 +151,19 @@ function createKeybindingsStore() {
   /**
    * Find which command matches a keyboard event.
    * Returns the command ID if found, undefined otherwise.
+   * Optionally accepts a predicate to skip commands that aren't currently available
+   * (e.g. those whose `when` guard returns false).
    */
-  function findMatchingCommand(event: KeyboardEvent): string | undefined {
-    // Build a map of shortcut -> commandId for efficient lookup
+  function findMatchingCommand(
+    event: KeyboardEvent,
+    isAvailable?: (commandId: string) => boolean,
+  ): string | undefined {
     for (const commandId of Object.keys(defaultShortcuts)) {
       const shortcut = getShortcut(commandId);
       if (shortcut && matchesShortcutString(event, shortcut)) {
-        return commandId;
+        if (!isAvailable || isAvailable(commandId)) {
+          return commandId;
+        }
       }
     }
     return undefined;

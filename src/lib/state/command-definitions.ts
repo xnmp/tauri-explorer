@@ -93,7 +93,7 @@ const fileCommands: Command[] = [
     label: "New Folder",
     category: "file",
     shortcut: "Ctrl+Shift+N",
-    handler: () => getActiveExplorer()?.openNewFolderDialog(),
+    handler: () => getActiveExplorer()?.startInlineNewFolder(),
   },
   {
     id: "file.rename",

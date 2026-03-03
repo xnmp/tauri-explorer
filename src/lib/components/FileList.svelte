@@ -3,6 +3,7 @@
   Issue: tauri-explorer-iw0, tauri-explorer-x25, tauri-explorer-as45, tauri-explorer-1k9k, tauri-explorer-im3m
 -->
 <script lang="ts">
+  import { tick } from "svelte";
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
   import { clipboardStore } from "$lib/state/clipboard.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
@@ -80,6 +81,44 @@
     () => explorer.displayEntries,
     (entry) => explorer.selectEntry(entry, {}),
   );
+
+  // Inline new folder creation
+  let newFolderName = $state("New folder");
+  let newFolderInput: HTMLInputElement | null = null;
+  let newFolderError = $state<string | null>(null);
+
+  $effect(() => {
+    if (explorer.isCreatingFolder && newFolderInput) {
+      newFolderName = "New folder";
+      newFolderError = null;
+      tick().then(() => {
+        newFolderInput?.focus();
+        newFolderInput?.select();
+      });
+    }
+  });
+
+  async function confirmNewFolder(): Promise<void> {
+    const name = newFolderName.trim();
+    if (!name) {
+      explorer.cancelInlineNewFolder();
+      return;
+    }
+    const error = await explorer.createFolder(name);
+    if (error) {
+      newFolderError = error;
+    }
+  }
+
+  function handleNewFolderKeydown(event: KeyboardEvent): void {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      confirmNewFolder();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      explorer.cancelInlineNewFolder();
+    }
+  }
 
   // Progressive rendering for tiles view to avoid UI freeze
   const TILE_CHUNK = 60;
@@ -359,6 +398,28 @@
             <div class="column-resize-handle" onmousedown={(e) => columnResize.startResize("size", e)}></div>
           </div>
         </div>
+
+        {#if explorer.isCreatingFolder}
+          <div class="inline-new-folder">
+            <span class="new-folder-icon">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="#ffb900"/>
+              </svg>
+            </span>
+            <input
+              type="text"
+              class="new-folder-input"
+              bind:value={newFolderName}
+              bind:this={newFolderInput}
+              onkeydown={handleNewFolderKeydown}
+              onblur={() => confirmNewFolder()}
+              class:error={newFolderError !== null}
+            />
+            {#if newFolderError}
+              <span class="new-folder-error">{newFolderError}</span>
+            {/if}
+          </div>
+        {/if}
 
         <VirtualList
           items={explorer.displayEntries}
@@ -884,5 +945,45 @@
     white-space: normal;
     line-height: 1.3;
     word-break: break-all;
+  }
+
+  /* Inline new folder creation */
+  .inline-new-folder {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 32px;
+    padding: 0 12px;
+    background: var(--accent-light);
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+  }
+
+  .new-folder-icon {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  .new-folder-input {
+    flex: 1;
+    height: 24px;
+    padding: 0 6px;
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    background: var(--control-fill);
+    font-family: inherit;
+    font-size: 12px;
+    color: var(--text-primary);
+    outline: none;
+  }
+
+  .new-folder-input.error {
+    border-color: #c42b1c;
+  }
+
+  .new-folder-error {
+    font-size: 11px;
+    color: #c42b1c;
+    white-space: nowrap;
   }
 </style>

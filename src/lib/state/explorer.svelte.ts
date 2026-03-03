@@ -22,7 +22,6 @@ import {
   moveEntry,
   startStreamingDirectory,
   cancelDirectoryListing,
-  extractListingId,
   type DirectoryEntriesEvent,
 } from "$lib/api/files";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -205,12 +204,12 @@ function createExplorerState() {
     const result = await startStreamingDirectory(path);
 
     if (result.ok) {
-      const { path: actualPath, listingId } = extractListingId(result.data.path);
-      coreState.currentPath = actualPath;
+      coreState.currentPath = result.data.path;
+      const listingId = result.data.listing_id;
       coreState.entries = [...result.data.entries];
 
       // Restore saved sort preference for this directory
-      const savedSort = getSortPref(actualPath);
+      const savedSort = getSortPref(result.data.path);
       if (savedSort) {
         coreState.sortBy = savedSort.sortBy;
         coreState.sortAscending = savedSort.sortAscending;
@@ -219,7 +218,7 @@ function createExplorerState() {
       // If there's a listing ID, more entries will come via events
       if (listingId !== null) {
         activeListingId = listingId;
-        await setupDirectoryListener(listingId, actualPath);
+        await setupDirectoryListener(listingId, result.data.path);
         // Keep loading true until all entries received
       } else {
         // Small directory - all entries received, done loading

@@ -86,13 +86,13 @@ const mockCommands: Record<string, CommandHandler> = {
   list_directory: (args) => {
     const path = args.path as string;
     const entries = getDirectoryEntries(path);
-    return { path, entries } as DirectoryListing;
+    return { path, entries, listing_id: null } as DirectoryListing;
   },
 
   start_streaming_directory: (args) => {
     const path = args.path as string;
     const entries = getDirectoryEntries(path);
-    return { path, entries } as DirectoryListing;
+    return { path, entries, listing_id: null } as DirectoryListing;
   },
 
   create_directory: (args) => {

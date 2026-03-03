@@ -392,18 +392,6 @@ export async function startStreamingDirectory(
 }
 
 /**
- * Extract listing ID from streaming directory response path.
- * Returns null if path doesn't contain a listing ID (small directory).
- */
-export function extractListingId(pathWithId: string): { path: string; listingId: number | null } {
-  const match = pathWithId.match(/^(.+)\|listing:(\d+)$/);
-  if (match) {
-    return { path: match[1], listingId: parseInt(match[2], 10) };
-  }
-  return { path: pathWithId, listingId: null };
-}
-
-/**
  * Cancel an active directory listing.
  *
  * @param listingId - ID of the listing to cancel

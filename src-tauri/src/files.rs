@@ -33,6 +33,7 @@ pub enum FileKind {
 pub struct DirectoryListing {
     pub path: String,
     pub entries: Vec<FileEntry>,
+    pub listing_id: Option<u64>,
 }
 
 /// Error types for file operations.
@@ -134,6 +135,7 @@ pub fn list_directory(path: String) -> Result<DirectoryListing, FileError> {
                 return Ok(DirectoryListing {
                     path: path.clone(),
                     entries: cached.entries.clone(),
+                    listing_id: None,
                 });
             }
         }
@@ -201,7 +203,7 @@ pub fn list_directory(path: String) -> Result<DirectoryListing, FileError> {
         );
     }
 
-    Ok(DirectoryListing { path, entries })
+    Ok(DirectoryListing { path, entries, listing_id: None })
 }
 
 /// Get the user's home directory.
@@ -691,6 +693,7 @@ pub fn start_streaming_directory(
         return Ok(DirectoryListing {
             path,
             entries: all_entries,
+            listing_id: None,
         });
     }
 
@@ -738,11 +741,11 @@ pub fn start_streaming_directory(
         listings.remove(&listing_id);
     });
 
-    // Return first batch immediately with listing_id hint in path
-    // Frontend can use this to correlate events
+    // Return first batch immediately with listing_id as a separate field
     Ok(DirectoryListing {
-        path: format!("{}|listing:{}", path, listing_id),
+        path,
         entries: first_batch,
+        listing_id: Some(listing_id),
     })
 }
 

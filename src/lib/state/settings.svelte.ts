@@ -27,6 +27,7 @@ export interface Settings {
   terminalApp: string; // terminal emulator command, empty = auto-detect
   backgroundOpacity: number; // 0-100, percentage of background opacity
   navBarButtons: NavBarButtons;
+  showStatusBar: boolean;
 }
 
 const MIN_ZOOM = 50;
@@ -49,6 +50,7 @@ const DEFAULT_SETTINGS: Settings = {
     up: true,
     refresh: false, // omitted by default per tauri-k4ec
   },
+  showStatusBar: true,
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -144,6 +146,12 @@ function createSettingsStore() {
     },
     get navBarButtons() {
       return settings.navBarButtons;
+    },
+    get showStatusBar() {
+      return settings.showStatusBar;
+    },
+    toggleStatusBar(): void {
+      update({ showStatusBar: !settings.showStatusBar });
     },
     toggleNavButton(button: keyof NavBarButtons): void {
       update({

@@ -27,6 +27,7 @@
   import ContentSearchDialog from "$lib/components/ContentSearchDialog.svelte";
   import WorkspaceDialog from "$lib/components/WorkspaceDialog.svelte";
   import BulkRenameDialog from "$lib/components/BulkRenameDialog.svelte";
+  import StatusBar from "$lib/components/StatusBar.svelte";
 
   // Get active explorer from window tabs manager
   function getActiveExplorer(): ExplorerInstance | undefined {
@@ -197,6 +198,9 @@
     {/if}
     <PaneContainer />
   </div>
+  {#if settingsStore.showStatusBar}
+    <StatusBar />
+  {/if}
 </main>
 
 <QuickOpen open={dialogStore.isQuickOpenOpen} onClose={() => dialogStore.closeQuickOpen()} />

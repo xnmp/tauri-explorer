@@ -359,6 +359,13 @@ const viewCommands: Command[] = [
     shortcut: "Alt+0",
     handler: () => settingsStore.zoomReset(),
   },
+  {
+    id: "view.toggleStatusBar",
+    label: "Toggle Status Bar",
+    category: "view",
+    shortcut: "Alt+M U",
+    handler: () => settingsStore.toggleStatusBar(),
+  },
 ];
 
 /** Bookmark commands */

@@ -113,6 +113,21 @@
               <span class="toggle-slider"></span>
             </label>
           </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Show Status Bar</span>
+              <span class="setting-description">Display file info bar at the bottom (Alt+M U)</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.showStatusBar}
+                onchange={() => settingsStore.toggleStatusBar()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
         </section>
 
         <!-- Navigation Bar Section -->

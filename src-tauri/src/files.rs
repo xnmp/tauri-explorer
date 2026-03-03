@@ -329,15 +329,13 @@ pub fn copy_entry(source: String, dest_dir: String) -> Result<FileEntry, FileErr
     }
 
     if source_path.is_dir() {
-        // Copy directory recursively
-        let options = fs_extra::dir::CopyOptions::new();
-        fs_extra::dir::copy(&source_path, &target.parent().unwrap(), &options)
+        // Copy directory recursively: create target dir then copy contents into it
+        fs::create_dir_all(&target)?;
+        let mut options = fs_extra::dir::CopyOptions::new();
+        options.content_only = true;
+        options.overwrite = false;
+        fs_extra::dir::copy(&source_path, &target, &options)
             .map_err(|e| FileError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
-        // fs_extra copies into the directory, so adjust path
-        let actual_target = target.parent().unwrap().join(&source_name);
-        if actual_target != target && actual_target.exists() {
-            fs::rename(&actual_target, &target)?;
-        }
     } else {
         fs::copy(&source_path, &target)?;
     }
@@ -379,8 +377,10 @@ pub fn move_entry(source: String, dest_dir: String) -> Result<FileEntry, FileErr
     if fs::rename(&source_path, &target).is_err() {
         // Fall back to copy + delete for cross-filesystem moves
         if source_path.is_dir() {
-            let options = fs_extra::dir::CopyOptions::new();
-            fs_extra::dir::copy(&source_path, &dest_dir_path, &options)
+            fs::create_dir_all(&target)?;
+            let mut options = fs_extra::dir::CopyOptions::new();
+            options.content_only = true;
+            fs_extra::dir::copy(&source_path, &target, &options)
                 .map_err(|e| FileError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
             fs::remove_dir_all(&source_path)?;
         } else {
@@ -804,6 +804,68 @@ mod tests {
             name2.file_name().unwrap().to_str().unwrap(),
             "test - Copy (2).txt"
         );
+    }
+
+    #[test]
+    fn test_copy_entry_folder_with_files() {
+        let dir = tempdir().unwrap();
+
+        // Create source folder with files
+        let source_dir = dir.path().join("my_folder");
+        fs::create_dir(&source_dir).unwrap();
+        fs::write(source_dir.join("file1.txt"), "hello").unwrap();
+        fs::write(source_dir.join("file2.txt"), "world").unwrap();
+        let sub = source_dir.join("sub");
+        fs::create_dir(&sub).unwrap();
+        fs::write(sub.join("nested.txt"), "nested content").unwrap();
+
+        // Create destination directory
+        let dest_dir = dir.path().join("dest");
+        fs::create_dir(&dest_dir).unwrap();
+
+        // Copy the folder
+        let result = copy_entry(
+            source_dir.to_string_lossy().to_string(),
+            dest_dir.to_string_lossy().to_string(),
+        );
+
+        assert!(result.is_ok(), "copy_entry failed: {:?}", result.err());
+        let entry = result.unwrap();
+        assert_eq!(entry.name, "my_folder");
+
+        // Verify contents were copied
+        let copied = dest_dir.join("my_folder");
+        assert!(copied.exists(), "Copied folder should exist");
+        assert!(copied.join("file1.txt").exists(), "file1.txt should exist");
+        assert!(copied.join("file2.txt").exists(), "file2.txt should exist");
+        assert!(copied.join("sub").exists(), "sub dir should exist");
+        assert!(copied.join("sub/nested.txt").exists(), "nested.txt should exist");
+        assert_eq!(fs::read_to_string(copied.join("file1.txt")).unwrap(), "hello");
+    }
+
+    #[test]
+    fn test_copy_entry_folder_same_dir() {
+        let dir = tempdir().unwrap();
+
+        // Create source folder with files
+        let source_dir = dir.path().join("my_folder");
+        fs::create_dir(&source_dir).unwrap();
+        fs::write(source_dir.join("file1.txt"), "hello").unwrap();
+
+        // Copy to same parent directory (should create "my_folder - Copy")
+        let result = copy_entry(
+            source_dir.to_string_lossy().to_string(),
+            dir.path().to_string_lossy().to_string(),
+        );
+
+        assert!(result.is_ok(), "copy_entry same dir failed: {:?}", result.err());
+        let entry = result.unwrap();
+        assert_eq!(entry.name, "my_folder - Copy");
+
+        // Verify copy contents
+        let copied = dir.path().join("my_folder - Copy");
+        assert!(copied.exists(), "Copy folder should exist");
+        assert!(copied.join("file1.txt").exists(), "file1.txt should be in copy");
     }
 
     #[test]

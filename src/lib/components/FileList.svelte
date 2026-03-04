@@ -233,6 +233,11 @@
   let dropTargets = $state<Record<string, boolean>>({});
   let copyDropTargets = $state<Record<string, boolean>>({});
 
+  function handleItemDragEnd(): void {
+    dragState.clear();
+    paneNav?.refreshAllPanes();
+  }
+
   function handleItemDragStart(event: DragEvent, entry: FileEntry): void {
     if (!event.dataTransfer) return;
     event.dataTransfer.setData("application/x-explorer-path", entry.path);
@@ -504,6 +509,7 @@
             ondblclick={() => handleDoubleClick(entry)}
             oncontextmenu={(e) => handleItemContextMenu(e, entry)}
             ondragstart={(e) => handleItemDragStart(e, entry)}
+            ondragend={handleItemDragEnd}
             ondragover={(e) => handleItemDragOver(e, entry)}
             ondragleave={() => handleItemDragLeave(entry)}
             ondrop={(e) => handleItemDrop(e, entry)}
@@ -541,6 +547,7 @@
             ondblclick={() => handleDoubleClick(entry)}
             oncontextmenu={(e) => handleItemContextMenu(e, entry)}
             ondragstart={(e) => handleItemDragStart(e, entry)}
+            ondragend={handleItemDragEnd}
             ondragover={(e) => handleItemDragOver(e, entry)}
             ondragleave={() => handleItemDragLeave(entry)}
             ondrop={(e) => handleItemDrop(e, entry)}

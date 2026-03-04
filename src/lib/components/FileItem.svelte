@@ -194,6 +194,19 @@
     dragState.start({ path: entry.path, name: entry.name, kind: entry.kind });
   }
 
+  function handleDragEnd() {
+    // After a drag ends, refresh panes to reflect any cross-window moves.
+    // Internal drops already call refreshAllPanes(), so this is a no-op
+    // in that case (just a redundant refresh). For external drops (another
+    // window), this ensures the source window updates.
+    dragState.clear();
+    if (paneNav) {
+      paneNav.refreshAllPanes();
+    } else {
+      explorer.refresh();
+    }
+  }
+
   // Drop handlers - allow dropping files/folders into directories
   function handleDragOver(event: DragEvent) {
     // Only accept drops on directories
@@ -261,6 +274,7 @@
   oncontextmenu={handleContextMenu}
   draggable="true"
   ondragstart={handleDragStart}
+  ondragend={handleDragEnd}
   ondragover={handleDragOver}
   ondragleave={handleDragLeave}
   ondrop={handleDrop}

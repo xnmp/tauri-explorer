@@ -314,29 +314,47 @@
 
   :global(:root) {
     /* Typography */
-    --font-family: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
-    --font-size-caption: 12px;
+    --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", sans-serif;
+    --font-size-caption: 11px;
     --font-size-body: 14px;
     --font-size-subtitle: 16px;
     --font-size-title: 20px;
+    --font-weight-normal: 400;
+    --font-weight-medium: 500;
+    --font-weight-semibold: 600;
+    --font-weight-bold: 700;
+    --letter-spacing-tight: -0.01em;
+    --letter-spacing-normal: 0em;
+    --letter-spacing-wide: 0.04em;
+    --line-height-tight: 1.2;
+    --line-height-normal: 1.5;
 
     /* Radii */
-    --radius-sm: 4px;
-    --radius-md: 8px;
-    --radius-lg: 12px;
-    --radius-window: 8px;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --radius-pill: 999px;
+    --radius-window: 10px;
 
     /* Transitions */
-    --transition-fast: 67ms cubic-bezier(0, 0, 0, 1);
-    --transition-normal: 167ms cubic-bezier(0, 0, 0, 1);
+    --transition-fast: 80ms cubic-bezier(0.25, 0.1, 0.25, 1);
+    --transition-normal: 150ms cubic-bezier(0.25, 0.1, 0.25, 1);
     --transition-slow: 250ms cubic-bezier(0, 0, 0, 1);
 
     /* Spacing */
+    --spacing-xxs: 2px;
     --spacing-xs: 4px;
     --spacing-sm: 8px;
     --spacing-md: 12px;
     --spacing-lg: 16px;
     --spacing-xl: 24px;
+
+    /* Shadows */
+    --shadow-subtle: 0 1px 2px rgba(0, 0, 0, 0.04);
+    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06), 0 0 1px rgba(0, 0, 0, 0.04);
+
+    /* Selection indicator */
+    --selection-indicator-width: 3px;
   }
 
   /* Window frame styling for transparent decorationless window */
@@ -350,7 +368,8 @@
   :global(body) {
     font-family: var(--font-family);
     font-size: var(--font-size-body);
-    line-height: 1.43;
+    line-height: var(--line-height-normal);
+    letter-spacing: var(--letter-spacing-tight);
     color: var(--text-primary);
     background: color-mix(in srgb, var(--background-mica) calc(var(--bg-opacity, 1) * 100%), transparent);
     -webkit-font-smoothing: antialiased;
@@ -371,14 +390,14 @@
 
   /* Selection styling */
   :global(::selection) {
-    background: var(--accent);
-    color: var(--text-on-accent);
+    background: color-mix(in srgb, var(--accent) 30%, transparent);
+    color: inherit;
   }
 
   /* Scrollbar styling - Windows 11 style */
   :global(::-webkit-scrollbar) {
-    width: 14px;
-    height: 14px;
+    width: 8px;
+    height: 8px;
   }
 
   :global(::-webkit-scrollbar-track) {
@@ -387,14 +406,14 @@
 
   :global(::-webkit-scrollbar-thumb) {
     background: var(--text-tertiary);
-    border: 4px solid transparent;
-    border-radius: 7px;
+    border: 2px solid transparent;
+    border-radius: var(--radius-pill);
     background-clip: padding-box;
   }
 
   :global(::-webkit-scrollbar-thumb:hover) {
     background: var(--text-secondary);
-    border: 4px solid transparent;
+    border: 2px solid transparent;
     background-clip: padding-box;
   }
 
@@ -425,11 +444,11 @@
     content: "";
     position: fixed;
     inset: 0;
-    background: linear-gradient(
-      180deg,
-      rgba(255, 255, 255, 0.05) 0%,
-      transparent 50%
-    );
+    background: var(--mica-overlay, linear-gradient(
+      170deg,
+      rgba(255, 255, 255, 0.03) 0%,
+      transparent 40%
+    ));
     pointer-events: none;
     z-index: 0;
   }

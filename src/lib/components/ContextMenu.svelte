@@ -394,13 +394,13 @@
   .context-menu {
     position: fixed;
     z-index: 1000;
-    min-width: 200px;
-    padding: 4px;
+    min-width: 220px;
+    padding: 6px;
     background: var(--background-acrylic);
     backdrop-filter: blur(20px) saturate(180%);
     -webkit-backdrop-filter: blur(20px) saturate(180%);
     border: 1px solid var(--surface-stroke-flyout);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-lg);
     box-shadow: var(--shadow-flyout);
     animation: menuIn 100ms cubic-bezier(0, 0, 0, 1);
   }
@@ -421,7 +421,7 @@
     align-items: center;
     gap: 12px;
     width: 100%;
-    padding: 8px 12px;
+    padding: 9px 14px;
     background: transparent;
     border: none;
     border-radius: var(--radius-sm);
@@ -470,12 +470,12 @@
   }
 
   .menu-section-label {
-    padding: 6px 12px 4px;
-    font-size: 11px;
-    font-weight: 600;
+    padding: 6px 14px 4px;
+    font-size: 10px;
+    font-weight: var(--font-weight-semibold);
     color: var(--text-tertiary);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.06em;
   }
 
   .menu-item.selected {

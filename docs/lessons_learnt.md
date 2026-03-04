@@ -4,6 +4,17 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## tauri-e2mn: Tiles View Thumbnail Freeze (Progressive Loading)
+
+**Key takeaways:**
+
+- Sync `#[tauri::command]` functions that do heavy I/O (image decode) run on the **Tauri main thread**, blocking all IPC. Even with frontend concurrency limiting, each call freezes the UI during decode. Fix: make commands `async fn` and wrap blocking work in `tokio::task::spawn_blocking`.
+- Two-tier progressive thumbnails (16x16 micro + 128x128 full) eliminate perceived lag. The micro thumbnail uses `Nearest` filter (~1ms), and **pre-warms** the full thumbnail cache as a side effect — since the image is already decoded in memory, generating both sizes is nearly free. The subsequent full thumbnail request becomes a cache hit (just file read + base64).
+- Dual concurrency pools (8 micro / 4 full) work better than a single pool because micro thumbnails are much faster and shouldn't be blocked waiting for heavier full thumbnail loads.
+- The `image` crate's `JpegEncoder` requires `&mut` binding even though `encode()` takes `&mut self` — easy to miss.
+
+---
+
 ## tauri-explorer-rdra / tauri-explorer-za55: OS Clipboard Integration
 
 **Key takeaways:**

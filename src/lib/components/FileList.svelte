@@ -475,6 +475,8 @@
       <!-- Compact List View -->
       <div class="list-view file-rows">
         {#each explorer.displayEntries as entry (entry.path)}
+          {@const iconColor = entry.kind !== "directory" ? getFileIconColor(entry) : undefined}
+          {@const iconCategory = entry.kind !== "directory" ? getFileIconCategory(entry) : undefined}
           <button
             class="list-item"
             class:directory={entry.kind === "directory"}
@@ -491,15 +493,52 @@
             ondragleave={() => handleItemDragLeave(entry)}
             ondrop={(e) => handleItemDrop(e, entry)}
           >
-            <span class="list-icon">
+            <span class="list-icon" style:color={iconColor}>
               {#if entry.kind === "directory"}
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="#ffb900"/>
+                <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
+                  <path d="M2.5 7.5C2.5 6.94772 2.94772 6.5 3.5 6.5H14.5C15.0523 6.5 15.5 6.94772 15.5 7.5V12.5C15.5 13.6046 14.6046 14.5 13.5 14.5H4.5C3.39543 14.5 2.5 13.6046 2.5 12.5V7.5Z" fill="var(--icon-folder, #ffb900)"/>
+                  <path d="M2 5.5C2 4.67157 2.67157 4 3.5 4H6.17157C6.43679 4 6.69114 4.10536 6.87868 4.29289L8.12132 4.29289C8.30886 4.10536 8.56321 4 8.82843 4H13C13.8284 4 14.5 4.67157 14.5 5.5V6.5H2V5.5Z" fill="var(--icon-folder, #ffb900)" opacity="0.6"/>
+                </svg>
+              {:else if iconCategory === "image"}
+                <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
+                  <rect x="3" y="3" width="12" height="12" rx="1.5" fill="currentColor" fill-opacity="0.15"/>
+                  <rect x="3" y="3" width="12" height="12" rx="1.5" stroke="currentColor" stroke-width="1.25"/>
+                  <circle cx="6.5" cy="6.5" r="1.5" fill="currentColor"/>
+                  <path d="M3 12L6 9L8.5 11.5L11 8L15 12V13.5C15 14.3284 14.3284 15 13.5 15H4.5C3.67157 15 3 14.3284 3 13.5V12Z" fill="currentColor" fill-opacity="0.4"/>
+                </svg>
+              {:else if iconCategory === "archive"}
+                <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
+                  <path d="M4 3C4 2.44772 4.44772 2 5 2H13C13.5523 2 14 2.44772 14 3V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" fill="currentColor" fill-opacity="0.15"/>
+                  <path d="M4 3C4 2.44772 4.44772 2 5 2H13C13.5523 2 14 2.44772 14 3V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" stroke="currentColor" stroke-width="1.25"/>
+                  <rect x="7" y="4" width="4" height="2" rx="0.5" fill="currentColor"/>
+                  <rect x="7" y="7" width="4" height="2" rx="0.5" fill="currentColor"/>
+                  <rect x="7" y="10" width="4" height="3" rx="0.5" fill="currentColor"/>
+                </svg>
+              {:else if iconCategory === "code"}
+                <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
+                  <path d="M4 3C4 2.44772 4.44772 2 5 2H10L14 6V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" fill="currentColor" fill-opacity="0.15"/>
+                  <path d="M4 3C4 2.44772 4.44772 2 5 2H10L14 6V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" stroke="currentColor" stroke-width="1.25"/>
+                  <path d="M10 2V5C10 5.55228 10.4477 6 11 6H14" stroke="currentColor" stroke-width="1.25"/>
+                  <path d="M7.5 9L6 10.5L7.5 12M10.5 9L12 10.5L10.5 12" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              {:else if iconCategory === "media"}
+                <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
+                  <rect x="3" y="4" width="12" height="10" rx="1.5" fill="currentColor" fill-opacity="0.15"/>
+                  <rect x="3" y="4" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.25"/>
+                  <path d="M7 7V11L11 9L7 7Z" fill="currentColor"/>
+                </svg>
+              {:else if iconCategory === "executable"}
+                <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
+                  <rect x="3" y="3" width="12" height="12" rx="2" fill="currentColor" fill-opacity="0.15"/>
+                  <rect x="3" y="3" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.25"/>
+                  <path d="M6 9H12M9 6V12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
                 </svg>
               {:else}
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <path d="M4 2C4 1.44772 4.44772 1 5 1H9L13 5V14C13 14.5523 12.5523 15 12 15H5C4.44772 15 4 14.5523 4 14V2Z" stroke="var(--text-tertiary)" stroke-width="1.25"/>
-                  <path d="M9 1V4C9 4.55228 9.44772 5 10 5H13" stroke="var(--text-tertiary)" stroke-width="1.25"/>
+                <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
+                  <path d="M4 3C4 2.44772 4.44772 2 5 2H10L15 7V15C15 15.5523 14.5523 16 14 16H5C4.44772 16 4 15.5523 4 15V3Z" fill="currentColor" fill-opacity="0.15"/>
+                  <path d="M4 3C4 2.44772 4.44772 2 5 2H10L15 7V15C15 15.5523 14.5523 16 14 16H5C4.44772 16 4 15.5523 4 15V3Z" stroke="currentColor" stroke-width="1.25"/>
+                  <path d="M10 2V6C10 6.55228 10.4477 7 11 7H15" stroke="currentColor" stroke-width="1.25"/>
+                  <path d="M6.5 10H11.5M6.5 12.5H10" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
                 </svg>
               {/if}
             </span>

@@ -203,3 +203,15 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 - This is a common issue with Tauri/WebKitGTK — always explicitly style `<option>` elements when using native `<select>` in themed UIs.
 
 ---
+
+## WebKitGTK Native Form Controls Ignore CSS Backgrounds on Dark Themes
+
+**Key takeaways:**
+
+- **WebKitGTK renders native `<select>` with its own opaque white background** underneath any CSS `background` you set. Translucent `rgba()` backgrounds (like `--control-fill: rgba(255,255,255,0.08)`) composite over that white base, making the select appear white/light on dark themes. This does NOT reproduce in headless Chromium — always test in the actual Tauri app.
+- **Fix 1: `color-scheme: dark`** — Add `color-scheme: dark` (or `light`) to each theme's `[data-theme="..."]` rule. This tells WebKitGTK to use dark native form control colors as a baseline. This is inherited, so setting it on the theme selector cascades to all form elements. Should be standard practice for all themes.
+- **Fix 2: `appearance: none`** — For full CSS control over `<select>` styling, use `appearance: none; -webkit-appearance: none;` to disable native widget rendering entirely. This requires adding a custom dropdown arrow (e.g., inline SVG via `background-image`). This gives consistent cross-engine results.
+- **Both fixes together are ideal:** `color-scheme` ensures any native controls you missed still look right, while `appearance: none` on specific controls gives pixel-perfect theming.
+- **Playwright headless Chromium cannot reproduce WebKitGTK rendering bugs.** When debugging Tauri UI issues, always verify in the actual app. Use Playwright for functional testing only.
+
+---

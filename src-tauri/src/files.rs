@@ -113,7 +113,7 @@ pub fn invalidate_dir_cache(path: String) -> Result<(), AppError> {
 /// List directory contents.
 /// Directories are sorted before files, and items are sorted case-insensitively by name.
 #[tauri::command]
-pub fn list_directory(path: String) -> Result<DirectoryListing, AppError> {
+pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> {
     // Check cache first
     {
         let cache = get_dir_cache().lock().unwrap();
@@ -701,7 +701,7 @@ static LISTINGS: crate::task_registry::TaskRegistry = crate::task_registry::Task
 /// Returns first batch immediately and emits remaining entries via events.
 /// For small directories (< batch_size), this behaves like regular list_directory.
 #[tauri::command]
-pub fn start_streaming_directory(
+pub async fn start_streaming_directory(
     app: AppHandle,
     path: String,
 ) -> Result<DirectoryListing, AppError> {

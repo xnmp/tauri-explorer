@@ -1,7 +1,9 @@
 //! Thumbnail generation module for Tauri commands.
-//! Issue: tauri-explorer-im3m, tauri-explorer-i0yt
+//! Issue: tauri-explorer-im3m, tauri-explorer-i0yt, tauri-e2mn
 //!
 //! Provides fast, cached thumbnail generation for image files.
+//! Uses async commands with spawn_blocking to avoid freezing the UI.
+//! Supports two-tier progressive loading: micro (16x16) + full (128x128).
 
 use base64::Engine as _;
 use crate::error::AppError;
@@ -13,6 +15,9 @@ use std::io::Cursor;
 
 /// Default thumbnail size (width and height in pixels)
 const THUMBNAIL_SIZE: u32 = 128;
+
+/// Micro thumbnail size for progressive loading preview
+const MICRO_SIZE: u32 = 16;
 
 /// Supported image extensions for thumbnail generation
 const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp"];
@@ -62,6 +67,47 @@ fn get_cached_thumbnail(cache_key: &str) -> Option<PathBuf> {
     }
 }
 
+/// Save raw JPEG bytes to cache
+fn save_to_cache(cache_key: &str, data: &[u8]) {
+    if let Some(cache_dir) = get_cache_dir() {
+        let _ = fs::create_dir_all(&cache_dir);
+        let cache_path = cache_dir.join(format!("{}.jpg", cache_key));
+        let _ = fs::write(&cache_path, data);
+    }
+}
+
+/// Encode an RGB8 image to JPEG bytes at the given quality
+fn encode_jpeg(img: &image::RgbImage, quality: u8) -> Result<Vec<u8>, AppError> {
+    let mut buffer = Cursor::new(Vec::new());
+    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, quality);
+    encoder.encode(
+        img.as_raw(),
+        img.width(),
+        img.height(),
+        image::ExtendedColorType::Rgb8,
+    ).map_err(|e| AppError::Other(format!("Failed to encode JPEG: {}", e)))?;
+    Ok(buffer.into_inner())
+}
+
+/// Format raw bytes as a data URI
+fn to_data_uri(data: &[u8]) -> String {
+    format!(
+        "data:image/jpeg;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(data)
+    )
+}
+
+/// Validate path for thumbnail generation (exists + supported format)
+fn validate_thumbnail_path(path: &Path, path_str: &str) -> Result<(), AppError> {
+    if !path.exists() {
+        return Err(AppError::NotFound(path_str.to_string()));
+    }
+    if !is_supported_image(path) {
+        return Err(AppError::InvalidPath(format!("Unsupported image format: {}", path_str)));
+    }
+    Ok(())
+}
+
 /// Generate thumbnail and save to cache
 fn generate_and_cache_thumbnail(
     source_path: &Path,
@@ -92,86 +138,117 @@ fn generate_and_cache_thumbnail(
     Ok(cache_path)
 }
 
-/// Get or generate thumbnail for an image file.
-/// Returns the path to the cached thumbnail.
-#[tauri::command]
-pub fn get_thumbnail(path: String, size: Option<u32>) -> Result<String, AppError> {
+// ─── Sync implementations ───────────────────────────────────────────────────
+
+fn get_thumbnail_sync(path: String, size: Option<u32>) -> Result<String, AppError> {
     let source_path = PathBuf::from(&path);
     let size = size.unwrap_or(THUMBNAIL_SIZE);
+    validate_thumbnail_path(&source_path, &path)?;
 
-    if !source_path.exists() {
-        return Err(AppError::NotFound(path));
-    }
-
-    if !is_supported_image(&source_path) {
-        return Err(AppError::InvalidPath(format!("Unsupported image format: {}", path)));
-    }
-
-    // Generate cache key
     let cache_key = generate_cache_key(&source_path)
         .ok_or_else(|| AppError::Other(format!("Failed to generate cache key for: {}", path)))?;
 
-    // Check if thumbnail is already cached
     if let Some(cached_path) = get_cached_thumbnail(&cache_key) {
         return Ok(cached_path.to_string_lossy().to_string());
     }
 
-    // Generate and cache thumbnail
     let thumb_path = generate_and_cache_thumbnail(&source_path, &cache_key, size)?;
     Ok(thumb_path.to_string_lossy().to_string())
 }
 
-/// Get thumbnail as base64-encoded data URI.
-/// More efficient for small thumbnails as it avoids file I/O.
-#[tauri::command]
-pub fn get_thumbnail_data(path: String, size: Option<u32>) -> Result<String, AppError> {
+fn get_thumbnail_data_sync(path: String, size: Option<u32>) -> Result<String, AppError> {
     let source_path = PathBuf::from(&path);
     let size = size.unwrap_or(THUMBNAIL_SIZE);
+    validate_thumbnail_path(&source_path, &path)?;
 
-    if !source_path.exists() {
-        return Err(AppError::NotFound(path));
-    }
-
-    if !is_supported_image(&source_path) {
-        return Err(AppError::InvalidPath(format!("Unsupported image format: {}", path)));
-    }
-
-    // Generate cache key
     let cache_key = generate_cache_key(&source_path)
         .ok_or_else(|| AppError::Other(format!("Failed to generate cache key for: {}", path)))?;
 
-    // Check if thumbnail is already cached
+    // Check cache first
     if let Some(cached_path) = get_cached_thumbnail(&cache_key) {
         let data = fs::read(&cached_path)?;
-        return Ok(format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(&data)));
+        return Ok(to_data_uri(&data));
     }
 
-    // Load and decode image (with_guessed_format for robust format detection)
+    // Decode image
     let img = ImageReader::open(&source_path)?
         .with_guessed_format()?
         .decode()
         .map_err(|e| AppError::Other(format!("Failed to decode image: {}", e)))?;
 
-    // Generate thumbnail, always convert to RGB8 for JPEG output
     let thumbnail = img.thumbnail(size, size).to_rgb8();
 
-    // Encode to JPEG in memory
-    let mut buffer = Cursor::new(Vec::new());
-    DynamicImage::ImageRgb8(thumbnail)
-        .write_to(&mut buffer, ImageFormat::Jpeg)
-        .map_err(|e| AppError::Other(format!("Failed to encode thumbnail: {}", e)))?;
+    let data = encode_jpeg(&thumbnail, 80)?;
+    save_to_cache(&cache_key, &data);
 
-    let data = buffer.into_inner();
+    Ok(to_data_uri(&data))
+}
 
-    // Also save to cache for future use
-    let cache_dir = get_cache_dir();
-    if let Some(cache_dir) = cache_dir {
-        let _ = fs::create_dir_all(&cache_dir);
-        let cache_path = cache_dir.join(format!("{}.jpg", cache_key));
-        let _ = fs::write(&cache_path, &data);
+fn get_micro_thumbnail_sync(path: String) -> Result<String, AppError> {
+    let source_path = PathBuf::from(&path);
+    validate_thumbnail_path(&source_path, &path)?;
+
+    let cache_key = generate_cache_key(&source_path)
+        .ok_or_else(|| AppError::Other(format!("Failed to generate cache key for: {}", path)))?;
+
+    let micro_cache_key = format!("{}_micro", cache_key);
+
+    // Check micro cache first
+    if let Some(cached_path) = get_cached_thumbnail(&micro_cache_key) {
+        let data = fs::read(&cached_path)?;
+        return Ok(to_data_uri(&data));
     }
 
-    Ok(format!("data:image/jpeg;base64,{}", base64::engine::general_purpose::STANDARD.encode(&data)))
+    // Decode image once (the expensive part)
+    let img = ImageReader::open(&source_path)?
+        .with_guessed_format()?
+        .decode()
+        .map_err(|e| AppError::Other(format!("Failed to decode image: {}", e)))?;
+
+    // Generate micro thumbnail (Nearest = fastest resize algorithm)
+    let micro = img.resize(MICRO_SIZE, MICRO_SIZE, image::imageops::FilterType::Nearest).to_rgb8();
+    let micro_data = encode_jpeg(&micro, 50)?;
+    save_to_cache(&micro_cache_key, &micro_data);
+
+    // Pre-warm full thumbnail cache if not already present.
+    // Since the image is already decoded in memory, this is nearly free.
+    if get_cached_thumbnail(&cache_key).is_none() {
+        let full = img.thumbnail(THUMBNAIL_SIZE, THUMBNAIL_SIZE).to_rgb8();
+        if let Ok(full_data) = encode_jpeg(&full, 80) {
+            save_to_cache(&cache_key, &full_data);
+        }
+    }
+
+    Ok(to_data_uri(&micro_data))
+}
+
+// ─── Async Tauri commands ───────────────────────────────────────────────────
+
+/// Get or generate thumbnail for an image file.
+/// Returns the path to the cached thumbnail.
+#[tauri::command]
+pub async fn get_thumbnail(path: String, size: Option<u32>) -> Result<String, AppError> {
+    tokio::task::spawn_blocking(move || get_thumbnail_sync(path, size))
+        .await
+        .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
+}
+
+/// Get thumbnail as base64-encoded data URI.
+/// More efficient for small thumbnails as it avoids file I/O.
+#[tauri::command]
+pub async fn get_thumbnail_data(path: String, size: Option<u32>) -> Result<String, AppError> {
+    tokio::task::spawn_blocking(move || get_thumbnail_data_sync(path, size))
+        .await
+        .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
+}
+
+/// Get a tiny 16x16 micro thumbnail for progressive loading.
+/// Also pre-warms the full thumbnail cache as a side effect.
+#[tauri::command]
+pub async fn get_micro_thumbnail(path: String) -> Result<String, AppError> {
+    tokio::task::spawn_blocking(move || get_micro_thumbnail_sync(path))
+        .await
+        .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
 }
 
 /// Clear the thumbnail cache
@@ -246,7 +323,6 @@ pub struct ThumbnailCacheStats {
 mod tests {
     use super::*;
     use std::fs::File;
-    use std::io::Write;
     use tempfile::tempdir;
 
     #[test]
@@ -296,8 +372,8 @@ mod tests {
         });
         img.save(&png_path).unwrap();
 
-        // Test get_thumbnail_data succeeds for PNG
-        let result = get_thumbnail_data(png_path.to_string_lossy().to_string(), Some(64));
+        // Test get_thumbnail_data_sync succeeds for PNG
+        let result = get_thumbnail_data_sync(png_path.to_string_lossy().to_string(), Some(64));
         assert!(result.is_ok(), "PNG thumbnail generation failed: {:?}", result.err());
         let data_uri = result.unwrap();
         assert!(data_uri.starts_with("data:image/jpeg;base64,"), "Expected JPEG data URI, got: {}", &data_uri[..50]);
@@ -311,7 +387,7 @@ mod tests {
             return; // Skip if not available
         }
 
-        let result = get_thumbnail_data(icon_path.to_string_lossy().to_string(), Some(64));
+        let result = get_thumbnail_data_sync(icon_path.to_string_lossy().to_string(), Some(64));
         assert!(result.is_ok(), "Real PNG thumbnail failed: {:?}", result.err());
     }
 
@@ -326,9 +402,33 @@ mod tests {
         });
         img.save(&jpg_path).unwrap();
 
-        let result = get_thumbnail_data(jpg_path.to_string_lossy().to_string(), Some(64));
+        let result = get_thumbnail_data_sync(jpg_path.to_string_lossy().to_string(), Some(64));
         assert!(result.is_ok(), "JPEG thumbnail generation failed: {:?}", result.err());
         let data_uri = result.unwrap();
         assert!(data_uri.starts_with("data:image/jpeg;base64,"));
+    }
+
+    #[test]
+    fn test_micro_thumbnail_generation() {
+        let dir = tempdir().unwrap();
+        let img_path = dir.path().join("test_micro.png");
+
+        let img = image::RgbImage::from_fn(200, 200, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, 128])
+        });
+        img.save(&img_path).unwrap();
+
+        let result = get_micro_thumbnail_sync(img_path.to_string_lossy().to_string());
+        assert!(result.is_ok(), "Micro thumbnail failed: {:?}", result.err());
+
+        let data_uri = result.unwrap();
+        assert!(data_uri.starts_with("data:image/jpeg;base64,"));
+
+        // Verify that full thumbnail cache was pre-warmed
+        let cache_key = generate_cache_key(&img_path).unwrap();
+        assert!(
+            get_cached_thumbnail(&cache_key).is_some(),
+            "Full thumbnail cache should be pre-warmed by micro thumbnail"
+        );
     }
 }

@@ -469,6 +469,24 @@ export async function getThumbnailData(
 }
 
 /**
+ * Get micro thumbnail (16x16) as base64 data URI for progressive loading.
+ * Also pre-warms the full thumbnail cache as a side effect.
+ *
+ * @param path - Full path to image file
+ * @returns Result with data URI (data:image/jpeg;base64,...) or error
+ */
+export async function getMicroThumbnail(
+  path: string
+): Promise<ApiResult<string>> {
+  try {
+    const dataUri = await invoke<string>("get_micro_thumbnail", { path });
+    return { ok: true, data: dataUri };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
  * Thumbnail cache statistics.
  */
 export interface ThumbnailCacheStats {

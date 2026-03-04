@@ -1,33 +1,44 @@
 <!--
-  ThumbnailImage component - Lazy-loaded image thumbnail with concurrency control
-  Issue: tauri-explorer-im3m, tauri-1rzt, tauri-nag1
+  ThumbnailImage component - Two-tier progressive thumbnail loading
+  Issue: tauri-explorer-im3m, tauri-1rzt, tauri-nag1, tauri-e2mn
+
+  Loading flow:
+  1. SVG placeholder (not visible yet)
+  2. IntersectionObserver fires → request micro thumbnail (16x16, pixelated)
+  3. Micro thumbnail appears instantly → request full thumbnail (cache hit from pre-warm)
+  4. Full thumbnail cross-fades in over 150ms
 -->
 <script lang="ts" module>
-  import { getThumbnailData } from "$lib/api/files";
+  import { getMicroThumbnail, getThumbnailData } from "$lib/api/files";
 
-  // Global concurrency limiter - max 4 concurrent thumbnail loads
-  const MAX_CONCURRENT = 4;
-  let activeCount = 0;
-  const queue: Array<() => void> = [];
+  // Dual concurrency pools: micro is fast (small payload), full is heavier
+  function createPool(max: number) {
+    let active = 0;
+    const queue: Array<() => void> = [];
 
-  function acquireSlot(): Promise<void> {
-    if (activeCount < MAX_CONCURRENT) {
-      activeCount++;
-      return Promise.resolve();
-    }
-    return new Promise((resolve) => {
-      queue.push(() => {
-        activeCount++;
-        resolve();
-      });
-    });
+    return {
+      acquire(): Promise<void> {
+        if (active < max) {
+          active++;
+          return Promise.resolve();
+        }
+        return new Promise((resolve) => {
+          queue.push(() => {
+            active++;
+            resolve();
+          });
+        });
+      },
+      release(): void {
+        active--;
+        const next = queue.shift();
+        if (next) next();
+      },
+    };
   }
 
-  function releaseSlot(): void {
-    activeCount--;
-    const next = queue.shift();
-    if (next) next();
-  }
+  const microPool = createPool(8);
+  const fullPool = createPool(4);
 </script>
 
 <script lang="ts">
@@ -39,7 +50,8 @@
 
   let { path, size = 128, fallbackColor = "#0078d4" }: Props = $props();
 
-  let thumbnailUrl = $state<string | null>(null);
+  let microUrl = $state<string | null>(null);
+  let fullUrl = $state<string | null>(null);
   let loading = $state(false);
   let error = $state(false);
   let visible = $state(false);
@@ -63,38 +75,62 @@
     return () => observer.disconnect();
   });
 
-  // Load thumbnail when visible and path changes
+  // Load thumbnails when visible and path changes
   $effect(() => {
     if (visible && path) {
-      loadThumbnail();
+      loadProgressiveThumbnail();
     }
   });
 
-  async function loadThumbnail() {
+  async function loadProgressiveThumbnail() {
+    const currentPath = path;
     loading = true;
     error = false;
-    thumbnailUrl = null;
+    microUrl = null;
+    fullUrl = null;
 
-    await acquireSlot();
+    // Stage 1: micro thumbnail (fast, pixelated preview)
+    await microPool.acquire();
     try {
-      const result = await getThumbnailData(path, size);
+      // Bail if path changed while queued
+      if (currentPath !== path) return;
 
-      if (result.ok) {
-        thumbnailUrl = result.data;
-      } else {
+      const microResult = await getMicroThumbnail(currentPath);
+      if (currentPath !== path) return;
+
+      if (microResult.ok) {
+        microUrl = microResult.data;
+      }
+    } finally {
+      microPool.release();
+    }
+
+    // Stage 2: full thumbnail (should be a cache hit from micro's pre-warm)
+    await fullPool.acquire();
+    try {
+      if (currentPath !== path) return;
+
+      const fullResult = await getThumbnailData(currentPath, size);
+      if (currentPath !== path) return;
+
+      if (fullResult.ok) {
+        fullUrl = fullResult.data;
+      } else if (!microUrl) {
         error = true;
       }
     } finally {
-      releaseSlot();
+      fullPool.release();
     }
 
-    loading = false;
+    if (currentPath === path) {
+      loading = false;
+    }
   }
 </script>
 
 <div class="thumbnail-container" style="--size: {size}px" bind:this={containerEl}>
-  {#if loading || !visible}
-    <!-- Show file type icon as placeholder while thumbnail loads -->
+  {#if !visible || (loading && !microUrl)}
+    <!-- SVG placeholder while waiting for first thumbnail -->
     <svg width={size} height={size} viewBox="0 0 48 48" fill="none" class="thumbnail-placeholder">
       <rect x="6" y="6" width="36" height="36" rx="4" fill={fallbackColor} fill-opacity="0.1"/>
       <rect x="6" y="6" width="36" height="36" rx="4" stroke={fallbackColor} stroke-width="1.5" stroke-opacity="0.3"/>
@@ -104,7 +140,7 @@
     {#if loading}
       <div class="loading-overlay"><div class="spinner"></div></div>
     {/if}
-  {:else if error || !thumbnailUrl}
+  {:else if error && !microUrl}
     <!-- Fallback to image icon SVG -->
     <svg width={size} height={size} viewBox="0 0 48 48" fill="none" class="thumbnail-fallback">
       <rect x="6" y="6" width="36" height="36" rx="4" fill={fallbackColor} fill-opacity="0.15"/>
@@ -113,13 +149,26 @@
       <path d="M6 33L15 24L22 31L30 21L42 33V38C42 40.2091 40.2091 42 38 42H10C7.79086 42 6 40.2091 6 38V33Z" fill={fallbackColor} fill-opacity="0.4"/>
     </svg>
   {:else}
-    <img
-      src={thumbnailUrl}
-      alt=""
-      class="thumbnail-image"
-      width={size}
-      height={size}
-    />
+    <!-- Two-layer thumbnail: micro (pixelated) underneath, full on top -->
+    {#if microUrl}
+      <img
+        src={microUrl}
+        alt=""
+        class="thumbnail-micro"
+        width={size}
+        height={size}
+      />
+    {/if}
+    {#if fullUrl}
+      <img
+        src={fullUrl}
+        alt=""
+        class="thumbnail-full"
+        class:loaded={true}
+        width={size}
+        height={size}
+      />
+    {/if}
   {/if}
 </div>
 
@@ -165,10 +214,28 @@
     opacity: 0.8;
   }
 
-  .thumbnail-image {
+  .thumbnail-micro {
     width: 100%;
     height: 100%;
     object-fit: cover;
     border-radius: inherit;
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    filter: blur(1px);
+  }
+
+  .thumbnail-full {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: inherit;
+    opacity: 0;
+    transition: opacity 150ms ease;
+  }
+
+  .thumbnail-full.loaded {
+    opacity: 1;
   }
 </style>

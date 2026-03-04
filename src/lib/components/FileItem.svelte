@@ -213,7 +213,8 @@
   function handleDragOver(event: DragEvent) {
     // Only accept drops on directories
     if (entry.kind !== "directory") return;
-    if (!event.dataTransfer?.types.includes("application/x-explorer-path")) return;
+    // Accept if dataTransfer has our type, OR if there's cross-window drag data
+    if (!event.dataTransfer?.types.includes("application/x-explorer-path") && !dragState.readCrossWindow()) return;
 
     event.preventDefault();
     // Ctrl held = copy, otherwise move
@@ -236,7 +237,12 @@
     if (entry.kind !== "directory") return;
     if (!event.dataTransfer) return;
 
-    const sourcePath = event.dataTransfer.getData("application/x-explorer-path");
+    // Try dataTransfer first, fall back to cross-window drag state
+    let sourcePath = event.dataTransfer.getData("application/x-explorer-path");
+    if (!sourcePath) {
+      const crossWindow = dragState.readCrossWindow();
+      if (crossWindow) sourcePath = crossWindow.path;
+    }
     if (!sourcePath || sourcePath === entry.path) return;
 
     // Don't allow moving/copying a folder into itself or its children

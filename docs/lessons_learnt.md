@@ -205,6 +205,17 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## Enter Key Leaking Through Modal Dialogs to Global Command Handler
+
+**Key takeaways:**
+
+- The DeleteDialog handles Enter via `onkeydown` to confirm deletion, but doesn't call `stopPropagation()`. The Enter event bubbles up to `+page.svelte`'s global `handleKeydown`, which matches the `file.openSelected` command (shortcut: Enter) and calls `navigateTo()` on the selected entry — the very folder being deleted. This causes "Path not found" because `navigateInternal` tries to list the now-deleted directory.
+- The fix is architectural, not per-dialog: the global command handler should skip execution when any modal dialog is open (`dialogStore.hasModalOpen`). This is cleaner than adding `stopPropagation()` to every dialog's keydown handler, and correctly models the semantic that modal dialogs should trap keyboard interaction.
+- Hardcoded shortcuts like `Ctrl+,` (settings) and `Ctrl+\` (toggle dual pane) are handled **before** the modal guard, so they remain functional regardless of modal state.
+- When debugging event propagation bugs, `console.trace()` in the affected handler immediately reveals the call chain — in this case showing `handleKeydown → executeCommand → file.openSelected → navigateTo` as the unexpected caller.
+
+---
+
 ## tauri-lgo0: "Unable to access folder" After Deleting a Folder
 
 **Key takeaways:**

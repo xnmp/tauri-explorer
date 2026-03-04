@@ -103,8 +103,8 @@
       return;
     }
 
-    // Skip dynamic shortcut handling if in input field
-    if (isInputField) {
+    // Skip dynamic shortcut handling if in input field or a modal dialog is open
+    if (isInputField || dialogStore.hasModalOpen) {
       return;
     }
 

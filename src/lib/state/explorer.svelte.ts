@@ -434,6 +434,9 @@ function createExplorerState() {
 
     if (result.ok) {
       coreState.entries = [...coreState.entries, result.data];
+      coreState.selectedPaths = new Set([result.data.path]);
+      const idx = displayEntries.findIndex((e) => e.path === result.data.path);
+      coreState.selectionAnchorIndex = idx >= 0 ? idx : null;
       isCreatingFolder = false;
       dialogStore.closeNewFolder();
       return null;

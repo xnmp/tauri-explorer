@@ -405,6 +405,7 @@ function createExplorerState() {
         : await deleteMultipleEntries(paths);
 
       if (result.ok) {
+        undoStore.push({ type: "delete", paths, parentDir: coreState.currentPath });
         const deletedPaths = new Set(paths);
         coreState.entries = coreState.entries.filter((e) => !deletedPaths.has(e.path));
         coreState.selectedPaths = new Set(
@@ -503,6 +504,7 @@ function createExplorerState() {
       : await deleteMultipleEntries(paths);
 
     if (result.ok) {
+      undoStore.push({ type: "delete", paths, parentDir: coreState.currentPath });
       const deletedPaths = new Set(paths);
       coreState.entries = coreState.entries.filter((e) => !deletedPaths.has(e.path));
       coreState.selectedPaths = new Set(

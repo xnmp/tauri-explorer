@@ -9,7 +9,8 @@ export type ViewMode = "details" | "list" | "tiles";
 /** Undoable action types */
 export type UndoAction =
   | { type: "rename"; path: string; oldName: string; newName: string }
-  | { type: "move"; sourcePath: string; destPath: string; originalDir: string };
+  | { type: "move"; sourcePath: string; destPath: string; originalDir: string }
+  | { type: "delete"; paths: string[]; parentDir: string };
 
 /** Selection options for click handlers */
 export interface SelectOptions {

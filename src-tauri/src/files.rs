@@ -154,9 +154,15 @@ pub fn list_directory(path: String) -> Result<DirectoryListing, AppError> {
             Err(_) => continue, // Skip inaccessible files
         };
 
-        let metadata = match entry.metadata() {
+        // Use fs::metadata (follows symlinks) so symlinks to directories
+        // get kind=Directory. Fall back to DirEntry::metadata (which is
+        // symlink_metadata on Unix) for broken/dangling symlinks.
+        let metadata = match fs::metadata(entry.path()) {
             Ok(m) => m,
-            Err(_) => continue, // Skip files we can't stat
+            Err(_) => match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            },
         };
 
         entries.push(metadata_to_entry(&entry.path(), &metadata));
@@ -708,9 +714,14 @@ pub fn start_streaming_directory(
             Err(_) => continue,
         };
 
-        let metadata = match entry.metadata() {
+        // Use fs::metadata (follows symlinks) so symlinks to directories
+        // get kind=Directory. Fall back for broken/dangling symlinks.
+        let metadata = match fs::metadata(entry.path()) {
             Ok(m) => m,
-            Err(_) => continue,
+            Err(_) => match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            },
         };
 
         all_entries.push(metadata_to_entry(&entry.path(), &metadata));

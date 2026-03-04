@@ -167,16 +167,21 @@
     }
   }
 
+  /** Header height for marquee clamping: 32px for details (column headers), 0 for list/tiles */
+  function marqueeHeaderHeight(): number {
+    return explorer.viewMode === "details" ? 32 : 0;
+  }
+
   function handleMarqueeStart(event: MouseEvent): void {
     const rect = contentRef?.getBoundingClientRect();
     if (!rect) return;
-    marquee.start(event, rect);
+    marquee.start(event, rect, marqueeHeaderHeight());
   }
 
   function handleMarqueeMove(event: MouseEvent): void {
     const rect = contentRef?.getBoundingClientRect();
     if (!rect) return;
-    marquee.move(event, rect);
+    marquee.move(event, rect, marqueeHeaderHeight());
     updateMarqueeSelection();
   }
 

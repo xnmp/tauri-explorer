@@ -58,7 +58,7 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     return config.backgroundClasses.some((cls) => target.classList.contains(cls));
   }
 
-  function start(event: MouseEvent, containerRect: DOMRect): void {
+  function start(event: MouseEvent, containerRect: DOMRect, headerHeight?: number): void {
     if (!isBackgroundClick(event.target as HTMLElement)) return;
     if (event.button !== 0) return; // Only left click
 
@@ -72,22 +72,24 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     // Compensate for CSS zoom: clientX/Y are physical pixels in WebKitGTK,
     // but containerRect is in CSS (zoomed) pixels.
     const zoom = getZoomFactor();
+    const minY = headerHeight ?? config.headerHeight;
     dragStart = {
       x: event.clientX / zoom - containerRect.left,
-      y: Math.max(config.headerHeight, event.clientY / zoom - containerRect.top),
+      y: Math.max(minY, event.clientY / zoom - containerRect.top),
     };
     dragCurrent = { ...dragStart };
 
     event.preventDefault();
   }
 
-  function move(event: MouseEvent, containerRect: DOMRect): void {
+  function move(event: MouseEvent, containerRect: DOMRect, headerHeight?: number): void {
     if (!isDragging) return;
 
     const zoom = getZoomFactor();
+    const minY = headerHeight ?? config.headerHeight;
     dragCurrent = {
       x: Math.max(0, Math.min(event.clientX / zoom - containerRect.left, containerRect.width)),
-      y: Math.max(config.headerHeight, event.clientY / zoom - containerRect.top),
+      y: Math.max(minY, event.clientY / zoom - containerRect.top),
     };
   }
 

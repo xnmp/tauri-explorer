@@ -17,7 +17,7 @@
 * Read the specs to implement features
 * If unsure how to do something that needs research, use the research-scout subagent to research the best ways to proceed. 
 * creature a new branch for each feature. 
-* After implementing features, commit once before running any tests. Then use the `test-fixer` subagent to run the tests and get them passing then commit again. Then use the `code-simplifier` subagent to condense the code and commit again. Finally, use the `ui-tester` to test that the feature is working, and commit again. 
+* After implementing features, commit once before running any tests. Then use the `test-fixer` subagent to run the tests and get them passing then commit again. Then use the `code-simplifier` subagent to condense the code and commit again. Finally, use `agent-browser` (CLI) directly to visually verify the feature is working (open the dev server URL, snapshot, screenshot, interact as needed), and commit again. The docs are [here](https://github.com/vercel-labs/agent-browser). Then run the e2e playwright tests to verify that there's no regressions. 
 * For each feature, after doing all of this in the previous point, merge the feature rbanch to main - just do this if the tests are passing and ui is working, don't ask for confirmation. always use a merge commit. don't delete the feature branch. 
 * Use the `bug-fixer` subagent to fix bugs. 
 * Every once in a while, use the `frontend-aesthetic-enhancer` to make it look nicer and the `architecture-reviewer` to structure the code better.

@@ -194,6 +194,17 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## Mock `create_directory` Missing Duplicate Check
+
+**Key takeaways:**
+
+- The inline new folder input has both `onkeydown` (Enter) and `onblur` handlers that call `confirmNewFolder()`. When Enter triggers `createFolder()` → sets `isCreatingFolder = false` → removes the input from DOM → `onblur` fires → `confirmNewFolder()` runs a **second time**. In the real Tauri app the OS rejects the duplicate (`EEXIST`), so this is harmless. But the mock had no such guard, silently creating two entries with the same path.
+- Duplicate entries with the same `path` break Svelte's `{#each ... (key)}` rendering (VirtualList uses `entry.path` as key). This causes the entire file list to stop responding to clicks — selection, context menus, and navigation all fail.
+- Mock API handlers should mirror real backend error semantics (idempotency, conflict detection) to avoid hiding bugs that only manifest in test environments.
+- When an `onblur` handler does the same work as an `onkeydown` handler (common pattern for "confirm on Enter or blur"), the blur will always fire redundantly when Enter removes the element from DOM. Either guard against double execution or make the operation idempotent.
+
+---
+
 ## tauri-lgo0: "Unable to access folder" After Deleting a Folder
 
 **Key takeaways:**

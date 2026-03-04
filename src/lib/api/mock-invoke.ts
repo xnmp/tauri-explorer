@@ -105,6 +105,9 @@ const mockCommands: Record<string, CommandHandler> = {
     const parentPath = args.parentPath as string;
     const name = args.name as string;
     const newPath = `${parentPath}/${name}`;
+    if (mockFiles[newPath] !== undefined) {
+      throw new Error(`Directory already exists: ${newPath}`);
+    }
     const entry = dir(name, newPath);
     if (!mockFiles[parentPath]) mockFiles[parentPath] = [];
     mockFiles[parentPath].push(entry);

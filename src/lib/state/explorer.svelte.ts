@@ -266,8 +266,15 @@ function createExplorerState() {
     }
   }
 
-  function refresh() {
-    navigateInternal(coreState.currentPath);
+  async function refresh() {
+    const success = await navigateInternal(coreState.currentPath);
+    if (!success) {
+      // Current path no longer exists (e.g. was deleted) — fall back to parent
+      const parentPath = navigation.getParentPath(breadcrumbs);
+      if (parentPath) {
+        await navigateInternal(parentPath);
+      }
+    }
   }
 
   // ===================
@@ -360,7 +367,7 @@ function createExplorerState() {
   }
 
   /** If any deleted path is the current directory or an ancestor, navigate up. */
-  function navigateAwayIfNeeded(deletedPaths: Set<string>): void {
+  async function navigateAwayIfNeeded(deletedPaths: Set<string>): Promise<void> {
     const current = coreState.currentPath;
     const shouldNavigateAway = [...deletedPaths].some(
       (dp) => current === dp || current.startsWith(dp + "/")
@@ -369,7 +376,7 @@ function createExplorerState() {
       // Navigate to the parent of the current directory
       const parentPath = navigation.getParentPath(breadcrumbs);
       if (parentPath) {
-        navigateTo(parentPath);
+        await navigateTo(parentPath);
       }
     }
   }
@@ -391,7 +398,7 @@ function createExplorerState() {
         coreState.selectedPaths = new Set(
           [...coreState.selectedPaths].filter((p) => !deletedPaths.has(p))
         );
-        navigateAwayIfNeeded(deletedPaths);
+        await navigateAwayIfNeeded(deletedPaths);
       }
       return;
     }
@@ -486,7 +493,7 @@ function createExplorerState() {
         [...coreState.selectedPaths].filter((p) => !deletedPaths.has(p))
       );
       dialogStore.cancelDelete();
-      navigateAwayIfNeeded(deletedPaths);
+      await navigateAwayIfNeeded(deletedPaths);
       return null;
     }
     return result.error;

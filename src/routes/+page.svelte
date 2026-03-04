@@ -17,6 +17,7 @@
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { copyEntry, moveEntry, getHomeDirectory } from "$lib/api/files";
   import { initFileChangeListener, cleanupFileChangeListener, broadcastFileChange, parentDir } from "$lib/state/file-events";
+  import { saveFocusedWindowState } from "$lib/state/focused-window";
   import "$lib/themes/index.css";
   import TitleBar from "$lib/components/TitleBar.svelte";
   import SharedToolbar from "$lib/components/SharedToolbar.svelte";
@@ -134,6 +135,26 @@
     }
   }
 
+  // Persist the focused window's state (path + viewMode) to localStorage
+  // so new windows (Ctrl+N) inherit from the last focused window.
+  function persistFocusedState() {
+    const explorer = getActiveExplorer();
+    if (explorer) {
+      saveFocusedWindowState(explorer.currentPath, explorer.viewMode);
+    }
+  }
+
+  // Update localStorage whenever the active explorer's path or viewMode changes
+  $effect(() => {
+    const explorer = getActiveExplorer();
+    if (explorer) {
+      // Access reactive properties to subscribe
+      const _path = explorer.currentPath;
+      const _viewMode = explorer.viewMode;
+      saveFocusedWindowState(_path, _viewMode);
+    }
+  });
+
   // Apply zoom level reactively
   $effect(() => {
     document.documentElement.style.zoom = `${settingsStore.zoomLevel}%`;
@@ -191,6 +212,9 @@
       }
     });
 
+    // Persist focused window state when this window gains focus
+    window.addEventListener("focus", persistFocusedState);
+
     // Track Ctrl key for external drop modifier detection
     function trackCtrlDown(e: KeyboardEvent) { ctrlKeyHeld = e.ctrlKey; }
     function trackCtrlUp(e: KeyboardEvent) { ctrlKeyHeld = e.ctrlKey; }
@@ -219,6 +243,7 @@
     }, 30000);
 
     return () => {
+      window.removeEventListener("focus", persistFocusedState);
       window.removeEventListener("keydown", trackCtrlDown, true);
       window.removeEventListener("keyup", trackCtrlUp, true);
       window.removeEventListener("keydown", handleKeydown);

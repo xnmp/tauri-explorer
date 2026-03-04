@@ -75,10 +75,11 @@ fn restore_from_trash(paths: Vec<String>) -> Result<(), AppError> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Fix webkit2gtk Wayland protocol errors on Linux compositors (Hyprland, Sway, etc.)
+    // WEBKIT_DISABLE_DMABUF_RENDERER: fixes Wayland protocol errors on some GPU/driver combos.
+    // WEBKIT_DISABLE_COMPOSITING_MODE was here but removed — it blocks alpha channel
+    // rendering, preventing true window transparency (see-through to desktop).
     #[cfg(target_os = "linux")]
     {
-        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
 

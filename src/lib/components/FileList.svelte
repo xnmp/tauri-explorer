@@ -214,6 +214,16 @@
     }
   }
 
+  /** Context menu handler for list/tiles items (Details view uses FileItem's own handler) */
+  function handleItemContextMenu(event: MouseEvent, entry: FileEntry): void {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!explorer.isSelected(entry)) {
+      explorer.selectEntry(entry, {});
+    }
+    explorer.openContextMenu(event.clientX, event.clientY, entry);
+  }
+
   function handleKeydown(event: KeyboardEvent): void {
     typeAhead.handleKeydown(event);
   }
@@ -434,6 +444,7 @@
             class:selected={explorer.isSelected(entry)}
             onclick={(e) => handleClick(entry, e)}
             ondblclick={() => handleDoubleClick(entry)}
+            oncontextmenu={(e) => handleItemContextMenu(e, entry)}
           >
             <span class="list-icon">
               {#if entry.kind === "directory"}
@@ -463,6 +474,7 @@
             class:selected={explorer.isSelected(entry)}
             onclick={(e) => handleClick(entry, e)}
             ondblclick={() => handleDoubleClick(entry)}
+            oncontextmenu={(e) => handleItemContextMenu(e, entry)}
           >
             <div class="tile-icon">
               {#if entry.kind === "directory"}

@@ -181,3 +181,15 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 - Both `FileItem.svelte` (details view) and `FileList.svelte` (list/tiles views) need the `ondragend` handler — same view-mode parity issue as context menus and drag-start.
 
 ---
+
+## tauri-vmpc: Copy/Cut Freezes Window ($effect Infinite Loop)
+
+**Key takeaways:**
+
+- **Svelte 5 `$effect` + store mutation = infinite loop.** If an `$effect` calls a store method that internally reads `$state` (e.g., `toasts.filter(...)` for deduplication), Svelte tracks that `$state` as a dependency of the effect. When the store writes to the same `$state`, the effect re-runs, calling the store again — infinite loop.
+- **Prefer imperative toast calls over reactive watching.** Instead of `$effect(() => { if (clipboardChanged) toastStore.show(...) })`, call `toastStore.show(...)` directly where the state change happens (e.g., inside `copyToClipboard()`). This is simpler, avoids reactive pitfalls, and makes the data flow explicit.
+- **If you must call a store from `$effect`, wrap it in `untrack()`.** `untrack(() => toastStore.show(...))` prevents Svelte from tracking the store's internal reads as dependencies of the effect.
+- **Synchronous Tauri commands block the main thread.** All Tauri 2 commands that do blocking I/O (subprocess spawning, file reads) should be `async fn` to run on a worker thread instead of the main thread.
+- **Playwright + Chromium headless: `keyboard.press("Control+c")` hangs.** Chromium's native clipboard implementation blocks in headless mode. Use `page.evaluate(() => el.dispatchEvent(new KeyboardEvent(...)))` instead to test keyboard shortcuts that involve Ctrl+C/X/V.
+
+---

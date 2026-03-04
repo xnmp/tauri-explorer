@@ -431,7 +431,7 @@
     border: none;
     background: transparent;
     font-family: inherit;
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-primary);
     outline: none;
     padding: 0;
@@ -450,7 +450,7 @@
     border: none;
     border-radius: 3px;
     font-family: inherit;
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-primary);
     cursor: pointer;
     transition: background var(--transition-fast);

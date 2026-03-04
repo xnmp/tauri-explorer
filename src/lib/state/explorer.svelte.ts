@@ -22,10 +22,12 @@ import {
   deleteMultipleEntries,
   copyEntry,
   moveEntry,
+  estimateSize,
   startStreamingDirectory,
   cancelDirectoryListing,
   type DirectoryEntriesEvent,
 } from "$lib/api/files";
+import { operationsManager } from "./operations.svelte";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { broadcastFileChange } from "./file-events";
 import { conflictResolver, type ConflictChoice } from "./conflict-resolver.svelte";
@@ -545,74 +547,11 @@ function createExplorerState() {
     if (clipboardContent) {
       const { entries, operation } = clipboardContent;
       const isCut = operation === "cut";
-      const errors: string[] = [];
-      const newEntries: FileEntry[] = [];
-
-      // Detect conflicts: which source names already exist in destination
-      const existingNames = new Set(coreState.entries.map((e) => e.name));
-      let globalChoice: ConflictChoice | null = null;
-
-      for (let i = 0; i < entries.length; i++) {
-        const entry = entries[i];
-        const hasConflict = existingNames.has(entry.name);
-        let overwrite = false;
-
-        if (hasConflict) {
-          if (globalChoice === "skip") continue;
-          if (globalChoice === "cancel") break;
-          if (globalChoice === "overwrite") {
-            overwrite = true;
-          } else {
-            // Prompt user for this conflict
-            const remaining = entries.length - i - 1;
-            const { choice, applyToAll } = await conflictResolver.prompt({
-              fileName: entry.name,
-              sourcePath: entry.path,
-              remaining,
-            });
-            if (applyToAll) globalChoice = choice;
-            if (choice === "skip") continue;
-            if (choice === "cancel") break;
-            if (choice === "overwrite") overwrite = true;
-          }
-        }
-
-        const originalDir = entry.path.substring(0, entry.path.lastIndexOf("/")) || "/";
-        const result = isCut
-          ? await moveEntry(entry.path, coreState.currentPath, overwrite)
-          : await copyEntry(entry.path, coreState.currentPath, overwrite);
-
-        if (result.ok) {
-          newEntries.push(result.data);
-          if (isCut) {
-            undoStore.push({
-              type: "move",
-              sourcePath: entry.path,
-              destPath: result.data.path,
-              originalDir,
-            });
-          }
-        } else {
-          errors.push(`${entry.name}: ${result.error}`);
-        }
-      }
-
-      if (isCut) clipboardStore.clear();
-      if (newEntries.length > 0) {
-        coreState.entries = [...coreState.entries, ...newEntries];
-        const affectedDirs = new Set([coreState.currentPath]);
-        for (const entry of entries) {
-          const dir = entry.path.substring(0, entry.path.lastIndexOf("/")) || "/";
-          affectedDirs.add(dir);
-        }
-        broadcastFileChange([...affectedDirs]);
-      }
-      // Refresh to get accurate listing after overwrites
-      await navigateInternal(coreState.currentPath);
-      const error = errors.length > 0 ? `Failed: ${errors.join(", ")}` : null;
-      pasteResult = { error, timestamp: Date.now() };
-      if (error) { toastStore.error(error); } else { toastStore.success("Pasted successfully"); }
-      return error;
+      return pasteEntries(
+        entries.map((e) => ({ path: e.path, name: e.name })),
+        isCut,
+        () => { if (isCut) clipboardStore.clear(); },
+      );
     }
 
     // Fall back to OS clipboard (files from external apps)
@@ -621,25 +560,124 @@ function createExplorerState() {
       return "Nothing in clipboard";
     }
 
+    return pasteEntries(
+      osContent.paths.map((p) => ({ path: p, name: p.split(/[/\\]/).pop() || p })),
+      false,
+    );
+  }
+
+  /** Core paste logic with progress tracking and conflict resolution */
+  async function pasteEntries(
+    sources: { path: string; name: string }[],
+    isCut: boolean,
+    onComplete?: () => void,
+  ): Promise<string | null> {
+    const destPath = coreState.currentPath;
+    const opType = isCut ? "move" as const : "copy" as const;
+    const label = sources.length === 1 ? sources[0].name : `${sources.length} items`;
+
+    // Estimate total size for byte-level progress
+    const sizeResult = await estimateSize(sources.map((s) => s.path));
+    const totalBytes = sizeResult.ok ? sizeResult.data.totalBytes : 0;
+
+    // Start tracking operation in progress dialog
+    const op = operationsManager.startOperation(opType, label, destPath);
+
     const errors: string[] = [];
     const newEntries: FileEntry[] = [];
+    let bytesProcessed = 0;
 
-    for (const sourcePath of osContent.paths) {
-      const result = await copyEntry(sourcePath, coreState.currentPath);
+    // Detect conflicts: which source names already exist in destination
+    const existingNames = new Set(coreState.entries.map((e) => e.name));
+    let globalChoice: ConflictChoice | null = null;
+
+    for (let i = 0; i < sources.length; i++) {
+      // Check cancellation between files
+      if (operationsManager.isOperationCancelled(op.id)) break;
+
+      const source = sources[i];
+      const hasConflict = existingNames.has(source.name);
+      let overwrite = false;
+
+      if (hasConflict) {
+        if (globalChoice === "skip") continue;
+        if (globalChoice === "cancel") break;
+        if (globalChoice === "overwrite") {
+          overwrite = true;
+        } else {
+          const remaining = sources.length - i - 1;
+          const { choice, applyToAll } = await conflictResolver.prompt({
+            fileName: source.name,
+            sourcePath: source.path,
+            remaining,
+          });
+          if (applyToAll) globalChoice = choice;
+          if (choice === "skip") continue;
+          if (choice === "cancel") break;
+          if (choice === "overwrite") overwrite = true;
+        }
+      }
+
+      const originalDir = source.path.substring(0, source.path.lastIndexOf("/")) || "/";
+      const result = isCut
+        ? await moveEntry(source.path, destPath, overwrite)
+        : await copyEntry(source.path, destPath, overwrite);
+
       if (result.ok) {
         newEntries.push(result.data);
+        if (isCut) {
+          undoStore.push({
+            type: "move",
+            sourcePath: source.path,
+            destPath: result.data.path,
+            originalDir,
+          });
+        }
       } else {
-        errors.push(`${sourcePath}: ${result.error}`);
+        errors.push(`${source.name}: ${result.error}`);
       }
+
+      // Update progress (file-level granularity)
+      // If we have byte estimates, try to distribute proportionally; otherwise use file count
+      if (totalBytes > 0) {
+        // Estimate each file's share of total bytes (uniform approximation per file)
+        bytesProcessed = Math.round(totalBytes * ((i + 1) / sources.length));
+        operationsManager.updateProgress(
+          op.id,
+          ((i + 1) / sources.length) * 100,
+          bytesProcessed,
+          totalBytes,
+        );
+      } else {
+        operationsManager.updateProgress(op.id, ((i + 1) / sources.length) * 100);
+      }
+    }
+
+    onComplete?.();
+
+    // Finalize operation tracking
+    if (operationsManager.isOperationCancelled(op.id)) {
+      // Already marked cancelled
+    } else if (errors.length > 0 && newEntries.length === 0) {
+      operationsManager.failOperation(op.id, errors.join("; "));
+    } else {
+      operationsManager.completeOperation(op.id);
     }
 
     if (newEntries.length > 0) {
       coreState.entries = [...coreState.entries, ...newEntries];
+      const affectedDirs = new Set([destPath]);
+      for (const source of sources) {
+        const dir = source.path.substring(0, source.path.lastIndexOf("/")) || "/";
+        affectedDirs.add(dir);
+      }
+      broadcastFileChange([...affectedDirs]);
     }
 
+    await navigateInternal(destPath);
     const error = errors.length > 0 ? `Failed: ${errors.join(", ")}` : null;
     pasteResult = { error, timestamp: Date.now() };
-    if (error) { toastStore.error(error); } else { toastStore.success("Pasted successfully"); }
+    if (error) { toastStore.error(error); } else if (!operationsManager.isOperationCancelled(op.id)) { toastStore.success("Pasted successfully"); }
     return error;
   }
 

@@ -78,9 +78,13 @@ pub fn run() {
     // WEBKIT_DISABLE_DMABUF_RENDERER: fixes Wayland protocol errors on some GPU/driver combos.
     // WEBKIT_DISABLE_COMPOSITING_MODE was here but removed — it blocks alpha channel
     // rendering, preventing true window transparency (see-through to desktop).
+    // GDK_BACKEND=wayland: avoid XWayland which breaks GTK RGBA transparency.
     #[cfg(target_os = "linux")]
     {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        if std::env::var("WAYLAND_DISPLAY").is_ok() {
+            std::env::set_var("GDK_BACKEND", "wayland");
+        }
     }
 
     tauri::Builder::default()

@@ -111,6 +111,13 @@
       return;
     }
 
+    // Escape closes any open modal dialog
+    if (event.key === "Escape" && dialogStore.hasModalOpen) {
+      event.preventDefault();
+      dialogStore.closeAll();
+      return;
+    }
+
     // Skip dynamic shortcut handling if in input field or a modal dialog is open
     if (isInputField || dialogStore.hasModalOpen) {
       return;
@@ -124,6 +131,7 @@
       const cmd = getCommand(id);
       return !cmd?.when || cmd.when();
     });
+
     if (matchingCommandId === "chord:waiting") {
       event.preventDefault();
       return;

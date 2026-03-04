@@ -8,6 +8,7 @@
   import { formatSize } from "$lib/domain/file";
   import { getFileType, getFileIconColor, getFileIconCategory, formatDate, type IconCategory } from "$lib/domain/file-types";
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
+  import { toastStore } from "$lib/state/toast.svelte";
   import { clipboardStore } from "$lib/state/clipboard.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
@@ -255,13 +256,17 @@
       : await moveEntry(sourcePath, entry.path);
 
     if (result.ok) {
-      if (!isCopyOp) {
+      const fileName = sourcePath.split("/").pop() || sourcePath;
+      if (isCopyOp) {
+        toastStore.show(`Copied ${fileName} to ${entry.name}`, "info");
+      } else {
         undoStore.push({
           type: "move",
           sourcePath,
           destPath: result.data.path,
           originalDir: parentDir(sourcePath),
         });
+        toastStore.show(`Moved ${fileName} to ${entry.name}`, "info");
       }
       // Refresh all panes to reflect the operation
       if (paneNav) {

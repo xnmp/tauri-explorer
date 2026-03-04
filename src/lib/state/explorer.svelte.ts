@@ -711,11 +711,19 @@ function createExplorerState() {
     }
   }
 
+  function undoActionLabel(action: UndoAction): string {
+    switch (action.type) {
+      case "rename": return `Renamed ${action.oldName}`;
+      case "move": return `Moved to ${action.destPath.split("/").pop()}`;
+      case "delete": return `Deleted ${action.paths.length} item${action.paths.length > 1 ? "s" : ""}`;
+    }
+  }
+
   async function undo(): Promise<string | null> {
     const result = await undoStore.undo();
     if ("error" in result) return result.error;
 
-    // Refresh current directory and broadcast affected dirs
+    toastStore.show(`Undo: ${undoActionLabel(result.action)}`, "info");
     await navigateInternal(coreState.currentPath);
     broadcastFileChange(getAffectedDirs(result.action));
     return null;
@@ -725,7 +733,7 @@ function createExplorerState() {
     const result = await undoStore.redo();
     if ("error" in result) return result.error;
 
-    // Refresh current directory and broadcast affected dirs
+    toastStore.show(`Redo: ${undoActionLabel(result.action)}`, "info");
     await navigateInternal(coreState.currentPath);
     broadcastFileChange(getAffectedDirs(result.action));
     return null;

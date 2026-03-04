@@ -286,13 +286,17 @@
       : await moveEntry(sourcePath, entry.path);
 
     if (result.ok) {
-      if (!isCopyOp) {
+      const fileName = sourcePath.split("/").pop() || sourcePath;
+      if (isCopyOp) {
+        toastStore.show(`Copied ${fileName} to ${entry.name}`, "info");
+      } else {
         undoStore.push({
           type: "move",
           sourcePath,
           destPath: result.data.path,
           originalDir: parentDir(sourcePath),
         });
+        toastStore.show(`Moved ${fileName} to ${entry.name}`, "info");
       }
       paneNav?.refreshAllPanes();
       broadcastFileChange([parentDir(sourcePath), entry.path]);
@@ -352,12 +356,15 @@
 
     const result = await moveEntry(sourcePath, currentPath);
     if (result.ok) {
+      const fileName = sourcePath.split("/").pop() || sourcePath;
+      const destName = currentPath.split("/").pop() || currentPath;
       undoStore.push({
         type: "move",
         sourcePath,
         destPath: result.data.path,
         originalDir: sourceDir,
       });
+      toastStore.show(`Moved ${fileName} to ${destName}`, "info");
       // Refresh all panes to reflect the move
       if (paneNav) {
         paneNav.refreshAllPanes();

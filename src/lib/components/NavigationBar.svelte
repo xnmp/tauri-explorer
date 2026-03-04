@@ -211,9 +211,6 @@
     cancelPathEdit();
   }
 
-  function copyPathToClipboard() {
-    navigator.clipboard.writeText(explorer.currentPath);
-  }
 </script>
 
 <div class="navigation-bar">
@@ -350,8 +347,8 @@
           aria-label="Show folders in {i === 0 ? 'parent' : visibleBreadcrumbs[i - 1].name}"
           onclick={(e) => { e.stopPropagation(); openCaretPicker(parentOfSegment, e.currentTarget as HTMLElement); }}
         >
-          <svg class="chevron-icon" width="10" height="10" viewBox="0 0 10 10" fill="none">
-            <path d="M3 2L6 5L3 8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+          <svg class="chevron-icon" width="12" height="12" viewBox="0 0 10 10" fill="none">
+            <path d="M3 2L6 5L3 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </button>
         <button
@@ -365,7 +362,7 @@
 
       {#if caretPickerPath && caretPickerDirs.length > 0}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="caret-picker-backdrop" onclick={closeCaretPicker} onkeydown={(e) => { if (e.key === "Escape") closeCaretPicker(); }}></div>
+        <div class="caret-picker-backdrop" onclick={(e) => { e.stopPropagation(); closeCaretPicker(); }} onkeydown={(e) => { if (e.key === "Escape") closeCaretPicker(); }}></div>
         <div class="caret-picker" style="left: {caretPickerEl ? caretPickerEl.getBoundingClientRect().left : 0}px; top: {caretPickerEl ? caretPickerEl.getBoundingClientRect().bottom + 4 : 0}px;">
           {#each caretPickerDirs as dir (dir.path)}
             <button class="caret-picker-item" onclick={() => navigateFromCaret(dir.path)}>
@@ -378,12 +375,6 @@
         </div>
       {/if}
 
-      <button class="dropdown-toggle" onclick={(e) => { e.stopPropagation(); copyPathToClipboard(); }} title="Copy path to clipboard" aria-label="Copy path">
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-          <rect x="4" y="4" width="6" height="7" rx="1" stroke="currentColor" stroke-width="1"/>
-          <path d="M8 4V2.5C8 2.22386 7.77614 2 7.5 2H3C2.72386 2 2.5 2.22386 2.5 2.5V8C2.5 8.27614 2.72386 8.5 3 8.5H4" stroke="currentColor" stroke-width="1"/>
-        </svg>
-      </button>
     {/if}
   </div>
 </div>
@@ -531,7 +522,7 @@
   }
 
   .caret-btn {
-    padding: 2px 4px;
+    padding: 4px 5px;
     background: transparent;
     border: none;
     border-radius: 3px;
@@ -599,28 +590,6 @@
 
   .caret-picker-item:hover {
     background: var(--subtle-fill-secondary);
-  }
-
-  .dropdown-toggle {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 18px;
-    height: 18px;
-    padding: 0;
-    background: transparent;
-    border: none;
-    border-radius: 3px;
-    color: var(--text-tertiary);
-    cursor: pointer;
-    transition: background var(--transition-fast);
-    flex-shrink: 0;
-    margin-left: auto;
-  }
-
-  .dropdown-toggle:hover {
-    background: var(--subtle-fill-secondary);
-    color: var(--text-primary);
   }
 
   /* Autocomplete suggestions dropdown */

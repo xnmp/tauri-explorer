@@ -57,9 +57,17 @@ interface ClosedTabSnapshot {
   dualPaneEnabled: boolean;
   splitRatio: number;
   closedAt: number; // insertion index
+  fromClosedWindow: boolean; // true if this was the last tab when window closed
 }
 
 const MAX_CLOSED_TABS = 20;
+
+/** Result of restoring a closed tab */
+export interface RestoreResult {
+  restored: true;
+  /** If the closed tab was from a closed window, the path to open in a new window */
+  openInNewWindow?: string;
+}
 
 function createWindowTabsManager() {
   // Explorer instances registry (keyed by explorerId)
@@ -222,7 +230,7 @@ function createWindowTabsManager() {
   }
 
   /** Snapshot a tab for Ctrl+Shift+T restoration */
-  function snapshotTab(tab: WindowTab, tabIndex: number): void {
+  function snapshotTab(tab: WindowTab, tabIndex: number, fromClosedWindow = false): void {
     closedTabStack.push({
       leftPath: getPanePath(tab.panes.left),
       rightPath: getPanePath(tab.panes.right),
@@ -230,6 +238,7 @@ function createWindowTabsManager() {
       dualPaneEnabled: tab.dualPaneEnabled,
       splitRatio: tab.splitRatio,
       closedAt: tabIndex,
+      fromClosedWindow,
     });
     if (closedTabStack.length > MAX_CLOSED_TABS) {
       closedTabStack.shift();
@@ -244,10 +253,12 @@ function createWindowTabsManager() {
 
     const tab = tabs[tabIndex];
 
-    // Snapshot before closing (even if it's the last tab)
-    snapshotTab(tab, tabIndex);
+    const isLastTab = tabs.length <= 1;
 
-    if (tabs.length <= 1) {
+    // Snapshot before closing (even if it's the last tab)
+    snapshotTab(tab, tabIndex, isLastTab);
+
+    if (isLastTab) {
       // Close the window when closing the last tab
       import("@tauri-apps/api/window")
         .then(({ getCurrentWindow }) => getCurrentWindow().close())
@@ -273,11 +284,16 @@ function createWindowTabsManager() {
     saveState();
   }
 
-  /** Restore the most recently closed tab. Returns true if a tab was restored. */
-  function restoreClosedTab(): boolean {
+  /** Restore the most recently closed tab. Returns false if nothing to restore. */
+  function restoreClosedTab(): false | RestoreResult {
     const snapshot = closedTabStack.pop();
     if (!snapshot) return false;
     saveClosedTabs();
+
+    // If the tab was from a closed window, signal to open a new window instead
+    if (snapshot.fromClosedWindow) {
+      return { restored: true, openInNewWindow: snapshot.leftPath };
+    }
 
     const tab: WindowTab = {
       id: generateId("tab"),
@@ -297,7 +313,7 @@ function createWindowTabsManager() {
     tabs = newTabs;
     activeTabId = tab.id;
     saveState();
-    return true;
+    return { restored: true };
   }
 
   /** Close the active tab */

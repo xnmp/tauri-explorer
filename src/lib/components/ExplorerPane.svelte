@@ -43,6 +43,10 @@
     // Don't process keyboard shortcuts when a dialog is open
     if (dialogStore.activeDialog) return;
 
+    // Ignore events from interactive elements (e.g. path input, rename input)
+    const tag = (event.target as HTMLElement)?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA") return;
+
     // Arrow key navigation in file list (not in global command system
     // because it needs current selection context and shift-key handling)
     if (event.key === "ArrowUp" || event.key === "ArrowDown") {

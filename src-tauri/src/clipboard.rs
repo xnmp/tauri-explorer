@@ -248,13 +248,13 @@ pub async fn clipboard_paste_image(directory: String) -> Result<String, String> 
 
     // Generate a timestamped filename
     let now = chrono::Local::now();
-    let filename = format!("clipboard-{}.png", now.format("%Y%m%d-%H%M%S"));
+    let filename = format!("img-{}.png", now.format("%Y%m%d-%H%M%S"));
     let filepath = dir.join(&filename);
 
     // Avoid overwriting existing files
     if filepath.exists() {
         // Add milliseconds to disambiguate
-        let filename = format!("clipboard-{}.png", now.format("%Y%m%d-%H%M%S-%3f"));
+        let filename = format!("img-{}.png", now.format("%Y%m%d-%H%M%S-%3f"));
         let filepath = dir.join(&filename);
         std::fs::write(&filepath, &data)
             .map_err(|e| format!("Failed to write image: {}", e))?;

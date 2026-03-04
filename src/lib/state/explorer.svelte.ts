@@ -25,6 +25,8 @@ import {
   estimateSize,
   startStreamingDirectory,
   cancelDirectoryListing,
+  clipboardHasImage,
+  clipboardPasteImage,
   type DirectoryEntriesEvent,
 } from "$lib/api/files";
 import { operationsManager } from "./operations.svelte";
@@ -558,14 +560,24 @@ function createExplorerState() {
 
     // Fall back to OS clipboard (files from external apps)
     const osContent = await clipboardStore.readOsFiles();
-    if (!osContent || osContent.paths.length === 0) {
-      return "Nothing in clipboard";
+    if (osContent && osContent.paths.length > 0) {
+      return pasteEntries(
+        osContent.paths.map((p) => ({ path: p, name: p.split(/[/\\]/).pop() || p })),
+        false,
+      );
     }
 
-    return pasteEntries(
-      osContent.paths.map((p) => ({ path: p, name: p.split(/[/\\]/).pop() || p })),
-      false,
-    );
+    // Fall back to clipboard image
+    if (await clipboardHasImage()) {
+      const result = await clipboardPasteImage(coreState.currentPath);
+      if (result.ok) {
+        await navigateInternal(coreState.currentPath);
+        return null;
+      }
+      return result.error;
+    }
+
+    return "Nothing in clipboard";
   }
 
   /** Core paste logic with progress tracking and conflict resolution */

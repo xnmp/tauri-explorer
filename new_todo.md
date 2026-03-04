@@ -1,5 +1,5 @@
 # New Todo Items
 <!-- Add new tasks here to be converted to beads issues -->
-The folder icon color is weird in the rapture theme, and the details column header background is too dark. 
-if I ctrl+p search for delete-debug, there's a folder in /tmp/delete-debug that doesn't even show up - why?
-navigating to /tmp just results in hanging on "loading", presumably because there's too many files in there
+* support pasting images from the clipboard directly into the explorer. the name will just be `img-<timestamp>.png`. 
+* more powerful theming support. 
+* the switching to tiles view with thumbnails is still laggy, with a temporary freeze!

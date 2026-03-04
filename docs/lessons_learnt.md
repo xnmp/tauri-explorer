@@ -302,3 +302,37 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 - **`onblur` vs suggestion clicks**: `onblur` fires before `onclick` on suggestion items. Fix: use `onmousedown` on suggestions (fires before blur) and `event.preventDefault()` on the dropdown container to prevent focus loss.
 
 ---
+
+## tauri-15y5: Undo Delete
+
+**Key takeaways:**
+- The `trash` crate v5 provides `trash::os_limited::list()` and `trash::os_limited::restore_all()` for restoring items from the system trash on Linux/Windows (not macOS).
+- `TrashItem::original_path()` combines `original_parent` + `name`. Sort by `time_deleted` (descending) to find the most recently trashed matching item.
+- When multiple items share the same original path, use only the most recent to avoid `RestoreTwins` errors.
+
+---
+
+## tauri-5dq0: Cross-Window Drag and Drop
+
+**Key takeaways:**
+- `dataTransfer.getData()` is unreliable between separate Tauri webview contexts. Custom MIME types may not transfer cross-window.
+- Use `localStorage` as a cross-window communication channel since all Tauri webview windows share the same origin.
+- Both `dragover` and `drop` handlers need fallbacks: check `dataTransfer.types` first, then fall back to `localStorage` for cross-window scenarios.
+
+---
+
+## tauri-cj2c: Directory Listing Freezing UI
+
+**Key takeaways:**
+- Synchronous (`pub fn`) Tauri commands run on the main thread and block the UI. Any directory with slow-to-stat entries (FUSE mounts, broken NFS symlinks) freezes the window.
+- Always use `pub async fn` for file I/O Tauri commands so they run on a background thread.
+
+---
+
+## tauri-vz1q: Undo Doesn't Refresh Other Panes
+
+**Key takeaways:**
+- Undo/redo operations affect multiple directories (e.g., move: source and destination). After executing, broadcast affected directories via `broadcastFileChange` so other panes and windows refresh.
+- Return the action from undo/redo so the caller can compute affected directories from the action fields.
+
+---

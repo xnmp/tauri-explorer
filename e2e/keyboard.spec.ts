@@ -5,6 +5,35 @@
 
 import { test, expect } from "@playwright/test";
 
+/**
+ * Dispatch a keyboard shortcut via JS dispatchEvent.
+ * Playwright's keyboard.press("Control+c/x") triggers Chromium's native clipboard
+ * which hangs in headless mode. Using dispatchEvent bypasses this.
+ */
+async function pressShortcut(
+  page: import("@playwright/test").Page,
+  key: string,
+  modifiers: { ctrlKey?: boolean; shiftKey?: boolean; altKey?: boolean } = {},
+) {
+  await page.evaluate(
+    ({ key, ctrlKey, shiftKey, altKey }) => {
+      const el = document.activeElement || document.body;
+      el.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key,
+          code: `Key${key.toUpperCase()}`,
+          ctrlKey: ctrlKey ?? false,
+          shiftKey: shiftKey ?? false,
+          altKey: altKey ?? false,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    },
+    { key, ...modifiers },
+  );
+}
+
 async function waitForFileList(page: import("@playwright/test").Page) {
   await page.waitForSelector(".file-list");
   await page.locator(".file-item").first().waitFor({ timeout: 10000 });
@@ -43,7 +72,7 @@ test.describe("Keyboard Shortcuts", () => {
     await expect(firstItem).toHaveClass(/selected/);
 
     // Press Ctrl+C
-    await page.keyboard.press("Control+c");
+    await pressShortcut(page, "c", { ctrlKey: true });
     await page.waitForTimeout(100);
 
     // Check clipboard banner appears
@@ -61,7 +90,7 @@ test.describe("Keyboard Shortcuts", () => {
     await expect(firstFile).toHaveClass(/selected/);
 
     // Press Ctrl+X
-    await page.keyboard.press("Control+x");
+    await pressShortcut(page, "x", { ctrlKey: true });
     await page.waitForTimeout(100);
 
     // Check clipboard banner appears with cut styling
@@ -76,17 +105,15 @@ test.describe("Keyboard Shortcuts", () => {
     // First, copy a file
     const firstFile = page.locator(".file-item:not(.directory)").first();
     await firstFile.click();
-    await page.keyboard.press("Control+c");
+    await pressShortcut(page, "c", { ctrlKey: true });
     await page.waitForTimeout(100);
 
     // Verify clipboard banner is visible
     const clipboardBanner = page.locator(".toast.clipboard");
     await expect(clipboardBanner).toBeVisible();
 
-    // Press Ctrl+V to paste - the file-list needs focus for paste handler
-    const fileList = page.locator(".file-list");
-    await fileList.focus();
-    await page.keyboard.press("Control+v");
+    // Press Ctrl+V to paste
+    await pressShortcut(page, "v", { ctrlKey: true });
     await page.waitForTimeout(500);
 
     // After paste, either a toast appears OR the clipboard is cleared (for successful cut+paste)
@@ -114,7 +141,7 @@ test.describe("Keyboard Shortcuts", () => {
 
     // Press Ctrl+Z - this should trigger the undo handler
     // Even with empty undo stack, it should not crash
-    await page.keyboard.press("Control+z");
+    await pressShortcut(page, "z", { ctrlKey: true });
     await page.waitForTimeout(100);
 
     // Verify the app is still functional by checking file list is visible

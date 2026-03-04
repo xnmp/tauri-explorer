@@ -421,6 +421,11 @@
     border-color: var(--accent);
   }
 
+  .theme-select option {
+    background: var(--background-solid);
+    color: var(--text-primary);
+  }
+
   /* Toggle switch */
   .toggle {
     position: relative;

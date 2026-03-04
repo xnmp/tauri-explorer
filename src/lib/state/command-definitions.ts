@@ -480,11 +480,13 @@ const windowCommands: Command[] = [
     category: "general",
     shortcut: "Ctrl+N",
     handler: () => {
-      // Inherit path and viewMode from the last focused window
-      const focused = readFocusedWindowState();
+      // The window receiving Ctrl+N IS the focused window, so prefer
+      // its active explorer. Fall back to localStorage for edge cases
+      // (e.g. no active explorer yet).
       const explorer = getActiveExplorer();
-      const path = focused?.path ?? explorer?.state.currentPath ?? "/home";
-      const viewMode = focused?.viewMode ?? explorer?.viewMode;
+      const focused = readFocusedWindowState();
+      const path = explorer?.state.currentPath ?? focused?.path ?? "/home";
+      const viewMode = explorer?.viewMode ?? focused?.viewMode;
       openNewWindow(path, viewMode);
     },
   },

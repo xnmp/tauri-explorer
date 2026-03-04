@@ -209,20 +209,25 @@ function createWindowTabsManager() {
     activeTabId = state.activeTabId;
   }
 
-  /** Initialize - restores from localStorage or creates a new tab */
-  function init(initialPath: string): WindowTab {
-    // Try to restore from localStorage
-    const savedState = loadState();
-    if (savedState && savedState.tabs.length > 0) {
-      restoreFromState(savedState);
-      const restored = tabs.find((t) => t.id === activeTabId) ?? tabs[0];
-      if (restored && !activeTabId) {
-        activeTabId = restored.id;
+  /** Initialize - restores from localStorage or creates a new tab.
+   *  @param skipRestore - When true, skip saved-state restoration and
+   *    create a fresh tab at initialPath. Used for child windows spawned
+   *    via Ctrl+N that receive their path via URL params. */
+  function init(initialPath: string, skipRestore = false): WindowTab {
+    if (!skipRestore) {
+      // Try to restore from localStorage (cold start / app relaunch)
+      const savedState = loadState();
+      if (savedState && savedState.tabs.length > 0) {
+        restoreFromState(savedState);
+        const restored = tabs.find((t) => t.id === activeTabId) ?? tabs[0];
+        if (restored && !activeTabId) {
+          activeTabId = restored.id;
+        }
+        return restored;
       }
-      return restored;
     }
 
-    // No saved state, create new
+    // No saved state or child window — create a fresh tab
     explorers.clear();
     tabs = [];
     activeTabId = null;

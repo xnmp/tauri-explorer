@@ -179,7 +179,10 @@
       const urlViewMode = searchParams.get("viewMode") as import("$lib/state/types").ViewMode | null;
       const homeResult = await getHomeDirectory();
       const homePath = homeResult.ok ? homeResult.data : "/home";
-      const tab = windowTabsManager.init(urlPath || homePath);
+      // Child windows (spawned via Ctrl+N) have a ?path= param — skip
+      // saved-state restoration so they open at the parent's path.
+      const isChildWindow = !!urlPath;
+      const tab = windowTabsManager.init(urlPath || homePath, isChildWindow);
       // Apply inherited view mode from parent window
       if (urlViewMode && tab) {
         const explorer = windowTabsManager.getActiveExplorer();

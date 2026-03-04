@@ -29,6 +29,7 @@
   import ContentSearchDialog from "$lib/components/ContentSearchDialog.svelte";
   import WorkspaceDialog from "$lib/components/WorkspaceDialog.svelte";
   import BulkRenameDialog from "$lib/components/BulkRenameDialog.svelte";
+  import ConflictDialog from "$lib/components/ConflictDialog.svelte";
   import StatusBar from "$lib/components/StatusBar.svelte";
 
   // Get active explorer from window tabs manager
@@ -253,6 +254,7 @@
   onComplete={() => refreshAllPanes()}
 />
 <ProgressDialog />
+<ConflictDialog />
 
 <style>
   /* Windows 11 Fluent Design System */

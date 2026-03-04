@@ -294,8 +294,9 @@ fn generate_copy_name(dest_dir: &Path, source_name: &str, is_directory: bool) ->
 }
 
 /// Copy a file or directory.
+/// If overwrite is true and target exists, replaces the existing entry.
 #[tauri::command]
-pub fn copy_entry(source: String, dest_dir: String) -> Result<FileEntry, AppError> {
+pub fn copy_entry(source: String, dest_dir: String, overwrite: Option<bool>) -> Result<FileEntry, AppError> {
     let source_path = PathBuf::from(&source);
     let dest_dir_path = PathBuf::from(&dest_dir);
 
@@ -318,9 +319,18 @@ pub fn copy_entry(source: String, dest_dir: String) -> Result<FileEntry, AppErro
 
     let mut target = dest_dir_path.join(&source_name);
 
-    // If target exists, generate a "name - Copy" style name
     if target.exists() {
-        target = generate_copy_name(&dest_dir_path, &source_name, source_path.is_dir());
+        if overwrite.unwrap_or(false) {
+            // Remove existing entry before copying
+            if target.is_dir() {
+                fs::remove_dir_all(&target)?;
+            } else {
+                fs::remove_file(&target)?;
+            }
+        } else {
+            // Generate a "name - Copy" style name
+            target = generate_copy_name(&dest_dir_path, &source_name, source_path.is_dir());
+        }
     }
 
     if source_path.is_dir() {
@@ -340,8 +350,9 @@ pub fn copy_entry(source: String, dest_dir: String) -> Result<FileEntry, AppErro
 }
 
 /// Move a file or directory.
+/// If overwrite is true and target exists, replaces the existing entry.
 #[tauri::command]
-pub fn move_entry(source: String, dest_dir: String) -> Result<FileEntry, AppError> {
+pub fn move_entry(source: String, dest_dir: String, overwrite: Option<bool>) -> Result<FileEntry, AppError> {
     let source_path = PathBuf::from(&source);
     let dest_dir_path = PathBuf::from(&dest_dir);
 
@@ -365,7 +376,15 @@ pub fn move_entry(source: String, dest_dir: String) -> Result<FileEntry, AppErro
     let target = dest_dir_path.join(&source_name);
 
     if target.exists() {
-        return Err(AppError::AlreadyExists(target.to_string_lossy().to_string()));
+        if overwrite.unwrap_or(false) {
+            if target.is_dir() {
+                fs::remove_dir_all(&target)?;
+            } else {
+                fs::remove_file(&target)?;
+            }
+        } else {
+            return Err(AppError::AlreadyExists(target.to_string_lossy().to_string()));
+        }
     }
 
     // Try a simple rename first (works if same filesystem)

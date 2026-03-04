@@ -28,6 +28,7 @@ import {
 } from "$lib/api/files";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { broadcastFileChange } from "./file-events";
+import { conflictResolver, type ConflictChoice } from "./conflict-resolver.svelte";
 import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/domain/file";
 import type { SelectOptions, ViewMode } from "./types";
 import * as selection from "./selection";
@@ -544,13 +545,42 @@ function createExplorerState() {
     if (clipboardContent) {
       const { entries, operation } = clipboardContent;
       const isCut = operation === "cut";
-      const pasteOperation = isCut ? moveEntry : copyEntry;
       const errors: string[] = [];
       const newEntries: FileEntry[] = [];
 
-      for (const entry of entries) {
+      // Detect conflicts: which source names already exist in destination
+      const existingNames = new Set(coreState.entries.map((e) => e.name));
+      let globalChoice: ConflictChoice | null = null;
+
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        const hasConflict = existingNames.has(entry.name);
+        let overwrite = false;
+
+        if (hasConflict) {
+          if (globalChoice === "skip") continue;
+          if (globalChoice === "cancel") break;
+          if (globalChoice === "overwrite") {
+            overwrite = true;
+          } else {
+            // Prompt user for this conflict
+            const remaining = entries.length - i - 1;
+            const { choice, applyToAll } = await conflictResolver.prompt({
+              fileName: entry.name,
+              sourcePath: entry.path,
+              remaining,
+            });
+            if (applyToAll) globalChoice = choice;
+            if (choice === "skip") continue;
+            if (choice === "cancel") break;
+            if (choice === "overwrite") overwrite = true;
+          }
+        }
+
         const originalDir = entry.path.substring(0, entry.path.lastIndexOf("/")) || "/";
-        const result = await pasteOperation(entry.path, coreState.currentPath);
+        const result = isCut
+          ? await moveEntry(entry.path, coreState.currentPath, overwrite)
+          : await copyEntry(entry.path, coreState.currentPath, overwrite);
 
         if (result.ok) {
           newEntries.push(result.data);
@@ -570,7 +600,6 @@ function createExplorerState() {
       if (isCut) clipboardStore.clear();
       if (newEntries.length > 0) {
         coreState.entries = [...coreState.entries, ...newEntries];
-        // Broadcast affected directories for cross-window refresh
         const affectedDirs = new Set([coreState.currentPath]);
         for (const entry of entries) {
           const dir = entry.path.substring(0, entry.path.lastIndexOf("/")) || "/";
@@ -578,6 +607,8 @@ function createExplorerState() {
         }
         broadcastFileChange([...affectedDirs]);
       }
+      // Refresh to get accurate listing after overwrites
+      await navigateInternal(coreState.currentPath);
       const error = errors.length > 0 ? `Failed: ${errors.join(", ")}` : null;
       pasteResult = { error, timestamp: Date.now() };
       if (error) { toastStore.error(error); } else { toastStore.success("Pasted successfully"); }

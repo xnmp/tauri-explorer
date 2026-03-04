@@ -127,10 +127,11 @@ export async function deleteMultipleEntries(paths: string[]): Promise<ApiResult<
  */
 export async function copyEntry(
   source: string,
-  destDir: string
+  destDir: string,
+  overwrite = false
 ): Promise<ApiResult<FileEntry>> {
   try {
-    const data = await invoke<FileEntry>("copy_entry", { source, destDir });
+    const data = await invoke<FileEntry>("copy_entry", { source, destDir, overwrite });
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: String(err) };
@@ -146,10 +147,11 @@ export async function copyEntry(
  */
 export async function moveEntry(
   source: string,
-  destDir: string
+  destDir: string,
+  overwrite = false
 ): Promise<ApiResult<FileEntry>> {
   try {
-    const data = await invoke<FileEntry>("move_entry", { source, destDir });
+    const data = await invoke<FileEntry>("move_entry", { source, destDir, overwrite });
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: String(err) };

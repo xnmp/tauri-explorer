@@ -251,7 +251,8 @@
 
   function handleItemDragOver(event: DragEvent, entry: FileEntry): void {
     if (entry.kind !== "directory") return;
-    if (!event.dataTransfer?.types.includes("application/x-explorer-path")) return;
+    // Accept if dataTransfer has our type, OR if there's cross-window drag data
+    if (!event.dataTransfer?.types.includes("application/x-explorer-path") && !dragState.readCrossWindow()) return;
     event.preventDefault();
     const copying = event.ctrlKey;
     event.dataTransfer.dropEffect = copying ? "copy" : "move";
@@ -270,7 +271,12 @@
     copyDropTargets[entry.path] = false;
     if (entry.kind !== "directory" || !event.dataTransfer) return;
 
-    const sourcePath = event.dataTransfer.getData("application/x-explorer-path");
+    // Try dataTransfer first, fall back to cross-window drag state
+    let sourcePath = event.dataTransfer.getData("application/x-explorer-path");
+    if (!sourcePath) {
+      const crossWindow = dragState.readCrossWindow();
+      if (crossWindow) sourcePath = crossWindow.path;
+    }
     if (!sourcePath || sourcePath === entry.path) return;
     if (entry.path.startsWith(sourcePath + "/")) return;
 
@@ -301,7 +307,8 @@
 
   // Drop handlers for dropping files into current directory
   function handleListDragOver(event: DragEvent): void {
-    if (!event.dataTransfer?.types.includes("application/x-explorer-path")) return;
+    // Accept if dataTransfer has our type, OR if there's cross-window drag data
+    if (!event.dataTransfer?.types.includes("application/x-explorer-path") && !dragState.readCrossWindow()) return;
 
     // Check if target is a file item (let FileItem handle its own drops)
     const target = event.target as HTMLElement;
@@ -328,7 +335,12 @@
 
     if (!event.dataTransfer) return;
 
-    const sourcePath = event.dataTransfer.getData("application/x-explorer-path");
+    // Try dataTransfer first, fall back to cross-window drag state
+    let sourcePath = event.dataTransfer.getData("application/x-explorer-path");
+    if (!sourcePath) {
+      const crossWindow = dragState.readCrossWindow();
+      if (crossWindow) sourcePath = crossWindow.path;
+    }
     if (!sourcePath) return;
 
     // Don't allow dropping into the same directory it's already in

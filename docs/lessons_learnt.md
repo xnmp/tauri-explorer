@@ -256,3 +256,49 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 - **Tauri's WebKitGTK may not pick up changes to all Svelte component files equally.** During this investigation, `+page.svelte` changes reflected immediately but `SharedToolbar.svelte` changes did not, even after full `rm -rf node_modules && bun install && bun run tauri dev`. When styling cross-component, keep changes in the parent file that's known to update.
 
 ---
+
+## tauri-mfjv / tauri-zf0z / tauri-zmjd / tauri-sa5i: List/Tiles View CSS Bugs
+
+**Key takeaways:**
+
+- **Icon shift on selection**: Caused by border-left changing from 1px to 2px. Fix: always use `border-left-width: 2px` with `border-left-color: transparent` by default, switch to colored on select. Same pattern for tiles bottom border.
+- **Marquee selection mismatch in list view**: FileList reused details-view constants (32px header/item height) for list view, which has different layout. Fix: use DOM-based hit testing with `getSelectedIndicesFromDOM()` instead of mathematical calculation.
+- **View mode parity**: Any change to interaction behavior (borders, selection, drag-drop) must be tested in ALL three view modes (details, list, tiles).
+
+---
+
+## tauri-31co: Transparent Column Headers
+
+**Key takeaway:** `--background-card-secondary` is semi-transparent across all themes. For elements that need an opaque background (like sticky column headers), use `--background-solid` instead.
+
+---
+
+## tauri-zqdp: Paste Conflict Dialog
+
+**Key takeaways:**
+
+- **Promise-based dialog pattern**: `conflictResolver.prompt()` returns a Promise that resolves when the user clicks a button. The dialog component calls `conflictResolver.resolve()` to fulfill the promise. This cleanly separates the async control flow from the UI.
+- **"Apply to all" tracking**: Track a `globalChoice` variable alongside the loop. When `applyToAll` is true, set `globalChoice` and skip prompting for subsequent entries.
+- **Rust overwrite parameter**: Both `copy_entry` and `move_entry` accept `overwrite: Option<bool>`. When true, existing targets are deleted before the operation.
+
+---
+
+## tauri-vjly: Progress Bar for File Operations
+
+**Key takeaways:**
+
+- **Frontend-driven progress is sufficient** for file-count-level tracking. The paste loop already processes files one-by-one, so tracking `(i + 1) / total` gives meaningful progress without needing Rust-side streaming.
+- **Existing infrastructure**: The `operationsManager` + `ProgressDialog` were already built but not wired. When adding progress tracking, check if UI components already exist before building new ones.
+- **`estimateSize()` API**: Already existed for pre-calculating total bytes. Use it for byte-level progress display alongside file-count progress.
+
+---
+
+## tauri-nxfi: Path Autocomplete
+
+**Key takeaways:**
+
+- **Debounce is essential**: Without debouncing, every keystroke triggers a full directory listing. 150ms debounce balances responsiveness with performance.
+- **Generation counter pattern**: Use an incrementing `fetchGeneration` counter to discard stale async results. Before applying results, check that `gen === fetchGeneration`.
+- **`onblur` vs suggestion clicks**: `onblur` fires before `onclick` on suggestion items. Fix: use `onmousedown` on suggestions (fires before blur) and `event.preventDefault()` on the dropdown container to prevent focus loss.
+
+---

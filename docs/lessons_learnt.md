@@ -97,3 +97,87 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 - FileItem-level keyboard handlers easily fall out of sync with the global command system. Prefer a single source of truth for keyboard shortcuts.
 
 ---
+
+## tauri-pghn / tauri-enf4: Themed Icons via CSS Variables
+
+**Key takeaways:**
+
+- To make inline SVG icons themeable, use `fill="currentColor"` and set the `color` CSS property via CSS custom properties. This allows a cascade: `color: var(--icon-file-tint, var(--file-icon-color, var(--text-secondary)))` where themes can override all icons at once (`--icon-file-tint`) or let per-extension colors shine through.
+- CSS variables can control `display` property to toggle between UI variants (e.g., chevron vs powerline breadcrumbs) without JavaScript: `display: var(--breadcrumb-chevron-display, flex)`.
+- When adding theme-specific features, use CSS variables with sensible defaults so existing themes continue to work without modification.
+
+---
+
+## tauri-vozb: Symlink Detection in Rust
+
+**Key takeaways:**
+
+- `fs::metadata()` follows symlinks, returning the target's metadata. Use `fs::symlink_metadata()` to detect symlinks themselves without following them.
+- On Unix, `std::os::unix::fs::symlink()` creates symlinks. On Windows, need to distinguish between `symlink_file()` and `symlink_dir()`.
+
+---
+
+## tauri-2dgf: External Drop Modifier Keys
+
+**Key takeaways:**
+
+- Tauri's `onDragDropEvent` doesn't expose keyboard modifier state (Ctrl, Shift). To detect modifiers during external drops, track them globally via `keydown`/`keyup` listeners with `capture: true`.
+- Use the same modifier convention as internal drags (default=move, Ctrl=copy) for consistency.
+
+---
+
+## tauri-ti0l: File-Based Config Persistence
+
+**Key takeaways:**
+
+- For Tauri apps, `dirs::config_dir()` gives the platform-appropriate config directory (`~/.config` on Linux, `~/Library/Application Support` on macOS, `%APPDATA%` on Windows).
+- Write-through persistence (save to both localStorage sync and config file async) provides the best of both: instant state for the UI and durable storage on disk.
+- When migrating from localStorage to file-based storage, check the config file first, then fall back to localStorage for migration.
+
+---
+
+## tauri-5hlj / tauri-ksp2: Address Bar "/ >" Prefix and Triangles
+
+**Key takeaways:**
+
+- Breadcrumb separators rendered as literal "/" text before the first segment created a confusing "/ >" prefix. Replacing the root crumb's text content with an inline SVG folder icon is cleaner and matches native explorer conventions.
+- When using SVG icons inline in Svelte, use `fill="none"` with `stroke="currentColor"` so they inherit the text color from CSS.
+
+---
+
+## tauri-8ytw / tauri-j9aa: Context Menu Not Appearing on Second Click / Missing for Files
+
+**Key takeaways:**
+
+- The ContextMenu backdrop's `oncontextmenu` re-dispatch logic ran `elementFromPoint()` synchronously after calling `contextMenuStore.close()`. But Svelte's reactive DOM updates are batched — the backdrop element was still in the DOM when `elementFromPoint` ran, so it hit the backdrop again instead of the underlying element. Fix: wrap re-dispatch in `requestAnimationFrame` to let Svelte flush DOM removal first.
+- The list and tiles view modes rendered file entries as plain `<button>` elements in `FileList.svelte` without `oncontextmenu` handlers. Only the details view (via `FileItem.svelte`) had context menu support. Always audit all view modes when adding interaction features.
+
+---
+
+## tauri-jmcg: Symlink Double-Click Opens Terminal Instead of Navigating
+
+**Key takeaways:**
+
+- **Critical Rust gotcha:** On Unix, `DirEntry::metadata()` is equivalent to `symlink_metadata()` — it does NOT follow symlinks. So a symlink pointing to a directory returns `kind: "file"` because symlinks themselves aren't directories. Use `fs::metadata(entry.path())` to follow the symlink and get the target's metadata.
+- Always provide a fallback to `entry.metadata()` for broken/dangling symlinks where `fs::metadata()` will fail.
+- This affected both `list_directory` and `start_streaming_directory` — when fixing metadata-related bugs, audit all code paths that read file metadata.
+
+---
+
+## tauri-gkwz: Can't Drag Folders in Tiles View
+
+**Key takeaways:**
+
+- The `FileItem.svelte` component (used in details view) had full drag-and-drop support (`draggable="true"`, `ondragstart`, `ondragover`, `ondragleave`, `ondrop`), but the list and tiles views in `FileList.svelte` rendered entries inline without any drag attributes or handlers. Feature parity across view modes requires explicit wiring of all interaction handlers.
+- Per-entry drop target state (using objects keyed by entry path) avoids the problem of a single boolean flag being shared across all entries, which would cause all items to highlight when dragging over any one of them.
+
+---
+
+## tauri-nweq: Cross-Window Drag Doesn't Refresh Source Window
+
+**Key takeaways:**
+
+- The HTML5 `dragend` event fires on the source element regardless of whether the drop target is in the same window, a different window, or even a native file manager. Use `ondragend` to clean up drag state and trigger a refresh of the source pane's directory listing.
+- Both `FileItem.svelte` (details view) and `FileList.svelte` (list/tiles views) need the `ondragend` handler — same view-mode parity issue as context menus and drag-start.
+
+---

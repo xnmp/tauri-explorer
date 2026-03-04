@@ -215,3 +215,15 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 - **Playwright headless Chromium cannot reproduce WebKitGTK rendering bugs.** When debugging Tauri UI issues, always verify in the actual app. Use Playwright for functional testing only.
 
 ---
+
+## backdrop-filter Creates Visible Color Seams on Padding Areas
+
+**Key takeaways:**
+
+- **`backdrop-filter` does NOT apply to an element's padding area** — only the content/child area gets the filter. If a parent has `backdrop-filter: blur()` and `padding-top: 6px`, the padding strip shows raw background without the filter, creating a visible color seam on dark themes.
+- **Fix: use a spacer div instead of padding.** A child `<div>` with matching `background` (e.g., `var(--background-card)`) sits inside the parent's content area where `backdrop-filter` applies, eliminating the seam. Only render the spacer when needed (no titlebar + no toolbar).
+- **`border` on `<body>` with `border-radius` also creates visible strips.** The border interacts with rounded corners to produce a colored band along the top edge. Fix: replace `border` with `box-shadow: inset 0 0 0 1px var(--surface-stroke)` — same visual frame, no layout impact.
+- **Debugging tip: use dramatic debug values** (e.g., `background: red`, `padding: 50px`) to confirm whether CSS changes are actually reaching the Tauri webview. WebKitGTK caches aggressively and `:global()` Svelte styles may not propagate reliably to child components in Tauri — prefer scoping changes to the component file that Tauri IS updating.
+- **Tauri's WebKitGTK may not pick up changes to all Svelte component files equally.** During this investigation, `+page.svelte` changes reflected immediately but `SharedToolbar.svelte` changes did not, even after full `rm -rf node_modules && bun install && bun run tauri dev`. When styling cross-component, keep changes in the parent file that's known to update.
+
+---

@@ -360,6 +360,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
+    #[ignore] // Run with: cargo test bench_100_images -- --ignored --nocapture
     fn bench_100_images_cold_start() {
         let test_dir = PathBuf::from("/tmp/test-100-images");
         if !test_dir.exists() {

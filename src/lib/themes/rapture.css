@@ -72,6 +72,6 @@
   --shadow-tooltip: 0 4px 12px rgba(0, 10, 20, 0.5);
 
   /* Icon colors - themeable */
-  --icon-folder: #fff09b;
+  --icon-folder: #f0c040;
   /* --icon-file-tint: unset; when set, overrides all file icon colors */
 }

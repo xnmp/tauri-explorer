@@ -47,6 +47,36 @@
   let showSuggestions = $state(false);
   let fetchGeneration = 0; // Discard stale fetches
 
+  // Caret picker state - shows subdirectories when clicking a breadcrumb separator
+  let caretPickerPath = $state<string | null>(null);
+  let caretPickerDirs = $state<FileEntry[]>([]);
+  let caretPickerEl = $state<HTMLElement | null>(null);
+
+  async function openCaretPicker(parentPath: string, el: HTMLElement) {
+    if (caretPickerPath === parentPath) {
+      closeCaretPicker();
+      return;
+    }
+    caretPickerPath = parentPath;
+    caretPickerEl = el;
+    caretPickerDirs = [];
+    const result = await fetchDirectory(parentPath);
+    if (result.ok && caretPickerPath === parentPath) {
+      caretPickerDirs = result.data.entries.filter((e) => e.kind === "directory");
+    }
+  }
+
+  function closeCaretPicker() {
+    caretPickerPath = null;
+    caretPickerDirs = [];
+    caretPickerEl = null;
+  }
+
+  function navigateFromCaret(path: string) {
+    closeCaretPicker();
+    explorer.navigateTo(path);
+  }
+
   function startPathEdit() {
     editedPath = explorer.currentPath;
     editingPath = true;
@@ -313,15 +343,17 @@
       {/if}
 
       {#each visibleBreadcrumbs as segment, i (segment.path)}
-        <span class="separator">
+        {@const parentOfSegment = i === 0 ? (isUnderHome ? homeDir! : "/") : visibleBreadcrumbs[i - 1].path}
+        <button
+          class="separator caret-btn"
+          class:caret-active={caretPickerPath === parentOfSegment}
+          aria-label="Show folders in {i === 0 ? 'parent' : visibleBreadcrumbs[i - 1].name}"
+          onclick={(e) => { e.stopPropagation(); openCaretPicker(parentOfSegment, e.currentTarget as HTMLElement); }}
+        >
           <svg class="chevron-icon" width="10" height="10" viewBox="0 0 10 10" fill="none">
             <path d="M3 2L6 5L3 8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
-          <svg class="powerline-icon" width="8" height="20" viewBox="0 0 8 20" fill="none" preserveAspectRatio="none">
-            <path d="M0 0L8 10L0 20" fill="currentColor" fill-opacity="0.15"/>
-            <path d="M0 0L8 10L0 20" stroke="currentColor" stroke-width="0.5" stroke-opacity="0.3"/>
-          </svg>
-        </span>
+        </button>
         <button
           class="crumb"
           class:current={i === visibleBreadcrumbs.length - 1}
@@ -330,6 +362,21 @@
           {segment.name}
         </button>
       {/each}
+
+      {#if caretPickerPath && caretPickerDirs.length > 0}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="caret-picker-backdrop" onclick={closeCaretPicker} onkeydown={(e) => { if (e.key === "Escape") closeCaretPicker(); }}></div>
+        <div class="caret-picker" style="left: {caretPickerEl ? caretPickerEl.getBoundingClientRect().left : 0}px; top: {caretPickerEl ? caretPickerEl.getBoundingClientRect().bottom + 4 : 0}px;">
+          {#each caretPickerDirs as dir (dir.path)}
+            <button class="caret-picker-item" onclick={() => navigateFromCaret(dir.path)}>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                <path d="M3 3.5C3 2.67 3.67 2 4.5 2H7L8.5 3.5H12.5C13.33 3.5 14 4.17 14 5V12C14 12.83 13.33 13.5 12.5 13.5H4.5C3.67 13.5 3 12.83 3 12V3.5Z" fill="var(--icon-folder, #ffb900)" opacity="0.8"/>
+              </svg>
+              {dir.name}
+            </button>
+          {/each}
+        </div>
+      {/if}
 
       <button class="dropdown-toggle" onclick={(e) => { e.stopPropagation(); copyPathToClipboard(); }} title="Copy path to clipboard" aria-label="Copy path">
         <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -475,12 +522,31 @@
     font-weight: 500;
   }
 
-  /* Separator - contains both chevron and powerline icons */
+  /* Separator / caret button */
   .separator {
     display: flex;
     align-items: center;
     color: var(--breadcrumb-separator-color, var(--text-tertiary));
     flex-shrink: 0;
+  }
+
+  .caret-btn {
+    padding: 2px 4px;
+    background: transparent;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+  }
+
+  .caret-btn:hover {
+    background: var(--subtle-fill-secondary);
+    color: var(--text-primary);
+  }
+
+  .caret-btn.caret-active {
+    background: var(--subtle-fill-tertiary);
+    color: var(--text-primary);
   }
 
   /* Default: show chevron, hide powerline */
@@ -492,6 +558,47 @@
     display: var(--breadcrumb-powerline-display, none);
     height: 20px;
     width: 8px;
+  }
+
+  /* Caret picker dropdown */
+  .caret-picker-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 99;
+  }
+
+  .caret-picker {
+    position: fixed;
+    background: var(--background-solid);
+    border: 1px solid var(--surface-stroke);
+    border-radius: 6px;
+    box-shadow: var(--shadow-flyout, 0 4px 16px rgba(0, 0, 0, 0.15));
+    max-height: 300px;
+    min-width: 180px;
+    overflow-y: auto;
+    z-index: 100;
+    padding: 4px;
+  }
+
+  .caret-picker-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 5px 8px;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 12px;
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+    transition: background var(--transition-fast);
+  }
+
+  .caret-picker-item:hover {
+    background: var(--subtle-fill-secondary);
   }
 
   .dropdown-toggle {

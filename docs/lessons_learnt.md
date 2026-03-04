@@ -193,3 +193,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 - **Playwright + Chromium headless: `keyboard.press("Control+c")` hangs.** Chromium's native clipboard implementation blocks in headless mode. Use `page.evaluate(() => el.dispatchEvent(new KeyboardEvent(...)))` instead to test keyboard shortcuts that involve Ctrl+C/X/V.
 
 ---
+
+## tauri-lgo0: "Unable to access folder" After Deleting a Folder
+
+**Key takeaways:**
+
+- `refresh()` called `navigateInternal(currentPath)` without handling failure. If the current directory was deleted (by another pane, externally, or via the delete handler), the backend returns `AppError::NotFound` and the UI shows an error instead of recovering. Fix: make `refresh()` async and fall back to the parent directory when `navigateInternal()` returns `false`.
+- `navigateAwayIfNeeded()` was a synchronous function that fire-and-forgot an async `navigateTo()` call. This meant the navigation hadn't completed before any subsequent `refresh()` or `refreshAllPanes()` could run, creating a race condition where the stale `currentPath` was used. Fix: make it `async` and `await` it in both callers (`startDelete` and `confirmDelete`).
+- In multi-pane setups, deleting a folder from one pane doesn't notify other panes that may be viewing the deleted path. The `refresh()` fallback is the safety net for this scenario.
+
+---

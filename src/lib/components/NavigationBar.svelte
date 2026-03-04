@@ -408,6 +408,10 @@
     position: relative;
   }
 
+  .breadcrumbs-container.editing {
+    overflow: visible;
+  }
+
   .breadcrumbs-container:focus-within {
     border-color: var(--accent);
     background: var(--control-fill-secondary);

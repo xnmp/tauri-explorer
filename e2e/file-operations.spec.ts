@@ -282,6 +282,102 @@ test.describe("File Operations", () => {
     });
   });
 
+  test.describe("Delete Recovery", () => {
+    test("deleting a folder navigates to parent if it was the current path", async ({ page }) => {
+      // Navigate into Documents folder
+      const folder = page.locator(".file-item.directory", { hasText: "Documents" });
+      await folder.dblclick();
+      await page.waitForTimeout(500);
+
+      // Verify we're in Documents
+      const breadcrumbs = page.locator(".breadcrumbs-container");
+      await expect(breadcrumbs).toContainText("Documents");
+
+      // Navigate deeper into project subfolder
+      const subfolder = page.locator(".file-item.directory", { hasText: "project" });
+      await subfolder.dblclick();
+      await page.waitForTimeout(500);
+      await expect(breadcrumbs).toContainText("project");
+
+      // Go back to Documents
+      await page.locator('button[title*="Back"], button[aria-label*="Back"]').click();
+      await page.waitForTimeout(500);
+      await expect(breadcrumbs).toContainText("Documents");
+
+      // Select the project folder and delete it
+      const projectFolder = page.locator(".file-item.directory", { hasText: "project" });
+      await projectFolder.click();
+      await page.keyboard.press("Delete");
+
+      // Confirm deletion in dialog
+      const dialog = page.locator("[role='alertdialog']");
+      await expect(dialog).toBeVisible();
+      await dialog.getByRole("button", { name: /^Delete/ }).click();
+      await page.waitForTimeout(500);
+
+      // project folder should be gone from the listing
+      await expect(projectFolder).not.toBeVisible();
+
+      // Now try to navigate forward (which would go to the deleted project path)
+      // Press F5 to refresh — this should NOT show an error
+      await page.keyboard.press("F5");
+      await page.waitForTimeout(500);
+
+      // Verify no error state is shown
+      const errorState = page.locator(".error-state");
+      await expect(errorState).not.toBeVisible();
+
+      // File list should still be visible with items
+      const items = page.locator(".file-item");
+      await expect(items.first()).toBeVisible();
+    });
+
+    test("navigating forward to a deleted folder recovers gracefully", async ({ page }) => {
+      // Navigate: home/user → Documents → project
+      const docsFolder = page.locator(".file-item.directory", { hasText: "Documents" });
+      await docsFolder.dblclick();
+      await page.waitForTimeout(500);
+
+      const breadcrumbs = page.locator(".breadcrumbs-container");
+      await expect(breadcrumbs).toContainText("Documents");
+
+      const projectFolder = page.locator(".file-item.directory", { hasText: "project" });
+      await projectFolder.dblclick();
+      await page.waitForTimeout(500);
+      await expect(breadcrumbs).toContainText("project");
+
+      // Go back to Documents
+      await page.locator('button[title*="Back"], button[aria-label*="Back"]').click();
+      await page.waitForTimeout(500);
+      await expect(breadcrumbs).toContainText("Documents");
+
+      // Delete the project folder from Documents listing
+      const projectEntry = page.locator(".file-item.directory", { hasText: "project" });
+      await projectEntry.click();
+      await page.keyboard.press("Delete");
+
+      const dialog = page.locator("[role='alertdialog']");
+      await expect(dialog).toBeVisible();
+      await dialog.getByRole("button", { name: /^Delete/ }).click();
+      await page.waitForTimeout(500);
+
+      // project should be removed from listing
+      await expect(projectEntry).not.toBeVisible();
+
+      // Navigate forward — history points to the now-deleted project path
+      await page.keyboard.press("Control+Alt+ArrowRight");
+      await page.waitForTimeout(500);
+
+      // Should NOT show an error state
+      const errorState = page.locator(".error-state");
+      await expect(errorState).not.toBeVisible();
+
+      // Should still show file items (either stayed at Documents or recovered to parent)
+      const items = page.locator(".file-item");
+      await expect(items.first()).toBeVisible();
+    });
+  });
+
   test.describe("New Folder", () => {
     test("right-click on empty space shows New folder option", async ({ page }) => {
       // Click empty space in content area

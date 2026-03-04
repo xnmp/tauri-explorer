@@ -247,6 +247,10 @@ function createExplorerState() {
     const success = await navigateInternal(prevPath);
     if (success) {
       coreState.historyIndex--;
+    } else {
+      // Path no longer exists — fall back to parent
+      const parentPath = navigation.getParentPath(breadcrumbs);
+      if (parentPath) await navigateInternal(parentPath);
     }
   }
 
@@ -256,6 +260,10 @@ function createExplorerState() {
     const success = await navigateInternal(nextPath);
     if (success) {
       coreState.historyIndex++;
+    } else {
+      // Path no longer exists — fall back to parent
+      const parentPath = navigation.getParentPath(breadcrumbs);
+      if (parentPath) await navigateInternal(parentPath);
     }
   }
 

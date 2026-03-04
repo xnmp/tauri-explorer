@@ -85,12 +85,18 @@ const mockCommands: Record<string, CommandHandler> = {
 
   list_directory: (args) => {
     const path = args.path as string;
+    if (!(path in mockFiles)) {
+      throw new Error(`Path not found: ${path}`);
+    }
     const entries = getDirectoryEntries(path);
     return { path, entries, listing_id: null } as DirectoryListing;
   },
 
   start_streaming_directory: (args) => {
     const path = args.path as string;
+    if (!(path in mockFiles)) {
+      throw new Error(`Path not found: ${path}`);
+    }
     const entries = getDirectoryEntries(path);
     return { path, entries, listing_id: null } as DirectoryListing;
   },
@@ -129,6 +135,21 @@ const mockCommands: Record<string, CommandHandler> = {
     const entryIndex = entries.findIndex((e) => e.path === path);
     if (entryIndex >= 0) {
       entries.splice(entryIndex, 1);
+    }
+    // Remove the directory's own listing so navigating to it after deletion fails
+    delete mockFiles[path];
+  },
+
+  move_multiple_to_trash: (args) => {
+    const paths = args.paths as string[];
+    for (const path of paths) {
+      const parentPath = path.substring(0, path.lastIndexOf("/"));
+      const entries = mockFiles[parentPath] || [];
+      const entryIndex = entries.findIndex((e) => e.path === path);
+      if (entryIndex >= 0) {
+        entries.splice(entryIndex, 1);
+      }
+      delete mockFiles[path];
     }
   },
 

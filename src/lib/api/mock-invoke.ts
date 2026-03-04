@@ -84,7 +84,8 @@ const mockCommands: Record<string, CommandHandler> = {
   get_home_directory: () => "/home/user",
 
   list_directory: (args) => {
-    const path = args.path as string;
+    const raw = args.path as string;
+    const path = raw !== "/" && raw.endsWith("/") ? raw.slice(0, -1) : raw;
     if (!(path in mockFiles)) {
       throw new Error(`Path not found: ${path}`);
     }
@@ -93,7 +94,8 @@ const mockCommands: Record<string, CommandHandler> = {
   },
 
   start_streaming_directory: (args) => {
-    const path = args.path as string;
+    const raw = args.path as string;
+    const path = raw !== "/" && raw.endsWith("/") ? raw.slice(0, -1) : raw;
     if (!(path in mockFiles)) {
       throw new Error(`Path not found: ${path}`);
     }

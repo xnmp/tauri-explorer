@@ -16,7 +16,6 @@
   import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { copyEntry, moveEntry, getHomeDirectory } from "$lib/api/files";
-  import { invoke } from "@tauri-apps/api/core";
   import { initFileChangeListener, cleanupFileChangeListener, broadcastFileChange, parentDir } from "$lib/state/file-events";
   import "$lib/themes/index.css";
   import TitleBar from "$lib/components/TitleBar.svelte";
@@ -144,8 +143,6 @@
   $effect(() => {
     const opacity = settingsStore.backgroundOpacity / 100;
     document.documentElement.style.setProperty("--bg-opacity", String(opacity));
-    // Set real compositor-level transparency (Hyprland via hyprctl)
-    invoke("set_compositor_opacity", { opacity }).catch(() => {});
   });
 
   onMount(() => {

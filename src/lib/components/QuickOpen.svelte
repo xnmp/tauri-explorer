@@ -355,23 +355,22 @@
                   <span class="result-name">{result.name}</span>
                   <span class="result-path">{result.relativePath}</span>
                 </div>
-                {#if result.kind === "directory"}
-                  <span class="result-kind">folder</span>
-                {:else}
-                  <span class="score-breakdown">
-                    <span class="score-detail" title="Combined score">
-                      {Math.round(result.score)}
-                    </span>
-                    <span class="score-sep">=</span>
-                    <span class="score-detail fuzzy" title="Fuzzy match score">
-                      f:{Math.round('fuzzyScore' in result ? (result as RankedResult).fuzzyScore : result.score)}
-                    </span>
-                    <span class="score-sep">+</span>
-                    <span class="score-detail frecency" title="Frecency boost (raw × {FRECENCY_WEIGHT})">
-                      r:{('frecencyScore' in result ? (result as RankedResult).frecencyScore : 0).toFixed(2)}
-                    </span>
+                <span class="score-breakdown">
+                  {#if result.kind === "directory"}
+                    <span class="result-kind">folder</span>
+                  {/if}
+                  <span class="score-detail" title="Combined score">
+                    {Math.round(result.score)}
                   </span>
-                {/if}
+                  <span class="score-sep">=</span>
+                  <span class="score-detail fuzzy" title="Fuzzy match score">
+                    f:{Math.round('fuzzyScore' in result ? (result as RankedResult).fuzzyScore : result.score)}
+                  </span>
+                  <span class="score-sep">+</span>
+                  <span class="score-detail frecency" title="Frecency boost (raw × {FRECENCY_WEIGHT})">
+                    r:{('frecencyScore' in result ? (result as RankedResult).frecencyScore : 0).toFixed(2)}
+                  </span>
+                </span>
               </li>
             {/each}
           </ul>

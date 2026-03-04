@@ -9,7 +9,8 @@
   import { toastStore } from "$lib/state/toast.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
-  import { openFile, moveEntry } from "$lib/api/files";
+  import { openFile, moveEntry, copyEntry } from "$lib/api/files";
+  import { dragState } from "$lib/state/drag.svelte";
   import FileItem from "./FileItem.svelte";
   import VirtualList from "./VirtualList.svelte";
   import ThumbnailImage from "./ThumbnailImage.svelte";
@@ -222,6 +223,60 @@
       explorer.selectEntry(entry, {});
     }
     explorer.openContextMenu(event.clientX, event.clientY, entry);
+  }
+
+  // ===================
+  // Drag handlers for list/tiles views (Details view uses FileItem's own handlers)
+  // ===================
+
+  /** Per-entry drop target state, keyed by path */
+  let dropTargets = $state<Record<string, boolean>>({});
+  let copyDropTargets = $state<Record<string, boolean>>({});
+
+  function handleItemDragStart(event: DragEvent, entry: FileEntry): void {
+    if (!event.dataTransfer) return;
+    event.dataTransfer.setData("application/x-explorer-path", entry.path);
+    event.dataTransfer.setData("application/x-explorer-name", entry.name);
+    event.dataTransfer.setData("application/x-explorer-kind", entry.kind);
+    event.dataTransfer.effectAllowed = "all";
+    dragState.start({ path: entry.path, name: entry.name, kind: entry.kind });
+  }
+
+  function handleItemDragOver(event: DragEvent, entry: FileEntry): void {
+    if (entry.kind !== "directory") return;
+    if (!event.dataTransfer?.types.includes("application/x-explorer-path")) return;
+    event.preventDefault();
+    const copying = event.ctrlKey;
+    event.dataTransfer.dropEffect = copying ? "copy" : "move";
+    dropTargets[entry.path] = true;
+    copyDropTargets[entry.path] = copying;
+  }
+
+  function handleItemDragLeave(entry: FileEntry): void {
+    dropTargets[entry.path] = false;
+    copyDropTargets[entry.path] = false;
+  }
+
+  async function handleItemDrop(event: DragEvent, entry: FileEntry): Promise<void> {
+    event.preventDefault();
+    dropTargets[entry.path] = false;
+    copyDropTargets[entry.path] = false;
+    if (entry.kind !== "directory" || !event.dataTransfer) return;
+
+    const sourcePath = event.dataTransfer.getData("application/x-explorer-path");
+    if (!sourcePath || sourcePath === entry.path) return;
+    if (entry.path.startsWith(sourcePath + "/")) return;
+
+    const isCopyOp = event.ctrlKey;
+    const result = isCopyOp
+      ? await copyEntry(sourcePath, entry.path)
+      : await moveEntry(sourcePath, entry.path);
+
+    if (result.ok) {
+      paneNav?.refreshAllPanes();
+    } else {
+      console.error(`Failed to ${isCopyOp ? "copy" : "move"}:`, result.error);
+    }
   }
 
   function handleKeydown(event: KeyboardEvent): void {
@@ -442,9 +497,16 @@
             class="list-item"
             class:directory={entry.kind === "directory"}
             class:selected={explorer.isSelected(entry)}
+            class:drop-target={dropTargets[entry.path]}
+            class:copy-drop={copyDropTargets[entry.path]}
+            draggable="true"
             onclick={(e) => handleClick(entry, e)}
             ondblclick={() => handleDoubleClick(entry)}
             oncontextmenu={(e) => handleItemContextMenu(e, entry)}
+            ondragstart={(e) => handleItemDragStart(e, entry)}
+            ondragover={(e) => handleItemDragOver(e, entry)}
+            ondragleave={() => handleItemDragLeave(entry)}
+            ondrop={(e) => handleItemDrop(e, entry)}
           >
             <span class="list-icon">
               {#if entry.kind === "directory"}
@@ -472,9 +534,16 @@
             class="tile-item"
             class:directory={entry.kind === "directory"}
             class:selected={explorer.isSelected(entry)}
+            class:drop-target={dropTargets[entry.path]}
+            class:copy-drop={copyDropTargets[entry.path]}
+            draggable="true"
             onclick={(e) => handleClick(entry, e)}
             ondblclick={() => handleDoubleClick(entry)}
             oncontextmenu={(e) => handleItemContextMenu(e, entry)}
+            ondragstart={(e) => handleItemDragStart(e, entry)}
+            ondragover={(e) => handleItemDragOver(e, entry)}
+            ondragleave={() => handleItemDragLeave(entry)}
+            ondrop={(e) => handleItemDrop(e, entry)}
           >
             <div class="tile-icon">
               {#if entry.kind === "directory"}
@@ -846,6 +915,16 @@
     border-radius: 0 4px 4px 0;
   }
 
+  .list-item.drop-target {
+    background: rgba(0, 120, 212, 0.15);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+
+  .list-item.drop-target.copy-drop {
+    background: rgba(16, 185, 129, 0.15);
+    box-shadow: inset 0 0 0 1px #10b981;
+  }
+
   .list-icon {
     display: flex;
     align-items: center;
@@ -909,6 +988,16 @@
 
   .tile-item.selected:hover {
     background: var(--subtle-fill-tertiary);
+  }
+
+  .tile-item.drop-target {
+    background: rgba(0, 120, 212, 0.15);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+
+  .tile-item.drop-target.copy-drop {
+    background: rgba(16, 185, 129, 0.15);
+    box-shadow: inset 0 0 0 1px #10b981;
   }
 
   .tile-icon {

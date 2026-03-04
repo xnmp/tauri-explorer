@@ -114,6 +114,11 @@ function createDialogStore() {
       closeIfActive("delete");
     },
 
+    /** True when any modal dialog is open (file ops or overlays). */
+    get hasModalOpen(): boolean {
+      return activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen;
+    },
+
     // Overlay dialog actions
     openQuickOpen(): void {
       quickOpenOpen = true;

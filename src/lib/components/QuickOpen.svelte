@@ -221,6 +221,9 @@
       // Cancel any previous search
       await cancelActiveSearch();
 
+      // Show external matches immediately (before backend responds)
+      results = matchExternalCandidates(query);
+
       // Search from home directory, boost results under CWD
       const root = await getSearchRoot();
       const boostPrefix = getCwdPath();
@@ -230,7 +233,6 @@
         activeSearchId = result.data;
         await setupSearchListener(result.data);
       } else {
-        results = [];
         loading = false;
       }
     }, 50); // Shorter debounce for streaming - results come in progressively

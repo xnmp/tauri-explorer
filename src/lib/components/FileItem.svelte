@@ -415,6 +415,7 @@
     padding: 4px 16px;
     background: transparent;
     border: 1px solid transparent;
+    border-left-width: 2px;
     border-radius: 4px;
     cursor: pointer;
     text-align: left;
@@ -445,7 +446,7 @@
   .file-item.selected {
     background: var(--subtle-fill-secondary);
     border-color: transparent;
-    border-left: 2px solid var(--accent);
+    border-left-color: var(--accent);
     border-radius: 0 4px 4px 0;
   }
 

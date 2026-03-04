@@ -177,6 +177,9 @@
     if (explorer.viewMode === "tiles") {
       // Tiles use CSS grid - need DOM-based hit testing
       indices = marquee.getSelectedIndicesFromDOM(contentRef, ".tile-item");
+    } else if (explorer.viewMode === "list") {
+      // List view has variable item height and no column headers - use DOM-based hit testing
+      indices = marquee.getSelectedIndicesFromDOM(contentRef, ".list-item");
     } else {
       const scrollTop = contentRef.querySelector('.virtual-viewport')?.scrollTop ?? 0;
       indices = marquee.getSelectedIndices(scrollTop, explorer.displayEntries.length);
@@ -906,7 +909,7 @@
     display: flex;
     flex-direction: column;
     padding: 8px;
-    gap: 2px;
+    gap: 4px;
     overflow-y: auto;
     flex: 1;
   }
@@ -916,8 +919,10 @@
     align-items: center;
     gap: 8px;
     padding: 4px 8px;
+    width: 100%;
     background: transparent;
     border: 1px solid transparent;
+    border-left-width: 2px;
     border-radius: 4px;
     cursor: pointer;
     text-align: left;
@@ -934,7 +939,7 @@
   .list-item.selected {
     background: var(--subtle-fill-secondary);
     border-color: transparent;
-    border-left: 2px solid var(--accent);
+    border-left-color: var(--accent);
     border-radius: 0 4px 4px 0;
   }
 
@@ -983,6 +988,7 @@
     padding: 10px 6px 8px;
     background: transparent;
     border: 1px solid transparent;
+    border-bottom-width: 2px;
     border-radius: 6px;
     cursor: pointer;
     text-align: center;
@@ -1005,7 +1011,7 @@
   .tile-item.selected {
     background: var(--subtle-fill-secondary);
     border-color: transparent;
-    border-bottom: 2px solid var(--accent);
+    border-bottom-color: var(--accent);
     border-radius: 6px 6px 2px 2px;
   }
 

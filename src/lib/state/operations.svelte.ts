@@ -129,6 +129,11 @@ function createOperationsManager() {
     );
   }
 
+  /** Check if an operation has been cancelled */
+  function isOperationCancelled(operationId: string): boolean {
+    return operations.some((op) => op.id === operationId && op.status === "cancelled");
+  }
+
   /** Cancel all running operations */
   function cancelAllOperations(): void {
     operations = operations.map((op) =>
@@ -192,6 +197,7 @@ function createOperationsManager() {
     failOperation,
     retryOperation,
     cancelOperation,
+    isOperationCancelled,
     cancelAllOperations,
     cleanupCompletedOperations,
     clearOperation,

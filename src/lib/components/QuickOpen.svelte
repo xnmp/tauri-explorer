@@ -58,6 +58,52 @@
   // Frecency weight relative to fuzzy score (how much frecency influences ranking)
   const FRECENCY_WEIGHT = 50;
 
+  /** Match recent/frecency paths outside home directory against the query. */
+  function getRecentMatches(q: string): SearchResult[] {
+    const query = q.toLowerCase();
+    const seen = new Set<string>();
+    const matches: SearchResult[] = [];
+
+    // Recent files
+    for (const entry of recentFilesStore.list) {
+      if (seen.has(entry.path)) continue;
+      seen.add(entry.path);
+      if (homeDir && entry.path.startsWith(homeDir)) continue;
+      const nameLower = entry.name.toLowerCase();
+      const pathLower = entry.path.toLowerCase();
+      if (nameLower.includes(query) || pathLower.includes(query)) {
+        matches.push({
+          name: entry.name,
+          path: entry.path,
+          relativePath: entry.path,
+          score: nameLower.includes(query) ? 80 : 40,
+          kind: entry.kind,
+        });
+      }
+    }
+
+    // Frecency entries
+    for (const entry of frecencyStore.entries) {
+      if (seen.has(entry.path)) continue;
+      seen.add(entry.path);
+      if (homeDir && entry.path.startsWith(homeDir)) continue;
+      const name = entry.path.split("/").pop() || "";
+      const nameLower = name.toLowerCase();
+      const pathLower = entry.path.toLowerCase();
+      if (nameLower.includes(query) || pathLower.includes(query)) {
+        matches.push({
+          name,
+          path: entry.path,
+          relativePath: entry.path,
+          score: nameLower.includes(query) ? 80 : 40,
+          kind: "directory",
+        });
+      }
+    }
+
+    return matches;
+  }
+
   /** Re-rank search results by combining fuzzy score with frecency. */
   function rankWithFrecency(searchResults: SearchResult[]): SearchResult[] {
     if (searchResults.length === 0) return searchResults;
@@ -127,7 +173,12 @@
       }
 
       // Update results with latest batch, boosted by frecency
-      results = rankWithFrecency(payload.results);
+      const backendResults = rankWithFrecency(payload.results);
+      // Merge in matching recent/frecency paths from outside home dir
+      const recentMatches = getRecentMatches(query);
+      const backendPaths = new Set(backendResults.map((r) => r.path));
+      const extra = recentMatches.filter((r) => !backendPaths.has(r.path));
+      results = [...backendResults, ...extra].sort((a, b) => b.score - a.score);
       totalScanned = payload.totalScanned;
 
       // Reset selection if needed

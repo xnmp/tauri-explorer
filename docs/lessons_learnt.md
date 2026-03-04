@@ -223,5 +223,36 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 - `refresh()` called `navigateInternal(currentPath)` without handling failure. If the current directory was deleted (by another pane, externally, or via the delete handler), the backend returns `AppError::NotFound` and the UI shows an error instead of recovering. Fix: make `refresh()` async and fall back to the parent directory when `navigateInternal()` returns `false`.
 - `navigateAwayIfNeeded()` was a synchronous function that fire-and-forgot an async `navigateTo()` call. This meant the navigation hadn't completed before any subsequent `refresh()` or `refreshAllPanes()` could run, creating a race condition where the stale `currentPath` was used. Fix: make it `async` and `await` it in both callers (`startDelete` and `confirmDelete`).
 - In multi-pane setups, deleting a folder from one pane doesn't notify other panes that may be viewing the deleted path. The `refresh()` fallback is the safety net for this scenario.
+## tauri-usui: Theme Selector Dropdown Uses Browser-Default Colors
+
+**Key takeaways:**
+
+- Native `<select>` elements inherit CSS custom properties for the closed/collapsed state, but `<option>` elements inside the dropdown render with browser/OS default colors (white bg, black text) unless explicitly styled.
+- Fix: add `.theme-select option { background: var(--background-solid); color: var(--text-primary); }` so options match the active theme.
+- This is a common issue with Tauri/WebKitGTK — always explicitly style `<option>` elements when using native `<select>` in themed UIs.
+
+---
+
+## WebKitGTK Native Form Controls Ignore CSS Backgrounds on Dark Themes
+
+**Key takeaways:**
+
+- **WebKitGTK renders native `<select>` with its own opaque white background** underneath any CSS `background` you set. Translucent `rgba()` backgrounds (like `--control-fill: rgba(255,255,255,0.08)`) composite over that white base, making the select appear white/light on dark themes. This does NOT reproduce in headless Chromium — always test in the actual Tauri app.
+- **Fix 1: `color-scheme: dark`** — Add `color-scheme: dark` (or `light`) to each theme's `[data-theme="..."]` rule. This tells WebKitGTK to use dark native form control colors as a baseline. This is inherited, so setting it on the theme selector cascades to all form elements. Should be standard practice for all themes.
+- **Fix 2: `appearance: none`** — For full CSS control over `<select>` styling, use `appearance: none; -webkit-appearance: none;` to disable native widget rendering entirely. This requires adding a custom dropdown arrow (e.g., inline SVG via `background-image`). This gives consistent cross-engine results.
+- **Both fixes together are ideal:** `color-scheme` ensures any native controls you missed still look right, while `appearance: none` on specific controls gives pixel-perfect theming.
+- **Playwright headless Chromium cannot reproduce WebKitGTK rendering bugs.** When debugging Tauri UI issues, always verify in the actual app. Use Playwright for functional testing only.
+
+---
+
+## backdrop-filter Creates Visible Color Seams on Padding Areas
+
+**Key takeaways:**
+
+- **`backdrop-filter` does NOT apply to an element's padding area** — only the content/child area gets the filter. If a parent has `backdrop-filter: blur()` and `padding-top: 6px`, the padding strip shows raw background without the filter, creating a visible color seam on dark themes.
+- **Fix: use a spacer div instead of padding.** A child `<div>` with matching `background` (e.g., `var(--background-card)`) sits inside the parent's content area where `backdrop-filter` applies, eliminating the seam. Only render the spacer when needed (no titlebar + no toolbar).
+- **`border` on `<body>` with `border-radius` also creates visible strips.** The border interacts with rounded corners to produce a colored band along the top edge. Fix: replace `border` with `box-shadow: inset 0 0 0 1px var(--surface-stroke)` — same visual frame, no layout impact.
+- **Debugging tip: use dramatic debug values** (e.g., `background: red`, `padding: 50px`) to confirm whether CSS changes are actually reaching the Tauri webview. WebKitGTK caches aggressively and `:global()` Svelte styles may not propagate reliably to child components in Tauri — prefer scoping changes to the component file that Tauri IS updating.
+- **Tauri's WebKitGTK may not pick up changes to all Svelte component files equally.** During this investigation, `+page.svelte` changes reflected immediately but `SharedToolbar.svelte` changes did not, even after full `rm -rf node_modules && bun install && bun run tauri dev`. When styling cross-component, keep changes in the parent file that's known to update.
 
 ---

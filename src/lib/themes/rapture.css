@@ -12,6 +12,8 @@
  */
 
 [data-theme="rapture"] {
+  color-scheme: dark;
+
   /* Theme metadata */
   --theme-name: "Rapture";
   --theme-description: "Deep navy with pastel neon accents";

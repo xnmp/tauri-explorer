@@ -206,10 +206,12 @@
   });
 </script>
 
-<main class="explorer" class:no-titlebar={windowTabsManager.tabs.length <= 1}>
+<main class="explorer">
   <TitleBar />
   {#if settingsStore.showToolbar}
     <SharedToolbar />
+  {:else if windowTabsManager.tabs.length <= 1}
+    <div class="window-top-spacer"></div>
   {/if}
   <div class="main-content">
     {#if settingsStore.showSidebar}
@@ -288,12 +290,14 @@
     font-size: var(--font-size-body);
     line-height: 1.43;
     color: var(--text-primary);
-    background: color-mix(in srgb, var(--background-solid) calc(var(--bg-opacity, 1) * 100%), transparent);
+    background: color-mix(in srgb, var(--background-mica) calc(var(--bg-opacity, 1) * 100%), transparent);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    /* Window frame with border for transparent window */
+    /* Window frame — use inset box-shadow instead of border to avoid
+       a visible colored strip at the top from border + border-radius */
     border-radius: var(--radius-window);
-    border: 1px solid var(--surface-stroke);
+    border: none;
+    box-shadow: inset 0 0 0 1px var(--surface-stroke);
     overflow: hidden;
     position: absolute;
     top: 0;
@@ -345,8 +349,13 @@
     -webkit-backdrop-filter: blur(60px) saturate(125%);
   }
 
-  .explorer.no-titlebar {
-    padding-top: 6px;
+  /* Spacer div that replaces the titlebar's space when no titlebar is
+     shown. Uses background-card to match the toolbar, avoiding a visible
+     seam from backdrop-filter not covering parent padding areas. */
+  .window-top-spacer {
+    height: 6px;
+    background: var(--background-card);
+    flex-shrink: 0;
   }
 
   /* Mica effect gradient overlay */

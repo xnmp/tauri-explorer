@@ -12,6 +12,7 @@
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { moveEntry, copyEntry } from "$lib/api/files";
+  import { broadcastFileChange, parentDir } from "$lib/state/file-events";
   import { dragState } from "$lib/state/drag.svelte";
 
   interface Props {
@@ -253,6 +254,7 @@
       } else {
         explorer.refresh();
       }
+      broadcastFileChange([parentDir(sourcePath), entry.path]);
     } else {
       console.error(`Failed to ${isCopyOp ? "copy" : "move"}:`, result.error);
     }

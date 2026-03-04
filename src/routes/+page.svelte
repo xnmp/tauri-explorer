@@ -16,6 +16,7 @@
   import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { copyEntry, moveEntry, getHomeDirectory } from "$lib/api/files";
+  import { initFileChangeListener, cleanupFileChangeListener, broadcastFileChange, parentDir } from "$lib/state/file-events";
   import "$lib/themes/index.css";
   import TitleBar from "$lib/components/TitleBar.svelte";
   import SharedToolbar from "$lib/components/SharedToolbar.svelte";
@@ -67,7 +68,11 @@
     const operation = ctrlKeyHeld ? copyEntry : moveEntry;
     const opName = ctrlKeyHeld ? "copy" : "move";
 
+    const affectedDirs = new Set<string>();
+    affectedDirs.add(destDir);
+
     for (const path of paths) {
+      affectedDirs.add(parentDir(path));
       const result = await operation(path, destDir);
       if (!result.ok) {
         console.error(`Failed to ${opName} dropped file:`, result.error);
@@ -75,6 +80,7 @@
     }
 
     refreshAllPanes();
+    broadcastFileChange([...affectedDirs]);
   }
 
   const externalDrop = useExternalDrop((paths) => {
@@ -167,6 +173,16 @@
     // Setup external file drop handling
     externalDrop.setup();
 
+    // Listen for file changes from other windows
+    initFileChangeListener((affectedDirs) => {
+      for (const paneId of ["left", "right"] as const) {
+        const exp = windowTabsManager.getExplorer(paneId);
+        if (exp && affectedDirs.includes(exp.currentPath)) {
+          exp.refresh();
+        }
+      }
+    });
+
     // Track Ctrl key for external drop modifier detection
     function trackCtrlDown(e: KeyboardEvent) { ctrlKeyHeld = e.ctrlKey; }
     function trackCtrlUp(e: KeyboardEvent) { ctrlKeyHeld = e.ctrlKey; }
@@ -202,6 +218,7 @@
       window.removeEventListener("beforeunload", handleBeforeUnload);
       clearInterval(saveInterval);
       externalDrop.cleanup();
+      cleanupFileChangeListener();
     };
   });
 </script>

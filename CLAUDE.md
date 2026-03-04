@@ -15,12 +15,18 @@
 * Please create implementation plans before converting into issues in Beads
 * At the beginning of each session, convert the tasks in [new_todo](@new_todo.md) into beads issues (edit the md file to remove issues that have been converted), together with priorities. 
 * Read the specs to implement features
-* If unsure how to do something that needs research, use the research-scout subagent to research the best ways to proceed. 
-* creature a new branch for each feature. 
-* After implementing features, commit once before running any tests. Then use the `test-fixer` subagent to run the tests and get them passing then commit again. Then use the `code-simplifier` subagent to condense the code and commit again. Then, use `agent-browser` (CLI) directly to visually verify the feature is working (open the dev server URL, snapshot, screenshot, interact as needed), and commit again. The docs are [here](https://github.com/vercel-labs/agent-browser). Then, if necessary, create an e2e playwright test that verifies the feature is working. Finally, run the e2e playwright tests to verify that there's no regressions. 
-* For each feature, after doing all of this in the previous point, merge the feature rbanch to main - just do this if the tests are passing and ui is working, don't ask for confirmation. always use a merge commit. don't delete the feature branch. 
-* Use the `bug-fixer` subagent to fix bugs. 
-* Every once in a while, use the `frontend-aesthetic-enhancer` to make it look nicer and the `architecture-reviewer` to structure the code better.
+* If unsure how to do something that needs research, use the `research-scout` subagent to research the best ways to proceed.
+* Create a new branch for each feature.
+* After implementing features, commit once before running any tests. Then run `bun run test` and fix any failures directly, then commit again. Then use `agent-browser` (CLI) directly to visually verify the feature is working (open the dev server URL, snapshot, screenshot, interact as needed), and commit again. The agent-browser docs are [here](https://github.com/vercel-labs/agent-browser). Then, if necessary, create an e2e playwright test that verifies the feature is working. Finally, run the e2e playwright tests to verify that there's no regressions.
+* For each feature, after doing all of this in the previous point, merge the feature branch to main - just do this if the tests are passing and ui is working, don't ask for confirmation. Always use a merge commit. Don't delete the feature branch.
+* Fix bugs directly — do not delegate implementation to subagents.
+* Every once in a while, use the `frontend-aesthetic-enhancer` subagent to improve visual design, the `architecture-reviewer` subagent for design review, and the `change-reviewer` subagent for post-change review. These are read-only scouts that report back — the main agent implements any suggested changes.
+
+## Subagent Policy
+Subagents are **scouts, not workers**. Rules:
+* **Never delegate implementation** (code writing, test fixing, bug fixing) to subagents. The main agent already has full context.
+* **Use subagents only for read-only information gathering**: research, architecture review, change review.
+* **Use CLI tools directly** instead of subagents for: running tests (`bun run test`), visual verification (`agent-browser`), linting, building.
 * Ensure that closed issues are well documented with all the findings and changes with enough detail to bring a new developer up to speed relatively quickly.
 * After closing each issue, append any important lessons learnt (gotchas, non-obvious behaviors, workarounds, debugging insights) to [lessons_learnt](docs/lessons_learnt.md). Include the issue ID, a brief summary, and the key takeaways. Skip if the issue was trivial with nothing noteworthy.
 

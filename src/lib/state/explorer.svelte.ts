@@ -12,6 +12,7 @@
  * - Undo (undo.svelte.ts) - global undo stack
  */
 
+import { toastStore } from "./toast.svelte";
 import { loadPersisted, savePersisted } from "./persisted";
 import {
   fetchDirectory,
@@ -497,17 +498,21 @@ function createExplorerState() {
 
   async function copyToClipboard(entries: FileEntry[]) {
     await clipboardStore.copy(entries);
+    const label = entries.length === 1 ? entries[0].name : `${entries.length} items`;
+    toastStore.clipboard(`Copied: ${label}`, false);
   }
 
   async function cutToClipboard(entries: FileEntry[]) {
     await clipboardStore.cut(entries);
+    const label = entries.length === 1 ? entries[0].name : `${entries.length} items`;
+    toastStore.clipboard(`Cut: ${label}`, true);
   }
 
   function clearClipboard() {
     clipboardStore.clear();
   }
 
-  // Paste result for UI feedback (observed by FileList for toasts)
+  // Paste result for UI feedback
   let pasteResult = $state<{ error: string | null; timestamp: number } | null>(null);
 
   async function paste(): Promise<string | null> {
@@ -548,6 +553,7 @@ function createExplorerState() {
       }
       const error = errors.length > 0 ? `Failed: ${errors.join(", ")}` : null;
       pasteResult = { error, timestamp: Date.now() };
+      if (error) { toastStore.error(error); } else { toastStore.success("Pasted successfully"); }
       return error;
     }
 
@@ -575,6 +581,7 @@ function createExplorerState() {
 
     const error = errors.length > 0 ? `Failed: ${errors.join(", ")}` : null;
     pasteResult = { error, timestamp: Date.now() };
+    if (error) { toastStore.error(error); } else { toastStore.success("Pasted successfully"); }
     return error;
   }
 

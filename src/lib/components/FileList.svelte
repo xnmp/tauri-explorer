@@ -30,29 +30,6 @@
   // Get pane context for cross-pane operations
   const paneNav = getPaneNavigationContext();
 
-  // Watch clipboard changes and show toast
-  $effect(() => {
-    const content = clipboardStore.content;
-    if (content) {
-      const label = content.entries.length === 1
-        ? content.entries[0].name
-        : `${content.entries.length} items`;
-      const isCut = content.operation === "cut";
-      toastStore.clipboard(`${isCut ? "Cut" : "Copied"}: ${label}`, isCut);
-    }
-  });
-
-  // Watch paste results for toast feedback
-  $effect(() => {
-    const result = explorer.pasteResult;
-    if (!result) return;
-    if (result.error) {
-      toastStore.error(result.error);
-    } else {
-      toastStore.success("Pasted successfully");
-    }
-  });
-
   // Drop target state for dropping files into current directory
   let isDropTarget = $state(false);
 

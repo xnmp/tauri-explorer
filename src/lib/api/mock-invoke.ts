@@ -51,9 +51,11 @@ const mockFiles: Record<string, FileEntry[]> = {
   ],
   "/home/user/Pictures": [
     dir("vacation", "/home/user/Pictures/vacation"),
-    file("photo1.jpg", "/home/user/Pictures/photo1.jpg", 2097152),
-    file("photo2.jpg", "/home/user/Pictures/photo2.jpg", 1572864),
-    file("screenshot.png", "/home/user/Pictures/screenshot.png", 262144),
+    ...Array.from({ length: 100 }, (_, i) => {
+      const idx = String(i).padStart(3, "0");
+      const ext = i % 3 === 0 ? "png" : "jpg";
+      return file(`image_${idx}.${ext}`, `/home/user/Pictures/image_${idx}.${ext}`, 500000 + Math.floor(Math.random() * 5000000));
+    }),
   ],
   "/home/user/Music": [
     dir("playlist", "/home/user/Music/playlist"),
@@ -246,6 +248,19 @@ const mockCommands: Record<string, CommandHandler> = {
   get_thumbnail_data: () => {
     // Return a 1x1 gray pixel as placeholder
     return "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+  },
+
+  get_micro_thumbnail: () => {
+    // Return a 1x1 colored pixel as mock micro thumbnail
+    return "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+  },
+
+  get_micro_thumbnails_batch: (args) => {
+    const paths = args.paths as string[];
+    return paths.map((path) => ({
+      path,
+      dataUri: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+    }));
   },
 
   clear_thumbnail_cache: () => 0,

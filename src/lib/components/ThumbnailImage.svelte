@@ -4,14 +4,67 @@
 
   Loading flow:
   1. SVG placeholder (not visible yet)
-  2. IntersectionObserver fires → request micro thumbnail (16x16, pixelated)
-  3. Micro thumbnail appears instantly → request full thumbnail (cache hit from pre-warm)
-  4. Full thumbnail cross-fades in over 150ms
+  2. IntersectionObserver fires → path added to batch scheduler
+  3. Batch scheduler collects paths for 16ms, then fires one IPC call
+  4. Backend processes all images in parallel → micro thumbnails appear
+  5. Full thumbnails requested individually (cache hits from pre-warm)
 -->
 <script lang="ts" module>
-  import { getMicroThumbnail, getThumbnailData } from "$lib/api/files";
+  import { getMicroThumbnailsBatch, getThumbnailData } from "$lib/api/files";
 
-  // Dual concurrency pools: micro is fast (small payload), full is heavier
+  // ─── Batch scheduler ──────────────────────────────────────────────────────
+  // Collects micro thumbnail requests over a short window, then fires
+  // a single batch IPC call. This eliminates per-image IPC overhead and
+  // lets the backend process all images in parallel.
+
+  type MicroCallback = (dataUri: string | null) => void;
+
+  let pendingBatch: Map<string, MicroCallback[]> = new Map();
+  let batchTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function scheduleMicroThumbnail(path: string): Promise<string | null> {
+    return new Promise((resolve) => {
+      const callbacks = pendingBatch.get(path);
+      if (callbacks) {
+        callbacks.push(resolve);
+      } else {
+        pendingBatch.set(path, [resolve]);
+      }
+
+      if (!batchTimer) {
+        batchTimer = setTimeout(flushBatch, 16); // ~1 frame
+      }
+    });
+  }
+
+  async function flushBatch() {
+    batchTimer = null;
+    const batch = pendingBatch;
+    pendingBatch = new Map();
+
+    const paths = Array.from(batch.keys());
+    if (paths.length === 0) return;
+
+    const result = await getMicroThumbnailsBatch(paths);
+
+    if (result.ok) {
+      for (const item of result.data) {
+        const callbacks = batch.get(item.path);
+        if (callbacks) {
+          for (const cb of callbacks) cb(item.dataUri);
+        }
+      }
+    }
+
+    // Resolve any paths not in the response (errors) with null
+    for (const [path, callbacks] of batch) {
+      if (!result.ok || !result.data.some((r) => r.path === path)) {
+        for (const cb of callbacks) cb(null);
+      }
+    }
+  }
+
+  // ─── Full thumbnail pool ──────────────────────────────────────────────────
   function createPool(max: number) {
     let active = 0;
     const queue: Array<() => void> = [];
@@ -37,8 +90,7 @@
     };
   }
 
-  const microPool = createPool(8);
-  const fullPool = createPool(4);
+  const fullPool = createPool(6);
 </script>
 
 <script lang="ts">
@@ -89,20 +141,12 @@
     microUrl = null;
     fullUrl = null;
 
-    // Stage 1: micro thumbnail (fast, pixelated preview)
-    await microPool.acquire();
-    try {
-      // Bail if path changed while queued
-      if (currentPath !== path) return;
+    // Stage 1: micro thumbnail via batch scheduler
+    const microResult = await scheduleMicroThumbnail(currentPath);
+    if (currentPath !== path) return;
 
-      const microResult = await getMicroThumbnail(currentPath);
-      if (currentPath !== path) return;
-
-      if (microResult.ok) {
-        microUrl = microResult.data;
-      }
-    } finally {
-      microPool.release();
+    if (microResult) {
+      microUrl = microResult;
     }
 
     // Stage 2: full thumbnail (should be a cache hit from micro's pre-warm)

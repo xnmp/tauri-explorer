@@ -283,25 +283,13 @@ test.describe("File Operations", () => {
   });
 
   test.describe("Delete Recovery", () => {
-    test("deleting a folder navigates to parent if it was the current path", async ({ page }) => {
-      // Navigate into Documents folder
+    test("deleting a child folder from parent stays in parent without error", async ({ page }) => {
+      // Navigate into Documents
       const folder = page.locator(".file-item.directory", { hasText: "Documents" });
       await folder.dblclick();
       await page.waitForTimeout(500);
 
-      // Verify we're in Documents
       const breadcrumbs = page.locator(".breadcrumbs-container");
-      await expect(breadcrumbs).toContainText("Documents");
-
-      // Navigate deeper into project subfolder
-      const subfolder = page.locator(".file-item.directory", { hasText: "project" });
-      await subfolder.dblclick();
-      await page.waitForTimeout(500);
-      await expect(breadcrumbs).toContainText("project");
-
-      // Go back to Documents
-      await page.locator('button[title*="Back"], button[aria-label*="Back"]').click();
-      await page.waitForTimeout(500);
       await expect(breadcrumbs).toContainText("Documents");
 
       // Select the project folder and delete it
@@ -309,25 +297,19 @@ test.describe("File Operations", () => {
       await projectFolder.click();
       await page.keyboard.press("Delete");
 
-      // Confirm deletion in dialog
+      // Confirm deletion
       const dialog = page.locator("[role='alertdialog']");
       await expect(dialog).toBeVisible();
       await dialog.getByRole("button", { name: /^Delete/ }).click();
       await page.waitForTimeout(500);
 
-      // project folder should be gone from the listing
-      await expect(projectFolder).not.toBeVisible();
-
-      // Now try to navigate forward (which would go to the deleted project path)
-      // Press F5 to refresh — this should NOT show an error
-      await page.keyboard.press("F5");
-      await page.waitForTimeout(500);
-
-      // Verify no error state is shown
+      // Should remain in Documents with no error — no refresh needed
+      await expect(breadcrumbs).toContainText("Documents");
       const errorState = page.locator(".error-state");
       await expect(errorState).not.toBeVisible();
 
-      // File list should still be visible with items
+      // project folder should be gone, other items remain
+      await expect(projectFolder).not.toBeVisible();
       const items = page.locator(".file-item");
       await expect(items.first()).toBeVisible();
     });

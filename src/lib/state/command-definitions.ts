@@ -505,7 +505,12 @@ const tabCommands: Command[] = [
     label: "Restore Closed Tab",
     category: "general",
     shortcut: "Ctrl+Shift+T",
-    handler: () => windowTabsManager.restoreClosedTab(),
+    handler: () => {
+      const result = windowTabsManager.restoreClosedTab();
+      if (result && result.openInNewWindow) {
+        openNewWindow(result.openInNewWindow);
+      }
+    },
     when: () => windowTabsManager.canRestoreTab,
   },
   {

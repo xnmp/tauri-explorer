@@ -213,7 +213,7 @@ fn read_clipboard_image() -> Option<Vec<u8>> {
 
 /// Check if the clipboard contains image data.
 #[tauri::command]
-pub fn clipboard_has_image() -> bool {
+pub async fn clipboard_has_image() -> bool {
     let output = if is_wayland() {
         Command::new("wl-paste")
             .args(["--list-types"])
@@ -238,7 +238,7 @@ pub fn clipboard_has_image() -> bool {
 /// Paste clipboard image data to a file in the given directory.
 /// Returns the path of the created file, or an error.
 #[tauri::command]
-pub fn clipboard_paste_image(directory: String) -> Result<String, String> {
+pub async fn clipboard_paste_image(directory: String) -> Result<String, String> {
     let data = read_clipboard_image().ok_or("No image data in clipboard")?;
 
     let dir = std::path::Path::new(&directory);
@@ -268,17 +268,17 @@ pub fn clipboard_paste_image(directory: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn clipboard_has_files() -> bool {
+pub async fn clipboard_has_files() -> bool {
     !read_clipboard_file_paths().is_empty()
 }
 
 #[tauri::command]
-pub fn clipboard_read_files() -> Vec<String> {
+pub async fn clipboard_read_files() -> Vec<String> {
     read_clipboard_file_paths()
 }
 
 #[tauri::command]
-pub fn clipboard_write_files(paths: Vec<String>) -> bool {
+pub async fn clipboard_write_files(paths: Vec<String>) -> bool {
     write_clipboard_file_paths(&paths)
 }
 

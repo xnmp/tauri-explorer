@@ -20,6 +20,8 @@
     "perf:baseline": "npx tsx scripts/perf-check.ts --update",
     "clean": "bash scripts/clean-rebuild.sh",
     "clean:fast": "bash scripts/clean-rebuild.sh --no-rust",
+    "start": "bash scripts/dev.sh",
+    "start:clean": "bash scripts/dev.sh --clean",
     "tauri": "tauri"
   },
   "license": "MIT",

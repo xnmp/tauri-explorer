@@ -7,7 +7,7 @@
 
 use base64::Engine as _;
 use crate::error::AppError;
-use image::{DynamicImage, ImageFormat, ImageReader};
+use image::{ImageFormat, ImageReader};
 use sha2::{Sha256, Digest};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -79,7 +79,7 @@ fn save_to_cache(cache_key: &str, data: &[u8]) {
 /// Encode an RGB8 image to JPEG bytes at the given quality
 fn encode_jpeg(img: &image::RgbImage, quality: u8) -> Result<Vec<u8>, AppError> {
     let mut buffer = Cursor::new(Vec::new());
-    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, quality);
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, quality);
     encoder.encode(
         img.as_raw(),
         img.width(),

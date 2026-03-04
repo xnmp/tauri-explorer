@@ -51,8 +51,10 @@ fn set_compositor_opacity(opacity: f64) -> Result<bool, AppError> {
     }
     let pid = std::process::id();
     let clamped = opacity.clamp(0.1, 1.0);
+    let val = format!("{clamped:.2}");
+    // opacity takes "active inactive" as space-separated values
     let output = std::process::Command::new("hyprctl")
-        .args(["dispatch", "setprop", &format!("pid:{pid}"), "opacity", &format!("{clamped:.2}"), "lock"])
+        .args(["dispatch", "setprop", &format!("pid:{pid}"), "opacity", &format!("{val} {val}"), "lock"])
         .output()
         .map_err(|e| AppError::Other(format!("Failed to run hyprctl: {e}")))?;
     if !output.status.success() {

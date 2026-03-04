@@ -58,21 +58,14 @@
   // Frecency weight relative to fuzzy score (how much frecency influences ranking)
   const FRECENCY_WEIGHT = 50;
 
-  type RankedResult = SearchResult & { fuzzyScore: number; frecencyScore: number };
-
   /** Re-rank search results by combining fuzzy score with frecency. */
-  function rankWithFrecency(searchResults: SearchResult[]): RankedResult[] {
-    if (searchResults.length === 0) return [];
+  function rankWithFrecency(searchResults: SearchResult[]): SearchResult[] {
+    if (searchResults.length === 0) return searchResults;
     const scoreMap = frecencyStore.getScoreMap();
+    // Create ranked copies with boosted scores
     const ranked = searchResults.map((r) => {
       const frecency = scoreMap.get(r.path) ?? 0;
-      const frecencyBoost = Math.round(frecency * FRECENCY_WEIGHT);
-      return {
-        ...r,
-        fuzzyScore: r.score,
-        frecencyScore: frecency,
-        score: r.score + frecencyBoost,
-      };
+      return { ...r, score: r.score + Math.round(frecency * FRECENCY_WEIGHT) };
     });
     ranked.sort((a, b) => b.score - a.score);
     return ranked;
@@ -355,22 +348,11 @@
                   <span class="result-name">{result.name}</span>
                   <span class="result-path">{result.relativePath}</span>
                 </div>
-                <span class="score-breakdown">
-                  {#if result.kind === "directory"}
-                    <span class="result-kind">folder</span>
-                  {/if}
-                  <span class="score-detail" title="Combined score">
-                    {Math.round(result.score)}
-                  </span>
-                  <span class="score-sep">=</span>
-                  <span class="score-detail fuzzy" title="Fuzzy match score">
-                    f:{Math.round('fuzzyScore' in result ? (result as RankedResult).fuzzyScore : result.score)}
-                  </span>
-                  <span class="score-sep">+</span>
-                  <span class="score-detail frecency" title="Frecency boost (raw × {FRECENCY_WEIGHT})">
-                    r:{('frecencyScore' in result ? (result as RankedResult).frecencyScore : 0).toFixed(2)}
-                  </span>
-                </span>
+                {#if result.kind === "directory"}
+                  <span class="result-kind">folder</span>
+                {:else}
+                  <span class="result-score">{Math.round(result.score)}%</span>
+                {/if}
               </li>
             {/each}
           </ul>
@@ -587,43 +569,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .score-breakdown {
-    display: flex;
-    align-items: center;
-    gap: 2px;
-    font-size: 10px;
-    font-family: monospace;
-    color: var(--text-tertiary);
-    flex-shrink: 0;
-  }
-
-  .score-detail {
-    padding: 1px 4px;
-    background: var(--subtle-fill-secondary);
-    border-radius: 3px;
-  }
-
-  .score-detail.frecency {
-    color: #e5a00d;
-  }
-
-  .score-sep {
-    opacity: 0.4;
-  }
-
-  .result-item.selected .score-breakdown {
-    color: var(--text-on-accent);
-    opacity: 0.8;
-  }
-
-  .result-item.selected .score-detail {
-    background: rgba(255, 255, 255, 0.2);
-  }
-
-  .result-item.selected .score-detail.frecency {
-    color: inherit;
   }
 
   .result-score,

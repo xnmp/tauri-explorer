@@ -193,3 +193,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 - **Playwright + Chromium headless: `keyboard.press("Control+c")` hangs.** Chromium's native clipboard implementation blocks in headless mode. Use `page.evaluate(() => el.dispatchEvent(new KeyboardEvent(...)))` instead to test keyboard shortcuts that involve Ctrl+C/X/V.
 
 ---
+
+## tauri-usui: Theme Selector Dropdown Uses Browser-Default Colors
+
+**Key takeaways:**
+
+- Native `<select>` elements inherit CSS custom properties for the closed/collapsed state, but `<option>` elements inside the dropdown render with browser/OS default colors (white bg, black text) unless explicitly styled.
+- Fix: add `.theme-select option { background: var(--background-solid); color: var(--text-primary); }` so options match the active theme.
+- This is a common issue with Tauri/WebKitGTK — always explicitly style `<option>` elements when using native `<select>` in themed UIs.
+
+---

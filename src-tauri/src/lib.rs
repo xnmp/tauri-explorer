@@ -42,6 +42,37 @@ fn move_multiple_to_trash(paths: Vec<String>) -> Result<(), AppError> {
     trash::delete_all(&pathbufs).map_err(|e| AppError::Other(format!("Failed to move items to trash: {}", e)))
 }
 
+/// Restore files from the system trash by their original paths.
+/// Finds the most recently deleted item matching each path and restores it.
+#[tauri::command]
+fn restore_from_trash(paths: Vec<String>) -> Result<(), AppError> {
+    let trash_items = trash::os_limited::list()
+        .map_err(|e| AppError::Other(format!("Failed to list trash: {}", e)))?;
+
+    let mut to_restore = Vec::new();
+
+    for path_str in &paths {
+        let target = PathBuf::from(path_str);
+        // Find the most recently deleted item matching this original path
+        let mut matching: Vec<_> = trash_items
+            .iter()
+            .filter(|item| item.original_path() == target)
+            .collect();
+        matching.sort_by_key(|item| std::cmp::Reverse(item.time_deleted));
+
+        if let Some(item) = matching.into_iter().next() {
+            to_restore.push(item.clone());
+        }
+    }
+
+    if to_restore.is_empty() {
+        return Err(AppError::Other("No matching items found in trash".to_string()));
+    }
+
+    trash::os_limited::restore_all(to_restore)
+        .map_err(|e| AppError::Other(format!("Failed to restore from trash: {}", e)))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Fix webkit2gtk Wayland protocol errors on Linux compositors (Hyprland, Sway, etc.)
@@ -60,6 +91,7 @@ pub fn run() {
             // Trash operations
             move_to_trash,
             move_multiple_to_trash,
+            restore_from_trash,
             // File operations
             files::list_directory,
             files::invalidate_dir_cache,

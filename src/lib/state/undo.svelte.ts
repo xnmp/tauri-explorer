@@ -7,7 +7,7 @@
  * The stack is global to provide a unified undo experience.
  */
 
-import { renameEntry, moveEntry } from "$lib/api/files";
+import { renameEntry, moveEntry, restoreFromTrash, deleteMultipleEntries } from "$lib/api/files";
 import type { UndoAction } from "./types";
 
 function createUndoStore() {
@@ -84,6 +84,8 @@ async function executeUndo(
       return renameEntry(action.path, action.oldName);
     case "move":
       return moveEntry(action.destPath, action.originalDir);
+    case "delete":
+      return restoreFromTrash(action.paths);
     default: {
       const _exhaustive: never = action;
       return { ok: false, error: `Unknown undo action type: ${(_exhaustive as UndoAction).type}` };
@@ -108,6 +110,10 @@ async function executeRedo(
       const currentPath = action.originalDir + "/" + fileName;
       const destDir = action.destPath.substring(0, action.destPath.lastIndexOf("/"));
       return moveEntry(currentPath, destDir);
+    }
+    case "delete": {
+      // Undo restored from trash, so redo re-deletes
+      return deleteMultipleEntries(action.paths);
     }
     default: {
       const _exhaustive: never = action;

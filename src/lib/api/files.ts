@@ -119,6 +119,21 @@ export async function deleteMultipleEntries(paths: string[]): Promise<ApiResult<
 }
 
 /**
+ * Restore files from the system trash by their original paths.
+ *
+ * @param paths - Array of original paths to restore
+ * @returns Result indicating success or error message
+ */
+export async function restoreFromTrash(paths: string[]): Promise<ApiResult<void>> {
+  try {
+    await invoke("restore_from_trash", { paths });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
  * Copy a file or directory to a destination.
  *
  * @param source - Full path to source file/directory

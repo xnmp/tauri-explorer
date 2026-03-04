@@ -158,6 +158,10 @@ const mockCommands: Record<string, CommandHandler> = {
     }
   },
 
+  restore_from_trash: () => {
+    // Mock: no-op in tests (trash restore is OS-level)
+  },
+
   copy_entry: (args) => {
     const source = args.source as string;
     const destDir = args.destDir as string;

@@ -11,6 +11,8 @@
  */
 
 [data-theme="hacker"] {
+  color-scheme: dark;
+
   /* Theme metadata */
   --theme-name: "Hacker";
   --theme-description: "Green-on-black terminal aesthetic";

@@ -10,6 +10,8 @@
  */
 
 [data-theme="light"] {
+  color-scheme: light;
+
   /* Theme metadata */
   --theme-name: "Light";
   --theme-description: "Clean white theme (default)";

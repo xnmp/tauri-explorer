@@ -401,8 +401,13 @@
   }
 
   .theme-select {
-    padding: 6px 12px;
+    appearance: none;
+    -webkit-appearance: none;
+    padding: 6px 28px 6px 12px;
     background: var(--control-fill);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 5l3 3 3-3' fill='none' stroke='%238a95b8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
     border: 1px solid var(--control-stroke);
     border-radius: var(--radius-sm);
     font-family: inherit;
@@ -414,7 +419,7 @@
   }
 
   .theme-select:hover {
-    background: var(--control-fill-secondary);
+    background-color: var(--control-fill-secondary);
   }
 
   .theme-select:focus {

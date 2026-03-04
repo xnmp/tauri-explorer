@@ -11,6 +11,8 @@
  */
 
 [data-theme="dark"] {
+  color-scheme: dark;
+
   /* Theme metadata */
   --theme-name: "Dark";
   --theme-description: "Comfortable dark mode";

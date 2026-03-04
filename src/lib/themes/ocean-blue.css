@@ -6,6 +6,8 @@
  */
 
 [data-theme="ocean-blue"] {
+  color-scheme: dark;
+
   /* Theme metadata */
   --theme-name: "Ocean Blue";
   --theme-description: "Relaxing deep blue tones";

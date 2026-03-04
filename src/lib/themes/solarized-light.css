@@ -22,6 +22,8 @@
  */
 
 [data-theme="solarized-light"] {
+  color-scheme: light;
+
   /* Theme metadata */
   --theme-name: "Solarized Light";
   --theme-description: "Warm cream tones, easy on the eyes";

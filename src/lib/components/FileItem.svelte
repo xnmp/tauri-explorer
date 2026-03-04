@@ -219,7 +219,7 @@
     event.preventDefault();
     // Ctrl held = copy, otherwise move
     const copying = event.ctrlKey;
-    event.dataTransfer.dropEffect = copying ? "copy" : "move";
+    if (event.dataTransfer) event.dataTransfer.dropEffect = copying ? "copy" : "move";
     isDropTarget = true;
     isCopyDrop = copying;
   }

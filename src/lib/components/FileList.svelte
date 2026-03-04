@@ -255,7 +255,7 @@
     if (!event.dataTransfer?.types.includes("application/x-explorer-path") && !dragState.readCrossWindow()) return;
     event.preventDefault();
     const copying = event.ctrlKey;
-    event.dataTransfer.dropEffect = copying ? "copy" : "move";
+    if (event.dataTransfer) event.dataTransfer.dropEffect = copying ? "copy" : "move";
     dropTargets[entry.path] = true;
     copyDropTargets[entry.path] = copying;
   }
@@ -315,7 +315,7 @@
     if (target.closest(".file-item")) return;
 
     event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
     isDropTarget = true;
   }
 

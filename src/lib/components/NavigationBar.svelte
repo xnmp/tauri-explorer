@@ -126,9 +126,11 @@
         placeholder="Enter path..."
       />
     {:else}
-      <!-- Breadcrumb view - start with root -->
+      <!-- Breadcrumb view - start with root drive icon -->
       <button class="crumb root" onclick={(e) => { e.stopPropagation(); explorer.navigateTo("/"); }} aria-label="Root">
-        /
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M3 3.5C3 2.67 3.67 2 4.5 2H7L8.5 3.5H12.5C13.33 3.5 14 4.17 14 5V12C14 12.83 13.33 13.5 12.5 13.5H4.5C3.67 13.5 3 12.83 3 12V3.5Z" stroke="currentColor" stroke-width="1.2" fill="none"/>
+        </svg>
       </button>
 
       {#each explorer.breadcrumbs as segment, i (segment.path)}
@@ -273,9 +275,8 @@
   }
 
   .crumb.root {
-    padding: 2px 4px;
+    padding: 2px 3px;
     color: var(--text-tertiary);
-    font-weight: 500;
   }
 
   .crumb:hover {

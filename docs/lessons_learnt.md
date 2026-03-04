@@ -303,36 +303,27 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
-## tauri-15y5: Undo Delete
+## tauri-p09o: Include recent/frecency paths in Ctrl+P search
+
+**Problem:** Ctrl+P QuickOpen only searched under `~` via the Rust backend. Paths outside home (e.g. `/tmp/delete-debug`) never appeared even if recently visited.
 
 **Key takeaways:**
-- The `trash` crate v5 provides `trash::os_limited::list()` and `trash::os_limited::restore_all()` for restoring items from the system trash on Linux/Windows (not macOS).
-- `TrashItem::original_path()` combines `original_parent` + `name`. Sort by `time_deleted` (descending) to find the most recently trashed matching item.
-- When multiple items share the same original path, use only the most recent to avoid `RestoreTwins` errors.
+
+- **Client-side injection for supplementary results**: Rather than modifying the backend to support multiple search roots, inject matching entries from client-side stores (recentFilesStore, frecencyStore) directly into search results. Filter to paths outside the backend's search root to avoid duplicates.
+- **Show results immediately, don't wait for streaming**: External matches should be injected at search start, not only inside the streaming event handler. If the backend is slow or unavailable, users still see relevant results instantly.
+- **Separate collection from matching**: Split external candidate logic into `getExternalCandidates()` (collect + dedup) and `matchExternalCandidates()` (filter by query). Reusable and testable.
 
 ---
 
-## tauri-5dq0: Cross-Window Drag and Drop
+## tauri-jsn1.8: True window transparency on Linux (WebKitGTK) — BLOCKED
 
 **Key takeaways:**
-- `dataTransfer.getData()` is unreliable between separate Tauri webview contexts. Custom MIME types may not transfer cross-window.
-- Use `localStorage` as a cross-window communication channel since all Tauri webview windows share the same origin.
-- Both `dragover` and `drop` handlers need fallbacks: check `dataTransfer.types` first, then fall back to `localStorage` for cross-window scenarios.
 
----
-
-## tauri-cj2c: Directory Listing Freezing UI
-
-**Key takeaways:**
-- Synchronous (`pub fn`) Tauri commands run on the main thread and block the UI. Any directory with slow-to-stat entries (FUSE mounts, broken NFS symlinks) freezes the window.
-- Always use `pub async fn` for file I/O Tauri commands so they run on a background thread.
-
----
-
-## tauri-vz1q: Undo Doesn't Refresh Other Panes
-
-**Key takeaways:**
-- Undo/redo operations affect multiple directories (e.g., move: source and destination). After executing, broadcast affected directories via `broadcastFileChange` so other panes and windows refresh.
-- Return the action from undo/redo so the caller can compute affected directories from the action fields.
+- **`WEBKIT_DISABLE_COMPOSITING_MODE=1` kills transparency but prevents ghosting**: Removing it enables alpha rendering but causes wry #1524 — stale frames accumulate on every interaction, making the window progressively opaque. No clean app-side workaround exists.
+- **`WEBKIT_DISABLE_DMABUF_RENDERER=1` is safe**: Fixes DMA-BUF protocol errors without affecting rendering.
+- **CSS `backdrop-filter: blur()` does NOT blur the desktop**: Only operates within the DOM stacking context.
+- **Tauri `windowEffects`/`window-vibrancy` don't support Linux**: Windows/macOS only.
+- **`hyprctl dispatch setprop` opacity doesn't persist across focus changes** on Hyprland 0.53.3 despite using `"active inactive"` syntax and `lock`.
+- **Hyprland setprop syntax quirks**: `opacity` accepts space-separated `"active inactive"` values. Properties like `activeopacity`/`inactiveopacity` return "prop not found" on real windows despite accepting dummy addresses. Use `dispatch setprop` not `setprop` directly.
 
 ---

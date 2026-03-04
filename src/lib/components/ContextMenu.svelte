@@ -185,18 +185,22 @@
     oncontextmenu={(e) => {
       e.preventDefault();
       e.stopPropagation();
+      // Save coordinates before closing — Svelte needs a frame to remove
+      // the backdrop from the DOM, so elementFromPoint must run after that.
+      const { clientX, clientY } = e;
       contextMenuStore.close();
-      // Re-dispatch contextmenu to the element under the cursor so the
-      // app context menu reopens at the new position.
-      const el = document.elementFromPoint(e.clientX, e.clientY);
-      if (el) {
-        el.dispatchEvent(new MouseEvent("contextmenu", {
-          bubbles: true,
-          clientX: e.clientX,
-          clientY: e.clientY,
-          button: 2,
-        }));
-      }
+      requestAnimationFrame(() => {
+        const el = document.elementFromPoint(clientX, clientY);
+        if (el) {
+          el.dispatchEvent(new MouseEvent("contextmenu", {
+            bubbles: true,
+            cancelable: true,
+            clientX,
+            clientY,
+            button: 2,
+          }));
+        }
+      });
     }}
   ></div>
 

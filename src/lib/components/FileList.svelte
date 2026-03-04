@@ -475,6 +475,8 @@
       <!-- Compact List View -->
       <div class="list-view file-rows">
         {#each explorer.displayEntries as entry (entry.path)}
+          {@const iconColor = entry.kind !== "directory" ? getFileIconColor(entry) : undefined}
+          {@const iconCategory = entry.kind !== "directory" ? getFileIconCategory(entry) : undefined}
           <button
             class="list-item"
             class:directory={entry.kind === "directory"}
@@ -491,8 +493,6 @@
             ondragleave={() => handleItemDragLeave(entry)}
             ondrop={(e) => handleItemDrop(e, entry)}
           >
-            {@const iconColor = entry.kind !== "directory" ? getFileIconColor(entry) : undefined}
-            {@const iconCategory = entry.kind !== "directory" ? getFileIconCategory(entry) : undefined}
             <span class="list-icon" style:color={iconColor}>
               {#if entry.kind === "directory"}
                 <svg width="16" height="16" viewBox="0 0 18 18" fill="none">

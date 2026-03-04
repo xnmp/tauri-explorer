@@ -188,6 +188,7 @@ describe("copyEntry", () => {
     expect(mockInvoke).toHaveBeenCalledWith("copy_entry", {
       source: "/source/file.txt",
       destDir: "/dest",
+      overwrite: false,
     });
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -217,6 +218,7 @@ describe("moveEntry", () => {
     expect(mockInvoke).toHaveBeenCalledWith("move_entry", {
       source: "/source/file.txt",
       destDir: "/dest",
+      overwrite: false,
     });
     expect(result.ok).toBe(true);
     if (result.ok) {

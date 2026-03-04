@@ -4,10 +4,10 @@
   Issue: tauri-u00y, tauri-nxfi
 -->
 <script lang="ts">
-  import { tick } from "svelte";
+  import { tick, onMount } from "svelte";
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { fetchDirectory } from "$lib/api/files";
+  import { fetchDirectory, getHomeDirectory } from "$lib/api/files";
   import type { FileEntry } from "$lib/domain/file";
 
   interface Props {
@@ -15,6 +15,27 @@
   }
 
   let { explorer = defaultExplorer }: Props = $props();
+
+  // Home directory detection for breadcrumb collapsing
+  let homeDir = $state<string | null>(null);
+
+  onMount(async () => {
+    const result = await getHomeDirectory();
+    if (result.ok) homeDir = result.data;
+  });
+
+  const homeParts = $derived(homeDir ? homeDir.split("/").filter(Boolean) : []);
+
+  const isUnderHome = $derived.by(() => {
+    const crumbs = explorer.breadcrumbs;
+    if (!homeDir || crumbs.length === 0) return false;
+    return crumbs.length >= homeParts.length &&
+      crumbs[homeParts.length - 1]?.path === homeDir;
+  });
+
+  const visibleBreadcrumbs = $derived(
+    isUnderHome ? explorer.breadcrumbs.slice(homeParts.length) : explorer.breadcrumbs
+  );
 
   let editingPath = $state(false);
   let editedPath = $state("");
@@ -269,14 +290,29 @@
         </div>
       {/if}
     {:else}
-      <!-- Breadcrumb view - start with root drive icon -->
-      <button class="crumb root" onclick={(e) => { e.stopPropagation(); explorer.navigateTo("/"); }} aria-label="Root">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M3 3.5C3 2.67 3.67 2 4.5 2H7L8.5 3.5H12.5C13.33 3.5 14 4.17 14 5V12C14 12.83 13.33 13.5 12.5 13.5H4.5C3.67 13.5 3 12.83 3 12V3.5Z" stroke="currentColor" stroke-width="1.2" fill="none"/>
-        </svg>
-      </button>
+      <!-- Breadcrumb view -->
+      {#if isUnderHome}
+        <!-- Home icon: navigates to user's home directory -->
+        <button class="crumb root" onclick={(e) => { e.stopPropagation(); explorer.navigateTo(homeDir!); }} aria-label="Home folder">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path
+              d="M8 1.5L14.5 7V14C14.5 14.2761 14.2761 14.5 14 14.5H10V10C10 9.72386 9.77614 9.5 9.5 9.5H6.5C6.22386 9.5 6 9.72386 6 10V14.5H2C1.72386 14.5 1.5 14.2761 1.5 14V7L8 1.5Z"
+              stroke="currentColor"
+              stroke-width="1.25"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
+      {:else}
+        <!-- Root folder icon -->
+        <button class="crumb root" onclick={(e) => { e.stopPropagation(); explorer.navigateTo("/"); }} aria-label="Root">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M3 3.5C3 2.67 3.67 2 4.5 2H7L8.5 3.5H12.5C13.33 3.5 14 4.17 14 5V12C14 12.83 13.33 13.5 12.5 13.5H4.5C3.67 13.5 3 12.83 3 12V3.5Z" stroke="currentColor" stroke-width="1.2" fill="none"/>
+          </svg>
+        </button>
+      {/if}
 
-      {#each explorer.breadcrumbs as segment, i (segment.path)}
+      {#each visibleBreadcrumbs as segment, i (segment.path)}
         <span class="separator">
           <svg class="chevron-icon" width="10" height="10" viewBox="0 0 10 10" fill="none">
             <path d="M3 2L6 5L3 8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
@@ -288,7 +324,7 @@
         </span>
         <button
           class="crumb"
-          class:current={i === explorer.breadcrumbs.length - 1}
+          class:current={i === visibleBreadcrumbs.length - 1}
           onclick={(e) => { e.stopPropagation(); explorer.navigateTo(segment.path); }}
         >
           {segment.name}

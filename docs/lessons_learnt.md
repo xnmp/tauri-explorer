@@ -336,3 +336,12 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 - Return the action from undo/redo so the caller can compute affected directories from the action fields.
 
 ---
+
+## tauri-8gpm: New Window Inherits from Last Focused Window
+
+**Key takeaways:**
+- All Tauri WebviewWindows share the same `localStorage` (same origin). This means `windowTabsManager.init()` was restoring the **parent's saved tab state** instead of using the child window's URL-provided path. The URL params (`?path=...&viewMode=...`) were completely ignored.
+- Fix: child windows (those with `?path=` URL param) pass `skipRestore=true` to `init()`, creating a fresh tab at the intended path instead of restoring saved state.
+- General lesson: in multi-window apps with shared localStorage, saved-state restoration logic must distinguish between cold starts (restore) and child windows (use provided params).
+
+---

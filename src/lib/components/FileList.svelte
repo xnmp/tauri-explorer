@@ -11,6 +11,7 @@
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { openFile, moveEntry, copyEntry } from "$lib/api/files";
   import { broadcastFileChange, parentDir } from "$lib/state/file-events";
+  import { undoStore } from "$lib/state/undo.svelte";
   import { dragState } from "$lib/state/drag.svelte";
   import FileItem from "./FileItem.svelte";
   import VirtualList from "./VirtualList.svelte";
@@ -274,6 +275,14 @@
       : await moveEntry(sourcePath, entry.path);
 
     if (result.ok) {
+      if (!isCopyOp) {
+        undoStore.push({
+          type: "move",
+          sourcePath,
+          destPath: result.data.path,
+          originalDir: parentDir(sourcePath),
+        });
+      }
       paneNav?.refreshAllPanes();
       broadcastFileChange([parentDir(sourcePath), entry.path]);
     } else {
@@ -326,6 +335,12 @@
 
     const result = await moveEntry(sourcePath, currentPath);
     if (result.ok) {
+      undoStore.push({
+        type: "move",
+        sourcePath,
+        destPath: result.data.path,
+        originalDir: sourceDir,
+      });
       // Refresh all panes to reflect the move
       if (paneNav) {
         paneNav.refreshAllPanes();

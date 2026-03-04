@@ -13,6 +13,7 @@
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { moveEntry, copyEntry } from "$lib/api/files";
   import { broadcastFileChange, parentDir } from "$lib/state/file-events";
+  import { undoStore } from "$lib/state/undo.svelte";
   import { dragState } from "$lib/state/drag.svelte";
 
   interface Props {
@@ -248,6 +249,14 @@
       : await moveEntry(sourcePath, entry.path);
 
     if (result.ok) {
+      if (!isCopyOp) {
+        undoStore.push({
+          type: "move",
+          sourcePath,
+          destPath: result.data.path,
+          originalDir: parentDir(sourcePath),
+        });
+      }
       // Refresh all panes to reflect the operation
       if (paneNav) {
         paneNav.refreshAllPanes();

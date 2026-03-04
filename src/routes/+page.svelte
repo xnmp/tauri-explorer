@@ -153,10 +153,17 @@
 
     // Initialize window tabs with directory from query param or home
     (async () => {
-      const urlPath = new URLSearchParams(window.location.search).get("path");
+      const searchParams = new URLSearchParams(window.location.search);
+      const urlPath = searchParams.get("path");
+      const urlViewMode = searchParams.get("viewMode") as import("$lib/state/types").ViewMode | null;
       const homeResult = await getHomeDirectory();
       const homePath = homeResult.ok ? homeResult.data : "/home";
-      windowTabsManager.init(urlPath || homePath);
+      const tab = windowTabsManager.init(urlPath || homePath);
+      // Apply inherited view mode from parent window
+      if (urlViewMode && tab) {
+        const explorer = windowTabsManager.getActiveExplorer();
+        explorer?.setViewMode(urlViewMode);
+      }
       performance.mark("app-first-dir");
       if (import.meta.env.DEV) {
         performance.measure("startup-to-first-dir", "app-mount-start", "app-first-dir");

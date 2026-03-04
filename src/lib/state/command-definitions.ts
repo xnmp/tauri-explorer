@@ -18,11 +18,13 @@ import { dialogStore } from "./dialogs.svelte";
 import { copyEntry, moveEntry, writeTextFile, openInTerminal, clipboardPasteImage } from "$lib/api/files";
 import type { ViewMode } from "./types";
 
-/** Open a new explorer window at the given path */
-function openNewWindow(path: string): void {
+/** Open a new explorer window at the given path with optional view mode */
+function openNewWindow(path: string, viewMode?: ViewMode): void {
   const label = "explorer-" + Date.now();
   const baseUrl = window.location.origin + window.location.pathname;
-  const url = `${baseUrl}?path=${encodeURIComponent(path)}`;
+  const params = new URLSearchParams({ path });
+  if (viewMode) params.set("viewMode", viewMode);
+  const url = `${baseUrl}?${params.toString()}`;
   new WebviewWindow(label, {
     url,
     width: 1200,
@@ -479,7 +481,7 @@ const windowCommands: Command[] = [
     handler: () => {
       const explorer = getActiveExplorer();
       const path = explorer?.state.currentPath || "/home";
-      openNewWindow(path);
+      openNewWindow(path, explorer?.viewMode);
     },
   },
 ];

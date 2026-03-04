@@ -42,6 +42,26 @@ fn move_multiple_to_trash(paths: Vec<String>) -> Result<(), AppError> {
     trash::delete_all(&pathbufs).map_err(|e| AppError::Other(format!("Failed to move items to trash: {}", e)))
 }
 
+/// Set window opacity via the compositor (Hyprland only).
+/// Falls back silently on non-Hyprland systems.
+#[tauri::command]
+fn set_compositor_opacity(opacity: f64) -> Result<bool, AppError> {
+    if std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_err() {
+        return Ok(false);
+    }
+    let pid = std::process::id();
+    let clamped = opacity.clamp(0.1, 1.0);
+    let output = std::process::Command::new("hyprctl")
+        .args(["dispatch", "setprop", &format!("pid:{pid}"), "opacity", &format!("{clamped:.2}"), "lock"])
+        .output()
+        .map_err(|e| AppError::Other(format!("Failed to run hyprctl: {e}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(AppError::Other(format!("hyprctl failed: {stderr}")));
+    }
+    Ok(true)
+}
+
 /// Restore files from the system trash by their original paths.
 /// Finds the most recently deleted item matching each path and restores it.
 #[tauri::command]
@@ -75,16 +95,14 @@ fn restore_from_trash(paths: Vec<String>) -> Result<(), AppError> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Fix webkit2gtk rendering issues on Linux compositors (Hyprland, Sway, etc.)
+    // WEBKIT_DISABLE_COMPOSITING_MODE: prevents ghosting artifacts with transparent windows.
     // WEBKIT_DISABLE_DMABUF_RENDERER: fixes Wayland protocol errors on some GPU/driver combos.
-    // WEBKIT_DISABLE_COMPOSITING_MODE was here but removed — it blocks alpha channel
-    // rendering, preventing true window transparency (see-through to desktop).
-    // GDK_BACKEND=wayland: avoid XWayland which breaks GTK RGBA transparency.
+    // Real window transparency is handled compositor-side (e.g. hyprctl setprop opacity).
     #[cfg(target_os = "linux")]
     {
+        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-        if std::env::var("WAYLAND_DISPLAY").is_ok() {
-            std::env::set_var("GDK_BACKEND", "wayland");
-        }
     }
 
     tauri::Builder::default()
@@ -97,6 +115,8 @@ pub fn run() {
             move_to_trash,
             move_multiple_to_trash,
             restore_from_trash,
+            // Window
+            set_compositor_opacity,
             // File operations
             files::list_directory,
             files::invalidate_dir_cache,

@@ -16,6 +16,7 @@
   import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { copyEntry, moveEntry, getHomeDirectory } from "$lib/api/files";
+  import { invoke } from "@tauri-apps/api/core";
   import { initFileChangeListener, cleanupFileChangeListener, broadcastFileChange, parentDir } from "$lib/state/file-events";
   import "$lib/themes/index.css";
   import TitleBar from "$lib/components/TitleBar.svelte";
@@ -140,15 +141,11 @@
   });
 
   // Apply background opacity reactively (for window transparency)
-  // Disable backdrop-filter when opacity < 1 — WebKitGTK creates an opaque
-  // compositing surface for backdrop-filter, blocking true window transparency.
   $effect(() => {
     const opacity = settingsStore.backgroundOpacity / 100;
     document.documentElement.style.setProperty("--bg-opacity", String(opacity));
-    document.documentElement.style.setProperty(
-      "--mica-filter",
-      opacity >= 1 ? "blur(60px) saturate(125%)" : "none",
-    );
+    // Set real compositor-level transparency (Hyprland via hyprctl)
+    invoke("set_compositor_opacity", { opacity }).catch(() => {});
   });
 
   onMount(() => {
@@ -377,10 +374,8 @@
     flex-direction: column;
     height: 100vh;
     background: color-mix(in srgb, var(--background-mica) calc(var(--bg-opacity, 1) * 100%), transparent);
-    /* backdrop-filter creates an opaque compositing surface in WebKitGTK,
-       blocking true window transparency. Only enable when fully opaque. */
-    backdrop-filter: var(--mica-filter, blur(60px) saturate(125%));
-    -webkit-backdrop-filter: var(--mica-filter, blur(60px) saturate(125%));
+    backdrop-filter: blur(60px) saturate(125%);
+    -webkit-backdrop-filter: blur(60px) saturate(125%);
   }
 
   /* Spacer div that replaces the titlebar's space when no titlebar is

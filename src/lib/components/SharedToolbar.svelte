@@ -129,10 +129,11 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 12px;
+    padding: 8px 16px;
     background: var(--background-card);
-    border-bottom: 1px solid var(--divider);
-    height: 44px;
+    border-bottom: none;
+    box-shadow: 0 1px 0 var(--divider);
+    height: 48px;
     position: relative;
     z-index: 10;
   }
@@ -143,24 +144,25 @@
 
   .search-container {
     flex-shrink: 0;
-    width: 220px;
+    width: 240px;
   }
 
   .search-box {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 0 10px;
-    height: 32px;
+    padding: 0 12px;
+    height: 34px;
     background: var(--control-fill);
     border: 1px solid var(--control-stroke);
-    border-radius: 4px;
+    border-radius: var(--radius-pill);
     transition: all var(--transition-fast);
   }
 
   .search-box:focus-within {
     background: var(--control-fill-secondary);
     border-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 15%, transparent);
   }
 
   .search-icon {
@@ -194,14 +196,14 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 36px;
-    height: 32px;
+    width: 34px;
+    height: 30px;
     background: transparent;
     border: none;
     color: var(--text-secondary);
     cursor: pointer;
     transition: all var(--transition-normal);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
   }
 
   .control-btn:hover {

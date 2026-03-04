@@ -336,3 +336,16 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 - General lesson: in multi-window apps with shared localStorage, saved-state restoration logic must distinguish between cold starts (restore) and child windows (use provided params).
 
 ---
+
+## tauri-vup6: UI Facelift - Premium Polish
+
+**Key takeaways:**
+- CSS `color-mix(in srgb, var(--accent) 8%, transparent)` is an effective way to create accent-tinted selection backgrounds that adapt to any theme's accent color, avoiding hardcoded RGBA values per theme.
+- When doing a comprehensive CSS-only facelift (tokens + themes + components), all changes should flow through CSS custom properties. This keeps the blast radius contained — no JS changes needed, and themes just override the variables.
+- `--radius-pill: 999px` for pill-shaped elements (search bars, breadcrumbs, scrollbar thumbs) provides a significant premium feel upgrade with minimal code change.
+- Uppercase section labels (`text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px`) dramatically improve visual hierarchy in sidebars and column headers.
+- Replacing `border-bottom` with `box-shadow` on toolbars/status bars creates softer, more premium edges.
+- New theme creation: when adding a theme (Aurora), remember to add the `@import` in `index.css` — the theme auto-discovery reads `[data-theme="..."]` selectors from imported CSS.
+- Multi-layer shadows (`--shadow-card`) add depth without being heavy. Each theme should define its own shadow intensity based on its background darkness.
+
+---

@@ -470,8 +470,7 @@
   .sidebar {
     flex: 1;
     background: var(--background-card-secondary);
-    border-right: none;
-    box-shadow: 1px 0 0 var(--divider);
+    border-right: 1px solid var(--divider);
     overflow-y: auto;
     display: flex;
     flex-direction: column;
@@ -506,7 +505,7 @@
   .divider {
     height: 1px;
     background: var(--divider);
-    margin: 6px 12px;
+    margin: 4px 8px;
   }
 
   .section-header {
@@ -518,11 +517,9 @@
     border: none;
     border-radius: 4px;
     font-family: inherit;
-    font-size: var(--font-size-caption);
-    font-weight: var(--font-weight-semibold);
-    color: var(--text-tertiary);
-    text-transform: uppercase;
-    letter-spacing: var(--letter-spacing-wide);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
     cursor: pointer;
     transition: background var(--transition-fast);
     text-align: left;
@@ -553,10 +550,10 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 7px 12px;
+    padding: 6px 10px;
     background: transparent;
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: 4px;
     font-family: inherit;
     font-size: 13px;
     color: var(--text-primary);
@@ -564,7 +561,7 @@
     transition: background var(--transition-fast);
     text-align: left;
     width: 100%;
-    min-height: 34px;
+    min-height: 32px;
   }
 
   .nav-item:hover:not(:disabled) {
@@ -641,16 +638,16 @@
   }
 
   .usage-bar {
-    height: 4px;
+    height: 3px;
     background: var(--control-fill-tertiary);
-    border-radius: var(--radius-pill);
+    border-radius: 2px;
     overflow: hidden;
   }
 
   .usage-fill {
     height: 100%;
     background: var(--accent);
-    border-radius: var(--radius-pill);
+    border-radius: 2px;
     transition: width 0.3s ease;
   }
 

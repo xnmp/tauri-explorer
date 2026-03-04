@@ -1,5 +1,5 @@
 /**
- * Light Theme - Premium light mode
+ * Light Theme - Windows 11 Style
  *
  * To create your own theme:
  * 1. Copy this file and rename it (e.g., my-theme.css)
@@ -14,31 +14,31 @@
 
   /* Theme metadata */
   --theme-name: "Light";
-  --theme-description: "Clean premium light theme";
+  --theme-description: "Clean white theme (default)";
   --theme-order: 0;
 
-  /* Accent colors - deeper blue */
-  --accent: #0066cc;
+  /* Accent colors - your brand/highlight color */
+  --accent: #0078d4;
   --accent-light: #60cdff;
-  --accent-dark: #004a94;
+  --accent-dark: #005a9e;
 
-  /* Text colors - warmer */
-  --text-primary: #1d1d1f;
+  /* Text colors */
+  --text-primary: #1a1a1a;
   --text-secondary: #5d5d5d;
-  --text-tertiary: #aeaeb2;
+  --text-tertiary: #8a8a8a;
   --text-on-accent: #ffffff;
 
-  /* Background colors - Apple warm gray */
-  --background-solid: #f5f5f7;
-  --background-mica: rgba(245, 245, 247, 0.88);
-  --background-acrylic: rgba(255, 255, 255, 0.72);
-  --background-card: rgba(255, 255, 255, 0.72);
-  --background-card-secondary: rgba(249, 249, 251, 0.55);
+  /* Background colors */
+  --background-solid: #f3f3f3;
+  --background-mica: rgba(243, 243, 243, 0.85);
+  --background-acrylic: rgba(255, 255, 255, 0.7);
+  --background-card: rgba(255, 255, 255, 0.7);
+  --background-card-secondary: rgba(249, 249, 249, 0.5);
 
   /* Surface/border colors */
-  --surface-stroke: rgba(0, 0, 0, 0.05);
-  --surface-stroke-flyout: rgba(0, 0, 0, 0.03);
-  --divider: rgba(0, 0, 0, 0.06);
+  --surface-stroke: rgba(0, 0, 0, 0.0578);
+  --surface-stroke-flyout: rgba(0, 0, 0, 0.0326);
+  --divider: rgba(0, 0, 0, 0.0803);
 
   /* Control/input backgrounds */
   --control-fill: rgba(255, 255, 255, 0.7);
@@ -48,12 +48,12 @@
 
   /* Subtle hover/active fills */
   --subtle-fill: transparent;
-  --subtle-fill-secondary: rgba(0, 0, 0, 0.035);
-  --subtle-fill-tertiary: rgba(0, 0, 0, 0.022);
+  --subtle-fill-secondary: rgba(0, 0, 0, 0.0373);
+  --subtle-fill-tertiary: rgba(0, 0, 0, 0.0241);
 
   /* Control borders */
-  --control-stroke: rgba(0, 0, 0, 0.05);
-  --control-stroke-secondary: rgba(0, 0, 0, 0.14);
+  --control-stroke: rgba(0, 0, 0, 0.0578);
+  --control-stroke-secondary: rgba(0, 0, 0, 0.1622);
 
   /* Focus indicators */
   --focus-stroke-outer: #000000;
@@ -64,21 +64,12 @@
   --system-success: #0f7b0f;
   --system-caution: #9d5d00;
 
-  /* Shadows - multi-layer for depth */
-  --shadow-flyout: 0 8px 24px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
-  --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.18), 0 4px 24px rgba(0, 0, 0, 0.1);
-  --shadow-tooltip: 0 4px 12px rgba(0, 0, 0, 0.1);
-  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.05), 0 0 1px rgba(0, 0, 0, 0.03);
-  --shadow-subtle: 0 1px 2px rgba(0, 0, 0, 0.03);
+  /* Shadows */
+  --shadow-flyout: 0 8px 16px rgba(0, 0, 0, 0.14);
+  --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.24), 0 2px 21px rgba(0, 0, 0, 0.18);
+  --shadow-tooltip: 0 4px 8px rgba(0, 0, 0, 0.14);
 
-  /* Mica overlay */
-  --mica-overlay: linear-gradient(
-    170deg,
-    rgba(255, 255, 255, 0.06) 0%,
-    transparent 35%
-  );
-
-  /* Icon colors - warmer gold */
-  --icon-folder: #e8a800;
+  /* Icon colors - themeable */
+  --icon-folder: #ffb900;
   /* --icon-file-tint: unset; when set, overrides all file icon colors */
 }

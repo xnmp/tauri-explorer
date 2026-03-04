@@ -58,13 +58,12 @@
   .titlebar {
     display: flex;
     align-items: center;
-    height: 38px;
+    height: 36px;
     background: var(--background-card);
     user-select: none;
     flex-shrink: 0;
     position: relative;
-    border-bottom: none;
-    box-shadow: 0 1px 0 var(--surface-stroke);
+    border-bottom: 1px solid var(--surface-stroke);
   }
 
   /* Subtle gradient overlay for depth */

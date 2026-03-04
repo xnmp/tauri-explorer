@@ -116,12 +116,12 @@
   /* Active border only shows in dual pane mode */
   .explorer-pane.active {
     border-color: var(--accent);
-    box-shadow: var(--shadow-card, 0 1px 3px rgba(0, 0, 0, 0.06)), 0 0 6px -2px var(--accent);
+    box-shadow: 0 0 6px -2px var(--accent);
   }
 
   /* Inactive pane in dual pane mode */
   .explorer-pane.inactive {
-    opacity: 0.7;
+    opacity: 0.75;
     border-color: var(--divider);
   }
 

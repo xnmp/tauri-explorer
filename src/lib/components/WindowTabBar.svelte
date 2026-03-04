@@ -172,12 +172,12 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    height: 30px;
+    height: 28px;
     padding: 0 10px 0 12px;
     background: transparent;
-    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    border-radius: 6px 6px 0 0;
     font-size: 12px;
-    font-weight: var(--font-weight-medium);
+    font-weight: 600;
     letter-spacing: -0.01em;
     color: var(--text-tertiary);
     cursor: pointer;
@@ -248,7 +248,7 @@
   .tab.active {
     background: var(--background-card);
     color: var(--text-primary);
-    font-weight: var(--font-weight-semibold);
+    font-weight: 700;
     border-color: var(--surface-stroke);
     box-shadow:
       0 -1px 3px rgba(0, 0, 0, 0.05),
@@ -330,8 +330,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 30px;
-    height: 30px;
+    width: 28px;
+    height: 28px;
     margin-bottom: 2px;
     margin-left: 4px;
     background: transparent;

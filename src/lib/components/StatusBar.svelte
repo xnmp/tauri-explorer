@@ -56,12 +56,11 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    height: 28px;
-    padding: 0 16px;
+    height: 24px;
+    padding: 0 12px;
     background: var(--background-card-secondary);
-    border-top: none;
-    box-shadow: 0 -1px 0 var(--divider);
-    font-size: var(--font-size-caption);
+    border-top: 1px solid var(--divider);
+    font-size: 11px;
     color: var(--text-secondary);
     flex-shrink: 0;
     user-select: none;
@@ -71,7 +70,7 @@
   .status-left {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     min-width: 0;
   }
 

@@ -79,12 +79,12 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 30px;
-    height: 30px;
+    width: 28px;
+    height: 28px;
     padding: 0;
     background: transparent;
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: 4px;
     color: var(--text-primary);
     cursor: pointer;
     transition: background var(--transition-fast);
@@ -103,12 +103,12 @@
     top: 100%;
     right: 0;
     margin-top: 4px;
-    min-width: 180px;
-    padding: 6px;
+    min-width: 160px;
+    padding: 4px;
     background: var(--background-acrylic);
     backdrop-filter: blur(60px) saturate(125%);
     border: 1px solid var(--surface-stroke-flyout);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-md);
     box-shadow: var(--shadow-flyout);
     z-index: 100;
   }
@@ -139,9 +139,9 @@
   }
 
   .theme-preview {
-    width: 22px;
-    height: 22px;
-    border-radius: var(--radius-sm);
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
     border: 1px solid;
     display: flex;
     align-items: flex-end;

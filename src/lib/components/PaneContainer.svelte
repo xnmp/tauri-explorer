@@ -112,23 +112,19 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 6px;
-    background: transparent;
-    border-left: 1px solid var(--divider);
-    border-right: 1px solid var(--divider);
+    width: 8px;
+    background: var(--divider);
     cursor: col-resize;
     flex-shrink: 0;
-    transition: background var(--transition-fast), border-color var(--transition-fast);
+    transition: background var(--transition-fast);
   }
 
   .pane-divider:hover {
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
-    border-color: var(--accent);
+    background: var(--accent);
   }
 
   .pane-container.resizing .pane-divider {
-    background: color-mix(in srgb, var(--accent) 20%, transparent);
-    border-color: var(--accent);
+    background: var(--accent);
   }
 
   .divider-handle {

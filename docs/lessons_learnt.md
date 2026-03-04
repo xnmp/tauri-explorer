@@ -4,6 +4,24 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## tauri-e2mn: Tiles View Thumbnail Freeze (Progressive Loading)
+
+**Key takeaways:**
+
+- Sync `#[tauri::command]` functions that do heavy I/O (image decode) run on the **Tauri main thread**, blocking all IPC. Even with frontend concurrency limiting, each call freezes the UI during decode. Fix: make commands `async fn` and wrap blocking work in `tokio::task::spawn_blocking`.
+- Two-tier progressive thumbnails (16x16 micro + 128x128 full) eliminate perceived lag. The micro thumbnail uses `Nearest` filter (~1ms), and **pre-warms** the full thumbnail cache as a side effect — since the image is already decoded in memory, generating both sizes is nearly free. The subsequent full thumbnail request becomes a cache hit (just file read + base64).
+- **Batch IPC is critical for 100+ images.** Individual IPC calls (even with frontend concurrency pools) add per-call overhead. A batch endpoint (`get_micro_thumbnails_batch`) sends all paths in one IPC call; the backend spawns parallel `tokio::task::spawn_blocking` tasks. Result: 100 large PNGs (3-7MB each) in 107ms release (vs 350ms sequential).
+- **`DynamicImage::thumbnail()` is faster than `resize(Triangle)`** for large downscales. `thumbnail()` uses a two-pass optimization: fast nearest-neighbor to ~2x target, then Lanczos3 for quality. `resize(Triangle)` was 2x slower in benchmarks.
+- **Frontend debounced batch scheduler**: Collect thumbnail requests over a 16ms window (one frame), then fire one batch IPC call. This naturally batches IntersectionObserver callbacks that fire together when entering a new directory.
+- The `image` crate's `JpegEncoder` requires `&mut` binding even though `encode()` takes `&mut self` — easy to miss.
+- **Performance benchmarks (100 large PNGs, 3-7MB each, release mode):**
+  - Sequential micro: 350ms total (3.5ms/image)
+  - Parallel micro (12 threads): 107ms total (1.1ms/image effective)
+  - Full from warm cache: 1ms total for all 100 images
+  - Frontend render: 20ms for first 59 tiles, 200ms for all 100 (progressive RAF chunking)
+
+---
+
 ## tauri-explorer-rdra / tauri-explorer-za55: OS Clipboard Integration
 
 **Key takeaways:**
@@ -334,18 +352,5 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 - All Tauri WebviewWindows share the same `localStorage` (same origin). This means `windowTabsManager.init()` was restoring the **parent's saved tab state** instead of using the child window's URL-provided path. The URL params (`?path=...&viewMode=...`) were completely ignored.
 - Fix: child windows (those with `?path=` URL param) pass `skipRestore=true` to `init()`, creating a fresh tab at the intended path instead of restoring saved state.
 - General lesson: in multi-window apps with shared localStorage, saved-state restoration logic must distinguish between cold starts (restore) and child windows (use provided params).
-
----
-
-## tauri-vup6: UI Facelift - Premium Polish
-
-**Key takeaways:**
-- CSS `color-mix(in srgb, var(--accent) 8%, transparent)` is an effective way to create accent-tinted selection backgrounds that adapt to any theme's accent color, avoiding hardcoded RGBA values per theme.
-- When doing a comprehensive CSS-only facelift (tokens + themes + components), all changes should flow through CSS custom properties. This keeps the blast radius contained — no JS changes needed, and themes just override the variables.
-- `--radius-pill: 999px` for pill-shaped elements (search bars, breadcrumbs, scrollbar thumbs) provides a significant premium feel upgrade with minimal code change.
-- Uppercase section labels (`text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px`) dramatically improve visual hierarchy in sidebars and column headers.
-- Replacing `border-bottom` with `box-shadow` on toolbars/status bars creates softer, more premium edges.
-- New theme creation: when adding a theme (Aurora), remember to add the `@import` in `index.css` — the theme auto-discovery reads `[data-theme="..."]` selectors from imported CSS.
-- Multi-layer shadows (`--shadow-card`) add depth without being heavy. Each theme should define its own shadow intensity based on its background darkness.
 
 ---

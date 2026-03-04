@@ -872,11 +872,9 @@
     border: none;
     border-radius: 3px;
     font-family: inherit;
-    font-size: var(--font-size-caption);
-    font-weight: var(--font-weight-semibold);
-    color: var(--text-tertiary);
-    text-transform: uppercase;
-    letter-spacing: var(--letter-spacing-wide);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
     cursor: pointer;
     transition: all var(--transition-fast);
     text-align: left;
@@ -924,9 +922,8 @@
     background: var(--background-acrylic);
     backdrop-filter: blur(20px);
     border: 1px solid var(--surface-stroke);
-    border-radius: var(--radius-pill);
+    border-radius: var(--radius-md);
     font-size: var(--font-size-caption);
-    padding: var(--spacing-sm) var(--spacing-lg);
     box-shadow: var(--shadow-tooltip);
     animation: toastIn 200ms cubic-bezier(0, 0, 0, 1);
   }
@@ -1025,8 +1022,8 @@
     width: 100%;
     background: transparent;
     border: 1px solid transparent;
-    border-left-width: var(--selection-indicator-width);
-    border-radius: var(--radius-sm);
+    border-left-width: 2px;
+    border-radius: 4px;
     cursor: pointer;
     text-align: left;
     font-family: inherit;
@@ -1040,10 +1037,10 @@
   }
 
   .list-item.selected {
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    background: var(--subtle-fill-secondary);
     border-color: transparent;
     border-left-color: var(--accent);
-    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    border-radius: 0 4px 4px 0;
   }
 
   .list-item.drop-target {
@@ -1074,10 +1071,10 @@
   /* Tiles View */
   .tiles-view {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
     grid-auto-rows: min-content;
     align-content: start;
-    gap: 6px;
+    gap: 4px;
     padding: 12px;
     overflow-y: auto;
     flex: 1;
@@ -1088,11 +1085,11 @@
     flex-direction: column;
     align-items: center;
     gap: 6px;
-    padding: 12px 8px 10px;
+    padding: 10px 6px 8px;
     background: transparent;
     border: 1px solid transparent;
-    border-bottom-width: var(--selection-indicator-width);
-    border-radius: var(--radius-md);
+    border-bottom-width: 2px;
+    border-radius: 6px;
     cursor: pointer;
     text-align: center;
     font-family: inherit;
@@ -1112,10 +1109,10 @@
   }
 
   .tile-item.selected {
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    background: var(--subtle-fill-secondary);
     border-color: transparent;
     border-bottom-color: var(--accent);
-    border-radius: var(--radius-md) var(--radius-md) 2px 2px;
+    border-radius: 6px 6px 2px 2px;
   }
 
   .tile-item.selected:hover {

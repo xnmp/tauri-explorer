@@ -27,6 +27,7 @@ import {
   type DirectoryEntriesEvent,
 } from "$lib/api/files";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { broadcastFileChange } from "./file-events";
 import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/domain/file";
 import type { SelectOptions, ViewMode } from "./types";
 import * as selection from "./selection";
@@ -454,6 +455,7 @@ function createExplorerState() {
       coreState.selectionAnchorIndex = idx >= 0 ? idx : null;
       isCreatingFolder = false;
       dialogStore.closeNewFolder();
+      broadcastFileChange([coreState.currentPath]);
       return null;
     }
     return result.error;
@@ -568,6 +570,13 @@ function createExplorerState() {
       if (isCut) clipboardStore.clear();
       if (newEntries.length > 0) {
         coreState.entries = [...coreState.entries, ...newEntries];
+        // Broadcast affected directories for cross-window refresh
+        const affectedDirs = new Set([coreState.currentPath]);
+        for (const entry of entries) {
+          const dir = entry.path.substring(0, entry.path.lastIndexOf("/")) || "/";
+          affectedDirs.add(dir);
+        }
+        broadcastFileChange([...affectedDirs]);
       }
       const error = errors.length > 0 ? `Failed: ${errors.join(", ")}` : null;
       pasteResult = { error, timestamp: Date.now() };

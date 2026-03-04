@@ -10,6 +10,7 @@
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { openFile, moveEntry, copyEntry } from "$lib/api/files";
+  import { broadcastFileChange, parentDir } from "$lib/state/file-events";
   import { dragState } from "$lib/state/drag.svelte";
   import FileItem from "./FileItem.svelte";
   import VirtualList from "./VirtualList.svelte";
@@ -274,6 +275,7 @@
 
     if (result.ok) {
       paneNav?.refreshAllPanes();
+      broadcastFileChange([parentDir(sourcePath), entry.path]);
     } else {
       console.error(`Failed to ${isCopyOp ? "copy" : "move"}:`, result.error);
     }
@@ -330,6 +332,7 @@
       } else {
         explorer.refresh();
       }
+      broadcastFileChange([parentDir(sourcePath), currentPath]);
     } else {
       console.error("Failed to move:", result.error);
       toastStore.error(result.error);

@@ -34,36 +34,36 @@ function createUndoStore() {
 
     /**
      * Execute the most recent undo action and remove it from the stack.
-     * Returns an error message if the operation fails, null on success.
+     * Returns { error } on failure, { action } on success (for broadcasting affected dirs).
      */
-    async undo(): Promise<string | null> {
-      if (stack.length === 0) return "Nothing to undo";
+    async undo(): Promise<{ error: string } | { action: UndoAction }> {
+      if (stack.length === 0) return { error: "Nothing to undo" };
 
       const action = stack[stack.length - 1];
       const result = await executeUndo(action);
 
-      if (!result.ok) return result.error;
+      if (!result.ok) return { error: result.error };
 
       stack = stack.slice(0, -1);
       redoStack = [...redoStack, action];
-      return null;
+      return { action };
     },
 
     /**
      * Re-execute the most recently undone action.
-     * Returns an error message if the operation fails, null on success.
+     * Returns { error } on failure, { action } on success (for broadcasting affected dirs).
      */
-    async redo(): Promise<string | null> {
-      if (redoStack.length === 0) return "Nothing to redo";
+    async redo(): Promise<{ error: string } | { action: UndoAction }> {
+      if (redoStack.length === 0) return { error: "Nothing to redo" };
 
       const action = redoStack[redoStack.length - 1];
       const result = await executeRedo(action);
 
-      if (!result.ok) return result.error;
+      if (!result.ok) return { error: result.error };
 
       redoStack = redoStack.slice(0, -1);
       stack = [...stack, action];
-      return null;
+      return { action };
     },
 
     /**

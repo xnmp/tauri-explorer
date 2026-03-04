@@ -32,7 +32,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { broadcastFileChange } from "./file-events";
 import { conflictResolver, type ConflictChoice } from "./conflict-resolver.svelte";
 import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/domain/file";
-import type { SelectOptions, ViewMode } from "./types";
+import type { SelectOptions, ViewMode, UndoAction } from "./types";
 import * as selection from "./selection";
 import * as navigation from "./navigation";
 import { clipboardStore } from "./clipboard.svelte";
@@ -687,21 +687,35 @@ function createExplorerState() {
   // Undo Actions (delegates to global undoStore)
   // ===================
 
-  async function undo(): Promise<string | null> {
-    const error = await undoStore.undo();
-    if (error) return error;
+  /** Compute directories affected by an undo/redo action for broadcasting. */
+  function getAffectedDirs(action: UndoAction): string[] {
+    switch (action.type) {
+      case "rename":
+        return [action.path.substring(0, action.path.lastIndexOf("/"))];
+      case "move":
+        return [action.originalDir, action.destPath.substring(0, action.destPath.lastIndexOf("/"))];
+      case "delete":
+        return [action.parentDir];
+    }
+  }
 
-    // Refresh current directory to reflect undo
+  async function undo(): Promise<string | null> {
+    const result = await undoStore.undo();
+    if ("error" in result) return result.error;
+
+    // Refresh current directory and broadcast affected dirs
     await navigateInternal(coreState.currentPath);
+    broadcastFileChange(getAffectedDirs(result.action));
     return null;
   }
 
   async function redo(): Promise<string | null> {
-    const error = await undoStore.redo();
-    if (error) return error;
+    const result = await undoStore.redo();
+    if ("error" in result) return result.error;
 
-    // Refresh current directory to reflect redo
+    // Refresh current directory and broadcast affected dirs
     await navigateInternal(coreState.currentPath);
+    broadcastFileChange(getAffectedDirs(result.action));
     return null;
   }
 

@@ -17,6 +17,7 @@ import { recentFilesStore } from "./recent-files.svelte";
 import { dialogStore } from "./dialogs.svelte";
 import { copyEntry, moveEntry, writeTextFile, openInTerminal, clipboardPasteImage } from "$lib/api/files";
 import type { ViewMode } from "./types";
+import { readFocusedWindowState } from "./focused-window";
 
 /** Open a new explorer window at the given path with optional view mode */
 function openNewWindow(path: string, viewMode?: ViewMode): void {
@@ -479,9 +480,12 @@ const windowCommands: Command[] = [
     category: "general",
     shortcut: "Ctrl+N",
     handler: () => {
+      // Inherit path and viewMode from the last focused window
+      const focused = readFocusedWindowState();
       const explorer = getActiveExplorer();
-      const path = explorer?.state.currentPath || "/home";
-      openNewWindow(path, explorer?.viewMode);
+      const path = focused?.path ?? explorer?.state.currentPath ?? "/home";
+      const viewMode = focused?.viewMode ?? explorer?.viewMode;
+      openNewWindow(path, viewMode);
     },
   },
 ];

@@ -9,7 +9,7 @@
   import { toastStore } from "$lib/state/toast.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
-  import { openFile, moveEntry, copyEntry } from "$lib/api/files";
+  import { openFile, openImageWithSiblings, moveEntry, copyEntry } from "$lib/api/files";
   import { broadcastFileChange, parentDir } from "$lib/state/file-events";
   import { undoStore } from "$lib/state/undo.svelte";
   import { dragState } from "$lib/state/drag.svelte";
@@ -152,7 +152,9 @@
     if (entry.kind === "directory") {
       explorer.navigateTo(entry.path);
     } else {
-      const result = await openFile(entry.path);
+      const result = isImageFile(entry)
+        ? await openImageWithSiblings(entry.path)
+        : await openFile(entry.path);
       if (result.ok) {
         recentFilesStore.add(entry.path, entry.name, "file");
       } else {

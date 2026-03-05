@@ -205,6 +205,19 @@ export async function openFileWith(path: string, app: string): Promise<ApiResult
 }
 
 /**
+ * Open an image file with sibling images passed to the viewer,
+ * enabling arrow-key navigation in viewers like imv, feh, etc.
+ */
+export async function openImageWithSiblings(path: string): Promise<ApiResult<void>> {
+  try {
+    await invoke("open_image_with_siblings", { path });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
  * Open a terminal at a directory path.
  *
  * @param path - Path (directory or file, uses parent for files)

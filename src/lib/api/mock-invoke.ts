@@ -201,6 +201,10 @@ const mockCommands: Record<string, CommandHandler> = {
     // No-op for mock
   },
 
+  open_image_with_siblings: () => {
+    // No-op for mock
+  },
+
   fuzzy_search: (args) => {
     const query = (args.query as string).toLowerCase();
     const limit = args.limit as number || 20;

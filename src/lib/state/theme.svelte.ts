@@ -9,6 +9,8 @@
  * That's it - themes are auto-discovered from CSS at runtime.
  */
 
+import { loadPersisted, savePersisted } from "./persisted";
+
 interface ThemeColors {
   backgroundSolid: string;
   divider: string;
@@ -84,9 +86,7 @@ function discoverThemes(): ThemeInfo[] {
 }
 
 function createThemeState() {
-  const savedTheme = typeof localStorage !== "undefined"
-    ? localStorage.getItem("theme")
-    : null;
+  const savedTheme = loadPersisted<string | null>("theme", null);
 
   let currentThemeId = $state(savedTheme || "light");
   let themes = $state<ThemeInfo[]>([]);
@@ -97,9 +97,7 @@ function createThemeState() {
 
   function setTheme(themeId: string) {
     currentThemeId = themeId;
-    if (typeof localStorage !== "undefined") {
-      localStorage.setItem("theme", themeId);
-    }
+    savePersisted("theme", themeId);
     applyTheme(themeId);
   }
 

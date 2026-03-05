@@ -176,7 +176,7 @@
     filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15));
   }
 
-  /* Large file icon badge (tiles view) — glyph on colored rounded rectangle */
+  /* Large file icon badge (tiles view) — prominent glyph with subtle backing */
   .nf-icon-badge {
     width: 64px;
     height: 64px;
@@ -189,25 +189,17 @@
   .nf-icon-badge::before {
     content: "";
     position: absolute;
-    inset: 4px;
-    border-radius: 10px;
+    inset: 6px;
+    border-radius: 8px;
     background: var(--badge-color);
-    opacity: 0.15;
-  }
-
-  .nf-icon-badge::after {
-    content: "";
-    position: absolute;
-    inset: 4px;
-    border-radius: 10px;
-    border: 1.5px solid var(--badge-color);
-    opacity: 0.4;
+    opacity: 0.1;
   }
 
   .nf-badge-glyph {
     position: relative;
     z-index: 1;
-    font-size: 32px;
+    font-size: 42px;
     color: var(--badge-color);
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.2));
   }
 </style>

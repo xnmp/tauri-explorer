@@ -102,6 +102,7 @@ pub fn run() {
             files::move_entry,
             files::open_file,
             files::open_file_with,
+            files::open_image_with_siblings,
             files::open_in_terminal,
             files::read_text_file,
             files::write_text_file,

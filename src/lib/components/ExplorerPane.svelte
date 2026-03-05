@@ -100,7 +100,7 @@
     flex: 1;
     min-width: 0;
     overflow: hidden;
-    background: var(--background-card);
+    background: color-mix(in srgb, var(--background-card) calc(var(--content-opacity, 1) * 100%), transparent);
     border-radius: var(--radius-md);
     border: 1px solid transparent;
     transition:

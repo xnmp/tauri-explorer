@@ -469,7 +469,7 @@
 
   .sidebar {
     flex: 1;
-    background: var(--background-card-secondary);
+    background: color-mix(in srgb, var(--background-card-secondary) calc(var(--sidebar-opacity, 1) * 100%), transparent);
     border-right: none;
     box-shadow: 1px 0 0 var(--divider);
     overflow-y: auto;

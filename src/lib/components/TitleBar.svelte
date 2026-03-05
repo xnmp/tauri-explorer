@@ -59,7 +59,7 @@
     display: flex;
     align-items: center;
     height: 38px;
-    background: var(--background-card);
+    background: color-mix(in srgb, var(--background-card) calc(var(--titlebar-opacity, 1) * 100%), transparent);
     user-select: none;
     flex-shrink: 0;
     position: relative;

@@ -85,6 +85,13 @@
     transparent 35%
   );
 
+  /* Per-section opacity tokens (multiplied by global --bg-opacity) */
+  --sidebar-opacity: 1;
+  --toolbar-opacity: 1;
+  --content-opacity: 1;
+  --titlebar-opacity: 1;
+  --statusbar-opacity: 1;
+
   /* Icon colors - warmer gold */
   --icon-folder: #e8a800;
   /* --icon-file-tint: unset; when set, overrides all file icon colors */

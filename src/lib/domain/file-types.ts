@@ -249,6 +249,14 @@ export function isImageFile(entry: FileEntry): boolean {
   return THUMBNAIL_EXTENSIONS.has(ext);
 }
 
+/** Get uppercase extension label for display on file icons (e.g. "TS", "JSON") */
+export function getFileExtensionLabel(entry: FileEntry): string {
+  if (entry.kind === "directory") return "";
+  const ext = getExtension(entry.name);
+  if (!ext) return "";
+  return ext.toUpperCase();
+}
+
 /** Check if a file is a text/code file that can be previewed */
 export function isTextFile(entry: FileEntry): boolean {
   if (entry.kind === "directory") return false;

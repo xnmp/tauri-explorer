@@ -5,7 +5,7 @@
 -->
 <script lang="ts">
   import type { FileEntry } from "$lib/domain/file";
-  import { getFileIconCategory } from "$lib/domain/file-types";
+  import { getFileIconCategory, getFileExtensionLabel } from "$lib/domain/file-types";
   import { getNerdIcon } from "$lib/domain/nerd-icons";
   import { settingsStore } from "$lib/state/settings.svelte";
 
@@ -19,6 +19,11 @@
   const iconCategory = $derived(getFileIconCategory(entry));
   const useMaterial = $derived(settingsStore.iconTheme === "material");
   const nerdIcon = $derived(useMaterial ? getNerdIcon(entry.name, entry.kind) : null);
+  const extLabel = $derived(getFileExtensionLabel(entry));
+  /** Font size for extension label - shorter labels get bigger text */
+  const extFontSize = $derived(
+    extLabel.length <= 2 ? 12 : extLabel.length <= 3 ? 10 : extLabel.length <= 4 ? 8.5 : 7
+  );
 </script>
 
 {#if useMaterial && nerdIcon && entry.kind !== "directory"}
@@ -124,7 +129,11 @@
       <path d="M10 6C10 4.34315 11.3431 3 13 3H27L38 14V42C38 43.6569 36.6569 45 35 45H13C11.3431 45 10 43.6569 10 42V6Z" fill="currentColor" fill-opacity="0.15"/>
       <path d="M10 6C10 4.34315 11.3431 3 13 3H27L38 14V42C38 43.6569 36.6569 45 35 45H13C11.3431 45 10 43.6569 10 42V6Z" stroke="currentColor" stroke-width="1.5"/>
       <path d="M27 3V11C27 12.6569 28.3431 14 30 14H38" stroke="currentColor" stroke-width="1.5"/>
-      <path d="M18 24L13 29L18 34M30 24L35 29L30 34" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      {#if extLabel}
+        <text x="24" y="33" text-anchor="middle" font-size="{extFontSize}" font-weight="700" font-family="system-ui, -apple-system, sans-serif" fill="currentColor" fill-opacity="0.85">{extLabel}</text>
+      {:else}
+        <path d="M18 24L13 29L18 34M30 24L35 29L30 34" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      {/if}
     </svg>
   {:else if iconCategory === "media"}
     <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
@@ -145,7 +154,11 @@
       <path d="M10 6C10 4.34 11.34 3 13 3H27L40 16V42C40 43.66 38.66 45 37 45H13C11.34 45 10 43.66 10 42V6Z" stroke="currentColor" stroke-width="1.5" stroke-opacity="0.5"/>
       <path d="M27 3V13C27 14.66 28.34 16 30 16H40" stroke="currentColor" stroke-width="1.5" stroke-opacity="0.5"/>
       <path d="M27 3V12C27 14.21 28.79 16 31 16H40L27 3Z" fill="currentColor" fill-opacity="0.12"/>
-      <path d="M16 25H32M16 30H28M16 35H24" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-opacity="0.6"/>
+      {#if extLabel}
+        <text x="24" y="35" text-anchor="middle" font-size="{extFontSize}" font-weight="700" font-family="system-ui, -apple-system, sans-serif" fill="currentColor" fill-opacity="0.7">{extLabel}</text>
+      {:else}
+        <path d="M16 25H32M16 30H28M16 35H24" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-opacity="0.6"/>
+      {/if}
     </svg>
   {/if}
 {/if}

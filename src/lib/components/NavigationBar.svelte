@@ -386,7 +386,7 @@
     gap: 6px;
     padding: 4px 10px;
     background: var(--background-card-secondary);
-    border-bottom: 1px solid var(--divider);
+    border-bottom: var(--navbar-border-bottom, 1px solid var(--divider));
     height: 40px;
   }
 
@@ -434,7 +434,7 @@
   .breadcrumbs-container {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: var(--breadcrumb-gap, 2px);
     flex: 1;
     min-width: 0;
     height: 30px;
@@ -488,13 +488,13 @@
     align-items: center;
     gap: 4px;
     padding: 3px 8px;
-    background: var(--breadcrumb-segment-bg, transparent);
+    background: var(--breadcrumb-bg, var(--breadcrumb-segment-bg, transparent));
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--breadcrumb-radius, var(--radius-sm));
     font-family: inherit;
     font-size: 13px;
     font-weight: var(--font-weight-medium);
-    color: var(--text-primary);
+    color: var(--breadcrumb-text, var(--text-primary));
     cursor: pointer;
     transition: background var(--transition-fast);
     white-space: nowrap;
@@ -507,7 +507,7 @@
   }
 
   .crumb:hover {
-    background: var(--breadcrumb-segment-bg-hover, var(--subtle-fill-secondary));
+    background: var(--breadcrumb-hover-bg, var(--breadcrumb-segment-bg-hover, var(--subtle-fill-secondary)));
   }
 
   .crumb:active {
@@ -517,6 +517,7 @@
   .crumb.current {
     font-weight: var(--font-weight-semibold);
     color: var(--accent);
+    background: var(--breadcrumb-active-bg, var(--breadcrumb-bg, transparent));
   }
 
   /* Separator / caret button */

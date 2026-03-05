@@ -55,6 +55,13 @@
   --control-stroke: rgba(0, 0, 0, 0.05);
   --control-stroke-secondary: rgba(0, 0, 0, 0.14);
 
+  /* Address bar */
+  --address-bar-bg: rgba(0, 0, 0, 0.04);
+  --address-bar-stroke: rgba(0, 0, 0, 0.12);
+  --address-bar-highlight: rgba(255, 255, 255, 0.5);
+  --address-bar-bg-hover: rgba(0, 0, 0, 0.06);
+  --address-bar-stroke-hover: rgba(0, 0, 0, 0.18);
+
   /* Focus indicators */
   --focus-stroke-outer: #000000;
   --focus-stroke-inner: #ffffff;

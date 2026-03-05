@@ -439,11 +439,12 @@
     min-width: 0;
     height: 30px;
     padding: 0 10px;
-    background: var(--control-fill);
-    border: 1px solid var(--control-stroke);
+    background: var(--address-bar-bg, rgba(255, 255, 255, 0.12));
+    border: 1px solid var(--address-bar-stroke, rgba(255, 255, 255, 0.18));
     border-radius: var(--radius-pill);
     overflow: hidden;
     position: relative;
+    box-shadow: inset 0 1px 0 var(--address-bar-highlight, rgba(255, 255, 255, 0.04));
   }
 
   .breadcrumbs-container.editing {
@@ -461,7 +462,8 @@
   }
 
   .breadcrumbs-container:not(.editing):hover {
-    background: var(--control-fill-secondary);
+    background: var(--address-bar-bg-hover, rgba(255, 255, 255, 0.16));
+    border-color: var(--address-bar-stroke-hover, rgba(255, 255, 255, 0.24));
   }
 
   .path-input {

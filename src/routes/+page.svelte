@@ -33,6 +33,7 @@
   import BulkRenameDialog from "$lib/components/BulkRenameDialog.svelte";
   import ConflictDialog from "$lib/components/ConflictDialog.svelte";
   import StatusBar from "$lib/components/StatusBar.svelte";
+  import AnimatedBackground from "$lib/components/AnimatedBackground.svelte";
 
   // Get active explorer from window tabs manager
   function getActiveExplorer(): ExplorerInstance | undefined {
@@ -270,6 +271,7 @@
 
 <!-- Theme background layer - sits behind glassmorphism stack, targetable by themes via --theme-background-image -->
 <div class="theme-background-layer" aria-hidden="true"></div>
+<AnimatedBackground />
 
 <main class="explorer">
   <TitleBar />

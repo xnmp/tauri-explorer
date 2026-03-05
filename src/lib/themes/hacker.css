@@ -78,6 +78,7 @@
   --icon-folder: #00ff41;
   --icon-file-tint: #00cc33;
   --theme-icon-pack: 'minimal';
+  --theme-bg-animation: 'particles';
 
   /* Mica overlay - green tint */
   --mica-overlay: linear-gradient(

@@ -40,6 +40,7 @@
 {"created_at":"2026-01-13T12:06:08Z","created_by":"Claude User","depends_on_id":"tauri-explorer-imc","issue_id":"tauri-explorer-79p","type":"parent-child"}
 {"created_at":"2026-01-13T12:13:30Z","created_by":"Claude User","depends_on_id":"tauri-explorer-9l2","issue_id":"tauri-explorer-7ii","type":"parent-child"}
 {"created_at":"2026-01-15T13:18:59Z","created_by":"Claude User","depends_on_id":"tauri-explorer-5lbi","issue_id":"tauri-explorer-7pce","type":"parent-child"}
+{"created_at":"2026-03-05T17:56:10Z","created_by":"Claude User","depends_on_id":"tauri-explorer-gijl","issue_id":"tauri-explorer-7ujh","type":"parent-child"}
 {"created_at":"2026-01-13T12:22:27Z","created_by":"Claude User","depends_on_id":"tauri-explorer-a0b2","issue_id":"tauri-explorer-8ja7","type":"parent-child"}
 {"created_at":"2026-01-13T12:22:27Z","created_by":"Claude User","depends_on_id":"tauri-explorer-hgt6","issue_id":"tauri-explorer-8ja7","type":"blocks"}
 {"created_at":"2026-01-13T12:26:47Z","created_by":"Claude User","depends_on_id":"tauri-explorer-y4y7","issue_id":"tauri-explorer-8n9r","type":"parent-child"}
@@ -129,6 +130,7 @@
 {"created_at":"2026-01-13T12:15:59Z","created_by":"Claude User","depends_on_id":"tauri-explorer-i9d","issue_id":"tauri-explorer-lbb","type":"blocks"}
 {"created_at":"2026-01-13T12:06:08Z","created_by":"Claude User","depends_on_id":"tauri-explorer-imc","issue_id":"tauri-explorer-lbb","type":"parent-child"}
 {"created_at":"2026-01-13T12:15:57Z","created_by":"Claude User","depends_on_id":"tauri-explorer-m0b","issue_id":"tauri-explorer-lcd9","type":"parent-child"}
+{"created_at":"2026-03-05T17:56:11Z","created_by":"Claude User","depends_on_id":"tauri-explorer-gijl","issue_id":"tauri-explorer-mhwq","type":"parent-child"}
 {"created_at":"2026-01-13T12:13:04Z","created_by":"Claude User","depends_on_id":"tauri-explorer-5kv","issue_id":"tauri-explorer-mwr","type":"parent-child"}
 {"created_at":"2026-01-13T12:16:00Z","created_by":"Claude User","depends_on_id":"tauri-explorer-2c6b","issue_id":"tauri-explorer-nnda","type":"blocks"}
 {"created_at":"2026-01-13T12:15:30Z","created_by":"Claude User","depends_on_id":"tauri-explorer-xdm","issue_id":"tauri-explorer-nnda","type":"parent-child"}
@@ -148,6 +150,7 @@
 {"created_at":"2026-01-13T12:15:30Z","created_by":"Claude User","depends_on_id":"tauri-explorer-xdm","issue_id":"tauri-explorer-osjq","type":"parent-child"}
 {"created_at":"2026-01-13T12:15:57Z","created_by":"Claude User","depends_on_id":"tauri-explorer-m0b","issue_id":"tauri-explorer-oytv","type":"parent-child"}
 {"created_at":"2026-01-13T12:06:08Z","created_by":"Claude User","depends_on_id":"tauri-explorer-imc","issue_id":"tauri-explorer-pad","type":"parent-child"}
+{"created_at":"2026-03-05T17:56:10Z","created_by":"Claude User","depends_on_id":"tauri-explorer-gijl","issue_id":"tauri-explorer-py73","type":"parent-child"}
 {"created_at":"2026-01-13T12:22:26Z","created_by":"Claude User","depends_on_id":"tauri-explorer-a0b2","issue_id":"tauri-explorer-qaqo","type":"parent-child"}
 {"created_at":"2026-01-13T12:13:22Z","created_by":"Claude User","depends_on_id":"tauri-explorer-auj","issue_id":"tauri-explorer-qcq5","type":"parent-child"}
 {"created_at":"2026-01-13T12:22:27Z","created_by":"Claude User","depends_on_id":"tauri-explorer-a0b2","issue_id":"tauri-explorer-rtxz","type":"parent-child"}

@@ -21,14 +21,16 @@
   const nerdIcon = $derived(useMaterial ? getNerdIcon(entry.name, entry.kind) : null);
 </script>
 
-{#if useMaterial && nerdIcon}
+{#if useMaterial && nerdIcon && entry.kind !== "directory"}
   <!--
-    Material icon theme: Nerd Font glyphs
+    Material icon theme: Nerd Font glyphs (folders use the default SVG icons)
   -->
   {#if size === "small"}
-    <span class="nf-icon" style:color={nerdIcon.color} style:font-size="16px" style:line-height="16px" style:width="16px" style:height="16px" style:display="inline-flex" style:align-items="center" style:justify-content="center">{nerdIcon.glyph}</span>
+    <span class="nf-icon nf-small" style:color={nerdIcon.color}>{nerdIcon.glyph}</span>
   {:else}
-    <span class="nf-icon" style:color={nerdIcon.color} style:font-size="48px" style:line-height="64px" style:width="64px" style:height="64px" style:display="inline-flex" style:align-items="center" style:justify-content="center">{nerdIcon.glyph}</span>
+    <span class="nf-icon-badge" style:--badge-color={nerdIcon.color}>
+      <span class="nf-icon nf-badge-glyph">{nerdIcon.glyph}</span>
+    </span>
   {/if}
 {:else if size === "small"}
   <!--
@@ -147,3 +149,43 @@
     </svg>
   {/if}
 {/if}
+
+<style>
+  /* Small material icons (list/details view) */
+  .nf-small {
+    font-size: 16px;
+    line-height: 16px;
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Large file icon badge (tiles view) — prominent glyph with subtle backing */
+  .nf-icon-badge {
+    width: 64px;
+    height: 64px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+
+  .nf-icon-badge::before {
+    content: "";
+    position: absolute;
+    inset: 6px;
+    border-radius: 8px;
+    background: var(--badge-color);
+    opacity: 0.1;
+  }
+
+  .nf-badge-glyph {
+    position: relative;
+    z-index: 1;
+    font-size: 42px;
+    color: var(--badge-color);
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.2));
+  }
+</style>

@@ -25,7 +25,7 @@
   --text-on-accent: #0a1929;
 
   /* Background colors - deep ocean blues */
-  --background-solid: #0f2233;
+  --background-solid: #0a1a2e;
   --background-mica: rgba(15, 34, 51, 0.96);
   --background-acrylic: rgba(20, 45, 65, 0.92);
   --background-card: rgba(30, 60, 85, 0.5);
@@ -34,7 +34,7 @@
   /* Surface/border colors - subtle blue glow */
   --surface-stroke: rgba(94, 183, 224, 0.15);
   --surface-stroke-flyout: rgba(94, 183, 224, 0.2);
-  --divider: rgba(94, 183, 224, 0.12);
+  --divider: rgba(94, 183, 224, 0.08);
 
   /* Control/input backgrounds - soft blue tints */
   --control-fill: rgba(94, 183, 224, 0.1);
@@ -64,6 +64,18 @@
   --shadow-flyout: 0 8px 20px rgba(0, 15, 30, 0.5);
   --shadow-dialog: 0 32px 64px rgba(0, 15, 30, 0.6), 0 4px 24px rgba(0, 15, 30, 0.4);
   --shadow-tooltip: 0 4px 12px rgba(0, 15, 30, 0.5);
+
+  /* Mica overlay - ocean gradient */
+  --mica-overlay: linear-gradient(
+    170deg,
+    rgba(94, 183, 224, 0.03) 0%,
+    rgba(52, 152, 200, 0.01) 25%,
+    transparent 45%
+  );
+
+  /* Premium shadows */
+  --shadow-card: 0 1px 4px rgba(0, 15, 30, 0.25), 0 0 1px rgba(0, 15, 30, 0.2);
+  --shadow-subtle: 0 1px 2px rgba(0, 15, 30, 0.2);
 
   /* Icon colors - themeable */
   --icon-folder: #f0d060;

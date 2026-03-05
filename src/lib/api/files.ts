@@ -487,29 +487,6 @@ export async function getMicroThumbnail(
 }
 
 /**
- * Result of a single micro thumbnail in a batch request.
- */
-export interface MicroThumbnailResult {
-  path: string;
-  dataUri: string | null;
-}
-
-/**
- * Batch micro thumbnails — process multiple images in parallel on the backend.
- * Returns results for all paths; individual failures return null dataUri.
- */
-export async function getMicroThumbnailsBatch(
-  paths: string[]
-): Promise<ApiResult<MicroThumbnailResult[]>> {
-  try {
-    const results = await invoke<MicroThumbnailResult[]>("get_micro_thumbnails_batch", { paths });
-    return { ok: true, data: results };
-  } catch (err) {
-    return { ok: false, error: String(err) };
-  }
-}
-
-/**
  * Thumbnail cache statistics.
  */
 export interface ThumbnailCacheStats {

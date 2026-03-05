@@ -384,10 +384,10 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 8px;
+    padding: 4px 10px;
     background: var(--background-card-secondary);
     border-bottom: 1px solid var(--divider);
-    height: 36px;
+    height: 40px;
   }
 
   .nav-controls {
@@ -401,12 +401,12 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 26px;
-    height: 26px;
+    width: 28px;
+    height: 28px;
     padding: 0;
     background: transparent;
     border: none;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     color: var(--text-primary);
     cursor: pointer;
     transition: background var(--transition-fast);
@@ -437,11 +437,11 @@
     gap: 2px;
     flex: 1;
     min-width: 0;
-    height: 28px;
-    padding: 0 8px;
+    height: 30px;
+    padding: 0 10px;
     background: var(--control-fill);
     border: 1px solid var(--control-stroke);
-    border-radius: 4px;
+    border-radius: var(--radius-pill);
     overflow: hidden;
     position: relative;
   }
@@ -453,6 +453,7 @@
   .breadcrumbs-container:focus-within {
     border-color: var(--accent);
     background: var(--control-fill-secondary);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 15%, transparent);
   }
 
   .breadcrumbs-container:not(.editing) {
@@ -483,12 +484,13 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    padding: 2px 6px;
+    padding: 3px 8px;
     background: var(--breadcrumb-segment-bg, transparent);
     border: none;
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
     font-family: inherit;
     font-size: 13px;
+    font-weight: var(--font-weight-medium);
     color: var(--text-primary);
     cursor: pointer;
     transition: background var(--transition-fast);
@@ -497,7 +499,7 @@
   }
 
   .crumb.root {
-    padding: 2px 3px;
+    padding: 3px 4px;
     color: var(--text-tertiary);
   }
 
@@ -510,7 +512,8 @@
   }
 
   .crumb.current {
-    font-weight: 500;
+    font-weight: var(--font-weight-semibold);
+    color: var(--accent);
   }
 
   /* Separator / caret button */
@@ -562,7 +565,7 @@
     position: fixed;
     background: var(--background-solid);
     border: 1px solid var(--surface-stroke);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     box-shadow: var(--shadow-flyout, 0 4px 16px rgba(0, 0, 0, 0.15));
     max-height: 300px;
     min-width: 180px;
@@ -601,8 +604,8 @@
     margin-top: 2px;
     background: var(--background-solid);
     border: 1px solid var(--surface-stroke);
-    border-radius: 6px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-flyout, 0 4px 16px rgba(0, 0, 0, 0.15));
     max-height: 240px;
     overflow-y: auto;
     z-index: 100;

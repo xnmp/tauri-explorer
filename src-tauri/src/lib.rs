@@ -128,7 +128,6 @@ pub fn run() {
             thumbnails::get_thumbnail,
             thumbnails::get_thumbnail_data,
             thumbnails::get_micro_thumbnail,
-            thumbnails::get_micro_thumbnails_batch,
             thumbnails::clear_thumbnail_cache,
             thumbnails::get_thumbnail_cache_stats,
             // Archive operations

@@ -437,8 +437,8 @@
     padding: 4px 16px;
     background: transparent;
     border: 1px solid transparent;
-    border-left-width: 2px;
-    border-radius: 4px;
+    border-left-width: var(--selection-indicator-width);
+    border-radius: var(--radius-sm);
     cursor: pointer;
     text-align: left;
     width: 100%;
@@ -446,7 +446,7 @@
     color: var(--text-primary);
     transition: background var(--transition-fast), border-color var(--transition-fast), opacity var(--transition-fast);
     position: relative;
-    min-height: 32px;
+    min-height: 34px;
   }
 
   .file-item:hover {
@@ -464,12 +464,12 @@
     box-shadow: 0 0 0 1px var(--accent);
   }
 
-  /* Selected state - unified look for multi-selection */
+  /* Selected state - accent-tinted background */
   .file-item.selected {
-    background: var(--subtle-fill-secondary);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
     border-color: transparent;
     border-left-color: var(--accent);
-    border-radius: 0 4px 4px 0;
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   }
 
   .file-item.selected:hover {
@@ -508,8 +508,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 20px;
-    height: 20px;
+    width: 22px;
+    height: 22px;
     flex-shrink: 0;
   }
 
@@ -574,8 +574,8 @@
   .date-cell,
   .type-cell,
   .size-cell {
-    font-size: 13px;
-    color: var(--text-secondary);
+    font-size: var(--font-size-caption);
+    color: var(--text-tertiary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

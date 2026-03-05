@@ -827,13 +827,13 @@ mod tests {
     use std::fs::File;
     use tempfile::tempdir;
 
-    #[tokio::test]
-    async fn test_list_directory() {
+    #[test]
+    fn test_list_directory() {
         let dir = tempdir().unwrap();
         File::create(dir.path().join("test.txt")).unwrap();
         fs::create_dir(dir.path().join("subdir")).unwrap();
 
-        let result = list_directory(dir.path().to_string_lossy().to_string()).await.unwrap();
+        let result = list_directory(dir.path().to_string_lossy().to_string()).unwrap();
 
         assert_eq!(result.entries.len(), 2);
         // Directories should come first
@@ -908,7 +908,6 @@ mod tests {
         let result = copy_entry(
             source_dir.to_string_lossy().to_string(),
             dest_dir.to_string_lossy().to_string(),
-            None,
         );
 
         assert!(result.is_ok(), "copy_entry failed: {:?}", result.err());
@@ -938,7 +937,6 @@ mod tests {
         let result = copy_entry(
             source_dir.to_string_lossy().to_string(),
             dir.path().to_string_lossy().to_string(),
-            None,
         );
 
         assert!(result.is_ok(), "copy_entry same dir failed: {:?}", result.err());

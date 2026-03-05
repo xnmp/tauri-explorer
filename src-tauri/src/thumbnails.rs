@@ -7,7 +7,7 @@
 
 use base64::Engine as _;
 use crate::error::AppError;
-use image::{ImageFormat, ImageReader};
+use image::{DynamicImage, ImageFormat, ImageReader};
 use sha2::{Sha256, Digest};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -79,7 +79,7 @@ fn save_to_cache(cache_key: &str, data: &[u8]) {
 /// Encode an RGB8 image to JPEG bytes at the given quality
 fn encode_jpeg(img: &image::RgbImage, quality: u8) -> Result<Vec<u8>, AppError> {
     let mut buffer = Cursor::new(Vec::new());
-    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, quality);
+    let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, quality);
     encoder.encode(
         img.as_raw(),
         img.width(),
@@ -125,8 +125,7 @@ fn generate_and_cache_thumbnail(
         .decode()
         .map_err(|e| AppError::Other(format!("Failed to decode image: {}", e)))?;
 
-    // thumbnail() is optimized for large downscales: does fast nearest-neighbor
-    // to ~2x target, then Lanczos3 for quality. Much faster than resize() for large images.
+    // Generate thumbnail using fast Lanczos3 sampling
     // Always convert to RGB8 for JPEG output (PNG/GIF may have alpha channels)
     let thumbnail = img.thumbnail(size, size).to_rgb8();
 
@@ -213,7 +212,6 @@ fn get_micro_thumbnail_sync(path: String) -> Result<String, AppError> {
 
     // Pre-warm full thumbnail cache if not already present.
     // Since the image is already decoded in memory, this is nearly free.
-    // thumbnail() uses optimized two-pass downscale (nearest + Lanczos3).
     if get_cached_thumbnail(&cache_key).is_none() {
         let full = img.thumbnail(THUMBNAIL_SIZE, THUMBNAIL_SIZE).to_rgb8();
         if let Ok(full_data) = encode_jpeg(&full, 80) {
@@ -251,38 +249,6 @@ pub async fn get_micro_thumbnail(path: String) -> Result<String, AppError> {
     tokio::task::spawn_blocking(move || get_micro_thumbnail_sync(path))
         .await
         .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
-}
-
-/// Batch micro thumbnails — process multiple images in parallel.
-/// Returns a vec of (path, result) pairs. Errors for individual images
-/// are returned as null data URIs rather than failing the whole batch.
-#[tauri::command]
-pub async fn get_micro_thumbnails_batch(paths: Vec<String>) -> Vec<MicroThumbnailResult> {
-    let handles: Vec<_> = paths
-        .into_iter()
-        .map(|path| {
-            tokio::task::spawn_blocking(move || {
-                let data_uri = get_micro_thumbnail_sync(path.clone()).ok();
-                MicroThumbnailResult { path, data_uri }
-            })
-        })
-        .collect();
-
-    let mut results = Vec::with_capacity(handles.len());
-    for handle in handles {
-        match handle.await {
-            Ok(result) => results.push(result),
-            Err(_) => {} // task panicked, skip
-        }
-    }
-    results
-}
-
-#[derive(Debug, serde::Serialize)]
-pub struct MicroThumbnailResult {
-    path: String,
-    #[serde(rename = "dataUri")]
-    data_uri: Option<String>,
 }
 
 /// Clear the thumbnail cache
@@ -358,93 +324,6 @@ mod tests {
     use super::*;
     use std::fs::File;
     use tempfile::tempdir;
-
-    #[test]
-    #[ignore] // Run with: cargo test bench_100_images -- --ignored --nocapture
-    fn bench_100_images_cold_start() {
-        let test_dir = PathBuf::from("/tmp/test-100-images");
-        if !test_dir.exists() {
-            eprintln!("Skipping bench: /tmp/test-100-images not found");
-            return;
-        }
-
-        // Clear cache
-        if let Some(cache_dir) = get_cache_dir() {
-            let _ = fs::remove_dir_all(&cache_dir);
-        }
-
-        let mut images: Vec<PathBuf> = fs::read_dir(&test_dir)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| is_supported_image(p))
-            .collect();
-        images.sort();
-
-        eprintln!("Benchmarking {} images (cold start)...", images.len());
-
-        // Measure micro thumbnail generation (sequential, cold)
-        let start = std::time::Instant::now();
-        for img in &images {
-            let result = get_micro_thumbnail_sync(img.to_string_lossy().to_string());
-            assert!(result.is_ok(), "Failed: {:?}: {:?}", img, result.err());
-        }
-        let micro_cold = start.elapsed();
-        eprintln!("Micro thumbnails (cold, sequential): {:.1}ms total, {:.1}ms/image",
-            micro_cold.as_millis(), micro_cold.as_millis() as f64 / images.len() as f64);
-
-        // Measure full thumbnail generation (should be cache hits after micro pre-warm)
-        let start = std::time::Instant::now();
-        for img in &images {
-            let result = get_thumbnail_data_sync(img.to_string_lossy().to_string(), None);
-            assert!(result.is_ok(), "Failed: {:?}: {:?}", img, result.err());
-        }
-        let full_warm = start.elapsed();
-        eprintln!("Full thumbnails (warm, sequential): {:.1}ms total, {:.1}ms/image",
-            full_warm.as_millis(), full_warm.as_millis() as f64 / images.len() as f64);
-
-        // Measure parallel micro thumbnails (simulates batch API)
-        if let Some(cache_dir) = get_cache_dir() {
-            let _ = fs::remove_dir_all(&cache_dir);
-        }
-        let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
-        eprintln!("Available parallelism: {} threads", cpus);
-
-        let start = std::time::Instant::now();
-        let images_clone: Vec<String> = images.iter()
-            .map(|p| p.to_string_lossy().to_string())
-            .collect();
-        let handles: Vec<_> = images_clone.into_iter()
-            .map(|path| std::thread::spawn(move || get_micro_thumbnail_sync(path)))
-            .collect();
-        for handle in handles {
-            let result = handle.join().unwrap();
-            assert!(result.is_ok(), "Parallel micro failed: {:?}", result.err());
-        }
-        let micro_parallel = start.elapsed();
-        eprintln!("Micro thumbnails (cold, parallel/{}): {:.1}ms total, {:.1}ms/image effective",
-            cpus, micro_parallel.as_millis(), micro_parallel.as_millis() as f64 / images.len() as f64);
-
-        // Full after parallel micro pre-warm (should be all cache hits)
-        let start = std::time::Instant::now();
-        for img in &images {
-            let result = get_thumbnail_data_sync(img.to_string_lossy().to_string(), None);
-            assert!(result.is_ok(), "Failed: {:?}: {:?}", img, result.err());
-        }
-        let full_after_parallel = start.elapsed();
-        eprintln!("Full thumbnails (warm after parallel micro): {:.1}ms total",
-            full_after_parallel.as_millis());
-
-        // Performance assertions
-        // Parallel micro should complete all 100 images within 5s on any reasonable hardware
-        assert!(micro_parallel.as_secs() < 10,
-            "Parallel micro too slow: {:.1}s (target <10s for 100 large images)",
-            micro_parallel.as_secs_f64());
-        // Full from warm cache should be near-instant
-        assert!(full_after_parallel.as_millis() < 500,
-            "Full from warm cache too slow: {}ms (target <500ms)",
-            full_after_parallel.as_millis());
-    }
 
     #[test]
     fn test_is_supported_image() {

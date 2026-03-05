@@ -21,3 +21,6 @@ __pycache__/
 /test-corpus/
 .vagrant/
 test-screenshots/
+
+# bv (beads viewer) local config and caches
+.bv/

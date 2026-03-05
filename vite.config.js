@@ -4,7 +4,7 @@ import { sveltekit } from "@sveltejs/kit/vite";
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 // @ts-expect-error process is a nodejs global
-const port = parseInt(process.env.DEV_PORT || "1421", 10);
+const port = parseInt(process.env.DEV_PORT || "1420", 10);
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({

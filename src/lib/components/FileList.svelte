@@ -1096,7 +1096,7 @@
     cursor: pointer;
     text-align: center;
     font-family: inherit;
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-primary);
     transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
     height: fit-content;

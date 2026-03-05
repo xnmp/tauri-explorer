@@ -6,11 +6,8 @@ test.describe("Navigation", () => {
     // Wait for app to load and file items to be visible
     await page.waitForSelector(".file-list");
     await page.locator(".file-item").first().waitFor({ timeout: 5000 });
-    // Ensure breadcrumbs are populated
-    await page.waitForFunction(() => {
-      const bc = document.querySelector('.breadcrumbs-container');
-      return bc && bc.textContent && bc.textContent.trim().length > 0;
-    });
+    // Ensure breadcrumbs are populated (at home root, only the icon crumb is present)
+    await page.waitForSelector('.breadcrumbs-container .crumb');
   });
 
   test.describe("Initial Load", () => {
@@ -99,7 +96,7 @@ test.describe("Navigation", () => {
       const breadcrumbsBefore = await page.locator(".breadcrumbs-container").textContent();
 
       // Click up button
-      await page.locator('button[title*="Up"], button[aria-label*="parent"]').click();
+      await page.locator('button[aria-label="Go up one level"]').click();
       await page.waitForTimeout(500);
 
       // Path should be shorter (parent)

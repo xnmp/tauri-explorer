@@ -227,6 +227,43 @@
 
           <div class="setting-row">
             <div class="setting-info">
+              <span class="setting-label">Background Image</span>
+              <span class="setting-description">Custom wallpaper path (PNG, JPG, WEBP, SVG)</span>
+            </div>
+            <div class="wallpaper-controls">
+              <input
+                class="text-input wallpaper-input"
+                type="text"
+                value={settingsStore.backgroundImage}
+                placeholder="/path/to/image.jpg"
+                onchange={(e) => settingsStore.update({ backgroundImage: e.currentTarget.value })}
+              />
+              {#if settingsStore.backgroundImage}
+                <button class="clear-btn" onclick={() => settingsStore.update({ backgroundImage: "", backgroundBlur: 0 })} title="Clear wallpaper">✕</button>
+              {/if}
+            </div>
+          </div>
+
+          {#if settingsStore.backgroundImage}
+            <div class="setting-row">
+              <div class="setting-info">
+                <span class="setting-label">Wallpaper Blur</span>
+                <span class="setting-description">Blur the background image ({settingsStore.backgroundBlur}px)</span>
+              </div>
+              <input
+                class="range-input"
+                type="range"
+                min="0"
+                max="20"
+                step="1"
+                value={settingsStore.backgroundBlur}
+                oninput={(e) => settingsStore.update({ backgroundBlur: Number(e.currentTarget.value) })}
+              />
+            </div>
+          {/if}
+
+          <div class="setting-row">
+            <div class="setting-info">
               <span class="setting-label">Terminal Application</span>
               <span class="setting-description">Command to open terminal (empty = auto-detect)</span>
             </div>
@@ -408,6 +445,38 @@
 
   .text-input::placeholder {
     color: var(--text-tertiary);
+  }
+
+  .wallpaper-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .wallpaper-input {
+    width: 200px;
+    font-size: 12px;
+  }
+
+  .clear-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    background: var(--control-fill);
+    border: 1px solid var(--control-stroke);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 12px;
+    transition: all var(--transition-fast);
+  }
+
+  .clear-btn:hover {
+    background: var(--system-critical);
+    color: white;
+    border-color: var(--system-critical);
   }
 
   .range-input {

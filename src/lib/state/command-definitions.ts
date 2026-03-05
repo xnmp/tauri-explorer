@@ -84,7 +84,7 @@ const navigationCommands: Command[] = [
     id: "navigation.refresh",
     label: "Refresh",
     category: "navigation",
-    shortcut: "Ctrl+R",
+    shortcut: "F5",
     handler: () => getActiveExplorer()?.refresh(),
   },
 ];
@@ -425,7 +425,7 @@ const crossPaneCommands: Command[] = [
     id: "pane.copyToOther",
     label: "Copy to Other Pane",
     category: "file",
-    shortcut: "F5",
+    shortcut: "Ctrl+Shift+F5",
     handler: async () => {
       if (!windowTabsManager.dualPaneEnabled) return;
       const activePaneId = windowTabsManager.activePaneId;

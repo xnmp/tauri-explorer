@@ -975,8 +975,8 @@
     align-items: center;
     gap: 6px;
     padding: 12px 8px 10px;
-    background: transparent;
-    border: 1px solid transparent;
+    background: var(--subtle-fill-secondary, rgba(0, 0, 0, 0.03));
+    border: 1px solid color-mix(in srgb, var(--text-primary) 5%, transparent);
     border-bottom-width: var(--selection-indicator-width);
     border-radius: var(--radius-md);
     cursor: pointer;
@@ -984,13 +984,15 @@
     font-family: inherit;
     font-size: 13px;
     color: var(--text-primary);
-    transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+    transition: background 120ms ease, border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
     height: fit-content;
     min-width: 0;
   }
 
   .tile-item:hover {
-    background: var(--subtle-fill-secondary);
+    background: var(--subtle-fill-tertiary, rgba(0, 0, 0, 0.06));
+    border-color: color-mix(in srgb, var(--text-primary) 10%, transparent);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
   }
 
   .tile-item:active {
@@ -998,14 +1000,16 @@
   }
 
   .tile-item.selected {
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
-    border-color: transparent;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 20%, transparent);
     border-bottom-color: var(--accent);
     border-radius: var(--radius-md) var(--radius-md) 2px 2px;
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--accent) 10%, transparent);
   }
 
   .tile-item.selected:hover {
-    background: var(--subtle-fill-tertiary);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 25%, transparent);
   }
 
   .tile-item.drop-target {

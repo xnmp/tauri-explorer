@@ -3,6 +3,7 @@
   Issue: tauri-explorer-iw0, tauri-explorer-jql, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-w3t, tauri-explorer-npjh, tauri-explorer-1ex, tauri-explorer-auj, tauri-explorer-npjh.4
 -->
 <script lang="ts">
+  import "@fontsource-variable/inter";
   import { onMount } from "svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
@@ -314,7 +315,7 @@
 
   :global(:root) {
     /* Typography */
-    --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", sans-serif;
+    --font-family: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", "Cantarell", "Noto Sans", sans-serif;
     --font-size-caption: 11px;
     --font-size-body: 14px;
     --font-size-subtitle: 16px;

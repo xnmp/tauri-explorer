@@ -1149,8 +1149,10 @@
     -webkit-box-orient: vertical;
     text-overflow: ellipsis;
     white-space: normal;
-    line-height: 1.3;
-    word-break: break-all;
+    line-height: 1.4;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    padding-top: 1px;
   }
 
   /* Inline new folder creation */

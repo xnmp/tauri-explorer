@@ -86,7 +86,7 @@ test.describe("Theme System", () => {
 
   test("theme selector shows available themes including hacker", async ({ page }) => {
     await openSettings(page);
-    const themeSelect = page.locator(".theme-select");
+    const themeSelect = page.locator(".color-theme-select");
     await expect(themeSelect).toBeVisible();
 
     // Get all options
@@ -99,7 +99,7 @@ test.describe("Theme System", () => {
 
   test("switching themes changes data-theme attribute", async ({ page }) => {
     await openSettings(page);
-    const themeSelect = page.locator(".theme-select");
+    const themeSelect = page.locator(".color-theme-select");
 
     // Switch to dark
     await themeSelect.selectOption("dark");
@@ -134,7 +134,7 @@ test.describe("Theme System", () => {
 
   test("hacker theme defines monospace font in stylesheet", async ({ page }) => {
     await openSettings(page);
-    const themeSelect = page.locator(".theme-select");
+    const themeSelect = page.locator(".color-theme-select");
     await themeSelect.selectOption("hacker");
     await closeSettings(page);
     await page.waitForTimeout(200);
@@ -164,7 +164,7 @@ test.describe("Theme System", () => {
 
   test("hacker theme shows powerline breadcrumbs", async ({ page }) => {
     await openSettings(page);
-    const themeSelect = page.locator(".theme-select");
+    const themeSelect = page.locator(".color-theme-select");
     await themeSelect.selectOption("hacker");
     await closeSettings(page);
     await page.waitForTimeout(200);
@@ -190,7 +190,7 @@ test.describe("Theme System", () => {
 
   test("theme persists after page reload", async ({ page }) => {
     await openSettings(page);
-    await page.locator(".theme-select").selectOption("ocean-blue");
+    await page.locator(".color-theme-select").selectOption("ocean-blue");
     await closeSettings(page);
 
     // Reload the page
@@ -616,7 +616,7 @@ test.describe("Feature Interactions", () => {
 
     // Change theme
     await openSettings(page);
-    await page.locator(".theme-select").selectOption("dark");
+    await page.locator(".color-theme-select").selectOption("dark");
     await closeSettings(page);
     await page.waitForTimeout(100);
 

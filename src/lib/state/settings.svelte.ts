@@ -16,6 +16,8 @@ export interface NavBarButtons {
   refresh: boolean;
 }
 
+export type IconTheme = "default" | "material";
+
 export interface Settings {
   showToolbar: boolean;
   showSidebar: boolean;
@@ -28,6 +30,7 @@ export interface Settings {
   backgroundOpacity: number; // 0-100, percentage of background opacity
   navBarButtons: NavBarButtons;
   showStatusBar: boolean;
+  iconTheme: IconTheme;
 }
 
 const MIN_ZOOM = 50;
@@ -51,6 +54,7 @@ const DEFAULT_SETTINGS: Settings = {
     refresh: false, // omitted by default per tauri-k4ec
   },
   showStatusBar: true,
+  iconTheme: "default",
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -149,6 +153,9 @@ function createSettingsStore() {
     },
     get showStatusBar() {
       return settings.showStatusBar;
+    },
+    get iconTheme() {
+      return settings.iconTheme;
     },
     toggleStatusBar(): void {
       update({ showStatusBar: !settings.showStatusBar });

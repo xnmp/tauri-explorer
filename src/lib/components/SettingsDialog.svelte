@@ -59,13 +59,28 @@
               <span class="setting-description">Choose the color theme for the app</span>
             </div>
             <select
-              class="theme-select"
+              class="theme-select color-theme-select"
               value={themeStore.currentThemeId}
               onchange={(e) => themeStore.setTheme(e.currentTarget.value)}
             >
               {#each themeStore.availableThemes as theme (theme.id)}
                 <option value={theme.id}>{theme.name}</option>
               {/each}
+            </select>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Icon Theme</span>
+              <span class="setting-description">Choose file icon style</span>
+            </div>
+            <select
+              class="theme-select icon-theme-select"
+              value={settingsStore.iconTheme}
+              onchange={(e) => settingsStore.update({ iconTheme: e.currentTarget.value as "default" | "material" })}
+            >
+              <option value="default">Default</option>
+              <option value="material">Material</option>
             </select>
           </div>
 

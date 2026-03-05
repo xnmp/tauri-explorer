@@ -78,4 +78,7 @@
   /* Icon colors */
   --icon-folder: #5de5d5;
   /* --icon-file-tint: unset; */
+
+  /* Background animation - starfield with constellation lines */
+  --theme-bg-animation: 'starfield';
 }

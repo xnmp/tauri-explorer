@@ -77,6 +77,7 @@
   /* Icon colors - all green to match terminal aesthetic */
   --icon-folder: #00ff41;
   --icon-file-tint: #00cc33;
+  --theme-icon-pack: 'minimal';
 
   /* Mica overlay - green tint */
   --mica-overlay: linear-gradient(

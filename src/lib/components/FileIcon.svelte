@@ -17,7 +17,9 @@
   let { entry, size }: Props = $props();
 
   const iconCategory = $derived(getFileIconCategory(entry));
-  const useMaterial = $derived(settingsStore.iconTheme === "material");
+  const effectiveTheme = $derived(settingsStore.effectiveIconTheme);
+  const useMaterial = $derived(effectiveTheme === "material");
+  const useMinimal = $derived(effectiveTheme === "minimal");
   const nerdIcon = $derived(useMaterial ? getNerdIcon(entry.name, entry.kind) : null);
   const extLabel = $derived(getFileExtensionLabel(entry));
   /** Font size for extension label - shorter labels get bigger text */
@@ -36,6 +38,39 @@
     <span class="nf-icon-badge" style:--badge-color={nerdIcon.color}>
       <span class="nf-icon nf-badge-glyph">{nerdIcon.glyph}</span>
     </span>
+  {/if}
+{:else if useMinimal && size === "small"}
+  <!--
+    Minimal icon theme: clean monochrome outlines (small)
+  -->
+  {#if entry.kind === "directory"}
+    <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
+      <path d="M3 6.5H15V13C15 13.8284 14.3284 14.5 13.5 14.5H4.5C3.67157 14.5 3 13.8284 3 13V6.5Z" stroke="currentColor" stroke-width="1.25" fill="none"/>
+      <path d="M3 5.5C3 4.67 3.67 4 4.5 4H7L9 6H13.5C14.33 6 15 6.67 15 7.5" stroke="currentColor" stroke-width="1.25" fill="none"/>
+    </svg>
+  {:else}
+    <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
+      <path d="M5 2.5H10.5L14.5 6.5V15C14.5 15.2761 14.2761 15.5 14 15.5H5C4.72386 15.5 4.5 15.2761 4.5 15V3C4.5 2.72386 4.72386 2.5 5 2.5Z" stroke="currentColor" stroke-width="1.25" fill="none"/>
+      <path d="M10.5 2.5V6.5H14.5" stroke="currentColor" stroke-width="1.25" fill="none"/>
+    </svg>
+  {/if}
+{:else if useMinimal}
+  <!--
+    Minimal icon theme: clean monochrome outlines (large)
+  -->
+  {#if entry.kind === "directory"}
+    <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
+      <path d="M5 18H43V38C43 39.66 41.66 41 40 41H8C6.34 41 5 39.66 5 38V18Z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+      <path d="M5 14C5 12.34 6.34 11 8 11H17L21 15H40C41.66 15 43 16.34 43 18" stroke="currentColor" stroke-width="1.5" fill="none"/>
+    </svg>
+  {:else}
+    <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
+      <path d="M12 5H28L39 16V43C39 44.1 38.1 45 37 45H12C10.9 45 10 44.1 10 43V7C10 5.9 10.9 5 12 5Z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+      <path d="M28 5V16H39" stroke="currentColor" stroke-width="1.5" fill="none"/>
+      {#if extLabel}
+        <text x="24" y="35" text-anchor="middle" font-size="{extFontSize}" font-weight="600" font-family="system-ui, -apple-system, sans-serif" fill="currentColor" fill-opacity="0.6">{extLabel}</text>
+      {/if}
+    </svg>
   {/if}
 {:else if size === "small"}
   <!--

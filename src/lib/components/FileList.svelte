@@ -9,10 +9,11 @@
   import { toastStore } from "$lib/state/toast.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
-  import { openFile, openImageWithSiblings, moveEntry, copyEntry } from "$lib/api/files";
+  import { openFile, openImageWithSiblings, moveEntry, copyEntry, fetchDirectory } from "$lib/api/files";
   import { broadcastFileChange, parentDir } from "$lib/state/file-events";
   import { undoStore } from "$lib/state/undo.svelte";
   import { dragState } from "$lib/state/drag.svelte";
+  import { conflictResolver } from "$lib/state/conflict-resolver.svelte";
   import FileItem from "./FileItem.svelte";
   import FileIcon from "./FileIcon.svelte";
   import VirtualList from "./VirtualList.svelte";
@@ -284,12 +285,29 @@
     if (entry.path.startsWith(sourcePath + "/")) return;
 
     const isCopyOp = event.ctrlKey;
+    const fileName = sourcePath.split("/").pop() || sourcePath;
+
+    // Check for naming conflict in target directory
+    let overwrite = false;
+    const dirResult = await fetchDirectory(entry.path);
+    if (dirResult.ok) {
+      const existingNames = new Set(dirResult.data.entries.map((e) => e.name));
+      if (existingNames.has(fileName)) {
+        const { choice } = await conflictResolver.prompt({
+          fileName,
+          sourcePath,
+          remaining: 0,
+        });
+        if (choice === "skip" || choice === "cancel") return;
+        if (choice === "overwrite") overwrite = true;
+      }
+    }
+
     const result = isCopyOp
-      ? await copyEntry(sourcePath, entry.path)
-      : await moveEntry(sourcePath, entry.path);
+      ? await copyEntry(sourcePath, entry.path, overwrite)
+      : await moveEntry(sourcePath, entry.path, overwrite);
 
     if (result.ok) {
-      const fileName = sourcePath.split("/").pop() || sourcePath;
       if (isCopyOp) {
         toastStore.show(`Copied ${fileName} to ${entry.name}`, "info");
       } else {
@@ -305,6 +323,7 @@
       broadcastFileChange([parentDir(sourcePath), entry.path]);
     } else {
       console.error(`Failed to ${isCopyOp ? "copy" : "move"}:`, result.error);
+      toastStore.error(result.error);
     }
   }
 
@@ -357,9 +376,23 @@
 
     event.preventDefault();
 
-    const result = await moveEntry(sourcePath, currentPath);
+    const fileName = sourcePath.split("/").pop() || sourcePath;
+
+    // Check for naming conflict in current directory
+    let overwrite = false;
+    const existingNames = new Set(explorer.displayEntries.map((e) => e.name));
+    if (existingNames.has(fileName)) {
+      const { choice } = await conflictResolver.prompt({
+        fileName,
+        sourcePath,
+        remaining: 0,
+      });
+      if (choice === "skip" || choice === "cancel") return;
+      if (choice === "overwrite") overwrite = true;
+    }
+
+    const result = await moveEntry(sourcePath, currentPath, overwrite);
     if (result.ok) {
-      const fileName = sourcePath.split("/").pop() || sourcePath;
       const destName = currentPath.split("/").pop() || currentPath;
       undoStore.push({
         type: "move",
@@ -368,7 +401,6 @@
         originalDir: sourceDir,
       });
       toastStore.show(`Moved ${fileName} to ${destName}`, "info");
-      // Refresh all panes to reflect the move
       if (paneNav) {
         paneNav.refreshAllPanes();
       } else {

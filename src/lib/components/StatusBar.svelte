@@ -58,7 +58,7 @@
     justify-content: space-between;
     height: 28px;
     padding: 0 16px;
-    background: var(--background-card-secondary);
+    background: color-mix(in srgb, var(--background-card-secondary) calc(var(--statusbar-opacity, 1) * 100%), transparent);
     border-top: none;
     box-shadow: 0 -1px 0 var(--divider);
     font-size: var(--font-size-caption);

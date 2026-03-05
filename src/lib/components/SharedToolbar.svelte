@@ -130,7 +130,7 @@
     align-items: center;
     gap: 8px;
     padding: 8px 16px;
-    background: var(--background-card);
+    background: color-mix(in srgb, var(--background-card) calc(var(--toolbar-opacity, 1) * 100%), transparent);
     border-bottom: none;
     box-shadow: 0 1px 0 var(--divider);
     height: 48px;

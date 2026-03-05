@@ -6,7 +6,8 @@
   import { tick } from "svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { formatSize } from "$lib/domain/file";
-  import { getFileType, getFileIconColor, getFileIconCategory, formatDate, type IconCategory } from "$lib/domain/file-types";
+  import { getFileType, getFileIconColor, formatDate } from "$lib/domain/file-types";
+  import FileIcon from "./FileIcon.svelte";
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
   import { toastStore } from "$lib/state/toast.svelte";
   import { clipboardStore } from "$lib/state/clipboard.svelte";
@@ -304,70 +305,7 @@
   <!-- Name column -->
   <div class="name-cell">
     <div class="icon" style:--file-icon-color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined} aria-hidden="true">
-      {#if entry.kind === "directory"}
-        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-          <path
-            d="M2 5.5C2 4.67157 2.67157 4 3.5 4H6.17157C6.43679 4 6.69114 4.10536 6.87868 4.29289L7.5 4.91421L8.12132 4.29289C8.30886 4.10536 8.56321 4 8.82843 4H13C13.8284 4 14.5 4.67157 14.5 5.5V6H15.5V5.5C15.5 4.11929 14.3807 3 13 3H8.82843C8.29799 3 7.78929 3.21071 7.41421 3.58579L7.5 3.67157L7.58579 3.58579C7.21071 3.21071 6.70201 3 6.17157 3H3.5C2.11929 3 1 4.11929 1 5.5V12.5C1 13.8807 2.11929 15 3.5 15H8V14H3.5C2.67157 14 2 13.3284 2 12.5V5.5Z"
-            fill="currentColor"
-            class="folder-back"
-          />
-          <path
-            d="M2.5 7.5C2.5 6.94772 2.94772 6.5 3.5 6.5H14.5C15.0523 6.5 15.5 6.94772 15.5 7.5V12.5C15.5 13.6046 14.6046 14.5 13.5 14.5H4.5C3.39543 14.5 2.5 13.6046 2.5 12.5V7.5Z"
-            fill="currentColor"
-            class="folder-front"
-          />
-        </svg>
-      {:else}
-        {@const iconCategory = getFileIconCategory(entry)}
-        {#if iconCategory === "image"}
-          <!-- Image file icon -->
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-            <rect x="3" y="3" width="12" height="12" rx="1.5" fill="currentColor" fill-opacity="0.15"/>
-            <rect x="3" y="3" width="12" height="12" rx="1.5" stroke="currentColor" stroke-width="1.25"/>
-            <circle cx="6.5" cy="6.5" r="1.5" fill="currentColor"/>
-            <path d="M3 12L6 9L8.5 11.5L11 8L15 12V13.5C15 14.3284 14.3284 15 13.5 15H4.5C3.67157 15 3 14.3284 3 13.5V12Z" fill="currentColor" fill-opacity="0.4"/>
-          </svg>
-        {:else if iconCategory === "archive"}
-          <!-- Archive file icon -->
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-            <path d="M4 3C4 2.44772 4.44772 2 5 2H13C13.5523 2 14 2.44772 14 3V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" fill="currentColor" fill-opacity="0.15"/>
-            <path d="M4 3C4 2.44772 4.44772 2 5 2H13C13.5523 2 14 2.44772 14 3V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" stroke="currentColor" stroke-width="1.25"/>
-            <rect x="7" y="4" width="4" height="2" rx="0.5" fill="currentColor"/>
-            <rect x="7" y="7" width="4" height="2" rx="0.5" fill="currentColor"/>
-            <rect x="7" y="10" width="4" height="3" rx="0.5" fill="currentColor"/>
-          </svg>
-        {:else if iconCategory === "code"}
-          <!-- Code file icon -->
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-            <path d="M4 3C4 2.44772 4.44772 2 5 2H10L14 6V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" fill="currentColor" fill-opacity="0.15"/>
-            <path d="M4 3C4 2.44772 4.44772 2 5 2H10L14 6V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" stroke="currentColor" stroke-width="1.25"/>
-            <path d="M10 2V5C10 5.55228 10.4477 6 11 6H14" stroke="currentColor" stroke-width="1.25"/>
-            <path d="M7.5 9L6 10.5L7.5 12M10.5 9L12 10.5L10.5 12" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        {:else if iconCategory === "media"}
-          <!-- Media file icon -->
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-            <rect x="3" y="4" width="12" height="10" rx="1.5" fill="currentColor" fill-opacity="0.15"/>
-            <rect x="3" y="4" width="12" height="10" rx="1.5" stroke="currentColor" stroke-width="1.25"/>
-            <path d="M7 7V11L11 9L7 7Z" fill="currentColor"/>
-          </svg>
-        {:else if iconCategory === "executable"}
-          <!-- Executable file icon -->
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-            <rect x="3" y="3" width="12" height="12" rx="2" fill="currentColor" fill-opacity="0.15"/>
-            <rect x="3" y="3" width="12" height="12" rx="2" stroke="currentColor" stroke-width="1.25"/>
-            <path d="M6 9H12M9 6V12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-          </svg>
-        {:else}
-          <!-- Default document icon -->
-          <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-            <path d="M4 3C4 2.44772 4.44772 2 5 2H10L15 7V15C15 15.5523 14.5523 16 14 16H5C4.44772 16 4 15.5523 4 15V3Z" fill="currentColor" fill-opacity="0.15"/>
-            <path d="M4 3C4 2.44772 4.44772 2 5 2H10L15 7V15C15 15.5523 14.5523 16 14 16H5C4.44772 16 4 15.5523 4 15V3Z" stroke="currentColor" stroke-width="1.25"/>
-            <path d="M10 2V6C10 6.55228 10.4477 7 11 7H15" stroke="currentColor" stroke-width="1.25"/>
-            <path d="M6.5 10H11.5M6.5 12.5H10" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
-          </svg>
-        {/if}
-      {/if}
+      <FileIcon {entry} size="small" />
     </div>
     {#if isRenaming}
       <!-- svelte-ignore a11y_autofocus -->
@@ -511,19 +449,6 @@
     width: 22px;
     height: 22px;
     flex-shrink: 0;
-  }
-
-  /* Folder colors - themed via CSS variable */
-  .folder-back {
-    opacity: 0.65;
-  }
-
-  .folder-front {
-    opacity: 1;
-  }
-
-  .directory .icon {
-    color: var(--icon-folder, #ffb900);
   }
 
   /* File icon colors - theme can override via --icon-file-tint */

@@ -202,8 +202,8 @@ fn perform_content_search(
 
                 let path = entry.path();
 
-                // Skip directories
-                if path.is_dir() {
+                // Skip directories using file_type() (avoids extra stat syscall)
+                if entry.file_type().map_or(true, |ft| ft.is_dir()) {
                     return WalkState::Continue;
                 }
 
@@ -288,10 +288,10 @@ fn perform_content_search(
     });
 
     // Collect results and emit time-based batches (runs in original thread).
-    // Adaptive batching: 50ms for fast first-paint, then 150ms steady state.
+    // Adaptive batching: 16ms for fast first-paint, then 100ms steady state.
     let mut pending_results: Vec<ContentSearchResult> = Vec::new();
-    let mut batch_interval = std::time::Duration::from_millis(50);
-    let steady_interval = std::time::Duration::from_millis(150);
+    let mut batch_interval = std::time::Duration::from_millis(16);
+    let steady_interval = std::time::Duration::from_millis(100);
     let mut last_emit = std::time::Instant::now();
 
     loop {

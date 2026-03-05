@@ -35,6 +35,15 @@
   import StatusBar from "$lib/components/StatusBar.svelte";
   import AnimatedBackground from "$lib/components/AnimatedBackground.svelte";
 
+  /** Convert a filesystem path to a URL usable in src/background-image. */
+  function convertFileSrc(path: string): string {
+    // Tauri asset protocol
+    if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
+      return `asset://localhost/${encodeURIComponent(path)}`;
+    }
+    return `file://${path}`;
+  }
+
   // Get active explorer from window tabs manager
   function getActiveExplorer(): ExplorerInstance | undefined {
     return windowTabsManager.getActiveExplorer();
@@ -270,7 +279,12 @@
 </script>
 
 <!-- Theme background layer - sits behind glassmorphism stack, targetable by themes via --theme-background-image -->
-<div class="theme-background-layer" aria-hidden="true"></div>
+<div
+  class="theme-background-layer"
+  aria-hidden="true"
+  style:background-image={settingsStore.backgroundImage ? `url('${convertFileSrc(settingsStore.backgroundImage)}')` : undefined}
+  style:filter={settingsStore.backgroundImage && settingsStore.backgroundBlur > 0 ? `blur(${settingsStore.backgroundBlur}px)` : undefined}
+></div>
 <AnimatedBackground />
 
 <main class="explorer">
@@ -445,7 +459,8 @@
   /* Theme background layer: behind glassmorphism, targetable by themes */
   .theme-background-layer {
     position: fixed;
-    inset: 0;
+    /* Extend beyond edges to prevent blur transparency at borders */
+    inset: -20px;
     z-index: -1;
     background: var(--theme-background-image, var(--theme-background-color, transparent));
     background-size: cover;

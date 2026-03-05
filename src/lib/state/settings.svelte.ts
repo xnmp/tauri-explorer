@@ -31,6 +31,8 @@ export interface Settings {
   navBarButtons: NavBarButtons;
   showStatusBar: boolean;
   iconTheme: IconTheme;
+  backgroundImage: string; // absolute path to wallpaper image, empty = none
+  backgroundBlur: number; // 0-20, blur in px for custom wallpaper
 }
 
 const MIN_ZOOM = 50;
@@ -55,6 +57,8 @@ const DEFAULT_SETTINGS: Settings = {
   },
   showStatusBar: true,
   iconTheme: "default",
+  backgroundImage: "",
+  backgroundBlur: 0,
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -156,6 +160,12 @@ function createSettingsStore() {
     },
     get iconTheme() {
       return settings.iconTheme;
+    },
+    get backgroundImage() {
+      return settings.backgroundImage;
+    },
+    get backgroundBlur() {
+      return settings.backgroundBlur;
     },
     /** Effective icon theme: user setting wins; if "default", check --theme-icon-pack CSS var */
     get effectiveIconTheme(): IconTheme {

@@ -268,6 +268,9 @@
   });
 </script>
 
+<!-- Theme background layer - sits behind glassmorphism stack, targetable by themes via --theme-background-image -->
+<div class="theme-background-layer" aria-hidden="true"></div>
+
 <main class="explorer">
   <TitleBar />
   {#if settingsStore.showToolbar}
@@ -435,6 +438,18 @@
 
   :global(::-webkit-scrollbar-corner) {
     background: transparent;
+  }
+
+  /* Theme background layer: behind glassmorphism, targetable by themes */
+  .theme-background-layer {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    background: var(--theme-background-image, var(--theme-background-color, transparent));
+    background-size: cover;
+    background-position: center;
+    opacity: var(--bg-opacity, 1);
+    pointer-events: none;
   }
 
   .explorer {

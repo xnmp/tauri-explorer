@@ -4,6 +4,15 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## tauri-explorer-gmpb: Material Design File Icons
+
+**Key takeaways:**
+- When adding new select/dropdown elements that reuse CSS classes (e.g., `.theme-select`), E2E tests using that class as a locator will break with "strict mode violation: resolved to N elements". Always add a distinguishing class (e.g., `.color-theme-select` vs `.icon-theme-select`).
+- Nerd Font BMP codepoints (U+E000-U+F8FF) are safe to use with `\uXXXX` JS escapes. SMP codepoints (U+F0000+) require `String.fromCodePoint()` — stick to BMP for simplicity.
+- The Symbols Nerd Font "Only" variant (~2.4MB TTF) contains just icon glyphs without text characters, ideal for file explorer icon rendering.
+
+---
+
 ## tauri-explorer-rdra / tauri-explorer-za55: OS Clipboard Integration
 
 **Key takeaways:**

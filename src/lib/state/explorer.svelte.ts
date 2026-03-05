@@ -600,6 +600,7 @@ function createExplorerState() {
     const errors: string[] = [];
     const newEntries: FileEntry[] = [];
     let bytesProcessed = 0;
+    let cancelledByUser = false;
 
     // Detect conflicts: which source names already exist in destination
     const existingNames = new Set(coreState.entries.map((e) => e.name));
@@ -610,12 +611,16 @@ function createExplorerState() {
       if (operationsManager.isOperationCancelled(op.id)) break;
 
       const source = sources[i];
-      const hasConflict = existingNames.has(source.name);
+      const sourceDir = source.path.substring(0, source.path.lastIndexOf("/")) || "/";
+
+      // When cutting from the same directory, the file isn't a real conflict
+      const isSameDir = isCut && sourceDir === destPath;
+      const hasConflict = !isSameDir && existingNames.has(source.name);
       let overwrite = false;
 
       if (hasConflict) {
         if (globalChoice === "skip") continue;
-        if (globalChoice === "cancel") break;
+        if (globalChoice === "cancel") { cancelledByUser = true; break; }
         if (globalChoice === "overwrite") {
           overwrite = true;
         } else {
@@ -627,34 +632,36 @@ function createExplorerState() {
           });
           if (applyToAll) globalChoice = choice;
           if (choice === "skip") continue;
-          if (choice === "cancel") break;
+          if (choice === "cancel") { cancelledByUser = true; break; }
           if (choice === "overwrite") overwrite = true;
         }
       }
 
-      const originalDir = source.path.substring(0, source.path.lastIndexOf("/")) || "/";
-      const result = isCut
-        ? await moveEntry(source.path, destPath, overwrite)
-        : await copyEntry(source.path, destPath, overwrite);
-
-      if (result.ok) {
-        newEntries.push(result.data);
-        if (isCut) {
-          undoStore.push({
-            type: "move",
-            sourcePath: source.path,
-            destPath: result.data.path,
-            originalDir,
-          });
-        }
+      // Skip no-op: cut-paste to same directory (file is already there)
+      if (isSameDir) {
+        newEntries.push(coreState.entries.find((e) => e.name === source.name)!);
       } else {
-        errors.push(`${source.name}: ${result.error}`);
+        const result = isCut
+          ? await moveEntry(source.path, destPath, overwrite)
+          : await copyEntry(source.path, destPath, overwrite);
+
+        if (result.ok) {
+          newEntries.push(result.data);
+          if (isCut) {
+            undoStore.push({
+              type: "move",
+              sourcePath: source.path,
+              destPath: result.data.path,
+              originalDir: sourceDir,
+            });
+          }
+        } else {
+          errors.push(`${source.name}: ${result.error}`);
+        }
       }
 
       // Update progress (file-level granularity)
-      // If we have byte estimates, try to distribute proportionally; otherwise use file count
       if (totalBytes > 0) {
-        // Estimate each file's share of total bytes (uniform approximation per file)
         bytesProcessed = Math.round(totalBytes * ((i + 1) / sources.length));
         operationsManager.updateProgress(
           op.id,
@@ -670,8 +677,8 @@ function createExplorerState() {
     onComplete?.();
 
     // Finalize operation tracking
-    if (operationsManager.isOperationCancelled(op.id)) {
-      // Already marked cancelled
+    if (operationsManager.isOperationCancelled(op.id) || cancelledByUser) {
+      operationsManager.cancelOperation(op.id);
     } else if (errors.length > 0 && newEntries.length === 0) {
       operationsManager.failOperation(op.id, errors.join("; "));
     } else {

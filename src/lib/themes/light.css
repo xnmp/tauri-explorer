@@ -95,4 +95,5 @@
   /* Icon colors - warmer gold */
   --icon-folder: #e8a800;
   /* --icon-file-tint: unset; when set, overrides all file icon colors */
+  /* --theme-icon-pack: 'default'; themes can suggest: 'default', 'material', 'minimal' */
 }

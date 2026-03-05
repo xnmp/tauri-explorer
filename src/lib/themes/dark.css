@@ -97,4 +97,5 @@
 
   --icon-folder: #ffc83d;
   /* --icon-file-tint: unset; when set, overrides all file icon colors */
+  /* --theme-icon-pack: 'default'; themes can suggest: 'default', 'material', 'minimal' */
 }

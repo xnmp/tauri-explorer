@@ -3,7 +3,7 @@
   Issue: tauri-explorer-npjh.1, tauri-explorer-oytv
 -->
 <script lang="ts">
-  import { settingsStore } from "$lib/state/settings.svelte";
+  import { settingsStore, type IconTheme } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import KeybindingsSettings from "./KeybindingsSettings.svelte";
 
@@ -77,10 +77,11 @@
             <select
               class="theme-select icon-theme-select"
               value={settingsStore.iconTheme}
-              onchange={(e) => settingsStore.update({ iconTheme: e.currentTarget.value as "default" | "material" })}
+              onchange={(e) => settingsStore.update({ iconTheme: e.currentTarget.value as IconTheme })}
             >
               <option value="default">Default</option>
               <option value="material">Material</option>
+              <option value="minimal">Minimal</option>
             </select>
           </div>
 

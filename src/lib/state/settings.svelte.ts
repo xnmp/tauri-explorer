@@ -16,7 +16,7 @@ export interface NavBarButtons {
   refresh: boolean;
 }
 
-export type IconTheme = "default" | "material";
+export type IconTheme = "default" | "material" | "minimal";
 
 export interface Settings {
   showToolbar: boolean;
@@ -156,6 +156,14 @@ function createSettingsStore() {
     },
     get iconTheme() {
       return settings.iconTheme;
+    },
+    /** Effective icon theme: user setting wins; if "default", check --theme-icon-pack CSS var */
+    get effectiveIconTheme(): IconTheme {
+      if (settings.iconTheme !== "default") return settings.iconTheme;
+      if (typeof document === "undefined") return "default";
+      const css = getComputedStyle(document.documentElement).getPropertyValue("--theme-icon-pack").trim().replace(/["']/g, "");
+      if (css === "material" || css === "minimal") return css;
+      return "default";
     },
     toggleStatusBar(): void {
       update({ showStatusBar: !settings.showStatusBar });

@@ -21,14 +21,12 @@
   const nerdIcon = $derived(useMaterial ? getNerdIcon(entry.name, entry.kind) : null);
 </script>
 
-{#if useMaterial && nerdIcon}
+{#if useMaterial && nerdIcon && entry.kind !== "directory"}
   <!--
-    Material icon theme: Nerd Font glyphs
+    Material icon theme: Nerd Font glyphs (folders use the default SVG icons)
   -->
   {#if size === "small"}
     <span class="nf-icon nf-small" style:color={nerdIcon.color}>{nerdIcon.glyph}</span>
-  {:else if entry.kind === "directory"}
-    <span class="nf-icon nf-large nf-folder" style:color={nerdIcon.color}>{nerdIcon.glyph}</span>
   {:else}
     <span class="nf-icon-badge" style:--badge-color={nerdIcon.color}>
       <span class="nf-icon nf-badge-glyph">{nerdIcon.glyph}</span>
@@ -162,18 +160,6 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-  }
-
-  /* Large folder icon (tiles view) — bare glyph, large and warm */
-  .nf-folder {
-    font-size: 56px;
-    line-height: 64px;
-    width: 64px;
-    height: 64px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15));
   }
 
   /* Large file icon badge (tiles view) — prominent glyph with subtle backing */

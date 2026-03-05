@@ -1,11 +1,13 @@
 <!--
-  FileIcon component - renders file/folder SVG icons by category and size.
-  Color is controlled by the caller via CSS `color` on the parent element.
-  Issue: tauri-18op
+  FileIcon component - renders file/folder icons by category and size.
+  Supports two icon themes: "default" (inline SVGs) and "material" (Nerd Font glyphs).
+  Issue: tauri-18op, tauri-explorer-gmpb
 -->
 <script lang="ts">
   import type { FileEntry } from "$lib/domain/file";
   import { getFileIconCategory } from "$lib/domain/file-types";
+  import { getNerdIcon } from "$lib/domain/nerd-icons";
+  import { settingsStore } from "$lib/state/settings.svelte";
 
   interface Props {
     entry: FileEntry;
@@ -15,9 +17,20 @@
   let { entry, size }: Props = $props();
 
   const iconCategory = $derived(getFileIconCategory(entry));
+  const useMaterial = $derived(settingsStore.iconTheme === "material");
+  const nerdIcon = $derived(useMaterial ? getNerdIcon(entry.name, entry.kind) : null);
 </script>
 
-{#if size === "small"}
+{#if useMaterial && nerdIcon}
+  <!--
+    Material icon theme: Nerd Font glyphs
+  -->
+  {#if size === "small"}
+    <span class="nf-icon" style:color={nerdIcon.color} style:font-size="16px" style:line-height="16px" style:width="16px" style:height="16px" style:display="inline-flex" style:align-items="center" style:justify-content="center">{nerdIcon.glyph}</span>
+  {:else}
+    <span class="nf-icon" style:color={nerdIcon.color} style:font-size="48px" style:line-height="64px" style:width="64px" style:height="64px" style:display="inline-flex" style:align-items="center" style:justify-content="center">{nerdIcon.glyph}</span>
+  {/if}
+{:else if size === "small"}
   <!--
     Small icons: 16x16 element, 18x18 viewBox (list & details views)
   -->

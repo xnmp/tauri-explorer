@@ -313,6 +313,21 @@
     -webkit-appearance: none;
   }
 
+  @font-face {
+    font-family: "NerdFontsSymbols";
+    src: url("/fonts/SymbolsNerdFont-Regular.ttf") format("truetype");
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+  }
+
+  :global(.nf-icon) {
+    font-family: "NerdFontsSymbols", monospace;
+    font-style: normal;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
   :global(:root) {
     /* Typography */
     --font-family: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", "Cantarell", "Noto Sans", sans-serif;

@@ -71,6 +71,21 @@
 
           <div class="setting-row">
             <div class="setting-info">
+              <span class="setting-label">Icon Theme</span>
+              <span class="setting-description">Choose file icon style</span>
+            </div>
+            <select
+              class="theme-select"
+              value={settingsStore.iconTheme}
+              onchange={(e) => settingsStore.update({ iconTheme: e.currentTarget.value as "default" | "material" })}
+            >
+              <option value="default">Default</option>
+              <option value="material">Material</option>
+            </select>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
               <span class="setting-label">Show Toolbar</span>
               <span class="setting-description">Display navigation buttons at the top</span>
             </div>

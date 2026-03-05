@@ -8,6 +8,8 @@
  * localStorage.
  */
 
+import { loadPersisted, savePersisted, removePersisted } from "./persisted";
+
 const STORAGE_KEY = "explorer-drag-data";
 
 export interface DragData {
@@ -23,30 +25,16 @@ export const dragState = {
 
   start(data: DragData) {
     current = data;
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    } catch {
-      // localStorage may be unavailable in some contexts
-    }
+    savePersisted(STORAGE_KEY, data);
   },
 
   clear() {
     current = null;
-    try {
-      localStorage.removeItem(STORAGE_KEY);
-    } catch {
-      // Ignore
-    }
+    removePersisted(STORAGE_KEY);
   },
 
   /** Read drag data from localStorage (cross-window fallback) */
   readCrossWindow(): DragData | null {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return null;
-      return JSON.parse(raw) as DragData;
-    } catch {
-      return null;
-    }
+    return loadPersisted<DragData | null>(STORAGE_KEY, null);
   },
 };

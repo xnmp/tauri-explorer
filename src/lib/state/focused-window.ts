@@ -8,6 +8,7 @@
  */
 
 import type { ViewMode } from "./types";
+import { loadPersisted, savePersisted } from "./persisted";
 
 const STORAGE_KEY = "explorer-focused-window";
 
@@ -17,19 +18,9 @@ interface FocusedWindowState {
 }
 
 export function saveFocusedWindowState(path: string, viewMode: ViewMode): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ path, viewMode }));
-  } catch {
-    // localStorage not available
-  }
+  savePersisted(STORAGE_KEY, { path, viewMode });
 }
 
 export function readFocusedWindowState(): FocusedWindowState | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as FocusedWindowState;
-  } catch {
-    return null;
-  }
+  return loadPersisted<FocusedWindowState | null>(STORAGE_KEY, null);
 }

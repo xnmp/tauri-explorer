@@ -31,3 +31,11 @@ export function savePersisted<T>(key: string, value: T): void {
   if (!isAvailable) return;
   localStorage.setItem(key, JSON.stringify(value));
 }
+
+/**
+ * Remove a key from localStorage.
+ */
+export function removePersisted(key: string): void {
+  if (!isAvailable) return;
+  localStorage.removeItem(key);
+}

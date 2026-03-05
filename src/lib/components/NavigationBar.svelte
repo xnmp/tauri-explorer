@@ -474,6 +474,7 @@
     font-family: inherit;
     font-size: 13px;
     color: var(--text-primary);
+    caret-color: var(--accent);
     outline: none;
     padding: 0;
   }

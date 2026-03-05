@@ -358,3 +358,15 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 - Multi-layer shadows (`--shadow-card`) add depth without being heavy. Each theme should define its own shadow intensity based on its background darkness.
 
 ---
+
+## tauri-jsn1 (EPIC): Advanced Theme Engine
+
+**Key takeaways:**
+- CSS `color-mix(in srgb, var(--bg) calc(var(--opacity) * 100%), transparent)` is the best pattern for per-section transparency tokens. Each section (sidebar, toolbar, content, titlebar, statusbar) gets its own `--*-opacity` variable defaulting to 1.
+- The `--theme-icon-pack` and `--theme-bg-animation` pattern works well: themes declare preferences via CSS variables, the app reads them with `getComputedStyle().getPropertyValue()`. User settings override theme suggestions.
+- Canvas-based animated backgrounds must handle: `requestAnimationFrame` pause on `document.hidden`, window resize with `devicePixelRatio`, and `prefers-reduced-motion` media query.
+- Tauri asset protocol requires `"assetProtocol": { "scope": { "allow": ["**"] } }` in tauri.conf.json for loading local filesystem images in `<img>` or CSS `background-image`.
+- When applying CSS blur to a background layer, extend the element beyond viewport edges (`inset: -20px`) to prevent transparent seams at the border.
+- Window transparency on Linux/WebKitGTK is blocked by ghosting artifacts (wry #1524). `WEBKIT_DISABLE_COMPOSITING_MODE=1` prevents ghosting but blocks all transparency. No reliable workaround exists as of 2026-03.
+
+---

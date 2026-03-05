@@ -685,6 +685,7 @@
     flex: 1;
     overflow: auto;
     position: relative;
+    background: var(--content-bg, radial-gradient(ellipse at 50% 0%, var(--subtle-fill-secondary, rgba(0, 0, 0, 0.02)) 0%, transparent 70%));
     transition: background var(--transition-fast), box-shadow var(--transition-fast);
   }
 

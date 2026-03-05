@@ -35,6 +35,7 @@
   --background-acrylic: rgba(38, 38, 40, 0.92);
   --background-card: rgba(44, 44, 46, 0.6);
   --background-card-secondary: rgba(38, 38, 40, 0.5);
+  --content-bg: radial-gradient(ellipse at 50% 0%, rgba(76, 194, 244, 0.03) 0%, transparent 60%);
 
   /* Surface/border colors */
   --surface-stroke: rgba(255, 255, 255, 0.08);

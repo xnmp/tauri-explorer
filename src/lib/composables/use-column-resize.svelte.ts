@@ -24,16 +24,26 @@ const DEFAULT_WIDTHS: ColumnWidths = {
   size: 100,
 };
 
-export function useColumnResize(initialWidths?: Partial<ColumnWidths>) {
+import type { ColumnVisibility } from "$lib/state/settings.svelte";
+
+export function useColumnResize(
+  initialWidths?: Partial<ColumnWidths>,
+  getVisibility?: () => ColumnVisibility,
+) {
   let columnWidths = $state<ColumnWidths>({ ...DEFAULT_WIDTHS, ...initialWidths });
   let isResizing = $state(false);
   let resizeColumn = $state<ColumnKey | null>(null);
   let resizeStartX = $state(0);
   let resizeStartWidth = $state(0);
 
-  const gridTemplateColumns = $derived(
-    `${columnWidths.name}px ${columnWidths.date}px ${columnWidths.type}px ${columnWidths.size}px`
-  );
+  const gridTemplateColumns = $derived.by(() => {
+    const vis = getVisibility?.() ?? { date: true, type: true, size: true };
+    const cols = [`${columnWidths.name}px`];
+    if (vis.date) cols.push(`${columnWidths.date}px`);
+    if (vis.type) cols.push(`${columnWidths.type}px`);
+    if (vis.size) cols.push(`${columnWidths.size}px`);
+    return cols.join(" ");
+  });
 
   function startResize(column: ColumnKey, event: MouseEvent): void {
     event.preventDefault();

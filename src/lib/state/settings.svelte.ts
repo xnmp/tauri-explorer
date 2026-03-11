@@ -18,6 +18,13 @@ export interface NavBarButtons {
 
 export type IconTheme = "default" | "material" | "minimal";
 
+/** Which columns are visible in details view (name is always shown) */
+export interface ColumnVisibility {
+  date: boolean;
+  type: boolean;
+  size: boolean;
+}
+
 export interface Settings {
   showToolbar: boolean;
   showSidebar: boolean;
@@ -33,6 +40,7 @@ export interface Settings {
   iconTheme: IconTheme;
   backgroundImage: string; // absolute path to wallpaper image, empty = none
   backgroundBlur: number; // 0-20, blur in px for custom wallpaper
+  columnVisibility: ColumnVisibility;
 }
 
 const MIN_ZOOM = 50;
@@ -59,6 +67,7 @@ const DEFAULT_SETTINGS: Settings = {
   iconTheme: "default",
   backgroundImage: "",
   backgroundBlur: 0,
+  columnVisibility: { date: true, type: true, size: true },
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -166,6 +175,17 @@ function createSettingsStore() {
     },
     get backgroundBlur() {
       return settings.backgroundBlur;
+    },
+    get columnVisibility() {
+      return settings.columnVisibility;
+    },
+    toggleColumn(column: keyof ColumnVisibility): void {
+      update({
+        columnVisibility: {
+          ...settings.columnVisibility,
+          [column]: !settings.columnVisibility[column],
+        },
+      });
     },
     /** Effective icon theme: user setting wins; if "default", check --theme-icon-pack CSS var */
     get effectiveIconTheme(): IconTheme {

@@ -196,20 +196,29 @@
       const searchParams = new URLSearchParams(window.location.search);
       const urlPath = searchParams.get("path");
       const urlViewMode = searchParams.get("viewMode") as import("$lib/state/types").ViewMode | null;
-      // Use launch cwd as default path so `tauri-explorer` opens at the terminal's cwd.
-      // Fall back to home directory if cwd isn't available.
-      const cwdResult = await getLaunchCwd();
-      let defaultPath: string;
-      if (cwdResult.ok) {
-        defaultPath = cwdResult.data;
-      } else {
-        const homeResult = await getHomeDirectory();
-        defaultPath = homeResult.ok ? homeResult.data : "/home";
-      }
+      // Fetch launch cwd and home directory
+      const [cwdResult, homeResult] = await Promise.all([getLaunchCwd(), getHomeDirectory()]);
+      const homePath = homeResult.ok ? homeResult.data : "/home";
+      const launchCwd = cwdResult.ok ? cwdResult.data : null;
+
+      console.log("[Explorer] Launch cwd:", launchCwd, "Home:", homePath);
+
       // Child windows (spawned via Ctrl+N) have a ?path= param — skip
       // saved-state restoration so they open at the parent's path.
       const isChildWindow = !!urlPath;
-      const tab = windowTabsManager.init(urlPath || defaultPath, isChildWindow);
+      const defaultPath = urlPath || launchCwd || homePath;
+      const tab = windowTabsManager.init(defaultPath, isChildWindow);
+
+      // If launched from a terminal with a cwd that isn't home, navigate the
+      // active pane there — even when saved state was restored. This makes
+      // `tauri-explorer` (or `tauri-explorer /some/path`) open at the right place.
+      if (!isChildWindow && launchCwd && launchCwd !== homePath) {
+        const explorer = windowTabsManager.getActiveExplorer();
+        if (explorer && explorer.currentPath !== launchCwd) {
+          console.log("[Explorer] Navigating active pane to launch cwd:", launchCwd);
+          explorer.navigateTo(launchCwd);
+        }
+      }
       // Apply inherited view mode from parent window
       if (urlViewMode && tab) {
         const explorer = windowTabsManager.getActiveExplorer();

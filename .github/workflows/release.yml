@@ -82,8 +82,51 @@ jobs:
             src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
           if-no-files-found: ignore
 
+  build-arch:
+    needs: version-check
+    if: needs.version-check.outputs.tag_exists == 'false'
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Install build dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm git rust cargo webkit2gtk-4.1 gtk3 libsoup3 \
+            pango cairo gdk-pixbuf2 glib2 librsvg openssl pkgconf
+
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install tauri-cli
+        run: cargo install tauri-cli
+
+      - name: Build with makepkg
+        run: |
+          # makepkg refuses to run as root - create a build user
+          useradd -m builder
+          chown -R builder:builder .
+          # Copy repo into the expected source location
+          mkdir -p /tmp/build
+          cp -a . /tmp/build/tauri-explorer
+          cp PKGBUILD /tmp/build/
+          chown -R builder:builder /tmp/build
+          cd /tmp/build
+          # Set _srcdir so PKGBUILD finds the source
+          export _srcdir=/tmp/build/tauri-explorer
+          su builder -c '_srcdir=/tmp/build/tauri-explorer makepkg -ef --nocheck PKGDEST=/tmp/build/out'
+
+      - name: Upload Arch package
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundles-arch-pkg
+          path: /tmp/build/out/*.pkg.tar.zst
+
   release:
-    needs: [version-check, build]
+    needs: [version-check, build, build-arch]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -98,7 +141,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.version-check.outputs.version }}
         run: |
-          find artifacts -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.dmg' -o -name '*.exe' \) > /tmp/assets.txt
+          find artifacts -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.dmg' -o -name '*.exe' -o -name '*.pkg.tar.zst' \) > /tmp/assets.txt
           gh release create "$VERSION" \
             --title "$VERSION" \
             --generate-notes \

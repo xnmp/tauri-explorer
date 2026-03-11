@@ -26,7 +26,9 @@ options=('!lto')
 source=()
 sha256sums=()
 
-_srcdir="/home/chong/Repos/tauri-explorer"
+# When building locally, set _srcdir to the repo root.
+# In CI, the repo is copied into $srcdir/tauri-explorer before makepkg runs.
+_srcdir="${_srcdir:-$srcdir/$pkgname}"
 
 prepare() {
   cd "$_srcdir"

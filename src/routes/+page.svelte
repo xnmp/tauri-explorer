@@ -186,10 +186,12 @@
   });
 
   onMount(() => {
+    const t0 = performance.now();
     performance.mark("app-mount-start");
 
     // Initialize theme from saved preference
     themeStore.initTheme();
+    const tTheme = performance.now();
 
     // Initialize window tabs with directory from query param or home
     (async () => {
@@ -197,17 +199,19 @@
       const urlPath = searchParams.get("path");
       const urlViewMode = searchParams.get("viewMode") as import("$lib/state/types").ViewMode | null;
       // Fetch launch cwd and home directory
+      const tIpc0 = performance.now();
       const [cwdResult, homeResult] = await Promise.all([getLaunchCwd(), getHomeDirectory()]);
+      const tIpc1 = performance.now();
       const homePath = homeResult.ok ? homeResult.data : "/home";
       const launchCwd = cwdResult.ok ? cwdResult.data : null;
-
-      console.log("[Explorer] Launch cwd:", launchCwd, "Home:", homePath);
 
       // Child windows (spawned via Ctrl+N) have a ?path= param — skip
       // saved-state restoration so they open at the parent's path.
       const isChildWindow = !!urlPath;
       const defaultPath = urlPath || launchCwd || homePath;
+      const tInit0 = performance.now();
       const tab = windowTabsManager.init(defaultPath, isChildWindow);
+      const tInit1 = performance.now();
 
       // If launched from a terminal with a meaningful cwd, navigate the active
       // pane there — even when saved state was restored. Skip if cwd is $HOME
@@ -216,7 +220,6 @@
       if (!isChildWindow && !isGenericCwd) {
         const explorer = windowTabsManager.getActiveExplorer();
         if (explorer && explorer.currentPath !== launchCwd) {
-          console.log("[Explorer] Navigating active pane to launch cwd:", launchCwd);
           explorer.navigateTo(launchCwd);
         }
       }
@@ -225,12 +228,17 @@
         const explorer = windowTabsManager.getActiveExplorer();
         explorer?.setViewMode(urlViewMode);
       }
+      const tEnd = performance.now();
       performance.mark("app-first-dir");
-      if (import.meta.env.DEV) {
-        performance.measure("startup-to-first-dir", "app-mount-start", "app-first-dir");
-        const m = performance.getEntriesByName("startup-to-first-dir")[0];
-        console.log(`[Perf] Startup to first directory: ${m.duration.toFixed(0)}ms`);
-      }
+
+      // Startup profiling — always log for now
+      console.log(
+        `[Perf] Startup breakdown:\n` +
+        `  theme init:     ${(tTheme - t0).toFixed(1)}ms\n` +
+        `  IPC (cwd+home): ${(tIpc1 - tIpc0).toFixed(1)}ms\n` +
+        `  tabs init:      ${(tInit1 - tInit0).toFixed(1)}ms\n` +
+        `  total to dir:   ${(tEnd - t0).toFixed(1)}ms`
+      );
     })();
 
     // Load settings and bookmarks from config files (async, non-blocking)

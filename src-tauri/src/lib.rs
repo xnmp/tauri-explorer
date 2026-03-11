@@ -84,6 +84,8 @@ fn restore_from_trash(paths: Vec<String>) -> Result<(), AppError> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(launch_dir: Option<String>) {
+    let t_start = std::time::Instant::now();
+
     // Fix webkit2gtk Wayland protocol errors on Linux compositors (Hyprland, Sway, etc.)
     #[cfg(target_os = "linux")]
     {
@@ -98,7 +100,7 @@ pub fn run(launch_dir: Option<String>) {
             .to_string()
     });
 
-    eprintln!("[Explorer] Using launch cwd: {}", launch_cwd);
+    let t_plugins = std::time::Instant::now();
 
     tauri::Builder::default()
         .manage(LaunchCwd(launch_cwd))
@@ -160,14 +162,17 @@ pub fn run(launch_dir: Option<String>) {
             config::write_config_file,
             config::get_config_dir,
         ])
-        .setup(|_app| {
-            #[cfg(debug_assertions)]
-            {
-                println!("[Explorer] Rust backend ready");
-            }
-            // Note: Window rounded corners and borders are handled via CSS
-            // with transparent: true and shadow: false in tauri.conf.json
-            // DWM APIs don't work with decorations: false windows
+        .setup(move |_app| {
+            let t_setup = std::time::Instant::now();
+            eprintln!(
+                "[Perf] Rust startup:\n  \
+                 pre-builder:  {:?}\n  \
+                 builder→setup: {:?}\n  \
+                 total:        {:?}",
+                t_plugins - t_start,
+                t_setup - t_plugins,
+                t_setup - t_start,
+            );
             Ok(())
         })
         .run(tauri::generate_context!())

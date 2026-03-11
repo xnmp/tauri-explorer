@@ -68,11 +68,10 @@ fn should_skip_dir(name: &str) -> bool {
 
 /// Collect all file/directory entries under `root_path` using jwalk.
 /// Returns `(relative_path, name, is_dir)` tuples.
-/// Default walk limit. Home directories can easily have 50k+ entries;
-/// a low cap causes the walker to miss entire subtrees.
-const DEFAULT_MAX_ENTRIES: usize = 100_000;
-
-fn walk_entries(root_path: &PathBuf, max_entries: usize) -> Vec<(String, String, bool)> {
+/// No entry cap — jwalk is parallel and fast, and we already cap scored
+/// results. An artificial walk limit causes non-deterministic subtree
+/// omissions because jwalk uses parallel DFS.
+fn walk_entries(root_path: &PathBuf) -> Vec<(String, String, bool)> {
     let mut entries: Vec<(String, String, bool)> = Vec::new();
 
     let walker = WalkDir::new(root_path)
@@ -86,7 +85,7 @@ fn walk_entries(root_path: &PathBuf, max_entries: usize) -> Vec<(String, String,
             });
         });
 
-    for entry in walker.into_iter().take(max_entries) {
+    for entry in walker {
         let entry = match entry {
             Ok(e) => e,
             Err(_) => continue,
@@ -165,7 +164,7 @@ pub fn fuzzy_search(query: String, root: String, limit: usize) -> Result<SearchR
     }
 
     let limit = limit.min(100).max(1);
-    let entries = walk_entries(&root_path, DEFAULT_MAX_ENTRIES);
+    let entries = walk_entries(&root_path);
 
     if entries.is_empty() {
         return Ok(SearchResponse { results: vec![] });
@@ -240,7 +239,6 @@ pub fn start_streaming_search(
         let mut all_results: Vec<SearchResult> = Vec::new();
         let mut total_scanned = 0;
         let batch_size = 500;
-        let max_entries = DEFAULT_MAX_ENTRIES;
 
         let query_lower = query.to_lowercase();
         let mut matcher = Matcher::new(Config::DEFAULT);
@@ -259,7 +257,7 @@ pub fn start_streaming_search(
 
         let mut pending_entries: Vec<(String, String, bool)> = Vec::new();
 
-        for entry in walker.into_iter().take(max_entries) {
+        for entry in walker {
             // Check for cancellation
             if cancelled.load(Ordering::Relaxed) {
                 break;
@@ -455,7 +453,7 @@ mod tests {
         let root = visible_root(&dir);
         build_project_tree(&root);
 
-        let entries = walk_entries(&PathBuf::from(&root), 10000);
+        let entries = walk_entries(&PathBuf::from(&root));
 
         // Verify we collected entries from all depths
         let names: Vec<&str> = entries.iter().map(|e| e.1.as_str()).collect();
@@ -497,7 +495,7 @@ mod tests {
         fs::create_dir(root.join("folder2")).unwrap();
         File::create(root.join("folder2/abc.txt")).unwrap();
 
-        let entries = walk_entries(&PathBuf::from(&root), 10000);
+        let entries = walk_entries(&PathBuf::from(&root));
 
         // Count "abc" directories
         let abc_dirs: Vec<&(String, String, bool)> = entries
@@ -532,7 +530,7 @@ mod tests {
         fs::create_dir_all(root.join("a/b/c/d/target_folder")).unwrap();
         File::create(root.join("a/b/c/d/target_folder/payload.txt")).unwrap();
 
-        let entries = walk_entries(&PathBuf::from(&root), 10000);
+        let entries = walk_entries(&PathBuf::from(&root));
 
         // Must find the deeply nested folder despite 200 root siblings
         assert!(

@@ -99,13 +99,14 @@ jobs:
         run: |
           pacman -Syu --noconfirm
           pacman -S --noconfirm git rust cargo webkit2gtk-4.1 gtk3 libsoup3 \
-            pango cairo gdk-pixbuf2 glib2 librsvg openssl pkgconf
+            pango cairo gdk-pixbuf2 glib2 librsvg openssl pkgconf unzip
 
       - uses: actions/checkout@v4
 
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
+      - name: Install bun
+        run: |
+          curl -fsSL https://bun.sh/install | bash
+          echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
 
       - name: Install tauri-cli
         run: cargo install tauri-cli --locked
@@ -117,8 +118,12 @@ jobs:
           cp -a . /tmp/build/tauri-explorer
           cp PKGBUILD /tmp/build/
           chown -R builder:builder /tmp/build
+          # Make cargo and bun accessible to builder
+          cp -a "$HOME/.cargo" /home/builder/.cargo
+          cp -a "$HOME/.bun" /home/builder/.bun
+          chown -R builder:builder /home/builder/.cargo /home/builder/.bun
           cd /tmp/build
-          su builder -c '_srcdir=/tmp/build/tauri-explorer makepkg -ef --nocheck PKGDEST=/tmp/build/out'
+          su builder -c 'export PATH="/home/builder/.cargo/bin:/home/builder/.bun/bin:$PATH" && _srcdir=/tmp/build/tauri-explorer makepkg -ef --nocheck PKGDEST=/tmp/build/out'
 
       - name: Upload Arch package
         uses: actions/upload-artifact@v4

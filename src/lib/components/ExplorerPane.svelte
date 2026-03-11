@@ -4,7 +4,7 @@
   Issue: tauri-explorer-auj, tauri-explorer-ldfx (window-level tabs)
 -->
 <script lang="ts">
-  import { setContext } from "svelte";
+  import { setContext, tick } from "svelte";
   import { createExplorerState } from "$lib/state/explorer.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import type { PaneId } from "$lib/state/types";
@@ -86,6 +86,15 @@
       }
 
       paneExplorer.selectEntry(entries[newIndex], { ctrlKey: false, shiftKey: event.shiftKey });
+
+      // Move DOM focus to the newly selected element so focus-visible
+      // tracks selection (avoids stale focus ring on the old item)
+      tick().then(() => {
+        const el = paneRef?.querySelector<HTMLElement>(".selected");
+        if (el && el !== document.activeElement) {
+          el.focus({ preventScroll: false });
+        }
+      });
     }
     // All other shortcuts (Ctrl+C/X/V/Z/A, Delete, F2, F5, F6, Enter, etc.)
     // are handled by the global keybinding system in command-definitions.ts

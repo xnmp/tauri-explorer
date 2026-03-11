@@ -1024,6 +1024,10 @@
     transition: background var(--transition-fast), border-color var(--transition-fast);
   }
 
+  .list-item:focus {
+    outline: none;
+  }
+
   .list-item:hover {
     background: var(--subtle-fill-secondary);
   }
@@ -1070,6 +1074,10 @@
     padding: 12px;
     overflow-y: auto;
     flex: 1;
+  }
+
+  .tile-item:focus {
+    outline: none;
   }
 
   .tile-item {

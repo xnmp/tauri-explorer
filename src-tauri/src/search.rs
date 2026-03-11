@@ -66,11 +66,16 @@ fn should_skip_dir(name: &str) -> bool {
     name.starts_with('.') || SKIP_DIRS.contains(&name)
 }
 
-/// Collect all file/directory entries under `root_path` using jwalk.
+/// Safety cap for the non-streaming path which collects entries into memory.
+/// High enough to cover any normal home directory tree; prevents OOM if
+/// the search root is accidentally `/` or a network mount. The streaming
+/// path (used by the UI) has its own cancellation mechanism and doesn't
+/// need this cap.
+const WALK_SAFETY_CAP: usize = 500_000;
+
+/// Collect file/directory entries under `root_path` using jwalk.
 /// Returns `(relative_path, name, is_dir)` tuples.
-/// No entry cap — jwalk is parallel and fast, and we already cap scored
-/// results. An artificial walk limit causes non-deterministic subtree
-/// omissions because jwalk uses parallel DFS.
+/// Capped at `WALK_SAFETY_CAP` to bound memory for the non-streaming path.
 fn walk_entries(root_path: &PathBuf) -> Vec<(String, String, bool)> {
     let mut entries: Vec<(String, String, bool)> = Vec::new();
 
@@ -85,7 +90,7 @@ fn walk_entries(root_path: &PathBuf) -> Vec<(String, String, bool)> {
             });
         });
 
-    for entry in walker {
+    for entry in walker.into_iter().take(WALK_SAFETY_CAP) {
         let entry = match entry {
             Ok(e) => e,
             Err(_) => continue,

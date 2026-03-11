@@ -41,6 +41,44 @@
     windowTabsManager.setActivePane(paneId);
   }
 
+  /** Compute how many indices to jump for an arrow key in the current view.
+   *  Returns 0 if the arrow key doesn't apply to this view mode.
+   *
+   *  Layout summary:
+   *  - details: single column, up/down only
+   *  - list:    grid-auto-flow: column (items fill top→bottom, then next column)
+   *             up/down = ±1, left/right = ±rows_per_column
+   *  - tiles:   grid row-first (items fill left→right, then next row)
+   *             left/right = ±1, up/down = ±columns_per_row
+   */
+  function getArrowStep(key: string, viewMode: string, totalItems: number): number {
+    const isVertical = key === "ArrowUp" || key === "ArrowDown";
+    const isHorizontal = key === "ArrowLeft" || key === "ArrowRight";
+
+    if (viewMode === "details") {
+      return isVertical ? 1 : 0;
+    }
+
+    if (viewMode === "list") {
+      if (isVertical) return 1;
+      // Horizontal: jump by rows-per-column
+      const gridEl = paneRef?.querySelector<HTMLElement>(".list-view");
+      const cols = gridEl ? parseInt(getComputedStyle(gridEl).getPropertyValue("--list-columns")) || 1 : 1;
+      return Math.ceil(totalItems / cols);
+    }
+
+    if (viewMode === "tiles") {
+      if (isHorizontal) return 1;
+      // Vertical: jump by columns-per-row (read from rendered grid)
+      const gridEl = paneRef?.querySelector<HTMLElement>(".tiles-view");
+      if (!gridEl) return 1;
+      const cols = getComputedStyle(gridEl).gridTemplateColumns.split(" ").length;
+      return cols;
+    }
+
+    return isVertical ? 1 : 0;
+  }
+
   function handleKeydown(event: KeyboardEvent): void {
     // Don't process keyboard shortcuts when a dialog is open
     if (dialogStore.activeDialog) return;
@@ -63,17 +101,8 @@
         ? entries.findIndex((e) => e.path === selected.path)
         : -1;
 
-      // In list view, left/right move between columns (jump by rows-per-column).
-      // In other views, left/right are ignored.
-      const isListView = paneExplorer.viewMode === "list";
-      let step = 1;
-      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-        if (!isListView) return;
-        // Read actual column count from the rendered grid CSS variable
-        const gridEl = paneRef?.querySelector<HTMLElement>(".list-view");
-        const cols = gridEl ? parseInt(getComputedStyle(gridEl).getPropertyValue("--list-columns")) || 1 : 1;
-        step = Math.ceil(entries.length / cols);
-      }
+      const step = getArrowStep(event.key, paneExplorer.viewMode, entries.length);
+      if (step === 0) return; // Arrow key not applicable in this view
 
       const isForward = event.key === "ArrowDown" || event.key === "ArrowRight";
       let newIndex: number;

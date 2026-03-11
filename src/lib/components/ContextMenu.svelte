@@ -153,6 +153,7 @@
   ];
 
   let menuEl: HTMLDivElement | undefined = $state();
+  let listSubmenuOpen = $state(false);
 
   // Clamp menu position to viewport after rendering
   $effect(() => {
@@ -354,32 +355,77 @@
     <!-- View options -->
     <div class="menu-section-label">View</div>
     {#each viewModes as mode}
-      <button
-        class="menu-item"
-        class:selected={explorer.viewMode === mode.id}
-        onclick={() => handleSetViewMode(mode.id)}
-        role="menuitemradio"
-        aria-checked={explorer.viewMode === mode.id}
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-          {#if mode.id === "details"}
-            <path d="M2 4H14M2 8H14M2 12H14" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
-          {:else if mode.id === "list"}
-            <path d="M3 4H4M6 4H13M3 8H4M6 8H13M3 12H4M6 12H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-          {:else}
-            <rect x="2" y="2" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-            <rect x="9" y="2" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-            <rect x="2" y="9" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-            <rect x="9" y="9" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+      {#if mode.id === "list"}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="submenu-wrapper" onmouseenter={() => listSubmenuOpen = true} onmouseleave={() => listSubmenuOpen = false}>
+          <button
+            class="menu-item"
+            class:selected={explorer.viewMode === mode.id}
+            onclick={() => handleSetViewMode(mode.id)}
+            role="menuitemradio"
+            aria-checked={explorer.viewMode === mode.id}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M3 4H4M6 4H13M3 8H4M6 8H13M3 12H4M6 12H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+            <span>{mode.label}</span>
+            {#if explorer.viewMode === mode.id}
+              <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            {/if}
+            <svg class="submenu-arrow" width="8" height="8" viewBox="0 0 8 8" fill="none">
+              <path d="M3 1.5L6 4L3 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          {#if listSubmenuOpen}
+            <div class="submenu">
+              <div class="menu-section-label">Columns</div>
+              {#each [1, 2, 3, 4, 5, 6] as n}
+                <button
+                  class="menu-item"
+                  class:selected={settingsStore.listViewColumns === n}
+                  onclick={() => { settingsStore.setListViewColumns(n); contextMenuStore.close(); }}
+                  role="menuitemradio"
+                  aria-checked={settingsStore.listViewColumns === n}
+                >
+                  <span>{n}</span>
+                  {#if settingsStore.listViewColumns === n}
+                    <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                      <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  {/if}
+                </button>
+              {/each}
+            </div>
           {/if}
-        </svg>
-        <span>{mode.label}</span>
-        {#if explorer.viewMode === mode.id}
-          <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
-            <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </div>
+      {:else}
+        <button
+          class="menu-item"
+          class:selected={explorer.viewMode === mode.id}
+          onclick={() => handleSetViewMode(mode.id)}
+          role="menuitemradio"
+          aria-checked={explorer.viewMode === mode.id}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            {#if mode.id === "details"}
+              <path d="M2 4H14M2 8H14M2 12H14" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+            {:else}
+              <rect x="2" y="2" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+              <rect x="9" y="2" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+              <rect x="2" y="9" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+              <rect x="9" y="9" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+            {/if}
           </svg>
-        {/if}
-      </button>
+          <span>{mode.label}</span>
+          {#if explorer.viewMode === mode.id}
+            <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          {/if}
+        </button>
+      {/if}
     {/each}
   </div>
 {/if}
@@ -485,5 +531,30 @@
   .check-icon {
     color: var(--accent);
     margin-left: auto;
+  }
+
+  .submenu-wrapper {
+    position: relative;
+  }
+
+  .submenu-arrow {
+    color: var(--text-tertiary);
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
+  .submenu {
+    position: absolute;
+    left: 100%;
+    top: -6px;
+    min-width: 120px;
+    padding: 6px;
+    background: var(--background-acrylic);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid var(--surface-stroke-flyout);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-flyout);
+    animation: menuIn 100ms cubic-bezier(0, 0, 0, 1);
   }
 </style>

@@ -56,20 +56,6 @@
     columnMenuPos = null;
   }
 
-  // List view column count menu
-  let listColumnMenuPos = $state<{ x: number; y: number } | null>(null);
-
-  function handleListViewContextMenu(event: MouseEvent) {
-    // Only show on background clicks, not on items
-    const target = event.target as HTMLElement;
-    if (target.closest(".list-item")) return;
-    event.preventDefault();
-    listColumnMenuPos = { x: event.clientX, y: event.clientY };
-  }
-
-  function closeListColumnMenu() {
-    listColumnMenuPos = null;
-  }
 
   // Marquee selection composable
   const marquee = useMarqueeSelection();
@@ -622,9 +608,8 @@
         </VirtualList>
       </div>
     {:else if explorer.viewMode === "list"}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
       <!-- Compact List View -->
-      <div class="list-view file-rows" style="--list-columns: {settingsStore.listViewColumns};" oncontextmenu={handleListViewContextMenu}>
+      <div class="list-view file-rows" style="--list-columns: {settingsStore.listViewColumns};">
         {#if explorer.isCreatingFolder}
           <div class="inline-new-folder list-inline-new-folder">
             <span class="list-icon">
@@ -670,20 +655,6 @@
           </button>
         {/each}
 
-        <!-- List view column count menu -->
-        {#if listColumnMenuPos}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="column-menu-backdrop" onclick={closeListColumnMenu} oncontextmenu={(e) => { e.preventDefault(); closeListColumnMenu(); }}></div>
-          <div class="column-menu" style="left: {listColumnMenuPos.x}px; top: {listColumnMenuPos.y}px;">
-            <div class="column-menu-label">Columns</div>
-            {#each [1, 2, 3, 4, 5, 6] as n}
-              <button class="column-menu-item" onclick={() => { settingsStore.setListViewColumns(n); closeListColumnMenu(); }}>
-                <span class="column-menu-check">{settingsStore.listViewColumns === n ? "✓" : ""}</span>
-                {n} {n === 1 ? "column" : "columns"}
-              </button>
-            {/each}
-          </div>
-        {/if}
       </div>
     {:else}
       <!-- Tiles View (Grid) - progressively rendered to avoid UI freeze -->
@@ -1266,11 +1237,4 @@
     font-size: 12px;
   }
 
-  .column-menu-label {
-    padding: 4px 10px 2px;
-    font-size: var(--font-size-caption);
-    color: var(--text-tertiary);
-    text-transform: uppercase;
-    letter-spacing: var(--letter-spacing-wide);
-  }
 </style>

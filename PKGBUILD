@@ -1,6 +1,6 @@
 # Maintainer: Your Name <email>
 pkgname=tauri-explorer
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="A minimalistic, high-performance file explorer"
 arch=('x86_64' 'aarch64')

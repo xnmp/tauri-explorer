@@ -750,7 +750,7 @@
     display: grid;
     gap: 0;
     padding: 6px 16px;
-    background: var(--background-card, var(--background-solid));
+    background: var(--background-solid);
     border-bottom: 1px solid var(--divider);
     position: sticky;
     top: 0;

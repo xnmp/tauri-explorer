@@ -3,7 +3,6 @@
   Issue: tauri-explorer-iw0, tauri-explorer-x25, tauri-explorer-as45, tauri-explorer-1k9k, tauri-explorer-im3m
 -->
 <script lang="ts">
-  import { tick } from "svelte";
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
   import { clipboardStore } from "$lib/state/clipboard.svelte";
   import { toastStore } from "$lib/state/toast.svelte";
@@ -18,6 +17,8 @@
   import FileIcon from "./FileIcon.svelte";
   import VirtualList from "./VirtualList.svelte";
   import ThumbnailImage from "./ThumbnailImage.svelte";
+  import ToastOverlay from "./ToastOverlay.svelte";
+  import InlineNewFolder from "./InlineNewFolder.svelte";
   import { useColumnResize } from "$lib/composables/use-column-resize.svelte";
   import { useMarqueeSelection } from "$lib/composables/use-marquee-selection.svelte";
   import { useTypeAhead } from "$lib/composables/use-type-ahead.svelte";
@@ -83,59 +84,6 @@
     () => explorer.displayEntries,
     (entry) => explorer.selectEntry(entry, {}),
   );
-
-  // Inline new folder creation
-  let newFolderName = $state("New folder");
-  let newFolderInput: HTMLInputElement | null = null;
-  let newFolderError = $state<string | null>(null);
-
-  /** Compute next available "New folder" / "New folder 2" / etc. */
-  function getNextFolderName(): string {
-    const base = "New folder";
-    const existingNames = new Set(
-      explorer.displayEntries
-        .filter((e) => e.kind === "directory")
-        .map((e) => e.name.toLowerCase())
-    );
-    if (!existingNames.has(base.toLowerCase())) return base;
-    for (let i = 2; ; i++) {
-      const candidate = `${base} ${i}`;
-      if (!existingNames.has(candidate.toLowerCase())) return candidate;
-    }
-  }
-
-  $effect(() => {
-    if (explorer.isCreatingFolder && newFolderInput) {
-      newFolderName = getNextFolderName();
-      newFolderError = null;
-      tick().then(() => {
-        newFolderInput?.focus();
-        newFolderInput?.select();
-      });
-    }
-  });
-
-  async function confirmNewFolder(): Promise<void> {
-    const name = newFolderName.trim();
-    if (!name) {
-      explorer.cancelInlineNewFolder();
-      return;
-    }
-    const error = await explorer.createFolder(name);
-    if (error) {
-      newFolderError = error;
-    }
-  }
-
-  function handleNewFolderKeydown(event: KeyboardEvent): void {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      confirmNewFolder();
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      explorer.cancelInlineNewFolder();
-    }
-  }
 
   // Progressive rendering for tiles view to avoid UI freeze
   const TILE_CHUNK = 60;
@@ -591,25 +539,7 @@
         {/if}
 
         {#if explorer.isCreatingFolder}
-          <div class="inline-new-folder">
-            <span class="new-folder-icon">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="#ffb900"/>
-              </svg>
-            </span>
-            <input
-              type="text"
-              class="new-folder-input"
-              bind:value={newFolderName}
-              bind:this={newFolderInput}
-              onkeydown={handleNewFolderKeydown}
-              onblur={() => confirmNewFolder()}
-              class:error={newFolderError !== null}
-            />
-            {#if newFolderError}
-              <span class="new-folder-error">{newFolderError}</span>
-            {/if}
-          </div>
+          <InlineNewFolder {explorer} variant="details" />
         {/if}
 
         <VirtualList
@@ -634,25 +564,7 @@
       {@const listRows = Math.ceil(totalItems / effectiveListColumns)}
       <div class="list-view file-rows" style="--list-columns: {effectiveListColumns}; --list-rows: {listRows};">
         {#if explorer.isCreatingFolder}
-          <div class="inline-new-folder list-inline-new-folder">
-            <span class="list-icon">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="#ffb900"/>
-              </svg>
-            </span>
-            <input
-              type="text"
-              class="new-folder-input"
-              bind:value={newFolderName}
-              bind:this={newFolderInput}
-              onkeydown={handleNewFolderKeydown}
-              onblur={() => confirmNewFolder()}
-              class:error={newFolderError !== null}
-            />
-            {#if newFolderError}
-              <span class="new-folder-error">{newFolderError}</span>
-            {/if}
-          </div>
+          <InlineNewFolder {explorer} variant="list" />
         {/if}
         {#each explorer.displayEntries as entry (entry.path)}
           <button
@@ -683,26 +595,7 @@
       <!-- Tiles View (Grid) - progressively rendered to avoid UI freeze -->
       <div class="tiles-view file-rows">
         {#if explorer.isCreatingFolder}
-          <div class="tile-item tile-inline-new-folder">
-            <div class="tile-icon">
-              <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
-                <path d="M4 14C4 11.79 5.79 10 8 10H16.34C17.4 10 18.42 10.42 19.17 11.17L22 14H40C42.21 14 44 15.79 44 18V37C44 39.21 42.21 41 40 41H8C5.79 41 4 39.21 4 37V14Z" fill="#e8a800"/>
-                <path d="M2 22C2 20.34 3.34 19 5 19H43C44.66 19 46 20.34 46 22V39C46 40.66 44.66 42 43 42H5C3.34 42 2 40.66 2 39V22Z" fill="#f0b400"/>
-              </svg>
-            </div>
-            <input
-              type="text"
-              class="new-folder-input tile-new-folder-input"
-              bind:value={newFolderName}
-              bind:this={newFolderInput}
-              onkeydown={handleNewFolderKeydown}
-              onblur={() => confirmNewFolder()}
-              class:error={newFolderError !== null}
-            />
-            {#if newFolderError}
-              <span class="new-folder-error">{newFolderError}</span>
-            {/if}
-          </div>
+          <InlineNewFolder {explorer} variant="tiles" />
         {/if}
         {#each visibleTileEntries as entry (entry.path)}
           {@const iconColor = getFileIconColor(entry)}
@@ -744,29 +637,7 @@
     {/if}
   </div>
 
-  <!-- Toast notifications (bottom-right floating) -->
-  {#if toastStore.toasts.length > 0}
-    <div class="toast-container">
-      {#each toastStore.toasts as toast (toast.id)}
-        <div class="toast {toast.type}" class:cut={toast.isCut} role={toast.type === "error" ? "alert" : "status"}>
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            {#if toast.type === "clipboard" && toast.isCut}
-              <path d="M6 3L3 6L6 9M10 3L13 6L10 9M4 6H12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            {:else if toast.type === "clipboard"}
-              <path d="M4 4H12M4 4V12C4 12.5523 4.44772 13 5 13H11C11.5523 13 12 12.5523 12 12V4M4 4L5 2H11L12 4M7 7V10M9 7V10" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-            {:else if toast.type === "error"}
-              <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.25"/>
-              <path d="M8 5V8.5M8 11V10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-            {:else}
-              <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.25"/>
-              <path d="M5.5 8L7 9.5L10.5 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            {/if}
-          </svg>
-          <span>{toast.message}{#if toast.type === "clipboard"} — Ctrl+V to paste{/if}</span>
-        </div>
-      {/each}
-    </div>
-  {/if}
+  <ToastOverlay />
 </div>
 
 <style>
@@ -890,64 +761,6 @@
 
   .sort-indicator {
     opacity: 0.7;
-  }
-
-  /* Clipboard toast */
-  .toast.clipboard {
-    color: var(--accent);
-  }
-
-  .toast.clipboard.cut {
-    color: var(--system-caution);
-  }
-
-  /* Toast container */
-  .toast-container {
-    position: fixed;
-    bottom: 16px;
-    right: 16px;
-    z-index: 100;
-    display: flex;
-    flex-direction: column-reverse;
-    gap: 8px;
-  }
-
-  /* Toast notifications */
-  .toast {
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-sm);
-    background: var(--background-acrylic);
-    backdrop-filter: blur(20px);
-    border: 1px solid var(--surface-stroke);
-    border-radius: var(--radius-pill);
-    font-size: var(--font-size-caption);
-    padding: var(--spacing-sm) var(--spacing-lg);
-    box-shadow: var(--shadow-tooltip);
-    animation: toastIn 200ms cubic-bezier(0, 0, 0, 1);
-  }
-
-  @keyframes toastIn {
-    from {
-      opacity: 0;
-      transform: translateY(8px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  .toast.error {
-    background: linear-gradient(135deg, rgba(196, 43, 28, 0.1), rgba(196, 43, 28, 0.05));
-    border-color: rgba(196, 43, 28, 0.2);
-    color: var(--system-critical);
-  }
-
-  .toast.success {
-    background: linear-gradient(135deg, rgba(15, 123, 15, 0.1), rgba(15, 123, 15, 0.05));
-    border-color: rgba(15, 123, 15, 0.2);
-    color: var(--system-success);
   }
 
   /* Status states */
@@ -1159,78 +972,6 @@
     word-break: break-word;
     overflow-wrap: break-word;
     padding-top: 1px;
-  }
-
-  /* Inline new folder creation */
-  .inline-new-folder {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    height: 32px;
-    padding: 0 12px;
-    background: var(--accent-light);
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
-  }
-
-  .new-folder-icon {
-    display: flex;
-    align-items: center;
-    flex-shrink: 0;
-  }
-
-  .new-folder-input {
-    flex: 1;
-    height: 24px;
-    padding: 0 6px;
-    border: 1px solid var(--accent);
-    border-radius: 3px;
-    background: var(--control-fill);
-    font-family: inherit;
-    font-size: 12px;
-    color: var(--text-primary);
-    outline: none;
-  }
-
-  .new-folder-input.error {
-    border-color: #c42b1c;
-  }
-
-  .new-folder-error {
-    font-size: 11px;
-    color: #c42b1c;
-    white-space: nowrap;
-  }
-
-  /* List view inline new folder */
-  .list-inline-new-folder {
-    padding: 4px 8px;
-    height: auto;
-  }
-
-  .list-inline-new-folder .list-icon {
-    display: flex;
-    align-items: center;
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
-  }
-
-  /* Tiles view inline new folder */
-  .tile-inline-new-folder {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    padding: 10px 6px 8px;
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
-    border-radius: 6px;
-    height: fit-content;
-  }
-
-  .tile-new-folder-input {
-    width: 100%;
-    text-align: center;
-    font-size: 11px;
   }
 
   /* Column visibility context menu */

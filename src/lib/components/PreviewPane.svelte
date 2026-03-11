@@ -41,14 +41,12 @@
     loadPreview(file);
   });
 
-  /** Decode an image off-screen so the main thread isn't blocked */
-  function decodeImage(url: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve(url);
-      img.onerror = () => reject(new Error("Failed to load image"));
-      img.src = url;
-    });
+  /** Decode an image off the main thread so selection/animation aren't blocked */
+  async function decodeImage(url: string): Promise<string> {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    return url;
   }
 
   async function loadPreview(file: FileEntry): Promise<void> {

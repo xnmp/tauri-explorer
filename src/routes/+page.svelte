@@ -215,7 +215,8 @@
       }
     })();
 
-    // Load bookmarks from config file (async, non-blocking)
+    // Load settings and bookmarks from config files (async, non-blocking)
+    settingsStore.init();
     bookmarksStore.init();
 
     // Register all commands for the command palette (deferred to next tick)

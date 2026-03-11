@@ -147,15 +147,13 @@
     return explorer.currentPath;
   }
 
-  // Get home directory (cached)
-  async function getSearchRoot(): Promise<string> {
-    if (homeDir) return homeDir;
+  // Cache home directory for external candidate filtering
+  async function ensureHomeDir(): Promise<void> {
+    if (homeDir) return;
     const result = await getHomeDirectory();
     if (result.ok) {
       homeDir = result.data;
-      return result.data;
     }
-    return getCwdPath();
   }
 
   // Cancel active search and cleanup listener
@@ -222,12 +220,12 @@
       await cancelActiveSearch();
 
       // Show external matches immediately (before backend responds)
+      await ensureHomeDir();
       results = matchExternalCandidates(query);
 
-      // Search from home directory, boost results under CWD
-      const root = await getSearchRoot();
-      const boostPrefix = getCwdPath();
-      const result = await startStreamingSearch(query, root, 20, boostPrefix);
+      // Search from CWD so immediate directory contents are always found
+      const cwd = getCwdPath();
+      const result = await startStreamingSearch(query, cwd, 20);
 
       if (result.ok) {
         activeSearchId = result.data;

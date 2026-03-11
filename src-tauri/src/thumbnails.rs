@@ -30,8 +30,8 @@ fn get_cache_dir() -> Option<PathBuf> {
 /// Cache version - bump when thumbnail generation logic changes to invalidate stale cache
 const CACHE_VERSION: u8 = 2;
 
-/// Generate a cache key (hash) for a file path + modification time + cache version
-fn generate_cache_key(path: &Path) -> Option<String> {
+/// Generate a cache key (hash) for a file path + modification time + size + cache version
+fn generate_cache_key(path: &Path, size: u32) -> Option<String> {
     let metadata = fs::metadata(path).ok()?;
     let modified = metadata.modified().ok()?;
     let modified_secs = modified
@@ -42,6 +42,7 @@ fn generate_cache_key(path: &Path) -> Option<String> {
     let mut hasher = Sha256::new();
     hasher.update(path.to_string_lossy().as_bytes());
     hasher.update(modified_secs.to_le_bytes());
+    hasher.update(size.to_le_bytes());
     hasher.update([CACHE_VERSION]);
 
     Some(hex::encode(hasher.finalize()))
@@ -145,7 +146,7 @@ fn get_thumbnail_sync(path: String, size: Option<u32>) -> Result<String, AppErro
     let size = size.unwrap_or(THUMBNAIL_SIZE);
     validate_thumbnail_path(&source_path, &path)?;
 
-    let cache_key = generate_cache_key(&source_path)
+    let cache_key = generate_cache_key(&source_path, size)
         .ok_or_else(|| AppError::Other(format!("Failed to generate cache key for: {}", path)))?;
 
     if let Some(cached_path) = get_cached_thumbnail(&cache_key) {
@@ -161,7 +162,7 @@ fn get_thumbnail_data_sync(path: String, size: Option<u32>) -> Result<String, Ap
     let size = size.unwrap_or(THUMBNAIL_SIZE);
     validate_thumbnail_path(&source_path, &path)?;
 
-    let cache_key = generate_cache_key(&source_path)
+    let cache_key = generate_cache_key(&source_path, size)
         .ok_or_else(|| AppError::Other(format!("Failed to generate cache key for: {}", path)))?;
 
     // Check cache first
@@ -188,10 +189,9 @@ fn get_micro_thumbnail_sync(path: String) -> Result<String, AppError> {
     let source_path = PathBuf::from(&path);
     validate_thumbnail_path(&source_path, &path)?;
 
-    let cache_key = generate_cache_key(&source_path)
+    let micro_cache_key = generate_cache_key(&source_path, MICRO_SIZE)
+        .map(|k| format!("{}_micro", k))
         .ok_or_else(|| AppError::Other(format!("Failed to generate cache key for: {}", path)))?;
-
-    let micro_cache_key = format!("{}_micro", cache_key);
 
     // Check micro cache first
     if let Some(cached_path) = get_cached_thumbnail(&micro_cache_key) {
@@ -212,10 +212,13 @@ fn get_micro_thumbnail_sync(path: String) -> Result<String, AppError> {
 
     // Pre-warm full thumbnail cache if not already present.
     // Since the image is already decoded in memory, this is nearly free.
-    if get_cached_thumbnail(&cache_key).is_none() {
-        let full = img.thumbnail(THUMBNAIL_SIZE, THUMBNAIL_SIZE).to_rgb8();
-        if let Ok(full_data) = encode_jpeg(&full, 80) {
-            save_to_cache(&cache_key, &full_data);
+    let full_cache_key = generate_cache_key(&source_path, THUMBNAIL_SIZE);
+    if let Some(ref key) = full_cache_key {
+        if get_cached_thumbnail(key).is_none() {
+            let full = img.thumbnail(THUMBNAIL_SIZE, THUMBNAIL_SIZE).to_rgb8();
+            if let Ok(full_data) = encode_jpeg(&full, 80) {
+                save_to_cache(key, &full_data);
+            }
         }
     }
 
@@ -343,7 +346,7 @@ mod tests {
         let file_path = dir.path().join("test.jpg");
         File::create(&file_path).unwrap();
 
-        let key = generate_cache_key(&file_path);
+        let key = generate_cache_key(&file_path, THUMBNAIL_SIZE);
         assert!(key.is_some());
         assert_eq!(key.unwrap().len(), 64); // SHA256 hex is 64 chars
     }
@@ -425,7 +428,7 @@ mod tests {
         assert!(data_uri.starts_with("data:image/jpeg;base64,"));
 
         // Verify that full thumbnail cache was pre-warmed
-        let cache_key = generate_cache_key(&img_path).unwrap();
+        let cache_key = generate_cache_key(&img_path, THUMBNAIL_SIZE).unwrap();
         assert!(
             get_cached_thumbnail(&cache_key).is_some(),
             "Full thumbnail cache should be pre-warmed by micro thumbnail"

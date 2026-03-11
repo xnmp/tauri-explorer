@@ -27,9 +27,12 @@ function generateOperationId(): string {
   return `op-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+const DIALOG_DELAY_MS = 1500;
+
 function createOperationsManager() {
   let operations = $state<Operation[]>([]);
   let showProgressDialog = $state(false);
+  let dialogTimerId: ReturnType<typeof setTimeout> | null = null;
 
   /** Start a new operation */
   function startOperation(
@@ -53,7 +56,16 @@ function createOperationsManager() {
     };
 
     operations = [...operations, operation];
-    showProgressDialog = true;
+
+    // Only show progress dialog if the operation takes longer than the delay
+    if (!showProgressDialog && !dialogTimerId) {
+      dialogTimerId = setTimeout(() => {
+        dialogTimerId = null;
+        if (operations.some((op) => op.status === "running")) {
+          showProgressDialog = true;
+        }
+      }, DIALOG_DELAY_MS);
+    }
 
     return operation;
   }
@@ -93,13 +105,14 @@ function createOperationsManager() {
     }, 2000);
   }
 
-  /** Mark operation as error */
+  /** Mark operation as error — show dialog immediately so user sees the error */
   function failOperation(operationId: string, error: string): void {
     operations = operations.map((op) =>
       op.id === operationId
         ? { ...op, status: "error", error }
         : op
     );
+    showProgressDialog = true;
   }
 
   /** Retry a failed operation */
@@ -150,6 +163,10 @@ function createOperationsManager() {
     );
 
     if (operations.length === 0) {
+      if (dialogTimerId) {
+        clearTimeout(dialogTimerId);
+        dialogTimerId = null;
+      }
       showProgressDialog = false;
     }
   }
@@ -159,12 +176,20 @@ function createOperationsManager() {
     operations = operations.filter((op) => op.id !== operationId);
 
     if (operations.length === 0) {
+      if (dialogTimerId) {
+        clearTimeout(dialogTimerId);
+        dialogTimerId = null;
+      }
       showProgressDialog = false;
     }
   }
 
   /** Hide the progress dialog */
   function hideDialog(): void {
+    if (dialogTimerId) {
+      clearTimeout(dialogTimerId);
+      dialogTimerId = null;
+    }
     showProgressDialog = false;
   }
 

@@ -370,3 +370,12 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 - Window transparency on Linux/WebKitGTK is blocked by ghosting artifacts (wry #1524). `WEBKIT_DISABLE_COMPOSITING_MODE=1` prevents ghosting but blocks all transparency. No reliable workaround exists as of 2026-03.
 
 ---
+
+### tauri-explorer-kxa9 — Marquee selection lag from tile card surfaces
+
+- **`box-shadow` transitions on many elements are a performance killer.** When dozens of elements toggle state per frame (e.g. during marquee drag selection), animated `box-shadow` can't be GPU-composited and forces expensive CPU repaints on every frame.
+- **`color-mix()` in frequently-toggled styles adds cost.** Per-element `color-mix()` on borders/backgrounds during rapid state changes compounds the repaint expense.
+- **Git bisect is invaluable for CSS performance regressions.** The bug was not in the DOM hit-testing logic (initial suspicion) but in a styling commit — only bisecting across commits confirmed the real cause.
+- **Keep tile/grid item styles minimal.** Avoid transitions on `box-shadow` and `transform` for elements that participate in bulk selection. Instant state changes are visually fine and much cheaper.
+
+---

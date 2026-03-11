@@ -1,6 +1,6 @@
 [package]
 name = "tauri-explorer"
-version = "0.2.6"
+version = "0.2.7"
 description = "A minimalistic, high-performance file explorer"
 authors = ["you"]
 edition = "2021"

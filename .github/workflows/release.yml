@@ -88,8 +88,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.version-check.outputs.version }}
         run: |
-          find artifacts -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) > /tmp/assets.txt
+          find artifacts -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) | while read -r f; do
+            args+=("$f")
+          done
           gh release create "$VERSION" \
             --title "$VERSION" \
             --generate-notes \
-            $(cat /tmp/assets.txt | sed 's/^/"/;s/$/"/' | tr '\n' ' ')
+            "${args[@]}"

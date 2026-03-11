@@ -16,6 +16,7 @@
 * At the beginning of each session, convert the tasks in [new_todo](@new_todo.md) into beads issues (edit the md file to remove issues that have been converted), together with priorities. 
 * Read the specs to implement features
 * If unsure how to do something that needs research, use the `research-scout` subagent to research the best ways to proceed.
+* All development happens on the `dev` branch. Create feature branches off `dev` and merge back to `dev`.
 * Create a new branch for each feature.
 * After implementing features, commit once before running any tests. Then run `bun run test` and fix any failures directly, then commit again. Then use `agent-browser` (CLI) directly to visually verify the feature is working (open the dev server URL, snapshot, screenshot, interact as needed), and commit again. The agent-browser docs are [here](https://github.com/vercel-labs/agent-browser). Then, if necessary, create an e2e playwright test that verifies the feature is working. Finally, run the e2e playwright tests to verify that there's no regressions.
 * For each feature, after doing all of this in the previous point, merge the feature branch to main - just do this if the tests are passing and ui is working, don't ask for confirmation. Always use a merge commit. Don't delete the feature branch.

@@ -383,6 +383,48 @@ const viewCommands: Command[] = [
     shortcut: "Alt+M U",
     handler: () => settingsStore.toggleStatusBar(),
   },
+  {
+    id: "view.listColumnsAuto",
+    label: "List View: Auto Columns",
+    category: "view",
+    handler: () => settingsStore.setListViewColumns(0),
+  },
+  {
+    id: "view.listColumns1",
+    label: "List View: 1 Column",
+    category: "view",
+    handler: () => settingsStore.setListViewColumns(1),
+  },
+  {
+    id: "view.listColumns2",
+    label: "List View: 2 Columns",
+    category: "view",
+    handler: () => settingsStore.setListViewColumns(2),
+  },
+  {
+    id: "view.listColumns3",
+    label: "List View: 3 Columns",
+    category: "view",
+    handler: () => settingsStore.setListViewColumns(3),
+  },
+  {
+    id: "view.listColumns4",
+    label: "List View: 4 Columns",
+    category: "view",
+    handler: () => settingsStore.setListViewColumns(4),
+  },
+  {
+    id: "view.listColumns5",
+    label: "List View: 5 Columns",
+    category: "view",
+    handler: () => settingsStore.setListViewColumns(5),
+  },
+  {
+    id: "view.listColumns6",
+    label: "List View: 6 Columns",
+    category: "view",
+    handler: () => settingsStore.setListViewColumns(6),
+  },
 ];
 
 /** Bookmark commands */

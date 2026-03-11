@@ -41,6 +41,24 @@
   // Content container ref
   let contentRef = $state<HTMLElement | null>(null);
 
+  // Compute effective list column count (auto or fixed)
+  let contentWidth = $state(0);
+  const effectiveListColumns = $derived.by(() => {
+    if (settingsStore.listViewColumns > 0) return settingsStore.listViewColumns;
+    if (contentWidth <= 0) return 1;
+    return Math.max(1, Math.min(6, Math.floor(contentWidth / settingsStore.listColumnMaxWidth)));
+  });
+
+  // Track content width for auto columns
+  $effect(() => {
+    if (!contentRef) return;
+    const observer = new ResizeObserver((entries) => {
+      contentWidth = entries[0]?.contentRect.width ?? 0;
+    });
+    observer.observe(contentRef);
+    return () => observer.disconnect();
+  });
+
   // Column resize composable
   const columnResize = useColumnResize(undefined, () => settingsStore.columnVisibility);
 
@@ -609,7 +627,7 @@
       </div>
     {:else if explorer.viewMode === "list"}
       <!-- Compact List View -->
-      <div class="list-view file-rows" style="--list-columns: {settingsStore.listViewColumns};">
+      <div class="list-view file-rows" style="--list-columns: {effectiveListColumns};">
         {#if explorer.isCreatingFolder}
           <div class="inline-new-folder list-inline-new-folder">
             <span class="list-icon">

@@ -41,7 +41,8 @@ export interface Settings {
   backgroundImage: string; // absolute path to wallpaper image, empty = none
   backgroundBlur: number; // 0-20, blur in px for custom wallpaper
   columnVisibility: ColumnVisibility;
-  listViewColumns: number; // 1-6 columns in list view
+  listViewColumns: number; // 0 = auto (based on window width), 1-6 = fixed
+  listColumnMaxWidth: number; // max width per column in px (used when listViewColumns=0)
 }
 
 const MIN_ZOOM = 50;
@@ -69,7 +70,8 @@ const DEFAULT_SETTINGS: Settings = {
   backgroundImage: "",
   backgroundBlur: 0,
   columnVisibility: { date: true, type: true, size: true },
-  listViewColumns: 1,
+  listViewColumns: 0,
+  listColumnMaxWidth: 250,
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -184,8 +186,14 @@ function createSettingsStore() {
     get listViewColumns() {
       return settings.listViewColumns;
     },
+    get listColumnMaxWidth() {
+      return settings.listColumnMaxWidth;
+    },
     setListViewColumns(n: number): void {
-      update({ listViewColumns: Math.max(1, Math.min(6, n)) });
+      update({ listViewColumns: Math.max(0, Math.min(6, n)) });
+    },
+    setListColumnMaxWidth(px: number): void {
+      update({ listColumnMaxWidth: Math.max(100, Math.min(600, px)) });
     },
     toggleColumn(column: keyof ColumnVisibility): void {
       update({

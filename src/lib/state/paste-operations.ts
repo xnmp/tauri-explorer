@@ -20,7 +20,7 @@ export interface PasteContext {
   destPath: string;
   existingEntries: FileEntry[];
   onEntriesAdded: (entries: FileEntry[]) => void;
-  onRefresh: () => Promise<void>;
+  onRefresh: () => Promise<unknown>;
 }
 
 export interface PasteResult {

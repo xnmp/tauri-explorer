@@ -9,22 +9,19 @@
     cancelContentSearch,
     openFile,
     type ContentSearchResult,
-    type ContentMatch,
     type ContentSearchEvent,
   } from "$lib/api/files";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { explorer as defaultExplorer } from "$lib/state/explorer.svelte";
-
-  interface FlattenedResult {
-    filePath: string;
-    relativePath: string;
-    match: ContentMatch;
-    isFirstInFile: boolean;
-    isShowMore?: boolean;
-    hiddenCount?: number;
-    totalFileMatches?: number;
-  }
+  import {
+    type FlattenedResult,
+    flattenBatch,
+    rebuildAllFlattened,
+    computeOffsets,
+    findFirstVisible,
+    highlightMatch,
+  } from "$lib/domain/content-search-flatten";
 
   interface Props {
     open: boolean;
@@ -77,63 +74,8 @@
   let pageEnd = $state(PAGE_SIZE);
   let totalFlattenedCount = $state(0);
 
-  // Flatten a file's matches, respecting collapsed limit
-  function flattenFile(file: ContentSearchResult, filterLower: string, isFirstFile: boolean): FlattenedResult[] {
-    const isExpanded = expandedFiles.has(file.path);
-    const filtered: ContentMatch[] = [];
-    for (const match of file.matches) {
-      if (filterLower && !match.lineContent.toLowerCase().includes(filterLower) &&
-          !file.relativePath.toLowerCase().includes(filterLower)) {
-        continue;
-      }
-      filtered.push(match);
-    }
-    if (filtered.length === 0) return [];
-
-    const limit = isExpanded ? filtered.length : Math.min(COLLAPSED_LIMIT, filtered.length);
-    const items: FlattenedResult[] = [];
-    for (let i = 0; i < limit; i++) {
-      items.push({
-        filePath: file.path,
-        relativePath: file.relativePath,
-        match: filtered[i],
-        isFirstInFile: i === 0 && isFirstFile,
-        totalFileMatches: filtered.length,
-      });
-    }
-
-    // Add "show more" row if collapsed and there are hidden matches
-    if (!isExpanded && filtered.length > COLLAPSED_LIMIT) {
-      items.push({
-        filePath: file.path,
-        relativePath: file.relativePath,
-        match: filtered[0], // placeholder, not rendered
-        isFirstInFile: false,
-        isShowMore: true,
-        hiddenCount: filtered.length - COLLAPSED_LIMIT,
-        totalFileMatches: filtered.length,
-      });
-    }
-    return items;
-  }
-
-  // Flatten a single batch of new results (O(batch) not O(total))
-  // newResults are already deduped -- each file here is new, so first match is always isFirstInFile
-  function flattenBatch(newResults: ContentSearchResult[], filterLower: string): FlattenedResult[] {
-    const batch: FlattenedResult[] = [];
-    for (const file of newResults) {
-      batch.push(...flattenFile(file, filterLower, true));
-    }
-    return batch;
-  }
-
-  // Rebuild allFlattened from scratch (used when filter changes or expand/collapse toggles)
   function rebuildFlattened(filterLower: string): void {
-    const rebuilt: FlattenedResult[] = [];
-    for (const file of results) {
-      rebuilt.push(...flattenFile(file, filterLower, true));
-    }
-    allFlattened = rebuilt;
+    allFlattened = rebuildAllFlattened(results, filterLower, expandedFiles);
     totalFlattenedCount = allFlattened.length;
     pageEnd = PAGE_SIZE;
     updatePage();
@@ -183,16 +125,7 @@
   });
 
   // Cached offsets array -- recomputed only when flattenedResults changes, not on scroll
-  let cachedOffsets = $derived.by(() => {
-    const items = flattenedResults;
-    const offsets: number[] = new Array(items.length);
-    let cumulative = 0;
-    for (let i = 0; i < items.length; i++) {
-      offsets[i] = cumulative;
-      cumulative += items[i].isFirstInFile ? FILE_HEADER_HEIGHT : ITEM_HEIGHT;
-    }
-    return { offsets, totalHeight: cumulative };
-  });
+  let cachedOffsets = $derived(computeOffsets(flattenedResults, FILE_HEADER_HEIGHT, ITEM_HEIGHT));
 
   // Compute virtual scroll window using cached offsets
   let virtualWindow = $derived.by(() => {
@@ -200,17 +133,7 @@
     const { offsets, totalHeight } = cachedOffsets;
     if (items.length === 0) return { startIndex: 0, endIndex: 0, offsetY: 0, totalHeight: 0 };
 
-    // Binary search for first visible item
-    let lo = 0, hi = items.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      if (offsets[mid] + (items[mid].isFirstInFile ? FILE_HEADER_HEIGHT : ITEM_HEIGHT) <= scrollTop) {
-        lo = mid + 1;
-      } else {
-        hi = mid;
-      }
-    }
-
+    const lo = findFirstVisible(items, offsets, scrollTop, FILE_HEADER_HEIGHT, ITEM_HEIGHT);
     const overscan = 10;
     const startIndex = Math.max(0, lo - overscan);
 
@@ -276,7 +199,7 @@
 
         // Incremental flatten: only process new batch, append to backing store
         const filterLower = filterQuery.toLowerCase();
-        const batch = flattenBatch(newResults, filterLower);
+        const batch = flattenBatch(newResults, filterLower, expandedFiles);
         if (batch.length > 0) {
           allFlattened.push(...batch);
           totalFlattenedCount = allFlattened.length;
@@ -401,20 +324,6 @@
     onClose();
   }
 
-  function highlightMatch(lineContent: string, matchStart: number, matchEnd: number): string {
-    const before = escapeHtml(lineContent.slice(0, matchStart));
-    const match = escapeHtml(lineContent.slice(matchStart, matchEnd));
-    const after = escapeHtml(lineContent.slice(matchEnd));
-    return `${before}<mark>${match}</mark>${after}`;
-  }
-
-  function escapeHtml(str: string): string {
-    return str
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
-  }
 
   function handleScroll(e: Event): void {
     const target = e.target as HTMLElement;

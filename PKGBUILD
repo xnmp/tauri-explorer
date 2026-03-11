@@ -1,6 +1,6 @@
 # Maintainer: Your Name <email>
 pkgname=tauri-explorer
-pkgver=0.2.3
+pkgver=0.2.4
 pkgrel=1
 pkgdesc="A minimalistic, high-performance file explorer"
 arch=('x86_64' 'aarch64')
@@ -37,6 +37,7 @@ prepare() {
 
 build() {
   cd "$_srcdir"
+  export PATH="$_srcdir/node_modules/.bin:$PATH"
   cargo tauri build --no-bundle
 }
 

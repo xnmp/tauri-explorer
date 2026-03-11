@@ -93,17 +93,25 @@ pub fn run(launch_dir: Option<String>) {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
 
-    let launch_cwd = launch_dir.unwrap_or_else(|| {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("/"))
-            .to_string_lossy()
-            .to_string()
-    });
+    let home_dir = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("/"))
+        .to_string_lossy()
+        .to_string();
+    let launch_cwd = launch_dir.unwrap_or_else(|| home_dir.clone());
+
+    // Inject launch data into the webview as a synchronous JS global,
+    // so the frontend can read it immediately without IPC roundtrips.
+    let init_script = format!(
+        "window.__LAUNCH_DATA__ = {{ cwd: {}, home: {} }};",
+        serde_json::to_string(&launch_cwd).unwrap(),
+        serde_json::to_string(&home_dir).unwrap(),
+    );
+    let launch_cwd_for_state = launch_cwd.clone();
 
     let t_plugins = std::time::Instant::now();
 
     tauri::Builder::default()
-        .manage(LaunchCwd(launch_cwd))
+        .manage(LaunchCwd(launch_cwd_for_state))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_drag::init())
@@ -162,8 +170,25 @@ pub fn run(launch_dir: Option<String>) {
             config::write_config_file,
             config::get_config_dir,
         ])
-        .setup(move |_app| {
+        .setup(move |app| {
             let t_setup = std::time::Instant::now();
+
+            // Create window programmatically so we can inject initialization_script.
+            // This replaces the static window definition in tauri.conf.json.
+            tauri::WebviewWindowBuilder::new(
+                app,
+                "main",
+                tauri::WebviewUrl::App("index.html".into()),
+            )
+            .title("tauri-explorer")
+            .inner_size(1200.0, 800.0)
+            .decorations(false)
+            .transparent(true)
+            .shadow(false)
+            .disable_drag_drop_handler()
+            .initialization_script(&init_script)
+            .build()?;
+
             eprintln!(
                 "[Perf] Rust startup:\n  \
                  pre-builder:  {:?}\n  \

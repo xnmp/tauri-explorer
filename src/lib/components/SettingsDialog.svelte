@@ -194,6 +194,22 @@
         <!-- Behavior Section -->
         <section class="settings-section">
           <h3 class="section-title">Behavior</h3>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Show Hidden Files</span>
+              <span class="setting-description">Show files and folders starting with a dot (Ctrl+H)</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.showHidden}
+                onchange={() => settingsStore.toggleHidden()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
           <div class="setting-item">
             <div class="setting-label">
               <span>Confirm before deleting</span>

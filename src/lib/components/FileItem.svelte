@@ -18,6 +18,7 @@
   import { undoStore } from "$lib/state/undo.svelte";
   import { dragState } from "$lib/state/drag.svelte";
   import { conflictResolver } from "$lib/state/conflict-resolver.svelte";
+  import { settingsStore } from "$lib/state/settings.svelte";
 
   interface Props {
     entry: FileEntry;
@@ -365,16 +366,21 @@
   </div>
 
   <!-- Date modified column -->
+  {#if settingsStore.columnVisibility.date}
   <div class="date-cell">
     {formatDate(entry.modified)}
   </div>
+  {/if}
 
   <!-- Type column -->
+  {#if settingsStore.columnVisibility.type}
   <div class="type-cell">
     {getFileType(entry)}
   </div>
+  {/if}
 
   <!-- Size column -->
+  {#if settingsStore.columnVisibility.size}
   <div class="size-cell">
     {#if entry.kind === "file"}
       {formatSize(entry.size)}
@@ -382,12 +388,13 @@
       <span class="empty-cell">—</span>
     {/if}
   </div>
+  {/if}
 </button>
 
 <style>
   .file-item {
     display: grid;
-    grid-template-columns: var(--col-name, 300px) var(--col-date, 180px) var(--col-type, 120px) var(--col-size, 90px);
+    grid-template-columns: var(--details-grid-columns, var(--col-name, 300px) var(--col-date, 180px) var(--col-type, 120px) var(--col-size, 90px));
     gap: 0;
     align-items: center;
     padding: 4px 16px;

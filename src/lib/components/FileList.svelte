@@ -22,6 +22,7 @@
   import { useMarqueeSelection } from "$lib/composables/use-marquee-selection.svelte";
   import { useTypeAhead } from "$lib/composables/use-type-ahead.svelte";
   import { getFileIconColor, isImageFile } from "$lib/domain/file-types";
+  import { settingsStore } from "$lib/state/settings.svelte";
 
   import type { FileEntry } from "$lib/domain/file";
 
@@ -41,7 +42,19 @@
   let contentRef = $state<HTMLElement | null>(null);
 
   // Column resize composable
-  const columnResize = useColumnResize();
+  const columnResize = useColumnResize(undefined, () => settingsStore.columnVisibility);
+
+  // Column header context menu state
+  let columnMenuPos = $state<{ x: number; y: number } | null>(null);
+
+  function handleColumnHeaderContextMenu(event: MouseEvent) {
+    event.preventDefault();
+    columnMenuPos = { x: event.clientX, y: event.clientY };
+  }
+
+  function closeColumnMenu() {
+    columnMenuPos = null;
+  }
 
   // Marquee selection composable
   const marquee = useMarqueeSelection();
@@ -457,8 +470,9 @@
       </div>
     {:else if explorer.viewMode === "details"}
       <!-- Details View with Column Headers -->
-      <div class="details-view" class:resizing={columnResize.isResizing} style="--col-name: {columnResize.columnWidths.name}px; --col-date: {columnResize.columnWidths.date}px; --col-type: {columnResize.columnWidths.type}px; --col-size: {columnResize.columnWidths.size}px;">
-        <div class="column-headers" style="grid-template-columns: {columnResize.gridTemplateColumns};">
+      <div class="details-view" class:resizing={columnResize.isResizing} style="--col-name: {columnResize.columnWidths.name}px; --col-date: {columnResize.columnWidths.date}px; --col-type: {columnResize.columnWidths.type}px; --col-size: {columnResize.columnWidths.size}px; --details-grid-columns: {columnResize.gridTemplateColumns};">
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="column-headers" style="grid-template-columns: {columnResize.gridTemplateColumns};" oncontextmenu={handleColumnHeaderContextMenu}>
           <div class="column-header-wrapper">
             <button
               class="column-header name-column"
@@ -479,6 +493,7 @@
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="column-resize-handle" onmousedown={(e) => columnResize.startResize("name", e)}></div>
           </div>
+          {#if settingsStore.columnVisibility.date}
           <div class="column-header-wrapper">
             <button
               class="column-header date-column"
@@ -499,6 +514,8 @@
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="column-resize-handle" onmousedown={(e) => columnResize.startResize("date", e)}></div>
           </div>
+          {/if}
+          {#if settingsStore.columnVisibility.type}
           <div class="column-header-wrapper">
             <div class="column-header type-column">
               <span>Type</span>
@@ -506,6 +523,8 @@
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="column-resize-handle" onmousedown={(e) => columnResize.startResize("type", e)}></div>
           </div>
+          {/if}
+          {#if settingsStore.columnVisibility.size}
           <div class="column-header-wrapper">
             <button
               class="column-header size-column"
@@ -526,7 +545,28 @@
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="column-resize-handle" onmousedown={(e) => columnResize.startResize("size", e)}></div>
           </div>
+          {/if}
         </div>
+
+        <!-- Column visibility context menu -->
+        {#if columnMenuPos}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="column-menu-backdrop" onclick={closeColumnMenu} oncontextmenu={(e) => { e.preventDefault(); closeColumnMenu(); }}></div>
+          <div class="column-menu" style="left: {columnMenuPos.x}px; top: {columnMenuPos.y}px;">
+            <button class="column-menu-item" onclick={() => { settingsStore.toggleColumn("date"); closeColumnMenu(); }}>
+              <span class="column-menu-check">{settingsStore.columnVisibility.date ? "✓" : ""}</span>
+              Date modified
+            </button>
+            <button class="column-menu-item" onclick={() => { settingsStore.toggleColumn("type"); closeColumnMenu(); }}>
+              <span class="column-menu-check">{settingsStore.columnVisibility.type ? "✓" : ""}</span>
+              Type
+            </button>
+            <button class="column-menu-item" onclick={() => { settingsStore.toggleColumn("size"); closeColumnMenu(); }}>
+              <span class="column-menu-check">{settingsStore.columnVisibility.size ? "✓" : ""}</span>
+              Size
+            </button>
+          </div>
+        {/if}
 
         {#if explorer.isCreatingFolder}
           <div class="inline-new-folder">
@@ -1146,5 +1186,50 @@
     width: 100%;
     text-align: center;
     font-size: 11px;
+  }
+
+  /* Column visibility context menu */
+  .column-menu-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 99;
+  }
+
+  .column-menu {
+    position: fixed;
+    z-index: 100;
+    background: var(--background-solid);
+    border: 1px solid var(--surface-stroke-flyout);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-flyout);
+    padding: 4px;
+    min-width: 160px;
+  }
+
+  .column-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 6px 10px;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: var(--font-size-body);
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .column-menu-item:hover {
+    background: var(--subtle-fill-secondary);
+  }
+
+  .column-menu-check {
+    width: 16px;
+    text-align: center;
+    color: var(--accent);
+    font-size: 12px;
   }
 </style>

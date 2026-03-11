@@ -71,7 +71,7 @@ jobs:
             libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
             patchelf libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
 
-      - run: bun install --frozen-lockfile
+      - run: bun install
 
       - name: Build Tauri app
         run: cargo tauri build --target ${{ matrix.target }}
@@ -123,7 +123,7 @@ jobs:
           cp -a "$HOME/.bun" /home/builder/.bun
           chown -R builder:builder /home/builder/.cargo /home/builder/.bun
           cd /tmp/build
-          su builder -c 'export PATH="/home/builder/.cargo/bin:/home/builder/.bun/bin:$PATH" && _srcdir=/tmp/build/tauri-explorer makepkg -ef --nocheck PKGDEST=/tmp/build/out'
+          su builder -c 'export PATH="/tmp/build/tauri-explorer/node_modules/.bin:/home/builder/.cargo/bin:/home/builder/.bun/bin:$PATH" && _srcdir=/tmp/build/tauri-explorer makepkg -ef --nocheck PKGDEST=/tmp/build/out'
 
       - name: Upload Arch package
         uses: actions/upload-artifact@v4

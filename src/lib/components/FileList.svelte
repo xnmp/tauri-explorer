@@ -627,7 +627,9 @@
       </div>
     {:else if explorer.viewMode === "list"}
       <!-- Compact List View -->
-      <div class="list-view file-rows" style="--list-columns: {effectiveListColumns};">
+      {@const totalItems = explorer.displayEntries.length + (explorer.isCreatingFolder ? 1 : 0)}
+      {@const listRows = Math.ceil(totalItems / effectiveListColumns)}
+      <div class="list-view file-rows" style="--list-columns: {effectiveListColumns}; --list-rows: {listRows};">
         {#if explorer.isCreatingFolder}
           <div class="inline-new-folder list-inline-new-folder">
             <span class="list-icon">
@@ -990,11 +992,15 @@
 
   /* List View */
   .list-view {
-    column-count: var(--list-columns, 1);
-    column-gap: 4px;
+    display: grid;
+    grid-template-rows: repeat(var(--list-rows, 1), auto);
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    gap: 4px;
     padding: 8px;
     overflow-y: auto;
     flex: 1;
+    align-content: start;
   }
 
   .list-item {
@@ -1002,7 +1008,6 @@
     align-items: center;
     gap: 8px;
     padding: 4px 8px;
-    margin-bottom: 4px;
     width: 100%;
     background: transparent;
     border: 1px solid transparent;
@@ -1014,7 +1019,6 @@
     font-size: 13px;
     color: var(--text-primary);
     transition: background var(--transition-fast), border-color var(--transition-fast);
-    break-inside: avoid;
   }
 
   .list-item:hover {
@@ -1181,7 +1185,6 @@
   .list-inline-new-folder {
     padding: 4px 8px;
     height: auto;
-    break-inside: avoid;
   }
 
   .list-inline-new-folder .list-icon {

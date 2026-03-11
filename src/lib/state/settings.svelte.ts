@@ -3,10 +3,13 @@
  * Issue: tauri-explorer-npjh
  *
  * Stores UI preferences and hotkey customization.
- * Persisted to localStorage.
+ * Persisted to ~/.config/tauri-explorer/settings.json with
+ * localStorage as synchronous fallback for immediate state.
  */
 
 import { loadPersisted, savePersisted } from "./persisted";
+import { readConfigFile, writeConfigFile } from "$lib/api/files";
+import type { ViewMode } from "./types";
 
 /** Which navigation bar buttons to display */
 export interface NavBarButtons {
@@ -43,6 +46,7 @@ export interface Settings {
   columnVisibility: ColumnVisibility;
   listViewColumns: number; // 0 = auto (based on window width), 1-6 = fixed
   listColumnMaxWidth: number; // max width per column in px (used when listViewColumns=0)
+  viewMode: ViewMode; // default view mode for new panes
 }
 
 const MIN_ZOOM = 50;
@@ -72,9 +76,11 @@ const DEFAULT_SETTINGS: Settings = {
   columnVisibility: { date: true, type: true, size: true },
   listViewColumns: 0,
   listColumnMaxWidth: 250,
+  viewMode: "details",
 };
 
 const STORAGE_KEY = "explorer-settings";
+const CONFIG_FILENAME = "settings.json";
 
 function loadSettings(): Settings {
   const saved = loadPersisted<Partial<Settings>>(STORAGE_KEY, {});
@@ -83,10 +89,39 @@ function loadSettings(): Settings {
 
 function saveSettings(settings: Settings): void {
   savePersisted(STORAGE_KEY, settings);
+  writeConfigFile(CONFIG_FILENAME, JSON.stringify(settings, null, 2)).catch((err) => {
+    console.warn("Failed to save settings to config file:", err);
+  });
 }
 
 function createSettingsStore() {
   let settings = $state<Settings>(loadSettings());
+
+  /**
+   * Load settings from config file, migrating from localStorage if needed.
+   * Called once during app initialization.
+   */
+  async function init() {
+    try {
+      const result = await readConfigFile(CONFIG_FILENAME);
+      if (result.ok && result.data) {
+        const loaded = JSON.parse(result.data) as Partial<Settings>;
+        if (loaded && typeof loaded === "object") {
+          settings = { ...DEFAULT_SETTINGS, ...loaded };
+          savePersisted(STORAGE_KEY, settings);
+          return;
+        }
+      }
+    } catch {
+      // Config file doesn't exist or is invalid - fall through
+    }
+
+    // If config file was empty but localStorage has data, migrate
+    const saved = loadPersisted<Partial<Settings>>(STORAGE_KEY, {});
+    if (Object.keys(saved).length > 0) {
+      writeConfigFile(CONFIG_FILENAME, JSON.stringify(settings, null, 2)).catch(() => {});
+    }
+  }
 
   function update(partial: Partial<Settings>): void {
     settings = { ...settings, ...partial };
@@ -189,6 +224,12 @@ function createSettingsStore() {
     get listColumnMaxWidth() {
       return settings.listColumnMaxWidth;
     },
+    get viewMode() {
+      return settings.viewMode;
+    },
+    setViewMode(mode: ViewMode): void {
+      update({ viewMode: mode });
+    },
     setListViewColumns(n: number): void {
       update({ listViewColumns: Math.max(0, Math.min(6, n)) });
     },
@@ -222,6 +263,7 @@ function createSettingsStore() {
         },
       });
     },
+    init,
     update,
     toggleToolbar,
     toggleSidebar,

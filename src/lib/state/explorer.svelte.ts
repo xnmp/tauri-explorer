@@ -110,7 +110,7 @@ function createExplorerState() {
     // View options
     sortBy: "name",
     sortAscending: true,
-    viewMode: "details",
+    viewMode: settingsStore.viewMode,
 
     // Selection
     selectedPaths: new Set(),
@@ -315,6 +315,7 @@ function createExplorerState() {
 
   function setViewMode(mode: ViewMode) {
     coreState.viewMode = mode;
+    settingsStore.setViewMode(mode);
   }
 
   // ===================

@@ -1,5 +1,5 @@
 //! Tauri Explorer app entry point.
-//! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6, tauri-explorer-im3m, tauri-explorer-bo8l
+//! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6, tauri-explorer-im3m, tauri-explorer-bo8l, tauri-explorer-yclf
 
 mod archive;
 mod clipboard;
@@ -14,6 +14,9 @@ mod thumbnails;
 use std::path::PathBuf;
 
 use error::AppError;
+
+/// Stores the working directory from which the app was launched.
+struct LaunchCwd(String);
 
 /// Move a file or directory to the system trash/recycle bin.
 /// Cross-platform: Windows Recycle Bin, macOS Trash, Linux Freedesktop Trash.
@@ -40,6 +43,12 @@ fn move_multiple_to_trash(paths: Vec<String>) -> Result<(), AppError> {
     }
 
     trash::delete_all(&pathbufs).map_err(|e| AppError::Other(format!("Failed to move items to trash: {}", e)))
+}
+
+/// Get the directory the app was launched from.
+#[tauri::command]
+fn get_launch_cwd(state: tauri::State<'_, LaunchCwd>) -> String {
+    state.0.clone()
 }
 
 /// Restore files from the system trash by their original paths.
@@ -82,12 +91,20 @@ pub fn run() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
 
+    let launch_cwd = std::env::current_dir()
+        .unwrap_or_else(|_| dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")))
+        .to_string_lossy()
+        .to_string();
+
     tauri::Builder::default()
+        .manage(LaunchCwd(launch_cwd))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_drag::init())
         .plugin(tauri_plugin_clipboard_x::init())
         .invoke_handler(tauri::generate_handler![
+            // Launch info
+            get_launch_cwd,
             // Trash operations
             move_to_trash,
             move_multiple_to_trash,

@@ -16,7 +16,7 @@
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
-  import { copyEntry, moveEntry, getHomeDirectory } from "$lib/api/files";
+  import { copyEntry, moveEntry, getHomeDirectory, getLaunchCwd } from "$lib/api/files";
   import { initFileChangeListener, cleanupFileChangeListener, broadcastFileChange, parentDir } from "$lib/state/file-events";
   import { saveFocusedWindowState } from "$lib/state/focused-window";
   import "$lib/themes/index.css";
@@ -196,12 +196,20 @@
       const searchParams = new URLSearchParams(window.location.search);
       const urlPath = searchParams.get("path");
       const urlViewMode = searchParams.get("viewMode") as import("$lib/state/types").ViewMode | null;
-      const homeResult = await getHomeDirectory();
-      const homePath = homeResult.ok ? homeResult.data : "/home";
+      // Use launch cwd as default path so `tauri-explorer` opens at the terminal's cwd.
+      // Fall back to home directory if cwd isn't available.
+      const cwdResult = await getLaunchCwd();
+      let defaultPath: string;
+      if (cwdResult.ok) {
+        defaultPath = cwdResult.data;
+      } else {
+        const homeResult = await getHomeDirectory();
+        defaultPath = homeResult.ok ? homeResult.data : "/home";
+      }
       // Child windows (spawned via Ctrl+N) have a ?path= param — skip
       // saved-state restoration so they open at the parent's path.
       const isChildWindow = !!urlPath;
-      const tab = windowTabsManager.init(urlPath || homePath, isChildWindow);
+      const tab = windowTabsManager.init(urlPath || defaultPath, isChildWindow);
       // Apply inherited view mode from parent window
       if (urlViewMode && tab) {
         const explorer = windowTabsManager.getActiveExplorer();

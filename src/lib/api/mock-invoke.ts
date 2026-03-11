@@ -82,6 +82,7 @@ type CommandHandler = (args: Record<string, unknown>) => unknown;
 
 const mockCommands: Record<string, CommandHandler> = {
   get_home_directory: () => "/home/user",
+  get_launch_cwd: () => "/home/user",
 
   list_directory: (args) => {
     const raw = args.path as string;

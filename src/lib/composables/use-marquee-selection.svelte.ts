@@ -82,8 +82,15 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     event.preventDefault();
   }
 
-  function move(event: MouseEvent, containerRect: DOMRect, headerHeight?: number): void {
-    if (!isDragging) return;
+  function move(event: MouseEvent, containerRect: DOMRect, headerHeight?: number): boolean {
+    if (!isDragging) return false;
+
+    // Safety net: if mouse button was released but we missed the mouseup
+    // (e.g. overlay stopPropagation, native drag hijack, window blur, OS pointer cancel)
+    if (event.buttons === 0) {
+      end();
+      return false;
+    }
 
     const zoom = getZoomFactor();
     const minY = headerHeight ?? config.headerHeight;
@@ -91,6 +98,7 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
       x: Math.max(0, Math.min(event.clientX / zoom - containerRect.left, containerRect.width)),
       y: Math.max(minY, event.clientY / zoom - containerRect.top),
     };
+    return true;
   }
 
   function end(): void {

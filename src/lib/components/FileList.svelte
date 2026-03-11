@@ -217,7 +217,7 @@
   function handleMarqueeMove(event: MouseEvent): void {
     const rect = contentRef?.getBoundingClientRect();
     if (!rect) return;
-    marquee.move(event, rect, marqueeHeaderHeight());
+    if (!marquee.move(event, rect, marqueeHeaderHeight())) return;
     updateMarqueeSelection();
   }
 
@@ -450,6 +450,9 @@
 <svelte:window
   onmousemove={(e) => { handleMarqueeMove(e); columnResize.handleResize(e); }}
   onmouseup={() => { handleMarqueeEnd(); columnResize.endResize(); }}
+  onblur={() => { if (marquee.isDragging) marquee.end(); }}
+  onpointercancel={() => { if (marquee.isDragging) marquee.end(); }}
+  ondragstart={() => { if (marquee.isDragging) marquee.end(); }}
 />
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->

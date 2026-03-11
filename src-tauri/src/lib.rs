@@ -96,6 +96,8 @@ pub fn run() {
         .to_string_lossy()
         .to_string();
 
+    println!("[Explorer] Launch cwd: {}", launch_cwd);
+
     tauri::Builder::default()
         .manage(LaunchCwd(launch_cwd))
         .plugin(tauri_plugin_opener::init())

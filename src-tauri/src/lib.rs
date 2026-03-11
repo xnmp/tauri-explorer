@@ -83,7 +83,7 @@ fn restore_from_trash(paths: Vec<String>) -> Result<(), AppError> {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
+pub fn run(launch_dir: Option<String>) {
     // Fix webkit2gtk Wayland protocol errors on Linux compositors (Hyprland, Sway, etc.)
     #[cfg(target_os = "linux")]
     {
@@ -91,12 +91,14 @@ pub fn run() {
         std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
     }
 
-    let launch_cwd = std::env::current_dir()
-        .unwrap_or_else(|_| dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")))
-        .to_string_lossy()
-        .to_string();
+    let launch_cwd = launch_dir.unwrap_or_else(|| {
+        dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("/"))
+            .to_string_lossy()
+            .to_string()
+    });
 
-    println!("[Explorer] Launch cwd: {}", launch_cwd);
+    eprintln!("[Explorer] Using launch cwd: {}", launch_cwd);
 
     tauri::Builder::default()
         .manage(LaunchCwd(launch_cwd))

@@ -168,8 +168,10 @@
     }
   }
 
-  // Setup event listener for streaming search results
-  async function setupSearchListener(searchId: number): Promise<void> {
+  // Setup event listener for streaming search results.
+  // Must be called BEFORE starting the search to avoid missing events
+  // from fast-completing searches (e.g. small directories).
+  async function setupSearchListener(): Promise<void> {
     // Clean up any existing listener
     if (unlisten) {
       unlisten();
@@ -179,7 +181,7 @@
       const payload = event.payload;
 
       // Only handle events for our active search
-      if (payload.searchId !== searchId || activeSearchId !== searchId) {
+      if (activeSearchId === null || payload.searchId !== activeSearchId) {
         return;
       }
 
@@ -223,13 +225,18 @@
       await ensureHomeDir();
       results = matchExternalCandidates(query);
 
+      // Set up listener BEFORE starting search to avoid missing events
+      // from fast-completing searches on small directories.
+      // JS single-threaded execution ensures activeSearchId is set
+      // before any queued event callbacks can fire.
+      await setupSearchListener();
+
       // Search from CWD so immediate directory contents are always found
       const cwd = getCwdPath();
       const result = await startStreamingSearch(query, cwd, 20);
 
       if (result.ok) {
         activeSearchId = result.data;
-        await setupSearchListener(result.data);
       } else {
         loading = false;
       }

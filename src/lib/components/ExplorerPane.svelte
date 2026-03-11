@@ -109,9 +109,11 @@
       if (currentIndex < 0) {
         newIndex = 0;
       } else if (isForward) {
-        newIndex = Math.min(entries.length - 1, currentIndex + step);
+        newIndex = currentIndex + step;
+        if (newIndex >= entries.length) return; // Already at edge
       } else {
-        newIndex = Math.max(0, currentIndex - step);
+        newIndex = currentIndex - step;
+        if (newIndex < 0) return; // Already at edge
       }
 
       paneExplorer.selectEntry(entries[newIndex], { ctrlKey: false, shiftKey: event.shiftKey });

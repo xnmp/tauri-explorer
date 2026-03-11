@@ -13,26 +13,19 @@
  */
 
 import { toastStore } from "./toast.svelte";
-import { loadPersisted, savePersisted } from "./persisted";
 import {
-  fetchDirectory,
   createDirectory,
   renameEntry as apiRenameEntry,
   deleteEntry,
   deleteMultipleEntries,
-  copyEntry,
-  moveEntry,
-  estimateSize,
   startStreamingDirectory,
   cancelDirectoryListing,
   clipboardHasImage,
   clipboardPasteImage,
   type DirectoryEntriesEvent,
 } from "$lib/api/files";
-import { operationsManager } from "./operations.svelte";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { broadcastFileChange } from "./file-events";
-import { conflictResolver, type ConflictChoice } from "./conflict-resolver.svelte";
 import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/domain/file";
 import type { SelectOptions, ViewMode, UndoAction } from "./types";
 import * as selection from "./selection";
@@ -44,33 +37,8 @@ import { contextMenuStore } from "./context-menu.svelte";
 import { undoStore } from "./undo.svelte";
 import { settingsStore } from "./settings.svelte";
 import { frecencyStore } from "./frecency.svelte";
-
-/** Per-directory sort preference persistence */
-const SORT_STORAGE_KEY = "explorer-sort-prefs";
-const MAX_SORT_ENTRIES = 200;
-
-interface SortPref { sortBy: SortField; sortAscending: boolean; }
-
-function loadSortPrefs(): Record<string, SortPref> {
-  return loadPersisted(SORT_STORAGE_KEY, {});
-}
-
-function saveSortPref(path: string, pref: SortPref): void {
-  const prefs = loadSortPrefs();
-  prefs[path] = pref;
-  // Evict oldest entries if over limit
-  const keys = Object.keys(prefs);
-  if (keys.length > MAX_SORT_ENTRIES) {
-    for (const key of keys.slice(0, keys.length - MAX_SORT_ENTRIES)) {
-      delete prefs[key];
-    }
-  }
-  savePersisted(SORT_STORAGE_KEY, prefs);
-}
-
-function getSortPref(path: string): SortPref | undefined {
-  return loadSortPrefs()[path];
-}
+import { getSortPref, saveSortPref } from "./sort-prefs";
+import { pasteEntries, type PasteResult } from "./paste-operations";
 
 /** Core explorer state (per-pane) */
 interface ExplorerCoreState {
@@ -541,7 +509,18 @@ function createExplorerState() {
   }
 
   // Paste result for UI feedback
-  let pasteResult = $state<{ error: string | null; timestamp: number } | null>(null);
+  let pasteResult = $state<PasteResult | null>(null);
+
+  function makePasteContext() {
+    return {
+      destPath: coreState.currentPath,
+      existingEntries: coreState.entries,
+      onEntriesAdded: (entries: FileEntry[]) => {
+        coreState.entries = [...coreState.entries, ...entries];
+      },
+      onRefresh: () => navigateInternal(coreState.currentPath),
+    };
+  }
 
   async function paste(): Promise<string | null> {
     if (!coreState.currentPath) return "No current directory";
@@ -552,20 +531,26 @@ function createExplorerState() {
     if (clipboardContent) {
       const { entries, operation } = clipboardContent;
       const isCut = operation === "cut";
-      return pasteEntries(
+      const error = await pasteEntries(
         entries.map((e) => ({ path: e.path, name: e.name })),
         isCut,
+        makePasteContext(),
         () => { if (isCut) clipboardStore.clear(); },
       );
+      pasteResult = { error, timestamp: Date.now() };
+      return error;
     }
 
     // Fall back to OS clipboard (files from external apps)
     const osContent = await clipboardStore.readOsFiles();
     if (osContent && osContent.paths.length > 0) {
-      return pasteEntries(
+      const error = await pasteEntries(
         osContent.paths.map((p) => ({ path: p, name: p.split(/[/\\]/).pop() || p })),
         false,
+        makePasteContext(),
       );
+      pasteResult = { error, timestamp: Date.now() };
+      return error;
     }
 
     // Fall back to clipboard image
@@ -579,128 +564,6 @@ function createExplorerState() {
     }
 
     return "Nothing in clipboard";
-  }
-
-  /** Core paste logic with progress tracking and conflict resolution */
-  async function pasteEntries(
-    sources: { path: string; name: string }[],
-    isCut: boolean,
-    onComplete?: () => void,
-  ): Promise<string | null> {
-    const destPath = coreState.currentPath;
-    const opType = isCut ? "move" as const : "copy" as const;
-    const label = sources.length === 1 ? sources[0].name : `${sources.length} items`;
-
-    // Estimate total size for byte-level progress
-    const sizeResult = await estimateSize(sources.map((s) => s.path));
-    const totalBytes = sizeResult.ok ? sizeResult.data.totalBytes : 0;
-
-    // Start tracking operation in progress dialog
-    const op = operationsManager.startOperation(opType, label, destPath);
-
-    const errors: string[] = [];
-    const newEntries: FileEntry[] = [];
-    let bytesProcessed = 0;
-    let cancelledByUser = false;
-
-    // Detect conflicts: which source names already exist in destination
-    const existingNames = new Set(coreState.entries.map((e) => e.name));
-    let globalChoice: ConflictChoice | null = null;
-
-    for (let i = 0; i < sources.length; i++) {
-      // Check cancellation between files
-      if (operationsManager.isOperationCancelled(op.id)) break;
-
-      const source = sources[i];
-      const sourceDir = source.path.substring(0, source.path.lastIndexOf("/")) || "/";
-
-      // When cutting from the same directory, the file isn't a real conflict
-      const isSameDir = isCut && sourceDir === destPath;
-      const hasConflict = !isSameDir && existingNames.has(source.name);
-      let overwrite = false;
-
-      if (hasConflict) {
-        if (globalChoice === "skip") continue;
-        if (globalChoice === "cancel") { cancelledByUser = true; break; }
-        if (globalChoice === "overwrite") {
-          overwrite = true;
-        } else {
-          const remaining = sources.length - i - 1;
-          const { choice, applyToAll } = await conflictResolver.prompt({
-            fileName: source.name,
-            sourcePath: source.path,
-            remaining,
-          });
-          if (applyToAll) globalChoice = choice;
-          if (choice === "skip") continue;
-          if (choice === "cancel") { cancelledByUser = true; break; }
-          if (choice === "overwrite") overwrite = true;
-        }
-      }
-
-      // Skip no-op: cut-paste to same directory (file is already there)
-      if (isSameDir) {
-        newEntries.push(coreState.entries.find((e) => e.name === source.name)!);
-      } else {
-        const result = isCut
-          ? await moveEntry(source.path, destPath, overwrite)
-          : await copyEntry(source.path, destPath, overwrite);
-
-        if (result.ok) {
-          newEntries.push(result.data);
-          if (isCut) {
-            undoStore.push({
-              type: "move",
-              sourcePath: source.path,
-              destPath: result.data.path,
-              originalDir: sourceDir,
-            });
-          }
-        } else {
-          errors.push(`${source.name}: ${result.error}`);
-        }
-      }
-
-      // Update progress (file-level granularity)
-      if (totalBytes > 0) {
-        bytesProcessed = Math.round(totalBytes * ((i + 1) / sources.length));
-        operationsManager.updateProgress(
-          op.id,
-          ((i + 1) / sources.length) * 100,
-          bytesProcessed,
-          totalBytes,
-        );
-      } else {
-        operationsManager.updateProgress(op.id, ((i + 1) / sources.length) * 100);
-      }
-    }
-
-    onComplete?.();
-
-    // Finalize operation tracking
-    if (operationsManager.isOperationCancelled(op.id) || cancelledByUser) {
-      operationsManager.cancelOperation(op.id);
-    } else if (errors.length > 0 && newEntries.length === 0) {
-      operationsManager.failOperation(op.id, errors.join("; "));
-    } else {
-      operationsManager.completeOperation(op.id);
-    }
-
-    if (newEntries.length > 0) {
-      coreState.entries = [...coreState.entries, ...newEntries];
-      const affectedDirs = new Set([destPath]);
-      for (const source of sources) {
-        const dir = source.path.substring(0, source.path.lastIndexOf("/")) || "/";
-        affectedDirs.add(dir);
-      }
-      broadcastFileChange([...affectedDirs]);
-    }
-
-    await navigateInternal(destPath);
-    const error = errors.length > 0 ? `Failed: ${errors.join(", ")}` : null;
-    pasteResult = { error, timestamp: Date.now() };
-    if (error) { toastStore.error(error); } else if (!operationsManager.isOperationCancelled(op.id)) { toastStore.success("Pasted successfully"); }
-    return error;
   }
 
   // ===================

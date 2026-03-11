@@ -168,10 +168,14 @@
     }
   }
 
+  // Monotonically increasing search generation counter.
+  // Used to discard stale results without needing to wait for searchId.
+  let searchGeneration = 0;
+
   // Setup event listener for streaming search results.
   // Must be called BEFORE starting the search to avoid missing events
   // from fast-completing searches (e.g. small directories).
-  async function setupSearchListener(): Promise<void> {
+  async function setupSearchListener(generation: number): Promise<void> {
     // Clean up any existing listener
     if (unlisten) {
       unlisten();
@@ -180,8 +184,17 @@
     unlisten = await listen<SearchResultsEvent>("search-results", (event) => {
       const payload = event.payload;
 
-      // Only handle events for our active search
-      if (activeSearchId === null || payload.searchId !== activeSearchId) {
+      // Discard events from stale searches (user typed again)
+      if (generation !== searchGeneration) {
+        return;
+      }
+
+      // Accept events that match our search ID, OR if we haven't received
+      // the search ID yet (race: backend thread emits before invoke returns).
+      // Once we learn the ID from the first event, lock to it.
+      if (activeSearchId === null) {
+        activeSearchId = payload.searchId;
+      } else if (payload.searchId !== activeSearchId) {
         return;
       }
 
@@ -221,15 +234,17 @@
       // Cancel any previous search
       await cancelActiveSearch();
 
+      // Bump generation so stale listeners are discarded
+      const generation = ++searchGeneration;
+
       // Show external matches immediately (before backend responds)
       await ensureHomeDir();
       results = matchExternalCandidates(query);
 
-      // Set up listener BEFORE starting search to avoid missing events
-      // from fast-completing searches on small directories.
-      // JS single-threaded execution ensures activeSearchId is set
-      // before any queued event callbacks can fire.
-      await setupSearchListener();
+      // Set up listener BEFORE starting search. The listener accepts
+      // events even before we know the searchId (avoids race condition
+      // where the backend thread emits before the invoke returns).
+      await setupSearchListener(generation);
 
       // Search from CWD so immediate directory contents are always found
       const cwd = getCwdPath();

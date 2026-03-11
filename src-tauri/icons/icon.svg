@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="folder" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#5B9BD5"/>
+      <stop offset="100%" stop-color="#2E75B6"/>
+    </linearGradient>
+    <linearGradient id="tab" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#6CB4E8"/>
+      <stop offset="100%" stop-color="#5B9BD5"/>
+    </linearGradient>
+    <linearGradient id="shadow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1A5276" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="#1A5276" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <!-- Shadow -->
+  <ellipse cx="256" cy="460" rx="180" ry="20" fill="url(#shadow)"/>
+  <!-- Folder back -->
+  <rect x="56" y="160" width="400" height="272" rx="16" fill="url(#folder)"/>
+  <!-- Folder tab -->
+  <path d="M56 160 V120 C56 108 66 98 78 98 H200 L232 140 H56 Z" fill="url(#tab)"/>
+  <!-- Folder front highlight -->
+  <rect x="56" y="180" width="400" height="252" rx="14" fill="#ffffff" opacity="0.08"/>
+  <!-- Magnifying glass (explorer/search motif) -->
+  <circle cx="300" cy="290" r="56" fill="none" stroke="#ffffff" stroke-width="14" opacity="0.85"/>
+  <line x1="340" y1="330" x2="380" y2="370" stroke="#ffffff" stroke-width="14" stroke-linecap="round" opacity="0.85"/>
+  <!-- Small folder lines suggesting file tree -->
+  <rect x="140" y="240" width="80" height="8" rx="4" fill="#ffffff" opacity="0.4"/>
+  <rect x="140" y="268" width="60" height="8" rx="4" fill="#ffffff" opacity="0.3"/>
+  <rect x="140" y="296" width="70" height="8" rx="4" fill="#ffffff" opacity="0.3"/>
+  <rect x="140" y="324" width="50" height="8" rx="4" fill="#ffffff" opacity="0.25"/>
+  <rect x="140" y="352" width="65" height="8" rx="4" fill="#ffffff" opacity="0.2"/>
+</svg>

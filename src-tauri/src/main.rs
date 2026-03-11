@@ -2,6 +2,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    let t_main = std::time::Instant::now();
+
     // Capture cwd immediately — before Tauri or any library changes it.
     let cwd = std::env::current_dir()
         .ok()
@@ -28,5 +30,6 @@ fn main() {
         // pid < 0: fork failed, just continue in the original process.
     }
 
+    eprintln!("[Perf] main() pre-run: {:?}", t_main.elapsed());
     tauri_explorer_lib::run(launch_dir)
 }

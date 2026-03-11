@@ -796,6 +796,7 @@ pub async fn start_streaming_directory(
     })?;
 
     // Collect all entries first (needed for sorting)
+    let t_scan_start = std::time::Instant::now();
     let mut all_entries: Vec<FileEntry> = Vec::new();
 
     for entry_result in read_dir {
@@ -816,6 +817,7 @@ pub async fn start_streaming_directory(
 
         all_entries.push(metadata_to_entry(&entry.path(), &metadata));
     }
+    let t_scan_end = std::time::Instant::now();
 
     // Sort: directories first, then by name case-insensitively
     all_entries.sort_by(|a, b| {
@@ -829,7 +831,14 @@ pub async fn start_streaming_directory(
         }
     });
 
+    let t_sort_end = std::time::Instant::now();
     let total_count = all_entries.len();
+    eprintln!(
+        "[Perf] dir scan '{}': {} entries, scan={:?}, sort={:?}",
+        path, total_count,
+        t_scan_end - t_scan_start,
+        t_sort_end - t_scan_end,
+    );
 
     // If small directory, return everything immediately
     if total_count <= batch_size {

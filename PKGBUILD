@@ -1,6 +1,6 @@
 # Maintainer: Your Name <email>
 pkgname=tauri-explorer
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="A minimalistic, high-performance file explorer"
 arch=('x86_64' 'aarch64')
@@ -26,7 +26,9 @@ options=('!lto')
 source=()
 sha256sums=()
 
-_srcdir="/home/chong/Repos/tauri-explorer"
+# When building locally, set _srcdir to the repo root.
+# In CI, the repo is copied into $srcdir/tauri-explorer before makepkg runs.
+_srcdir="${_srcdir:-$srcdir/$pkgname}"
 
 prepare() {
   cd "$_srcdir"

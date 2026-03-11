@@ -28,3 +28,8 @@ test-screenshots/
 # Dolt database files (added by bd init)
 .dolt/
 *.db
+
+# Build artifacts
+pkg/
+*.pkg.tar.zst
+src/tauri-explorer.desktop

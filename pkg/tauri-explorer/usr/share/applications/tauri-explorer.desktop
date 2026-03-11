@@ -1,9 +1,0 @@
-[Desktop Entry]
-Name=Tauri Explorer
-Comment=A minimalistic, high-performance file explorer
-Exec=tauri-explorer
-Icon=tauri-explorer
-Terminal=false
-Type=Application
-Categories=System;FileManager;
-StartupWMClass=tauri-explorer

@@ -422,9 +422,6 @@
 
   .file-item:focus-visible {
     outline: none;
-    border-color: var(--accent);
-    background: var(--subtle-fill-secondary);
-    box-shadow: 0 0 0 1px var(--accent);
   }
 
   /* Selected state - accent-tinted background */

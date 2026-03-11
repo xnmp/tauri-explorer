@@ -4,7 +4,7 @@
 -->
 <script lang="ts">
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { readTextFile } from "$lib/api/files";
+  import { getThumbnailData, readTextFile } from "$lib/api/files";
   import { isImageFile, isTextFile, isPdfFile, getFileType, formatDate } from "$lib/domain/file-types";
   import { formatSize, type FileEntry } from "$lib/domain/file";
   import { isTauri } from "$lib/api/mock-invoke";
@@ -65,16 +65,12 @@
     }
 
     if (isImageFile(file)) {
-      if (isTauri()) {
-        try {
-          const { convertFileSrc } = await import("@tauri-apps/api/core");
-          if (file.path !== lastPreviewPath) return; // Stale
-          previewImageUrl = convertFileSrc(file.path);
-        } catch {
-          previewError = "Cannot preview image";
-        }
+      const result = await getThumbnailData(file.path, 1024);
+      if (file.path !== lastPreviewPath) return; // Stale
+      if (result.ok) {
+        previewImageUrl = result.data;
       } else {
-        previewError = "Image preview requires Tauri runtime";
+        previewError = result.error;
       }
     } else if (isTextFile(file)) {
       const result = await readTextFile(file.path, 524288); // 512KB limit for preview

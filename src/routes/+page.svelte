@@ -16,7 +16,7 @@
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
-  import { copyEntry, moveEntry, getHomeDirectory, getLaunchCwd } from "$lib/api/files";
+  import { copyEntry, moveEntry } from "$lib/api/files";
   import { initFileChangeListener, cleanupFileChangeListener, broadcastFileChange, parentDir } from "$lib/state/file-events";
   import { saveFocusedWindowState } from "$lib/state/focused-window";
   import "$lib/themes/index.css";
@@ -191,55 +191,45 @@
 
     // Initialize theme from saved preference
     themeStore.initTheme();
-    const tTheme = performance.now();
 
-    // Initialize window tabs with directory from query param or home
-    (async () => {
-      const searchParams = new URLSearchParams(window.location.search);
-      const urlPath = searchParams.get("path");
-      const urlViewMode = searchParams.get("viewMode") as import("$lib/state/types").ViewMode | null;
-      // Fetch launch cwd and home directory
-      const tIpc0 = performance.now();
-      const [cwdResult, homeResult] = await Promise.all([getLaunchCwd(), getHomeDirectory()]);
-      const tIpc1 = performance.now();
-      const homePath = homeResult.ok ? homeResult.data : "/home";
-      const launchCwd = cwdResult.ok ? cwdResult.data : null;
+    // Read launch data injected by Rust initialization_script (synchronous, no IPC).
+    // Falls back to IPC for child windows or if injection is missing.
+    const launchData = (window as any).__LAUNCH_DATA__ as
+      | { cwd: string; home: string }
+      | undefined;
 
-      // Child windows (spawned via Ctrl+N) have a ?path= param — skip
-      // saved-state restoration so they open at the parent's path.
-      const isChildWindow = !!urlPath;
-      const defaultPath = urlPath || launchCwd || homePath;
-      const tInit0 = performance.now();
-      const tab = windowTabsManager.init(defaultPath, isChildWindow);
-      const tInit1 = performance.now();
+    const searchParams = new URLSearchParams(window.location.search);
+    const urlPath = searchParams.get("path");
+    const urlViewMode = searchParams.get("viewMode") as import("$lib/state/types").ViewMode | null;
 
-      // If launched from a terminal with a meaningful cwd, navigate the active
-      // pane there — even when saved state was restored. Skip if cwd is $HOME
-      // or "/" (typical desktop-launcher cwds where we want saved state).
-      const isGenericCwd = !launchCwd || launchCwd === homePath || launchCwd === "/";
-      if (!isChildWindow && !isGenericCwd) {
-        const explorer = windowTabsManager.getActiveExplorer();
-        if (explorer && explorer.currentPath !== launchCwd) {
-          explorer.navigateTo(launchCwd);
-        }
+    const homePath = launchData?.home ?? "/home";
+    const launchCwd = launchData?.cwd ?? null;
+
+    // Child windows (spawned via Ctrl+N) have a ?path= param — skip
+    // saved-state restoration so they open at the parent's path.
+    const isChildWindow = !!urlPath;
+    const defaultPath = urlPath || launchCwd || homePath;
+    const tab = windowTabsManager.init(defaultPath, isChildWindow);
+
+    // If launched from a terminal with a meaningful cwd, navigate the active
+    // pane there — even when saved state was restored. Skip if cwd is $HOME
+    // or "/" (typical desktop-launcher cwds where we want saved state).
+    const isGenericCwd = !launchCwd || launchCwd === homePath || launchCwd === "/";
+    if (!isChildWindow && !isGenericCwd) {
+      const explorer = windowTabsManager.getActiveExplorer();
+      if (explorer && explorer.currentPath !== launchCwd) {
+        explorer.navigateTo(launchCwd);
       }
-      // Apply inherited view mode from parent window
-      if (urlViewMode && tab) {
-        const explorer = windowTabsManager.getActiveExplorer();
-        explorer?.setViewMode(urlViewMode);
-      }
-      const tEnd = performance.now();
-      performance.mark("app-first-dir");
+    }
+    // Apply inherited view mode from parent window
+    if (urlViewMode && tab) {
+      const explorer = windowTabsManager.getActiveExplorer();
+      explorer?.setViewMode(urlViewMode);
+    }
+    performance.mark("app-first-dir");
 
-      // Startup profiling — always log for now
-      console.log(
-        `[Perf] Startup breakdown:\n` +
-        `  theme init:     ${(tTheme - t0).toFixed(1)}ms\n` +
-        `  IPC (cwd+home): ${(tIpc1 - tIpc0).toFixed(1)}ms\n` +
-        `  tabs init:      ${(tInit1 - tInit0).toFixed(1)}ms\n` +
-        `  total to dir:   ${(tEnd - t0).toFixed(1)}ms`
-      );
-    })();
+    const tEnd = performance.now();
+    console.log(`[Perf] Frontend mount→dir: ${(tEnd - t0).toFixed(1)}ms`);
 
     // Load settings and bookmarks from config files (async, non-blocking)
     settingsStore.init();

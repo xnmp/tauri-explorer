@@ -30,6 +30,8 @@
   });
   setContext("pane-id", paneId);
 
+  let paneRef = $state<HTMLElement | null>(null);
+
   const isActive = $derived(windowTabsManager.activePaneId === paneId);
   const dualPaneEnabled = $derived(windowTabsManager.dualPaneEnabled);
   const isInactive = $derived(dualPaneEnabled && !isActive);
@@ -49,7 +51,9 @@
 
     // Arrow key navigation in file list (not in global command system
     // because it needs current selection context and shift-key handling)
-    if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+    const isArrow = event.key === "ArrowUp" || event.key === "ArrowDown"
+      || event.key === "ArrowLeft" || event.key === "ArrowRight";
+    if (isArrow) {
       event.preventDefault();
       const entries = paneExplorer.displayEntries;
       if (entries.length === 0) return;
@@ -59,9 +63,27 @@
         ? entries.findIndex((e) => e.path === selected.path)
         : -1;
 
-      const newIndex = event.key === "ArrowUp"
-        ? (currentIndex <= 0 ? entries.length - 1 : currentIndex - 1)
-        : (currentIndex >= entries.length - 1 ? 0 : currentIndex + 1);
+      // In list view, left/right move between columns (jump by rows-per-column).
+      // In other views, left/right are ignored.
+      const isListView = paneExplorer.viewMode === "list";
+      let step = 1;
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        if (!isListView) return;
+        // Read actual column count from the rendered grid CSS variable
+        const gridEl = paneRef?.querySelector<HTMLElement>(".list-view");
+        const cols = gridEl ? parseInt(getComputedStyle(gridEl).getPropertyValue("--list-columns")) || 1 : 1;
+        step = Math.ceil(entries.length / cols);
+      }
+
+      const isForward = event.key === "ArrowDown" || event.key === "ArrowRight";
+      let newIndex: number;
+      if (currentIndex < 0) {
+        newIndex = 0;
+      } else if (isForward) {
+        newIndex = Math.min(entries.length - 1, currentIndex + step);
+      } else {
+        newIndex = Math.max(0, currentIndex - step);
+      }
 
       paneExplorer.selectEntry(entries[newIndex], { ctrlKey: false, shiftKey: event.shiftKey });
     }
@@ -74,6 +96,7 @@
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <section
+  bind:this={paneRef}
   class="explorer-pane"
   class:active={showActiveBorder}
   class:inactive={isInactive}

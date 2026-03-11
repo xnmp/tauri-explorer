@@ -18,16 +18,12 @@ import {
   renameEntry as apiRenameEntry,
   deleteEntry,
   deleteMultipleEntries,
-  startStreamingDirectory,
-  cancelDirectoryListing,
   clipboardHasImage,
   clipboardPasteImage,
-  type DirectoryEntriesEvent,
 } from "$lib/api/files";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { broadcastFileChange } from "./file-events";
 import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/domain/file";
-import type { SelectOptions, ViewMode, UndoAction } from "./types";
+import type { SelectOptions, ViewMode } from "./types";
 import * as selection from "./selection";
 import * as navigation from "./navigation";
 import { clipboardStore } from "./clipboard.svelte";
@@ -39,6 +35,8 @@ import { settingsStore } from "./settings.svelte";
 import { frecencyStore } from "./frecency.svelte";
 import { getSortPref, saveSortPref } from "./sort-prefs";
 import { pasteEntries, type PasteResult } from "./paste-operations";
+import { createDirectoryListing } from "./directory-listing";
+import { getAffectedDirs, undoActionLabel } from "./undo-helpers";
 
 /** Core explorer state (per-pane) */
 interface ExplorerCoreState {
@@ -107,86 +105,35 @@ function createExplorerState() {
   const canRedo = $derived(undoStore.canRedo);
 
   // ===================
-  // Streaming Directory State
+  // Directory Listing
   // ===================
 
-  let activeListingId: number | null = null;
-  let directoryUnlisten: UnlistenFn | null = null;
-
-  async function cleanupDirectoryListener() {
-    if (activeListingId !== null) {
-      await cancelDirectoryListing(activeListingId);
-      activeListingId = null;
-    }
-    if (directoryUnlisten) {
-      directoryUnlisten();
-      directoryUnlisten = null;
-    }
-  }
-
-  async function setupDirectoryListener(listingId: number, expectedPath: string) {
-    // Clean up any existing listener
-    if (directoryUnlisten) {
-      directoryUnlisten();
-    }
-
-    directoryUnlisten = await listen<DirectoryEntriesEvent>("directory-entries", (event) => {
-      const payload = event.payload;
-
-      // Only handle events for our active listing
-      if (payload.listingId !== listingId || activeListingId !== listingId) {
-        return;
-      }
-
-      // Verify this is for the correct path
-      if (payload.path !== expectedPath) {
-        return;
-      }
-
-      // Append new entries to existing list
-      coreState.entries = [...coreState.entries, ...payload.entries];
-
-      // Stop loading when done
-      if (payload.done) {
-        coreState.loading = false;
-        activeListingId = null;
-      }
-    });
-  }
-
-  // ===================
-  // Navigation Actions
-  // ===================
+  const dirListing = createDirectoryListing();
 
   async function navigateInternal(path: string): Promise<boolean> {
-    // Cancel any active listing from previous navigation
-    await cleanupDirectoryListener();
-
     coreState.loading = true;
     coreState.error = null;
 
-    // Use streaming directory listing for potentially large directories
-    const result = await startStreamingDirectory(path);
+    const result = await dirListing.load(path, {
+      onEntries: (entries) => {
+        coreState.entries = [...coreState.entries, ...entries];
+      },
+      onDone: () => {
+        coreState.loading = false;
+      },
+    });
 
     if (result.ok) {
-      coreState.currentPath = result.data.path;
-      const listingId = result.data.listing_id;
-      coreState.entries = [...result.data.entries];
+      coreState.currentPath = result.path;
+      coreState.entries = result.entries;
 
-      // Restore saved sort preference for this directory
-      const savedSort = getSortPref(result.data.path);
+      const savedSort = getSortPref(result.path);
       if (savedSort) {
         coreState.sortBy = savedSort.sortBy;
         coreState.sortAscending = savedSort.sortAscending;
       }
 
-      // If there's a listing ID, more entries will come via events
-      if (listingId !== null) {
-        activeListingId = listingId;
-        await setupDirectoryListener(listingId, result.data.path);
-        // Keep loading true until all entries received
-      } else {
-        // Small directory - all entries received, done loading
+      if (!result.streaming) {
         coreState.loading = false;
       }
       return true;
@@ -330,37 +277,17 @@ function createExplorerState() {
   }
 
   // ===================
-  // Dialog Actions (delegates to global dialogStore)
+  // Dialog & Context Menu Actions
   // ===================
 
-  function openNewFolderDialog() {
-    dialogStore.openNewFolder();
-  }
-
-  function closeNewFolderDialog() {
-    dialogStore.closeNewFolder();
-  }
-
-  function startRename(entry: FileEntry) {
-    dialogStore.startRename(entry);
-  }
-
-  function cancelRename() {
-    dialogStore.cancelRename();
-  }
-
-  /** If any deleted path is the current directory or an ancestor, navigate up. */
   async function navigateAwayIfNeeded(deletedPaths: Set<string>): Promise<void> {
     const current = coreState.currentPath;
     const shouldNavigateAway = [...deletedPaths].some(
       (dp) => current === dp || current.startsWith(dp + "/")
     );
     if (shouldNavigateAway) {
-      // Navigate to the parent of the current directory
       const parentPath = navigation.getParentPath(breadcrumbs);
-      if (parentPath) {
-        await navigateTo(parentPath);
-      }
+      if (parentPath) await navigateTo(parentPath);
     }
   }
 
@@ -369,7 +296,6 @@ function createExplorerState() {
     if (arr.length === 0) return;
 
     if (!settingsStore.confirmDelete) {
-      // Skip dialog, delete immediately
       const paths = arr.map((e) => e.path);
       const result = arr.length === 1
         ? await deleteEntry(paths[0])
@@ -390,28 +316,12 @@ function createExplorerState() {
     dialogStore.startDelete(arr);
   }
 
-  function cancelDelete() {
-    dialogStore.cancelDelete();
-  }
-
-  // ===================
-  // Context Menu Actions (delegates to global contextMenuStore)
-  // ===================
-
   function openContextMenu(x: number, y: number, entry?: FileEntry) {
-    if (entry) {
-      // If right-clicked entry is not selected, select only it
-      if (!coreState.selectedPaths.has(entry.path)) {
-        coreState.selectedPaths = new Set([entry.path]);
-        const entryIndex = displayEntries.findIndex((e) => e.path === entry.path);
-        coreState.selectionAnchorIndex = entryIndex;
-      }
+    if (entry && !coreState.selectedPaths.has(entry.path)) {
+      coreState.selectedPaths = new Set([entry.path]);
+      coreState.selectionAnchorIndex = displayEntries.findIndex((e) => e.path === entry.path);
     }
     contextMenuStore.open(x, y);
-  }
-
-  function closeContextMenu() {
-    contextMenuStore.close();
   }
 
   // ===================
@@ -567,28 +477,8 @@ function createExplorerState() {
   }
 
   // ===================
-  // Undo Actions (delegates to global undoStore)
+  // Undo Actions
   // ===================
-
-  /** Compute directories affected by an undo/redo action for broadcasting. */
-  function getAffectedDirs(action: UndoAction): string[] {
-    switch (action.type) {
-      case "rename":
-        return [action.path.substring(0, action.path.lastIndexOf("/"))];
-      case "move":
-        return [action.originalDir, action.destPath.substring(0, action.destPath.lastIndexOf("/"))];
-      case "delete":
-        return [action.parentDir];
-    }
-  }
-
-  function undoActionLabel(action: UndoAction): string {
-    switch (action.type) {
-      case "rename": return `Renamed ${action.oldName}`;
-      case "move": return `Moved to ${action.destPath.split("/").pop()}`;
-      case "delete": return `Deleted ${action.paths.length} item${action.paths.length > 1 ? "s" : ""}`;
-    }
-  }
 
   async function undo(): Promise<string | null> {
     const result = await undoStore.undo();
@@ -678,16 +568,16 @@ function createExplorerState() {
     getSelectedEntries,
     selectByIndices,
     selectAll,
-    // Dialogs
-    openNewFolderDialog,
-    closeNewFolderDialog,
-    startRename,
-    cancelRename,
+    // Dialogs (thin delegates for facade API)
+    openNewFolderDialog: () => dialogStore.openNewFolder(),
+    closeNewFolderDialog: () => dialogStore.closeNewFolder(),
+    startRename: (entry: FileEntry) => dialogStore.startRename(entry),
+    cancelRename: () => dialogStore.cancelRename(),
     startDelete,
-    cancelDelete,
+    cancelDelete: () => dialogStore.cancelDelete(),
     // Context menu
     openContextMenu,
-    closeContextMenu,
+    closeContextMenu: () => contextMenuStore.close(),
     // Inline folder creation
     get isCreatingFolder() {
       return isCreatingFolder;

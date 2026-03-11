@@ -41,6 +41,16 @@
     loadPreview(file);
   });
 
+  /** Decode an image off-screen so the main thread isn't blocked */
+  function decodeImage(url: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(url);
+      img.onerror = () => reject(new Error("Failed to load image"));
+      img.src = url;
+    });
+  }
+
   async function loadPreview(file: FileEntry): Promise<void> {
     lastPreviewPath = file.path;
     previewImageUrl = null;
@@ -69,7 +79,11 @@
         try {
           const { convertFileSrc } = await import("@tauri-apps/api/core");
           if (file.path !== lastPreviewPath) return; // Stale
-          previewImageUrl = convertFileSrc(file.path);
+          const url = convertFileSrc(file.path);
+          // Decode off-screen — spinner stays visible until ready
+          await decodeImage(url);
+          if (file.path !== lastPreviewPath) return; // Stale after decode
+          previewImageUrl = url;
         } catch {
           previewError = "Cannot preview image";
         }

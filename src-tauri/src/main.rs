@@ -16,7 +16,8 @@ fn main() {
 
     // Fork to background so the launching terminal is freed.
     // On Windows, the windows_subsystem attribute already handles this.
-    #[cfg(unix)]
+    // Skip in debug/dev builds so `tauri dev` stays in the foreground with logs.
+    #[cfg(all(unix, not(debug_assertions)))]
     unsafe {
         let pid = libc::fork();
         if pid > 0 {

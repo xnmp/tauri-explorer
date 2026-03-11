@@ -147,15 +147,13 @@
     return explorer.currentPath;
   }
 
-  // Get home directory (cached)
-  async function getSearchRoot(): Promise<string> {
-    if (homeDir) return homeDir;
+  // Cache home directory for external candidate filtering
+  async function ensureHomeDir(): Promise<void> {
+    if (homeDir) return;
     const result = await getHomeDirectory();
     if (result.ok) {
       homeDir = result.data;
-      return result.data;
     }
-    return getCwdPath();
   }
 
   // Cancel active search and cleanup listener
@@ -170,8 +168,10 @@
     }
   }
 
-  // Setup event listener for streaming search results
-  async function setupSearchListener(searchId: number): Promise<void> {
+  // Setup event listener for streaming search results.
+  // Must be called BEFORE starting the search to avoid missing events
+  // from fast-completing searches (e.g. small directories).
+  async function setupSearchListener(): Promise<void> {
     // Clean up any existing listener
     if (unlisten) {
       unlisten();
@@ -181,7 +181,7 @@
       const payload = event.payload;
 
       // Only handle events for our active search
-      if (payload.searchId !== searchId || activeSearchId !== searchId) {
+      if (activeSearchId === null || payload.searchId !== activeSearchId) {
         return;
       }
 
@@ -222,16 +222,21 @@
       await cancelActiveSearch();
 
       // Show external matches immediately (before backend responds)
+      await ensureHomeDir();
       results = matchExternalCandidates(query);
 
-      // Search from home directory, boost results under CWD
-      const root = await getSearchRoot();
-      const boostPrefix = getCwdPath();
-      const result = await startStreamingSearch(query, root, 20, boostPrefix);
+      // Set up listener BEFORE starting search to avoid missing events
+      // from fast-completing searches on small directories.
+      // JS single-threaded execution ensures activeSearchId is set
+      // before any queued event callbacks can fire.
+      await setupSearchListener();
+
+      // Search from CWD so immediate directory contents are always found
+      const cwd = getCwdPath();
+      const result = await startStreamingSearch(query, cwd, 20);
 
       if (result.ok) {
         activeSearchId = result.data;
-        await setupSearchListener(result.data);
       } else {
         loading = false;
       }

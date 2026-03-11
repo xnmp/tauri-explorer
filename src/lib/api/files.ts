@@ -275,6 +275,18 @@ export async function getHomeDirectory(): Promise<ApiResult<string>> {
 }
 
 /**
+ * Get the working directory the app was launched from.
+ */
+export async function getLaunchCwd(): Promise<ApiResult<string>> {
+  try {
+    const path = await invoke<string>("get_launch_cwd");
+    return { ok: true, data: path };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
  * Search result from fuzzy file search.
  */
 export interface SearchResult {

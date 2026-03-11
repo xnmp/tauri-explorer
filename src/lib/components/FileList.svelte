@@ -1021,7 +1021,7 @@
     font-family: inherit;
     font-size: 13px;
     color: var(--text-primary);
-    transition: background var(--transition-fast), border-color var(--transition-fast);
+    transition: background var(--transition-fast);
   }
 
   .list-item:focus {
@@ -1036,7 +1036,6 @@
     background: color-mix(in srgb, var(--accent) 8%, transparent);
     border-color: transparent;
     border-left-color: var(--accent);
-    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   }
 
   .list-item.drop-target {
@@ -1095,7 +1094,7 @@
     font-family: inherit;
     font-size: 13px;
     color: var(--text-primary);
-    transition: background 120ms ease, border-color 120ms ease;
+    transition: background 120ms ease;
     height: fit-content;
     min-width: 0;
   }

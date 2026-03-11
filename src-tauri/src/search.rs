@@ -122,6 +122,8 @@ fn walk_entries(root_path: &PathBuf, max_entries: usize) -> Vec<(String, String,
 
 /// Score an entry against a query. Returns Some(score) if matched, None otherwise.
 /// Uses nucleo fuzzy matching with a case-insensitive substring fallback.
+/// Shallower entries (fewer path components) get a depth bonus so items
+/// closer to the search root rank higher than deeply nested ones.
 fn score_entry(
     name: &str,
     relative_path: &str,
@@ -131,15 +133,21 @@ fn score_entry(
 ) -> Option<u32> {
     let mut buf = Vec::new();
     let haystack = Utf32Str::new(name, &mut buf);
-    if let Some(score) = pattern.score(haystack, matcher) {
-        Some(score)
+    let base_score = if let Some(score) = pattern.score(haystack, matcher) {
+        score
     } else if name.to_lowercase().contains(query_lower)
         || relative_path.to_lowercase().contains(query_lower)
     {
-        Some(1)
+        1
     } else {
-        None
-    }
+        return None;
+    };
+
+    // Depth bonus: depth 1 (direct child) gets +50, each extra level reduces by 5.
+    // Clamped to 0 so deep items are never penalized below their base score.
+    let depth = relative_path.matches('/').count() + 1;
+    let depth_bonus = (50u32).saturating_sub((depth as u32 - 1) * 5);
+    Some(base_score.saturating_add(depth_bonus))
 }
 
 /// Fuzzy search for files and directories recursively (non-streaming version).
@@ -815,5 +823,35 @@ mod tests {
             "Should find file in subdirectory, got: {:?}",
             fmt_results(&result.results)
         );
+    }
+
+    #[test]
+    fn test_shallow_matches_rank_higher_than_deep() {
+        let dir = tempdir().unwrap();
+        let root = visible_root(&dir);
+
+        // Same name at different depths
+        fs::create_dir(root.join("config")).unwrap();
+        fs::create_dir_all(root.join("a/b/config")).unwrap();
+        fs::create_dir_all(root.join("a/b/c/d/config")).unwrap();
+
+        let result = fuzzy_search("config".into(), root.to_string_lossy().into(), 20).unwrap();
+
+        let configs: Vec<&SearchResult> = result
+            .results
+            .iter()
+            .filter(|r| r.name == "config")
+            .collect();
+        assert_eq!(configs.len(), 3, "Should find all 3, got: {:?}", fmt_results(&result.results));
+
+        // Scores should decrease with depth
+        assert!(
+            configs[0].score > configs[1].score && configs[1].score > configs[2].score,
+            "Shallower should score higher: {:?}",
+            configs.iter().map(|r| (&r.relative_path, r.score)).collect::<Vec<_>>()
+        );
+
+        // Shallowest should be first
+        assert_eq!(configs[0].relative_path, "config");
     }
 }

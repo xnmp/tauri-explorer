@@ -1019,7 +1019,7 @@
     font-family: inherit;
     font-size: 13px;
     color: var(--text-primary);
-    transition: background 120ms ease, border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+    transition: background 120ms ease, border-color 120ms ease;
     height: fit-content;
     min-width: 0;
   }

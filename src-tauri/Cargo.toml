@@ -1,6 +1,6 @@
 [package]
 name = "tauri-explorer"
-version = "0.2.5"
+version = "0.2.6"
 description = "A minimalistic, high-performance file explorer"
 authors = ["you"]
 edition = "2021"
@@ -40,6 +40,7 @@ base64 = "0.22"
 hex = "0.4"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 tokio = { version = "1", features = ["rt"] }
+libc = "0.2.183"
 
 [dev-dependencies]
 tempfile = "3"

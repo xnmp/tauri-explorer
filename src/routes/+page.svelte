@@ -209,10 +209,11 @@
       const defaultPath = urlPath || launchCwd || homePath;
       const tab = windowTabsManager.init(defaultPath, isChildWindow);
 
-      // If launched from a terminal with a cwd that isn't home, navigate the
-      // active pane there — even when saved state was restored. This makes
-      // `tauri-explorer` (or `tauri-explorer /some/path`) open at the right place.
-      if (!isChildWindow && launchCwd && launchCwd !== homePath) {
+      // If launched from a terminal with a meaningful cwd, navigate the active
+      // pane there — even when saved state was restored. Skip if cwd is $HOME
+      // or "/" (typical desktop-launcher cwds where we want saved state).
+      const isGenericCwd = !launchCwd || launchCwd === homePath || launchCwd === "/";
+      if (!isChildWindow && !isGenericCwd) {
         const explorer = windowTabsManager.getActiveExplorer();
         if (explorer && explorer.currentPath !== launchCwd) {
           console.log("[Explorer] Navigating active pane to launch cwd:", launchCwd);

@@ -1,0 +1,88 @@
+/**
+ * Horizon Theme - Ghostty terminal color scheme
+ * Issue: tauri-explorer-8d3
+ *
+ * Warm dark theme with vibrant sunset accents.
+ * Based on the Horizon color palette from Ghostty.
+ *
+ * Key palette:
+ *   bg: #1c1e26   fg: #d5d8da   selection: #6c6f93
+ *   red: #e95678   green: #29d398   yellow: #fab795
+ *   blue: #26bbd9  magenta: #ee64ac  cyan: #59e1e3
+ */
+
+[data-theme="horizon"] {
+  color-scheme: dark;
+
+  /* Theme metadata */
+  --theme-name: "Horizon";
+  --theme-description: "Warm dark with vibrant sunset accents";
+  --theme-order: 8;
+
+  /* Accent colors - signature Horizon red/pink */
+  --accent: #e95678;
+  --accent-light: #ee64ac;
+  --accent-dark: #c4405f;
+
+  /* Text colors - from Horizon foreground */
+  --text-primary: #d5d8da;
+  --text-secondary: #b0b4b8;
+  --text-tertiary: #6c6f93;
+  --text-on-accent: #1c1e26;
+
+  /* Background colors - from Horizon background */
+  --background-solid: #1c1e26;
+  --background-mica: rgba(28, 30, 38, 0.96);
+  --background-acrylic: rgba(28, 30, 38, 0.92);
+  --background-card: rgba(108, 111, 147, 0.15);
+  --background-card-secondary: rgba(108, 111, 147, 0.1);
+
+  /* Surface/border colors */
+  --surface-stroke: rgba(213, 216, 218, 0.12);
+  --surface-stroke-flyout: rgba(213, 216, 218, 0.18);
+  --divider: rgba(213, 216, 218, 0.06);
+
+  /* Control/input backgrounds */
+  --control-fill: rgba(213, 216, 218, 0.08);
+  --control-fill-secondary: rgba(213, 216, 218, 0.12);
+  --control-fill-tertiary: rgba(213, 216, 218, 0.05);
+  --control-fill-disabled: rgba(213, 216, 218, 0.04);
+
+  /* Subtle hover/active fills - selection purple tint */
+  --subtle-fill: transparent;
+  --subtle-fill-secondary: rgba(108, 111, 147, 0.3);
+  --subtle-fill-tertiary: rgba(108, 111, 147, 0.18);
+
+  /* Control borders */
+  --control-stroke: rgba(213, 216, 218, 0.15);
+  --control-stroke-secondary: rgba(213, 216, 218, 0.1);
+
+  /* Focus indicators */
+  --focus-stroke-outer: #e95678;
+  --focus-stroke-inner: #1c1e26;
+
+  /* System status colors - from Horizon ANSI colors */
+  --system-critical: #e95678;
+  --system-success: #29d398;
+  --system-caution: #fab795;
+
+  /* Shadows */
+  --shadow-flyout: 0 8px 20px rgba(10, 10, 18, 0.5);
+  --shadow-dialog: 0 32px 64px rgba(10, 10, 18, 0.6), 0 4px 24px rgba(10, 10, 18, 0.4);
+  --shadow-tooltip: 0 4px 12px rgba(10, 10, 18, 0.5);
+
+  /* Mica overlay - warm sunset gradient */
+  --mica-overlay: linear-gradient(
+    170deg,
+    rgba(233, 86, 120, 0.03) 0%,
+    rgba(238, 100, 172, 0.02) 25%,
+    transparent 45%
+  );
+
+  /* Premium shadows */
+  --shadow-card: 0 1px 4px rgba(10, 10, 18, 0.25), 0 0 1px rgba(10, 10, 18, 0.2);
+  --shadow-subtle: 0 1px 2px rgba(10, 10, 18, 0.2);
+
+  /* Icon colors */
+  --icon-folder: #fab795;
+}

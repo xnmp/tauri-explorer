@@ -275,6 +275,7 @@ export function getFileExtensionLabel(entry: FileEntry): string {
   if (!ext) return EXTENSIONLESS_LABELS[entry.name] ?? "";
   const label = ext.toUpperCase();
   if (label.length > MAX_EXT_LABEL_LENGTH) return label.slice(0, MAX_EXT_LABEL_LENGTH);
+  return label;
 }
 
 /** Check if a file is a text/code file that can be previewed */

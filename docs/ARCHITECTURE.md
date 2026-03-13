@@ -66,7 +66,10 @@
 │  │  ├── PaneContainer                              │    │
 │  │  │   ├── ExplorerPane (left)                    │    │
 │  │  │   │   ├── NavigationBar (breadcrumbs)        │    │
-│  │  │   │   └── FileList → FileItem / VirtualList  │    │
+│  │  │   │   └── FileList (dispatcher)              │    │
+│  │  │   │       ├── DetailsView → VirtualList      │    │
+│  │  │   │       ├── ListView (CSS grid)            │    │
+│  │  │   │       └── TilesView (CSS auto-fill)      │    │
 │  │  │   └── ExplorerPane (right, if dual pane)     │    │
 │  │  ├── PreviewPane (optional)                     │    │
 │  │  ├── StatusBar                                  │    │
@@ -78,7 +81,11 @@
 │                         │                               │
 │  ┌─────────────────────────────────────────────────┐    │
 │  │  Rust Backend (src-tauri/src/)                  │    │
-│  │  ├── files.rs (dir listing, CRUD, streaming)    │    │
+│  │  ├── files/                                     │    │
+│  │  │   ├── mod.rs (shared types: FileEntry, etc.) │    │
+│  │  │   ├── dir_listing.rs (cached + streaming)    │    │
+│  │  │   ├── file_ops.rs (CRUD operations)          │    │
+│  │  │   └── external_apps.rs (open, terminal)      │    │
 │  │  ├── search.rs (fuzzy search, streaming)        │    │
 │  │  ├── content_search.rs (ripgrep-based grep)     │    │
 │  │  ├── thumbnails.rs (image thumbnail cache)      │    │
@@ -110,26 +117,41 @@ The `run()` function:
 
 ### Modules
 
-#### `files.rs` — File Operations
+#### `files/` — File Operations Module
+
+Split into focused submodules. Shared types live in `mod.rs`.
+
+##### `files/mod.rs` — Shared Types
 - **Types:** `FileEntry { name, path, kind, size, modified, is_symlink, symlink_target }`, `FileKind { File, Directory }`, `DirectoryListing { path, entries, listing_id }`
+- **Helper:** `metadata_to_entry()` — converts `std::fs::Metadata` + path into `FileEntry`
+- Re-exports submodules as `pub mod dir_listing`, `pub mod file_ops`, `pub mod external_apps`
+
+##### `files/dir_listing.rs` — Directory Listing & Caching
 - **Commands:**
   - `list_directory(path)` — cached (5s TTL, 50 entry LRU), returns sorted entries (dirs first, case-insensitive name sort)
   - `start_streaming_directory(path)` — returns first 100 entries immediately, streams remaining via `directory-entries` Tauri event in batches of 100
   - `cancel_directory_listing(listing_id)` — cancels active streaming via `TaskRegistry`
   - `invalidate_dir_cache(path)`
+
+##### `files/file_ops.rs` — CRUD Operations
+- **Commands:**
+  - `get_home_directory()` → home dir path
   - `create_directory(parent_path, name)` → `FileEntry`
   - `rename_entry(path, new_name)` → `FileEntry`
   - `copy_entry(source, dest_dir, overwrite)` — generates "name - Copy" suffix on conflict, uses `fs_extra` for recursive dir copy
   - `move_entry(source, dest_dir, overwrite)` — tries `fs::rename` first (same filesystem), falls back to copy+delete for cross-filesystem
-  - `open_file(path)` — opens with system default via `opener` crate
-  - `open_file_with(path, app)` — opens with specific app
-  - `open_image_with_siblings(path)` — detects image viewer via `xdg-mime`, passes sibling images for navigation
-  - `open_in_terminal(path, terminal)` — auto-detects terminal (ghostty, kitty, alacritty, etc.) with per-terminal argument handling
   - `read_text_file(path, max_bytes)` — 1MB default limit, UTF-8 validation
   - `write_text_file(path, content)` — creates new file only (no overwrite)
   - `delete_entry_permanent(path)`
   - `create_symlink(target_path, link_path)` — platform-aware (Unix vs Windows)
   - `estimate_size(paths)` → `{ fileCount, totalBytes }` — recursive walk for progress estimation
+
+##### `files/external_apps.rs` — External App Launching
+- **Commands:**
+  - `open_file(path)` — opens with system default via `opener` crate
+  - `open_file_with(path, app)` — opens with specific app
+  - `open_image_with_siblings(path)` — detects image viewer via `xdg-mime`, passes sibling images for navigation
+  - `open_in_terminal(path, terminal)` — auto-detects terminal (ghostty, kitty, alacritty, etc.) with per-terminal argument handling
 
 #### `lib.rs` — Trash Operations
 - `move_to_trash(path)` — cross-platform via `trash` crate
@@ -194,7 +216,7 @@ The `run()` function:
 
 #### `error.rs` — Unified Error Type
 - `AppError` enum: `NotFound`, `PermissionDenied`, `AlreadyExists`, `InvalidPath`, `Io`, `Other`
-- Implements `Serialize` (serializes to string for Tauri IPC)
+- Implements `Serialize` as `{ kind, message }` JSON object (e.g. `{ kind: "not_found", message: "Path not found: /foo" }`)
 
 #### `task_registry.rs` — Cancellable Task Registry
 - Thread-safe registry (`AtomicU64` counter + `Mutex<HashMap<u64, Arc<AtomicBool>>>`)
@@ -331,6 +353,7 @@ All state lives in `src/lib/state/`. Svelte 5 runes (`$state`, `$derived`, `$eff
 | `navigation.ts` | Pure functions: `pushToHistory()`, `canGoBack/Forward()`, `getBackPath/ForwardPath()`, `parseBreadcrumbs()`, `getParentPath()` |
 | `paste-operations.ts` | Orchestrates paste: estimates size, tracks progress, handles conflicts, broadcasts file changes |
 | `directory-listing.ts` | Manages streaming directory listing: initial batch + event listener for remaining chunks |
+| `drop-operations.ts` | Pure drop handler logic: `getDropSourcePath()`, `handleItemDrop()`, `handleBackgroundDrop()` — conflict resolution, move/copy execution, undo tracking |
 | `sort-prefs.ts` | Per-directory sort preference persistence (localStorage, 200 entry cap) |
 | `persisted.ts` | localStorage helpers: `loadPersisted<T>()`, `savePersisted()`, `removePersisted()` |
 | `undo-helpers.ts` | Helper functions for undo: `getAffectedDirs()`, `undoActionLabel()` |
@@ -364,6 +387,7 @@ All state lives in `src/lib/state/`. Svelte 5 runes (`$state`, `$derived`, `$eff
 
 #### `files.ts` — Primary API Client
 - Wraps every Rust command in an `async` function returning `ApiResult<T> = { ok: true, data: T } | { ok: false, error: string }`
+- **Error handling:** `extractError(e)` extracts human-readable message from `AppError` `{ kind, message }` objects or falls back to string coercion. `extractErrorKind(e)` returns the error kind string (e.g. `"already_exists"`) for programmatic handling
 - Auto-detects Tauri vs browser environment (cached after first call)
 - **Functions map 1:1 to Rust commands:** `fetchDirectory`, `startStreamingDirectory`, `createDirectory`, `renameEntry`, `deleteEntry`, `deleteMultipleEntries`, `restoreFromTrash`, `copyEntry`, `moveEntry`, `openFile`, `openFileWith`, `openImageWithSiblings`, `openInTerminal`, `readTextFile`, `writeTextFile`, `fuzzySearch`, `startStreamingSearch`, `cancelSearch`, `startContentSearch`, `cancelContentSearch`, `estimateSize`, `getThumbnail`, `getThumbnailData`, `getMicroThumbnail`, `clearThumbnailCache`, `getThumbnailCacheStats`, `createSymlink`, `clipboardHasImage`, `clipboardPasteImage`, `setAsWallpaper`, `compressToZip`, `extractArchive`, `readConfigFile`, `writeConfigFile`, `listUserThemes`
 
@@ -391,7 +415,10 @@ All state lives in `src/lib/state/`. Svelte 5 runes (`$state`, `$derived`, `$eff
 | **PaneContainer** | `PaneContainer.svelte` | Manages single/dual pane layout with resizable divider. Contains two `ExplorerPane` instances + optional `PreviewPane` |
 | **ExplorerPane** | `ExplorerPane.svelte` | Self-contained pane: gets explorer from `windowTabsManager.getExplorer(paneId)`, provides it via Svelte context. Contains `NavigationBar` + `FileList` + `ContextMenu` + `NewFolderDialog` + `DeleteDialog`. Handles arrow-key navigation with view-mode-aware step calculation |
 | **NavigationBar** | `NavigationBar.svelte` | Back/Forward/Up/Refresh buttons (configurable), breadcrumb bar with editable path input and autocomplete, caret picker (click chevron to see subdirectories) |
-| **FileList** | `FileList.svelte` | Three view modes: details (VirtualList), list (CSS grid column-flow), tiles (CSS auto-fill grid). Handles: marquee selection, type-ahead, column resize, drag-and-drop, inline rename for list/tiles views |
+| **FileList** | `FileList.svelte` | View mode dispatcher. Handles shared concerns: marquee selection, type-ahead, background click/context menu, background drag-and-drop, loading/error/empty states. Routes to `DetailsView`, `ListView`, or `TilesView` |
+| **DetailsView** | `DetailsView.svelte` | Details view: column headers with sort indicators, column resize, column visibility context menu, VirtualList with FileItem rows |
+| **ListView** | `ListView.svelte` | List view: CSS grid column-flow with configurable columns, inline rename, drag/drop per item, clipboard visual feedback |
+| **TilesView** | `TilesView.svelte` | Tiles view: CSS auto-fill grid with progressive rendering (batched via `requestAnimationFrame`), thumbnail support, inline rename, clipboard visual feedback |
 | **FileItem** | `FileItem.svelte` | Single row in details view. Inline rename, slow-click-to-rename, drag source, drop target (directories), clipboard visual feedback, symlink badge |
 | **FileIcon** | `FileIcon.svelte` | Renders file/folder icon. Supports three themes: default (SVG), material (Nerd Fonts), minimal |
 | **VirtualList** | `VirtualList.svelte` | Generic virtual scrolling component for fixed-height items. Renders only visible items + buffer. Uses Svelte 5 generics |
@@ -422,6 +449,7 @@ All state lives in `src/lib/state/`. Svelte 5 runes (`$state`, `$derived`, `$eff
 | `use-column-resize.svelte.ts` | Resizable column headers in details view. Tracks column widths, generates `grid-template-columns` CSS |
 | `use-marquee-selection.svelte.ts` | Rubber-band selection rectangle. Handles mousedown→mousemove→mouseup, calculates selected indices, supports both index-based (details) and DOM-based (list/tiles) hit testing |
 | `use-type-ahead.svelte.ts` | Type-ahead selection: typing characters jumps to matching file name |
+| `use-inline-rename.svelte.ts` | Shared inline rename logic for list/tiles views: enter/escape handling, commit on blur, name validation |
 | `use-external-drag.svelte.ts` | Handles dragging files OUT of the app to the OS |
 | `use-external-drop.svelte.ts` | Handles files dropped INTO the app from OS (via Tauri `onDragDropEvent`) |
 
@@ -432,7 +460,7 @@ All state lives in `src/lib/state/`. Svelte 5 runes (`$state`, `$derived`, `$eff
 ### Navigation
 | Feature | Files to change |
 |---------|----------------|
-| Directory navigation | `explorer.svelte.ts:navigateTo`, `navigation.ts`, `directory-listing.ts`, `files.rs:start_streaming_directory` |
+| Directory navigation | `explorer.svelte.ts:navigateTo`, `navigation.ts`, `directory-listing.ts`, `files/dir_listing.rs:start_streaming_directory` |
 | Back/Forward/Up | `explorer.svelte.ts:goBack/goForward/goUp`, `navigation.ts` |
 | Breadcrumb bar | `NavigationBar.svelte` |
 | Path editing + autocomplete | `NavigationBar.svelte` (editable path input) |
@@ -442,23 +470,23 @@ All state lives in `src/lib/state/`. Svelte 5 runes (`$state`, `$derived`, `$eff
 ### File Operations
 | Feature | Files to change |
 |---------|----------------|
-| Create folder | `explorer.svelte.ts:createFolder`, `InlineNewFolder.svelte`, `files.rs:create_directory` |
-| Rename (inline) | `FileItem.svelte` (details), `FileList.svelte` (list/tiles), `explorer.svelte.ts:rename`, `files.rs:rename_entry` |
+| Create folder | `explorer.svelte.ts:createFolder`, `InlineNewFolder.svelte`, `files/file_ops.rs:create_directory` |
+| Rename (inline) | `FileItem.svelte` (details), `ListView.svelte`/`TilesView.svelte` (list/tiles via `use-inline-rename.svelte.ts`), `explorer.svelte.ts:rename`, `files/file_ops.rs:rename_entry` |
 | Rename (slow-click) | `FileItem.svelte:handleClick` (500ms timer after single-click on name of selected item) |
 | Bulk rename | `BulkRenameDialog.svelte`, `dialogStore.openBulkRename()` |
 | Delete (to trash) | `explorer.svelte.ts:startDelete/confirmDelete`, `DeleteDialog.svelte`, `lib.rs:move_to_trash` |
-| Delete (permanent) | `files.rs:delete_entry_permanent` |
-| Copy/Move (paste) | `paste-operations.ts`, `clipboard.svelte.ts`, `files.rs:copy_entry/move_entry` |
+| Delete (permanent) | `files/file_ops.rs:delete_entry_permanent` |
+| Copy/Move (paste) | `paste-operations.ts`, `clipboard.svelte.ts`, `files/file_ops.rs:copy_entry/move_entry` |
 | Conflict resolution | `conflict-resolver.svelte.ts`, `ConflictDialog.svelte` |
 | Progress tracking | `operations.svelte.ts`, `ProgressDialog.svelte` |
 | Undo/Redo | `undo.svelte.ts`, `undo-helpers.ts`, `explorer.svelte.ts:undo/redo` |
-| Open file | `files.rs:open_file`, `FileList.svelte:handleDoubleClick` |
-| Open with specific app | `files.rs:open_file_with` |
-| Open image with siblings | `files.rs:open_image_with_siblings`, `FileList.svelte` |
-| Create symlink | `ContextMenu.svelte:handleCreateSymlink`, `files.rs:create_symlink` |
+| Open file | `files/external_apps.rs:open_file`, `FileList.svelte:handleDoubleClick` |
+| Open with specific app | `files/external_apps.rs:open_file_with` |
+| Open image with siblings | `files/external_apps.rs:open_image_with_siblings`, `FileList.svelte` |
+| Create symlink | `ContextMenu.svelte:handleCreateSymlink`, `files/file_ops.rs:create_symlink` |
 | Compress to ZIP | `ContextMenu.svelte:handleCompress`, `archive.rs:compress_to_zip` |
 | Extract archive | `ContextMenu.svelte:handleExtractHere/handleExtractToFolder`, `archive.rs:extract_archive` |
-| Open in terminal | `ContextMenu.svelte:handleOpenInTerminal`, `files.rs:open_in_terminal` |
+| Open in terminal | `ContextMenu.svelte:handleOpenInTerminal`, `files/external_apps.rs:open_in_terminal` |
 | Set as wallpaper | `ContextMenu.svelte:handleSetAsWallpaper`, `wallpaper.rs:set_as_wallpaper` |
 
 ### Selection
@@ -473,12 +501,12 @@ All state lives in `src/lib/state/`. Svelte 5 runes (`$state`, `$derived`, `$eff
 ### View Modes
 | Feature | Files to change |
 |---------|----------------|
-| Details view | `FileList.svelte` (VirtualList + FileItem), `FileItem.svelte` |
-| List view | `FileList.svelte` (CSS grid column-flow with configurable columns) |
-| Tiles view | `FileList.svelte` (CSS auto-fill grid with thumbnail images) |
-| Column resize (details) | `use-column-resize.svelte.ts`, `FileList.svelte` |
-| Column visibility toggle | `FileList.svelte` (column header right-click menu), `settingsStore.columnVisibility` |
-| List column count | `settingsStore.listViewColumns`, `FileList.svelte:effectiveListColumns` |
+| Details view | `DetailsView.svelte` (VirtualList + FileItem), `FileItem.svelte` |
+| List view | `ListView.svelte` (CSS grid column-flow with configurable columns) |
+| Tiles view | `TilesView.svelte` (CSS auto-fill grid with thumbnail images, progressive rendering) |
+| Column resize (details) | `use-column-resize.svelte.ts`, `DetailsView.svelte` |
+| Column visibility toggle | `DetailsView.svelte` (column header right-click menu), `settingsStore.columnVisibility` |
+| List column count | `settingsStore.listViewColumns`, `ListView.svelte:effectiveListColumns` |
 
 ### Search
 | Feature | Files to change |
@@ -507,7 +535,7 @@ All state lives in `src/lib/state/`. Svelte 5 runes (`$state`, `$derived`, `$eff
 | OS clipboard files | `os-clipboard.ts`, `clipboard.rs` |
 | Paste image from clipboard | `clipboard.rs:clipboard_paste_image`, `files.ts:clipboardPasteImage` |
 | Cross-window clipboard sync | `clipboard.svelte.ts` (Tauri events) |
-| Visual feedback (badges) | `FileItem.svelte` (clipboard badge, cut opacity) |
+| Visual feedback (badges) | `FileItem.svelte` (details: clipboard badge, cut opacity), `ListView.svelte`/`TilesView.svelte` (list/tiles: `.cut`/`.in-clipboard` CSS classes) |
 
 ### Thumbnails
 | Feature | Files to change |
@@ -545,7 +573,7 @@ User action (click breadcrumb / enter path / arrow + Enter)
   → explorer.navigateTo(path)
     → dirListing.load(path, callbacks)
       → API: startStreamingDirectory(path)
-        → Rust: files::start_streaming_directory
+        → Rust: files::dir_listing::start_streaming_directory
           → Returns first 100 entries immediately
           → Spawns thread for remaining entries (emits "directory-entries" events)
       → Frontend: sets coreState.entries, starts streaming listener
@@ -694,7 +722,7 @@ Svelte 5 event delegation can break HTML5 DnD `drop` events in complex component
 
 ### Internal DnD Flow
 ```
-FileItem/FileList dragstart
+FileItem/ListView/TilesView dragstart
   → Sets dataTransfer types: application/x-explorer-{path,name,kind}
   → Calls dragState.start(data) (reactive store + localStorage)
 
@@ -703,7 +731,8 @@ Target (directory) dragover
   → Shows visual feedback (blue = move, green = copy when Ctrl held)
 
 Target drop / Source dragend
-  → Reads path from dataTransfer first, falls back to dragState.readCrossWindow()
+  → drop-operations.ts:getDropSourcePath() reads from dataTransfer or dragState
+  → drop-operations.ts:handleItemDrop() (drop on directory) or handleBackgroundDrop() (drop on background)
   → Checks for naming conflict → conflictResolver.prompt()
   → Executes moveEntry or copyEntry
   → Pushes to undoStore (for moves)
@@ -748,7 +777,8 @@ Target drop / Source dragend
 - `render.bench.ts` — Frontend rendering benchmarks
 
 ### Rust Tests
-- `files.rs` — Unit tests for list_directory, create_directory, rename_entry, copy_entry, estimate_size
+- `files/dir_listing.rs` — Unit tests for `list_directory` (sorting, dir-before-file ordering)
+- `files/file_ops.rs` — Unit tests for `create_directory`, `rename_entry`, `copy_entry`, `estimate_size`
 - `clipboard.rs` — URI parsing, percent encoding/decoding tests
 
 ### Mock System

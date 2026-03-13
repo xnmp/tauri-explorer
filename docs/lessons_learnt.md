@@ -390,3 +390,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 - **Structured error serialization (`{kind, message}`)** is better than flat strings for frontend error handling. When changing serialization format, every `String(err)` in catch blocks becomes `[object Object]` — must update all 37 call sites simultaneously.
 
 ---
+
+## tauri-explorer-ryv1: New Todo Batch (March 2026)
+
+**Key takeaways:**
+- **Same-dir paste conflict**: The `isSameDir` check in paste-operations.ts was gated on `isCut`, causing copy-to-same-dir to show the conflict dialog. The Rust `copy_entry` already handles this via `generate_copy_name()` — the fix was removing the `isCut &&` gate so same-dir copies skip the dialog.
+- **Pruning stale entries**: localStorage stores (frecency, recent-files) never validated path existence. Added `check_paths_exist` Rust command for batch validation. Fire-and-forget pattern: call `pruneNonExistent()` when UI opens without awaiting.
+- **Marquee selection performance**: `getBoundingClientRect()` on every tile per mousemove is expensive. Two-fold fix: (1) RAF-throttle the selection update, (2) cache item rects per drag session since items don't move during marquee.
+- **highlight.js tree-shaking**: Use `highlight.js/lib/core` with individual language imports to avoid bundling all 190+ languages. Register extension aliases with `registerAliases()` for file-extension-based detection.
+- **Space as preview toggle hotkey**: Spacebar conflicts with text input. Must add a `when` guard checking `document.activeElement.tagName !== "INPUT"` etc. to prevent firing during typing.
+
+---

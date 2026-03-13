@@ -8,7 +8,6 @@
     startStreamingSearch,
     cancelSearch,
     openFile,
-    getHomeDirectory,
     type SearchResult,
     type SearchResultsEvent,
   } from "$lib/api/files";
@@ -53,60 +52,54 @@
   let activeSearchId: number | null = null;
   let unlisten: UnlistenFn | null = null;
   let totalScanned = $state(0);
-  let homeDir: string | null = null;
 
   // Frecency weight relative to fuzzy score (how much frecency influences ranking)
   const FRECENCY_WEIGHT = 50;
 
-  /** Candidate path from recent files or frecency store. */
-  interface ExternalCandidate {
-    name: string;
-    path: string;
-    kind: "file" | "directory";
-  }
-
-  /** Collect all external candidates (recent files + frecency) outside the home directory. */
-  function getExternalCandidates(): ExternalCandidate[] {
+  /** Match recent files and frecency entries against a search term.
+   *  These are always included in results (merged/deduplicated with backend results). */
+  function matchFrecencyAndRecent(term: string): SearchResult[] {
+    const lower = term.toLowerCase();
     const seen = new Set<string>();
-    const candidates: ExternalCandidate[] = [];
+    const matched: SearchResult[] = [];
+    const scoreMap = frecencyStore.getScoreMap();
 
+    // Recent files
     for (const entry of recentFilesStore.list) {
       if (seen.has(entry.path)) continue;
       seen.add(entry.path);
-      if (homeDir && entry.path.startsWith(homeDir)) continue;
-      candidates.push({ name: entry.name, path: entry.path, kind: entry.kind });
-    }
-
-    for (const entry of frecencyStore.entries) {
-      if (seen.has(entry.path)) continue;
-      seen.add(entry.path);
-      if (homeDir && entry.path.startsWith(homeDir)) continue;
-      const name = entry.path.split("/").pop() || "";
-      candidates.push({ name, path: entry.path, kind: "directory" });
-    }
-
-    return candidates;
-  }
-
-  /** Match external candidates against a search term via substring match. */
-  function matchExternalCandidates(term: string): SearchResult[] {
-    const lower = term.toLowerCase();
-    const results: SearchResult[] = [];
-
-    for (const c of getExternalCandidates()) {
-      const nameLower = c.name.toLowerCase();
-      if (nameLower.includes(lower) || c.path.toLowerCase().includes(lower)) {
-        results.push({
-          name: c.name,
-          path: c.path,
-          relativePath: c.path,
-          score: nameLower.includes(lower) ? 80 : 40,
-          kind: c.kind,
+      const nameLower = entry.name.toLowerCase();
+      if (nameLower.includes(lower) || entry.path.toLowerCase().includes(lower)) {
+        const frecency = scoreMap.get(entry.path) ?? 0;
+        matched.push({
+          name: entry.name,
+          path: entry.path,
+          relativePath: entry.path,
+          score: (nameLower.includes(lower) ? 80 : 40) + Math.round(frecency * FRECENCY_WEIGHT),
+          kind: entry.kind,
         });
       }
     }
 
-    return results;
+    // Frecency entries (mostly directories the user has navigated to)
+    for (const entry of frecencyStore.entries) {
+      if (seen.has(entry.path)) continue;
+      seen.add(entry.path);
+      const name = entry.path.split("/").pop() || "";
+      const nameLower = name.toLowerCase();
+      if (nameLower.includes(lower) || entry.path.toLowerCase().includes(lower)) {
+        const frecency = scoreMap.get(entry.path) ?? 0;
+        matched.push({
+          name,
+          path: entry.path,
+          relativePath: entry.path,
+          score: (nameLower.includes(lower) ? 80 : 40) + Math.round(frecency * FRECENCY_WEIGHT),
+          kind: "directory",
+        });
+      }
+    }
+
+    return matched;
   }
 
   /** Re-rank search results by combining fuzzy score with frecency. */
@@ -145,15 +138,6 @@
   function getCwdPath(): string {
     const explorer = paneNav?.getActiveExplorer() ?? defaultExplorer;
     return explorer.currentPath;
-  }
-
-  // Cache home directory for external candidate filtering
-  async function ensureHomeDir(): Promise<void> {
-    if (homeDir) return;
-    const result = await getHomeDirectory();
-    if (result.ok) {
-      homeDir = result.data;
-    }
   }
 
   // Cancel active search and cleanup listener
@@ -198,10 +182,10 @@
         return;
       }
 
-      // Rank backend results by frecency, then merge in external matches
+      // Rank backend results by frecency, then merge in recent/frecent matches
       const ranked = rankWithFrecency(payload.results);
-      const externalMatches = matchExternalCandidates(query);
-      results = mergeResultsByScore(ranked, externalMatches);
+      const frecencyMatches = matchFrecencyAndRecent(query);
+      results = mergeResultsByScore(ranked, frecencyMatches);
       totalScanned = payload.totalScanned;
 
       // Reset selection if needed
@@ -237,9 +221,8 @@
       // Bump generation so stale listeners are discarded
       const generation = ++searchGeneration;
 
-      // Show external matches immediately (before backend responds)
-      await ensureHomeDir();
-      results = matchExternalCandidates(query);
+      // Show frecency/recent matches immediately (before backend responds)
+      results = matchFrecencyAndRecent(query);
 
       // Set up listener BEFORE starting search. The listener accepts
       // events even before we know the searchId (avoids race condition

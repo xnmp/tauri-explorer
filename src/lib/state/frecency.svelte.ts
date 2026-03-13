@@ -10,6 +10,7 @@
  * contribute ~0.5, from a day ago ~0.04, etc.
  */
 
+import { checkPathsExist } from "$lib/api/files";
 import { loadPersisted, savePersisted } from "./persisted";
 
 const STORAGE_KEY = "explorer-frecency";
@@ -93,6 +94,16 @@ function createFrecencyStore() {
     save();
   }
 
+  /** Remove entries whose paths no longer exist on disk. */
+  async function pruneNonExistent(): Promise<void> {
+    if (data.length === 0) return;
+    const paths = data.map((e) => e.path);
+    const exists = await checkPathsExist(paths);
+    const before = data.length;
+    data = data.filter((_, i) => exists[i]);
+    if (data.length < before) save();
+  }
+
   return {
     get entries() { return data; },
     recordAccess,
@@ -100,6 +111,7 @@ function createFrecencyStore() {
     getScoreMap,
     remove,
     clear,
+    pruneNonExistent,
   };
 }
 

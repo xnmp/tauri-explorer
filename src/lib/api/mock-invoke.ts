@@ -94,6 +94,14 @@ const mockCommands: Record<string, CommandHandler> = {
     return { path, entries, listing_id: null } as DirectoryListing;
   },
 
+  check_paths_exist: (args) => {
+    const paths = args.paths as string[];
+    return paths.map((p: string) => p in mockFiles || Object.keys(mockFiles).some((k) => {
+      const entries = mockFiles[k];
+      return Array.isArray(entries) && entries.some((e: { path: string }) => e.path === p);
+    }));
+  },
+
   start_streaming_directory: (args) => {
     const raw = args.path as string;
     const path = raw !== "/" && raw.endsWith("/") ? raw.slice(0, -1) : raw;

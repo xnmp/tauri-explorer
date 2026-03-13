@@ -140,6 +140,7 @@ pub fn run(launch_dir: Option<String>) {
             files::file_ops::delete_entry_permanent,
             files::file_ops::create_symlink,
             files::file_ops::estimate_size,
+            files::file_ops::check_paths_exist,
             // File operations — external apps
             files::external_apps::open_file,
             files::external_apps::open_file_with,

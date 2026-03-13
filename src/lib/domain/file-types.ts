@@ -206,9 +206,11 @@ const ICON_CATEGORY_MAP: Record<string, IconCategory> = {
   ps1: "executable", sh: "executable", bash: "executable",
 };
 
-/** Extract file extension from filename */
+/** Extract file extension from filename (empty if no dot or dot-only prefix like ".gitignore") */
 function getExtension(name: string): string {
-  return name.split(".").pop()?.toLowerCase() || "";
+  const dotIndex = name.lastIndexOf(".");
+  if (dotIndex <= 0) return "";
+  return name.slice(dotIndex + 1).toLowerCase();
 }
 
 /** Get descriptive file type from entry - Windows 11 style */

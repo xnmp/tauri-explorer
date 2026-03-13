@@ -10,6 +10,7 @@
         "@tauri-apps/api": "^2.10.1",
         "@tauri-apps/plugin-opener": "^2",
         "@tauri-apps/plugin-shell": "^2",
+        "highlight.js": "^11.11.1",
         "tauri-plugin-clipboard-x-api": "^2.0.1",
       },
       "devDependencies": {
@@ -136,6 +137,8 @@
     "fdir": ["fdir@6.5.0", "", { "peerDependencies": { "picomatch": "^3 || ^4" } }, ""],
 
     "fsevents": ["fsevents@2.3.2", "", { "os": "darwin" }, "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA=="],
+
+    "highlight.js": ["highlight.js@11.11.1", "", {}, "sha512-Xwwo44whKBVCYoliBQwaPvtd/2tYFkRQtXDWj1nackaV2JPXx3L0+Jvd8/qCJ2p+ML0/XVkJ2q+Mr+UVdpJK5w=="],
 
     "is-reference": ["is-reference@3.0.3", "", { "dependencies": { "@types/estree": "^1.0.6" } }, ""],
 

@@ -8,6 +8,8 @@
   import { isImageFile, isTextFile, isPdfFile, getFileType, formatDate } from "$lib/domain/file-types";
   import { formatSize, type FileEntry } from "$lib/domain/file";
   import { isTauri } from "$lib/api/mock-invoke";
+  import { highlightCode } from "$lib/domain/syntax-highlight";
+  import "highlight.js/styles/github-dark.css";
 
   /** Currently selected file from the active explorer */
   const selectedFile = $derived.by((): FileEntry | null => {
@@ -20,6 +22,7 @@
   // Preview content state
   let previewImageUrl = $state<string | null>(null);
   let previewText = $state<string | null>(null);
+  let previewHighlightedHtml = $state<string | null>(null);
   let previewPdfUrl = $state<string | null>(null);
   let previewLoading = $state(false);
   let previewError = $state<string | null>(null);
@@ -32,6 +35,7 @@
       lastPreviewPath = null;
       previewImageUrl = null;
       previewText = null;
+      previewHighlightedHtml = null;
       previewPdfUrl = null;
       previewError = null;
       previewLoading = false;
@@ -53,6 +57,7 @@
     lastPreviewPath = file.path;
     previewImageUrl = null;
     previewText = null;
+    previewHighlightedHtml = null;
     previewPdfUrl = null;
     previewError = null;
     previewLoading = true;
@@ -93,6 +98,12 @@
       if (file.path !== lastPreviewPath) return; // Stale
       if (result.ok) {
         previewText = result.data;
+        // Syntax highlight for code files (defer to avoid blocking)
+        try {
+          previewHighlightedHtml = highlightCode(result.data, file.name);
+        } catch {
+          previewHighlightedHtml = null;
+        }
       } else {
         previewError = result.error;
       }
@@ -130,6 +141,8 @@
         <div class="preview-image-container">
           <img src={previewImageUrl} alt={selectedFile.name} class="preview-image" />
         </div>
+      {:else if previewHighlightedHtml !== null}
+        <pre class="preview-text preview-code"><code class="hljs">{@html previewHighlightedHtml}</code></pre>
       {:else if previewText !== null}
         <pre class="preview-text">{previewText}</pre>
       {:else if previewError}
@@ -275,6 +288,11 @@
     word-break: break-all;
     margin: 0;
     flex: 1;
+  }
+
+  .preview-code :global(.hljs) {
+    background: transparent;
+    padding: 0;
   }
 
   .preview-error-text {

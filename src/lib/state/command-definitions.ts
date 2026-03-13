@@ -336,8 +336,14 @@ const viewCommands: Command[] = [
     id: "view.togglePreviewPane",
     label: "Toggle Preview Pane",
     category: "view",
-    shortcut: "Alt+P",
+    shortcut: "Space",
     handler: () => settingsStore.togglePreviewPane(),
+    when: () => {
+      // Only toggle when focus is NOT in an input/textarea (e.g. file list is focused)
+      const active = document.activeElement;
+      const tag = active?.tagName;
+      return tag !== "INPUT" && tag !== "TEXTAREA" && !(active as HTMLElement)?.isContentEditable;
+    },
   },
   {
     id: "view.toggleDualPane",

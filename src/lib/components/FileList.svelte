@@ -4,15 +4,11 @@
 -->
 <script lang="ts">
   import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
-  import { clipboardStore } from "$lib/state/clipboard.svelte";
-  import { toastStore } from "$lib/state/toast.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
-  import { openFile, openImageWithSiblings, moveEntry, copyEntry, fetchDirectory } from "$lib/api/files";
-  import { broadcastFileChange, parentDir } from "$lib/state/file-events";
-  import { undoStore } from "$lib/state/undo.svelte";
+  import { openFile, openImageWithSiblings } from "$lib/api/files";
   import { dragState } from "$lib/state/drag.svelte";
-  import { conflictResolver } from "$lib/state/conflict-resolver.svelte";
+  import { getDropSourcePath, handleFileDrop, handleBackgroundDrop } from "$lib/state/drop-operations";
   import FileItem from "./FileItem.svelte";
   import FileIcon from "./FileIcon.svelte";
   import VirtualList from "./VirtualList.svelte";
@@ -25,7 +21,7 @@
   import { getFileIconColor, isImageFile } from "$lib/domain/file-types";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
-  import { tick } from "svelte";
+  import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
 
   import type { FileEntry } from "$lib/domain/file";
 
@@ -78,67 +74,19 @@
   }
 
 
-  // Inline rename state for list/tiles views (mirrors FileItem logic)
-  let renameInputRef: HTMLInputElement | HTMLTextAreaElement | null = null;
-  let editedName = $state("");
-  let renameError = $state<string | null>(null);
-  let submittingRename = $state(false);
+  // Inline rename composable for list/tiles views (FileItem handles details view)
+  const rename = useInlineRename(() => explorer);
 
-  // Only handle rename for non-details views (FileItem handles details view)
+  // Only handle rename for non-details views
   const renamingEntry = $derived(
     explorer.viewMode !== "details" ? dialogStore.renamingEntry : null,
   );
 
   $effect(() => {
-    if (renamingEntry && renameInputRef) {
-      editedName = renamingEntry.name;
-      renameError = null;
-      tick().then(() => {
-        renameInputRef?.focus();
-        if (renamingEntry.kind === "file") {
-          const lastDot = renamingEntry.name.lastIndexOf(".");
-          if (lastDot > 0) {
-            renameInputRef?.setSelectionRange(0, lastDot);
-          } else {
-            renameInputRef?.select();
-          }
-        } else {
-          renameInputRef?.select();
-        }
-      });
+    if (renamingEntry && rename.renameInputRef) {
+      rename.focusAndSelect(renamingEntry);
     }
   });
-
-  async function confirmRename() {
-    if (submittingRename) return;
-    const trimmed = editedName.trim();
-    if (!trimmed) { renameError = "Name cannot be empty"; return; }
-    if (trimmed === renamingEntry?.name) { explorer.cancelRename(); return; }
-    submittingRename = true;
-    renameError = null;
-    const result = await explorer.rename(trimmed);
-    submittingRename = false;
-    if (result) renameError = result;
-  }
-
-  function cancelRename() {
-    editedName = "";
-    renameError = null;
-    explorer.cancelRename();
-  }
-
-  function handleRenameKeydown(event: KeyboardEvent) {
-    if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); confirmRename(); }
-    else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelRename(); }
-  }
-
-  function handleRenameBlur() {
-    if (editedName.trim() && editedName.trim() !== renamingEntry?.name) {
-      confirmRename();
-    } else {
-      cancelRename();
-    }
-  }
 
   // Marquee selection composable
   const marquee = useMarqueeSelection();
@@ -319,56 +267,13 @@
     copyDropTargets[entry.path] = false;
     if (entry.kind !== "directory" || !event.dataTransfer) return;
 
-    // Try dataTransfer first, fall back to cross-window drag state
-    let sourcePath = event.dataTransfer.getData("application/x-explorer-path");
-    if (!sourcePath) {
-      const crossWindow = dragState.readCrossWindow();
-      if (crossWindow) sourcePath = crossWindow.path;
-    }
+    const sourcePath = getDropSourcePath(event.dataTransfer);
     if (!sourcePath || sourcePath === entry.path) return;
     if (entry.path.startsWith(sourcePath + "/")) return;
 
-    const isCopyOp = event.ctrlKey;
-    const fileName = sourcePath.split("/").pop() || sourcePath;
-
-    // Check for naming conflict in target directory
-    let overwrite = false;
-    const dirResult = await fetchDirectory(entry.path);
-    if (dirResult.ok) {
-      const existingNames = new Set(dirResult.data.entries.map((e) => e.name));
-      if (existingNames.has(fileName)) {
-        const { choice } = await conflictResolver.prompt({
-          fileName,
-          sourcePath,
-          remaining: 0,
-        });
-        if (choice === "skip" || choice === "cancel") return;
-        if (choice === "overwrite") overwrite = true;
-      }
-    }
-
-    const result = isCopyOp
-      ? await copyEntry(sourcePath, entry.path, overwrite)
-      : await moveEntry(sourcePath, entry.path, overwrite);
-
-    if (result.ok) {
-      if (isCopyOp) {
-        toastStore.show(`Copied ${fileName} to ${entry.name}`, "info");
-      } else {
-        undoStore.push({
-          type: "move",
-          sourcePath,
-          destPath: result.data.path,
-          originalDir: parentDir(sourcePath),
-        });
-        toastStore.show(`Moved ${fileName} to ${entry.name}`, "info");
-      }
-      paneNav?.refreshAllPanes();
-      broadcastFileChange([parentDir(sourcePath), entry.path]);
-    } else {
-      console.error(`Failed to ${isCopyOp ? "copy" : "move"}:`, result.error);
-      toastStore.error(result.error);
-    }
+    await handleFileDrop(sourcePath, entry.path, event.ctrlKey, {
+      onRefresh: () => paneNav?.refreshAllPanes(),
+    });
   }
 
   function handleKeydown(event: KeyboardEvent): void {
@@ -405,12 +310,7 @@
 
     if (!event.dataTransfer) return;
 
-    // Try dataTransfer first, fall back to cross-window drag state
-    let sourcePath = event.dataTransfer.getData("application/x-explorer-path");
-    if (!sourcePath) {
-      const crossWindow = dragState.readCrossWindow();
-      if (crossWindow) sourcePath = crossWindow.path;
-    }
+    const sourcePath = getDropSourcePath(event.dataTransfer);
     if (!sourcePath) return;
 
     // Don't allow dropping into the same directory it's already in
@@ -420,41 +320,13 @@
 
     event.preventDefault();
 
-    const fileName = sourcePath.split("/").pop() || sourcePath;
-
-    // Check for naming conflict in current directory
-    let overwrite = false;
     const existingNames = new Set(explorer.displayEntries.map((e) => e.name));
-    if (existingNames.has(fileName)) {
-      const { choice } = await conflictResolver.prompt({
-        fileName,
-        sourcePath,
-        remaining: 0,
-      });
-      if (choice === "skip" || choice === "cancel") return;
-      if (choice === "overwrite") overwrite = true;
-    }
-
-    const result = await moveEntry(sourcePath, currentPath, overwrite);
-    if (result.ok) {
-      const destName = currentPath.split("/").pop() || currentPath;
-      undoStore.push({
-        type: "move",
-        sourcePath,
-        destPath: result.data.path,
-        originalDir: sourceDir,
-      });
-      toastStore.show(`Moved ${fileName} to ${destName}`, "info");
-      if (paneNav) {
-        paneNav.refreshAllPanes();
-      } else {
-        explorer.refresh();
-      }
-      broadcastFileChange([parentDir(sourcePath), currentPath]);
-    } else {
-      console.error("Failed to move:", result.error);
-      toastStore.error(result.error);
-    }
+    await handleBackgroundDrop(sourcePath, currentPath, existingNames, {
+      onRefresh: () => {
+        if (paneNav) paneNav.refreshAllPanes();
+        else explorer.refresh();
+      },
+    });
   }
 </script>
 
@@ -655,13 +527,13 @@
               <input
                 type="text"
                 class="rename-input"
-                class:error={!!renameError}
-                bind:value={editedName}
-                bind:this={renameInputRef}
-                onkeydown={handleRenameKeydown}
-                onblur={handleRenameBlur}
+                class:error={!!rename.renameError}
+                bind:value={rename.editedName}
+                bind:this={rename.renameInputRef}
+                onkeydown={(e) => rename.handleRenameKeydown(e, entry.name)}
+                onblur={() => rename.handleRenameBlur(entry.name)}
                 onclick={(e) => e.stopPropagation()}
-                disabled={submittingRename}
+                disabled={rename.submittingRename}
                 autofocus
               />
             {:else}
@@ -706,13 +578,13 @@
               <!-- svelte-ignore a11y_autofocus -->
               <textarea
                 class="rename-input tile-rename"
-                class:error={!!renameError}
-                bind:value={editedName}
-                bind:this={renameInputRef}
-                onkeydown={handleRenameKeydown}
-                onblur={handleRenameBlur}
+                class:error={!!rename.renameError}
+                bind:value={rename.editedName}
+                bind:this={rename.renameInputRef}
+                onkeydown={(e) => rename.handleRenameKeydown(e, entry.name)}
+                onblur={() => rename.handleRenameBlur(entry.name)}
                 onclick={(e) => e.stopPropagation()}
-                disabled={submittingRename}
+                disabled={rename.submittingRename}
                 rows="2"
                 autofocus
               ></textarea>

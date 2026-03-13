@@ -79,7 +79,7 @@
 
 
   // Inline rename state for list/tiles views (mirrors FileItem logic)
-  let renameInputRef: HTMLInputElement | null = null;
+  let renameInputRef: HTMLInputElement | HTMLTextAreaElement | null = null;
   let editedName = $state("");
   let renameError = $state<string | null>(null);
   let submittingRename = $state(false);
@@ -704,8 +704,7 @@
             </div>
             {#if renamingEntry?.path === entry.path}
               <!-- svelte-ignore a11y_autofocus -->
-              <input
-                type="text"
+              <textarea
                 class="rename-input tile-rename"
                 class:error={!!renameError}
                 bind:value={editedName}
@@ -714,8 +713,9 @@
                 onblur={handleRenameBlur}
                 onclick={(e) => e.stopPropagation()}
                 disabled={submittingRename}
+                rows="2"
                 autofocus
-              />
+              ></textarea>
             {:else}
               <span class="tile-name entry-name" title={entry.name}>{entry.name}</span>
             {/if}
@@ -1091,6 +1091,11 @@
   .rename-input.tile-rename {
     width: 100%;
     text-align: center;
+    resize: none;
+    line-height: 1.4;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    font-size: 13px;
   }
 
   /* Column visibility context menu */

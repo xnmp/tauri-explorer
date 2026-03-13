@@ -59,9 +59,10 @@ export async function pasteEntries(
 
     const source = sources[i];
     const sourceDir = source.path.substring(0, source.path.lastIndexOf("/")) || "/";
+    const isSameDir = sourceDir === destPath;
 
-    // When cutting from the same directory, the file isn't a real conflict
-    const isSameDir = isCut && sourceDir === destPath;
+    // Copy to same dir: Rust auto-generates "name - Copy" suffix, no conflict dialog needed.
+    // Cut to same dir: no-op (file is already there).
     const hasConflict = !isSameDir && existingNames.has(source.name);
     let overwrite = false;
 
@@ -85,7 +86,7 @@ export async function pasteEntries(
     }
 
     // Skip no-op: cut-paste to same directory (file is already there)
-    if (isSameDir) {
+    if (isSameDir && isCut) {
       const existing = existingEntries.find((e) => e.name === source.name);
       if (existing) newEntries.push(existing);
     } else {

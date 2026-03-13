@@ -4,7 +4,7 @@
   Issue: tauri-explorer-83z, tauri-explorer-1k9k
 -->
 <script lang="ts">
-  import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
+  import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { contextMenuStore } from "$lib/state/context-menu.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
@@ -15,10 +15,10 @@
   import type { ViewMode } from "$lib/state/types";
 
   interface Props {
-    explorer?: ExplorerInstance;
+    explorer: ExplorerInstance;
   }
 
-  let { explorer = defaultExplorer }: Props = $props();
+  let { explorer }: Props = $props();
 
   function withSelectedEntry(action: (entry: FileEntry) => void): void {
     const entries = explorer.getSelectedEntries();

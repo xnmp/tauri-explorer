@@ -13,7 +13,7 @@
   } from "$lib/api/files";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
-  import { explorer as defaultExplorer } from "$lib/state/explorer.svelte";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import {
     type FlattenedResult,
     flattenBatch,
@@ -158,7 +158,7 @@
 
   // Get root directory from active explorer
   function getRootPath(): string {
-    const explorer = paneNav?.getActiveExplorer() ?? defaultExplorer;
+    const explorer = paneNav?.getActiveExplorer() ?? windowTabsManager.getActiveExplorer();
     return explorer.currentPath;
   }
 
@@ -317,7 +317,7 @@
   async function selectResult(result: FlattenedResult): Promise<void> {
     const openResult = await openFile(result.filePath);
     if (!openResult.ok) {
-      const explorer = paneNav?.getActiveExplorer() ?? defaultExplorer;
+      const explorer = paneNav?.getActiveExplorer() ?? windowTabsManager.getActiveExplorer();
       const parentDir = result.filePath.substring(0, result.filePath.lastIndexOf("/"));
       explorer.navigateTo(parentDir);
     }

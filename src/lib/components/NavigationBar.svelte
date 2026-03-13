@@ -5,16 +5,16 @@
 -->
 <script lang="ts">
   import { tick, onMount } from "svelte";
-  import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
+  import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { fetchDirectory, getHomeDirectory } from "$lib/api/files";
   import type { FileEntry } from "$lib/domain/file";
 
   interface Props {
-    explorer?: ExplorerInstance;
+    explorer: ExplorerInstance;
   }
 
-  let { explorer = defaultExplorer }: Props = $props();
+  let { explorer }: Props = $props();
 
   // Home directory detection for breadcrumb collapsing
   let homeDir = $state<string | null>(null);

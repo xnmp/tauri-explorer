@@ -15,7 +15,8 @@ import { themeStore } from "./theme.svelte";
 import { bookmarksStore } from "./bookmarks.svelte";
 import { recentFilesStore } from "./recent-files.svelte";
 import { dialogStore } from "./dialogs.svelte";
-import { copyEntry, moveEntry, writeTextFile, openInTerminal, clipboardPasteImage } from "$lib/api/files";
+import { fetchDirectory, writeTextFile, openInTerminal, clipboardPasteImage } from "$lib/api/files";
+import { pasteEntries, type PasteSource } from "./paste-operations";
 import type { ViewMode } from "./types";
 import { readFocusedWindowState } from "./focused-window";
 
@@ -479,11 +480,17 @@ const crossPaneCommands: Command[] = [
       const selected = activeExplorer.getSelectedEntries();
       if (selected.length === 0) return;
 
-      const destDir = otherExplorer.state.currentPath;
-      for (const entry of selected) {
-        await copyEntry(entry.path, destDir);
-      }
-      otherExplorer.refresh();
+      const destPath = otherExplorer.state.currentPath;
+      const dirResult = await fetchDirectory(destPath);
+      const existingEntries = dirResult.ok ? dirResult.data.entries : [];
+      const sources: PasteSource[] = selected.map((e) => ({ path: e.path, name: e.name }));
+
+      await pasteEntries(sources, false, {
+        destPath,
+        existingEntries,
+        onEntriesAdded: () => {},
+        onRefresh: () => Promise.all([otherExplorer.refresh()]),
+      });
     },
     when: () => windowTabsManager.dualPaneEnabled,
   },
@@ -503,12 +510,17 @@ const crossPaneCommands: Command[] = [
       const selected = activeExplorer.getSelectedEntries();
       if (selected.length === 0) return;
 
-      const destDir = otherExplorer.state.currentPath;
-      for (const entry of selected) {
-        await moveEntry(entry.path, destDir);
-      }
-      activeExplorer.refresh();
-      otherExplorer.refresh();
+      const destPath = otherExplorer.state.currentPath;
+      const dirResult = await fetchDirectory(destPath);
+      const existingEntries = dirResult.ok ? dirResult.data.entries : [];
+      const sources: PasteSource[] = selected.map((e) => ({ path: e.path, name: e.name }));
+
+      await pasteEntries(sources, true, {
+        destPath,
+        existingEntries,
+        onEntriesAdded: () => {},
+        onRefresh: () => Promise.all([activeExplorer.refresh(), otherExplorer.refresh()]),
+      });
     },
     when: () => windowTabsManager.dualPaneEnabled,
   },

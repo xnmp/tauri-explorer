@@ -3,32 +3,28 @@
   Issue: tauri-explorer-iw0, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-x25
 -->
 <script lang="ts">
-  import { tick } from "svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { formatSize } from "$lib/domain/file";
   import { getFileType, getFileIconColor, formatDate } from "$lib/domain/file-types";
   import FileIcon from "./FileIcon.svelte";
-  import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
-  import { toastStore } from "$lib/state/toast.svelte";
+  import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { clipboardStore } from "$lib/state/clipboard.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
-  import { moveEntry, copyEntry, fetchDirectory } from "$lib/api/files";
-  import { broadcastFileChange, parentDir } from "$lib/state/file-events";
-  import { undoStore } from "$lib/state/undo.svelte";
   import { dragState } from "$lib/state/drag.svelte";
-  import { conflictResolver } from "$lib/state/conflict-resolver.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { getDropSourcePath, handleFileDrop } from "$lib/state/drop-operations";
+  import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
 
   interface Props {
     entry: FileEntry;
     onclick: (event: MouseEvent) => void;
     ondblclick: () => void;
     selected?: boolean;
-    explorer?: ExplorerInstance;
+    explorer: ExplorerInstance;
   }
 
-  let { entry, onclick, ondblclick, selected = false, explorer = defaultExplorer }: Props = $props();
+  let { entry, onclick, ondblclick, selected = false, explorer }: Props = $props();
 
   // Get pane context for cross-pane operations
   const paneNav = getPaneNavigationContext();
@@ -38,89 +34,18 @@
   let renameClickTimeout: ReturnType<typeof setTimeout> | null = null;
   let nameClickPending = false;
 
-  // Inline rename state
-  let renameInputRef: HTMLInputElement | null = null;
-  let editedName = $state("");
-  let renameError = $state<string | null>(null);
-  let submittingRename = $state(false);
+  // Inline rename composable
+  const rename = useInlineRename(() => explorer);
 
   // Check if this entry is being renamed
   const isRenaming = $derived(dialogStore.renamingEntry?.path === entry.path);
 
   // When rename mode starts, initialize and focus the input
   $effect(() => {
-    if (isRenaming && renameInputRef) {
-      editedName = entry.name;
-      renameError = null;
-      // Focus and select filename (without extension for files)
-      tick().then(() => {
-        renameInputRef?.focus();
-        if (entry.kind === "file") {
-          const lastDot = entry.name.lastIndexOf(".");
-          if (lastDot > 0) {
-            renameInputRef?.setSelectionRange(0, lastDot);
-          } else {
-            renameInputRef?.select();
-          }
-        } else {
-          renameInputRef?.select();
-        }
-      });
+    if (isRenaming && rename.renameInputRef) {
+      rename.focusAndSelect(entry);
     }
   });
-
-  async function confirmRename() {
-    if (submittingRename) return;
-
-    const trimmedName = editedName.trim();
-    if (!trimmedName) {
-      renameError = "Name cannot be empty";
-      return;
-    }
-
-    if (trimmedName === entry.name) {
-      explorer.cancelRename();
-      return;
-    }
-
-    submittingRename = true;
-    renameError = null;
-
-    const result = await explorer.rename(trimmedName);
-
-    submittingRename = false;
-
-    if (result) {
-      renameError = result;
-    }
-  }
-
-  function cancelRename() {
-    editedName = "";
-    renameError = null;
-    explorer.cancelRename();
-  }
-
-  function handleRenameKeydown(event: KeyboardEvent) {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      event.stopPropagation();
-      confirmRename();
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      cancelRename();
-    }
-  }
-
-  function handleRenameBlur() {
-    // Confirm on blur (like Windows Explorer)
-    if (editedName.trim() && editedName.trim() !== entry.name) {
-      confirmRename();
-    } else {
-      cancelRename();
-    }
-  }
 
   // Track if item was selected before mousedown (for slow-click-to-rename)
   function handleMouseDown() {
@@ -241,63 +166,18 @@
     if (entry.kind !== "directory") return;
     if (!event.dataTransfer) return;
 
-    // Try dataTransfer first, fall back to cross-window drag state
-    let sourcePath = event.dataTransfer.getData("application/x-explorer-path");
-    if (!sourcePath) {
-      const crossWindow = dragState.readCrossWindow();
-      if (crossWindow) sourcePath = crossWindow.path;
-    }
+    const sourcePath = getDropSourcePath(event.dataTransfer);
     if (!sourcePath || sourcePath === entry.path) return;
 
     // Don't allow moving/copying a folder into itself or its children
     if (entry.path.startsWith(sourcePath + "/")) return;
 
-    // Ctrl held = copy, otherwise move
-    const isCopyOp = event.ctrlKey;
-    const fileName = sourcePath.split("/").pop() || sourcePath;
-
-    // Check for naming conflict in target directory
-    let overwrite = false;
-    const dirResult = await fetchDirectory(entry.path);
-    if (dirResult.ok) {
-      const existingNames = new Set(dirResult.data.entries.map((e) => e.name));
-      if (existingNames.has(fileName)) {
-        const { choice } = await conflictResolver.prompt({
-          fileName,
-          sourcePath,
-          remaining: 0,
-        });
-        if (choice === "skip" || choice === "cancel") return;
-        if (choice === "overwrite") overwrite = true;
-      }
-    }
-
-    const result = isCopyOp
-      ? await copyEntry(sourcePath, entry.path, overwrite)
-      : await moveEntry(sourcePath, entry.path, overwrite);
-
-    if (result.ok) {
-      if (isCopyOp) {
-        toastStore.show(`Copied ${fileName} to ${entry.name}`, "info");
-      } else {
-        undoStore.push({
-          type: "move",
-          sourcePath,
-          destPath: result.data.path,
-          originalDir: parentDir(sourcePath),
-        });
-        toastStore.show(`Moved ${fileName} to ${entry.name}`, "info");
-      }
-      if (paneNav) {
-        paneNav.refreshAllPanes();
-      } else {
-        explorer.refresh();
-      }
-      broadcastFileChange([parentDir(sourcePath), entry.path]);
-    } else {
-      console.error(`Failed to ${isCopyOp ? "copy" : "move"}:`, result.error);
-      toastStore.error(result.error);
-    }
+    await handleFileDrop(sourcePath, entry.path, event.ctrlKey, {
+      onRefresh: () => {
+        if (paneNav) paneNav.refreshAllPanes();
+        else explorer.refresh();
+      },
+    });
   }
 </script>
 
@@ -331,13 +211,13 @@
       <input
         type="text"
         class="rename-input"
-        class:error={!!renameError}
-        bind:value={editedName}
-        bind:this={renameInputRef}
-        onkeydown={handleRenameKeydown}
-        onblur={handleRenameBlur}
+        class:error={!!rename.renameError}
+        bind:value={rename.editedName}
+        bind:this={rename.renameInputRef}
+        onkeydown={(e) => rename.handleRenameKeydown(e, entry.name)}
+        onblur={() => rename.handleRenameBlur(entry.name)}
         onclick={(e) => e.stopPropagation()}
-        disabled={submittingRename}
+        disabled={rename.submittingRename}
         autofocus
       />
     {:else}

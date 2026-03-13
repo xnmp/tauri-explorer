@@ -626,6 +626,3 @@ export { createExplorerState };
 
 /** Type for the explorer instance */
 export type ExplorerInstance = ReturnType<typeof createExplorerState>;
-
-/** Default singleton explorer for single-pane mode */
-export const explorer = createExplorerState();

@@ -4,20 +4,19 @@
 -->
 <script lang="ts">
   import { onMount } from "svelte";
-  import { explorer as defaultExplorer } from "$lib/state/explorer.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { getHomeDirectory } from "$lib/api/files";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { dragState } from "$lib/state/drag.svelte";
 
-  // Use pane navigation context if available, fallback to default explorer
+  // Use pane navigation context if available, fallback to active explorer
   const paneNav = getPaneNavigationContext();
   const navigateTo = (path: string) => {
     if (paneNav) {
       paneNav.navigateTo(path);
     } else {
-      defaultExplorer.navigateTo(path);
+      windowTabsManager.getActiveExplorer()?.navigateTo(path);
     }
   };
 

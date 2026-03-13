@@ -82,6 +82,8 @@ fn set_hyprpaper(path: &str) -> Result<(), AppError> {
     // Small delay to let the process die
     std::thread::sleep(std::time::Duration::from_millis(200));
     Command::new("hyprpaper")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|e| AppError::Other(format!("Failed to start hyprpaper: {}", e)))?;
 

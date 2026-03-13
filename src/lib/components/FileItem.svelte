@@ -7,7 +7,7 @@
   import { formatSize } from "$lib/domain/file";
   import { getFileType, getFileIconColor, formatDate } from "$lib/domain/file-types";
   import FileIcon from "./FileIcon.svelte";
-  import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
+  import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { clipboardStore } from "$lib/state/clipboard.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
@@ -21,10 +21,10 @@
     onclick: (event: MouseEvent) => void;
     ondblclick: () => void;
     selected?: boolean;
-    explorer?: ExplorerInstance;
+    explorer: ExplorerInstance;
   }
 
-  let { entry, onclick, ondblclick, selected = false, explorer = defaultExplorer }: Props = $props();
+  let { entry, onclick, ondblclick, selected = false, explorer }: Props = $props();
 
   // Get pane context for cross-pane operations
   const paneNav = getPaneNavigationContext();

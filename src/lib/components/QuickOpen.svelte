@@ -14,7 +14,7 @@
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
-  import { explorer as defaultExplorer } from "$lib/state/explorer.svelte";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { getFileIconColor, getFileIconCategory, type IconCategory } from "$lib/domain/file-types";
   import type { FileEntry } from "$lib/domain/file";
   import { frecencyStore } from "$lib/state/frecency.svelte";
@@ -136,7 +136,7 @@
 
   // Get current working directory from active explorer
   function getCwdPath(): string {
-    const explorer = paneNav?.getActiveExplorer() ?? defaultExplorer;
+    const explorer = paneNav?.getActiveExplorer() ?? windowTabsManager.getActiveExplorer();
     return explorer.currentPath;
   }
 
@@ -274,7 +274,7 @@
   }
 
   async function selectResult(result: SearchResult): Promise<void> {
-    const explorer = paneNav?.getActiveExplorer() ?? defaultExplorer;
+    const explorer = paneNav?.getActiveExplorer() ?? windowTabsManager.getActiveExplorer();
 
     // Record access for frecency ranking
     frecencyStore.recordAccess(result.path);

@@ -3,7 +3,7 @@
   Issue: tauri-explorer-iw0, tauri-explorer-x25, tauri-explorer-as45, tauri-explorer-1k9k, tauri-explorer-im3m
 -->
 <script lang="ts">
-  import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
+  import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { openFile, openImageWithSiblings } from "$lib/api/files";
@@ -26,10 +26,10 @@
   import type { FileEntry } from "$lib/domain/file";
 
   interface Props {
-    explorer?: ExplorerInstance;
+    explorer: ExplorerInstance;
   }
 
-  let { explorer = defaultExplorer }: Props = $props();
+  let { explorer }: Props = $props();
 
   // Get pane context for cross-pane operations
   const paneNav = getPaneNavigationContext();

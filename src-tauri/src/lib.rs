@@ -10,6 +10,7 @@ mod files;
 mod search;
 pub mod task_registry;
 mod thumbnails;
+mod wallpaper;
 
 use std::path::PathBuf;
 
@@ -169,6 +170,8 @@ pub fn run(launch_dir: Option<String>) {
             config::read_config_file,
             config::write_config_file,
             config::get_config_dir,
+            // Wallpaper
+            wallpaper::set_as_wallpaper,
         ])
         .setup(move |app| {
             let t_setup = std::time::Instant::now();

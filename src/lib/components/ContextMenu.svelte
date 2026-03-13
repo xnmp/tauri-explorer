@@ -8,8 +8,9 @@
   import { contextMenuStore } from "$lib/state/context-menu.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { compressToZip, extractArchive, openFile, openInTerminal, createSymlink } from "$lib/api/files";
+  import { compressToZip, extractArchive, openFile, openInTerminal, createSymlink, setAsWallpaper } from "$lib/api/files";
   import type { FileEntry } from "$lib/domain/file";
+  import { isImageFile } from "$lib/domain/file-types";
   import { getZoomFactor } from "$lib/domain/zoom";
   import type { ViewMode } from "$lib/state/types";
 
@@ -134,9 +135,21 @@
     return entries[0];
   });
 
+  /** The single selected image file for wallpaper action */
+  const selectedImage = $derived.by((): FileEntry | null => {
+    if (!selectedFile) return null;
+    return isImageFile(selectedFile) ? selectedFile : null;
+  });
+
   async function handleOpenDefault(): Promise<void> {
     if (!selectedFile) return;
     await openFile(selectedFile.path);
+    contextMenuStore.close();
+  }
+
+  async function handleSetAsWallpaper(): Promise<void> {
+    if (!selectedImage) return;
+    await setAsWallpaper(selectedImage.path);
     contextMenuStore.close();
   }
 
@@ -222,6 +235,16 @@
           <span>Open</span>
           <span class="shortcut">Enter</span>
         </button>
+        {#if selectedImage}
+          <button class="menu-item" onclick={handleSetAsWallpaper} role="menuitem">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <rect x="2" y="3" width="12" height="10" rx="1" stroke="currentColor" stroke-width="1.25"/>
+              <circle cx="5.5" cy="6.5" r="1.5" stroke="currentColor" stroke-width="1"/>
+              <path d="M2 11L5 8L7 10L10 7L14 11" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span>Set as Desktop Background</span>
+          </button>
+        {/if}
         <div class="menu-divider"></div>
       {/if}
 

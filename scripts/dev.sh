@@ -2,8 +2,9 @@
 # Run the Tauri dev server with auto port selection.
 #
 # Usage: ./scripts/dev.sh [OPTIONS]
-#   --clean       Nuke all caches before starting (frontend + Rust)
-#   --clean-fast  Nuke frontend caches only
+#   (default)     Nuke frontend caches before starting
+#   --clean       Also reinstall node_modules
+#   --clean-all   Nuke everything (frontend + node_modules + Rust)
 #   --port PORT   Use a specific port (default: auto-find from 1420)
 #
 # Issue: tauri-jsn1.8
@@ -12,12 +13,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PORT=""
-CLEAN=""
+CLEAN="default"
 
 for arg in "$@"; do
   case "$arg" in
-    --clean) CLEAN="full" ;;
-    --clean-fast) CLEAN="fast" ;;
+    --clean) CLEAN="clean" ;;
+    --clean-all) CLEAN="full" ;;
     --port)
       # handled below with shift
       ;;
@@ -34,13 +35,16 @@ for arg in "$@"; do
   PREV_ARG="$arg"
 done
 
-# Clean caches if requested
+# Clean caches
 if [[ "$CLEAN" == "full" ]]; then
-  echo "=== Nuking all caches ==="
+  echo "=== Nuking all caches (frontend + node_modules + Rust) ==="
   bash scripts/clean-rebuild.sh
-elif [[ "$CLEAN" == "fast" ]]; then
-  echo "=== Nuking frontend caches ==="
+elif [[ "$CLEAN" == "clean" ]]; then
+  echo "=== Nuking frontend caches + reinstalling node_modules ==="
   bash scripts/clean-rebuild.sh --no-rust
+else
+  echo "=== Nuking frontend caches ==="
+  bash scripts/clean-rebuild.sh --no-rust --keep-node-modules
 fi
 
 # Find an available port starting from 1420

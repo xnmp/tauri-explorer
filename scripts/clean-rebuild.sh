@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Clean all caches and rebuild from scratch.
-# Usage: ./scripts/clean-rebuild.sh [--no-rust]
+# Usage: ./scripts/clean-rebuild.sh [--no-rust] [--keep-node-modules]
 #
 # Clears: node_modules, Vite cache, SvelteKit output, Svelte preprocessor
 # cache, TypeScript build info, Playwright browsers cache, Rust target dir
 # (unless --no-rust), and then reinstalls + rebuilds everything.
+# Use --keep-node-modules to skip nuking node_modules (faster).
 
 set -euo pipefail
 
@@ -12,16 +13,20 @@ cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 
 SKIP_RUST=false
+KEEP_NODE_MODULES=false
 for arg in "$@"; do
   case "$arg" in
     --no-rust) SKIP_RUST=true ;;
+    --keep-node-modules) KEEP_NODE_MODULES=true ;;
   esac
 done
 
-echo "=== Cleaning all caches ==="
+echo "=== Cleaning caches ==="
 
 # Frontend caches
-rm -rf node_modules
+if [ "$KEEP_NODE_MODULES" = false ]; then
+  rm -rf node_modules
+fi
 rm -rf node_modules/.vite
 rm -rf .svelte-kit
 rm -rf build

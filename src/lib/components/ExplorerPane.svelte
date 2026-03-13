@@ -32,6 +32,27 @@
 
   let paneRef = $state<HTMLElement | null>(null);
 
+  // Focus the selected item after navigation so arrow keys work immediately.
+  // Uses a callback (not reactive) to avoid firing on mount or tab switch.
+  function focusSelectedAfterNav() {
+    const active = document.activeElement;
+    if (active?.tagName === "INPUT" || active?.tagName === "TEXTAREA") return;
+    tick().then(() => {
+      if (!paneRef) return;
+      const selected = paneRef.querySelector<HTMLElement>(".selected");
+      if (selected) {
+        selected.focus({ preventScroll: false });
+      } else {
+        paneRef.focus({ preventScroll: true });
+      }
+    });
+  }
+
+  $effect(() => {
+    paneExplorer.onNavigate = focusSelectedAfterNav;
+    return () => { paneExplorer.onNavigate = null; };
+  });
+
   const isActive = $derived(windowTabsManager.activePaneId === paneId);
   const dualPaneEnabled = $derived(windowTabsManager.dualPaneEnabled);
   const isInactive = $derived(dualPaneEnabled && !isActive);

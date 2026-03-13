@@ -86,6 +86,9 @@ function createExplorerState() {
   // Inline folder creation state
   let isCreatingFolder = $state(false);
 
+  // Navigation callback for UI (e.g. focusing the selected item after nav)
+  let onNavigateCallback: (() => void) | null = null;
+
   // Read-only state accessor for components that need the raw state bag
   const state = $derived({ ...coreState });
 
@@ -142,6 +145,8 @@ function createExplorerState() {
       } else {
         coreState.selectionAnchorIndex = null;
       }
+
+      onNavigateCallback?.();
 
       if (!result.streaming) {
         coreState.loading = false;
@@ -609,6 +614,10 @@ function createExplorerState() {
     // Undo/Redo
     undo,
     redo,
+    // Navigation callback
+    set onNavigate(cb: (() => void) | null) {
+      onNavigateCallback = cb;
+    },
   };
 }
 

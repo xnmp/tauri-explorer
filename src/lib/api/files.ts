@@ -142,6 +142,16 @@ export async function deleteMultipleEntries(paths: string[]): Promise<ApiResult<
   }
 }
 
+/** Permanently delete a file or directory (bypasses trash). */
+export async function deleteEntryPermanent(path: string): Promise<ApiResult<void>> {
+  try {
+    await invoke("delete_entry_permanent", { path });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
 /**
  * Restore files from the system trash by their original paths.
  *

@@ -18,6 +18,7 @@ import {
   renameEntry as apiRenameEntry,
   deleteEntry,
   deleteMultipleEntries,
+  deleteEntryPermanent,
   clipboardHasImage,
   clipboardPasteImage,
 } from "$lib/api/files";
@@ -331,6 +332,13 @@ function createExplorerState() {
     dialogStore.startDelete(arr);
   }
 
+  /** Start permanent delete — always shows confirmation dialog. */
+  function startPermanentDelete(entries: FileEntry | FileEntry[]) {
+    const arr = Array.isArray(entries) ? entries : [entries];
+    if (arr.length === 0) return;
+    dialogStore.startDelete(arr, true);
+  }
+
   function openContextMenu(x: number, y: number, entry?: FileEntry) {
     if (entry && !coreState.selectedPaths.has(entry.path)) {
       coreState.selectedPaths = new Set([entry.path]);
@@ -393,14 +401,30 @@ function createExplorerState() {
   async function confirmDelete(): Promise<string | null> {
     const entries = dialogStore.deletingEntries;
     if (entries.length === 0) return "No entries selected for delete";
+    const isPermanent = dialogStore.isPermanentDelete;
 
     const paths = entries.map((e) => e.path);
-    const result = entries.length === 1
-      ? await deleteEntry(paths[0])
-      : await deleteMultipleEntries(paths);
+    let result: { ok: boolean; error?: string };
+
+    if (isPermanent) {
+      // Permanent delete: delete each entry one by one (no batch command)
+      const errors: string[] = [];
+      for (const path of paths) {
+        const r = await deleteEntryPermanent(path);
+        if (!r.ok) errors.push(r.error);
+      }
+      result = errors.length > 0 ? { ok: false, error: errors.join("; ") } : { ok: true };
+    } else {
+      result = entries.length === 1
+        ? await deleteEntry(paths[0])
+        : await deleteMultipleEntries(paths);
+    }
 
     if (result.ok) {
-      undoStore.push({ type: "delete", paths, parentDir: coreState.currentPath });
+      // Only push to undo for trash operations (permanent deletes can't be undone)
+      if (!isPermanent) {
+        undoStore.push({ type: "delete", paths, parentDir: coreState.currentPath });
+      }
       const deletedPaths = new Set(paths);
       coreState.entries = coreState.entries.filter((e) => !deletedPaths.has(e.path));
       coreState.selectedPaths = new Set(
@@ -589,6 +613,7 @@ function createExplorerState() {
     startRename: (entry: FileEntry) => dialogStore.startRename(entry),
     cancelRename: () => dialogStore.cancelRename(),
     startDelete,
+    startPermanentDelete,
     cancelDelete: () => dialogStore.cancelDelete(),
     // Context menu
     openContextMenu,

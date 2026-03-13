@@ -833,6 +833,7 @@ pub async fn start_streaming_directory(
 
     let t_sort_end = std::time::Instant::now();
     let total_count = all_entries.len();
+    #[cfg(debug_assertions)]
     eprintln!(
         "[Perf] dir scan '{}': {} entries, scan={:?}, sort={:?}",
         path, total_count,

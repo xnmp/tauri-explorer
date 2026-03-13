@@ -192,6 +192,7 @@ pub fn run(launch_dir: Option<String>) {
             .initialization_script(&init_script)
             .build()?;
 
+            #[cfg(debug_assertions)]
             eprintln!(
                 "[Perf] Rust startup:\n  \
                  pre-builder:  {:?}\n  \

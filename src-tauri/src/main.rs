@@ -31,6 +31,7 @@ fn main() {
         // pid < 0: fork failed, just continue in the original process.
     }
 
+    #[cfg(debug_assertions)]
     eprintln!("[Perf] main() pre-run: {:?}", t_main.elapsed());
     tauri_explorer_lib::run(launch_dir)
 }

@@ -113,6 +113,7 @@ pub fn start_content_search(
                     total_matches: 0,
                 },
             );
+            #[cfg(debug_assertions)]
             eprintln!("Content search error: {}", e);
         }
     });

@@ -133,6 +133,16 @@ function createExplorerState() {
         coreState.sortAscending = savedSort.sortAscending;
       }
 
+      // Auto-select first item when navigating to a new directory
+      // Issue: tauri-explorer-130a
+      coreState.selectedPaths = new Set();
+      if (displayEntries.length > 0) {
+        coreState.selectedPaths = new Set([displayEntries[0].path]);
+        coreState.selectionAnchorIndex = 0;
+      } else {
+        coreState.selectionAnchorIndex = null;
+      }
+
       if (!result.streaming) {
         coreState.loading = false;
       }

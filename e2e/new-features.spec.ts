@@ -12,7 +12,7 @@ import { test, expect } from "@playwright/test";
 
 async function waitForFileList(page: import("@playwright/test").Page) {
   await page.waitForSelector(".file-list");
-  await page.locator(".file-item").first().waitFor({ timeout: 10000 });
+  await page.locator(".entry-item").first().waitFor({ timeout: 10000 });
 }
 
 async function openSettings(page: import("@playwright/test").Page) {
@@ -78,7 +78,7 @@ async function getSettingToggle(
 // ==========================================================
 test.describe("Theme System", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?path=/home/user");
     await page.evaluate(() => localStorage.clear());
     await page.reload();
     await waitForFileList(page);
@@ -120,7 +120,7 @@ test.describe("Theme System", () => {
 
   test("folder icons use --icon-folder CSS variable", async ({ page }) => {
     // Folder icons should respond to theme changes
-    const folderIcon = page.locator(".file-item.directory .icon").first();
+    const folderIcon = page.locator(".entry-item.directory .icon").first();
     await expect(folderIcon).toBeVisible();
 
     // Get computed color
@@ -209,7 +209,7 @@ test.describe("Theme System", () => {
 // ==========================================================
 test.describe("Navigation Bar Buttons", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?path=/home/user");
     await page.evaluate(() => localStorage.clear());
     await page.reload();
     await waitForFileList(page);
@@ -284,7 +284,7 @@ test.describe("Navigation Bar Buttons", () => {
 // ==========================================================
 test.describe("Status Bar", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?path=/home/user");
     await page.evaluate(() => localStorage.clear());
     await page.reload();
     await waitForFileList(page);
@@ -311,7 +311,7 @@ test.describe("Status Bar", () => {
 
   test("selecting files updates status bar", async ({ page }) => {
     // Click a file to select it
-    const fileItem = page.locator(".file-item").first();
+    const fileItem = page.locator(".entry-item").first();
     await fileItem.click();
     await page.waitForTimeout(200);
 
@@ -322,7 +322,7 @@ test.describe("Status Bar", () => {
   });
 
   test("selecting multiple files shows count", async ({ page }) => {
-    const items = page.locator(".file-item");
+    const items = page.locator(".entry-item");
     const itemCount = await items.count();
     if (itemCount >= 2) {
       // Click first item
@@ -380,7 +380,7 @@ test.describe("Status Bar", () => {
 // ==========================================================
 test.describe("Bookmarks", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?path=/home/user");
     await page.evaluate(() => localStorage.clear());
     await page.reload();
     await waitForFileList(page);
@@ -400,8 +400,8 @@ test.describe("Bookmarks", () => {
 
   test("dragging a folder to Quick Access adds bookmark", async ({ page }) => {
     // Find a directory in the file list
-    const folder = page.locator(".file-item.directory").first();
-    const folderName = await folder.locator(".name").textContent();
+    const folder = page.locator(".entry-item.directory").first();
+    const folderName = await folder.locator(".entry-name").textContent();
 
     // Get the Quick Access drop target
     const quickAccess = page.locator(".quick-access");
@@ -425,7 +425,7 @@ test.describe("Bookmarks", () => {
 
   test("removing a bookmark works", async ({ page }) => {
     // First add a bookmark by dragging
-    const folder = page.locator(".file-item.directory").first();
+    const folder = page.locator(".entry-item.directory").first();
     const quickAccess = page.locator(".quick-access");
     await folder.dragTo(quickAccess);
     await page.waitForTimeout(300);
@@ -463,7 +463,7 @@ test.describe("Bookmarks", () => {
 
   test("bookmarks persist after reload", async ({ page }) => {
     // Add a bookmark
-    const folder = page.locator(".file-item.directory").first();
+    const folder = page.locator(".entry-item.directory").first();
     const quickAccess = page.locator(".quick-access");
     await folder.dragTo(quickAccess);
     await page.waitForTimeout(300);
@@ -483,7 +483,7 @@ test.describe("Bookmarks", () => {
 
   test("bookmark reordering via drag", async ({ page }) => {
     // Add two bookmarks
-    const folders = page.locator(".file-item.directory");
+    const folders = page.locator(".entry-item.directory");
     const folderCount = await folders.count();
     if (folderCount < 2) return;
 
@@ -533,7 +533,7 @@ test.describe("Bookmarks", () => {
 // ==========================================================
 test.describe("Symlink Badge", () => {
   test("symlink badge CSS class exists in component styles", async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?path=/home/user");
     await waitForFileList(page);
 
     // Verify the symlink-badge style rule exists in the page
@@ -560,7 +560,7 @@ test.describe("Symlink Badge", () => {
 // ==========================================================
 test.describe("External Drop Behavior", () => {
   test("Ctrl key tracking is set up on page load", async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?path=/home/user");
     await waitForFileList(page);
 
     // Verify the Ctrl key tracking works by checking that pressing Ctrl
@@ -588,7 +588,7 @@ test.describe("External Drop Behavior", () => {
 // ==========================================================
 test.describe("Feature Interactions", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?path=/home/user");
     await page.evaluate(() => localStorage.clear());
     await page.reload();
     await waitForFileList(page);

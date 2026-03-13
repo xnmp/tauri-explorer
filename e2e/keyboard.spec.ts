@@ -36,18 +36,18 @@ async function pressShortcut(
 
 async function waitForFileList(page: import("@playwright/test").Page) {
   await page.waitForSelector(".file-list");
-  await page.locator(".file-item").first().waitFor({ timeout: 10000 });
+  await page.locator(".entry-item").first().waitFor({ timeout: 10000 });
 }
 
 test.describe("Keyboard Shortcuts", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?path=/home/user");
     await waitForFileList(page);
   });
 
   test("Ctrl+A selects all files", async ({ page }) => {
     // Click on a file item to ensure pane has focus
-    const firstItem = page.locator(".file-item").first();
+    const firstItem = page.locator(".entry-item").first();
     await firstItem.click();
 
     // Press Ctrl+A
@@ -55,19 +55,19 @@ test.describe("Keyboard Shortcuts", () => {
     await page.waitForTimeout(100);
 
     // All items should be selected
-    const items = page.locator(".file-item");
+    const items = page.locator(".entry-item");
     const count = await items.count();
     expect(count).toBeGreaterThan(0);
 
     // Check that items have selected class
-    const selectedItems = page.locator(".file-item.selected");
+    const selectedItems = page.locator(".entry-item.selected");
     const selectedCount = await selectedItems.count();
     expect(selectedCount).toBe(count);
   });
 
   test("Ctrl+C copies selected file to clipboard", async ({ page }) => {
     // Select a file
-    const firstItem = page.locator(".file-item").first();
+    const firstItem = page.locator(".entry-item").first();
     await firstItem.click();
     await expect(firstItem).toHaveClass(/selected/);
 
@@ -85,7 +85,7 @@ test.describe("Keyboard Shortcuts", () => {
 
   test("Ctrl+X cuts selected file to clipboard", async ({ page }) => {
     // Select a file
-    const firstFile = page.locator(".file-item:not(.directory)").first();
+    const firstFile = page.locator(".entry-item:not(.directory)").first();
     await firstFile.click();
     await expect(firstFile).toHaveClass(/selected/);
 
@@ -103,7 +103,7 @@ test.describe("Keyboard Shortcuts", () => {
 
   test("Ctrl+V pastes file from clipboard", async ({ page }) => {
     // First, copy a file
-    const firstFile = page.locator(".file-item:not(.directory)").first();
+    const firstFile = page.locator(".entry-item:not(.directory)").first();
     await firstFile.click();
     await pressShortcut(page, "c", { ctrlKey: true });
     await page.waitForTimeout(100);
@@ -131,7 +131,7 @@ test.describe("Keyboard Shortcuts", () => {
     // The actual undo functionality is tested by checking no errors occur
 
     // Click on a file to ensure focus is in the pane
-    const firstFile = page.locator(".file-item").first();
+    const firstFile = page.locator(".entry-item").first();
     await firstFile.click();
     await page.waitForTimeout(100);
 
@@ -145,13 +145,13 @@ test.describe("Keyboard Shortcuts", () => {
     await page.waitForTimeout(100);
 
     // Verify the app is still functional by checking file list is visible
-    const fileItems = page.locator(".file-item");
+    const fileItems = page.locator(".entry-item");
     await expect(fileItems.first()).toBeVisible();
   });
 
   test("Delete key opens delete confirmation", async ({ page }) => {
     // Select a file
-    const firstFile = page.locator(".file-item:not(.directory)").first();
+    const firstFile = page.locator(".entry-item:not(.directory)").first();
     await firstFile.click();
     await expect(firstFile).toHaveClass(/selected/);
 
@@ -166,7 +166,7 @@ test.describe("Keyboard Shortcuts", () => {
 
   test("F2 starts rename mode", async ({ page }) => {
     // Select a file
-    const firstItem = page.locator(".file-item").first();
+    const firstItem = page.locator(".entry-item").first();
     await firstItem.click();
     await expect(firstItem).toHaveClass(/selected/);
 
@@ -182,7 +182,7 @@ test.describe("Keyboard Shortcuts", () => {
 
   test("Escape cancels rename mode", async ({ page }) => {
     // Select a file and start rename
-    const firstItem = page.locator(".file-item").first();
+    const firstItem = page.locator(".entry-item").first();
     await firstItem.click();
     await page.keyboard.press("F2");
     await page.waitForTimeout(100);
@@ -203,7 +203,7 @@ test.describe("Keyboard Shortcuts", () => {
     const initialPath = await page.locator(".breadcrumbs-container").textContent();
 
     // Navigate into a folder
-    const folder = page.locator(".file-item.directory").first();
+    const folder = page.locator(".entry-item.directory").first();
     if (await folder.count() > 0) {
       await folder.dblclick();
       await waitForFileList(page);
@@ -229,14 +229,14 @@ test.describe("Keyboard Shortcuts", () => {
     await waitForFileList(page);
 
     // Files should still be visible
-    const items = page.locator(".file-item");
+    const items = page.locator(".entry-item");
     const count = await items.count();
     expect(count).toBeGreaterThan(0);
   });
 
   test("Focus moves to file list items", async ({ page }) => {
     // Click on first item
-    const firstItem = page.locator(".file-item").first();
+    const firstItem = page.locator(".entry-item").first();
     await firstItem.click();
 
     // The item (button) should be focused

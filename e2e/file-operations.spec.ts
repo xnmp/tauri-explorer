@@ -32,14 +32,14 @@ async function pressShortcut(
 
 test.describe("File Operations", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?path=/home/user");
     await page.waitForSelector(".file-list");
-    await page.locator(".file-item").first().waitFor({ timeout: 5000 });
+    await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
   });
 
   test.describe("Context Menu", () => {
     test("right-click on file shows context menu", async ({ page }) => {
-      const file = page.locator(".file-item").first();
+      const file = page.locator(".entry-item").first();
       await file.click({ button: "right" });
 
       const contextMenu = page.locator(".context-menu");
@@ -47,7 +47,7 @@ test.describe("File Operations", () => {
     });
 
     test("context menu has Cut, Copy, Rename, Delete options", async ({ page }) => {
-      const file = page.locator(".file-item").first();
+      const file = page.locator(".entry-item").first();
       await file.click();
       await file.click({ button: "right" });
 
@@ -59,7 +59,7 @@ test.describe("File Operations", () => {
     });
 
     test("clicking outside context menu closes it", async ({ page }) => {
-      const file = page.locator(".file-item").first();
+      const file = page.locator(".entry-item").first();
       await file.click({ button: "right" });
 
       const contextMenu = page.locator(".context-menu");
@@ -71,7 +71,7 @@ test.describe("File Operations", () => {
     });
 
     test("pressing Escape closes context menu", async ({ page }) => {
-      const file = page.locator(".file-item").first();
+      const file = page.locator(".entry-item").first();
       await file.click({ button: "right" });
 
       const contextMenu = page.locator(".context-menu");
@@ -84,7 +84,7 @@ test.describe("File Operations", () => {
 
   test.describe("Cut/Copy/Paste", () => {
     test("Ctrl+C marks file as copied with clipboard banner", async ({ page }) => {
-      const file = page.locator(".file-item").first();
+      const file = page.locator(".entry-item").first();
       await file.click();
 
       await pressShortcut(page, "c", { ctrlKey: true });
@@ -95,7 +95,7 @@ test.describe("File Operations", () => {
     });
 
     test("Ctrl+X marks file as cut with faded appearance", async ({ page }) => {
-      const file = page.locator(".file-item").first();
+      const file = page.locator(".entry-item").first();
       await file.click();
 
       await pressShortcut(page, "x", { ctrlKey: true });
@@ -109,7 +109,7 @@ test.describe("File Operations", () => {
     });
 
     test("clipboard toast auto-dismisses", async ({ page }) => {
-      const file = page.locator(".file-item").first();
+      const file = page.locator(".entry-item").first();
       await file.click();
       await pressShortcut(page, "c", { ctrlKey: true });
 
@@ -121,7 +121,7 @@ test.describe("File Operations", () => {
     });
 
     test("Ctrl+C does not freeze the UI", async ({ page }) => {
-      const file = page.locator(".file-item").first();
+      const file = page.locator(".entry-item").first();
       await file.click();
 
       await pressShortcut(page, "c", { ctrlKey: true });
@@ -129,13 +129,13 @@ test.describe("File Operations", () => {
       await expect(banner).toBeVisible({ timeout: 1000 });
 
       // UI should remain responsive: clicking another file should work
-      const secondFile = page.locator(".file-item").nth(1);
+      const secondFile = page.locator(".entry-item").nth(1);
       await secondFile.click({ timeout: 1000 });
       await expect(secondFile).toHaveClass(/selected/);
     });
 
     test("Ctrl+X does not freeze the UI", async ({ page }) => {
-      const file = page.locator(".file-item").first();
+      const file = page.locator(".entry-item").first();
       await file.click();
 
       await pressShortcut(page, "x", { ctrlKey: true });
@@ -143,21 +143,21 @@ test.describe("File Operations", () => {
       await expect(banner).toBeVisible({ timeout: 1000 });
 
       // UI should remain responsive
-      const secondFile = page.locator(".file-item").nth(1);
+      const secondFile = page.locator(".entry-item").nth(1);
       await secondFile.click({ timeout: 1000 });
       await expect(secondFile).toHaveClass(/selected/);
     });
 
     test("Ctrl+A then Ctrl+C copies multiple files", async ({ page }) => {
-      const firstItem = page.locator(".file-item").first();
+      const firstItem = page.locator(".entry-item").first();
       await firstItem.click();
 
       // Select all
       await page.keyboard.press("Control+a");
       await page.waitForTimeout(50);
 
-      const totalItems = await page.locator(".file-item").count();
-      const selectedItems = await page.locator(".file-item.selected").count();
+      const totalItems = await page.locator(".entry-item").count();
+      const selectedItems = await page.locator(".entry-item.selected").count();
       expect(selectedItems).toBe(totalItems);
 
       // Copy all
@@ -168,7 +168,7 @@ test.describe("File Operations", () => {
     });
 
     test("cut after copy replaces clipboard operation", async ({ page }) => {
-      const file = page.locator(".file-item").first();
+      const file = page.locator(".entry-item").first();
       await file.click();
 
       // First copy
@@ -184,7 +184,7 @@ test.describe("File Operations", () => {
     });
 
     test("context menu Copy works on file", async ({ page }) => {
-      const file = page.locator(".file-item").first();
+      const file = page.locator(".entry-item").first();
       await file.click();
       await file.click({ button: "right" });
 
@@ -199,7 +199,7 @@ test.describe("File Operations", () => {
     });
 
     test("context menu Cut works on file", async ({ page }) => {
-      const file = page.locator(".file-item").first();
+      const file = page.locator(".entry-item").first();
       await file.click();
       await file.click({ button: "right" });
 
@@ -217,7 +217,7 @@ test.describe("File Operations", () => {
 
   test.describe("Rename", () => {
     test("F2 opens inline rename", async ({ page }) => {
-      const file = page.locator(".file-item").first();
+      const file = page.locator(".entry-item").first();
       await file.click();
 
       await page.keyboard.press("F2");
@@ -228,8 +228,8 @@ test.describe("File Operations", () => {
     });
 
     test("Escape cancels rename", async ({ page }) => {
-      const file = page.locator(".file-item").first();
-      const originalName = await file.locator(".name").textContent();
+      const file = page.locator(".entry-item").first();
+      const originalName = await file.locator(".entry-name").textContent();
 
       // Focus the file item and press F2
       await file.click();
@@ -248,16 +248,16 @@ test.describe("File Operations", () => {
       await expect(renameInput).not.toBeVisible({ timeout: 2000 });
 
       // Name should be unchanged - need to re-query for the updated element
-      const updatedFile = page.locator(".file-item").first();
-      await expect(updatedFile.locator(".name")).toBeVisible();
-      const currentName = await updatedFile.locator(".name").textContent();
+      const updatedFile = page.locator(".entry-item").first();
+      await expect(updatedFile.locator(".entry-name")).toBeVisible();
+      const currentName = await updatedFile.locator(".entry-name").textContent();
       expect(currentName).toBe(originalName);
     });
   });
 
   test.describe("Delete", () => {
     test("Delete key opens delete confirmation", async ({ page }) => {
-      const file = page.locator(".file-item").first();
+      const file = page.locator(".entry-item").first();
       await file.click();
 
       await page.keyboard.press("Delete");
@@ -268,7 +268,7 @@ test.describe("File Operations", () => {
     });
 
     test("Cancel closes delete dialog", async ({ page }) => {
-      const file = page.locator(".file-item").first();
+      const file = page.locator(".entry-item").first();
       await file.click();
 
       await page.keyboard.press("Delete");
@@ -285,7 +285,7 @@ test.describe("File Operations", () => {
   test.describe("Delete Recovery", () => {
     test("deleting a child folder from parent stays in parent without error", async ({ page }) => {
       // Navigate into Documents
-      const folder = page.locator(".file-item.directory", { hasText: "Documents" });
+      const folder = page.locator(".entry-item.directory", { hasText: "Documents" });
       await folder.dblclick();
       await page.waitForTimeout(500);
 
@@ -293,7 +293,7 @@ test.describe("File Operations", () => {
       await expect(breadcrumbs).toContainText("Documents");
 
       // Select the project folder and delete it
-      const projectFolder = page.locator(".file-item.directory", { hasText: "project" });
+      const projectFolder = page.locator(".entry-item.directory", { hasText: "project" });
       await projectFolder.click();
       await page.keyboard.press("Delete");
 
@@ -310,20 +310,20 @@ test.describe("File Operations", () => {
 
       // project folder should be gone, other items remain
       await expect(projectFolder).not.toBeVisible();
-      const items = page.locator(".file-item");
+      const items = page.locator(".entry-item");
       await expect(items.first()).toBeVisible();
     });
 
     test("navigating forward to a deleted folder recovers gracefully", async ({ page }) => {
       // Navigate: home/user → Documents → project
-      const docsFolder = page.locator(".file-item.directory", { hasText: "Documents" });
+      const docsFolder = page.locator(".entry-item.directory", { hasText: "Documents" });
       await docsFolder.dblclick();
       await page.waitForTimeout(500);
 
       const breadcrumbs = page.locator(".breadcrumbs-container");
       await expect(breadcrumbs).toContainText("Documents");
 
-      const projectFolder = page.locator(".file-item.directory", { hasText: "project" });
+      const projectFolder = page.locator(".entry-item.directory", { hasText: "project" });
       await projectFolder.dblclick();
       await page.waitForTimeout(500);
       await expect(breadcrumbs).toContainText("project");
@@ -334,7 +334,7 @@ test.describe("File Operations", () => {
       await expect(breadcrumbs).toContainText("Documents");
 
       // Delete the project folder from Documents listing
-      const projectEntry = page.locator(".file-item.directory", { hasText: "project" });
+      const projectEntry = page.locator(".entry-item.directory", { hasText: "project" });
       await projectEntry.click();
       await page.keyboard.press("Delete");
 
@@ -355,7 +355,7 @@ test.describe("File Operations", () => {
       await expect(errorState).not.toBeVisible();
 
       // Should still show file items (either stayed at Documents or recovered to parent)
-      const items = page.locator(".file-item");
+      const items = page.locator(".entry-item");
       await expect(items.first()).toBeVisible();
     });
   });

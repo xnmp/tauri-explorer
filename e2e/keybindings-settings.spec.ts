@@ -7,7 +7,7 @@ import { test, expect } from "@playwright/test";
 
 async function waitForFileList(page: import("@playwright/test").Page) {
   await page.waitForSelector(".file-list");
-  await page.locator(".file-item").first().waitFor({ timeout: 10000 });
+  await page.locator(".entry-item").first().waitFor({ timeout: 10000 });
 }
 
 async function openSettings(page: import("@playwright/test").Page) {
@@ -31,7 +31,7 @@ async function closeSettings(page: import("@playwright/test").Page) {
 test.describe("Keyboard Shortcuts Settings UI", () => {
   test.beforeEach(async ({ page }) => {
     // Clear localStorage to start fresh
-    await page.goto("/");
+    await page.goto("/?path=/home/user");
     await page.evaluate(() => localStorage.clear());
     await page.reload();
     await waitForFileList(page);

@@ -302,7 +302,7 @@
 </script>
 
 <button
-  class="file-item"
+  class="file-item entry-item"
   class:directory={entry.kind === "directory"}
   class:hidden-entry={entry.name.startsWith(".")}
   class:cut={isCut}
@@ -341,7 +341,7 @@
         autofocus
       />
     {:else}
-      <span class="name">{entry.name}</span>
+      <span class="name entry-name">{entry.name}</span>
     {/if}
     {#if entry.is_symlink && !isRenaming}
       <div class="symlink-badge" title={entry.symlink_target ? `Link to ${entry.symlink_target}` : "Symbolic link"}>

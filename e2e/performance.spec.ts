@@ -43,7 +43,7 @@ async function measureTime(
  */
 async function waitForFileList(page: Page): Promise<void> {
   await page.waitForSelector(".file-list");
-  await page.locator(".file-item").first().waitFor({ timeout: 10000 });
+  await page.locator(".entry-item").first().waitFor({ timeout: 10000 });
 }
 
 test.describe("Performance Tests", () => {
@@ -52,7 +52,7 @@ test.describe("Performance Tests", () => {
       const metric = await measureTime(
         "cold-start",
         async () => {
-          await page.goto("/");
+          await page.goto("/?path=/home/user");
           await waitForFileList(page);
         },
         3000
@@ -65,7 +65,7 @@ test.describe("Performance Tests", () => {
       const metric = await measureTime(
         "dom-content-loaded",
         async () => {
-          await page.goto("/", { waitUntil: "domcontentloaded" });
+          await page.goto("/?path=/home/user", { waitUntil: "domcontentloaded" });
         },
         1000
       );
@@ -77,7 +77,7 @@ test.describe("Performance Tests", () => {
       const metric = await measureTime(
         "initial-render",
         async () => {
-          await page.goto("/");
+          await page.goto("/?path=/home/user");
           // Wait for main layout to be visible
           await page.locator(".explorer").waitFor();
           await page.locator(".sidebar").waitFor();
@@ -92,12 +92,12 @@ test.describe("Performance Tests", () => {
 
   test.describe("Navigation Performance", () => {
     test.beforeEach(async ({ page }) => {
-      await page.goto("/");
+      await page.goto("/?path=/home/user");
       await waitForFileList(page);
     });
 
     test("folder navigation under 500ms", async ({ page }) => {
-      const folder = page.locator(".file-item.directory").first();
+      const folder = page.locator(".entry-item.directory").first();
       await folder.waitFor({ timeout: 5000 });
 
       const metric = await measureTime(
@@ -106,7 +106,7 @@ test.describe("Performance Tests", () => {
           await folder.dblclick();
           // Wait for new content to load
           await page.waitForFunction(
-            () => document.querySelectorAll(".file-item").length > 0,
+            () => document.querySelectorAll(".entry-item").length > 0,
             { timeout: 5000 }
           );
         },
@@ -118,7 +118,7 @@ test.describe("Performance Tests", () => {
 
     test("back navigation under 300ms", async ({ page }) => {
       // First navigate into a folder
-      const folder = page.locator(".file-item.directory").first();
+      const folder = page.locator(".entry-item.directory").first();
       await folder.dblclick();
       await page.waitForTimeout(300);
 
@@ -127,7 +127,7 @@ test.describe("Performance Tests", () => {
         async () => {
           await page.keyboard.press("Control+Alt+ArrowLeft");
           await page.waitForFunction(
-            () => document.querySelectorAll(".file-item").length > 0,
+            () => document.querySelectorAll(".entry-item").length > 0,
             { timeout: 5000 }
           );
         },
@@ -139,12 +139,12 @@ test.describe("Performance Tests", () => {
 
     test("breadcrumb click navigation under 400ms", async ({ page }) => {
       // Navigate deep first (into a folder)
-      const folder = page.locator(".file-item.directory").first();
+      const folder = page.locator(".entry-item.directory").first();
       await folder.dblclick();
       await page.waitForTimeout(300);
 
       // Navigate deeper (into another folder)
-      const nestedFolder = page.locator(".file-item.directory").first();
+      const nestedFolder = page.locator(".entry-item.directory").first();
       if (await nestedFolder.count() > 0) {
         await nestedFolder.dblclick();
         await page.waitForTimeout(300);
@@ -164,7 +164,7 @@ test.describe("Performance Tests", () => {
           async () => {
             await breadcrumb.click();
             await page.waitForFunction(
-              () => document.querySelectorAll(".file-item").length > 0,
+              () => document.querySelectorAll(".entry-item").length > 0,
               { timeout: 5000 }
             );
           },
@@ -181,7 +181,7 @@ test.describe("Performance Tests", () => {
 
   test.describe("Scroll Performance", () => {
     test.beforeEach(async ({ page }) => {
-      await page.goto("/");
+      await page.goto("/?path=/home/user");
       await waitForFileList(page);
     });
 
@@ -263,12 +263,12 @@ test.describe("Performance Tests", () => {
 
   test.describe("Selection Performance", () => {
     test.beforeEach(async ({ page }) => {
-      await page.goto("/");
+      await page.goto("/?path=/home/user");
       await waitForFileList(page);
     });
 
     test("single selection under 300ms", async ({ page }) => {
-      const item = page.locator(".file-item").first();
+      const item = page.locator(".entry-item").first();
 
       const metric = await measureTime(
         "single-selection",
@@ -297,10 +297,10 @@ test.describe("Performance Tests", () => {
     });
 
     test("range selection (Shift+Click) under 300ms", async ({ page }) => {
-      const firstItem = page.locator(".file-item").first();
+      const firstItem = page.locator(".entry-item").first();
       await firstItem.click();
 
-      const fifthItem = page.locator(".file-item").nth(4);
+      const fifthItem = page.locator(".entry-item").nth(4);
 
       const metric = await measureTime(
         "range-selection",
@@ -317,7 +317,7 @@ test.describe("Performance Tests", () => {
 
   test.describe("Quick Open Performance", () => {
     test.beforeEach(async ({ page }) => {
-      await page.goto("/");
+      await page.goto("/?path=/home/user");
       await waitForFileList(page);
     });
 
@@ -375,7 +375,7 @@ test.describe("Performance Tests", () => {
 
   test.describe("Command Palette Performance", () => {
     test.beforeEach(async ({ page }) => {
-      await page.goto("/");
+      await page.goto("/?path=/home/user");
       await waitForFileList(page);
     });
 
@@ -411,7 +411,7 @@ test.describe("Performance Tests", () => {
 
   test.describe("Tab Operations Performance", () => {
     test.beforeEach(async ({ page }) => {
-      await page.goto("/");
+      await page.goto("/?path=/home/user");
       await waitForFileList(page);
     });
 
@@ -472,7 +472,7 @@ test.describe("Performance Tests", () => {
 
   test.describe("View Mode Switch Performance", () => {
     test.beforeEach(async ({ page }) => {
-      await page.goto("/");
+      await page.goto("/?path=/home/user");
       await waitForFileList(page);
     });
 

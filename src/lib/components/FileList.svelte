@@ -632,7 +632,7 @@
         {/if}
         {#each explorer.displayEntries as entry (entry.path)}
           <button
-            class="list-item"
+            class="list-item entry-item"
             class:directory={entry.kind === "directory"}
             class:selected={explorer.isSelected(entry)}
             class:drop-target={dropTargets[entry.path]}
@@ -665,7 +665,7 @@
                 autofocus
               />
             {:else}
-              <span class="list-name">{entry.name}</span>
+              <span class="list-name entry-name">{entry.name}</span>
             {/if}
           </button>
         {/each}
@@ -680,7 +680,7 @@
         {#each visibleTileEntries as entry (entry.path)}
           {@const iconColor = getFileIconColor(entry)}
           <button
-            class="tile-item"
+            class="tile-item entry-item"
             class:directory={entry.kind === "directory"}
             class:selected={explorer.isSelected(entry)}
             class:drop-target={dropTargets[entry.path]}
@@ -717,7 +717,7 @@
                 autofocus
               />
             {:else}
-              <span class="tile-name" title={entry.name}>{entry.name}</span>
+              <span class="tile-name entry-name" title={entry.name}>{entry.name}</span>
             {/if}
           </button>
         {/each}

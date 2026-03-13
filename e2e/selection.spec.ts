@@ -2,21 +2,21 @@ import { test, expect } from "@playwright/test";
 
 test.describe("Selection", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?path=/home/user");
     await page.waitForSelector(".file-list");
     // Wait for files to load
-    await page.locator(".file-item").first().waitFor({ timeout: 5000 });
+    await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
   });
 
   test.describe("Single Selection", () => {
     test("single-click on file selects it", async ({ page }) => {
-      const file = page.locator(".file-item").first();
+      const file = page.locator(".entry-item").first();
       await file.click();
       await expect(file).toHaveClass(/selected/);
     });
 
     test("selected file has visual highlight", async ({ page }) => {
-      const file = page.locator(".file-item").first();
+      const file = page.locator(".entry-item").first();
       await file.click();
 
       // Check for visual selection (border or background change)
@@ -35,7 +35,7 @@ test.describe("Selection", () => {
     });
 
     test("clicking another file changes selection", async ({ page }) => {
-      const files = page.locator(".file-item");
+      const files = page.locator(".entry-item");
       const firstFile = files.nth(0);
       const secondFile = files.nth(1);
 
@@ -48,7 +48,7 @@ test.describe("Selection", () => {
     });
 
     test("clicking empty space deselects all", async ({ page }) => {
-      const file = page.locator(".file-item").first();
+      const file = page.locator(".entry-item").first();
       await file.click();
       await expect(file).toHaveClass(/selected/);
 
@@ -61,7 +61,7 @@ test.describe("Selection", () => {
 
   test.describe("Multi-Selection", () => {
     test("Ctrl+click adds to selection", async ({ page }) => {
-      const files = page.locator(".file-item");
+      const files = page.locator(".entry-item");
       const firstFile = files.nth(0);
       const secondFile = files.nth(1);
 
@@ -73,7 +73,7 @@ test.describe("Selection", () => {
     });
 
     test("Shift+click selects range", async ({ page }) => {
-      const files = page.locator(".file-item");
+      const files = page.locator(".entry-item");
       const count = await files.count();
       if (count < 3) {
         test.skip();
@@ -113,7 +113,7 @@ test.describe("Selection", () => {
     });
 
     test("drag selection selects files within rectangle", async ({ page }) => {
-      const files = page.locator(".file-item");
+      const files = page.locator(".entry-item");
       const count = await files.count();
       if (count < 2) { test.skip(); return; }
 
@@ -131,7 +131,7 @@ test.describe("Selection", () => {
 
       await page.waitForTimeout(100);
 
-      const selectedCount = await page.locator(".file-item.selected").count();
+      const selectedCount = await page.locator(".entry-item.selected").count();
       expect(selectedCount).toBeGreaterThan(0);
     });
 
@@ -144,7 +144,7 @@ test.describe("Selection", () => {
     /** Helper: check if the app's drag state is stuck (selection changes on mousemove without button) */
     async function isDragStuck(page: import("@playwright/test").Page, contentBox: { x: number; y: number; width: number; height: number }): Promise<boolean> {
       // Record current selection
-      const selBefore = await page.locator(".file-item.selected").count();
+      const selBefore = await page.locator(".entry-item.selected").count();
 
       // Move mouse to a different position (no buttons pressed)
       await page.mouse.move(contentBox.x + 80, contentBox.y + 40);
@@ -152,7 +152,7 @@ test.describe("Selection", () => {
       await page.mouse.move(contentBox.x + 80, contentBox.y + contentBox.height - 30);
       await page.waitForTimeout(50);
 
-      const selAfter = await page.locator(".file-item.selected").count();
+      const selAfter = await page.locator(".entry-item.selected").count();
       const marqueeVisible = await page.locator(".marquee-rect").isVisible();
 
       // If marquee is still visible or selection changed without clicking, drag is stuck

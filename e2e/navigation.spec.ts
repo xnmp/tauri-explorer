@@ -1,18 +1,23 @@
 import { test, expect } from "@playwright/test";
 
+// Helper: navigate to home directory so tests have multiple folders available
+const HOME_URL = "/?path=/home/user";
+
+/** Wait for the file list to be populated with entry items */
+async function waitForEntries(page: import("@playwright/test").Page) {
+  await page.waitForSelector(".file-list");
+  await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
+  await page.waitForSelector(".breadcrumbs-container .crumb");
+}
+
 test.describe("Navigation", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    // Wait for app to load and file items to be visible
-    await page.waitForSelector(".file-list");
-    await page.locator(".file-item").first().waitFor({ timeout: 5000 });
-    // Ensure breadcrumbs are populated (at home root, only the icon crumb is present)
-    await page.waitForSelector('.breadcrumbs-container .crumb');
+    await page.goto(HOME_URL);
+    await waitForEntries(page);
   });
 
   test.describe("Initial Load", () => {
     test("app loads without errors", async ({ page }) => {
-      // Check no console errors
       const errors: string[] = [];
       page.on("console", (msg) => {
         if (msg.type() === "error") errors.push(msg.text());
@@ -32,34 +37,30 @@ test.describe("Navigation", () => {
 
     test("FileList shows directory contents", async ({ page }) => {
       await expect(page.locator(".file-list")).toBeVisible();
-      // Should have some files or folders
-      const items = page.locator(".file-item");
+      const items = page.locator(".entry-item");
       await expect(items.first()).toBeVisible({ timeout: 5000 });
     });
   });
 
   test.describe("Folder Navigation", () => {
     test("double-click on folder navigates into it", async ({ page }) => {
-      // Find a folder (folders have .directory class)
-      const folder = page.locator(".file-item.directory").first();
-      const folderName = await folder.locator(".name").textContent();
+      // At /home/user we should see Documents, Downloads, etc.
+      const folder = page.locator(".entry-item.directory").first();
+      const folderName = await folder.locator(".entry-name").textContent();
+      expect(folderName).toBeTruthy();
 
-      // Double-click to navigate
+      // Double-click to navigate into the folder
       await folder.dblclick();
 
-      // Wait for navigation
-      await page.waitForTimeout(500);
-
-      // Breadcrumbs should contain the folder name
+      // Breadcrumbs should update to contain the folder name
       const breadcrumbs = page.locator(".breadcrumbs-container");
-      await expect(breadcrumbs).toContainText(folderName || "");
+      await expect(breadcrumbs).toContainText(folderName!, { timeout: 5000 });
     });
 
     test("single-click on folder only selects it", async ({ page }) => {
-      const folder = page.locator(".file-item.directory").first();
+      const folder = page.locator(".entry-item.directory").first();
       const initialBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
 
-      // Single click
       await folder.click();
 
       // Should be selected
@@ -74,9 +75,10 @@ test.describe("Navigation", () => {
       const initialBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
 
       // Navigate into a folder
-      const folder = page.locator(".file-item.directory").first();
+      const folder = page.locator(".entry-item.directory").first();
       await folder.dblclick();
-      await page.waitForTimeout(500);
+      await page.locator(".entry-item").first().waitFor({ timeout: 5000 }).catch(() => {});
+      await page.waitForTimeout(300);
 
       // Click back
       await page.locator('button[title*="Back"], button[aria-label*="Back"]').click();
@@ -88,34 +90,34 @@ test.describe("Navigation", () => {
     });
 
     test("up button navigates to parent directory", async ({ page }) => {
-      // Navigate into a folder first
-      const folder = page.locator(".file-item.directory").first();
+      // Navigate into a folder first so we can go up
+      const folder = page.locator(".entry-item.directory").first();
+      const folderName = await folder.locator(".entry-name").textContent();
       await folder.dblclick();
-      await page.waitForTimeout(500);
 
-      const breadcrumbsBefore = await page.locator(".breadcrumbs-container").textContent();
+      // Wait for navigation and breadcrumbs to show the folder name
+      const breadcrumbs = page.locator(".breadcrumbs-container");
+      await expect(breadcrumbs).toContainText(folderName!, { timeout: 5000 });
 
       // Click up button
       await page.locator('button[aria-label="Go up one level"]').click();
       await page.waitForTimeout(500);
 
-      // Path should be shorter (parent)
-      const breadcrumbsAfter = await page.locator(".breadcrumbs-container").textContent();
-      expect(breadcrumbsAfter?.length).toBeLessThan(breadcrumbsBefore?.length || 0);
+      // Should no longer contain the folder name (back at parent)
+      const breadcrumbsAfter = await breadcrumbs.textContent();
+      // At home dir, breadcrumbs collapse to just the home icon
+      expect(breadcrumbsAfter?.includes(folderName!)).toBe(false);
     });
   });
 
   test.describe("Keyboard Navigation", () => {
     test("F5 refreshes directory", async ({ page }) => {
-      // Get initial file count
-      const initialCount = await page.locator(".file-item").count();
+      const initialCount = await page.locator(".entry-item").count();
 
-      // Press F5
       await page.keyboard.press("F5");
       await page.waitForTimeout(500);
 
-      // File list should still be visible with same content
-      const newCount = await page.locator(".file-item").count();
+      const newCount = await page.locator(".entry-item").count();
       expect(newCount).toBe(initialCount);
     });
 
@@ -123,7 +125,7 @@ test.describe("Navigation", () => {
       const initialBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
 
       // Navigate forward
-      const folder = page.locator(".file-item.directory").first();
+      const folder = page.locator(".entry-item.directory").first();
       await folder.dblclick();
       await page.waitForTimeout(500);
 

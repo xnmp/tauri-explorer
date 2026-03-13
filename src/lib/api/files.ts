@@ -687,6 +687,27 @@ export async function clipboardPasteImage(directory: string): Promise<ApiResult<
 }
 
 // ===================
+// Wallpaper
+// Issue: tauri-explorer-mj32
+// ===================
+
+/**
+ * Set an image file as the desktop wallpaper.
+ * Auto-detects DE (Hyprland/hyprpaper, Sway, GNOME, KDE, XFCE, feh).
+ *
+ * @param path - Full path to image file
+ * @returns Result indicating success or error message
+ */
+export async function setAsWallpaper(path: string): Promise<ApiResult<void>> {
+  try {
+    await invoke("set_as_wallpaper", { path });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+// ===================
 // Archive Operations
 // Issue: tauri-explorer-0xr, tauri-explorer-kez
 // ===================

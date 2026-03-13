@@ -209,18 +209,13 @@
     // saved-state restoration so they open at the parent's path.
     const isChildWindow = !!urlPath;
     const defaultPath = urlPath || launchCwd || homePath;
-    const tab = windowTabsManager.init(defaultPath, isChildWindow);
 
-    // If launched from a terminal with a meaningful cwd, navigate the active
-    // pane there — even when saved state was restored. Skip if cwd is $HOME
-    // or "/" (typical desktop-launcher cwds where we want saved state).
+    // If launched from a terminal with a meaningful cwd, pass it as an
+    // override so the active pane navigates there directly instead of
+    // racing two concurrent navigateTo calls.
     const isGenericCwd = !launchCwd || launchCwd === homePath || launchCwd === "/";
-    if (!isChildWindow && !isGenericCwd) {
-      const explorer = windowTabsManager.getActiveExplorer();
-      if (explorer && explorer.currentPath !== launchCwd) {
-        explorer.navigateTo(launchCwd);
-      }
-    }
+    const overridePath = (!isChildWindow && !isGenericCwd) ? launchCwd! : undefined;
+    const tab = windowTabsManager.init(defaultPath, isChildWindow, overridePath);
     // Apply inherited view mode from parent window
     if (urlViewMode && tab) {
       const explorer = windowTabsManager.getActiveExplorer();

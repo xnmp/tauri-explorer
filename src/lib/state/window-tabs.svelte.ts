@@ -187,16 +187,28 @@ function createWindowTabsManager() {
     return tab;
   }
 
-  /** Restore tabs from a persisted state */
-  function restoreFromState(state: PersistedTabState): void {
+  /** Restore tabs from a persisted state.
+   *  @param overridePath - If set, the active pane of the active tab
+   *    navigates here instead of its saved path (avoids racing navigations). */
+  function restoreFromState(state: PersistedTabState, overridePath?: string): void {
     explorers.clear();
 
     const restoredTabs: WindowTab[] = state.tabs.map((persistedTab) => {
+      const isActiveTab = persistedTab.id === state.activeTabId;
+      const activePaneSide = persistedTab.activePaneId ?? "left";
+
+      const leftPath = (isActiveTab && activePaneSide === "left" && overridePath)
+        ? overridePath
+        : persistedTab.panes.left.path;
+      const rightPath = (isActiveTab && activePaneSide === "right" && overridePath)
+        ? overridePath
+        : persistedTab.panes.right.path;
+
       const tab: WindowTab = {
         id: persistedTab.id,
         panes: {
-          left: createPane(persistedTab.panes.left.path),
-          right: createPane(persistedTab.panes.right.path),
+          left: createPane(leftPath),
+          right: createPane(rightPath),
         },
         activePaneId: persistedTab.activePaneId,
         dualPaneEnabled: persistedTab.dualPaneEnabled,
@@ -212,13 +224,15 @@ function createWindowTabsManager() {
   /** Initialize - restores from localStorage or creates a new tab.
    *  @param skipRestore - When true, skip saved-state restoration and
    *    create a fresh tab at initialPath. Used for child windows spawned
-   *    via Ctrl+N that receive their path via URL params. */
-  function init(initialPath: string, skipRestore = false): WindowTab {
+   *    via Ctrl+N that receive their path via URL params.
+   *  @param overridePath - When set, the active pane navigates here instead
+   *    of its saved path. Used for CLI cwd so we don't race two navigations. */
+  function init(initialPath: string, skipRestore = false, overridePath?: string): WindowTab {
     if (!skipRestore) {
       // Try to restore from localStorage (cold start / app relaunch)
       const savedState = loadState();
       if (savedState && savedState.tabs.length > 0) {
-        restoreFromState(savedState);
+        restoreFromState(savedState, overridePath);
         const restored = tabs.find((t) => t.id === activeTabId) ?? tabs[0];
         if (restored && !activeTabId) {
           activeTabId = restored.id;
@@ -231,7 +245,7 @@ function createWindowTabsManager() {
     explorers.clear();
     tabs = [];
     activeTabId = null;
-    return createTab(initialPath);
+    return createTab(overridePath ?? initialPath);
   }
 
   /** Snapshot a tab for Ctrl+Shift+T restoration */

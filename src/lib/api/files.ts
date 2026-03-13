@@ -775,3 +775,16 @@ export async function writeConfigFile(filename: string, data: string): Promise<A
     return { ok: false, error: String(err) };
   }
 }
+
+/**
+ * List user theme CSS files from ~/.config/tauri-explorer/themes/.
+ * Returns array of [filename, cssContent] pairs.
+ */
+export async function listUserThemes(): Promise<ApiResult<[string, string][]>> {
+  try {
+    const data = await invoke<[string, string][]>("list_user_themes");
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}

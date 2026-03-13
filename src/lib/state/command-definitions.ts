@@ -691,6 +691,16 @@ const generalCommands: Command[] = [
       dialogStore.openContentSearch();
     },
   },
+  {
+    id: "general.filterCurrentDir",
+    label: "Filter Current Directory",
+    category: "general",
+    shortcut: "Ctrl+F",
+    handler: () => {
+      const explorer = getActiveExplorer();
+      explorer?.openFilter();
+    },
+  },
 ];
 
 /** Register all commands */

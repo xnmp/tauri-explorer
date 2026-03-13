@@ -87,6 +87,10 @@ function createExplorerState() {
   // Inline folder creation state
   let isCreatingFolder = $state(false);
 
+  // Filter query for filtering displayed entries (Ctrl+F)
+  let filterQuery = $state("");
+  let showFilter = $state(false);
+
   // Navigation callback for UI (e.g. focusing the selected item after nav)
   let onNavigateCallback: (() => void) | null = null;
 
@@ -98,7 +102,11 @@ function createExplorerState() {
   // ===================
 
   const displayEntries = $derived.by(() => {
-    const filtered = filterHidden(coreState.entries, settingsStore.showHidden);
+    let filtered = filterHidden(coreState.entries, settingsStore.showHidden);
+    if (filterQuery) {
+      const q = filterQuery.toLowerCase();
+      filtered = filtered.filter((e) => e.name.toLowerCase().includes(q));
+    }
     return sortEntries(filtered, coreState.sortBy, coreState.sortAscending);
   });
 
@@ -117,6 +125,8 @@ function createExplorerState() {
   async function navigateInternal(path: string): Promise<boolean> {
     coreState.loading = true;
     coreState.error = null;
+    filterQuery = "";
+    showFilter = false;
 
     const result = await dirListing.load(path, {
       onEntries: (entries) => {
@@ -600,6 +610,17 @@ function createExplorerState() {
     toggleHidden,
     setSorting,
     setViewMode,
+    // Filter
+    get filterQuery() { return filterQuery; },
+    get showFilter() { return showFilter; },
+    toggleFilter() {
+      showFilter = !showFilter;
+      if (!showFilter) filterQuery = "";
+    },
+    openFilter() { showFilter = true; },
+    closeFilter() { showFilter = false; filterQuery = ""; },
+    setFilter(query: string) { filterQuery = query; },
+    clearFilter() { filterQuery = ""; },
     // Selection
     selectEntry,
     clearSelection,

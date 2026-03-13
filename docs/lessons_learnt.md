@@ -379,3 +379,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 - **Keep tile/grid item styles minimal.** Avoid transitions on `box-shadow` and `transform` for elements that participate in bulk selection. Instant state changes are visually fine and much cheaper.
 
 ---
+
+## tauri-explorer-9djf: Architecture Improvements (Tech Debt)
+
+**Key takeaways:**
+- **Tauri `#[tauri::command]` macro generates hidden `__cmd__*` items** at the module where the function is defined. When splitting a monolithic Rust file into submodules, `pub use` re-exports only re-export the function — not these hidden items. The `generate_handler![]` macro in `lib.rs` must reference the full submodule path (e.g., `files::file_ops::rename_entry`), and the submodules must be `pub`.
+- **Svelte scoped styles don't affect child components.** When extracting view-specific templates into child components (e.g., ListView.svelte from FileList.svelte), CSS classes like `.cut` and `.in-clipboard` must be added to the new component — they won't inherit from the parent's stylesheet. E2E tests across all view modes caught this.
+- **Always run ALL_VIEW_MODES=1 E2E tests** when refactoring view-mode-specific code. The default fast mode only tests details view, so regressions in list/tiles views go undetected.
+- **Extracting shared composables pays off.** The `useInlineRename` composable eliminated ~80 lines of duplicated rename logic between FileItem and FileList. The `drop-operations.ts` module eliminated ~120 lines of duplicated drag-and-drop conflict resolution code.
+- **Structured error serialization (`{kind, message}`)** is better than flat strings for frontend error handling. When changing serialization format, every `String(err)` in catch blocks becomes `[object Object]` — must update all 37 call sites simultaneously.
+
+---

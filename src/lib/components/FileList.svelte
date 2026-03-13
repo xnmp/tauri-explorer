@@ -24,6 +24,8 @@
   import { useTypeAhead } from "$lib/composables/use-type-ahead.svelte";
   import { getFileIconColor, isImageFile } from "$lib/domain/file-types";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { dialogStore } from "$lib/state/dialogs.svelte";
+  import { tick } from "svelte";
 
   import type { FileEntry } from "$lib/domain/file";
 
@@ -75,6 +77,68 @@
     columnMenuPos = null;
   }
 
+
+  // Inline rename state for list/tiles views (mirrors FileItem logic)
+  let renameInputRef: HTMLInputElement | null = null;
+  let editedName = $state("");
+  let renameError = $state<string | null>(null);
+  let submittingRename = $state(false);
+
+  // Only handle rename for non-details views (FileItem handles details view)
+  const renamingEntry = $derived(
+    explorer.viewMode !== "details" ? dialogStore.renamingEntry : null,
+  );
+
+  $effect(() => {
+    if (renamingEntry && renameInputRef) {
+      editedName = renamingEntry.name;
+      renameError = null;
+      tick().then(() => {
+        renameInputRef?.focus();
+        if (renamingEntry.kind === "file") {
+          const lastDot = renamingEntry.name.lastIndexOf(".");
+          if (lastDot > 0) {
+            renameInputRef?.setSelectionRange(0, lastDot);
+          } else {
+            renameInputRef?.select();
+          }
+        } else {
+          renameInputRef?.select();
+        }
+      });
+    }
+  });
+
+  async function confirmRename() {
+    if (submittingRename) return;
+    const trimmed = editedName.trim();
+    if (!trimmed) { renameError = "Name cannot be empty"; return; }
+    if (trimmed === renamingEntry?.name) { explorer.cancelRename(); return; }
+    submittingRename = true;
+    renameError = null;
+    const result = await explorer.rename(trimmed);
+    submittingRename = false;
+    if (result) renameError = result;
+  }
+
+  function cancelRename() {
+    editedName = "";
+    renameError = null;
+    explorer.cancelRename();
+  }
+
+  function handleRenameKeydown(event: KeyboardEvent) {
+    if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); confirmRename(); }
+    else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); cancelRename(); }
+  }
+
+  function handleRenameBlur() {
+    if (editedName.trim() && editedName.trim() !== renamingEntry?.name) {
+      confirmRename();
+    } else {
+      cancelRename();
+    }
+  }
 
   // Marquee selection composable
   const marquee = useMarqueeSelection();
@@ -586,7 +650,23 @@
             <span class="list-icon" style:color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined}>
               <FileIcon {entry} size="small" />
             </span>
-            <span class="list-name">{entry.name}</span>
+            {#if renamingEntry?.path === entry.path}
+              <!-- svelte-ignore a11y_autofocus -->
+              <input
+                type="text"
+                class="rename-input"
+                class:error={!!renameError}
+                bind:value={editedName}
+                bind:this={renameInputRef}
+                onkeydown={handleRenameKeydown}
+                onblur={handleRenameBlur}
+                onclick={(e) => e.stopPropagation()}
+                disabled={submittingRename}
+                autofocus
+              />
+            {:else}
+              <span class="list-name">{entry.name}</span>
+            {/if}
           </button>
         {/each}
 
@@ -622,7 +702,23 @@
                 <FileIcon {entry} size="large" />
               {/if}
             </div>
-            <span class="tile-name" title={entry.name}>{entry.name}</span>
+            {#if renamingEntry?.path === entry.path}
+              <!-- svelte-ignore a11y_autofocus -->
+              <input
+                type="text"
+                class="rename-input tile-rename"
+                class:error={!!renameError}
+                bind:value={editedName}
+                bind:this={renameInputRef}
+                onkeydown={handleRenameKeydown}
+                onblur={handleRenameBlur}
+                onclick={(e) => e.stopPropagation()}
+                disabled={submittingRename}
+                autofocus
+              />
+            {:else}
+              <span class="tile-name" title={entry.name}>{entry.name}</span>
+            {/if}
           </button>
         {/each}
       </div>
@@ -972,6 +1068,29 @@
     word-break: break-word;
     overflow-wrap: break-word;
     padding-top: 1px;
+  }
+
+  /* Inline rename input for list/tiles views */
+  .rename-input {
+    flex: 1;
+    min-width: 0;
+    padding: 2px 6px;
+    background: var(--control-fill);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-sm);
+    font: inherit;
+    font-size: var(--font-size-body);
+    color: var(--text-primary);
+    outline: none;
+  }
+
+  .rename-input.error {
+    border-color: var(--system-critical);
+  }
+
+  .rename-input.tile-rename {
+    width: 100%;
+    text-align: center;
   }
 
   /* Column visibility context menu */

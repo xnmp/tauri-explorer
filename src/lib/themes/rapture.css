@@ -30,10 +30,10 @@
   --text-tertiary: #7a87a8;
   --text-on-accent: #111e2a;
 
-  /* Background colors - from Rapture background */
-  --background-solid: #162636;
-  --background-mica: rgba(17, 30, 42, 0.96);
-  --background-acrylic: rgba(22, 38, 54, 0.92);
+  /* Background colors - from Rapture background, darkened for compositor transparency */
+  --background-solid: #081420;
+  --background-mica: rgba(6, 16, 24, 1);
+  --background-acrylic: rgba(6, 16, 24, 0.98);
   --background-card: rgba(48, 75, 102, 0.3);
   --background-card-secondary: rgba(48, 75, 102, 0.2);
 

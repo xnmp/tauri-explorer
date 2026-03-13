@@ -30,12 +30,12 @@
   --text-tertiary: #6c6f93;
   --text-on-accent: #1c1e26;
 
-  /* Background colors - from Horizon background (#1c1e26) */
-  --background-solid: #1c1e26;
-  --background-mica: rgba(28, 30, 38, 0.98);
-  --background-acrylic: rgba(28, 30, 38, 0.96);
-  --background-card: rgba(108, 111, 147, 0.08);
-  --background-card-secondary: rgba(108, 111, 147, 0.05);
+  /* Background colors - from Horizon background (#1c1e26), darkened for compositor transparency */
+  --background-solid: #141620;
+  --background-mica: rgba(16, 18, 23, 1);
+  --background-acrylic: rgba(16, 18, 23, 0.98);
+  --background-card: rgba(108, 111, 147, 0.12);
+  --background-card-secondary: rgba(108, 111, 147, 0.08);
 
   /* Surface/border colors */
   --surface-stroke: rgba(213, 216, 218, 0.12);

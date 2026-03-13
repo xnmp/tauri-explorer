@@ -504,19 +504,7 @@
     flex-shrink: 0;
   }
 
-  /* Mica effect gradient overlay */
-  .explorer::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    background: var(--mica-overlay, linear-gradient(
-      170deg,
-      rgba(255, 255, 255, 0.03) 0%,
-      transparent 40%
-    ));
-    pointer-events: none;
-    z-index: 0;
-  }
+  /* Mica effect gradient overlay — disabled due to gradient banding artifacts */
 
 
   .main-content {

@@ -117,14 +117,26 @@
     marquee.start(event, rect, marqueeHeaderHeight());
   }
 
+  // RAF-throttled marquee selection to avoid layout thrashing in tiles/list views
+  let marqueeRafId: number | null = null;
+
   function handleMarqueeMove(event: MouseEvent): void {
     const rect = contentRef?.getBoundingClientRect();
     if (!rect) return;
     if (!marquee.move(event, rect, marqueeHeaderHeight())) return;
-    updateMarqueeSelection();
+    if (marqueeRafId === null) {
+      marqueeRafId = requestAnimationFrame(() => {
+        marqueeRafId = null;
+        updateMarqueeSelection();
+      });
+    }
   }
 
   function handleMarqueeEnd(): void {
+    if (marqueeRafId !== null) {
+      cancelAnimationFrame(marqueeRafId);
+      marqueeRafId = null;
+    }
     if (marquee.isDragging) {
       updateMarqueeSelection();
     }

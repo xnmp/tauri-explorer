@@ -274,6 +274,8 @@ const mockCommands: Record<string, CommandHandler> = {
   },
 
   get_config_dir: () => "/home/user/.config/tauri-explorer",
+
+  list_user_themes: () => [] as [string, string][],
 };
 
 // In-memory config file store for mock mode

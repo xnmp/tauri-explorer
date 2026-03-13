@@ -170,6 +170,7 @@ pub fn run(launch_dir: Option<String>) {
             config::read_config_file,
             config::write_config_file,
             config::get_config_dir,
+            config::list_user_themes,
             // Wallpaper
             wallpaper::set_as_wallpaper,
         ])

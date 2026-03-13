@@ -45,3 +45,38 @@ pub fn write_config_file(filename: String, data: String) -> Result<(), AppError>
 pub fn get_config_dir() -> Result<String, AppError> {
     config_dir().map(|p| p.to_string_lossy().into_owned())
 }
+
+/// Read all CSS files from ~/.config/tauri-explorer/themes/.
+/// Returns a vec of (filename, css_content) pairs.
+/// Returns empty vec if directory doesn't exist.
+#[tauri::command]
+pub fn list_user_themes() -> Result<Vec<(String, String)>, AppError> {
+    let themes_dir = config_dir()?.join("themes");
+    if !themes_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut themes = Vec::new();
+    let entries = fs::read_dir(&themes_dir)
+        .map_err(|e| AppError::Other(format!("Failed to read themes dir: {}", e)))?;
+
+    for entry in entries {
+        let entry = entry
+            .map_err(|e| AppError::Other(format!("Failed to read dir entry: {}", e)))?;
+        let path = entry.path();
+
+        if path.extension().and_then(|e| e.to_str()) == Some("css") {
+            let filename = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            let content = fs::read_to_string(&path).map_err(|e| {
+                AppError::Other(format!("Failed to read theme '{}': {}", filename, e))
+            })?;
+            themes.push((filename, content));
+        }
+    }
+
+    Ok(themes)
+}

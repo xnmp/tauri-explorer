@@ -62,56 +62,33 @@ enum WallpaperBackend {
     Unknown,
 }
 
-/// Set wallpaper using hyprpaper IPC + update config file.
+/// Set wallpaper using hyprpaper: update config then restart hyprpaper.
+/// Restarting is more reliable than IPC since the Tauri process may not
+/// inherit the Hyprland socket environment variables.
 fn set_hyprpaper(path: &str) -> Result<(), AppError> {
     let abs_path = std::fs::canonicalize(path)
         .map_err(|e| AppError::Other(format!("Failed to resolve path: {}", e)))?
         .to_string_lossy()
         .to_string();
 
-    // Step 1: Preload the new wallpaper
-    let output = Command::new("hyprctl")
-        .args(["hyprpaper", "preload", &abs_path])
-        .output()
-        .map_err(|e| AppError::Other(format!("Failed to run hyprctl: {}", e)))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        // "already loaded" is not an error
-        if !stderr.contains("already loaded") && !output.stdout.windows(14).any(|w| w == b"already loaded") {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            return Err(AppError::Other(format!("hyprpaper preload failed: {} {}", stdout, stderr)));
-        }
-    }
-
-    // Step 2: Get monitor names and set wallpaper on each
+    // Get current monitors for config
     let monitors = get_hyprland_monitors()?;
-    for monitor in &monitors {
-        let wallpaper_arg = format!("{},{}", monitor, abs_path);
-        let output = Command::new("hyprctl")
-            .args(["hyprpaper", "wallpaper", &wallpaper_arg])
-            .output()
-            .map_err(|e| AppError::Other(format!("Failed to set wallpaper on {}: {}", monitor, e)))?;
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            eprintln!("[wallpaper] Warning: failed to set on {}: {} {}", monitor, stdout, stderr);
-        }
-    }
-
-    // Step 3: Unload unused wallpapers
-    let _ = Command::new("hyprctl")
-        .args(["hyprpaper", "unload", "unused"])
-        .output();
-
-    // Step 4: Update hyprpaper.conf for persistence
+    // Update config file
     update_hyprpaper_conf(&abs_path, &monitors)?;
+
+    // Restart hyprpaper to pick up the new config
+    let _ = Command::new("pkill").arg("hyprpaper").output();
+    // Small delay to let the process die
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    Command::new("hyprpaper")
+        .spawn()
+        .map_err(|e| AppError::Other(format!("Failed to start hyprpaper: {}", e)))?;
 
     Ok(())
 }
 
-/// Get list of monitor names from Hyprland.
+/// Get list of active monitor names from Hyprland.
 fn get_hyprland_monitors() -> Result<Vec<String>, AppError> {
     let output = Command::new("hyprctl")
         .args(["monitors", "-j"])
@@ -119,7 +96,6 @@ fn get_hyprland_monitors() -> Result<Vec<String>, AppError> {
         .map_err(|e| AppError::Other(format!("Failed to query monitors: {}", e)))?;
 
     let json_str = String::from_utf8_lossy(&output.stdout);
-    // Parse JSON array of monitors, extracting "name" field
     let monitors: Vec<serde_json::Value> = serde_json::from_str(&json_str)
         .map_err(|e| AppError::Other(format!("Failed to parse monitor info: {}", e)))?;
 
@@ -142,8 +118,7 @@ fn update_hyprpaper_conf(image_path: &str, monitors: &[String]) -> Result<(), Ap
         .join("hypr")
         .join("hyprpaper.conf");
 
-    let mut content = String::new();
-    content.push_str(&format!("preload = {}\n\n", image_path));
+    let mut content = format!("preload = {}\n\n", image_path);
 
     for monitor in monitors {
         content.push_str(&format!(

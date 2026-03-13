@@ -149,7 +149,10 @@
 
   async function handleSetAsWallpaper(): Promise<void> {
     if (!selectedImage) return;
-    await setAsWallpaper(selectedImage.path);
+    const result = await setAsWallpaper(selectedImage.path);
+    if (!result.ok) {
+      console.error("[wallpaper] Failed to set wallpaper:", result.error);
+    }
     contextMenuStore.close();
   }
 

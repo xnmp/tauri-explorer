@@ -294,13 +294,16 @@
     onClose();
   }
 
-  // Focus input when dialog opens
+  // Focus input and prune stale entries when dialog opens
   $effect(() => {
     if (open && inputRef) {
       query = "";
       results = [];
       selectedIndex = 0;
       tick().then(() => inputRef?.focus());
+      // Prune deleted paths from recent files and frecency (fire-and-forget)
+      recentFilesStore.pruneNonExistent();
+      frecencyStore.pruneNonExistent();
     }
   });
 

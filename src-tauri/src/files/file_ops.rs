@@ -348,6 +348,12 @@ pub fn estimate_size(paths: Vec<String>) -> Result<SizeEstimate, AppError> {
     })
 }
 
+/// Batch-check which paths exist on the filesystem.
+#[tauri::command]
+pub fn check_paths_exist(paths: Vec<String>) -> Vec<bool> {
+    paths.iter().map(|p| PathBuf::from(p).exists()).collect()
+}
+
 fn estimate_path_size(path: &Path, file_count: &mut u64, total_bytes: &mut u64) {
     if path.is_file() {
         *file_count += 1;

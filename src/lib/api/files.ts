@@ -374,6 +374,15 @@ export async function estimateSize(paths: string[]): Promise<ApiResult<SizeEstim
   }
 }
 
+/** Batch-check which paths exist on the filesystem. */
+export async function checkPathsExist(paths: string[]): Promise<boolean[]> {
+  try {
+    return await invoke<boolean[]>("check_paths_exist", { paths });
+  } catch {
+    return paths.map(() => true); // assume exists on error
+  }
+}
+
 /**
  * Event payload for streaming search results.
  */

@@ -6,6 +6,7 @@
  * Persisted to localStorage with a max capacity.
  */
 
+import { checkPathsExist } from "$lib/api/files";
 import { loadPersisted, savePersisted } from "./persisted";
 
 export interface RecentEntry {
@@ -45,12 +46,23 @@ function createRecentFilesState() {
     save();
   }
 
+  /** Remove entries whose paths no longer exist on disk. */
+  async function pruneNonExistent(): Promise<void> {
+    if (entries.length === 0) return;
+    const paths = entries.map((e) => e.path);
+    const exists = await checkPathsExist(paths);
+    const before = entries.length;
+    entries = entries.filter((_, i) => exists[i]);
+    if (entries.length < before) save();
+  }
+
   return {
     get list() { return entries; },
     get count() { return entries.length; },
     add,
     remove,
     clear,
+    pruneNonExistent,
   };
 }
 

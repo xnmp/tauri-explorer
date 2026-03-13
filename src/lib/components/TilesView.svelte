@@ -5,6 +5,7 @@
 <script lang="ts">
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
+  import { clipboardStore } from "$lib/state/clipboard.svelte";
   import { dragState } from "$lib/state/drag.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { getDropSourcePath, handleFileDrop } from "$lib/state/drop-operations";
@@ -119,6 +120,14 @@
     });
   }
 
+  function isInClipboard(entry: FileEntry): boolean {
+    return clipboardStore.content?.entries.some((e) => e.path === entry.path) ?? false;
+  }
+
+  function isCut(entry: FileEntry): boolean {
+    return isInClipboard(entry) && clipboardStore.isCut;
+  }
+
   function handleItemContextMenu(event: MouseEvent, entry: FileEntry): void {
     event.preventDefault();
     event.stopPropagation();
@@ -139,6 +148,8 @@
       class="tile-item entry-item"
       class:directory={entry.kind === "directory"}
       class:selected={explorer.isSelected(entry)}
+      class:cut={isCut(entry)}
+      class:in-clipboard={isInClipboard(entry)}
       class:drop-target={dropTargets[entry.path]}
       class:copy-drop={copyDropTargets[entry.path]}
       draggable="true"
@@ -232,6 +243,15 @@
 
   .tile-item.selected:hover {
     background: var(--subtle-fill-tertiary);
+  }
+
+  .tile-item.cut {
+    opacity: 0.5;
+  }
+
+  .tile-item.in-clipboard:not(.cut) {
+    outline: 1px dashed var(--accent);
+    outline-offset: -1px;
   }
 
   .tile-item.drop-target {

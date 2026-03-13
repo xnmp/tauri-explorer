@@ -17,6 +17,7 @@ function createDialogStore() {
   let activeDialog = $state<DialogType>(null);
   let targetEntry = $state<FileEntry | null>(null);
   let targetEntries = $state<FileEntry[]>([]);
+  let permanentDelete = $state(false);
 
   // Overlay dialogs (independent, can coexist with file ops but not each other)
   let quickOpenOpen = $state(false);
@@ -61,6 +62,9 @@ function createDialogStore() {
     get deletingEntries() {
       return activeDialog === "delete" ? targetEntries : [];
     },
+    get isPermanentDelete() {
+      return permanentDelete;
+    },
 
     // Overlay dialog accessors
     get isQuickOpenOpen() {
@@ -104,14 +108,16 @@ function createDialogStore() {
       closeIfActive("rename");
     },
 
-    startDelete(entries: FileEntry[]): void {
+    startDelete(entries: FileEntry[], isPermanent = false): void {
       activeDialog = "delete";
       targetEntries = entries;
       targetEntry = entries.length === 1 ? entries[0] : null;
+      permanentDelete = isPermanent;
     },
 
     cancelDelete(): void {
       closeIfActive("delete");
+      permanentDelete = false;
     },
 
     /** True when any modal dialog is open (file ops or overlays). */

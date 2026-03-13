@@ -141,6 +141,20 @@ const fileCommands: Command[] = [
     when: () => (getActiveExplorer()?.getSelectedEntries().length ?? 0) > 0,
   },
   {
+    id: "file.permanentDelete",
+    label: "Permanently Delete",
+    category: "file",
+    shortcut: "Shift+Delete",
+    handler: () => {
+      const explorer = getActiveExplorer();
+      const selected = explorer?.getSelectedEntries();
+      if (selected && selected.length > 0) {
+        explorer?.startPermanentDelete(selected);
+      }
+    },
+    when: () => (getActiveExplorer()?.getSelectedEntries().length ?? 0) > 0,
+  },
+  {
     id: "file.openSelected",
     label: "Open",
     category: "file",

@@ -107,6 +107,8 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     isDragging = false;
     dragStart = null;
     dragCurrent = null;
+    cachedItemRects = null;
+    cachedContainerOffset = null;
 
     // Record end time so click handlers can ignore the immediate click
     dragEndTime = performance.now();
@@ -136,22 +138,42 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
    * @param container The scrollable container element
    * @param itemSelector CSS selector for item elements
    */
+  // Cached item rects for the current marquee drag session
+  let cachedItemRects: DOMRect[] | null = null;
+  let cachedContainerOffset: { left: number; top: number } | null = null;
+
   function getSelectedIndicesFromDOM(container: HTMLElement, itemSelector: string): number[] {
     if (!marqueeRect) return [];
 
     const containerRect = container.getBoundingClientRect();
+
+    // Cache item positions on first call per drag session (items don't move during marquee)
+    if (!cachedItemRects) {
+      const items = container.querySelectorAll(itemSelector);
+      cachedItemRects = new Array(items.length);
+      for (let i = 0; i < items.length; i++) {
+        cachedItemRects[i] = items[i].getBoundingClientRect();
+      }
+      cachedContainerOffset = { left: containerRect.left, top: containerRect.top };
+    }
+
+    // Adjust for any container scroll since caching
+    const offsetDx = containerRect.left - cachedContainerOffset!.left;
+    const offsetDy = containerRect.top - cachedContainerOffset!.top;
+
     const mLeft = marqueeRect.left + containerRect.left;
     const mTop = marqueeRect.top + containerRect.top;
     const mRight = mLeft + marqueeRect.width;
     const mBottom = mTop + marqueeRect.height;
 
-    const items = container.querySelectorAll(itemSelector);
     const indices: number[] = [];
-
-    for (let i = 0; i < items.length; i++) {
-      const rect = items[i].getBoundingClientRect();
-      // Check AABB intersection
-      if (rect.right > mLeft && rect.left < mRight && rect.bottom > mTop && rect.top < mBottom) {
+    for (let i = 0; i < cachedItemRects.length; i++) {
+      const rect = cachedItemRects[i];
+      const rLeft = rect.left + offsetDx;
+      const rRight = rect.right + offsetDx;
+      const rTop = rect.top + offsetDy;
+      const rBottom = rect.bottom + offsetDy;
+      if (rRight > mLeft && rLeft < mRight && rBottom > mTop && rTop < mBottom) {
         indices.push(i);
       }
     }

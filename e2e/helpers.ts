@@ -47,9 +47,17 @@ export async function switchViewMode(page: Page, mode: ViewMode) {
     tiles: "Tiles",
   };
 
-  // Right-click on empty space to open context menu
+  // Clear selection first — view options only appear in background context menu
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(50);
+
+  // Right-click in the middle of the content area so the context menu
+  // has room to render fully (it contains Paste, New folder, Open in
+  // Terminal, and View options). Clicking too low causes viewport clipping.
   const content = page.locator(".file-list .content").first();
-  await content.click({ button: "right", position: { x: 10, y: 400 } });
+  const box = await content.boundingBox();
+  const clickY = box ? Math.round(box.height / 2) : 300;
+  await content.click({ button: "right", position: { x: 10, y: clickY } });
 
   // Wait for context menu
   const contextMenu = page.locator(".context-menu");

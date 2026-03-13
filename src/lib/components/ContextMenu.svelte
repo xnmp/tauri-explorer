@@ -344,46 +344,103 @@
         </button>
       {/if}
 
-      <div class="menu-divider"></div>
     {/if}
 
-    <!-- Always available options -->
-    <button class="menu-item" onclick={handlePaste} role="menuitem">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <rect x="4" y="4" width="9" height="10" rx="1" stroke="currentColor" stroke-width="1.25"/>
-        <path d="M6 4V3C6 2.44772 6.44772 2 7 2H10C10.5523 2 11 2.44772 11 3V4" stroke="currentColor" stroke-width="1.25"/>
-        <path d="M7 8H10M8.5 6.5V9.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
-      </svg>
-      <span>Paste</span>
-      <span class="shortcut">Ctrl+V</span>
-    </button>
-    <div class="menu-divider"></div>
+    {#if !hasSelection}
+      <!-- Background right-click: directory-level actions -->
+      <button class="menu-item" onclick={handlePaste} role="menuitem">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <rect x="4" y="4" width="9" height="10" rx="1" stroke="currentColor" stroke-width="1.25"/>
+          <path d="M6 4V3C6 2.44772 6.44772 2 7 2H10C10.5523 2 11 2.44772 11 3V4" stroke="currentColor" stroke-width="1.25"/>
+          <path d="M7 8H10M8.5 6.5V9.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+        </svg>
+        <span>Paste</span>
+        <span class="shortcut">Ctrl+V</span>
+      </button>
+      <div class="menu-divider"></div>
 
-    <button class="menu-item" onclick={handleNewFolder} role="menuitem">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" stroke="currentColor" stroke-width="1.25"/>
-        <path d="M8 7.5V10.5M6.5 9H9.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
-      </svg>
-      <span>New folder</span>
-    </button>
+      <button class="menu-item" onclick={handleNewFolder} role="menuitem">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" stroke="currentColor" stroke-width="1.25"/>
+          <path d="M8 7.5V10.5M6.5 9H9.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+        </svg>
+        <span>New folder</span>
+      </button>
 
-    <button class="menu-item" onclick={handleOpenInTerminal} role="menuitem">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <rect x="2" y="3" width="12" height="10" rx="1" stroke="currentColor" stroke-width="1.25"/>
-        <path d="M4 7L6 9L4 11" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M8 11H12" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
-      </svg>
-      <span>Open in Terminal</span>
-    </button>
+      <button class="menu-item" onclick={handleOpenInTerminal} role="menuitem">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <rect x="2" y="3" width="12" height="10" rx="1" stroke="currentColor" stroke-width="1.25"/>
+          <path d="M4 7L6 9L4 11" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M8 11H12" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+        </svg>
+        <span>Open in Terminal</span>
+      </button>
 
-    <div class="menu-divider"></div>
+      <div class="menu-divider"></div>
 
-    <!-- View options -->
-    <div class="menu-section-label">View</div>
-    {#each viewModes as mode}
-      {#if mode.id === "list"}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="submenu-wrapper" onmouseenter={() => listSubmenuOpen = true} onmouseleave={() => listSubmenuOpen = false}>
+      <!-- View options -->
+      <div class="menu-section-label">View</div>
+      {#each viewModes as mode}
+        {#if mode.id === "list"}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="submenu-wrapper" onmouseenter={() => listSubmenuOpen = true} onmouseleave={() => listSubmenuOpen = false}>
+            <button
+              class="menu-item"
+              class:selected={explorer.viewMode === mode.id}
+              onclick={() => handleSetViewMode(mode.id)}
+              role="menuitemradio"
+              aria-checked={explorer.viewMode === mode.id}
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M3 4H4M6 4H13M3 8H4M6 8H13M3 12H4M6 12H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+              <span>{mode.label}</span>
+              {#if explorer.viewMode === mode.id}
+                <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              {/if}
+              <svg class="submenu-arrow" width="8" height="8" viewBox="0 0 8 8" fill="none">
+                <path d="M3 1.5L6 4L3 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            {#if listSubmenuOpen}
+              <div class="submenu">
+                <div class="menu-section-label">Columns</div>
+                <button
+                  class="menu-item"
+                  class:selected={settingsStore.listViewColumns === 0}
+                  onclick={() => { settingsStore.setListViewColumns(0); contextMenuStore.close(); }}
+                  role="menuitemradio"
+                  aria-checked={settingsStore.listViewColumns === 0}
+                >
+                  <span>Auto</span>
+                  {#if settingsStore.listViewColumns === 0}
+                    <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                      <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  {/if}
+                </button>
+                {#each [1, 2, 3, 4, 5, 6] as n}
+                  <button
+                    class="menu-item"
+                    class:selected={settingsStore.listViewColumns === n}
+                    onclick={() => { settingsStore.setListViewColumns(n); contextMenuStore.close(); }}
+                    role="menuitemradio"
+                    aria-checked={settingsStore.listViewColumns === n}
+                  >
+                    <span>{n}</span>
+                    {#if settingsStore.listViewColumns === n}
+                      <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                        <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                      </svg>
+                    {/if}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {:else}
           <button
             class="menu-item"
             class:selected={explorer.viewMode === mode.id}
@@ -392,7 +449,14 @@
             aria-checked={explorer.viewMode === mode.id}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path d="M3 4H4M6 4H13M3 8H4M6 8H13M3 12H4M6 12H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              {#if mode.id === "details"}
+                <path d="M2 4H14M2 8H14M2 12H14" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+              {:else}
+                <rect x="2" y="2" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+                <rect x="9" y="2" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+                <rect x="2" y="9" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+                <rect x="9" y="9" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+              {/if}
             </svg>
             <span>{mode.label}</span>
             {#if explorer.viewMode === mode.id}
@@ -400,73 +464,10 @@
                 <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
             {/if}
-            <svg class="submenu-arrow" width="8" height="8" viewBox="0 0 8 8" fill="none">
-              <path d="M3 1.5L6 4L3 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
           </button>
-          {#if listSubmenuOpen}
-            <div class="submenu">
-              <div class="menu-section-label">Columns</div>
-              <button
-                class="menu-item"
-                class:selected={settingsStore.listViewColumns === 0}
-                onclick={() => { settingsStore.setListViewColumns(0); contextMenuStore.close(); }}
-                role="menuitemradio"
-                aria-checked={settingsStore.listViewColumns === 0}
-              >
-                <span>Auto</span>
-                {#if settingsStore.listViewColumns === 0}
-                  <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
-                    <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                  </svg>
-                {/if}
-              </button>
-              {#each [1, 2, 3, 4, 5, 6] as n}
-                <button
-                  class="menu-item"
-                  class:selected={settingsStore.listViewColumns === n}
-                  onclick={() => { settingsStore.setListViewColumns(n); contextMenuStore.close(); }}
-                  role="menuitemradio"
-                  aria-checked={settingsStore.listViewColumns === n}
-                >
-                  <span>{n}</span>
-                  {#if settingsStore.listViewColumns === n}
-                    <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
-                      <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                  {/if}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      {:else}
-        <button
-          class="menu-item"
-          class:selected={explorer.viewMode === mode.id}
-          onclick={() => handleSetViewMode(mode.id)}
-          role="menuitemradio"
-          aria-checked={explorer.viewMode === mode.id}
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            {#if mode.id === "details"}
-              <path d="M2 4H14M2 8H14M2 12H14" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
-            {:else}
-              <rect x="2" y="2" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-              <rect x="9" y="2" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-              <rect x="2" y="9" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-              <rect x="9" y="9" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-            {/if}
-          </svg>
-          <span>{mode.label}</span>
-          {#if explorer.viewMode === mode.id}
-            <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          {/if}
-        </button>
-      {/if}
-    {/each}
+        {/if}
+      {/each}
+    {/if}
   </div>
 {/if}
 

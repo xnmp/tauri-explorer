@@ -1,6 +1,6 @@
 <!--
-  FileList component - Windows 11 Fluent Design
-  Issue: tauri-explorer-iw0, tauri-explorer-x25, tauri-explorer-as45, tauri-explorer-1k9k, tauri-explorer-im3m
+  FileList component - View mode dispatcher with shared interaction logic.
+  Issue: tauri-explorer-iw0, tauri-explorer-x25, tauri-explorer-as45, tauri-explorer-1k9k, tauri-explorer-im3m, tauri-explorer-9djf.5
 -->
 <script lang="ts">
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
@@ -8,20 +8,14 @@
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { openFile, openImageWithSiblings } from "$lib/api/files";
   import { dragState } from "$lib/state/drag.svelte";
-  import { getDropSourcePath, handleFileDrop, handleBackgroundDrop } from "$lib/state/drop-operations";
-  import FileItem from "./FileItem.svelte";
-  import FileIcon from "./FileIcon.svelte";
-  import VirtualList from "./VirtualList.svelte";
-  import ThumbnailImage from "./ThumbnailImage.svelte";
-  import ToastOverlay from "./ToastOverlay.svelte";
-  import InlineNewFolder from "./InlineNewFolder.svelte";
-  import { useColumnResize } from "$lib/composables/use-column-resize.svelte";
+  import { getDropSourcePath, handleBackgroundDrop } from "$lib/state/drop-operations";
   import { useMarqueeSelection } from "$lib/composables/use-marquee-selection.svelte";
   import { useTypeAhead } from "$lib/composables/use-type-ahead.svelte";
-  import { getFileIconColor, isImageFile } from "$lib/domain/file-types";
-  import { settingsStore } from "$lib/state/settings.svelte";
-  import { dialogStore } from "$lib/state/dialogs.svelte";
-  import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
+  import { isImageFile } from "$lib/domain/file-types";
+  import DetailsView from "./DetailsView.svelte";
+  import ListView from "./ListView.svelte";
+  import TilesView from "./TilesView.svelte";
+  import ToastOverlay from "./ToastOverlay.svelte";
 
   import type { FileEntry } from "$lib/domain/file";
 
@@ -31,7 +25,6 @@
 
   let { explorer }: Props = $props();
 
-  // Get pane context for cross-pane operations
   const paneNav = getPaneNavigationContext();
 
   // Drop target state for dropping files into current directory
@@ -40,15 +33,9 @@
   // Content container ref
   let contentRef = $state<HTMLElement | null>(null);
 
-  // Compute effective list column count (auto or fixed)
+  // Track content width for ListView auto columns
   let contentWidth = $state(0);
-  const effectiveListColumns = $derived.by(() => {
-    if (settingsStore.listViewColumns > 0) return settingsStore.listViewColumns;
-    if (contentWidth <= 0) return 1;
-    return Math.max(1, Math.min(6, Math.floor(contentWidth / settingsStore.listColumnMaxWidth)));
-  });
 
-  // Track content width for auto columns
   $effect(() => {
     if (!contentRef) return;
     const observer = new ResizeObserver((entries) => {
@@ -56,36 +43,6 @@
     });
     observer.observe(contentRef);
     return () => observer.disconnect();
-  });
-
-  // Column resize composable
-  const columnResize = useColumnResize(undefined, () => settingsStore.columnVisibility);
-
-  // Column header context menu state
-  let columnMenuPos = $state<{ x: number; y: number } | null>(null);
-
-  function handleColumnHeaderContextMenu(event: MouseEvent) {
-    event.preventDefault();
-    columnMenuPos = { x: event.clientX, y: event.clientY };
-  }
-
-  function closeColumnMenu() {
-    columnMenuPos = null;
-  }
-
-
-  // Inline rename composable for list/tiles views (FileItem handles details view)
-  const rename = useInlineRename(() => explorer);
-
-  // Only handle rename for non-details views
-  const renamingEntry = $derived(
-    explorer.viewMode !== "details" ? dialogStore.renamingEntry : null,
-  );
-
-  $effect(() => {
-    if (renamingEntry && rename.renameInputRef) {
-      rename.focusAndSelect(renamingEntry);
-    }
   });
 
   // Marquee selection composable
@@ -97,42 +54,9 @@
     (entry) => explorer.selectEntry(entry, {}),
   );
 
-  // Progressive rendering for tiles view to avoid UI freeze
-  const TILE_CHUNK = 60;
-  let tileRenderLimit = $state(TILE_CHUNK);
-  let tileRafId: number | null = null;
-
-  // Reset and progressively render tiles when entries or view mode change
-  $effect(() => {
-    // Track dependencies
-    const entries = explorer.displayEntries;
-    const mode = explorer.viewMode;
-
-    if (tileRafId) cancelAnimationFrame(tileRafId);
-
-    if (mode !== "tiles" || entries.length <= TILE_CHUNK) {
-      tileRenderLimit = entries.length;
-      return;
-    }
-
-    tileRenderLimit = TILE_CHUNK;
-
-    function renderMore() {
-      tileRenderLimit = Math.min(tileRenderLimit + TILE_CHUNK, entries.length);
-      if (tileRenderLimit < entries.length) {
-        tileRafId = requestAnimationFrame(renderMore);
-      }
-    }
-    tileRafId = requestAnimationFrame(renderMore);
-
-    return () => {
-      if (tileRafId) cancelAnimationFrame(tileRafId);
-    };
-  });
-
-  const visibleTileEntries = $derived(
-    explorer.displayEntries.slice(0, tileRenderLimit)
-  );
+  // ===================
+  // Shared item callbacks (passed to view components)
+  // ===================
 
   function handleClick(entry: FileEntry, event: MouseEvent): void {
     explorer.selectEntry(entry, {
@@ -156,12 +80,31 @@
     }
   }
 
+  // ===================
+  // Background interaction handlers
+  // ===================
+
   function handleBackgroundClick(event: MouseEvent): void {
-    // Only clear selection on click if not ending a drag
     if (marquee.isBackgroundClick(event.target as HTMLElement) && !marquee.isDragging && !marquee.dragJustEnded) {
       explorer.clearSelection();
     }
   }
+
+  function handleBackgroundContextMenu(event: MouseEvent): void {
+    if (marquee.isBackgroundClick(event.target as HTMLElement)) {
+      event.preventDefault();
+      explorer.clearSelection();
+      explorer.openContextMenu(event.clientX, event.clientY);
+    }
+  }
+
+  function handleKeydown(event: KeyboardEvent): void {
+    typeAhead.handleKeydown(event);
+  }
+
+  // ===================
+  // Marquee selection
+  // ===================
 
   /** Header height for marquee clamping: 32px for details (column headers), 0 for list/tiles */
   function marqueeHeaderHeight(): number {
@@ -193,10 +136,8 @@
 
     let indices: number[];
     if (explorer.viewMode === "tiles") {
-      // Tiles use CSS grid - need DOM-based hit testing
       indices = marquee.getSelectedIndicesFromDOM(contentRef, ".tile-item");
     } else if (explorer.viewMode === "list") {
-      // List view has variable item height and no column headers - use DOM-based hit testing
       indices = marquee.getSelectedIndicesFromDOM(contentRef, ".list-item");
     } else {
       const scrollTop = contentRef.querySelector('.virtual-viewport')?.scrollTop ?? 0;
@@ -205,87 +146,13 @@
     explorer.selectByIndices(indices, marquee.ctrlKeyHeld);
   }
 
-  function handleBackgroundContextMenu(event: MouseEvent): void {
-    if (marquee.isBackgroundClick(event.target as HTMLElement)) {
-      event.preventDefault();
-      explorer.clearSelection();
-      explorer.openContextMenu(event.clientX, event.clientY);
-    }
-  }
-
-  /** Context menu handler for list/tiles items (Details view uses FileItem's own handler) */
-  function handleItemContextMenu(event: MouseEvent, entry: FileEntry): void {
-    event.preventDefault();
-    event.stopPropagation();
-    if (!explorer.isSelected(entry)) {
-      explorer.selectEntry(entry, {});
-    }
-    explorer.openContextMenu(event.clientX, event.clientY, entry);
-  }
-
   // ===================
-  // Drag handlers for list/tiles views (Details view uses FileItem's own handlers)
+  // Background drop handlers (dropping into current directory)
   // ===================
 
-  /** Per-entry drop target state, keyed by path */
-  let dropTargets = $state<Record<string, boolean>>({});
-  let copyDropTargets = $state<Record<string, boolean>>({});
-
-  function handleItemDragEnd(): void {
-    dragState.clear();
-    paneNav?.refreshAllPanes();
-  }
-
-  function handleItemDragStart(event: DragEvent, entry: FileEntry): void {
-    if (!event.dataTransfer) return;
-    event.dataTransfer.setData("application/x-explorer-path", entry.path);
-    event.dataTransfer.setData("application/x-explorer-name", entry.name);
-    event.dataTransfer.setData("application/x-explorer-kind", entry.kind);
-    event.dataTransfer.effectAllowed = "all";
-    dragState.start({ path: entry.path, name: entry.name, kind: entry.kind });
-  }
-
-  function handleItemDragOver(event: DragEvent, entry: FileEntry): void {
-    if (entry.kind !== "directory") return;
-    // Accept if dataTransfer has our type, OR if there's cross-window drag data
-    if (!event.dataTransfer?.types.includes("application/x-explorer-path") && !dragState.readCrossWindow()) return;
-    event.preventDefault();
-    const copying = event.ctrlKey;
-    if (event.dataTransfer) event.dataTransfer.dropEffect = copying ? "copy" : "move";
-    dropTargets[entry.path] = true;
-    copyDropTargets[entry.path] = copying;
-  }
-
-  function handleItemDragLeave(entry: FileEntry): void {
-    dropTargets[entry.path] = false;
-    copyDropTargets[entry.path] = false;
-  }
-
-  async function handleItemDrop(event: DragEvent, entry: FileEntry): Promise<void> {
-    event.preventDefault();
-    dropTargets[entry.path] = false;
-    copyDropTargets[entry.path] = false;
-    if (entry.kind !== "directory" || !event.dataTransfer) return;
-
-    const sourcePath = getDropSourcePath(event.dataTransfer);
-    if (!sourcePath || sourcePath === entry.path) return;
-    if (entry.path.startsWith(sourcePath + "/")) return;
-
-    await handleFileDrop(sourcePath, entry.path, event.ctrlKey, {
-      onRefresh: () => paneNav?.refreshAllPanes(),
-    });
-  }
-
-  function handleKeydown(event: KeyboardEvent): void {
-    typeAhead.handleKeydown(event);
-  }
-
-  // Drop handlers for dropping files into current directory
   function handleListDragOver(event: DragEvent): void {
-    // Accept if dataTransfer has our type, OR if there's cross-window drag data
     if (!event.dataTransfer?.types.includes("application/x-explorer-path") && !dragState.readCrossWindow()) return;
 
-    // Check if target is a file item (let FileItem handle its own drops)
     const target = event.target as HTMLElement;
     if (target.closest(".file-item")) return;
 
@@ -295,7 +162,6 @@
   }
 
   function handleListDragLeave(event: DragEvent): void {
-    // Only clear if leaving the file list entirely
     const relatedTarget = event.relatedTarget as HTMLElement | null;
     if (relatedTarget && contentRef?.contains(relatedTarget)) return;
     isDropTarget = false;
@@ -304,7 +170,6 @@
   async function handleListDrop(event: DragEvent): Promise<void> {
     isDropTarget = false;
 
-    // Check if target is a file item (let FileItem handle its own drops)
     const target = event.target as HTMLElement;
     if (target.closest(".file-item")) return;
 
@@ -313,7 +178,6 @@
     const sourcePath = getDropSourcePath(event.dataTransfer);
     if (!sourcePath) return;
 
-    // Don't allow dropping into the same directory it's already in
     const currentPath = explorer.currentPath;
     const sourceDir = sourcePath.substring(0, sourcePath.lastIndexOf("/"));
     if (sourceDir === currentPath) return;
@@ -330,10 +194,10 @@
   }
 </script>
 
-<!-- Global mouse events for marquee and column resize -->
+<!-- Global mouse events for marquee -->
 <svelte:window
-  onmousemove={(e) => { handleMarqueeMove(e); columnResize.handleResize(e); }}
-  onmouseup={() => { handleMarqueeEnd(); columnResize.endResize(); }}
+  onmousemove={(e) => { handleMarqueeMove(e); }}
+  onmouseup={() => { handleMarqueeEnd(); }}
   onblur={() => { if (marquee.isDragging) marquee.end(); }}
   onpointercancel={() => { if (marquee.isDragging) marquee.end(); }}
   ondragstart={() => { if (marquee.isDragging) marquee.end(); }}
@@ -341,7 +205,6 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="file-list" onkeydown={handleKeydown} onclick={handleBackgroundClick} oncontextmenu={handleBackgroundContextMenu} tabindex="-1">
-  <!-- Main content with column headers -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="content"
@@ -375,225 +238,24 @@
         <span>This folder is empty</span>
       </div>
     {:else if explorer.viewMode === "details"}
-      <!-- Details View with Column Headers -->
-      <div class="details-view" class:resizing={columnResize.isResizing} style="--col-name: {columnResize.columnWidths.name}px; --col-date: {columnResize.columnWidths.date}px; --col-type: {columnResize.columnWidths.type}px; --col-size: {columnResize.columnWidths.size}px; --details-grid-columns: {columnResize.gridTemplateColumns};">
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="column-headers" style="grid-template-columns: {columnResize.gridTemplateColumns};" oncontextmenu={handleColumnHeaderContextMenu}>
-          <div class="column-header-wrapper">
-            <button
-              class="column-header name-column"
-              onclick={() => explorer.setSorting("name")}
-              class:active={explorer.sortBy === "name"}
-            >
-              <span>Name</span>
-              {#if explorer.sortBy === "name"}
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="sort-indicator">
-                  {#if explorer.sortAscending}
-                    <path d="M5 2V8M5 2L2 5M5 2L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-                  {:else}
-                    <path d="M5 8V2M5 8L2 5M5 8L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-                  {/if}
-                </svg>
-              {/if}
-            </button>
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="column-resize-handle" onmousedown={(e) => columnResize.startResize("name", e)}></div>
-          </div>
-          {#if settingsStore.columnVisibility.date}
-          <div class="column-header-wrapper">
-            <button
-              class="column-header date-column"
-              onclick={() => explorer.setSorting("modified")}
-              class:active={explorer.sortBy === "modified"}
-            >
-              <span>Date modified</span>
-              {#if explorer.sortBy === "modified"}
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="sort-indicator">
-                  {#if explorer.sortAscending}
-                    <path d="M5 2V8M5 2L2 5M5 2L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-                  {:else}
-                    <path d="M5 8V2M5 8L2 5M5 8L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-                  {/if}
-                </svg>
-              {/if}
-            </button>
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="column-resize-handle" onmousedown={(e) => columnResize.startResize("date", e)}></div>
-          </div>
-          {/if}
-          {#if settingsStore.columnVisibility.type}
-          <div class="column-header-wrapper">
-            <div class="column-header type-column">
-              <span>Type</span>
-            </div>
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="column-resize-handle" onmousedown={(e) => columnResize.startResize("type", e)}></div>
-          </div>
-          {/if}
-          {#if settingsStore.columnVisibility.size}
-          <div class="column-header-wrapper">
-            <button
-              class="column-header size-column"
-              onclick={() => explorer.setSorting("size")}
-              class:active={explorer.sortBy === "size"}
-            >
-              <span>Size</span>
-              {#if explorer.sortBy === "size"}
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" class="sort-indicator">
-                  {#if explorer.sortAscending}
-                    <path d="M5 2V8M5 2L2 5M5 2L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-                  {:else}
-                    <path d="M5 8V2M5 8L2 5M5 8L8 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-                  {/if}
-                </svg>
-              {/if}
-            </button>
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div class="column-resize-handle" onmousedown={(e) => columnResize.startResize("size", e)}></div>
-          </div>
-          {/if}
-        </div>
-
-        <!-- Column visibility context menu -->
-        {#if columnMenuPos}
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="column-menu-backdrop" onclick={closeColumnMenu} oncontextmenu={(e) => { e.preventDefault(); closeColumnMenu(); }}></div>
-          <div class="column-menu" style="left: {columnMenuPos.x}px; top: {columnMenuPos.y}px;">
-            <button class="column-menu-item" onclick={() => { settingsStore.toggleColumn("date"); closeColumnMenu(); }}>
-              <span class="column-menu-check">{settingsStore.columnVisibility.date ? "✓" : ""}</span>
-              Date modified
-            </button>
-            <button class="column-menu-item" onclick={() => { settingsStore.toggleColumn("type"); closeColumnMenu(); }}>
-              <span class="column-menu-check">{settingsStore.columnVisibility.type ? "✓" : ""}</span>
-              Type
-            </button>
-            <button class="column-menu-item" onclick={() => { settingsStore.toggleColumn("size"); closeColumnMenu(); }}>
-              <span class="column-menu-check">{settingsStore.columnVisibility.size ? "✓" : ""}</span>
-              Size
-            </button>
-          </div>
-        {/if}
-
-        {#if explorer.isCreatingFolder}
-          <InlineNewFolder {explorer} variant="details" />
-        {/if}
-
-        <VirtualList
-          items={explorer.displayEntries}
-          itemHeight={32}
-          getKey={(entry) => entry.path}
-        >
-          {#snippet children(entry, index)}
-            <FileItem
-              {entry}
-              {explorer}
-              onclick={(event) => handleClick(entry, event)}
-              ondblclick={() => handleDoubleClick(entry)}
-              selected={explorer.isSelected(entry)}
-            />
-          {/snippet}
-        </VirtualList>
-      </div>
+      <DetailsView
+        {explorer}
+        onitemclick={handleClick}
+        onitemdblclick={handleDoubleClick}
+      />
     {:else if explorer.viewMode === "list"}
-      <!-- Compact List View -->
-      {@const totalItems = explorer.displayEntries.length + (explorer.isCreatingFolder ? 1 : 0)}
-      {@const listRows = Math.ceil(totalItems / effectiveListColumns)}
-      <div class="list-view file-rows" style="--list-columns: {effectiveListColumns}; --list-rows: {listRows};">
-        {#if explorer.isCreatingFolder}
-          <InlineNewFolder {explorer} variant="list" />
-        {/if}
-        {#each explorer.displayEntries as entry (entry.path)}
-          <button
-            class="list-item entry-item"
-            class:directory={entry.kind === "directory"}
-            class:selected={explorer.isSelected(entry)}
-            class:drop-target={dropTargets[entry.path]}
-            class:copy-drop={copyDropTargets[entry.path]}
-            draggable="true"
-            onclick={(e) => handleClick(entry, e)}
-            ondblclick={() => handleDoubleClick(entry)}
-            oncontextmenu={(e) => handleItemContextMenu(e, entry)}
-            ondragstart={(e) => handleItemDragStart(e, entry)}
-            ondragend={handleItemDragEnd}
-            ondragover={(e) => handleItemDragOver(e, entry)}
-            ondragleave={() => handleItemDragLeave(entry)}
-            ondrop={(e) => handleItemDrop(e, entry)}
-          >
-            <span class="list-icon" style:color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined}>
-              <FileIcon {entry} size="small" />
-            </span>
-            {#if renamingEntry?.path === entry.path}
-              <!-- svelte-ignore a11y_autofocus -->
-              <input
-                type="text"
-                class="rename-input"
-                class:error={!!rename.renameError}
-                bind:value={rename.editedName}
-                bind:this={rename.renameInputRef}
-                onkeydown={(e) => rename.handleRenameKeydown(e, entry.name)}
-                onblur={() => rename.handleRenameBlur(entry.name)}
-                onclick={(e) => e.stopPropagation()}
-                disabled={rename.submittingRename}
-                autofocus
-              />
-            {:else}
-              <span class="list-name entry-name">{entry.name}</span>
-            {/if}
-          </button>
-        {/each}
-
-      </div>
+      <ListView
+        {explorer}
+        {contentWidth}
+        onitemclick={handleClick}
+        onitemdblclick={handleDoubleClick}
+      />
     {:else}
-      <!-- Tiles View (Grid) - progressively rendered to avoid UI freeze -->
-      <div class="tiles-view file-rows">
-        {#if explorer.isCreatingFolder}
-          <InlineNewFolder {explorer} variant="tiles" />
-        {/if}
-        {#each visibleTileEntries as entry (entry.path)}
-          {@const iconColor = getFileIconColor(entry)}
-          <button
-            class="tile-item entry-item"
-            class:directory={entry.kind === "directory"}
-            class:selected={explorer.isSelected(entry)}
-            class:drop-target={dropTargets[entry.path]}
-            class:copy-drop={copyDropTargets[entry.path]}
-            draggable="true"
-            onclick={(e) => handleClick(entry, e)}
-            ondblclick={() => handleDoubleClick(entry)}
-            oncontextmenu={(e) => handleItemContextMenu(e, entry)}
-            ondragstart={(e) => handleItemDragStart(e, entry)}
-            ondragend={handleItemDragEnd}
-            ondragover={(e) => handleItemDragOver(e, entry)}
-            ondragleave={() => handleItemDragLeave(entry)}
-            ondrop={(e) => handleItemDrop(e, entry)}
-          >
-            <div class="tile-icon" style:color={iconColor}>
-              {#if isImageFile(entry)}
-                <ThumbnailImage path={entry.path} size={64} fallbackColor={iconColor} />
-              {:else}
-                <FileIcon {entry} size="large" />
-              {/if}
-            </div>
-            {#if renamingEntry?.path === entry.path}
-              <!-- svelte-ignore a11y_autofocus -->
-              <textarea
-                class="rename-input tile-rename"
-                class:error={!!rename.renameError}
-                bind:value={rename.editedName}
-                bind:this={rename.renameInputRef}
-                onkeydown={(e) => rename.handleRenameKeydown(e, entry.name)}
-                onblur={() => rename.handleRenameBlur(entry.name)}
-                onclick={(e) => e.stopPropagation()}
-                disabled={rename.submittingRename}
-                rows="2"
-                autofocus
-              ></textarea>
-            {:else}
-              <span class="tile-name entry-name" title={entry.name}>{entry.name}</span>
-            {/if}
-          </button>
-        {/each}
-      </div>
+      <TilesView
+        {explorer}
+        onitemclick={handleClick}
+        onitemdblclick={handleDoubleClick}
+      />
     {/if}
 
     <!-- Marquee selection rectangle -->
@@ -644,91 +306,6 @@
     border-radius: 2px;
     pointer-events: none;
     z-index: 10;
-  }
-
-  /* Details View */
-  .details-view {
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-width: fit-content;
-  }
-
-  .column-headers {
-    display: grid;
-    gap: 0;
-    padding: 6px 16px;
-    background: var(--background-solid);
-    border-bottom: 1px solid var(--divider);
-    position: sticky;
-    top: 0;
-    z-index: 5;
-  }
-
-  .column-header-wrapper {
-    display: flex;
-    align-items: center;
-    position: relative;
-  }
-
-  .column-resize-handle {
-    position: absolute;
-    right: -4px;
-    top: 0;
-    width: 8px;
-    height: 100%;
-    cursor: col-resize;
-    z-index: 10;
-  }
-
-  .column-resize-handle:hover,
-  .details-view.resizing .column-resize-handle {
-    background: var(--accent);
-    opacity: 0.3;
-  }
-
-  .details-view.resizing {
-    cursor: col-resize;
-    user-select: none;
-  }
-
-  .column-header {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 8px;
-    background: transparent;
-    border: none;
-    border-radius: 3px;
-    font-family: inherit;
-    font-size: var(--font-size-caption);
-    font-weight: var(--font-weight-semibold);
-    color: var(--text-tertiary);
-    text-transform: uppercase;
-    letter-spacing: var(--letter-spacing-wide);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    text-align: left;
-    flex: 1;
-    min-width: 0;
-  }
-
-  .column-header:hover {
-    background: var(--subtle-fill-secondary);
-    color: var(--text-primary);
-  }
-
-  .column-header.active {
-    color: var(--text-primary);
-  }
-
-  .column-header:focus-visible {
-    outline: 2px solid var(--focus-stroke-outer);
-    outline-offset: -2px;
-  }
-
-  .sort-indicator {
-    opacity: 0.7;
   }
 
   /* Status states */
@@ -783,236 +360,4 @@
   @keyframes spin {
     to { transform: rotate(360deg); }
   }
-
-  /* List View */
-  .list-view {
-    display: grid;
-    grid-template-rows: repeat(var(--list-rows, 1), auto);
-    grid-auto-flow: column;
-    grid-auto-columns: 1fr;
-    gap: 4px;
-    padding: 8px;
-    overflow-y: auto;
-    flex: 1;
-    align-content: start;
-  }
-
-  .list-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 8px;
-    width: 100%;
-    background: transparent;
-    border: 1px solid transparent;
-    border-left-width: var(--selection-indicator-width);
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    text-align: left;
-    font-family: inherit;
-    font-size: 13px;
-    color: var(--text-primary);
-    transition: background var(--transition-fast);
-  }
-
-  .list-item:focus {
-    outline: none;
-  }
-
-  .list-item:hover {
-    background: var(--subtle-fill-secondary);
-  }
-
-  .list-item.selected {
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
-    border-color: transparent;
-    border-left-color: var(--accent);
-  }
-
-  .list-item.drop-target {
-    background: rgba(0, 120, 212, 0.15);
-    box-shadow: inset 0 0 0 1px var(--accent);
-  }
-
-  .list-item.drop-target.copy-drop {
-    background: rgba(16, 185, 129, 0.15);
-    box-shadow: inset 0 0 0 1px #10b981;
-  }
-
-  .list-icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
-  }
-
-  .list-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  /* Tiles View */
-  .tiles-view {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
-    grid-auto-rows: min-content;
-    align-content: start;
-    gap: 6px;
-    padding: 12px;
-    overflow-y: auto;
-    flex: 1;
-  }
-
-  .tile-item:focus {
-    outline: none;
-  }
-
-  .tile-item {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    padding: 12px 8px 10px;
-    background: transparent;
-    border: 1px solid transparent;
-    border-bottom-width: var(--selection-indicator-width);
-    border-radius: var(--radius-md);
-    cursor: pointer;
-    text-align: center;
-    font-family: inherit;
-    font-size: 13px;
-    color: var(--text-primary);
-    transition: background 120ms ease;
-    height: fit-content;
-    min-width: 0;
-  }
-
-  .tile-item:hover {
-    background: var(--subtle-fill-secondary);
-  }
-
-  .tile-item:active {
-    transform: scale(0.97);
-  }
-
-  .tile-item.selected {
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
-    border-color: transparent;
-    border-bottom-color: var(--accent);
-    border-radius: var(--radius-md) var(--radius-md) 2px 2px;
-  }
-
-  .tile-item.selected:hover {
-    background: var(--subtle-fill-tertiary);
-  }
-
-  .tile-item.drop-target {
-    background: rgba(0, 120, 212, 0.15);
-    box-shadow: inset 0 0 0 1px var(--accent);
-  }
-
-  .tile-item.drop-target.copy-drop {
-    background: rgba(16, 185, 129, 0.15);
-    box-shadow: inset 0 0 0 1px #10b981;
-  }
-
-  .tile-icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 64px;
-    height: 64px;
-    flex-shrink: 0;
-  }
-
-  .tile-name {
-    width: 100%;
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    text-overflow: ellipsis;
-    white-space: normal;
-    line-height: 1.4;
-    word-break: break-word;
-    overflow-wrap: break-word;
-    padding-top: 1px;
-  }
-
-  /* Inline rename input for list/tiles views */
-  .rename-input {
-    flex: 1;
-    min-width: 0;
-    padding: 2px 6px;
-    background: var(--control-fill);
-    border: 1px solid var(--accent);
-    border-radius: var(--radius-sm);
-    font: inherit;
-    font-size: var(--font-size-body);
-    color: var(--text-primary);
-    outline: none;
-  }
-
-  .rename-input.error {
-    border-color: var(--system-critical);
-  }
-
-  .rename-input.tile-rename {
-    width: 100%;
-    text-align: center;
-    resize: none;
-    line-height: 1.4;
-    word-break: break-word;
-    overflow-wrap: break-word;
-    font-size: 13px;
-  }
-
-  /* Column visibility context menu */
-  .column-menu-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 99;
-  }
-
-  .column-menu {
-    position: fixed;
-    z-index: 100;
-    background: var(--background-solid);
-    border: 1px solid var(--surface-stroke-flyout);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-flyout);
-    padding: 4px;
-    min-width: 160px;
-  }
-
-  .column-menu-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 6px 10px;
-    background: none;
-    border: none;
-    border-radius: var(--radius-sm);
-    color: var(--text-primary);
-    font-family: inherit;
-    font-size: var(--font-size-body);
-    cursor: pointer;
-    text-align: left;
-  }
-
-  .column-menu-item:hover {
-    background: var(--subtle-fill-secondary);
-  }
-
-  .column-menu-check {
-    width: 16px;
-    text-align: center;
-    color: var(--accent);
-    font-size: 12px;
-  }
-
 </style>

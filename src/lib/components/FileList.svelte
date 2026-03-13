@@ -920,6 +920,7 @@
     transition: background 120ms ease;
     height: fit-content;
     min-width: 0;
+    overflow: hidden;
   }
 
   .tile-item:hover {

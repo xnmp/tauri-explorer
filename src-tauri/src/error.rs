@@ -34,7 +34,19 @@ impl Serialize for AppError {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.to_string())
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(2))?;
+        let kind = match self {
+            AppError::NotFound(_) => "not_found",
+            AppError::PermissionDenied(_) => "permission_denied",
+            AppError::AlreadyExists(_) => "already_exists",
+            AppError::InvalidPath(_) => "invalid_path",
+            AppError::Io(_) => "io",
+            AppError::Other(_) => "other",
+        };
+        map.serialize_entry("kind", kind)?;
+        map.serialize_entry("message", &self.to_string())?;
+        map.end()
     }
 }
 

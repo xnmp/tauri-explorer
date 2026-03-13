@@ -388,18 +388,27 @@ pub fn move_entry(source: String, dest_dir: String, overwrite: Option<bool>) -> 
     }
 
     // Try a simple rename first (works if same filesystem)
-    if fs::rename(&source_path, &target).is_err() {
-        // Fall back to copy + delete for cross-filesystem moves
-        if source_path.is_dir() {
-            fs::create_dir_all(&target)?;
-            let mut options = fs_extra::dir::CopyOptions::new();
-            options.content_only = true;
-            fs_extra::dir::copy(&source_path, &target, &options)
-                .map_err(|e| AppError::Other(e.to_string()))?;
-            fs::remove_dir_all(&source_path)?;
-        } else {
-            fs::copy(&source_path, &target)?;
-            fs::remove_file(&source_path)?;
+    match fs::rename(&source_path, &target) {
+        Ok(()) => {}
+        Err(e) => {
+            // Only fall back to copy+delete for cross-filesystem moves (EXDEV).
+            // Other errors (permission denied, etc.) should be returned immediately.
+            let is_cross_device = e.raw_os_error() == Some(libc::EXDEV);
+            if !is_cross_device {
+                return Err(AppError::Io(e));
+            }
+            // Fall back to copy + delete for cross-filesystem moves
+            if source_path.is_dir() {
+                fs::create_dir_all(&target)?;
+                let mut options = fs_extra::dir::CopyOptions::new();
+                options.content_only = true;
+                fs_extra::dir::copy(&source_path, &target, &options)
+                    .map_err(|e| AppError::Other(e.to_string()))?;
+                fs::remove_dir_all(&source_path)?;
+            } else {
+                fs::copy(&source_path, &target)?;
+                fs::remove_file(&source_path)?;
+            }
         }
     }
 

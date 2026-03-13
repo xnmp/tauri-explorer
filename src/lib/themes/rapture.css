@@ -19,6 +19,9 @@
   --theme-description: "Deep navy with pastel neon accents";
   --theme-order: 4;
 
+  /* Font override */
+  --font-family: "Ubuntu Mono", "JetBrains Mono", monospace;
+
   /* Accent colors - cyan from the Rapture palette */
   --accent: #64e0ff;
   --accent-light: #7afde1;

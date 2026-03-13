@@ -19,6 +19,9 @@
   --theme-description: "Deep navy with warm coral sunrise accents";
   --theme-order: 9;
 
+  /* Font override */
+  --font-family: "Ubuntu Mono", "JetBrains Mono", monospace;
+
   /* Accent colors - warm coral from the sunrise */
   --accent: #d4607a;
   --accent-light: #e87898;

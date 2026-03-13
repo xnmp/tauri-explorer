@@ -251,12 +251,30 @@ export function isImageFile(entry: FileEntry): boolean {
   return THUMBNAIL_EXTENSIONS.has(ext);
 }
 
+/** Labels for well-known extensionless files */
+const EXTENSIONLESS_LABELS: Record<string, string> = {
+  "Dockerfile": "DOCK",
+  "Makefile": "MAKE",
+  "Vagrantfile": "VGRNT",
+  "Procfile": "PROC",
+  "Rakefile": "RAKE",
+  "Gemfile": "GEM",
+  "Brewfile": "BREW",
+  "Justfile": "JUST",
+  "CMakeLists.txt": "CMAKE",
+  "PKGBUILD": "PKG",
+};
+
+/** Max characters for an extension label before truncating */
+const MAX_EXT_LABEL_LENGTH = 5;
+
 /** Get uppercase extension label for display on file icons (e.g. "TS", "JSON") */
 export function getFileExtensionLabel(entry: FileEntry): string {
   if (entry.kind === "directory") return "";
   const ext = getExtension(entry.name);
-  if (!ext) return "";
-  return ext.toUpperCase();
+  if (!ext) return EXTENSIONLESS_LABELS[entry.name] ?? "";
+  const label = ext.toUpperCase();
+  if (label.length > MAX_EXT_LABEL_LENGTH) return label.slice(0, MAX_EXT_LABEL_LENGTH);
 }
 
 /** Check if a file is a text/code file that can be previewed */

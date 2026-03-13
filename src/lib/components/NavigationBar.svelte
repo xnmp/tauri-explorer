@@ -211,6 +211,30 @@
     cancelPathEdit();
   }
 
+  // Filter input
+  let filterInputRef = $state<HTMLInputElement | null>(null);
+  let localFilter = $state("");
+
+  $effect(() => {
+    if (explorer.showFilter && filterInputRef) {
+      localFilter = explorer.filterQuery;
+      tick().then(() => filterInputRef?.focus());
+    }
+  });
+
+  function handleFilterInput() {
+    explorer.setFilter(localFilter);
+  }
+
+  function handleFilterKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      localFilter = "";
+      explorer.closeFilter();
+    }
+  }
+
 </script>
 
 <div class="navigation-bar">
@@ -377,6 +401,33 @@
 
     {/if}
   </div>
+
+  {#if explorer.showFilter}
+    <div class="filter-bar">
+      <svg class="filter-icon" width="14" height="14" viewBox="0 0 16 16" fill="none">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <input
+        type="text"
+        class="filter-input"
+        bind:value={localFilter}
+        bind:this={filterInputRef}
+        oninput={handleFilterInput}
+        onkeydown={handleFilterKeydown}
+        placeholder="Filter..."
+        autocomplete="off"
+        spellcheck="false"
+      />
+      {#if localFilter}
+        <button class="filter-clear" onclick={() => { localFilter = ""; explorer.closeFilter(); }} aria-label="Clear filter">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path d="M3 3L9 9M9 3L3 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -653,5 +704,62 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* Filter bar */
+  .filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    padding: 2px 8px;
+    background: var(--control-fill);
+    border: 1px solid var(--control-stroke);
+    border-radius: var(--radius-sm);
+    animation: filterIn 150ms cubic-bezier(0, 0, 0, 1);
+  }
+
+  @keyframes filterIn {
+    from { opacity: 0; width: 0; padding: 0; }
+    to { opacity: 1; }
+  }
+
+  .filter-icon {
+    color: var(--text-tertiary);
+    flex-shrink: 0;
+  }
+
+  .filter-input {
+    width: 120px;
+    padding: 2px 4px;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: var(--font-size-caption);
+  }
+
+  .filter-input::placeholder {
+    color: var(--text-tertiary);
+  }
+
+  .filter-clear {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-tertiary);
+    cursor: pointer;
+  }
+
+  .filter-clear:hover {
+    background: var(--subtle-fill-secondary);
+    color: var(--text-primary);
   }
 </style>

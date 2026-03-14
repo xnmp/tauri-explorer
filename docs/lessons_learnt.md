@@ -417,6 +417,16 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## User Theme `--font-family` Can Break Input Rendering in WebKitGTK
+
+**Key takeaways:**
+- Setting `--font-family: "JetBrains Mono", monospace` in a user theme CSS file caused input text and caret to become invisible in the command palette and address bar. Removing the variable restored normal behavior.
+- The root cause: "JetBrains Mono" (plain) was not installed — only the Nerd Font patched variant "JetBrainsMono Nerd Font" (no space, different name). The CSS fell back to generic `monospace`, which triggered a WebKitGTK rendering bug where inputs lose their caret and typed text.
+- **Always use the exact `fc-list` font family name** in CSS, not the upstream project name. Nerd Font variants use concatenated names (e.g., `"JetBrainsMono Nerd Font"` not `"JetBrains Mono"`).
+- User theme CSS variables (`--font-family`, `--selection-bg`, etc.) defined in `[data-theme="..."]` selectors do cascade correctly to the app — the issue was purely a font resolution failure triggering a WebKitGTK input rendering bug.
+
+---
+
 ## tauri-explorer-r5yc: Tilde expansion in QuickOpen and address bar
 
 **Key takeaways:**

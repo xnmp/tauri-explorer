@@ -5,12 +5,8 @@
 * Code with TDD in mind - where possible use a test suite and write tests before implementation.
 
 ## Documentation
-* **Start at [docs/INDEX.md](docs/INDEX.md)** — it's the table of contents for all documentation.
-* Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — full feature→file map, data flow, component tree.
-* Product specs: `docs/product-specs/` — requirements and design principles.
-* Design decisions: `docs/design-docs/` — architectural rationale and knowledge base.
-* Execution plans: `docs/exec-plans/active/` (current) and `docs/exec-plans/completed/` (done).
-* Reference material: `docs/references/` — dependency docs, codebase maps, test patterns.
+* **Start at [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — slim map with architecture diagram and pointers to deep references.
+* Deep references in `docs/architecture/`: [backend](docs/architecture/backend.md), [frontend](docs/architecture/frontend.md), [components](docs/architecture/components.md), [features](docs/architecture/features.md), [cross-cutting](docs/architecture/cross-cutting.md).
 * Lessons learnt: [docs/lessons_learnt.md](docs/lessons_learnt.md) — gotchas from closed issues.
 
 ## Multi-Worktree Setup

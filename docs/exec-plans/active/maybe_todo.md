@@ -1,1 +1,0 @@
-* the forward/backward shortcuts are no longer working

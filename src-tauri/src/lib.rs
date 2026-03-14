@@ -140,19 +140,22 @@ pub fn run(launch_dir: Option<String>) {
     tauri::Builder::default()
         .manage(LaunchCwd(launch_cwd_for_state))
         .plugin({
-            let mut log_builder = tauri_plugin_log::Builder::new()
+            let mut targets = vec![
+                Target::new(TargetKind::LogDir { file_name: None }),
+                Target::new(TargetKind::Webview),
+            ];
+            if cfg!(debug_assertions) {
+                targets.push(Target::new(TargetKind::Stdout));
+            }
+            tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Warn) // third-party crates: warn only
                 .level_for("tauri_explorer", app_log_level)
                 .level_for("tauri_explorer_lib", app_log_level)
                 .rotation_strategy(RotationStrategy::KeepSome(7))
                 .max_file_size(10 * 1024 * 1024) // 10 MB
                 .timezone_strategy(TimezoneStrategy::UseLocal)
-                .target(Target::new(TargetKind::LogDir { file_name: None }))
-                .target(Target::new(TargetKind::Webview));
-            if cfg!(debug_assertions) {
-                log_builder = log_builder.target(Target::new(TargetKind::Stdout));
-            }
-            log_builder.build()
+                .targets(targets)
+                .build()
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())

@@ -434,3 +434,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 - **QuickOpen path navigation**: If query starts with `/` or `~`, Enter should navigate directly instead of selecting a search result. Add the path-check before the result-selection logic.
 
 ---
+
+## tauri-plugin-log `.target()` vs `.targets()` — Stdout Leaks in Release Builds
+
+**Key takeaways:**
+- **`tauri-plugin-log` v2 defaults include `Stdout`**: The `Builder::default()` starts with `[Stdout, LogDir]` as default targets.
+- **`.target()` (singular) appends; `.targets()` (plural) replaces.** Calling `.target(TargetKind::Webview)` adds Webview to the existing defaults — you end up with Stdout + LogDir + Webview. To suppress stdout, you must use `.targets([...])` to replace the entire list.
+- **`cfg!(debug_assertions)` was never the problem.** The guard was correct but irrelevant — stdout was coming from the default target list, not the conditional block.
+- Three commits tried to fix this before finding the root cause. When a "simple" fix doesn't work, question the API semantics, not just the conditional logic.
+
+---

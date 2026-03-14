@@ -16,9 +16,10 @@
     explorer: ExplorerInstance;
     onitemclick: (entry: FileEntry, event: MouseEvent) => void;
     onitemdblclick: (entry: FileEntry) => void;
+    scrollToIndex?: (index: number) => void;
   }
 
-  let { explorer, onitemclick, onitemdblclick }: Props = $props();
+  let { explorer, onitemclick, onitemdblclick, scrollToIndex = $bindable() }: Props = $props();
 
   // Column resize composable
   const columnResize = useColumnResize(undefined, () => settingsStore.columnVisibility);
@@ -147,6 +148,7 @@
     items={explorer.displayEntries}
     itemHeight={32}
     getKey={(entry) => entry.path}
+    bind:scrollToIndex
   >
     {#snippet children(entry, index)}
       <FileItem

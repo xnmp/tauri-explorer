@@ -34,6 +34,9 @@
   // Content container ref
   let contentRef = $state<HTMLElement | null>(null);
 
+  // VirtualList scroll method, bound from DetailsView
+  let detailsScrollToIndex = $state<((index: number) => void) | undefined>();
+
   // Track content width for ListView auto columns
   let contentWidth = $state(0);
 
@@ -64,21 +67,11 @@
     const index = entries.indexOf(entry);
     if (index < 0) return;
 
-    if (explorer.viewMode === "details") {
-      // VirtualList: item may not be rendered. Scroll viewport first,
-      // then wait for VirtualList to re-render and focus the item.
-      const itemHeight = 32;
+    if (explorer.viewMode === "details" && detailsScrollToIndex) {
+      // Delegate to VirtualList which owns its scroll container
+      detailsScrollToIndex(index);
+      // Wait for re-render, then focus the item
       tick().then(() => {
-        const viewport = contentRef?.querySelector<HTMLElement>(".virtual-viewport");
-        if (!viewport) return;
-        const targetTop = index * itemHeight;
-        const targetBottom = targetTop + itemHeight;
-        if (targetTop < viewport.scrollTop) {
-          viewport.scrollTop = targetTop;
-        } else if (targetBottom > viewport.scrollTop + viewport.clientHeight) {
-          viewport.scrollTop = targetBottom - viewport.clientHeight;
-        }
-        // Wait for VirtualList to re-render after scroll, then focus
         requestAnimationFrame(() => {
           const el = contentRef?.querySelector<HTMLElement>(".selected");
           el?.focus({ preventScroll: true });
@@ -296,6 +289,7 @@
         {explorer}
         onitemclick={handleClick}
         onitemdblclick={handleDoubleClick}
+        bind:scrollToIndex={detailsScrollToIndex}
       />
     {:else if explorer.viewMode === "list"}
       <ListView

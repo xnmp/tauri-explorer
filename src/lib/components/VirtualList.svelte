@@ -10,15 +10,18 @@
     itemHeight: number;
     children: Snippet<[T, number]>;
     getKey?: (item: T, index: number) => string | number;
+    scrollToIndex?: (index: number) => void;
   }
 
   let {
     items,
     itemHeight,
     children,
-    getKey = (_item: T, index: number) => index
+    getKey = (_item: T, index: number) => index,
+    scrollToIndex = $bindable(),
   }: Props = $props();
 
+  let viewportRef = $state<HTMLElement | null>(null);
   let viewportHeight = $state(0);
   let scrollTop = $state(0);
 
@@ -28,6 +31,18 @@
   function handleScroll(event: Event) {
     scrollTop = (event.target as HTMLElement).scrollTop;
   }
+
+  /** Scroll the viewport so that the item at `index` is visible. */
+  scrollToIndex = (index: number) => {
+    if (!viewportRef) return;
+    const targetTop = index * itemHeight;
+    const targetBottom = targetTop + itemHeight;
+    if (targetTop < viewportRef.scrollTop) {
+      viewportRef.scrollTop = targetTop;
+    } else if (targetBottom > viewportRef.scrollTop + viewportRef.clientHeight) {
+      viewportRef.scrollTop = targetBottom - viewportRef.clientHeight;
+    }
+  };
 
   // Derived chain — Svelte 5 memoizes these, so downstream only
   // recomputes when startIndex/endIndex values actually change
@@ -49,6 +64,7 @@
 
 <div
   class="virtual-viewport"
+  bind:this={viewportRef}
   bind:clientHeight={viewportHeight}
   onscroll={handleScroll}
 >

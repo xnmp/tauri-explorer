@@ -3,7 +3,7 @@
   Issue: tauri-explorer-w3t, tauri-explorer-btz, tauri-explorer-az6w
 -->
 <script lang="ts">
-  import { tick, untrack } from "svelte";
+  import { tick } from "svelte";
   import {
     startStreamingSearch,
     cancelSearch,
@@ -312,17 +312,16 @@
     onClose();
   }
 
-  // Focus input and prune stale entries when dialog opens.
-  // pruneNonExistent reads $state(entries) internally — must be untracked
-  // to avoid creating a reactive dependency that re-runs this effect and
-  // resets query="" on every entries mutation (tauri-explorer-m2x3).
+  // Focus input when dialog opens. Prune stale entries via queueMicrotask
+  // so the async store mutations run outside the reactive tracking context
+  // (avoids $effect re-triggering that resets query — tauri-explorer-m2x3).
   $effect(() => {
     if (open && inputRef) {
       query = "";
       results = [];
       selectedIndex = 0;
       tick().then(() => inputRef?.focus());
-      untrack(() => {
+      queueMicrotask(() => {
         recentFilesStore.pruneNonExistent();
         frecencyStore.pruneNonExistent();
       });

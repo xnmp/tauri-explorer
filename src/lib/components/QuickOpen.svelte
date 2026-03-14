@@ -409,7 +409,7 @@
               >
                 {#if result.kind === "directory"}
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="folder-icon">
-                    <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="#FFB900"/>
+                    <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="var(--icon-folder, #FFB900)"/>
                   </svg>
                 {:else}
                   {@const entry = toFileEntry(result)}
@@ -487,7 +487,7 @@
               >
                 {#if result.kind === "directory"}
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="folder-icon">
-                    <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="#FFB900"/>
+                    <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="var(--icon-folder, #FFB900)"/>
                   </svg>
                 {:else}
                   {@const entry = toFileEntry(result)}
@@ -696,8 +696,8 @@
   }
 
   .result-kind {
-    color: #B38F00;
-    background: rgba(255, 185, 0, 0.15);
+    color: var(--icon-folder, #B38F00);
+    background: color-mix(in srgb, var(--icon-folder, #FFB900) 15%, transparent);
   }
 
   .result-item.selected .result-score,
@@ -706,7 +706,7 @@
   }
 
   .result-item.is-directory {
-    border-left: 2px solid #FFB900;
+    border-left: 2px solid var(--icon-folder, #FFB900);
     padding-left: 10px;
   }
 

@@ -9,7 +9,40 @@
   import { formatSize, type FileEntry } from "$lib/domain/file";
   import { isTauri } from "$lib/api/mock-invoke";
   import { highlightCode } from "$lib/domain/syntax-highlight";
+  import { settingsStore } from "$lib/state/settings.svelte";
   import "highlight.js/styles/github-dark.css";
+
+  // Resize handle state
+  const DEFAULT_WIDTH = 280;
+  const MIN_WIDTH = 160;
+  const MAX_WIDTH = 600;
+  let resizing = $state(false);
+  let startX = 0;
+  let startWidth = 0;
+
+  const paneWidth = $derived(settingsStore.previewPaneWidth || DEFAULT_WIDTH);
+
+  function handleResizeStart(event: MouseEvent): void {
+    event.preventDefault();
+    resizing = true;
+    startX = event.clientX;
+    startWidth = paneWidth;
+    document.addEventListener("mousemove", handleResizeMove);
+    document.addEventListener("mouseup", handleResizeEnd);
+  }
+
+  function handleResizeMove(event: MouseEvent): void {
+    // Dragging left increases width (handle is on the left edge)
+    const delta = startX - event.clientX;
+    const newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startWidth + delta));
+    settingsStore.setPreviewPaneWidth(newWidth);
+  }
+
+  function handleResizeEnd(): void {
+    resizing = false;
+    document.removeEventListener("mousemove", handleResizeMove);
+    document.removeEventListener("mouseup", handleResizeEnd);
+  }
 
   /** Currently selected file from the active explorer */
   const selectedFile = $derived.by((): FileEntry | null => {
@@ -113,7 +146,9 @@
   }
 </script>
 
-<div class="preview-pane">
+<div class="preview-pane" class:resizing style="width: {paneWidth}px">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="resize-handle" onmousedown={handleResizeStart}></div>
   {#if !selectedFile}
     <div class="preview-empty">
       <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
@@ -179,12 +214,31 @@
   .preview-pane {
     display: flex;
     flex-direction: column;
-    width: 280px;
-    min-width: 200px;
-    max-width: 400px;
+    position: relative;
+    flex-shrink: 0;
     border-left: 1px solid var(--divider);
     background: var(--layer-default);
     overflow: hidden;
+  }
+
+  .preview-pane.resizing {
+    user-select: none;
+  }
+
+  .resize-handle {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    cursor: col-resize;
+    z-index: 10;
+  }
+
+  .resize-handle:hover,
+  .preview-pane.resizing .resize-handle {
+    background: var(--accent);
+    opacity: 0.5;
   }
 
   .preview-empty {

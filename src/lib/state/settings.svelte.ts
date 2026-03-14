@@ -47,6 +47,7 @@ export interface Settings {
   listViewColumns: number; // 0 = auto (based on window width), 1-6 = fixed
   listColumnMaxWidth: number; // max width per column in px (used when listViewColumns=0)
   viewMode: ViewMode; // default view mode for new panes
+  previewPaneWidth: number; // width in px, 0 = default (280px)
 }
 
 const MIN_ZOOM = 50;
@@ -77,6 +78,7 @@ const DEFAULT_SETTINGS: Settings = {
   listViewColumns: 0,
   listColumnMaxWidth: 250,
   viewMode: "details",
+  previewPaneWidth: 0,
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -226,6 +228,12 @@ function createSettingsStore() {
     },
     get viewMode() {
       return settings.viewMode;
+    },
+    get previewPaneWidth() {
+      return settings.previewPaneWidth;
+    },
+    setPreviewPaneWidth(px: number): void {
+      update({ previewPaneWidth: Math.max(0, Math.min(600, px)) });
     },
     setViewMode(mode: ViewMode): void {
       update({ viewMode: mode });

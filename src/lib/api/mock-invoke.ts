@@ -69,6 +69,8 @@ const mockFiles: Record<string, FileEntry[]> = {
     file("package.json", "/home/user/Documents/project/package.json", 512),
     file("README.md", "/home/user/Documents/project/README.md", 4096),
     file("tsconfig.json", "/home/user/Documents/project/tsconfig.json", 256),
+    file("index.ts", "/home/user/Documents/project/index.ts", 180),
+    file("main.py", "/home/user/Documents/project/main.py", 120),
   ],
 };
 
@@ -204,6 +206,34 @@ const mockCommands: Record<string, CommandHandler> = {
     if (!mockFiles[destDir]) mockFiles[destDir] = [];
     mockFiles[destDir].push(newEntry);
     return newEntry;
+  },
+
+  read_text_file: (args) => {
+    const path = args.path as string;
+    // Return mock code content based on file extension
+    const mockContent: Record<string, string> = {
+      "/home/user/Documents/project/index.ts": 'export function greet(name: string): string {\n  return `Hello, ${name}!`;\n}\n',
+      "/home/user/Documents/project/main.py": 'def greet(name: str) -> str:\n    return f"Hello, {name}!"\n',
+      "/home/user/Documents/project/package.json": '{\n  "name": "project",\n  "version": "1.0.0"\n}\n',
+      "/home/user/Documents/project/tsconfig.json": '{\n  "compilerOptions": {\n    "strict": true\n  }\n}\n',
+      "/home/user/Documents/project/README.md": '# Project\n\nA sample project.\n',
+      "/home/user/readme.txt": "This is a readme file.\n",
+      "/home/user/notes.md": "# Notes\n\nSome notes here.\n",
+    };
+    const content = mockContent[path];
+    if (content !== undefined) return content;
+    throw new Error(`File not found: ${path}`);
+  },
+
+  delete_entry_permanent: (args) => {
+    const path = args.path as string;
+    const parentPath = path.substring(0, path.lastIndexOf("/"));
+    const entries = mockFiles[parentPath] || [];
+    const entryIndex = entries.findIndex((e) => e.path === path);
+    if (entryIndex >= 0) {
+      entries.splice(entryIndex, 1);
+    }
+    delete mockFiles[path];
   },
 
   open_file: () => {

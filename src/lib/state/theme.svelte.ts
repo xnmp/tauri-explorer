@@ -11,7 +11,8 @@
  */
 
 import { listUserThemes } from "$lib/api/files";
-import { loadPersisted, savePersisted } from "./persisted";
+import { loadPersisted } from "./persisted";
+import { settingsStore } from "./settings.svelte";
 
 interface ThemeColors {
   backgroundSolid: string;
@@ -106,9 +107,12 @@ function discoverThemes(): ThemeInfo[] {
 }
 
 function createThemeState() {
-  const savedTheme = loadPersisted<string | null>("theme", null);
+  // Migrate from old standalone localStorage key if settings doesn't have a theme yet
+  const legacyTheme = loadPersisted<string | null>("theme", null);
+  const initialTheme = settingsStore.theme !== "light" ? settingsStore.theme
+    : legacyTheme || "light";
 
-  let currentThemeId = $state(savedTheme || "light");
+  let currentThemeId = $state(initialTheme);
   let themes = $state<ThemeInfo[]>([]);
 
   const currentTheme = $derived(
@@ -117,7 +121,7 @@ function createThemeState() {
 
   function setTheme(themeId: string) {
     currentThemeId = themeId;
-    savePersisted("theme", themeId);
+    settingsStore.setTheme(themeId);
     applyTheme(themeId);
   }
 
@@ -142,6 +146,15 @@ function createThemeState() {
     applyTheme(currentThemeId);
   }
 
+  /** Re-sync theme from settings after settings.init() loads the config file. */
+  function syncFromSettings() {
+    const fileTheme = settingsStore.theme;
+    if (fileTheme && fileTheme !== currentThemeId) {
+      currentThemeId = fileTheme;
+      applyTheme(fileTheme);
+    }
+  }
+
   return {
     get currentThemeId() {
       return currentThemeId;
@@ -154,6 +167,7 @@ function createThemeState() {
     },
     setTheme,
     initTheme,
+    syncFromSettings,
   };
 }
 

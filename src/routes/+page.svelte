@@ -227,7 +227,7 @@
     console.log(`[Perf] Frontend mount→dir: ${(tEnd - t0).toFixed(1)}ms`);
 
     // Load settings and bookmarks from config files (async, non-blocking)
-    settingsStore.init();
+    settingsStore.init().then(() => themeStore.syncFromSettings());
     bookmarksStore.init();
 
     // Register all commands for the command palette (deferred to next tick)

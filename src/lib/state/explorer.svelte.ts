@@ -476,6 +476,10 @@ function createExplorerState() {
       existingEntries: coreState.entries,
       onEntriesAdded: (entries: FileEntry[]) => {
         coreState.entries = [...coreState.entries, ...entries];
+        // Select the newly pasted entries (tauri-explorer-d6cr)
+        if (entries.length > 0) {
+          coreState.selectedPaths = new Set(entries.map((e) => e.path));
+        }
       },
       onRefresh: () => navigateInternal(coreState.currentPath),
     };

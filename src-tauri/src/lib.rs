@@ -147,7 +147,6 @@ pub fn run(launch_dir: Option<String>) {
                 .rotation_strategy(RotationStrategy::KeepSome(7))
                 .max_file_size(10 * 1024 * 1024) // 10 MB
                 .timezone_strategy(TimezoneStrategy::UseLocal)
-                .target(Target::new(TargetKind::Stdout))
                 .target(Target::new(TargetKind::LogDir { file_name: None }))
                 .target(Target::new(TargetKind::Webview))
                 .build(),

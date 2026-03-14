@@ -152,7 +152,7 @@
       .slice(0, 12);
 
     suggestions = filtered;
-    selectedIndex = -1;
+    selectedIndex = filtered.length > 0 ? 0 : -1;
     showSuggestions = filtered.length > 0;
   }
 

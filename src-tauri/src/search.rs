@@ -61,11 +61,6 @@ pub struct SearchResultsEvent {
 /// Registry for active searches
 static SEARCHES: crate::task_registry::TaskRegistry = crate::task_registry::TaskRegistry::new();
 
-/// Check if a directory should be skipped.
-fn should_skip_dir(name: &str) -> bool {
-    name.starts_with('.') || SKIP_DIRS.contains(&name)
-}
-
 /// Safety cap for the non-streaming path which collects entries into memory.
 /// High enough to cover any normal home directory tree; prevents OOM if
 /// the search root is accidentally `/` or a network mount. The streaming
@@ -179,6 +174,7 @@ pub fn fuzzy_search(query: String, root: String, limit: usize) -> Result<SearchR
 
     let limit = limit.min(100).max(1);
     let entries = walk_entries(&root_path);
+    log::debug!("fuzzy_search: query={:?} entries={}", query, entries.len());
 
     if entries.is_empty() {
         return Ok(SearchResponse { results: vec![] });
@@ -244,6 +240,7 @@ pub fn start_streaming_search(
     }
 
     let limit = limit.min(100).max(1);
+    log::debug!("start_streaming_search: id=pending query={:?} root={:?}", query, root);
     let (search_id, cancelled) = SEARCHES.start();
 
     let boost_path = boost_prefix.map(PathBuf::from);

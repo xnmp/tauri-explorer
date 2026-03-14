@@ -2,6 +2,7 @@
 //! Issue: tauri-explorer-mj32
 
 use crate::error::AppError;
+use log;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -222,7 +223,9 @@ pub fn set_as_wallpaper(path: String) -> Result<(), AppError> {
         .to_string_lossy()
         .to_string();
 
-    match detect_wallpaper_backend() {
+    let backend = detect_wallpaper_backend();
+    log::info!("Setting wallpaper via {:?} backend", backend_name(&backend));
+    match backend {
         WallpaperBackend::Hyprpaper => set_hyprpaper(&abs_path),
         WallpaperBackend::Swaybg => set_swaybg(&abs_path),
         WallpaperBackend::Gnome => set_gnome(&abs_path),
@@ -232,6 +235,18 @@ pub fn set_as_wallpaper(path: String) -> Result<(), AppError> {
         WallpaperBackend::Unknown => Err(AppError::Other(
             "Could not detect desktop environment. Supported: Hyprland (hyprpaper), Sway, GNOME, KDE, XFCE, feh".to_string(),
         )),
+    }
+}
+
+fn backend_name(b: &WallpaperBackend) -> &'static str {
+    match b {
+        WallpaperBackend::Hyprpaper => "hyprpaper",
+        WallpaperBackend::Swaybg => "swaybg",
+        WallpaperBackend::Gnome => "gnome",
+        WallpaperBackend::Kde => "kde",
+        WallpaperBackend::Xfce => "xfce",
+        WallpaperBackend::Feh => "feh",
+        WallpaperBackend::Unknown => "unknown",
     }
 }
 

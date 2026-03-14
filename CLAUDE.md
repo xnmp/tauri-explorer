@@ -55,5 +55,41 @@ After completing any performance-related issue (EPIC: Performance Optimization o
    - Commit new baseline files so future regressions are caught
 
    
+## Logging & Diagnostics
+The backend uses `tauri-plugin-log` (wraps `fern`) with structured logging via the `log` crate.
+
+### Log Locations
+- **Linux**: `~/.local/share/com.tauri-explorer.app/logs/` (or check `get_log_dir` command output)
+- **macOS**: `~/Library/Logs/com.tauri-explorer.app/`
+- **Windows**: `%APPDATA%/com.tauri-explorer.app/logs/`
+- **Stdout**: Logs are also printed to stdout when running via `cargo tauri dev`
+
+### Log Levels
+- Default: `warn` for third-party crates, `info` for app code
+- Override with `RUST_LOG` env var: `RUST_LOG=debug cargo tauri dev`
+- Frontend logs bridge to Rust via `tauri-plugin-log` webview target
+
+### What's Logged
+- **File operations**: create, rename, copy, move, delete (info level)
+- **Directory listing**: cache hits, slow listings >100ms, permission errors
+- **Search**: streaming search start/complete, content search parameters
+- **Archive**: compress/extract operations with entry counts
+- **Wallpaper**: backend detection and set operations
+- **Clipboard**: image paste operations
+- **Config**: config file writes
+- **Thumbnails**: cache clear operations
+- **Startup**: timing breakdown (pre-builder, builder→setup, total)
+
+### Log Rotation
+- Max file size: 10 MB
+- Keeps last 7 log files
+- Uses local timezone for timestamps
+
+### When Debugging
+1. Check stdout first (visible in terminal during `cargo tauri dev`)
+2. For production issues, look in the log directory (see locations above)
+3. Use `RUST_LOG=debug` for verbose output (search walker details, cache hits, etc.)
+4. The `get_log_dir` Tauri command returns the log directory path (used in Settings UI)
+
 ## Misc
 * Use `bun` as the package manager.

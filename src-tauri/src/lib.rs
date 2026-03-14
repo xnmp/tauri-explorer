@@ -15,6 +15,8 @@ mod wallpaper;
 use std::path::PathBuf;
 
 use error::AppError;
+use log;
+use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
 /// Stores the working directory from which the app was launched.
 struct LaunchCwd(String);
@@ -29,7 +31,10 @@ fn move_to_trash(path: String) -> Result<(), AppError> {
         return Err(AppError::NotFound(path));
     }
 
-    trash::delete(&pathbuf).map_err(|e| AppError::Other(format!("Failed to move to trash: {}", e)))
+    trash::delete(&pathbuf).map_err(|e| {
+        log::error!("Failed to move to trash: {}", e);
+        AppError::Other(format!("Failed to move to trash: {}", e))
+    })
 }
 
 /// Move multiple files/directories to trash.
@@ -43,13 +48,28 @@ fn move_multiple_to_trash(paths: Vec<String>) -> Result<(), AppError> {
         }
     }
 
-    trash::delete_all(&pathbufs).map_err(|e| AppError::Other(format!("Failed to move items to trash: {}", e)))
+    log::info!("Moving {} items to trash", pathbufs.len());
+    trash::delete_all(&pathbufs).map_err(|e| {
+        log::error!("Failed to move {} items to trash: {}", pathbufs.len(), e);
+        AppError::Other(format!("Failed to move items to trash: {}", e))
+    })
 }
 
 /// Get the directory the app was launched from.
 #[tauri::command]
 fn get_launch_cwd(state: tauri::State<'_, LaunchCwd>) -> String {
     state.0.clone()
+}
+
+/// Get the log directory path so the frontend can display it in settings.
+#[tauri::command]
+fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
+    use tauri::Manager;
+    let log_dir = app
+        .path()
+        .app_log_dir()
+        .map_err(|e| AppError::Other(format!("Failed to resolve log directory: {}", e)))?;
+    Ok(log_dir.to_string_lossy().to_string())
 }
 
 /// Restore files from the system trash by their original paths.
@@ -111,8 +131,27 @@ pub fn run(launch_dir: Option<String>) {
 
     let t_plugins = std::time::Instant::now();
 
+    // Parse RUST_LOG env var for log level override (default: warn, app crate: info).
+    let app_log_level = std::env::var("RUST_LOG")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(log::LevelFilter::Info);
+
     tauri::Builder::default()
         .manage(LaunchCwd(launch_cwd_for_state))
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Warn) // third-party crates: warn only
+                .level_for("tauri_explorer", app_log_level)
+                .level_for("tauri_explorer_lib", app_log_level)
+                .rotation_strategy(RotationStrategy::KeepSome(7))
+                .max_file_size(10 * 1024 * 1024) // 10 MB
+                .timezone_strategy(TimezoneStrategy::UseLocal)
+                .target(Target::new(TargetKind::Stdout))
+                .target(Target::new(TargetKind::LogDir { file_name: None }))
+                .target(Target::new(TargetKind::Webview))
+                .build(),
+        )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_drag::init())
@@ -120,6 +159,7 @@ pub fn run(launch_dir: Option<String>) {
         .invoke_handler(tauri::generate_handler![
             // Launch info
             get_launch_cwd,
+            get_log_dir,
             // Trash operations
             move_to_trash,
             move_multiple_to_trash,
@@ -195,12 +235,8 @@ pub fn run(launch_dir: Option<String>) {
             .initialization_script(&init_script)
             .build()?;
 
-            #[cfg(debug_assertions)]
-            eprintln!(
-                "[Perf] Rust startup:\n  \
-                 pre-builder:  {:?}\n  \
-                 builder→setup: {:?}\n  \
-                 total:        {:?}",
+            log::info!(
+                "Startup: pre-builder={:?} builder→setup={:?} total={:?}",
                 t_plugins - t_start,
                 t_setup - t_plugins,
                 t_setup - t_start,

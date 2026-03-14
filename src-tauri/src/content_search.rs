@@ -79,6 +79,8 @@ pub fn start_content_search(
         return Err(AppError::InvalidPath(format!("Not a directory: {}", root)));
     }
 
+    log::debug!("start_content_search: regex={} case_sensitive={} max={}", regex_mode, case_sensitive, max_results);
+
     if query.is_empty() {
         return Err(AppError::Other("Search query cannot be empty".into()));
     }

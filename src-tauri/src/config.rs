@@ -5,6 +5,7 @@
 //! in the app's config directory (~/.config/tauri-explorer/ on Linux).
 
 use crate::error::AppError;
+use log;
 use std::fs;
 use std::path::PathBuf;
 
@@ -36,6 +37,7 @@ pub fn read_config_file(filename: String) -> Result<String, AppError> {
 #[tauri::command]
 pub fn write_config_file(filename: String, data: String) -> Result<(), AppError> {
     let path = config_dir()?.join(&filename);
+    log::debug!("Writing config file: {}", filename);
     fs::write(&path, &data)
         .map_err(|e| AppError::Other(format!("Failed to write config file '{}': {}", filename, e)))
 }

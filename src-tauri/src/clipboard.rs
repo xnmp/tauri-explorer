@@ -7,6 +7,7 @@
 //! This module shells out to `wl-paste`/`wl-copy` (Wayland) or
 //! `xclip` (X11) to read and write file URIs directly.
 
+use log;
 use std::process::Command;
 
 /// Detect whether the session is Wayland or X11.
@@ -264,6 +265,7 @@ pub async fn clipboard_paste_image(directory: String) -> Result<String, String> 
     std::fs::write(&filepath, &data)
         .map_err(|e| format!("Failed to write image: {}", e))?;
 
+    log::info!("Pasted clipboard image to: {}", filename);
     Ok(filepath.to_string_lossy().to_string())
 }
 

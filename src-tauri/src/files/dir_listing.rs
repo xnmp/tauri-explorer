@@ -43,11 +43,14 @@ pub fn invalidate_dir_cache(path: String) -> Result<(), AppError> {
 /// Directories are sorted before files, and items are sorted case-insensitively by name.
 #[tauri::command]
 pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> {
+    let t_start = std::time::Instant::now();
+
     // Check cache first
     {
         let cache = get_dir_cache().lock().unwrap();
         if let Some(cached) = cache.get(&path) {
             if cached.cached_at.elapsed().as_secs() < CACHE_TTL_SECS {
+                log::debug!("list_directory: cache hit ({} entries)", cached.entries.len());
                 return Ok(DirectoryListing {
                     path: path.clone(),
                     entries: cached.entries.clone(),
@@ -71,8 +74,10 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
 
     let read_dir = fs::read_dir(&dir_path).map_err(|e| {
         if e.kind() == std::io::ErrorKind::PermissionDenied {
+            log::warn!("Permission denied listing directory");
             AppError::PermissionDenied(path.clone())
         } else {
+            log::error!("IO error listing directory: {}", e);
             AppError::Io(e)
         }
     })?;
@@ -95,6 +100,13 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
     }
 
     sort_entries(&mut entries);
+
+    let elapsed = t_start.elapsed();
+    if elapsed.as_millis() > 100 {
+        log::warn!("Slow directory listing: {} entries in {:?}", entries.len(), elapsed);
+    } else {
+        log::debug!("list_directory: {} entries in {:?}", entries.len(), elapsed);
+    }
 
     // Update cache
     {

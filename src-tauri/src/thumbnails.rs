@@ -7,6 +7,7 @@
 
 use base64::Engine as _;
 use crate::error::AppError;
+use log;
 use image::{ImageFormat, ImageReader};
 use sha2::{Sha256, Digest};
 use std::fs;
@@ -263,6 +264,7 @@ pub fn clear_thumbnail_cache() -> Result<u64, AppError> {
         return Ok(0);
     }
 
+    log::info!("Clearing thumbnail cache");
     let mut cleared = 0u64;
 
     for entry in fs::read_dir(&cache_dir).map_err(AppError::Io)? {

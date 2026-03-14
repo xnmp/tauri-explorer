@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::error::AppError;
+use log;
 use super::{metadata_to_entry, FileEntry, SizeEstimate};
 
 /// Get the user's home directory.
@@ -39,6 +40,7 @@ pub fn create_directory(parent_path: String, name: String) -> Result<FileEntry, 
     }
 
     fs::create_dir(&new_path)?;
+    log::info!("Created directory: {:?}", name);
 
     let metadata = fs::metadata(&new_path)?;
     Ok(metadata_to_entry(&new_path, &metadata))
@@ -161,6 +163,7 @@ pub fn copy_entry(
         fs::copy(&source_path, &target)?;
     }
 
+    log::info!("Copied entry (is_dir={}) overwrite={}", source_path.is_dir(), overwrite.unwrap_or(false));
     let metadata = fs::metadata(&target)?;
     Ok(metadata_to_entry(&target, &metadata))
 }
@@ -217,8 +220,10 @@ pub fn move_entry(
             // Other errors (permission denied, etc.) should be returned immediately.
             let is_cross_device = e.raw_os_error() == Some(libc::EXDEV);
             if !is_cross_device {
+                log::warn!("Move failed (not cross-device): {}", e);
                 return Err(AppError::Io(e));
             }
+            log::info!("Cross-device move detected, falling back to copy+delete");
             // Fall back to copy + delete for cross-filesystem moves
             if source_path.is_dir() {
                 fs::create_dir_all(&target)?;
@@ -289,12 +294,14 @@ pub fn delete_entry_permanent(path: String) -> Result<(), AppError> {
         return Err(AppError::NotFound(path));
     }
 
-    if file_path.is_dir() {
+    let is_dir = file_path.is_dir();
+    if is_dir {
         fs::remove_dir_all(&file_path)?;
     } else {
         fs::remove_file(&file_path)?;
     }
 
+    log::info!("Permanently deleted entry (is_dir={})", is_dir);
     Ok(())
 }
 

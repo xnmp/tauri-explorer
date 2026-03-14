@@ -471,17 +471,26 @@ function createExplorerState() {
   let pasteResult = $state<PasteResult | null>(null);
 
   function makePasteContext() {
+    let pastedPaths: Set<string> | null = null;
     return {
       destPath: coreState.currentPath,
       existingEntries: coreState.entries,
       onEntriesAdded: (entries: FileEntry[]) => {
         coreState.entries = [...coreState.entries, ...entries];
-        // Select the newly pasted entries (tauri-explorer-d6cr)
+        // Remember pasted paths so onRefresh can re-select after navigation
         if (entries.length > 0) {
-          coreState.selectedPaths = new Set(entries.map((e) => e.path));
+          pastedPaths = new Set(entries.map((e) => e.path));
+          coreState.selectedPaths = pastedPaths;
         }
       },
-      onRefresh: () => navigateInternal(coreState.currentPath),
+      onRefresh: async () => {
+        await navigateInternal(coreState.currentPath);
+        // Re-select pasted entries after refresh resets selection
+        if (pastedPaths) {
+          coreState.selectedPaths = pastedPaths;
+          pastedPaths = null;
+        }
+      },
     };
   }
 

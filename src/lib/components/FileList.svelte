@@ -65,22 +65,33 @@
     if (index < 0) return;
 
     if (explorer.viewMode === "details") {
-      // VirtualList: items may not be in DOM; set scrollTop directly
+      // VirtualList: item may not be rendered. Scroll viewport first,
+      // then wait for VirtualList to re-render and focus the item.
       const itemHeight = 32;
-      const viewport = contentRef?.querySelector<HTMLElement>(".virtual-viewport");
-      if (!viewport) return;
-      const targetTop = index * itemHeight;
-      const targetBottom = targetTop + itemHeight;
-      if (targetTop < viewport.scrollTop) {
-        viewport.scrollTop = targetTop;
-      } else if (targetBottom > viewport.scrollTop + viewport.clientHeight) {
-        viewport.scrollTop = targetBottom - viewport.clientHeight;
-      }
+      tick().then(() => {
+        const viewport = contentRef?.querySelector<HTMLElement>(".virtual-viewport");
+        if (!viewport) return;
+        const targetTop = index * itemHeight;
+        const targetBottom = targetTop + itemHeight;
+        if (targetTop < viewport.scrollTop) {
+          viewport.scrollTop = targetTop;
+        } else if (targetBottom > viewport.scrollTop + viewport.clientHeight) {
+          viewport.scrollTop = targetBottom - viewport.clientHeight;
+        }
+        // Wait for VirtualList to re-render after scroll, then focus
+        requestAnimationFrame(() => {
+          const el = contentRef?.querySelector<HTMLElement>(".selected");
+          el?.focus({ preventScroll: true });
+        });
+      });
     } else {
-      // List/Tiles: items are in DOM, use scrollIntoView after tick
+      // List/Tiles: wait for selection state to flush to DOM, then scroll
       tick().then(() => {
         const el = contentRef?.querySelector<HTMLElement>(".selected");
-        el?.scrollIntoView({ block: "nearest" });
+        if (el) {
+          el.scrollIntoView({ block: "nearest" });
+          el.focus({ preventScroll: true });
+        }
       });
     }
   }

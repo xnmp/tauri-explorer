@@ -55,6 +55,14 @@ After completing any performance-related issue (EPIC: Performance Optimization o
    - Commit new baseline files so future regressions are caught
 
    
+## Operational Principles
+
+### E2E tests must assert on actual feature behavior
+Don't just check that a component renders — assert on the outcome. E.g., a QuickOpen test must verify that results appear for a query, not just that the modal opened. Tests that only check "component mounts" give false confidence and miss real regressions.
+
+### Svelte 5: `$effect` + store writes = infinite loop
+Never call a store method from `$effect` if that method internally reads `$state`. Example: `$effect(() => { if (x) toastStore.show(...) })` loops because `show()` reads `toasts` via `.filter()`, making it a dependency. Fix: call imperatively at the source, or wrap in `untrack()`. This has caused 3+ separate bugs — treat it as a known hazard.
+
 ## Logging & Diagnostics
 The backend uses `tauri-plugin-log` (wraps `fern`) with structured logging via the `log` crate.
 

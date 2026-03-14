@@ -68,6 +68,8 @@
 
   // Frecency weight relative to fuzzy score (how much frecency influences ranking)
   const FRECENCY_WEIGHT = 50;
+  // Directories get a score boost since they're more commonly navigated to
+  const DIRECTORY_BONUS = 1.25;
 
   /** Match recent files and frecency entries against a search term.
    *  These are always included in results (merged/deduplicated with backend results). */
@@ -123,8 +125,13 @@
       const frecency = scoreMap.get(r.path) ?? 0;
       return { ...r, score: r.score + Math.round(frecency * FRECENCY_WEIGHT) };
     });
-    ranked.sort((a, b) => b.score - a.score);
+    ranked.sort((a, b) => effectiveScore(b) - effectiveScore(a));
     return ranked;
+  }
+
+  /** Effective score with directory bonus applied. */
+  function effectiveScore(r: SearchResult): number {
+    return r.kind === "directory" ? r.score * DIRECTORY_BONUS : r.score;
   }
 
   /** Merge primary results with extras (deduplicated), sorted by score descending. */
@@ -132,7 +139,7 @@
     const seen = new Set(primary.map((r) => r.path));
     const unique = extras.filter((r) => !seen.has(r.path));
     const merged = [...primary, ...unique];
-    merged.sort((a, b) => b.score - a.score);
+    merged.sort((a, b) => effectiveScore(b) - effectiveScore(a));
     return merged;
   }
 

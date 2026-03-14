@@ -3,7 +3,7 @@
   Issue: tauri-explorer-w3t, tauri-explorer-btz, tauri-explorer-az6w
 -->
 <script lang="ts">
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import {
     startStreamingSearch,
     cancelSearch,
@@ -294,16 +294,20 @@
     onClose();
   }
 
-  // Focus input and prune stale entries when dialog opens
+  // Focus input and prune stale entries when dialog opens.
+  // pruneNonExistent reads $state(entries) internally — must be untracked
+  // to avoid creating a reactive dependency that re-runs this effect and
+  // resets query="" on every entries mutation (tauri-explorer-m2x3).
   $effect(() => {
     if (open && inputRef) {
       query = "";
       results = [];
       selectedIndex = 0;
       tick().then(() => inputRef?.focus());
-      // Prune deleted paths from recent files and frecency (fire-and-forget)
-      recentFilesStore.pruneNonExistent();
-      frecencyStore.pruneNonExistent();
+      untrack(() => {
+        recentFilesStore.pruneNonExistent();
+        frecencyStore.pruneNonExistent();
+      });
     }
   });
 

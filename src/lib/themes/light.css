@@ -94,6 +94,13 @@
 
   /* Icon colors - warmer gold */
   --icon-folder: #e8a800;
-  /* --icon-file-tint: unset; when set, overrides all file icon colors */
+  /* --icon-file-tint: unset; when set, overrides ALL file icon colors */
+  /* Per-category icon colors (override individually, or use --icon-file-tint for all) */
+  /* --icon-image: #c05090; */
+  /* --icon-archive: #a07830; */
+  /* --icon-code: #3070b0; */
+  /* --icon-media: #c04040; */
+  /* --icon-executable: #408040; */
+  /* --icon-document: #505050; */
   /* --theme-icon-pack: 'default'; themes can suggest: 'default', 'material', 'minimal' */
 }

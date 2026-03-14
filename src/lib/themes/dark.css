@@ -96,6 +96,13 @@
   --statusbar-opacity: 1;
 
   --icon-folder: #ffc83d;
-  /* --icon-file-tint: unset; when set, overrides all file icon colors */
+  /* --icon-file-tint: unset; when set, overrides ALL file icon colors */
+  /* Per-category icon colors (override individually, or use --icon-file-tint for all) */
+  /* --icon-image: #e879a8; */
+  /* --icon-archive: #c49b5e; */
+  /* --icon-code: #6bc1f0; */
+  /* --icon-media: #e06c75; */
+  /* --icon-executable: #98c379; */
+  /* --icon-document: #abb2bf; */
   /* --theme-icon-pack: 'default'; themes can suggest: 'default', 'material', 'minimal' */
 }

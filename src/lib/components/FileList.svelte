@@ -3,6 +3,7 @@
   Issue: tauri-explorer-iw0, tauri-explorer-x25, tauri-explorer-as45, tauri-explorer-1k9k, tauri-explorer-im3m, tauri-explorer-9djf.5
 -->
 <script lang="ts">
+  import { tick } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
@@ -51,8 +52,38 @@
   // Type-ahead selection composable
   const typeAhead = useTypeAhead(
     () => explorer.displayEntries,
-    (entry) => explorer.selectEntry(entry, {}),
+    (entry) => {
+      explorer.selectEntry(entry, {});
+      scrollToSelected(entry);
+    },
   );
+
+  /** Scroll the matched entry into view after type-ahead selection. */
+  function scrollToSelected(entry: FileEntry): void {
+    const entries = explorer.displayEntries;
+    const index = entries.indexOf(entry);
+    if (index < 0) return;
+
+    if (explorer.viewMode === "details") {
+      // VirtualList: items may not be in DOM; set scrollTop directly
+      const itemHeight = 32;
+      const viewport = contentRef?.querySelector<HTMLElement>(".virtual-viewport");
+      if (!viewport) return;
+      const targetTop = index * itemHeight;
+      const targetBottom = targetTop + itemHeight;
+      if (targetTop < viewport.scrollTop) {
+        viewport.scrollTop = targetTop;
+      } else if (targetBottom > viewport.scrollTop + viewport.clientHeight) {
+        viewport.scrollTop = targetBottom - viewport.clientHeight;
+      }
+    } else {
+      // List/Tiles: items are in DOM, use scrollIntoView after tick
+      tick().then(() => {
+        const el = contentRef?.querySelector<HTMLElement>(".selected");
+        el?.scrollIntoView({ block: "nearest" });
+      });
+    }
+  }
 
   // ===================
   // Shared item callbacks (passed to view components)

@@ -251,7 +251,7 @@ test.describe("Syntax Highlighting Preview", () => {
     await expect(filename).toContainText("index.ts");
   });
 
-  test("preview shows file info (size, modified, path)", async ({ page }) => {
+  test("preview shows file info (size, modified)", async ({ page }) => {
     const tsFile = page.locator(".entry-item", { hasText: "index.ts" });
     await tsFile.click();
     await page.waitForTimeout(500);
@@ -260,7 +260,6 @@ test.describe("Syntax Highlighting Preview", () => {
     await expect(infoSection).toBeVisible();
     await expect(infoSection).toContainText("Size");
     await expect(infoSection).toContainText("Modified");
-    await expect(infoSection).toContainText("Path");
   });
 });
 

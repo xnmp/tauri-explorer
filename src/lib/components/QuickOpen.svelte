@@ -7,6 +7,7 @@
   import {
     startStreamingSearch,
     cancelSearch,
+    fuzzySearch,
     openFile,
     getHomeDirectory,
     type SearchResult,
@@ -242,20 +243,36 @@
       const generation = ++searchGeneration;
 
       // Show frecency/recent matches immediately (before backend responds)
-      results = matchFrecencyAndRecent(query);
-
-      // Set up listener BEFORE starting search. The listener accepts
-      // events even before we know the searchId (avoids race condition
-      // where the backend thread emits before the invoke returns).
-      await setupSearchListener(generation);
+      const frecencyMatches = matchFrecencyAndRecent(query);
+      results = frecencyMatches;
 
       // Search from CWD so immediate directory contents are always found
       const cwd = getCwdPath();
-      const result = await startStreamingSearch(query, cwd, 20);
 
-      if (result.ok) {
-        activeSearchId = result.data;
+      // Try streaming search (requires Tauri event system).
+      // Falls back to non-streaming fuzzySearch when events aren't available
+      // (e.g. browser/mock mode).
+      let streamingAvailable = true;
+      try {
+        await setupSearchListener(generation);
+      } catch {
+        streamingAvailable = false;
+      }
+
+      if (streamingAvailable) {
+        const result = await startStreamingSearch(query, cwd, 20);
+        if (result.ok) {
+          activeSearchId = result.data;
+        } else {
+          loading = false;
+        }
       } else {
+        // Fallback: non-streaming search
+        const result = await fuzzySearch(query, cwd, 20);
+        if (result.ok) {
+          const ranked = rankWithFrecency(result.data);
+          results = mergeResultsByScore(ranked, frecencyMatches);
+        }
         loading = false;
       }
     }, 50); // Shorter debounce for streaming - results come in progressively

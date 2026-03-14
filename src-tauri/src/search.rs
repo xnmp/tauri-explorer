@@ -82,12 +82,14 @@ fn walk_entries(root_path: &PathBuf) -> Vec<(String, String, bool)> {
     let walker = WalkDir::new(root_path)
         .skip_hidden(true)
         .process_read_dir(|_depth, _path, _read_dir_state, children| {
-            children.retain(|entry| {
-                entry.as_ref().map_or(true, |e| {
+            for entry in children.iter_mut() {
+                if let Ok(e) = entry {
                     let name = e.file_name().to_string_lossy();
-                    !should_skip_dir(&name)
-                })
-            });
+                    if SKIP_DIRS.contains(&name.as_ref()) {
+                        e.read_children_path = None;
+                    }
+                }
+            }
         });
 
     for entry in walker.into_iter().take(WALK_SAFETY_CAP) {
@@ -124,13 +126,19 @@ fn walk_entries(root_path: &PathBuf) -> Vec<(String, String, bool)> {
     entries
 }
 
+/// Directory bonus: directories are ranked higher than files with equal scores
+/// since users more commonly navigate to folders from QuickOpen.
+const DIRECTORY_BONUS: u32 = 30;
+
 /// Score an entry against a query. Returns Some(score) if matched, None otherwise.
 /// Uses nucleo fuzzy matching with a case-insensitive substring fallback.
 /// Shallower entries (fewer path components) get a depth bonus so items
 /// closer to the search root rank higher than deeply nested ones.
+/// Directories get an additional bonus to rank above files.
 fn score_entry(
     name: &str,
     relative_path: &str,
+    is_dir: bool,
     query_lower: &str,
     pattern: &Pattern,
     matcher: &mut Matcher,
@@ -151,7 +159,8 @@ fn score_entry(
     // Clamped to 0 so deep items are never penalized below their base score.
     let depth = relative_path.matches('/').count() + 1;
     let depth_bonus = (50u32).saturating_sub((depth as u32 - 1) * 5);
-    Some(base_score.saturating_add(depth_bonus))
+    let dir_bonus = if is_dir { DIRECTORY_BONUS } else { 0 };
+    Some(base_score.saturating_add(depth_bonus).saturating_add(dir_bonus))
 }
 
 /// Fuzzy search for files and directories recursively (non-streaming version).
@@ -182,8 +191,8 @@ pub fn fuzzy_search(query: String, root: String, limit: usize) -> Result<SearchR
     let mut scored: Vec<(u32, usize)> = entries
         .iter()
         .enumerate()
-        .filter_map(|(idx, (relative_path, name, _))| {
-            score_entry(name, relative_path, &query_lower, &pattern, &mut matcher)
+        .filter_map(|(idx, (relative_path, name, is_dir))| {
+            score_entry(name, relative_path, *is_dir, &query_lower, &pattern, &mut matcher)
                 .map(|score| (score, idx))
         })
         .collect();
@@ -252,12 +261,17 @@ pub fn start_streaming_search(
         let walker = WalkDir::new(&root_path)
             .skip_hidden(true)
             .process_read_dir(|_depth, _path, _read_dir_state, children| {
-                children.retain(|entry| {
-                    entry.as_ref().map_or(true, |e| {
+                // Don't remove skip-listed dirs — they should still appear as
+                // search results. Instead, prevent descent by clearing
+                // read_children_path so their contents aren't walked.
+                for entry in children.iter_mut() {
+                    if let Ok(e) = entry {
                         let name = e.file_name().to_string_lossy();
-                        !should_skip_dir(&name)
-                    })
-                });
+                        if SKIP_DIRS.contains(&name.as_ref()) {
+                            e.read_children_path = None;
+                        }
+                    }
+                }
             });
 
         let mut pending_entries: Vec<(String, String, bool)> = Vec::new();
@@ -371,7 +385,7 @@ fn process_batch(
     let mut new_results: Vec<SearchResult> = pending
         .iter()
         .filter_map(|(relative_path, name, is_dir)| {
-            let score = score_entry(name, relative_path, query_lower, pattern, matcher)?;
+            let score = score_entry(name, relative_path, *is_dir, query_lower, pattern, matcher)?;
             let full_path = root_path.join(relative_path);
             // Boost score for results under the priority prefix
             let boosted_score = if let Some(prefix) = boost_prefix {

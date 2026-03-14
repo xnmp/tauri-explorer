@@ -63,6 +63,100 @@ test.describe("Quick Open (Ctrl+P)", () => {
     await expect(quickOpen).not.toBeVisible();
   });
 
+  test("searching for a folder in a large project returns results", async ({ page }) => {
+    // Navigate to Documents/project (100+ files, 15+ subdirectories)
+    await page.locator(".entry-item", { hasText: "Documents" }).first().dblclick();
+    await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
+    await page.locator(".entry-item", { hasText: "project" }).first().dblclick();
+    await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
+
+    // Open QuickOpen and search for "src" — a direct child folder
+    await page.keyboard.press("Control+p");
+    const quickOpen = page.locator(".quick-open-dialog");
+    await expect(quickOpen).toBeVisible({ timeout: 2000 });
+
+    const searchInput = quickOpen.locator(".search-input");
+    await searchInput.pressSequentially("src", { delay: 50 });
+    await page.waitForTimeout(1500);
+
+    // Should find the "src" folder
+    const resultItems = quickOpen.locator(".result-item");
+    await expect(resultItems.first()).toBeVisible({ timeout: 5000 });
+
+    const resultNames = await quickOpen.locator(".result-name").allTextContents();
+    expect(resultNames).toContain("src");
+  });
+
+  test("searching for a nested folder returns results", async ({ page }) => {
+    // Navigate to Documents/project
+    await page.locator(".entry-item", { hasText: "Documents" }).first().dblclick();
+    await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
+    await page.locator(".entry-item", { hasText: "project" }).first().dblclick();
+    await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
+
+    await page.keyboard.press("Control+p");
+    const quickOpen = page.locator(".quick-open-dialog");
+    await expect(quickOpen).toBeVisible({ timeout: 2000 });
+
+    // Search for "components" — nested under src/
+    const searchInput = quickOpen.locator(".search-input");
+    await searchInput.pressSequentially("components", { delay: 50 });
+    await page.waitForTimeout(1500);
+
+    const resultItems = quickOpen.locator(".result-item");
+    await expect(resultItems.first()).toBeVisible({ timeout: 5000 });
+
+    const resultNames = await quickOpen.locator(".result-name").allTextContents();
+    expect(resultNames).toContain("components");
+  });
+
+  test("searching for a file among many returns results", async ({ page }) => {
+    // Navigate to Documents/project
+    await page.locator(".entry-item", { hasText: "Documents" }).first().dblclick();
+    await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
+    await page.locator(".entry-item", { hasText: "project" }).first().dblclick();
+    await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
+
+    await page.keyboard.press("Control+p");
+    const quickOpen = page.locator(".quick-open-dialog");
+    await expect(quickOpen).toBeVisible({ timeout: 2000 });
+
+    // Search for "engine" — deeply nested in lib/core/engine.ts
+    const searchInput = quickOpen.locator(".search-input");
+    await searchInput.pressSequentially("engine", { delay: 50 });
+    await page.waitForTimeout(1500);
+
+    const resultItems = quickOpen.locator(".result-item");
+    await expect(resultItems.first()).toBeVisible({ timeout: 5000 });
+
+    const resultNames = await quickOpen.locator(".result-name").allTextContents();
+    expect(resultNames).toContain("engine.ts");
+  });
+
+  test("folders rank above files with same match", async ({ page }) => {
+    // Navigate to Documents/project
+    await page.locator(".entry-item", { hasText: "Documents" }).first().dblclick();
+    await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
+    await page.locator(".entry-item", { hasText: "project" }).first().dblclick();
+    await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
+
+    await page.keyboard.press("Control+p");
+    const quickOpen = page.locator(".quick-open-dialog");
+    await expect(quickOpen).toBeVisible({ timeout: 2000 });
+
+    // Search for "config" — matches both config/ directory and config files
+    const searchInput = quickOpen.locator(".search-input");
+    await searchInput.pressSequentially("config", { delay: 50 });
+    await page.waitForTimeout(1500);
+
+    const resultItems = quickOpen.locator(".result-item");
+    await expect(resultItems.first()).toBeVisible({ timeout: 5000 });
+
+    // First result should be the directory
+    const firstResult = resultItems.first();
+    await expect(firstResult).toHaveClass(/is-directory/);
+  });
+
   test("re-opening quick open clears previous query", async ({ page }) => {
     await page.keyboard.press("Control+p");
     await page.waitForTimeout(300);

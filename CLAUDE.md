@@ -4,9 +4,19 @@
 * When working on an issue, mark it as "in_progress"
 * Code with TDD in mind - where possible use a test suite and write tests before implementation.
 
+## Documentation
+* **Start at [docs/INDEX.md](docs/INDEX.md)** — it's the table of contents for all documentation.
+* Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — full feature→file map, data flow, component tree.
+* Product specs: `docs/product-specs/` — requirements and design principles.
+* Design decisions: `docs/design-docs/` — architectural rationale and knowledge base.
+* Execution plans: `docs/exec-plans/active/` (current) and `docs/exec-plans/completed/` (done).
+* Reference material: `docs/references/` — dependency docs, codebase maps, test patterns.
+* Lessons learnt: [docs/lessons_learnt.md](docs/lessons_learnt.md) — gotchas from closed issues.
+
 ## Multi-Worktree Setup
 * Multiple agents may be working on this repo concurrently via separate git worktrees (e.g. `worktree-2`, `worktree-3`).
 * Each worktree has a default branch matching its suffix (e.g. `worktree-2` uses `main-2`).
+* Each worktree gets a deterministic dev server port: primary → 1420, worktree-2 → 1422, worktree-3 → 1423, etc.
 * **If you are on a secondary worktree (not the primary repo), rebase your default branch onto `main` before doing anything else** — e.g. `git rebase main` from `main-2`. This ensures you pick up changes merged by other agents.
 * After rebasing, continue with the normal workflow (check beads, convert todos, etc.).
 
@@ -18,7 +28,7 @@
 * If unsure how to do something that needs research, use the `research-scout` subagent to research the best ways to proceed.
 * All development happens on the `dev` branch. Create feature branches off `dev` and merge back to `dev`.
 * Create a new branch for each feature.
-* After implementing features, commit once before running any tests. Then run `bun run test` and fix any failures directly, then commit again. Then use `agent-browser` (CLI) directly to visually verify the feature is working (open the dev server URL, snapshot, screenshot, interact as needed), and commit again. The agent-browser docs are [here](https://github.com/vercel-labs/agent-browser). Then, if necessary, create an e2e playwright test that verifies the feature is working. Finally, run the e2e playwright tests to verify that there's no regressions.
+* After implementing features, commit once before running any tests. Then run `bun run test` and fix any failures directly, then commit again. Then use `agent-browser` (CLI) directly to visually verify the feature is working (open the dev server URL, snapshot, screenshot, interact as needed), and commit again. Alternatively, run `./scripts/validate.sh` to take a screenshot of the running app for quick visual checks. The agent-browser docs are [here](https://github.com/vercel-labs/agent-browser). Then, if necessary, create an e2e playwright test that verifies the feature is working. Finally, run the e2e playwright tests to verify that there's no regressions.
 * For each feature, after doing all of this in the previous point, merge the feature branch to main - just do this if the tests are passing and ui is working, don't ask for confirmation. Always use a merge commit. Don't delete the feature branch.
 * Fix bugs directly — do not delegate implementation to subagents.
 * Every once in a while, use the `frontend-aesthetic-enhancer` subagent to improve visual design, the `architecture-reviewer` subagent for design review, and the `change-reviewer` subagent for post-change review. These are read-only scouts that report back — the main agent implements any suggested changes.

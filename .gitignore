@@ -29,6 +29,9 @@ test-screenshots/
 .dolt/
 *.db
 
+# Dev server state
+.dev-port
+
 # Build artifacts
 pkg/
 *.pkg.tar.zst

@@ -93,9 +93,17 @@
     showSuggestions = false;
   }
 
+  /** Expand leading ~ to home directory path */
+  function expandTilde(path: string): string {
+    if (!homeDir) return path;
+    if (path === "~") return homeDir;
+    if (path.startsWith("~/")) return homeDir + path.slice(1);
+    return path;
+  }
+
   function confirmPathEdit() {
     if (editedPath.trim()) {
-      explorer.navigateTo(editedPath.trim());
+      explorer.navigateTo(expandTilde(editedPath.trim()));
     }
     editingPath = false;
     editedPath = "";
@@ -105,14 +113,15 @@
 
   /** Parse typed path into parent directory and name prefix */
   function parsePathInput(input: string): { parentDir: string; prefix: string } {
-    if (!input || input === "/") return { parentDir: "/", prefix: "" };
+    const expanded = expandTilde(input);
+    if (!expanded || expanded === "/") return { parentDir: "/", prefix: "" };
     // If path ends with /, list contents of that directory
-    if (input.endsWith("/")) return { parentDir: input, prefix: "" };
-    const lastSlash = input.lastIndexOf("/");
-    if (lastSlash < 0) return { parentDir: "/", prefix: input };
+    if (expanded.endsWith("/")) return { parentDir: expanded, prefix: "" };
+    const lastSlash = expanded.lastIndexOf("/");
+    if (lastSlash < 0) return { parentDir: "/", prefix: expanded };
     return {
-      parentDir: input.substring(0, lastSlash + 1),
-      prefix: input.substring(lastSlash + 1),
+      parentDir: expanded.substring(0, lastSlash + 1),
+      prefix: expanded.substring(lastSlash + 1),
     };
   }
 

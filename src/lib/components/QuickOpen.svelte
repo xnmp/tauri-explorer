@@ -8,6 +8,7 @@
     startStreamingSearch,
     cancelSearch,
     openFile,
+    getHomeDirectory,
     type SearchResult,
     type SearchResultsEvent,
   } from "$lib/api/files";
@@ -44,6 +45,18 @@
   let selectedIndex = $state(0);
   let loading = $state(false);
   let inputRef = $state<HTMLInputElement | null>(null);
+  let homeDir = $state<string | null>(null);
+
+  // Fetch home directory for tilde expansion
+  getHomeDirectory().then((r) => { if (r.ok) homeDir = r.data; });
+
+  /** Expand leading ~ to home directory path */
+  function expandTilde(path: string): string {
+    if (!homeDir) return path;
+    if (path === "~") return homeDir;
+    if (path.startsWith("~/")) return homeDir + path.slice(1);
+    return path;
+  }
 
   // Debounce timer for search
   let searchTimer: ReturnType<typeof setTimeout> | null = null;
@@ -266,7 +279,12 @@
         break;
       case "Enter":
         event.preventDefault();
-        if (displayResults[selectedIndex]) {
+        // If query looks like a path (starts with / or ~), navigate directly
+        if (query.startsWith("/") || query.startsWith("~")) {
+          const explorer = paneNav?.getActiveExplorer() ?? windowTabsManager.getActiveExplorer();
+          explorer.navigateTo(expandTilde(query.trim()));
+          onClose();
+        } else if (displayResults[selectedIndex]) {
           selectResult(displayResults[selectedIndex]);
         }
         break;

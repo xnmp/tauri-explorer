@@ -202,10 +202,6 @@
         <span class="info-label">Modified</span>
         <span class="info-value">{formatDate(selectedFile.modified)}</span>
       </div>
-      <div class="info-row">
-        <span class="info-label">Path</span>
-        <span class="info-value path-value" title={selectedFile.path}>{selectedFile.path}</span>
-      </div>
     </div>
   {/if}
 </div>
@@ -383,8 +379,4 @@
     white-space: nowrap;
   }
 
-  .path-value {
-    direction: rtl;
-    text-align: left;
-  }
 </style>

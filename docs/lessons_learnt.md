@@ -401,3 +401,26 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 - **Space as preview toggle hotkey**: Spacebar conflicts with text input. Must add a `when` guard checking `document.activeElement.tagName !== "INPUT"` etc. to prevent firing during typing.
 
 ---
+
+## tauri-explorer-ggbb: Ctrl+P Quick Open typing broken
+
+**Key takeaways:**
+- **Svelte 5 `$effect` + store mutation = infinite loop**: Calling `pruneNonExistent()` inside `$effect` reads the store's `$state(entries)` array, making it a reactive dependency. When prune modifies entries, the effect re-runs, resetting `query = ""`. Fix: wrap store calls in `untrack()`. This is a recurring Svelte 5 gotcha — always audit what a called function reads internally.
+
+---
+
+## tauri-explorer-zden: Resizable preview pane
+
+**Key takeaways:**
+- **Multiple `.resize-handle` elements**: When both sidebar and preview pane have resize handles with the same class, Playwright's strict mode fails. Scope locators to the parent: `page.locator(".preview-pane").locator(".resize-handle")`.
+- **CSS resize pattern**: Use `mousedown`/`mousemove`/`mouseup` with `user-select: none` on the resizing state to prevent text selection during drag. Remove listeners in `mouseup` to avoid leaks.
+
+---
+
+## tauri-explorer-r5yc: Tilde expansion in QuickOpen and address bar
+
+**Key takeaways:**
+- **Async home directory**: `getHomeDirectory()` returns a promise. Cache the result in component state at init time rather than awaiting on each use.
+- **QuickOpen path navigation**: If query starts with `/` or `~`, Enter should navigate directly instead of selecting a search result. Add the path-check before the result-selection logic.
+
+---

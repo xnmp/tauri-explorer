@@ -14,6 +14,7 @@ __pycache__/
 .venv/
 .pytest_cache/
 *.png
+!screenshots/readme/*.png
 
 # Playwright
 /playwright-report/
@@ -31,6 +32,9 @@ test-screenshots/
 
 # Dev server state
 .dev-port
+
+# Archived docs (local reference only)
+docs/archive/
 
 # Build artifacts
 pkg/

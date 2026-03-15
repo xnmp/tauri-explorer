@@ -211,6 +211,60 @@ for (const viewMode of VIEW_MODES) {
         const currentName = await updatedFile.locator(".entry-name").textContent();
         expect(currentName).toBe(originalName);
       });
+
+      test("typing in rename input does not trigger type-ahead selection", async ({ page }) => {
+        // Use a file entry (not directory) for rename
+        const file = page.locator(".entry-item:not(.directory)").first();
+        await file.click();
+        const originalName = await file.locator(".entry-name").textContent();
+
+        // Count how many entries are selected before rename
+        const selectedBefore = await page.locator(".entry-item.selected").count();
+        expect(selectedBefore).toBe(1);
+
+        await page.keyboard.press("F2");
+        const renameInput = page.locator(".rename-input");
+        await expect(renameInput).toBeFocused();
+
+        // Type "d" character-by-character — this would match "Documents" via
+        // type-ahead if keystrokes leaked out of the rename input.
+        await renameInput.fill("");
+        await renameInput.pressSequentially("d");
+
+        // The input should contain what we typed, not be cleared by a selection change
+        await expect(renameInput).toHaveValue("d");
+
+        // Only one entry should be selected — if type-ahead fired, "Documents"
+        // would also get selected/focused, causing visible side effects.
+        const selectedAfter = await page.locator(".entry-item.selected").count();
+        expect(selectedAfter).toBe(1);
+
+        // The original file should still be the one in rename mode
+        await expect(file).toHaveClass(/renaming|selected/);
+
+        // Cancel and verify original name preserved
+        await page.keyboard.press("Escape");
+        await expect(file.locator(".entry-name")).toHaveText(originalName!);
+      });
+
+      test("Enter confirms rename and updates the entry name", async ({ page }) => {
+        const file = page.locator(".entry-item:not(.directory)").first();
+        await file.click();
+
+        await page.keyboard.press("F2");
+        const renameInput = page.locator(".rename-input");
+        await expect(renameInput).toBeFocused();
+
+        await renameInput.fill("renamed-file.txt");
+        await page.keyboard.press("Enter");
+
+        // Rename input should close
+        await expect(renameInput).not.toBeVisible({ timeout: 2000 });
+
+        // The entry should now show the new name
+        const renamedEntry = page.locator(".entry-item .entry-name", { hasText: "renamed-file.txt" });
+        await expect(renamedEntry).toBeVisible({ timeout: 2000 });
+      });
     });
 
     test.describe("Delete", () => {

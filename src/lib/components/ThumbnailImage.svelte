@@ -45,10 +45,11 @@
   interface Props {
     path: string;
     size?: number;
+    quality?: number;
     fallbackColor?: string;
   }
 
-  let { path, size = 128, fallbackColor = "#0078d4" }: Props = $props();
+  let { path, size = 128, quality, fallbackColor = "#0078d4" }: Props = $props();
 
   let microUrl = $state<string | null>(null);
   let fullUrl = $state<string | null>(null);
@@ -95,7 +96,7 @@
       // Bail if path changed while queued
       if (currentPath !== path) return;
 
-      const microResult = await getMicroThumbnail(currentPath);
+      const microResult = await getMicroThumbnail(currentPath, size, quality);
       if (currentPath !== path) return;
 
       if (microResult.ok) {
@@ -110,7 +111,7 @@
     try {
       if (currentPath !== path) return;
 
-      const fullResult = await getThumbnailData(currentPath, size);
+      const fullResult = await getThumbnailData(currentPath, size, quality);
       if (currentPath !== path) return;
 
       if (fullResult.ok) {

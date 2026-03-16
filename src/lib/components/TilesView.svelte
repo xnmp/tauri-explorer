@@ -11,6 +11,7 @@
   import { getDropSourcePath, handleFileDrop } from "$lib/state/drop-operations";
   import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
   import { getFileIconColor, isImageFile } from "$lib/domain/file-types";
+  import { settingsStore, THUMBNAIL_SIZE_CONFIG } from "$lib/state/settings.svelte";
   import FileIcon from "./FileIcon.svelte";
   import ThumbnailImage from "./ThumbnailImage.svelte";
   import InlineNewFolder from "./InlineNewFolder.svelte";
@@ -26,6 +27,8 @@
   let { explorer, onitemclick, onitemdblclick }: Props = $props();
 
   const paneNav = getPaneNavigationContext();
+
+  const tileConfig = $derived(THUMBNAIL_SIZE_CONFIG[settingsStore.thumbnailSize]);
 
   // Inline rename composable
   const rename = useInlineRename(() => explorer);
@@ -138,7 +141,7 @@
   }
 </script>
 
-<div class="tiles-view file-rows">
+<div class="tiles-view file-rows" style:--tile-icon-size="{tileConfig.displaySize}px" style:--tile-min-col="{tileConfig.gridMinWidth}px">
   {#if explorer.isCreatingFolder}
     <InlineNewFolder {explorer} variant="tiles" />
   {/if}
@@ -164,7 +167,7 @@
     >
       <div class="tile-icon" style:color={iconColor}>
         {#if isImageFile(entry)}
-          <ThumbnailImage path={entry.path} size={64} fallbackColor={iconColor} />
+          <ThumbnailImage path={entry.path} size={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} />
         {:else}
           <FileIcon {entry} size="large" />
         {/if}
@@ -193,7 +196,7 @@
 <style>
   .tiles-view {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(var(--tile-min-col, 108px), 1fr));
     grid-auto-rows: min-content;
     align-content: start;
     gap: 6px;
@@ -268,9 +271,15 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 64px;
-    height: 64px;
+    width: var(--tile-icon-size, 64px);
+    height: var(--tile-icon-size, 64px);
     flex-shrink: 0;
+  }
+
+  .tile-icon :global(svg),
+  .tile-icon :global(.nf-icon-badge) {
+    width: 100%;
+    height: 100%;
   }
 
   .tile-name {

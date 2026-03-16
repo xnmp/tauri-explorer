@@ -158,9 +158,10 @@ fn get_thumbnail_sync(path: String, size: Option<u32>) -> Result<String, AppErro
     Ok(thumb_path.to_string_lossy().to_string())
 }
 
-fn get_thumbnail_data_sync(path: String, size: Option<u32>) -> Result<String, AppError> {
+fn get_thumbnail_data_sync(path: String, size: Option<u32>, quality: Option<u8>) -> Result<String, AppError> {
     let source_path = PathBuf::from(&path);
     let size = size.unwrap_or(THUMBNAIL_SIZE);
+    let quality = quality.unwrap_or(80);
     validate_thumbnail_path(&source_path, &path)?;
 
     let cache_key = generate_cache_key(&source_path, size)
@@ -180,14 +181,16 @@ fn get_thumbnail_data_sync(path: String, size: Option<u32>) -> Result<String, Ap
 
     let thumbnail = img.thumbnail(size, size).to_rgb8();
 
-    let data = encode_jpeg(&thumbnail, 80)?;
+    let data = encode_jpeg(&thumbnail, quality)?;
     save_to_cache(&cache_key, &data);
 
     Ok(to_data_uri(&data))
 }
 
-fn get_micro_thumbnail_sync(path: String) -> Result<String, AppError> {
+fn get_micro_thumbnail_sync(path: String, prewarm_size: Option<u32>, prewarm_quality: Option<u8>) -> Result<String, AppError> {
     let source_path = PathBuf::from(&path);
+    let full_size = prewarm_size.unwrap_or(THUMBNAIL_SIZE);
+    let full_quality = prewarm_quality.unwrap_or(80);
     validate_thumbnail_path(&source_path, &path)?;
 
     let micro_cache_key = generate_cache_key(&source_path, MICRO_SIZE)
@@ -213,11 +216,11 @@ fn get_micro_thumbnail_sync(path: String) -> Result<String, AppError> {
 
     // Pre-warm full thumbnail cache if not already present.
     // Since the image is already decoded in memory, this is nearly free.
-    let full_cache_key = generate_cache_key(&source_path, THUMBNAIL_SIZE);
+    let full_cache_key = generate_cache_key(&source_path, full_size);
     if let Some(ref key) = full_cache_key {
         if get_cached_thumbnail(key).is_none() {
-            let full = img.thumbnail(THUMBNAIL_SIZE, THUMBNAIL_SIZE).to_rgb8();
-            if let Ok(full_data) = encode_jpeg(&full, 80) {
+            let full = img.thumbnail(full_size, full_size).to_rgb8();
+            if let Ok(full_data) = encode_jpeg(&full, full_quality) {
                 save_to_cache(key, &full_data);
             }
         }
@@ -240,8 +243,8 @@ pub async fn get_thumbnail(path: String, size: Option<u32>) -> Result<String, Ap
 /// Get thumbnail as base64-encoded data URI.
 /// More efficient for small thumbnails as it avoids file I/O.
 #[tauri::command]
-pub async fn get_thumbnail_data(path: String, size: Option<u32>) -> Result<String, AppError> {
-    tokio::task::spawn_blocking(move || get_thumbnail_data_sync(path, size))
+pub async fn get_thumbnail_data(path: String, size: Option<u32>, quality: Option<u8>) -> Result<String, AppError> {
+    tokio::task::spawn_blocking(move || get_thumbnail_data_sync(path, size, quality))
         .await
         .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
 }
@@ -249,8 +252,8 @@ pub async fn get_thumbnail_data(path: String, size: Option<u32>) -> Result<Strin
 /// Get a tiny 16x16 micro thumbnail for progressive loading.
 /// Also pre-warms the full thumbnail cache as a side effect.
 #[tauri::command]
-pub async fn get_micro_thumbnail(path: String) -> Result<String, AppError> {
-    tokio::task::spawn_blocking(move || get_micro_thumbnail_sync(path))
+pub async fn get_micro_thumbnail(path: String, prewarm_size: Option<u32>, prewarm_quality: Option<u8>) -> Result<String, AppError> {
+    tokio::task::spawn_blocking(move || get_micro_thumbnail_sync(path, prewarm_size, prewarm_quality))
         .await
         .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
 }
@@ -423,7 +426,7 @@ mod tests {
         });
         img.save(&img_path).unwrap();
 
-        let result = get_micro_thumbnail_sync(img_path.to_string_lossy().to_string());
+        let result = get_micro_thumbnail_sync(img_path.to_string_lossy().to_string(), None, None);
         assert!(result.is_ok(), "Micro thumbnail failed: {:?}", result.err());
 
         let data_uri = result.unwrap();

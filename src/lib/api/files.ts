@@ -526,10 +526,11 @@ export async function getThumbnail(
  */
 export async function getThumbnailData(
   path: string,
-  size?: number
+  size?: number,
+  quality?: number
 ): Promise<ApiResult<string>> {
   try {
-    const dataUri = await invoke<string>("get_thumbnail_data", { path, size });
+    const dataUri = await invoke<string>("get_thumbnail_data", { path, size, quality });
     return { ok: true, data: dataUri };
   } catch (err) {
     return { ok: false, error: extractError(err) };
@@ -544,10 +545,12 @@ export async function getThumbnailData(
  * @returns Result with data URI (data:image/jpeg;base64,...) or error
  */
 export async function getMicroThumbnail(
-  path: string
+  path: string,
+  prewarmSize?: number,
+  prewarmQuality?: number
 ): Promise<ApiResult<string>> {
   try {
-    const dataUri = await invoke<string>("get_micro_thumbnail", { path });
+    const dataUri = await invoke<string>("get_micro_thumbnail", { path, prewarmSize, prewarmQuality });
     return { ok: true, data: dataUri };
   } catch (err) {
     return { ok: false, error: extractError(err) };

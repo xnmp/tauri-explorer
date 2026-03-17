@@ -21,6 +21,21 @@ export interface NavBarButtons {
 
 export type IconTheme = "default" | "material" | "minimal";
 
+export type ThumbnailSize = "small" | "medium" | "large";
+
+export interface ThumbnailSizeConfig {
+  displaySize: number;
+  genSize: number;
+  quality: number;
+  gridMinWidth: number;
+}
+
+export const THUMBNAIL_SIZE_CONFIG: Record<ThumbnailSize, ThumbnailSizeConfig> = {
+  small:  { displaySize: 64,  genSize: 128, quality: 80, gridMinWidth: 108 },
+  medium: { displaySize: 96,  genSize: 192, quality: 85, gridMinWidth: 140 },
+  large:  { displaySize: 128, genSize: 256, quality: 90, gridMinWidth: 172 },
+};
+
 /** Which columns are visible in details view (name is always shown) */
 export interface ColumnVisibility {
   date: boolean;
@@ -49,6 +64,7 @@ export interface Settings {
   viewMode: ViewMode; // default view mode for new panes
   previewPaneWidth: number; // width in px, 0 = default (280px)
   theme: string; // active theme id, e.g. "dark", "golden-hour"
+  thumbnailSize: ThumbnailSize; // tile thumbnail size tier
 }
 
 const MIN_ZOOM = 50;
@@ -81,6 +97,7 @@ const DEFAULT_SETTINGS: Settings = {
   viewMode: "details",
   previewPaneWidth: 0,
   theme: "light",
+  thumbnailSize: "small",
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -236,6 +253,9 @@ function createSettingsStore() {
     },
     get theme() {
       return settings.theme;
+    },
+    get thumbnailSize() {
+      return settings.thumbnailSize;
     },
     setTheme(themeId: string): void {
       update({ theme: themeId });

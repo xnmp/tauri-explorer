@@ -3,7 +3,7 @@
   Issue: tauri-explorer-npjh.1, tauri-explorer-oytv
 -->
 <script lang="ts">
-  import { settingsStore, type IconTheme } from "$lib/state/settings.svelte";
+  import { settingsStore, type IconTheme, type ThumbnailSize } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import KeybindingsSettings from "./KeybindingsSettings.svelte";
 
@@ -82,6 +82,22 @@
               <option value="default">Default</option>
               <option value="material">Material</option>
               <option value="minimal">Minimal</option>
+            </select>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Thumbnail Size</span>
+              <span class="setting-description">Size of image thumbnails in tiles view</span>
+            </div>
+            <select
+              class="theme-select"
+              value={settingsStore.thumbnailSize}
+              onchange={(e) => settingsStore.update({ thumbnailSize: e.currentTarget.value as ThumbnailSize })}
+            >
+              <option value="small">Small</option>
+              <option value="medium">Medium</option>
+              <option value="large">Large</option>
             </select>
           </div>
 

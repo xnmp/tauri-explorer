@@ -381,7 +381,7 @@ mod tests {
         img.save(&png_path).unwrap();
 
         // Test get_thumbnail_data_sync succeeds for PNG
-        let result = get_thumbnail_data_sync(png_path.to_string_lossy().to_string(), Some(64));
+        let result = get_thumbnail_data_sync(png_path.to_string_lossy().to_string(), Some(64), None);
         assert!(result.is_ok(), "PNG thumbnail generation failed: {:?}", result.err());
         let data_uri = result.unwrap();
         assert!(data_uri.starts_with("data:image/jpeg;base64,"), "Expected JPEG data URI, got: {}", &data_uri[..50]);
@@ -395,7 +395,7 @@ mod tests {
             return; // Skip if not available
         }
 
-        let result = get_thumbnail_data_sync(icon_path.to_string_lossy().to_string(), Some(64));
+        let result = get_thumbnail_data_sync(icon_path.to_string_lossy().to_string(), Some(64), None);
         assert!(result.is_ok(), "Real PNG thumbnail failed: {:?}", result.err());
     }
 
@@ -410,7 +410,7 @@ mod tests {
         });
         img.save(&jpg_path).unwrap();
 
-        let result = get_thumbnail_data_sync(jpg_path.to_string_lossy().to_string(), Some(64));
+        let result = get_thumbnail_data_sync(jpg_path.to_string_lossy().to_string(), Some(64), None);
         assert!(result.is_ok(), "JPEG thumbnail generation failed: {:?}", result.err());
         let data_uri = result.unwrap();
         assert!(data_uri.starts_with("data:image/jpeg;base64,"));

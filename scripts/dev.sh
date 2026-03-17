@@ -50,8 +50,11 @@ elif [[ "$CLEAN" == "clean" ]]; then
   echo "=== Nuking frontend caches + reinstalling node_modules ==="
   bash scripts/clean-rebuild.sh --no-rust
 else
+  # Default: just nuke caches that cause stale PostCSS/Svelte errors.
+  # Do NOT run clean-rebuild.sh here — its vite build step recreates
+  # .svelte-kit/output with stale .vite caches that break the dev server.
   echo "=== Nuking frontend caches ==="
-  bash scripts/clean-rebuild.sh --no-rust --keep-node-modules
+  rm -rf .svelte-kit node_modules/.vite src-tauri/.svelte-kit
 fi
 
 # Derive a deterministic port from the worktree directory name.
@@ -85,10 +88,6 @@ fi
 echo "$PORT" > .dev-port
 
 # Always sync SvelteKit generated files right before starting the dev server.
-# clean-rebuild.sh already syncs, but the subsequent vite build can leave stale
-# cache in .svelte-kit/output that confuses the dev server. A final sync here
-# ensures the generated files match the current source.
-rm -rf .svelte-kit/output 2>/dev/null || true
 npx svelte-kit sync
 
 echo "=== Starting dev server on port $PORT ($(basename "$(pwd)")) ==="

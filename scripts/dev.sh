@@ -84,6 +84,13 @@ fi
 # Write port to .dev-port so scripts/validate.sh can find the running server
 echo "$PORT" > .dev-port
 
+# Always sync SvelteKit generated files right before starting the dev server.
+# clean-rebuild.sh already syncs, but the subsequent vite build can leave stale
+# cache in .svelte-kit/output that confuses the dev server. A final sync here
+# ensures the generated files match the current source.
+rm -rf .svelte-kit/output 2>/dev/null || true
+npx svelte-kit sync
+
 echo "=== Starting dev server on port $PORT ($(basename "$(pwd)")) ==="
 
 export DEV_PORT="$PORT"

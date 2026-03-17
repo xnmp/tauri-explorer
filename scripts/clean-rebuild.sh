@@ -29,6 +29,7 @@ if [ "$KEEP_NODE_MODULES" = false ]; then
 fi
 rm -rf node_modules/.vite
 rm -rf .svelte-kit
+rm -rf src-tauri/.svelte-kit
 rm -rf build
 rm -rf .vite
 rm -rf tsconfig.tsbuildinfo

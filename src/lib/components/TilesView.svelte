@@ -167,7 +167,7 @@
     >
       <div class="tile-icon" style:color={iconColor}>
         {#if isImageFile(entry)}
-          <ThumbnailImage path={entry.path} size={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} />
+          <ThumbnailImage path={entry.path} size={tileConfig.displaySize} genSize={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} />
         {:else}
           <FileIcon {entry} size="large" />
         {/if}

@@ -155,13 +155,6 @@ test.describe("Thumbnail Size Setting", () => {
       return getComputedStyle(el).width;
     });
     expect(containerSize).toBe("96px");
-
-    // The ThumbnailImage's internal --size CSS var should be genSize (192px)
-    // confirming the backend gets the higher-res request
-    const internalSize = await thumbnailContainer.evaluate((el) => {
-      return el.style.getPropertyValue("--size");
-    });
-    expect(internalSize).toBe("192px");
   });
 
   test("image thumbnails render at Large size in tiles view", async ({ page }) => {
@@ -176,16 +169,11 @@ test.describe("Thumbnail Size Setting", () => {
     const thumbnailContainer = page.locator(".tile-icon .thumbnail-container").first();
     await expect(thumbnailContainer).toBeVisible({ timeout: 5000 });
 
-    // Display size matches tile icon (128px), internal --size is genSize (256px)
+    // Display size matches tile icon (128px for large)
     const containerSize = await thumbnailContainer.evaluate((el) => {
       return getComputedStyle(el).width;
     });
     expect(containerSize).toBe("128px");
-
-    const internalSize = await thumbnailContainer.evaluate((el) => {
-      return el.style.getPropertyValue("--size");
-    });
-    expect(internalSize).toBe("256px");
   });
 
   test("thumbnail size persists across page reloads", async ({ page }) => {

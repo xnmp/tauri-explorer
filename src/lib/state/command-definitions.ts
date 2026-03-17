@@ -428,24 +428,6 @@ const viewCommands: Command[] = [
     category: "view",
     handler: () => settingsStore.setListViewColumns(3),
   },
-  {
-    id: "view.listColumns4",
-    label: "List View: 4 Columns",
-    category: "view",
-    handler: () => settingsStore.setListViewColumns(4),
-  },
-  {
-    id: "view.listColumns5",
-    label: "List View: 5 Columns",
-    category: "view",
-    handler: () => settingsStore.setListViewColumns(5),
-  },
-  {
-    id: "view.listColumns6",
-    label: "List View: 6 Columns",
-    category: "view",
-    handler: () => settingsStore.setListViewColumns(6),
-  },
 ];
 
 /** Bookmark commands */

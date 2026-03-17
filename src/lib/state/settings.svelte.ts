@@ -267,7 +267,7 @@ function createSettingsStore() {
       update({ viewMode: mode });
     },
     setListViewColumns(n: number): void {
-      update({ listViewColumns: Math.max(0, Math.min(6, n)) });
+      update({ listViewColumns: Math.max(0, Math.min(3, n)) });
     },
     setListColumnMaxWidth(px: number): void {
       update({ listColumnMaxWidth: Math.max(100, Math.min(600, px)) });

@@ -141,7 +141,7 @@
   }
 </script>
 
-<div class="tiles-view file-rows" style:--tile-icon-size="{tileConfig.displaySize}px" style:--tile-min-col="{tileConfig.gridMinWidth}px">
+<div class="tiles-view file-rows" style:--tile-icon-size="{tileConfig.displaySize}px" style:--tile-min-col="{tileConfig.gridMinWidth}px" style:--tile-icon-scale={tileConfig.displaySize / 64}>
   {#if explorer.isCreatingFolder}
     <InlineNewFolder {explorer} variant="tiles" />
   {/if}
@@ -275,6 +275,15 @@
     width: var(--tile-icon-size, 64px);
     height: var(--tile-icon-size, 64px);
     flex-shrink: 0;
+  }
+
+  /* Scale file icons (64px SVGs) to fill the tile at medium/large sizes.
+     Uses GPU-composited transform instead of re-rasterizing SVGs.
+     Only targets direct children (FileIcon output), not nested thumbnail SVGs. */
+  .tile-icon > :global(svg),
+  .tile-icon > :global(.icon-cat),
+  .tile-icon > :global(.nf-icon-badge) {
+    transform: scale(var(--tile-icon-scale, 1));
   }
 
   .tile-name {

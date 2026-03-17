@@ -285,9 +285,12 @@ function createWindowTabsManager() {
       return;
     }
 
-    // Clean up explorers for this tab
-    explorers.delete(tab.panes.left.explorerId);
-    explorers.delete(tab.panes.right.explorerId);
+    // Clean up explorers for this tab (unwatch directories first)
+    for (const paneId of ["left", "right"] as const) {
+      const explorer = explorers.get(tab.panes[paneId].explorerId);
+      explorer?.destroy();
+      explorers.delete(tab.panes[paneId].explorerId);
+    }
 
     const newTabs = tabs.filter((t) => t.id !== tabId);
 

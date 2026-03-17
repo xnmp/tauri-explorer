@@ -18,6 +18,7 @@
   import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { copyEntry, moveEntry } from "$lib/api/files";
+  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { initFileChangeListener, cleanupFileChangeListener, broadcastFileChange, parentDir } from "$lib/state/file-events";
   import { saveFocusedWindowState } from "$lib/state/focused-window";
   import "$lib/themes/index.css";
@@ -248,6 +249,18 @@
       }
     });
 
+    // Listen for filesystem watcher events from backend (auto-refresh)
+    let unlistenWatcher: UnlistenFn | undefined;
+    listen<{ path: string }>("directory-changed", (event) => {
+      const changedPath = event.payload.path;
+      for (const paneId of ["left", "right"] as const) {
+        const exp = windowTabsManager.getExplorer(paneId);
+        if (exp && exp.currentPath === changedPath) {
+          exp.refresh();
+        }
+      }
+    }).then((fn) => { unlistenWatcher = fn; });
+
     // Persist focused window state when this window gains focus
     window.addEventListener("focus", persistFocusedState);
 
@@ -288,6 +301,7 @@
       clearInterval(saveInterval);
       externalDrop.cleanup();
       cleanupFileChangeListener();
+      unlistenWatcher?.();
     };
   });
 </script>

@@ -21,6 +21,8 @@ import {
   deleteEntryPermanent,
   clipboardHasImage,
   clipboardPasteImage,
+  watchDirectory,
+  unwatchDirectory,
 } from "$lib/api/files";
 import { broadcastFileChange } from "./file-events";
 import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/domain/file";
@@ -94,6 +96,23 @@ function createExplorerState() {
   // Navigation callback for UI (e.g. focusing the selected item after nav)
   let onNavigateCallback: (() => void) | null = null;
 
+  // Filesystem watcher: track which path this pane is watching
+  let watchedPath: string | null = null;
+
+  function updateWatch(newPath: string) {
+    if (watchedPath === newPath) return;
+    if (watchedPath) unwatchDirectory(watchedPath);
+    watchDirectory(newPath);
+    watchedPath = newPath;
+  }
+
+  function destroyWatch() {
+    if (watchedPath) {
+      unwatchDirectory(watchedPath);
+      watchedPath = null;
+    }
+  }
+
   // Read-only state accessor for components that need the raw state bag
   const state = $derived({ ...coreState });
 
@@ -140,6 +159,7 @@ function createExplorerState() {
     if (result.ok) {
       coreState.currentPath = result.path;
       coreState.entries = result.entries;
+      updateWatch(result.path);
 
       const savedSort = getSortPref(result.path);
       if (savedSort) {
@@ -677,6 +697,8 @@ function createExplorerState() {
     set onNavigate(cb: (() => void) | null) {
       onNavigateCallback = cb;
     },
+    // Cleanup
+    destroy: destroyWatch,
   };
 }
 

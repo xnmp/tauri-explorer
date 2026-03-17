@@ -4,6 +4,7 @@
 pub mod dir_listing;
 pub mod external_apps;
 pub mod file_ops;
+pub mod fs_watcher;
 
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};

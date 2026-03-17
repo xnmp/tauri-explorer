@@ -17,6 +17,7 @@ import { recentFilesStore } from "./recent-files.svelte";
 import { dialogStore } from "./dialogs.svelte";
 import { fetchDirectory, writeTextFile, openInTerminal, clipboardPasteImage } from "$lib/api/files";
 import { pasteEntries, type PasteSource } from "./paste-operations";
+import { folderViewsStore } from "./folder-views.svelte";
 import type { ViewMode } from "./types";
 import { readFocusedWindowState } from "./focused-window";
 
@@ -430,21 +431,21 @@ const viewCommands: Command[] = [
   },
   {
     id: "view.tilesSizeSmall",
-    label: "Tiles: Small Icons",
+    label: "Tiles: Small Icons (this folder)",
     category: "view",
-    handler: () => settingsStore.update({ thumbnailSize: "small" }),
+    handler: () => { const p = getActiveExplorer()?.currentPath; if (p) folderViewsStore.set(p, { thumbnailSize: "small" }); },
   },
   {
     id: "view.tilesSizeMedium",
-    label: "Tiles: Medium Icons",
+    label: "Tiles: Medium Icons (this folder)",
     category: "view",
-    handler: () => settingsStore.update({ thumbnailSize: "medium" }),
+    handler: () => { const p = getActiveExplorer()?.currentPath; if (p) folderViewsStore.set(p, { thumbnailSize: "medium" }); },
   },
   {
     id: "view.tilesSizeLarge",
-    label: "Tiles: Large Icons",
+    label: "Tiles: Large Icons (this folder)",
     category: "view",
-    handler: () => settingsStore.update({ thumbnailSize: "large" }),
+    handler: () => { const p = getActiveExplorer()?.currentPath; if (p) folderViewsStore.set(p, { thumbnailSize: "large" }); },
   },
 ];
 

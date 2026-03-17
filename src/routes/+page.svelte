@@ -7,6 +7,7 @@
   import { onMount } from "svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { setPaneNavigationContext } from "$lib/state/pane-context";
@@ -229,6 +230,7 @@
     // Load settings and bookmarks from config files (async, non-blocking)
     settingsStore.init().then(() => themeStore.syncFromSettings());
     bookmarksStore.init();
+    folderViewsStore.init();
 
     // Register all commands for the command palette (deferred to next tick)
     queueMicrotask(() => registerAllCommands());
@@ -414,6 +416,7 @@
 
   :global(body) {
     font-family: var(--font-family);
+    font-weight: var(--font-weight-normal);
     font-size: var(--font-size-body);
     line-height: var(--line-height-normal);
     letter-spacing: var(--letter-spacing-tight);

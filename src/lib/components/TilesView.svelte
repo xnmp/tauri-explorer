@@ -227,6 +227,7 @@
     transition: background 120ms ease;
     height: fit-content;
     min-width: 0;
+    contain: layout style;
   }
 
   .tile-item:hover {

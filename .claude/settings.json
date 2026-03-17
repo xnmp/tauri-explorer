@@ -2,5 +2,36 @@
   "enabledPlugins": {
     "code-simplifier@claude-plugins-official": true,
     "frontend-design@claude-plugins-official": true
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/pre-commit-require-tests.sh",
+            "timeout": 5000
+          },
+          {
+            "type": "command",
+            "command": ".claude/hooks/pre-merge-e2e.sh",
+            "timeout": 120000
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/run_svelte_check_post_edit.sh",
+            "timeout": 30000
+          }
+        ]
+      }
+    ]
   }
 }

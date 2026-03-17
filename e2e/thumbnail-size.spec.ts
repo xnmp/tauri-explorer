@@ -136,6 +136,58 @@ test.describe("Thumbnail Size Setting", () => {
     expect(largeMinCol).toBe("172px");
   });
 
+  test("image thumbnails render at Medium size in tiles view", async ({ page }) => {
+    // Navigate to Pictures which has image files
+    await page.goto("/?path=/home/user/Pictures");
+    await waitForFileList(page);
+    await switchToTilesView(page);
+
+    // Set to Medium
+    await setThumbnailSize(page, "medium");
+    await page.waitForTimeout(300);
+
+    // Find a thumbnail container (image files get ThumbnailImage, not FileIcon)
+    const thumbnailContainer = page.locator(".tile-icon .thumbnail-container").first();
+    await expect(thumbnailContainer).toBeVisible({ timeout: 5000 });
+
+    // Thumbnail container display size matches tile icon size (96px for medium)
+    const containerSize = await thumbnailContainer.evaluate((el) => {
+      return getComputedStyle(el).width;
+    });
+    expect(containerSize).toBe("96px");
+
+    // The ThumbnailImage's internal --size CSS var should be genSize (192px)
+    // confirming the backend gets the higher-res request
+    const internalSize = await thumbnailContainer.evaluate((el) => {
+      return el.style.getPropertyValue("--size");
+    });
+    expect(internalSize).toBe("192px");
+  });
+
+  test("image thumbnails render at Large size in tiles view", async ({ page }) => {
+    await page.goto("/?path=/home/user/Pictures");
+    await waitForFileList(page);
+    await switchToTilesView(page);
+
+    // Set to Large
+    await setThumbnailSize(page, "large");
+    await page.waitForTimeout(300);
+
+    const thumbnailContainer = page.locator(".tile-icon .thumbnail-container").first();
+    await expect(thumbnailContainer).toBeVisible({ timeout: 5000 });
+
+    // Display size matches tile icon (128px), internal --size is genSize (256px)
+    const containerSize = await thumbnailContainer.evaluate((el) => {
+      return getComputedStyle(el).width;
+    });
+    expect(containerSize).toBe("128px");
+
+    const internalSize = await thumbnailContainer.evaluate((el) => {
+      return el.style.getPropertyValue("--size");
+    });
+    expect(internalSize).toBe("256px");
+  });
+
   test("thumbnail size persists across page reloads", async ({ page }) => {
     await setThumbnailSize(page, "large");
     await page.waitForTimeout(200);

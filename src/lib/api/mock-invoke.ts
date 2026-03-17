@@ -480,6 +480,11 @@ const mockCommands: Record<string, CommandHandler> = {
     return "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
   },
 
+  get_micro_thumbnail: () => {
+    // Return a 1x1 gray pixel as micro placeholder
+    return "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+  },
+
   clear_thumbnail_cache: () => 0,
 
   get_thumbnail_cache_stats: () => ({

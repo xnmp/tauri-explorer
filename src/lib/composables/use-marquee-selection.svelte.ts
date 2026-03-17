@@ -96,7 +96,7 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     const minY = headerHeight ?? config.headerHeight;
     dragCurrent = {
       x: Math.max(0, Math.min(event.clientX / zoom - containerRect.left, containerRect.width)),
-      y: Math.max(minY, event.clientY / zoom - containerRect.top),
+      y: Math.max(minY, Math.min(event.clientY / zoom - containerRect.top, containerRect.height)),
     };
     return true;
   }

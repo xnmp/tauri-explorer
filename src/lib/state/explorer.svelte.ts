@@ -248,8 +248,16 @@ function createExplorerState() {
 
   async function refresh(options?: { silent?: boolean }) {
     const oldFingerprint = entriesFingerprint(coreState.entries);
-    const success = await navigateInternal(coreState.currentPath);
-    if (!success) {
+    const silent = options?.silent ?? false;
+
+    // Fetch new data without touching UI state — avoids flash on no-change
+    const result = await dirListing.load(coreState.currentPath, {
+      onEntries: () => {},
+      onDone: () => {},
+    });
+
+    if (!result.ok) {
+      // Directory no longer exists — fall back to parent
       const parentPath = navigation.getParentPath(breadcrumbs);
       if (parentPath) {
         await navigateInternal(parentPath);
@@ -257,14 +265,24 @@ function createExplorerState() {
       return;
     }
 
-    const silent = options?.silent ?? false;
-    if (!silent) {
-      const newFingerprint = entriesFingerprint(coreState.entries);
-      if (oldFingerprint === newFingerprint) {
+    const newFingerprint = entriesFingerprint(result.entries);
+    if (oldFingerprint === newFingerprint) {
+      if (!silent) {
         toastStore.show("Already up to date", "info", { duration: 1500 });
-      } else {
-        toastStore.show("Refreshed", "info", { duration: 1500 });
       }
+      return;
+    }
+
+    // Entries changed — update UI state in place without full navigateInternal reset
+    coreState.entries = result.entries;
+    updateWatch(result.path);
+
+    if (!result.streaming) {
+      coreState.loading = false;
+    }
+
+    if (!silent) {
+      toastStore.show("Refreshed", "info", { duration: 1500 });
     }
   }
 

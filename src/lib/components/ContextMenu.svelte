@@ -170,6 +170,9 @@
 
   let menuEl: HTMLDivElement | undefined = $state();
   let listSubmenuOpen = $state(false);
+  let tilesSubmenuOpen = $state(false);
+
+  const tileSizeLabels: Record<string, string> = { small: "Small", medium: "Medium", large: "Large" };
 
   // Clamp menu position to viewport after rendering
   $effect(() => {
@@ -440,6 +443,54 @@
               </div>
             {/if}
           </div>
+        {:else if mode.id === "tiles"}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="submenu-wrapper" onmouseenter={() => tilesSubmenuOpen = true} onmouseleave={() => tilesSubmenuOpen = false}>
+            <button
+              class="menu-item"
+              class:selected={explorer.viewMode === mode.id}
+              onclick={() => handleSetViewMode(mode.id)}
+              role="menuitemradio"
+              aria-checked={explorer.viewMode === mode.id}
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <rect x="2" y="2" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+                <rect x="9" y="2" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+                <rect x="2" y="9" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+                <rect x="9" y="9" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+              </svg>
+              <span>{mode.label}</span>
+              {#if explorer.viewMode === mode.id}
+                <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              {/if}
+              <svg class="submenu-arrow" width="8" height="8" viewBox="0 0 8 8" fill="none">
+                <path d="M3 1.5L6 4L3 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            {#if tilesSubmenuOpen}
+              <div class="submenu">
+                <div class="menu-section-label">Icon Size</div>
+                {#each ["small", "medium", "large"] as size}
+                  <button
+                    class="menu-item"
+                    class:selected={settingsStore.thumbnailSize === size}
+                    onclick={() => { settingsStore.update({ thumbnailSize: size as "small" | "medium" | "large" }); contextMenuStore.close(); }}
+                    role="menuitemradio"
+                    aria-checked={settingsStore.thumbnailSize === size}
+                  >
+                    <span>{tileSizeLabels[size]}</span>
+                    {#if settingsStore.thumbnailSize === size}
+                      <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                        <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                      </svg>
+                    {/if}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
         {:else}
           <button
             class="menu-item"
@@ -449,14 +500,7 @@
             aria-checked={explorer.viewMode === mode.id}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              {#if mode.id === "details"}
-                <path d="M2 4H14M2 8H14M2 12H14" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
-              {:else}
-                <rect x="2" y="2" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-                <rect x="9" y="2" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-                <rect x="2" y="9" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-                <rect x="9" y="9" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-              {/if}
+              <path d="M2 4H14M2 8H14M2 12H14" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
             </svg>
             <span>{mode.label}</span>
             {#if explorer.viewMode === mode.id}

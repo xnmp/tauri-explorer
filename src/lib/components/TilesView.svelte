@@ -224,7 +224,6 @@
     font-family: inherit;
     font-size: 13px;
     color: var(--text-primary);
-    transition: background 120ms ease;
     height: fit-content;
     min-width: 0;
     contain: layout style;
@@ -232,6 +231,7 @@
 
   .tile-item:hover {
     background: var(--subtle-fill-secondary);
+    transition: background 120ms ease;
   }
 
   .tile-item:active {
@@ -275,12 +275,6 @@
     width: var(--tile-icon-size, 64px);
     height: var(--tile-icon-size, 64px);
     flex-shrink: 0;
-  }
-
-  .tile-icon :global(svg),
-  .tile-icon :global(.nf-icon-badge) {
-    width: 100%;
-    height: 100%;
   }
 
   .tile-name {

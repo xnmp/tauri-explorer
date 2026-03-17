@@ -39,7 +39,8 @@ sha2 = "0.10"
 base64 = "0.22"
 hex = "0.4"
 zip = { version = "2", default-features = false, features = ["deflate"] }
-tokio = { version = "1", features = ["rt"] }
+tokio = { version = "1", features = ["rt", "time", "sync"] }
+notify = "7"
 libc = "0.2.183"
 log = "0.4"
 tauri-plugin-log = "2"

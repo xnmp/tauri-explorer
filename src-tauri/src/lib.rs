@@ -186,6 +186,9 @@ pub fn run(launch_dir: Option<String>) {
             files::file_ops::create_symlink,
             files::file_ops::estimate_size,
             files::file_ops::check_paths_exist,
+            // Filesystem watcher
+            files::fs_watcher::watch_directory,
+            files::fs_watcher::unwatch_directory,
             // File operations — external apps
             files::external_apps::open_file,
             files::external_apps::open_file_with,
@@ -223,6 +226,9 @@ pub fn run(launch_dir: Option<String>) {
         ])
         .setup(move |app| {
             let t_setup = std::time::Instant::now();
+
+            // Initialize filesystem watcher for auto-refresh
+            files::fs_watcher::init_watcher(&app.handle());
 
             // Create window programmatically so we can inject initialization_script.
             // This replaces the static window definition in tauri.conf.json.

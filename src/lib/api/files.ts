@@ -492,6 +492,34 @@ export async function cancelDirectoryListing(listingId: number): Promise<ApiResu
 }
 
 // ===================
+// Filesystem Watcher
+// Issue: tauri-explorer-2gdf
+// ===================
+
+/**
+ * Start watching a directory for external changes.
+ * Refcounted — safe to call multiple times for the same path.
+ */
+export async function watchDirectory(path: string): Promise<void> {
+  try {
+    await invoke("watch_directory", { path });
+  } catch {
+    // Non-critical: watcher failure shouldn't block navigation
+  }
+}
+
+/**
+ * Stop watching a directory. Decrements refcount; OS watch removed at zero.
+ */
+export async function unwatchDirectory(path: string): Promise<void> {
+  try {
+    await invoke("unwatch_directory", { path });
+  } catch {
+    // Non-critical
+  }
+}
+
+// ===================
 // Thumbnail Generation
 // Issue: tauri-explorer-im3m
 // ===================

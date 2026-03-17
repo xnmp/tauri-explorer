@@ -8,6 +8,7 @@
   import { contextMenuStore } from "$lib/state/context-menu.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { compressToZip, extractArchive, openFile, openInTerminal, createSymlink, setAsWallpaper } from "$lib/api/files";
   import type { FileEntry } from "$lib/domain/file";
   import { isImageFile } from "$lib/domain/file-types";
@@ -173,6 +174,10 @@
   let tilesSubmenuOpen = $state(false);
 
   const tileSizeLabels: Record<string, string> = { small: "Small", medium: "Medium", large: "Large" };
+
+  const effectiveThumbnailSize = $derived(
+    folderViewsStore.getThumbnailSize(explorer.currentPath, settingsStore.thumbnailSize)
+  );
 
   // Compute submenu flip direction from the already-clamped menu position
   // and viewport size. All values are in CSS pixels — no getBoundingClientRect
@@ -524,13 +529,13 @@
                 {#each ["small", "medium", "large"] as size}
                   <button
                     class="menu-item"
-                    class:selected={settingsStore.thumbnailSize === size}
-                    onclick={() => { settingsStore.update({ thumbnailSize: size as "small" | "medium" | "large" }); contextMenuStore.close(); }}
+                    class:selected={effectiveThumbnailSize === size}
+                    onclick={() => { folderViewsStore.set(explorer.currentPath, { thumbnailSize: size as "small" | "medium" | "large" }); contextMenuStore.close(); }}
                     role="menuitemradio"
-                    aria-checked={settingsStore.thumbnailSize === size}
+                    aria-checked={effectiveThumbnailSize === size}
                   >
                     <span>{tileSizeLabels[size]}</span>
-                    {#if settingsStore.thumbnailSize === size}
+                    {#if effectiveThumbnailSize === size}
                       <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
                         <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                       </svg>

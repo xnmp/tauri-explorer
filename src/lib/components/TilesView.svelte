@@ -12,6 +12,7 @@
   import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
   import { getFileIconColor, isImageFile } from "$lib/domain/file-types";
   import { settingsStore, THUMBNAIL_SIZE_CONFIG } from "$lib/state/settings.svelte";
+  import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import FileIcon from "./FileIcon.svelte";
   import ThumbnailImage from "./ThumbnailImage.svelte";
   import InlineNewFolder from "./InlineNewFolder.svelte";
@@ -28,7 +29,10 @@
 
   const paneNav = getPaneNavigationContext();
 
-  const tileConfig = $derived(THUMBNAIL_SIZE_CONFIG[settingsStore.thumbnailSize]);
+  const effectiveThumbnailSize = $derived(
+    folderViewsStore.getThumbnailSize(explorer.currentPath, settingsStore.thumbnailSize)
+  );
+  const tileConfig = $derived(THUMBNAIL_SIZE_CONFIG[effectiveThumbnailSize]);
 
   // Inline rename composable
   const rename = useInlineRename(() => explorer);

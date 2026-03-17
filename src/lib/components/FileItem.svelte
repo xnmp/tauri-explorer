@@ -134,7 +134,7 @@
     if (paneNav) {
       paneNav.refreshAllPanes();
     } else {
-      explorer.refresh();
+      explorer.refresh({ silent: true });
     }
   }
 
@@ -175,7 +175,7 @@
     await handleFileDrop(sourcePath, entry.path, event.ctrlKey, {
       onRefresh: () => {
         if (paneNav) paneNav.refreshAllPanes();
-        else explorer.refresh();
+        else explorer.refresh({ silent: true });
       },
     });
   }

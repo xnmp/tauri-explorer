@@ -241,13 +241,29 @@ function createExplorerState() {
     }
   }
 
-  async function refresh() {
+  /** Build a fingerprint string for change detection. */
+  function entriesFingerprint(entries: FileEntry[]): string {
+    return entries.map((e) => `${e.path}\0${e.size}\0${e.modified}`).join("\n");
+  }
+
+  async function refresh(options?: { silent?: boolean }) {
+    const oldFingerprint = entriesFingerprint(coreState.entries);
     const success = await navigateInternal(coreState.currentPath);
     if (!success) {
-      // Current path no longer exists (e.g. was deleted) — fall back to parent
       const parentPath = navigation.getParentPath(breadcrumbs);
       if (parentPath) {
         await navigateInternal(parentPath);
+      }
+      return;
+    }
+
+    const silent = options?.silent ?? false;
+    if (!silent) {
+      const newFingerprint = entriesFingerprint(coreState.entries);
+      if (oldFingerprint === newFingerprint) {
+        toastStore.show("Already up to date", "info", { duration: 1500 });
+      } else {
+        toastStore.show("Refreshed", "info", { duration: 1500 });
       }
     }
   }

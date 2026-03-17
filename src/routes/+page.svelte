@@ -56,9 +56,9 @@
   }
 
   function refreshAllPanes() {
-    // Refresh both panes in active tab
+    // Refresh both panes in active tab (silent — triggered by file operations, not user action)
     for (const paneId of ["left", "right"] as const) {
-      windowTabsManager.getExplorer(paneId)?.refresh();
+      windowTabsManager.getExplorer(paneId)?.refresh({ silent: true });
     }
   }
 
@@ -244,7 +244,7 @@
       for (const paneId of ["left", "right"] as const) {
         const exp = windowTabsManager.getExplorer(paneId);
         if (exp && affectedDirs.includes(exp.currentPath)) {
-          exp.refresh();
+          exp.refresh({ silent: true });
         }
       }
     });
@@ -256,7 +256,7 @@
       for (const paneId of ["left", "right"] as const) {
         const exp = windowTabsManager.getExplorer(paneId);
         if (exp && exp.currentPath === changedPath) {
-          exp.refresh();
+          exp.refresh({ silent: true });
         }
       }
     }).then((fn) => { unlistenWatcher = fn; });

@@ -252,7 +252,7 @@ const editCommands: Command[] = [
         const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
         const path = `${dir}/pasted-${timestamp}.txt`;
         await writeTextFile(path, text);
-        explorer.refresh();
+        explorer.refresh({ silent: true });
       } catch {
         // Clipboard access denied or empty
       }
@@ -268,7 +268,7 @@ const editCommands: Command[] = [
       if (!explorer) return;
       const result = await clipboardPasteImage(explorer.currentPath);
       if (result.ok) {
-        explorer.refresh();
+        explorer.refresh({ silent: true });
       }
     },
   },
@@ -510,7 +510,7 @@ const crossPaneCommands: Command[] = [
         destPath,
         existingEntries,
         onEntriesAdded: () => {},
-        onRefresh: () => Promise.all([otherExplorer.refresh()]),
+        onRefresh: () => Promise.all([otherExplorer.refresh({ silent: true })]),
       });
     },
     when: () => windowTabsManager.dualPaneEnabled,
@@ -540,7 +540,7 @@ const crossPaneCommands: Command[] = [
         destPath,
         existingEntries,
         onEntriesAdded: () => {},
-        onRefresh: () => Promise.all([activeExplorer.refresh(), otherExplorer.refresh()]),
+        onRefresh: () => Promise.all([activeExplorer.refresh({ silent: true }), otherExplorer.refresh({ silent: true })]),
       });
     },
     when: () => windowTabsManager.dualPaneEnabled,

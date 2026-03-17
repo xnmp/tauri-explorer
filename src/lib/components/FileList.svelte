@@ -235,7 +235,7 @@
     await handleBackgroundDrop(sourcePath, currentPath, existingNames, {
       onRefresh: () => {
         if (paneNav) paneNav.refreshAllPanes();
-        else explorer.refresh();
+        else explorer.refresh({ silent: true });
       },
     });
   }

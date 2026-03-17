@@ -97,14 +97,14 @@
   async function handleExtractHere(): Promise<void> {
     if (!selectedArchive) return;
     await extractArchive(selectedArchive.path, true);
-    explorer.refresh();
+    explorer.refresh({ silent: true });
     contextMenuStore.close();
   }
 
   async function handleExtractToFolder(): Promise<void> {
     if (!selectedArchive) return;
     await extractArchive(selectedArchive.path, false);
-    explorer.refresh();
+    explorer.refresh({ silent: true });
     contextMenuStore.close();
   }
 
@@ -112,7 +112,7 @@
     const selected = explorer.getSelectedEntries();
     if (selected.length === 0) return;
     await compressToZip(selected.map((e) => e.path));
-    explorer.refresh();
+    explorer.refresh({ silent: true });
     contextMenuStore.close();
   }
 
@@ -124,7 +124,7 @@
     const linkPath = `${explorer.currentPath}/${linkName}`;
     const result = await createSymlink(entry.path, linkPath);
     if (result.ok) {
-      explorer.refresh();
+      explorer.refresh({ silent: true });
     }
     contextMenuStore.close();
   }

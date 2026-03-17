@@ -174,23 +174,72 @@
 
   const tileSizeLabels: Record<string, string> = { small: "Small", medium: "Medium", large: "Large" };
 
-  // Clamp menu position to viewport after rendering
-  $effect(() => {
-    if (!menuEl || !contextMenuStore.isOpen) return;
-    const rect = menuEl.getBoundingClientRect();
+  // Compute submenu flip direction from the already-clamped menu position
+  // and viewport size. All values are in CSS pixels — no getBoundingClientRect
+  // needed, avoiding WebKitGTK zoom inconsistencies.
+  const submenuFlip = $derived.by(() => {
+    if (!menuEl) return { flipLeft: false, flipUp: false };
     const zoom = getZoomFactor();
-    const vw = window.innerWidth / zoom;
-    const vh = window.innerHeight / zoom;
-    const menuW = rect.width / zoom;
-    const menuH = rect.height / zoom;
-    const pad = 4;
-    let { x, y } = contextMenuStore.position!;
-    if (x + menuW > vw - pad) x = vw - menuW - pad;
-    if (y + menuH > vh - pad) y = vh - menuH - pad;
-    if (x < pad) x = pad;
-    if (y < pad) y = pad;
-    menuEl.style.left = `${x}px`;
-    menuEl.style.top = `${y}px`;
+    const vw = document.documentElement.clientWidth / zoom;
+    const vh = document.documentElement.clientHeight / zoom;
+    const menuW = menuEl.offsetWidth;
+    const menuH = menuEl.offsetHeight;
+    const submenuW = 140; // generous estimate for submenu width
+    const submenuH = 280; // generous estimate for tallest submenu (List: 8 items)
+    return {
+      flipLeft: clampedX + menuW + submenuW > vw - 8,
+      flipUp: clampedY + menuH + submenuH > vh - 8,
+    };
+  });
+
+  // Clamp menu position to viewport after layout.
+  // Uses visibility: hidden on first frame to measure without flicker,
+  // then applies clamped position and shows on the next frame.
+  let clampedX = $state(0);
+  let clampedY = $state(0);
+  let menuVisible = $state(false);
+
+  $effect(() => {
+    if (!menuEl || !contextMenuStore.isOpen || !contextMenuStore.position) {
+      menuVisible = false;
+      return;
+    }
+    const { x: rawX, y: rawY } = contextMenuStore.position;
+    // Reset visibility for measurement — place at raw position (hidden)
+    menuVisible = false;
+    clampedX = rawX;
+    clampedY = rawY;
+    // Note: clampedX/Y here are physical pixels from clientX/Y, not yet
+    // zoom-adjusted. The rAF callback below converts to CSS pixels.
+
+    // Measure after layout, clamp, then reveal.
+    // Use offsetWidth/offsetHeight instead of getBoundingClientRect — the latter
+    // returns the animated (scaled-down) size due to the menuIn animation.
+    requestAnimationFrame(() => {
+      if (!menuEl) return;
+      // With CSS zoom, position:fixed coordinates are in CSS pixels but the
+      // visible viewport shrinks. clientWidth/Height return physical pixels,
+      // so divide by zoom to get the usable CSS-pixel viewport.
+      // offsetWidth/Height are CSS pixels (unaffected by zoom).
+      // rawX/rawY (event.clientX/Y) need the same zoom division as the
+      // viewport so the ratio is consistent regardless of whether the
+      // engine reports them as physical or CSS pixels.
+      const zoom = getZoomFactor();
+      const vw = document.documentElement.clientWidth / zoom;
+      const vh = document.documentElement.clientHeight / zoom;
+      const menuW = menuEl.offsetWidth;
+      const menuH = menuEl.offsetHeight;
+      const pad = 12;
+      let x = rawX / zoom;
+      let y = rawY / zoom;
+      if (x + menuW > vw - pad) x = vw - menuW - pad;
+      if (y + menuH > vh - pad) y = vh - menuH - pad;
+      if (x < pad) x = pad;
+      if (y < pad) y = pad;
+      clampedX = x;
+      clampedY = y;
+      menuVisible = true;
+    });
   });
 </script>
 
@@ -227,7 +276,7 @@
   <div
     bind:this={menuEl}
     class="context-menu"
-    style="left: {contextMenuStore.position.x}px; top: {contextMenuStore.position.y}px;"
+    style="left: {clampedX}px; top: {clampedY}px; visibility: {menuVisible ? 'visible' : 'hidden'};"
     role="menu"
   >
     {#if hasSelection}
@@ -386,7 +435,7 @@
       {#each viewModes as mode}
         {#if mode.id === "list"}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="submenu-wrapper" onmouseenter={() => listSubmenuOpen = true} onmouseleave={() => listSubmenuOpen = false}>
+          <div class="submenu-wrapper" class:flip-left={submenuFlip.flipLeft} class:flip-up={submenuFlip.flipUp} onmouseenter={() => listSubmenuOpen = true} onmouseleave={() => listSubmenuOpen = false}>
             <button
               class="menu-item"
               class:selected={explorer.viewMode === mode.id}
@@ -445,7 +494,7 @@
           </div>
         {:else if mode.id === "tiles"}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="submenu-wrapper" onmouseenter={() => tilesSubmenuOpen = true} onmouseleave={() => tilesSubmenuOpen = false}>
+          <div class="submenu-wrapper" class:flip-left={submenuFlip.flipLeft} class:flip-up={submenuFlip.flipUp} onmouseenter={() => tilesSubmenuOpen = true} onmouseleave={() => tilesSubmenuOpen = false}>
             <button
               class="menu-item"
               class:selected={explorer.viewMode === mode.id}
@@ -641,5 +690,17 @@
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-flyout);
     animation: menuIn 100ms cubic-bezier(0, 0, 0, 1);
+  }
+
+  /* Flip submenu to the left when it would overflow the viewport */
+  .submenu-wrapper.flip-left > .submenu {
+    left: auto;
+    right: 100%;
+  }
+
+  /* Flip submenu upward when it would overflow the bottom */
+  .submenu-wrapper.flip-up > .submenu {
+    top: auto;
+    bottom: -6px;
   }
 </style>

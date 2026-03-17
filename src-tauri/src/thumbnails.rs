@@ -439,4 +439,62 @@ mod tests {
             "Full thumbnail cache should be pre-warmed by micro thumbnail"
         );
     }
+
+    #[test]
+    fn test_quality_affects_jpeg_output_size() {
+        // Higher JPEG quality should produce larger files
+        let img = image::RgbImage::from_fn(200, 200, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, 128])
+        });
+
+        let low = encode_jpeg(&img, 50).unwrap();
+        let mid = encode_jpeg(&img, 80).unwrap();
+        let high = encode_jpeg(&img, 90).unwrap();
+
+        assert!(
+            low.len() < mid.len(),
+            "quality 50 ({} bytes) should be smaller than quality 80 ({} bytes)",
+            low.len(), mid.len()
+        );
+        assert!(
+            mid.len() < high.len(),
+            "quality 80 ({} bytes) should be smaller than quality 90 ({} bytes)",
+            mid.len(), high.len()
+        );
+    }
+
+    #[test]
+    fn test_quality_param_reaches_encoder() {
+        // Generate same image at different qualities via get_thumbnail_data_sync
+        // and verify the data URIs differ (different quality = different bytes)
+        let dir = tempdir().unwrap();
+        let img_path = dir.path().join("quality_test.jpg");
+
+        let img = image::RgbImage::from_fn(200, 200, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, 128])
+        });
+        img.save(&img_path).unwrap();
+
+        let path_str = img_path.to_string_lossy().to_string();
+
+        // Request at quality 50 with size 64
+        let result_q50 = get_thumbnail_data_sync(path_str.clone(), Some(64), Some(50)).unwrap();
+        // Clear cache so next request generates fresh
+        if let Some(cache_dir) = get_cache_dir() {
+            let _ = std::fs::remove_dir_all(&cache_dir);
+        }
+        let result_q90 = get_thumbnail_data_sync(path_str, Some(64), Some(90)).unwrap();
+
+        // Different quality should produce different data URIs
+        assert_ne!(
+            result_q50, result_q90,
+            "quality 50 and quality 90 should produce different thumbnails"
+        );
+        // Higher quality = longer base64 string (larger file)
+        assert!(
+            result_q50.len() < result_q90.len(),
+            "quality 90 ({} chars) should be larger than quality 50 ({} chars)",
+            result_q90.len(), result_q50.len()
+        );
+    }
 }

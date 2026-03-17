@@ -428,6 +428,24 @@ const viewCommands: Command[] = [
     category: "view",
     handler: () => settingsStore.setListViewColumns(3),
   },
+  {
+    id: "view.tilesSizeSmall",
+    label: "Tiles: Small Icons",
+    category: "view",
+    handler: () => settingsStore.update({ thumbnailSize: "small" }),
+  },
+  {
+    id: "view.tilesSizeMedium",
+    label: "Tiles: Medium Icons",
+    category: "view",
+    handler: () => settingsStore.update({ thumbnailSize: "medium" }),
+  },
+  {
+    id: "view.tilesSizeLarge",
+    label: "Tiles: Large Icons",
+    category: "view",
+    handler: () => settingsStore.update({ thumbnailSize: "large" }),
+  },
 ];
 
 /** Bookmark commands */

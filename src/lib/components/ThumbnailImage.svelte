@@ -81,9 +81,12 @@
     return () => observer.disconnect();
   });
 
-  // Load thumbnails when visible and path changes
+  // Reload key: changes when path, size, or quality changes
+  const reloadKey = $derived(`${path}:${backendSize}:${quality}`);
+
+  // Load thumbnails when visible and reload key changes
   $effect(() => {
-    if (visible && path) {
+    if (visible && reloadKey) {
       loadProgressiveThumbnail();
     }
   });

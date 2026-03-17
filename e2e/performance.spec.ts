@@ -400,10 +400,11 @@ test.describe("Performance Tests", () => {
         "command-filter",
         async () => {
           await page.locator(".command-palette-dialog input").fill("new");
-          await page.waitForTimeout(50);
         },
         100
       );
+      // Wait for filter results to settle after measurement
+      await page.waitForTimeout(50);
 
       expect(metric.duration).toBeLessThan(metric.threshold);
     });

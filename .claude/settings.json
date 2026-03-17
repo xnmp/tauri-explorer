@@ -10,12 +10,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/pre-commit-require-tests.sh",
+            "command": ".claude/hooks/require_tests_for_commit.sh",
             "timeout": 5000
           },
           {
             "type": "command",
-            "command": ".claude/hooks/pre-merge-e2e.sh",
+            "command": ".claude/hooks/run_e2e_for_merge.sh",
             "timeout": 120000
           }
         ]
@@ -27,7 +27,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/run_svelte_check_post_edit.sh",
+            "command": ".claude/hooks/svelte_check_edited_svelte_file.sh",
+            "timeout": 30000
+          },
+          {
+            "type": "command",
+            "command": ".claude/hooks/typecheck_edited_ts_file.sh",
             "timeout": 30000
           }
         ]

@@ -39,11 +39,11 @@
   let quickAccessEl: HTMLDivElement | undefined;
   let dragPollInterval: ReturnType<typeof setInterval> | null = null;
 
-  onMount(async () => {
-    const result = await getHomeDirectory();
-    if (result.ok) {
-      homeDir = result.data;
-    }
+  onMount(() => {
+    // Async init (non-blocking)
+    getHomeDirectory().then((result) => {
+      if (result.ok) homeDir = result.data;
+    });
 
     // Native DnD listeners bypass Svelte 5 event delegation which can
     // interfere with the HTML5 drag-and-drop state machine. We attach

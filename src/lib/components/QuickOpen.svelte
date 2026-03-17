@@ -158,7 +158,7 @@
   // Get current working directory from active explorer
   function getCwdPath(): string {
     const explorer = paneNav?.getActiveExplorer() ?? windowTabsManager.getActiveExplorer();
-    return explorer.currentPath;
+    return explorer?.currentPath ?? "/";
   }
 
   // Cancel active search and cleanup listener
@@ -306,7 +306,7 @@
         // If query looks like a path (starts with / or ~), navigate directly
         if (query.startsWith("/") || query.startsWith("~")) {
           const explorer = paneNav?.getActiveExplorer() ?? windowTabsManager.getActiveExplorer();
-          explorer.navigateTo(expandTilde(query.trim()));
+          explorer?.navigateTo(expandTilde(query.trim()));
           onClose();
         } else if (displayResults[selectedIndex]) {
           selectResult(displayResults[selectedIndex]);
@@ -322,14 +322,14 @@
     frecencyStore.recordAccess(result.path);
 
     if (result.kind === "directory") {
-      explorer.navigateTo(result.path);
+      explorer?.navigateTo(result.path);
     } else {
       const openResult = await openFile(result.path);
       if (openResult.ok) {
         recentFilesStore.add(result.path, result.name, "file");
       } else {
         const parentDir = result.path.substring(0, result.path.lastIndexOf("/"));
-        explorer.navigateTo(parentDir);
+        explorer?.navigateTo(parentDir);
       }
     }
 

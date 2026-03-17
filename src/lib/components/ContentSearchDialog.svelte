@@ -159,7 +159,7 @@
   // Get root directory from active explorer
   function getRootPath(): string {
     const explorer = paneNav?.getActiveExplorer() ?? windowTabsManager.getActiveExplorer();
-    return explorer.currentPath;
+    return explorer?.currentPath ?? "/";
   }
 
   // Cancel active search and cleanup listener
@@ -319,7 +319,7 @@
     if (!openResult.ok) {
       const explorer = paneNav?.getActiveExplorer() ?? windowTabsManager.getActiveExplorer();
       const parentDir = result.filePath.substring(0, result.filePath.lastIndexOf("/"));
-      explorer.navigateTo(parentDir);
+      explorer?.navigateTo(parentDir);
     }
     onClose();
   }

@@ -503,7 +503,7 @@ const crossPaneCommands: Command[] = [
 
       const destPath = otherExplorer.state.currentPath;
       const dirResult = await fetchDirectory(destPath);
-      const existingEntries = dirResult.ok ? dirResult.data.entries : [];
+      const existingEntries = dirResult.ok ? [...dirResult.data.entries] : [];
       const sources: PasteSource[] = selected.map((e) => ({ path: e.path, name: e.name }));
 
       await pasteEntries(sources, false, {
@@ -533,7 +533,7 @@ const crossPaneCommands: Command[] = [
 
       const destPath = otherExplorer.state.currentPath;
       const dirResult = await fetchDirectory(destPath);
-      const existingEntries = dirResult.ok ? dirResult.data.entries : [];
+      const existingEntries = dirResult.ok ? [...dirResult.data.entries] : [];
       const sources: PasteSource[] = selected.map((e) => ({ path: e.path, name: e.name }));
 
       await pasteEntries(sources, true, {

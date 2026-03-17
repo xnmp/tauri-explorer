@@ -444,7 +444,7 @@ function createExplorerState() {
       await navigateAwayIfNeeded(deletedPaths);
       return null;
     }
-    return result.error;
+    return result.error ?? "Unknown error";
   }
 
   // ===================

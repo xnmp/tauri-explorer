@@ -14,6 +14,19 @@ pub fn open_file(path: String) -> Result<(), AppError> {
         return Err(AppError::NotFound(path));
     }
 
+    // On Linux, xdg-open detects MIME from content (not extension), which
+    // often maps e.g. .md → text/plain instead of text/markdown. Work around
+    // by resolving the MIME type from the extension and querying xdg-mime
+    // for the correct handler.
+    #[cfg(target_os = "linux")]
+    if let Some(app) = resolve_xdg_app_by_extension(&file_path) {
+        return std::process::Command::new(&app)
+            .arg(&file_path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| AppError::Io(e));
+    }
+
     opener::open(&file_path).map_err(|e| AppError::Other(e.to_string()))
 }
 
@@ -223,4 +236,72 @@ pub fn open_in_terminal(path: String, terminal: Option<String>) -> Result<(), Ap
     }
 
     Ok(())
+}
+
+/// Map file extension to MIME type for cases where content-based detection
+/// (used by `xdg-open`) gives the wrong result. Only includes types where
+/// extension-based lookup is more reliable than content sniffing.
+#[cfg(target_os = "linux")]
+fn mime_type_from_extension(path: &std::path::Path) -> Option<&'static str> {
+    let ext = path.extension()?.to_str()?.to_lowercase();
+    match ext.as_str() {
+        "md" | "markdown" | "mdown" | "mkd" => Some("text/markdown"),
+        "rs" => Some("text/x-rust"),
+        "ts" | "mts" | "cts" => Some("text/x-typescript"),
+        "tsx" => Some("text/x-typescript"),
+        "jsx" => Some("text/javascript"),
+        "svelte" => Some("text/x-svelte"),
+        "vue" => Some("text/x-vue"),
+        "go" => Some("text/x-go"),
+        "rb" => Some("text/x-ruby"),
+        "lua" => Some("text/x-lua"),
+        "toml" => Some("application/toml"),
+        "yaml" | "yml" => Some("application/x-yaml"),
+        "json" | "jsonc" => Some("application/json"),
+        _ => None,
+    }
+}
+
+/// Query xdg-mime for the default app for a MIME type resolved from the file
+/// extension. Returns `None` if no override is needed (i.e., content-based
+/// detection would pick the same handler).
+#[cfg(target_os = "linux")]
+fn resolve_xdg_app_by_extension(path: &std::path::Path) -> Option<String> {
+    let mime = mime_type_from_extension(path)?;
+
+    let output = std::process::Command::new("xdg-mime")
+        .args(["query", "default", mime])
+        .output()
+        .ok()?;
+
+    let desktop_file = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if desktop_file.is_empty() {
+        return None;
+    }
+
+    // Check what xdg-open would use (content-based MIME) — if the same
+    // desktop file, no override needed.
+    if let Ok(content_output) = std::process::Command::new("xdg-mime")
+        .args(["query", "filetype"])
+        .arg(path)
+        .output()
+    {
+        let content_mime = String::from_utf8_lossy(&content_output.stdout)
+            .trim()
+            .to_string();
+        if let Ok(default_output) = std::process::Command::new("xdg-mime")
+            .args(["query", "default", &content_mime])
+            .output()
+        {
+            let default_desktop = String::from_utf8_lossy(&default_output.stdout)
+                .trim()
+                .to_string();
+            if default_desktop == desktop_file {
+                return None;
+            }
+        }
+    }
+
+    let app_name = desktop_file.strip_suffix(".desktop").unwrap_or(&desktop_file);
+    Some(app_name.to_string())
 }

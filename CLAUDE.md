@@ -11,7 +11,7 @@
    * `bd dep add <id> --blocks <other-id>` — add dependency
    * `bd quickstart` — full reference
 * Use Beads to create both high level issues (~epics) and low level issues. Be liberal in issue creation and dependency assignment.
-* When creating Beads issues, include a `## Screenshots` section listing required screenshots , as a list of markdown checkboxes eg `- [ ] sidebar` (or 'None required' with a reason). Screenshots must be saved to screenshots/<branch>/. The merge hook will verify they exist.
+* When creating Beads issues, include a `## Screenshots` section listing required screenshots , as a list of markdown checkboxes eg `- [ ] sidebar` (or 'None required' with a reason). Screenshots must be saved to screenshots/<branch>/. The merge hook will verify they exist. Behavioral fixes (e.g. a menu should close, a shortcut should work) still need a screenshot showing the corrected behavior — "None required" is only for pure backend/refactor changes with no user-visible effect.
 
 ## Documentation
 * **Start at [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — slim map with architecture diagram and pointers to deep references.
@@ -28,7 +28,7 @@
 
 ## For Each Issue
 * Create a Beads issue if none exists
-* In the issue description you must include a include a `## Screenshots` section listing required screenshots that verify that witness that the issue is resolved, as a list of markdown checkboxes eg `- [ ] sidebar` (or 'None required' with a reason). Screenshots must be saved to screenshots/<branch>/. The merge hook will verify they exist.
+* In the issue description you must include a include a `## Screenshots` section listing required screenshots that verify that witness that the issue is resolved, as a list of markdown checkboxes eg `- [ ] sidebar` (or 'None required' with a reason). Note that if the issue results in any change in UI behaviour then this should be documented with screenshots. Screenshots must be saved to screenshots/<branch>/. The merge hook will verify they exist. 
 * Create a new branch. Note that the bracnh name must match the Beads issue name, and must be prefixed with feat, fix, or one of a few types (a hook will let you know if you go wrong here)
 * After implementation run `bun run test` and fix any failures directly, then commit. 
 * Then if screenshots are required, use `agent-browser` (CLI) to visually verify the feature is working as intended, take the required screenshots, and commit again. 

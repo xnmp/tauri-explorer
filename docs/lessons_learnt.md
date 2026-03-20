@@ -444,3 +444,10 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 - Three commits tried to fix this before finding the root cause. When a "simple" fix doesn't work, question the API semantics, not just the conditional logic.
 
 ---
+
+## fix/context-menu-close-on-cut-copy: Context menu not closing after Cut/Copy
+
+**Key takeaways:**
+- **Consistency check for handlers**: When adding new context menu actions, always include `contextMenuStore.close()`. Most handlers had it, but `handleCut` and `handleCopy` were missed because they were added separately from the pattern established by `withSelectedEntry()`.
+
+---

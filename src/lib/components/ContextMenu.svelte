@@ -45,11 +45,13 @@
   function handleCut(): void {
     const selected = explorer.getSelectedEntries();
     if (selected.length > 0) explorer.cutToClipboard(selected);
+    contextMenuStore.close();
   }
 
   function handleCopy(): void {
     const selected = explorer.getSelectedEntries();
     if (selected.length > 0) explorer.copyToClipboard(selected);
+    contextMenuStore.close();
   }
 
   async function handlePaste(): Promise<void> {

@@ -18,19 +18,25 @@ COMMITTED=$(git diff --name-only dev...HEAD 2>/dev/null)
 STAGED=$(git diff --cached --name-only 2>/dev/null)
 ALL_CHANGES=$(printf "%s\n%s" "$COMMITTED" "$STAGED" | sort -u)
 
-# If tests already exist anywhere on the branch, allow all further commits
+# Non-blocking reminder on first commit: consider unit tests
+COMMITS_AHEAD=$(git rev-list --count dev..HEAD 2>/dev/null || echo "0")
 UNIT_COUNT=$(echo "$ALL_CHANGES" | grep -cE 'tests/.*\.test\.ts$' || true)
-E2E_COUNT=$(echo "$ALL_CHANGES" | grep -cE 'e2e/.*\.spec\.ts$' || true)
-[ "$UNIT_COUNT" -gt 0 ] || [ "$E2E_COUNT" -gt 0 ] && exit 0
+if [ "$COMMITS_AHEAD" -eq 0 ] && [ "$UNIT_COUNT" -eq 0 ]; then
+  echo "Reminder: consider adding unit tests if this feature introduces new business logic." >&2
+fi
 
-# No tests yet — check if there are source changes that need them
+# feat/ branches must include an e2e test
+E2E_COUNT=$(echo "$ALL_CHANGES" | grep -cE 'e2e/.*\.spec\.ts$' || true)
+[ "$E2E_COUNT" -gt 0 ] && exit 0
+
+# No e2e tests — check if there are source changes that need them
 SRC_COUNT=$(echo "$ALL_CHANGES" | grep -cE 'src/(lib|routes)/.*\.(ts|svelte)$' || true)
 RUST_COUNT=$(echo "$ALL_CHANGES" | grep -cE 'src-tauri/src/.*\.rs$' || true)
 SRC_TOTAL=$((SRC_COUNT + RUST_COUNT))
 
 if [ "$SRC_TOTAL" -gt 0 ]; then
-  echo "Blocked: feat/ branch '$BRANCH' has $SRC_TOTAL changed source files but no tests." >&2
-  echo "Add unit tests (tests/*.test.ts) and/or e2e tests (e2e/*.spec.ts) before committing." >&2
+  echo "Blocked: feat/ branch '$BRANCH' has $SRC_TOTAL changed source files but no e2e test." >&2
+  echo "Add an e2e test (e2e/*.spec.ts) that verifies the feature before committing." >&2
   exit 2
 fi
 

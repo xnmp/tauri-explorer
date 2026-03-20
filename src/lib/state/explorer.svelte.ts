@@ -686,7 +686,18 @@ function createExplorerState() {
     },
     openFilter() { showFilter = true; },
     closeFilter() { showFilter = false; filterQuery = ""; },
-    setFilter(query: string) { filterQuery = query; },
+    setFilter(query: string) {
+      filterQuery = query;
+      // Auto-select the first matching entry as the user types
+      const first = displayEntries[0];
+      if (first) {
+        coreState.selectedPaths = new Set([first.path]);
+        coreState.selectionAnchorIndex = 0;
+      } else {
+        coreState.selectedPaths = new Set();
+        coreState.selectionAnchorIndex = null;
+      }
+    },
     clearFilter() { filterQuery = ""; },
     // Selection
     selectEntry,

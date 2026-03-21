@@ -54,7 +54,7 @@
 | Feature | Files to change |
 |---------|----------------|
 | Miller columns | `MillerColumns.svelte` — optional 1-3 ancestor columns panel (left of file list, directories only), works with any view mode |
-| File type icons | `FileIcon.svelte` — language-specific SVG icons (Python snake, Rust gear, HTML shield, etc.) for 20+ file types, colored by language |
+| File type icons | `FileIcon.svelte` — real devicon SVG paths (Python, TS, JS, HTML5, CSS3) + fallback labels, works in both small (details/list) and large (tiles) views |
 | Details view | `DetailsView.svelte` (VirtualList + FileItem), `FileItem.svelte` |
 | List view | `ListView.svelte` (CSS grid column-flow with configurable columns) |
 | Tiles view | `TilesView.svelte` (CSS auto-fill grid with thumbnail images, progressive rendering) |

@@ -4,6 +4,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/quickopen-debug-settings: QuickOpen Score Breakdown
+
+**Key takeaways:**
+- `result.score` in QuickOpen already has frecency and name bonus baked in from `rankWithFrecency`. To show a proper breakdown, derive the base fuzzy score as `result.score - frecencyPts - nameScore`. Without this, the debug display double-counts or misses the backend search score entirely.
+- Debug features should be Settings toggles, not hidden keyboard shortcuts. Users can't discover undocumented shortcuts.
+
+---
+
 ## feat/miller-view: Miller Columns
 
 **Key takeaways:**

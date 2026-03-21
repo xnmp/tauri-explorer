@@ -72,6 +72,7 @@
 3. **Default shortcuts** registered with `keybindingsStore.registerDefaults()`
 4. **User overrides** loaded from localStorage, can be null (unbind) or custom string
 5. **Matching:** On keydown, `keybindingsStore.findMatchingCommand()` checks chord state, then iterates commands, checking effective shortcut + `when` guard
+6. **Debug:** `settingsStore.quickOpenDebug` shows per-result score breakdown in QuickOpen (fuzzy, name, frecency, dir multiplier)
 
 ### Hardcoded Shortcuts (in `+page.svelte`, not customizable)
 - `Ctrl+,` — Open settings

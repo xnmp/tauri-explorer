@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
   import { tick, untrack } from "svelte";
+  import { fuzzyScorePath } from "$lib/domain/fuzzy-score";
   import {
     startStreamingSearch,
     cancelSearch,
@@ -103,18 +104,19 @@
     const matched: SearchResult[] = [];
     const scoreMap = frecencyStore.getScoreMap();
 
-    // Recent files
+    // Recent files — scored with full fuzzy matching
     for (const entry of recentFilesStore.list) {
       if (seen.has(entry.path)) continue;
       seen.add(entry.path);
-      const baseScore = scoreEntry(entry.name, entry.path, lower);
-      if (baseScore > 0) {
+      const fuzzy = fuzzyScorePath(lower, entry.path);
+      if (fuzzy > 0) {
         const frecency = scoreMap.get(entry.path) ?? 0;
+        const nameBonus = filenameMatchScore(entry.name, lower);
         matched.push({
           name: entry.name,
           path: entry.path,
           relativePath: entry.path,
-          score: baseScore + Math.round(frecency * FRECENCY_WEIGHT),
+          score: Math.round(fuzzy * 10) + nameBonus + Math.round(frecency * FRECENCY_WEIGHT),
           kind: entry.kind,
         });
       }
@@ -125,14 +127,15 @@
       if (seen.has(entry.path)) continue;
       seen.add(entry.path);
       const name = entry.path.split("/").pop() || "";
-      const baseScore = scoreEntry(name, entry.path, lower);
-      if (baseScore > 0) {
+      const fuzzy = fuzzyScorePath(lower, entry.path);
+      if (fuzzy > 0) {
         const frecency = scoreMap.get(entry.path) ?? 0;
+        const nameBonus = filenameMatchScore(name, lower);
         matched.push({
           name,
           path: entry.path,
           relativePath: entry.path,
-          score: baseScore + Math.round(frecency * FRECENCY_WEIGHT),
+          score: Math.round(fuzzy * 10) + nameBonus + Math.round(frecency * FRECENCY_WEIGHT),
           kind: "directory",
         });
       }

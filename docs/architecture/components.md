@@ -47,5 +47,6 @@
 | `use-marquee-selection.svelte.ts` | Rubber-band selection rectangle with DOM-based hit testing |
 | `use-type-ahead.svelte.ts` | Type-ahead: typing characters jumps to matching file name |
 | `use-inline-rename.svelte.ts` | Shared inline rename logic for list/tiles views |
+| `use-item-interactions.svelte.ts` | Shared DnD, context menu, clipboard state for all view modes (FileItem/ListView/TilesView) |
 | `use-external-drag.svelte.ts` | Dragging files OUT of the app to the OS |
 | `use-external-drop.svelte.ts` | Files dropped INTO the app from OS |

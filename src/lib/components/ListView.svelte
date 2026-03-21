@@ -5,15 +5,13 @@
 <script lang="ts">
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { gitStatusStore } from "$lib/state/git-status.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
-  import { clipboardStore } from "$lib/state/clipboard.svelte";
-  import { dragState } from "$lib/state/drag.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
-  import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
   import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
+  import { useItemInteractions, isInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
   import { getFileIconColor } from "$lib/domain/file-types";
   import FileIcon from "./FileIcon.svelte";
+  import GitStatusBadge from "./GitStatusBadge.svelte";
   import InlineNewFolder from "./InlineNewFolder.svelte";
 
   import type { FileEntry } from "$lib/domain/file";
@@ -28,6 +26,13 @@
   let { explorer, contentWidth, onitemclick, onitemdblclick }: Props = $props();
 
   const paneNav = getPaneNavigationContext();
+
+  // Shared item interactions (DnD, context menu with select-on-right-click)
+  const interactions = useItemInteractions({
+    getExplorer: () => explorer,
+    getPaneNav: () => paneNav,
+    selectOnContextMenu: true,
+  });
 
   // Compute effective list column count (auto or fixed)
   const effectiveListColumns = $derived.by(() => {
@@ -47,85 +52,8 @@
     }
   });
 
-  // Per-entry drop target state
-  let dropTargets = $state<Record<string, boolean>>({});
-  let copyDropTargets = $state<Record<string, boolean>>({});
-
-  function handleItemDragEnd(): void {
-    // Defer clear so sidebar's document-level dragend listener
-    // can still read dragState.current for bookmark drops
-    setTimeout(() => dragState.clear(), 0);
-    paneNav?.refreshAllPanes();
-  }
-
-  function handleItemDragStart(event: DragEvent, entry: FileEntry): void {
-    if (!event.dataTransfer) return;
-    const selected = explorer.getSelectedEntries();
-    const isMulti = selected.length > 1 && explorer.isSelected(entry);
-    const paths = isMulti ? selected.map((e) => e.path) : [entry.path];
-
-    event.dataTransfer.setData("application/x-explorer-path", entry.path);
-    event.dataTransfer.setData("application/x-explorer-name", entry.name);
-    event.dataTransfer.setData("application/x-explorer-kind", entry.kind);
-    if (isMulti) {
-      event.dataTransfer.setData("application/x-explorer-paths", JSON.stringify(paths));
-    }
-    event.dataTransfer.effectAllowed = "all";
-    dragState.start({ path: entry.path, name: entry.name, kind: entry.kind, paths: isMulti ? paths : undefined });
-  }
-
-  function handleItemDragOver(event: DragEvent, entry: FileEntry): void {
-    if (entry.kind !== "directory") return;
-    if (!event.dataTransfer?.types.includes("application/x-explorer-path") && !dragState.readCrossWindow()) return;
-    event.preventDefault();
-    const copying = event.ctrlKey;
-    if (event.dataTransfer) event.dataTransfer.dropEffect = copying ? "copy" : "move";
-    dropTargets[entry.path] = true;
-    copyDropTargets[entry.path] = copying;
-  }
-
-  function handleItemDragLeave(entry: FileEntry): void {
-    dropTargets[entry.path] = false;
-    copyDropTargets[entry.path] = false;
-  }
-
-  async function handleItemDrop(event: DragEvent, entry: FileEntry): Promise<void> {
-    event.preventDefault();
-    dropTargets[entry.path] = false;
-    copyDropTargets[entry.path] = false;
-    if (entry.kind !== "directory" || !event.dataTransfer) return;
-
-    const sourcePaths = getDropSourcePaths(event.dataTransfer);
-    if (sourcePaths.length === 0) return;
-
-    for (const sourcePath of sourcePaths) {
-      if (sourcePath === entry.path) continue;
-      if (entry.path.startsWith(sourcePath + "/")) continue;
-      await handleFileDrop(sourcePath, entry.path, event.ctrlKey, {
-        onRefresh: () => paneNav?.refreshAllPanes(),
-      });
-    }
-  }
-
   const totalItems = $derived(explorer.displayEntries.length + (explorer.isCreatingFolder ? 1 : 0));
   const listRows = $derived(Math.ceil(totalItems / effectiveListColumns));
-
-  function isInClipboard(entry: FileEntry): boolean {
-    return clipboardStore.content?.entries.some((e) => e.path === entry.path) ?? false;
-  }
-
-  function isCut(entry: FileEntry): boolean {
-    return isInClipboard(entry) && clipboardStore.isCut;
-  }
-
-  function handleItemContextMenu(event: MouseEvent, entry: FileEntry): void {
-    event.preventDefault();
-    event.stopPropagation();
-    if (!explorer.isSelected(entry)) {
-      explorer.selectEntry(entry, {});
-    }
-    explorer.openContextMenu(event.clientX, event.clientY, entry);
-  }
 </script>
 
 <div class="list-view file-rows" style="--list-columns: {effectiveListColumns}; --list-rows: {listRows};">
@@ -137,19 +65,19 @@
       class="list-item entry-item"
       class:directory={entry.kind === "directory"}
       class:selected={explorer.isSelected(entry)}
-      class:cut={isCut(entry)}
+      class:cut={isClipboardCut(entry)}
       class:in-clipboard={isInClipboard(entry)}
-      class:drop-target={dropTargets[entry.path]}
-      class:copy-drop={copyDropTargets[entry.path]}
+      class:drop-target={interactions.isDropTarget(entry.path)}
+      class:copy-drop={interactions.isCopyDrop(entry.path)}
       draggable="true"
       onclick={(e) => onitemclick(entry, e)}
       ondblclick={() => onitemdblclick(entry)}
-      oncontextmenu={(e) => handleItemContextMenu(e, entry)}
-      ondragstart={(e) => handleItemDragStart(e, entry)}
-      ondragend={handleItemDragEnd}
-      ondragover={(e) => handleItemDragOver(e, entry)}
-      ondragleave={() => handleItemDragLeave(entry)}
-      ondrop={(e) => handleItemDrop(e, entry)}
+      oncontextmenu={(e) => interactions.handleContextMenu(e, entry)}
+      ondragstart={(e) => interactions.handleDragStart(e, entry, explorer.isSelected(entry))}
+      ondragend={interactions.handleDragEnd}
+      ondragover={(e) => interactions.handleDragOver(e, entry)}
+      ondragleave={() => interactions.handleDragLeave(entry)}
+      ondrop={(e) => interactions.handleDrop(e, entry)}
     >
       <span class="list-icon" style:color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined}>
         <FileIcon {entry} size="small" />
@@ -170,14 +98,7 @@
         />
       {:else}
         <span class="list-name entry-name">{entry.name}</span>
-        {#if settingsStore.showGitStatus}
-          {@const gitStatus = gitStatusStore.getStatus(entry.name)}
-          {#if gitStatus}
-            <span class="git-indicator git-{gitStatus.toLowerCase()}" title="Git: {gitStatus}">
-              {gitStatus === "Modified" ? "M" : gitStatus === "Untracked" ? "U" : gitStatus === "Added" ? "A" : gitStatus === "Deleted" ? "D" : gitStatus === "Conflict" ? "!" : "R"}
-            </span>
-          {/if}
-        {/if}
+        <GitStatusBadge entryName={entry.name} />
       {/if}
     </button>
   {/each}
@@ -279,20 +200,4 @@
   .rename-input.error {
     border-color: var(--system-critical);
   }
-
-  /* Git status indicator */
-  .git-indicator {
-    font-size: 11px;
-    font-weight: 600;
-    flex-shrink: 0;
-    margin-left: 4px;
-    opacity: 0.85;
-  }
-
-  .git-modified { color: #d4a017; }
-  .git-untracked { color: #22c55e; }
-  .git-added { color: #22c55e; }
-  .git-deleted { color: #ef4444; }
-  .git-conflict { color: #ef4444; font-weight: 800; }
-  .git-renamed { color: #60a5fa; }
 </style>

@@ -248,7 +248,7 @@
   function handleCrumbDragOver(event: DragEvent, path: string): void {
     if (!event.dataTransfer?.types.includes("application/x-explorer-path")) return;
     event.preventDefault();
-    event.dataTransfer.dropEffect = event.ctrlKey ? "copy" : "move";
+    event.dataTransfer.dropEffect = "move";
     dropTargetCrumb = path;
   }
 
@@ -265,7 +265,7 @@
     for (const sourcePath of sourcePaths) {
       if (sourcePath === targetPath) continue;
       if (targetPath.startsWith(sourcePath + "/")) continue;
-      await handleFileDrop(sourcePath, targetPath, event.ctrlKey, {
+      await handleFileDrop(sourcePath, targetPath, false, {
         onRefresh: () => paneNav?.refreshAllPanes(),
       });
     }

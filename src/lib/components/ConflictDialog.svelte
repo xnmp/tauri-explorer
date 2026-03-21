@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
   import { conflictResolver, type ConflictChoice } from "$lib/state/conflict-resolver.svelte";
+  import { formatSize } from "$lib/domain/file";
 
   const conflict = $derived(conflictResolver.activeConflict);
 
@@ -34,6 +35,29 @@
       <p class="conflict-message">
         <strong>{conflict.fileName}</strong> already exists in this folder.
       </p>
+
+      {#if conflict.sourceSize !== undefined || conflict.destSize !== undefined}
+        <div class="conflict-details">
+          <div class="conflict-file">
+            <span class="conflict-label">Source</span>
+            {#if conflict.sourceSize !== undefined}
+              <span class="conflict-meta">{formatSize(conflict.sourceSize)}</span>
+            {/if}
+            {#if conflict.sourceModified}
+              <span class="conflict-meta">{conflict.sourceModified}</span>
+            {/if}
+          </div>
+          <div class="conflict-file">
+            <span class="conflict-label">Destination</span>
+            {#if conflict.destSize !== undefined}
+              <span class="conflict-meta">{formatSize(conflict.destSize)}</span>
+            {/if}
+            {#if conflict.destModified}
+              <span class="conflict-meta">{conflict.destModified}</span>
+            {/if}
+          </div>
+        </div>
+      {/if}
 
       <div class="conflict-actions">
         <button class="btn btn-primary" onclick={() => handleChoice("overwrite")}>
@@ -142,6 +166,33 @@
   }
 
   .btn-cancel {
+    color: var(--text-secondary);
+  }
+
+  .conflict-details {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
+    padding: 12px;
+    background: var(--subtle-fill-secondary);
+    border-radius: 6px;
+    font-size: 12px;
+  }
+
+  .conflict-file {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .conflict-label {
+    font-weight: 600;
+    color: var(--text-primary);
+    min-width: 80px;
+  }
+
+  .conflict-meta {
     color: var(--text-secondary);
   }
 </style>

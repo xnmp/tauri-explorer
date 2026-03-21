@@ -12,6 +12,10 @@ export interface ConflictInfo {
   fileName: string;
   sourcePath: string;
   remaining: number;
+  sourceSize?: number;
+  sourceModified?: string;
+  destSize?: number;
+  destModified?: string;
 }
 
 export interface ConflictResult {

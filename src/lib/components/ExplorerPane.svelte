@@ -10,6 +10,7 @@
   import type { PaneId } from "$lib/state/types";
   import NavigationBar from "./NavigationBar.svelte";
   import FileList from "./FileList.svelte";
+  import MillerColumns from "./MillerColumns.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import NewFolderDialog from "./NewFolderDialog.svelte";
   import DeleteDialog from "./DeleteDialog.svelte";
@@ -183,7 +184,12 @@
 >
   {#if paneExplorer}
     <NavigationBar explorer={paneExplorer} />
-    <FileList explorer={paneExplorer} />
+    <div class="pane-content">
+      {#if settingsStore.millerLayers > 0}
+        <MillerColumns explorer={paneExplorer} />
+      {/if}
+      <FileList explorer={paneExplorer} />
+    </div>
     <ContextMenu explorer={paneExplorer} />
     <NewFolderDialog explorer={paneExplorer} />
     <DeleteDialog explorer={paneExplorer} />
@@ -225,5 +231,12 @@
   .explorer-pane.inactive:hover {
     opacity: 0.9;
     border-color: var(--text-tertiary);
+  }
+
+  .pane-content {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
   }
 </style>

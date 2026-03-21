@@ -101,6 +101,7 @@ All state lives in `src/lib/state/`. Svelte 5 runes (`$state`, `$derived`, `$eff
 |------|----------|
 | `file.ts` | `FileEntry`, `DirectoryListing`, `SortField`, `sortEntries()`, `filterHidden()`, `formatSize()` |
 | `file-types.ts` | `getFileType()`, `getFileIconColor()`, `isImageFile()`, `isTextFile()`, icon mappings |
+| `git.ts` | `gitStatusLetter()` — maps git status strings to single-letter indicators |
 | `nerd-icons.ts` | Nerd Font glyph/color mappings per extension |
 | `keyboard.ts` | `normalizeKeyForShortcut()`, shortcut key constants |
 | `keybinding-parser.ts` | Shortcut parsing, matching, chord support |

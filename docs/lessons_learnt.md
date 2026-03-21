@@ -4,6 +4,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/recent-frecency-sort: Recent Folders Sorting
+
+**Key takeaways:**
+- `frecencyStore.entries` is in insertion order, not score order. Must sort explicitly by `getScoreMap()` when displaying.
+- Recent folders should exclude bookmarked paths and system folders to avoid duplication with the Bookmarks section above.
+
+---
+
 ## fix/drag-to-bookmarks: Drag to Bookmarks Race Condition
 
 **Key takeaways:**

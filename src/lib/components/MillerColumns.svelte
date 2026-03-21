@@ -84,8 +84,9 @@
   async function loadColumn(path: string): Promise<void> {
     const result = await fetchDirectory(path);
     if (result.ok) {
-      const entries = result.data.entries
-        .sort((a, b) => a.name.localeCompare(b.name));
+      const entries = [...result.data.entries]
+        .filter((e: FileEntry) => e.kind === "directory" && (settingsStore.showHidden || !e.name.startsWith(".")))
+        .sort((a: FileEntry, b: FileEntry) => a.name.localeCompare(b.name));
       rawCache.set(path, entries);
       rawColumns = rawColumns.map((col) =>
         col.path === path ? { ...col, entries, loading: false } : col
@@ -96,10 +97,51 @@
   function handleClick(entry: FileEntry): void {
     explorer.navigateTo(entry.path);
   }
+
+  // Resizable width
+  const MILLER_WIDTH_KEY = "explorer-miller-width";
+  const MIN_WIDTH = 120;
+  const MAX_WIDTH = 600;
+  const DEFAULT_WIDTH = 200;
+
+  let savedWidth = typeof localStorage !== "undefined"
+    ? parseInt(localStorage.getItem(MILLER_WIDTH_KEY) || String(DEFAULT_WIDTH), 10)
+    : DEFAULT_WIDTH;
+
+  let millerWidth = $state(Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, savedWidth)));
+  let isResizing = $state(false);
+
+  function startResize(event: MouseEvent) {
+    event.preventDefault();
+    isResizing = true;
+    const startX = event.clientX;
+    const startWidth = millerWidth;
+
+    function onMouseMove(e: MouseEvent) {
+      const delta = e.clientX - startX;
+      millerWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startWidth + delta));
+    }
+
+    function onMouseUp() {
+      isResizing = false;
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem(MILLER_WIDTH_KEY, String(millerWidth));
+      }
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    document.body.style.cursor = "ew-resize";
+    document.body.style.userSelect = "none";
+  }
 </script>
 
 {#if columns.length > 0}
-  <div class="miller-columns">
+  <div class="miller-columns" class:resizing={isResizing} style="width: {millerWidth}px">
     {#each columns as column (column.path)}
       <div class="miller-col">
         <div class="col-header" title={column.path}>{column.name}</div>
@@ -126,6 +168,13 @@
         </div>
       </div>
     {/each}
+    <div
+      class="resize-handle"
+      onmousedown={startResize}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize miller columns"
+    ></div>
   </div>
 {/if}
 
@@ -134,17 +183,38 @@
     display: flex;
     flex-shrink: 0;
     overflow: hidden;
-    border-right: 1px solid var(--divider);
+    position: relative;
     background: var(--miller-bg, var(--background-card-secondary));
+  }
+
+  .miller-columns.resizing {
+    user-select: none;
   }
 
   .miller-col {
     display: flex;
     flex-direction: column;
-    width: 200px;
-    min-width: 160px;
+    flex: 1;
+    min-width: 0;
     border-right: 1px solid var(--divider);
     overflow: hidden;
+  }
+
+  .resize-handle {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    cursor: ew-resize;
+    background: transparent;
+    z-index: 1;
+    transition: background 150ms;
+  }
+
+  .resize-handle:hover,
+  .miller-columns.resizing .resize-handle {
+    background: var(--accent);
   }
 
   .miller-col:last-child {

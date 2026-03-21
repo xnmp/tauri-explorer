@@ -53,7 +53,7 @@
 ### View Modes
 | Feature | Files to change |
 |---------|----------------|
-| Miller columns | `MillerColumns.svelte` — optional 1-3 ancestor columns panel (left of file list, directories only), works with any view mode |
+| Miller columns | `MillerColumns.svelte` — optional 1-3 ancestor columns panel (left of file list, directories only), resizable via drag handle, works with any view mode |
 | File type icons | `FileIcon.svelte` — real devicon SVG paths (Python, TS, JS, HTML5, CSS3) + fallback labels, works in both small (details/list) and large (tiles) views |
 | Details view | `DetailsView.svelte` (VirtualList + FileItem), `FileItem.svelte` |
 | List view | `ListView.svelte` (CSS grid column-flow with configurable columns) |

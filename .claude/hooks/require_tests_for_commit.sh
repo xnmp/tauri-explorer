@@ -13,6 +13,13 @@ BRANCH=$(git branch --show-current 2>/dev/null)
 # Only enforce on feature and fix branches
 echo "$BRANCH" | grep -qE '^(feat|fix)/' || exit 0
 
+# Skip if this branch was previously merged to dev (revisited branch)
+# If the merge base is NOT on dev's first-parent line, the branch was already merged before
+MERGE_BASE=$(git merge-base dev HEAD 2>/dev/null)
+if [ -n "$MERGE_BASE" ] && ! git rev-list --first-parent dev 2>/dev/null | grep -qm1 "^${MERGE_BASE}$"; then
+  exit 0
+fi
+
 # Check all files on this branch (committed + staged) vs dev
 COMMITTED=$(git diff --name-only dev...HEAD 2>/dev/null)
 STAGED=$(git diff --cached --name-only 2>/dev/null)

@@ -51,6 +51,7 @@
 | Details view | `DetailsView.svelte` (VirtualList + FileItem), `FileItem.svelte` |
 | List view | `ListView.svelte` (CSS grid column-flow with configurable columns) |
 | Tiles view | `TilesView.svelte` (CSS auto-fill grid with thumbnail images, progressive rendering) |
+| Tiles size from palette | `command-definitions.ts` — tile size commands also switch view mode to tiles |
 | Column resize (details) | `use-column-resize.svelte.ts`, `DetailsView.svelte` |
 | Column visibility toggle | `DetailsView.svelte` (column header right-click menu), `settingsStore.columnVisibility` |
 | List column count | `settingsStore.listViewColumns`, `ListView.svelte:effectiveListColumns` |

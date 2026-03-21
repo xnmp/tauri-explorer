@@ -66,6 +66,7 @@
 | Feature | Files to change |
 |---------|----------------|
 | Quick Open (Ctrl+P) | `QuickOpen.svelte`, `files.ts:startStreamingSearch`, `search.rs` |
+| Quick Open debug mode | `QuickOpen.svelte` — Alt+D toggles score breakdown display |
 | Content search (Ctrl+Shift+F) | `ContentSearchDialog.svelte`, `files.ts:startContentSearch`, `content_search.rs` |
 | Directory filter (Ctrl+F) | `NavigationBar.svelte` (filter bar UI), `explorer.svelte.ts:setFilter` (auto-selects first match) |
 | Frecency ranking | `frecency.svelte.ts`, used by `QuickOpen.svelte` |

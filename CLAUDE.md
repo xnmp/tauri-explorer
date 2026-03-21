@@ -41,3 +41,8 @@
 
 ### E2E tests must assert on actual feature behavior
 Don't just check that a component renders — assert on the outcome. E.g., a QuickOpen test must verify that results appear for a query, not just that the modal opened. Tests that only check "component mounts" give false confidence and miss real regressions.
+
+### Debugging
+When a bug resists quick diagnosis, 
+* search the knowledge base and the commit history for similar issues
+* add logging before adding more fix attempts

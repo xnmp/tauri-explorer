@@ -78,11 +78,16 @@ function createWindowTabsManager() {
   let activeTabId = $state<string | null>(null);
 
   // Stack of recently closed tabs for Ctrl+Shift+T restoration (persisted)
-  const closedTabStack: ClosedTabSnapshot[] = loadPersisted<ClosedTabSnapshot[]>(CLOSED_TABS_KEY, []);
+  let closedTabStack: ClosedTabSnapshot[] = loadPersisted<ClosedTabSnapshot[]>(CLOSED_TABS_KEY, []);
 
   /** Persist the closed tab stack to localStorage */
   function saveClosedTabs(): void {
     savePersisted(CLOSED_TABS_KEY, closedTabStack);
+  }
+
+  /** Reload the closed tab stack from localStorage (picks up cross-window changes) */
+  function refreshClosedTabs(): void {
+    closedTabStack = loadPersisted<ClosedTabSnapshot[]>(CLOSED_TABS_KEY, []);
   }
 
   /** Capture the current tab state as a serializable snapshot */
@@ -308,6 +313,8 @@ function createWindowTabsManager() {
 
   /** Restore the most recently closed tab. Returns false if nothing to restore. */
   function restoreClosedTab(): false | RestoreResult {
+    // Re-read from localStorage to pick up snapshots from other windows
+    refreshClosedTabs();
     const snapshot = closedTabStack.pop();
     if (!snapshot) return false;
     saveClosedTabs();
@@ -484,6 +491,7 @@ function createWindowTabsManager() {
     closeActiveTab,
     restoreClosedTab,
     get canRestoreTab() {
+      refreshClosedTabs();
       return closedTabStack.length > 0;
     },
     setActiveTab,

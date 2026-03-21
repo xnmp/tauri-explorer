@@ -34,7 +34,7 @@ function extractError(err: unknown): string {
   if (err && typeof err === "object" && "message" in err) {
     return (err as AppError).message;
   }
-  return extractError(err);
+  return String(err);
 }
 
 /** Extract structured error kind from Tauri command error */

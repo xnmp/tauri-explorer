@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/new-folder-tile-size: New Folder Sizing in Tiles
+
+**Key takeaways:**
+- InlineNewFolder's tiles variant must inherit CSS variables (`--tile-icon-size`, `--tile-icon-scale`, `--tile-padding`) from the parent TilesView rather than hardcoding dimensions. Hardcoded `64px` icon size and `11px` font caused size mismatch in medium/large tile modes.
+
+---
+
 ## fix/titlebar-disabled-margin: Top Margin When Title Bar Disabled
 
 **Key takeaways:**

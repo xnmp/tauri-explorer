@@ -43,6 +43,7 @@ const mockFiles: Record<string, FileEntry[]> = {
     file("report.pdf", "/home/user/Documents/report.pdf", 102400),
     file("budget.xlsx", "/home/user/Documents/budget.xlsx", 51200),
     file("presentation.pptx", "/home/user/Documents/presentation.pptx", 204800),
+    file("notes.md", "/home/user/Documents/notes.md", 4096),
   ],
   "/home/user/Downloads": [
     file("archive.zip", "/home/user/Downloads/archive.zip", 1048576),
@@ -281,6 +282,29 @@ const mockCommands: Record<string, CommandHandler> = {
       const entries = mockFiles[k];
       return Array.isArray(entries) && entries.some((e: { path: string }) => e.path === p);
     }));
+  },
+
+  estimate_size: (args) => {
+    const paths = args.paths as string[];
+    let fileCount = 0;
+    let totalBytes = 0;
+    for (const p of paths) {
+      // Check if it's a directory
+      if (p in mockFiles) {
+        const entries = mockFiles[p] || [];
+        fileCount += entries.filter((e) => e.kind === "file").length;
+        totalBytes += entries.filter((e) => e.kind === "file").reduce((sum, e) => sum + e.size, 0);
+      } else {
+        // Single file — find it in parent
+        const parentPath = p.substring(0, p.lastIndexOf("/"));
+        const entry = (mockFiles[parentPath] || []).find((e) => e.path === p);
+        if (entry) {
+          fileCount++;
+          totalBytes += entry.size;
+        }
+      }
+    }
+    return { fileCount, totalBytes };
   },
 
   start_streaming_directory: (args) => {

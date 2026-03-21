@@ -433,19 +433,19 @@ const viewCommands: Command[] = [
     id: "view.tilesSizeSmall",
     label: "Tiles: Small Icons (this folder)",
     category: "view",
-    handler: () => { const p = getActiveExplorer()?.currentPath; if (p) folderViewsStore.set(p, { thumbnailSize: "small" }); },
+    handler: () => { const e = getActiveExplorer(); if (e) { e.setViewMode("tiles"); folderViewsStore.set(e.currentPath, { thumbnailSize: "small" }); } },
   },
   {
     id: "view.tilesSizeMedium",
     label: "Tiles: Medium Icons (this folder)",
     category: "view",
-    handler: () => { const p = getActiveExplorer()?.currentPath; if (p) folderViewsStore.set(p, { thumbnailSize: "medium" }); },
+    handler: () => { const e = getActiveExplorer(); if (e) { e.setViewMode("tiles"); folderViewsStore.set(e.currentPath, { thumbnailSize: "medium" }); } },
   },
   {
     id: "view.tilesSizeLarge",
     label: "Tiles: Large Icons (this folder)",
     category: "view",
-    handler: () => { const p = getActiveExplorer()?.currentPath; if (p) folderViewsStore.set(p, { thumbnailSize: "large" }); },
+    handler: () => { const e = getActiveExplorer(); if (e) { e.setViewMode("tiles"); folderViewsStore.set(e.currentPath, { thumbnailSize: "large" }); } },
   },
 ];
 

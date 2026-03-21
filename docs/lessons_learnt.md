@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## chore/add-unit-test-hook: Pre-Commit Unit Tests
+
+**Key takeaways:**
+- Unit tests run in ~3s, fast enough for a pre-commit hook. This catches broken tests before they reach dev, unlike the previous setup which only checked that test files *exist* but never *ran* them.
+
+---
+
 ## fix/undo-window-close: Cross-Window Tab Restore
 
 **Key takeaways:**

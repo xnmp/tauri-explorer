@@ -32,6 +32,11 @@
           },
           {
             "type": "command",
+            "command": ".claude/hooks/run_unit_tests_on_commit.sh",
+            "timeout": 15000
+          },
+          {
+            "type": "command",
             "command": ".claude/hooks/run_e2e_for_merge.sh",
             "timeout": 120000
           },

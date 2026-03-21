@@ -319,7 +319,7 @@
   <TitleBar />
   {#if settingsStore.showToolbar}
     <SharedToolbar />
-  {:else if windowTabsManager.tabs.length <= 1}
+  {:else if windowTabsManager.tabs.length <= 1 && settingsStore.showWindowControls}
     <div class="window-top-spacer"></div>
   {/if}
   <div class="main-content">

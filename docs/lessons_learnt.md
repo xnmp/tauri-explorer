@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/titlebar-disabled-margin: Top Margin When Title Bar Disabled
+
+**Key takeaways:**
+- The `window-top-spacer` div provides a drag region when the toolbar is hidden. But it should also be gated on `showWindowControls` — if the user has disabled window controls, they don't need a drag region and the spacer creates a visible gap above the address bar.
+
+---
+
 ## fix/small-tiles-spacing: Reduce Spacing in Small Tiles Mode
 
 **Key takeaways:**

@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/settings-ctrlf: Ctrl+F in Settings
+
+**Key takeaways:**
+- When adding a search filter to a dialog, also wire Ctrl+F to focus it. Users expect Ctrl+F to find things — not doing so feels broken.
+
+---
+
 ## fix/recent-frecency-sort: Recent Folders Sorting
 
 **Key takeaways:**

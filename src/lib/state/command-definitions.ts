@@ -314,6 +314,13 @@ const viewCommands: Command[] = [
     handler: () => getActiveExplorer()?.setViewMode("tiles"),
   },
   {
+    id: "view.toggleMillerColumns",
+    label: "Toggle Miller Columns",
+    category: "view",
+    shortcut: "Alt+M E",
+    handler: () => settingsStore.toggleMillerColumns(),
+  },
+  {
     id: "view.millerLayers0",
     label: "Miller Columns: Off",
     category: "view",
@@ -341,14 +348,14 @@ const viewCommands: Command[] = [
     id: "view.toggleSidebar",
     label: "Toggle Sidebar",
     category: "view",
-    shortcut: "Alt+M E",
+    shortcut: "Alt+M B",
     handler: () => settingsStore.toggleSidebar(),
   },
   {
     id: "view.toggleToolbar",
     label: "Toggle Toolbar",
     category: "view",
-    shortcut: "Alt+M B",
+    shortcut: "Alt+M W",
     handler: () => settingsStore.toggleToolbar(),
   },
   {

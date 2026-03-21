@@ -281,6 +281,9 @@ function createSettingsStore() {
     setMillerLayers(n: number): void {
       update({ millerLayers: Math.max(0, Math.min(3, n)) });
     },
+    toggleMillerColumns(): void {
+      update({ millerLayers: settings.millerLayers > 0 ? 0 : 2 });
+    },
     setTheme(themeId: string): void {
       update({ theme: themeId });
     },

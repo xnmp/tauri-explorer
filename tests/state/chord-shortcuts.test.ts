@@ -6,8 +6,9 @@ import { describe, it, expect } from "vitest";
 
 // The chord shortcuts from command-definitions.ts
 const CHORD_SHORTCUTS = [
-  "Alt+M E",  // Toggle Sidebar
-  "Alt+M B",  // Toggle Toolbar
+  "Alt+M E",  // Toggle Miller Columns
+  "Alt+M B",  // Toggle Sidebar
+  "Alt+M W",  // Toggle Toolbar
   "Alt+M U",  // Toggle Status Bar
   "Alt+M T",  // Open Terminal
 ];

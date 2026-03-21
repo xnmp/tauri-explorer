@@ -116,7 +116,7 @@
           name: entry.name,
           path: entry.path,
           relativePath: entry.path,
-          score: Math.round(fuzzy * 10) + nameBonus + Math.round(frecency * FRECENCY_WEIGHT),
+          score: Math.round(fuzzy * 5) + nameBonus + Math.round(frecency * FRECENCY_WEIGHT),
           kind: entry.kind,
         });
       }
@@ -135,7 +135,7 @@
           name,
           path: entry.path,
           relativePath: entry.path,
-          score: Math.round(fuzzy * 10) + nameBonus + Math.round(frecency * FRECENCY_WEIGHT),
+          score: Math.round(fuzzy * 5) + nameBonus + Math.round(frecency * FRECENCY_WEIGHT),
           kind: "directory",
         });
       }

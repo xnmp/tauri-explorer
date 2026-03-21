@@ -11,6 +11,7 @@
   import { dragState } from "$lib/state/drag.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { loadPersisted, savePersisted } from "$lib/state/persisted";
 
   // Use pane navigation context if available, fallback to active explorer
   const paneNav = getPaneNavigationContext();
@@ -169,13 +170,34 @@
   }
 
   // Bookmarks folders use dynamic home directory
-  const quickAccessFolders = $derived([
-    { name: "Downloads", icon: "download", path: `${homeDir}/Downloads`, pinned: true, color: "#0078d4" },
-    { name: "Documents", icon: "document", path: `${homeDir}/Documents`, pinned: true, color: "#2b579a" },
-    { name: "Pictures", icon: "picture", path: `${homeDir}/Pictures`, pinned: true, color: "#008272" },
-    { name: "Videos", icon: "video", path: `${homeDir}/Videos`, pinned: false, color: "#a855f7" },
-    { name: "Music", icon: "music", path: `${homeDir}/Music`, pinned: false, color: "#f472b6" },
+  const allSystemFolders = $derived([
+    { name: "Downloads", icon: "download", path: `${homeDir}/Downloads`, color: "#0078d4" },
+    { name: "Documents", icon: "document", path: `${homeDir}/Documents`, color: "#2b579a" },
+    { name: "Pictures", icon: "picture", path: `${homeDir}/Pictures`, color: "#008272" },
+    { name: "Videos", icon: "video", path: `${homeDir}/Videos`, color: "#a855f7" },
+    { name: "Music", icon: "music", path: `${homeDir}/Music`, color: "#f472b6" },
   ]);
+
+  // Track which system folders the user has hidden
+  let hiddenSystemFolders = $state<Set<string>>(
+    new Set(loadPersisted<string[]>("explorer-hidden-system-folders", []))
+  );
+
+  function hideSystemFolder(name: string) {
+    hiddenSystemFolders = new Set([...hiddenSystemFolders, name]);
+    savePersisted("explorer-hidden-system-folders", [...hiddenSystemFolders]);
+  }
+
+  function showSystemFolder(name: string) {
+    const next = new Set(hiddenSystemFolders);
+    next.delete(name);
+    hiddenSystemFolders = next;
+    savePersisted("explorer-hidden-system-folders", [...hiddenSystemFolders]);
+  }
+
+  const quickAccessFolders = $derived(
+    allSystemFolders.filter((f) => !hiddenSystemFolders.has(f.name))
+  );
 
   /** Map bookmark names to custom icon colors for known folders */
   function getBookmarkIconColor(name: string): string | null {
@@ -322,7 +344,9 @@
       <div class="section-content">
         <!-- Default system folders -->
         {#each quickAccessFolders as folder}
-          <button class="nav-item folder-item" onclick={() => navigateTo(folder.path)}>
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="nav-item folder-item" onclick={() => navigateTo(folder.path)}>
             {#if folder.icon === "download"}
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: {folder.color}">
                 <path d="M8 2V10M8 10L5 7M8 10L11 7M3 12H13" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
@@ -349,12 +373,16 @@
               </svg>
             {/if}
             <span>{folder.name}</span>
-            {#if folder.pinned}
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" class="pin-icon">
-                <path d="M7 2V5L8 6V8H6.5V11L6 11.5L5.5 11V8H4V6L5 5V2H7Z" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/>
+            <button
+              class="remove-bookmark"
+              onclick={(e) => { e.stopPropagation(); hideSystemFolder(folder.name); }}
+              title="Remove from Bookmarks"
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path d="M3 3L9 9M9 3L3 9" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
               </svg>
-            {/if}
-          </button>
+            </button>
+          </div>
         {/each}
 
         <!-- User bookmarks -->

@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/remove-system-bookmarks: Removable System Folders
+
+**Key takeaways:**
+- System folders (Downloads, Documents, etc.) were hardcoded with no way to hide them. Persist hidden names in localStorage (`explorer-hidden-system-folders`) and filter the list. Use a `<div>` wrapper instead of `<button>` when a row needs a nested remove button — HTML doesn't allow `<button>` inside `<button>`.
+
+---
+
 ## fix/recent-exclude-root: /home in Recent Locations
 
 **Key takeaways:**

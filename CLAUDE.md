@@ -30,12 +30,13 @@
 ## For Each Issue
 * Create a Beads issue if none exists
 * In the issue description you must include a include a `## Screenshots` section listing required screenshots that verify that witness that the issue is resolved, as a list of markdown checkboxes eg `- [ ] sidebar` (or 'None required' with a reason). Note that if the issue results in any change in UI behaviour then this should be documented with screenshots. Screenshots must be saved to screenshots/<branch>/. The merge hook will verify they exist. 
-* Create a new branch. Note that the bracnh name must match the Beads issue name, and must be prefixed with feat, fix, or one of a few types (a hook will let you know if you go wrong here)
+* Create a new branch. Note that the bracnh name must match the Beads issue name, and must be prefixed with feat, fix, refactor, or one of a few types (a hook will let you know if you go wrong here - create a bogus type to see what's available)
 * After implementation run `bun run test` and fix any failures directly, then commit. 
 * Then if screenshots are required, use `agent-browser` (CLI) to take the required screenshots. You MUST actually veriify that the screenshot captures the fact that the implemented functionality is working as intended. Then commit again. 
 * If necessary, create an e2e playwright test that verifies the feature is working. 
 * Update the necessary docs in the `docs` folder, particularly the `Architecture.md` file for feature branches, and `lessons_learnt.md` file for bugfix branches. 
 * Finally, merge the feature branch to main. Use a merge commit with a descriptive, human readable commit message. Note that there'll be a hook to run e2e tests to ensure there's no regressions at this point. If there are regressions, fix them. There is no need to manually close the Beads issue. 
+* after a session of completing several issues, before stopping run e2e tests for all view modes (details, list, tiles), with `ALL_VIEW_MODES=1 npx playwright test`
 
 ## Important Operational Principles
 

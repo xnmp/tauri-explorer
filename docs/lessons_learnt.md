@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/recent-exclude-root: /home in Recent Locations
+
+**Key takeaways:**
+- `homeDir` defaults to `"/home"` before the async `getHomeDirectory()` resolves. The filter `e.path !== homeDir` only excludes the *user's* home dir (e.g. `/home/user`), not `/home` itself. Hardcode exclusions for `/home` and `/` since nobody wants to see these in recent locations.
+
+---
+
 ## fix/miller-spacing: Miller Column Spacing
 
 **Key takeaways:**

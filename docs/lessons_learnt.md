@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/addressbar-responsive-icons: Responsive Nav Icons
+
+**Key takeaways:**
+- Use CSS `container-type: inline-size` on the navigation bar and a `@container (max-width: 400px)` query to hide navigation buttons when the content area is too narrow. This is more reliable than media queries because it responds to the actual component width, not the viewport.
+
+---
+
 ## fix/terminal-shortcut-garbage: Alt Chord Shortcuts on Linux
 
 **Key takeaways:**

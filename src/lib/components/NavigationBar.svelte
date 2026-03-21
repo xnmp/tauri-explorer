@@ -443,6 +443,7 @@
     background: var(--background-card-secondary);
     border-bottom: var(--navbar-border-bottom, 1px solid var(--divider));
     height: 40px;
+    container-type: inline-size;
   }
 
   .nav-controls {
@@ -450,6 +451,13 @@
     align-items: center;
     gap: 2px;
     flex-shrink: 0;
+  }
+
+  /* Hide navigation buttons when address bar space is limited */
+  @container (max-width: 400px) {
+    .nav-controls {
+      display: none;
+    }
   }
 
   .nav-btn {

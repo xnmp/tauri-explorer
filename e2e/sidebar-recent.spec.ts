@@ -13,8 +13,8 @@ test.describe("Sidebar recent locations", () => {
     // Sidebar should be visible
     await expect(page.locator(".sidebar")).toBeVisible();
 
-    // Quick Access section should exist
-    await expect(page.locator(".section-header:has-text('Quick access')")).toBeVisible();
+    // Bookmarks section should exist
+    await expect(page.locator(".section-header:has-text('Bookmarks')")).toBeVisible();
 
     // Navigate to a few directories to populate frecency
     await page.locator(".entry-item").first().dblclick();

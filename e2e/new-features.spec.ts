@@ -386,8 +386,8 @@ test.describe("Bookmarks", () => {
     await waitForFileList(page);
   });
 
-  test("Quick Access section exists in sidebar", async ({ page }) => {
-    await expect(page.getByText("Quick access")).toBeVisible();
+  test("Bookmarks section exists in sidebar", async ({ page }) => {
+    await expect(page.getByText("Bookmarks")).toBeVisible();
   });
 
   test("default system folders are shown", async ({ page }) => {

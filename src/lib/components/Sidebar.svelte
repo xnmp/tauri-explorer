@@ -10,6 +10,7 @@
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { dragState } from "$lib/state/drag.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
+  import { settingsStore } from "$lib/state/settings.svelte";
 
   // Use pane navigation context if available, fallback to active explorer
   const paneNav = getPaneNavigationContext();
@@ -183,7 +184,7 @@
   const recentLocations = $derived(
     frecencyStore.entries
       .filter((e) => e.path !== homeDir) // exclude home dir (already has button)
-      .slice(0, 8)
+      .slice(0, settingsStore.recentItemsCount)
       .map((e) => ({
         name: e.path.split("/").pop() || e.path,
         path: e.path,
@@ -467,10 +468,6 @@
     padding: 4px;
   }
 
-  .top-section {
-    padding-top: 8px;
-  }
-
   .divider {
     height: 1px;
     background: var(--divider);
@@ -558,25 +555,6 @@
     flex-shrink: 0;
   }
 
-  /* Top section icons */
-  .top-section .nav-item:nth-child(1) .nav-icon { color: #0078d4; } /* Home - Blue */
-
-  /* Dual pane toggle */
-  .dual-pane-toggle .nav-icon {
-    color: var(--text-secondary);
-  }
-
-  .dual-pane-toggle.active {
-    background: var(--subtle-fill-secondary);
-  }
-
-  .dual-pane-toggle.active .nav-icon {
-    color: var(--accent);
-  }
-
-  /* Drive icons */
-  .drive-item .nav-icon { color: #6d6d6d; }
-
   .folder-item {
     position: relative;
   }
@@ -584,42 +562,6 @@
   .pin-icon {
     margin-left: auto;
     opacity: 0.4;
-  }
-
-  .drive-item {
-    align-items: flex-start;
-    padding-top: 8px;
-    padding-bottom: 8px;
-  }
-
-  .drive-details {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    flex: 1;
-    min-width: 0;
-  }
-
-  .drive-name {
-    font-size: 13px;
-  }
-
-  .drive-usage {
-    width: 100%;
-  }
-
-  .usage-bar {
-    height: 4px;
-    background: var(--control-fill-tertiary);
-    border-radius: var(--radius-pill);
-    overflow: hidden;
-  }
-
-  .usage-fill {
-    height: 100%;
-    background: var(--accent);
-    border-radius: var(--radius-pill);
-    transition: width 0.3s ease;
   }
 
   /* Drag and drop styles */

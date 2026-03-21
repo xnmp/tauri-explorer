@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/miller-spacing: Miller Column Spacing
+
+**Key takeaways:**
+- New components should match existing components' spacing. Miller entries used 12px font/6px gap/3px padding while list view used 13px/8px/4px. Always reference the established component's CSS when building a similar one.
+
+---
+
 ## fix/settings-ctrlf: Ctrl+F in Settings
 
 **Key takeaways:**

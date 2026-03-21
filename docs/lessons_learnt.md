@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## feat/miller-drag-drop: Miller Columns Drop Targets
+
+**Key takeaways:**
+- Miller columns drop-to-move uses the shared `useDropTarget` composable. Default drag = move (blue highlight), Ctrl+drag = copy (green highlight). The `handleFileDrop` utility handles conflict resolution, undo tracking, and toast notifications consistently with the main file list. Always take screenshots with `deviceScaleFactor: 2` and element-level `.screenshot()` for cropped, high-res captures of small UI regions.
+
+---
+
 ## fix/scan-metadata-syscalls: Minimize Metadata Syscalls
 
 **Key takeaways:**

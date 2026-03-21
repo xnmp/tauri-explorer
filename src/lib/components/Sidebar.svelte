@@ -637,6 +637,7 @@
     position: relative;
   }
 
+  .folder-item .remove-bookmark,
   .user-bookmark .remove-bookmark {
     display: none;
     align-items: center;
@@ -653,10 +654,12 @@
     transition: all var(--transition-fast);
   }
 
+  .folder-item:hover .remove-bookmark,
   .user-bookmark:hover .remove-bookmark {
     display: flex;
   }
 
+  .folder-item .remove-bookmark:hover,
   .user-bookmark .remove-bookmark:hover {
     background: var(--subtle-fill-secondary);
     color: var(--system-critical);

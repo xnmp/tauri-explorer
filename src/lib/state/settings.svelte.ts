@@ -66,6 +66,7 @@ export interface Settings {
   theme: string; // active theme id, e.g. "dark", "golden-hour"
   thumbnailSize: ThumbnailSize; // tile thumbnail size tier
   showGitStatus: boolean; // show git indicators on files
+  recentItemsCount: number; // number of recent locations in sidebar (0 = hidden)
 }
 
 const MIN_ZOOM = 50;
@@ -100,6 +101,7 @@ const DEFAULT_SETTINGS: Settings = {
   theme: "light",
   thumbnailSize: "small",
   showGitStatus: false,
+  recentItemsCount: 6,
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -264,6 +266,12 @@ function createSettingsStore() {
     },
     toggleGitStatus(): void {
       update({ showGitStatus: !settings.showGitStatus });
+    },
+    get recentItemsCount() {
+      return settings.recentItemsCount;
+    },
+    setRecentItemsCount(count: number): void {
+      update({ recentItemsCount: Math.max(0, Math.min(20, count)) });
     },
     setTheme(themeId: string): void {
       update({ theme: themeId });

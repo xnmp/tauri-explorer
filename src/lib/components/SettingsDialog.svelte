@@ -241,6 +241,21 @@
             </label>
           </div>
 
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Recent Items in Sidebar</span>
+              <span class="setting-description">Number of recent locations to show (0 to hide)</span>
+            </div>
+            <input
+              type="number"
+              class="setting-number"
+              min="0"
+              max="20"
+              value={settingsStore.recentItemsCount}
+              onchange={(e) => settingsStore.setRecentItemsCount(parseInt((e.target as HTMLInputElement).value) || 0)}
+            />
+          </div>
+
           <div class="setting-item">
             <div class="setting-label">
               <span>Confirm before deleting</span>
@@ -467,6 +482,18 @@
   .setting-description {
     font-size: 12px;
     color: var(--text-tertiary);
+  }
+
+  .setting-number {
+    width: 60px;
+    padding: 4px 8px;
+    border: 1px solid var(--control-stroke);
+    border-radius: var(--radius-sm);
+    background: var(--control-fill);
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--text-primary);
+    text-align: center;
   }
 
   .text-input {

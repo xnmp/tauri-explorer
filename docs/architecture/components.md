@@ -29,7 +29,7 @@
 | **QuickOpen** | `QuickOpen.svelte` | Ctrl+P fuzzy file search with frecency ranking |
 | **CommandPalette** | `CommandPalette.svelte` | Ctrl+Shift+P command search |
 | **ContentSearchDialog** | `ContentSearchDialog.svelte` | Ctrl+Shift+F grep-in-files using ripgrep backend |
-| **SettingsDialog** | `SettingsDialog.svelte` | Settings UI: appearance, behavior, keybindings, thumbnail cache |
+| **SettingsDialog** | `SettingsDialog.svelte` | Settings UI with search filter: appearance, behavior, keybindings, thumbnail cache |
 | **KeybindingsSettings** | `KeybindingsSettings.svelte` | Keybinding customization: search, record, conflict detection |
 | **WorkspaceDialog** | `WorkspaceDialog.svelte` | Save/restore named tab layout snapshots |
 | **BulkRenameDialog** | `BulkRenameDialog.svelte` | Multi-file rename with find/replace, regex, sequence patterns |

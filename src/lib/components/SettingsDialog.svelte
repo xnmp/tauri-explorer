@@ -14,10 +14,58 @@
 
   let { open, onClose }: Props = $props();
 
+  let searchQuery = $state("");
+  let searchInputRef = $state<HTMLInputElement | null>(null);
+
+  const queryLower = $derived(searchQuery.toLowerCase());
+
+  /** Check if a setting row matches the search query */
+  function matchesSearch(...terms: string[]): boolean {
+    if (!queryLower) return true;
+    return terms.some((t) => t.toLowerCase().includes(queryLower));
+  }
+
+  /** Check if a section has any visible settings */
+  function sectionVisible(...terms: string[][]): boolean {
+    if (!queryLower) return true;
+    return terms.some((t) => matchesSearch(...t));
+  }
+
+  let dialogContentRef = $state<HTMLElement | null>(null);
+
+  // Filter settings rows based on search query
+  $effect(() => {
+    if (!dialogContentRef) return;
+    const q = queryLower;
+    const rows = dialogContentRef.querySelectorAll<HTMLElement>(".setting-row, .setting-item");
+    const sections = dialogContentRef.querySelectorAll<HTMLElement>(".settings-section");
+
+    if (!q) {
+      rows.forEach((r) => r.style.display = "");
+      sections.forEach((s) => s.style.display = "");
+      return;
+    }
+
+    rows.forEach((row) => {
+      const text = row.textContent?.toLowerCase() ?? "";
+      row.style.display = text.includes(q) ? "" : "none";
+    });
+
+    // Hide sections where all rows are hidden
+    sections.forEach((section) => {
+      const visibleRows = section.querySelectorAll<HTMLElement>(".setting-row:not([style*='display: none']), .setting-item:not([style*='display: none'])");
+      section.style.display = visibleRows.length > 0 ? "" : "none";
+    });
+  });
+
   function handleKeydown(event: KeyboardEvent): void {
     if (event.key === "Escape") {
       event.preventDefault();
-      onClose();
+      if (searchQuery) {
+        searchQuery = "";
+      } else {
+        onClose();
+      }
     }
   }
 
@@ -41,6 +89,15 @@
     <div class="settings-dialog">
       <header class="dialog-header">
         <h2 id="settings-title">Settings</h2>
+        <input
+          type="text"
+          class="settings-search"
+          placeholder="Filter settings..."
+          bind:value={searchQuery}
+          bind:this={searchInputRef}
+          autocomplete="off"
+          spellcheck="false"
+        />
         <button class="close-btn" onclick={onClose} aria-label="Close settings">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
@@ -48,7 +105,7 @@
         </button>
       </header>
 
-      <div class="dialog-content">
+      <div class="dialog-content" bind:this={dialogContentRef}>
         <!-- Appearance Section -->
         <section class="settings-section">
           <h3 class="section-title">Appearance</h3>
@@ -419,6 +476,28 @@
     font-weight: 600;
     color: var(--text-primary);
     margin: 0;
+  }
+
+  .settings-search {
+    flex: 1;
+    max-width: 200px;
+    margin: 0 12px;
+    padding: 5px 10px;
+    border: 1px solid var(--control-stroke);
+    border-radius: var(--radius-sm);
+    background: var(--control-fill);
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--text-primary);
+    outline: none;
+  }
+
+  .settings-search:focus {
+    border-color: var(--accent);
+  }
+
+  .settings-search::placeholder {
+    color: var(--text-tertiary);
   }
 
   .close-btn {

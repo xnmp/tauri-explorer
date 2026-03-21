@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/view-component-duplication: View Interaction Composable
+
+**Key takeaways:**
+- DnD, context menu, and clipboard state logic was duplicated across FileItem, ListView, and TilesView (3x ~130 lines). Extract shared logic into a composable (`use-item-interactions.svelte.ts`) that accepts dependencies via a config object. Use a `selectOnContextMenu` flag to handle the difference between views that select on right-click (ListView/TilesView) and those that don't (FileItem/DetailsView where selection is handled upstream). Git status badges should be a shared component (`GitStatusBadge.svelte`) to ensure consistent rendering across views.
+
+---
+
 ## fix/blocking-rust-commands: Async Tauri Commands
 
 **Key takeaways:**

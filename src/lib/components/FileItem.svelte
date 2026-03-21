@@ -7,15 +7,13 @@
   import { formatSize } from "$lib/domain/file";
   import { getFileType, getFileIconColor, formatDate } from "$lib/domain/file-types";
   import FileIcon from "./FileIcon.svelte";
+  import GitStatusBadge from "./GitStatusBadge.svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
-  import { clipboardStore } from "$lib/state/clipboard.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
-  import { dragState } from "$lib/state/drag.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { gitStatusStore } from "$lib/state/git-status.svelte";
-  import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
   import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
+  import { useItemInteractions, isInClipboard as checkInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
 
   interface Props {
     entry: FileEntry;
@@ -29,6 +27,12 @@
 
   // Get pane context for cross-pane operations
   const paneNav = getPaneNavigationContext();
+
+  // Shared item interactions (DnD, context menu)
+  const interactions = useItemInteractions({
+    getExplorer: () => explorer,
+    getPaneNav: () => paneNav,
+  });
 
   // Slow-click-to-rename state (Windows Explorer behavior)
   let wasSelectedOnMouseDown = false;
@@ -47,6 +51,10 @@
       rename.focusAndSelect(entry);
     }
   });
+
+  // Clipboard state
+  const entryInClipboard = $derived(checkInClipboard(entry));
+  const isCut = $derived(isClipboardCut(entry));
 
   // Track if item was selected before mousedown (for slow-click-to-rename)
   function handleMouseDown() {
@@ -94,105 +102,6 @@
     nameClickPending = false;
     ondblclick();
   }
-
-  // Check if this item is in clipboard (for visual feedback)
-  const isInClipboard = $derived(
-    clipboardStore.content?.entries.some((e) => e.path === entry.path) ?? false
-  );
-  const isCut = $derived(
-    isInClipboard && clipboardStore.isCut
-  );
-
-  function handleContextMenu(event: MouseEvent) {
-    event.preventDefault();
-    event.stopPropagation();
-    explorer.openContextMenu(event.clientX, event.clientY, entry);
-  }
-
-  // Drag handlers - allow dragging files/folders
-  let isDropTarget = $state(false);
-  let isCopyDrop = $state(false);
-
-  function handleDragStart(event: DragEvent) {
-    if (!event.dataTransfer) return;
-
-    // If multiple items selected and dragged entry is among them, drag all
-    const selectedEntries = explorer.getSelectedEntries();
-    const isMulti = selectedEntries.length > 1 && selected;
-    const paths = isMulti ? selectedEntries.map((e) => e.path) : [entry.path];
-
-    // Set drag data with file info (both dataTransfer and shared state)
-    event.dataTransfer.setData("application/x-explorer-path", entry.path);
-    event.dataTransfer.setData("application/x-explorer-name", entry.name);
-    event.dataTransfer.setData("application/x-explorer-kind", entry.kind);
-    if (isMulti) {
-      event.dataTransfer.setData("application/x-explorer-paths", JSON.stringify(paths));
-    }
-    event.dataTransfer.effectAllowed = "all";
-
-    // Also set shared drag state (dataTransfer is unreliable in some webviews)
-    dragState.start({ path: entry.path, name: entry.name, kind: entry.kind, paths: isMulti ? paths : undefined });
-  }
-
-  function handleDragEnd() {
-    // After a drag ends, refresh panes to reflect any cross-window moves.
-    // Internal drops already call refreshAllPanes(), so this is a no-op
-    // in that case (just a redundant refresh). For external drops (another
-    // window), this ensures the source window updates.
-    // Defer clear so sidebar's document-level dragend listener
-    // can still read dragState.current for bookmark drops
-    setTimeout(() => dragState.clear(), 0);
-    if (paneNav) {
-      paneNav.refreshAllPanes();
-    } else {
-      explorer.refresh({ silent: true });
-    }
-  }
-
-  // Drop handlers - allow dropping files/folders into directories
-  function handleDragOver(event: DragEvent) {
-    // Only accept drops on directories
-    if (entry.kind !== "directory") return;
-    // Accept if dataTransfer has our type, OR if there's cross-window drag data
-    if (!event.dataTransfer?.types.includes("application/x-explorer-path") && !dragState.readCrossWindow()) return;
-
-    event.preventDefault();
-    // Ctrl held = copy, otherwise move
-    const copying = event.ctrlKey;
-    if (event.dataTransfer) event.dataTransfer.dropEffect = copying ? "copy" : "move";
-    isDropTarget = true;
-    isCopyDrop = copying;
-  }
-
-  function handleDragLeave() {
-    isDropTarget = false;
-    isCopyDrop = false;
-  }
-
-  async function handleDrop(event: DragEvent) {
-    event.preventDefault();
-    isDropTarget = false;
-    isCopyDrop = false;
-
-    if (entry.kind !== "directory") return;
-    if (!event.dataTransfer) return;
-
-    const sourcePaths = getDropSourcePaths(event.dataTransfer);
-    if (sourcePaths.length === 0) return;
-
-    for (const sourcePath of sourcePaths) {
-      if (sourcePath === entry.path) continue;
-      // Don't allow moving/copying a folder into itself or its children
-      if (entry.path.startsWith(sourcePath + "/")) continue;
-
-      await handleFileDrop(sourcePath, entry.path, event.ctrlKey, {
-        onRefresh: () => {
-          if (paneNav) paneNav.refreshAllPanes();
-          else explorer.refresh({ silent: true });
-        },
-      });
-    }
-  }
 </script>
 
 <button
@@ -200,20 +109,20 @@
   class:directory={entry.kind === "directory"}
   class:hidden-entry={entry.name.startsWith(".")}
   class:cut={isCut}
-  class:in-clipboard={isInClipboard}
+  class:in-clipboard={entryInClipboard}
   class:selected
-  class:drop-target={isDropTarget}
-  class:copy-drop={isCopyDrop}
+  class:drop-target={interactions.isDropTarget(entry.path)}
+  class:copy-drop={interactions.isCopyDrop(entry.path)}
   onmousedown={handleMouseDown}
   onclick={handleClick}
   ondblclick={handleDoubleClick}
-  oncontextmenu={handleContextMenu}
+  oncontextmenu={(e) => interactions.handleContextMenu(e, entry)}
   draggable="true"
-  ondragstart={handleDragStart}
-  ondragend={handleDragEnd}
-  ondragover={handleDragOver}
-  ondragleave={handleDragLeave}
-  ondrop={handleDrop}
+  ondragstart={(e) => interactions.handleDragStart(e, entry, selected)}
+  ondragend={interactions.handleDragEnd}
+  ondragover={(e) => interactions.handleDragOver(e, entry)}
+  ondragleave={() => interactions.handleDragLeave(entry)}
+  ondrop={(e) => interactions.handleDrop(e, entry)}
 >
   <!-- Name column -->
   <div class="name-cell">
@@ -237,14 +146,7 @@
     {:else}
       <span class="name entry-name">{entry.name}</span>
     {/if}
-    {#if settingsStore.showGitStatus && !isRenaming}
-      {@const gitStatus = gitStatusStore.getStatus(entry.name)}
-      {#if gitStatus}
-        <span class="git-indicator git-{gitStatus.toLowerCase()}" title="Git: {gitStatus}">
-          {gitStatus === "Modified" ? "M" : gitStatus === "Untracked" ? "U" : gitStatus === "Added" ? "A" : gitStatus === "Deleted" ? "D" : gitStatus === "Conflict" ? "!" : "R"}
-        </span>
-      {/if}
-    {/if}
+    <GitStatusBadge entryName={entry.name} hideOnRename={isRenaming} />
     {#if entry.is_symlink && !isRenaming}
       <div class="symlink-badge" title={entry.symlink_target ? `Link to ${entry.symlink_target}` : "Symbolic link"}>
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
@@ -252,7 +154,7 @@
         </svg>
       </div>
     {/if}
-    {#if isInClipboard && !isRenaming}
+    {#if entryInClipboard && !isRenaming}
       <div class="clipboard-badge" aria-label={isCut ? "Cut" : "Copied"}>
         {#if isCut}
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
@@ -438,26 +340,6 @@
   .empty-cell {
     opacity: 0.3;
   }
-
-  /* Git status indicator — subtle letter with no background */
-  .git-indicator {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 14px;
-    font-size: 11px;
-    font-weight: 600;
-    flex-shrink: 0;
-    line-height: 1;
-    opacity: 0.85;
-  }
-
-  .git-modified { color: #d4a017; }
-  .git-untracked { color: #22c55e; }
-  .git-added { color: #22c55e; }
-  .git-deleted { color: #ef4444; }
-  .git-conflict { color: #ef4444; font-weight: 800; }
-  .git-renamed { color: #60a5fa; }
 
   /* Symlink badge */
   .symlink-badge {

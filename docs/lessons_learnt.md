@@ -4,6 +4,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/remove-sidebar-buttons: Sidebar Cleanup
+
+**Key takeaways:**
+- When removing UI sections (Home/Dual Pane buttons, This PC drives), also remove the associated state variables (`thisPcExpanded`, `drives`) and CSS classes to avoid dead code.
+- The "Quick Access" label was renamed to "Bookmarks" and recent locations changed from clock icons to folder icons to match user expectations.
+
+---
+
 ## fix/mock-paste-ops: Mock Paste Operations
 
 **Key takeaways:**

@@ -167,7 +167,7 @@
     stopDragPoll();
   }
 
-  // Quick access folders use dynamic home directory
+  // Bookmarks folders use dynamic home directory
   const quickAccessFolders = $derived([
     { name: "Downloads", icon: "download", path: `${homeDir}/Downloads`, pinned: true, color: "#0078d4" },
     { name: "Documents", icon: "document", path: `${homeDir}/Documents`, pinned: true, color: "#2b579a" },
@@ -176,14 +176,8 @@
     { name: "Music", icon: "music", path: `${homeDir}/Music`, pinned: false, color: "#f472b6" },
   ]);
 
-  const drives = [
-    { name: "Local Disk (C:)", icon: "drive", path: "/", usage: 65 },
-    { name: "Data (D:)", icon: "drive", path: "/mnt", usage: 42 },
-  ];
-
   let quickAccessExpanded = $state(true);
   let recentExpanded = $state(true);
-  let thisPcExpanded = $state(true);
 
   // Recent locations from frecency store (top 8 most recently visited directories)
   const recentLocations = $derived(
@@ -285,45 +279,13 @@
 
 <div class="sidebar-container" class:resizing={isResizing} style="width: {sidebarWidth}px">
   <div class="sidebar">
-    <!-- Home / Gallery / Cloud sections -->
-  <div class="nav-section top-section">
-    <button class="nav-item" onclick={() => navigateTo(homeDir)}>
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
-        <path d="M8 1.5L14.5 7V14C14.5 14.2761 14.2761 14.5 14 14.5H10V10C10 9.72386 9.77614 9.5 9.5 9.5H6.5C6.22386 9.5 6 9.72386 6 10V14.5H2C1.72386 14.5 1.5 14.2761 1.5 14V7L8 1.5Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
-      </svg>
-      <span>Home</span>
-    </button>
-
-    <button
-      class="nav-item dual-pane-toggle"
-      class:active={windowTabsManager.dualPaneEnabled}
-      onclick={() => windowTabsManager.toggleDualPane()}
-      title="Toggle dual pane (Ctrl+\)"
-    >
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
-        {#if windowTabsManager.dualPaneEnabled}
-          <!-- Dual pane active icon -->
-          <rect x="1.5" y="2.5" width="5.5" height="11" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-          <rect x="9" y="2.5" width="5.5" height="11" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-        {:else}
-          <!-- Single pane icon -->
-          <rect x="2" y="2.5" width="12" height="11" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-          <path d="M8 2.5V13.5" stroke="currentColor" stroke-width="1.25" stroke-dasharray="2 2"/>
-        {/if}
-      </svg>
-      <span>{windowTabsManager.dualPaneEnabled ? "Single Pane" : "Dual Pane"}</span>
-    </button>
-  </div>
-
-  <div class="divider"></div>
-
-  <!-- Quick access -->
+  <!-- Bookmarks -->
   <div
     bind:this={quickAccessEl}
     class="nav-section quick-access"
     class:drag-over={isDragOver}
     role="region"
-    aria-label="Quick access - drop folders here to bookmark"
+    aria-label="Bookmarks - drop folders here to bookmark"
   >
     <button
       class="section-header"
@@ -333,7 +295,7 @@
       <svg width="12" height="12" viewBox="0 0 12 12" fill="none" class="chevron" class:expanded={quickAccessExpanded}>
         <path d="M4 3L7 6L4 9" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
-      <span>Quick access</span>
+      <span>Bookmarks</span>
       {#if isDragOver}
         <span class="drop-hint">Drop to pin</span>
       {/if}
@@ -408,7 +370,7 @@
             <button
               class="remove-bookmark"
               onclick={(e) => removeBookmark(e, bookmark.path)}
-              title="Unpin from Quick access"
+              title="Unpin from Bookmarks"
             >
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                 <path d="M3 3L9 9M9 3L3 9" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
@@ -441,7 +403,7 @@
           {#each recentLocations as loc (loc.path)}
             <button class="nav-item" onclick={() => navigateTo(loc.path)} title={loc.path}>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
-                <path d="M8 1.5A6.5 6.5 0 1 0 14.5 8 6.5 6.5 0 0 0 8 1.5ZM8 4V8L10.5 10" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="var(--icon-folder, #FFB900)" opacity="0.7"/>
               </svg>
               <span>{loc.name}</span>
             </button>
@@ -451,43 +413,6 @@
     </div>
   {/if}
 
-  <div class="divider"></div>
-
-  <!-- This PC -->
-  <div class="nav-section">
-    <button
-      class="section-header"
-      onclick={() => thisPcExpanded = !thisPcExpanded}
-      aria-expanded={thisPcExpanded}
-    >
-      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" class="chevron" class:expanded={thisPcExpanded}>
-        <path d="M4 3L7 6L4 9" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-      <span>This PC</span>
-    </button>
-
-    {#if thisPcExpanded}
-      <div class="section-content">
-        {#each drives as drive}
-          <button class="nav-item drive-item" onclick={() => navigateTo(drive.path)}>
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
-              <rect x="2" y="4" width="12" height="8" rx="1" stroke="currentColor" stroke-width="1.25"/>
-              <circle cx="4.5" cy="8" r="0.75" fill="currentColor"/>
-              <path d="M2 7H14" stroke="currentColor" stroke-width="1.25"/>
-            </svg>
-            <div class="drive-details">
-              <span class="drive-name">{drive.name}</span>
-              <div class="drive-usage">
-                <div class="usage-bar">
-                  <div class="usage-fill" style="width: {drive.usage}%"></div>
-                </div>
-              </div>
-            </div>
-          </button>
-        {/each}
-      </div>
-    {/if}
-  </div>
   </div>
   <!-- Resize handle -->
   <div

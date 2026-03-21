@@ -25,7 +25,7 @@
 | **InlineNewFolder** | `InlineNewFolder.svelte` | Inline editable placeholder for creating new folders |
 | **ContextMenu** | `ContextMenu.svelte` | Right-click menu with all file operations |
 | **PreviewPane** | `PreviewPane.svelte` | Side panel: image/text/PDF preview + file metadata |
-| **StatusBar** | `StatusBar.svelte` | Bottom bar: item count, selected count + size, current path |
+| **StatusBar** | `StatusBar.svelte` | Bottom bar: item count, folder/file breakdown, total file size, selected count/size breakdown, current path |
 | **QuickOpen** | `QuickOpen.svelte` | Ctrl+P fuzzy file search with frecency ranking |
 | **CommandPalette** | `CommandPalette.svelte` | Ctrl+Shift+P command search |
 | **ContentSearchDialog** | `ContentSearchDialog.svelte` | Ctrl+Shift+F grep-in-files using ripgrep backend |

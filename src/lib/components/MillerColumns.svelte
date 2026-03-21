@@ -7,13 +7,14 @@
   navigates into it. Controlled by settingsStore.millerLayers (0=off).
 -->
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { untrack, onMount } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { fetchDirectory } from "$lib/api/files";
   import FileIcon from "./FileIcon.svelte";
   import { dragState } from "$lib/state/drag.svelte";
   import type { FileEntry } from "$lib/domain/file";
+  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
   interface Props {
     explorer: ExplorerInstance;
@@ -86,7 +87,7 @@
     const result = await fetchDirectory(path);
     if (result.ok) {
       const entries = [...result.data.entries]
-        .filter((e: FileEntry) => e.kind === "directory" && (settingsStore.showHidden || !e.name.startsWith(".")))
+        .filter((e: FileEntry) => e.kind === "directory")
         .sort((a: FileEntry, b: FileEntry) => a.name.localeCompare(b.name));
       rawCache.set(path, entries);
       rawColumns = rawColumns.map((col) =>
@@ -94,6 +95,24 @@
       );
     }
   }
+
+  // Listen for filesystem changes to invalidate stale Miller cache entries
+  onMount(() => {
+    let unlisten: UnlistenFn | undefined;
+    listen<{ path: string }>("directory-changed", (event) => {
+      const changedPath = event.payload.path;
+      if (rawCache.has(changedPath)) {
+        rawCache.delete(changedPath);
+        // Reload the column if it's currently visible
+        const isVisible = rawColumns.some((col) => col.path === changedPath);
+        if (isVisible) {
+          loadColumn(changedPath);
+        }
+      }
+    }).then((fn) => { unlisten = fn; });
+
+    return () => { unlisten?.(); };
+  });
 
   function handleClick(entry: FileEntry): void {
     explorer.navigateTo(entry.path);

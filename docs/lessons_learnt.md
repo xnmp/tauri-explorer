@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/terminal-shortcut-garbage: Alt Chord Shortcuts on Linux
+
+**Key takeaways:**
+- On Linux with WebKitGTK, `Alt+key` combinations produce compose characters (e.g. Alt+M → µ) that leak through to other applications (especially terminal emulators like Ghostty). Use `Ctrl+key` chord prefixes instead of `Alt+key` to avoid generating compose characters.
+
+---
+
 ## fix/quickopen-filename-scoring: Filename Match Scoring
 
 **Key takeaways:**

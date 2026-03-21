@@ -317,14 +317,14 @@ const viewCommands: Command[] = [
     id: "view.toggleSidebar",
     label: "Toggle Sidebar",
     category: "view",
-    shortcut: "Alt+M E",
+    shortcut: "Ctrl+M E",
     handler: () => settingsStore.toggleSidebar(),
   },
   {
     id: "view.toggleToolbar",
     label: "Toggle Toolbar",
     category: "view",
-    shortcut: "Alt+M B",
+    shortcut: "Ctrl+M B",
     handler: () => settingsStore.toggleToolbar(),
   },
   {
@@ -402,7 +402,7 @@ const viewCommands: Command[] = [
     id: "view.toggleStatusBar",
     label: "Toggle Status Bar",
     category: "view",
-    shortcut: "Alt+M U",
+    shortcut: "Ctrl+M U",
     handler: () => settingsStore.toggleStatusBar(),
   },
   {
@@ -659,7 +659,7 @@ const terminalCommands: Command[] = [
     id: "general.openTerminal",
     label: "Open Terminal Here",
     category: "general",
-    shortcut: "Alt+M T",
+    shortcut: "Ctrl+M T",
     handler: () => {
       const explorer = getActiveExplorer();
       if (explorer) {

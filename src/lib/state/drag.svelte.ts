@@ -16,6 +16,8 @@ export interface DragData {
   path: string;
   name: string;
   kind: string;
+  /** Additional paths when dragging a multi-selection */
+  paths?: string[];
 }
 
 let current: DragData | null = $state(null);

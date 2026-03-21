@@ -13,7 +13,7 @@
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { dragState } from "$lib/state/drag.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { getDropSourcePath, handleFileDrop } from "$lib/state/drop-operations";
+  import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
   import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
 
   interface Props {
@@ -115,14 +115,22 @@
   function handleDragStart(event: DragEvent) {
     if (!event.dataTransfer) return;
 
+    // If multiple items selected and dragged entry is among them, drag all
+    const selectedEntries = explorer.getSelectedEntries();
+    const isMulti = selectedEntries.length > 1 && selected;
+    const paths = isMulti ? selectedEntries.map((e) => e.path) : [entry.path];
+
     // Set drag data with file info (both dataTransfer and shared state)
     event.dataTransfer.setData("application/x-explorer-path", entry.path);
     event.dataTransfer.setData("application/x-explorer-name", entry.name);
     event.dataTransfer.setData("application/x-explorer-kind", entry.kind);
+    if (isMulti) {
+      event.dataTransfer.setData("application/x-explorer-paths", JSON.stringify(paths));
+    }
     event.dataTransfer.effectAllowed = "all";
 
     // Also set shared drag state (dataTransfer is unreliable in some webviews)
-    dragState.start({ path: entry.path, name: entry.name, kind: entry.kind });
+    dragState.start({ path: entry.path, name: entry.name, kind: entry.kind, paths: isMulti ? paths : undefined });
   }
 
   function handleDragEnd() {
@@ -166,18 +174,21 @@
     if (entry.kind !== "directory") return;
     if (!event.dataTransfer) return;
 
-    const sourcePath = getDropSourcePath(event.dataTransfer);
-    if (!sourcePath || sourcePath === entry.path) return;
+    const sourcePaths = getDropSourcePaths(event.dataTransfer);
+    if (sourcePaths.length === 0) return;
 
-    // Don't allow moving/copying a folder into itself or its children
-    if (entry.path.startsWith(sourcePath + "/")) return;
+    for (const sourcePath of sourcePaths) {
+      if (sourcePath === entry.path) continue;
+      // Don't allow moving/copying a folder into itself or its children
+      if (entry.path.startsWith(sourcePath + "/")) continue;
 
-    await handleFileDrop(sourcePath, entry.path, event.ctrlKey, {
-      onRefresh: () => {
-        if (paneNav) paneNav.refreshAllPanes();
-        else explorer.refresh({ silent: true });
-      },
-    });
+      await handleFileDrop(sourcePath, entry.path, event.ctrlKey, {
+        onRefresh: () => {
+          if (paneNav) paneNav.refreshAllPanes();
+          else explorer.refresh({ silent: true });
+        },
+      });
+    }
   }
 </script>
 

@@ -186,26 +186,31 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 6px;
-    padding: 10px 6px 8px;
+    gap: 4px;
+    padding: var(--tile-padding, 12px 8px 10px);
     background: color-mix(in srgb, var(--accent) 15%, transparent);
-    border-radius: 6px;
+    border-radius: var(--radius-md, 6px);
     height: fit-content;
   }
 
   .tile-new-folder-input {
     width: 100%;
     text-align: center;
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .tile-icon {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 64px;
-    height: 64px;
+    width: var(--tile-icon-size, 64px);
+    height: var(--tile-icon-size, 64px);
     flex-shrink: 0;
+  }
+
+  /* Scale the SVG to match the current tile size */
+  .tile-icon > :global(svg) {
+    transform: scale(var(--tile-icon-scale, 1));
   }
 
   .tile-item {

@@ -140,15 +140,10 @@
     }
 
     const lowerPrefix = prefix.toLowerCase();
-    // Filter entries matching prefix, directories first
+    // Address bar navigates to directories — only show folders in autocomplete
     const filtered = result.data.entries
-      .filter((e) => e.name.toLowerCase().startsWith(lowerPrefix))
-      .sort((a, b) => {
-        // Directories before files
-        if (a.kind === "directory" && b.kind !== "directory") return -1;
-        if (a.kind !== "directory" && b.kind === "directory") return 1;
-        return a.name.localeCompare(b.name);
-      })
+      .filter((e) => e.kind === "directory" && e.name.toLowerCase().startsWith(lowerPrefix))
+      .sort((a, b) => a.name.localeCompare(b.name))
       .slice(0, 12);
 
     suggestions = filtered;

@@ -100,3 +100,4 @@
 - `playwright.config.ts` — Playwright e2e config
 - `src-tauri/tauri.conf.json` — Tauri window/build/security config
 - `src-tauri/Cargo.toml` — Rust dependencies
+# test

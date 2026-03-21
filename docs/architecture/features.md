@@ -53,6 +53,7 @@
 ### View Modes
 | Feature | Files to change |
 |---------|----------------|
+| File type icons | `FileIcon.svelte` — extension labels (PY, RS, GO) rendered inside code/doc file icons |
 | Details view | `DetailsView.svelte` (VirtualList + FileItem), `FileItem.svelte` |
 | List view | `ListView.svelte` (CSS grid column-flow with configurable columns) |
 | Tiles view | `TilesView.svelte` (CSS auto-fill grid with thumbnail images, progressive rendering) |

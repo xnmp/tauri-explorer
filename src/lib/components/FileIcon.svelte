@@ -106,7 +106,11 @@
       <path d="M4 3C4 2.44772 4.44772 2 5 2H10L14 6V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" fill="currentColor" fill-opacity="0.15"/>
       <path d="M4 3C4 2.44772 4.44772 2 5 2H10L14 6V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" stroke="currentColor" stroke-width="1.25"/>
       <path d="M10 2V5C10 5.55228 10.4477 6 11 6H14" stroke="currentColor" stroke-width="1.25"/>
-      <path d="M7.5 9L6 10.5L7.5 12M10.5 9L12 10.5L10.5 12" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+      {#if extLabel && extLabel.length <= 4}
+        <text x="9" y="13" text-anchor="middle" font-size="{extLabel.length <= 2 ? 6.5 : 5.5}" font-weight="700" font-family="system-ui, sans-serif" fill="currentColor" fill-opacity="0.8">{extLabel}</text>
+      {:else}
+        <path d="M7.5 9L6 10.5L7.5 12M10.5 9L12 10.5L10.5 12" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+      {/if}
     </svg>
     </span>
   {:else if iconCategory === "media"}
@@ -131,7 +135,11 @@
       <path d="M4 3C4 2.44772 4.44772 2 5 2H10L15 7V15C15 15.5523 14.5523 16 14 16H5C4.44772 16 4 15.5523 4 15V3Z" fill="currentColor" fill-opacity="0.15"/>
       <path d="M4 3C4 2.44772 4.44772 2 5 2H10L15 7V15C15 15.5523 14.5523 16 14 16H5C4.44772 16 4 15.5523 4 15V3Z" stroke="currentColor" stroke-width="1.25"/>
       <path d="M10 2V6C10 6.55228 10.4477 7 11 7H15" stroke="currentColor" stroke-width="1.25"/>
-      <path d="M6.5 10H11.5M6.5 12.5H10" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+      {#if extLabel && extLabel.length <= 4}
+        <text x="9.5" y="13.5" text-anchor="middle" font-size="{extLabel.length <= 2 ? 6.5 : 5.5}" font-weight="700" font-family="system-ui, sans-serif" fill="currentColor" fill-opacity="0.7">{extLabel}</text>
+      {:else}
+        <path d="M6.5 10H11.5M6.5 12.5H10" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+      {/if}
     </svg>
     </span>
   {/if}

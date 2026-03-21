@@ -558,7 +558,7 @@ function createExplorerState() {
       const { entries, operation } = clipboardContent;
       const isCut = operation === "cut";
       const error = await pasteEntries(
-        entries.map((e) => ({ path: e.path, name: e.name })),
+        entries.map((e) => ({ path: e.path, name: e.name, size: e.size, modified: e.modified })),
         isCut,
         makePasteContext(),
         () => { if (isCut) clipboardStore.clear(); },

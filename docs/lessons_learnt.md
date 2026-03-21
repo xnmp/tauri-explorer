@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/miller-stale-folders: Miller Columns Cache Invalidation
+
+**Key takeaways:**
+- Miller columns had an infinite-TTL local cache (`rawCache` Map) that was never invalidated by filesystem events. The main pane's `directory-changed` listener only refreshed `explorer.currentPath`, not ancestor directories displayed in Miller columns. Fix: listen to `directory-changed` in the MillerColumns component itself, delete affected cache entries, and reload visible columns. Also, don't pre-filter hidden files in the cache — store all directory entries and let the reactive `filterEntries` derived state handle visibility, so toggling `showHidden` works correctly.
+
+---
+
 ## fix/streaming-dir-listing: Parallel Directory Scanning with jwalk
 
 **Key takeaways:**

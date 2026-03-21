@@ -76,10 +76,10 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
-## fix/terminal-shortcut-garbage: Alt Chord Shortcuts on Linux
+## fix/terminal-shortcut-garbage + fix/revert-chord-prefix: Alt Chord Shortcuts
 
 **Key takeaways:**
-- On Linux with WebKitGTK, `Alt+key` combinations produce compose characters (e.g. Alt+M → µ) that leak through to other applications (especially terminal emulators like Ghostty). Use `Ctrl+key` chord prefixes instead of `Alt+key` to avoid generating compose characters.
+- Alt+M chord shortcuts were temporarily changed to Ctrl+M to avoid compose characters on Linux WebKitGTK, but the user preferred Alt+M. Reverted back. The compose character issue on Linux is accepted as a known limitation.
 
 ---
 

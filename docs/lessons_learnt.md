@@ -64,6 +64,7 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 **Key takeaways:**
 - Use CSS `container-type: inline-size` on the navigation bar and a `@container (max-width: 400px)` query to hide navigation buttons when the content area is too narrow. This is more reliable than media queries because it responds to the actual component width, not the viewport.
+- `agent-browser` can't resize the viewport. Use Playwright directly (`chromium.launch()` + `page.setViewportSize()`) to take screenshots at specific widths for responsive features.
 
 ---
 

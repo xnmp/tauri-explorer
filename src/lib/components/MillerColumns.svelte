@@ -13,8 +13,8 @@
   import { fetchDirectory } from "$lib/api/files";
   import FileIcon from "./FileIcon.svelte";
   import { dragState } from "$lib/state/drag.svelte";
-  import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
+  import { useDropTarget } from "$lib/composables/use-drop-target.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
@@ -134,47 +134,14 @@
     paneNav?.refreshAllPanes();
   }
 
-  // Drop target state for Miller column entries
+  // Shared drop-target behavior
   const paneNav = getPaneNavigationContext();
-  let dropTargets = $state<Record<string, boolean>>({});
-  let copyDropTargets = $state<Record<string, boolean>>({});
-
-  function handleDragOver(event: DragEvent, entry: FileEntry): void {
-    if (entry.kind !== "directory") return;
-    if (!event.dataTransfer?.types.includes("application/x-explorer-path") && !dragState.readCrossWindow()) return;
-    event.preventDefault();
-    const copying = event.ctrlKey;
-    if (event.dataTransfer) event.dataTransfer.dropEffect = copying ? "copy" : "move";
-    dropTargets[entry.path] = true;
-    copyDropTargets[entry.path] = copying;
-  }
-
-  function handleDragLeave(entry: FileEntry): void {
-    dropTargets[entry.path] = false;
-    copyDropTargets[entry.path] = false;
-  }
-
-  async function handleDrop(event: DragEvent, entry: FileEntry): Promise<void> {
-    event.preventDefault();
-    dropTargets[entry.path] = false;
-    copyDropTargets[entry.path] = false;
-
-    if (entry.kind !== "directory" || !event.dataTransfer) return;
-
-    const sourcePaths = getDropSourcePaths(event.dataTransfer);
-    if (sourcePaths.length === 0) return;
-
-    for (const sourcePath of sourcePaths) {
-      if (sourcePath === entry.path) continue;
-      if (entry.path.startsWith(sourcePath + "/")) continue;
-      await handleFileDrop(sourcePath, entry.path, event.ctrlKey, {
-        onRefresh: () => {
-          if (paneNav) paneNav.refreshAllPanes();
-          else explorer.refresh({ silent: true });
-        },
-      });
-    }
-  }
+  const dropTarget = useDropTarget({
+    onRefresh: () => {
+      if (paneNav) paneNav.refreshAllPanes();
+      else explorer.refresh({ silent: true });
+    },
+  });
 
   // Resizable width
   const MILLER_WIDTH_KEY = "explorer-miller-width";
@@ -231,15 +198,15 @@
               <button
                 class="col-entry"
                 class:active={entry.path === column.activeChildPath}
-                class:drop-target={dropTargets[entry.path]}
-                class:copy-drop={copyDropTargets[entry.path]}
+                class:drop-target={dropTarget.isDropTarget(entry.path)}
+                class:copy-drop={dropTarget.isCopyDrop(entry.path)}
                 onclick={() => handleClick(entry)}
                 draggable="true"
                 ondragstart={(e) => handleDragStart(e, entry)}
                 ondragend={handleDragEnd}
-                ondragover={(e) => handleDragOver(e, entry)}
-                ondragleave={() => handleDragLeave(entry)}
-                ondrop={(e) => handleDrop(e, entry)}
+                ondragover={(e) => dropTarget.handleDragOver(e, entry)}
+                ondragleave={() => dropTarget.handleDragLeave(entry)}
+                ondrop={(e) => dropTarget.handleDrop(e, entry)}
               >
                 <span class="col-icon">
                   <FileIcon {entry} size="small" />

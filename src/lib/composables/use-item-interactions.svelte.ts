@@ -2,15 +2,15 @@
  * Composable for shared item interaction logic across all view modes.
  * Extracts duplicated drag-and-drop, clipboard state, and context menu
  * handlers from FileItem, ListView, and TilesView.
- * Issue: fix/view-component-duplication
+ * Issue: fix/view-component-duplication, refactor/extract-drop-target
  */
 
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { clipboardStore } from "$lib/state/clipboard.svelte";
 import { dragState } from "$lib/state/drag.svelte";
-import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
 import type { PaneNavigationContext } from "$lib/state/pane-context";
+import { useDropTarget } from "./use-drop-target.svelte";
 
 interface ItemInteractionsDeps {
   getExplorer: () => ExplorerInstance;
@@ -22,11 +22,16 @@ interface ItemInteractionsDeps {
 export function useItemInteractions(deps: ItemInteractionsDeps) {
   const { getExplorer, getPaneNav, selectOnContextMenu = false } = deps;
 
-  // Per-entry drop target state (keyed by path)
-  let dropTargets = $state<Record<string, boolean>>({});
-  let copyDropTargets = $state<Record<string, boolean>>({});
+  function refreshPanes(): void {
+    const paneNav = getPaneNav();
+    if (paneNav) paneNav.refreshAllPanes();
+    else getExplorer().refresh({ silent: true });
+  }
 
-  // --- Drag handlers ---
+  // Shared drop-target behavior
+  const dropTarget = useDropTarget({ onRefresh: refreshPanes });
+
+  // --- Drag source handlers ---
 
   function handleDragStart(event: DragEvent, entry: FileEntry, isSelected: boolean): void {
     if (!event.dataTransfer) return;
@@ -46,63 +51,8 @@ export function useItemInteractions(deps: ItemInteractionsDeps) {
   }
 
   function handleDragEnd(): void {
-    // Defer clear so sidebar's document-level dragend listener
-    // can still read dragState.current for bookmark drops
     setTimeout(() => dragState.clear(), 0);
-    const paneNav = getPaneNav();
-    if (paneNav) {
-      paneNav.refreshAllPanes();
-    } else {
-      getExplorer().refresh({ silent: true });
-    }
-  }
-
-  function handleDragOver(event: DragEvent, entry: FileEntry): void {
-    if (entry.kind !== "directory") return;
-    if (!event.dataTransfer?.types.includes("application/x-explorer-path") && !dragState.readCrossWindow()) return;
-    event.preventDefault();
-    const copying = event.ctrlKey;
-    if (event.dataTransfer) event.dataTransfer.dropEffect = copying ? "copy" : "move";
-    dropTargets[entry.path] = true;
-    copyDropTargets[entry.path] = copying;
-  }
-
-  function handleDragLeave(entry: FileEntry): void {
-    dropTargets[entry.path] = false;
-    copyDropTargets[entry.path] = false;
-  }
-
-  async function handleDrop(event: DragEvent, entry: FileEntry): Promise<void> {
-    event.preventDefault();
-    dropTargets[entry.path] = false;
-    copyDropTargets[entry.path] = false;
-
-    if (entry.kind !== "directory" || !event.dataTransfer) return;
-
-    const sourcePaths = getDropSourcePaths(event.dataTransfer);
-    if (sourcePaths.length === 0) return;
-
-    const paneNav = getPaneNav();
-    for (const sourcePath of sourcePaths) {
-      if (sourcePath === entry.path) continue;
-      if (entry.path.startsWith(sourcePath + "/")) continue;
-      await handleFileDrop(sourcePath, entry.path, event.ctrlKey, {
-        onRefresh: () => {
-          if (paneNav) paneNav.refreshAllPanes();
-          else getExplorer().refresh({ silent: true });
-        },
-      });
-    }
-  }
-
-  // --- Drop target state ---
-
-  function isDropTarget(path: string): boolean {
-    return dropTargets[path] ?? false;
-  }
-
-  function isCopyDrop(path: string): boolean {
-    return copyDropTargets[path] ?? false;
+    refreshPanes();
   }
 
   // --- Context menu ---
@@ -120,11 +70,11 @@ export function useItemInteractions(deps: ItemInteractionsDeps) {
   return {
     handleDragStart,
     handleDragEnd,
-    handleDragOver,
-    handleDragLeave,
-    handleDrop,
-    isDropTarget,
-    isCopyDrop,
+    handleDragOver: dropTarget.handleDragOver,
+    handleDragLeave: dropTarget.handleDragLeave,
+    handleDrop: dropTarget.handleDrop,
+    isDropTarget: dropTarget.isDropTarget,
+    isCopyDrop: dropTarget.isCopyDrop,
     handleContextMenu,
   };
 }

@@ -53,7 +53,7 @@
 ### View Modes
 | Feature | Files to change |
 |---------|----------------|
-| Miller columns | `MillerColumns.svelte` — optional 1-3 ancestor columns panel (left of file list), works with any view mode |
+| Miller columns | `MillerColumns.svelte` — optional 1-3 ancestor columns panel (left of file list, directories only), works with any view mode |
 | File type icons | `FileIcon.svelte` — extension labels (PY, RS, GO) rendered inside code/doc file icons |
 | Details view | `DetailsView.svelte` (VirtualList + FileItem), `FileItem.svelte` |
 | List view | `ListView.svelte` (CSS grid column-flow with configurable columns) |

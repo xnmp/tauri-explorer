@@ -4,6 +4,15 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/mock-paste-ops: Mock Paste Operations
+
+**Key takeaways:**
+- `estimate_size` mock was missing, silently breaking the paste flow in browser dev mode (thrown error caught by `ApiResult` pattern). Every new Tauri command needs a corresponding mock handler.
+- `Ctrl+C/V` keyboard shortcuts don't work via `agent-browser press` in headless Chromium. Use `window.dispatchEvent(new KeyboardEvent('keydown', ...))` instead.
+- To test conflict dialogs: need two directories with a file of the same name in the mock filesystem.
+
+---
+
 ## fix/conflict-dialog-display: Conflict Dialog Details Missing
 
 **Key takeaways:**

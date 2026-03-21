@@ -46,6 +46,7 @@
   let selectedIndex = $state(0);
   let loading = $state(false);
   let inputRef = $state<HTMLInputElement | null>(null);
+  let debugMode = $state(false);
   let homeDir = $state<string | null>(null);
 
   // Fetch home directory for tilde expansion
@@ -308,6 +309,12 @@
   );
 
   function handleKeydown(event: KeyboardEvent): void {
+    // Alt+D toggles debug mode (shows score breakdown)
+    if (event.key === "d" && event.altKey) {
+      event.preventDefault();
+      debugMode = !debugMode;
+      return;
+    }
     switch (event.key) {
       case "Escape":
         event.preventDefault();
@@ -486,7 +493,12 @@
                   <span class="result-name">{result.name}</span>
                   <span class="result-path">{result.relativePath}</span>
                 </div>
-                {#if result.kind === "directory"}
+                {#if debugMode}
+                  {@const nameBonus = filenameMatchScore(result.name, query.toLowerCase())}
+                  <span class="result-score debug-score" title="name={nameBonus} total={Math.round(result.score)} kind={result.kind}">
+                    {Math.round(result.score)} <span class="debug-detail">n:{nameBonus}</span>
+                  </span>
+                {:else if result.kind === "directory"}
                   <span class="result-kind">folder</span>
                 {:else}
                   <span class="result-score">{Math.round(result.score)}%</span>
@@ -539,6 +551,7 @@
         <span class="shortcut"><kbd>↑</kbd><kbd>↓</kbd> Navigate</span>
         <span class="shortcut"><kbd>Enter</kbd> Open</span>
         <span class="shortcut"><kbd>Esc</kbd> Close</span>
+        <span class="shortcut"><kbd>Alt+D</kbd> {debugMode ? "Debug ON" : "Debug"}</span>
       </div>
     </div>
   </div>
@@ -762,6 +775,16 @@
 
   .no-results.hint {
     color: var(--text-tertiary);
+  }
+
+  .debug-score {
+    font-family: monospace;
+    font-size: 10px;
+  }
+
+  .debug-detail {
+    opacity: 0.6;
+    font-size: 9px;
   }
 
   .footer {

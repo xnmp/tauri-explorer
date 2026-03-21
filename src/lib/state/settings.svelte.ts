@@ -67,7 +67,8 @@ export interface Settings {
   thumbnailSize: ThumbnailSize; // tile thumbnail size tier
   showGitStatus: boolean; // show git indicators on files
   recentItemsCount: number; // number of recent locations in sidebar (0 = hidden)
-  millerLayers: number; // 1-3, number of ancestor columns in miller view
+  millerLayers: number; // 0-3, number of ancestor columns in miller view
+  millerLayersPreferred: number; // 1-3, remembered layer count for toggle
 }
 
 const MIN_ZOOM = 50;
@@ -104,6 +105,7 @@ const DEFAULT_SETTINGS: Settings = {
   showGitStatus: false,
   recentItemsCount: 6,
   millerLayers: 0,
+  millerLayersPreferred: 2,
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -279,10 +281,14 @@ function createSettingsStore() {
       return settings.millerLayers;
     },
     setMillerLayers(n: number): void {
-      update({ millerLayers: Math.max(0, Math.min(3, n)) });
+      const clamped = Math.max(0, Math.min(3, n));
+      const updates: Partial<Settings> = { millerLayers: clamped };
+      if (clamped > 0) updates.millerLayersPreferred = clamped;
+      update(updates);
     },
     toggleMillerColumns(): void {
-      update({ millerLayers: settings.millerLayers > 0 ? 0 : 2 });
+      const on = settings.millerLayers > 0;
+      update({ millerLayers: on ? 0 : settings.millerLayersPreferred });
     },
     setTheme(themeId: string): void {
       update({ theme: themeId });

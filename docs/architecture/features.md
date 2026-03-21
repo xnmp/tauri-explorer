@@ -52,6 +52,7 @@
 | List view | `ListView.svelte` (CSS grid column-flow with configurable columns) |
 | Tiles view | `TilesView.svelte` (CSS auto-fill grid with thumbnail images, progressive rendering) |
 | Tiles size from palette | `command-definitions.ts` — tile size commands also switch view mode to tiles |
+| Tiles scroll perf logging | `TilesView.svelte:handleScroll` — dev-only frame time metrics logged to console |
 | Column resize (details) | `use-column-resize.svelte.ts`, `DetailsView.svelte` |
 | Column visibility toggle | `DetailsView.svelte` (column header right-click menu), `settingsStore.columnVisibility` |
 | List column count | `settingsStore.listViewColumns`, `ListView.svelte:effectiveListColumns` |

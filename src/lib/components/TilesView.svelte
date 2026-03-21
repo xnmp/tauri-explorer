@@ -135,6 +135,37 @@
     return isInClipboard(entry) && clipboardStore.isCut;
   }
 
+  // Scroll performance logging (dev only)
+  let scrollFrameTimes: number[] = [];
+  let scrollRafId: number | null = null;
+  let lastScrollTime = 0;
+
+  function handleScroll(): void {
+    if (!import.meta.env.DEV) return;
+    const now = performance.now();
+    if (lastScrollTime > 0) {
+      scrollFrameTimes.push(now - lastScrollTime);
+    }
+    lastScrollTime = now;
+
+    if (scrollRafId) cancelAnimationFrame(scrollRafId);
+    scrollRafId = requestAnimationFrame(() => {
+      // After scroll settles, log metrics
+      scrollRafId = requestAnimationFrame(() => {
+        if (scrollFrameTimes.length > 2) {
+          const avg = scrollFrameTimes.reduce((a, b) => a + b, 0) / scrollFrameTimes.length;
+          const max = Math.max(...scrollFrameTimes);
+          const jank = scrollFrameTimes.filter((t) => t > 33).length; // frames > 30fps
+          console.debug(
+            `[tiles-scroll] ${scrollFrameTimes.length} frames, avg=${avg.toFixed(1)}ms, max=${max.toFixed(1)}ms, jank=${jank} (>${(jank / scrollFrameTimes.length * 100).toFixed(0)}%), entries=${visibleTileEntries.length}`
+          );
+        }
+        scrollFrameTimes = [];
+        lastScrollTime = 0;
+      });
+    });
+  }
+
   function handleItemContextMenu(event: MouseEvent, entry: FileEntry): void {
     event.preventDefault();
     event.stopPropagation();
@@ -145,7 +176,7 @@
   }
 </script>
 
-<div class="tiles-view file-rows" style:--tile-icon-size="{tileConfig.displaySize}px" style:--tile-min-col="{tileConfig.gridMinWidth}px" style:--tile-icon-scale={tileConfig.displaySize / 64} style:--tile-gap="{effectiveThumbnailSize === 'small' ? 2 : 6}px" style:--tile-padding="{effectiveThumbnailSize === 'small' ? '6px 4px 6px' : '12px 8px 10px'}">
+<div class="tiles-view file-rows" onscroll={handleScroll} style:--tile-icon-size="{tileConfig.displaySize}px" style:--tile-min-col="{tileConfig.gridMinWidth}px" style:--tile-icon-scale={tileConfig.displaySize / 64} style:--tile-gap="{effectiveThumbnailSize === 'small' ? 2 : 6}px" style:--tile-padding="{effectiveThumbnailSize === 'small' ? '6px 4px 6px' : '12px 8px 10px'}">
   {#if explorer.isCreatingFolder}
     <InlineNewFolder {explorer} variant="tiles" />
   {/if}

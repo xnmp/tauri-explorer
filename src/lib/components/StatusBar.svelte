@@ -17,13 +17,21 @@
   const fileCount = $derived(entries.filter((e) => e.kind === "file").length);
   const folderCount = $derived(entries.filter((e) => e.kind === "directory").length);
 
-  const selectedSize = $derived(() => {
-    if (!explorer || selectedCount === 0) return 0;
+  const totalSize = $derived(
+    entries.filter((e) => e.kind === "file").reduce((sum, e) => sum + e.size, 0)
+  );
+
+  const selectedEntries = $derived.by(() => {
+    if (!explorer || selectedCount === 0) return [];
     const selectedPaths = explorer.selectedPaths;
-    return entries
-      .filter((e) => selectedPaths.has(e.path) && e.kind === "file")
-      .reduce((sum, e) => sum + e.size, 0);
+    return entries.filter((e) => selectedPaths.has(e.path));
   });
+
+  const selectedFiles = $derived(selectedEntries.filter((e) => e.kind === "file").length);
+  const selectedFolders = $derived(selectedEntries.filter((e) => e.kind === "directory").length);
+  const selectedSize = $derived(
+    selectedEntries.filter((e) => e.kind === "file").reduce((sum, e) => sum + e.size, 0)
+  );
 
   const currentPath = $derived(explorer?.currentPath ?? "");
 </script>
@@ -35,13 +43,19 @@
       {#if folderCount > 0 && fileCount > 0}
         <span class="status-detail">({folderCount} folder{folderCount !== 1 ? "s" : ""}, {fileCount} file{fileCount !== 1 ? "s" : ""})</span>
       {/if}
+      {#if totalSize > 0}
+        <span class="status-detail">&mdash; {formatSize(totalSize)}</span>
+      {/if}
     </span>
     {#if selectedCount > 0}
       <span class="status-separator">|</span>
       <span class="status-item selected-info">
         {selectedCount} selected
-        {#if selectedSize() > 0}
-          <span class="status-detail">({formatSize(selectedSize())})</span>
+        {#if selectedFiles > 0 && selectedFolders > 0}
+          <span class="status-detail">({selectedFolders} folder{selectedFolders !== 1 ? "s" : ""}, {selectedFiles} file{selectedFiles !== 1 ? "s" : ""})</span>
+        {/if}
+        {#if selectedSize > 0}
+          <span class="status-detail">({formatSize(selectedSize)})</span>
         {/if}
       </span>
     {/if}

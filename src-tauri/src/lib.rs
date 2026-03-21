@@ -221,6 +221,8 @@ pub fn run(launch_dir: Option<String>) {
             config::write_config_file,
             config::get_config_dir,
             config::list_user_themes,
+            // Git status
+            files::git_status::get_git_status,
             // Wallpaper
             wallpaper::set_as_wallpaper,
         ])

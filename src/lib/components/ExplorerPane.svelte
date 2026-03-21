@@ -14,6 +14,8 @@
   import NewFolderDialog from "./NewFolderDialog.svelte";
   import DeleteDialog from "./DeleteDialog.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
+  import { settingsStore } from "$lib/state/settings.svelte";
+  import { gitStatusStore } from "$lib/state/git-status.svelte";
 
   interface Props {
     paneId: PaneId;
@@ -31,6 +33,14 @@
   setContext("pane-id", paneId);
 
   let paneRef = $state<HTMLElement | null>(null);
+
+  // Fetch git status when directory changes and setting is enabled
+  $effect(() => {
+    const path = paneExplorer.currentPath;
+    if (settingsStore.showGitStatus && path) {
+      gitStatusStore.fetchForDirectory(path);
+    }
+  });
 
   // Focus the selected item after navigation so arrow keys work immediately.
   // Uses a callback (not reactive) to avoid firing on mount or tab switch.

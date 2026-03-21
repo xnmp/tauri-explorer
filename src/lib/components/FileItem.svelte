@@ -13,6 +13,7 @@
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { dragState } from "$lib/state/drag.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { gitStatusStore } from "$lib/state/git-status.svelte";
   import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
   import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
 
@@ -234,6 +235,14 @@
     {:else}
       <span class="name entry-name">{entry.name}</span>
     {/if}
+    {#if settingsStore.showGitStatus && !isRenaming}
+      {@const gitStatus = gitStatusStore.getStatus(entry.name)}
+      {#if gitStatus}
+        <span class="git-badge git-{gitStatus.toLowerCase()}" title="Git: {gitStatus}">
+          {gitStatus === "Modified" ? "M" : gitStatus === "Untracked" ? "U" : gitStatus === "Added" ? "A" : gitStatus === "Deleted" ? "D" : gitStatus === "Conflict" ? "!" : "?"}
+        </span>
+      {/if}
+    {/if}
     {#if entry.is_symlink && !isRenaming}
       <div class="symlink-badge" title={entry.symlink_target ? `Link to ${entry.symlink_target}` : "Symbolic link"}>
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
@@ -426,6 +435,50 @@
 
   .empty-cell {
     opacity: 0.3;
+  }
+
+  /* Git status badge */
+  .git-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    font-size: 10px;
+    font-weight: 700;
+    border-radius: 3px;
+    flex-shrink: 0;
+    line-height: 1;
+  }
+
+  .git-modified {
+    color: #e5a100;
+    background: rgba(229, 161, 0, 0.12);
+  }
+
+  .git-untracked {
+    color: #22c55e;
+    background: rgba(34, 197, 94, 0.12);
+  }
+
+  .git-added {
+    color: #22c55e;
+    background: rgba(34, 197, 94, 0.12);
+  }
+
+  .git-deleted {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.12);
+  }
+
+  .git-conflict {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.2);
+  }
+
+  .git-renamed {
+    color: #3b82f6;
+    background: rgba(59, 130, 246, 0.12);
   }
 
   /* Symlink badge */

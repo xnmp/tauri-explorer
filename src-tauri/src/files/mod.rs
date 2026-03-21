@@ -42,31 +42,41 @@ pub struct DirectoryListing {
 }
 
 /// Convert metadata to FileEntry, detecting symlinks.
-pub(crate) fn metadata_to_entry(path: &Path, metadata: &fs::Metadata) -> FileEntry {
+///
+/// Uses `symlink_metadata` (lstat) to check for symlinks, then follows with
+/// `fs::metadata` (stat) only for actual symlinks to get the resolved target info.
+/// This avoids redundant syscalls for the common case (non-symlink entries).
+pub(crate) fn metadata_to_entry(path: &Path, sym_meta: &fs::Metadata) -> FileEntry {
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
 
-    let kind = if metadata.is_dir() {
+    let is_symlink = sym_meta.file_type().is_symlink();
+
+    // For symlinks, follow to get resolved kind/size/modified.
+    // For non-symlinks, sym_meta already has the correct values.
+    let resolved = if is_symlink {
+        fs::metadata(path).ok()
+    } else {
+        None
+    };
+    let effective = resolved.as_ref().unwrap_or(sym_meta);
+
+    let kind = if effective.is_dir() {
         FileKind::Directory
     } else {
         FileKind::File
     };
 
-    let size = if metadata.is_dir() { 0 } else { metadata.len() };
+    let size = if effective.is_dir() { 0 } else { effective.len() };
 
-    let modified = metadata
+    let modified = effective
         .modified()
         .ok()
         .map(|t| DateTime::<Local>::from(t).format("%Y-%m-%dT%H:%M:%S").to_string())
         .unwrap_or_default();
 
-    // Check if entry is a symlink (symlink_metadata doesn't follow links)
-    let sym_meta = fs::symlink_metadata(path).ok();
-    let is_symlink = sym_meta
-        .as_ref()
-        .map_or(false, |m| m.file_type().is_symlink());
     let symlink_target = if is_symlink {
         fs::read_link(path)
             .ok()

@@ -8,6 +8,8 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { fetchDirectory, getHomeDirectory } from "$lib/api/files";
+  import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
+  import { getPaneNavigationContext } from "$lib/state/pane-context";
   import type { FileEntry } from "$lib/domain/file";
 
   interface Props {
@@ -239,6 +241,36 @@
     }
   }
 
+  // Breadcrumb drop target state
+  const paneNav = getPaneNavigationContext();
+  let dropTargetCrumb = $state<string | null>(null);
+
+  function handleCrumbDragOver(event: DragEvent, path: string): void {
+    if (!event.dataTransfer?.types.includes("application/x-explorer-path")) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = event.ctrlKey ? "copy" : "move";
+    dropTargetCrumb = path;
+  }
+
+  function handleCrumbDragLeave(): void {
+    dropTargetCrumb = null;
+  }
+
+  async function handleCrumbDrop(event: DragEvent, targetPath: string): Promise<void> {
+    event.preventDefault();
+    dropTargetCrumb = null;
+    if (!event.dataTransfer) return;
+
+    const sourcePaths = getDropSourcePaths(event.dataTransfer);
+    for (const sourcePath of sourcePaths) {
+      if (sourcePath === targetPath) continue;
+      if (targetPath.startsWith(sourcePath + "/")) continue;
+      await handleFileDrop(sourcePath, targetPath, event.ctrlKey, {
+        onRefresh: () => paneNav?.refreshAllPanes(),
+      });
+    }
+  }
+
 </script>
 
 <div class="navigation-bar">
@@ -382,7 +414,11 @@
         <button
           class="crumb"
           class:current={i === visibleBreadcrumbs.length - 1}
+          class:drop-target={dropTargetCrumb === segment.path}
           onclick={(e) => { e.stopPropagation(); explorer.navigateTo(segment.path); }}
+          ondragover={(e) => handleCrumbDragOver(e, segment.path)}
+          ondragleave={handleCrumbDragLeave}
+          ondrop={(e) => handleCrumbDrop(e, segment.path)}
         >
           {segment.name}
         </button>
@@ -575,6 +611,11 @@
 
   .crumb:active {
     background: var(--subtle-fill-tertiary);
+  }
+
+  .crumb.drop-target {
+    background: rgba(0, 120, 212, 0.2);
+    box-shadow: inset 0 0 0 1px var(--accent);
   }
 
   .crumb.current {

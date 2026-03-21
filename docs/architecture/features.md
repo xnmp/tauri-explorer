@@ -9,7 +9,7 @@
 |---------|----------------|
 | Directory navigation | `explorer.svelte.ts:navigateTo`, `navigation.ts`, `directory-listing.ts`, `files/dir_listing.rs:start_streaming_directory` |
 | Back/Forward/Up | `explorer.svelte.ts:goBack/goForward/goUp`, `navigation.ts` |
-| Breadcrumb bar | `NavigationBar.svelte` |
+| Breadcrumb bar | `NavigationBar.svelte` (also accepts file drops on segments) |
 | Path editing + autocomplete | `NavigationBar.svelte` (editable path input) |
 | Breadcrumb caret picker | `NavigationBar.svelte` (subdirectory dropdown on chevron click) |
 | History management | `navigation.ts:pushToHistory` |

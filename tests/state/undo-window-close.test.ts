@@ -4,19 +4,32 @@
  * Issue: fix/undo-window-close
  */
 import { describe, it, expect } from "vitest";
+import { loadPersisted, savePersisted } from "$lib/state/persisted";
 
 describe("Cross-window tab restore", () => {
-  it("refreshClosedTabs picks up changes from localStorage", () => {
-    // Simulate: window A writes a snapshot, window B reads it
-    const key = "explorer-closed-tabs";
-    const snapshot = [{ leftPath: "/test", rightPath: "/", activePaneId: "left", dualPaneEnabled: false, splitRatio: 0.5, closedAt: 0, fromClosedWindow: true }];
+  it("savePersisted + loadPersisted round-trips closed tab snapshots", () => {
+    const key = "test-closed-tabs";
+    const snapshot = [
+      {
+        leftPath: "/test",
+        rightPath: "/",
+        activePaneId: "left",
+        dualPaneEnabled: false,
+        splitRatio: 0.5,
+        closedAt: 0,
+        fromClosedWindow: true,
+      },
+    ];
 
-    localStorage.setItem(key, JSON.stringify(snapshot));
-    const loaded = JSON.parse(localStorage.getItem(key) || "[]");
+    savePersisted(key, snapshot);
+    const loaded = loadPersisted<typeof snapshot>(key, []);
     expect(loaded).toHaveLength(1);
     expect(loaded[0].fromClosedWindow).toBe(true);
+    expect(loaded[0].leftPath).toBe("/test");
+  });
 
-    // Clean up
-    localStorage.removeItem(key);
+  it("loadPersisted returns default when key is missing", () => {
+    const loaded = loadPersisted<unknown[]>("nonexistent-key-12345", []);
+    expect(loaded).toEqual([]);
   });
 });

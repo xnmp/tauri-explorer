@@ -8,6 +8,7 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 **Key takeaways:**
 - `closedTabStack` loaded from localStorage at module init becomes stale when another window adds entries. Before checking `canRestoreTab` or popping from the stack, always re-read from localStorage to pick up cross-window changes. Without this, Ctrl+Shift+T in window B can't see tabs closed in window A.
+- Tests that need localStorage must use `loadPersisted`/`savePersisted` helpers (which handle the Vitest stub), not raw `localStorage.setItem()` calls.
 
 ---
 

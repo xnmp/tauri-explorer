@@ -24,7 +24,7 @@
 | Delete (to trash) | `explorer.svelte.ts:startDelete/confirmDelete`, `DeleteDialog.svelte`, `lib.rs:move_to_trash` |
 | Delete (permanent) | `files/file_ops.rs:delete_entry_permanent` |
 | Copy/Move (paste) | `paste-operations.ts`, `clipboard.svelte.ts`, `files/file_ops.rs:copy_entry/move_entry` |
-| Conflict resolution | `conflict-resolver.svelte.ts`, `ConflictDialog.svelte` |
+| Conflict resolution | `conflict-resolver.svelte.ts`, `ConflictDialog.svelte` — shows file size + date for source/destination |
 | Progress tracking | `operations.svelte.ts`, `ProgressDialog.svelte` |
 | Undo/Redo | `undo.svelte.ts`, `undo-helpers.ts`, `explorer.svelte.ts:undo/redo` |
 | Open file | `files/external_apps.rs:open_file`, `FileList.svelte:handleDoubleClick` |

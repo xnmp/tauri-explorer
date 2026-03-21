@@ -73,10 +73,13 @@ export async function pasteEntries(
         overwrite = true;
       } else {
         const remaining = sources.length - i - 1;
+        const destEntry = existingEntries.find((e) => e.name === source.name);
         const { choice, applyToAll } = await conflictResolver.prompt({
           fileName: source.name,
           sourcePath: source.path,
           remaining,
+          destSize: destEntry?.size,
+          destModified: destEntry?.modified,
         });
         if (applyToAll) globalChoice = choice;
         if (choice === "skip") continue;

@@ -49,10 +49,13 @@ export async function handleFileDrop(
   if (dirResult.ok) {
     const existingNames = new Set(dirResult.data.entries.map((e) => e.name));
     if (existingNames.has(fileName)) {
+      const destEntry = dirResult.data.entries.find((e) => e.name === fileName);
       const { choice } = await conflictResolver.prompt({
         fileName,
         sourcePath,
         remaining: 0,
+        destSize: destEntry?.size,
+        destModified: destEntry?.modified,
       });
       if (choice === "skip" || choice === "cancel") return;
       if (choice === "overwrite") overwrite = true;

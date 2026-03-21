@@ -508,6 +508,25 @@ const mockCommands: Record<string, CommandHandler> = {
   get_config_dir: () => "/home/user/.config/tauri-explorer",
 
   list_user_themes: () => [] as [string, string][],
+
+  get_git_status: (args: Record<string, unknown>) => {
+    const path = args.path as string;
+    // Mock: treat /home/user/Documents/project as a git repo
+    if (path.startsWith("/home/user/Documents/project")) {
+      return {
+        is_git_repo: true,
+        statuses: {
+          "App.tsx": "Modified",
+          "index.css": "Modified",
+          "router.tsx": "Untracked",
+          "src": "Modified",
+          "CHANGELOG.md": "Modified",
+          ".env.example": "Untracked",
+        },
+      };
+    }
+    return { is_git_repo: false, statuses: {} };
+  },
 };
 
 // In-memory config file store for mock mode

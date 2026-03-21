@@ -4,6 +4,15 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/git-status-display: Git Indicators Not Showing
+
+**Key takeaways:**
+- View-mode-parity: when adding UI features, wire them into ALL three views (FileItem/details, ListView, TilesView). The git badges were only added to FileItem.
+- Mock invoke must handle new commands — `mockCommands` in `mock-invoke.ts` throws on unknown commands, silently swallowing the feature in browser dev mode.
+- `$effect` calling a store method that reads `$state` internally creates hidden dependencies. Wrap the call in `untrack()` to prevent infinite loops.
+
+---
+
 ## chore/pin-dolt-port: Dolt Port Race Condition
 
 **Key takeaways:**

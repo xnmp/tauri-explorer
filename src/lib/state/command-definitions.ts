@@ -406,7 +406,7 @@ const viewCommands: Command[] = [
     label: "Toggle Hidden Files",
     category: "view",
     shortcut: "Ctrl+H",
-    handler: () => getActiveExplorer()?.toggleHidden(),
+    handler: () => settingsStore.toggleHidden(),
   },
   {
     id: "view.zoomIn",

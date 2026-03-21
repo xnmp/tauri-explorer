@@ -132,8 +132,6 @@ function createExplorerState() {
   const breadcrumbs = $derived(navigation.parseBreadcrumbs(coreState.currentPath));
   const canGoBack = $derived(navigation.canGoBack(coreState.historyIndex));
   const canGoForward = $derived(navigation.canGoForward(coreState.history, coreState.historyIndex));
-  const canUndo = $derived(undoStore.canUndo);
-  const canRedo = $derived(undoStore.canRedo);
 
   // ===================
   // Directory Listing
@@ -289,10 +287,6 @@ function createExplorerState() {
   // ===================
   // View Actions
   // ===================
-
-  function toggleHidden() {
-    settingsStore.toggleHidden();
-  }
 
   function setSorting(by: SortField) {
     if (coreState.sortBy === by) {
@@ -517,10 +511,6 @@ function createExplorerState() {
     toastStore.clipboard(`Cut: ${label}`, true);
   }
 
-  function clearClipboard() {
-    clipboardStore.clear();
-  }
-
   // Paste result for UI feedback
   let pasteResult = $state<PasteResult | null>(null);
 
@@ -660,12 +650,6 @@ function createExplorerState() {
     get canGoForward() {
       return canGoForward;
     },
-    get canUndo() {
-      return canUndo;
-    },
-    get canRedo() {
-      return canRedo;
-    },
 
     // Navigation
     navigateTo,
@@ -674,7 +658,6 @@ function createExplorerState() {
     goUp,
     refresh,
     // View
-    toggleHidden,
     setSorting,
     setViewMode,
     // Filter
@@ -706,17 +689,12 @@ function createExplorerState() {
     getSelectedEntries,
     selectByIndices,
     selectAll,
-    // Dialogs (thin delegates for facade API)
-    openNewFolderDialog: () => dialogStore.openNewFolder(),
-    closeNewFolderDialog: () => dialogStore.closeNewFolder(),
+    // Dialogs
     startRename: (entry: FileEntry) => dialogStore.startRename(entry),
-    cancelRename: () => dialogStore.cancelRename(),
     startDelete,
     startPermanentDelete,
-    cancelDelete: () => dialogStore.cancelDelete(),
     // Context menu
     openContextMenu,
-    closeContextMenu: () => contextMenuStore.close(),
     // Inline folder creation
     get isCreatingFolder() {
       return isCreatingFolder;
@@ -730,7 +708,6 @@ function createExplorerState() {
     // Clipboard
     copyToClipboard,
     cutToClipboard,
-    clearClipboard,
     paste,
     get pasteResult() {
       return pasteResult;

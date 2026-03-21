@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/explorer-facade-god-object: Explorer Facade Cleanup
+
+**Key takeaways:**
+- Facade objects accumulate unused thin delegates over time. Audit usage before assuming methods are needed. In this case, `openNewFolderDialog`, `closeNewFolderDialog`, `cancelRename`, `cancelDelete`, `closeContextMenu`, `clearClipboard`, `canUndo`, `canRedo`, and `toggleHidden` were either never called on the facade or already accessed via their underlying stores. Removing dead delegates reduces API surface and makes it clear which operations actually require per-pane coordination.
+
+---
+
 ## fix/view-component-duplication: View Interaction Composable
 
 **Key takeaways:**

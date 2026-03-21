@@ -171,8 +171,8 @@
         {#if settingsStore.showGitStatus}
           {@const gitStatus = gitStatusStore.getStatus(entry.name)}
           {#if gitStatus}
-            <span class="git-badge git-{gitStatus.toLowerCase()}" title="Git: {gitStatus}">
-              {gitStatus === "Modified" ? "M" : gitStatus === "Untracked" ? "U" : gitStatus === "Added" ? "A" : gitStatus === "Deleted" ? "D" : gitStatus === "Conflict" ? "!" : "?"}
+            <span class="git-indicator git-{gitStatus.toLowerCase()}" title="Git: {gitStatus}">
+              {gitStatus === "Modified" ? "M" : gitStatus === "Untracked" ? "U" : gitStatus === "Added" ? "A" : gitStatus === "Deleted" ? "D" : gitStatus === "Conflict" ? "!" : "R"}
             </span>
           {/if}
         {/if}
@@ -278,25 +278,19 @@
     border-color: var(--system-critical);
   }
 
-  /* Git status badge */
-  .git-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
-    font-size: 10px;
-    font-weight: 700;
-    border-radius: 3px;
-    line-height: 1;
+  /* Git status indicator */
+  .git-indicator {
+    font-size: 11px;
+    font-weight: 600;
     flex-shrink: 0;
     margin-left: 4px;
+    opacity: 0.85;
   }
 
-  .git-modified { color: #e5a100; background: rgba(229, 161, 0, 0.15); }
-  .git-untracked { color: #22c55e; background: rgba(34, 197, 94, 0.15); }
-  .git-added { color: #22c55e; background: rgba(34, 197, 94, 0.15); }
-  .git-deleted { color: #ef4444; background: rgba(239, 68, 68, 0.15); }
-  .git-conflict { color: #ef4444; background: rgba(239, 68, 68, 0.25); }
-  .git-renamed { color: #3b82f6; background: rgba(59, 130, 246, 0.15); }
+  .git-modified { color: #d4a017; }
+  .git-untracked { color: #22c55e; }
+  .git-added { color: #22c55e; }
+  .git-deleted { color: #ef4444; }
+  .git-conflict { color: #ef4444; font-weight: 800; }
+  .git-renamed { color: #60a5fa; }
 </style>

@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## feat/git-indicator-polish: Polished Git Indicators
+
+**Key takeaways:**
+- VS Code-style git indicators use colored text without background boxes — just the letter (M/U/A/D) in the appropriate color. This is more subtle and integrated than badge-style indicators with backgrounds.
+
+---
+
 ## fix/breadcrumb-drop-move: Breadcrumb Drop Always Moves
 
 **Key takeaways:**

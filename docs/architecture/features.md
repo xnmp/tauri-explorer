@@ -14,6 +14,11 @@
 | Breadcrumb caret picker | `NavigationBar.svelte` (subdirectory dropdown on chevron click) |
 | History management | `navigation.ts:pushToHistory` |
 
+### Git Integration
+| Feature | Files to change |
+|---------|----------------|
+| Git status indicators | `git_status.rs` (Rust command), `git-status.svelte.ts` (store), `FileItem.svelte` (badge), `ExplorerPane.svelte` (fetch trigger), `settings.svelte.ts` (toggle) |
+
 ### File Operations
 | Feature | Files to change |
 |---------|----------------|

@@ -65,6 +65,7 @@ export interface Settings {
   previewPaneWidth: number; // width in px, 0 = default (280px)
   theme: string; // active theme id, e.g. "dark", "golden-hour"
   thumbnailSize: ThumbnailSize; // tile thumbnail size tier
+  showGitStatus: boolean; // show git indicators on files
 }
 
 const MIN_ZOOM = 50;
@@ -98,6 +99,7 @@ const DEFAULT_SETTINGS: Settings = {
   previewPaneWidth: 0,
   theme: "light",
   thumbnailSize: "small",
+  showGitStatus: false,
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -256,6 +258,12 @@ function createSettingsStore() {
     },
     get thumbnailSize() {
       return settings.thumbnailSize;
+    },
+    get showGitStatus() {
+      return settings.showGitStatus;
+    },
+    toggleGitStatus(): void {
+      update({ showGitStatus: !settings.showGitStatus });
     },
     setTheme(themeId: string): void {
       update({ theme: themeId });

@@ -226,6 +226,21 @@
             </label>
           </div>
 
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Git Status Indicators</span>
+              <span class="setting-description">Show modified/untracked indicators for files in git repositories</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.showGitStatus}
+                onchange={() => settingsStore.toggleGitStatus()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
           <div class="setting-item">
             <div class="setting-label">
               <span>Confirm before deleting</span>

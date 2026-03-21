@@ -5,6 +5,7 @@ pub mod dir_listing;
 pub mod external_apps;
 pub mod file_ops;
 pub mod fs_watcher;
+pub mod git_status;
 
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};

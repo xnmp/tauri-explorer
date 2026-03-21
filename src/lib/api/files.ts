@@ -862,3 +862,25 @@ export async function listUserThemes(): Promise<ApiResult<[string, string][]>> {
     return { ok: false, error: extractError(err) };
   }
 }
+
+/**
+ * Git file status types.
+ */
+export type GitFileStatus = "Modified" | "Added" | "Deleted" | "Renamed" | "Untracked" | "Ignored" | "Conflict";
+
+export interface GitStatusResponse {
+  is_git_repo: boolean;
+  statuses: Record<string, GitFileStatus>;
+}
+
+/**
+ * Get git status for files in a directory.
+ */
+export async function getGitStatus(path: string): Promise<ApiResult<GitStatusResponse>> {
+  try {
+    const data = await invoke<GitStatusResponse>("get_git_status", { path });
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}

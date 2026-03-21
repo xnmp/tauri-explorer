@@ -1,6 +1,6 @@
 /**
  * E2E test: QuickOpen debug mode shows score breakdown.
- * Issue: feat/quickopen-debug
+ * Issue: feat/quickopen-debug, fix/quickopen-debug-settings
  */
 import { test, expect } from "@playwright/test";
 import { HOME_URL, waitForEntries } from "./helpers";

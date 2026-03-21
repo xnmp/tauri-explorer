@@ -25,9 +25,9 @@ for (const viewMode of VIEW_MODES) {
         await expect(page.locator(".navigation-bar")).toBeVisible();
       });
 
-      test("Sidebar is visible with Quick Access section", async ({ page }) => {
+      test("Sidebar is visible with Bookmarks section", async ({ page }) => {
         await expect(page.locator(".sidebar")).toBeVisible();
-        await expect(page.getByText("Quick access")).toBeVisible();
+        await expect(page.getByText("Bookmarks")).toBeVisible();
       });
 
       test("FileList shows directory contents", async ({ page }) => {

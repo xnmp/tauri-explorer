@@ -4,6 +4,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## feat/miller-view: Miller Columns
+
+**Key takeaways:**
+- Miller columns work better as an optional panel alongside any view mode (details/list/tiles) rather than as a separate view mode. This avoids ViewMode type changes and lets users combine miller navigation with their preferred file display.
+- Only show directories in miller columns — files are visible in the main view. Showing files would duplicate content and add clutter.
+
+---
+
 ## fix/undo-paste + fix/undo-multi-drag: Paste Undo and Batch Undo
 
 **Key takeaways:**

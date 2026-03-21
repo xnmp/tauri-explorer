@@ -1,5 +1,5 @@
 /**
- * E2E test: Miller columns panel alongside any view mode.
+ * E2E test: Miller columns panel alongside any view mode (directories only).
  * Issue: feat/miller-view
  */
 import { test, expect } from "@playwright/test";

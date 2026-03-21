@@ -59,6 +59,12 @@
   });
 
   function handleKeydown(event: KeyboardEvent): void {
+    if (event.key === "f" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      searchInputRef?.focus();
+      searchInputRef?.select();
+      return;
+    }
     if (event.key === "Escape") {
       event.preventDefault();
       if (searchQuery) {

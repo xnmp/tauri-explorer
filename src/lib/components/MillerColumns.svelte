@@ -257,6 +257,9 @@
     flex: 1;
     overflow-y: auto;
     padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }
 
   .col-loading {
@@ -273,7 +276,7 @@
     width: 100%;
     padding: 4px 8px;
     background: transparent;
-    border: none;
+    border: 1px solid transparent;
     border-radius: var(--radius-sm);
     font-family: inherit;
     font-size: 13px;

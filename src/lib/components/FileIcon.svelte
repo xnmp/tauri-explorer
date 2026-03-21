@@ -26,6 +26,41 @@
   const extFontSize = $derived(
     extLabel.length <= 2 ? 12 : extLabel.length <= 3 ? 10 : extLabel.length <= 4 ? 8.5 : 7
   );
+
+  /** Language-specific icon for known file extensions (default theme only) */
+  interface LangIcon { id: string; color: string; }
+  const LANG_ICONS: Record<string, LangIcon> = {
+    py: { id: "python", color: "#3776ab" },
+    rs: { id: "rust", color: "#dea584" },
+    go: { id: "go", color: "#00add8" },
+    ts: { id: "typescript", color: "#3178c6" },
+    tsx: { id: "typescript", color: "#3178c6" },
+    js: { id: "javascript", color: "#f7df1e" },
+    jsx: { id: "javascript", color: "#f7df1e" },
+    java: { id: "java", color: "#ed8b00" },
+    rb: { id: "ruby", color: "#cc342d" },
+    cpp: { id: "cpp", color: "#659ad2" },
+    c: { id: "c", color: "#a8b9cc" },
+    cs: { id: "csharp", color: "#68217a" },
+    swift: { id: "swift", color: "#f05138" },
+    kt: { id: "kotlin", color: "#7f52ff" },
+    php: { id: "php", color: "#777bb4" },
+    html: { id: "html", color: "#e44d26" },
+    css: { id: "css", color: "#264de4" },
+    json: { id: "json", color: "#f5a623" },
+    md: { id: "markdown", color: "#083fa1" },
+    sh: { id: "shell", color: "#4eaa25" },
+    bash: { id: "shell", color: "#4eaa25" },
+  };
+
+  function getExt(name: string): string {
+    const dot = name.lastIndexOf(".");
+    return dot > 0 ? name.substring(dot + 1).toLowerCase() : "";
+  }
+
+  const langIcon = $derived<LangIcon | null>(
+    entry.kind === "file" ? (LANG_ICONS[getExt(entry.name)] ?? null) : null
+  );
 </script>
 
 {#if useMaterial && nerdIcon && entry.kind !== "directory"}
@@ -100,17 +135,96 @@
       <rect x="7" y="10" width="4" height="3" rx="0.5" fill="currentColor"/>
     </svg>
     </span>
+  {:else if langIcon}
+    <!-- Language-specific icon -->
+    <span class="icon-cat" style:color={langIcon.color}>
+    {#if langIcon.id === "python"}
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <path d="M7.9 1C5.4 1 5.5 2.1 5.5 2.1V3.5H8V4H3.6S1 3.7 1 8s2.3 4 2.3 4H4.6V11.3S4.5 9 6.9 9H9.1C10.2 9 11 8.2 11 7.1V3.4C11 2.3 9.9 1 7.9 1ZM5.8 2.3a.7.7 0 1 1 0 1.4.7.7 0 0 1 0-1.4Z" fill="currentColor"/>
+        <path d="M8.1 15c2.5 0 2.4-1.1 2.4-1.1V12.5H8v-.5h4.4s2.6.3 2.6-3.9-2.3-4-2.3-4H11.4V4.7S11.5 7 9.1 7H6.9C5.8 7 5 7.8 5 8.9v3.7C5 13.7 6.1 15 8.1 15Zm2.1-1.3a.7.7 0 1 1 0-1.4.7.7 0 0 1 0 1.4Z" fill="currentColor"/>
+      </svg>
+    {:else if langIcon.id === "rust"}
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.2"/>
+        <path d="M5 10V6.5C5 5.67 5.67 5 6.5 5H9.5C10.33 5 11 5.67 11 6.5V10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        <path d="M5 8H11" stroke="currentColor" stroke-width="1.2"/>
+        <circle cx="8" cy="2.5" r="0.8" fill="currentColor"/>
+      </svg>
+    {:else if langIcon.id === "go"}
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <path d="M2 7.5C2 7.5 3.5 5 8 5S14 7.5 14 7.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+        <circle cx="5.5" cy="7.5" r="2.5" stroke="currentColor" stroke-width="1.2"/>
+        <circle cx="10.5" cy="7.5" r="2.5" stroke="currentColor" stroke-width="1.2"/>
+        <circle cx="5.5" cy="7.2" r="0.8" fill="currentColor"/>
+        <circle cx="10.5" cy="7.2" r="0.8" fill="currentColor"/>
+      </svg>
+    {:else if langIcon.id === "typescript"}
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <rect x="1.5" y="1.5" width="13" height="13" rx="2" fill="currentColor" fill-opacity="0.15" stroke="currentColor" stroke-width="1.2"/>
+        <text x="8" y="12" text-anchor="middle" font-size="8" font-weight="800" font-family="system-ui, sans-serif" fill="currentColor">TS</text>
+      </svg>
+    {:else if langIcon.id === "javascript"}
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <rect x="1.5" y="1.5" width="13" height="13" rx="2" fill="currentColor" fill-opacity="0.15" stroke="currentColor" stroke-width="1.2"/>
+        <text x="8" y="12" text-anchor="middle" font-size="8" font-weight="800" font-family="system-ui, sans-serif" fill="currentColor">JS</text>
+      </svg>
+    {:else if langIcon.id === "java"}
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <rect x="1.5" y="1.5" width="13" height="13" rx="2" fill="currentColor" fill-opacity="0.15" stroke="currentColor" stroke-width="1.2"/>
+        <text x="8" y="12" text-anchor="middle" font-size="7" font-weight="700" font-family="system-ui, sans-serif" fill="currentColor">J</text>
+      </svg>
+    {:else if langIcon.id === "ruby"}
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <polygon points="8,2 13,5 13,11 8,14 3,11 3,5" stroke="currentColor" stroke-width="1.2" fill="currentColor" fill-opacity="0.15"/>
+        <text x="8" y="10.5" text-anchor="middle" font-size="6" font-weight="700" font-family="system-ui, sans-serif" fill="currentColor">rb</text>
+      </svg>
+    {:else if langIcon.id === "cpp" || langIcon.id === "c" || langIcon.id === "csharp"}
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <rect x="1.5" y="1.5" width="13" height="13" rx="2" fill="currentColor" fill-opacity="0.15" stroke="currentColor" stroke-width="1.2"/>
+        <text x="8" y="12" text-anchor="middle" font-size="8" font-weight="800" font-family="system-ui, sans-serif" fill="currentColor">{langIcon.id === "cpp" ? "C+" : langIcon.id === "csharp" ? "C#" : "C"}</text>
+      </svg>
+    {:else if langIcon.id === "html"}
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <path d="M3 2L4 13L8 14.5L12 13L13 2H3Z" stroke="currentColor" stroke-width="1.1" fill="currentColor" fill-opacity="0.12"/>
+        <path d="M5.5 5H10.5L10 8H6.5L6.8 10L8 10.5L9.2 10" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    {:else if langIcon.id === "css"}
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <path d="M3 2L4 13L8 14.5L12 13L13 2H3Z" stroke="currentColor" stroke-width="1.1" fill="currentColor" fill-opacity="0.12"/>
+        <path d="M10.5 5H5.5L5.8 7H10L9.5 10L8 10.5L6.5 10" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    {:else if langIcon.id === "json"}
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <rect x="1.5" y="1.5" width="13" height="13" rx="2" fill="currentColor" fill-opacity="0.15" stroke="currentColor" stroke-width="1.2"/>
+        <text x="8" y="11.5" text-anchor="middle" font-size="6" font-weight="700" font-family="system-ui, sans-serif" fill="currentColor">{"{ }"}</text>
+      </svg>
+    {:else if langIcon.id === "markdown"}
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <rect x="1.5" y="3" width="13" height="10" rx="1.5" fill="currentColor" fill-opacity="0.12" stroke="currentColor" stroke-width="1.1"/>
+        <path d="M4 10V6L6 8.5L8 6V10" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M11 10V7L12.5 8.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    {:else if langIcon.id === "shell"}
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="currentColor" fill-opacity="0.12" stroke="currentColor" stroke-width="1.1"/>
+        <path d="M4.5 6L7 8L4.5 10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M8 10H11" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+      </svg>
+    {:else}
+      <!-- Fallback: colored square with extension -->
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <rect x="1.5" y="1.5" width="13" height="13" rx="2" fill="currentColor" fill-opacity="0.15" stroke="currentColor" stroke-width="1.2"/>
+        <text x="8" y="12" text-anchor="middle" font-size="7" font-weight="700" font-family="system-ui, sans-serif" fill="currentColor">{extLabel}</text>
+      </svg>
+    {/if}
+    </span>
   {:else if iconCategory === "code"}
     <span class="icon-cat icon-code">
     <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
       <path d="M4 3C4 2.44772 4.44772 2 5 2H10L14 6V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" fill="currentColor" fill-opacity="0.15"/>
       <path d="M4 3C4 2.44772 4.44772 2 5 2H10L14 6V15C14 15.5523 13.5523 16 13 16H5C4.44772 16 4 15.5523 4 15V3Z" stroke="currentColor" stroke-width="1.25"/>
       <path d="M10 2V5C10 5.55228 10.4477 6 11 6H14" stroke="currentColor" stroke-width="1.25"/>
-      {#if extLabel && extLabel.length <= 4}
-        <text x="9" y="13" text-anchor="middle" font-size="{extLabel.length <= 2 ? 6.5 : 5.5}" font-weight="700" font-family="system-ui, sans-serif" fill="currentColor" fill-opacity="0.8">{extLabel}</text>
-      {:else}
-        <path d="M7.5 9L6 10.5L7.5 12M10.5 9L12 10.5L10.5 12" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-      {/if}
+      <path d="M7.5 9L6 10.5L7.5 12M10.5 9L12 10.5L10.5 12" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
     </span>
   {:else if iconCategory === "media"}

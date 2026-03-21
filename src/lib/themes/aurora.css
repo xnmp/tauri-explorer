@@ -32,6 +32,7 @@
   --background-acrylic: rgba(22, 27, 34, 0.80);
   --background-card: rgba(30, 37, 46, 0.45);
   --background-card-secondary: rgba(22, 27, 34, 0.40);
+  --miller-bg: rgba(16, 21, 28, 0.6);
   --content-bg: radial-gradient(ellipse at 50% 0%, rgba(93, 229, 213, 0.04) 0%, transparent 50%);
 
   /* Surface/border colors - teal-tinted */

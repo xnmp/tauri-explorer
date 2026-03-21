@@ -256,7 +256,7 @@
   .col-entries {
     flex: 1;
     overflow-y: auto;
-    padding: 2px 0;
+    padding: 4px;
   }
 
   .col-loading {
@@ -269,17 +269,17 @@
   .col-entry {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     width: 100%;
-    padding: 3px 8px;
+    padding: 4px 8px;
     background: transparent;
     border: none;
+    border-radius: var(--radius-sm);
     font-family: inherit;
-    font-size: 12px;
+    font-size: 13px;
     color: var(--text-primary);
     cursor: pointer;
     text-align: left;
-    min-height: 26px;
   }
 
   .col-entry:hover {

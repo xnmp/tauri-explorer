@@ -314,6 +314,30 @@ const viewCommands: Command[] = [
     handler: () => getActiveExplorer()?.setViewMode("tiles"),
   },
   {
+    id: "view.millerLayers0",
+    label: "Miller Columns: Off",
+    category: "view",
+    handler: () => settingsStore.setMillerLayers(0),
+  },
+  {
+    id: "view.millerLayers1",
+    label: "Miller Columns: 1 Layer",
+    category: "view",
+    handler: () => settingsStore.setMillerLayers(1),
+  },
+  {
+    id: "view.millerLayers2",
+    label: "Miller Columns: 2 Layers",
+    category: "view",
+    handler: () => settingsStore.setMillerLayers(2),
+  },
+  {
+    id: "view.millerLayers3",
+    label: "Miller Columns: 3 Layers",
+    category: "view",
+    handler: () => settingsStore.setMillerLayers(3),
+  },
+  {
     id: "view.toggleSidebar",
     label: "Toggle Sidebar",
     category: "view",

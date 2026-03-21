@@ -28,15 +28,27 @@
     activeChildPath: string | null;
   }
 
-  const dirCache = new Map<string, FileEntry[]>();
-  let columns = $state<MillerColumn[]>([]);
+  // Cache stores raw (unfiltered) directory entries; filtering is derived reactively.
+  const rawCache = new Map<string, FileEntry[]>();
+  let rawColumns = $state<MillerColumn[]>([]);
+
+  function filterEntries(entries: FileEntry[]): FileEntry[] {
+    return entries.filter(
+      (e) => e.kind === "directory" && (settingsStore.showHidden || !e.name.startsWith(".")),
+    );
+  }
+
+  // Derive displayed columns reactively so showHidden changes take effect immediately.
+  const columns = $derived(
+    rawColumns.map((col) => ({ ...col, entries: filterEntries(col.entries) })),
+  );
 
   $effect(() => {
     const crumbs = explorer.breadcrumbs;
     const currentPath = explorer.currentPath;
     const layers = settingsStore.millerLayers;
     if (layers === 0 || crumbs.length <= 1) {
-      columns = [];
+      rawColumns = [];
       return;
     }
 
@@ -52,17 +64,17 @@
       return {
         path: crumb.path,
         name: crumb.name,
-        entries: dirCache.get(crumb.path) || [],
-        loading: !dirCache.has(crumb.path),
+        entries: rawCache.get(crumb.path) || [],
+        loading: !rawCache.has(crumb.path),
         activeChildPath: nextPath,
       };
     });
 
-    columns = newColumns;
+    rawColumns = newColumns;
 
     untrack(() => {
       for (const col of newColumns) {
-        if (!dirCache.has(col.path)) {
+        if (!rawCache.has(col.path)) {
           loadColumn(col.path);
         }
       }
@@ -73,10 +85,9 @@
     const result = await fetchDirectory(path);
     if (result.ok) {
       const entries = result.data.entries
-        .filter((e) => e.kind === "directory" && (settingsStore.showHidden || !e.name.startsWith(".")))
         .sort((a, b) => a.name.localeCompare(b.name));
-      dirCache.set(path, entries);
-      columns = columns.map((col) =>
+      rawCache.set(path, entries);
+      rawColumns = rawColumns.map((col) =>
         col.path === path ? { ...col, entries, loading: false } : col
       );
     }

@@ -4,7 +4,7 @@
   Issue: fix/view-component-duplication
 -->
 <script lang="ts">
-  import { gitStatusLetter } from "$lib/composables/use-item-interactions.svelte";
+  import { gitStatusLetter } from "$lib/domain/git";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { gitStatusStore } from "$lib/state/git-status.svelte";
 

@@ -498,13 +498,15 @@
                   {@const nameScore = filenameMatchScore(result.name, qLower)}
                   {@const frecency = frecencyStore.getScoreMap().get(result.path) ?? 0}
                   {@const frecencyPts = Math.round(frecency * FRECENCY_WEIGHT)}
-                  {@const dirBonus = result.kind === "directory" ? "1.25x" : "1x"}
+                  {@const baseScore = Math.round(result.score - frecencyPts - nameScore)}
+                  {@const dirMult = result.kind === "directory" ? 1.25 : 1}
                   {@const effective = Math.round(effectiveScore(result))}
                   <span class="debug-breakdown" title={result.path}>
                     <span class="debug-row"><b>{effective}</b></span>
+                    <span class="debug-row">fuzzy:{baseScore}</span>
                     <span class="debug-row">name:{nameScore}</span>
                     <span class="debug-row">frec:{frecencyPts}</span>
-                    <span class="debug-row">dir:{dirBonus}</span>
+                    {#if dirMult !== 1}<span class="debug-row">dir:×{dirMult}</span>{/if}
                   </span>
                 {:else if result.kind === "directory"}
                   <span class="result-kind">folder</span>

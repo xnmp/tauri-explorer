@@ -135,6 +135,7 @@
     flex-shrink: 0;
     overflow: hidden;
     border-right: 1px solid var(--divider);
+    background: var(--miller-bg, var(--background-card-secondary));
   }
 
   .miller-col {

@@ -36,6 +36,7 @@
   --background-acrylic: rgba(16, 18, 23, 0.98);
   --background-card: rgba(108, 111, 147, 0.12);
   --background-card-secondary: rgba(108, 111, 147, 0.08);
+  --miller-bg: rgba(18, 20, 30, 0.7);
 
   /* Surface/border colors */
   --surface-stroke: rgba(213, 216, 218, 0.12);

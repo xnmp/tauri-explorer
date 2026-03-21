@@ -49,6 +49,7 @@ export async function pasteEntries(
 
   const errors: string[] = [];
   const newEntries: FileEntry[] = [];
+  const undoActions: import("./types").UndoAction[] = [];
   let bytesProcessed = 0;
   let cancelledByUser = false;
 
@@ -104,11 +105,17 @@ export async function pasteEntries(
       if (result.ok) {
         newEntries.push(result.data);
         if (isCut) {
-          undoStore.push({
+          undoActions.push({
             type: "move",
             sourcePath: source.path,
             destPath: result.data.path,
             originalDir: sourceDir,
+          });
+        } else {
+          undoActions.push({
+            type: "copy",
+            copiedPath: result.data.path,
+            parentDir: destPath,
           });
         }
       } else {
@@ -128,6 +135,17 @@ export async function pasteEntries(
     } else {
       operationsManager.updateProgress(op.id, ((i + 1) / sources.length) * 100);
     }
+  }
+
+  // Push undo action(s) — batch if multiple files
+  if (undoActions.length === 1) {
+    undoStore.push(undoActions[0]);
+  } else if (undoActions.length > 1) {
+    undoStore.push({
+      type: "batch",
+      actions: undoActions,
+      label: `${isCut ? "Moved" : "Copied"} ${undoActions.length} items`,
+    });
   }
 
   onComplete?.();

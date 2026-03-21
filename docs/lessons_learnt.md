@@ -4,6 +4,15 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/undo-paste + fix/undo-multi-drag: Paste Undo and Batch Undo
+
+**Key takeaways:**
+- Copy-paste operations were not undoable because no undo action was pushed. Added a `"copy"` undo type that trashes the copied file on undo.
+- Multi-file operations pushed individual undo actions, requiring N Ctrl+Z presses. Added a `"batch"` undo type that wraps multiple actions and undoes/redoes them all at once.
+- Single-file pastes should NOT be batched (push directly) to avoid unnecessary wrapper.
+
+---
+
 ## feat/git-indicator-polish: Polished Git Indicators
 
 **Key takeaways:**

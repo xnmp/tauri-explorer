@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/breadcrumb-drop-move: Breadcrumb Drop Always Moves
+
+**Key takeaways:**
+- Breadcrumb segments are navigation targets, not file manager targets. Dropping onto them should always move (never copy), regardless of Ctrl key state. Hardcode `isCopy = false` and `dropEffect = "move"`.
+
+---
+
 ## fix/remove-sidebar-buttons: Sidebar Cleanup
 
 **Key takeaways:**

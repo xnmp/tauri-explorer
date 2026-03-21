@@ -87,6 +87,7 @@
 | [components.md](architecture/components.md) | Full component table + composables |
 | [features.md](architecture/features.md) | Feature → file mapping, data flow patterns |
 | [cross-cutting.md](architecture/cross-cutting.md) | Persistence, cross-window comms, theming, keyboard, DnD, testing |
+| [reference-deps.md](reference-deps.md) | API reference for key Rust dependencies (jwalk, grep-searcher, fs_extra, image, tauri-plugin-log) |
 
 ---
 

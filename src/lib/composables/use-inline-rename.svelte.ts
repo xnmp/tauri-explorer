@@ -8,6 +8,7 @@
 import { tick } from "svelte";
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
+import { dialogStore } from "$lib/state/dialogs.svelte";
 
 export interface InlineRenameState {
   editedName: string;
@@ -47,7 +48,7 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
       return;
     }
     if (trimmed === currentName) {
-      getExplorer().cancelRename();
+      dialogStore.cancelRename();
       return;
     }
     submittingRename = true;
@@ -60,7 +61,7 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
   function cancelRename() {
     editedName = "";
     renameError = null;
-    getExplorer().cancelRename();
+    dialogStore.cancelRename();
   }
 
   function handleRenameKeydown(event: KeyboardEvent, currentName: string) {

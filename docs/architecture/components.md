@@ -8,7 +8,7 @@
 |-----------|------|---------|
 | **TitleBar** | `TitleBar.svelte` | Custom decorationless title bar, only visible when >1 tab. Contains `WindowTabBar` |
 | **WindowTabBar** | `WindowTabBar.svelte` | Tab strip: tab buttons (closeable, reorderable), new tab button |
-| **SharedToolbar** | `SharedToolbar.svelte` | Search box, theme switcher, window controls (minimize/maximize/close) |
+| **SharedToolbar** | `SharedToolbar.svelte` | Search box, theme switcher, settings gear button, window controls (minimize/maximize/close) |
 | **ThemeSwitcher** | `ThemeSwitcher.svelte` | Dropdown to select theme |
 | **Sidebar** | `Sidebar.svelte` | Bookmarks (system folders + user bookmarks with drag-to-reorder, custom icons for Repos/Code folders), Recent locations (sorted by frecency score, excludes bookmarked paths, configurable count). Resizable (180-400px) |
 | **PaneContainer** | `PaneContainer.svelte` | Manages single/dual pane layout with resizable divider |

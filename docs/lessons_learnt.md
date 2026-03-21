@@ -4,6 +4,15 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/quickopen-debug-fuzzy: Fuzzy Scoring for Frecency Results
+
+**Key takeaways:**
+- Frecency/recent results used simple `name.includes(query)` matching while backend results used a proper fuzzy scorer. This caused frecency-sourced folders to rank lower than backend files with the same name match. Solution: apply the same fuzzy scoring algorithm (fzy/VS Code style) to frecency entries on the frontend.
+- The `fuzzyScorePath` function scores against the basename at 1.5× weight vs full path, so filename matches naturally rank higher.
+- Multiplying fuzzy score by 10 (`fuzzy * 10`) puts it in the same numeric range as the backend scores + name bonus.
+
+---
+
 ## fix/quickopen-debug-settings: QuickOpen Score Breakdown
 
 **Key takeaways:**

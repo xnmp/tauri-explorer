@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
   import { tick, untrack } from "svelte";
+  import { fuzzyScorePath } from "$lib/domain/fuzzy-score";
   import {
     startStreamingSearch,
     cancelSearch,
@@ -103,18 +104,19 @@
     const matched: SearchResult[] = [];
     const scoreMap = frecencyStore.getScoreMap();
 
-    // Recent files
+    // Recent files — scored with full fuzzy matching
     for (const entry of recentFilesStore.list) {
       if (seen.has(entry.path)) continue;
       seen.add(entry.path);
-      const baseScore = scoreEntry(entry.name, entry.path, lower);
-      if (baseScore > 0) {
+      const fuzzy = fuzzyScorePath(lower, entry.path);
+      if (fuzzy > 0) {
         const frecency = scoreMap.get(entry.path) ?? 0;
+        const nameBonus = filenameMatchScore(entry.name, lower);
         matched.push({
           name: entry.name,
           path: entry.path,
           relativePath: entry.path,
-          score: baseScore + Math.round(frecency * FRECENCY_WEIGHT),
+          score: Math.round(fuzzy * 10) + nameBonus + Math.round(frecency * FRECENCY_WEIGHT),
           kind: entry.kind,
         });
       }
@@ -125,14 +127,15 @@
       if (seen.has(entry.path)) continue;
       seen.add(entry.path);
       const name = entry.path.split("/").pop() || "";
-      const baseScore = scoreEntry(name, entry.path, lower);
-      if (baseScore > 0) {
+      const fuzzy = fuzzyScorePath(lower, entry.path);
+      if (fuzzy > 0) {
         const frecency = scoreMap.get(entry.path) ?? 0;
+        const nameBonus = filenameMatchScore(name, lower);
         matched.push({
           name,
           path: entry.path,
           relativePath: entry.path,
-          score: baseScore + Math.round(frecency * FRECENCY_WEIGHT),
+          score: Math.round(fuzzy * 10) + nameBonus + Math.round(frecency * FRECENCY_WEIGHT),
           kind: "directory",
         });
       }
@@ -503,9 +506,18 @@
                   {@const effective = Math.round(effectiveScore(result))}
                   <span class="debug-breakdown" title={result.path}>
                     <span class="debug-row"><b>{effective}</b></span>
-                    <span class="debug-row">fuzzy:{baseScore}</span>
-                    <span class="debug-row">name:{nameScore}</span>
-                    <span class="debug-row">frec:{frecencyPts}</span>
+                    {#if baseScore > 0}
+                      <span class="debug-row">fuzzy:{baseScore}</span>
+                    {/if}
+                    {#if nameScore > 0}
+                      <span class="debug-row">name:{nameScore}</span>
+                    {/if}
+                    {#if frecencyPts > 0}
+                      <span class="debug-row">frec:{frecencyPts}</span>
+                    {/if}
+                    {#if baseScore === 0 && frecencyPts === 0 && nameScore === 0}
+                      <span class="debug-row">recent</span>
+                    {/if}
                     {#if dirMult !== 1}<span class="debug-row">dir:×{dirMult}</span>{/if}
                   </span>
                 {:else if result.kind === "directory"}

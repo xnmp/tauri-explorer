@@ -177,6 +177,20 @@
     { name: "Music", icon: "music", path: `${homeDir}/Music`, pinned: false, color: "#f472b6" },
   ]);
 
+  /** Map bookmark names to custom icon colors for known folders */
+  function getBookmarkIconColor(name: string): string | null {
+    const lower = name.toLowerCase();
+    if (lower === "repos" || lower === "repositories" || lower === "projects" || lower === "code") return "#f97316";
+    if (lower === "work") return "#0ea5e9";
+    return null;
+  }
+
+  /** Check if a bookmark should show a code/git icon */
+  function isCodeFolder(name: string): boolean {
+    const lower = name.toLowerCase();
+    return lower === "repos" || lower === "repositories" || lower === "projects" || lower === "code";
+  }
+
   let quickAccessExpanded = $state(true);
   let recentExpanded = $state(true);
 
@@ -358,15 +372,21 @@
             role="button"
             tabindex="0"
           >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: var(--icon-folder, #ffb900)">
-              <path
-                d="M2 5.5C2 4.67157 2.67157 4 3.5 4H6.17157C6.43679 4 6.69114 4.10536 6.87868 4.29289L8.12132 5.53553C8.30886 5.72307 8.56321 5.82843 8.82843 5.82843H13C13.8284 5.82843 14.5 6.5 14.5 7.32843V12.5C14.5 13.3284 13.8284 14 13 14H3C2.17157 14 1.5 13.3284 1.5 12.5V5.5"
-                stroke="currentColor"
-                stroke-width="1.25"
-                fill="currentColor"
-                fill-opacity="0.15"
-              />
-            </svg>
+            {#if isCodeFolder(bookmark.name)}
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: {getBookmarkIconColor(bookmark.name) ?? 'var(--icon-folder, #ffb900)'}">
+                <path d="M5 4L2 8L5 12M11 4L14 8L11 12M9 3L7 13" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            {:else}
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: {getBookmarkIconColor(bookmark.name) ?? 'var(--icon-folder, #ffb900)'}">
+                <path
+                  d="M2 5.5C2 4.67157 2.67157 4 3.5 4H6.17157C6.43679 4 6.69114 4.10536 6.87868 4.29289L8.12132 5.53553C8.30886 5.72307 8.56321 5.82843 8.82843 5.82843H13C13.8284 5.82843 14.5 6.5 14.5 7.32843V12.5C14.5 13.3284 13.8284 14 13 14H3C2.17157 14 1.5 13.3284 1.5 12.5V5.5"
+                  stroke="currentColor"
+                  stroke-width="1.25"
+                  fill="currentColor"
+                  fill-opacity="0.15"
+                />
+              </svg>
+            {/if}
             <span>{bookmark.name}</span>
             <button
               class="remove-bookmark"

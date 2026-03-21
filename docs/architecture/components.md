@@ -10,7 +10,7 @@
 | **WindowTabBar** | `WindowTabBar.svelte` | Tab strip: tab buttons (closeable, reorderable), new tab button |
 | **SharedToolbar** | `SharedToolbar.svelte` | Search box, theme switcher, window controls (minimize/maximize/close) |
 | **ThemeSwitcher** | `ThemeSwitcher.svelte` | Dropdown to select theme |
-| **Sidebar** | `Sidebar.svelte` | Bookmarks (system folders + user bookmarks with drag-to-reorder), Recent locations (from frecency, configurable count). Resizable (180-400px) |
+| **Sidebar** | `Sidebar.svelte` | Bookmarks (system folders + user bookmarks with drag-to-reorder, custom icons for Repos/Code folders), Recent locations (from frecency, configurable count). Resizable (180-400px) |
 | **PaneContainer** | `PaneContainer.svelte` | Manages single/dual pane layout with resizable divider |
 | **ExplorerPane** | `ExplorerPane.svelte` | Self-contained pane with NavigationBar + FileList + ContextMenu + dialogs. Handles arrow-key navigation |
 | **NavigationBar** | `NavigationBar.svelte` | Back/Forward/Up/Refresh buttons, breadcrumb bar with editable path input and autocomplete |

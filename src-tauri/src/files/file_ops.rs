@@ -113,7 +113,7 @@ fn generate_copy_name(dest_dir: &Path, source_name: &str, is_directory: bool) ->
 /// Copy a file or directory.
 /// If overwrite is true and target exists, replaces the existing entry.
 #[tauri::command]
-pub fn copy_entry(
+pub async fn copy_entry(
     source: String,
     dest_dir: String,
     overwrite: Option<bool>,
@@ -171,7 +171,7 @@ pub fn copy_entry(
 /// Move a file or directory.
 /// If overwrite is true and target exists, replaces the existing entry.
 #[tauri::command]
-pub fn move_entry(
+pub async fn move_entry(
     source: String,
     dest_dir: String,
     overwrite: Option<bool>,
@@ -245,7 +245,7 @@ pub fn move_entry(
 
 /// Read a text file's contents with a size limit (default 1MB).
 #[tauri::command]
-pub fn read_text_file(path: String, max_bytes: Option<u64>) -> Result<String, AppError> {
+pub async fn read_text_file(path: String, max_bytes: Option<u64>) -> Result<String, AppError> {
     let file_path = PathBuf::from(&path);
 
     if !file_path.exists() {
@@ -273,7 +273,7 @@ pub fn read_text_file(path: String, max_bytes: Option<u64>) -> Result<String, Ap
 
 /// Write text content to a new file.
 #[tauri::command]
-pub fn write_text_file(path: String, content: String) -> Result<FileEntry, AppError> {
+pub async fn write_text_file(path: String, content: String) -> Result<FileEntry, AppError> {
     let file_path = PathBuf::from(&path);
 
     if file_path.exists() {
@@ -287,7 +287,7 @@ pub fn write_text_file(path: String, content: String) -> Result<FileEntry, AppEr
 
 /// Delete a file or directory permanently (not to trash).
 #[tauri::command]
-pub fn delete_entry_permanent(path: String) -> Result<(), AppError> {
+pub async fn delete_entry_permanent(path: String) -> Result<(), AppError> {
     let file_path = PathBuf::from(&path);
 
     if !file_path.exists() {
@@ -307,7 +307,7 @@ pub fn delete_entry_permanent(path: String) -> Result<(), AppError> {
 
 /// Create a symbolic link.
 #[tauri::command]
-pub fn create_symlink(target_path: String, link_path: String) -> Result<FileEntry, AppError> {
+pub async fn create_symlink(target_path: String, link_path: String) -> Result<FileEntry, AppError> {
     let target = PathBuf::from(&target_path);
     let link = PathBuf::from(&link_path);
 
@@ -337,7 +337,7 @@ pub fn create_symlink(target_path: String, link_path: String) -> Result<FileEntr
 
 /// Estimate total file count and size for a list of paths.
 #[tauri::command]
-pub fn estimate_size(paths: Vec<String>) -> Result<SizeEstimate, AppError> {
+pub async fn estimate_size(paths: Vec<String>) -> Result<SizeEstimate, AppError> {
     let mut file_count: u64 = 0;
     let mut total_bytes: u64 = 0;
 
@@ -357,7 +357,7 @@ pub fn estimate_size(paths: Vec<String>) -> Result<SizeEstimate, AppError> {
 
 /// Batch-check which paths exist on the filesystem.
 #[tauri::command]
-pub fn check_paths_exist(paths: Vec<String>) -> Vec<bool> {
+pub async fn check_paths_exist(paths: Vec<String>) -> Vec<bool> {
     paths.iter().map(|p| PathBuf::from(p).exists()).collect()
 }
 
@@ -429,6 +429,10 @@ mod tests {
         );
     }
 
+    fn block_on<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Runtime::new().unwrap().block_on(f)
+    }
+
     #[test]
     fn test_copy_entry_folder_with_files() {
         let dir = tempdir().unwrap();
@@ -444,11 +448,11 @@ mod tests {
         let dest_dir = dir.path().join("dest");
         fs::create_dir(&dest_dir).unwrap();
 
-        let result = copy_entry(
+        let result = block_on(copy_entry(
             source_dir.to_string_lossy().to_string(),
             dest_dir.to_string_lossy().to_string(),
             None,
-        );
+        ));
 
         assert!(result.is_ok(), "copy_entry failed: {:?}", result.err());
         let entry = result.unwrap();
@@ -474,11 +478,11 @@ mod tests {
         fs::create_dir(&source_dir).unwrap();
         fs::write(source_dir.join("file1.txt"), "hello").unwrap();
 
-        let result = copy_entry(
+        let result = block_on(copy_entry(
             source_dir.to_string_lossy().to_string(),
             dir.path().to_string_lossy().to_string(),
             None,
-        );
+        ));
 
         assert!(
             result.is_ok(),
@@ -501,7 +505,7 @@ mod tests {
         fs::create_dir(dir.path().join("subdir")).unwrap();
         fs::write(dir.path().join("subdir/nested.txt"), "abc").unwrap();
 
-        let result = estimate_size(vec![dir.path().to_string_lossy().to_string()]).unwrap();
+        let result = block_on(estimate_size(vec![dir.path().to_string_lossy().to_string()])).unwrap();
         assert_eq!(result.file_count, 3);
         assert_eq!(result.total_bytes, 14);
     }

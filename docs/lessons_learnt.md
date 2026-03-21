@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/blocking-rust-commands: Async Tauri Commands
+
+**Key takeaways:**
+- All Tauri 2 commands that do filesystem I/O must be `async fn`. Sync commands run on the main thread and freeze the UI during large operations. Simply adding `async` to the function signature is sufficient — Tauri's macro handles running async commands on a thread pool. Tests calling async commands need `tokio::runtime::Runtime::new().unwrap().block_on(...)`.
+
+---
+
 ## fix/extract-error-recursion: extractError Infinite Recursion
 
 **Key takeaways:**

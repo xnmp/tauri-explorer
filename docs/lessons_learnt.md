@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/quickopen-filename-scoring: Filename Match Scoring
+
+**Key takeaways:**
+- When scoring search results that include both filename and path matches, filename matches need a dramatically higher weight (150-200) compared to path-only matches (30). Otherwise, frequently accessed subdirectories can outrank the parent that actually matches the query name. The scoring tiers: exact name=200, prefix=150, substring=100, path-only=30.
+
+---
+
 ## fix/addressbar-folder-only: Address Bar Folders Only
 
 **Key takeaways:**

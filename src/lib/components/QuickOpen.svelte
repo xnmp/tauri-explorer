@@ -72,6 +72,28 @@
   // Directories get a score boost since they're more commonly navigated to
   const DIRECTORY_BONUS = 1.25;
 
+  /**
+   * Score how well a query matches a filename vs just appearing in the path.
+   * Filename matches are weighted much higher so that e.g. searching "pictures"
+   * returns ~/Pictures above ~/Pictures/Wallpaper.
+   */
+  function filenameMatchScore(name: string, queryLower: string): number {
+    const nameLower = name.toLowerCase();
+    if (nameLower === queryLower) return 200;      // exact match
+    if (nameLower.startsWith(queryLower)) return 150; // prefix match
+    if (nameLower.includes(queryLower)) return 100;   // substring match
+    return 0; // filename doesn't match
+  }
+
+  /** Score an entry against a query, heavily weighting filename matches. */
+  function scoreEntry(name: string, path: string, queryLower: string): number {
+    const nameScore = filenameMatchScore(name, queryLower);
+    if (nameScore > 0) return nameScore;
+    // Path-only match (filename doesn't contain query)
+    if (path.toLowerCase().includes(queryLower)) return 30;
+    return 0;
+  }
+
   /** Match recent files and frecency entries against a search term.
    *  These are always included in results (merged/deduplicated with backend results). */
   function matchFrecencyAndRecent(term: string): SearchResult[] {
@@ -84,14 +106,14 @@
     for (const entry of recentFilesStore.list) {
       if (seen.has(entry.path)) continue;
       seen.add(entry.path);
-      const nameLower = entry.name.toLowerCase();
-      if (nameLower.includes(lower) || entry.path.toLowerCase().includes(lower)) {
+      const baseScore = scoreEntry(entry.name, entry.path, lower);
+      if (baseScore > 0) {
         const frecency = scoreMap.get(entry.path) ?? 0;
         matched.push({
           name: entry.name,
           path: entry.path,
           relativePath: entry.path,
-          score: (nameLower.includes(lower) ? 80 : 40) + Math.round(frecency * FRECENCY_WEIGHT),
+          score: baseScore + Math.round(frecency * FRECENCY_WEIGHT),
           kind: entry.kind,
         });
       }
@@ -102,14 +124,14 @@
       if (seen.has(entry.path)) continue;
       seen.add(entry.path);
       const name = entry.path.split("/").pop() || "";
-      const nameLower = name.toLowerCase();
-      if (nameLower.includes(lower) || entry.path.toLowerCase().includes(lower)) {
+      const baseScore = scoreEntry(name, entry.path, lower);
+      if (baseScore > 0) {
         const frecency = scoreMap.get(entry.path) ?? 0;
         matched.push({
           name,
           path: entry.path,
           relativePath: entry.path,
-          score: (nameLower.includes(lower) ? 80 : 40) + Math.round(frecency * FRECENCY_WEIGHT),
+          score: baseScore + Math.round(frecency * FRECENCY_WEIGHT),
           kind: "directory",
         });
       }
@@ -118,13 +140,15 @@
     return matched;
   }
 
-  /** Re-rank search results by combining fuzzy score with frecency. */
+  /** Re-rank search results by combining fuzzy score with frecency and filename bonus. */
   function rankWithFrecency(searchResults: SearchResult[]): SearchResult[] {
     if (searchResults.length === 0) return searchResults;
     const scoreMap = frecencyStore.getScoreMap();
+    const currentQuery = query.toLowerCase();
     const ranked = searchResults.map((r) => {
       const frecency = scoreMap.get(r.path) ?? 0;
-      return { ...r, score: r.score + Math.round(frecency * FRECENCY_WEIGHT) };
+      const nameBonus = filenameMatchScore(r.name, currentQuery);
+      return { ...r, score: r.score + Math.round(frecency * FRECENCY_WEIGHT) + nameBonus };
     });
     ranked.sort((a, b) => effectiveScore(b) - effectiveScore(a));
     return ranked;

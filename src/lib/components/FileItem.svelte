@@ -139,7 +139,9 @@
     // Internal drops already call refreshAllPanes(), so this is a no-op
     // in that case (just a redundant refresh). For external drops (another
     // window), this ensures the source window updates.
-    dragState.clear();
+    // Defer clear so sidebar's document-level dragend listener
+    // can still read dragState.current for bookmark drops
+    setTimeout(() => dragState.clear(), 0);
     if (paneNav) {
       paneNav.refreshAllPanes();
     } else {

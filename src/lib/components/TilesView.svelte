@@ -85,7 +85,9 @@
   let copyDropTargets = $state<Record<string, boolean>>({});
 
   function handleItemDragEnd(): void {
-    dragState.clear();
+    // Defer clear so sidebar's document-level dragend listener
+    // can still read dragState.current for bookmark drops
+    setTimeout(() => dragState.clear(), 0);
     paneNav?.refreshAllPanes();
   }
 

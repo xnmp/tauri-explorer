@@ -4,6 +4,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/drag-to-bookmarks: Drag to Bookmarks Race Condition
+
+**Key takeaways:**
+- Element-level `ondragend` fires before document-level `addEventListener("dragend", ...)`. The file item's `dragState.clear()` ran before the sidebar's document listener could read `dragState.current`. Fix: `setTimeout(() => dragState.clear(), 0)` to defer the clear until after all synchronous dragend listeners have fired.
+- This is the same class of bug as tauri-0gre (Svelte 5 event delegation + DnD state machine). The sidebar uses native `addEventListener` because Svelte 5's delegation breaks DnD — but that means it runs after element handlers in the bubbling phase.
+
+---
+
 ## fix/quickopen-debug-fuzzy: Fuzzy Scoring for Frecency Results
 
 **Key takeaways:**

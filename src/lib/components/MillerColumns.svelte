@@ -11,7 +11,6 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { fetchDirectory } from "$lib/api/files";
-  import { getFileIconColor } from "$lib/domain/file-types";
   import FileIcon from "./FileIcon.svelte";
   import type { FileEntry } from "$lib/domain/file";
 
@@ -74,11 +73,8 @@
     const result = await fetchDirectory(path);
     if (result.ok) {
       const entries = result.data.entries
-        .filter((e) => settingsStore.showHidden || !e.name.startsWith("."))
-        .sort((a, b) => {
-          if (a.kind !== b.kind) return a.kind === "directory" ? -1 : 1;
-          return a.name.localeCompare(b.name);
-        });
+        .filter((e) => e.kind === "directory" && (settingsStore.showHidden || !e.name.startsWith(".")))
+        .sort((a, b) => a.name.localeCompare(b.name));
       dirCache.set(path, entries);
       columns = columns.map((col) =>
         col.path === path ? { ...col, entries, loading: false } : col
@@ -87,9 +83,7 @@
   }
 
   function handleClick(entry: FileEntry): void {
-    if (entry.kind === "directory") {
-      explorer.navigateTo(entry.path);
-    }
+    explorer.navigateTo(entry.path);
   }
 </script>
 
@@ -105,19 +99,16 @@
             {#each column.entries as entry (entry.path)}
               <button
                 class="col-entry"
-                class:directory={entry.kind === "directory"}
                 class:active={entry.path === column.activeChildPath}
                 onclick={() => handleClick(entry)}
               >
-                <span class="col-icon" style:color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined}>
+                <span class="col-icon">
                   <FileIcon {entry} size="small" />
                 </span>
                 <span class="col-name">{entry.name}</span>
-                {#if entry.kind === "directory"}
-                  <svg class="col-chevron" width="7" height="7" viewBox="0 0 7 7" fill="none">
-                    <path d="M2 1L5 3.5L2 6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
-                  </svg>
-                {/if}
+                <svg class="col-chevron" width="7" height="7" viewBox="0 0 7 7" fill="none">
+                  <path d="M2 1L5 3.5L2 6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
               </button>
             {/each}
           {/if}

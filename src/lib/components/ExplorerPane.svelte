@@ -4,7 +4,7 @@
   Issue: tauri-explorer-auj, tauri-explorer-ldfx (window-level tabs)
 -->
 <script lang="ts">
-  import { setContext, tick } from "svelte";
+  import { setContext, tick, untrack } from "svelte";
   import { createExplorerState } from "$lib/state/explorer.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import type { PaneId } from "$lib/state/types";
@@ -34,11 +34,14 @@
 
   let paneRef = $state<HTMLElement | null>(null);
 
-  // Fetch git status when directory changes and setting is enabled
+  // Fetch git status when directory changes and setting is enabled.
+  // untrack the fetch call to avoid $state reads inside fetchForDirectory
+  // from becoming effect dependencies (would cause infinite loop).
   $effect(() => {
     const path = paneExplorer.currentPath;
-    if (settingsStore.showGitStatus && path) {
-      gitStatusStore.fetchForDirectory(path);
+    const enabled = settingsStore.showGitStatus;
+    if (enabled && path) {
+      untrack(() => gitStatusStore.fetchForDirectory(path));
     }
   });
 

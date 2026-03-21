@@ -24,7 +24,7 @@ struct LaunchCwd(String);
 /// Move a file or directory to the system trash/recycle bin.
 /// Cross-platform: Windows Recycle Bin, macOS Trash, Linux Freedesktop Trash.
 #[tauri::command]
-fn move_to_trash(path: String) -> Result<(), AppError> {
+async fn move_to_trash(path: String) -> Result<(), AppError> {
     let pathbuf = PathBuf::from(&path);
 
     if !pathbuf.exists() {
@@ -39,7 +39,7 @@ fn move_to_trash(path: String) -> Result<(), AppError> {
 
 /// Move multiple files/directories to trash.
 #[tauri::command]
-fn move_multiple_to_trash(paths: Vec<String>) -> Result<(), AppError> {
+async fn move_multiple_to_trash(paths: Vec<String>) -> Result<(), AppError> {
     let pathbufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
 
     for (i, path) in pathbufs.iter().enumerate() {
@@ -75,7 +75,7 @@ fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
 /// Restore files from the system trash by their original paths.
 /// Finds the most recently deleted item matching each path and restores it.
 #[tauri::command]
-fn restore_from_trash(paths: Vec<String>) -> Result<(), AppError> {
+async fn restore_from_trash(paths: Vec<String>) -> Result<(), AppError> {
     let trash_items = trash::os_limited::list()
         .map_err(|e| AppError::Other(format!("Failed to list trash: {}", e)))?;
 

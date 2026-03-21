@@ -148,9 +148,7 @@ fn scan_directory_parallel(dir_path: &PathBuf) -> Vec<FileEntry> {
                 return None;
             }
             let path = dir_entry.path();
-            let metadata = fs::metadata(&path)
-                .or_else(|_| dir_entry.metadata().map_err(|e| std::io::Error::other(e)))
-                .ok()?;
+            let metadata = fs::symlink_metadata(&path).ok()?;
             Some(metadata_to_entry(&path, &metadata))
         })
         .collect();

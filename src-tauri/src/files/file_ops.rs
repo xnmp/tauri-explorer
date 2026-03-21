@@ -42,7 +42,7 @@ pub async fn create_directory(parent_path: String, name: String) -> Result<FileE
     fs::create_dir(&new_path)?;
     log::info!("Created directory: {:?}", name);
 
-    let metadata = fs::metadata(&new_path)?;
+    let metadata = fs::symlink_metadata(&new_path)?;
     Ok(metadata_to_entry(&new_path, &metadata))
 }
 
@@ -73,7 +73,7 @@ pub async fn rename_entry(path: String, new_name: String) -> Result<FileEntry, A
 
     fs::rename(&source, &target)?;
 
-    let metadata = fs::metadata(&target)?;
+    let metadata = fs::symlink_metadata(&target)?;
     Ok(metadata_to_entry(&target, &metadata))
 }
 
@@ -164,7 +164,7 @@ pub async fn copy_entry(
     }
 
     log::info!("Copied entry (is_dir={}) overwrite={}", source_path.is_dir(), overwrite.unwrap_or(false));
-    let metadata = fs::metadata(&target)?;
+    let metadata = fs::symlink_metadata(&target)?;
     Ok(metadata_to_entry(&target, &metadata))
 }
 
@@ -239,7 +239,7 @@ pub async fn move_entry(
         }
     }
 
-    let metadata = fs::metadata(&target)?;
+    let metadata = fs::symlink_metadata(&target)?;
     Ok(metadata_to_entry(&target, &metadata))
 }
 
@@ -281,7 +281,7 @@ pub async fn write_text_file(path: String, content: String) -> Result<FileEntry,
     }
 
     fs::write(&file_path, content.as_bytes())?;
-    let metadata = fs::metadata(&file_path)?;
+    let metadata = fs::symlink_metadata(&file_path)?;
     Ok(metadata_to_entry(&file_path, &metadata))
 }
 
@@ -331,7 +331,7 @@ pub async fn create_symlink(target_path: String, link_path: String) -> Result<Fi
         }
     }
 
-    let metadata = fs::metadata(&link)?;
+    let metadata = fs::symlink_metadata(&link)?;
     Ok(metadata_to_entry(&link, &metadata))
 }
 

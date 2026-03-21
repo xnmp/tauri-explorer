@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/scan-metadata-syscalls: Minimize Metadata Syscalls
+
+**Key takeaways:**
+- `metadata_to_entry` was calling `fs::metadata` (passed by callers) + `fs::symlink_metadata` internally = 2 syscalls per entry minimum, 3 for symlinks. Refactored to use `symlink_metadata` as the primary call everywhere. For non-symlinks (99% of entries), this is 1 syscall. For symlinks, it's 2 (symlink_metadata + fs::metadata to resolve target). Saves ~10K syscalls for a 10K-entry directory.
+
+---
+
 ## fix/miller-double-filter: Don't Filter at Cache Level
 
 **Key takeaways:**

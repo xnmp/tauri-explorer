@@ -15,7 +15,7 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 **Key takeaways:**
 - `closedTabStack` loaded from localStorage at module init becomes stale when another window adds entries. Before checking `canRestoreTab` or popping from the stack, always re-read from localStorage to pick up cross-window changes. Without this, Ctrl+Shift+T in window B can't see tabs closed in window A.
-- Tests that need localStorage must use `loadPersisted`/`savePersisted` helpers (which handle the Vitest stub), not raw `localStorage.setItem()` calls.
+- **Never use `localStorage` in unit tests** — not even via `loadPersisted`/`savePersisted`. Node versions differ in whether `globalThis.localStorage` exists, is partial, or is undefined. The `setup.ts` stub only applies when it's fully undefined, so tests break on machines where Node provides a partial `localStorage`. Test the business logic (e.g. "stale array misses external writes, refreshed array doesn't") with plain data structures instead.
 
 ---
 

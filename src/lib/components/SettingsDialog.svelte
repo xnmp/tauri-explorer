@@ -256,6 +256,21 @@
             />
           </div>
 
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">QuickOpen Debug Scores</span>
+              <span class="setting-description">Show score breakdown (name, frecency, dir bonus) in Ctrl+P results</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.quickOpenDebug}
+                onchange={() => settingsStore.toggleQuickOpenDebug()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
           <div class="setting-item">
             <div class="setting-label">
               <span>Confirm before deleting</span>

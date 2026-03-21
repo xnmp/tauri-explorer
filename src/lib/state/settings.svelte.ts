@@ -69,6 +69,7 @@ export interface Settings {
   recentItemsCount: number; // number of recent locations in sidebar (0 = hidden)
   millerLayers: number; // 0-3, number of ancestor columns in miller view
   millerLayersPreferred: number; // 1-3, remembered layer count for toggle
+  quickOpenDebug: boolean; // show score breakdown in QuickOpen results
 }
 
 const MIN_ZOOM = 50;
@@ -106,6 +107,7 @@ const DEFAULT_SETTINGS: Settings = {
   recentItemsCount: 6,
   millerLayers: 0,
   millerLayersPreferred: 2,
+  quickOpenDebug: false,
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -285,6 +287,12 @@ function createSettingsStore() {
       const updates: Partial<Settings> = { millerLayers: clamped };
       if (clamped > 0) updates.millerLayersPreferred = clamped;
       update(updates);
+    },
+    get quickOpenDebug() {
+      return settings.quickOpenDebug;
+    },
+    toggleQuickOpenDebug(): void {
+      update({ quickOpenDebug: !settings.quickOpenDebug });
     },
     toggleMillerColumns(): void {
       const on = settings.millerLayers > 0;

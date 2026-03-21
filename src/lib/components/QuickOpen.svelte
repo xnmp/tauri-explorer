@@ -16,6 +16,7 @@
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
+  import { settingsStore } from "$lib/state/settings.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { getFileIconColor, getFileIconCategory, type IconCategory } from "$lib/domain/file-types";
   import type { FileEntry } from "$lib/domain/file";
@@ -46,7 +47,6 @@
   let selectedIndex = $state(0);
   let loading = $state(false);
   let inputRef = $state<HTMLInputElement | null>(null);
-  let debugMode = $state(false);
   let homeDir = $state<string | null>(null);
 
   // Fetch home directory for tilde expansion
@@ -312,7 +312,7 @@
     // Alt+D toggles debug mode (shows score breakdown)
     if (event.key === "d" && event.altKey) {
       event.preventDefault();
-      debugMode = !debugMode;
+      settingsStore.toggleQuickOpenDebug();
       return;
     }
     switch (event.key) {
@@ -493,10 +493,18 @@
                   <span class="result-name">{result.name}</span>
                   <span class="result-path">{result.relativePath}</span>
                 </div>
-                {#if debugMode}
-                  {@const nameBonus = filenameMatchScore(result.name, query.toLowerCase())}
-                  <span class="result-score debug-score" title="name={nameBonus} total={Math.round(result.score)} kind={result.kind}">
-                    {Math.round(result.score)} <span class="debug-detail">n:{nameBonus}</span>
+                {#if settingsStore.quickOpenDebug}
+                  {@const qLower = query.toLowerCase()}
+                  {@const nameScore = filenameMatchScore(result.name, qLower)}
+                  {@const frecency = frecencyStore.getScoreMap().get(result.path) ?? 0}
+                  {@const frecencyPts = Math.round(frecency * FRECENCY_WEIGHT)}
+                  {@const dirBonus = result.kind === "directory" ? "1.25x" : "1x"}
+                  {@const effective = Math.round(effectiveScore(result))}
+                  <span class="debug-breakdown" title={result.path}>
+                    <span class="debug-row"><b>{effective}</b></span>
+                    <span class="debug-row">name:{nameScore}</span>
+                    <span class="debug-row">frec:{frecencyPts}</span>
+                    <span class="debug-row">dir:{dirBonus}</span>
                   </span>
                 {:else if result.kind === "directory"}
                   <span class="result-kind">folder</span>
@@ -551,7 +559,7 @@
         <span class="shortcut"><kbd>↑</kbd><kbd>↓</kbd> Navigate</span>
         <span class="shortcut"><kbd>Enter</kbd> Open</span>
         <span class="shortcut"><kbd>Esc</kbd> Close</span>
-        <span class="shortcut"><kbd>Alt+D</kbd> {debugMode ? "Debug ON" : "Debug"}</span>
+        <span class="shortcut"><kbd>Alt+D</kbd> {settingsStore.quickOpenDebug ? "Debug ON" : "Debug"}</span>
       </div>
     </div>
   </div>
@@ -777,14 +785,25 @@
     color: var(--text-tertiary);
   }
 
-  .debug-score {
+  .debug-breakdown {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 1px;
     font-family: monospace;
-    font-size: 10px;
+    font-size: 9px;
+    color: var(--text-tertiary);
+    flex-shrink: 0;
+    line-height: 1.2;
   }
 
-  .debug-detail {
-    opacity: 0.6;
-    font-size: 9px;
+  .debug-breakdown b {
+    color: var(--text-primary);
+    font-size: 11px;
+  }
+
+  .debug-row {
+    white-space: nowrap;
   }
 
   .footer {

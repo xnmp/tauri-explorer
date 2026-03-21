@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/small-tiles-spacing: Reduce Spacing in Small Tiles Mode
+
+**Key takeaways:**
+- When tile sizes are controlled by CSS custom properties (`--tile-icon-size`, `--tile-min-col`), spacing (gap, padding) should also be parameterized rather than hardcoded. Use additional CSS custom properties (`--tile-gap`, `--tile-padding`) driven by the thumbnail size tier so that small tiles get a denser layout without affecting medium/large.
+
+---
+
 ## tauri-explorer-gmpb: Material Design File Icons
 
 **Key takeaways:**

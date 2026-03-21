@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/addressbar-folder-only: Address Bar Folders Only
+
+**Key takeaways:**
+- Address bar autocomplete is for navigation, which only targets directories. Filter to `e.kind === "directory"` in `fetchSuggestions()`. No need for sorting directories before files when files are excluded entirely.
+
+---
+
 ## fix/new-folder-tile-size: New Folder Sizing in Tiles
 
 **Key takeaways:**

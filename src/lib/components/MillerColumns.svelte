@@ -12,6 +12,7 @@
   import { settingsStore } from "$lib/state/settings.svelte";
   import { fetchDirectory } from "$lib/api/files";
   import FileIcon from "./FileIcon.svelte";
+  import { dragState } from "$lib/state/drag.svelte";
   import type { FileEntry } from "$lib/domain/file";
 
   interface Props {
@@ -98,6 +99,19 @@
     explorer.navigateTo(entry.path);
   }
 
+  function handleDragStart(event: DragEvent, entry: FileEntry): void {
+    if (!event.dataTransfer) return;
+    event.dataTransfer.setData("application/x-explorer-path", entry.path);
+    event.dataTransfer.setData("application/x-explorer-name", entry.name);
+    event.dataTransfer.setData("application/x-explorer-kind", entry.kind);
+    event.dataTransfer.effectAllowed = "all";
+    dragState.start({ path: entry.path, name: entry.name, kind: entry.kind });
+  }
+
+  function handleDragEnd(): void {
+    setTimeout(() => dragState.clear(), 0);
+  }
+
   // Resizable width
   const MILLER_WIDTH_KEY = "explorer-miller-width";
   const MIN_WIDTH = 120;
@@ -154,6 +168,9 @@
                 class="col-entry"
                 class:active={entry.path === column.activeChildPath}
                 onclick={() => handleClick(entry)}
+                draggable="true"
+                ondragstart={(e) => handleDragStart(e, entry)}
+                ondragend={handleDragEnd}
               >
                 <span class="col-icon">
                   <FileIcon {entry} size="small" />

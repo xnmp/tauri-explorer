@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## chore/pin-dolt-port: Dolt Port Race Condition
+
+**Key takeaways:**
+- When multiple hooks call `bd` in rapid succession (e.g. 17 merges back-to-back), each `bd` invocation may auto-start a new dolt server on a random port if the previous port is unreachable. This creates competing instances that deadlock on the database lock. Fix: pin `dolt.port` in `.beads/config.yaml` so every invocation connects to the same deterministic port.
+
+---
+
 ## chore/add-unit-test-hook: Pre-Commit Unit Tests
 
 **Key takeaways:**

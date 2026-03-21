@@ -12,6 +12,10 @@ export function getAffectedDirs(action: UndoAction): string[] {
       return [action.path.substring(0, action.path.lastIndexOf("/"))];
     case "move":
       return [action.originalDir, action.destPath.substring(0, action.destPath.lastIndexOf("/"))];
+    case "copy":
+      return [action.parentDir];
+    case "batch":
+      return action.actions.flatMap(getAffectedDirs);
     case "delete":
       return [action.parentDir];
   }
@@ -21,6 +25,8 @@ export function undoActionLabel(action: UndoAction): string {
   switch (action.type) {
     case "rename": return `Renamed ${action.oldName}`;
     case "move": return `Moved to ${action.destPath.split("/").pop()}`;
+    case "copy": return `Copied ${action.copiedPath.split("/").pop()}`;
+    case "batch": return action.label;
     case "delete": return `Deleted ${action.paths.length} item${action.paths.length > 1 ? "s" : ""}`;
   }
 }

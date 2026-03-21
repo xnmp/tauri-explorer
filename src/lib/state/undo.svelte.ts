@@ -7,7 +7,7 @@
  * The stack is global to provide a unified undo experience.
  */
 
-import { renameEntry, moveEntry, restoreFromTrash, deleteMultipleEntries } from "$lib/api/files";
+import { renameEntry, moveEntry, restoreFromTrash, deleteMultipleEntries, deleteEntry } from "$lib/api/files";
 import type { UndoAction } from "./types";
 
 function createUndoStore() {
@@ -84,6 +84,17 @@ async function executeUndo(
       return renameEntry(action.path, action.oldName);
     case "move":
       return moveEntry(action.destPath, action.originalDir);
+    case "copy":
+      // Undo a copy by trashing the copied file
+      return deleteEntry(action.copiedPath);
+    case "batch": {
+      // Undo all actions in reverse order
+      for (let i = action.actions.length - 1; i >= 0; i--) {
+        const result = await executeUndo(action.actions[i]);
+        if (!result.ok) return result;
+      }
+      return { ok: true };
+    }
     case "delete":
       return restoreFromTrash(action.paths);
     default: {
@@ -110,6 +121,18 @@ async function executeRedo(
       const currentPath = action.originalDir + "/" + fileName;
       const destDir = action.destPath.substring(0, action.destPath.lastIndexOf("/"));
       return moveEntry(currentPath, destDir);
+    }
+    case "copy": {
+      // Undo trashed the copy, so redo restores it
+      return restoreFromTrash([action.copiedPath]);
+    }
+    case "batch": {
+      // Redo all actions in original order
+      for (const a of action.actions) {
+        const result = await executeRedo(a);
+        if (!result.ok) return result;
+      }
+      return { ok: true };
     }
     case "delete": {
       // Undo restored from trash, so redo re-deletes

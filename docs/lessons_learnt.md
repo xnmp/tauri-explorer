@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/miller-double-filter: Don't Filter at Cache Level
+
+**Key takeaways:**
+- When a cache layer exists below a reactive derived filter, avoid filtering at the cache level. MillerColumns' `loadColumn` filtered to directories only before caching, then the `$derived` `filterEntries` filtered again. Removing the cache-level filter makes the cache truly raw and ensures all filtering is handled in one place (the reactive layer).
+
+---
+
 ## fix/miller-stale-folders: Miller Columns Cache Invalidation
 
 **Key takeaways:**

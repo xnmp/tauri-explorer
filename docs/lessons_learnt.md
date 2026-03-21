@@ -4,6 +4,15 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/conflict-dialog-display: Conflict Dialog Details Missing
+
+**Key takeaways:**
+- `PasteSource` stripped metadata (size/modified) from `FileEntry` when creating the source array. When extending data interfaces, update ALL callsites that construct them — not just the consumer.
+- Dates in `FileEntry.modified` are ISO strings — must format with `formatDate()` before display.
+- Directory size is 0 in listings — guard the size display with `> 0` to avoid showing "0 B".
+
+---
+
 ## fix/git-status-display: Git Indicators Not Showing
 
 **Key takeaways:**

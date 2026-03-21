@@ -14,6 +14,8 @@ import type { FileEntry } from "$lib/domain/file";
 export interface PasteSource {
   path: string;
   name: string;
+  size?: number;
+  modified?: string;
 }
 
 export interface PasteContext {
@@ -78,6 +80,8 @@ export async function pasteEntries(
           fileName: source.name,
           sourcePath: source.path,
           remaining,
+          sourceSize: source.size,
+          sourceModified: source.modified,
           destSize: destEntry?.size,
           destModified: destEntry?.modified,
         });

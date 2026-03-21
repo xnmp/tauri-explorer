@@ -504,7 +504,7 @@ const crossPaneCommands: Command[] = [
       const destPath = otherExplorer.state.currentPath;
       const dirResult = await fetchDirectory(destPath);
       const existingEntries = dirResult.ok ? [...dirResult.data.entries] : [];
-      const sources: PasteSource[] = selected.map((e) => ({ path: e.path, name: e.name }));
+      const sources: PasteSource[] = selected.map((e) => ({ path: e.path, name: e.name, size: e.size, modified: e.modified }));
 
       await pasteEntries(sources, false, {
         destPath,
@@ -534,7 +534,7 @@ const crossPaneCommands: Command[] = [
       const destPath = otherExplorer.state.currentPath;
       const dirResult = await fetchDirectory(destPath);
       const existingEntries = dirResult.ok ? [...dirResult.data.entries] : [];
-      const sources: PasteSource[] = selected.map((e) => ({ path: e.path, name: e.name }));
+      const sources: PasteSource[] = selected.map((e) => ({ path: e.path, name: e.name, size: e.size, modified: e.modified }));
 
       await pasteEntries(sources, true, {
         destPath,

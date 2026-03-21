@@ -8,6 +8,7 @@
   import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { dialogStore } from "$lib/state/dialogs.svelte";
   import ThemeSwitcher from "./ThemeSwitcher.svelte";
 
   // Search state
@@ -80,6 +81,18 @@
   </div>
 
   <ThemeSwitcher />
+
+  <button
+    class="toolbar-btn"
+    onclick={() => dialogStore.openSettings()}
+    title="Settings (Ctrl+,)"
+    aria-label="Settings"
+  >
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+      <path d="M6.5 1.5L6.8 3.1C6.3 3.3 5.8 3.6 5.4 4L3.9 3.3L2.4 5.7L3.7 6.7C3.6 7.1 3.6 7.5 3.6 7.9L3.6 8.1L2.4 9.1L3.9 11.5L5.4 10.8C5.8 11.2 6.3 11.5 6.8 11.7L7.1 13.3H9.5L9.8 11.7C10.3 11.5 10.8 11.2 11.2 10.8L12.7 11.5L14.2 9.1L12.9 8.1C13 7.7 13 7.3 13 6.9L13 6.7L14.2 5.7L12.7 3.3L11.2 4C10.8 3.6 10.3 3.3 9.8 3.1L9.5 1.5H6.5Z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/>
+      <circle cx="8" cy="7.4" r="2" stroke="currentColor" stroke-width="1.1"/>
+    </svg>
+  </button>
 
   {#if settingsStore.showWindowControls}
     <div class="window-controls">
@@ -221,6 +234,35 @@
   }
 
   .control-btn:focus-visible {
+    outline: 2px solid var(--focus-stroke-outer);
+    outline-offset: -2px;
+  }
+
+  /* Settings gear button — matches theme-button styling */
+  .toolbar-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: background var(--transition-fast);
+  }
+
+  .toolbar-btn:hover {
+    background: var(--subtle-fill-secondary);
+  }
+
+  .toolbar-btn:active {
+    transform: scale(0.95);
+  }
+
+  .toolbar-btn:focus-visible {
     outline: 2px solid var(--focus-stroke-outer);
     outline-offset: -2px;
   }

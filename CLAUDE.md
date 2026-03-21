@@ -25,6 +25,7 @@
 * If unsure how to do something that needs research, use the `research-scout` subagent to research the best ways to proceed.
 * All development happens on the `dev` branch. Create feature branches off `dev` and merge back to `dev`. Don't modify files directly on the `dev` branch. 
 * Every once in a while, use the `architecture-reviewer` subagent for design review. 
+* The explorer app has multiple views (List, Details, Tiles). When adding UI features, ensure that they get included into all three views. 
 
 ## For Each Issue
 * Create a Beads issue if none exists

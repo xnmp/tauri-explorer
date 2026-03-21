@@ -238,8 +238,8 @@
     {#if settingsStore.showGitStatus && !isRenaming}
       {@const gitStatus = gitStatusStore.getStatus(entry.name)}
       {#if gitStatus}
-        <span class="git-badge git-{gitStatus.toLowerCase()}" title="Git: {gitStatus}">
-          {gitStatus === "Modified" ? "M" : gitStatus === "Untracked" ? "U" : gitStatus === "Added" ? "A" : gitStatus === "Deleted" ? "D" : gitStatus === "Conflict" ? "!" : "?"}
+        <span class="git-indicator git-{gitStatus.toLowerCase()}" title="Git: {gitStatus}">
+          {gitStatus === "Modified" ? "M" : gitStatus === "Untracked" ? "U" : gitStatus === "Added" ? "A" : gitStatus === "Deleted" ? "D" : gitStatus === "Conflict" ? "!" : "R"}
         </span>
       {/if}
     {/if}
@@ -437,49 +437,25 @@
     opacity: 0.3;
   }
 
-  /* Git status badge */
-  .git-badge {
+  /* Git status indicator — subtle letter with no background */
+  .git-indicator {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 16px;
-    height: 16px;
-    font-size: 10px;
-    font-weight: 700;
-    border-radius: 3px;
+    width: 14px;
+    font-size: 11px;
+    font-weight: 600;
     flex-shrink: 0;
     line-height: 1;
+    opacity: 0.85;
   }
 
-  .git-modified {
-    color: #e5a100;
-    background: rgba(229, 161, 0, 0.12);
-  }
-
-  .git-untracked {
-    color: #22c55e;
-    background: rgba(34, 197, 94, 0.12);
-  }
-
-  .git-added {
-    color: #22c55e;
-    background: rgba(34, 197, 94, 0.12);
-  }
-
-  .git-deleted {
-    color: #ef4444;
-    background: rgba(239, 68, 68, 0.12);
-  }
-
-  .git-conflict {
-    color: #ef4444;
-    background: rgba(239, 68, 68, 0.2);
-  }
-
-  .git-renamed {
-    color: #3b82f6;
-    background: rgba(59, 130, 246, 0.12);
-  }
+  .git-modified { color: #d4a017; }
+  .git-untracked { color: #22c55e; }
+  .git-added { color: #22c55e; }
+  .git-deleted { color: #ef4444; }
+  .git-conflict { color: #ef4444; font-weight: 800; }
+  .git-renamed { color: #60a5fa; }
 
   /* Symlink badge */
   .symlink-badge {

@@ -503,9 +503,18 @@
                   {@const effective = Math.round(effectiveScore(result))}
                   <span class="debug-breakdown" title={result.path}>
                     <span class="debug-row"><b>{effective}</b></span>
-                    <span class="debug-row">fuzzy:{baseScore}</span>
-                    <span class="debug-row">name:{nameScore}</span>
-                    <span class="debug-row">frec:{frecencyPts}</span>
+                    {#if baseScore > 0}
+                      <span class="debug-row">fuzzy:{baseScore}</span>
+                    {/if}
+                    {#if nameScore > 0}
+                      <span class="debug-row">name:{nameScore}</span>
+                    {/if}
+                    {#if frecencyPts > 0}
+                      <span class="debug-row">frec:{frecencyPts}</span>
+                    {/if}
+                    {#if baseScore === 0 && frecencyPts === 0 && nameScore === 0}
+                      <span class="debug-row">recent</span>
+                    {/if}
                     {#if dirMult !== 1}<span class="debug-row">dir:×{dirMult}</span>{/if}
                   </span>
                 {:else if result.kind === "directory"}

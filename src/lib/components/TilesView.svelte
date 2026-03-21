@@ -145,7 +145,7 @@
   }
 </script>
 
-<div class="tiles-view file-rows" style:--tile-icon-size="{tileConfig.displaySize}px" style:--tile-min-col="{tileConfig.gridMinWidth}px" style:--tile-icon-scale={tileConfig.displaySize / 64}>
+<div class="tiles-view file-rows" style:--tile-icon-size="{tileConfig.displaySize}px" style:--tile-min-col="{tileConfig.gridMinWidth}px" style:--tile-icon-scale={tileConfig.displaySize / 64} style:--tile-gap="{effectiveThumbnailSize === 'small' ? 2 : 6}px" style:--tile-padding="{effectiveThumbnailSize === 'small' ? '6px 4px 6px' : '12px 8px 10px'}">
   {#if explorer.isCreatingFolder}
     <InlineNewFolder {explorer} variant="tiles" />
   {/if}
@@ -203,8 +203,8 @@
     grid-template-columns: repeat(auto-fill, minmax(var(--tile-min-col, 108px), 1fr));
     grid-auto-rows: min-content;
     align-content: start;
-    gap: 6px;
-    padding: 12px;
+    gap: var(--tile-gap, 6px);
+    padding: 8px;
     overflow-y: auto;
     flex: 1;
   }
@@ -217,8 +217,8 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 6px;
-    padding: 12px 8px 10px;
+    gap: 4px;
+    padding: var(--tile-padding, 12px 8px 10px);
     background: transparent;
     border: 1px solid transparent;
     border-bottom-width: var(--selection-indicator-width);

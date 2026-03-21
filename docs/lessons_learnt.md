@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/extract-error-recursion: extractError Infinite Recursion
+
+**Key takeaways:**
+- Error extraction functions must have a safe fallback that doesn't recurse. The `extractError` function's fallback case called itself instead of `String(err)`, causing stack overflow for any non-structured error. Always ensure recursive functions have a base case that terminates.
+
+---
+
 ## fix/remove-system-bookmarks: Removable System Folders
 
 **Key takeaways:**

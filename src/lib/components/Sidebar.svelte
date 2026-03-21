@@ -201,7 +201,7 @@
     const scoreMap = frecencyStore.getScoreMap();
 
     return frecencyStore.entries
-      .filter((e) => e.path !== homeDir && !bookmarkedPaths.has(e.path) && !systemPaths.has(e.path))
+      .filter((e) => e.path !== homeDir && e.path !== "/home" && e.path !== "/" && !bookmarkedPaths.has(e.path) && !systemPaths.has(e.path))
       .map((e) => ({ path: e.path, name: e.path.split("/").pop() || e.path, score: scoreMap.get(e.path) ?? 0 }))
       .sort((a, b) => b.score - a.score)
       .slice(0, settingsStore.recentItemsCount);

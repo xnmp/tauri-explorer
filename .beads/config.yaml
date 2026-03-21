@@ -38,6 +38,11 @@
 
 # JSONL backup (periodic export for off-machine recovery)
 # Auto-enabled when a git remote exists. Override explicitly:
+# Pin dolt server port to avoid race conditions when multiple hooks
+# call bd in rapid succession (e.g. during merge)
+dolt:
+  port: 3307
+
 backup:
   enabled: false
 #   interval: 15m      # Minimum time between auto-exports

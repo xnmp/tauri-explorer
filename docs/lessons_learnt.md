@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/streaming-dir-listing: Parallel Directory Scanning with jwalk
+
+**Key takeaways:**
+- `fs::read_dir` + sequential `fs::metadata` calls are the bottleneck for large directories (100K+ files). `jwalk::WalkDir` with `max_depth(1)` parallelizes the `stat()` calls across a rayon thread pool, significantly reducing scan time. The sort still requires all entries, but the I/O-bound scan phase benefits most from parallelism. Extracting the scan into a shared `scan_directory_parallel` function also deduplicates the logic between `list_directory` and `start_streaming_directory`.
+
+---
+
 ## fix/explorer-facade-god-object: Explorer Facade Cleanup
 
 **Key takeaways:**

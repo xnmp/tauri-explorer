@@ -89,7 +89,6 @@
     const result = await fetchDirectory(path);
     if (result.ok) {
       const entries = [...result.data.entries]
-        .filter((e: FileEntry) => e.kind === "directory")
         .sort((a: FileEntry, b: FileEntry) => a.name.localeCompare(b.name));
       rawCache.set(path, entries);
       rawColumns = rawColumns.map((col) =>

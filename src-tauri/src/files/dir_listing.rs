@@ -70,36 +70,7 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
         return Err(AppError::InvalidPath(format!("Not a directory: {}", path)));
     }
 
-    let mut entries = Vec::new();
-
-    let read_dir = fs::read_dir(&dir_path).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::PermissionDenied {
-            log::warn!("Permission denied listing directory");
-            AppError::PermissionDenied(path.clone())
-        } else {
-            log::error!("IO error listing directory: {}", e);
-            AppError::Io(e)
-        }
-    })?;
-
-    for entry_result in read_dir {
-        let entry = match entry_result {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        let metadata = match fs::metadata(entry.path()) {
-            Ok(m) => m,
-            Err(_) => match entry.metadata() {
-                Ok(m) => m,
-                Err(_) => continue,
-            },
-        };
-
-        entries.push(metadata_to_entry(&entry.path(), &metadata));
-    }
-
-    sort_entries(&mut entries);
+    let entries = scan_directory_parallel(&dir_path);
 
     let elapsed = t_start.elapsed();
     if elapsed.as_millis() > 100 {
@@ -163,8 +134,34 @@ pub struct DirectoryEntriesEvent {
 /// Registry for active directory listings
 static LISTINGS: crate::task_registry::TaskRegistry = crate::task_registry::TaskRegistry::new();
 
+/// Scan a directory using jwalk for parallel metadata reading.
+/// Returns entries sorted (directories first, then by name).
+fn scan_directory_parallel(dir_path: &PathBuf) -> Vec<FileEntry> {
+    let mut entries: Vec<FileEntry> = jwalk::WalkDir::new(dir_path)
+        .max_depth(1)
+        .skip_hidden(false)
+        .into_iter()
+        .filter_map(|result| {
+            let dir_entry = result.ok()?;
+            // Skip the root directory itself
+            if dir_entry.depth() == 0 {
+                return None;
+            }
+            let path = dir_entry.path();
+            let metadata = fs::metadata(&path)
+                .or_else(|_| dir_entry.metadata().map_err(|e| std::io::Error::other(e)))
+                .ok()?;
+            Some(metadata_to_entry(&path, &metadata))
+        })
+        .collect();
+
+    sort_entries(&mut entries);
+    entries
+}
+
 /// Start streaming directory listing.
 /// Returns first batch immediately and emits remaining entries via events.
+/// Uses jwalk for parallel metadata reading to avoid blocking on large directories.
 #[tauri::command]
 pub async fn start_streaming_directory(
     app: AppHandle,
@@ -181,46 +178,17 @@ pub async fn start_streaming_directory(
         return Err(AppError::InvalidPath(format!("Not a directory: {}", path)));
     }
 
-    let read_dir = fs::read_dir(&dir_path).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::PermissionDenied {
-            AppError::PermissionDenied(path.clone())
-        } else {
-            AppError::Io(e)
-        }
-    })?;
-
     let t_scan_start = std::time::Instant::now();
-    let mut all_entries: Vec<FileEntry> = Vec::new();
-
-    for entry_result in read_dir {
-        let entry = match entry_result {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        let metadata = match fs::metadata(entry.path()) {
-            Ok(m) => m,
-            Err(_) => match entry.metadata() {
-                Ok(m) => m,
-                Err(_) => continue,
-            },
-        };
-
-        all_entries.push(metadata_to_entry(&entry.path(), &metadata));
-    }
+    let mut all_entries = scan_directory_parallel(&dir_path);
     let t_scan_end = std::time::Instant::now();
 
-    sort_entries(&mut all_entries);
-
-    let t_sort_end = std::time::Instant::now();
     let total_count = all_entries.len();
     #[cfg(debug_assertions)]
     eprintln!(
-        "[Perf] dir scan '{}': {} entries, scan={:?}, sort={:?}",
+        "[Perf] dir scan '{}': {} entries, scan+sort={:?}",
         path,
         total_count,
         t_scan_end - t_scan_start,
-        t_sort_end - t_scan_end,
     );
 
     if total_count <= batch_size {

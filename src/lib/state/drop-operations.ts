@@ -30,6 +30,27 @@ export function getDropSourcePath(dataTransfer: DataTransfer): string | null {
 }
 
 /**
+ * Extract all source paths from a drop event (supports multi-file drag).
+ * Falls back to single path if multi-paths data is not available.
+ */
+export function getDropSourcePaths(dataTransfer: DataTransfer): string[] {
+  const multiPaths = dataTransfer.getData("application/x-explorer-paths");
+  if (multiPaths) {
+    try {
+      const parsed = JSON.parse(multiPaths);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    } catch { /* ignore parse errors */ }
+  }
+  // Check dragState for multi-paths
+  const crossWindow = dragState.readCrossWindow();
+  if (crossWindow?.paths && crossWindow.paths.length > 0) return crossWindow.paths;
+
+  // Fallback to single path
+  const single = getDropSourcePath(dataTransfer);
+  return single ? [single] : [];
+}
+
+/**
  * Handle dropping a file/folder onto a target directory.
  * Implements: conflict detection, conflict resolution, copy/move dispatch,
  * undo tracking, toast notifications, and broadcastFileChange.

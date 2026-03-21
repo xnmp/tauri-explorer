@@ -9,7 +9,7 @@
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { openFile, openImageWithSiblings } from "$lib/api/files";
   import { dragState } from "$lib/state/drag.svelte";
-  import { getDropSourcePath, handleBackgroundDrop } from "$lib/state/drop-operations";
+  import { getDropSourcePaths, handleBackgroundDrop } from "$lib/state/drop-operations";
   import { useMarqueeSelection } from "$lib/composables/use-marquee-selection.svelte";
   import { useTypeAhead } from "$lib/composables/use-type-ahead.svelte";
   import { isImageFile } from "$lib/domain/file-types";
@@ -222,22 +222,28 @@
 
     if (!event.dataTransfer) return;
 
-    const sourcePath = getDropSourcePath(event.dataTransfer);
-    if (!sourcePath) return;
+    const sourcePaths = getDropSourcePaths(event.dataTransfer);
+    if (sourcePaths.length === 0) return;
 
     const currentPath = explorer.currentPath;
-    const sourceDir = sourcePath.substring(0, sourcePath.lastIndexOf("/"));
-    if (sourceDir === currentPath) return;
+    // Filter out sources already in this directory
+    const validPaths = sourcePaths.filter((p) => {
+      const sourceDir = p.substring(0, p.lastIndexOf("/"));
+      return sourceDir !== currentPath;
+    });
+    if (validPaths.length === 0) return;
 
     event.preventDefault();
 
     const existingNames = new Set(explorer.displayEntries.map((e) => e.name));
-    await handleBackgroundDrop(sourcePath, currentPath, existingNames, {
-      onRefresh: () => {
-        if (paneNav) paneNav.refreshAllPanes();
-        else explorer.refresh({ silent: true });
-      },
-    });
+    for (const sourcePath of validPaths) {
+      await handleBackgroundDrop(sourcePath, currentPath, existingNames, {
+        onRefresh: () => {
+          if (paneNav) paneNav.refreshAllPanes();
+          else explorer.refresh({ silent: true });
+        },
+      });
+    }
   }
 </script>
 

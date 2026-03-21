@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/multi-file-drag-drop: Multi-File Drag and Drop
+
+**Key takeaways:**
+- `DragData` and `dataTransfer` only stored a single path. When dragging from a multi-selection, all selected paths must be serialized (via `application/x-explorer-paths` JSON and `DragData.paths`). Drop handlers must iterate over all paths rather than operating on a single source.
+
+---
+
 ## fix/addressbar-responsive-icons: Responsive Nav Icons
 
 **Key takeaways:**

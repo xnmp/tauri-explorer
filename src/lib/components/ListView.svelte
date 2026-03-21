@@ -9,7 +9,7 @@
   import { clipboardStore } from "$lib/state/clipboard.svelte";
   import { dragState } from "$lib/state/drag.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
-  import { getDropSourcePath, handleFileDrop } from "$lib/state/drop-operations";
+  import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
   import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
   import { getFileIconColor } from "$lib/domain/file-types";
   import FileIcon from "./FileIcon.svelte";
@@ -57,11 +57,18 @@
 
   function handleItemDragStart(event: DragEvent, entry: FileEntry): void {
     if (!event.dataTransfer) return;
+    const selected = explorer.getSelectedEntries();
+    const isMulti = selected.length > 1 && explorer.isSelected(entry);
+    const paths = isMulti ? selected.map((e) => e.path) : [entry.path];
+
     event.dataTransfer.setData("application/x-explorer-path", entry.path);
     event.dataTransfer.setData("application/x-explorer-name", entry.name);
     event.dataTransfer.setData("application/x-explorer-kind", entry.kind);
+    if (isMulti) {
+      event.dataTransfer.setData("application/x-explorer-paths", JSON.stringify(paths));
+    }
     event.dataTransfer.effectAllowed = "all";
-    dragState.start({ path: entry.path, name: entry.name, kind: entry.kind });
+    dragState.start({ path: entry.path, name: entry.name, kind: entry.kind, paths: isMulti ? paths : undefined });
   }
 
   function handleItemDragOver(event: DragEvent, entry: FileEntry): void {
@@ -85,13 +92,16 @@
     copyDropTargets[entry.path] = false;
     if (entry.kind !== "directory" || !event.dataTransfer) return;
 
-    const sourcePath = getDropSourcePath(event.dataTransfer);
-    if (!sourcePath || sourcePath === entry.path) return;
-    if (entry.path.startsWith(sourcePath + "/")) return;
+    const sourcePaths = getDropSourcePaths(event.dataTransfer);
+    if (sourcePaths.length === 0) return;
 
-    await handleFileDrop(sourcePath, entry.path, event.ctrlKey, {
-      onRefresh: () => paneNav?.refreshAllPanes(),
-    });
+    for (const sourcePath of sourcePaths) {
+      if (sourcePath === entry.path) continue;
+      if (entry.path.startsWith(sourcePath + "/")) continue;
+      await handleFileDrop(sourcePath, entry.path, event.ctrlKey, {
+        onRefresh: () => paneNav?.refreshAllPanes(),
+      });
+    }
   }
 
   const totalItems = $derived(explorer.displayEntries.length + (explorer.isCreatingFolder ? 1 : 0));

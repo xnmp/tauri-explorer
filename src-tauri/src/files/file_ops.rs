@@ -17,7 +17,7 @@ pub fn get_home_directory() -> Result<String, AppError> {
 
 /// Create a new directory.
 #[tauri::command]
-pub fn create_directory(parent_path: String, name: String) -> Result<FileEntry, AppError> {
+pub async fn create_directory(parent_path: String, name: String) -> Result<FileEntry, AppError> {
     if name.is_empty() {
         return Err(AppError::InvalidPath(
             "Directory name cannot be empty".to_string(),
@@ -48,7 +48,7 @@ pub fn create_directory(parent_path: String, name: String) -> Result<FileEntry, 
 
 /// Rename a file or directory.
 #[tauri::command]
-pub fn rename_entry(path: String, new_name: String) -> Result<FileEntry, AppError> {
+pub async fn rename_entry(path: String, new_name: String) -> Result<FileEntry, AppError> {
     if new_name.is_empty() {
         return Err(AppError::InvalidPath(
             "New name cannot be empty".to_string(),
@@ -385,10 +385,10 @@ mod tests {
     #[test]
     fn test_create_directory() {
         let dir = tempdir().unwrap();
-        let result = create_directory(
+        let result = block_on(create_directory(
             dir.path().to_string_lossy().to_string(),
             "new_folder".to_string(),
-        )
+        ))
         .unwrap();
 
         assert_eq!(result.name, "new_folder");
@@ -403,7 +403,7 @@ mod tests {
         File::create(&file_path).unwrap();
 
         let result =
-            rename_entry(file_path.to_string_lossy().to_string(), "new_name.txt".to_string())
+            block_on(rename_entry(file_path.to_string_lossy().to_string(), "new_name.txt".to_string()))
                 .unwrap();
 
         assert_eq!(result.name, "new_name.txt");

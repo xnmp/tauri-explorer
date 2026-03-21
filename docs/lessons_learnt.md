@@ -11,6 +11,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/remaining-sync-commands: Audit All Commands After Async Conversion
+
+**Key takeaways:**
+- When converting commands to async, audit the entire module — don't just convert the ones listed in a ticket. `create_directory` and `rename_entry` were missed in the initial pass because they do "small" I/O, but on network filesystems even `fs::create_dir` or `fs::rename` can block for seconds.
+
+---
+
 ## fix/streaming-dir-listing: Parallel Directory Scanning with jwalk
 
 **Key takeaways:**

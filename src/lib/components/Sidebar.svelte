@@ -9,6 +9,7 @@
   import { getHomeDirectory } from "$lib/api/files";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { dragState } from "$lib/state/drag.svelte";
+  import { frecencyStore } from "$lib/state/frecency.svelte";
 
   // Use pane navigation context if available, fallback to active explorer
   const paneNav = getPaneNavigationContext();
@@ -181,7 +182,19 @@
   ];
 
   let quickAccessExpanded = $state(true);
+  let recentExpanded = $state(true);
   let thisPcExpanded = $state(true);
+
+  // Recent locations from frecency store (top 8 most recently visited directories)
+  const recentLocations = $derived(
+    frecencyStore.entries
+      .filter((e) => e.path !== homeDir) // exclude home dir (already has button)
+      .slice(0, 8)
+      .map((e) => ({
+        name: e.path.split("/").pop() || e.path,
+        path: e.path,
+      }))
+  );
 
   // Note: DnD handlers for Quick Access bookmarking are attached as native
   // listeners in onMount (see nativeDragEnter/Over/Leave/Drop) to bypass
@@ -406,6 +419,37 @@
       </div>
     {/if}
   </div>
+
+  {#if recentLocations.length > 0}
+    <div class="divider"></div>
+
+    <!-- Recent locations -->
+    <div class="nav-section">
+      <button
+        class="section-header"
+        onclick={() => recentExpanded = !recentExpanded}
+        aria-expanded={recentExpanded}
+      >
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" class="chevron" class:expanded={recentExpanded}>
+          <path d="M4 3L7 6L4 9" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span>Recent</span>
+      </button>
+
+      {#if recentExpanded}
+        <div class="section-content">
+          {#each recentLocations as loc (loc.path)}
+            <button class="nav-item" onclick={() => navigateTo(loc.path)} title={loc.path}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
+                <path d="M8 1.5A6.5 6.5 0 1 0 14.5 8 6.5 6.5 0 0 0 8 1.5ZM8 4V8L10.5 10" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <span>{loc.name}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
 
   <div class="divider"></div>
 

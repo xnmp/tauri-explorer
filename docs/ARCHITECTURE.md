@@ -51,6 +51,7 @@
 │  │  ├── thumbnails.rs (image thumbnail cache)      │    │
 │  │  ├── clipboard.rs (OS clipboard)                │    │
 │  │  ├── archive.rs (zip compress/extract)          │    │
+│  │  ├── nano_banana.rs (AI image editing via gemini)│    │
 │  │  ├── wallpaper.rs (set desktop wallpaper)       │    │
 │  │  ├── config.rs (JSON config persistence)        │    │
 │  │  ├── error.rs (unified AppError type)           │    │

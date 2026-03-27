@@ -10,6 +10,7 @@ mod files;
 mod search;
 pub mod task_registry;
 mod thumbnails;
+mod nano_banana;
 mod wallpaper;
 
 use std::path::PathBuf;
@@ -225,6 +226,8 @@ pub fn run(launch_dir: Option<String>) {
             files::git_status::get_git_status,
             // Wallpaper
             wallpaper::set_as_wallpaper,
+            // Nano Banana (AI image editing)
+            nano_banana::start_nano_banana_job,
         ])
         .setup(move |app| {
             let t_setup = std::time::Instant::now();

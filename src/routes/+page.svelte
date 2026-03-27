@@ -34,6 +34,10 @@
   import WorkspaceDialog from "$lib/components/WorkspaceDialog.svelte";
   import BulkRenameDialog from "$lib/components/BulkRenameDialog.svelte";
   import ConflictDialog from "$lib/components/ConflictDialog.svelte";
+  import NanoBananaDialog from "$lib/components/NanoBananaDialog.svelte";
+  import JobsPanel from "$lib/components/JobsPanel.svelte";
+  import { jobsStore } from "$lib/state/jobs.svelte";
+  import { toastStore } from "$lib/state/toast.svelte";
   import StatusBar from "$lib/components/StatusBar.svelte";
   import AnimatedBackground from "$lib/components/AnimatedBackground.svelte";
 
@@ -108,6 +112,13 @@
     // Skip if focus is in an input field (except for special cases)
     const target = event.target as HTMLElement;
     const isInputField = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+
+    // Ctrl+J: Open jobs panel (hardcoded)
+    if (event.key === "j" && isModifier) {
+      event.preventDefault();
+      dialogStore.openJobsPanel();
+      return;
+    }
 
     // Ctrl+,: Open settings (hardcoded, not customizable)
     if (event.key === "," && isModifier) {
@@ -249,6 +260,22 @@
       }
     });
 
+    // Listen for Nano Banana completion/error events
+    let unlistenNbComplete: UnlistenFn | undefined;
+    let unlistenNbError: UnlistenFn | undefined;
+    listen<{ jobId: number; outputPath: string }>("nano-banana-complete", (event) => {
+      const { jobId, outputPath } = event.payload;
+      jobsStore.completeJob(jobId, outputPath);
+      const fileName = outputPath.split("/").pop() ?? "image";
+      toastStore.show(`Nano Banana complete: ${fileName}`, "success");
+      refreshAllPanes();
+    }).then((fn) => { unlistenNbComplete = fn; });
+    listen<{ jobId: number; error: string }>("nano-banana-error", (event) => {
+      const { jobId, error } = event.payload;
+      jobsStore.failJob(jobId, error);
+      toastStore.error(`Nano Banana failed: ${error.slice(0, 100)}`);
+    }).then((fn) => { unlistenNbError = fn; });
+
     // Listen for filesystem watcher events from backend (auto-refresh)
     let unlistenWatcher: UnlistenFn | undefined;
     listen<{ path: string }>("directory-changed", (event) => {
@@ -302,6 +329,8 @@
       externalDrop.cleanup();
       cleanupFileChangeListener();
       unlistenWatcher?.();
+      unlistenNbComplete?.();
+      unlistenNbError?.();
     };
   });
 </script>
@@ -343,6 +372,15 @@
   entries={dialogStore.bulkRenameEntries}
   onClose={() => dialogStore.closeBulkRename()}
   onComplete={() => refreshAllPanes()}
+/>
+<NanoBananaDialog
+  open={dialogStore.isNanoBananaOpen}
+  sourcePath={dialogStore.nanoBananaSourcePath}
+  onClose={() => dialogStore.closeNanoBanana()}
+/>
+<JobsPanel
+  open={dialogStore.isJobsPanelOpen}
+  onClose={() => dialogStore.closeJobsPanel()}
 />
 <ProgressDialog />
 <ConflictDialog />

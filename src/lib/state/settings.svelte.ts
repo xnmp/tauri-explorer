@@ -70,6 +70,7 @@ export interface Settings {
   millerLayers: number; // 0-3, number of ancestor columns in miller view
   millerLayersPreferred: number; // 1-3, remembered layer count for toggle
   quickOpenDebug: boolean; // show score breakdown in QuickOpen results
+  geminiApiKey: string; // Gemini API key for Nano Banana image editing
 }
 
 const MIN_ZOOM = 50;
@@ -108,6 +109,7 @@ const DEFAULT_SETTINGS: Settings = {
   millerLayers: 0,
   millerLayersPreferred: 2,
   quickOpenDebug: false,
+  geminiApiKey: "",
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -293,6 +295,12 @@ function createSettingsStore() {
     },
     toggleQuickOpenDebug(): void {
       update({ quickOpenDebug: !settings.quickOpenDebug });
+    },
+    get geminiApiKey() {
+      return settings.geminiApiKey;
+    },
+    setGeminiApiKey(key: string): void {
+      update({ geminiApiKey: key });
     },
     toggleMillerColumns(): void {
       const on = settings.millerLayers > 0;

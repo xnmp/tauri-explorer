@@ -35,7 +35,9 @@ pub async fn start_nano_banana_job(
     source_path: String,
     prompt: String,
     output_dir: String,
+    output_filename: String,
     api_key: String,
+    model: String,
 ) -> Result<u64, AppError> {
     let source = PathBuf::from(&source_path);
     if !source.exists() {
@@ -59,7 +61,9 @@ pub async fn start_nano_banana_job(
     let job_id = NEXT_JOB_ID.fetch_add(1, Ordering::Relaxed);
 
     tokio::spawn(async move {
-        let result = run_gemini_edit(&source_path, &prompt, &output_dir, &api_key).await;
+        let result =
+            run_gemini_edit(&source_path, &prompt, &output_dir, &output_filename, &api_key, &model)
+                .await;
         match result {
             Ok(output_path) => {
                 let _ = app.emit(
@@ -89,21 +93,30 @@ async fn run_gemini_edit(
     source_path: &str,
     prompt: &str,
     output_dir: &str,
+    output_filename: &str,
     api_key: &str,
+    model: &str,
 ) -> Result<String, AppError> {
-    let edit_command = format!("/edit {} '{}'", source_path, prompt.replace('\'', "'\\''"));
-
-    log::info!(
-        "Starting Nano Banana: gemini --yolo \"{}\" in {}",
-        edit_command,
-        output_dir
+    let output_path = PathBuf::from(output_dir).join(output_filename);
+    let edit_command = format!(
+        "/edit {} '{}' --output {}",
+        source_path,
+        prompt.replace('\'', "'\\''"),
+        output_path.to_string_lossy()
     );
 
-    let output = tokio::process::Command::new("gemini")
+    log::info!(
+        "Starting Nano Banana (model={}): gemini --yolo \"{}\"",
+        model,
+        edit_command,
+    );
+
+    let result = tokio::process::Command::new("gemini")
         .arg("--yolo")
         .arg(&edit_command)
         .current_dir(output_dir)
         .env("GEMINI_API_KEY", api_key)
+        .env("NANOBANANA_MODEL", model)
         .output()
         .await
         .map_err(|e| {
@@ -113,12 +126,12 @@ async fn run_gemini_edit(
             ))
         })?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
+    if !result.status.success() {
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        let stdout = String::from_utf8_lossy(&result.stdout);
         return Err(AppError::Other(format!(
             "gemini exited with {}: {}{}",
-            output.status,
+            result.status,
             stderr,
             if stdout.is_empty() {
                 String::new()
@@ -128,28 +141,30 @@ async fn run_gemini_edit(
         )));
     }
 
-    // Scan nanobanana-output/ for the newest file
-    let nb_output_dir = PathBuf::from(output_dir).join("nanobanana-output");
-    if !nb_output_dir.exists() {
-        return Err(AppError::Other(
-            "nanobanana-output directory was not created by gemini".to_string(),
-        ));
+    // Check if the output file was created
+    if output_path.exists() {
+        return Ok(output_path.to_string_lossy().to_string());
     }
 
-    let newest = find_newest_file(&nb_output_dir)?;
-    match newest {
-        Some(path) => Ok(path.to_string_lossy().to_string()),
-        None => Err(AppError::Other(
-            "No output file found in nanobanana-output/".to_string(),
-        )),
+    // Fallback: scan nanobanana-output/ in case the CLI ignores --output
+    let nb_output_dir = PathBuf::from(output_dir).join("nanobanana-output");
+    if nb_output_dir.exists() {
+        if let Some(path) = find_newest_file(&nb_output_dir)? {
+            return Ok(path.to_string_lossy().to_string());
+        }
     }
+
+    Err(AppError::Other(format!(
+        "Output file not found: {}",
+        output_path.to_string_lossy()
+    )))
 }
 
 fn find_newest_file(dir: &PathBuf) -> Result<Option<PathBuf>, AppError> {
     let mut newest: Option<(PathBuf, std::time::SystemTime)> = None;
 
     for entry in std::fs::read_dir(dir).map_err(|e| {
-        AppError::Other(format!("Failed to read nanobanana-output: {}", e))
+        AppError::Other(format!("Failed to read output directory: {}", e))
     })? {
         let entry = entry.map_err(|e| AppError::Other(e.to_string()))?;
         let metadata = entry.metadata().map_err(|e| AppError::Other(e.to_string()))?;

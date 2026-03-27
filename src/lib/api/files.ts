@@ -794,14 +794,18 @@ export async function startNanoBananaJob(
   sourcePath: string,
   prompt: string,
   outputDir: string,
-  apiKey: string
+  outputFilename: string,
+  apiKey: string,
+  model: string,
 ): Promise<ApiResult<number>> {
   try {
     const jobId = await invoke<number>("start_nano_banana_job", {
       sourcePath,
       prompt,
       outputDir,
+      outputFilename,
       apiKey,
+      model,
     });
     return { ok: true, data: jobId };
   } catch (err) {

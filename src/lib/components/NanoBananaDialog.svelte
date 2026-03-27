@@ -17,7 +17,15 @@
 
   let { open, sourcePath, onClose }: Props = $props();
 
+  type NanoBananaModel = "nanobanana-pro" | "flash-image";
+  const MODEL_OPTIONS: { id: NanoBananaModel; label: string }[] = [
+    { id: "nanobanana-pro", label: "Nano Banana Pro" },
+    { id: "flash-image", label: "Flash Image" },
+  ];
+
   let prompt = $state("");
+  let outputFilename = $state("");
+  let model = $state<NanoBananaModel>("nanobanana-pro");
   let submitting = $state(false);
   let inputRef = $state<HTMLInputElement | null>(null);
 
@@ -25,17 +33,25 @@
   const outputDir = $derived(sourcePath.substring(0, sourcePath.lastIndexOf("/")));
   const hasApiKey = $derived(!!settingsStore.geminiApiKey);
 
+  /** Derive default output name: photo.png → photo_edit.png */
+  const defaultOutputFilename = $derived.by(() => {
+    const dot = fileName.lastIndexOf(".");
+    if (dot <= 0) return fileName + "_edit.png";
+    return fileName.slice(0, dot) + "_edit" + fileName.slice(dot);
+  });
+
   $effect(() => {
     if (open) {
       prompt = "";
+      outputFilename = defaultOutputFilename;
+      model = "nanobanana-pro";
       submitting = false;
-      // Focus input after dialog renders
       requestAnimationFrame(() => inputRef?.focus());
     }
   });
 
   async function handleGenerate(): Promise<void> {
-    if (!prompt.trim() || submitting) return;
+    if (!prompt.trim() || !outputFilename.trim() || submitting) return;
 
     if (!hasApiKey) return;
 
@@ -44,7 +60,9 @@
       sourcePath,
       prompt.trim(),
       outputDir,
-      settingsStore.geminiApiKey
+      outputFilename.trim(),
+      settingsStore.geminiApiKey,
+      model,
     );
 
     if (result.ok) {
@@ -119,6 +137,20 @@
           </div>
         {:else}
           <div class="prompt-field">
+            <label for="nano-banana-model" class="prompt-label">Model</label>
+            <select
+              id="nano-banana-model"
+              class="model-select"
+              bind:value={model}
+              disabled={submitting}
+            >
+              {#each MODEL_OPTIONS as opt (opt.id)}
+                <option value={opt.id}>{opt.label}</option>
+              {/each}
+            </select>
+          </div>
+
+          <div class="prompt-field">
             <label for="nano-banana-prompt" class="prompt-label">Edit prompt</label>
             <input
               id="nano-banana-prompt"
@@ -131,6 +163,17 @@
             />
           </div>
 
+          <div class="prompt-field">
+            <label for="nano-banana-output" class="prompt-label">Output filename</label>
+            <input
+              id="nano-banana-output"
+              type="text"
+              class="prompt-input"
+              bind:value={outputFilename}
+              disabled={submitting}
+            />
+          </div>
+
           <div class="dialog-actions">
             <button class="btn btn-secondary" onclick={onClose} disabled={submitting}>
               Cancel
@@ -138,7 +181,7 @@
             <button
               class="btn btn-primary"
               onclick={handleGenerate}
-              disabled={!prompt.trim() || submitting}
+              disabled={!prompt.trim() || !outputFilename.trim() || submitting}
             >
               {submitting ? "Starting..." : "Generate"}
             </button>
@@ -297,6 +340,37 @@
     font-size: 13px;
     font-weight: 500;
     color: var(--text-secondary);
+  }
+
+  .model-select {
+    appearance: none;
+    -webkit-appearance: none;
+    padding: 10px 32px 10px 14px;
+    background: var(--control-fill);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 5l3 3 3-3' fill='none' stroke='%238a95b8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    border: 1px solid var(--control-stroke);
+    border-radius: var(--radius-sm);
+    font-family: inherit;
+    font-size: 14px;
+    color: var(--text-primary);
+    cursor: pointer;
+    outline: none;
+    transition: border-color var(--transition-fast);
+  }
+
+  .model-select:focus {
+    border-color: var(--accent);
+  }
+
+  .model-select:disabled {
+    opacity: 0.6;
+  }
+
+  .model-select option {
+    background: var(--background-solid);
+    color: var(--text-primary);
   }
 
   .prompt-input {

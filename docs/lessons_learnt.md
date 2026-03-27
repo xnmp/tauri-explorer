@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/hyprpaper-fill-mode: Hyprpaper Wallpaper Fit Mode
+
+**Key takeaways:**
+- Hyprpaper's `fit_mode` option in `hyprpaper.conf` defaults to `cover` (may crop the image), but `fill` stretches to fill the entire monitor without cropping. Use `fill` for the "Set as Wallpaper" context menu action since users generally expect the image to fill the screen completely.
+
+---
+
 ## feat/miller-drag-drop: Miller Columns Drop Targets
 
 **Key takeaways:**

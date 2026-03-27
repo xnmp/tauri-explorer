@@ -125,7 +125,7 @@ fn update_hyprpaper_conf(image_path: &str, monitors: &[String]) -> Result<(), Ap
 
     for monitor in monitors {
         content.push_str(&format!(
-            "wallpaper {{\nmonitor = {}\npath = {}\nfit_mode = cover\n}}\n\n",
+            "wallpaper {{\nmonitor = {}\npath = {}\nfit_mode = fill\n}}\n\n",
             monitor, image_path
         ));
     }

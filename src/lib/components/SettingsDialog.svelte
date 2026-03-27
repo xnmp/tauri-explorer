@@ -417,6 +417,25 @@
           </div>
         </section>
 
+        <!-- AI / Nano Banana Section -->
+        <section class="settings-section">
+          <h3 class="section-title">AI / Nano Banana</h3>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Gemini API Key</span>
+              <span class="setting-description">Required for Nano Banana image editing (right-click images)</span>
+            </div>
+            <input
+              class="text-input"
+              type="password"
+              value={settingsStore.geminiApiKey}
+              placeholder="Enter API key"
+              onchange={(e) => settingsStore.setGeminiApiKey(e.currentTarget.value)}
+            />
+          </div>
+        </section>
+
         <!-- Keyboard Shortcuts Section -->
         <section class="settings-section">
           <h3 class="section-title">Keyboard Shortcuts</h3>

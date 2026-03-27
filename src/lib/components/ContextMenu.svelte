@@ -10,6 +10,7 @@
   import { settingsStore } from "$lib/state/settings.svelte";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { compressToZip, extractArchive, openFile, openInTerminal, createSymlink, setAsWallpaper } from "$lib/api/files";
+  import { dialogStore } from "$lib/state/dialogs.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { isImageFile } from "$lib/domain/file-types";
   import { getZoomFactor } from "$lib/domain/zoom";
@@ -305,6 +306,13 @@
               <path d="M2 11L5 8L7 10L10 7L14 11" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
             <span>Set as Desktop Background</span>
+          </button>
+          <button class="menu-item" onclick={() => { dialogStore.openNanoBanana(selectedImage.path); contextMenuStore.close(); }} role="menuitem">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M12 2L14 4L5 13H3V11L12 2Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+              <path d="M10.5 3.5L12.5 5.5" stroke="currentColor" stroke-width="1.25"/>
+            </svg>
+            <span>Edit with Nano Banana</span>
           </button>
         {/if}
         <div class="menu-divider"></div>

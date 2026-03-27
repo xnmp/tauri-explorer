@@ -27,6 +27,9 @@ function createDialogStore() {
   let workspaceOpen = $state(false);
   let bulkRenameOpen = $state(false);
   let bulkRenameItems = $state<FileEntry[]>([]);
+  let nanoBananaOpen = $state(false);
+  let nanoBananaSourcePath = $state("");
+  let jobsPanelOpen = $state(false);
 
   function closeIfActive(dialogType: DialogType): void {
     if (activeDialog === dialogType) {
@@ -88,6 +91,15 @@ function createDialogStore() {
     get bulkRenameEntries() {
       return bulkRenameItems;
     },
+    get isNanoBananaOpen() {
+      return nanoBananaOpen;
+    },
+    get nanoBananaSourcePath() {
+      return nanoBananaSourcePath;
+    },
+    get isJobsPanelOpen() {
+      return jobsPanelOpen;
+    },
 
     // File operation actions
     openNewFolder(): void {
@@ -122,7 +134,7 @@ function createDialogStore() {
 
     /** True when any modal dialog is open (file ops or overlays). */
     get hasModalOpen(): boolean {
-      return activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen;
+      return activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || nanoBananaOpen || jobsPanelOpen;
     },
 
     // Overlay dialog actions
@@ -176,6 +188,24 @@ function createDialogStore() {
       bulkRenameItems = [];
     },
 
+    openNanoBanana(sourcePath: string): void {
+      nanoBananaSourcePath = sourcePath;
+      nanoBananaOpen = true;
+    },
+
+    closeNanoBanana(): void {
+      nanoBananaOpen = false;
+      nanoBananaSourcePath = "";
+    },
+
+    openJobsPanel(): void {
+      jobsPanelOpen = true;
+    },
+
+    closeJobsPanel(): void {
+      jobsPanelOpen = false;
+    },
+
     closeAll(): void {
       activeDialog = null;
       targetEntry = null;
@@ -187,6 +217,9 @@ function createDialogStore() {
       workspaceOpen = false;
       bulkRenameOpen = false;
       bulkRenameItems = [];
+      nanoBananaOpen = false;
+      nanoBananaSourcePath = "";
+      jobsPanelOpen = false;
     },
   };
 }

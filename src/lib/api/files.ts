@@ -782,6 +782,34 @@ export async function setAsWallpaper(path: string): Promise<ApiResult<void>> {
 }
 
 // ===================
+// Nano Banana (AI Image Editing)
+// Issue: feat/nano-banana
+// ===================
+
+/**
+ * Start a Nano Banana image editing job.
+ * Returns job ID immediately; listen for nano-banana-complete/error events.
+ */
+export async function startNanoBananaJob(
+  sourcePath: string,
+  prompt: string,
+  outputDir: string,
+  apiKey: string
+): Promise<ApiResult<number>> {
+  try {
+    const jobId = await invoke<number>("start_nano_banana_job", {
+      sourcePath,
+      prompt,
+      outputDir,
+      apiKey,
+    });
+    return { ok: true, data: jobId };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+// ===================
 // Archive Operations
 // Issue: tauri-explorer-0xr, tauri-explorer-kez
 // ===================

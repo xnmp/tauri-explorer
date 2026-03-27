@@ -7,7 +7,7 @@
   import { jobsStore } from "$lib/state/jobs.svelte";
   import { toastStore } from "$lib/state/toast.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
-  import { startNanoBananaJob } from "$lib/api/files";
+  import { startNanoBananaJob, checkPathsExist } from "$lib/api/files";
 
   interface Props {
     open: boolean;
@@ -33,19 +33,35 @@
   const outputDir = $derived(sourcePath.substring(0, sourcePath.lastIndexOf("/")));
   const hasApiKey = $derived(!!settingsStore.geminiApiKey);
 
-  /** Derive default output name: photo.png → photo_edit.png */
-  const defaultOutputFilename = $derived.by(() => {
-    const dot = fileName.lastIndexOf(".");
-    if (dot <= 0) return fileName + "_edit.png";
-    return fileName.slice(0, dot) + "_edit" + fileName.slice(dot);
-  });
+  /** Find next available output name: photo_edit.png, photo_edit_2.png, ... */
+  async function findAvailableFilename(dir: string, name: string): Promise<string> {
+    const dot = name.lastIndexOf(".");
+    const base = dot > 0 ? name.slice(0, dot) : name;
+    const ext = dot > 0 ? name.slice(dot) : ".png";
+    const editBase = base + "_edit";
+
+    // Check first candidate and a batch of numbered variants
+    const candidates = [editBase + ext];
+    for (let i = 2; i <= 20; i++) {
+      candidates.push(`${editBase}_${i}${ext}`);
+    }
+    const paths = candidates.map((c) => `${dir}/${c}`);
+    const exists = await checkPathsExist(paths);
+
+    const firstAvailable = candidates.find((_, i) => !exists[i]);
+    return firstAvailable ?? `${editBase}_${Date.now()}${ext}`;
+  }
 
   $effect(() => {
     if (open) {
       prompt = "";
-      outputFilename = defaultOutputFilename;
+      outputFilename = "";
       model = "nanobanana-pro";
       submitting = false;
+      // Resolve available filename asynchronously
+      findAvailableFilename(outputDir, fileName).then((name) => {
+        outputFilename = name;
+      });
       requestAnimationFrame(() => inputRef?.focus());
     }
   });

@@ -15,7 +15,6 @@ __pycache__/
 .venv/
 .pytest_cache/
 *.png
-!screenshots/**/*.png
 
 # Playwright
 /playwright-report/
@@ -42,3 +41,9 @@ docs/archive/
 pkg/
 *.pkg.tar.zst
 src/tauri-explorer.desktop
+
+.beads/
+.archive/
+docs/explorer3 - Copy.jpg
+docs/handover.md
+docs/potential_hooks.md

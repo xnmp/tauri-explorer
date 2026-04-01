@@ -700,6 +700,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## feat/preview-pane-polish: Preview Pane Visual Polish
+
+**Key takeaways:**
+- **`--subtle-fill-tertiary` is nearly invisible**: At `rgba(255, 255, 255, 0.04)`, it provides no meaningful visual differentiation. Use `--background-card-secondary` or `--subtle-fill-secondary` for visible surface distinction.
+- **`color-mix()` for tinted badges**: `color-mix(in srgb, var(--accent) 12%, transparent)` creates a theme-aware tinted background that adapts to any accent color — useful for status badges and pills.
+
+---
+
 ## User Theme `--font-family` Can Break Input Rendering in WebKitGTK
 
 **Key takeaways:**

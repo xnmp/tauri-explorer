@@ -151,16 +151,16 @@
   <div class="resize-handle" onmousedown={handleResizeStart}></div>
   {#if !selectedFile}
     <div class="preview-empty">
-      <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
-        <rect x="6" y="6" width="36" height="36" rx="4" stroke="currentColor" stroke-width="1.5" stroke-opacity="0.3"/>
-        <path d="M18 20L24 26L30 20" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-opacity="0.3"/>
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
+        <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.25"/>
+        <polyline points="14,2 14,8 20,8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.25"/>
       </svg>
       <span>Select a file to preview</span>
     </div>
   {:else}
     <div class="preview-header">
       <span class="preview-filename" title={selectedFile.path}>{selectedFile.name}</span>
-      <span class="preview-type">{getFileType(selectedFile)}</span>
+      <span class="preview-type-badge">{getFileType(selectedFile)}</span>
     </div>
 
     <div class="preview-content">
@@ -213,7 +213,7 @@
     position: relative;
     flex-shrink: 0;
     border-left: 1px solid var(--divider);
-    background: var(--layer-default);
+    background: var(--background-card-secondary);
     overflow: hidden;
   }
 
@@ -229,12 +229,13 @@
     width: 4px;
     cursor: col-resize;
     z-index: 10;
+    transition: background var(--transition-normal);
   }
 
   .resize-handle:hover,
   .preview-pane.resizing .resize-handle {
     background: var(--accent);
-    opacity: 0.5;
+    opacity: 0.6;
   }
 
   .preview-empty {
@@ -243,18 +244,18 @@
     align-items: center;
     justify-content: center;
     flex: 1;
-    gap: 12px;
+    gap: 10px;
     color: var(--text-tertiary);
     font-size: var(--font-size-caption);
-    padding: 24px;
+    padding: 32px;
     text-align: center;
   }
 
   .preview-header {
     display: flex;
     flex-direction: column;
-    gap: 2px;
-    padding: 12px 16px;
+    gap: 6px;
+    padding: 16px 16px 14px;
     border-bottom: 1px solid var(--divider);
     flex-shrink: 0;
   }
@@ -268,9 +269,18 @@
     white-space: nowrap;
   }
 
-  .preview-type {
-    font-size: var(--font-size-caption);
-    color: var(--text-tertiary);
+  .preview-type-badge {
+    display: inline-flex;
+    align-self: flex-start;
+    font-size: 10px;
+    line-height: 1;
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+    padding: 3px 8px;
+    border-radius: var(--radius-pill);
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    font-weight: 500;
   }
 
   .preview-content {
@@ -289,9 +299,9 @@
   }
 
   .spinner {
-    width: 24px;
-    height: 24px;
-    border: 2px solid var(--divider);
+    width: 20px;
+    height: 20px;
+    border: 1.5px solid var(--divider);
     border-top-color: var(--accent);
     border-radius: 50%;
     animation: spin 600ms linear infinite;
@@ -317,8 +327,12 @@
     align-items: center;
     justify-content: center;
     flex: 1;
-    padding: 12px;
-    background: var(--subtle-fill-secondary);
+    padding: 20px;
+    background:
+      repeating-conic-gradient(
+        rgba(255, 255, 255, 0.03) 0% 25%,
+        transparent 0% 50%
+      ) 50% / 12px 12px;
   }
 
   .preview-image {
@@ -326,13 +340,14 @@
     max-height: 100%;
     object-fit: contain;
     border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-card);
   }
 
   .preview-text {
-    padding: 12px 16px;
+    padding: 16px;
     font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
     font-size: 11px;
-    line-height: 1.5;
+    line-height: 1.6;
     color: var(--text-secondary);
     white-space: pre-wrap;
     word-break: break-all;
@@ -353,8 +368,8 @@
   .preview-info {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    padding: 12px 16px;
+    gap: 0;
+    padding: 0;
     border-top: 1px solid var(--divider);
     flex-shrink: 0;
   }
@@ -362,8 +377,15 @@
   .info-row {
     display: flex;
     justify-content: space-between;
+    align-items: center;
     gap: 8px;
     font-size: var(--font-size-caption);
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--divider);
+  }
+
+  .info-row:last-child {
+    border-bottom: none;
   }
 
   .info-label {
@@ -378,5 +400,4 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-
 </style>

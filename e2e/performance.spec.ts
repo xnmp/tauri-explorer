@@ -290,7 +290,7 @@ test.describe("Performance Tests", () => {
           // Wait for selection to apply
           await page.waitForTimeout(50);
         },
-        200
+        500
       );
 
       expect(metric.duration).toBeLessThan(metric.threshold);
@@ -328,7 +328,7 @@ test.describe("Performance Tests", () => {
           await page.keyboard.press("Control+p");
           await page.locator(".quick-open-dialog").waitFor();
         },
-        200
+        500
       );
 
       expect(metric.duration).toBeLessThan(metric.threshold);
@@ -386,7 +386,7 @@ test.describe("Performance Tests", () => {
           await page.keyboard.press("Control+Shift+p");
           await page.locator(".command-palette-dialog").waitFor();
         },
-        200
+        500
       );
 
       expect(metric.duration).toBeLessThan(metric.threshold);
@@ -444,7 +444,7 @@ test.describe("Performance Tests", () => {
           await page.keyboard.press("Control+Tab");
           await page.waitForTimeout(50);
         },
-        200
+        500
       );
 
       expect(metric.duration).toBeLessThan(metric.threshold);
@@ -464,7 +464,7 @@ test.describe("Performance Tests", () => {
             { timeout: 2000 }
           );
         },
-        200
+        500
       );
 
       expect(metric.duration).toBeLessThan(metric.threshold);

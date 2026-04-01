@@ -60,36 +60,39 @@ Frontend calls `invoke("command_name", { args })` via `src/lib/api/files.ts`. Wh
 - Deep references in `docs/architecture/`: [backend](docs/architecture/backend.md), [frontend](docs/architecture/frontend.md), [components](docs/architecture/components.md), [features](docs/architecture/features.md), [cross-cutting](docs/architecture/cross-cutting.md).
 - Lessons learnt: [docs/lessons_learnt.md](docs/lessons_learnt.md) — gotchas from closed issues.
 
-## Issue Tracking (Beads)
+## Issue Tracking (GitHub Issues)
 
 Key commands:
-- `bd create "Title" --id "feat/my-feature" --force -d "Description" -p P2 -t feature` — create issue (use `--force` if ID doesn't match db prefix)
-- `bd update <id> --status in_progress` — mark as in progress (hook requires this before checkout)
-- `bd update <id> -d "new description"` — update description
-- `bd update <id> --append-notes "notes"` — append to notes without replacing
-- `bd show <id>` — view issue details (`--json` for machine-readable)
-- `bd close <id> --reason "why"` — close issue (automated by merge hook)
-- `bd list` — list open issues
-- `bd dep add <id> --blocks <other-id>` — add dependency
-- `bd quickstart` — full reference
+- `gh issue create --title "Title" --body "Description"` — create issue
+- `gh issue list` — list open issues
+- `gh issue list --state all` — list all issues
+- `gh issue view <number>` — view issue details (`--json` for machine-readable)
+- `gh issue edit <number> --body "new body"` — update description
+- `gh issue comment <number> --body "notes"` — add notes
+- `gh issue close <number> --comment "why"` — close issue (automated by merge hook)
+- `gh extension install jwilger/gh-issue-ext` — install if missing
+- `gh issue-ext blocking add <blocked> <blocker>` — mark issue as blocked by another
+- `gh issue-ext blocking list <number>` — list blocking relationships
+- `gh issue-ext sub add <parent> <child>` — add sub-issue
+- `gh issue-ext show <number>` — show all relationships
 
-Use Beads for both high-level issues (~epics) and granular tasks. Be liberal with issue creation and dependency assignment.
+Convention: branch names map to issues by title. Branch `feat/my-feature` matches an issue whose title contains "my-feature". A hook validates that a matching open issue exists before allowing branch creation.
 
 ### Screenshot Requirements
 
-When creating issues, include a `## Screenshots` section with markdown checkboxes (e.g., `- [ ] sidebar`). Screenshots must be saved to `screenshots/<branch>/`. The merge hook verifies they exist. Use 'None required' only for pure backend/refactor changes with no user-visible effect. Behavioral fixes still need a screenshot showing the corrected behavior.
+When creating issues, include a `## Screenshots` section in the issue body with markdown checkboxes (e.g., `- [ ] sidebar`). Screenshots must be saved to `screenshots/<branch>/`. The merge hook verifies they exist. Use 'None required' only for pure backend/refactor changes with no user-visible effect. Behavioral fixes still need a screenshot showing the corrected behavior.
 
 ## Branching & Workflow
 
 - All development happens on the `dev` branch. Create feature branches off `dev` and merge back to `dev`. Don't modify files directly on `dev`.
 - Branch names must match the Beads issue name, prefixed with `feat/`, `fix/`, `refactor/`, etc. (a hook validates this).
-- At session start, convert tasks in [@new_todo.md](@new_todo.md) into Beads issues.
+- At session start, convert tasks in [@new_todo.md](@new_todo.md) into GitHub issues.
 - Create implementation plans before converting into issues.
 
 ### Per-Issue Checklist
 
-1. Create a Beads issue (with `## Screenshots` section)
-2. Create a branch and mark issue as `in_progress`
+1. Create a GitHub issue (with `## Screenshots` section in the body)
+2. Create a branch (hook validates a matching open issue exists)
 3. Implement, then run `bun run test` and fix failures
 4. Take required screenshots with `agent-browser` CLI; verify they capture working functionality
 5. Create E2E Playwright tests if needed

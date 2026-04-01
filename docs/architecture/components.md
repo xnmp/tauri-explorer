@@ -24,7 +24,7 @@
 | **ThumbnailImage** | `ThumbnailImage.svelte` | Progressive image loading: micro → full thumbnail, lazy via IntersectionObserver |
 | **InlineNewFolder** | `InlineNewFolder.svelte` | Inline editable placeholder for creating new folders |
 | **ContextMenu** | `ContextMenu.svelte` | Right-click menu with all file operations |
-| **PreviewPane** | `PreviewPane.svelte` | Side panel: image/text/PDF preview + file metadata |
+| **PreviewPane** | `PreviewPane.svelte` | Side panel: image/text/PDF/folder preview + file metadata |
 | **StatusBar** | `StatusBar.svelte` | Bottom bar: item count, folder/file breakdown, total file size, selected count/size breakdown, current path |
 | **QuickOpen** | `QuickOpen.svelte` | Ctrl+P fuzzy file search with frecency ranking |
 | **CommandPalette** | `CommandPalette.svelte` | Ctrl+Shift+P command search |

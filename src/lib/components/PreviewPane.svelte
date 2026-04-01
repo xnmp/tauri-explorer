@@ -4,7 +4,7 @@
 -->
 <script lang="ts">
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { readTextFile } from "$lib/api/files";
+  import { readTextFile, fetchDirectory } from "$lib/api/files";
   import { isImageFile, isTextFile, isPdfFile, getFileType, formatDate } from "$lib/domain/file-types";
   import { formatSize, type FileEntry } from "$lib/domain/file";
   import { isTauri } from "$lib/api/mock-invoke";
@@ -57,6 +57,7 @@
   let previewText = $state<string | null>(null);
   let previewHighlightedHtml = $state<string | null>(null);
   let previewPdfUrl = $state<string | null>(null);
+  let previewFolderChildren = $state<readonly FileEntry[]>([]);
   let previewLoading = $state(false);
   let previewError = $state<string | null>(null);
   let lastPreviewPath = $state<string | null>(null);
@@ -70,6 +71,7 @@
       previewText = null;
       previewHighlightedHtml = null;
       previewPdfUrl = null;
+      previewFolderChildren = [];
       previewError = null;
       previewLoading = false;
       return;
@@ -92,8 +94,19 @@
     previewText = null;
     previewHighlightedHtml = null;
     previewPdfUrl = null;
+    previewFolderChildren = [];
     previewError = null;
     previewLoading = true;
+
+    if (file.kind === "directory") {
+      const result = await fetchDirectory(file.path);
+      if (file.path !== lastPreviewPath) return;
+      if (result.ok) {
+        previewFolderChildren = result.data.entries;
+      }
+      previewLoading = false;
+      return;
+    }
 
     if (isPdfFile(file)) {
       if (isTauri()) {
@@ -175,6 +188,14 @@
       {:else if previewImageUrl}
         <div class="preview-image-container">
           <img src={previewImageUrl} alt={selectedFile.name} class="preview-image" />
+        </div>
+      {:else if previewFolderChildren.length > 0}
+        <div class="preview-folder-list">
+          {#each previewFolderChildren as child}
+            <div class="folder-item" class:is-directory={child.kind === "directory"}>
+              <span class="folder-item-name">{child.name}</span>
+            </div>
+          {/each}
         </div>
       {:else if previewHighlightedHtml !== null}
         <pre class="preview-text preview-code"><code class="hljs">{@html previewHighlightedHtml}</code></pre>
@@ -396,6 +417,31 @@
   .info-value {
     color: var(--text-secondary);
     text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .preview-folder-list {
+    flex: 1;
+    overflow: auto;
+    padding: 4px 0;
+  }
+
+  .folder-item {
+    display: flex;
+    align-items: center;
+    padding: 5px 16px;
+    font-size: var(--font-size-caption);
+    color: var(--text-secondary);
+  }
+
+  .folder-item.is-directory .folder-item-name {
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+
+  .folder-item-name {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

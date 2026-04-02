@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/chord-key-leak: Chord Suffix Keys Leaking to Type-Ahead
+
+**Key takeaways:**
+- Chord shortcuts (e.g. Alt+M E) work in two phases: prefix fires on window keydown, suffix fires on next keydown. But the FileList type-ahead handler fires on element bubble phase before the window listener, so it processes the plain suffix key (e/u/b) as type-ahead navigation. Fix: check `keybindingsStore.isChordActive` in type-ahead to skip processing when a chord is in progress.
+
+---
+
 ## fix/hyprpaper-fill-mode: Hyprpaper Wallpaper Fit Mode
 
 **Key takeaways:**

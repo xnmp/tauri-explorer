@@ -153,7 +153,7 @@
     align-items: center;
     justify-content: center;
     z-index: 1000;
-    animation: overlayIn 150ms cubic-bezier(0, 0, 0, 1);
+    animation: overlayIn 80ms cubic-bezier(0, 0, 0, 1);
   }
 
   @keyframes overlayIn {

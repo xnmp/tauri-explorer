@@ -22,6 +22,11 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 **Key takeaways:**
 - FileList's empty-state (`displayEntries.length === 0`) prevents any view component from rendering, so `InlineNewFolder` never mounts. Must check `isCreatingFolder` alongside empty state to render the inline input even in empty directories.
+## fix/tiles-delete-lag: Tiles View Delete Lag and Thumbnail Flicker
+
+**Key takeaways:**
+- The progressive tile rendering `$effect` was resetting `tileRenderLimit` to `TILE_CHUNK` on every `displayEntries` change, including deletions. This caused all tiles to re-render from scratch (flicker). Fix: only reset on large entry count increases (new directory), not decreases (deletion) or small additions.
+- The delete dialog overlay animation at 150ms felt sluggish. Reducing to 80ms makes it feel instant without losing visual smoothness.
 
 ---
 

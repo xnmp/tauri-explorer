@@ -10,6 +10,8 @@
   import { isTauri } from "$lib/api/mock-invoke";
   import { highlightCode } from "$lib/domain/syntax-highlight";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { getFileIconColor } from "$lib/domain/file-types";
+  import FileIcon from "./FileIcon.svelte";
   import "highlight.js/styles/github-dark.css";
 
   // Resize handle state
@@ -193,6 +195,9 @@
         <div class="preview-folder-list">
           {#each previewFolderChildren as child}
             <div class="folder-item" class:is-directory={child.kind === "directory"}>
+              <span class="folder-item-icon" style:color={child.kind !== "directory" ? getFileIconColor(child) : undefined}>
+                <FileIcon entry={child} size="small" />
+              </span>
               <span class="folder-item-name">{child.name}</span>
             </div>
           {/each}
@@ -431,14 +436,24 @@
   .folder-item {
     display: flex;
     align-items: center;
-    padding: 5px 16px;
-    font-size: var(--font-size-caption);
+    gap: 6px;
+    padding: 4px 16px;
+    font-size: 13px;
     color: var(--text-secondary);
   }
 
   .folder-item.is-directory .folder-item-name {
     font-weight: 500;
     color: var(--text-primary);
+  }
+
+  .folder-item-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
   }
 
   .folder-item-name {

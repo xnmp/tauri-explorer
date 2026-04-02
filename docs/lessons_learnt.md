@@ -18,6 +18,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/new-folder-empty-dir: New Folder in Empty Directory
+
+**Key takeaways:**
+- FileList's empty-state (`displayEntries.length === 0`) prevents any view component from rendering, so `InlineNewFolder` never mounts. Must check `isCreatingFolder` alongside empty state to render the inline input even in empty directories.
+
+---
+
 ## fix/hyprpaper-fill-mode: Hyprpaper Wallpaper Fit Mode
 
 **Key takeaways:**

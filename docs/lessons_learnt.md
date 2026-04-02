@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## feat/miller-arrow-nav: Miller View Arrow Key Navigation
+
+**Key takeaways:**
+- In details view, `getArrowStep()` returns 0 for horizontal arrows. When miller columns are visible, left/right arrows should navigate directories (up/into) like yazi. The check must happen before the step=0 early return.
+
+---
+
 ## fix/hyprpaper-fill-mode: Hyprpaper Wallpaper Fit Mode
 
 **Key takeaways:**

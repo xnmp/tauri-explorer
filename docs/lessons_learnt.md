@@ -27,6 +27,10 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 **Key takeaways:**
 - The progressive tile rendering `$effect` was resetting `tileRenderLimit` to `TILE_CHUNK` on every `displayEntries` change, including deletions. This caused all tiles to re-render from scratch (flicker). Fix: only reset on large entry count increases (new directory), not decreases (deletion) or small additions.
 - The delete dialog overlay animation at 150ms felt sluggish. Reducing to 80ms makes it feel instant without losing visual smoothness.
+## feat/text-file-preview: Text File Preview for Shell Scripts and Dotfiles
+
+**Key takeaways:**
+- `isTextFile()` only checked `ICON_CATEGORY_MAP` categories and a handful of hardcoded extensions. Files like `.sh` (in ICON_CATEGORY_MAP as "executable") and `.gitignore` (no extension via `getExtension()`) were missed. Added `KNOWN_TEXT_FILES` set for extensionless files and `EXTRA_TEXT_EXTENSIONS` set for additional extensions.
 
 ---
 

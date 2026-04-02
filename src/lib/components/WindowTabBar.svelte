@@ -168,6 +168,21 @@
     pointer-events: none;
   }
 
+  @keyframes tabSlideIn {
+    from {
+      max-width: 0;
+      opacity: 0;
+      padding-left: 0;
+      padding-right: 0;
+    }
+    to {
+      max-width: 220px;
+      opacity: 1;
+      padding-left: 12px;
+      padding-right: 10px;
+    }
+  }
+
   .tab {
     display: flex;
     align-items: center;
@@ -188,6 +203,8 @@
     border: 1px solid transparent;
     border-bottom: none;
     transform-origin: bottom center;
+    animation: tabSlideIn 250ms cubic-bezier(0.1, 0.9, 0.2, 1) both;
+    overflow: hidden;
   }
 
   /* Subtle gradient overlay for depth */

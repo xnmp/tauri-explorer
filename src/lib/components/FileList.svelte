@@ -17,6 +17,7 @@
   import ListView from "./ListView.svelte";
   import TilesView from "./TilesView.svelte";
   import ToastOverlay from "./ToastOverlay.svelte";
+  import InlineNewFolder from "./InlineNewFolder.svelte";
 
   import type { FileEntry } from "$lib/domain/file";
 
@@ -282,13 +283,17 @@
         <span class="error-title">Unable to access folder</span>
         <span class="error-message">{explorer.error}</span>
       </div>
-    {:else if explorer.displayEntries.length === 0}
+    {:else if explorer.displayEntries.length === 0 && !explorer.isCreatingFolder}
       <div class="status empty-state">
         <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
           <path d="M8 16C8 13.7909 9.79086 12 12 12H19.1716C19.702 12 20.2107 12.2107 20.5858 12.5858L23 15H36C38.2091 15 40 16.7909 40 19V34C40 36.2091 38.2091 38 36 38H12C9.79086 38 8 36.2091 8 34V16Z" stroke="currentColor" stroke-width="2" opacity="0.3"/>
           <path d="M20 27H28" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
         </svg>
         <span>This folder is empty</span>
+      </div>
+    {:else if explorer.displayEntries.length === 0 && explorer.isCreatingFolder}
+      <div class="empty-create-folder">
+        <InlineNewFolder {explorer} variant="details" />
       </div>
     {:else if explorer.viewMode === "details"}
       <DetailsView
@@ -413,5 +418,10 @@
 
   @keyframes spin {
     to { transform: rotate(360deg); }
+  }
+
+  .empty-create-folder {
+    flex: 1;
+    overflow: auto;
   }
 </style>

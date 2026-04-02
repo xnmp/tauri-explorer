@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/light-theme-preview: Preview Pane Light Theme Support
+
+**Key takeaways:**
+- highlight.js CSS themes are global imports that define `.hljs` class colors. Importing `github-dark.css` made code unreadable on light themes. Solution: replace the global import with component-scoped CSS rules (`.hljs-light` / `.hljs-dark` wrappers) and detect the active theme's `color-scheme` property via `getComputedStyle(document.documentElement).colorScheme`.
+
+---
+
 ## fix/hyprpaper-fill-mode: Hyprpaper Wallpaper Fit Mode
 
 **Key takeaways:**

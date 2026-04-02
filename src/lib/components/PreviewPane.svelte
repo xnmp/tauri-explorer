@@ -12,7 +12,13 @@
   import { settingsStore } from "$lib/state/settings.svelte";
   import { getFileIconColor } from "$lib/domain/file-types";
   import FileIcon from "./FileIcon.svelte";
-  import "highlight.js/styles/github-dark.css";
+  /** Detect if the current theme uses a light color scheme */
+  const isLightTheme = $derived.by(() => {
+    // Force re-evaluation when theme changes by reading the theme ID
+    const _theme = settingsStore.theme;
+    if (typeof document === "undefined") return false;
+    return getComputedStyle(document.documentElement).colorScheme === "light";
+  });
 
   // Resize handle state
   const DEFAULT_WIDTH = 280;
@@ -203,7 +209,7 @@
           {/each}
         </div>
       {:else if previewHighlightedHtml !== null}
-        <pre class="preview-text preview-code"><code class="hljs">{@html previewHighlightedHtml}</code></pre>
+        <pre class="preview-text preview-code" class:hljs-light={isLightTheme} class:hljs-dark={!isLightTheme}><code class="hljs">{@html previewHighlightedHtml}</code></pre>
       {:else if previewText !== null}
         <pre class="preview-text">{previewText}</pre>
       {:else if previewError}
@@ -385,6 +391,84 @@
     background: transparent;
     padding: 0;
   }
+
+  /* GitHub Dark hljs theme (default) */
+  .hljs-dark :global(.hljs) { color: #c9d1d9; }
+  .hljs-dark :global(.hljs-keyword),
+  .hljs-dark :global(.hljs-doctag),
+  .hljs-dark :global(.hljs-template-tag),
+  .hljs-dark :global(.hljs-template-variable),
+  .hljs-dark :global(.hljs-type),
+  .hljs-dark :global(.hljs-variable.language_) { color: #ff7b72; }
+  .hljs-dark :global(.hljs-title),
+  .hljs-dark :global(.hljs-title.class_),
+  .hljs-dark :global(.hljs-title.function_) { color: #d2a8ff; }
+  .hljs-dark :global(.hljs-attr),
+  .hljs-dark :global(.hljs-attribute),
+  .hljs-dark :global(.hljs-literal),
+  .hljs-dark :global(.hljs-meta),
+  .hljs-dark :global(.hljs-number),
+  .hljs-dark :global(.hljs-operator),
+  .hljs-dark :global(.hljs-variable),
+  .hljs-dark :global(.hljs-selector-attr),
+  .hljs-dark :global(.hljs-selector-class),
+  .hljs-dark :global(.hljs-selector-id) { color: #79c0ff; }
+  .hljs-dark :global(.hljs-regexp),
+  .hljs-dark :global(.hljs-string),
+  .hljs-dark :global(.hljs-meta .hljs-string) { color: #a5d6ff; }
+  .hljs-dark :global(.hljs-built_in),
+  .hljs-dark :global(.hljs-symbol) { color: #ffa657; }
+  .hljs-dark :global(.hljs-comment),
+  .hljs-dark :global(.hljs-code),
+  .hljs-dark :global(.hljs-formula) { color: #8b949e; }
+  .hljs-dark :global(.hljs-name),
+  .hljs-dark :global(.hljs-quote),
+  .hljs-dark :global(.hljs-selector-tag),
+  .hljs-dark :global(.hljs-selector-pseudo) { color: #7ee787; }
+  .hljs-dark :global(.hljs-subst) { color: #c9d1d9; }
+  .hljs-dark :global(.hljs-section) { color: #1f6feb; font-weight: bold; }
+  .hljs-dark :global(.hljs-bullet) { color: #f2cc60; }
+  .hljs-dark :global(.hljs-addition) { color: #aff5b4; background-color: #033a16; }
+  .hljs-dark :global(.hljs-deletion) { color: #ffdcd7; background-color: #67060c; }
+
+  /* GitHub Light hljs theme */
+  .hljs-light :global(.hljs) { color: #24292e; }
+  .hljs-light :global(.hljs-keyword),
+  .hljs-light :global(.hljs-doctag),
+  .hljs-light :global(.hljs-template-tag),
+  .hljs-light :global(.hljs-template-variable),
+  .hljs-light :global(.hljs-type),
+  .hljs-light :global(.hljs-variable.language_) { color: #d73a49; }
+  .hljs-light :global(.hljs-title),
+  .hljs-light :global(.hljs-title.class_),
+  .hljs-light :global(.hljs-title.function_) { color: #6f42c1; }
+  .hljs-light :global(.hljs-attr),
+  .hljs-light :global(.hljs-attribute),
+  .hljs-light :global(.hljs-literal),
+  .hljs-light :global(.hljs-meta),
+  .hljs-light :global(.hljs-number),
+  .hljs-light :global(.hljs-operator),
+  .hljs-light :global(.hljs-variable),
+  .hljs-light :global(.hljs-selector-attr),
+  .hljs-light :global(.hljs-selector-class),
+  .hljs-light :global(.hljs-selector-id) { color: #005cc5; }
+  .hljs-light :global(.hljs-regexp),
+  .hljs-light :global(.hljs-string),
+  .hljs-light :global(.hljs-meta .hljs-string) { color: #032f62; }
+  .hljs-light :global(.hljs-built_in),
+  .hljs-light :global(.hljs-symbol) { color: #e36209; }
+  .hljs-light :global(.hljs-comment),
+  .hljs-light :global(.hljs-code),
+  .hljs-light :global(.hljs-formula) { color: #6a737d; }
+  .hljs-light :global(.hljs-name),
+  .hljs-light :global(.hljs-quote),
+  .hljs-light :global(.hljs-selector-tag),
+  .hljs-light :global(.hljs-selector-pseudo) { color: #22863a; }
+  .hljs-light :global(.hljs-subst) { color: #24292e; }
+  .hljs-light :global(.hljs-section) { color: #005cc5; font-weight: bold; }
+  .hljs-light :global(.hljs-bullet) { color: #735c0f; }
+  .hljs-light :global(.hljs-addition) { color: #22863a; background-color: #f0fff4; }
+  .hljs-light :global(.hljs-deletion) { color: #b31d28; background-color: #ffeef0; }
 
   .preview-error-text {
     color: var(--system-critical);

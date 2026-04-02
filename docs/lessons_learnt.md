@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## feat/tab-open-animation: Tab Opening Animation
+
+**Key takeaways:**
+- CSS `@keyframes` with `max-width: 0 → 220px` + `opacity: 0 → 1` creates a Chrome-like slide-in. Use `animation-fill-mode: both` and `overflow: hidden` on the tab to clip content during expansion.
+
+---
+
 ## fix/hyprpaper-fill-mode: Hyprpaper Wallpaper Fit Mode
 
 **Key takeaways:**

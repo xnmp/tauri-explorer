@@ -278,12 +278,46 @@ export function getFileExtensionLabel(entry: FileEntry): string {
   return label;
 }
 
+/** Well-known extensionless or dotfiles that are plaintext */
+const KNOWN_TEXT_FILES = new Set([
+  ".gitignore", ".gitattributes", ".gitmodules",
+  ".dockerignore", ".editorconfig", ".eslintrc", ".prettierrc",
+  ".npmrc", ".nvmrc", ".env", ".envrc", ".flake8",
+  "Dockerfile", "Makefile", "Gemfile", "Procfile",
+  "Rakefile", "Justfile", "Vagrantfile", "Brewfile",
+  "CMakeLists.txt", "PKGBUILD", "LICENSE", "CHANGELOG",
+  "AUTHORS", "CONTRIBUTORS", "CODEOWNERS",
+]);
+
+/** Additional text extensions not in ICON_CATEGORY_MAP */
+const EXTRA_TEXT_EXTENSIONS = new Set([
+  "txt", "md", "log", "cfg", "ini", "toml", "conf",
+  "sh", "bash", "zsh", "fish",      // Shell scripts
+  "env", "properties",               // Config files
+  "patch", "diff",                   // Diffs
+  "lock",                            // Lock files
+  "gitignore", "dockerignore",       // Ignore files (when extracted as ext)
+  "editorconfig",
+  "svelte", "vue",                   // Frontend templates
+  "lua", "pl", "pm",                 // Scripting languages
+  "r", "R",                          // R language
+  "tex", "bib",                      // LaTeX
+  "csv", "tsv",                      // Data files
+]);
+
 /** Check if a file is a text/code file that can be previewed */
 export function isTextFile(entry: FileEntry): boolean {
   if (entry.kind === "directory") return false;
+
+  // Check well-known extensionless/dot filenames
+  if (KNOWN_TEXT_FILES.has(entry.name)) return true;
+
   const ext = getExtension(entry.name);
   const category = ICON_CATEGORY_MAP[ext];
-  return category === "code" || category === "document" || ext === "txt" || ext === "md" || ext === "log" || ext === "cfg" || ext === "ini" || ext === "toml" || ext === "conf";
+  if (category === "code" || category === "document") return true;
+  if (EXTRA_TEXT_EXTENSIONS.has(ext)) return true;
+
+  return false;
 }
 
 /** Check if a file is a PDF */

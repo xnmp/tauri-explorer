@@ -51,26 +51,41 @@
     }
   });
 
-  // Progressive rendering to avoid UI freeze
+  // Progressive rendering to avoid UI freeze on large directories.
+  // Only resets the render limit when entry count increases significantly
+  // (e.g. navigating to a new directory), not on small changes like deletions.
   const TILE_CHUNK = 60;
   let tileRenderLimit = $state(TILE_CHUNK);
   let tileRafId: number | null = null;
+  let prevEntryCount = 0;
 
   $effect(() => {
     const entries = explorer.displayEntries;
+    const count = entries.length;
 
     if (tileRafId) cancelAnimationFrame(tileRafId);
 
-    if (entries.length <= TILE_CHUNK) {
-      tileRenderLimit = entries.length;
+    // Entries decreased or stayed same: just clamp — don't reset
+    if (count <= tileRenderLimit) {
+      tileRenderLimit = count;
+      prevEntryCount = count;
       return;
     }
 
+    // Small increase (e.g. new folder created): extend without resetting
+    if (count <= prevEntryCount + TILE_CHUNK) {
+      tileRenderLimit = count;
+      prevEntryCount = count;
+      return;
+    }
+
+    // Large increase (new directory): progressive render from scratch
     tileRenderLimit = TILE_CHUNK;
+    prevEntryCount = count;
 
     function renderMore() {
-      tileRenderLimit = Math.min(tileRenderLimit + TILE_CHUNK, entries.length);
-      if (tileRenderLimit < entries.length) {
+      tileRenderLimit = Math.min(tileRenderLimit + TILE_CHUNK, count);
+      if (tileRenderLimit < count) {
         tileRafId = requestAnimationFrame(renderMore);
       }
     }

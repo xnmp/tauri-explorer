@@ -128,6 +128,22 @@
       || event.key === "ArrowLeft" || event.key === "ArrowRight";
     if (isArrow) {
       event.preventDefault();
+
+      // Miller + details view: left/right arrows navigate directories (yazi-like)
+      if (settingsStore.millerLayers > 0 && paneExplorer.viewMode === "details") {
+        if (event.key === "ArrowLeft") {
+          paneExplorer.goUp();
+          return;
+        }
+        if (event.key === "ArrowRight") {
+          const sel = paneExplorer.getSelectedEntries()[0];
+          if (sel?.kind === "directory") {
+            paneExplorer.navigateTo(sel.path);
+            return;
+          }
+        }
+      }
+
       const entries = paneExplorer.displayEntries;
       if (entries.length === 0) return;
 

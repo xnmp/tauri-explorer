@@ -129,21 +129,6 @@
     if (isArrow) {
       event.preventDefault();
 
-      // Miller + details view: left/right arrows navigate directories (yazi-like)
-      if (settingsStore.millerLayers > 0 && paneExplorer.viewMode === "details") {
-        if (event.key === "ArrowLeft") {
-          paneExplorer.goUp();
-          return;
-        }
-        if (event.key === "ArrowRight") {
-          const sel = paneExplorer.getSelectedEntries()[0];
-          if (sel?.kind === "directory") {
-            paneExplorer.navigateTo(sel.path);
-            return;
-          }
-        }
-      }
-
       const entries = paneExplorer.displayEntries;
       if (entries.length === 0) return;
 
@@ -160,6 +145,20 @@
           if (el && el !== document.activeElement) el.focus({ preventScroll: false });
         });
         return;
+      }
+
+      // Miller + details view: left/right arrows navigate directories (yazi-like)
+      if (settingsStore.millerLayers > 0 && paneExplorer.viewMode === "details") {
+        if (event.key === "ArrowLeft") {
+          paneExplorer.goUp();
+          return;
+        }
+        if (event.key === "ArrowRight") {
+          if (selected?.kind === "directory") {
+            paneExplorer.navigateTo(selected.path);
+            return;
+          }
+        }
       }
 
       const step = getArrowStep(event.key, paneExplorer.viewMode, entries.length);

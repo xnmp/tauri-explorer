@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/arrow-select-first-v2: Arrow Select First (v2)
+
+**Key takeaways:**
+- The "select first item when nothing selected" check must come BEFORE the miller left/right directory navigation, otherwise ArrowLeft always triggers goUp() even with no selection. Also reuse the already-fetched `selected` variable in the miller right-arrow check instead of calling `getSelectedEntries()` again.
+
+---
+
 ## fix/breadcrumb-caret-spacing: Tighter Breadcrumb Carets
 
 **Key takeaways:**

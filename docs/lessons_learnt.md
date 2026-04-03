@@ -20,6 +20,10 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 **Key takeaways:**
 - PreviewPane's folder listing used `result.data.entries` directly without filtering. MillerColumns correctly filtered hidden files but PreviewPane didn't. Filter based on `settingsStore.showHidden`.
+## fix/arrow-select-first: Arrow Key Selects First Item
+
+**Key takeaways:**
+- When nothing is selected (`currentIndex < 0`), the `step === 0` early return for inapplicable arrows (e.g. left/right in details) prevented selecting the first item. Moved the "nothing selected → select first" check before the step calculation.
 
 ---
 

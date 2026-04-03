@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/tab-flash-content: Tab Content Flash on New Tab
+
+**Key takeaways:**
+- New tabs flash empty because `createTab` creates a fresh explorer and immediately switches to it. The explorer's `navigateTo()` is async so entries arrive after the first render. Fix: seed the new explorer with the source tab's entries/sort/viewMode so it renders instantly. Also skip `loading = true` in `navigateInternal` when the path is already populated (seeded state).
+
+---
+
 ## fix/breadcrumb-caret-spacing: Tighter Breadcrumb Carets
 
 **Key takeaways:**

@@ -141,18 +141,34 @@ function createWindowTabsManager() {
     return `Left: ${getPanePath(tab.panes.left)}\nRight: ${getPanePath(tab.panes.right)}`;
   }
 
-  /** Create a new explorer and register it */
-  function createAndRegisterExplorer(path: string): { explorerId: string; explorer: ExplorerInstance } {
+  /** Create a new explorer and register it. If a source explorer is
+   *  provided and shares the same path, seed the new one with its
+   *  entries so the UI doesn't flash empty while loading. */
+  function createAndRegisterExplorer(
+    path: string,
+    sourceExplorer?: ExplorerInstance,
+  ): { explorerId: string; explorer: ExplorerInstance } {
     const explorerId = generateId("explorer");
-    const explorer = createExplorerState();
+    const canSeed = sourceExplorer && sourceExplorer.currentPath === path;
+    const explorer = createExplorerState(
+      canSeed
+        ? {
+            currentPath: sourceExplorer.currentPath,
+            entries: [...sourceExplorer.displayEntries],
+            sortBy: sourceExplorer.sortBy,
+            sortAscending: sourceExplorer.sortAscending,
+            viewMode: sourceExplorer.viewMode,
+          }
+        : undefined,
+    );
     explorers.set(explorerId, explorer);
     explorer.navigateTo(path);
     return { explorerId, explorer };
   }
 
   /** Create a pane object with a new explorer */
-  function createPane(path: string): WindowTabPane {
-    const { explorerId } = createAndRegisterExplorer(path);
+  function createPane(path: string, sourceExplorer?: ExplorerInstance): WindowTabPane {
+    const { explorerId } = createAndRegisterExplorer(path, sourceExplorer);
     return {
       explorerId,
       path,
@@ -164,15 +180,18 @@ function createWindowTabsManager() {
   function createTab(initialPath?: string): WindowTab {
     const defaultPath = "/home";
 
-    // Inherit paths from active tab's explorers, or use provided/default path
+    // Inherit paths and entries from active tab's explorers so the new
+    // tab renders instantly instead of flashing a loading state.
+    const leftExplorer = activeTab ? explorers.get(activeTab.panes.left.explorerId) : undefined;
+    const rightExplorer = activeTab ? explorers.get(activeTab.panes.right.explorerId) : undefined;
     const leftPath = initialPath ?? (activeTab ? getPanePath(activeTab.panes.left) : defaultPath);
     const rightPath = activeTab ? getPanePath(activeTab.panes.right) : defaultPath;
 
     const tab: WindowTab = {
       id: generateId("tab"),
       panes: {
-        left: createPane(leftPath),
-        right: createPane(rightPath),
+        left: createPane(leftPath, leftExplorer),
+        right: createPane(rightPath, rightExplorer),
       },
       activePaneId: "left",
       dualPaneEnabled: activeTab?.dualPaneEnabled ?? false,

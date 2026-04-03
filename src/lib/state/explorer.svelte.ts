@@ -63,23 +63,31 @@ interface ExplorerCoreState {
   selectionAnchorIndex: number | null;
 }
 
-function createExplorerState() {
+interface ExplorerSeed {
+  currentPath: string;
+  entries: FileEntry[];
+  sortBy: SortField;
+  sortAscending: boolean;
+  viewMode: ViewMode;
+}
+
+function createExplorerState(seed?: ExplorerSeed) {
   // Core per-pane state using $state rune
   let coreState = $state<ExplorerCoreState>({
     // Navigation
-    currentPath: "",
+    currentPath: seed?.currentPath ?? "",
     history: [],
     historyIndex: -1,
 
     // Entries
-    entries: [],
-    loading: false,
+    entries: seed?.entries ?? [],
+    loading: !seed, // not loading if seeded
     error: null,
 
     // View options
-    sortBy: "name",
-    sortAscending: true,
-    viewMode: settingsStore.viewMode,
+    sortBy: seed?.sortBy ?? "name",
+    sortAscending: seed?.sortAscending ?? true,
+    viewMode: seed?.viewMode ?? settingsStore.viewMode,
 
     // Selection
     selectedPaths: new Set(),
@@ -140,7 +148,12 @@ function createExplorerState() {
   const dirListing = createDirectoryListing();
 
   async function navigateInternal(path: string): Promise<boolean> {
-    coreState.loading = true;
+    // If we already have entries for this path (e.g. seeded from another tab),
+    // don't show loading state — the existing entries stay visible while we refresh.
+    const isSeeded = coreState.currentPath === path && coreState.entries.length > 0;
+    if (!isSeeded) {
+      coreState.loading = true;
+    }
     coreState.error = null;
     filterQuery = "";
     showFilter = false;

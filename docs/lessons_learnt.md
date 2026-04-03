@@ -12,6 +12,10 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 **Key takeaways:**
 - New tabs flash empty because `createTab` creates a fresh explorer and immediately switches to it. The explorer's `navigateTo()` is async so entries arrive after the first render. Fix: seed the new explorer with the source tab's entries/sort/viewMode so it renders instantly. Also skip `loading = true` in `navigateInternal` when the path is already populated (seeded state).
+## fix/preview-hidden-reactive: Folder Preview Hidden Files Reactivity
+
+**Key takeaways:**
+- Folder preview filtered hidden files inside `loadPreview()` which only runs on selection change. Toggling `showHidden` didn't update the preview. Fix: store raw entries in `previewFolderChildrenRaw` and use `$derived` to filter based on `settingsStore.showHidden`, making it reactive.
 
 ---
 

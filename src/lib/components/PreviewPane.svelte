@@ -65,7 +65,12 @@
   let previewText = $state<string | null>(null);
   let previewHighlightedHtml = $state<string | null>(null);
   let previewPdfUrl = $state<string | null>(null);
-  let previewFolderChildren = $state<readonly FileEntry[]>([]);
+  let previewFolderChildrenRaw = $state<readonly FileEntry[]>([]);
+  const previewFolderChildren = $derived(
+    settingsStore.showHidden
+      ? previewFolderChildrenRaw
+      : previewFolderChildrenRaw.filter((e) => !e.name.startsWith("."))
+  );
   let previewLoading = $state(false);
   let previewError = $state<string | null>(null);
   let previewTruncatedLines = $state(0);
@@ -80,7 +85,7 @@
       previewText = null;
       previewHighlightedHtml = null;
       previewPdfUrl = null;
-      previewFolderChildren = [];
+      previewFolderChildrenRaw = [];
       previewError = null;
       previewLoading = false;
       return;
@@ -103,7 +108,7 @@
     previewText = null;
     previewHighlightedHtml = null;
     previewPdfUrl = null;
-    previewFolderChildren = [];
+    previewFolderChildrenRaw = [];
     previewError = null;
     previewTruncatedLines = 0;
     previewLoading = true;
@@ -112,9 +117,7 @@
       const result = await fetchDirectory(file.path);
       if (file.path !== lastPreviewPath) return;
       if (result.ok) {
-        previewFolderChildren = settingsStore.showHidden
-          ? result.data.entries
-          : result.data.entries.filter((e) => !e.name.startsWith("."));
+        previewFolderChildrenRaw = result.data.entries;
       }
       previewLoading = false;
       return;

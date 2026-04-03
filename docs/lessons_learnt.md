@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/disable-slow-click-rename: Remove Slow-Click-to-Rename
+
+**Key takeaways:**
+- FileItem.svelte had Windows Explorer-style slow-click-to-rename: clicking an already-selected file's name after 500ms triggered rename. Removed entirely — rename is only via F2 or context menu now.
+
+---
+
 ## fix/breadcrumb-caret-spacing: Tighter Breadcrumb Carets
 
 **Key takeaways:**

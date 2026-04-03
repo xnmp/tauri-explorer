@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/arrow-select-first: Arrow Key Selects First Item
+
+**Key takeaways:**
+- When nothing is selected (`currentIndex < 0`), the `step === 0` early return for inapplicable arrows (e.g. left/right in details) prevented selecting the first item. Moved the "nothing selected → select first" check before the step calculation.
+
+---
+
 ## feat/miller-arrow-nav: Miller View Arrow Key Navigation
 
 **Key takeaways:**

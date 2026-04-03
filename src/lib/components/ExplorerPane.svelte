@@ -152,14 +152,22 @@
         ? entries.findIndex((e) => e.path === selected.path)
         : -1;
 
+      // If nothing is selected, any arrow key selects the first item
+      if (currentIndex < 0) {
+        paneExplorer.selectEntry(entries[0], { ctrlKey: false, shiftKey: false });
+        tick().then(() => {
+          const el = paneRef?.querySelector<HTMLElement>(".selected");
+          if (el && el !== document.activeElement) el.focus({ preventScroll: false });
+        });
+        return;
+      }
+
       const step = getArrowStep(event.key, paneExplorer.viewMode, entries.length);
       if (step === 0) return; // Arrow key not applicable in this view
 
       const isForward = event.key === "ArrowDown" || event.key === "ArrowRight";
       let newIndex: number;
-      if (currentIndex < 0) {
-        newIndex = 0;
-      } else if (isForward) {
+      if (isForward) {
         newIndex = currentIndex + step;
         if (newIndex >= entries.length) return; // Already at edge
       } else {

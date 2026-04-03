@@ -12,6 +12,10 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 **Key takeaways:**
 - Added PageUp/PageDown support in ExplorerPane alongside existing arrow key handling. Jumps by 8 items, clamped to list bounds. Supports Shift+PageUp/Down for range selection.
+## fix/preview-line-limit: Preview Line Limit and Large File Performance
+
+**Key takeaways:**
+- Syntax highlighting the full 512KB of a large file (uv.lock, etc.) causes UI lag. Fix: truncate preview to 200 lines and only syntax-highlight content under 50KB. Show a truncation indicator.
 
 ---
 

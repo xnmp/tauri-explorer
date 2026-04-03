@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/breadcrumb-caret-spacing: Tighter Breadcrumb Carets
+
+**Key takeaways:**
+- Breadcrumb caret buttons had `padding: 4px 5px` and container `gap: 2px`. Reduced to `padding: 4px 2px` and `gap: 0px` for tighter spacing between chevrons and folder names.
+
+---
+
 ## feat/miller-arrow-nav: Miller View Arrow Key Navigation
 
 **Key takeaways:**

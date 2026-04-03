@@ -533,7 +533,7 @@
   .breadcrumbs-container {
     display: flex;
     align-items: center;
-    gap: var(--breadcrumb-gap, 2px);
+    gap: var(--breadcrumb-gap, 0px);
     flex: 1;
     min-width: 0;
     height: 30px;
@@ -633,7 +633,7 @@
   }
 
   .caret-btn {
-    padding: 4px 5px;
+    padding: 4px 2px;
     background: transparent;
     border: none;
     border-radius: 3px;

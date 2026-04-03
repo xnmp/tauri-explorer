@@ -24,6 +24,10 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 **Key takeaways:**
 - When nothing is selected (`currentIndex < 0`), the `step === 0` early return for inapplicable arrows (e.g. left/right in details) prevented selecting the first item. Moved the "nothing selected → select first" check before the step calculation.
+## fix/tab-open-flash: Tab Open Flash and Close Animation
+
+**Key takeaways:**
+- The slide-in animation on `.tab` replayed for ALL tabs whenever the tab bar re-rendered (e.g. on mount with 2+ tabs). Fix: track known tab IDs and only apply `tab-entering` class to genuinely new tabs. For close animation, use a `closingTabId` state + `setTimeout` to delay actual removal until the CSS animation completes.
 
 ---
 

@@ -11,19 +11,40 @@
   const tabs = $derived(windowTabsManager.tabs);
   const activeTabId = $derived(windowTabsManager.activeTabId);
 
+  // Track tab IDs that existed on first render to skip entrance animation
+  let knownTabIds = new Set(windowTabsManager.tabs.map((t) => t.id));
+
+  // Track tabs being closed (for exit animation)
+  let closingTabId = $state<string | null>(null);
+
+  function isNewTab(tabId: string): boolean {
+    if (knownTabIds.has(tabId)) return false;
+    knownTabIds.add(tabId);
+    return true;
+  }
+
   function handleTabClick(tabId: string): void {
     windowTabsManager.setActiveTab(tabId);
   }
 
   function handleTabClose(event: MouseEvent, tabId: string): void {
     event.stopPropagation();
-    windowTabsManager.closeTab(tabId);
+    closingTabId = tabId;
+    // Wait for close animation to finish, then actually remove
+    setTimeout(() => {
+      windowTabsManager.closeTab(tabId);
+      closingTabId = null;
+    }, 200);
   }
 
   function handleTabMiddleClick(event: MouseEvent, tabId: string): void {
     if (event.button === 1) {
       event.preventDefault();
-      windowTabsManager.closeTab(tabId);
+      closingTabId = tabId;
+      setTimeout(() => {
+        windowTabsManager.closeTab(tabId);
+        closingTabId = null;
+      }, 200);
     }
   }
 
@@ -89,6 +110,8 @@
         class:active={tab.id === activeTabId}
         class:drag-over={dropTargetTabId === tab.id}
         class:dragging={dragTabId === tab.id}
+        class:tab-entering={isNewTab(tab.id)}
+        class:tab-closing={closingTabId === tab.id}
         role="tab"
         tabindex="0"
         aria-selected={tab.id === activeTabId}
@@ -183,6 +206,15 @@
     }
   }
 
+  @keyframes tabSlideOut {
+    to {
+      max-width: 0;
+      opacity: 0;
+      padding-left: 0;
+      padding-right: 0;
+    }
+  }
+
   .tab {
     display: flex;
     align-items: center;
@@ -203,8 +235,16 @@
     border: 1px solid transparent;
     border-bottom: none;
     transform-origin: bottom center;
-    animation: tabSlideIn 250ms cubic-bezier(0.1, 0.9, 0.2, 1) both;
     overflow: hidden;
+  }
+
+  .tab.tab-entering {
+    animation: tabSlideIn 250ms cubic-bezier(0.1, 0.9, 0.2, 1) both;
+  }
+
+  .tab.tab-closing {
+    animation: tabSlideOut 200ms cubic-bezier(0.4, 0, 1, 1) forwards;
+    pointer-events: none;
   }
 
   /* Subtle gradient overlay for depth */

@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/folder-preview-hidden: Folder Preview Respects Hidden Files
+
+**Key takeaways:**
+- PreviewPane's folder listing used `result.data.entries` directly without filtering. MillerColumns correctly filtered hidden files but PreviewPane didn't. Filter based on `settingsStore.showHidden`.
+
+---
+
 ## feat/miller-arrow-nav: Miller View Arrow Key Navigation
 
 **Key takeaways:**

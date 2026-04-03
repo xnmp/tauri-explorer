@@ -8,6 +8,10 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 **Key takeaways:**
 - Breadcrumb caret buttons had `padding: 4px 5px` and container `gap: 2px`. Reduced to `padding: 4px 2px` and `gap: 0px` for tighter spacing between chevrons and folder names.
+## feat/pageup-down-navigation: PageUp/PageDown Navigation
+
+**Key takeaways:**
+- Added PageUp/PageDown support in ExplorerPane alongside existing arrow key handling. Jumps by 8 items, clamped to list bounds. Supports Shift+PageUp/Down for range selection.
 
 ---
 

@@ -129,6 +129,12 @@
     if (isArrow) {
       event.preventDefault();
 
+      // Miller + details: ArrowLeft always goes up (even in empty folders)
+      if (settingsStore.millerLayers > 0 && paneExplorer.viewMode === "details" && event.key === "ArrowLeft") {
+        paneExplorer.goUp();
+        return;
+      }
+
       const entries = paneExplorer.displayEntries;
       if (entries.length === 0) return;
 
@@ -147,17 +153,11 @@
         return;
       }
 
-      // Miller + details view: left/right arrows navigate directories (yazi-like)
-      if (settingsStore.millerLayers > 0 && paneExplorer.viewMode === "details") {
-        if (event.key === "ArrowLeft") {
-          paneExplorer.goUp();
+      // Miller + details: ArrowRight on a folder navigates into it
+      if (settingsStore.millerLayers > 0 && paneExplorer.viewMode === "details" && event.key === "ArrowRight") {
+        if (selected?.kind === "directory") {
+          paneExplorer.navigateTo(selected.path);
           return;
-        }
-        if (event.key === "ArrowRight") {
-          if (selected?.kind === "directory") {
-            paneExplorer.navigateTo(selected.path);
-            return;
-          }
         }
       }
 

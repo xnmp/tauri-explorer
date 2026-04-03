@@ -112,7 +112,9 @@
       const result = await fetchDirectory(file.path);
       if (file.path !== lastPreviewPath) return;
       if (result.ok) {
-        previewFolderChildren = result.data.entries;
+        previewFolderChildren = settingsStore.showHidden
+          ? result.data.entries
+          : result.data.entries.filter((e) => !e.name.startsWith("."));
       }
       previewLoading = false;
       return;

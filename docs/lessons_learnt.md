@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/preview-hidden-reactive: Folder Preview Hidden Files Reactivity
+
+**Key takeaways:**
+- Folder preview filtered hidden files inside `loadPreview()` which only runs on selection change. Toggling `showHidden` didn't update the preview. Fix: store raw entries in `previewFolderChildrenRaw` and use `$derived` to filter based on `settingsStore.showHidden`, making it reactive.
+
+---
+
 ## fix/breadcrumb-caret-spacing: Tighter Breadcrumb Carets
 
 **Key takeaways:**

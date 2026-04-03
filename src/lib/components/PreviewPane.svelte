@@ -68,6 +68,7 @@
   let previewFolderChildren = $state<readonly FileEntry[]>([]);
   let previewLoading = $state(false);
   let previewError = $state<string | null>(null);
+  let previewTruncatedLines = $state(0);
   let lastPreviewPath = $state<string | null>(null);
 
   // Load preview when selection changes
@@ -104,6 +105,7 @@
     previewPdfUrl = null;
     previewFolderChildren = [];
     previewError = null;
+    previewTruncatedLines = 0;
     previewLoading = true;
 
     if (file.kind === "directory") {
@@ -151,11 +153,23 @@
       const result = await readTextFile(file.path, 524288); // 512KB limit for preview
       if (file.path !== lastPreviewPath) return; // Stale
       if (result.ok) {
-        previewText = result.data;
-        // Syntax highlight for code files (defer to avoid blocking)
-        try {
-          previewHighlightedHtml = highlightCode(result.data, file.name);
-        } catch {
+        // Limit to first 200 lines to avoid lag on large files
+        const MAX_PREVIEW_LINES = 200;
+        const lines = result.data.split("\n");
+        const truncated = lines.length > MAX_PREVIEW_LINES;
+        const displayText = truncated
+          ? lines.slice(0, MAX_PREVIEW_LINES).join("\n")
+          : result.data;
+        previewText = displayText;
+        previewTruncatedLines = truncated ? lines.length : 0;
+        // Only syntax-highlight if content is reasonably small (< 50KB)
+        if (displayText.length < 50_000) {
+          try {
+            previewHighlightedHtml = highlightCode(displayText, file.name);
+          } catch {
+            previewHighlightedHtml = null;
+          }
+        } else {
           previewHighlightedHtml = null;
         }
       } else {
@@ -210,8 +224,14 @@
         </div>
       {:else if previewHighlightedHtml !== null}
         <pre class="preview-text preview-code" class:hljs-light={isLightTheme} class:hljs-dark={!isLightTheme}><code class="hljs">{@html previewHighlightedHtml}</code></pre>
+        {#if previewTruncatedLines > 0}
+          <div class="preview-truncated">Showing first 200 of {previewTruncatedLines.toLocaleString()} lines</div>
+        {/if}
       {:else if previewText !== null}
         <pre class="preview-text">{previewText}</pre>
+        {#if previewTruncatedLines > 0}
+          <div class="preview-truncated">Showing first 200 of {previewTruncatedLines.toLocaleString()} lines</div>
+        {/if}
       {:else if previewError}
         <div class="preview-empty">
           <span class="preview-error-text">{previewError}</span>
@@ -390,6 +410,15 @@
   .preview-code :global(.hljs) {
     background: transparent;
     padding: 0;
+  }
+
+  .preview-truncated {
+    padding: 8px 16px;
+    font-size: 10px;
+    color: var(--text-tertiary);
+    text-align: center;
+    border-top: 1px solid var(--divider);
+    flex-shrink: 0;
   }
 
   /* GitHub Dark hljs theme (default) */

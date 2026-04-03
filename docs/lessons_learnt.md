@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/preview-line-limit: Preview Line Limit and Large File Performance
+
+**Key takeaways:**
+- Syntax highlighting the full 512KB of a large file (uv.lock, etc.) causes UI lag. Fix: truncate preview to 200 lines and only syntax-highlight content under 50KB. Show a truncation indicator.
+
+---
+
 ## feat/miller-arrow-nav: Miller View Arrow Key Navigation
 
 **Key takeaways:**

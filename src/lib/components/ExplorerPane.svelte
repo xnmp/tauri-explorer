@@ -178,6 +178,35 @@
         }
       });
     }
+    // PageUp/PageDown: jump by PAGE_STEP items
+    const PAGE_STEP = 8;
+    if (event.key === "PageUp" || event.key === "PageDown") {
+      event.preventDefault();
+      const entries = paneExplorer.displayEntries;
+      if (entries.length === 0) return;
+
+      const selected = paneExplorer.getSelectedEntries()[0];
+      const currentIndex = selected
+        ? entries.findIndex((e) => e.path === selected.path)
+        : -1;
+
+      let newIndex: number;
+      if (currentIndex < 0) {
+        newIndex = 0;
+      } else if (event.key === "PageDown") {
+        newIndex = Math.min(currentIndex + PAGE_STEP, entries.length - 1);
+      } else {
+        newIndex = Math.max(currentIndex - PAGE_STEP, 0);
+      }
+
+      paneExplorer.selectEntry(entries[newIndex], { ctrlKey: false, shiftKey: event.shiftKey });
+      tick().then(() => {
+        const el = paneRef?.querySelector<HTMLElement>(".selected");
+        if (el && el !== document.activeElement) {
+          el.focus({ preventScroll: false });
+        }
+      });
+    }
     // All other shortcuts (Ctrl+C/X/V/Z/A, Delete, F2, F5, F6, Enter, etc.)
     // are handled by the global keybinding system in command-definitions.ts
   }

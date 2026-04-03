@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/tab-open-flash: Tab Open Flash and Close Animation
+
+**Key takeaways:**
+- The slide-in animation on `.tab` replayed for ALL tabs whenever the tab bar re-rendered (e.g. on mount with 2+ tabs). Fix: track known tab IDs and only apply `tab-entering` class to genuinely new tabs. For close animation, use a `closingTabId` state + `setTimeout` to delay actual removal until the CSS animation completes.
+
+---
+
 ## feat/miller-arrow-nav: Miller View Arrow Key Navigation
 
 **Key takeaways:**

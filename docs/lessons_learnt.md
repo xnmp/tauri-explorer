@@ -16,6 +16,10 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 **Key takeaways:**
 - Folder preview filtered hidden files inside `loadPreview()` which only runs on selection change. Toggling `showHidden` didn't update the preview. Fix: store raw entries in `previewFolderChildrenRaw` and use `$derived` to filter based on `settingsStore.showHidden`, making it reactive.
+## fix/disable-slow-click-rename: Remove Slow-Click-to-Rename
+
+**Key takeaways:**
+- FileItem.svelte had Windows Explorer-style slow-click-to-rename: clicking an already-selected file's name after 500ms triggered rename. Removed entirely — rename is only via F2 or context menu now.
 
 ---
 

@@ -34,11 +34,6 @@
     getPaneNav: () => paneNav,
   });
 
-  // Slow-click-to-rename state (Windows Explorer behavior)
-  let wasSelectedOnMouseDown = false;
-  let renameClickTimeout: ReturnType<typeof setTimeout> | null = null;
-  let nameClickPending = false;
-
   // Inline rename composable
   const rename = useInlineRename(() => explorer);
 
@@ -56,50 +51,15 @@
   const entryInClipboard = $derived(checkInClipboard(entry));
   const isCut = $derived(isClipboardCut(entry));
 
-  // Track if item was selected before mousedown (for slow-click-to-rename)
-  function handleMouseDown() {
-    wasSelectedOnMouseDown = selected;
-  }
-
   function handleClick(event: MouseEvent) {
     if (isRenaming) {
       event.stopPropagation();
       return;
     }
-
-    // Clear any pending rename timeout
-    if (renameClickTimeout) {
-      clearTimeout(renameClickTimeout);
-      renameClickTimeout = null;
-    }
-
-    // Check if click was on the name area (for slow-click-to-rename)
-    const target = event.target as HTMLElement;
-    const isNameClick = target.classList.contains("name") || target.closest(".name-cell");
-
-    // If item was already selected before this click, on the name area,
-    // and it's a simple left click (no modifiers), schedule rename
-    if (wasSelectedOnMouseDown && isNameClick && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
-      nameClickPending = true;
-      renameClickTimeout = setTimeout(() => {
-        if (nameClickPending) {
-          explorer.startRename(entry);
-        }
-        nameClickPending = false;
-        renameClickTimeout = null;
-      }, 500); // 500ms delay to distinguish from double-click
-    }
-
     onclick(event);
   }
 
-  // Cancel slow-click-to-rename on double-click
   function handleDoubleClick() {
-    if (renameClickTimeout) {
-      clearTimeout(renameClickTimeout);
-      renameClickTimeout = null;
-    }
-    nameClickPending = false;
     ondblclick();
   }
 </script>
@@ -113,7 +73,6 @@
   class:selected
   class:drop-target={interactions.isDropTarget(entry.path)}
   class:copy-drop={interactions.isCopyDrop(entry.path)}
-  onmousedown={handleMouseDown}
   onclick={handleClick}
   ondblclick={handleDoubleClick}
   oncontextmenu={(e) => interactions.handleContextMenu(e, entry)}

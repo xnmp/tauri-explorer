@@ -75,6 +75,8 @@ fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
 
 /// Restore files from the system trash by their original paths.
 /// Finds the most recently deleted item matching each path and restores it.
+/// Note: trash::os_limited is only available on Linux/Windows (not macOS).
+#[cfg(not(target_os = "macos"))]
 #[tauri::command]
 async fn restore_from_trash(paths: Vec<String>) -> Result<(), AppError> {
     let trash_items = trash::os_limited::list()
@@ -102,6 +104,12 @@ async fn restore_from_trash(paths: Vec<String>) -> Result<(), AppError> {
 
     trash::os_limited::restore_all(to_restore)
         .map_err(|e| AppError::Other(format!("Failed to restore from trash: {}", e)))
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn restore_from_trash(_paths: Vec<String>) -> Result<(), AppError> {
+    Err(AppError::Other("Trash restore is not supported on macOS".to_string()))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -244,9 +252,7 @@ pub fn run(launch_dir: Option<String>) {
             )
             .title("tauri-explorer")
             .inner_size(1200.0, 800.0)
-            .decorations(false)
-            .transparent(true)
-            .shadow(false)
+            .decorations(cfg!(target_os = "macos"))
             .disable_drag_drop_handler()
             .initialization_script(&init_script)
             .build()?;

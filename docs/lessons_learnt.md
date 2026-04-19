@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/test-setup-stub-node25: Node 25 Native localStorage Breaks Test Stub
+
+**Key takeaways:**
+- Node 25 exposes a native empty `localStorage` global, so `typeof globalThis.localStorage === "undefined"` is false and `tests/setup.ts` skipped installing the functional stub. Any test that persists state (via `persisted.ts` / `drag.svelte.ts`) without its own `vi.stubGlobal` then crashed with `setItem is not a function`. Check for a functional `setItem` method, not mere existence.
+
+---
+
 ## fix/arrow-select-first-v2: Arrow Select First (v2)
 
 **Key takeaways:**

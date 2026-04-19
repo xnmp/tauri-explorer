@@ -1,19 +1,20 @@
 <!--
-  Custom Title Bar - Windows 11 style (compact)
-  Shows only when multiple tabs are open (tab bar + drag region).
-  Window controls have moved to SharedToolbar.
-  Issue: tauri-explorer-adtw, tauri-explorer-ikiq, tauri-explorer-ldfx, tauri-2e92
+  Custom title bar — hosts the tab strip, a drag region, and window controls.
+  Renders whenever there are tabs to display or window controls are enabled,
+  so users on compositors with their own window chrome (e.g. Hyprland) can
+  hide it entirely by disabling showWindowControls and opening a single tab.
 -->
 <script lang="ts">
   import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
+  import { onMount } from "svelte";
   import WindowTabBar from "./WindowTabBar.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+  import { settingsStore } from "$lib/state/settings.svelte";
 
   const showTabBar = $derived(windowTabsManager.tabs.length > 1);
-  const showTitleBar = $derived(showTabBar);
+  const showTitleBar = $derived(showTabBar || settingsStore.showWindowControls);
 
-  // Check if running in Tauri environment
-  const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+  const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
   let appWindow: Window | null = null;
   try {
     if (isTauri) {
@@ -23,35 +24,93 @@
     // Running in browser without Tauri runtime
   }
 
-  // Handle window dragging manually for better compatibility
+  let isMaximized = $state(false);
+
+  onMount(() => {
+    if (!appWindow) return;
+    let unlisten: (() => void) | undefined;
+    (async () => {
+      isMaximized = await appWindow.isMaximized();
+      unlisten = await appWindow.onResized(async () => {
+        isMaximized = await appWindow!.isMaximized();
+      });
+    })();
+    return () => unlisten?.();
+  });
+
   async function handleDragStart(event: MouseEvent) {
-    // Only drag on left click
     if (event.button !== 0) return;
-
     const target = event.target as HTMLElement;
-    // Don't drag when clicking on interactive elements (buttons, tabs)
-    if (target.closest('button') || target.closest('.tab-area')) return;
+    if (target.closest("button") || target.closest(".tab-area")) return;
 
-    // Double-click to maximize/restore
     if (event.detail === 2) {
       await appWindow?.toggleMaximize();
       return;
     }
-
-    // Start dragging
     await appWindow?.startDragging();
+  }
+
+  async function handleMinimize() {
+    await appWindow?.minimize();
+  }
+
+  async function handleMaximize() {
+    await appWindow?.toggleMaximize();
+  }
+
+  async function handleClose() {
+    await appWindow?.close();
   }
 </script>
 
 {#if showTitleBar}
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="titlebar" onmousedown={handleDragStart}>
-  <!-- Window-level tab bar -->
-  <WindowTabBar />
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="titlebar" onmousedown={handleDragStart}>
+    <WindowTabBar />
+    <div class="spacer"></div>
 
-  <!-- Spacer for drag region -->
-  <div class="spacer"></div>
-</div>
+    {#if settingsStore.showWindowControls}
+      <div class="window-controls">
+        <button
+          class="control-btn"
+          onclick={handleMinimize}
+          title="Minimize"
+          aria-label="Minimize"
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10">
+            <path d="M0 5H10" stroke="currentColor" stroke-width="1" />
+          </svg>
+        </button>
+        <button
+          class="control-btn"
+          onclick={handleMaximize}
+          title={isMaximized ? "Restore" : "Maximize"}
+          aria-label={isMaximized ? "Restore" : "Maximize"}
+        >
+          {#if isMaximized}
+            <svg width="10" height="10" viewBox="0 0 10 10">
+              <rect x="2" y="2" width="6" height="6" stroke="currentColor" stroke-width="1" fill="none" />
+              <path d="M2 2V1H9V8H8" stroke="currentColor" stroke-width="1" fill="none" />
+            </svg>
+          {:else}
+            <svg width="10" height="10" viewBox="0 0 10 10">
+              <rect x="1" y="1" width="8" height="8" stroke="currentColor" stroke-width="1" fill="none" />
+            </svg>
+          {/if}
+        </button>
+        <button
+          class="control-btn close"
+          onclick={handleClose}
+          title="Close"
+          aria-label="Close"
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10">
+            <path d="M1 1L9 9M9 1L1 9" stroke="currentColor" stroke-width="1" stroke-linecap="round" />
+          </svg>
+        </button>
+      </div>
+    {/if}
+  </div>
 {/if}
 
 <style>
@@ -84,5 +143,44 @@
   .spacer {
     flex: 1;
     height: 100%;
+  }
+
+  .window-controls {
+    display: flex;
+    height: 100%;
+    margin-left: 4px;
+  }
+
+  .control-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 30px;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-normal);
+    border-radius: var(--radius-sm);
+  }
+
+  .control-btn:hover {
+    background: var(--control-fill-secondary);
+    color: var(--text-primary);
+  }
+
+  .control-btn:active {
+    transform: scale(0.95);
+  }
+
+  .control-btn.close:hover {
+    background: #c42b1c;
+    color: white;
+  }
+
+  .control-btn:focus-visible {
+    outline: 2px solid var(--focus-stroke-outer);
+    outline-offset: -2px;
   }
 </style>

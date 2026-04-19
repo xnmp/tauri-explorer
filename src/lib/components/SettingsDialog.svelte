@@ -166,21 +166,6 @@
 
           <div class="setting-row">
             <div class="setting-info">
-              <span class="setting-label">Show Toolbar</span>
-              <span class="setting-description">Display navigation buttons at the top</span>
-            </div>
-            <label class="toggle">
-              <input
-                type="checkbox"
-                checked={settingsStore.showToolbar}
-                onchange={() => settingsStore.toggleToolbar()}
-              />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-
-          <div class="setting-row">
-            <div class="setting-info">
               <span class="setting-label">Show Sidebar</span>
               <span class="setting-description">Display bookmarks and quick access panel</span>
             </div>

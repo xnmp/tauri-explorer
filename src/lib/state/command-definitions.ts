@@ -352,13 +352,6 @@ const viewCommands: Command[] = [
     handler: () => settingsStore.toggleSidebar(),
   },
   {
-    id: "view.toggleToolbar",
-    label: "Toggle Toolbar",
-    category: "view",
-    shortcut: "Alt+M W",
-    handler: () => settingsStore.toggleToolbar(),
-  },
-  {
     id: "view.toggleWindowControls",
     label: "Toggle Window Controls",
     category: "view",
@@ -741,6 +734,16 @@ const generalCommands: Command[] = [
   },
 ];
 
+/** Generate one "Theme: <Name>" command per registered theme. */
+function buildThemeCommands(): Command[] {
+  return themeStore.availableThemes.map((theme) => ({
+    id: `view.theme.${theme.id}`,
+    label: `Theme: ${theme.name}`,
+    category: "view",
+    handler: () => themeStore.setTheme(theme.id),
+  }));
+}
+
 /** Register all commands */
 export function registerAllCommands(): void {
   const allCommands = [
@@ -749,6 +752,7 @@ export function registerAllCommands(): void {
     ...editCommands,
     ...selectionCommands,
     ...viewCommands,
+    ...buildThemeCommands(),
     ...bookmarkCommands,
     ...recentCommands,
     ...windowCommands,

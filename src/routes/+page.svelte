@@ -23,7 +23,6 @@
   import { saveFocusedWindowState } from "$lib/state/focused-window";
   import "$lib/themes/index.css";
   import TitleBar from "$lib/components/TitleBar.svelte";
-  import SharedToolbar from "$lib/components/SharedToolbar.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import PaneContainer from "$lib/components/PaneContainer.svelte";
   import QuickOpen from "$lib/components/QuickOpen.svelte";
@@ -346,11 +345,6 @@
 
 <main class="explorer">
   <TitleBar />
-  {#if settingsStore.showToolbar}
-    <SharedToolbar />
-  {:else if windowTabsManager.tabs.length <= 1 && settingsStore.showWindowControls}
-    <div class="window-top-spacer"></div>
-  {/if}
   <div class="main-content">
     {#if settingsStore.showSidebar}
       <Sidebar />
@@ -543,15 +537,6 @@
     background: color-mix(in srgb, var(--background-mica) calc(var(--bg-opacity, 1) * 100%), transparent);
     backdrop-filter: blur(60px) saturate(125%);
     -webkit-backdrop-filter: blur(60px) saturate(125%);
-  }
-
-  /* Spacer div that replaces the titlebar's space when no titlebar is
-     shown. Uses background-card to match the toolbar, avoiding a visible
-     seam from backdrop-filter not covering parent padding areas. */
-  .window-top-spacer {
-    height: 6px;
-    background: var(--background-card);
-    flex-shrink: 0;
   }
 
   /* Mica effect gradient overlay — disabled due to gradient banding artifacts */

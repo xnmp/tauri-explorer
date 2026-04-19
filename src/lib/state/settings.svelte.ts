@@ -44,7 +44,6 @@ export interface ColumnVisibility {
 }
 
 export interface Settings {
-  showToolbar: boolean;
   showSidebar: boolean;
   showHidden: boolean;
   showWindowControls: boolean;
@@ -78,7 +77,6 @@ const MAX_ZOOM = 200;
 const ZOOM_STEP = 10;
 
 const DEFAULT_SETTINGS: Settings = {
-  showToolbar: true,
   showSidebar: true,
   showHidden: false,
   showWindowControls: true,
@@ -161,10 +159,6 @@ function createSettingsStore() {
     saveSettings(settings);
   }
 
-  function toggleToolbar(): void {
-    update({ showToolbar: !settings.showToolbar });
-  }
-
   function toggleSidebar(): void {
     update({ showSidebar: !settings.showSidebar });
   }
@@ -205,9 +199,6 @@ function createSettingsStore() {
   return {
     get state() {
       return settings;
-    },
-    get showToolbar() {
-      return settings.showToolbar;
     },
     get showSidebar() {
       return settings.showSidebar;
@@ -350,7 +341,6 @@ function createSettingsStore() {
     },
     init,
     update,
-    toggleToolbar,
     toggleSidebar,
     toggleHidden,
     toggleWindowControls,

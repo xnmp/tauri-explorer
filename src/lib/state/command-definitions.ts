@@ -28,13 +28,14 @@ function openNewWindow(path: string, viewMode?: ViewMode): void {
   const params = new URLSearchParams({ path });
   if (viewMode) params.set("viewMode", viewMode);
   const url = `${baseUrl}?${params.toString()}`;
+  const isMac = navigator.platform.startsWith("Mac");
   new WebviewWindow(label, {
     url,
     width: 1200,
     height: 800,
-    decorations: false,
-    transparent: true,
-    shadow: false,
+    decorations: isMac,
+    transparent: !isMac,
+    shadow: isMac,
     dragDropEnabled: false,
   });
 }

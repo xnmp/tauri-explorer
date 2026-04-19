@@ -11,6 +11,7 @@ import { clipboardStore } from "$lib/state/clipboard.svelte";
 import { dragState } from "$lib/state/drag.svelte";
 import type { PaneNavigationContext } from "$lib/state/pane-context";
 import { useDropTarget } from "./use-drop-target.svelte";
+import { startExternalDrag } from "./use-external-drag.svelte";
 
 interface ItemInteractionsDeps {
   getExplorer: () => ExplorerInstance;
@@ -48,6 +49,10 @@ export function useItemInteractions(deps: ItemInteractionsDeps) {
     }
     event.dataTransfer.effectAllowed = "all";
     dragState.start({ path: entry.path, name: entry.name, kind: entry.kind, paths: isMulti ? paths : undefined });
+
+    // Kick off OS-level drag session so external apps (VSCode, browsers, Finder) accept the drop.
+    // Fire-and-forget: dragstart must return synchronously; the plugin handles the native session.
+    void startExternalDrag(paths);
   }
 
   function handleDragEnd(): void {

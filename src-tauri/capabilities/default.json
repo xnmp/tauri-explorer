@@ -15,6 +15,7 @@
     "shell:allow-execute",
     "clipboard-x:default",
     "core:webview:allow-create-webview-window",
-    "log:default"
+    "log:default",
+    "drag:default"
   ]
 }

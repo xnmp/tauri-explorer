@@ -48,6 +48,18 @@ export function useItemInteractions(deps: ItemInteractionsDeps) {
       event.dataTransfer.setData("application/x-explorer-paths", JSON.stringify(paths));
     }
     event.dataTransfer.effectAllowed = "all";
+
+    // Suppress the browser's auto-generated drag preview — when the dragged element
+    // contains an image thumbnail, Chromium picks it up and turns the external drop
+    // into a data: URL instead of a file upload. A 1×1 transparent element forces
+    // the native plugin's drag icon to be the only preview that reaches external apps.
+    if (typeof document !== "undefined") {
+      const blank = document.createElement("canvas");
+      blank.width = 1;
+      blank.height = 1;
+      event.dataTransfer.setDragImage(blank, 0, 0);
+    }
+
     dragState.start({ path: entry.path, name: entry.name, kind: entry.kind, paths: isMulti ? paths : undefined });
 
     // Kick off OS-level drag session so external apps (VSCode, browsers, Finder) accept the drop.

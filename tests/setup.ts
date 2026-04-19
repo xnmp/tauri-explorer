@@ -5,7 +5,10 @@
 
 // Provide a minimal localStorage stub for modules that check availability at import time.
 // Individual tests can override via vi.stubGlobal if needed.
-if (typeof globalThis.localStorage === "undefined") {
+// Node 25 exposes a native empty localStorage global, so check for functional methods
+// rather than just existence.
+const existing = (globalThis as { localStorage?: Partial<Storage> }).localStorage;
+if (!existing || typeof existing.setItem !== "function") {
   const store = new Map<string, string>();
   globalThis.localStorage = {
     getItem: (key: string) => store.get(key) ?? null,

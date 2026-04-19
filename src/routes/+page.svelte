@@ -7,6 +7,7 @@
   import { onMount } from "svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { setPaneNavigationContext } from "$lib/state/pane-context";
@@ -17,11 +18,11 @@
   import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { copyEntry, moveEntry } from "$lib/api/files";
+  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { initFileChangeListener, cleanupFileChangeListener, broadcastFileChange, parentDir } from "$lib/state/file-events";
   import { saveFocusedWindowState } from "$lib/state/focused-window";
   import "$lib/themes/index.css";
   import TitleBar from "$lib/components/TitleBar.svelte";
-  import SharedToolbar from "$lib/components/SharedToolbar.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import PaneContainer from "$lib/components/PaneContainer.svelte";
   import QuickOpen from "$lib/components/QuickOpen.svelte";
@@ -32,6 +33,10 @@
   import WorkspaceDialog from "$lib/components/WorkspaceDialog.svelte";
   import BulkRenameDialog from "$lib/components/BulkRenameDialog.svelte";
   import ConflictDialog from "$lib/components/ConflictDialog.svelte";
+  import NanoBananaDialog from "$lib/components/NanoBananaDialog.svelte";
+  import JobsPanel from "$lib/components/JobsPanel.svelte";
+  import { jobsStore } from "$lib/state/jobs.svelte";
+  import { toastStore } from "$lib/state/toast.svelte";
   import StatusBar from "$lib/components/StatusBar.svelte";
   import AnimatedBackground from "$lib/components/AnimatedBackground.svelte";
 
@@ -54,9 +59,9 @@
   }
 
   function refreshAllPanes() {
-    // Refresh both panes in active tab
+    // Refresh both panes in active tab (silent — triggered by file operations, not user action)
     for (const paneId of ["left", "right"] as const) {
-      windowTabsManager.getExplorer(paneId)?.refresh();
+      windowTabsManager.getExplorer(paneId)?.refresh({ silent: true });
     }
   }
 
@@ -106,6 +111,13 @@
     // Skip if focus is in an input field (except for special cases)
     const target = event.target as HTMLElement;
     const isInputField = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+
+    // Ctrl+J: Open jobs panel (hardcoded)
+    if (event.key === "j" && isModifier) {
+      event.preventDefault();
+      dialogStore.openJobsPanel();
+      return;
+    }
 
     // Ctrl+,: Open settings (hardcoded, not customizable)
     if (event.key === "," && isModifier) {
@@ -209,18 +221,13 @@
     // saved-state restoration so they open at the parent's path.
     const isChildWindow = !!urlPath;
     const defaultPath = urlPath || launchCwd || homePath;
-    const tab = windowTabsManager.init(defaultPath, isChildWindow);
 
-    // If launched from a terminal with a meaningful cwd, navigate the active
-    // pane there — even when saved state was restored. Skip if cwd is $HOME
-    // or "/" (typical desktop-launcher cwds where we want saved state).
+    // If launched from a terminal with a meaningful cwd, pass it as an
+    // override so the active pane navigates there directly instead of
+    // racing two concurrent navigateTo calls.
     const isGenericCwd = !launchCwd || launchCwd === homePath || launchCwd === "/";
-    if (!isChildWindow && !isGenericCwd) {
-      const explorer = windowTabsManager.getActiveExplorer();
-      if (explorer && explorer.currentPath !== launchCwd) {
-        explorer.navigateTo(launchCwd);
-      }
-    }
+    const overridePath = (!isChildWindow && !isGenericCwd) ? launchCwd! : undefined;
+    const tab = windowTabsManager.init(defaultPath, isChildWindow, overridePath);
     // Apply inherited view mode from parent window
     if (urlViewMode && tab) {
       const explorer = windowTabsManager.getActiveExplorer();
@@ -232,8 +239,9 @@
     console.log(`[Perf] Frontend mount→dir: ${(tEnd - t0).toFixed(1)}ms`);
 
     // Load settings and bookmarks from config files (async, non-blocking)
-    settingsStore.init();
+    settingsStore.init().then(() => themeStore.syncFromSettings());
     bookmarksStore.init();
+    folderViewsStore.init();
 
     // Register all commands for the command palette (deferred to next tick)
     queueMicrotask(() => registerAllCommands());
@@ -246,10 +254,38 @@
       for (const paneId of ["left", "right"] as const) {
         const exp = windowTabsManager.getExplorer(paneId);
         if (exp && affectedDirs.includes(exp.currentPath)) {
-          exp.refresh();
+          exp.refresh({ silent: true });
         }
       }
     });
+
+    // Listen for Nano Banana completion/error events
+    let unlistenNbComplete: UnlistenFn | undefined;
+    let unlistenNbError: UnlistenFn | undefined;
+    listen<{ jobId: number; outputPath: string }>("nano-banana-complete", (event) => {
+      const { jobId, outputPath } = event.payload;
+      jobsStore.completeJob(jobId, outputPath);
+      const fileName = outputPath.split("/").pop() ?? "image";
+      toastStore.show(`Nano Banana complete: ${fileName}`, "success");
+      refreshAllPanes();
+    }).then((fn) => { unlistenNbComplete = fn; });
+    listen<{ jobId: number; error: string }>("nano-banana-error", (event) => {
+      const { jobId, error } = event.payload;
+      jobsStore.failJob(jobId, error);
+      toastStore.error(`Nano Banana failed: ${error.slice(0, 100)}`);
+    }).then((fn) => { unlistenNbError = fn; });
+
+    // Listen for filesystem watcher events from backend (auto-refresh)
+    let unlistenWatcher: UnlistenFn | undefined;
+    listen<{ path: string }>("directory-changed", (event) => {
+      const changedPath = event.payload.path;
+      for (const paneId of ["left", "right"] as const) {
+        const exp = windowTabsManager.getExplorer(paneId);
+        if (exp && exp.currentPath === changedPath) {
+          exp.refresh({ silent: true });
+        }
+      }
+    }).then((fn) => { unlistenWatcher = fn; });
 
     // Persist focused window state when this window gains focus
     window.addEventListener("focus", persistFocusedState);
@@ -291,6 +327,9 @@
       clearInterval(saveInterval);
       externalDrop.cleanup();
       cleanupFileChangeListener();
+      unlistenWatcher?.();
+      unlistenNbComplete?.();
+      unlistenNbError?.();
     };
   });
 </script>
@@ -306,11 +345,6 @@
 
 <main class="explorer">
   <TitleBar />
-  {#if settingsStore.showToolbar}
-    <SharedToolbar />
-  {:else if windowTabsManager.tabs.length <= 1}
-    <div class="window-top-spacer"></div>
-  {/if}
   <div class="main-content">
     {#if settingsStore.showSidebar}
       <Sidebar />
@@ -332,6 +366,15 @@
   entries={dialogStore.bulkRenameEntries}
   onClose={() => dialogStore.closeBulkRename()}
   onComplete={() => refreshAllPanes()}
+/>
+<NanoBananaDialog
+  open={dialogStore.isNanoBananaOpen}
+  sourcePath={dialogStore.nanoBananaSourcePath}
+  onClose={() => dialogStore.closeNanoBanana()}
+/>
+<JobsPanel
+  open={dialogStore.isJobsPanelOpen}
+  onClose={() => dialogStore.closeJobsPanel()}
 />
 <ProgressDialog />
 <ConflictDialog />
@@ -419,6 +462,7 @@
 
   :global(body) {
     font-family: var(--font-family);
+    font-weight: var(--font-weight-normal);
     font-size: var(--font-size-body);
     line-height: var(--line-height-normal);
     letter-spacing: var(--letter-spacing-tight);
@@ -495,28 +539,7 @@
     -webkit-backdrop-filter: blur(60px) saturate(125%);
   }
 
-  /* Spacer div that replaces the titlebar's space when no titlebar is
-     shown. Uses background-card to match the toolbar, avoiding a visible
-     seam from backdrop-filter not covering parent padding areas. */
-  .window-top-spacer {
-    height: 6px;
-    background: var(--background-card);
-    flex-shrink: 0;
-  }
-
-  /* Mica effect gradient overlay */
-  .explorer::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    background: var(--mica-overlay, linear-gradient(
-      170deg,
-      rgba(255, 255, 255, 0.03) 0%,
-      transparent 40%
-    ));
-    pointer-events: none;
-    z-index: 0;
-  }
+  /* Mica effect gradient overlay — disabled due to gradient banding artifacts */
 
 
   .main-content {

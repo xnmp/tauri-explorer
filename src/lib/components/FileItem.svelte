@@ -3,323 +3,85 @@
   Issue: tauri-explorer-iw0, tauri-explorer-bae, tauri-explorer-h3n, tauri-explorer-x25
 -->
 <script lang="ts">
-  import { tick } from "svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { formatSize } from "$lib/domain/file";
   import { getFileType, getFileIconColor, formatDate } from "$lib/domain/file-types";
   import FileIcon from "./FileIcon.svelte";
-  import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
-  import { toastStore } from "$lib/state/toast.svelte";
-  import { clipboardStore } from "$lib/state/clipboard.svelte";
+  import GitStatusBadge from "./GitStatusBadge.svelte";
+  import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
-  import { moveEntry, copyEntry, fetchDirectory } from "$lib/api/files";
-  import { broadcastFileChange, parentDir } from "$lib/state/file-events";
-  import { undoStore } from "$lib/state/undo.svelte";
-  import { dragState } from "$lib/state/drag.svelte";
-  import { conflictResolver } from "$lib/state/conflict-resolver.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
+  import { useItemInteractions, isInClipboard as checkInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
 
   interface Props {
     entry: FileEntry;
     onclick: (event: MouseEvent) => void;
     ondblclick: () => void;
     selected?: boolean;
-    explorer?: ExplorerInstance;
+    explorer: ExplorerInstance;
   }
 
-  let { entry, onclick, ondblclick, selected = false, explorer = defaultExplorer }: Props = $props();
+  let { entry, onclick, ondblclick, selected = false, explorer }: Props = $props();
 
   // Get pane context for cross-pane operations
   const paneNav = getPaneNavigationContext();
 
-  // Slow-click-to-rename state (Windows Explorer behavior)
-  let wasSelectedOnMouseDown = false;
-  let renameClickTimeout: ReturnType<typeof setTimeout> | null = null;
-  let nameClickPending = false;
+  // Shared item interactions (DnD, context menu)
+  const interactions = useItemInteractions({
+    getExplorer: () => explorer,
+    getPaneNav: () => paneNav,
+  });
 
-  // Inline rename state
-  let renameInputRef: HTMLInputElement | null = null;
-  let editedName = $state("");
-  let renameError = $state<string | null>(null);
-  let submittingRename = $state(false);
+  // Inline rename composable
+  const rename = useInlineRename(() => explorer);
 
   // Check if this entry is being renamed
   const isRenaming = $derived(dialogStore.renamingEntry?.path === entry.path);
 
   // When rename mode starts, initialize and focus the input
   $effect(() => {
-    if (isRenaming && renameInputRef) {
-      editedName = entry.name;
-      renameError = null;
-      // Focus and select filename (without extension for files)
-      tick().then(() => {
-        renameInputRef?.focus();
-        if (entry.kind === "file") {
-          const lastDot = entry.name.lastIndexOf(".");
-          if (lastDot > 0) {
-            renameInputRef?.setSelectionRange(0, lastDot);
-          } else {
-            renameInputRef?.select();
-          }
-        } else {
-          renameInputRef?.select();
-        }
-      });
+    if (isRenaming && rename.renameInputRef) {
+      rename.focusAndSelect(entry);
     }
   });
 
-  async function confirmRename() {
-    if (submittingRename) return;
-
-    const trimmedName = editedName.trim();
-    if (!trimmedName) {
-      renameError = "Name cannot be empty";
-      return;
-    }
-
-    if (trimmedName === entry.name) {
-      explorer.cancelRename();
-      return;
-    }
-
-    submittingRename = true;
-    renameError = null;
-
-    const result = await explorer.rename(trimmedName);
-
-    submittingRename = false;
-
-    if (result) {
-      renameError = result;
-    }
-  }
-
-  function cancelRename() {
-    editedName = "";
-    renameError = null;
-    explorer.cancelRename();
-  }
-
-  function handleRenameKeydown(event: KeyboardEvent) {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      event.stopPropagation();
-      confirmRename();
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      cancelRename();
-    }
-  }
-
-  function handleRenameBlur() {
-    // Confirm on blur (like Windows Explorer)
-    if (editedName.trim() && editedName.trim() !== entry.name) {
-      confirmRename();
-    } else {
-      cancelRename();
-    }
-  }
-
-  // Track if item was selected before mousedown (for slow-click-to-rename)
-  function handleMouseDown() {
-    wasSelectedOnMouseDown = selected;
-  }
+  // Clipboard state
+  const entryInClipboard = $derived(checkInClipboard(entry));
+  const isCut = $derived(isClipboardCut(entry));
 
   function handleClick(event: MouseEvent) {
     if (isRenaming) {
       event.stopPropagation();
       return;
     }
-
-    // Clear any pending rename timeout
-    if (renameClickTimeout) {
-      clearTimeout(renameClickTimeout);
-      renameClickTimeout = null;
-    }
-
-    // Check if click was on the name area (for slow-click-to-rename)
-    const target = event.target as HTMLElement;
-    const isNameClick = target.classList.contains("name") || target.closest(".name-cell");
-
-    // If item was already selected before this click, on the name area,
-    // and it's a simple left click (no modifiers), schedule rename
-    if (wasSelectedOnMouseDown && isNameClick && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
-      nameClickPending = true;
-      renameClickTimeout = setTimeout(() => {
-        if (nameClickPending) {
-          explorer.startRename(entry);
-        }
-        nameClickPending = false;
-        renameClickTimeout = null;
-      }, 500); // 500ms delay to distinguish from double-click
-    }
-
     onclick(event);
   }
 
-  // Cancel slow-click-to-rename on double-click
   function handleDoubleClick() {
-    if (renameClickTimeout) {
-      clearTimeout(renameClickTimeout);
-      renameClickTimeout = null;
-    }
-    nameClickPending = false;
     ondblclick();
-  }
-
-  // Check if this item is in clipboard (for visual feedback)
-  const isInClipboard = $derived(
-    clipboardStore.content?.entries.some((e) => e.path === entry.path) ?? false
-  );
-  const isCut = $derived(
-    isInClipboard && clipboardStore.isCut
-  );
-
-  function handleContextMenu(event: MouseEvent) {
-    event.preventDefault();
-    event.stopPropagation();
-    explorer.openContextMenu(event.clientX, event.clientY, entry);
-  }
-
-  // Drag handlers - allow dragging files/folders
-  let isDropTarget = $state(false);
-  let isCopyDrop = $state(false);
-
-  function handleDragStart(event: DragEvent) {
-    if (!event.dataTransfer) return;
-
-    // Set drag data with file info (both dataTransfer and shared state)
-    event.dataTransfer.setData("application/x-explorer-path", entry.path);
-    event.dataTransfer.setData("application/x-explorer-name", entry.name);
-    event.dataTransfer.setData("application/x-explorer-kind", entry.kind);
-    event.dataTransfer.effectAllowed = "all";
-
-    // Also set shared drag state (dataTransfer is unreliable in some webviews)
-    dragState.start({ path: entry.path, name: entry.name, kind: entry.kind });
-  }
-
-  function handleDragEnd() {
-    // After a drag ends, refresh panes to reflect any cross-window moves.
-    // Internal drops already call refreshAllPanes(), so this is a no-op
-    // in that case (just a redundant refresh). For external drops (another
-    // window), this ensures the source window updates.
-    dragState.clear();
-    if (paneNav) {
-      paneNav.refreshAllPanes();
-    } else {
-      explorer.refresh();
-    }
-  }
-
-  // Drop handlers - allow dropping files/folders into directories
-  function handleDragOver(event: DragEvent) {
-    // Only accept drops on directories
-    if (entry.kind !== "directory") return;
-    // Accept if dataTransfer has our type, OR if there's cross-window drag data
-    if (!event.dataTransfer?.types.includes("application/x-explorer-path") && !dragState.readCrossWindow()) return;
-
-    event.preventDefault();
-    // Ctrl held = copy, otherwise move
-    const copying = event.ctrlKey;
-    if (event.dataTransfer) event.dataTransfer.dropEffect = copying ? "copy" : "move";
-    isDropTarget = true;
-    isCopyDrop = copying;
-  }
-
-  function handleDragLeave() {
-    isDropTarget = false;
-    isCopyDrop = false;
-  }
-
-  async function handleDrop(event: DragEvent) {
-    event.preventDefault();
-    isDropTarget = false;
-    isCopyDrop = false;
-
-    if (entry.kind !== "directory") return;
-    if (!event.dataTransfer) return;
-
-    // Try dataTransfer first, fall back to cross-window drag state
-    let sourcePath = event.dataTransfer.getData("application/x-explorer-path");
-    if (!sourcePath) {
-      const crossWindow = dragState.readCrossWindow();
-      if (crossWindow) sourcePath = crossWindow.path;
-    }
-    if (!sourcePath || sourcePath === entry.path) return;
-
-    // Don't allow moving/copying a folder into itself or its children
-    if (entry.path.startsWith(sourcePath + "/")) return;
-
-    // Ctrl held = copy, otherwise move
-    const isCopyOp = event.ctrlKey;
-    const fileName = sourcePath.split("/").pop() || sourcePath;
-
-    // Check for naming conflict in target directory
-    let overwrite = false;
-    const dirResult = await fetchDirectory(entry.path);
-    if (dirResult.ok) {
-      const existingNames = new Set(dirResult.data.entries.map((e) => e.name));
-      if (existingNames.has(fileName)) {
-        const { choice } = await conflictResolver.prompt({
-          fileName,
-          sourcePath,
-          remaining: 0,
-        });
-        if (choice === "skip" || choice === "cancel") return;
-        if (choice === "overwrite") overwrite = true;
-      }
-    }
-
-    const result = isCopyOp
-      ? await copyEntry(sourcePath, entry.path, overwrite)
-      : await moveEntry(sourcePath, entry.path, overwrite);
-
-    if (result.ok) {
-      if (isCopyOp) {
-        toastStore.show(`Copied ${fileName} to ${entry.name}`, "info");
-      } else {
-        undoStore.push({
-          type: "move",
-          sourcePath,
-          destPath: result.data.path,
-          originalDir: parentDir(sourcePath),
-        });
-        toastStore.show(`Moved ${fileName} to ${entry.name}`, "info");
-      }
-      if (paneNav) {
-        paneNav.refreshAllPanes();
-      } else {
-        explorer.refresh();
-      }
-      broadcastFileChange([parentDir(sourcePath), entry.path]);
-    } else {
-      console.error(`Failed to ${isCopyOp ? "copy" : "move"}:`, result.error);
-      toastStore.error(result.error);
-    }
   }
 </script>
 
 <button
-  class="file-item"
+  class="file-item entry-item"
   class:directory={entry.kind === "directory"}
   class:hidden-entry={entry.name.startsWith(".")}
   class:cut={isCut}
-  class:in-clipboard={isInClipboard}
+  class:in-clipboard={entryInClipboard}
   class:selected
-  class:drop-target={isDropTarget}
-  class:copy-drop={isCopyDrop}
-  onmousedown={handleMouseDown}
+  class:drop-target={interactions.isDropTarget(entry.path)}
+  class:copy-drop={interactions.isCopyDrop(entry.path)}
   onclick={handleClick}
   ondblclick={handleDoubleClick}
-  oncontextmenu={handleContextMenu}
+  oncontextmenu={(e) => interactions.handleContextMenu(e, entry)}
   draggable="true"
-  ondragstart={handleDragStart}
-  ondragend={handleDragEnd}
-  ondragover={handleDragOver}
-  ondragleave={handleDragLeave}
-  ondrop={handleDrop}
+  ondragstart={(e) => interactions.handleDragStart(e, entry, selected)}
+  ondragend={interactions.handleDragEnd}
+  ondragover={(e) => interactions.handleDragOver(e, entry)}
+  ondragleave={() => interactions.handleDragLeave(entry)}
+  ondrop={(e) => interactions.handleDrop(e, entry)}
 >
   <!-- Name column -->
   <div class="name-cell">
@@ -331,18 +93,19 @@
       <input
         type="text"
         class="rename-input"
-        class:error={!!renameError}
-        bind:value={editedName}
-        bind:this={renameInputRef}
-        onkeydown={handleRenameKeydown}
-        onblur={handleRenameBlur}
+        class:error={!!rename.renameError}
+        bind:value={rename.editedName}
+        bind:this={rename.renameInputRef}
+        onkeydown={(e) => rename.handleRenameKeydown(e, entry.name)}
+        onblur={() => rename.handleRenameBlur(entry.name)}
         onclick={(e) => e.stopPropagation()}
-        disabled={submittingRename}
+        disabled={rename.submittingRename}
         autofocus
       />
     {:else}
-      <span class="name">{entry.name}</span>
+      <span class="name entry-name">{entry.name}</span>
     {/if}
+    <GitStatusBadge entryName={entry.name} hideOnRename={isRenaming} />
     {#if entry.is_symlink && !isRenaming}
       <div class="symlink-badge" title={entry.symlink_target ? `Link to ${entry.symlink_target}` : "Symbolic link"}>
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
@@ -350,7 +113,7 @@
         </svg>
       </div>
     {/if}
-    {#if isInClipboard && !isRenaming}
+    {#if entryInClipboard && !isRenaming}
       <div class="clipboard-badge" aria-label={isCut ? "Cut" : "Copied"}>
         {#if isCut}
           <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
@@ -407,7 +170,7 @@
     width: 100%;
     font-family: inherit;
     color: var(--text-primary);
-    transition: background var(--transition-fast), border-color var(--transition-fast), opacity var(--transition-fast);
+    transition: background var(--transition-fast), opacity var(--transition-fast);
     position: relative;
     min-height: 34px;
   }
@@ -422,9 +185,6 @@
 
   .file-item:focus-visible {
     outline: none;
-    border-color: var(--accent);
-    background: var(--subtle-fill-secondary);
-    box-shadow: 0 0 0 1px var(--accent);
   }
 
   /* Selected state - accent-tinted background */

@@ -44,11 +44,17 @@
 <script lang="ts">
   interface Props {
     path: string;
+    /** Display size in px (CSS container dimensions) */
     size?: number;
+    /** Backend generation size in px (defaults to size if not set) */
+    genSize?: number;
+    quality?: number;
     fallbackColor?: string;
   }
 
-  let { path, size = 128, fallbackColor = "#0078d4" }: Props = $props();
+  let { path, size = 128, genSize, quality, fallbackColor = "#0078d4" }: Props = $props();
+
+  const backendSize = $derived(genSize ?? size);
 
   let microUrl = $state<string | null>(null);
   let fullUrl = $state<string | null>(null);
@@ -75,9 +81,12 @@
     return () => observer.disconnect();
   });
 
-  // Load thumbnails when visible and path changes
+  // Reload key: changes when path, size, or quality changes
+  const reloadKey = $derived(`${path}:${backendSize}:${quality}`);
+
+  // Load thumbnails when visible and reload key changes
   $effect(() => {
-    if (visible && path) {
+    if (visible && reloadKey) {
       loadProgressiveThumbnail();
     }
   });
@@ -95,7 +104,7 @@
       // Bail if path changed while queued
       if (currentPath !== path) return;
 
-      const microResult = await getMicroThumbnail(currentPath);
+      const microResult = await getMicroThumbnail(currentPath, backendSize, quality);
       if (currentPath !== path) return;
 
       if (microResult.ok) {
@@ -110,7 +119,7 @@
     try {
       if (currentPath !== path) return;
 
-      const fullResult = await getThumbnailData(currentPath, size);
+      const fullResult = await getThumbnailData(currentPath, backendSize, quality);
       if (currentPath !== path) return;
 
       if (fullResult.ok) {
@@ -157,6 +166,7 @@
         class="thumbnail-micro"
         width={size}
         height={size}
+        draggable="false"
       />
     {/if}
     {#if fullUrl}
@@ -167,6 +177,7 @@
         class:loaded={true}
         width={size}
         height={size}
+        draggable="false"
       />
     {/if}
   {/if}

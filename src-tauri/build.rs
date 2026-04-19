@@ -1,11 +1,18 @@
 fn main() {
     let mut windows = tauri_build::WindowsAttributes::new();
 
-    // Windows manifest for Per-Monitor V2 DPI awareness
-    // This ensures crisp rendering on high-DPI displays (e.g., 4K at 125% scaling)
+    // Windows manifest for Per-Monitor V2 DPI awareness.
+    // The Common-Controls v6 dependency is required so that comctl32 v6 is loaded;
+    // without it, `TaskDialogIndirect` (used by the `trash` crate) fails to resolve
+    // and the binary exits at startup with a "procedure entry point not found" error.
     let manifest = r#"
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0" xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0" processorArchitecture="*" publicKeyToken="6595b64144ccf1df" language="*"/>
+    </dependentAssembly>
+  </dependency>
   <asmv3:application>
     <asmv3:windowsSettings>
       <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true</dpiAware>

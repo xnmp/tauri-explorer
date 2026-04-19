@@ -17,6 +17,7 @@ function createDialogStore() {
   let activeDialog = $state<DialogType>(null);
   let targetEntry = $state<FileEntry | null>(null);
   let targetEntries = $state<FileEntry[]>([]);
+  let permanentDelete = $state(false);
 
   // Overlay dialogs (independent, can coexist with file ops but not each other)
   let quickOpenOpen = $state(false);
@@ -26,6 +27,9 @@ function createDialogStore() {
   let workspaceOpen = $state(false);
   let bulkRenameOpen = $state(false);
   let bulkRenameItems = $state<FileEntry[]>([]);
+  let nanoBananaOpen = $state(false);
+  let nanoBananaSourcePath = $state("");
+  let jobsPanelOpen = $state(false);
 
   function closeIfActive(dialogType: DialogType): void {
     if (activeDialog === dialogType) {
@@ -61,6 +65,9 @@ function createDialogStore() {
     get deletingEntries() {
       return activeDialog === "delete" ? targetEntries : [];
     },
+    get isPermanentDelete() {
+      return permanentDelete;
+    },
 
     // Overlay dialog accessors
     get isQuickOpenOpen() {
@@ -84,6 +91,15 @@ function createDialogStore() {
     get bulkRenameEntries() {
       return bulkRenameItems;
     },
+    get isNanoBananaOpen() {
+      return nanoBananaOpen;
+    },
+    get nanoBananaSourcePath() {
+      return nanoBananaSourcePath;
+    },
+    get isJobsPanelOpen() {
+      return jobsPanelOpen;
+    },
 
     // File operation actions
     openNewFolder(): void {
@@ -104,19 +120,21 @@ function createDialogStore() {
       closeIfActive("rename");
     },
 
-    startDelete(entries: FileEntry[]): void {
+    startDelete(entries: FileEntry[], isPermanent = false): void {
       activeDialog = "delete";
       targetEntries = entries;
       targetEntry = entries.length === 1 ? entries[0] : null;
+      permanentDelete = isPermanent;
     },
 
     cancelDelete(): void {
       closeIfActive("delete");
+      permanentDelete = false;
     },
 
     /** True when any modal dialog is open (file ops or overlays). */
     get hasModalOpen(): boolean {
-      return activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen;
+      return activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || nanoBananaOpen || jobsPanelOpen;
     },
 
     // Overlay dialog actions
@@ -170,6 +188,24 @@ function createDialogStore() {
       bulkRenameItems = [];
     },
 
+    openNanoBanana(sourcePath: string): void {
+      nanoBananaSourcePath = sourcePath;
+      nanoBananaOpen = true;
+    },
+
+    closeNanoBanana(): void {
+      nanoBananaOpen = false;
+      nanoBananaSourcePath = "";
+    },
+
+    openJobsPanel(): void {
+      jobsPanelOpen = true;
+    },
+
+    closeJobsPanel(): void {
+      jobsPanelOpen = false;
+    },
+
     closeAll(): void {
       activeDialog = null;
       targetEntry = null;
@@ -181,6 +217,9 @@ function createDialogStore() {
       workspaceOpen = false;
       bulkRenameOpen = false;
       bulkRenameItems = [];
+      nanoBananaOpen = false;
+      nanoBananaSourcePath = "";
+      jobsPanelOpen = false;
     },
   };
 }

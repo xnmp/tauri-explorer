@@ -4,6 +4,380 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/test-setup-stub-node25: Node 25 Native localStorage Breaks Test Stub
+
+**Key takeaways:**
+- Node 25 exposes a native empty `localStorage` global, so `typeof globalThis.localStorage === "undefined"` is false and `tests/setup.ts` skipped installing the functional stub. Any test that persists state (via `persisted.ts` / `drag.svelte.ts`) without its own `vi.stubGlobal` then crashed with `setItem is not a function`. Check for a functional `setItem` method, not mere existence.
+
+---
+
+## fix/arrow-select-first-v2: Arrow Select First (v2)
+
+**Key takeaways:**
+- The "select first item when nothing selected" check must come BEFORE the miller left/right directory navigation, otherwise ArrowLeft always triggers goUp() even with no selection. Also reuse the already-fetched `selected` variable in the miller right-arrow check instead of calling `getSelectedEntries()` again.
+## fix/tab-flash-content: Tab Content Flash on New Tab
+
+**Key takeaways:**
+- New tabs flash empty because `createTab` creates a fresh explorer and immediately switches to it. The explorer's `navigateTo()` is async so entries arrive after the first render. Fix: seed the new explorer with the source tab's entries/sort/viewMode so it renders instantly. Also skip `loading = true` in `navigateInternal` when the path is already populated (seeded state).
+## fix/preview-hidden-reactive: Folder Preview Hidden Files Reactivity
+
+**Key takeaways:**
+- Folder preview filtered hidden files inside `loadPreview()` which only runs on selection change. Toggling `showHidden` didn't update the preview. Fix: store raw entries in `previewFolderChildrenRaw` and use `$derived` to filter based on `settingsStore.showHidden`, making it reactive.
+## fix/disable-slow-click-rename: Remove Slow-Click-to-Rename
+
+**Key takeaways:**
+- FileItem.svelte had Windows Explorer-style slow-click-to-rename: clicking an already-selected file's name after 500ms triggered rename. Removed entirely — rename is only via F2 or context menu now.
+
+---
+
+## fix/breadcrumb-caret-spacing: Tighter Breadcrumb Carets
+
+**Key takeaways:**
+- Breadcrumb caret buttons had `padding: 4px 5px` and container `gap: 2px`. Reduced to `padding: 4px 2px` and `gap: 0px` for tighter spacing between chevrons and folder names.
+## feat/pageup-down-navigation: PageUp/PageDown Navigation
+
+**Key takeaways:**
+- Added PageUp/PageDown support in ExplorerPane alongside existing arrow key handling. Jumps by 8 items, clamped to list bounds. Supports Shift+PageUp/Down for range selection.
+## fix/preview-line-limit: Preview Line Limit and Large File Performance
+
+**Key takeaways:**
+- Syntax highlighting the full 512KB of a large file (uv.lock, etc.) causes UI lag. Fix: truncate preview to 200 lines and only syntax-highlight content under 50KB. Show a truncation indicator.
+## fix/folder-preview-hidden: Folder Preview Respects Hidden Files
+
+**Key takeaways:**
+- PreviewPane's folder listing used `result.data.entries` directly without filtering. MillerColumns correctly filtered hidden files but PreviewPane didn't. Filter based on `settingsStore.showHidden`.
+## fix/arrow-select-first: Arrow Key Selects First Item
+
+**Key takeaways:**
+- When nothing is selected (`currentIndex < 0`), the `step === 0` early return for inapplicable arrows (e.g. left/right in details) prevented selecting the first item. Moved the "nothing selected → select first" check before the step calculation.
+## fix/tab-open-flash: Tab Open Flash and Close Animation
+
+**Key takeaways:**
+- The slide-in animation on `.tab` replayed for ALL tabs whenever the tab bar re-rendered (e.g. on mount with 2+ tabs). Fix: track known tab IDs and only apply `tab-entering` class to genuinely new tabs. For close animation, use a `closingTabId` state + `setTimeout` to delay actual removal until the CSS animation completes.
+
+---
+
+## feat/miller-arrow-nav: Miller View Arrow Key Navigation
+
+**Key takeaways:**
+- In details view, `getArrowStep()` returns 0 for horizontal arrows. When miller columns are visible, left/right arrows should navigate directories (up/into) like yazi. The check must happen before the step=0 early return.
+
+---
+
+## feat/tab-open-animation: Tab Opening Animation
+
+**Key takeaways:**
+- CSS `@keyframes` with `max-width: 0 → 220px` + `opacity: 0 → 1` creates a Chrome-like slide-in. Use `animation-fill-mode: both` and `overflow: hidden` on the tab to clip content during expansion.
+
+---
+
+## fix/new-folder-empty-dir: New Folder in Empty Directory
+
+**Key takeaways:**
+- FileList's empty-state (`displayEntries.length === 0`) prevents any view component from rendering, so `InlineNewFolder` never mounts. Must check `isCreatingFolder` alongside empty state to render the inline input even in empty directories.
+## fix/tiles-delete-lag: Tiles View Delete Lag and Thumbnail Flicker
+
+**Key takeaways:**
+- The progressive tile rendering `$effect` was resetting `tileRenderLimit` to `TILE_CHUNK` on every `displayEntries` change, including deletions. This caused all tiles to re-render from scratch (flicker). Fix: only reset on large entry count increases (new directory), not decreases (deletion) or small additions.
+- The delete dialog overlay animation at 150ms felt sluggish. Reducing to 80ms makes it feel instant without losing visual smoothness.
+## feat/text-file-preview: Text File Preview for Shell Scripts and Dotfiles
+
+**Key takeaways:**
+- `isTextFile()` only checked `ICON_CATEGORY_MAP` categories and a handful of hardcoded extensions. Files like `.sh` (in ICON_CATEGORY_MAP as "executable") and `.gitignore` (no extension via `getExtension()`) were missed. Added `KNOWN_TEXT_FILES` set for extensionless files and `EXTRA_TEXT_EXTENSIONS` set for additional extensions.
+## fix/chord-key-leak: Chord Suffix Keys Leaking to Type-Ahead
+
+**Key takeaways:**
+- Chord shortcuts (e.g. Alt+M E) work in two phases: prefix fires on window keydown, suffix fires on next keydown. But the FileList type-ahead handler fires on element bubble phase before the window listener, so it processes the plain suffix key (e/u/b) as type-ahead navigation. Fix: check `keybindingsStore.isChordActive` in type-ahead to skip processing when a chord is in progress.
+## fix/light-theme-preview: Preview Pane Light Theme Support
+
+**Key takeaways:**
+- highlight.js CSS themes are global imports that define `.hljs` class colors. Importing `github-dark.css` made code unreadable on light themes. Solution: replace the global import with component-scoped CSS rules (`.hljs-light` / `.hljs-dark` wrappers) and detect the active theme's `color-scheme` property via `getComputedStyle(document.documentElement).colorScheme`.
+
+---
+
+## fix/hyprpaper-fill-mode: Hyprpaper Wallpaper Fit Mode
+
+**Key takeaways:**
+- Hyprpaper's `fit_mode` option in `hyprpaper.conf` defaults to `cover` (may crop the image), but `fill` stretches to fill the entire monitor without cropping. Use `fill` for the "Set as Wallpaper" context menu action since users generally expect the image to fill the screen completely.
+
+---
+
+## feat/miller-drag-drop: Miller Columns Drop Targets
+
+**Key takeaways:**
+- Miller columns drop-to-move uses the shared `useDropTarget` composable. Default drag = move (blue highlight), Ctrl+drag = copy (green highlight). The `handleFileDrop` utility handles conflict resolution, undo tracking, and toast notifications consistently with the main file list. Always take screenshots with `deviceScaleFactor: 2` and element-level `.screenshot()` for cropped, high-res captures of small UI regions.
+
+---
+
+## fix/scan-metadata-syscalls: Minimize Metadata Syscalls
+
+**Key takeaways:**
+- `metadata_to_entry` was calling `fs::metadata` (passed by callers) + `fs::symlink_metadata` internally = 2 syscalls per entry minimum, 3 for symlinks. Refactored to use `symlink_metadata` as the primary call everywhere. For non-symlinks (99% of entries), this is 1 syscall. For symlinks, it's 2 (symlink_metadata + fs::metadata to resolve target). Saves ~10K syscalls for a 10K-entry directory.
+
+---
+
+## fix/miller-double-filter: Don't Filter at Cache Level
+
+**Key takeaways:**
+- When a cache layer exists below a reactive derived filter, avoid filtering at the cache level. MillerColumns' `loadColumn` filtered to directories only before caching, then the `$derived` `filterEntries` filtered again. Removing the cache-level filter makes the cache truly raw and ensures all filtering is handled in one place (the reactive layer).
+
+---
+
+## fix/miller-stale-folders: Miller Columns Cache Invalidation
+
+**Key takeaways:**
+- Miller columns had an infinite-TTL local cache (`rawCache` Map) that was never invalidated by filesystem events. The main pane's `directory-changed` listener only refreshed `explorer.currentPath`, not ancestor directories displayed in Miller columns. Fix: listen to `directory-changed` in the MillerColumns component itself, delete affected cache entries, and reload visible columns. Also, don't pre-filter hidden files in the cache — store all directory entries and let the reactive `filterEntries` derived state handle visibility, so toggling `showHidden` works correctly.
+
+---
+
+## fix/remaining-sync-commands: Audit All Commands After Async Conversion
+
+**Key takeaways:**
+- When converting commands to async, audit the entire module — don't just convert the ones listed in a ticket. `create_directory` and `rename_entry` were missed in the initial pass because they do "small" I/O, but on network filesystems even `fs::create_dir` or `fs::rename` can block for seconds.
+
+---
+
+## fix/streaming-dir-listing: Parallel Directory Scanning with jwalk
+
+**Key takeaways:**
+- `fs::read_dir` + sequential `fs::metadata` calls are the bottleneck for large directories (100K+ files). `jwalk::WalkDir` with `max_depth(1)` parallelizes the `stat()` calls across a rayon thread pool, significantly reducing scan time. The sort still requires all entries, but the I/O-bound scan phase benefits most from parallelism. Extracting the scan into a shared `scan_directory_parallel` function also deduplicates the logic between `list_directory` and `start_streaming_directory`.
+
+---
+
+## fix/explorer-facade-god-object: Explorer Facade Cleanup
+
+**Key takeaways:**
+- Facade objects accumulate unused thin delegates over time. Audit usage before assuming methods are needed. In this case, `openNewFolderDialog`, `closeNewFolderDialog`, `cancelRename`, `cancelDelete`, `closeContextMenu`, `clearClipboard`, `canUndo`, `canRedo`, and `toggleHidden` were either never called on the facade or already accessed via their underlying stores. Removing dead delegates reduces API surface and makes it clear which operations actually require per-pane coordination.
+
+---
+
+## fix/view-component-duplication: View Interaction Composable
+
+**Key takeaways:**
+- DnD, context menu, and clipboard state logic was duplicated across FileItem, ListView, and TilesView (3x ~130 lines). Extract shared logic into a composable (`use-item-interactions.svelte.ts`) that accepts dependencies via a config object. Use a `selectOnContextMenu` flag to handle the difference between views that select on right-click (ListView/TilesView) and those that don't (FileItem/DetailsView where selection is handled upstream). Git status badges should be a shared component (`GitStatusBadge.svelte`) to ensure consistent rendering across views.
+
+---
+
+## fix/blocking-rust-commands: Async Tauri Commands
+
+**Key takeaways:**
+- All Tauri 2 commands that do filesystem I/O must be `async fn`. Sync commands run on the main thread and freeze the UI during large operations. Simply adding `async` to the function signature is sufficient — Tauri's macro handles running async commands on a thread pool. Tests calling async commands need `tokio::runtime::Runtime::new().unwrap().block_on(...)`.
+
+---
+
+## fix/extract-error-recursion: extractError Infinite Recursion
+
+**Key takeaways:**
+- Error extraction functions must have a safe fallback that doesn't recurse. The `extractError` function's fallback case called itself instead of `String(err)`, causing stack overflow for any non-structured error. Always ensure recursive functions have a base case that terminates.
+
+---
+
+## fix/remove-system-bookmarks: Removable System Folders
+
+**Key takeaways:**
+- System folders (Downloads, Documents, etc.) were hardcoded with no way to hide them. Persist hidden names in localStorage (`explorer-hidden-system-folders`) and filter the list. Use a `<div>` wrapper instead of `<button>` when a row needs a nested remove button — HTML doesn't allow `<button>` inside `<button>`.
+
+---
+
+## fix/recent-exclude-root: /home in Recent Locations
+
+**Key takeaways:**
+- `homeDir` defaults to `"/home"` before the async `getHomeDirectory()` resolves. The filter `e.path !== homeDir` only excludes the *user's* home dir (e.g. `/home/user`), not `/home` itself. Hardcode exclusions for `/home` and `/` since nobody wants to see these in recent locations.
+
+---
+
+## fix/miller-spacing: Miller Column Spacing
+
+**Key takeaways:**
+- New components should match existing components' spacing. Miller entries used 12px font/6px gap/3px padding while list view used 13px/8px/4px. Always reference the established component's CSS when building a similar one.
+
+---
+
+## fix/settings-ctrlf: Ctrl+F in Settings
+
+**Key takeaways:**
+- When adding a search filter to a dialog, also wire Ctrl+F to focus it. Users expect Ctrl+F to find things — not doing so feels broken.
+
+---
+
+## fix/recent-frecency-sort: Recent Folders Sorting
+
+**Key takeaways:**
+- `frecencyStore.entries` is in insertion order, not score order. Must sort explicitly by `getScoreMap()` when displaying.
+- Recent folders should exclude bookmarked paths and system folders to avoid duplication with the Bookmarks section above.
+
+---
+
+## fix/drag-to-bookmarks: Drag to Bookmarks Race Condition
+
+**Key takeaways:**
+- Element-level `ondragend` fires before document-level `addEventListener("dragend", ...)`. The file item's `dragState.clear()` ran before the sidebar's document listener could read `dragState.current`. Fix: `setTimeout(() => dragState.clear(), 0)` to defer the clear until after all synchronous dragend listeners have fired.
+- This is the same class of bug as tauri-0gre (Svelte 5 event delegation + DnD state machine). The sidebar uses native `addEventListener` because Svelte 5's delegation breaks DnD — but that means it runs after element handlers in the bubbling phase.
+
+---
+
+## fix/quickopen-debug-fuzzy: Fuzzy Scoring for Frecency Results
+
+**Key takeaways:**
+- Frecency/recent results used simple `name.includes(query)` matching while backend results used a proper fuzzy scorer. This caused frecency-sourced folders to rank lower than backend files with the same name match. Solution: apply the same fuzzy scoring algorithm (fzy/VS Code style) to frecency entries on the frontend.
+- The `fuzzyScorePath` function scores against the basename at 1.5× weight vs full path, so filename matches naturally rank higher.
+- Multiplying fuzzy score by 10 (`fuzzy * 10`) puts it in the same numeric range as the backend scores + name bonus.
+
+---
+
+## fix/quickopen-debug-settings: QuickOpen Score Breakdown
+
+**Key takeaways:**
+- `result.score` in QuickOpen already has frecency and name bonus baked in from `rankWithFrecency`. To show a proper breakdown, derive the base fuzzy score as `result.score - frecencyPts - nameScore`. Without this, the debug display double-counts or misses the backend search score entirely.
+- Debug features should be Settings toggles, not hidden keyboard shortcuts. Users can't discover undocumented shortcuts.
+
+---
+
+## feat/miller-view: Miller Columns
+
+**Key takeaways:**
+- Miller columns work better as an optional panel alongside any view mode (details/list/tiles) rather than as a separate view mode. This avoids ViewMode type changes and lets users combine miller navigation with their preferred file display.
+- Only show directories in miller columns — files are visible in the main view. Showing files would duplicate content and add clutter.
+
+---
+
+## fix/undo-paste + fix/undo-multi-drag: Paste Undo and Batch Undo
+
+**Key takeaways:**
+- Copy-paste operations were not undoable because no undo action was pushed. Added a `"copy"` undo type that trashes the copied file on undo.
+- Multi-file operations pushed individual undo actions, requiring N Ctrl+Z presses. Added a `"batch"` undo type that wraps multiple actions and undoes/redoes them all at once.
+- Single-file pastes should NOT be batched (push directly) to avoid unnecessary wrapper.
+
+---
+
+## feat/git-indicator-polish: Polished Git Indicators
+
+**Key takeaways:**
+- VS Code-style git indicators use colored text without background boxes — just the letter (M/U/A/D) in the appropriate color. This is more subtle and integrated than badge-style indicators with backgrounds.
+
+---
+
+## fix/breadcrumb-drop-move: Breadcrumb Drop Always Moves
+
+**Key takeaways:**
+- Breadcrumb segments are navigation targets, not file manager targets. Dropping onto them should always move (never copy), regardless of Ctrl key state. Hardcode `isCopy = false` and `dropEffect = "move"`.
+
+---
+
+## fix/remove-sidebar-buttons: Sidebar Cleanup
+
+**Key takeaways:**
+- When removing UI sections (Home/Dual Pane buttons, This PC drives), also remove the associated state variables (`thisPcExpanded`, `drives`) and CSS classes to avoid dead code.
+- The "Quick Access" label was renamed to "Bookmarks" and recent locations changed from clock icons to folder icons to match user expectations.
+
+---
+
+## fix/mock-paste-ops: Mock Paste Operations
+
+**Key takeaways:**
+- `estimate_size` mock was missing, silently breaking the paste flow in browser dev mode (thrown error caught by `ApiResult` pattern). Every new Tauri command needs a corresponding mock handler.
+- `Ctrl+C/V` keyboard shortcuts don't work via `agent-browser press` in headless Chromium. Use `window.dispatchEvent(new KeyboardEvent('keydown', ...))` instead.
+- To test conflict dialogs: need two directories with a file of the same name in the mock filesystem.
+
+---
+
+## fix/conflict-dialog-display: Conflict Dialog Details Missing
+
+**Key takeaways:**
+- `PasteSource` stripped metadata (size/modified) from `FileEntry` when creating the source array. When extending data interfaces, update ALL callsites that construct them — not just the consumer.
+- Dates in `FileEntry.modified` are ISO strings — must format with `formatDate()` before display.
+- Directory size is 0 in listings — guard the size display with `> 0` to avoid showing "0 B".
+
+---
+
+## fix/git-status-display: Git Indicators Not Showing
+
+**Key takeaways:**
+- View-mode-parity: when adding UI features, wire them into ALL three views (FileItem/details, ListView, TilesView). The git badges were only added to FileItem.
+- Mock invoke must handle new commands — `mockCommands` in `mock-invoke.ts` throws on unknown commands, silently swallowing the feature in browser dev mode.
+- `$effect` calling a store method that reads `$state` internally creates hidden dependencies. Wrap the call in `untrack()` to prevent infinite loops.
+
+---
+
+## chore/pin-dolt-port: Dolt Port Race Condition
+
+**Key takeaways:**
+- When multiple hooks call `bd` in rapid succession (e.g. 17 merges back-to-back), each `bd` invocation may auto-start a new dolt server on a random port if the previous port is unreachable. This creates competing instances that deadlock on the database lock. Fix: pin `dolt.port` in `.beads/config.yaml` so every invocation connects to the same deterministic port.
+
+---
+
+## chore/add-unit-test-hook: Pre-Commit Unit Tests
+
+**Key takeaways:**
+- Unit tests run in ~3s, fast enough for a pre-commit hook. This catches broken tests before they reach dev, unlike the previous setup which only checked that test files *exist* but never *ran* them.
+
+---
+
+## fix/undo-window-close: Cross-Window Tab Restore
+
+**Key takeaways:**
+- `closedTabStack` loaded from localStorage at module init becomes stale when another window adds entries. Before checking `canRestoreTab` or popping from the stack, always re-read from localStorage to pick up cross-window changes. Without this, Ctrl+Shift+T in window B can't see tabs closed in window A.
+- **Never use `localStorage` in unit tests** — not even via `loadPersisted`/`savePersisted`. Node versions differ in whether `globalThis.localStorage` exists, is partial, or is undefined. The `setup.ts` stub only applies when it's fully undefined, so tests break on machines where Node provides a partial `localStorage`. Test the business logic (e.g. "stale array misses external writes, refreshed array doesn't") with plain data structures instead.
+
+---
+
+## fix/multi-file-drag-drop: Multi-File Drag and Drop
+
+**Key takeaways:**
+- `DragData` and `dataTransfer` only stored a single path. When dragging from a multi-selection, all selected paths must be serialized (via `application/x-explorer-paths` JSON and `DragData.paths`). Drop handlers must iterate over all paths rather than operating on a single source.
+
+---
+
+## fix/addressbar-responsive-icons: Responsive Nav Icons
+
+**Key takeaways:**
+- Use CSS `container-type: inline-size` on the navigation bar and a `@container (max-width: 400px)` query to hide navigation buttons when the content area is too narrow. This is more reliable than media queries because it responds to the actual component width, not the viewport.
+- `agent-browser` can't resize the viewport. Use Playwright directly (`chromium.launch()` + `page.setViewportSize()`) to take screenshots at specific widths for responsive features.
+
+---
+
+## fix/terminal-shortcut-garbage + fix/revert-chord-prefix: Alt Chord Shortcuts
+
+**Key takeaways:**
+- Alt+M chord shortcuts were temporarily changed to Ctrl+M to avoid compose characters on Linux WebKitGTK, but the user preferred Alt+M. Reverted back. The compose character issue on Linux is accepted as a known limitation.
+
+---
+
+## fix/quickopen-filename-scoring: Filename Match Scoring
+
+**Key takeaways:**
+- When scoring search results that include both filename and path matches, filename matches need a dramatically higher weight (150-200) compared to path-only matches (30). Otherwise, frequently accessed subdirectories can outrank the parent that actually matches the query name. The scoring tiers: exact name=200, prefix=150, substring=100, path-only=30.
+
+---
+
+## fix/addressbar-folder-only: Address Bar Folders Only
+
+**Key takeaways:**
+- Address bar autocomplete is for navigation, which only targets directories. Filter to `e.kind === "directory"` in `fetchSuggestions()`. No need for sorting directories before files when files are excluded entirely.
+
+---
+
+## fix/new-folder-tile-size: New Folder Sizing in Tiles
+
+**Key takeaways:**
+- InlineNewFolder's tiles variant must inherit CSS variables (`--tile-icon-size`, `--tile-icon-scale`, `--tile-padding`) from the parent TilesView rather than hardcoding dimensions. Hardcoded `64px` icon size and `11px` font caused size mismatch in medium/large tile modes.
+
+---
+
+## fix/titlebar-disabled-margin: Top Margin When Title Bar Disabled
+
+**Key takeaways:**
+- The `window-top-spacer` div provides a drag region when the toolbar is hidden. But it should also be gated on `showWindowControls` — if the user has disabled window controls, they don't need a drag region and the spacer creates a visible gap above the address bar.
+
+---
+
+## fix/small-tiles-spacing: Reduce Spacing in Small Tiles Mode
+
+**Key takeaways:**
+- When tile sizes are controlled by CSS custom properties (`--tile-icon-size`, `--tile-min-col`), spacing (gap, padding) should also be parameterized rather than hardcoded. Use additional CSS custom properties (`--tile-gap`, `--tile-padding`) driven by the thumbnail size tier so that small tiles get a denser layout without affecting medium/large.
+
+---
+
 ## tauri-explorer-gmpb: Material Design File Icons
 
 **Key takeaways:**
@@ -377,5 +751,85 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 - **`color-mix()` in frequently-toggled styles adds cost.** Per-element `color-mix()` on borders/backgrounds during rapid state changes compounds the repaint expense.
 - **Git bisect is invaluable for CSS performance regressions.** The bug was not in the DOM hit-testing logic (initial suspicion) but in a styling commit — only bisecting across commits confirmed the real cause.
 - **Keep tile/grid item styles minimal.** Avoid transitions on `box-shadow` and `transform` for elements that participate in bulk selection. Instant state changes are visually fine and much cheaper.
+
+---
+
+## tauri-explorer-9djf: Architecture Improvements (Tech Debt)
+
+**Key takeaways:**
+- **Tauri `#[tauri::command]` macro generates hidden `__cmd__*` items** at the module where the function is defined. When splitting a monolithic Rust file into submodules, `pub use` re-exports only re-export the function — not these hidden items. The `generate_handler![]` macro in `lib.rs` must reference the full submodule path (e.g., `files::file_ops::rename_entry`), and the submodules must be `pub`.
+- **Svelte scoped styles don't affect child components.** When extracting view-specific templates into child components (e.g., ListView.svelte from FileList.svelte), CSS classes like `.cut` and `.in-clipboard` must be added to the new component — they won't inherit from the parent's stylesheet. E2E tests across all view modes caught this.
+- **Always run ALL_VIEW_MODES=1 E2E tests** when refactoring view-mode-specific code. The default fast mode only tests details view, so regressions in list/tiles views go undetected.
+- **Extracting shared composables pays off.** The `useInlineRename` composable eliminated ~80 lines of duplicated rename logic between FileItem and FileList. The `drop-operations.ts` module eliminated ~120 lines of duplicated drag-and-drop conflict resolution code.
+- **Structured error serialization (`{kind, message}`)** is better than flat strings for frontend error handling. When changing serialization format, every `String(err)` in catch blocks becomes `[object Object]` — must update all 37 call sites simultaneously.
+
+---
+
+## tauri-explorer-ryv1: New Todo Batch (March 2026)
+
+**Key takeaways:**
+- **Same-dir paste conflict**: The `isSameDir` check in paste-operations.ts was gated on `isCut`, causing copy-to-same-dir to show the conflict dialog. The Rust `copy_entry` already handles this via `generate_copy_name()` — the fix was removing the `isCut &&` gate so same-dir copies skip the dialog.
+- **Pruning stale entries**: localStorage stores (frecency, recent-files) never validated path existence. Added `check_paths_exist` Rust command for batch validation. Fire-and-forget pattern: call `pruneNonExistent()` when UI opens without awaiting.
+- **Marquee selection performance**: `getBoundingClientRect()` on every tile per mousemove is expensive. Two-fold fix: (1) RAF-throttle the selection update, (2) cache item rects per drag session since items don't move during marquee.
+- **highlight.js tree-shaking**: Use `highlight.js/lib/core` with individual language imports to avoid bundling all 190+ languages. Register extension aliases with `registerAliases()` for file-extension-based detection.
+- **Space as preview toggle hotkey**: Spacebar conflicts with text input. Must add a `when` guard checking `document.activeElement.tagName !== "INPUT"` etc. to prevent firing during typing.
+
+---
+
+## tauri-explorer-ggbb: Ctrl+P Quick Open typing broken
+
+**Key takeaways:**
+- **Svelte 5 `$effect` + store mutation = infinite loop**: Calling `pruneNonExistent()` inside `$effect` reads the store's `$state(entries)` array, making it a reactive dependency. When prune modifies entries, the effect re-runs, resetting `query = ""`. Fix: wrap store calls in `untrack()`. This is a recurring Svelte 5 gotcha — always audit what a called function reads internally.
+
+---
+
+## tauri-explorer-zden: Resizable preview pane
+
+**Key takeaways:**
+- **Multiple `.resize-handle` elements**: When both sidebar and preview pane have resize handles with the same class, Playwright's strict mode fails. Scope locators to the parent: `page.locator(".preview-pane").locator(".resize-handle")`.
+- **CSS resize pattern**: Use `mousedown`/`mousemove`/`mouseup` with `user-select: none` on the resizing state to prevent text selection during drag. Remove listeners in `mouseup` to avoid leaks.
+
+---
+
+## feat/preview-pane-polish: Preview Pane Visual Polish
+
+**Key takeaways:**
+- **`--subtle-fill-tertiary` is nearly invisible**: At `rgba(255, 255, 255, 0.04)`, it provides no meaningful visual differentiation. Use `--background-card-secondary` or `--subtle-fill-secondary` for visible surface distinction.
+- **`color-mix()` for tinted badges**: `color-mix(in srgb, var(--accent) 12%, transparent)` creates a theme-aware tinted background that adapts to any accent color — useful for status badges and pills.
+
+---
+
+## User Theme `--font-family` Can Break Input Rendering in WebKitGTK
+
+**Key takeaways:**
+- Setting `--font-family: "JetBrains Mono", monospace` in a user theme CSS file caused input text and caret to become invisible in the command palette and address bar. Removing the variable restored normal behavior.
+- The root cause: "JetBrains Mono" (plain) was not installed — only the Nerd Font patched variant "JetBrainsMono Nerd Font" (no space, different name). The CSS fell back to generic `monospace`, which triggered a WebKitGTK rendering bug where inputs lose their caret and typed text.
+- **Always use the exact `fc-list` font family name** in CSS, not the upstream project name. Nerd Font variants use concatenated names (e.g., `"JetBrainsMono Nerd Font"` not `"JetBrains Mono"`).
+- User theme CSS variables (`--font-family`, `--selection-bg`, etc.) defined in `[data-theme="..."]` selectors do cascade correctly to the app — the issue was purely a font resolution failure triggering a WebKitGTK input rendering bug.
+
+---
+
+## tauri-explorer-r5yc: Tilde expansion in QuickOpen and address bar
+
+**Key takeaways:**
+- **Async home directory**: `getHomeDirectory()` returns a promise. Cache the result in component state at init time rather than awaiting on each use.
+- **QuickOpen path navigation**: If query starts with `/` or `~`, Enter should navigate directly instead of selecting a search result. Add the path-check before the result-selection logic.
+
+---
+
+## tauri-plugin-log `.target()` vs `.targets()` — Stdout Leaks in Release Builds
+
+**Key takeaways:**
+- **`tauri-plugin-log` v2 defaults include `Stdout`**: The `Builder::default()` starts with `[Stdout, LogDir]` as default targets.
+- **`.target()` (singular) appends; `.targets()` (plural) replaces.** Calling `.target(TargetKind::Webview)` adds Webview to the existing defaults — you end up with Stdout + LogDir + Webview. To suppress stdout, you must use `.targets([...])` to replace the entire list.
+- **`cfg!(debug_assertions)` was never the problem.** The guard was correct but irrelevant — stdout was coming from the default target list, not the conditional block.
+- Three commits tried to fix this before finding the root cause. When a "simple" fix doesn't work, question the API semantics, not just the conditional logic.
+
+---
+
+## fix/context-menu-close-on-cut-copy: Context menu not closing after Cut/Copy
+
+**Key takeaways:**
+- **Consistency check for handlers**: When adding new context menu actions, always include `contextMenuStore.close()`. Most handlers had it, but `handleCut` and `handleCopy` were missed because they were added separately from the pattern established by `withSelectedEntry()`.
 
 ---

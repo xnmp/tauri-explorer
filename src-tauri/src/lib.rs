@@ -10,10 +10,14 @@ mod files;
 mod search;
 pub mod task_registry;
 mod thumbnails;
+mod nano_banana;
+mod wallpaper;
 
 use std::path::PathBuf;
 
 use error::AppError;
+use log;
+use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
 /// Stores the working directory from which the app was launched.
 struct LaunchCwd(String);
@@ -21,19 +25,22 @@ struct LaunchCwd(String);
 /// Move a file or directory to the system trash/recycle bin.
 /// Cross-platform: Windows Recycle Bin, macOS Trash, Linux Freedesktop Trash.
 #[tauri::command]
-fn move_to_trash(path: String) -> Result<(), AppError> {
+async fn move_to_trash(path: String) -> Result<(), AppError> {
     let pathbuf = PathBuf::from(&path);
 
     if !pathbuf.exists() {
         return Err(AppError::NotFound(path));
     }
 
-    trash::delete(&pathbuf).map_err(|e| AppError::Other(format!("Failed to move to trash: {}", e)))
+    trash::delete(&pathbuf).map_err(|e| {
+        log::error!("Failed to move to trash: {}", e);
+        AppError::Other(format!("Failed to move to trash: {}", e))
+    })
 }
 
 /// Move multiple files/directories to trash.
 #[tauri::command]
-fn move_multiple_to_trash(paths: Vec<String>) -> Result<(), AppError> {
+async fn move_multiple_to_trash(paths: Vec<String>) -> Result<(), AppError> {
     let pathbufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
 
     for (i, path) in pathbufs.iter().enumerate() {
@@ -42,7 +49,11 @@ fn move_multiple_to_trash(paths: Vec<String>) -> Result<(), AppError> {
         }
     }
 
-    trash::delete_all(&pathbufs).map_err(|e| AppError::Other(format!("Failed to move items to trash: {}", e)))
+    log::info!("Moving {} items to trash", pathbufs.len());
+    trash::delete_all(&pathbufs).map_err(|e| {
+        log::error!("Failed to move {} items to trash: {}", pathbufs.len(), e);
+        AppError::Other(format!("Failed to move items to trash: {}", e))
+    })
 }
 
 /// Get the directory the app was launched from.
@@ -51,10 +62,23 @@ fn get_launch_cwd(state: tauri::State<'_, LaunchCwd>) -> String {
     state.0.clone()
 }
 
+/// Get the log directory path so the frontend can display it in settings.
+#[tauri::command]
+fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
+    use tauri::Manager;
+    let log_dir = app
+        .path()
+        .app_log_dir()
+        .map_err(|e| AppError::Other(format!("Failed to resolve log directory: {}", e)))?;
+    Ok(log_dir.to_string_lossy().to_string())
+}
+
 /// Restore files from the system trash by their original paths.
 /// Finds the most recently deleted item matching each path and restores it.
+/// Note: trash::os_limited is only available on Linux/Windows (not macOS).
+#[cfg(not(target_os = "macos"))]
 #[tauri::command]
-fn restore_from_trash(paths: Vec<String>) -> Result<(), AppError> {
+async fn restore_from_trash(paths: Vec<String>) -> Result<(), AppError> {
     let trash_items = trash::os_limited::list()
         .map_err(|e| AppError::Other(format!("Failed to list trash: {}", e)))?;
 
@@ -80,6 +104,12 @@ fn restore_from_trash(paths: Vec<String>) -> Result<(), AppError> {
 
     trash::os_limited::restore_all(to_restore)
         .map_err(|e| AppError::Other(format!("Failed to restore from trash: {}", e)))
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn restore_from_trash(_paths: Vec<String>) -> Result<(), AppError> {
+    Err(AppError::Other("Trash restore is not supported on macOS".to_string()))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -110,8 +140,32 @@ pub fn run(launch_dir: Option<String>) {
 
     let t_plugins = std::time::Instant::now();
 
+    // Parse RUST_LOG env var for log level override (default: warn, app crate: info).
+    let app_log_level = std::env::var("RUST_LOG")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(log::LevelFilter::Info);
+
     tauri::Builder::default()
         .manage(LaunchCwd(launch_cwd_for_state))
+        .plugin({
+            let mut targets = vec![
+                Target::new(TargetKind::LogDir { file_name: None }),
+                Target::new(TargetKind::Webview),
+            ];
+            if cfg!(debug_assertions) {
+                targets.push(Target::new(TargetKind::Stdout));
+            }
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Warn) // third-party crates: warn only
+                .level_for("tauri_explorer", app_log_level)
+                .level_for("tauri_explorer_lib", app_log_level)
+                .rotation_strategy(RotationStrategy::KeepSome(7))
+                .max_file_size(10 * 1024 * 1024) // 10 MB
+                .timezone_strategy(TimezoneStrategy::UseLocal)
+                .targets(targets)
+                .build()
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_drag::init())
@@ -119,30 +173,36 @@ pub fn run(launch_dir: Option<String>) {
         .invoke_handler(tauri::generate_handler![
             // Launch info
             get_launch_cwd,
+            get_log_dir,
             // Trash operations
             move_to_trash,
             move_multiple_to_trash,
             restore_from_trash,
-            // File operations
-            files::list_directory,
-            files::invalidate_dir_cache,
-            files::get_home_directory,
-            files::create_directory,
-            files::rename_entry,
-            files::copy_entry,
-            files::move_entry,
-            files::open_file,
-            files::open_file_with,
-            files::open_image_with_siblings,
-            files::open_in_terminal,
-            files::read_text_file,
-            files::write_text_file,
-            files::delete_entry_permanent,
-            files::create_symlink,
-            files::estimate_size,
-            // Streaming directory listing
-            files::start_streaming_directory,
-            files::cancel_directory_listing,
+            // File operations — directory listing
+            files::dir_listing::list_directory,
+            files::dir_listing::invalidate_dir_cache,
+            files::dir_listing::start_streaming_directory,
+            files::dir_listing::cancel_directory_listing,
+            // File operations — CRUD
+            files::file_ops::get_home_directory,
+            files::file_ops::create_directory,
+            files::file_ops::rename_entry,
+            files::file_ops::copy_entry,
+            files::file_ops::move_entry,
+            files::file_ops::read_text_file,
+            files::file_ops::write_text_file,
+            files::file_ops::delete_entry_permanent,
+            files::file_ops::create_symlink,
+            files::file_ops::estimate_size,
+            files::file_ops::check_paths_exist,
+            // Filesystem watcher
+            files::fs_watcher::watch_directory,
+            files::fs_watcher::unwatch_directory,
+            // File operations — external apps
+            files::external_apps::open_file,
+            files::external_apps::open_file_with,
+            files::external_apps::open_image_with_siblings,
+            files::external_apps::open_in_terminal,
             // Search
             search::fuzzy_search,
             search::start_streaming_search,
@@ -169,9 +229,19 @@ pub fn run(launch_dir: Option<String>) {
             config::read_config_file,
             config::write_config_file,
             config::get_config_dir,
+            config::list_user_themes,
+            // Git status
+            files::git_status::get_git_status,
+            // Wallpaper
+            wallpaper::set_as_wallpaper,
+            // Nano Banana (AI image editing)
+            nano_banana::start_nano_banana_job,
         ])
         .setup(move |app| {
             let t_setup = std::time::Instant::now();
+
+            // Initialize filesystem watcher for auto-refresh
+            files::fs_watcher::init_watcher(&app.handle());
 
             // Create window programmatically so we can inject initialization_script.
             // This replaces the static window definition in tauri.conf.json.
@@ -182,18 +252,13 @@ pub fn run(launch_dir: Option<String>) {
             )
             .title("tauri-explorer")
             .inner_size(1200.0, 800.0)
-            .decorations(false)
-            .transparent(true)
-            .shadow(false)
+            .decorations(cfg!(target_os = "macos"))
             .disable_drag_drop_handler()
             .initialization_script(&init_script)
             .build()?;
 
-            eprintln!(
-                "[Perf] Rust startup:\n  \
-                 pre-builder:  {:?}\n  \
-                 builder→setup: {:?}\n  \
-                 total:        {:?}",
+            log::info!(
+                "Startup: pre-builder={:?} builder→setup={:?} total={:?}",
                 t_plugins - t_start,
                 t_setup - t_plugins,
                 t_setup - t_start,

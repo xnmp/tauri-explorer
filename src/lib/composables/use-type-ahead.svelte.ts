@@ -8,6 +8,7 @@
  */
 
 import type { FileEntry } from "$lib/domain/file";
+import { keybindingsStore } from "$lib/state/keybindings.svelte";
 
 const TYPE_AHEAD_TIMEOUT = 800;
 
@@ -33,9 +34,13 @@ export function useTypeAhead(
 
   /** Returns true if the key was handled as type-ahead */
   function handleKeydown(event: KeyboardEvent): boolean {
+    const tag = (event.target as HTMLElement)?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA") return false;
+
     if (
       event.key.length === 1 &&
-      !event.ctrlKey && !event.metaKey && !event.altKey
+      !event.ctrlKey && !event.metaKey && !event.altKey &&
+      !keybindingsStore.isChordActive
     ) {
       handleKey(event.key);
       return true;

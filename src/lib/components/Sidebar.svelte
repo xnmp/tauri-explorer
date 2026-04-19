@@ -4,20 +4,22 @@
 -->
 <script lang="ts">
   import { onMount } from "svelte";
-  import { explorer as defaultExplorer } from "$lib/state/explorer.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { getHomeDirectory } from "$lib/api/files";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { dragState } from "$lib/state/drag.svelte";
+  import { frecencyStore } from "$lib/state/frecency.svelte";
+  import { settingsStore } from "$lib/state/settings.svelte";
+  import { loadPersisted, savePersisted } from "$lib/state/persisted";
 
-  // Use pane navigation context if available, fallback to default explorer
+  // Use pane navigation context if available, fallback to active explorer
   const paneNav = getPaneNavigationContext();
   const navigateTo = (path: string) => {
     if (paneNav) {
       paneNav.navigateTo(path);
     } else {
-      defaultExplorer.navigateTo(path);
+      windowTabsManager.getActiveExplorer()?.navigateTo(path);
     }
   };
 
@@ -40,11 +42,11 @@
   let quickAccessEl: HTMLDivElement | undefined;
   let dragPollInterval: ReturnType<typeof setInterval> | null = null;
 
-  onMount(async () => {
-    const result = await getHomeDirectory();
-    if (result.ok) {
-      homeDir = result.data;
-    }
+  onMount(() => {
+    // Async init (non-blocking)
+    getHomeDirectory().then((result) => {
+      if (result.ok) homeDir = result.data;
+    });
 
     // Native DnD listeners bypass Svelte 5 event delegation which can
     // interfere with the HTML5 drag-and-drop state machine. We attach
@@ -167,22 +169,65 @@
     stopDragPoll();
   }
 
-  // Quick access folders use dynamic home directory
-  const quickAccessFolders = $derived([
-    { name: "Downloads", icon: "download", path: `${homeDir}/Downloads`, pinned: true, color: "#0078d4" },
-    { name: "Documents", icon: "document", path: `${homeDir}/Documents`, pinned: true, color: "#2b579a" },
-    { name: "Pictures", icon: "picture", path: `${homeDir}/Pictures`, pinned: true, color: "#008272" },
-    { name: "Videos", icon: "video", path: `${homeDir}/Videos`, pinned: false, color: "#a855f7" },
-    { name: "Music", icon: "music", path: `${homeDir}/Music`, pinned: false, color: "#f472b6" },
+  // Bookmarks folders use dynamic home directory
+  const allSystemFolders = $derived([
+    { name: "Downloads", icon: "download", path: `${homeDir}/Downloads`, color: "#0078d4" },
+    { name: "Documents", icon: "document", path: `${homeDir}/Documents`, color: "#2b579a" },
+    { name: "Pictures", icon: "picture", path: `${homeDir}/Pictures`, color: "#008272" },
+    { name: "Videos", icon: "video", path: `${homeDir}/Videos`, color: "#a855f7" },
+    { name: "Music", icon: "music", path: `${homeDir}/Music`, color: "#f472b6" },
   ]);
 
-  const drives = [
-    { name: "Local Disk (C:)", icon: "drive", path: "/", usage: 65 },
-    { name: "Data (D:)", icon: "drive", path: "/mnt", usage: 42 },
-  ];
+  // Track which system folders the user has hidden
+  let hiddenSystemFolders = $state<Set<string>>(
+    new Set(loadPersisted<string[]>("explorer-hidden-system-folders", []))
+  );
+
+  function hideSystemFolder(name: string) {
+    hiddenSystemFolders = new Set([...hiddenSystemFolders, name]);
+    savePersisted("explorer-hidden-system-folders", [...hiddenSystemFolders]);
+  }
+
+  function showSystemFolder(name: string) {
+    const next = new Set(hiddenSystemFolders);
+    next.delete(name);
+    hiddenSystemFolders = next;
+    savePersisted("explorer-hidden-system-folders", [...hiddenSystemFolders]);
+  }
+
+  const quickAccessFolders = $derived(
+    allSystemFolders.filter((f) => !hiddenSystemFolders.has(f.name))
+  );
+
+  /** Map bookmark names to custom icon colors for known folders */
+  function getBookmarkIconColor(name: string): string | null {
+    const lower = name.toLowerCase();
+    if (lower === "repos" || lower === "repositories" || lower === "projects" || lower === "code") return "#f97316";
+    if (lower === "work") return "#0ea5e9";
+    return null;
+  }
+
+  /** Check if a bookmark should show a code/git icon */
+  function isCodeFolder(name: string): boolean {
+    const lower = name.toLowerCase();
+    return lower === "repos" || lower === "repositories" || lower === "projects" || lower === "code";
+  }
 
   let quickAccessExpanded = $state(true);
-  let thisPcExpanded = $state(true);
+  let recentExpanded = $state(true);
+
+  // Recent locations — sorted by frecency score, excluding bookmarked and system folders
+  const recentLocations = $derived.by(() => {
+    const bookmarkedPaths = new Set(bookmarksStore.list.map((b) => b.path));
+    const systemPaths = new Set(quickAccessFolders.map((f) => f.path));
+    const scoreMap = frecencyStore.getScoreMap();
+
+    return frecencyStore.entries
+      .filter((e) => e.path !== homeDir && e.path !== "/home" && e.path !== "/" && !bookmarkedPaths.has(e.path) && !systemPaths.has(e.path))
+      .map((e) => ({ path: e.path, name: e.path.split("/").pop() || e.path, score: scoreMap.get(e.path) ?? 0 }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, settingsStore.recentItemsCount);
+  });
 
   // Note: DnD handlers for Quick Access bookmarking are attached as native
   // listeners in onMount (see nativeDragEnter/Over/Leave/Drop) to bypass
@@ -273,45 +318,13 @@
 
 <div class="sidebar-container" class:resizing={isResizing} style="width: {sidebarWidth}px">
   <div class="sidebar">
-    <!-- Home / Gallery / Cloud sections -->
-  <div class="nav-section top-section">
-    <button class="nav-item" onclick={() => navigateTo(homeDir)}>
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
-        <path d="M8 1.5L14.5 7V14C14.5 14.2761 14.2761 14.5 14 14.5H10V10C10 9.72386 9.77614 9.5 9.5 9.5H6.5C6.22386 9.5 6 9.72386 6 10V14.5H2C1.72386 14.5 1.5 14.2761 1.5 14V7L8 1.5Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
-      </svg>
-      <span>Home</span>
-    </button>
-
-    <button
-      class="nav-item dual-pane-toggle"
-      class:active={windowTabsManager.dualPaneEnabled}
-      onclick={() => windowTabsManager.toggleDualPane()}
-      title="Toggle dual pane (Ctrl+\)"
-    >
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
-        {#if windowTabsManager.dualPaneEnabled}
-          <!-- Dual pane active icon -->
-          <rect x="1.5" y="2.5" width="5.5" height="11" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-          <rect x="9" y="2.5" width="5.5" height="11" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-        {:else}
-          <!-- Single pane icon -->
-          <rect x="2" y="2.5" width="12" height="11" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-          <path d="M8 2.5V13.5" stroke="currentColor" stroke-width="1.25" stroke-dasharray="2 2"/>
-        {/if}
-      </svg>
-      <span>{windowTabsManager.dualPaneEnabled ? "Single Pane" : "Dual Pane"}</span>
-    </button>
-  </div>
-
-  <div class="divider"></div>
-
-  <!-- Quick access -->
+  <!-- Bookmarks -->
   <div
     bind:this={quickAccessEl}
     class="nav-section quick-access"
     class:drag-over={isDragOver}
     role="region"
-    aria-label="Quick access - drop folders here to bookmark"
+    aria-label="Bookmarks - drop folders here to bookmark"
   >
     <button
       class="section-header"
@@ -321,7 +334,7 @@
       <svg width="12" height="12" viewBox="0 0 12 12" fill="none" class="chevron" class:expanded={quickAccessExpanded}>
         <path d="M4 3L7 6L4 9" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
-      <span>Quick access</span>
+      <span>Bookmarks</span>
       {#if isDragOver}
         <span class="drop-hint">Drop to pin</span>
       {/if}
@@ -331,7 +344,9 @@
       <div class="section-content">
         <!-- Default system folders -->
         {#each quickAccessFolders as folder}
-          <button class="nav-item folder-item" onclick={() => navigateTo(folder.path)}>
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="nav-item folder-item" onclick={() => navigateTo(folder.path)}>
             {#if folder.icon === "download"}
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: {folder.color}">
                 <path d="M8 2V10M8 10L5 7M8 10L11 7M3 12H13" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
@@ -358,12 +373,16 @@
               </svg>
             {/if}
             <span>{folder.name}</span>
-            {#if folder.pinned}
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" class="pin-icon">
-                <path d="M7 2V5L8 6V8H6.5V11L6 11.5L5.5 11V8H4V6L5 5V2H7Z" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/>
+            <button
+              class="remove-bookmark"
+              onclick={(e) => { e.stopPropagation(); hideSystemFolder(folder.name); }}
+              title="Remove from Bookmarks"
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path d="M3 3L9 9M9 3L3 9" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
               </svg>
-            {/if}
-          </button>
+            </button>
+          </div>
         {/each}
 
         <!-- User bookmarks -->
@@ -383,20 +402,26 @@
             role="button"
             tabindex="0"
           >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: #ffb900">
-              <path
-                d="M2 5.5C2 4.67157 2.67157 4 3.5 4H6.17157C6.43679 4 6.69114 4.10536 6.87868 4.29289L8.12132 5.53553C8.30886 5.72307 8.56321 5.82843 8.82843 5.82843H13C13.8284 5.82843 14.5 6.5 14.5 7.32843V12.5C14.5 13.3284 13.8284 14 13 14H3C2.17157 14 1.5 13.3284 1.5 12.5V5.5"
-                stroke="currentColor"
-                stroke-width="1.25"
-                fill="currentColor"
-                fill-opacity="0.15"
-              />
-            </svg>
+            {#if isCodeFolder(bookmark.name)}
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: {getBookmarkIconColor(bookmark.name) ?? 'var(--icon-folder, #ffb900)'}">
+                <path d="M5 4L2 8L5 12M11 4L14 8L11 12M9 3L7 13" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            {:else}
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: {getBookmarkIconColor(bookmark.name) ?? 'var(--icon-folder, #ffb900)'}">
+                <path
+                  d="M2 5.5C2 4.67157 2.67157 4 3.5 4H6.17157C6.43679 4 6.69114 4.10536 6.87868 4.29289L8.12132 5.53553C8.30886 5.72307 8.56321 5.82843 8.82843 5.82843H13C13.8284 5.82843 14.5 6.5 14.5 7.32843V12.5C14.5 13.3284 13.8284 14 13 14H3C2.17157 14 1.5 13.3284 1.5 12.5V5.5"
+                  stroke="currentColor"
+                  stroke-width="1.25"
+                  fill="currentColor"
+                  fill-opacity="0.15"
+                />
+              </svg>
+            {/if}
             <span>{bookmark.name}</span>
             <button
               class="remove-bookmark"
               onclick={(e) => removeBookmark(e, bookmark.path)}
-              title="Unpin from Quick access"
+              title="Unpin from Bookmarks"
             >
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                 <path d="M3 3L9 9M9 3L3 9" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
@@ -408,43 +433,37 @@
     {/if}
   </div>
 
-  <div class="divider"></div>
+  {#if recentLocations.length > 0}
+    <div class="divider"></div>
 
-  <!-- This PC -->
-  <div class="nav-section">
-    <button
-      class="section-header"
-      onclick={() => thisPcExpanded = !thisPcExpanded}
-      aria-expanded={thisPcExpanded}
-    >
-      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" class="chevron" class:expanded={thisPcExpanded}>
-        <path d="M4 3L7 6L4 9" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-      <span>This PC</span>
-    </button>
+    <!-- Recent locations -->
+    <div class="nav-section">
+      <button
+        class="section-header"
+        onclick={() => recentExpanded = !recentExpanded}
+        aria-expanded={recentExpanded}
+      >
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" class="chevron" class:expanded={recentExpanded}>
+          <path d="M4 3L7 6L4 9" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span>Recent</span>
+      </button>
 
-    {#if thisPcExpanded}
-      <div class="section-content">
-        {#each drives as drive}
-          <button class="nav-item drive-item" onclick={() => navigateTo(drive.path)}>
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
-              <rect x="2" y="4" width="12" height="8" rx="1" stroke="currentColor" stroke-width="1.25"/>
-              <circle cx="4.5" cy="8" r="0.75" fill="currentColor"/>
-              <path d="M2 7H14" stroke="currentColor" stroke-width="1.25"/>
-            </svg>
-            <div class="drive-details">
-              <span class="drive-name">{drive.name}</span>
-              <div class="drive-usage">
-                <div class="usage-bar">
-                  <div class="usage-fill" style="width: {drive.usage}%"></div>
-                </div>
-              </div>
-            </div>
-          </button>
-        {/each}
-      </div>
-    {/if}
-  </div>
+      {#if recentExpanded}
+        <div class="section-content">
+          {#each recentLocations as loc (loc.path)}
+            <button class="nav-item" onclick={() => navigateTo(loc.path)} title={loc.path}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
+                <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="var(--icon-folder, #FFB900)" opacity="0.7"/>
+              </svg>
+              <span>{loc.name}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
+
   </div>
   <!-- Resize handle -->
   <div
@@ -497,10 +516,6 @@
     display: flex;
     flex-direction: column;
     padding: 4px;
-  }
-
-  .top-section {
-    padding-top: 8px;
   }
 
   .divider {
@@ -590,25 +605,6 @@
     flex-shrink: 0;
   }
 
-  /* Top section icons */
-  .top-section .nav-item:nth-child(1) .nav-icon { color: #0078d4; } /* Home - Blue */
-
-  /* Dual pane toggle */
-  .dual-pane-toggle .nav-icon {
-    color: var(--text-secondary);
-  }
-
-  .dual-pane-toggle.active {
-    background: var(--subtle-fill-secondary);
-  }
-
-  .dual-pane-toggle.active .nav-icon {
-    color: var(--accent);
-  }
-
-  /* Drive icons */
-  .drive-item .nav-icon { color: #6d6d6d; }
-
   .folder-item {
     position: relative;
   }
@@ -616,42 +612,6 @@
   .pin-icon {
     margin-left: auto;
     opacity: 0.4;
-  }
-
-  .drive-item {
-    align-items: flex-start;
-    padding-top: 8px;
-    padding-bottom: 8px;
-  }
-
-  .drive-details {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    flex: 1;
-    min-width: 0;
-  }
-
-  .drive-name {
-    font-size: 13px;
-  }
-
-  .drive-usage {
-    width: 100%;
-  }
-
-  .usage-bar {
-    height: 4px;
-    background: var(--control-fill-tertiary);
-    border-radius: var(--radius-pill);
-    overflow: hidden;
-  }
-
-  .usage-fill {
-    height: 100%;
-    background: var(--accent);
-    border-radius: var(--radius-pill);
-    transition: width 0.3s ease;
   }
 
   /* Drag and drop styles */
@@ -677,6 +637,7 @@
     position: relative;
   }
 
+  .folder-item .remove-bookmark,
   .user-bookmark .remove-bookmark {
     display: none;
     align-items: center;
@@ -693,10 +654,12 @@
     transition: all var(--transition-fast);
   }
 
+  .folder-item:hover .remove-bookmark,
   .user-bookmark:hover .remove-bookmark {
     display: flex;
   }
 
+  .folder-item .remove-bookmark:hover,
   .user-bookmark .remove-bookmark:hover {
     background: var(--subtle-fill-secondary);
     color: var(--system-critical);

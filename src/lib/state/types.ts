@@ -10,6 +10,8 @@ export type ViewMode = "details" | "list" | "tiles";
 export type UndoAction =
   | { type: "rename"; path: string; oldName: string; newName: string }
   | { type: "move"; sourcePath: string; destPath: string; originalDir: string }
+  | { type: "copy"; copiedPath: string; parentDir: string }
+  | { type: "batch"; actions: UndoAction[]; label: string }
   | { type: "delete"; paths: string[]; parentDir: string };
 
 /** Selection options for click handlers */

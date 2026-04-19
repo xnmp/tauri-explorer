@@ -15,7 +15,9 @@ import { themeStore } from "./theme.svelte";
 import { bookmarksStore } from "./bookmarks.svelte";
 import { recentFilesStore } from "./recent-files.svelte";
 import { dialogStore } from "./dialogs.svelte";
-import { copyEntry, moveEntry, writeTextFile, openInTerminal, clipboardPasteImage } from "$lib/api/files";
+import { fetchDirectory, writeTextFile, openInTerminal, clipboardPasteImage } from "$lib/api/files";
+import { pasteEntries, type PasteSource } from "./paste-operations";
+import { folderViewsStore } from "./folder-views.svelte";
 import type { ViewMode } from "./types";
 import { readFocusedWindowState } from "./focused-window";
 
@@ -140,6 +142,20 @@ const fileCommands: Command[] = [
     when: () => (getActiveExplorer()?.getSelectedEntries().length ?? 0) > 0,
   },
   {
+    id: "file.permanentDelete",
+    label: "Permanently Delete",
+    category: "file",
+    shortcut: "Shift+Delete",
+    handler: () => {
+      const explorer = getActiveExplorer();
+      const selected = explorer?.getSelectedEntries();
+      if (selected && selected.length > 0) {
+        explorer?.startPermanentDelete(selected);
+      }
+    },
+    when: () => (getActiveExplorer()?.getSelectedEntries().length ?? 0) > 0,
+  },
+  {
     id: "file.openSelected",
     label: "Open",
     category: "file",
@@ -236,7 +252,7 @@ const editCommands: Command[] = [
         const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
         const path = `${dir}/pasted-${timestamp}.txt`;
         await writeTextFile(path, text);
-        explorer.refresh();
+        explorer.refresh({ silent: true });
       } catch {
         // Clipboard access denied or empty
       }
@@ -252,7 +268,7 @@ const editCommands: Command[] = [
       if (!explorer) return;
       const result = await clipboardPasteImage(explorer.currentPath);
       if (result.ok) {
-        explorer.refresh();
+        explorer.refresh({ silent: true });
       }
     },
   },
@@ -298,18 +314,42 @@ const viewCommands: Command[] = [
     handler: () => getActiveExplorer()?.setViewMode("tiles"),
   },
   {
+    id: "view.toggleMillerColumns",
+    label: "Toggle Miller Columns",
+    category: "view",
+    shortcut: "Alt+M E",
+    handler: () => settingsStore.toggleMillerColumns(),
+  },
+  {
+    id: "view.millerLayers0",
+    label: "Miller Columns: Off",
+    category: "view",
+    handler: () => settingsStore.setMillerLayers(0),
+  },
+  {
+    id: "view.millerLayers1",
+    label: "Miller Columns: 1 Layer",
+    category: "view",
+    handler: () => settingsStore.setMillerLayers(1),
+  },
+  {
+    id: "view.millerLayers2",
+    label: "Miller Columns: 2 Layers",
+    category: "view",
+    handler: () => settingsStore.setMillerLayers(2),
+  },
+  {
+    id: "view.millerLayers3",
+    label: "Miller Columns: 3 Layers",
+    category: "view",
+    handler: () => settingsStore.setMillerLayers(3),
+  },
+  {
     id: "view.toggleSidebar",
     label: "Toggle Sidebar",
     category: "view",
-    shortcut: "Alt+M E",
-    handler: () => settingsStore.toggleSidebar(),
-  },
-  {
-    id: "view.toggleToolbar",
-    label: "Toggle Toolbar",
-    category: "view",
     shortcut: "Alt+M B",
-    handler: () => settingsStore.toggleToolbar(),
+    handler: () => settingsStore.toggleSidebar(),
   },
   {
     id: "view.toggleWindowControls",
@@ -321,8 +361,14 @@ const viewCommands: Command[] = [
     id: "view.togglePreviewPane",
     label: "Toggle Preview Pane",
     category: "view",
-    shortcut: "Alt+P",
+    shortcut: "Space",
     handler: () => settingsStore.togglePreviewPane(),
+    when: () => {
+      // Only toggle when focus is NOT in an input/textarea (e.g. file list is focused)
+      const active = document.activeElement;
+      const tag = active?.tagName;
+      return tag !== "INPUT" && tag !== "TEXTAREA" && !(active as HTMLElement)?.isContentEditable;
+    },
   },
   {
     id: "view.toggleDualPane",
@@ -353,7 +399,7 @@ const viewCommands: Command[] = [
     label: "Toggle Hidden Files",
     category: "view",
     shortcut: "Ctrl+H",
-    handler: () => getActiveExplorer()?.toggleHidden(),
+    handler: () => settingsStore.toggleHidden(),
   },
   {
     id: "view.zoomIn",
@@ -408,22 +454,22 @@ const viewCommands: Command[] = [
     handler: () => settingsStore.setListViewColumns(3),
   },
   {
-    id: "view.listColumns4",
-    label: "List View: 4 Columns",
+    id: "view.tilesSizeSmall",
+    label: "Tiles: Small Icons (this folder)",
     category: "view",
-    handler: () => settingsStore.setListViewColumns(4),
+    handler: () => { const e = getActiveExplorer(); if (e) { e.setViewMode("tiles"); folderViewsStore.set(e.currentPath, { thumbnailSize: "small" }); } },
   },
   {
-    id: "view.listColumns5",
-    label: "List View: 5 Columns",
+    id: "view.tilesSizeMedium",
+    label: "Tiles: Medium Icons (this folder)",
     category: "view",
-    handler: () => settingsStore.setListViewColumns(5),
+    handler: () => { const e = getActiveExplorer(); if (e) { e.setViewMode("tiles"); folderViewsStore.set(e.currentPath, { thumbnailSize: "medium" }); } },
   },
   {
-    id: "view.listColumns6",
-    label: "List View: 6 Columns",
+    id: "view.tilesSizeLarge",
+    label: "Tiles: Large Icons (this folder)",
     category: "view",
-    handler: () => settingsStore.setListViewColumns(6),
+    handler: () => { const e = getActiveExplorer(); if (e) { e.setViewMode("tiles"); folderViewsStore.set(e.currentPath, { thumbnailSize: "large" }); } },
   },
 ];
 
@@ -479,11 +525,17 @@ const crossPaneCommands: Command[] = [
       const selected = activeExplorer.getSelectedEntries();
       if (selected.length === 0) return;
 
-      const destDir = otherExplorer.state.currentPath;
-      for (const entry of selected) {
-        await copyEntry(entry.path, destDir);
-      }
-      otherExplorer.refresh();
+      const destPath = otherExplorer.state.currentPath;
+      const dirResult = await fetchDirectory(destPath);
+      const existingEntries = dirResult.ok ? [...dirResult.data.entries] : [];
+      const sources: PasteSource[] = selected.map((e) => ({ path: e.path, name: e.name, size: e.size, modified: e.modified }));
+
+      await pasteEntries(sources, false, {
+        destPath,
+        existingEntries,
+        onEntriesAdded: () => {},
+        onRefresh: () => Promise.all([otherExplorer.refresh({ silent: true })]),
+      });
     },
     when: () => windowTabsManager.dualPaneEnabled,
   },
@@ -503,12 +555,17 @@ const crossPaneCommands: Command[] = [
       const selected = activeExplorer.getSelectedEntries();
       if (selected.length === 0) return;
 
-      const destDir = otherExplorer.state.currentPath;
-      for (const entry of selected) {
-        await moveEntry(entry.path, destDir);
-      }
-      activeExplorer.refresh();
-      otherExplorer.refresh();
+      const destPath = otherExplorer.state.currentPath;
+      const dirResult = await fetchDirectory(destPath);
+      const existingEntries = dirResult.ok ? [...dirResult.data.entries] : [];
+      const sources: PasteSource[] = selected.map((e) => ({ path: e.path, name: e.name, size: e.size, modified: e.modified }));
+
+      await pasteEntries(sources, true, {
+        destPath,
+        existingEntries,
+        onEntriesAdded: () => {},
+        onRefresh: () => Promise.all([activeExplorer.refresh({ silent: true }), otherExplorer.refresh({ silent: true })]),
+      });
     },
     when: () => windowTabsManager.dualPaneEnabled,
   },
@@ -665,7 +722,27 @@ const generalCommands: Command[] = [
       dialogStore.openContentSearch();
     },
   },
+  {
+    id: "general.filterCurrentDir",
+    label: "Filter Current Directory",
+    category: "general",
+    shortcut: "Ctrl+F",
+    handler: () => {
+      const explorer = getActiveExplorer();
+      explorer?.openFilter();
+    },
+  },
 ];
+
+/** Generate one "Theme: <Name>" command per registered theme. */
+function buildThemeCommands(): Command[] {
+  return themeStore.availableThemes.map((theme) => ({
+    id: `view.theme.${theme.id}`,
+    label: `Theme: ${theme.name}`,
+    category: "view",
+    handler: () => themeStore.setTheme(theme.id),
+  }));
+}
 
 /** Register all commands */
 export function registerAllCommands(): void {
@@ -675,6 +752,7 @@ export function registerAllCommands(): void {
     ...editCommands,
     ...selectionCommands,
     ...viewCommands,
+    ...buildThemeCommands(),
     ...bookmarkCommands,
     ...recentCommands,
     ...windowCommands,

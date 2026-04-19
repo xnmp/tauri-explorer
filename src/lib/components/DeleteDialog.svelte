@@ -3,14 +3,14 @@
   Issue: tauri-explorer-h3n, tauri-explorer-w0eo, tauri-explorer-1k9k
 -->
 <script lang="ts">
-  import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
+  import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
 
   interface Props {
-    explorer?: ExplorerInstance;
+    explorer: ExplorerInstance;
   }
 
-  let { explorer = defaultExplorer }: Props = $props();
+  let { explorer }: Props = $props();
 
   let error = $state<string | null>(null);
   let deleting = $state(false);
@@ -61,6 +61,7 @@
   {@const isMultiple = entries.length > 1}
   {@const singleEntry = entries[0]}
   {@const hasFolders = entries.some((e) => e.kind === "directory")}
+  {@const isPermanent = dialogStore.isPermanentDelete}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
     class="overlay"
@@ -83,11 +84,15 @@
 
       <div class="dialog-content">
         {#if isMultiple}
-          <h2 id="dialog-title">Delete {entries.length} items?</h2>
+          <h2 id="dialog-title">{isPermanent ? "Permanently delete" : "Delete"} {entries.length} items?</h2>
           <p id="dialog-description" class="message">
-            These {entries.length} items will be moved to the Recycle Bin.
+            {#if isPermanent}
+              These {entries.length} items will be <strong>permanently deleted</strong>. This cannot be undone.
+            {:else}
+              These {entries.length} items will be moved to the Recycle Bin.
+            {/if}
             {#if hasFolders}
-              <span class="info">Folders and all their contents will also be moved.</span>
+              <span class="info">Folders and all their contents will also be {isPermanent ? "deleted" : "moved"}.</span>
             {/if}
           </p>
           <div class="entry-list">
@@ -99,11 +104,15 @@
             {/if}
           </div>
         {:else}
-          <h2 id="dialog-title">Delete {singleEntry.kind === "directory" ? "folder" : "file"}?</h2>
+          <h2 id="dialog-title">{isPermanent ? "Permanently delete" : "Delete"} {singleEntry.kind === "directory" ? "folder" : "file"}?</h2>
           <p id="dialog-description" class="message">
-            <strong>{singleEntry.name}</strong> will be moved to the Recycle Bin.
+            {#if isPermanent}
+              <strong>{singleEntry.name}</strong> will be <strong>permanently deleted</strong>. This cannot be undone.
+            {:else}
+              <strong>{singleEntry.name}</strong> will be moved to the Recycle Bin.
+            {/if}
             {#if singleEntry.kind === "directory"}
-              <span class="info">All files and folders inside will also be moved.</span>
+              <span class="info">All files and folders inside will also be {isPermanent ? "deleted" : "moved"}.</span>
             {/if}
           </p>
         {/if}
@@ -144,7 +153,7 @@
     align-items: center;
     justify-content: center;
     z-index: 1000;
-    animation: overlayIn 150ms cubic-bezier(0, 0, 0, 1);
+    animation: overlayIn 80ms cubic-bezier(0, 0, 0, 1);
   }
 
   @keyframes overlayIn {

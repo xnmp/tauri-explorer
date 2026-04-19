@@ -17,7 +17,10 @@ fn main() {
     // Fork to background so the launching terminal is freed.
     // On Windows, the windows_subsystem attribute already handles this.
     // Skip in debug/dev builds so `tauri dev` stays in the foreground with logs.
-    #[cfg(all(unix, not(debug_assertions)))]
+    // macOS: fork() is not safe after Cocoa/AppKit initialization — it breaks
+    // WKWebView's XPC connections, causing blank windows. Use `open -a` to launch
+    // the .app bundle detached from the terminal instead.
+    #[cfg(all(target_os = "linux", not(debug_assertions)))]
     unsafe {
         let pid = libc::fork();
         if pid > 0 {
@@ -31,6 +34,7 @@ fn main() {
         // pid < 0: fork failed, just continue in the original process.
     }
 
+    #[cfg(debug_assertions)]
     eprintln!("[Perf] main() pre-run: {:?}", t_main.elapsed());
     tauri_explorer_lib::run(launch_dir)
 }

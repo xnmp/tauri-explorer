@@ -3,10 +3,12 @@
   Issue: tauri-explorer-w3t, tauri-explorer-btz, tauri-explorer-az6w
 -->
 <script lang="ts">
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
+  import { fuzzyScorePath } from "$lib/domain/fuzzy-score";
   import {
     startStreamingSearch,
     cancelSearch,
+    fuzzySearch,
     openFile,
     getHomeDirectory,
     type SearchResult,
@@ -15,7 +17,8 @@
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
-  import { explorer as defaultExplorer } from "$lib/state/explorer.svelte";
+  import { settingsStore } from "$lib/state/settings.svelte";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { getFileIconColor, getFileIconCategory, type IconCategory } from "$lib/domain/file-types";
   import type { FileEntry } from "$lib/domain/file";
   import { frecencyStore } from "$lib/state/frecency.svelte";
@@ -45,6 +48,18 @@
   let selectedIndex = $state(0);
   let loading = $state(false);
   let inputRef = $state<HTMLInputElement | null>(null);
+  let homeDir = $state<string | null>(null);
+
+  // Fetch home directory for tilde expansion
+  getHomeDirectory().then((r) => { if (r.ok) homeDir = r.data; });
+
+  /** Expand leading ~ to home directory path */
+  function expandTilde(path: string): string {
+    if (!homeDir) return path;
+    if (path === "~") return homeDir;
+    if (path.startsWith("~/")) return homeDir + path.slice(1);
+    return path;
+  }
 
   // Debounce timer for search
   let searchTimer: ReturnType<typeof setTimeout> | null = null;
@@ -53,72 +68,99 @@
   let activeSearchId: number | null = null;
   let unlisten: UnlistenFn | null = null;
   let totalScanned = $state(0);
-  let homeDir: string | null = null;
 
   // Frecency weight relative to fuzzy score (how much frecency influences ranking)
   const FRECENCY_WEIGHT = 50;
+  // Directories get a score boost since they're more commonly navigated to
+  const DIRECTORY_BONUS = 1.25;
 
-  /** Candidate path from recent files or frecency store. */
-  interface ExternalCandidate {
-    name: string;
-    path: string;
-    kind: "file" | "directory";
+  /**
+   * Score how well a query matches a filename vs just appearing in the path.
+   * Filename matches are weighted much higher so that e.g. searching "pictures"
+   * returns ~/Pictures above ~/Pictures/Wallpaper.
+   */
+  function filenameMatchScore(name: string, queryLower: string): number {
+    const nameLower = name.toLowerCase();
+    if (nameLower === queryLower) return 200;      // exact match
+    if (nameLower.startsWith(queryLower)) return 150; // prefix match
+    if (nameLower.includes(queryLower)) return 100;   // substring match
+    return 0; // filename doesn't match
   }
 
-  /** Collect all external candidates (recent files + frecency) outside the home directory. */
-  function getExternalCandidates(): ExternalCandidate[] {
-    const seen = new Set<string>();
-    const candidates: ExternalCandidate[] = [];
+  /** Score an entry against a query, heavily weighting filename matches. */
+  function scoreEntry(name: string, path: string, queryLower: string): number {
+    const nameScore = filenameMatchScore(name, queryLower);
+    if (nameScore > 0) return nameScore;
+    // Path-only match (filename doesn't contain query)
+    if (path.toLowerCase().includes(queryLower)) return 30;
+    return 0;
+  }
 
+  /** Match recent files and frecency entries against a search term.
+   *  These are always included in results (merged/deduplicated with backend results). */
+  function matchFrecencyAndRecent(term: string): SearchResult[] {
+    const lower = term.toLowerCase();
+    const seen = new Set<string>();
+    const matched: SearchResult[] = [];
+    const scoreMap = frecencyStore.getScoreMap();
+
+    // Recent files — scored with full fuzzy matching
     for (const entry of recentFilesStore.list) {
       if (seen.has(entry.path)) continue;
       seen.add(entry.path);
-      if (homeDir && entry.path.startsWith(homeDir)) continue;
-      candidates.push({ name: entry.name, path: entry.path, kind: entry.kind });
-    }
-
-    for (const entry of frecencyStore.entries) {
-      if (seen.has(entry.path)) continue;
-      seen.add(entry.path);
-      if (homeDir && entry.path.startsWith(homeDir)) continue;
-      const name = entry.path.split("/").pop() || "";
-      candidates.push({ name, path: entry.path, kind: "directory" });
-    }
-
-    return candidates;
-  }
-
-  /** Match external candidates against a search term via substring match. */
-  function matchExternalCandidates(term: string): SearchResult[] {
-    const lower = term.toLowerCase();
-    const results: SearchResult[] = [];
-
-    for (const c of getExternalCandidates()) {
-      const nameLower = c.name.toLowerCase();
-      if (nameLower.includes(lower) || c.path.toLowerCase().includes(lower)) {
-        results.push({
-          name: c.name,
-          path: c.path,
-          relativePath: c.path,
-          score: nameLower.includes(lower) ? 80 : 40,
-          kind: c.kind,
+      const fuzzy = fuzzyScorePath(lower, entry.path);
+      if (fuzzy > 0) {
+        const frecency = scoreMap.get(entry.path) ?? 0;
+        const nameBonus = filenameMatchScore(entry.name, lower);
+        matched.push({
+          name: entry.name,
+          path: entry.path,
+          relativePath: entry.path,
+          score: Math.round(fuzzy * 5) + nameBonus + Math.round(frecency * FRECENCY_WEIGHT),
+          kind: entry.kind,
         });
       }
     }
 
-    return results;
+    // Frecency entries (mostly directories the user has navigated to)
+    for (const entry of frecencyStore.entries) {
+      if (seen.has(entry.path)) continue;
+      seen.add(entry.path);
+      const name = entry.path.split("/").pop() || "";
+      const fuzzy = fuzzyScorePath(lower, entry.path);
+      if (fuzzy > 0) {
+        const frecency = scoreMap.get(entry.path) ?? 0;
+        const nameBonus = filenameMatchScore(name, lower);
+        matched.push({
+          name,
+          path: entry.path,
+          relativePath: entry.path,
+          score: Math.round(fuzzy * 5) + nameBonus + Math.round(frecency * FRECENCY_WEIGHT),
+          kind: "directory",
+        });
+      }
+    }
+
+    return matched;
   }
 
-  /** Re-rank search results by combining fuzzy score with frecency. */
+  /** Re-rank search results by combining fuzzy score with frecency and filename bonus. */
   function rankWithFrecency(searchResults: SearchResult[]): SearchResult[] {
     if (searchResults.length === 0) return searchResults;
     const scoreMap = frecencyStore.getScoreMap();
+    const currentQuery = query.toLowerCase();
     const ranked = searchResults.map((r) => {
       const frecency = scoreMap.get(r.path) ?? 0;
-      return { ...r, score: r.score + Math.round(frecency * FRECENCY_WEIGHT) };
+      const nameBonus = filenameMatchScore(r.name, currentQuery);
+      return { ...r, score: r.score + Math.round(frecency * FRECENCY_WEIGHT) + nameBonus };
     });
-    ranked.sort((a, b) => b.score - a.score);
+    ranked.sort((a, b) => effectiveScore(b) - effectiveScore(a));
     return ranked;
+  }
+
+  /** Effective score with directory bonus applied. */
+  function effectiveScore(r: SearchResult): number {
+    return r.kind === "directory" ? r.score * DIRECTORY_BONUS : r.score;
   }
 
   /** Merge primary results with extras (deduplicated), sorted by score descending. */
@@ -126,7 +168,7 @@
     const seen = new Set(primary.map((r) => r.path));
     const unique = extras.filter((r) => !seen.has(r.path));
     const merged = [...primary, ...unique];
-    merged.sort((a, b) => b.score - a.score);
+    merged.sort((a, b) => effectiveScore(b) - effectiveScore(a));
     return merged;
   }
 
@@ -143,17 +185,8 @@
 
   // Get current working directory from active explorer
   function getCwdPath(): string {
-    const explorer = paneNav?.getActiveExplorer() ?? defaultExplorer;
-    return explorer.currentPath;
-  }
-
-  // Cache home directory for external candidate filtering
-  async function ensureHomeDir(): Promise<void> {
-    if (homeDir) return;
-    const result = await getHomeDirectory();
-    if (result.ok) {
-      homeDir = result.data;
-    }
+    const explorer = paneNav?.getActiveExplorer() ?? windowTabsManager.getActiveExplorer();
+    return explorer?.currentPath ?? "/";
   }
 
   // Cancel active search and cleanup listener
@@ -168,10 +201,14 @@
     }
   }
 
+  // Monotonically increasing search generation counter.
+  // Used to discard stale results without needing to wait for searchId.
+  let searchGeneration = 0;
+
   // Setup event listener for streaming search results.
   // Must be called BEFORE starting the search to avoid missing events
   // from fast-completing searches (e.g. small directories).
-  async function setupSearchListener(): Promise<void> {
+  async function setupSearchListener(generation: number): Promise<void> {
     // Clean up any existing listener
     if (unlisten) {
       unlisten();
@@ -180,15 +217,24 @@
     unlisten = await listen<SearchResultsEvent>("search-results", (event) => {
       const payload = event.payload;
 
-      // Only handle events for our active search
-      if (activeSearchId === null || payload.searchId !== activeSearchId) {
+      // Discard events from stale searches (user typed again)
+      if (generation !== searchGeneration) {
         return;
       }
 
-      // Rank backend results by frecency, then merge in external matches
+      // Accept events that match our search ID, OR if we haven't received
+      // the search ID yet (race: backend thread emits before invoke returns).
+      // Once we learn the ID from the first event, lock to it.
+      if (activeSearchId === null) {
+        activeSearchId = payload.searchId;
+      } else if (payload.searchId !== activeSearchId) {
+        return;
+      }
+
+      // Rank backend results by frecency, then merge in recent/frecent matches
       const ranked = rankWithFrecency(payload.results);
-      const externalMatches = matchExternalCandidates(query);
-      results = mergeResultsByScore(ranked, externalMatches);
+      const frecencyMatches = matchFrecencyAndRecent(query);
+      results = mergeResultsByScore(ranked, frecencyMatches);
       totalScanned = payload.totalScanned;
 
       // Reset selection if needed
@@ -221,23 +267,40 @@
       // Cancel any previous search
       await cancelActiveSearch();
 
-      // Show external matches immediately (before backend responds)
-      await ensureHomeDir();
-      results = matchExternalCandidates(query);
+      // Bump generation so stale listeners are discarded
+      const generation = ++searchGeneration;
 
-      // Set up listener BEFORE starting search to avoid missing events
-      // from fast-completing searches on small directories.
-      // JS single-threaded execution ensures activeSearchId is set
-      // before any queued event callbacks can fire.
-      await setupSearchListener();
+      // Show frecency/recent matches immediately (before backend responds)
+      const frecencyMatches = matchFrecencyAndRecent(query);
+      results = frecencyMatches;
 
       // Search from CWD so immediate directory contents are always found
       const cwd = getCwdPath();
-      const result = await startStreamingSearch(query, cwd, 20);
 
-      if (result.ok) {
-        activeSearchId = result.data;
+      // Try streaming search (requires Tauri event system).
+      // Falls back to non-streaming fuzzySearch when events aren't available
+      // (e.g. browser/mock mode).
+      let streamingAvailable = true;
+      try {
+        await setupSearchListener(generation);
+      } catch {
+        streamingAvailable = false;
+      }
+
+      if (streamingAvailable) {
+        const result = await startStreamingSearch(query, cwd, 20);
+        if (result.ok) {
+          activeSearchId = result.data;
+        } else {
+          loading = false;
+        }
       } else {
+        // Fallback: non-streaming search
+        const result = await fuzzySearch(query, cwd, 20);
+        if (result.ok) {
+          const ranked = rankWithFrecency(result.data);
+          results = mergeResultsByScore(ranked, frecencyMatches);
+        }
         loading = false;
       }
     }, 50); // Shorter debounce for streaming - results come in progressively
@@ -249,6 +312,12 @@
   );
 
   function handleKeydown(event: KeyboardEvent): void {
+    // Alt+D toggles debug mode (shows score breakdown)
+    if (event.key === "d" && event.altKey) {
+      event.preventDefault();
+      settingsStore.toggleQuickOpenDebug();
+      return;
+    }
     switch (event.key) {
       case "Escape":
         event.preventDefault();
@@ -268,7 +337,12 @@
         break;
       case "Enter":
         event.preventDefault();
-        if (displayResults[selectedIndex]) {
+        // If query looks like a path (starts with / or ~), navigate directly
+        if (query.startsWith("/") || query.startsWith("~")) {
+          const explorer = paneNav?.getActiveExplorer() ?? windowTabsManager.getActiveExplorer();
+          explorer?.navigateTo(expandTilde(query.trim()));
+          onClose();
+        } else if (displayResults[selectedIndex]) {
           selectResult(displayResults[selectedIndex]);
         }
         break;
@@ -276,33 +350,39 @@
   }
 
   async function selectResult(result: SearchResult): Promise<void> {
-    const explorer = paneNav?.getActiveExplorer() ?? defaultExplorer;
+    const explorer = paneNav?.getActiveExplorer() ?? windowTabsManager.getActiveExplorer();
 
     // Record access for frecency ranking
     frecencyStore.recordAccess(result.path);
 
     if (result.kind === "directory") {
-      explorer.navigateTo(result.path);
+      explorer?.navigateTo(result.path);
     } else {
       const openResult = await openFile(result.path);
       if (openResult.ok) {
         recentFilesStore.add(result.path, result.name, "file");
       } else {
         const parentDir = result.path.substring(0, result.path.lastIndexOf("/"));
-        explorer.navigateTo(parentDir);
+        explorer?.navigateTo(parentDir);
       }
     }
 
     onClose();
   }
 
-  // Focus input when dialog opens
+  // Focus input and prune stale entries when dialog opens.
+  // untrack prevents pruneNonExistent's internal $state reads from
+  // becoming dependencies of this effect (tauri-explorer-m2x3).
   $effect(() => {
     if (open && inputRef) {
       query = "";
       results = [];
       selectedIndex = 0;
       tick().then(() => inputRef?.focus());
+      untrack(() => {
+        recentFilesStore.pruneNonExistent();
+        frecencyStore.pruneNonExistent();
+      });
     }
   });
 
@@ -363,7 +443,7 @@
               >
                 {#if result.kind === "directory"}
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="folder-icon">
-                    <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="#FFB900"/>
+                    <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="var(--icon-folder, #FFB900)"/>
                   </svg>
                 {:else}
                   {@const entry = toFileEntry(result)}
@@ -416,7 +496,31 @@
                   <span class="result-name">{result.name}</span>
                   <span class="result-path">{result.relativePath}</span>
                 </div>
-                {#if result.kind === "directory"}
+                {#if settingsStore.quickOpenDebug}
+                  {@const qLower = query.toLowerCase()}
+                  {@const nameScore = filenameMatchScore(result.name, qLower)}
+                  {@const frecency = frecencyStore.getScoreMap().get(result.path) ?? 0}
+                  {@const frecencyPts = Math.round(frecency * FRECENCY_WEIGHT)}
+                  {@const baseScore = Math.round(result.score - frecencyPts - nameScore)}
+                  {@const dirMult = result.kind === "directory" ? 1.25 : 1}
+                  {@const effective = Math.round(effectiveScore(result))}
+                  <span class="debug-breakdown" title={result.path}>
+                    <span class="debug-row"><b>{effective}</b></span>
+                    {#if baseScore > 0}
+                      <span class="debug-row">fuzzy:{baseScore}</span>
+                    {/if}
+                    {#if nameScore > 0}
+                      <span class="debug-row">name:{nameScore}</span>
+                    {/if}
+                    {#if frecencyPts > 0}
+                      <span class="debug-row">frec:{frecencyPts}</span>
+                    {/if}
+                    {#if baseScore === 0 && frecencyPts === 0 && nameScore === 0}
+                      <span class="debug-row">recent</span>
+                    {/if}
+                    {#if dirMult !== 1}<span class="debug-row">dir:×{dirMult}</span>{/if}
+                  </span>
+                {:else if result.kind === "directory"}
                   <span class="result-kind">folder</span>
                 {:else}
                   <span class="result-score">{Math.round(result.score)}%</span>
@@ -441,7 +545,7 @@
               >
                 {#if result.kind === "directory"}
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="folder-icon">
-                    <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="#FFB900"/>
+                    <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="var(--icon-folder, #FFB900)"/>
                   </svg>
                 {:else}
                   {@const entry = toFileEntry(result)}
@@ -469,6 +573,7 @@
         <span class="shortcut"><kbd>↑</kbd><kbd>↓</kbd> Navigate</span>
         <span class="shortcut"><kbd>Enter</kbd> Open</span>
         <span class="shortcut"><kbd>Esc</kbd> Close</span>
+        <span class="shortcut"><kbd>Alt+D</kbd> {settingsStore.quickOpenDebug ? "Debug ON" : "Debug"}</span>
       </div>
     </div>
   </div>
@@ -650,8 +755,8 @@
   }
 
   .result-kind {
-    color: #B38F00;
-    background: rgba(255, 185, 0, 0.15);
+    color: var(--icon-folder, #B38F00);
+    background: color-mix(in srgb, var(--icon-folder, #FFB900) 15%, transparent);
   }
 
   .result-item.selected .result-score,
@@ -660,7 +765,7 @@
   }
 
   .result-item.is-directory {
-    border-left: 2px solid #FFB900;
+    border-left: 2px solid var(--icon-folder, #FFB900);
     padding-left: 10px;
   }
 
@@ -692,6 +797,27 @@
 
   .no-results.hint {
     color: var(--text-tertiary);
+  }
+
+  .debug-breakdown {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 1px;
+    font-family: monospace;
+    font-size: 9px;
+    color: var(--text-tertiary);
+    flex-shrink: 0;
+    line-height: 1.2;
+  }
+
+  .debug-breakdown b {
+    color: var(--text-primary);
+    font-size: 11px;
+  }
+
+  .debug-row {
+    white-space: nowrap;
   }
 
   .footer {

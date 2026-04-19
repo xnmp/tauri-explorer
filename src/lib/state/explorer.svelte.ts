@@ -13,28 +13,20 @@
  */
 
 import { toastStore } from "./toast.svelte";
-import { loadPersisted, savePersisted } from "./persisted";
 import {
-  fetchDirectory,
   createDirectory,
   renameEntry as apiRenameEntry,
   deleteEntry,
   deleteMultipleEntries,
-  copyEntry,
-  moveEntry,
-  estimateSize,
-  startStreamingDirectory,
-  cancelDirectoryListing,
+  deleteEntryPermanent,
   clipboardHasImage,
   clipboardPasteImage,
-  type DirectoryEntriesEvent,
+  watchDirectory,
+  unwatchDirectory,
 } from "$lib/api/files";
-import { operationsManager } from "./operations.svelte";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { broadcastFileChange } from "./file-events";
-import { conflictResolver, type ConflictChoice } from "./conflict-resolver.svelte";
 import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/domain/file";
-import type { SelectOptions, ViewMode, UndoAction } from "./types";
+import type { SelectOptions, ViewMode } from "./types";
 import * as selection from "./selection";
 import * as navigation from "./navigation";
 import { clipboardStore } from "./clipboard.svelte";
@@ -44,33 +36,10 @@ import { contextMenuStore } from "./context-menu.svelte";
 import { undoStore } from "./undo.svelte";
 import { settingsStore } from "./settings.svelte";
 import { frecencyStore } from "./frecency.svelte";
-
-/** Per-directory sort preference persistence */
-const SORT_STORAGE_KEY = "explorer-sort-prefs";
-const MAX_SORT_ENTRIES = 200;
-
-interface SortPref { sortBy: SortField; sortAscending: boolean; }
-
-function loadSortPrefs(): Record<string, SortPref> {
-  return loadPersisted(SORT_STORAGE_KEY, {});
-}
-
-function saveSortPref(path: string, pref: SortPref): void {
-  const prefs = loadSortPrefs();
-  prefs[path] = pref;
-  // Evict oldest entries if over limit
-  const keys = Object.keys(prefs);
-  if (keys.length > MAX_SORT_ENTRIES) {
-    for (const key of keys.slice(0, keys.length - MAX_SORT_ENTRIES)) {
-      delete prefs[key];
-    }
-  }
-  savePersisted(SORT_STORAGE_KEY, prefs);
-}
-
-function getSortPref(path: string): SortPref | undefined {
-  return loadSortPrefs()[path];
-}
+import { getSortPref, saveSortPref } from "./sort-prefs";
+import { pasteEntries, type PasteResult } from "./paste-operations";
+import { createDirectoryListing } from "./directory-listing";
+import { getAffectedDirs, undoActionLabel } from "./undo-helpers";
 
 /** Core explorer state (per-pane) */
 interface ExplorerCoreState {
@@ -94,23 +63,31 @@ interface ExplorerCoreState {
   selectionAnchorIndex: number | null;
 }
 
-function createExplorerState() {
+interface ExplorerSeed {
+  currentPath: string;
+  entries: FileEntry[];
+  sortBy: SortField;
+  sortAscending: boolean;
+  viewMode: ViewMode;
+}
+
+function createExplorerState(seed?: ExplorerSeed) {
   // Core per-pane state using $state rune
   let coreState = $state<ExplorerCoreState>({
     // Navigation
-    currentPath: "",
+    currentPath: seed?.currentPath ?? "",
     history: [],
     historyIndex: -1,
 
     // Entries
-    entries: [],
-    loading: false,
+    entries: seed?.entries ?? [],
+    loading: !seed, // not loading if seeded
     error: null,
 
     // View options
-    sortBy: "name",
-    sortAscending: true,
-    viewMode: settingsStore.viewMode,
+    sortBy: seed?.sortBy ?? "name",
+    sortAscending: seed?.sortAscending ?? true,
+    viewMode: seed?.viewMode ?? settingsStore.viewMode,
 
     // Selection
     selectedPaths: new Set(),
@@ -120,6 +97,30 @@ function createExplorerState() {
   // Inline folder creation state
   let isCreatingFolder = $state(false);
 
+  // Filter query for filtering displayed entries (Ctrl+F)
+  let filterQuery = $state("");
+  let showFilter = $state(false);
+
+  // Navigation callback for UI (e.g. focusing the selected item after nav)
+  let onNavigateCallback: (() => void) | null = null;
+
+  // Filesystem watcher: track which path this pane is watching
+  let watchedPath: string | null = null;
+
+  function updateWatch(newPath: string) {
+    if (watchedPath === newPath) return;
+    if (watchedPath) unwatchDirectory(watchedPath);
+    watchDirectory(newPath);
+    watchedPath = newPath;
+  }
+
+  function destroyWatch() {
+    if (watchedPath) {
+      unwatchDirectory(watchedPath);
+      watchedPath = null;
+    }
+  }
+
   // Read-only state accessor for components that need the raw state bag
   const state = $derived({ ...coreState });
 
@@ -128,97 +129,68 @@ function createExplorerState() {
   // ===================
 
   const displayEntries = $derived.by(() => {
-    const filtered = filterHidden(coreState.entries, settingsStore.showHidden);
+    let filtered = filterHidden(coreState.entries, settingsStore.showHidden);
+    if (filterQuery) {
+      const q = filterQuery.toLowerCase();
+      filtered = filtered.filter((e) => e.name.toLowerCase().includes(q));
+    }
     return sortEntries(filtered, coreState.sortBy, coreState.sortAscending);
   });
 
   const breadcrumbs = $derived(navigation.parseBreadcrumbs(coreState.currentPath));
   const canGoBack = $derived(navigation.canGoBack(coreState.historyIndex));
   const canGoForward = $derived(navigation.canGoForward(coreState.history, coreState.historyIndex));
-  const canUndo = $derived(undoStore.canUndo);
-  const canRedo = $derived(undoStore.canRedo);
 
   // ===================
-  // Streaming Directory State
+  // Directory Listing
   // ===================
 
-  let activeListingId: number | null = null;
-  let directoryUnlisten: UnlistenFn | null = null;
-
-  async function cleanupDirectoryListener() {
-    if (activeListingId !== null) {
-      await cancelDirectoryListing(activeListingId);
-      activeListingId = null;
-    }
-    if (directoryUnlisten) {
-      directoryUnlisten();
-      directoryUnlisten = null;
-    }
-  }
-
-  async function setupDirectoryListener(listingId: number, expectedPath: string) {
-    // Clean up any existing listener
-    if (directoryUnlisten) {
-      directoryUnlisten();
-    }
-
-    directoryUnlisten = await listen<DirectoryEntriesEvent>("directory-entries", (event) => {
-      const payload = event.payload;
-
-      // Only handle events for our active listing
-      if (payload.listingId !== listingId || activeListingId !== listingId) {
-        return;
-      }
-
-      // Verify this is for the correct path
-      if (payload.path !== expectedPath) {
-        return;
-      }
-
-      // Append new entries to existing list
-      coreState.entries = [...coreState.entries, ...payload.entries];
-
-      // Stop loading when done
-      if (payload.done) {
-        coreState.loading = false;
-        activeListingId = null;
-      }
-    });
-  }
-
-  // ===================
-  // Navigation Actions
-  // ===================
+  const dirListing = createDirectoryListing();
 
   async function navigateInternal(path: string): Promise<boolean> {
-    // Cancel any active listing from previous navigation
-    await cleanupDirectoryListener();
-
-    coreState.loading = true;
+    // If we already have entries for this path (e.g. seeded from another tab),
+    // don't show loading state — the existing entries stay visible while we refresh.
+    const isSeeded = coreState.currentPath === path && coreState.entries.length > 0;
+    if (!isSeeded) {
+      coreState.loading = true;
+    }
     coreState.error = null;
+    filterQuery = "";
+    showFilter = false;
 
-    // Use streaming directory listing for potentially large directories
-    const result = await startStreamingDirectory(path);
+    const result = await dirListing.load(path, {
+      onEntries: (entries) => {
+        coreState.entries = [...coreState.entries, ...entries];
+      },
+      onDone: () => {
+        coreState.loading = false;
+      },
+    });
 
     if (result.ok) {
-      coreState.currentPath = result.data.path;
-      const listingId = result.data.listing_id;
-      coreState.entries = [...result.data.entries];
+      coreState.currentPath = result.path;
+      coreState.entries = result.entries;
+      updateWatch(result.path);
 
-      // Restore saved sort preference for this directory
-      const savedSort = getSortPref(result.data.path);
+      const savedSort = getSortPref(result.path);
       if (savedSort) {
         coreState.sortBy = savedSort.sortBy;
         coreState.sortAscending = savedSort.sortAscending;
       }
 
-      // If there's a listing ID, more entries will come via events
-      if (listingId !== null) {
-        activeListingId = listingId;
-        await setupDirectoryListener(listingId, result.data.path);
-        // Keep loading true until all entries received
+      // Auto-select first item when navigating to a new directory
+      // Issue: tauri-explorer-130a
+      coreState.selectedPaths = new Set();
+      if (displayEntries.length > 0) {
+        coreState.selectedPaths = new Set([displayEntries[0].path]);
+        coreState.selectionAnchorIndex = 0;
       } else {
-        // Small directory - all entries received, done loading
+        coreState.selectionAnchorIndex = null;
+      }
+
+      onNavigateCallback?.();
+
+      if (!result.streaming) {
         coreState.loading = false;
       }
       return true;
@@ -280,24 +252,54 @@ function createExplorerState() {
     }
   }
 
-  async function refresh() {
-    const success = await navigateInternal(coreState.currentPath);
-    if (!success) {
-      // Current path no longer exists (e.g. was deleted) — fall back to parent
+  /** Build a fingerprint string for change detection. */
+  function entriesFingerprint(entries: FileEntry[]): string {
+    return entries.map((e) => `${e.path}\0${e.size}\0${e.modified}`).join("\n");
+  }
+
+  async function refresh(options?: { silent?: boolean }) {
+    const oldFingerprint = entriesFingerprint(coreState.entries);
+    const silent = options?.silent ?? false;
+
+    // Fetch new data without touching UI state — avoids flash on no-change
+    const result = await dirListing.load(coreState.currentPath, {
+      onEntries: () => {},
+      onDone: () => {},
+    });
+
+    if (!result.ok) {
+      // Directory no longer exists — fall back to parent
       const parentPath = navigation.getParentPath(breadcrumbs);
       if (parentPath) {
         await navigateInternal(parentPath);
       }
+      return;
+    }
+
+    const newFingerprint = entriesFingerprint(result.entries);
+    if (oldFingerprint === newFingerprint) {
+      if (!silent) {
+        toastStore.show("Already up to date", "info", { duration: 1500 });
+      }
+      return;
+    }
+
+    // Entries changed — update UI state in place without full navigateInternal reset
+    coreState.entries = result.entries;
+    updateWatch(result.path);
+
+    if (!result.streaming) {
+      coreState.loading = false;
+    }
+
+    if (!silent) {
+      toastStore.show("Refreshed", "info", { duration: 1500 });
     }
   }
 
   // ===================
   // View Actions
   // ===================
-
-  function toggleHidden() {
-    settingsStore.toggleHidden();
-  }
 
   function setSorting(by: SortField) {
     if (coreState.sortBy === by) {
@@ -362,37 +364,17 @@ function createExplorerState() {
   }
 
   // ===================
-  // Dialog Actions (delegates to global dialogStore)
+  // Dialog & Context Menu Actions
   // ===================
 
-  function openNewFolderDialog() {
-    dialogStore.openNewFolder();
-  }
-
-  function closeNewFolderDialog() {
-    dialogStore.closeNewFolder();
-  }
-
-  function startRename(entry: FileEntry) {
-    dialogStore.startRename(entry);
-  }
-
-  function cancelRename() {
-    dialogStore.cancelRename();
-  }
-
-  /** If any deleted path is the current directory or an ancestor, navigate up. */
   async function navigateAwayIfNeeded(deletedPaths: Set<string>): Promise<void> {
     const current = coreState.currentPath;
     const shouldNavigateAway = [...deletedPaths].some(
       (dp) => current === dp || current.startsWith(dp + "/")
     );
     if (shouldNavigateAway) {
-      // Navigate to the parent of the current directory
       const parentPath = navigation.getParentPath(breadcrumbs);
-      if (parentPath) {
-        await navigateTo(parentPath);
-      }
+      if (parentPath) await navigateTo(parentPath);
     }
   }
 
@@ -401,7 +383,6 @@ function createExplorerState() {
     if (arr.length === 0) return;
 
     if (!settingsStore.confirmDelete) {
-      // Skip dialog, delete immediately
       const paths = arr.map((e) => e.path);
       const result = arr.length === 1
         ? await deleteEntry(paths[0])
@@ -422,28 +403,19 @@ function createExplorerState() {
     dialogStore.startDelete(arr);
   }
 
-  function cancelDelete() {
-    dialogStore.cancelDelete();
+  /** Start permanent delete — always shows confirmation dialog. */
+  function startPermanentDelete(entries: FileEntry | FileEntry[]) {
+    const arr = Array.isArray(entries) ? entries : [entries];
+    if (arr.length === 0) return;
+    dialogStore.startDelete(arr, true);
   }
-
-  // ===================
-  // Context Menu Actions (delegates to global contextMenuStore)
-  // ===================
 
   function openContextMenu(x: number, y: number, entry?: FileEntry) {
-    if (entry) {
-      // If right-clicked entry is not selected, select only it
-      if (!coreState.selectedPaths.has(entry.path)) {
-        coreState.selectedPaths = new Set([entry.path]);
-        const entryIndex = displayEntries.findIndex((e) => e.path === entry.path);
-        coreState.selectionAnchorIndex = entryIndex;
-      }
+    if (entry && !coreState.selectedPaths.has(entry.path)) {
+      coreState.selectedPaths = new Set([entry.path]);
+      coreState.selectionAnchorIndex = displayEntries.findIndex((e) => e.path === entry.path);
     }
     contextMenuStore.open(x, y);
-  }
-
-  function closeContextMenu() {
-    contextMenuStore.close();
   }
 
   // ===================
@@ -500,14 +472,30 @@ function createExplorerState() {
   async function confirmDelete(): Promise<string | null> {
     const entries = dialogStore.deletingEntries;
     if (entries.length === 0) return "No entries selected for delete";
+    const isPermanent = dialogStore.isPermanentDelete;
 
     const paths = entries.map((e) => e.path);
-    const result = entries.length === 1
-      ? await deleteEntry(paths[0])
-      : await deleteMultipleEntries(paths);
+    let result: { ok: boolean; error?: string };
+
+    if (isPermanent) {
+      // Permanent delete: delete each entry one by one (no batch command)
+      const errors: string[] = [];
+      for (const path of paths) {
+        const r = await deleteEntryPermanent(path);
+        if (!r.ok) errors.push(r.error);
+      }
+      result = errors.length > 0 ? { ok: false, error: errors.join("; ") } : { ok: true };
+    } else {
+      result = entries.length === 1
+        ? await deleteEntry(paths[0])
+        : await deleteMultipleEntries(paths);
+    }
 
     if (result.ok) {
-      undoStore.push({ type: "delete", paths, parentDir: coreState.currentPath });
+      // Only push to undo for trash operations (permanent deletes can't be undone)
+      if (!isPermanent) {
+        undoStore.push({ type: "delete", paths, parentDir: coreState.currentPath });
+      }
       const deletedPaths = new Set(paths);
       coreState.entries = coreState.entries.filter((e) => !deletedPaths.has(e.path));
       coreState.selectedPaths = new Set(
@@ -517,7 +505,7 @@ function createExplorerState() {
       await navigateAwayIfNeeded(deletedPaths);
       return null;
     }
-    return result.error;
+    return result.error ?? "Unknown error";
   }
 
   // ===================
@@ -536,12 +524,32 @@ function createExplorerState() {
     toastStore.clipboard(`Cut: ${label}`, true);
   }
 
-  function clearClipboard() {
-    clipboardStore.clear();
-  }
-
   // Paste result for UI feedback
-  let pasteResult = $state<{ error: string | null; timestamp: number } | null>(null);
+  let pasteResult = $state<PasteResult | null>(null);
+
+  function makePasteContext() {
+    let pastedPaths: Set<string> | null = null;
+    return {
+      destPath: coreState.currentPath,
+      existingEntries: coreState.entries,
+      onEntriesAdded: (entries: FileEntry[]) => {
+        coreState.entries = [...coreState.entries, ...entries];
+        // Remember pasted paths so onRefresh can re-select after navigation
+        if (entries.length > 0) {
+          pastedPaths = new Set(entries.map((e) => e.path));
+          coreState.selectedPaths = pastedPaths;
+        }
+      },
+      onRefresh: async () => {
+        await navigateInternal(coreState.currentPath);
+        // Re-select pasted entries after refresh resets selection
+        if (pastedPaths) {
+          coreState.selectedPaths = pastedPaths;
+          pastedPaths = null;
+        }
+      },
+    };
+  }
 
   async function paste(): Promise<string | null> {
     if (!coreState.currentPath) return "No current directory";
@@ -552,20 +560,26 @@ function createExplorerState() {
     if (clipboardContent) {
       const { entries, operation } = clipboardContent;
       const isCut = operation === "cut";
-      return pasteEntries(
-        entries.map((e) => ({ path: e.path, name: e.name })),
+      const error = await pasteEntries(
+        entries.map((e) => ({ path: e.path, name: e.name, size: e.size, modified: e.modified })),
         isCut,
+        makePasteContext(),
         () => { if (isCut) clipboardStore.clear(); },
       );
+      pasteResult = { error, timestamp: Date.now() };
+      return error;
     }
 
     // Fall back to OS clipboard (files from external apps)
     const osContent = await clipboardStore.readOsFiles();
     if (osContent && osContent.paths.length > 0) {
-      return pasteEntries(
+      const error = await pasteEntries(
         osContent.paths.map((p) => ({ path: p, name: p.split(/[/\\]/).pop() || p })),
         false,
+        makePasteContext(),
       );
+      pasteResult = { error, timestamp: Date.now() };
+      return error;
     }
 
     // Fall back to clipboard image
@@ -581,151 +595,9 @@ function createExplorerState() {
     return "Nothing in clipboard";
   }
 
-  /** Core paste logic with progress tracking and conflict resolution */
-  async function pasteEntries(
-    sources: { path: string; name: string }[],
-    isCut: boolean,
-    onComplete?: () => void,
-  ): Promise<string | null> {
-    const destPath = coreState.currentPath;
-    const opType = isCut ? "move" as const : "copy" as const;
-    const label = sources.length === 1 ? sources[0].name : `${sources.length} items`;
-
-    // Estimate total size for byte-level progress
-    const sizeResult = await estimateSize(sources.map((s) => s.path));
-    const totalBytes = sizeResult.ok ? sizeResult.data.totalBytes : 0;
-
-    // Start tracking operation in progress dialog
-    const op = operationsManager.startOperation(opType, label, destPath);
-
-    const errors: string[] = [];
-    const newEntries: FileEntry[] = [];
-    let bytesProcessed = 0;
-    let cancelledByUser = false;
-
-    // Detect conflicts: which source names already exist in destination
-    const existingNames = new Set(coreState.entries.map((e) => e.name));
-    let globalChoice: ConflictChoice | null = null;
-
-    for (let i = 0; i < sources.length; i++) {
-      // Check cancellation between files
-      if (operationsManager.isOperationCancelled(op.id)) break;
-
-      const source = sources[i];
-      const sourceDir = source.path.substring(0, source.path.lastIndexOf("/")) || "/";
-
-      // When cutting from the same directory, the file isn't a real conflict
-      const isSameDir = isCut && sourceDir === destPath;
-      const hasConflict = !isSameDir && existingNames.has(source.name);
-      let overwrite = false;
-
-      if (hasConflict) {
-        if (globalChoice === "skip") continue;
-        if (globalChoice === "cancel") { cancelledByUser = true; break; }
-        if (globalChoice === "overwrite") {
-          overwrite = true;
-        } else {
-          const remaining = sources.length - i - 1;
-          const { choice, applyToAll } = await conflictResolver.prompt({
-            fileName: source.name,
-            sourcePath: source.path,
-            remaining,
-          });
-          if (applyToAll) globalChoice = choice;
-          if (choice === "skip") continue;
-          if (choice === "cancel") { cancelledByUser = true; break; }
-          if (choice === "overwrite") overwrite = true;
-        }
-      }
-
-      // Skip no-op: cut-paste to same directory (file is already there)
-      if (isSameDir) {
-        newEntries.push(coreState.entries.find((e) => e.name === source.name)!);
-      } else {
-        const result = isCut
-          ? await moveEntry(source.path, destPath, overwrite)
-          : await copyEntry(source.path, destPath, overwrite);
-
-        if (result.ok) {
-          newEntries.push(result.data);
-          if (isCut) {
-            undoStore.push({
-              type: "move",
-              sourcePath: source.path,
-              destPath: result.data.path,
-              originalDir: sourceDir,
-            });
-          }
-        } else {
-          errors.push(`${source.name}: ${result.error}`);
-        }
-      }
-
-      // Update progress (file-level granularity)
-      if (totalBytes > 0) {
-        bytesProcessed = Math.round(totalBytes * ((i + 1) / sources.length));
-        operationsManager.updateProgress(
-          op.id,
-          ((i + 1) / sources.length) * 100,
-          bytesProcessed,
-          totalBytes,
-        );
-      } else {
-        operationsManager.updateProgress(op.id, ((i + 1) / sources.length) * 100);
-      }
-    }
-
-    onComplete?.();
-
-    // Finalize operation tracking
-    if (operationsManager.isOperationCancelled(op.id) || cancelledByUser) {
-      operationsManager.cancelOperation(op.id);
-    } else if (errors.length > 0 && newEntries.length === 0) {
-      operationsManager.failOperation(op.id, errors.join("; "));
-    } else {
-      operationsManager.completeOperation(op.id);
-    }
-
-    if (newEntries.length > 0) {
-      coreState.entries = [...coreState.entries, ...newEntries];
-      const affectedDirs = new Set([destPath]);
-      for (const source of sources) {
-        const dir = source.path.substring(0, source.path.lastIndexOf("/")) || "/";
-        affectedDirs.add(dir);
-      }
-      broadcastFileChange([...affectedDirs]);
-    }
-
-    await navigateInternal(destPath);
-    const error = errors.length > 0 ? `Failed: ${errors.join(", ")}` : null;
-    pasteResult = { error, timestamp: Date.now() };
-    if (error) { toastStore.error(error); } else if (!operationsManager.isOperationCancelled(op.id)) { toastStore.success("Pasted successfully"); }
-    return error;
-  }
-
   // ===================
-  // Undo Actions (delegates to global undoStore)
+  // Undo Actions
   // ===================
-
-  /** Compute directories affected by an undo/redo action for broadcasting. */
-  function getAffectedDirs(action: UndoAction): string[] {
-    switch (action.type) {
-      case "rename":
-        return [action.path.substring(0, action.path.lastIndexOf("/"))];
-      case "move":
-        return [action.originalDir, action.destPath.substring(0, action.destPath.lastIndexOf("/"))];
-      case "delete":
-        return [action.parentDir];
-    }
-  }
-
-  function undoActionLabel(action: UndoAction): string {
-    switch (action.type) {
-      case "rename": return `Renamed ${action.oldName}`;
-      case "move": return `Moved to ${action.destPath.split("/").pop()}`;
-      case "delete": return `Deleted ${action.paths.length} item${action.paths.length > 1 ? "s" : ""}`;
-    }
-  }
 
   async function undo(): Promise<string | null> {
     const result = await undoStore.undo();
@@ -791,12 +663,6 @@ function createExplorerState() {
     get canGoForward() {
       return canGoForward;
     },
-    get canUndo() {
-      return canUndo;
-    },
-    get canRedo() {
-      return canRedo;
-    },
 
     // Navigation
     navigateTo,
@@ -805,9 +671,30 @@ function createExplorerState() {
     goUp,
     refresh,
     // View
-    toggleHidden,
     setSorting,
     setViewMode,
+    // Filter
+    get filterQuery() { return filterQuery; },
+    get showFilter() { return showFilter; },
+    toggleFilter() {
+      showFilter = !showFilter;
+      if (!showFilter) filterQuery = "";
+    },
+    openFilter() { showFilter = true; },
+    closeFilter() { showFilter = false; filterQuery = ""; },
+    setFilter(query: string) {
+      filterQuery = query;
+      // Auto-select the first matching entry as the user types
+      const first = displayEntries[0];
+      if (first) {
+        coreState.selectedPaths = new Set([first.path]);
+        coreState.selectionAnchorIndex = 0;
+      } else {
+        coreState.selectedPaths = new Set();
+        coreState.selectionAnchorIndex = null;
+      }
+    },
+    clearFilter() { filterQuery = ""; },
     // Selection
     selectEntry,
     clearSelection,
@@ -816,15 +703,11 @@ function createExplorerState() {
     selectByIndices,
     selectAll,
     // Dialogs
-    openNewFolderDialog,
-    closeNewFolderDialog,
-    startRename,
-    cancelRename,
+    startRename: (entry: FileEntry) => dialogStore.startRename(entry),
     startDelete,
-    cancelDelete,
+    startPermanentDelete,
     // Context menu
     openContextMenu,
-    closeContextMenu,
     // Inline folder creation
     get isCreatingFolder() {
       return isCreatingFolder;
@@ -838,7 +721,6 @@ function createExplorerState() {
     // Clipboard
     copyToClipboard,
     cutToClipboard,
-    clearClipboard,
     paste,
     get pasteResult() {
       return pasteResult;
@@ -846,6 +728,12 @@ function createExplorerState() {
     // Undo/Redo
     undo,
     redo,
+    // Navigation callback
+    set onNavigate(cb: (() => void) | null) {
+      onNavigateCallback = cb;
+    },
+    // Cleanup
+    destroy: destroyWatch,
   };
 }
 
@@ -854,6 +742,3 @@ export { createExplorerState };
 
 /** Type for the explorer instance */
 export type ExplorerInstance = ReturnType<typeof createExplorerState>;
-
-/** Default singleton explorer for single-pane mode */
-export const explorer = createExplorerState();

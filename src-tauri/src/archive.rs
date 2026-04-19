@@ -2,6 +2,7 @@
 //! Issue: tauri-explorer-0xr, tauri-explorer-kez
 
 use crate::error::AppError;
+use log;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -58,6 +59,7 @@ pub fn compress_to_zip(paths: Vec<String>) -> Result<String, AppError> {
         .finish()
         .map_err(|e| AppError::Other(format!("Failed to finalize ZIP: {}", e)))?;
 
+    log::info!("Compressed {} items to ZIP", paths.len());
     Ok(zip_path.to_string_lossy().to_string())
 }
 
@@ -96,6 +98,7 @@ pub fn extract_archive(
     let mut zip = zip::ZipArchive::new(file)
         .map_err(|e| AppError::Other(format!("Failed to read ZIP archive: {}", e)))?;
 
+    log::info!("Extracting archive ({} entries, extract_here={})", zip.len(), extract_here);
     for i in 0..zip.len() {
         let mut entry = zip
             .by_index(i)

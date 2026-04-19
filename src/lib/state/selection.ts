@@ -63,11 +63,23 @@ export function selectByIndices(
     .map((i) => displayEntries[i].path);
 
   if (addToSelection) {
+    // Check if adding these paths actually changes the selection
+    const allAlreadySelected = pathsToSelect.every((p) => currentSelection.has(p));
+    if (allAlreadySelected) return currentSelection;
+
     const newSelection = new Set(currentSelection);
     for (const path of pathsToSelect) {
       newSelection.add(path);
     }
     return newSelection;
+  }
+
+  // Skip creating a new Set if the selection is identical
+  if (
+    pathsToSelect.length === currentSelection.size &&
+    pathsToSelect.every((p) => currentSelection.has(p))
+  ) {
+    return currentSelection;
   }
 
   return new Set(pathsToSelect);

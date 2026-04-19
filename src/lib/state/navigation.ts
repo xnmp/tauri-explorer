@@ -62,6 +62,11 @@ export function getForwardPath(
 
 /**
  * Parse path into breadcrumb segments.
+ *
+ * Handles both POSIX paths (/home/me/hello) and Windows paths with a drive
+ * letter root (C:\Users\me\hello or C:/Users/me/hello). On Windows, the drive
+ * letter becomes the first breadcrumb with path "C:\\" so navigating up from
+ * it resolves to the drive root, not a bogus "/C:" POSIX-style path.
  */
 export function parseBreadcrumbs(
   path: string
@@ -69,11 +74,21 @@ export function parseBreadcrumbs(
   if (!path) return [];
 
   const parts = path.split(/[/\\]/).filter(Boolean);
+  if (parts.length === 0) return [];
+
+  const hasDriveRoot = /^[a-zA-Z]:$/.test(parts[0]);
+  const sep = hasDriveRoot ? "\\" : "/";
   const result: { name: string; path: string }[] = [];
 
   let accumulated = "";
   for (const part of parts) {
-    accumulated = accumulated ? `${accumulated}/${part}` : `/${part}`;
+    if (!accumulated) {
+      accumulated = hasDriveRoot ? `${part}${sep}` : `${sep}${part}`;
+    } else {
+      accumulated = accumulated.endsWith(sep)
+        ? `${accumulated}${part}`
+        : `${accumulated}${sep}${part}`;
+    }
     result.push({ name: part, path: accumulated });
   }
 
@@ -81,12 +96,16 @@ export function parseBreadcrumbs(
 }
 
 /**
- * Get parent path from breadcrumbs.
+ * Get parent path from breadcrumbs. Returns null at filesystem root (POSIX "/"
+ * or a Windows drive root like "C:\\"), since those have no parent to surface.
  */
 export function getParentPath(
   breadcrumbs: { name: string; path: string }[]
 ): string | null {
   if (breadcrumbs.length > 1) return breadcrumbs[breadcrumbs.length - 2].path;
-  if (breadcrumbs.length === 1) return "/";
+  if (breadcrumbs.length === 1) {
+    const { path } = breadcrumbs[0];
+    return /^[a-zA-Z]:[\\/]?$/.test(path) ? null : "/";
+  }
   return null;
 }

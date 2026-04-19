@@ -3,14 +3,14 @@
   Issue: tauri-explorer-bae, tauri-explorer-1k9k
 -->
 <script lang="ts">
-  import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
+  import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
 
   interface Props {
-    explorer?: ExplorerInstance;
+    explorer: ExplorerInstance;
   }
 
-  let { explorer = defaultExplorer }: Props = $props();
+  let { explorer }: Props = $props();
 
   let newName = $state("");
   let error = $state<string | null>(null);

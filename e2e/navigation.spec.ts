@@ -1,138 +1,121 @@
 import { test, expect } from "@playwright/test";
+import { VIEW_MODES, HOME_URL, waitForEntries, switchViewMode, type ViewMode } from "./helpers";
 
-test.describe("Navigation", () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto("/");
-    // Wait for app to load and file items to be visible
-    await page.waitForSelector(".file-list");
-    await page.locator(".file-item").first().waitFor({ timeout: 5000 });
-    // Ensure breadcrumbs are populated (at home root, only the icon crumb is present)
-    await page.waitForSelector('.breadcrumbs-container .crumb');
-  });
+for (const viewMode of VIEW_MODES) {
+  test.describe(`Navigation [${viewMode}]`, () => {
+    test.beforeEach(async ({ page }) => {
+      await page.goto(HOME_URL);
+      await waitForEntries(page);
+      if (viewMode !== "details") {
+        await switchViewMode(page, viewMode);
+      }
+    });
 
-  test.describe("Initial Load", () => {
-    test("app loads without errors", async ({ page }) => {
-      // Check no console errors
-      const errors: string[] = [];
-      page.on("console", (msg) => {
-        if (msg.type() === "error") errors.push(msg.text());
+    test.describe("Initial Load", () => {
+      test("app loads without errors", async ({ page }) => {
+        const errors: string[] = [];
+        page.on("console", (msg) => {
+          if (msg.type() === "error") errors.push(msg.text());
+        });
+        await page.waitForTimeout(1000);
+        expect(errors.filter((e) => !e.includes("WebSocket"))).toHaveLength(0);
       });
-      await page.waitForTimeout(1000);
-      expect(errors.filter((e) => !e.includes("WebSocket"))).toHaveLength(0);
+
+      test("NavigationBar is visible", async ({ page }) => {
+        await expect(page.locator(".navigation-bar")).toBeVisible();
+      });
+
+      test("Sidebar is visible with Bookmarks section", async ({ page }) => {
+        await expect(page.locator(".sidebar")).toBeVisible();
+        await expect(page.getByText("Bookmarks")).toBeVisible();
+      });
+
+      test("FileList shows directory contents", async ({ page }) => {
+        await expect(page.locator(".file-list")).toBeVisible();
+        const items = page.locator(".entry-item");
+        await expect(items.first()).toBeVisible({ timeout: 5000 });
+      });
     });
 
-    test("NavigationBar is visible", async ({ page }) => {
-      await expect(page.locator(".navigation-bar")).toBeVisible();
+    test.describe("Folder Navigation", () => {
+      test("double-click on folder navigates into it", async ({ page }) => {
+        const folder = page.locator(".entry-item.directory").first();
+        const folderName = await folder.locator(".entry-name").textContent();
+        expect(folderName).toBeTruthy();
+
+        await folder.dblclick();
+
+        const breadcrumbs = page.locator(".breadcrumbs-container");
+        await expect(breadcrumbs).toContainText(folderName!, { timeout: 5000 });
+      });
+
+      test("single-click on folder only selects it", async ({ page }) => {
+        const folder = page.locator(".entry-item.directory").first();
+        const initialBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
+
+        await folder.click();
+
+        await expect(folder).toHaveClass(/selected/);
+
+        const newBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
+        expect(newBreadcrumbs).toBe(initialBreadcrumbs);
+      });
+
+      test("back button works after navigation", async ({ page }) => {
+        const initialBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
+
+        const folder = page.locator(".entry-item.directory").first();
+        await folder.dblclick();
+        await page.locator(".entry-item").first().waitFor({ timeout: 5000 }).catch(() => {});
+        await page.waitForTimeout(300);
+
+        await page.locator('button[title*="Back"], button[aria-label*="Back"]').click();
+        await page.waitForTimeout(500);
+
+        const currentBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
+        expect(currentBreadcrumbs).toBe(initialBreadcrumbs);
+      });
+
+      test("up button navigates to parent directory", async ({ page }) => {
+        const folder = page.locator(".entry-item.directory").first();
+        const folderName = await folder.locator(".entry-name").textContent();
+        await folder.dblclick();
+
+        const breadcrumbs = page.locator(".breadcrumbs-container");
+        await expect(breadcrumbs).toContainText(folderName!, { timeout: 5000 });
+
+        await page.locator('button[aria-label="Go up one level"]').click();
+        await page.waitForTimeout(500);
+
+        const breadcrumbsAfter = await breadcrumbs.textContent();
+        expect(breadcrumbsAfter?.includes(folderName!)).toBe(false);
+      });
     });
 
-    test("Sidebar is visible with Quick Access section", async ({ page }) => {
-      await expect(page.locator(".sidebar")).toBeVisible();
-      await expect(page.getByText("Quick access")).toBeVisible();
-    });
+    test.describe("Keyboard Navigation", () => {
+      test("F5 refreshes directory", async ({ page }) => {
+        const initialCount = await page.locator(".entry-item").count();
 
-    test("FileList shows directory contents", async ({ page }) => {
-      await expect(page.locator(".file-list")).toBeVisible();
-      // Should have some files or folders
-      const items = page.locator(".file-item");
-      await expect(items.first()).toBeVisible({ timeout: 5000 });
-    });
-  });
+        await page.keyboard.press("F5");
+        await page.waitForTimeout(500);
 
-  test.describe("Folder Navigation", () => {
-    test("double-click on folder navigates into it", async ({ page }) => {
-      // Find a folder (folders have .directory class)
-      const folder = page.locator(".file-item.directory").first();
-      const folderName = await folder.locator(".name").textContent();
+        const newCount = await page.locator(".entry-item").count();
+        expect(newCount).toBe(initialCount);
+      });
 
-      // Double-click to navigate
-      await folder.dblclick();
+      test("Alt+Left goes back", async ({ page }) => {
+        const initialBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
 
-      // Wait for navigation
-      await page.waitForTimeout(500);
+        const folder = page.locator(".entry-item.directory").first();
+        await folder.dblclick();
+        await page.waitForTimeout(500);
 
-      // Breadcrumbs should contain the folder name
-      const breadcrumbs = page.locator(".breadcrumbs-container");
-      await expect(breadcrumbs).toContainText(folderName || "");
-    });
+        await page.keyboard.press("Control+Alt+ArrowLeft");
+        await page.waitForTimeout(500);
 
-    test("single-click on folder only selects it", async ({ page }) => {
-      const folder = page.locator(".file-item.directory").first();
-      const initialBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
-
-      // Single click
-      await folder.click();
-
-      // Should be selected
-      await expect(folder).toHaveClass(/selected/);
-
-      // Path should NOT change
-      const newBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
-      expect(newBreadcrumbs).toBe(initialBreadcrumbs);
-    });
-
-    test("back button works after navigation", async ({ page }) => {
-      const initialBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
-
-      // Navigate into a folder
-      const folder = page.locator(".file-item.directory").first();
-      await folder.dblclick();
-      await page.waitForTimeout(500);
-
-      // Click back
-      await page.locator('button[title*="Back"], button[aria-label*="Back"]').click();
-      await page.waitForTimeout(500);
-
-      // Should be back at initial path
-      const currentBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
-      expect(currentBreadcrumbs).toBe(initialBreadcrumbs);
-    });
-
-    test("up button navigates to parent directory", async ({ page }) => {
-      // Navigate into a folder first
-      const folder = page.locator(".file-item.directory").first();
-      await folder.dblclick();
-      await page.waitForTimeout(500);
-
-      const breadcrumbsBefore = await page.locator(".breadcrumbs-container").textContent();
-
-      // Click up button
-      await page.locator('button[aria-label="Go up one level"]').click();
-      await page.waitForTimeout(500);
-
-      // Path should be shorter (parent)
-      const breadcrumbsAfter = await page.locator(".breadcrumbs-container").textContent();
-      expect(breadcrumbsAfter?.length).toBeLessThan(breadcrumbsBefore?.length || 0);
-    });
-  });
-
-  test.describe("Keyboard Navigation", () => {
-    test("F5 refreshes directory", async ({ page }) => {
-      // Get initial file count
-      const initialCount = await page.locator(".file-item").count();
-
-      // Press F5
-      await page.keyboard.press("F5");
-      await page.waitForTimeout(500);
-
-      // File list should still be visible with same content
-      const newCount = await page.locator(".file-item").count();
-      expect(newCount).toBe(initialCount);
-    });
-
-    test("Alt+Left goes back", async ({ page }) => {
-      const initialBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
-
-      // Navigate forward
-      const folder = page.locator(".file-item.directory").first();
-      await folder.dblclick();
-      await page.waitForTimeout(500);
-
-      // Ctrl+Alt+Left to go back
-      await page.keyboard.press("Control+Alt+ArrowLeft");
-      await page.waitForTimeout(500);
-
-      const currentBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
-      expect(currentBreadcrumbs).toBe(initialBreadcrumbs);
+        const currentBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
+        expect(currentBreadcrumbs).toBe(initialBreadcrumbs);
+      });
     });
   });
-});
+}

@@ -35,6 +35,7 @@
   --background-acrylic: rgba(38, 38, 40, 0.92);
   --background-card: rgba(44, 44, 46, 0.6);
   --background-card-secondary: rgba(38, 38, 40, 0.5);
+  --miller-bg: rgba(30, 30, 32, 0.7);
   --content-bg: radial-gradient(ellipse at 50% 0%, rgba(76, 194, 244, 0.03) 0%, transparent 60%);
 
   /* Surface/border colors */
@@ -96,6 +97,13 @@
   --statusbar-opacity: 1;
 
   --icon-folder: #ffc83d;
-  /* --icon-file-tint: unset; when set, overrides all file icon colors */
+  /* --icon-file-tint: unset; when set, overrides ALL file icon colors */
+  /* Per-category icon colors (override individually, or use --icon-file-tint for all) */
+  /* --icon-image: #e879a8; */
+  /* --icon-archive: #c49b5e; */
+  /* --icon-code: #6bc1f0; */
+  /* --icon-media: #e06c75; */
+  /* --icon-executable: #98c379; */
+  /* --icon-document: #abb2bf; */
   /* --theme-icon-pack: 'default'; themes can suggest: 'default', 'material', 'minimal' */
 }

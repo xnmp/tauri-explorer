@@ -1,6 +1,6 @@
 {
   "name": "tauri-explorer",
-  "version": "0.2.7",
+  "version": "0.3.0",
   "description": "A minimalistic, high-performance file explorer",
   "type": "module",
   "scripts": {
@@ -14,6 +14,7 @@
     "test:perf": "vitest run tests/perf/",
     "bench:render": "vitest run tests/perf/render.bench.ts",
     "test:e2e": "playwright test",
+    "test:e2e:all": "ALL_VIEW_MODES=1 playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:perf": "playwright test e2e/performance.spec.ts",
     "perf:check": "npx tsx scripts/perf-check.ts",
@@ -28,19 +29,20 @@
   "dependencies": {
     "@crabnebula/tauri-plugin-drag": "^2.1.0",
     "@fontsource-variable/inter": "^5.2.8",
-    "@tauri-apps/api": "^2",
+    "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-shell": "^2",
+    "highlight.js": "^11.11.1",
     "tauri-plugin-clipboard-x-api": "^2.0.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
     "@sveltejs/adapter-static": "^3.0.6",
-    "@sveltejs/kit": "^2.9.0",
+    "@sveltejs/kit": "^2.55.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "@tauri-apps/cli": "^2",
-    "svelte": "^5.0.0",
-    "svelte-check": "^4.0.0",
+    "svelte": "^5.53.11",
+    "svelte-check": "^4.4.5",
     "typescript": "~5.6.2",
     "vite": "^6.0.3",
     "vitest": "^2.0.0"

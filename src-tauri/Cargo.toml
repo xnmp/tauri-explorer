@@ -1,6 +1,6 @@
 [package]
 name = "tauri-explorer"
-version = "0.2.7"
+version = "0.3.0"
 description = "A minimalistic, high-performance file explorer"
 authors = ["you"]
 edition = "2021"
@@ -13,7 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-drag = "2"
@@ -39,8 +39,11 @@ sha2 = "0.10"
 base64 = "0.22"
 hex = "0.4"
 zip = { version = "2", default-features = false, features = ["deflate"] }
-tokio = { version = "1", features = ["rt"] }
+tokio = { version = "1", features = ["rt", "time", "sync", "process"] }
+notify = "7"
 libc = "0.2.183"
+log = "0.4"
+tauri-plugin-log = "2"
 
 [dev-dependencies]
 tempfile = "3"

@@ -21,6 +21,21 @@ export interface NavBarButtons {
 
 export type IconTheme = "default" | "material" | "minimal";
 
+export type ThumbnailSize = "small" | "medium" | "large";
+
+export interface ThumbnailSizeConfig {
+  displaySize: number;
+  genSize: number;
+  quality: number;
+  gridMinWidth: number;
+}
+
+export const THUMBNAIL_SIZE_CONFIG: Record<ThumbnailSize, ThumbnailSizeConfig> = {
+  small:  { displaySize: 64,  genSize: 128, quality: 80, gridMinWidth: 108 },
+  medium: { displaySize: 96,  genSize: 192, quality: 85, gridMinWidth: 140 },
+  large:  { displaySize: 128, genSize: 256, quality: 90, gridMinWidth: 172 },
+};
+
 /** Which columns are visible in details view (name is always shown) */
 export interface ColumnVisibility {
   date: boolean;
@@ -29,7 +44,6 @@ export interface ColumnVisibility {
 }
 
 export interface Settings {
-  showToolbar: boolean;
   showSidebar: boolean;
   showHidden: boolean;
   showWindowControls: boolean;
@@ -47,6 +61,15 @@ export interface Settings {
   listViewColumns: number; // 0 = auto (based on window width), 1-6 = fixed
   listColumnMaxWidth: number; // max width per column in px (used when listViewColumns=0)
   viewMode: ViewMode; // default view mode for new panes
+  previewPaneWidth: number; // width in px, 0 = default (280px)
+  theme: string; // active theme id, e.g. "dark", "golden-hour"
+  thumbnailSize: ThumbnailSize; // tile thumbnail size tier
+  showGitStatus: boolean; // show git indicators on files
+  recentItemsCount: number; // number of recent locations in sidebar (0 = hidden)
+  millerLayers: number; // 0-3, number of ancestor columns in miller view
+  millerLayersPreferred: number; // 1-3, remembered layer count for toggle
+  quickOpenDebug: boolean; // show score breakdown in QuickOpen results
+  geminiApiKey: string; // Gemini API key for Nano Banana image editing
 }
 
 const MIN_ZOOM = 50;
@@ -54,7 +77,6 @@ const MAX_ZOOM = 200;
 const ZOOM_STEP = 10;
 
 const DEFAULT_SETTINGS: Settings = {
-  showToolbar: true,
   showSidebar: true,
   showHidden: false,
   showWindowControls: true,
@@ -77,6 +99,15 @@ const DEFAULT_SETTINGS: Settings = {
   listViewColumns: 0,
   listColumnMaxWidth: 250,
   viewMode: "details",
+  previewPaneWidth: 0,
+  theme: "light",
+  thumbnailSize: "small",
+  showGitStatus: false,
+  recentItemsCount: 6,
+  millerLayers: 0,
+  millerLayersPreferred: 2,
+  quickOpenDebug: false,
+  geminiApiKey: "",
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -128,10 +159,6 @@ function createSettingsStore() {
     saveSettings(settings);
   }
 
-  function toggleToolbar(): void {
-    update({ showToolbar: !settings.showToolbar });
-  }
-
   function toggleSidebar(): void {
     update({ showSidebar: !settings.showSidebar });
   }
@@ -172,9 +199,6 @@ function createSettingsStore() {
   return {
     get state() {
       return settings;
-    },
-    get showToolbar() {
-      return settings.showToolbar;
     },
     get showSidebar() {
       return settings.showSidebar;
@@ -227,11 +251,63 @@ function createSettingsStore() {
     get viewMode() {
       return settings.viewMode;
     },
+    get previewPaneWidth() {
+      return settings.previewPaneWidth;
+    },
+    get theme() {
+      return settings.theme;
+    },
+    get thumbnailSize() {
+      return settings.thumbnailSize;
+    },
+    get showGitStatus() {
+      return settings.showGitStatus;
+    },
+    toggleGitStatus(): void {
+      update({ showGitStatus: !settings.showGitStatus });
+    },
+    get recentItemsCount() {
+      return settings.recentItemsCount;
+    },
+    setRecentItemsCount(count: number): void {
+      update({ recentItemsCount: Math.max(0, Math.min(20, count)) });
+    },
+    get millerLayers() {
+      return settings.millerLayers;
+    },
+    setMillerLayers(n: number): void {
+      const clamped = Math.max(0, Math.min(3, n));
+      const updates: Partial<Settings> = { millerLayers: clamped };
+      if (clamped > 0) updates.millerLayersPreferred = clamped;
+      update(updates);
+    },
+    get quickOpenDebug() {
+      return settings.quickOpenDebug;
+    },
+    toggleQuickOpenDebug(): void {
+      update({ quickOpenDebug: !settings.quickOpenDebug });
+    },
+    get geminiApiKey() {
+      return settings.geminiApiKey;
+    },
+    setGeminiApiKey(key: string): void {
+      update({ geminiApiKey: key });
+    },
+    toggleMillerColumns(): void {
+      const on = settings.millerLayers > 0;
+      update({ millerLayers: on ? 0 : settings.millerLayersPreferred });
+    },
+    setTheme(themeId: string): void {
+      update({ theme: themeId });
+    },
+    setPreviewPaneWidth(px: number): void {
+      update({ previewPaneWidth: Math.max(0, Math.min(600, px)) });
+    },
     setViewMode(mode: ViewMode): void {
       update({ viewMode: mode });
     },
     setListViewColumns(n: number): void {
-      update({ listViewColumns: Math.max(0, Math.min(6, n)) });
+      update({ listViewColumns: Math.max(0, Math.min(3, n)) });
     },
     setListColumnMaxWidth(px: number): void {
       update({ listColumnMaxWidth: Math.max(100, Math.min(600, px)) });
@@ -265,7 +341,6 @@ function createSettingsStore() {
     },
     init,
     update,
-    toggleToolbar,
     toggleSidebar,
     toggleHidden,
     toggleWindowControls,

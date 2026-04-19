@@ -4,6 +4,8 @@
 -->
 <script lang="ts">
   import { conflictResolver, type ConflictChoice } from "$lib/state/conflict-resolver.svelte";
+  import { formatSize } from "$lib/domain/file";
+  import { formatDate } from "$lib/domain/file-types";
 
   const conflict = $derived(conflictResolver.activeConflict);
 
@@ -34,6 +36,33 @@
       <p class="conflict-message">
         <strong>{conflict.fileName}</strong> already exists in this folder.
       </p>
+
+      {#if (conflict.sourceSize && conflict.sourceSize > 0) || (conflict.destSize && conflict.destSize > 0) || conflict.sourceModified || conflict.destModified}
+        <div class="conflict-details">
+          {#if conflict.sourceSize || conflict.sourceModified}
+            <div class="conflict-file">
+              <span class="conflict-label">Source</span>
+              {#if conflict.sourceSize && conflict.sourceSize > 0}
+                <span class="conflict-meta">{formatSize(conflict.sourceSize)}</span>
+              {/if}
+              {#if conflict.sourceModified}
+                <span class="conflict-meta">{formatDate(conflict.sourceModified)}</span>
+              {/if}
+            </div>
+          {/if}
+          {#if conflict.destSize || conflict.destModified}
+            <div class="conflict-file">
+              <span class="conflict-label">Existing</span>
+              {#if conflict.destSize && conflict.destSize > 0}
+                <span class="conflict-meta">{formatSize(conflict.destSize)}</span>
+              {/if}
+              {#if conflict.destModified}
+                <span class="conflict-meta">{formatDate(conflict.destModified)}</span>
+              {/if}
+            </div>
+          {/if}
+        </div>
+      {/if}
 
       <div class="conflict-actions">
         <button class="btn btn-primary" onclick={() => handleChoice("overwrite")}>
@@ -142,6 +171,33 @@
   }
 
   .btn-cancel {
+    color: var(--text-secondary);
+  }
+
+  .conflict-details {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
+    padding: 12px;
+    background: var(--subtle-fill-secondary);
+    border-radius: 6px;
+    font-size: 12px;
+  }
+
+  .conflict-file {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .conflict-label {
+    font-weight: 600;
+    color: var(--text-primary);
+    min-width: 80px;
+  }
+
+  .conflict-meta {
     color: var(--text-secondary);
   }
 </style>

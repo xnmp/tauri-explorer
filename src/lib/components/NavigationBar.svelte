@@ -5,16 +5,18 @@
 -->
 <script lang="ts">
   import { tick, onMount } from "svelte";
-  import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
+  import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { fetchDirectory, getHomeDirectory } from "$lib/api/files";
+  import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
+  import { getPaneNavigationContext } from "$lib/state/pane-context";
   import type { FileEntry } from "$lib/domain/file";
 
   interface Props {
-    explorer?: ExplorerInstance;
+    explorer: ExplorerInstance;
   }
 
-  let { explorer = defaultExplorer }: Props = $props();
+  let { explorer }: Props = $props();
 
   // Home directory detection for breadcrumb collapsing
   let homeDir = $state<string | null>(null);
@@ -24,7 +26,15 @@
     if (result.ok) homeDir = result.data;
   });
 
-  const homeParts = $derived(homeDir ? homeDir.split("/").filter(Boolean) : []);
+  const homeParts = $derived(homeDir ? homeDir.split(/[/\\]/).filter(Boolean) : []);
+
+  // On Windows the filesystem root is a drive letter (e.g. "C:\"), not "/".
+  // Fall back to the first breadcrumb when it looks like a drive root so the
+  // "Root" button and caret picker don't try to navigate to a POSIX "/".
+  const rootPath = $derived.by(() => {
+    const first = explorer.breadcrumbs[0]?.path;
+    return first && /^[a-zA-Z]:[\\/]?$/.test(first) ? first : "/";
+  });
 
   const isUnderHome = $derived.by(() => {
     const crumbs = explorer.breadcrumbs;
@@ -93,9 +103,17 @@
     showSuggestions = false;
   }
 
+  /** Expand leading ~ to home directory path */
+  function expandTilde(path: string): string {
+    if (!homeDir) return path;
+    if (path === "~") return homeDir;
+    if (path.startsWith("~/")) return homeDir + path.slice(1);
+    return path;
+  }
+
   function confirmPathEdit() {
     if (editedPath.trim()) {
-      explorer.navigateTo(editedPath.trim());
+      explorer.navigateTo(expandTilde(editedPath.trim()));
     }
     editingPath = false;
     editedPath = "";
@@ -105,14 +123,15 @@
 
   /** Parse typed path into parent directory and name prefix */
   function parsePathInput(input: string): { parentDir: string; prefix: string } {
-    if (!input || input === "/") return { parentDir: "/", prefix: "" };
+    const expanded = expandTilde(input);
+    if (!expanded || expanded === "/") return { parentDir: "/", prefix: "" };
     // If path ends with /, list contents of that directory
-    if (input.endsWith("/")) return { parentDir: input, prefix: "" };
-    const lastSlash = input.lastIndexOf("/");
-    if (lastSlash < 0) return { parentDir: "/", prefix: input };
+    if (expanded.endsWith("/")) return { parentDir: expanded, prefix: "" };
+    const lastSlash = expanded.lastIndexOf("/");
+    if (lastSlash < 0) return { parentDir: "/", prefix: expanded };
     return {
-      parentDir: input.substring(0, lastSlash + 1),
-      prefix: input.substring(lastSlash + 1),
+      parentDir: expanded.substring(0, lastSlash + 1),
+      prefix: expanded.substring(lastSlash + 1),
     };
   }
 
@@ -131,19 +150,14 @@
     }
 
     const lowerPrefix = prefix.toLowerCase();
-    // Filter entries matching prefix, directories first
+    // Address bar navigates to directories — only show folders in autocomplete
     const filtered = result.data.entries
-      .filter((e) => e.name.toLowerCase().startsWith(lowerPrefix))
-      .sort((a, b) => {
-        // Directories before files
-        if (a.kind === "directory" && b.kind !== "directory") return -1;
-        if (a.kind !== "directory" && b.kind === "directory") return 1;
-        return a.name.localeCompare(b.name);
-      })
+      .filter((e) => e.kind === "directory" && e.name.toLowerCase().startsWith(lowerPrefix))
+      .sort((a, b) => a.name.localeCompare(b.name))
       .slice(0, 12);
 
     suggestions = filtered;
-    selectedIndex = -1;
+    selectedIndex = filtered.length > 0 ? 0 : -1;
     showSuggestions = filtered.length > 0;
   }
 
@@ -209,6 +223,60 @@
     const related = event.relatedTarget as HTMLElement | null;
     if (related?.closest(".suggestions-dropdown")) return;
     cancelPathEdit();
+  }
+
+  // Filter input
+  let filterInputRef = $state<HTMLInputElement | null>(null);
+  let localFilter = $state("");
+
+  $effect(() => {
+    if (explorer.showFilter && filterInputRef) {
+      localFilter = explorer.filterQuery;
+      tick().then(() => filterInputRef?.focus());
+    }
+  });
+
+  function handleFilterInput() {
+    explorer.setFilter(localFilter);
+  }
+
+  function handleFilterKeydown(event: KeyboardEvent) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      localFilter = "";
+      explorer.closeFilter();
+    }
+  }
+
+  // Breadcrumb drop target state
+  const paneNav = getPaneNavigationContext();
+  let dropTargetCrumb = $state<string | null>(null);
+
+  function handleCrumbDragOver(event: DragEvent, path: string): void {
+    if (!event.dataTransfer?.types.includes("application/x-explorer-path")) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    dropTargetCrumb = path;
+  }
+
+  function handleCrumbDragLeave(): void {
+    dropTargetCrumb = null;
+  }
+
+  async function handleCrumbDrop(event: DragEvent, targetPath: string): Promise<void> {
+    event.preventDefault();
+    dropTargetCrumb = null;
+    if (!event.dataTransfer) return;
+
+    const sourcePaths = getDropSourcePaths(event.dataTransfer);
+    for (const sourcePath of sourcePaths) {
+      if (sourcePath === targetPath) continue;
+      if (targetPath.startsWith(sourcePath + "/")) continue;
+      await handleFileDrop(sourcePath, targetPath, false, {
+        onRefresh: () => paneNav?.refreshAllPanes(),
+      });
+    }
   }
 
 </script>
@@ -332,7 +400,7 @@
         </button>
       {:else}
         <!-- Root folder icon -->
-        <button class="crumb root" onclick={(e) => { e.stopPropagation(); explorer.navigateTo("/"); }} aria-label="Root">
+        <button class="crumb root" onclick={(e) => { e.stopPropagation(); explorer.navigateTo(rootPath); }} aria-label="Root">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M3 3.5C3 2.67 3.67 2 4.5 2H7L8.5 3.5H12.5C13.33 3.5 14 4.17 14 5V12C14 12.83 13.33 13.5 12.5 13.5H4.5C3.67 13.5 3 12.83 3 12V3.5Z" stroke="currentColor" stroke-width="1.2" fill="none"/>
           </svg>
@@ -340,7 +408,7 @@
       {/if}
 
       {#each visibleBreadcrumbs as segment, i (segment.path)}
-        {@const parentOfSegment = i === 0 ? (isUnderHome ? homeDir! : "/") : visibleBreadcrumbs[i - 1].path}
+        {@const parentOfSegment = i === 0 ? (isUnderHome ? homeDir! : rootPath) : visibleBreadcrumbs[i - 1].path}
         <button
           class="separator caret-btn"
           class:caret-active={caretPickerPath === parentOfSegment}
@@ -354,7 +422,11 @@
         <button
           class="crumb"
           class:current={i === visibleBreadcrumbs.length - 1}
+          class:drop-target={dropTargetCrumb === segment.path}
           onclick={(e) => { e.stopPropagation(); explorer.navigateTo(segment.path); }}
+          ondragover={(e) => handleCrumbDragOver(e, segment.path)}
+          ondragleave={handleCrumbDragLeave}
+          ondrop={(e) => handleCrumbDrop(e, segment.path)}
         >
           {segment.name}
         </button>
@@ -377,6 +449,33 @@
 
     {/if}
   </div>
+
+  {#if explorer.showFilter}
+    <div class="filter-bar">
+      <svg class="filter-icon" width="14" height="14" viewBox="0 0 16 16" fill="none">
+        <circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/>
+        <path d="M11 11L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+      </svg>
+      <input
+        type="text"
+        class="filter-input"
+        bind:value={localFilter}
+        bind:this={filterInputRef}
+        oninput={handleFilterInput}
+        onkeydown={handleFilterKeydown}
+        placeholder="Filter..."
+        autocomplete="off"
+        spellcheck="false"
+      />
+      {#if localFilter}
+        <button class="filter-clear" onclick={() => { localFilter = ""; explorer.closeFilter(); }} aria-label="Clear filter">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path d="M3 3L9 9M9 3L3 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -388,6 +487,7 @@
     background: var(--background-card-secondary);
     border-bottom: var(--navbar-border-bottom, 1px solid var(--divider));
     height: 40px;
+    container-type: inline-size;
   }
 
   .nav-controls {
@@ -395,6 +495,13 @@
     align-items: center;
     gap: 2px;
     flex-shrink: 0;
+  }
+
+  /* Hide navigation buttons when address bar space is limited */
+  @container (max-width: 400px) {
+    .nav-controls {
+      display: none;
+    }
   }
 
   .nav-btn {
@@ -434,7 +541,7 @@
   .breadcrumbs-container {
     display: flex;
     align-items: center;
-    gap: var(--breadcrumb-gap, 2px);
+    gap: var(--breadcrumb-gap, 0px);
     flex: 1;
     min-width: 0;
     height: 30px;
@@ -514,6 +621,11 @@
     background: var(--subtle-fill-tertiary);
   }
 
+  .crumb.drop-target {
+    background: rgba(0, 120, 212, 0.2);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+
   .crumb.current {
     font-weight: var(--font-weight-semibold);
     color: var(--accent);
@@ -529,7 +641,7 @@
   }
 
   .caret-btn {
-    padding: 4px 5px;
+    padding: 4px 2px;
     background: transparent;
     border: none;
     border-radius: 3px;
@@ -653,5 +765,62 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* Filter bar */
+  .filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+    padding: 2px 8px;
+    background: var(--control-fill);
+    border: 1px solid var(--control-stroke);
+    border-radius: var(--radius-sm);
+    animation: filterIn 150ms cubic-bezier(0, 0, 0, 1);
+  }
+
+  @keyframes filterIn {
+    from { opacity: 0; width: 0; padding: 0; }
+    to { opacity: 1; }
+  }
+
+  .filter-icon {
+    color: var(--text-tertiary);
+    flex-shrink: 0;
+  }
+
+  .filter-input {
+    width: 120px;
+    padding: 2px 4px;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: var(--font-size-caption);
+  }
+
+  .filter-input::placeholder {
+    color: var(--text-tertiary);
+  }
+
+  .filter-clear {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-tertiary);
+    cursor: pointer;
+  }
+
+  .filter-clear:hover {
+    background: var(--subtle-fill-secondary);
+    color: var(--text-primary);
   }
 </style>

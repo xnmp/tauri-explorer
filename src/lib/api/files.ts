@@ -21,6 +21,30 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
   return args !== undefined ? invoker(cmd, args) : invoker(cmd);
 }
 
+/** Structured error from Tauri backend */
+export type AppErrorKind = "not_found" | "permission_denied" | "already_exists" | "invalid_path" | "io" | "other";
+
+export interface AppError {
+  kind: AppErrorKind;
+  message: string;
+}
+
+/** Extract error message from Tauri command error (structured or string) */
+function extractError(err: unknown): string {
+  if (err && typeof err === "object" && "message" in err) {
+    return (err as AppError).message;
+  }
+  return String(err);
+}
+
+/** Extract structured error kind from Tauri command error */
+export function extractErrorKind(err: unknown): AppErrorKind | null {
+  if (err && typeof err === "object" && "kind" in err) {
+    return (err as AppError).kind;
+  }
+  return null;
+}
+
 export type ApiResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: string };
@@ -38,7 +62,7 @@ export async function fetchDirectory(
     const data = await invoke<DirectoryListing>("list_directory", { path });
     return { ok: true, data };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -60,7 +84,7 @@ export async function createDirectory(
     });
     return { ok: true, data };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -79,7 +103,7 @@ export async function renameEntry(
     const data = await invoke<FileEntry>("rename_entry", { path, newName });
     return { ok: true, data };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -99,7 +123,7 @@ export async function deleteEntry(path: string): Promise<ApiResult<void>> {
     await invoke("move_to_trash", { path });
     return { ok: true, data: undefined };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -114,7 +138,17 @@ export async function deleteMultipleEntries(paths: string[]): Promise<ApiResult<
     await invoke("move_multiple_to_trash", { paths });
     return { ok: true, data: undefined };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+/** Permanently delete a file or directory (bypasses trash). */
+export async function deleteEntryPermanent(path: string): Promise<ApiResult<void>> {
+  try {
+    await invoke("delete_entry_permanent", { path });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -129,7 +163,7 @@ export async function restoreFromTrash(paths: string[]): Promise<ApiResult<void>
     await invoke("restore_from_trash", { paths });
     return { ok: true, data: undefined };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -149,7 +183,7 @@ export async function copyEntry(
     const data = await invoke<FileEntry>("copy_entry", { source, destDir, overwrite });
     return { ok: true, data };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -169,7 +203,7 @@ export async function moveEntry(
     const data = await invoke<FileEntry>("move_entry", { source, destDir, overwrite });
     return { ok: true, data };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -184,7 +218,7 @@ export async function openFile(path: string): Promise<ApiResult<void>> {
     await invoke("open_file", { path });
     return { ok: true, data: undefined };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -200,7 +234,7 @@ export async function openFileWith(path: string, app: string): Promise<ApiResult
     await invoke("open_file_with", { path, app });
     return { ok: true, data: undefined };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -213,7 +247,7 @@ export async function openImageWithSiblings(path: string): Promise<ApiResult<voi
     await invoke("open_image_with_siblings", { path });
     return { ok: true, data: undefined };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -228,7 +262,7 @@ export async function openInTerminal(path: string, terminal?: string): Promise<A
     await invoke("open_in_terminal", { path, terminal: terminal || null });
     return { ok: true, data: undefined };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -240,7 +274,7 @@ export async function writeTextFile(path: string, content: string): Promise<ApiR
     const data = await invoke<FileEntry>("write_text_file", { path, content });
     return { ok: true, data };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -256,7 +290,7 @@ export async function readTextFile(path: string, maxBytes?: number): Promise<Api
     const content = await invoke<string>("read_text_file", { path, maxBytes: maxBytes ?? null });
     return { ok: true, data: content };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -270,7 +304,7 @@ export async function getHomeDirectory(): Promise<ApiResult<string>> {
     const path = await invoke<string>("get_home_directory");
     return { ok: true, data: path };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -282,7 +316,7 @@ export async function getLaunchCwd(): Promise<ApiResult<string>> {
     const path = await invoke<string>("get_launch_cwd");
     return { ok: true, data: path };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -322,7 +356,7 @@ export async function fuzzySearch(
     });
     return { ok: true, data: response.results };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -346,7 +380,16 @@ export async function estimateSize(paths: string[]): Promise<ApiResult<SizeEstim
     const data = await invoke<SizeEstimate>("estimate_size", { paths });
     return { ok: true, data };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+/** Batch-check which paths exist on the filesystem. */
+export async function checkPathsExist(paths: string[]): Promise<boolean[]> {
+  try {
+    return await invoke<boolean[]>("check_paths_exist", { paths });
+  } catch {
+    return paths.map(() => true); // assume exists on error
   }
 }
 
@@ -384,7 +427,7 @@ export async function startStreamingSearch(
     });
     return { ok: true, data: searchId };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -399,7 +442,7 @@ export async function cancelSearch(searchId: number): Promise<ApiResult<void>> {
     await invoke("cancel_search", { searchId });
     return { ok: true, data: undefined };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -429,7 +472,7 @@ export async function startStreamingDirectory(
     const data = await invoke<DirectoryListing>("start_streaming_directory", { path });
     return { ok: true, data };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -444,7 +487,35 @@ export async function cancelDirectoryListing(listingId: number): Promise<ApiResu
     await invoke("cancel_directory_listing", { listingId });
     return { ok: true, data: undefined };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+// ===================
+// Filesystem Watcher
+// Issue: tauri-explorer-2gdf
+// ===================
+
+/**
+ * Start watching a directory for external changes.
+ * Refcounted — safe to call multiple times for the same path.
+ */
+export async function watchDirectory(path: string): Promise<void> {
+  try {
+    await invoke("watch_directory", { path });
+  } catch {
+    // Non-critical: watcher failure shouldn't block navigation
+  }
+}
+
+/**
+ * Stop watching a directory. Decrements refcount; OS watch removed at zero.
+ */
+export async function unwatchDirectory(path: string): Promise<void> {
+  try {
+    await invoke("unwatch_directory", { path });
+  } catch {
+    // Non-critical
   }
 }
 
@@ -469,7 +540,7 @@ export async function getThumbnail(
     const thumbnailPath = await invoke<string>("get_thumbnail", { path, size });
     return { ok: true, data: thumbnailPath };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -483,13 +554,14 @@ export async function getThumbnail(
  */
 export async function getThumbnailData(
   path: string,
-  size?: number
+  size?: number,
+  quality?: number
 ): Promise<ApiResult<string>> {
   try {
-    const dataUri = await invoke<string>("get_thumbnail_data", { path, size });
+    const dataUri = await invoke<string>("get_thumbnail_data", { path, size, quality });
     return { ok: true, data: dataUri };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -501,13 +573,15 @@ export async function getThumbnailData(
  * @returns Result with data URI (data:image/jpeg;base64,...) or error
  */
 export async function getMicroThumbnail(
-  path: string
+  path: string,
+  prewarmSize?: number,
+  prewarmQuality?: number
 ): Promise<ApiResult<string>> {
   try {
-    const dataUri = await invoke<string>("get_micro_thumbnail", { path });
+    const dataUri = await invoke<string>("get_micro_thumbnail", { path, prewarmSize, prewarmQuality });
     return { ok: true, data: dataUri };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -530,7 +604,7 @@ export async function clearThumbnailCache(): Promise<ApiResult<number>> {
     const bytesCleared = await invoke<number>("clear_thumbnail_cache");
     return { ok: true, data: bytesCleared };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -544,7 +618,7 @@ export async function getThumbnailCacheStats(): Promise<ApiResult<ThumbnailCache
     const stats = await invoke<ThumbnailCacheStats>("get_thumbnail_cache_stats");
     return { ok: true, data: stats };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -612,7 +686,7 @@ export async function startContentSearch(
     });
     return { ok: true, data: searchId };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -627,7 +701,7 @@ export async function cancelContentSearch(searchId: number): Promise<ApiResult<v
     await invoke("cancel_content_search", { searchId });
     return { ok: true, data: undefined };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -651,7 +725,7 @@ export async function createSymlink(
     const data = await invoke<FileEntry>("create_symlink", { targetPath, linkPath });
     return { ok: true, data };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -682,7 +756,60 @@ export async function clipboardPasteImage(directory: string): Promise<ApiResult<
     const path = await invoke<string>("clipboard_paste_image", { directory });
     return { ok: true, data: path };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+// ===================
+// Wallpaper
+// Issue: tauri-explorer-mj32
+// ===================
+
+/**
+ * Set an image file as the desktop wallpaper.
+ * Auto-detects DE (Hyprland/hyprpaper, Sway, GNOME, KDE, XFCE, feh).
+ *
+ * @param path - Full path to image file
+ * @returns Result indicating success or error message
+ */
+export async function setAsWallpaper(path: string): Promise<ApiResult<void>> {
+  try {
+    await invoke("set_as_wallpaper", { path });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+// ===================
+// Nano Banana (AI Image Editing)
+// Issue: feat/nano-banana
+// ===================
+
+/**
+ * Start a Nano Banana image editing job.
+ * Returns job ID immediately; listen for nano-banana-complete/error events.
+ */
+export async function startNanoBananaJob(
+  sourcePath: string,
+  prompt: string,
+  outputDir: string,
+  outputFilename: string,
+  apiKey: string,
+  model: string,
+): Promise<ApiResult<number>> {
+  try {
+    const jobId = await invoke<number>("start_nano_banana_job", {
+      sourcePath,
+      prompt,
+      outputDir,
+      outputFilename,
+      apiKey,
+      model,
+    });
+    return { ok: true, data: jobId };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -702,7 +829,7 @@ export async function compressToZip(paths: string[]): Promise<ApiResult<string>>
     const zipPath = await invoke<string>("compress_to_zip", { paths });
     return { ok: true, data: zipPath };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -721,7 +848,7 @@ export async function extractArchive(
     const destPath = await invoke<string>("extract_archive", { archivePath, extractHere });
     return { ok: true, data: destPath };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -739,7 +866,7 @@ export async function readConfigFile(filename: string): Promise<ApiResult<string
     const data = await invoke<string>("read_config_file", { filename });
     return { ok: true, data };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -751,6 +878,41 @@ export async function writeConfigFile(filename: string, data: string): Promise<A
     await invoke("write_config_file", { filename, data });
     return { ok: true, data: undefined };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+/**
+ * List user theme CSS files from ~/.config/tauri-explorer/themes/.
+ * Returns array of [filename, cssContent] pairs.
+ */
+export async function listUserThemes(): Promise<ApiResult<[string, string][]>> {
+  try {
+    const data = await invoke<[string, string][]>("list_user_themes");
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+/**
+ * Git file status types.
+ */
+export type GitFileStatus = "Modified" | "Added" | "Deleted" | "Renamed" | "Untracked" | "Ignored" | "Conflict";
+
+export interface GitStatusResponse {
+  is_git_repo: boolean;
+  statuses: Record<string, GitFileStatus>;
+}
+
+/**
+ * Get git status for files in a directory.
+ */
+export async function getGitStatus(path: string): Promise<ApiResult<GitStatusResponse>> {
+  try {
+    const data = await invoke<GitStatusResponse>("get_git_status", { path });
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
   }
 }

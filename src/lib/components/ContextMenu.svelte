@@ -4,20 +4,23 @@
   Issue: tauri-explorer-83z, tauri-explorer-1k9k
 -->
 <script lang="ts">
-  import { explorer as defaultExplorer, type ExplorerInstance } from "$lib/state/explorer.svelte";
+  import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { contextMenuStore } from "$lib/state/context-menu.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { compressToZip, extractArchive, openFile, openInTerminal, createSymlink } from "$lib/api/files";
+  import { folderViewsStore } from "$lib/state/folder-views.svelte";
+  import { compressToZip, extractArchive, openFile, openInTerminal, createSymlink, setAsWallpaper } from "$lib/api/files";
+  import { dialogStore } from "$lib/state/dialogs.svelte";
   import type { FileEntry } from "$lib/domain/file";
+  import { isImageFile } from "$lib/domain/file-types";
   import { getZoomFactor } from "$lib/domain/zoom";
   import type { ViewMode } from "$lib/state/types";
 
   interface Props {
-    explorer?: ExplorerInstance;
+    explorer: ExplorerInstance;
   }
 
-  let { explorer = defaultExplorer }: Props = $props();
+  let { explorer }: Props = $props();
 
   function withSelectedEntry(action: (entry: FileEntry) => void): void {
     const entries = explorer.getSelectedEntries();
@@ -43,11 +46,13 @@
   function handleCut(): void {
     const selected = explorer.getSelectedEntries();
     if (selected.length > 0) explorer.cutToClipboard(selected);
+    contextMenuStore.close();
   }
 
   function handleCopy(): void {
     const selected = explorer.getSelectedEntries();
     if (selected.length > 0) explorer.copyToClipboard(selected);
+    contextMenuStore.close();
   }
 
   async function handlePaste(): Promise<void> {
@@ -95,14 +100,14 @@
   async function handleExtractHere(): Promise<void> {
     if (!selectedArchive) return;
     await extractArchive(selectedArchive.path, true);
-    explorer.refresh();
+    explorer.refresh({ silent: true });
     contextMenuStore.close();
   }
 
   async function handleExtractToFolder(): Promise<void> {
     if (!selectedArchive) return;
     await extractArchive(selectedArchive.path, false);
-    explorer.refresh();
+    explorer.refresh({ silent: true });
     contextMenuStore.close();
   }
 
@@ -110,7 +115,7 @@
     const selected = explorer.getSelectedEntries();
     if (selected.length === 0) return;
     await compressToZip(selected.map((e) => e.path));
-    explorer.refresh();
+    explorer.refresh({ silent: true });
     contextMenuStore.close();
   }
 
@@ -122,7 +127,7 @@
     const linkPath = `${explorer.currentPath}/${linkName}`;
     const result = await createSymlink(entry.path, linkPath);
     if (result.ok) {
-      explorer.refresh();
+      explorer.refresh({ silent: true });
     }
     contextMenuStore.close();
   }
@@ -134,9 +139,24 @@
     return entries[0];
   });
 
+  /** The single selected image file for wallpaper action */
+  const selectedImage = $derived.by((): FileEntry | null => {
+    if (!selectedFile) return null;
+    return isImageFile(selectedFile) ? selectedFile : null;
+  });
+
   async function handleOpenDefault(): Promise<void> {
     if (!selectedFile) return;
     await openFile(selectedFile.path);
+    contextMenuStore.close();
+  }
+
+  async function handleSetAsWallpaper(): Promise<void> {
+    if (!selectedImage) return;
+    const result = await setAsWallpaper(selectedImage.path);
+    if (!result.ok) {
+      console.error("[wallpaper] Failed to set wallpaper:", result.error);
+    }
     contextMenuStore.close();
   }
 
@@ -154,24 +174,80 @@
 
   let menuEl: HTMLDivElement | undefined = $state();
   let listSubmenuOpen = $state(false);
+  let tilesSubmenuOpen = $state(false);
 
-  // Clamp menu position to viewport after rendering
-  $effect(() => {
-    if (!menuEl || !contextMenuStore.isOpen) return;
-    const rect = menuEl.getBoundingClientRect();
+  const tileSizeLabels: Record<string, string> = { small: "Small", medium: "Medium", large: "Large" };
+
+  const effectiveThumbnailSize = $derived(
+    folderViewsStore.getThumbnailSize(explorer.currentPath, settingsStore.thumbnailSize)
+  );
+
+  // Compute submenu flip direction from the already-clamped menu position
+  // and viewport size. All values are in CSS pixels — no getBoundingClientRect
+  // needed, avoiding WebKitGTK zoom inconsistencies.
+  const submenuFlip = $derived.by(() => {
+    if (!menuEl) return { flipLeft: false, flipUp: false };
     const zoom = getZoomFactor();
-    const vw = window.innerWidth / zoom;
-    const vh = window.innerHeight / zoom;
-    const menuW = rect.width / zoom;
-    const menuH = rect.height / zoom;
-    const pad = 4;
-    let { x, y } = contextMenuStore.position!;
-    if (x + menuW > vw - pad) x = vw - menuW - pad;
-    if (y + menuH > vh - pad) y = vh - menuH - pad;
-    if (x < pad) x = pad;
-    if (y < pad) y = pad;
-    menuEl.style.left = `${x}px`;
-    menuEl.style.top = `${y}px`;
+    const vw = document.documentElement.clientWidth / zoom;
+    const vh = document.documentElement.clientHeight / zoom;
+    const menuW = menuEl.offsetWidth;
+    const menuH = menuEl.offsetHeight;
+    const submenuW = 140; // generous estimate for submenu width
+    const submenuH = 280; // generous estimate for tallest submenu (List: 8 items)
+    return {
+      flipLeft: clampedX + menuW + submenuW > vw - 8,
+      flipUp: clampedY + menuH + submenuH > vh - 8,
+    };
+  });
+
+  // Clamp menu position to viewport after layout.
+  // Uses visibility: hidden on first frame to measure without flicker,
+  // then applies clamped position and shows on the next frame.
+  let clampedX = $state(0);
+  let clampedY = $state(0);
+  let menuVisible = $state(false);
+
+  $effect(() => {
+    if (!menuEl || !contextMenuStore.isOpen || !contextMenuStore.position) {
+      menuVisible = false;
+      return;
+    }
+    const { x: rawX, y: rawY } = contextMenuStore.position;
+    // Reset visibility for measurement — place at raw position (hidden)
+    menuVisible = false;
+    clampedX = rawX;
+    clampedY = rawY;
+    // Note: clampedX/Y here are physical pixels from clientX/Y, not yet
+    // zoom-adjusted. The rAF callback below converts to CSS pixels.
+
+    // Measure after layout, clamp, then reveal.
+    // Use offsetWidth/offsetHeight instead of getBoundingClientRect — the latter
+    // returns the animated (scaled-down) size due to the menuIn animation.
+    requestAnimationFrame(() => {
+      if (!menuEl) return;
+      // With CSS zoom, position:fixed coordinates are in CSS pixels but the
+      // visible viewport shrinks. clientWidth/Height return physical pixels,
+      // so divide by zoom to get the usable CSS-pixel viewport.
+      // offsetWidth/Height are CSS pixels (unaffected by zoom).
+      // rawX/rawY (event.clientX/Y) need the same zoom division as the
+      // viewport so the ratio is consistent regardless of whether the
+      // engine reports them as physical or CSS pixels.
+      const zoom = getZoomFactor();
+      const vw = document.documentElement.clientWidth / zoom;
+      const vh = document.documentElement.clientHeight / zoom;
+      const menuW = menuEl.offsetWidth;
+      const menuH = menuEl.offsetHeight;
+      const pad = 12;
+      let x = rawX / zoom;
+      let y = rawY / zoom;
+      if (x + menuW > vw - pad) x = vw - menuW - pad;
+      if (y + menuH > vh - pad) y = vh - menuH - pad;
+      if (x < pad) x = pad;
+      if (y < pad) y = pad;
+      clampedX = x;
+      clampedY = y;
+      menuVisible = true;
+    });
   });
 </script>
 
@@ -208,7 +284,7 @@
   <div
     bind:this={menuEl}
     class="context-menu"
-    style="left: {contextMenuStore.position.x}px; top: {contextMenuStore.position.y}px;"
+    style="left: {clampedX}px; top: {clampedY}px; visibility: {menuVisible ? 'visible' : 'hidden'};"
     role="menu"
   >
     {#if hasSelection}
@@ -222,6 +298,23 @@
           <span>Open</span>
           <span class="shortcut">Enter</span>
         </button>
+        {#if selectedImage}
+          <button class="menu-item" onclick={handleSetAsWallpaper} role="menuitem">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <rect x="2" y="3" width="12" height="10" rx="1" stroke="currentColor" stroke-width="1.25"/>
+              <circle cx="5.5" cy="6.5" r="1.5" stroke="currentColor" stroke-width="1"/>
+              <path d="M2 11L5 8L7 10L10 7L14 11" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span>Set as Desktop Background</span>
+          </button>
+          <button class="menu-item" onclick={() => { dialogStore.openNanoBanana(selectedImage.path); contextMenuStore.close(); }} role="menuitem">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M12 2L14 4L5 13H3V11L12 2Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+              <path d="M10.5 3.5L12.5 5.5" stroke="currentColor" stroke-width="1.25"/>
+            </svg>
+            <span>Edit with Nano Banana</span>
+          </button>
+        {/if}
         <div class="menu-divider"></div>
       {/if}
 
@@ -318,46 +411,151 @@
         </button>
       {/if}
 
-      <div class="menu-divider"></div>
     {/if}
 
-    <!-- Always available options -->
-    <button class="menu-item" onclick={handlePaste} role="menuitem">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <rect x="4" y="4" width="9" height="10" rx="1" stroke="currentColor" stroke-width="1.25"/>
-        <path d="M6 4V3C6 2.44772 6.44772 2 7 2H10C10.5523 2 11 2.44772 11 3V4" stroke="currentColor" stroke-width="1.25"/>
-        <path d="M7 8H10M8.5 6.5V9.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
-      </svg>
-      <span>Paste</span>
-      <span class="shortcut">Ctrl+V</span>
-    </button>
-    <div class="menu-divider"></div>
+    {#if !hasSelection}
+      <!-- Background right-click: directory-level actions -->
+      <button class="menu-item" onclick={handlePaste} role="menuitem">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <rect x="4" y="4" width="9" height="10" rx="1" stroke="currentColor" stroke-width="1.25"/>
+          <path d="M6 4V3C6 2.44772 6.44772 2 7 2H10C10.5523 2 11 2.44772 11 3V4" stroke="currentColor" stroke-width="1.25"/>
+          <path d="M7 8H10M8.5 6.5V9.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+        </svg>
+        <span>Paste</span>
+        <span class="shortcut">Ctrl+V</span>
+      </button>
+      <div class="menu-divider"></div>
 
-    <button class="menu-item" onclick={handleNewFolder} role="menuitem">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" stroke="currentColor" stroke-width="1.25"/>
-        <path d="M8 7.5V10.5M6.5 9H9.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
-      </svg>
-      <span>New folder</span>
-    </button>
+      <button class="menu-item" onclick={handleNewFolder} role="menuitem">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" stroke="currentColor" stroke-width="1.25"/>
+          <path d="M8 7.5V10.5M6.5 9H9.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+        </svg>
+        <span>New folder</span>
+      </button>
 
-    <button class="menu-item" onclick={handleOpenInTerminal} role="menuitem">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <rect x="2" y="3" width="12" height="10" rx="1" stroke="currentColor" stroke-width="1.25"/>
-        <path d="M4 7L6 9L4 11" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M8 11H12" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
-      </svg>
-      <span>Open in Terminal</span>
-    </button>
+      <button class="menu-item" onclick={handleOpenInTerminal} role="menuitem">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <rect x="2" y="3" width="12" height="10" rx="1" stroke="currentColor" stroke-width="1.25"/>
+          <path d="M4 7L6 9L4 11" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M8 11H12" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+        </svg>
+        <span>Open in Terminal</span>
+      </button>
 
-    <div class="menu-divider"></div>
+      <div class="menu-divider"></div>
 
-    <!-- View options -->
-    <div class="menu-section-label">View</div>
-    {#each viewModes as mode}
-      {#if mode.id === "list"}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="submenu-wrapper" onmouseenter={() => listSubmenuOpen = true} onmouseleave={() => listSubmenuOpen = false}>
+      <!-- View options -->
+      <div class="menu-section-label">View</div>
+      {#each viewModes as mode}
+        {#if mode.id === "list"}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="submenu-wrapper" class:flip-left={submenuFlip.flipLeft} class:flip-up={submenuFlip.flipUp} onmouseenter={() => listSubmenuOpen = true} onmouseleave={() => listSubmenuOpen = false}>
+            <button
+              class="menu-item"
+              class:selected={explorer.viewMode === mode.id}
+              onclick={() => handleSetViewMode(mode.id)}
+              role="menuitemradio"
+              aria-checked={explorer.viewMode === mode.id}
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M3 4H4M6 4H13M3 8H4M6 8H13M3 12H4M6 12H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+              <span>{mode.label}</span>
+              {#if explorer.viewMode === mode.id}
+                <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              {/if}
+              <svg class="submenu-arrow" width="8" height="8" viewBox="0 0 8 8" fill="none">
+                <path d="M3 1.5L6 4L3 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            {#if listSubmenuOpen}
+              <div class="submenu">
+                <div class="menu-section-label">Columns</div>
+                <button
+                  class="menu-item"
+                  class:selected={settingsStore.listViewColumns === 0}
+                  onclick={() => { settingsStore.setListViewColumns(0); contextMenuStore.close(); }}
+                  role="menuitemradio"
+                  aria-checked={settingsStore.listViewColumns === 0}
+                >
+                  <span>Auto</span>
+                  {#if settingsStore.listViewColumns === 0}
+                    <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                      <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  {/if}
+                </button>
+                {#each [1, 2, 3] as n}
+                  <button
+                    class="menu-item"
+                    class:selected={settingsStore.listViewColumns === n}
+                    onclick={() => { settingsStore.setListViewColumns(n); contextMenuStore.close(); }}
+                    role="menuitemradio"
+                    aria-checked={settingsStore.listViewColumns === n}
+                  >
+                    <span>{n}</span>
+                    {#if settingsStore.listViewColumns === n}
+                      <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                        <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                      </svg>
+                    {/if}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {:else if mode.id === "tiles"}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="submenu-wrapper" class:flip-left={submenuFlip.flipLeft} class:flip-up={submenuFlip.flipUp} onmouseenter={() => tilesSubmenuOpen = true} onmouseleave={() => tilesSubmenuOpen = false}>
+            <button
+              class="menu-item"
+              class:selected={explorer.viewMode === mode.id}
+              onclick={() => handleSetViewMode(mode.id)}
+              role="menuitemradio"
+              aria-checked={explorer.viewMode === mode.id}
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <rect x="2" y="2" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+                <rect x="9" y="2" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+                <rect x="2" y="9" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+                <rect x="9" y="9" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
+              </svg>
+              <span>{mode.label}</span>
+              {#if explorer.viewMode === mode.id}
+                <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              {/if}
+              <svg class="submenu-arrow" width="8" height="8" viewBox="0 0 8 8" fill="none">
+                <path d="M3 1.5L6 4L3 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            {#if tilesSubmenuOpen}
+              <div class="submenu">
+                <div class="menu-section-label">Icon Size</div>
+                {#each ["small", "medium", "large"] as size}
+                  <button
+                    class="menu-item"
+                    class:selected={effectiveThumbnailSize === size}
+                    onclick={() => { folderViewsStore.set(explorer.currentPath, { thumbnailSize: size as "small" | "medium" | "large" }); contextMenuStore.close(); }}
+                    role="menuitemradio"
+                    aria-checked={effectiveThumbnailSize === size}
+                  >
+                    <span>{tileSizeLabels[size]}</span>
+                    {#if effectiveThumbnailSize === size}
+                      <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                        <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                      </svg>
+                    {/if}
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {:else}
           <button
             class="menu-item"
             class:selected={explorer.viewMode === mode.id}
@@ -366,7 +564,7 @@
             aria-checked={explorer.viewMode === mode.id}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path d="M3 4H4M6 4H13M3 8H4M6 8H13M3 12H4M6 12H13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              <path d="M2 4H14M2 8H14M2 12H14" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
             </svg>
             <span>{mode.label}</span>
             {#if explorer.viewMode === mode.id}
@@ -374,73 +572,10 @@
                 <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
             {/if}
-            <svg class="submenu-arrow" width="8" height="8" viewBox="0 0 8 8" fill="none">
-              <path d="M3 1.5L6 4L3 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
           </button>
-          {#if listSubmenuOpen}
-            <div class="submenu">
-              <div class="menu-section-label">Columns</div>
-              <button
-                class="menu-item"
-                class:selected={settingsStore.listViewColumns === 0}
-                onclick={() => { settingsStore.setListViewColumns(0); contextMenuStore.close(); }}
-                role="menuitemradio"
-                aria-checked={settingsStore.listViewColumns === 0}
-              >
-                <span>Auto</span>
-                {#if settingsStore.listViewColumns === 0}
-                  <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
-                    <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                  </svg>
-                {/if}
-              </button>
-              {#each [1, 2, 3, 4, 5, 6] as n}
-                <button
-                  class="menu-item"
-                  class:selected={settingsStore.listViewColumns === n}
-                  onclick={() => { settingsStore.setListViewColumns(n); contextMenuStore.close(); }}
-                  role="menuitemradio"
-                  aria-checked={settingsStore.listViewColumns === n}
-                >
-                  <span>{n}</span>
-                  {#if settingsStore.listViewColumns === n}
-                    <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
-                      <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                  {/if}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      {:else}
-        <button
-          class="menu-item"
-          class:selected={explorer.viewMode === mode.id}
-          onclick={() => handleSetViewMode(mode.id)}
-          role="menuitemradio"
-          aria-checked={explorer.viewMode === mode.id}
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            {#if mode.id === "details"}
-              <path d="M2 4H14M2 8H14M2 12H14" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
-            {:else}
-              <rect x="2" y="2" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-              <rect x="9" y="2" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-              <rect x="2" y="9" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-              <rect x="9" y="9" width="5" height="5" rx="0.5" stroke="currentColor" stroke-width="1.25"/>
-            {/if}
-          </svg>
-          <span>{mode.label}</span>
-          {#if explorer.viewMode === mode.id}
-            <svg class="check-icon" width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          {/if}
-        </button>
-      {/if}
-    {/each}
+        {/if}
+      {/each}
+    {/if}
   </div>
 {/if}
 
@@ -570,5 +705,17 @@
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-flyout);
     animation: menuIn 100ms cubic-bezier(0, 0, 0, 1);
+  }
+
+  /* Flip submenu to the left when it would overflow the viewport */
+  .submenu-wrapper.flip-left > .submenu {
+    left: auto;
+    right: 100%;
+  }
+
+  /* Flip submenu upward when it would overflow the bottom */
+  .submenu-wrapper.flip-up > .submenu {
+    top: auto;
+    bottom: -6px;
   }
 </style>

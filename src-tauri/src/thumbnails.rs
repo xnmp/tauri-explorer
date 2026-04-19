@@ -7,6 +7,7 @@
 
 use base64::Engine as _;
 use crate::error::AppError;
+use log;
 use image::{ImageFormat, ImageReader};
 use sha2::{Sha256, Digest};
 use std::fs;
@@ -30,8 +31,8 @@ fn get_cache_dir() -> Option<PathBuf> {
 /// Cache version - bump when thumbnail generation logic changes to invalidate stale cache
 const CACHE_VERSION: u8 = 2;
 
-/// Generate a cache key (hash) for a file path + modification time + cache version
-fn generate_cache_key(path: &Path) -> Option<String> {
+/// Generate a cache key (hash) for a file path + modification time + size + cache version
+fn generate_cache_key(path: &Path, size: u32) -> Option<String> {
     let metadata = fs::metadata(path).ok()?;
     let modified = metadata.modified().ok()?;
     let modified_secs = modified
@@ -42,6 +43,7 @@ fn generate_cache_key(path: &Path) -> Option<String> {
     let mut hasher = Sha256::new();
     hasher.update(path.to_string_lossy().as_bytes());
     hasher.update(modified_secs.to_le_bytes());
+    hasher.update(size.to_le_bytes());
     hasher.update([CACHE_VERSION]);
 
     Some(hex::encode(hasher.finalize()))
@@ -145,7 +147,7 @@ fn get_thumbnail_sync(path: String, size: Option<u32>) -> Result<String, AppErro
     let size = size.unwrap_or(THUMBNAIL_SIZE);
     validate_thumbnail_path(&source_path, &path)?;
 
-    let cache_key = generate_cache_key(&source_path)
+    let cache_key = generate_cache_key(&source_path, size)
         .ok_or_else(|| AppError::Other(format!("Failed to generate cache key for: {}", path)))?;
 
     if let Some(cached_path) = get_cached_thumbnail(&cache_key) {
@@ -156,12 +158,13 @@ fn get_thumbnail_sync(path: String, size: Option<u32>) -> Result<String, AppErro
     Ok(thumb_path.to_string_lossy().to_string())
 }
 
-fn get_thumbnail_data_sync(path: String, size: Option<u32>) -> Result<String, AppError> {
+fn get_thumbnail_data_sync(path: String, size: Option<u32>, quality: Option<u8>) -> Result<String, AppError> {
     let source_path = PathBuf::from(&path);
     let size = size.unwrap_or(THUMBNAIL_SIZE);
+    let quality = quality.unwrap_or(80);
     validate_thumbnail_path(&source_path, &path)?;
 
-    let cache_key = generate_cache_key(&source_path)
+    let cache_key = generate_cache_key(&source_path, size)
         .ok_or_else(|| AppError::Other(format!("Failed to generate cache key for: {}", path)))?;
 
     // Check cache first
@@ -178,20 +181,21 @@ fn get_thumbnail_data_sync(path: String, size: Option<u32>) -> Result<String, Ap
 
     let thumbnail = img.thumbnail(size, size).to_rgb8();
 
-    let data = encode_jpeg(&thumbnail, 80)?;
+    let data = encode_jpeg(&thumbnail, quality)?;
     save_to_cache(&cache_key, &data);
 
     Ok(to_data_uri(&data))
 }
 
-fn get_micro_thumbnail_sync(path: String) -> Result<String, AppError> {
+fn get_micro_thumbnail_sync(path: String, prewarm_size: Option<u32>, prewarm_quality: Option<u8>) -> Result<String, AppError> {
     let source_path = PathBuf::from(&path);
+    let full_size = prewarm_size.unwrap_or(THUMBNAIL_SIZE);
+    let full_quality = prewarm_quality.unwrap_or(80);
     validate_thumbnail_path(&source_path, &path)?;
 
-    let cache_key = generate_cache_key(&source_path)
+    let micro_cache_key = generate_cache_key(&source_path, MICRO_SIZE)
+        .map(|k| format!("{}_micro", k))
         .ok_or_else(|| AppError::Other(format!("Failed to generate cache key for: {}", path)))?;
-
-    let micro_cache_key = format!("{}_micro", cache_key);
 
     // Check micro cache first
     if let Some(cached_path) = get_cached_thumbnail(&micro_cache_key) {
@@ -212,10 +216,13 @@ fn get_micro_thumbnail_sync(path: String) -> Result<String, AppError> {
 
     // Pre-warm full thumbnail cache if not already present.
     // Since the image is already decoded in memory, this is nearly free.
-    if get_cached_thumbnail(&cache_key).is_none() {
-        let full = img.thumbnail(THUMBNAIL_SIZE, THUMBNAIL_SIZE).to_rgb8();
-        if let Ok(full_data) = encode_jpeg(&full, 80) {
-            save_to_cache(&cache_key, &full_data);
+    let full_cache_key = generate_cache_key(&source_path, full_size);
+    if let Some(ref key) = full_cache_key {
+        if get_cached_thumbnail(key).is_none() {
+            let full = img.thumbnail(full_size, full_size).to_rgb8();
+            if let Ok(full_data) = encode_jpeg(&full, full_quality) {
+                save_to_cache(key, &full_data);
+            }
         }
     }
 
@@ -236,8 +243,8 @@ pub async fn get_thumbnail(path: String, size: Option<u32>) -> Result<String, Ap
 /// Get thumbnail as base64-encoded data URI.
 /// More efficient for small thumbnails as it avoids file I/O.
 #[tauri::command]
-pub async fn get_thumbnail_data(path: String, size: Option<u32>) -> Result<String, AppError> {
-    tokio::task::spawn_blocking(move || get_thumbnail_data_sync(path, size))
+pub async fn get_thumbnail_data(path: String, size: Option<u32>, quality: Option<u8>) -> Result<String, AppError> {
+    tokio::task::spawn_blocking(move || get_thumbnail_data_sync(path, size, quality))
         .await
         .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
 }
@@ -245,8 +252,8 @@ pub async fn get_thumbnail_data(path: String, size: Option<u32>) -> Result<Strin
 /// Get a tiny 16x16 micro thumbnail for progressive loading.
 /// Also pre-warms the full thumbnail cache as a side effect.
 #[tauri::command]
-pub async fn get_micro_thumbnail(path: String) -> Result<String, AppError> {
-    tokio::task::spawn_blocking(move || get_micro_thumbnail_sync(path))
+pub async fn get_micro_thumbnail(path: String, prewarm_size: Option<u32>, prewarm_quality: Option<u8>) -> Result<String, AppError> {
+    tokio::task::spawn_blocking(move || get_micro_thumbnail_sync(path, prewarm_size, prewarm_quality))
         .await
         .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
 }
@@ -260,6 +267,7 @@ pub fn clear_thumbnail_cache() -> Result<u64, AppError> {
         return Ok(0);
     }
 
+    log::info!("Clearing thumbnail cache");
     let mut cleared = 0u64;
 
     for entry in fs::read_dir(&cache_dir).map_err(AppError::Io)? {
@@ -343,7 +351,7 @@ mod tests {
         let file_path = dir.path().join("test.jpg");
         File::create(&file_path).unwrap();
 
-        let key = generate_cache_key(&file_path);
+        let key = generate_cache_key(&file_path, THUMBNAIL_SIZE);
         assert!(key.is_some());
         assert_eq!(key.unwrap().len(), 64); // SHA256 hex is 64 chars
     }
@@ -373,7 +381,7 @@ mod tests {
         img.save(&png_path).unwrap();
 
         // Test get_thumbnail_data_sync succeeds for PNG
-        let result = get_thumbnail_data_sync(png_path.to_string_lossy().to_string(), Some(64));
+        let result = get_thumbnail_data_sync(png_path.to_string_lossy().to_string(), Some(64), None);
         assert!(result.is_ok(), "PNG thumbnail generation failed: {:?}", result.err());
         let data_uri = result.unwrap();
         assert!(data_uri.starts_with("data:image/jpeg;base64,"), "Expected JPEG data URI, got: {}", &data_uri[..50]);
@@ -387,7 +395,7 @@ mod tests {
             return; // Skip if not available
         }
 
-        let result = get_thumbnail_data_sync(icon_path.to_string_lossy().to_string(), Some(64));
+        let result = get_thumbnail_data_sync(icon_path.to_string_lossy().to_string(), Some(64), None);
         assert!(result.is_ok(), "Real PNG thumbnail failed: {:?}", result.err());
     }
 
@@ -402,7 +410,7 @@ mod tests {
         });
         img.save(&jpg_path).unwrap();
 
-        let result = get_thumbnail_data_sync(jpg_path.to_string_lossy().to_string(), Some(64));
+        let result = get_thumbnail_data_sync(jpg_path.to_string_lossy().to_string(), Some(64), None);
         assert!(result.is_ok(), "JPEG thumbnail generation failed: {:?}", result.err());
         let data_uri = result.unwrap();
         assert!(data_uri.starts_with("data:image/jpeg;base64,"));
@@ -418,17 +426,75 @@ mod tests {
         });
         img.save(&img_path).unwrap();
 
-        let result = get_micro_thumbnail_sync(img_path.to_string_lossy().to_string());
+        let result = get_micro_thumbnail_sync(img_path.to_string_lossy().to_string(), None, None);
         assert!(result.is_ok(), "Micro thumbnail failed: {:?}", result.err());
 
         let data_uri = result.unwrap();
         assert!(data_uri.starts_with("data:image/jpeg;base64,"));
 
         // Verify that full thumbnail cache was pre-warmed
-        let cache_key = generate_cache_key(&img_path).unwrap();
+        let cache_key = generate_cache_key(&img_path, THUMBNAIL_SIZE).unwrap();
         assert!(
             get_cached_thumbnail(&cache_key).is_some(),
             "Full thumbnail cache should be pre-warmed by micro thumbnail"
+        );
+    }
+
+    #[test]
+    fn test_quality_affects_jpeg_output_size() {
+        // Higher JPEG quality should produce larger files
+        let img = image::RgbImage::from_fn(200, 200, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, 128])
+        });
+
+        let low = encode_jpeg(&img, 50).unwrap();
+        let mid = encode_jpeg(&img, 80).unwrap();
+        let high = encode_jpeg(&img, 90).unwrap();
+
+        assert!(
+            low.len() < mid.len(),
+            "quality 50 ({} bytes) should be smaller than quality 80 ({} bytes)",
+            low.len(), mid.len()
+        );
+        assert!(
+            mid.len() < high.len(),
+            "quality 80 ({} bytes) should be smaller than quality 90 ({} bytes)",
+            mid.len(), high.len()
+        );
+    }
+
+    #[test]
+    fn test_quality_param_reaches_encoder() {
+        // Generate same image at different qualities via get_thumbnail_data_sync
+        // and verify the data URIs differ (different quality = different bytes)
+        let dir = tempdir().unwrap();
+        let img_path = dir.path().join("quality_test.jpg");
+
+        let img = image::RgbImage::from_fn(200, 200, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, 128])
+        });
+        img.save(&img_path).unwrap();
+
+        let path_str = img_path.to_string_lossy().to_string();
+
+        // Request at quality 50 with size 64
+        let result_q50 = get_thumbnail_data_sync(path_str.clone(), Some(64), Some(50)).unwrap();
+        // Clear cache so next request generates fresh
+        if let Some(cache_dir) = get_cache_dir() {
+            let _ = std::fs::remove_dir_all(&cache_dir);
+        }
+        let result_q90 = get_thumbnail_data_sync(path_str, Some(64), Some(90)).unwrap();
+
+        // Different quality should produce different data URIs
+        assert_ne!(
+            result_q50, result_q90,
+            "quality 50 and quality 90 should produce different thumbnails"
+        );
+        // Higher quality = longer base64 string (larger file)
+        assert!(
+            result_q50.len() < result_q90.len(),
+            "quality 90 ({} chars) should be larger than quality 50 ({} chars)",
+            result_q90.len(), result_q50.len()
         );
     }
 }

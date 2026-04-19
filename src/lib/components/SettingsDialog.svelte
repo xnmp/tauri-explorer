@@ -3,7 +3,7 @@
   Issue: tauri-explorer-npjh.1, tauri-explorer-oytv
 -->
 <script lang="ts">
-  import { settingsStore, type IconTheme } from "$lib/state/settings.svelte";
+  import { settingsStore, type IconTheme, type ThumbnailSize } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import KeybindingsSettings from "./KeybindingsSettings.svelte";
 
@@ -14,10 +14,64 @@
 
   let { open, onClose }: Props = $props();
 
+  let searchQuery = $state("");
+  let searchInputRef = $state<HTMLInputElement | null>(null);
+
+  const queryLower = $derived(searchQuery.toLowerCase());
+
+  /** Check if a setting row matches the search query */
+  function matchesSearch(...terms: string[]): boolean {
+    if (!queryLower) return true;
+    return terms.some((t) => t.toLowerCase().includes(queryLower));
+  }
+
+  /** Check if a section has any visible settings */
+  function sectionVisible(...terms: string[][]): boolean {
+    if (!queryLower) return true;
+    return terms.some((t) => matchesSearch(...t));
+  }
+
+  let dialogContentRef = $state<HTMLElement | null>(null);
+
+  // Filter settings rows based on search query
+  $effect(() => {
+    if (!dialogContentRef) return;
+    const q = queryLower;
+    const rows = dialogContentRef.querySelectorAll<HTMLElement>(".setting-row, .setting-item");
+    const sections = dialogContentRef.querySelectorAll<HTMLElement>(".settings-section");
+
+    if (!q) {
+      rows.forEach((r) => r.style.display = "");
+      sections.forEach((s) => s.style.display = "");
+      return;
+    }
+
+    rows.forEach((row) => {
+      const text = row.textContent?.toLowerCase() ?? "";
+      row.style.display = text.includes(q) ? "" : "none";
+    });
+
+    // Hide sections where all rows are hidden
+    sections.forEach((section) => {
+      const visibleRows = section.querySelectorAll<HTMLElement>(".setting-row:not([style*='display: none']), .setting-item:not([style*='display: none'])");
+      section.style.display = visibleRows.length > 0 ? "" : "none";
+    });
+  });
+
   function handleKeydown(event: KeyboardEvent): void {
+    if (event.key === "f" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      searchInputRef?.focus();
+      searchInputRef?.select();
+      return;
+    }
     if (event.key === "Escape") {
       event.preventDefault();
-      onClose();
+      if (searchQuery) {
+        searchQuery = "";
+      } else {
+        onClose();
+      }
     }
   }
 
@@ -41,6 +95,15 @@
     <div class="settings-dialog">
       <header class="dialog-header">
         <h2 id="settings-title">Settings</h2>
+        <input
+          type="text"
+          class="settings-search"
+          placeholder="Filter settings..."
+          bind:value={searchQuery}
+          bind:this={searchInputRef}
+          autocomplete="off"
+          spellcheck="false"
+        />
         <button class="close-btn" onclick={onClose} aria-label="Close settings">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
             <path d="M4 4L12 12M12 4L4 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
@@ -48,7 +111,7 @@
         </button>
       </header>
 
-      <div class="dialog-content">
+      <div class="dialog-content" bind:this={dialogContentRef}>
         <!-- Appearance Section -->
         <section class="settings-section">
           <h3 class="section-title">Appearance</h3>
@@ -87,17 +150,18 @@
 
           <div class="setting-row">
             <div class="setting-info">
-              <span class="setting-label">Show Toolbar</span>
-              <span class="setting-description">Display navigation buttons at the top</span>
+              <span class="setting-label">Thumbnail Size</span>
+              <span class="setting-description">Size of image thumbnails in tiles view</span>
             </div>
-            <label class="toggle">
-              <input
-                type="checkbox"
-                checked={settingsStore.showToolbar}
-                onchange={() => settingsStore.toggleToolbar()}
-              />
-              <span class="toggle-slider"></span>
-            </label>
+            <select
+              class="theme-select"
+              value={settingsStore.thumbnailSize}
+              onchange={(e) => settingsStore.update({ thumbnailSize: e.currentTarget.value as ThumbnailSize })}
+            >
+              <option value="small">Small</option>
+              <option value="medium">Medium</option>
+              <option value="large">Large</option>
+            </select>
           </div>
 
           <div class="setting-row">
@@ -210,6 +274,51 @@
             </label>
           </div>
 
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Git Status Indicators</span>
+              <span class="setting-description">Show modified/untracked indicators for files in git repositories</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.showGitStatus}
+                onchange={() => settingsStore.toggleGitStatus()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Recent Items in Sidebar</span>
+              <span class="setting-description">Number of recent locations to show (0 to hide)</span>
+            </div>
+            <input
+              type="number"
+              class="setting-number"
+              min="0"
+              max="20"
+              value={settingsStore.recentItemsCount}
+              onchange={(e) => settingsStore.setRecentItemsCount(parseInt((e.target as HTMLInputElement).value) || 0)}
+            />
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">QuickOpen Debug Scores</span>
+              <span class="setting-description">Show score breakdown (name, frecency, dir bonus) in Ctrl+P results</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.quickOpenDebug}
+                onchange={() => settingsStore.toggleQuickOpenDebug()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
           <div class="setting-item">
             <div class="setting-label">
               <span>Confirm before deleting</span>
@@ -293,6 +402,25 @@
           </div>
         </section>
 
+        <!-- AI / Nano Banana Section -->
+        <section class="settings-section">
+          <h3 class="section-title">AI / Nano Banana</h3>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Gemini API Key</span>
+              <span class="setting-description">Required for Nano Banana image editing (right-click images)</span>
+            </div>
+            <input
+              class="text-input"
+              type="password"
+              value={settingsStore.geminiApiKey}
+              placeholder="Enter API key"
+              onchange={(e) => settingsStore.setGeminiApiKey(e.currentTarget.value)}
+            />
+          </div>
+        </section>
+
         <!-- Keyboard Shortcuts Section -->
         <section class="settings-section">
           <h3 class="section-title">Keyboard Shortcuts</h3>
@@ -358,6 +486,28 @@
     font-weight: 600;
     color: var(--text-primary);
     margin: 0;
+  }
+
+  .settings-search {
+    flex: 1;
+    max-width: 200px;
+    margin: 0 12px;
+    padding: 5px 10px;
+    border: 1px solid var(--control-stroke);
+    border-radius: var(--radius-sm);
+    background: var(--control-fill);
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--text-primary);
+    outline: none;
+  }
+
+  .settings-search:focus {
+    border-color: var(--accent);
+  }
+
+  .settings-search::placeholder {
+    color: var(--text-tertiary);
   }
 
   .close-btn {
@@ -436,6 +586,18 @@
   .setting-description {
     font-size: 12px;
     color: var(--text-tertiary);
+  }
+
+  .setting-number {
+    width: 60px;
+    padding: 4px 8px;
+    border: 1px solid var(--control-stroke);
+    border-radius: var(--radius-sm);
+    background: var(--control-fill);
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--text-primary);
+    text-align: center;
   }
 
   .text-input {

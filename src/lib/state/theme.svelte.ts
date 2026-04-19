@@ -1,15 +1,18 @@
 /**
  * Theme state management using Svelte 5 runes.
- * Issue: tauri-explorer-l7lv, tauri-jvdk
+ * Issue: tauri-explorer-l7lv, tauri-jvdk, tauri-explorer-0nut
  *
- * Themes are defined in CSS files at src/lib/themes/
- * To add a new theme:
- * 1. Create a CSS file in src/lib/themes/ (copy an existing one)
- * 2. Add @import to src/lib/themes/index.css
- * That's it - themes are auto-discovered from CSS at runtime.
+ * Themes are defined in CSS files at src/lib/themes/ (bundled)
+ * and optionally in ~/.config/tauri-explorer/themes/ (user themes).
+ *
+ * Bundled themes: add CSS file + @import in index.css.
+ * User themes: drop a CSS file in the config themes directory.
+ * All themes are auto-discovered from CSS at runtime.
  */
 
-import { loadPersisted, savePersisted } from "./persisted";
+import { listUserThemes } from "$lib/api/files";
+import { loadPersisted } from "./persisted";
+import { settingsStore } from "./settings.svelte";
 
 interface ThemeColors {
   backgroundSolid: string;
@@ -39,6 +42,24 @@ function unquote(s: string): string {
 function intOr(s: string, fallback: number): number {
   const n = parseInt(s, 10);
   return Number.isNaN(n) ? fallback : n;
+}
+
+/**
+ * Inject user theme CSS strings into the document as <style> elements.
+ * Each gets a data attribute so we can identify/replace them later.
+ */
+function injectUserThemeStyles(themes: [string, string][]): void {
+  // Remove previously injected user themes
+  document
+    .querySelectorAll("style[data-user-theme]")
+    .forEach((el) => el.remove());
+
+  for (const [filename, css] of themes) {
+    const style = document.createElement("style");
+    style.setAttribute("data-user-theme", filename);
+    style.textContent = css;
+    document.head.appendChild(style);
+  }
 }
 
 /**
@@ -86,9 +107,12 @@ function discoverThemes(): ThemeInfo[] {
 }
 
 function createThemeState() {
-  const savedTheme = loadPersisted<string | null>("theme", null);
+  // Migrate from old standalone localStorage key if settings doesn't have a theme yet
+  const legacyTheme = loadPersisted<string | null>("theme", null);
+  const initialTheme = settingsStore.theme !== "light" ? settingsStore.theme
+    : legacyTheme || "light";
 
-  let currentThemeId = $state(savedTheme || "light");
+  let currentThemeId = $state(initialTheme);
   let themes = $state<ThemeInfo[]>([]);
 
   const currentTheme = $derived(
@@ -97,7 +121,7 @@ function createThemeState() {
 
   function setTheme(themeId: string) {
     currentThemeId = themeId;
-    savePersisted("theme", themeId);
+    settingsStore.setTheme(themeId);
     applyTheme(themeId);
   }
 
@@ -105,7 +129,13 @@ function createThemeState() {
     document.documentElement.setAttribute("data-theme", themeId);
   }
 
-  function initTheme() {
+  async function initTheme() {
+    // Load user themes from config dir and inject into DOM
+    const result = await listUserThemes();
+    if (result.ok && result.data.length > 0) {
+      injectUserThemeStyles(result.data);
+    }
+
     themes = discoverThemes();
 
     // If saved theme no longer exists, fall back to first available
@@ -114,6 +144,15 @@ function createThemeState() {
     }
 
     applyTheme(currentThemeId);
+  }
+
+  /** Re-sync theme from settings after settings.init() loads the config file. */
+  function syncFromSettings() {
+    const fileTheme = settingsStore.theme;
+    if (fileTheme && fileTheme !== currentThemeId) {
+      currentThemeId = fileTheme;
+      applyTheme(fileTheme);
+    }
   }
 
   return {
@@ -128,6 +167,7 @@ function createThemeState() {
     },
     setTheme,
     initTheme,
+    syncFromSettings,
   };
 }
 

@@ -166,6 +166,7 @@
         class="thumbnail-micro"
         width={size}
         height={size}
+        draggable="false"
       />
     {/if}
     {#if fullUrl}
@@ -176,6 +177,7 @@
         class:loaded={true}
         width={size}
         height={size}
+        draggable="false"
       />
     {/if}
   {/if}

@@ -68,7 +68,10 @@ export function useItemInteractions(deps: ItemInteractionsDeps) {
   }
 
   function handleDragEnd(): void {
-    setTimeout(() => dragState.clear(), 0);
+    // Sidebar's document-level dragend runs in capture phase and reads
+    // `dragState.current` before this bubble-phase handler fires, so
+    // clearing synchronously is safe.
+    dragState.clear();
     refreshPanes();
   }
 

@@ -52,7 +52,7 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 **Key takeaways:**
 - The Quick Access (bookmarks) region already had native dragover/drop listeners that bookmark any `dragState.current` where `kind === "directory"`. Making recent-location entries `draggable="true"` and populating `dragState.start({...})` on dragstart makes promotion Just Work — no new drop handler needed. Setting the `application/x-explorer-kind` data attribute keeps the existing dropEffect logic happy.
-- **Drag sources MUST defer `dragState.clear()` with `setTimeout(..., 0)` in `ondragend`** (see `fix/drag-to-bookmarks` below). A synchronous clear passes the browser but breaks in Tauri/WebKitGTK because `dragover`/`drop` don't fire on the sidebar — the sidebar falls back to reading `dragState.current` inside a document-level `dragend` listener, which runs *after* element-level handlers. E2E tests run on Chromium and can't catch this regression.
+- Sidebar's document-level `dragend` listener is registered with `{ capture: true }` so it reads `dragState.current` BEFORE any drag source's bubble-phase `ondragend` can clear it. Drag sources then clear synchronously — no `setTimeout` needed. This replaces the earlier workaround pattern (see `fix/drag-to-bookmarks` below, which originally used `setTimeout(() => dragState.clear(), 0)` to work around the same race).
 
 ---
 

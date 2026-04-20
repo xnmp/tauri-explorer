@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## feat/switch-theme-command: Preview vs. commit on the theme store
+
+**Key takeaways:**
+- Live-preview UI needs a separate API from persist. Added `themeStore.previewTheme(id)` which only toggles `document.documentElement.data-theme`, leaving settings alone. The picker uses it on every arrow-key selection; Enter calls `setTheme` to persist, Escape re-applies the saved `originalThemeId` so the live preview is cleanly reverted. Replaces the old N-commands-in-palette approach with a single `view.switchTheme` entry.
+
+---
+
 ## fix/spurious-text-highlighting: Default `user-select: none` on UI chrome
 
 **Key takeaways:**

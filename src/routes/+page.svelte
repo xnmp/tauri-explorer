@@ -467,6 +467,23 @@
     line-height: var(--line-height-normal);
     letter-spacing: var(--letter-spacing-tight);
     color: var(--text-primary);
+    /* UI chrome is not selectable by default — prevents stray text selections
+       bleeding across file rows, miller columns, breadcrumbs etc. from
+       shift-click, double-click, or drag interactions. Components that host
+       real selectable text (inputs, contenteditable, the preview pane) opt
+       back in with `user-select: text` explicitly. (#38) */
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* Re-enable text selection for genuinely textual UI surfaces */
+  :global(input),
+  :global(textarea),
+  :global([contenteditable="true"]),
+  :global(.preview-pane),
+  :global(.preview-pane *) {
+    user-select: text;
+    -webkit-user-select: text;
     background: color-mix(in srgb, var(--background-mica) calc(var(--bg-opacity, 1) * 100%), transparent);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;

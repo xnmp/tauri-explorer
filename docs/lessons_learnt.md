@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/spurious-text-highlighting: Default `user-select: none` on UI chrome
+
+**Key takeaways:**
+- Several components set `user-select: none` locally, but the body defaulted to `auto`, so shift-click across rows (e.g. miller columns, details view) could kick off a native text selection range spanning them — sticky, hard-to-clear, and visually jarring. Set `user-select: none` on `body` globally and explicitly re-enable `text` for inputs, textareas, `[contenteditable="true"]`, and `.preview-pane` (where users actually want to copy). Root-cause fix rather than a local patch per component.
+
+---
+
 ## feat/allow-hiding-address-bar: New setting + command
 
 **Key takeaways:**

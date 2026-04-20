@@ -92,13 +92,14 @@ jobs:
             libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
             patchelf libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
 
-      # The committed bun.lock is resolved on the dev machine (Linux) and only
-      # lists optional deps for that platform. Delete it so each runner
-      # resolves the correct platform-specific binaries for rollup/tauri-cli.
+      # Lockfiles resolved on the dev machine (Linux) only list optional deps
+      # for that platform, so rollup's native binary won't resolve on other
+      # runners. Delete both so each runner resolves its own platform-specific
+      # binaries for rollup/tauri-cli.
       - name: Install frontend dependencies
         shell: bash
         run: |
-          rm -f bun.lock
+          rm -f bun.lock package-lock.json
           bun install
 
       - name: Build Tauri app

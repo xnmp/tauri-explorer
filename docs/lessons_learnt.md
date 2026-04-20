@@ -4,6 +4,15 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/reenable-native-drag-drop: External drops need Tauri's native handler
+
+**Key takeaways:**
+- `WebviewWindowBuilder::disable_drag_drop_handler()` had been added incidentally in a perf commit about `initialization_script`. With it disabled, Tauri does not intercept OS-level file drops, so `webview.onDragDropEvent` (wired in `use-external-drop.svelte.ts`) never fires. WebKitGTK's default then kicks in: the webview navigates to the `file://` URL and shows the picture full-screen with no way back.
+- Removing `.disable_drag_drop_handler()` is safe: internal HTML5 DnD (bookmark reorder, file items, recent→bookmark) doesn't cross the OS boundary and keeps working. `tauri-plugin-drag` handles *outgoing* drags via a separate native API — orthogonal to the incoming handler.
+- If the webview ever traps on a file URL again, `Ctrl+R` reloads it back to the app.
+
+---
+
 ## fix/address-bar-hides-nav-buttons: Hide the whole navigation bar, not just the address portion
 
 **Key takeaways:**

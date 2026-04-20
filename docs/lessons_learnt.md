@@ -77,6 +77,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## chore/drop-macos-intel-build: Dropped macos-13 Release Matrix Cell
+
+**Key takeaways:**
+- GitHub Actions `macos-13` (Intel Mac) hosted runners are routinely queued 2h+ with no pickup, blocking the `release` job (which `needs: build` across the whole matrix). Apple stopped selling Intel Macs in 2023 and macOS Tahoe (2025) is the last macOS supporting them, so the Intel .dmg has a vanishing audience. Dropped the cell; arm64 still ships a signed .dmg. If Intel Mac support becomes important again, reintroduce with a self-hosted or third-party runner rather than hosted `macos-13`.
+
+---
+
 ## fix/ci-rollup-optional-deps: CI Rollup Optional Deps Fail on Non-Linux Runners
 
 **Key takeaways:**

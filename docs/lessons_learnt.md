@@ -4,6 +4,16 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## feat/sidebar-removable-drives: Platform-specific volume enumeration
+
+**Key takeaways:**
+- Linux user-mounts live under `/run/media/$USER` (systemd) or `/media/$USER` (udisks). Don't hardcode one — scan both and dedupe. Skip the `$USER` entry itself when scanning `/media`.
+- macOS exposes every mount under `/Volumes`, including the root volume as a symlink to `/`. Read the symlink target to distinguish boot from removable.
+- On Windows, detecting DRIVE_REMOVABLE reliably needs `GetDriveTypeW`. Without a winapi dep we fall back to a heuristic (C: is fixed, others are Unknown and still shown). Upgrade when needed.
+- The drives store polls every 5s (no reliable cross-platform mount notifications) — cheap since `read_dir` on a handful of mount points is instant.
+
+---
+
 ## fix/quickopen-hover-selection: Don't let initial hover override keyboard selection
 
 **Key takeaways:**

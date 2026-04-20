@@ -267,7 +267,7 @@ const mockCommands: Record<string, CommandHandler> = {
   get_launch_cwd: () => "/home/user",
   list_drives: () => [
     { name: "USB Drive", path: "/media/user/USB_DRIVE", kind: "removable" },
-    { name: "Backup", path: "/media/user/Backup", kind: "removable" },
+    { name: "Memory Stick", path: "/media/user/Memory_Stick", kind: "removable" },
   ],
 
   list_directory: (args) => {

@@ -476,16 +476,6 @@
        back in with `user-select: text` explicitly. (#38) */
     user-select: none;
     -webkit-user-select: none;
-  }
-
-  /* Re-enable text selection for genuinely textual UI surfaces */
-  :global(input),
-  :global(textarea),
-  :global([contenteditable="true"]),
-  :global(.preview-pane),
-  :global(.preview-pane *) {
-    user-select: text;
-    -webkit-user-select: text;
     background: color-mix(in srgb, var(--background-mica) calc(var(--bg-opacity, 1) * 100%), transparent);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -501,6 +491,16 @@
     right: 0;
     bottom: 0;
     margin: 0;
+  }
+
+  /* Re-enable text selection for genuinely textual UI surfaces (#38) */
+  :global(input),
+  :global(textarea),
+  :global([contenteditable="true"]),
+  :global(.preview-pane),
+  :global(.preview-pane *) {
+    user-select: text;
+    -webkit-user-select: text;
   }
 
   /* Selection styling */

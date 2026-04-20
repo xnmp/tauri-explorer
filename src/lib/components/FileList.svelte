@@ -321,7 +321,7 @@
     {#if marquee.isDragging && marquee.marqueeRect}
       <div
         class="marquee-rect"
-        style="left: {marquee.marqueeRect.left}px; top: {marquee.marqueeRect.top}px; width: {marquee.marqueeRect.width}px; height: {marquee.marqueeRect.height}px;"
+        style="transform: translate({marquee.marqueeRect.left}px, {marquee.marqueeRect.top}px); width: {marquee.marqueeRect.width}px; height: {marquee.marqueeRect.height}px;"
       ></div>
     {/if}
   </div>
@@ -360,11 +360,14 @@
   /* Marquee selection rectangle */
   .marquee-rect {
     position: absolute;
+    left: 0;
+    top: 0;
     background: color-mix(in srgb, var(--accent) 15%, transparent);
     border: 1px solid var(--accent);
     border-radius: 2px;
     pointer-events: none;
     z-index: 10;
+    will-change: transform, width, height;
   }
 
   /* Status states */

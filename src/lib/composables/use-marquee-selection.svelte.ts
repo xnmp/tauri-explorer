@@ -44,6 +44,12 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
   let dragCurrent = $state<{ x: number; y: number } | null>(null);
   let ctrlKeyHeld = $state(false);
 
+  // rAF-batched pointer updates: mousemove can fire 200+ Hz, but the rubber-band
+  // only needs to repaint at the display refresh rate. Coalescing caps the reactive
+  // chain (dragCurrent → marqueeRect → DOM style) to one update per frame.
+  let pendingMove: { clientX: number; clientY: number; rect: DOMRect; headerHeight?: number } | null = null;
+  let moveRafId: number | null = null;
+
   const marqueeRect = $derived.by((): MarqueeRect | null => {
     if (!dragStart || !dragCurrent) return null;
     return {
@@ -82,6 +88,22 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     event.preventDefault();
   }
 
+  function flushPendingMove(): void {
+    moveRafId = null;
+    if (!pendingMove || !isDragging) {
+      pendingMove = null;
+      return;
+    }
+    const { clientX, clientY, rect, headerHeight } = pendingMove;
+    pendingMove = null;
+    const zoom = getZoomFactor();
+    const minY = headerHeight ?? config.headerHeight;
+    dragCurrent = {
+      x: Math.max(0, Math.min(clientX / zoom - rect.left, rect.width)),
+      y: Math.max(minY, Math.min(clientY / zoom - rect.top, rect.height)),
+    };
+  }
+
   function move(event: MouseEvent, containerRect: DOMRect, headerHeight?: number): boolean {
     if (!isDragging) return false;
 
@@ -92,17 +114,26 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
       return false;
     }
 
-    const zoom = getZoomFactor();
-    const minY = headerHeight ?? config.headerHeight;
-    dragCurrent = {
-      x: Math.max(0, Math.min(event.clientX / zoom - containerRect.left, containerRect.width)),
-      y: Math.max(minY, Math.min(event.clientY / zoom - containerRect.top, containerRect.height)),
+    pendingMove = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+      rect: containerRect,
+      headerHeight,
     };
+    if (moveRafId === null) {
+      moveRafId = requestAnimationFrame(flushPendingMove);
+    }
     return true;
   }
 
   function end(): void {
     if (!isDragging) return;
+
+    if (moveRafId !== null) {
+      cancelAnimationFrame(moveRafId);
+      moveRafId = null;
+    }
+    pendingMove = null;
 
     isDragging = false;
     dragStart = null;

@@ -4,6 +4,16 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## perf/marquee-selection-raf-throttle: Coalesce high-frequency pointer events to display refresh rate
+
+**Key takeaways:**
+- High-poll mice fire `mousemove` at 200+ Hz, but the screen only repaints at ~60 Hz. Synchronously updating a `$state` value on every event makes the reactive chain (`$state` → `$derived` → Svelte DOM update) run 3–4× more often than the user can ever see. On slower machines this manifests as rubber-band lag during marquee selection.
+- Fix pattern: inside the event handler, stash the latest event on a scratch variable and schedule an rAF only if none is pending; inside the rAF, commit the value to `$state`. That coalesces N events per frame into one reactive flush, preserving the latest coordinates. Remember to `cancelAnimationFrame` on teardown (`end()`) so a pending frame doesn't fire after the drag is over.
+- Orthogonal compositor win: position the overlay with `transform: translate(x, y)` instead of `left/top`, keep `will-change: transform`, and only mutate `width/height` inline. `transform` updates stay on the compositor thread; `left/top` on an absolutely-positioned element still triggers paint on the ancestor.
+- Verify this kind of perf change with a contract test (see `tests/state/marquee-raf-throttle.test.ts`), not a screenshot — assert that N move() calls schedule exactly 1 rAF and the committed value matches the last event. A screenshot can't distinguish 60 Hz from 240 Hz updates.
+
+---
+
 ## fix/reenable-native-drag-drop: External drops need Tauri's native handler
 
 **Key takeaways:**

@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## design/saturate-app-icon-colours: Bump chroma from the rendered PNG, not the SVG
+
+**Key takeaways:**
+- `icon.svg` in `src-tauri/icons/` is a separate blue-folder mock and is *not* what ships — the shipped icon is `icon.png`. Regenerate all platform sizes by resaturating `icon.png` (Pillow `ImageEnhance.Color(1.7)` + small contrast bump) then re-running the ico/icns/Square*Logo fan-out. If you edit the SVG thinking it's the source you'll waste a cycle.
+
+---
+
 ## feat/switch-theme-command: Preview vs. commit on the theme store
 
 **Key takeaways:**

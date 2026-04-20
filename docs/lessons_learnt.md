@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/ci-rollup-optional-deps: CI Rollup Optional Deps Fail on Non-Linux Runners
+
+**Key takeaways:**
+- `bun install` will migrate from an existing `package-lock.json` if one exists, and preserves the lockfile's platform-specific optional deps. Rollup ships platform-specific native binaries as optional deps; a lockfile generated on Linux only records `@rollup/rollup-linux-x64-gnu`, so non-Linux CI runners fail with `Cannot find module @rollup/rollup-darwin-arm64` / `@rollup/rollup-win32-x64-msvc`. Deleting `bun.lock` before `bun install` is not enough — `package-lock.json` also has to go. Because this project is bun-only, `package-lock.json` is removed from the repo and gitignored.
+
+---
+
 ## fix/test-setup-stub-node25: Node 25 Native localStorage Breaks Test Stub
 
 **Key takeaways:**

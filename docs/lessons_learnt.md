@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/tab-bar-window-controls: Tab bar hosts the window controls
+
+**Key takeaways:**
+- `WindowTabBar` used to hide itself whenever `tabs.length <= 1`, which caused a layout jump the moment a second tab opened and meant the window controls (min/max/close) also disappeared when they're enabled. Gate on `tabs.length > 1 || settingsStore.showWindowControls` so the strip stays mounted whenever it's hosting the controls.
+
+---
+
 ## fix/normalize-bare-drive-letter: Drive root must carry a separator
 
 **Key takeaways:**

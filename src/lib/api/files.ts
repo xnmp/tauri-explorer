@@ -320,6 +320,23 @@ export async function getLaunchCwd(): Promise<ApiResult<string>> {
   }
 }
 
+export type DriveKind = "fixed" | "removable" | "network" | "unknown";
+
+export interface Drive {
+  name: string;
+  path: string;
+  kind: DriveKind;
+}
+
+export async function listDrives(): Promise<ApiResult<Drive[]>> {
+  try {
+    const drives = await invoke<Drive[]>("list_drives");
+    return { ok: true, data: drives };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
 /**
  * Search result from fuzzy file search.
  */

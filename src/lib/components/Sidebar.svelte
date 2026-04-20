@@ -9,6 +9,7 @@
   import { getHomeDirectory } from "$lib/api/files";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { dragState } from "$lib/state/drag.svelte";
+  import { drivesStore } from "$lib/state/drives.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { loadPersisted, savePersisted } from "$lib/state/persisted";
@@ -48,6 +49,8 @@
       if (result.ok) homeDir = result.data;
     });
 
+    drivesStore.startPolling();
+
     // Native DnD listeners bypass Svelte 5 event delegation which can
     // interfere with the HTML5 drag-and-drop state machine. We attach
     // dragenter/dragover/dragleave/drop directly on the Quick Access element.
@@ -70,6 +73,7 @@
       document.removeEventListener("dragstart", onDragStartPoll);
       document.removeEventListener("dragend", onDragEnd);
       stopDragPoll();
+      drivesStore.stopPolling();
     };
   });
 
@@ -215,6 +219,7 @@
 
   let quickAccessExpanded = $state(true);
   let recentExpanded = $state(true);
+  let drivesExpanded = $state(true);
 
   // Recent locations — sorted by frecency score, excluding bookmarked and system folders
   const recentLocations = $derived.by(() => {
@@ -432,6 +437,39 @@
       </div>
     {/if}
   </div>
+
+  {#if drivesStore.removable.length > 0}
+    <div class="divider"></div>
+
+    <!-- Removable drives -->
+    <div class="nav-section">
+      <button
+        class="section-header"
+        onclick={() => drivesExpanded = !drivesExpanded}
+        aria-expanded={drivesExpanded}
+      >
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" class="chevron" class:expanded={drivesExpanded}>
+          <path d="M4 3L7 6L4 9" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span>Removable Drives</span>
+      </button>
+
+      {#if drivesExpanded}
+        <div class="section-content">
+          {#each drivesStore.removable as drive (drive.path)}
+            <button class="nav-item" onclick={() => navigateTo(drive.path)} title={drive.path}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: #10b981">
+                <rect x="2" y="4" width="12" height="8" rx="1.5" stroke="currentColor" stroke-width="1.25"/>
+                <circle cx="11" cy="8" r="0.9" fill="currentColor"/>
+                <path d="M4 4V3M6 4V3" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+              </svg>
+              <span>{drive.name}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
 
   {#if recentLocations.length > 0}
     <div class="divider"></div>

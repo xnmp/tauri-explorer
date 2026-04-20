@@ -232,6 +232,8 @@ pub fn run(launch_dir: Option<String>) {
             config::list_user_themes,
             // Git status
             files::git_status::get_git_status,
+            // Drives / volumes
+            files::drives::list_drives,
             // Wallpaper
             wallpaper::set_as_wallpaper,
             // Nano Banana (AI image editing)

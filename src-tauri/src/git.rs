@@ -329,6 +329,28 @@ where
     result
 }
 
+/// Initialize a new git repository at `path`. No-op if one already exists.
+/// Returns the new (or existing) repo root.
+#[tauri::command]
+pub async fn git_init(path: String) -> Result<String, AppError> {
+    run_blocking(move |_cancel| {
+        let p = PathBuf::from(&path);
+        if let Ok(existing) = open_repo(&p) {
+            if let Some(wd) = existing.workdir() {
+                return Ok(wd.to_string_lossy().to_string());
+            }
+        }
+        let repo = Repository::init(&p).map_err(to_app_err)?;
+        let root = repo
+            .workdir()
+            .ok_or_else(|| AppError::Other("git: init produced a bare repository".into()))?
+            .to_string_lossy()
+            .to_string();
+        Ok(root)
+    })
+    .await
+}
+
 /// Resolve the repo root that contains `path`, or `None` if outside any repo.
 #[tauri::command]
 pub async fn git_repo_root(path: String) -> Result<Option<String>, AppError> {

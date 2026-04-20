@@ -969,6 +969,15 @@ export interface GitCommitResult {
   summary: string;
 }
 
+export async function gitInit(path: string): Promise<ApiResult<string>> {
+  try {
+    const data = await invoke<string>("git_init", { path });
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
 export async function gitRepoRoot(path: string): Promise<ApiResult<string | null>> {
   try {
     const data = await invoke<string | null>("git_repo_root", { path });

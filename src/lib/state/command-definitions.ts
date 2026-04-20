@@ -359,6 +359,12 @@ const viewCommands: Command[] = [
     handler: () => settingsStore.toggleWindowControls(),
   },
   {
+    id: "view.toggleAddressBar",
+    label: "Toggle Address Bar",
+    category: "view",
+    handler: () => settingsStore.toggleAddressBar(),
+  },
+  {
     id: "view.togglePreviewPane",
     label: "Toggle Preview Pane",
     category: "view",

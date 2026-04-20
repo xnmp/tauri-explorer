@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## feat/allow-hiding-address-bar: New setting + command
+
+**Key takeaways:**
+- Added `showAddressBar: boolean` (default `true`) to `Settings`, a `toggleAddressBar` store method, a Settings dialog row, and a `view.toggleAddressBar` command so the feature is reachable from the command palette. The breadcrumb container is wrapped in `{#if settingsStore.showAddressBar}` — navigation buttons stay visible regardless, matching how other view toggles work.
+
+---
+
 ## feat/drag-recent-bookmarks: Reuse existing Quick-Access drop target
 
 **Key takeaways:**

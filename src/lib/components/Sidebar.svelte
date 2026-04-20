@@ -499,7 +499,7 @@
               tabindex="0"
               draggable="true"
               ondragstart={(e) => { dragState.start({ kind: "directory", path: loc.path, name: loc.name }); if (e.dataTransfer) { e.dataTransfer.effectAllowed = "link"; e.dataTransfer.setData("application/x-explorer-kind", "directory"); } }}
-              ondragend={() => dragState.clear()}
+              ondragend={() => { setTimeout(() => dragState.clear(), 0); }}
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
                 <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="var(--icon-folder, #FFB900)" opacity="0.7"/>

@@ -41,6 +41,7 @@ function createScmStore() {
   let amend = $state(false);
   let commitError = $state<string | null>(null);
   let selectedPath = $state<string | null>(null);
+  let activeDiff = $state<{ path: string; staged: boolean } | null>(null);
   let watcherPath: string | null = null;
   let unlistenWatcher: UnlistenFn | null = null;
 
@@ -74,6 +75,7 @@ function createScmStore() {
     }
     repoRoot = detected;
     selectedPath = null;
+    activeDiff = null;
 
     if (repoRoot) {
       await gitWatchRepo(repoRoot);
@@ -150,6 +152,15 @@ function createScmStore() {
     selectedPath = path;
   }
 
+  function openDiff(path: string, staged: boolean): void {
+    activeDiff = { path, staged };
+    selectedPath = path;
+  }
+
+  function closeDiff(): void {
+    activeDiff = null;
+  }
+
   function orderedRows(): GitFileEntry[] {
     return [...summary.merge, ...summary.staged, ...summary.changes, ...summary.untracked];
   }
@@ -174,6 +185,7 @@ function createScmStore() {
     get amend() { return amend; },
     get commitError() { return commitError; },
     get selectedPath() { return selectedPath; },
+    get activeDiff() { return activeDiff; },
 
     // actions
     setActivePath,
@@ -185,6 +197,8 @@ function createScmStore() {
     setCommitMessage,
     setAmend,
     setSelected,
+    openDiff,
+    closeDiff,
     moveSelection,
     initWatcherListener,
   };

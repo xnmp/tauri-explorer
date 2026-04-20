@@ -7,9 +7,15 @@
 -->
 <script lang="ts">
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+  import { settingsStore } from "$lib/state/settings.svelte";
 
   const tabs = $derived(windowTabsManager.tabs);
   const activeTabId = $derived(windowTabsManager.activeTabId);
+
+  // Show the tab strip whenever there are multiple tabs, OR when window controls
+  // are enabled (Windows 11 style — the tab strip hosts the controls, so it must
+  // remain visible even with one tab).
+  const showTabArea = $derived(tabs.length > 1 || settingsStore.showWindowControls);
 
   // Track tab IDs that existed on first render to skip entrance animation
   let knownTabIds = new Set(windowTabsManager.tabs.map((t) => t.id));
@@ -102,7 +108,7 @@
   }
 </script>
 
-{#if tabs.length > 1}
+{#if showTabArea}
   <div class="tab-area" role="tablist">
     {#each tabs as tab (tab.id)}
       <div

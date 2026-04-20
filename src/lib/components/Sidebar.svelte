@@ -490,12 +490,22 @@
       {#if recentExpanded}
         <div class="section-content">
           {#each recentLocations as loc (loc.path)}
-            <button class="nav-item" onclick={() => navigateTo(loc.path)} title={loc.path}>
+            <div class="nav-item folder-item recent-item" onclick={() => navigateTo(loc.path)} onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateTo(loc.path); }}} title={loc.path} role="button" tabindex="0">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
                 <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="var(--icon-folder, #FFB900)" opacity="0.7"/>
               </svg>
               <span>{loc.name}</span>
-            </button>
+              <button
+                class="remove-bookmark"
+                onclick={(e) => { e.stopPropagation(); frecencyStore.remove(loc.path); }}
+                title="Remove from Recent"
+                aria-label="Remove {loc.name} from recent locations"
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path d="M3 3L9 9M9 3L3 9" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+                </svg>
+              </button>
+            </div>
           {/each}
         </div>
       {/if}
@@ -650,6 +660,14 @@
   .pin-icon {
     margin-left: auto;
     opacity: 0.4;
+  }
+
+  .recent-item .remove-bookmark {
+    display: none;
+  }
+
+  .recent-item:hover .remove-bookmark {
+    display: flex;
   }
 
   /* Drag and drop styles */

@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## feat/drag-recent-bookmarks: Reuse existing Quick-Access drop target
+
+**Key takeaways:**
+- The Quick Access (bookmarks) region already had native dragover/drop listeners that bookmark any `dragState.current` where `kind === "directory"`. Making recent-location entries `draggable="true"` and populating `dragState.start({...})` on dragstart makes promotion Just Work — no new drop handler needed. Setting the `application/x-explorer-kind` data attribute keeps the existing dropEffect logic happy.
+
+---
+
 ## feat/remove-recent-paths: Hover-reveal remove on recent entries
 
 **Key takeaways:**

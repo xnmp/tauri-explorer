@@ -555,6 +555,73 @@ const mockCommands: Record<string, CommandHandler> = {
     }
     return { is_git_repo: false, statuses: {} };
   },
+
+  // ----- SCM git backend (#53) mock -----
+
+  git_repo_root: (args: Record<string, unknown>) => {
+    const p = args.path as string;
+    if (p?.startsWith("/home/user/Documents/project")) return "/home/user/Documents/project";
+    return null;
+  },
+
+  git_status: (args: Record<string, unknown>) => {
+    const repoPath = args.repoPath as string;
+    if (!repoPath?.startsWith("/home/user/Documents/project")) {
+      return {
+        is_repo: false,
+        repo_root: null,
+        branch: null,
+        detached: false,
+        staged: [],
+        changes: [],
+        untracked: [],
+        merge: [],
+      };
+    }
+    return {
+      is_repo: true,
+      repo_root: "/home/user/Documents/project",
+      branch: "main",
+      detached: false,
+      staged: [
+        { path: "src/App.tsx", old_path: null, status: "Modified" },
+      ],
+      changes: [
+        { path: "src/index.css", old_path: null, status: "Modified" },
+        { path: "README.md", old_path: null, status: "Modified" },
+      ],
+      untracked: [
+        { path: "src/router.tsx", old_path: null, status: "Untracked" },
+        { path: ".env.example", old_path: null, status: "Untracked" },
+      ],
+      merge: [],
+    };
+  },
+
+  git_stage: () => null,
+  git_unstage: () => null,
+  git_discard: () => null,
+  git_commit: (args: Record<string, unknown>) => {
+    const msg = (args.message as string) ?? "";
+    return { commit_id: "deadbeef".padEnd(40, "0"), summary: msg.split("\n")[0] };
+  },
+  git_diff: (args: Record<string, unknown>) => {
+    const p = args.path as string;
+    return [
+      `diff --git a/${p} b/${p}`,
+      "index 1111111..2222222 100644",
+      `--- a/${p}`,
+      `+++ b/${p}`,
+      "@@ -1,3 +1,3 @@",
+      " unchanged line",
+      "-removed line",
+      "+added line",
+      " more context",
+      "",
+    ].join("\n");
+  },
+  git_watch_repo: () => null,
+  git_unwatch_repo: () => null,
 };
 
 // In-memory config file store for mock mode

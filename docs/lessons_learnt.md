@@ -4,6 +4,15 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/activity-bar-tests-flake-under-all-view-modes-parallelism: Scope role-based queries when multiple widgets share the same ARIA role
+
+**Key takeaways:**
+- The app has two independent widgets that both expose `role="tab"`: the window-tab strip (per open folder/pane) and the sidebar activity bar. Under `ALL_VIEW_MODES=1` with parallel workers, a prior test could leave a window-tab labelled "Explorer" in localStorage, which then satisfies `getByRole("tab", { name: /Explorer/i })` alongside the activity-bar tab — strict-mode violation.
+- Fix: always scope the locator to its parent tablist (`getByRole("tablist", { name: "Sidebar views" })`), or use a structural selector like `.activity-button[data-view-id="files"]`. Same principle applies anywhere roles are reused at multiple layers of the UI.
+- Wait for the structural anchor (the `activity-button`) before asserting visibility on role-based locators — under high parallelism, the sidebar shell is still mounting when `waitForLoadState("domcontentloaded")` resolves.
+
+---
+
 ## perf/marquee-selection-raf-throttle: Coalesce high-frequency pointer events to display refresh rate
 
 **Key takeaways:**

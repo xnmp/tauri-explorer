@@ -741,15 +741,16 @@ const generalCommands: Command[] = [
   },
 ];
 
-/** Generate one "Theme: <Name>" command per registered theme. */
-function buildThemeCommands(): Command[] {
-  return themeStore.availableThemes.map((theme) => ({
-    id: `view.theme.${theme.id}`,
-    label: `Theme: ${theme.name}`,
+/** Single "Switch Theme..." command that opens a picker with live preview.
+ *  Replaces the previous per-theme command list to unclutter the palette. */
+const themeCommands: Command[] = [
+  {
+    id: "view.switchTheme",
+    label: "Switch Theme...",
     category: "view",
-    handler: () => themeStore.setTheme(theme.id),
-  }));
-}
+    handler: () => dialogStore.openThemePicker(),
+  },
+];
 
 /** Register all commands */
 export function registerAllCommands(): void {
@@ -759,7 +760,7 @@ export function registerAllCommands(): void {
     ...editCommands,
     ...selectionCommands,
     ...viewCommands,
-    ...buildThemeCommands(),
+    ...themeCommands,
     ...bookmarkCommands,
     ...recentCommands,
     ...windowCommands,

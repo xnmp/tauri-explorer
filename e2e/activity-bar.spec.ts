@@ -12,21 +12,31 @@ test.describe("Activity bar + sidebar views", () => {
     // Clear active-view preference once before navigation (not re-run on reload,
     // so per-window persistence can still be asserted).
     await page.goto("/");
+    await page.waitForLoadState("domcontentloaded");
     await page.evaluate(() => localStorage.removeItem("explorer-sidebar-active-view"));
     await page.reload();
     await page.waitForLoadState("domcontentloaded");
+    // Wait for the sidebar activity bar to mount — parallel runs can race
+    // on the tab list showing up without this.
+    await page.locator('.activity-button[data-view-id="files"]').waitFor({ state: "visible" });
   });
 
+  // Scope queries to the activity-bar tablist so window-tabs (which also use
+  // role=tab and can carry an "Explorer" label) don't collide with the strict
+  // locator mode.
+  const activityBar = (page: import("@playwright/test").Page) =>
+    page.getByRole("tablist", { name: /Sidebar views/i });
+
   test("activity bar renders with Explorer and Source Control", async ({ page }) => {
-    const explorerTab = page.getByRole("tab", { name: /Explorer/i });
-    const scmTab = page.getByRole("tab", { name: /Source Control/i });
+    const explorerTab = activityBar(page).getByRole("tab", { name: /Explorer/i });
+    const scmTab = activityBar(page).getByRole("tab", { name: /Source Control/i });
 
     await expect(explorerTab).toBeVisible();
     await expect(scmTab).toBeVisible();
   });
 
   test("Explorer view is active by default and shows Bookmarks section", async ({ page }) => {
-    const explorerTab = page.getByRole("tab", { name: /Explorer/i });
+    const explorerTab = activityBar(page).getByRole("tab", { name: /Explorer/i });
     await expect(explorerTab).toHaveAttribute("aria-selected", "true");
 
     const filesPanel = page.getByRole("tabpanel", { name: /Explorer/i });
@@ -37,8 +47,8 @@ test.describe("Activity bar + sidebar views", () => {
   });
 
   test("switching to Source Control replaces the files panel, switching back restores it", async ({ page }) => {
-    const scmTab = page.getByRole("tab", { name: /Source Control/i });
-    const explorerTab = page.getByRole("tab", { name: /Explorer/i });
+    const scmTab = activityBar(page).getByRole("tab", { name: /Source Control/i });
+    const explorerTab = activityBar(page).getByRole("tab", { name: /Explorer/i });
     const filesPanel = page.getByRole("tabpanel", { name: /Explorer/i });
     const scmPanel = page.getByRole("tabpanel", { name: /Source Control/i });
 
@@ -58,7 +68,7 @@ test.describe("Activity bar + sidebar views", () => {
   });
 
   test("inactive views remain mounted (hidden, not destroyed)", async ({ page }) => {
-    const scmTab = page.getByRole("tab", { name: /Source Control/i });
+    const scmTab = activityBar(page).getByRole("tab", { name: /Source Control/i });
     // `hidden` elements drop out of the a11y tree, so use CSS selectors here
     // to assert DOM presence regardless of visibility.
     const filesHost = page.locator('.sidebar-view-host[data-view-id="files"]');
@@ -78,13 +88,14 @@ test.describe("Activity bar + sidebar views", () => {
   test("active view persists across reload (per-window)", async ({ page }) => {
     const scmPanel = page.getByRole("tabpanel", { name: /Source Control/i });
 
-    await page.getByRole("tab", { name: /Source Control/i }).click();
+    await activityBar(page).getByRole("tab", { name: /Source Control/i }).click();
     await expect(scmPanel).toBeVisible();
 
     await page.reload();
     await page.waitForLoadState("domcontentloaded");
+    await page.locator('.activity-button[data-view-id="scm"]').waitFor({ state: "visible" });
 
-    await expect(page.getByRole("tab", { name: /Source Control/i })).toHaveAttribute("aria-selected", "true");
+    await expect(activityBar(page).getByRole("tab", { name: /Source Control/i })).toHaveAttribute("aria-selected", "true");
     await expect(scmPanel).toBeVisible();
   });
 });

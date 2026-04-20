@@ -37,7 +37,9 @@ test.describe("SCM panel UI", () => {
 
     await expect(stagedSection.locator(".count-badge")).toHaveText("1");
     await expect(changesSection.locator(".count-badge")).toHaveText("2");
-    await expect(untrackedSection.locator(".count-badge")).toHaveText("2");
+    // Mock includes a binary asset alongside text files to exercise the
+    // diff viewer's binary placeholder.
+    await expect(untrackedSection.locator(".count-badge")).toHaveText("3");
 
     // Specific files from the mock
     await expect(stagedSection.getByText("App.tsx")).toBeVisible();

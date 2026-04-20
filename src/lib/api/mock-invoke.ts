@@ -597,6 +597,7 @@ const mockCommands: Record<string, CommandHandler> = {
       untracked: [
         { path: "src/router.tsx", old_path: null, status: "Untracked" },
         { path: ".env.example", old_path: null, status: "Untracked" },
+        { path: "assets/logo.png", old_path: null, status: "Untracked" },
       ],
       merge: [],
     };
@@ -611,6 +612,15 @@ const mockCommands: Record<string, CommandHandler> = {
   },
   git_diff: (args: Record<string, unknown>) => {
     const p = args.path as string;
+    // Binary files show a marker rather than a textual hunk.
+    if (/\.(png|jpg|jpeg|gif|webp|ico|bin|exe|zip|pdf)$/i.test(p)) {
+      return [
+        `diff --git a/${p} b/${p}`,
+        "index 0000000..1111111",
+        `Binary files a/${p} and b/${p} differ`,
+        "",
+      ].join("\n");
+    }
     return [
       `diff --git a/${p} b/${p}`,
       "index 1111111..2222222 100644",

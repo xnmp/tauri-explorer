@@ -558,6 +558,10 @@ const mockCommands: Record<string, CommandHandler> = {
 
   // ----- SCM git backend (#53) mock -----
 
+  git_init: (args: Record<string, unknown>) => {
+    return args.path as string;
+  },
+
   git_repo_root: (args: Record<string, unknown>) => {
     const p = args.path as string;
     if (p?.startsWith("/home/user/Documents/project")) return "/home/user/Documents/project";

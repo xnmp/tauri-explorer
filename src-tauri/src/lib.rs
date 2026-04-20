@@ -233,7 +233,8 @@ pub fn run(launch_dir: Option<String>) {
             config::list_user_themes,
             // Git status (legacy: per-file indicators for file list)
             files::git_status::get_git_status,
-            // Git source-control backend (#53)
+            // Git source-control backend (#53, #54)
+            git::git_init,
             git::git_repo_root,
             git::git_status,
             git::git_stage,

@@ -13,7 +13,7 @@
 | **Sidebar** | `Sidebar.svelte` | Host shell: activity-bar icon strip + active view + resize handle (180-400px). Views switch instantly; inactive views stay mounted (hidden) so scroll/selection survive. Active view persists per-window. |
 | **ActivityBar** | `ActivityBar.svelte` | VSCode-style narrow icon strip on the sidebar's leftmost edge. Each button corresponds to a registered `SidebarView`. |
 | **FilesSidebarView** | `FilesSidebarView.svelte` | Explorer view: Bookmarks (system folders + user bookmarks with drag-to-reorder, custom icons for Repos/Code folders), Removable Drives, Recent locations (sorted by frecency score, excludes bookmarked paths, configurable count). |
-| **ScmSidebarView** | `ScmSidebarView.svelte` | Source Control view stub — filled in by #54 (SCM panel UI). |
+| **ScmSidebarView** | `ScmSidebarView.svelte` | Source Control view: branch line, commit input (Enter commits, Shift+Enter newline, amend toggle), Merge / Staged / Changes / Untracked sections with hover actions (stage / unstage / discard). Empty state with Initialize Repository button when not a git repo. Arrow keys move row selection. |
 | **PaneContainer** | `PaneContainer.svelte` | Manages single/dual pane layout with resizable divider |
 | **ExplorerPane** | `ExplorerPane.svelte` | Self-contained pane with NavigationBar + FileList + ContextMenu + dialogs. Handles arrow-key navigation |
 | **NavigationBar** | `NavigationBar.svelte` | Back/Forward/Up/Refresh buttons, breadcrumb bar with editable path input and autocomplete |

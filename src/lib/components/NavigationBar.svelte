@@ -283,7 +283,9 @@
 
 </script>
 
-<div class="navigation-bar">
+{#if settingsStore.showAddressBar || explorer.showFilter}
+<div class="navigation-bar" class:address-bar-hidden={!settingsStore.showAddressBar}>
+  {#if settingsStore.showAddressBar}
   <!-- Navigation controls next to address bar -->
   <div class="nav-controls">
     {#if settingsStore.navBarButtons.back}
@@ -340,6 +342,7 @@
       </button>
     {/if}
   </div>
+  {/if}
 
   {#if settingsStore.showAddressBar}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -481,6 +484,7 @@
     </div>
   {/if}
 </div>
+{/if}
 
 <style>
   .navigation-bar {
@@ -492,6 +496,13 @@
     border-bottom: var(--navbar-border-bottom, 1px solid var(--divider));
     height: 40px;
     container-type: inline-size;
+  }
+
+  /* When the address bar is hidden the filter bar is the only child left,
+     so anchor it to the right edge to mimic "top-right" instead of
+     left-aligning. */
+  .navigation-bar.address-bar-hidden {
+    justify-content: flex-end;
   }
 
   .nav-controls {

@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/address-bar-hides-nav-buttons: Hide the whole navigation bar, not just the address portion
+
+**Key takeaways:**
+- Originally "hide address bar" only hid the breadcrumb container, leaving the back/forward/up buttons and the 40px bar around them still occupying vertical space — defeating the purpose. Fix: wrap the entire `.navigation-bar` in `{#if settingsStore.showAddressBar || explorer.showFilter}` so it unmounts completely when hidden. Keep it mounted when the filter is showing (Ctrl+F) so the filter still has somewhere to render, and use `justify-content: flex-end` via an `.address-bar-hidden` modifier to push it to the top-right.
+
+---
+
 ## design/saturate-app-icon-colours: Bump chroma from the rendered PNG, not the SVG
 
 **Key takeaways:**

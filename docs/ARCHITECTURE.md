@@ -27,7 +27,7 @@
 │  │  +page.svelte (root)                            │    │
 │  │  ├── TitleBar / WindowTabBar                    │    │
 │  │  ├── SharedToolbar (search, theme, win controls)│    │
-│  │  ├── Sidebar (quick access, bookmarks, drives)  │    │
+│  │  ├── Sidebar (activity bar + files / SCM views) │    │
 │  │  ├── PaneContainer                              │    │
 │  │  │   ├── ExplorerPane (left)                    │    │
 │  │  │   │   ├── NavigationBar (breadcrumbs)        │    │

@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/quickopen-hover-selection: Don't let initial hover override keyboard selection
+
+**Key takeaways:**
+- `onmouseenter` on a row fires the moment the popup renders over the cursor, silently overriding the initial top-result selection before the user can press Enter. Fix with a `mouseMoved` flag gated on `onmousemove` on the overlay — reset to `false` on open and on arrow-key nav, so hover only wins after the user actually moves the pointer.
+
+---
+
 ## fix/test-setup-stub-node25: Node 25 Native localStorage Breaks Test Stub
 
 **Key takeaways:**

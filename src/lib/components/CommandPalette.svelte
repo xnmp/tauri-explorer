@@ -25,6 +25,10 @@
   let query = $state("");
   let selectedIndex = $state(0);
   let inputRef = $state<HTMLInputElement | null>(null);
+  // Suppress mouseenter on rows until the user actually moves the mouse —
+  // prevents selection from jumping to the row the cursor happened to be over
+  // when the palette opened (or after arrow navigation scrolled a new row under it).
+  let mouseMoved = $state(false);
 
   // Get filtered and sorted commands
   const filteredCommands = $derived.by(() => {
@@ -118,6 +122,7 @@
         event.preventDefault();
         if (flatCommands.length > 0) {
           selectedIndex = (selectedIndex + 1) % flatCommands.length;
+          mouseMoved = false;
           scrollToSelected();
         }
         break;
@@ -125,6 +130,7 @@
         event.preventDefault();
         if (flatCommands.length > 0) {
           selectedIndex = (selectedIndex - 1 + flatCommands.length) % flatCommands.length;
+          mouseMoved = false;
           scrollToSelected();
         }
         break;
@@ -158,6 +164,7 @@
     if (open && inputRef) {
       query = "";
       selectedIndex = 0;
+      mouseMoved = false;
       tick().then(() => inputRef?.focus());
     }
   });
@@ -165,7 +172,7 @@
 
 {#if open}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="command-palette-overlay" onclick={onClose} onkeydown={handleKeydown}>
+  <div class="command-palette-overlay" onclick={onClose} onkeydown={handleKeydown} onmousemove={() => { mouseMoved = true; }}>
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="command-palette-dialog" onclick={(e) => e.stopPropagation()}>
       <div class="search-container">
@@ -192,7 +199,7 @@
                 role="option"
                 aria-selected={isSelected}
                 onclick={() => executeSelected(cmd)}
-                onmouseenter={() => selectedIndex = index}
+                onmouseenter={() => { if (mouseMoved) selectedIndex = index; }}
               >
                 <span class="command-category">{getCategoryLabel(cmd.category)}</span>
                 <span class="command-label">{cmd.label}</span>

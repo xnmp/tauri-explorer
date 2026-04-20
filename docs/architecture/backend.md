@@ -103,6 +103,18 @@ Split into focused submodules. Shared types live in `mod.rs`.
 - Auto-detects: Hyprland/hyprpaper, Sway/swaybg, GNOME, KDE, XFCE, MATE, feh fallback
 - **Command:** `set_as_wallpaper(path)`
 
+### `git.rs` — Source Control Backend (#53)
+- `git2` (vendored libgit2) wrapper for the SCM panel + git graph. Every command runs on `tokio::task::spawn_blocking` and is registered with the shared `TaskRegistry` for cancellation.
+- **Commands (all `async`):**
+  - `git_repo_root(path)` → repo root or `null`
+  - `git_status(repo_path)` → `{ is_repo, repo_root, branch, detached, staged, changes, untracked, merge }` with per-file `{ path, old_path, status }`
+  - `git_stage(repo_path, paths)` / `git_unstage(repo_path, paths)` — stage via `Index.add_path`; unstage resets index to HEAD (or removes from index on unborn branches)
+  - `git_discard(repo_path, paths, { force })` — checkout-from-HEAD for tracked paths, filesystem delete for untracked; refuses to blow away staged changes unless `force=true`
+  - `git_diff(repo_path, path, { staged })` → unified diff text
+  - `git_commit(repo_path, message, { amend })` → `{ commit_id, summary }` (empty message rejected unless amending)
+  - `git_watch_repo(repo_path)` / `git_unwatch_repo(repo_path)` — `notify` watcher on work tree + `.git`; emits `git-status-changed` with the repo root (200 ms debounced, ignores `.lock`/`~` files)
+- Legacy `files::git_status::get_git_status` remains for per-file status badges in the file list; the SCM panel uses the richer module above.
+
 ### `config.rs` — Config File Persistence
 - Config directory: `~/.config/tauri-explorer/`
 - **Commands:**

@@ -7,6 +7,7 @@ mod config;
 mod content_search;
 pub mod error;
 mod files;
+pub mod git;
 mod search;
 pub mod task_registry;
 mod thumbnails;
@@ -230,8 +231,18 @@ pub fn run(launch_dir: Option<String>) {
             config::write_config_file,
             config::get_config_dir,
             config::list_user_themes,
-            // Git status
+            // Git status (legacy: per-file indicators for file list)
             files::git_status::get_git_status,
+            // Git source-control backend (#53)
+            git::git_repo_root,
+            git::git_status,
+            git::git_stage,
+            git::git_unstage,
+            git::git_discard,
+            git::git_diff,
+            git::git_commit,
+            git::git_watch_repo,
+            git::git_unwatch_repo,
             // Drives / volumes
             files::drives::list_drives,
             // Wallpaper

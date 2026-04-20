@@ -12,6 +12,10 @@ fn main() {
     // Support `tauri-explorer /some/path` CLI argument.
     let cli_path = std::env::args().nth(1);
 
+    // On macOS, launching from Finder/DMG sets cwd to "/" which is not useful.
+    // Fall back to the home directory in that case.
+    let cwd = cwd.filter(|p| p != "/");
+
     let launch_dir = cli_path.or(cwd);
 
     // Fork to background so the launching terminal is freed.

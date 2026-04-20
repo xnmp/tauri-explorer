@@ -152,8 +152,13 @@ export function matchesShortcut(
   // Meta is checked separately for explicit meta shortcuts
   if (shortcut.meta && !event.metaKey) return false;
 
-  // Normalize and compare the key
-  const normalizedEventKey = normalizeKeyForShortcut(event.key);
+  // On macOS, Option/Alt produces special characters in event.key (e.g., Alt+M → "µ").
+  // Use event.code (physical key) when Alt is held to match the intended key.
+  const eventKey = event.altKey && event.code?.startsWith("Key")
+    ? event.code.slice(3).toLowerCase()
+    : event.key;
+
+  const normalizedEventKey = normalizeKeyForShortcut(eventKey);
   const normalizedShortcutKey = normalizeKeyForShortcut(shortcut.key);
 
   return normalizedEventKey === normalizedShortcutKey;
@@ -258,9 +263,14 @@ export function eventToShortcutString(event: KeyboardEvent): string | null {
   if (event.shiftKey) parts.push("Shift");
   if (event.altKey) parts.push("Alt");
 
+  // On macOS, Option/Alt produces special characters — use event.code for the real key
+  const rawKey = event.altKey && event.code?.startsWith("Key")
+    ? event.code.slice(3).toLowerCase()
+    : event.key;
+
   // Format the key using lookup or uppercase for single chars
-  const key = KEY_TO_SHORTCUT[event.key] ??
-    (event.key.length === 1 ? event.key.toUpperCase() : event.key);
+  const key = KEY_TO_SHORTCUT[rawKey] ??
+    (rawKey.length === 1 ? rawKey.toUpperCase() : rawKey);
 
   parts.push(key);
 

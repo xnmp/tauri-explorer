@@ -307,6 +307,18 @@
     }
     window.addEventListener("contextmenu", handleContextMenu);
 
+    // Guard against the webview navigating to dropped files. Even with
+    // Tauri's native drag-drop handler enabled, a dragover/drop that bubbles
+    // up to the document without preventDefault will let WebKitGTK (and
+    // Chromium) navigate to the file:// URL, replacing the app with an image
+    // or PDF viewer. `capture: true` ensures the guard runs before any
+    // app-level handlers can opt out.
+    function blockWebviewDefaultDnD(event: DragEvent) {
+      event.preventDefault();
+    }
+    window.addEventListener("dragover", blockWebviewDefaultDnD, { capture: true });
+    window.addEventListener("drop", blockWebviewDefaultDnD, { capture: true });
+
     // Save tabs before window closes
     function handleBeforeUnload() {
       windowTabsManager.save();
@@ -324,6 +336,8 @@
       window.removeEventListener("keyup", trackCtrlUp, true);
       window.removeEventListener("keydown", handleKeydown);
       window.removeEventListener("contextmenu", handleContextMenu);
+      window.removeEventListener("dragover", blockWebviewDefaultDnD, { capture: true });
+      window.removeEventListener("drop", blockWebviewDefaultDnD, { capture: true });
       window.removeEventListener("beforeunload", handleBeforeUnload);
       clearInterval(saveInterval);
       externalDrop.cleanup();

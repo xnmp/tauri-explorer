@@ -11,6 +11,7 @@
   import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import type { FileEntry } from "$lib/domain/file";
+  import { normalizePathInput } from "$lib/domain/path";
 
   interface Props {
     explorer: ExplorerInstance;
@@ -112,8 +113,9 @@
   }
 
   function confirmPathEdit() {
-    if (editedPath.trim()) {
-      explorer.navigateTo(expandTilde(editedPath.trim()));
+    const trimmed = editedPath.trim();
+    if (trimmed) {
+      explorer.navigateTo(expandTilde(normalizePathInput(trimmed)));
     }
     editingPath = false;
     editedPath = "";

@@ -15,6 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | E2E tests (default view) | `bun run test:e2e` |
 | E2E tests (all view modes) | `ALL_VIEW_MODES=1 npx playwright test` |
 | Single E2E test | `npx playwright test e2e/specific.spec.ts` |
+| Tauri-binary E2E smoke (Linux/Windows only) | `bun run test:e2e:tauri` (needs `cargo install tauri-driver` and a built binary) |
 | Performance tests | `bun run test:perf` |
 | Rust build only | `cd src-tauri && cargo build` |
 | Rust tests only | `cd src-tauri && cargo test` |
@@ -52,6 +53,7 @@ Frontend calls `invoke("command_name", { args })` via `src/lib/api/files.ts`. Wh
 
 - **Unit tests** (`tests/`): Vitest, Node environment, with `tests/setup.ts` providing minimal browser stubs (localStorage). Test domain logic and state behavior.
 - **E2E tests** (`e2e/`): Playwright against Chromium on `localhost:1420`. Uses `bun run dev` as web server (not full Tauri). Mock invoke provides fake filesystem data.
+- **Tauri-binary E2E** (`e2e-tauri/`): WebdriverIO + `tauri-driver` against the actually built Tauri binary. Linux + Windows only (see `e2e-tauri/README.md`); macOS needs ad-hoc coverage via unit tests until a WKWebView driver lands. Runs in CI via `.github/workflows/e2e-tauri.yml` on `ubuntu-latest` + `windows-latest`.
 - `ALL_VIEW_MODES=1` env var runs E2E tests across Details, List, and Tiles views.
 
 ## Documentation

@@ -196,6 +196,21 @@
 
           <div class="setting-row">
             <div class="setting-info">
+              <span class="setting-label">Show Address Bar</span>
+              <span class="setting-description">Display the breadcrumb/path bar above the file list</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.showAddressBar}
+                onchange={() => settingsStore.toggleAddressBar()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
               <span class="setting-label">Show Status Bar</span>
               <span class="setting-description">Display file info bar at the bottom (Alt+M U)</span>
             </div>

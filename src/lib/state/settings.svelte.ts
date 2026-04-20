@@ -47,6 +47,7 @@ export interface Settings {
   showSidebar: boolean;
   showHidden: boolean;
   showWindowControls: boolean;
+  showAddressBar: boolean;
   showPreviewPane: boolean;
   confirmDelete: boolean;
   zoomLevel: number; // percentage, e.g. 100 = 100%
@@ -80,6 +81,7 @@ const DEFAULT_SETTINGS: Settings = {
   showSidebar: true,
   showHidden: false,
   showWindowControls: true,
+  showAddressBar: true,
   showPreviewPane: false,
   confirmDelete: true,
   zoomLevel: 100,
@@ -171,6 +173,10 @@ function createSettingsStore() {
     update({ showWindowControls: !settings.showWindowControls });
   }
 
+  function toggleAddressBar(): void {
+    update({ showAddressBar: !settings.showAddressBar });
+  }
+
   function togglePreviewPane(): void {
     update({ showPreviewPane: !settings.showPreviewPane });
   }
@@ -208,6 +214,9 @@ function createSettingsStore() {
     },
     get showWindowControls() {
       return settings.showWindowControls;
+    },
+    get showAddressBar() {
+      return settings.showAddressBar;
     },
     get showPreviewPane() {
       return settings.showPreviewPane;
@@ -344,6 +353,7 @@ function createSettingsStore() {
     toggleSidebar,
     toggleHidden,
     toggleWindowControls,
+    toggleAddressBar,
     togglePreviewPane,
     toggleConfirmDelete,
     zoomIn,

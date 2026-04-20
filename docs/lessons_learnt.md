@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## feat/remove-recent-paths: Hover-reveal remove on recent entries
+
+**Key takeaways:**
+- The recent-locations list in the sidebar reused the `.folder-item .remove-bookmark` hover-reveal pattern from bookmarks. Swapped the `<button>` row for a `<div role="button" tabindex="0">` + inner close button so the nested interactive element is valid. Removal goes through `frecencyStore.remove(path)` which already handles persistence.
+
+---
+
 ## fix/tab-bar-window-controls: Tab bar hosts the window controls
 
 **Key takeaways:**

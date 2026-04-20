@@ -45,13 +45,6 @@ jobs:
             artifact-paths: |
               src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
               src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz
-          - os: macos-13
-            artifact-name: macos-x64-bundles
-            rust-target: x86_64-apple-darwin
-            tauri-args: --target x86_64-apple-darwin
-            artifact-paths: |
-              src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
-              src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz
           - os: windows-latest
             artifact-name: windows-bundles
             artifact-paths: |

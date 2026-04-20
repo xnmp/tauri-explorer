@@ -11,6 +11,7 @@
   import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import type { FileEntry } from "$lib/domain/file";
+  import { normalizePathInput } from "$lib/domain/path";
 
   interface Props {
     explorer: ExplorerInstance;
@@ -112,8 +113,9 @@
   }
 
   function confirmPathEdit() {
-    if (editedPath.trim()) {
-      explorer.navigateTo(expandTilde(editedPath.trim()));
+    const trimmed = editedPath.trim();
+    if (trimmed) {
+      explorer.navigateTo(expandTilde(normalizePathInput(trimmed)));
     }
     editingPath = false;
     editedPath = "";
@@ -281,7 +283,9 @@
 
 </script>
 
-<div class="navigation-bar">
+{#if settingsStore.showAddressBar || explorer.showFilter}
+<div class="navigation-bar" class:address-bar-hidden={!settingsStore.showAddressBar}>
+  {#if settingsStore.showAddressBar}
   <!-- Navigation controls next to address bar -->
   <div class="nav-controls">
     {#if settingsStore.navBarButtons.back}
@@ -338,7 +342,9 @@
       </button>
     {/if}
   </div>
+  {/if}
 
+  {#if settingsStore.showAddressBar}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="breadcrumbs-container" class:editing={editingPath} onclick={editingPath ? undefined : startPathEdit}>
@@ -449,6 +455,7 @@
 
     {/if}
   </div>
+  {/if}
 
   {#if explorer.showFilter}
     <div class="filter-bar">
@@ -477,6 +484,7 @@
     </div>
   {/if}
 </div>
+{/if}
 
 <style>
   .navigation-bar {
@@ -488,6 +496,13 @@
     border-bottom: var(--navbar-border-bottom, 1px solid var(--divider));
     height: 40px;
     container-type: inline-size;
+  }
+
+  /* When the address bar is hidden the filter bar is the only child left,
+     so anchor it to the right edge to mimic "top-right" instead of
+     left-aligning. */
+  .navigation-bar.address-bar-hidden {
+    justify-content: flex-end;
   }
 
   .nav-controls {

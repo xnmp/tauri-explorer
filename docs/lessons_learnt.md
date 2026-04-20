@@ -4,6 +4,94 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/address-bar-hides-nav-buttons: Hide the whole navigation bar, not just the address portion
+
+**Key takeaways:**
+- Originally "hide address bar" only hid the breadcrumb container, leaving the back/forward/up buttons and the 40px bar around them still occupying vertical space — defeating the purpose. Fix: wrap the entire `.navigation-bar` in `{#if settingsStore.showAddressBar || explorer.showFilter}` so it unmounts completely when hidden. Keep it mounted when the filter is showing (Ctrl+F) so the filter still has somewhere to render, and use `justify-content: flex-end` via an `.address-bar-hidden` modifier to push it to the top-right.
+
+---
+
+## design/saturate-app-icon-colours: Bump chroma from the rendered PNG, not the SVG
+
+**Key takeaways:**
+- `icon.svg` in `src-tauri/icons/` is a separate blue-folder mock and is *not* what ships — the shipped icon is `icon.png`. Regenerate all platform sizes by resaturating `icon.png` (Pillow `ImageEnhance.Color(1.7)` + small contrast bump) then re-running the ico/icns/Square*Logo fan-out. If you edit the SVG thinking it's the source you'll waste a cycle.
+
+---
+
+## feat/switch-theme-command: Preview vs. commit on the theme store
+
+**Key takeaways:**
+- Live-preview UI needs a separate API from persist. Added `themeStore.previewTheme(id)` which only toggles `document.documentElement.data-theme`, leaving settings alone. The picker uses it on every arrow-key selection; Enter calls `setTheme` to persist, Escape re-applies the saved `originalThemeId` so the live preview is cleanly reverted. Replaces the old N-commands-in-palette approach with a single `view.switchTheme` entry.
+
+---
+
+## fix/spurious-text-highlighting: Default `user-select: none` on UI chrome
+
+**Key takeaways:**
+- Several components set `user-select: none` locally, but the body defaulted to `auto`, so shift-click across rows (e.g. miller columns, details view) could kick off a native text selection range spanning them — sticky, hard-to-clear, and visually jarring. Set `user-select: none` on `body` globally and explicitly re-enable `text` for inputs, textareas, `[contenteditable="true"]`, and `.preview-pane` (where users actually want to copy). Root-cause fix rather than a local patch per component.
+
+---
+
+## feat/allow-hiding-address-bar: New setting + command
+
+**Key takeaways:**
+- Added `showAddressBar: boolean` (default `true`) to `Settings`, a `toggleAddressBar` store method, a Settings dialog row, and a `view.toggleAddressBar` command so the feature is reachable from the command palette. The breadcrumb container is wrapped in `{#if settingsStore.showAddressBar}` — navigation buttons stay visible regardless, matching how other view toggles work.
+
+---
+
+## feat/drag-recent-bookmarks: Reuse existing Quick-Access drop target
+
+**Key takeaways:**
+- The Quick Access (bookmarks) region already had native dragover/drop listeners that bookmark any `dragState.current` where `kind === "directory"`. Making recent-location entries `draggable="true"` and populating `dragState.start({...})` on dragstart makes promotion Just Work — no new drop handler needed. Setting the `application/x-explorer-kind` data attribute keeps the existing dropEffect logic happy.
+- **Drag sources MUST defer `dragState.clear()` with `setTimeout(..., 0)` in `ondragend`** (see `fix/drag-to-bookmarks` below). A synchronous clear passes the browser but breaks in Tauri/WebKitGTK because `dragover`/`drop` don't fire on the sidebar — the sidebar falls back to reading `dragState.current` inside a document-level `dragend` listener, which runs *after* element-level handlers. E2E tests run on Chromium and can't catch this regression.
+
+---
+
+## feat/remove-recent-paths: Hover-reveal remove on recent entries
+
+**Key takeaways:**
+- The recent-locations list in the sidebar reused the `.folder-item .remove-bookmark` hover-reveal pattern from bookmarks. Swapped the `<button>` row for a `<div role="button" tabindex="0">` + inner close button so the nested interactive element is valid. Removal goes through `frecencyStore.remove(path)` which already handles persistence.
+
+---
+
+## fix/tab-bar-window-controls: Tab bar hosts the window controls
+
+**Key takeaways:**
+- `WindowTabBar` used to hide itself whenever `tabs.length <= 1`, which caused a layout jump the moment a second tab opened and meant the window controls (min/max/close) also disappeared when they're enabled. Gate on `tabs.length > 1 || settingsStore.showWindowControls` so the strip stays mounted whenever it's hosting the controls.
+
+---
+
+## fix/normalize-bare-drive-letter: Drive root must carry a separator
+
+**Key takeaways:**
+- Typing `e:` in the address bar used to leave the path without a trailing separator, and `parseBreadcrumbs` split on `/\\` treats `E:` as a regular segment — so "up one level" produced a bogus `/E:` POSIX path. Normalize bare drive letters (`/^[A-Za-z]:$/`) to `E:/` at the address-bar boundary so all downstream path logic (breadcrumbs, `getParentPath`) sees a real drive root.
+
+---
+
+## feat/sidebar-removable-drives: Platform-specific volume enumeration
+
+**Key takeaways:**
+- Linux user-mounts live under `/run/media/$USER` (systemd) or `/media/$USER` (udisks). Don't hardcode one — scan both and dedupe. Skip the `$USER` entry itself when scanning `/media`.
+- macOS exposes every mount under `/Volumes`, including the root volume as a symlink to `/`. Read the symlink target to distinguish boot from removable.
+- On Windows, detecting DRIVE_REMOVABLE reliably needs `GetDriveTypeW`. Without a winapi dep we fall back to a heuristic (C: is fixed, others are Unknown and still shown). Upgrade when needed.
+- The drives store polls every 5s (no reliable cross-platform mount notifications) — cheap since `read_dir` on a handful of mount points is instant.
+
+---
+
+## fix/quickopen-hover-selection: Don't let initial hover override keyboard selection
+
+**Key takeaways:**
+- `onmouseenter` on a row fires the moment the popup renders over the cursor, silently overriding the initial top-result selection before the user can press Enter. Fix with a `mouseMoved` flag gated on `onmousemove` on the overlay — reset to `false` on open and on arrow-key nav, so hover only wins after the user actually moves the pointer.
+
+---
+
+## chore/drop-macos-intel-build: Dropped macos-13 Release Matrix Cell
+
+**Key takeaways:**
+- GitHub Actions `macos-13` (Intel Mac) hosted runners are routinely queued 2h+ with no pickup, blocking the `release` job (which `needs: build` across the whole matrix). Apple stopped selling Intel Macs in 2023 and macOS Tahoe (2025) is the last macOS supporting them, so the Intel .dmg has a vanishing audience. Dropped the cell; arm64 still ships a signed .dmg. If Intel Mac support becomes important again, reintroduce with a self-hosted or third-party runner rather than hosted `macos-13`.
+
+---
+
 ## fix/ci-rollup-optional-deps: CI Rollup Optional Deps Fail on Non-Linux Runners
 
 **Key takeaways:**

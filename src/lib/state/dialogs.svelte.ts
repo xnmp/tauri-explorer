@@ -30,6 +30,7 @@ function createDialogStore() {
   let nanoBananaOpen = $state(false);
   let nanoBananaSourcePath = $state("");
   let jobsPanelOpen = $state(false);
+  let themePickerOpen = $state(false);
 
   function closeIfActive(dialogType: DialogType): void {
     if (activeDialog === dialogType) {
@@ -75,6 +76,9 @@ function createDialogStore() {
     },
     get isCommandPaletteOpen() {
       return commandPaletteOpen;
+    },
+    get isThemePickerOpen() {
+      return themePickerOpen;
     },
     get isSettingsOpen() {
       return settingsOpen;
@@ -134,7 +138,7 @@ function createDialogStore() {
 
     /** True when any modal dialog is open (file ops or overlays). */
     get hasModalOpen(): boolean {
-      return activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || nanoBananaOpen || jobsPanelOpen;
+      return activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || nanoBananaOpen || jobsPanelOpen || themePickerOpen;
     },
 
     // Overlay dialog actions
@@ -204,6 +208,14 @@ function createDialogStore() {
 
     closeJobsPanel(): void {
       jobsPanelOpen = false;
+    },
+
+    openThemePicker(): void {
+      themePickerOpen = true;
+    },
+
+    closeThemePicker(): void {
+      themePickerOpen = false;
     },
 
     closeAll(): void {

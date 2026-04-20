@@ -9,6 +9,7 @@
   import { getHomeDirectory } from "$lib/api/files";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { dragState } from "$lib/state/drag.svelte";
+  import { drivesStore } from "$lib/state/drives.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { loadPersisted, savePersisted } from "$lib/state/persisted";
@@ -48,6 +49,8 @@
       if (result.ok) homeDir = result.data;
     });
 
+    drivesStore.startPolling();
+
     // Native DnD listeners bypass Svelte 5 event delegation which can
     // interfere with the HTML5 drag-and-drop state machine. We attach
     // dragenter/dragover/dragleave/drop directly on the Quick Access element.
@@ -70,6 +73,7 @@
       document.removeEventListener("dragstart", onDragStartPoll);
       document.removeEventListener("dragend", onDragEnd);
       stopDragPoll();
+      drivesStore.stopPolling();
     };
   });
 
@@ -215,6 +219,7 @@
 
   let quickAccessExpanded = $state(true);
   let recentExpanded = $state(true);
+  let drivesExpanded = $state(true);
 
   // Recent locations — sorted by frecency score, excluding bookmarked and system folders
   const recentLocations = $derived.by(() => {
@@ -433,6 +438,39 @@
     {/if}
   </div>
 
+  {#if drivesStore.removable.length > 0}
+    <div class="divider"></div>
+
+    <!-- Removable drives -->
+    <div class="nav-section">
+      <button
+        class="section-header"
+        onclick={() => drivesExpanded = !drivesExpanded}
+        aria-expanded={drivesExpanded}
+      >
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" class="chevron" class:expanded={drivesExpanded}>
+          <path d="M4 3L7 6L4 9" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span>Removable Drives</span>
+      </button>
+
+      {#if drivesExpanded}
+        <div class="section-content">
+          {#each drivesStore.removable as drive (drive.path)}
+            <button class="nav-item" onclick={() => navigateTo(drive.path)} title={drive.path}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: #10b981">
+                <rect x="2" y="4" width="12" height="8" rx="1.5" stroke="currentColor" stroke-width="1.25"/>
+                <circle cx="11" cy="8" r="0.9" fill="currentColor"/>
+                <path d="M4 4V3M6 4V3" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+              </svg>
+              <span>{drive.name}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
+
   {#if recentLocations.length > 0}
     <div class="divider"></div>
 
@@ -452,12 +490,32 @@
       {#if recentExpanded}
         <div class="section-content">
           {#each recentLocations as loc (loc.path)}
-            <button class="nav-item" onclick={() => navigateTo(loc.path)} title={loc.path}>
+            <div
+              class="nav-item folder-item recent-item"
+              onclick={() => navigateTo(loc.path)}
+              onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateTo(loc.path); }}}
+              title={loc.path}
+              role="button"
+              tabindex="0"
+              draggable="true"
+              ondragstart={(e) => { dragState.start({ kind: "directory", path: loc.path, name: loc.name }); if (e.dataTransfer) { e.dataTransfer.effectAllowed = "link"; e.dataTransfer.setData("application/x-explorer-kind", "directory"); } }}
+              ondragend={() => { setTimeout(() => dragState.clear(), 0); }}
+            >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon">
                 <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="var(--icon-folder, #FFB900)" opacity="0.7"/>
               </svg>
               <span>{loc.name}</span>
-            </button>
+              <button
+                class="remove-bookmark"
+                onclick={(e) => { e.stopPropagation(); frecencyStore.remove(loc.path); }}
+                title="Remove from Recent"
+                aria-label="Remove {loc.name} from recent locations"
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path d="M3 3L9 9M9 3L3 9" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+                </svg>
+              </button>
+            </div>
           {/each}
         </div>
       {/if}
@@ -612,6 +670,14 @@
   .pin-icon {
     margin-left: auto;
     opacity: 0.4;
+  }
+
+  .recent-item .remove-bookmark {
+    display: none;
+  }
+
+  .recent-item:hover .remove-bookmark {
+    display: flex;
   }
 
   /* Drag and drop styles */

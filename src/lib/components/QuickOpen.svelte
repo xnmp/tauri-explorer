@@ -49,6 +49,10 @@
   let loading = $state(false);
   let inputRef = $state<HTMLInputElement | null>(null);
   let homeDir = $state<string | null>(null);
+  // Guard: suppress mouseenter on results until the user actually moves the mouse.
+  // Prevents selection from jumping to whatever row the cursor happened to land on
+  // when the popup opened (or after results change).
+  let mouseMoved = $state(false);
 
   // Fetch home directory for tilde expansion
   getHomeDirectory().then((r) => { if (r.ok) homeDir = r.data; });
@@ -327,12 +331,14 @@
         event.preventDefault();
         if (displayResults.length > 0) {
           selectedIndex = (selectedIndex + 1) % displayResults.length;
+          mouseMoved = false;
         }
         break;
       case "ArrowUp":
         event.preventDefault();
         if (displayResults.length > 0) {
           selectedIndex = (selectedIndex - 1 + displayResults.length) % displayResults.length;
+          mouseMoved = false;
         }
         break;
       case "Enter":
@@ -378,6 +384,7 @@
       query = "";
       results = [];
       selectedIndex = 0;
+      mouseMoved = false;
       tick().then(() => inputRef?.focus());
       untrack(() => {
         recentFilesStore.pruneNonExistent();
@@ -402,7 +409,7 @@
 
 {#if open}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="quick-open-overlay" onclick={onClose} onkeydown={handleKeydown}>
+  <div class="quick-open-overlay" onclick={onClose} onkeydown={handleKeydown} onmousemove={() => { mouseMoved = true; }}>
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="quick-open-dialog" onclick={(e) => e.stopPropagation()}>
       <div class="search-container">
@@ -439,7 +446,7 @@
                 role="option"
                 aria-selected={index === selectedIndex}
                 onclick={() => selectResult(result)}
-                onmouseenter={() => selectedIndex = index}
+                onmouseenter={() => { if (mouseMoved) selectedIndex = index; }}
               >
                 {#if result.kind === "directory"}
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="folder-icon">
@@ -541,7 +548,7 @@
                 role="option"
                 aria-selected={index === selectedIndex}
                 onclick={() => selectResult(result)}
-                onmouseenter={() => selectedIndex = index}
+                onmouseenter={() => { if (mouseMoved) selectedIndex = index; }}
               >
                 {#if result.kind === "directory"}
                   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="folder-icon">

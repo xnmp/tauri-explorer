@@ -129,6 +129,13 @@ function createThemeState() {
     document.documentElement.setAttribute("data-theme", themeId);
   }
 
+  /** Swap the visual theme without persisting it. Used by the theme picker
+   *  for live preview while arrowing through options — so pressing Escape
+   *  can restore the saved theme just by re-applying `currentThemeId`. */
+  function previewTheme(themeId: string) {
+    applyTheme(themeId);
+  }
+
   async function initTheme() {
     // Load user themes from config dir and inject into DOM
     const result = await listUserThemes();
@@ -166,6 +173,7 @@ function createThemeState() {
       return themes;
     },
     setTheme,
+    previewTheme,
     initTheme,
     syncFromSettings,
   };

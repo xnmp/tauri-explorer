@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/normalize-bare-drive-letter: Drive root must carry a separator
+
+**Key takeaways:**
+- Typing `e:` in the address bar used to leave the path without a trailing separator, and `parseBreadcrumbs` split on `/\\` treats `E:` as a regular segment — so "up one level" produced a bogus `/E:` POSIX path. Normalize bare drive letters (`/^[A-Za-z]:$/`) to `E:/` at the address-bar boundary so all downstream path logic (breadcrumbs, `getParentPath`) sees a real drive root.
+
+---
+
 ## feat/sidebar-removable-drives: Platform-specific volume enumeration
 
 **Key takeaways:**

@@ -431,6 +431,7 @@
           type="text"
           class="search-input"
           placeholder="Search files..."
+          autocomplete="off"
           bind:value={query}
           bind:this={inputRef}
           oninput={handleInput}

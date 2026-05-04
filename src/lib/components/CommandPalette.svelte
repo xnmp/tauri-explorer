@@ -191,6 +191,7 @@
           type="text"
           class="search-input"
           placeholder="Type a command..."
+          autocomplete="off"
           bind:value={query}
           bind:this={inputRef}
           oninput={handleInput}

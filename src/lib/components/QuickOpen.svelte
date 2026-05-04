@@ -432,6 +432,10 @@
           class="search-input"
           placeholder="Search files..."
           autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+          name="quickopen-nofill"
           bind:value={query}
           bind:this={inputRef}
           oninput={handleInput}

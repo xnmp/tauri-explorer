@@ -192,6 +192,10 @@
           class="search-input"
           placeholder="Type a command..."
           autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+          name="cmdpalette-nofill"
           bind:value={query}
           bind:this={inputRef}
           oninput={handleInput}

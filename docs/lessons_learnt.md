@@ -4,6 +4,17 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## perf/marquee-selection-remaining-lag: Eliminate remaining marquee selection lag sources
+
+**Key takeaways:**
+- **Double rAF pipeline**: FileList had its own `requestAnimationFrame` wrapper around the composable's rAF-batched `move()`. Fix: add an `onFlush` callback to the composable's `move()` so the selection update runs inside the same rAF frame — one pipeline instead of two.
+- **Forced layout per mousemove**: `getBoundingClientRect()` was called on every `mousemove` during drag. Fix: cache the rect at drag-start and refresh it only on `ResizeObserver` events.
+- **Index-level dedup**: `selectByIndices` was called every frame even when the covered items hadn't changed. Fix: cache the last indices array and skip the call when identical.
+- **Svelte 5 reactive Set gotcha**: In-place `Set.add()`/`.delete()` on a `$state` Set creates fine-grained `.has()` subscriptions on a specific proxy instance. If you later replace the entire Set (`state = new Set()`), those subscriptions become orphaned — the old proxy's `.has()` stops updating but components still read from it. Stick with full Set replacement + identity checks, not mixed mutation strategies.
+- **macOS Ctrl+click**: `Ctrl+click` is intercepted by macOS as right-click (context menu). E2E tests using `{ modifiers: ["Control"] }` for multi-select must use `"Meta"` on macOS. Fix: platform-aware `MULTI_SELECT_MODIFIER` constant in test helpers.
+
+---
+
 ## perf/marquee-selection-raf-throttle: Coalesce high-frequency pointer events to display refresh rate
 
 **Key takeaways:**

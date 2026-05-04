@@ -4,6 +4,16 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/marquee-zoom-hit-test: CSS zoom breaks coordinate math when mixing viewport and container-relative spaces
+
+  **Key takeaways:**
+  - `clientX` and `getBoundingClientRect().left` are both in viewport pixels. To get a container-relative position in CSS space under zoom, subtract
+  first then divide: `(clientX - rect.left) / zoom`. The wrong order (`clientX / zoom - rect.left`) shifts the result left at zoom > 1.
+  - Clamp bounds from `getBoundingClientRect()` (`.width`, `.height`) are also in viewport pixels — divide by zoom to get CSS-space bounds.
+  - When converting CSS-space marquee coordinates back to viewport for DOM hit-testing (`getBoundingClientRect()` rects), multiply by zoom:
+  `marqueeRect.left * zoom + containerRect.left`.
+  - At zoom = 1 the bug is invisible since all transforms are identity. Always test selection features at a non-default zoom level.
+
 ## perf/marquee-selection-remaining-lag: Eliminate remaining marquee selection lag sources
 
 **Key takeaways:**

@@ -129,4 +129,54 @@ describe("marquee rAF batching", () => {
     expect(harness.caf).toHaveBeenCalled();
     expect(harness.pendingCount()).toBe(0);
   });
+
+  it("calls onFlush after committing dragCurrent", () => {
+    const marquee = useMarqueeSelection({ headerHeight: 0 });
+    marquee.start(makeBackgroundStart(), makeRect(), 0);
+
+    const flush = vi.fn(() => {
+      // At the time onFlush runs, marqueeRect must reflect the latest move
+      expect(marquee.marqueeRect).toEqual({ left: 10, top: 10, width: 290, height: 340 });
+    });
+
+    marquee.move(makeMouseEvent(300, 350), makeRect(), 0, flush);
+    expect(flush).not.toHaveBeenCalled();
+
+    harness.flushFrame();
+    expect(flush).toHaveBeenCalledOnce();
+  });
+
+  it("calls only the last onFlush when moves coalesce", () => {
+    const marquee = useMarqueeSelection();
+    marquee.start(makeBackgroundStart(), makeRect());
+
+    const flushA = vi.fn();
+    const flushB = vi.fn();
+    const flushC = vi.fn();
+
+    marquee.move(makeMouseEvent(50, 50), makeRect(), undefined, flushA);
+    marquee.move(makeMouseEvent(100, 100), makeRect(), undefined, flushB);
+    marquee.move(makeMouseEvent(150, 150), makeRect(), undefined, flushC);
+
+    harness.flushFrame();
+
+    expect(flushA).not.toHaveBeenCalled();
+    expect(flushB).not.toHaveBeenCalled();
+    expect(flushC).toHaveBeenCalledOnce();
+  });
+
+  it("does not call onFlush if end() cancels the pending rAF", () => {
+    const marquee = useMarqueeSelection();
+    marquee.start(makeBackgroundStart(), makeRect());
+
+    const flush = vi.fn();
+    marquee.move(makeMouseEvent(100, 100), makeRect(), undefined, flush);
+
+    expect(harness.pendingCount()).toBe(1);
+
+    marquee.end();
+
+    expect(harness.pendingCount()).toBe(0);
+    expect(flush).not.toHaveBeenCalled();
+  });
 });

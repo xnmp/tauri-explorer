@@ -41,10 +41,18 @@
   // Track content width for ListView auto columns
   let contentWidth = $state(0);
 
+  // Cached container rect for the duration of a marquee drag (avoids forced layout per mousemove)
+  let cachedDragRect: DOMRect | null = null;
+  // Cached marquee indices to skip redundant selectByIndices calls when the covered items haven't changed
+  let lastMarqueeIndices: number[] | null = null;
+
   $effect(() => {
     if (!contentRef) return;
     const observer = new ResizeObserver((entries) => {
       contentWidth = entries[0]?.contentRect.width ?? 0;
+      if (cachedDragRect) {
+        cachedDragRect = contentRef!.getBoundingClientRect();
+      }
     });
     observer.observe(contentRef);
     return () => observer.disconnect();
@@ -150,33 +158,30 @@
   function handleMarqueeStart(event: MouseEvent): void {
     const rect = contentRef?.getBoundingClientRect();
     if (!rect) return;
+    cachedDragRect = rect;
     marquee.start(event, rect, marqueeHeaderHeight());
   }
 
-  // RAF-throttled marquee selection to avoid layout thrashing in tiles/list views
-  let marqueeRafId: number | null = null;
-
   function handleMarqueeMove(event: MouseEvent): void {
-    const rect = contentRef?.getBoundingClientRect();
-    if (!rect) return;
-    if (!marquee.move(event, rect, marqueeHeaderHeight())) return;
-    if (marqueeRafId === null) {
-      marqueeRafId = requestAnimationFrame(() => {
-        marqueeRafId = null;
-        updateMarqueeSelection();
-      });
-    }
+    if (!cachedDragRect) return;
+    marquee.move(event, cachedDragRect, marqueeHeaderHeight(), updateMarqueeSelection);
   }
 
   function handleMarqueeEnd(): void {
-    if (marqueeRafId !== null) {
-      cancelAnimationFrame(marqueeRafId);
-      marqueeRafId = null;
-    }
     if (marquee.isDragging) {
       updateMarqueeSelection();
     }
     marquee.end();
+    cachedDragRect = null;
+    lastMarqueeIndices = null;
+  }
+
+  function indicesEqual(a: number[], b: number[] | null): boolean {
+    if (!b || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
   }
 
   function updateMarqueeSelection(): void {
@@ -191,6 +196,8 @@
       const scrollTop = contentRef.querySelector('.virtual-viewport')?.scrollTop ?? 0;
       indices = marquee.getSelectedIndices(scrollTop, explorer.displayEntries.length);
     }
+    if (indicesEqual(indices, lastMarqueeIndices)) return;
+    lastMarqueeIndices = indices;
     explorer.selectByIndices(indices, marquee.ctrlKeyHeld);
   }
 

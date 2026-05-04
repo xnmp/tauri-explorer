@@ -47,7 +47,7 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
   // rAF-batched pointer updates: mousemove can fire 200+ Hz, but the rubber-band
   // only needs to repaint at the display refresh rate. Coalescing caps the reactive
   // chain (dragCurrent → marqueeRect → DOM style) to one update per frame.
-  let pendingMove: { clientX: number; clientY: number; rect: DOMRect; headerHeight?: number } | null = null;
+  let pendingMove: { clientX: number; clientY: number; rect: DOMRect; headerHeight?: number; onFlush?: () => void } | null = null;
   let moveRafId: number | null = null;
 
   const marqueeRect = $derived.by((): MarqueeRect | null => {
@@ -94,7 +94,7 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
       pendingMove = null;
       return;
     }
-    const { clientX, clientY, rect, headerHeight } = pendingMove;
+    const { clientX, clientY, rect, headerHeight, onFlush } = pendingMove;
     pendingMove = null;
     const zoom = getZoomFactor();
     const minY = headerHeight ?? config.headerHeight;
@@ -102,9 +102,10 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
       x: Math.max(0, Math.min(clientX / zoom - rect.left, rect.width)),
       y: Math.max(minY, Math.min(clientY / zoom - rect.top, rect.height)),
     };
+    onFlush?.();
   }
 
-  function move(event: MouseEvent, containerRect: DOMRect, headerHeight?: number): boolean {
+  function move(event: MouseEvent, containerRect: DOMRect, headerHeight?: number, onFlush?: () => void): boolean {
     if (!isDragging) return false;
 
     // Safety net: if mouse button was released but we missed the mouseup
@@ -119,6 +120,7 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
       clientY: event.clientY,
       rect: containerRect,
       headerHeight,
+      onFlush,
     };
     if (moveRafId === null) {
       moveRafId = requestAnimationFrame(flushPendingMove);

@@ -350,12 +350,15 @@ function createExplorerState(seed?: ExplorerSeed) {
   }
 
   function selectByIndices(indices: number[], addToSelection: boolean = false) {
-    coreState.selectedPaths = selection.selectByIndices(
+    const nextSet = selection.selectByIndices(
       displayEntries,
       indices,
       coreState.selectedPaths,
-      addToSelection
+      addToSelection,
     );
+    // selection.selectByIndices returns the same reference when nothing changed
+    if (nextSet === coreState.selectedPaths) return;
+    coreState.selectedPaths = nextSet;
   }
 
   function selectAll() {

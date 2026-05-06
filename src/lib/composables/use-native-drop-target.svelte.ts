@@ -23,8 +23,7 @@ function adjustForZoom(pos: { x: number; y: number }): { x: number; y: number } 
 }
 
 export function adjustForPointerZoom(pos: { x: number; y: number }): { x: number; y: number } {
-  const zoom = settingsStore.zoomLevel / 100;
-  return { x: pos.x / zoom, y: pos.y / zoom };
+  return pos;
 }
 
 function resolveFromElement(el: Element | null): DropTargetResult {

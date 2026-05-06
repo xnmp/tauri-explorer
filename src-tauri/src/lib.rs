@@ -255,6 +255,7 @@ pub fn run(launch_dir: Option<String>) {
             .title("tauri-explorer")
             .inner_size(1200.0, 800.0)
             .decorations(cfg!(target_os = "macos"))
+            .accept_first_mouse(true)
             .initialization_script(&init_script)
             .build()?;
 

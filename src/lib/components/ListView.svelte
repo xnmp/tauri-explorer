@@ -9,7 +9,10 @@
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
   import { useItemInteractions, isInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
+  import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { getFileIconColor } from "$lib/domain/file-types";
+
+  const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
   import FileIcon from "./FileIcon.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
   import InlineNewFolder from "./InlineNewFolder.svelte";
@@ -33,6 +36,8 @@
     getPaneNav: () => paneNav,
     selectOnContextMenu: true,
   });
+
+  const pointerDrag = isMac ? usePointerDrag({ getExplorer: () => explorer, getPaneNav: () => paneNav }) : null;
 
   // Compute effective list column count (auto or fixed)
   const effectiveListColumns = $derived.by(() => {
@@ -63,21 +68,23 @@
   {#each explorer.displayEntries as entry (entry.path)}
     <button
       class="list-item entry-item"
+      data-path={entry.path}
       class:directory={entry.kind === "directory"}
       class:selected={explorer.isSelected(entry)}
       class:cut={isClipboardCut(entry)}
       class:in-clipboard={isInClipboard(entry)}
       class:drop-target={interactions.isDropTarget(entry.path)}
       class:copy-drop={interactions.isCopyDrop(entry.path)}
-      draggable="true"
+      draggable={!isMac}
       onclick={(e) => onitemclick(entry, e)}
       ondblclick={() => onitemdblclick(entry)}
       oncontextmenu={(e) => interactions.handleContextMenu(e, entry)}
-      ondragstart={(e) => interactions.handleDragStart(e, entry, explorer.isSelected(entry))}
-      ondragend={interactions.handleDragEnd}
+      ondragstart={!isMac ? (e) => interactions.handleDragStart(e, entry, explorer.isSelected(entry)) : undefined}
+      ondragend={!isMac ? interactions.handleDragEnd : undefined}
       ondragover={(e) => interactions.handleDragOver(e, entry)}
       ondragleave={() => interactions.handleDragLeave(entry)}
       ondrop={(e) => interactions.handleDrop(e, entry)}
+      onmousedown={isMac ? (e) => { e.stopPropagation(); pointerDrag!.handlePointerDown(e, entry, explorer.isSelected(entry)); } : undefined}
     >
       <span class="list-icon" style:color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined}>
         <FileIcon {entry} size="small" />

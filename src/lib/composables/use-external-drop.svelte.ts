@@ -4,6 +4,9 @@
  *
  * Uses Tauri's webview onDragDropEvent API to receive files
  * dropped from external applications (like the system file manager).
+ *
+ * On macOS, this also handles "self-drops" where the native drag
+ * session (started by tauri-plugin-drag) drops back onto the same window.
  */
 
 import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -14,13 +17,17 @@ export interface ExternalDropState {
   dropPosition: { x: number; y: number } | null;
 }
 
-export type DropHandler = (paths: string[], position: { x: number; y: number }) => void;
+export interface ExternalDropCallbacks {
+  onDrop: (paths: string[], position: { x: number; y: number }) => void;
+  onOver?: (position: { x: number; y: number }) => void;
+  onLeave?: () => void;
+}
 
 /**
  * Create external drop handling for the app.
  * Call this once at the app level.
  */
-export function useExternalDrop(onDrop: DropHandler) {
+export function useExternalDrop(callbacks: ExternalDropCallbacks) {
   let state = $state<ExternalDropState>({
     isDragging: false,
     dropPosition: null,
@@ -36,6 +43,7 @@ export function useExternalDrop(onDrop: DropHandler) {
         if (eventType === "over") {
           state.isDragging = true;
           state.dropPosition = event.payload.position;
+          callbacks.onOver?.(event.payload.position);
         } else if (eventType === "drop") {
           state.isDragging = false;
 
@@ -43,19 +51,19 @@ export function useExternalDrop(onDrop: DropHandler) {
           const position = event.payload.position;
 
           if (paths && paths.length > 0) {
-            onDrop(paths, position);
+            callbacks.onDrop(paths, position);
           }
 
           state.dropPosition = null;
+          callbacks.onLeave?.();
         } else {
-          // Handle leave/cancelled events
           state.isDragging = false;
           state.dropPosition = null;
+          callbacks.onLeave?.();
         }
       });
     } catch (err) {
-      // WebView API may not be available in dev/browser mode
-      console.warn("External drop not available:", err);
+      // Expected when running outside Tauri (dev server, tests)
     }
   }
 

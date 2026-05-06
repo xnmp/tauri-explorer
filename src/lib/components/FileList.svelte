@@ -206,7 +206,8 @@
   // ===================
 
   function handleListDragOver(event: DragEvent): void {
-    if (!event.dataTransfer?.types.includes("application/x-explorer-path") && !dragState.readCrossWindow()) return;
+    const types = event.dataTransfer?.types;
+    if (!types?.includes("application/x-explorer-path") && !types?.includes("Files") && !dragState.readCrossWindow()) return;
 
     const target = event.target as HTMLElement;
     if (target.closest(".file-item")) return;
@@ -242,6 +243,7 @@
     if (validPaths.length === 0) return;
 
     event.preventDefault();
+    dragState.clear();
 
     const existingNames = new Set(explorer.displayEntries.map((e) => e.name));
     for (const sourcePath of validPaths) {
@@ -270,6 +272,7 @@
   <div
     class="content"
     class:drop-target={isDropTarget}
+    data-current-path={explorer.currentPath}
     bind:this={contentRef}
     onmousedown={handleMarqueeStart}
     ondragover={handleListDragOver}

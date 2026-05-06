@@ -14,14 +14,20 @@ interface DropTargetDeps {
 }
 
 export function useDropTarget(deps: DropTargetDeps) {
+  const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
   let dropTargets = $state<Record<string, boolean>>({});
   let copyDropTargets = $state<Record<string, boolean>>({});
 
+  function isCopyModifier(event: DragEvent | MouseEvent): boolean {
+    return isMac ? event.altKey : event.ctrlKey;
+  }
+
   function handleDragOver(event: DragEvent, entry: FileEntry): void {
     if (entry.kind !== "directory") return;
-    if (!event.dataTransfer?.types.includes("application/x-explorer-path") && !dragState.readCrossWindow()) return;
+    const types = event.dataTransfer?.types;
+    if (!types?.includes("application/x-explorer-path") && !types?.includes("Files") && !dragState.readCrossWindow()) return;
     event.preventDefault();
-    const copying = event.ctrlKey;
+    const copying = isCopyModifier(event);
     if (event.dataTransfer) event.dataTransfer.dropEffect = copying ? "copy" : "move";
     dropTargets[entry.path] = true;
     copyDropTargets[entry.path] = copying;
@@ -42,10 +48,12 @@ export function useDropTarget(deps: DropTargetDeps) {
     const sourcePaths = getDropSourcePaths(event.dataTransfer);
     if (sourcePaths.length === 0) return;
 
+    dragState.clear();
+
     for (const sourcePath of sourcePaths) {
       if (sourcePath === entry.path) continue;
       if (entry.path.startsWith(sourcePath + "/")) continue;
-      await handleFileDrop(sourcePath, entry.path, event.ctrlKey, {
+      await handleFileDrop(sourcePath, entry.path, isCopyModifier(event), {
         onRefresh: deps.onRefresh,
       });
     }

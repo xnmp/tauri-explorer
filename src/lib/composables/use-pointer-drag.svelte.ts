@@ -42,7 +42,12 @@ export function usePointerDrag(deps: PointerDragDeps) {
     else deps.getExplorer().refresh({ silent: true });
   }
 
-  function handlePointerDown(event: PointerEvent, entry: FileEntry, isSelected: boolean): void {
+  function handlePointerDown(event: MouseEvent, entry: FileEntry, isSelected: boolean): void {
+    console.debug("[pointer-drag] handlePointerDown ENTRY", {
+      button: event.button,
+      type: event.type,
+      target: (event.target as HTMLElement)?.tagName,
+    });
     if (event.button !== 0) return;
 
     const explorer = deps.getExplorer();

@@ -161,8 +161,7 @@
       ondragover={(e) => interactions.handleDragOver(e, entry)}
       ondragleave={() => interactions.handleDragLeave(entry)}
       ondrop={(e) => interactions.handleDrop(e, entry)}
-      onpointerdown={isMac ? (e) => pointerDrag!.handlePointerDown(e, entry, explorer.isSelected(entry)) : undefined}
-      onmousedown={isMac ? (e) => e.stopPropagation() : undefined}
+      onmousedown={isMac ? (e) => { e.stopPropagation(); pointerDrag!.handlePointerDown(e, entry, explorer.isSelected(entry)); } : undefined}
     >
       <div class="tile-icon" style:color={iconColor}>
         {#if isImageFile(entry)}

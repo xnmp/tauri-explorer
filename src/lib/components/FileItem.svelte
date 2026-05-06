@@ -88,8 +88,7 @@
   ondragover={(e) => interactions.handleDragOver(e, entry)}
   ondragleave={() => interactions.handleDragLeave(entry)}
   ondrop={(e) => interactions.handleDrop(e, entry)}
-  onpointerdown={isMac ? (e) => pointerDrag!.handlePointerDown(e, entry, selected) : undefined}
-  onmousedown={isMac ? (e) => e.stopPropagation() : undefined}
+  onmousedown={isMac ? (e) => { e.stopPropagation(); pointerDrag!.handlePointerDown(e, entry, selected); } : undefined}
 >
   <!-- Name column -->
   <div class="name-cell">

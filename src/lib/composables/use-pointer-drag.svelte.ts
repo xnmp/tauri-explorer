@@ -2,8 +2,12 @@
  * Pointer-event-based drag for macOS.
  *
  * On macOS, native NSDraggingSession (startExternalDrag) kills HTML5 DnD events.
- * This composable uses pointer events for same-window drag and triggers native
+ * This composable uses mouse events for same-window drag and triggers native
  * drag only when the cursor exits the window bounds (for external/cross-window).
+ *
+ * Uses mousemove/mouseup on window (not pointer events with capture) because
+ * implicit mouse capture in browsers reliably delivers events and accurate
+ * coordinates even after the cursor leaves the viewport.
  */
 
 import type { FileEntry } from "$lib/domain/file";
@@ -30,8 +34,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
   let startX = 0;
   let startY = 0;
   let ghostEl: HTMLElement | null = null;
-  let capturedTarget: HTMLElement | null = null;
-  let pointerId: number | null = null;
+  let entryData: { path: string; name: string; kind: string; paths?: string[] } | null = null;
 
   function refreshPanes(): void {
     const paneNav = deps.getPaneNav();
@@ -50,33 +53,25 @@ export function usePointerDrag(deps: PointerDragDeps) {
     startX = event.clientX;
     startY = event.clientY;
     dragActive = false;
-    pointerId = event.pointerId;
-    capturedTarget = event.currentTarget as HTMLElement;
+    nativeStarted = false;
+    entryData = { path: entry.path, name: entry.name, kind: entry.kind, paths: isMulti ? dragPaths : undefined };
 
-    try { capturedTarget.setPointerCapture(event.pointerId); } catch {}
-
-    const entryData = { path: entry.path, name: entry.name, kind: entry.kind, paths: isMulti ? dragPaths : undefined };
-
-    document.addEventListener("pointermove", onPointerMove);
-    document.addEventListener("pointerup", onPointerUp);
-    document.addEventListener("pointercancel", onCancel);
-    document.addEventListener("keydown", onKeyDown);
-    document.documentElement.addEventListener("pointerleave", onPointerLeave);
+    // Use mousemove/mouseup on window — implicit mouse capture ensures events
+    // keep firing (with accurate coordinates) even after cursor leaves the viewport.
+    window.addEventListener("mousemove", onMouseMove, true);
+    window.addEventListener("mouseup", onMouseUp, true);
+    window.addEventListener("keydown", onKeyDown);
     window.addEventListener("blur", onCancel);
-
-    // Store entry data for use when threshold is met
-    (onPointerMove as any)._entryData = entryData;
   }
 
-  function onPointerMove(event: PointerEvent): void {
+  function onMouseMove(event: MouseEvent): void {
     const dx = event.clientX - startX;
     const dy = event.clientY - startY;
 
     if (!dragActive) {
       if (Math.sqrt(dx * dx + dy * dy) < THRESHOLD_PX) return;
       dragActive = true;
-      const entryData = (onPointerMove as any)._entryData;
-      dragState.start(entryData);
+      dragState.start(entryData!);
       ghostEl = createGhost(dragPaths);
     }
 
@@ -85,12 +80,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
     ghostEl!.style.top = `${(event.clientY + 12) / zoom}px`;
 
     // Exit window → hand off to native drag for external/cross-window.
-    // With pointer capture, coords clamp to viewport bounds when pointer exits.
-    // Log edge hits for debugging
-    if (event.clientX <= 0 || event.clientX >= window.innerWidth - 1 ||
-        event.clientY <= 0 || event.clientY >= window.innerHeight - 1) {
-      console.debug("[pointer-drag] edge hit:", event.clientX, event.clientY, "viewport:", window.innerWidth, window.innerHeight);
-    }
+    // With implicit mouse capture, clientX/Y extends beyond viewport bounds.
     if (
       !nativeStarted && (
         event.clientX <= 0 ||
@@ -109,40 +99,23 @@ export function usePointerDrag(deps: PointerDragDeps) {
     }
   }
 
-  function onPointerLeave(_event: PointerEvent): void {
-    if (!dragActive || nativeStarted) return;
-    nativeStarted = true;
-    startNativeDrag();
-  }
-
   function startNativeDrag(): void {
     clearHighlights();
-    // Release pointer capture so OS can take over the mouse gesture
-    if (capturedTarget && pointerId !== null) {
-      try { capturedTarget.releasePointerCapture(pointerId); } catch {}
-    }
-    // Remove listeners so no more pointer events fire during native drag
-    document.removeEventListener("pointermove", onPointerMove);
-    document.removeEventListener("pointerup", onPointerUp);
-    document.removeEventListener("pointercancel", onCancel);
-    document.removeEventListener("keydown", onKeyDown);
-    document.documentElement.removeEventListener("pointerleave", onPointerLeave);
-    window.removeEventListener("blur", onCancel);
+    removeListeners();
     if (ghostEl) {
       ghostEl.remove();
       ghostEl = null;
     }
-    // Start native drag — dragState is intentionally NOT cleared so cross-window
+    // Start native drag — dragState intentionally NOT cleared so cross-window
     // target can detect this as an internal source via dragState.current
     const paths = [...dragPaths];
     dragActive = false;
     dragPaths = [];
-    capturedTarget = null;
-    pointerId = null;
+    entryData = null;
     void startExternalDrag(paths);
   }
 
-  async function onPointerUp(event: PointerEvent): Promise<void> {
+  async function onMouseUp(event: MouseEvent): Promise<void> {
     if (!dragActive) {
       cleanup(false);
       return;
@@ -195,29 +168,24 @@ export function usePointerDrag(deps: PointerDragDeps) {
     cleanup(true);
   }
 
-  function cleanup(clearDrag: boolean): void {
-    document.removeEventListener("pointermove", onPointerMove);
-    document.removeEventListener("pointerup", onPointerUp);
-    document.removeEventListener("pointercancel", onCancel);
-    document.removeEventListener("keydown", onKeyDown);
-    document.documentElement.removeEventListener("pointerleave", onPointerLeave);
+  function removeListeners(): void {
+    window.removeEventListener("mousemove", onMouseMove, true);
+    window.removeEventListener("mouseup", onMouseUp, true);
+    window.removeEventListener("keydown", onKeyDown);
     window.removeEventListener("blur", onCancel);
+  }
 
+  function cleanup(clearDrag: boolean): void {
+    removeListeners();
     if (ghostEl) {
       ghostEl.remove();
       ghostEl = null;
     }
-
-    if (capturedTarget && pointerId !== null) {
-      try { capturedTarget.releasePointerCapture(pointerId); } catch {}
-    }
-
     if (clearDrag) dragState.clear();
     dragActive = false;
     nativeStarted = false;
     dragPaths = [];
-    capturedTarget = null;
-    pointerId = null;
+    entryData = null;
   }
 
   return { handlePointerDown };

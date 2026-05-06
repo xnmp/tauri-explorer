@@ -14,6 +14,9 @@
   import { settingsStore } from "$lib/state/settings.svelte";
   import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
   import { useItemInteractions, isInClipboard as checkInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
+  import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
+
+  const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
 
   interface Props {
     entry: FileEntry;
@@ -33,6 +36,8 @@
     getExplorer: () => explorer,
     getPaneNav: () => paneNav,
   });
+
+  const pointerDrag = isMac ? usePointerDrag({ getExplorer: () => explorer, getPaneNav: () => paneNav }) : null;
 
   // Inline rename composable
   const rename = useInlineRename(() => explorer);
@@ -66,6 +71,7 @@
 
 <button
   class="file-item entry-item"
+  data-path={entry.path}
   class:directory={entry.kind === "directory"}
   class:hidden-entry={entry.name.startsWith(".")}
   class:cut={isCut}
@@ -76,12 +82,14 @@
   onclick={handleClick}
   ondblclick={handleDoubleClick}
   oncontextmenu={(e) => interactions.handleContextMenu(e, entry)}
-  draggable="true"
-  ondragstart={(e) => interactions.handleDragStart(e, entry, selected)}
-  ondragend={interactions.handleDragEnd}
+  draggable={!isMac}
+  ondragstart={!isMac ? (e) => interactions.handleDragStart(e, entry, selected) : undefined}
+  ondragend={!isMac ? interactions.handleDragEnd : undefined}
   ondragover={(e) => interactions.handleDragOver(e, entry)}
   ondragleave={() => interactions.handleDragLeave(entry)}
   ondrop={(e) => interactions.handleDrop(e, entry)}
+  onpointerdown={isMac ? (e) => pointerDrag!.handlePointerDown(e, entry, selected) : undefined}
+  onmousedown={isMac ? (e) => e.stopPropagation() : undefined}
 >
   <!-- Name column -->
   <div class="name-cell">

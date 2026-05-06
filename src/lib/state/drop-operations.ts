@@ -41,7 +41,7 @@ export function getDropSourcePaths(dataTransfer: DataTransfer): string[] {
       if (Array.isArray(parsed) && parsed.length > 0) return parsed;
     } catch { /* ignore parse errors */ }
   }
-  // Check dragState for multi-paths
+  // Check dragState for multi-paths (cross-window internal drags)
   const crossWindow = dragState.readCrossWindow();
   if (crossWindow?.paths && crossWindow.paths.length > 0) return crossWindow.paths;
 

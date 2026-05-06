@@ -154,10 +154,10 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
    * @param scrollTop Current scroll position of the container
    * @param totalItems Total number of items in the list
    */
-  function getSelectedIndices(scrollTop: number, totalItems: number): number[] {
+  function getSelectedIndices(scrollTop: number, totalItems: number, headerHeight?: number): number[] {
     if (!marqueeRect) return [];
 
-    const marqueeTop = marqueeRect.top + scrollTop - config.headerHeight;
+    const marqueeTop = marqueeRect.top + scrollTop - (headerHeight ?? config.headerHeight);
     const marqueeBottom = marqueeTop + marqueeRect.height;
 
     const startIndex = Math.max(0, Math.floor(marqueeTop / config.itemHeight));

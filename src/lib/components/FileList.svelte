@@ -13,6 +13,7 @@
   import { useMarqueeSelection } from "$lib/composables/use-marquee-selection.svelte";
   import { useTypeAhead } from "$lib/composables/use-type-ahead.svelte";
   import { isImageFile } from "$lib/domain/file-types";
+  import { getZoomFactor } from "$lib/domain/zoom";
   import DetailsView from "./DetailsView.svelte";
   import ListView from "./ListView.svelte";
   import TilesView from "./TilesView.svelte";
@@ -150,9 +151,12 @@
   // Marquee selection
   // ===================
 
-  /** Header height for marquee clamping: 32px for details (column headers), 0 for list/tiles */
+  /** Header height for marquee clamping: measured from DOM for details view, 0 for list/tiles */
   function marqueeHeaderHeight(): number {
-    return explorer.viewMode === "details" ? 32 : 0;
+    if (explorer.viewMode !== "details") return 0;
+    const header = contentRef?.querySelector(".column-headers");
+    if (!header) return 32;
+    return header.getBoundingClientRect().height / getZoomFactor();
   }
 
   function handleMarqueeStart(event: MouseEvent): void {
@@ -194,7 +198,7 @@
       indices = marquee.getSelectedIndicesFromDOM(contentRef, ".list-item");
     } else {
       const scrollTop = contentRef.querySelector('.virtual-viewport')?.scrollTop ?? 0;
-      indices = marquee.getSelectedIndices(scrollTop, explorer.displayEntries.length);
+      indices = marquee.getSelectedIndices(scrollTop, explorer.displayEntries.length, marqueeHeaderHeight());
     }
     if (indicesEqual(indices, lastMarqueeIndices)) return;
     lastMarqueeIndices = indices;

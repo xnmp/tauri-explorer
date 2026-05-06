@@ -37,6 +37,7 @@ function openNewWindow(path: string, viewMode?: ViewMode): void {
     transparent: !isMac,
     shadow: isMac,
     dragDropEnabled: true,
+    acceptFirstMouse: true,
   });
 }
 

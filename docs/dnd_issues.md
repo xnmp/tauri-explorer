@@ -148,17 +148,83 @@ function adjustForPointerZoom(pos) { return { x: pos.x / zoom, y: pos.y / zoom }
 
 ---
 
+## Issue 11: WKWebView Swallows pointerdown After Native Drag-Drop
+
+**Symptom:** After a cross-window native drag completes, the next click on a file item in the destination window doesn't initiate a drag. A "warm-up" click is needed first.
+
+**Root cause:** After a native `NSDraggingSession` drop event is processed by WKWebView, the webview does NOT deliver `pointerdown` for the next mouse interaction. It DOES deliver `mousedown`, `mouseup`, and `click` — but `pointerdown` is silently swallowed.
+
+**Diagnosis:** Capture-phase event listeners on `window` revealed:
+- `mousedown` fires with `documentFocused: false` (focus-click)
+- `pointerdown` is completely absent
+- Subsequent interactions deliver both `mousedown` and `pointerdown` normally
+
+**Fix:** Changed drag initiation from `onpointerdown` to `onmousedown` on Mac. Combined with the existing `stopPropagation()` call (for marquee prevention):
+```svelte
+onmousedown={isMac ? (e) => { e.stopPropagation(); pointerDrag.handlePointerDown(e, entry, selected); } : undefined}
+```
+
+**Files:** `FileItem.svelte`, `ListView.svelte`, `TilesView.svelte`, `use-pointer-drag.svelte.ts`
+
+---
+
+## Issue 12: Global listen vs Webview-Scoped onDragDropEvent
+
+**Symptom:** Attempted to fix child window Finder drops by switching from `getCurrentWebview().onDragDropEvent()` to global `listen(TauriEvent.DRAG_DROP)`. Result: all windows highlight simultaneously during drag-over, and drop targets are offset by ~500px.
+
+**Root cause (dual highlights):** Global `listen` delivers events to ALL windows, not just the one being hovered.
+
+**Root cause (offset):** `onDragDropEvent` provides positions as `PhysicalPosition` (logical pixels × DPR). Global `listen` (and `getCurrentWindow().listen`) provides positions in logical pixels directly. Downstream code (`adjustForZoom`) divided by DPR, producing coordinates that were too small (upper-left offset).
+
+**Resolution:** Reverted to `onDragDropEvent`. It works correctly for the main window. Child window Finder drops remain an open issue (low priority — internal drags work via pointer-drag + dragState).
+
+**Key learning:** Don't switch event listener scoping without verifying the coordinate space of the payload. The same event name (`tauri://drag-drop`) has different position semantics depending on the listener scope.
+
+**File:** `src/lib/composables/use-external-drop.svelte.ts`
+
+---
+
+## Issue 13: DevTools Panel Causes Drop Position Inaccuracy
+
+**Symptom:** Drop targets resolve to wrong elements when the WebView inspector (DevTools) is open.
+
+**Root cause:** Known Tauri limitation, documented in `onDragDropEvent` API:
+> "When the debugger panel is open, the drop position of this event may be inaccurate due to a known limitation. To retrieve the correct drop position, please detach the debugger."
+
+The native drag position is calculated from window geometry, which changes when DevTools opens, but the position calculation doesn't account for this.
+
+**Fix:** None needed — close DevTools when testing drop positioning. Not a bug in app code.
+
+**Source:** `node_modules/@tauri-apps/api/webview.d.ts` lines 407-408.
+
+---
+
+## Issue 14: Unfocused Window Doesn't Deliver First Click
+
+**Symptom:** Clicking a file in an unfocused window only focuses the window — doesn't select the file or allow drag initiation.
+
+**Root cause:** macOS default behavior. `acceptsFirstMouse` on NSView defaults to `NO`, meaning the first click on an unfocused window is consumed by the window manager for focus activation and not delivered to the view content.
+
+**Fix:** Tauri exposes `accept_first_mouse` on the WebviewWindow builder (and in `tauri.conf.json`). Setting to `true` delivers the focus-click to the webview, enabling immediate interaction (like Finder).
+
+**Status:** Implementing.
+
+**File:** `src-tauri/src/lib.rs` (`.accept_first_mouse(true)`)
+
+---
+
 ## Summary of Current State
 
 | Scenario | Status |
 |----------|--------|
 | Same-pane drag onto folder | Working |
 | Cross-pane drag | Working |
-| Drag out to Finder/VSCode/Chrome | Working (when exit detected) |
-| Exit detection reliability | Fixed (mousemove approach) — needs testing |
-| Cross-window drag (main → child) | Partially working (HTML5 DnD + dragState) |
-| Finder drops on main window | Needs fix (global listen) |
-| Finder drops on child windows | Needs fix (global listen + dragDropEnabled: true) |
+| Drag out to Finder/VSCode/Chrome | Working |
+| Exit detection | Working (mousemove + implicit capture) |
+| Cross-window drag (main → child) | Working (native drag + dragState) |
+| Finder drops on main window | Working (onDragDropEvent) |
+| Finder drops on child windows | Not working (onDragDropEvent scoping bug) |
+| Drag from unfocused window | Implementing (accept_first_mouse) |
 | Escape cancels drag | Working |
 | Option+drop = copy | Working |
 
@@ -166,7 +232,7 @@ function adjustForPointerZoom(pos) { return { x: pos.x / zoom, y: pos.y / zoom }
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    pointerdown on item                    │
+│                    mousedown on item                      │
 │                           │                              │
 │                    ┌──────┴──────┐                       │
 │                    │ < 5px move? │                       │

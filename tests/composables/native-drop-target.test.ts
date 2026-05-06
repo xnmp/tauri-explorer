@@ -183,17 +183,17 @@ describe("pointer-zoom variants", () => {
     clearHighlights();
   });
 
-  it("adjustForPointerZoom only divides by zoom (not DPR)", async () => {
+  it("adjustForPointerZoom passes coordinates through unchanged", async () => {
     const settings = await import("$lib/state/settings.svelte");
     (settings.settingsStore as any).zoomLevel = 200;
 
     const result = adjustForPointerZoom({ x: 400, y: 600 });
-    expect(result).toEqual({ x: 200, y: 300 });
+    expect(result).toEqual({ x: 400, y: 600 });
 
     (settings.settingsStore as any).zoomLevel = 100;
   });
 
-  it("resolveDropTargetAtPoint uses pointer zoom (no DPR)", async () => {
+  it("resolveDropTargetAtPoint uses raw pointer coordinates", async () => {
     const el = makeElement("entry-item directory", { "data-path": "/docs" });
     const mockFn = vi.fn().mockReturnValue(el);
     vi.stubGlobal("document", { elementFromPoint: mockFn });
@@ -202,8 +202,7 @@ describe("pointer-zoom variants", () => {
     (settings.settingsStore as any).zoomLevel = 150;
 
     const result = resolveDropTargetAtPoint(300, 450);
-    // 300 / 1.5 = 200, 450 / 1.5 = 300 (no DPR division)
-    expect(mockFn).toHaveBeenCalledWith(200, 300);
+    expect(mockFn).toHaveBeenCalledWith(300, 450);
     expect(result).toEqual({ type: "folder", path: "/docs" });
 
     (settings.settingsStore as any).zoomLevel = 100;

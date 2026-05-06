@@ -131,37 +131,22 @@ pub async fn open_image_with_siblings(path: String) -> Result<(), AppError> {
 /// Spawn a terminal emulator at the given directory, using the correct
 /// arguments for each known terminal. Returns true on success.
 fn try_spawn_terminal(term: &str, dir: &std::path::Path) -> bool {
-    // Extract just the binary name for matching (handles full paths like /usr/bin/kitty)
-    let bin = std::path::Path::new(term)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(term);
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .args(["-a", term])
+            .arg(dir)
+            .spawn()
+            .is_ok()
+    }
 
-    let result = match bin {
-        // ghostty and gnome-terminal use --working-directory=PATH (= syntax)
-        "ghostty" | "gnome-terminal" => std::process::Command::new(term)
-            .arg(format!("--working-directory={}", dir.display()))
-            .spawn(),
-        // kitty uses --directory
-        "kitty" => std::process::Command::new(term)
-            .arg("--directory")
-            .arg(dir)
-            .spawn(),
-        // konsole uses --workdir
-        "konsole" => std::process::Command::new(term)
-            .arg("--workdir")
-            .arg(dir)
-            .spawn(),
-        // alacritty uses --working-directory
-        "alacritty" => std::process::Command::new(term)
-            .arg("--working-directory")
-            .arg(dir)
-            .spawn(),
-        // xterm and others: use current_dir as universal fallback
-        _ => std::process::Command::new(term).current_dir(dir).spawn(),
-    };
-
-    result.is_ok()
+    #[cfg(not(target_os = "macos"))]
+    {
+        std::process::Command::new(term)
+            .current_dir(dir)
+            .spawn()
+            .is_ok()
+    }
 }
 
 /// Open a terminal at a directory path.

@@ -10,7 +10,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// Get the app config directory, creating it if needed.
-fn config_dir() -> Result<PathBuf, AppError> {
+pub(crate) fn config_dir() -> Result<PathBuf, AppError> {
     let base = dirs::config_dir()
         .ok_or_else(|| AppError::Other("Could not determine config directory".into()))?;
     let dir = base.join("tauri-explorer");

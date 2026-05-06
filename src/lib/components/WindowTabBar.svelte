@@ -15,7 +15,7 @@
   // Show the tab strip whenever there are multiple tabs, OR when window controls
   // are enabled (Windows 11 style — the tab strip hosts the controls, so it must
   // remain visible even with one tab).
-  const showTabArea = $derived(tabs.length > 1 || settingsStore.showWindowControls);
+  const showTabArea = $derived(settingsStore.integratedTitleBar || tabs.length > 1 || settingsStore.showWindowControls);
 
   // Track tab IDs that existed on first render to skip entrance animation
   let knownTabIds = new Set(windowTabsManager.tabs.map((t) => t.id));

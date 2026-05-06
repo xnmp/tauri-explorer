@@ -31,7 +31,7 @@
 
 <style>
   .toast-container {
-    position: fixed;
+    position: absolute;
     bottom: 16px;
     right: 16px;
     z-index: 100;

@@ -619,7 +619,7 @@
   .explorer {
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    height: 100%;
     background: color-mix(in srgb, var(--background-mica) calc(var(--bg-opacity, 1) * 100%), transparent);
     backdrop-filter: blur(60px) saturate(125%);
     -webkit-backdrop-filter: blur(60px) saturate(125%);

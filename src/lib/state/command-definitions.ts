@@ -31,6 +31,7 @@ function openNewWindow(path: string, viewMode?: ViewMode): void {
   const isMac = navigator.platform.startsWith("Mac");
   new WebviewWindow(label, {
     url,
+    title: "tauri-explorer",
     width: 1200,
     height: 800,
     decorations: isMac,
@@ -39,6 +40,7 @@ function openNewWindow(path: string, viewMode?: ViewMode): void {
     dragDropEnabled: true,
     acceptFirstMouse: true,
     titleBarStyle: isMac && settingsStore.integratedTitleBar ? "overlay" : undefined,
+    hiddenTitle: isMac && settingsStore.integratedTitleBar,
   });
 }
 

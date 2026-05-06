@@ -50,6 +50,16 @@ export function usePointerDrag(deps: PointerDragDeps) {
     const isMulti = selectedEntries.length > 1 && isSelected;
     dragPaths = isMulti ? selectedEntries.map((e) => e.path) : [entry.path];
 
+    console.debug("[pointer-drag] pointerdown", {
+      documentFocused: document.hasFocus(),
+      windowFocused: document.visibilityState,
+      activeElement: document.activeElement?.tagName + (document.activeElement?.className ? "." + document.activeElement.className.split(" ")[0] : ""),
+      entryClicked: entry.name,
+      isSelected,
+      selectedCount: selectedEntries.length,
+      selectedNames: selectedEntries.map((e) => e.name),
+    });
+
     startX = event.clientX;
     startY = event.clientY;
     dragActive = false;
@@ -71,6 +81,10 @@ export function usePointerDrag(deps: PointerDragDeps) {
     if (!dragActive) {
       if (Math.sqrt(dx * dx + dy * dy) < THRESHOLD_PX) return;
       dragActive = true;
+      console.debug("[pointer-drag] threshold met, starting drag", {
+        documentFocused: document.hasFocus(),
+        paths: dragPaths,
+      });
       dragState.start(entryData!);
       ghostEl = createGhost(dragPaths);
     }
@@ -100,14 +114,16 @@ export function usePointerDrag(deps: PointerDragDeps) {
   }
 
   function startNativeDrag(): void {
+    console.debug("[pointer-drag] exiting window → startExternalDrag", {
+      paths: dragPaths,
+      documentFocused: document.hasFocus(),
+    });
     clearHighlights();
     removeListeners();
     if (ghostEl) {
       ghostEl.remove();
       ghostEl = null;
     }
-    // Start native drag — dragState intentionally NOT cleared so cross-window
-    // target can detect this as an internal source via dragState.current
     const paths = [...dragPaths];
     dragActive = false;
     dragPaths = [];

@@ -2,15 +2,15 @@
  * Composable for handling external file drops into the app.
  * Issue: tauri-explorer-gvb
  *
- * Uses global Tauri event listeners (not webview-scoped onDragDropEvent)
- * to receive native drops from external applications (Finder, etc.).
+ * Uses Tauri's webview onDragDropEvent API to receive files
+ * dropped from external applications (like the system file manager).
  *
- * Global listen is required because webview-scoped onDragDropEvent does NOT
- * fire for child windows created via the JS WebviewWindow API (Tauri v2 bug).
- * Global listen("tauri://drag-*") receives events on ALL windows reliably.
+ * On macOS, this also handles "self-drops" where the native drag
+ * session (started by tauri-plugin-drag) drops back onto the same window.
  */
 
-import { listen, TauriEvent, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 
 export interface ExternalDropState {
   isDragging: boolean;
@@ -33,26 +33,19 @@ export function useExternalDrop(callbacks: ExternalDropCallbacks) {
     dropPosition: null,
   });
 
-  let unlistenOver: UnlistenFn | null = null;
-  let unlistenDrop: UnlistenFn | null = null;
-  let unlistenLeave: UnlistenFn | null = null;
+  let unlisten: UnlistenFn | null = null;
 
   async function setup(): Promise<void> {
     try {
-      console.debug("[external-drop] registering global drag-drop listeners");
-
-      unlistenOver = await listen<{ position: { x: number; y: number } }>(
-        TauriEvent.DRAG_OVER,
-        (event) => {
+      const webview = getCurrentWebview();
+      console.debug("[external-drop] registering onDragDropEvent on webview:", webview.label);
+      unlisten = await webview.onDragDropEvent((event) => {
+        const eventType = event.payload.type;
+        if (eventType === "over") {
           state.isDragging = true;
           state.dropPosition = event.payload.position;
           callbacks.onOver?.(event.payload.position);
-        },
-      );
-
-      unlistenDrop = await listen<{ paths: string[]; position: { x: number; y: number } }>(
-        TauriEvent.DRAG_DROP,
-        (event) => {
+        } else if (eventType === "drop") {
           console.debug("[external-drop] drop event:", event.payload);
           state.isDragging = false;
 
@@ -65,15 +58,12 @@ export function useExternalDrop(callbacks: ExternalDropCallbacks) {
 
           state.dropPosition = null;
           callbacks.onLeave?.();
-        },
-      );
-
-      unlistenLeave = await listen(TauriEvent.DRAG_LEAVE, () => {
-        state.isDragging = false;
-        state.dropPosition = null;
-        callbacks.onLeave?.();
+        } else {
+          state.isDragging = false;
+          state.dropPosition = null;
+          callbacks.onLeave?.();
+        }
       });
-
       console.debug("[external-drop] registered successfully");
     } catch (err) {
       console.warn("External drop not available:", err);
@@ -81,12 +71,10 @@ export function useExternalDrop(callbacks: ExternalDropCallbacks) {
   }
 
   function cleanup(): void {
-    unlistenOver?.();
-    unlistenDrop?.();
-    unlistenLeave?.();
-    unlistenOver = null;
-    unlistenDrop = null;
-    unlistenLeave = null;
+    if (unlisten) {
+      unlisten();
+      unlisten = null;
+    }
   }
 
   return {

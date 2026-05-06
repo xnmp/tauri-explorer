@@ -50,72 +50,27 @@ function resolveFromElement(el: Element | null): DropTargetResult {
 
 /** Resolve drop target from onDragDropEvent position (physical pixels). */
 export function resolveDropTarget(position: { x: number; y: number }): DropTargetResult {
-  const dpr = typeof window !== "undefined" ? window.devicePixelRatio : 1;
-  const zoom = settingsStore.zoomLevel / 100;
   const adjusted = adjustForZoom(position);
   const el = document.elementFromPoint(adjusted.x, adjusted.y);
-  const result = resolveFromElement(el);
-  console.debug("[drop-target] resolveDropTarget (native)", {
-    raw: position,
-    dpr,
-    zoom,
-    adjusted,
-    elementTag: el?.tagName,
-    elementClass: (el as HTMLElement)?.className?.slice(0, 60),
-    result,
-  });
-  return result;
+  return resolveFromElement(el);
 }
 
 /** Resolve drop target from pointer event coordinates (CSS viewport pixels). */
 export function resolveDropTargetAtPoint(x: number, y: number): DropTargetResult {
   const adjusted = adjustForPointerZoom({ x, y });
   const el = document.elementFromPoint(adjusted.x, adjusted.y);
-  const result = resolveFromElement(el);
-  console.debug("[drop-target] resolveAtPoint", {
-    raw: { x, y },
-    adjusted,
-    zoom: settingsStore.zoomLevel,
-    elementTag: el?.tagName,
-    elementClass: (el as HTMLElement)?.className?.slice(0, 60),
-    result,
-  });
-  return result;
+  return resolveFromElement(el);
 }
-
-let lastNativeHighlightLog = 0;
 
 /** Highlight target from onDragDropEvent position (physical pixels). */
 export function highlightTarget(position: { x: number; y: number }): void {
   const adjusted = adjustForZoom(position);
-  if (Date.now() - lastNativeHighlightLog > 500) {
-    lastNativeHighlightLog = Date.now();
-    const dpr = typeof window !== "undefined" ? window.devicePixelRatio : 1;
-    console.debug("[drop-target] highlightTarget (native)", {
-      raw: position,
-      dpr,
-      zoom: settingsStore.zoomLevel,
-      adjusted,
-    });
-  }
   highlightAtCoords(adjusted.x, adjusted.y);
 }
-
-let lastHighlightLog = 0;
 
 /** Highlight target from pointer event coordinates (CSS viewport pixels). */
 export function highlightTargetAtPoint(x: number, y: number): void {
   const adjusted = adjustForPointerZoom({ x, y });
-  if (Date.now() - lastHighlightLog > 500) {
-    lastHighlightLog = Date.now();
-    const el = document.elementFromPoint(adjusted.x, adjusted.y);
-    console.debug("[drop-target] highlightAtPoint", {
-      raw: { x, y },
-      adjusted,
-      zoom: settingsStore.zoomLevel,
-      elementUnderCursor: el?.tagName + "." + ((el as HTMLElement)?.className || "").slice(0, 40),
-    });
-  }
   highlightAtCoords(adjusted.x, adjusted.y);
 }
 

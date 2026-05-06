@@ -85,7 +85,6 @@
   // Handle drops via Tauri's onDragDropEvent (external drops from Finder,
   // cross-window Cmd+drag). Position-based target detection via elementFromPoint.
   async function handleNativeDrop(paths: string[], position: { x: number; y: number }): Promise<void> {
-    console.debug("[event-trace] handleNativeDrop fired", { pathCount: paths.length, position });
     clearHighlights();
 
     const explorer = getActiveExplorer();
@@ -350,27 +349,6 @@
     function trackCtrlUp(e: KeyboardEvent) { copyModifierHeld = isMac ? e.altKey : e.ctrlKey; }
     window.addEventListener("keydown", trackCtrlDown, true);
     window.addEventListener("keyup", trackCtrlUp, true);
-
-    // DEBUG: capture-phase listeners to trace event delivery after native drops
-    function debugEvent(type: string, e: Event) {
-      const me = e as PointerEvent;
-      const target = me.target as HTMLElement;
-      console.debug(`[event-trace] ${type}`, {
-        button: me.button,
-        target: target.tagName + "." + (target.className || "").slice(0, 40),
-        closestItem: target.closest?.(".entry-item, .list-item, .tile-item")?.getAttribute("data-path")?.split("/").pop() || null,
-        documentFocused: document.hasFocus(),
-        isTrusted: e.isTrusted,
-        pointerId: (me as PointerEvent).pointerId,
-        pointerType: (me as PointerEvent).pointerType,
-      });
-    }
-
-    window.addEventListener("pointerdown", (e) => debugEvent("pointerdown", e), true);
-    window.addEventListener("mousedown", (e) => debugEvent("mousedown", e), true);
-    window.addEventListener("click", (e) => debugEvent("click", e), true);
-    window.addEventListener("pointerup", (e) => debugEvent("pointerup", e), true);
-    window.addEventListener("mouseup", (e) => debugEvent("mouseup", e), true);
 
     // Global keyboard shortcuts
     window.addEventListener("keydown", handleKeydown);

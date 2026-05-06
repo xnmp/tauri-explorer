@@ -38,7 +38,6 @@ export function useExternalDrop(callbacks: ExternalDropCallbacks) {
   async function setup(): Promise<void> {
     try {
       const webview = getCurrentWebview();
-      console.debug("[external-drop] registering onDragDropEvent on webview:", webview.label);
       unlisten = await webview.onDragDropEvent((event) => {
         const eventType = event.payload.type;
         if (eventType === "over") {
@@ -46,7 +45,6 @@ export function useExternalDrop(callbacks: ExternalDropCallbacks) {
           state.dropPosition = event.payload.position;
           callbacks.onOver?.(event.payload.position);
         } else if (eventType === "drop") {
-          console.debug("[external-drop] drop event:", event.payload);
           state.isDragging = false;
 
           const paths = event.payload.paths;
@@ -64,9 +62,8 @@ export function useExternalDrop(callbacks: ExternalDropCallbacks) {
           callbacks.onLeave?.();
         }
       });
-      console.debug("[external-drop] registered successfully");
     } catch (err) {
-      console.warn("External drop not available:", err);
+      // Expected when running outside Tauri (dev server, tests)
     }
   }
 

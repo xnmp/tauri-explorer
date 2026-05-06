@@ -11,8 +11,9 @@
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
 
-  const showTabBar = $derived(windowTabsManager.tabs.length > 1);
-  const showTitleBar = $derived(showTabBar || settingsStore.showWindowControls);
+  const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
+  const showTabBar = $derived(settingsStore.integratedTitleBar || windowTabsManager.tabs.length > 1);
+  const showTitleBar = $derived(settingsStore.integratedTitleBar || showTabBar || settingsStore.showWindowControls);
 
   const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
   let appWindow: Window | null = null;
@@ -65,7 +66,7 @@
 
 {#if showTitleBar}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="titlebar" onmousedown={handleDragStart}>
+  <div class="titlebar" class:integrated={isMac && settingsStore.integratedTitleBar} onmousedown={handleDragStart}>
     <WindowTabBar />
     <div class="spacer"></div>
 
@@ -138,6 +139,10 @@
     );
     opacity: 0.4;
     pointer-events: none;
+  }
+
+  .titlebar.integrated {
+    padding-left: 70px;
   }
 
   .spacer {

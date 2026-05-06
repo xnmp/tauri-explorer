@@ -38,6 +38,7 @@ function openNewWindow(path: string, viewMode?: ViewMode): void {
     shadow: isMac,
     dragDropEnabled: true,
     acceptFirstMouse: true,
+    titleBarStyle: isMac && settingsStore.integratedTitleBar ? "overlay" : undefined,
   });
 }
 

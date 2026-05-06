@@ -364,6 +364,7 @@ const viewCommands: Command[] = [
     id: "view.toggleAddressBar",
     label: "Toggle Address Bar",
     category: "view",
+    shortcut: "Alt+M D",
     handler: () => settingsStore.toggleAddressBar(),
   },
   {

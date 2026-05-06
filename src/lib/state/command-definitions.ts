@@ -697,7 +697,7 @@ const terminalCommands: Command[] = [
     handler: () => {
       const explorer = getActiveExplorer();
       if (explorer) {
-        openInTerminal(explorer.state.currentPath);
+        openInTerminal(explorer.state.currentPath, settingsStore.terminalApp);
       }
     },
   },

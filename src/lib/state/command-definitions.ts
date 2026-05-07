@@ -21,20 +21,15 @@ import { folderViewsStore } from "./folder-views.svelte";
 import type { ViewMode } from "./types";
 import { readFocusedWindowState } from "./focused-window";
 
-function parseBgColor(): [number, number, number, number] | null {
-  const raw = getComputedStyle(document.body).backgroundColor || "";
-  const match = raw.match(/[\d.]+/g);
-  if (!match || match.length < 3) return null;
-  const vals = match.map(Number);
-  // color(srgb ...) returns 0-1 floats; rgb() returns 0-255
-  const isFloat = vals[0] <= 1 && vals[1] <= 1 && vals[2] <= 1 && raw.includes("color(");
-  const r = isFloat ? Math.round(vals[0] * 255) : vals[0];
-  const g = isFloat ? Math.round(vals[1] * 255) : vals[1];
-  const b = isFloat ? Math.round(vals[2] * 255) : vals[2];
-  const a = vals[3] !== undefined
-    ? Math.round((isFloat || vals[3] <= 1 ? vals[3] : vals[3] / 255) * 255)
-    : 255;
-  return [r, g, b, a];
+function getPersistedBgColor(): [number, number, number, number] | null {
+  try {
+    const stored = localStorage.getItem("explorer-bg-rgba");
+    if (!stored) return null;
+    const arr = JSON.parse(stored) as number[];
+    if (Array.isArray(arr) && arr.length === 4)
+      return [arr[0], arr[1], arr[2], arr[3]];
+  } catch {}
+  return null;
 }
 
 /** Open a new explorer window at the given path with optional view mode */
@@ -47,7 +42,7 @@ function openNewWindow(path: string, viewMode?: ViewMode): void {
   invoke("open_new_window", {
     url,
     label,
-    bgRgba: parseBgColor(),
+    bgRgba: getPersistedBgColor(),
     integratedTitleBar: settingsStore.integratedTitleBar,
   });
 }

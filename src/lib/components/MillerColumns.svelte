@@ -195,7 +195,8 @@
           {:else}
             {#each column.entries as entry (entry.path)}
               <button
-                class="col-entry"
+                class="col-entry entry-item directory"
+                data-path={entry.path}
                 class:active={entry.path === column.activeChildPath}
                 class:drop-target={dropTarget.isDropTarget(entry.path)}
                 class:copy-drop={dropTarget.isCopyDrop(entry.path)}

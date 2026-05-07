@@ -48,6 +48,7 @@ async function openNewWindow(path: string, viewMode?: ViewMode): Promise<void> {
     label,
     bgRgba: getPersistedBgColor(),
     integratedTitleBar: settingsStore.integratedTitleBar,
+    macOsVibrancy: settingsStore.macOsVibrancy,
     parentX: pos.x,
     parentY: pos.y,
     parentWidth: size.width,

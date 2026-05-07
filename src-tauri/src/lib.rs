@@ -80,6 +80,7 @@ async fn open_new_window(
     label: String,
     bg_rgba: Option<[u8; 4]>,
     integrated_title_bar: bool,
+    mac_os_vibrancy: bool,
     parent_x: i32,
     parent_y: i32,
     parent_width: u32,
@@ -112,6 +113,20 @@ async fn open_new_window(
         builder = builder
             .title_bar_style(tauri::TitleBarStyle::Overlay)
             .hidden_title(true);
+    }
+
+    #[cfg(target_os = "macos")]
+    if mac_os_vibrancy {
+        use tauri::utils::config::WindowEffectsConfig;
+        use tauri::utils::{WindowEffect, WindowEffectState};
+        builder = builder
+            .transparent(true)
+            .effects(WindowEffectsConfig {
+                effects: vec![WindowEffect::UnderWindowBackground],
+                state: Some(WindowEffectState::Active),
+                radius: None,
+                color: None,
+            });
     }
 
     let win = builder
@@ -311,16 +326,36 @@ pub fn run(launch_dir: Option<String>) {
 
             #[cfg(target_os = "macos")]
             {
-                let integrated = config::config_dir()
+                let settings_json = config::config_dir()
                     .ok()
                     .and_then(|dir| std::fs::read_to_string(dir.join("settings.json")).ok())
-                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+
+                let integrated = settings_json
+                    .as_ref()
                     .and_then(|v| v.get("integratedTitleBar")?.as_bool())
                     .unwrap_or(false);
                 if integrated {
                     builder = builder
                         .title_bar_style(tauri::TitleBarStyle::Overlay)
                         .hidden_title(true);
+                }
+
+                let vibrancy = settings_json
+                    .as_ref()
+                    .and_then(|v| v.get("macOsVibrancy")?.as_bool())
+                    .unwrap_or(false);
+                if vibrancy {
+                    use tauri::utils::config::WindowEffectsConfig;
+                    use tauri::utils::{WindowEffect, WindowEffectState};
+                    builder = builder
+                        .transparent(true)
+                        .effects(WindowEffectsConfig {
+                            effects: vec![WindowEffect::UnderWindowBackground],
+                            state: Some(WindowEffectState::Active),
+                            radius: None,
+                            color: None,
+                        });
                 }
             }
 

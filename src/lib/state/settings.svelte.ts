@@ -72,6 +72,7 @@ export interface Settings {
   quickOpenDebug: boolean; // show score breakdown in QuickOpen results
   geminiApiKey: string; // Gemini API key for Nano Banana image editing
   integratedTitleBar: boolean; // macOS: render tabs in title bar with overlay traffic lights
+  macOsVibrancy: boolean; // macOS: native window vibrancy (translucent frosted glass), requires restart
 }
 
 const MIN_ZOOM = 50;
@@ -112,6 +113,7 @@ const DEFAULT_SETTINGS: Settings = {
   quickOpenDebug: false,
   geminiApiKey: "",
   integratedTitleBar: false,
+  macOsVibrancy: false,
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -306,6 +308,9 @@ function createSettingsStore() {
     },
     get integratedTitleBar() {
       return settings.integratedTitleBar;
+    },
+    get macOsVibrancy() {
+      return settings.macOsVibrancy;
     },
     toggleMillerColumns(): void {
       const on = settings.millerLayers > 0;

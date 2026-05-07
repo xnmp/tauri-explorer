@@ -24,7 +24,9 @@
     "clean:fast": "bash scripts/clean-rebuild.sh --no-rust",
     "start": "bash scripts/dev.sh",
     "start:clean": "bash scripts/dev.sh --clean",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "build": "tauri build && fileicon set src-tauri/target/release/bundle/macos/tauri-explorer.app src-tauri/icons/icon.png",
+    "install-app": "sudo rm -rf /Applications/tauri-explorer.app && cp -R src-tauri/target/release/bundle/macos/tauri-explorer.app /Applications/ && sudo fileicon set /Applications/tauri-explorer.app src-tauri/icons/icon.png && killall Dock"
   },
   "license": "MIT",
   "dependencies": {
@@ -53,5 +55,10 @@
     "vite": "^6.0.3",
     "vitest": "^2.0.0",
     "webdriverio": "^9.27.0"
+  },
+  "optionalDependencies": {
+    "@esbuild/darwin-arm64": "0.25.12",
+    "@rollup/rollup-darwin-arm64": ">=4.0.0",
+    "@tauri-apps/cli-darwin-arm64": ">=2.0.0"
   }
 }

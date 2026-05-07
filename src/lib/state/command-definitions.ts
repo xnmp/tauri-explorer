@@ -33,17 +33,25 @@ function getPersistedBgColor(): [number, number, number, number] | null {
 }
 
 /** Open a new explorer window at the given path with optional view mode */
-function openNewWindow(path: string, viewMode?: ViewMode): void {
+async function openNewWindow(path: string, viewMode?: ViewMode): Promise<void> {
   const label = "explorer-" + Date.now();
   const baseUrl = window.location.origin + window.location.pathname;
   const params = new URLSearchParams({ path });
   if (viewMode) params.set("viewMode", viewMode);
   const url = `${baseUrl}?${params.toString()}`;
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  const win = getCurrentWindow();
+  const pos = await win.outerPosition();
+  const size = await win.outerSize();
   invoke("open_new_window", {
     url,
     label,
     bgRgba: getPersistedBgColor(),
     integratedTitleBar: settingsStore.integratedTitleBar,
+    parentX: pos.x,
+    parentY: pos.y,
+    parentWidth: size.width,
+    parentHeight: size.height,
   });
 }
 

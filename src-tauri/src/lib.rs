@@ -80,6 +80,10 @@ async fn open_new_window(
     label: String,
     bg_rgba: Option<[u8; 4]>,
     integrated_title_bar: bool,
+    parent_x: i32,
+    parent_y: i32,
+    parent_width: u32,
+    parent_height: u32,
 ) -> Result<(), AppError> {
     use tauri::Manager;
     use tauri::webview::Color;
@@ -91,7 +95,8 @@ async fn open_new_window(
         tauri::WebviewUrl::External(url.parse().map_err(|e| AppError::Other(format!("{}", e)))?),
     )
     .title("tauri-explorer")
-    .inner_size(1200.0, 800.0)
+    .inner_size(parent_width as f64, parent_height as f64)
+    .position((parent_x + 30) as f64, (parent_y + 30) as f64)
     .visible(false)
     .decorations(is_mac)
     .transparent(!is_mac)

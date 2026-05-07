@@ -6,7 +6,7 @@
  * and include keyboard shortcuts where applicable.
  */
 
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { invoke } from "@tauri-apps/api/core";
 import { registerCommands, type Command } from "./commands.svelte";
 import { keybindingsStore } from "./keybindings.svelte";
 import { windowTabsManager } from "./window-tabs.svelte";
@@ -21,6 +21,22 @@ import { folderViewsStore } from "./folder-views.svelte";
 import type { ViewMode } from "./types";
 import { readFocusedWindowState } from "./focused-window";
 
+function parseBgColor(): [number, number, number, number] | null {
+  const raw = getComputedStyle(document.body).backgroundColor || "";
+  const match = raw.match(/[\d.]+/g);
+  if (!match || match.length < 3) return null;
+  const vals = match.map(Number);
+  // color(srgb ...) returns 0-1 floats; rgb() returns 0-255
+  const isFloat = vals[0] <= 1 && vals[1] <= 1 && vals[2] <= 1 && raw.includes("color(");
+  const r = isFloat ? Math.round(vals[0] * 255) : vals[0];
+  const g = isFloat ? Math.round(vals[1] * 255) : vals[1];
+  const b = isFloat ? Math.round(vals[2] * 255) : vals[2];
+  const a = vals[3] !== undefined
+    ? Math.round((isFloat || vals[3] <= 1 ? vals[3] : vals[3] / 255) * 255)
+    : 255;
+  return [r, g, b, a];
+}
+
 /** Open a new explorer window at the given path with optional view mode */
 function openNewWindow(path: string, viewMode?: ViewMode): void {
   const label = "explorer-" + Date.now();
@@ -28,19 +44,11 @@ function openNewWindow(path: string, viewMode?: ViewMode): void {
   const params = new URLSearchParams({ path });
   if (viewMode) params.set("viewMode", viewMode);
   const url = `${baseUrl}?${params.toString()}`;
-  const isMac = navigator.platform.startsWith("Mac");
-  new WebviewWindow(label, {
+  invoke("open_new_window", {
     url,
-    title: "tauri-explorer",
-    width: 1200,
-    height: 800,
-    decorations: isMac,
-    transparent: !isMac,
-    shadow: isMac,
-    dragDropEnabled: true,
-    acceptFirstMouse: true,
-    titleBarStyle: isMac && settingsStore.integratedTitleBar ? "overlay" : undefined,
-    hiddenTitle: isMac && settingsStore.integratedTitleBar,
+    label,
+    bgRgba: parseBgColor(),
+    integratedTitleBar: settingsStore.integratedTitleBar,
   });
 }
 

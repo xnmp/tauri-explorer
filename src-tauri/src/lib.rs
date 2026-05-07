@@ -73,6 +73,50 @@ fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
     Ok(log_dir.to_string_lossy().to_string())
 }
 
+#[tauri::command]
+async fn open_new_window(
+    app: tauri::AppHandle,
+    url: String,
+    label: String,
+    bg_rgba: Option<[u8; 4]>,
+    integrated_title_bar: bool,
+) -> Result<(), AppError> {
+    use tauri::Manager;
+    use tauri::webview::Color;
+
+    let is_mac = cfg!(target_os = "macos");
+    let mut builder = tauri::WebviewWindowBuilder::new(
+        &app,
+        &label,
+        tauri::WebviewUrl::External(url.parse().map_err(|e| AppError::Other(format!("{}", e)))?),
+    )
+    .title("tauri-explorer")
+    .inner_size(1200.0, 800.0)
+    .visible(false)
+    .decorations(is_mac)
+    .transparent(!is_mac)
+    .shadow(is_mac)
+    .accept_first_mouse(true);
+
+    if let Some([r, g, b, a]) = bg_rgba {
+        builder = builder.background_color(Color(r, g, b, a));
+    }
+
+    #[cfg(target_os = "macos")]
+    if integrated_title_bar {
+        builder = builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true);
+    }
+
+    let win = builder
+        .build()
+        .map_err(|e| AppError::Other(format!("Failed to create window: {}", e)))?;
+    win.show()
+        .map_err(|e| AppError::Other(format!("Failed to show window: {}", e)))?;
+    Ok(())
+}
+
 /// Restore files from the system trash by their original paths.
 /// Finds the most recently deleted item matching each path and restores it.
 /// Note: trash::os_limited is only available on Linux/Windows (not macOS).
@@ -236,6 +280,8 @@ pub fn run(launch_dir: Option<String>) {
             files::drives::list_drives,
             // Wallpaper
             wallpaper::set_as_wallpaper,
+            // Window management
+            open_new_window,
             // Nano Banana (AI image editing)
             nano_banana::start_nano_banana_job,
         ])

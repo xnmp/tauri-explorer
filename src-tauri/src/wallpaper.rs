@@ -1,4 +1,4 @@
-//! Set desktop wallpaper across different Linux desktop environments.
+//! Set desktop wallpaper across macOS and Linux desktop environments.
 //! Issue: tauri-explorer-mj32
 
 use crate::error::AppError;
@@ -21,6 +21,10 @@ fn is_wallpaper_image(path: &std::path::Path) -> bool {
 
 /// Detect the current desktop environment / wallpaper tool.
 fn detect_wallpaper_backend() -> WallpaperBackend {
+    if cfg!(target_os = "macos") {
+        return WallpaperBackend::MacOs;
+    }
+
     // Check for Hyprland first (hyprpaper)
     if std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok() {
         return WallpaperBackend::Hyprpaper;
@@ -54,6 +58,7 @@ fn detect_wallpaper_backend() -> WallpaperBackend {
 }
 
 enum WallpaperBackend {
+    MacOs,
     Hyprpaper,
     Swaybg,
     Gnome,
@@ -61,6 +66,26 @@ enum WallpaperBackend {
     Xfce,
     Feh,
     Unknown,
+}
+
+/// Set wallpaper on macOS using osascript (AppleScript).
+fn set_macos(path: &str) -> Result<(), AppError> {
+    let script = format!(
+        "tell application \"System Events\" to tell every desktop to set picture to \"{}\"",
+        path
+    );
+    let output = Command::new("osascript")
+        .args(["-e", &script])
+        .output()
+        .map_err(|e| AppError::Other(format!("osascript failed: {}", e)))?;
+
+    if !output.status.success() {
+        return Err(AppError::Other(format!(
+            "Failed to set wallpaper: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    Ok(())
 }
 
 /// Set wallpaper using hyprpaper: update config then restart hyprpaper.
@@ -226,6 +251,7 @@ pub fn set_as_wallpaper(path: String) -> Result<(), AppError> {
     let backend = detect_wallpaper_backend();
     log::info!("Setting wallpaper via {:?} backend", backend_name(&backend));
     match backend {
+        WallpaperBackend::MacOs => set_macos(&abs_path),
         WallpaperBackend::Hyprpaper => set_hyprpaper(&abs_path),
         WallpaperBackend::Swaybg => set_swaybg(&abs_path),
         WallpaperBackend::Gnome => set_gnome(&abs_path),
@@ -233,13 +259,14 @@ pub fn set_as_wallpaper(path: String) -> Result<(), AppError> {
         WallpaperBackend::Xfce => set_xfce(&abs_path),
         WallpaperBackend::Feh => set_feh(&abs_path),
         WallpaperBackend::Unknown => Err(AppError::Other(
-            "Could not detect desktop environment. Supported: Hyprland (hyprpaper), Sway, GNOME, KDE, XFCE, feh".to_string(),
+            "Could not detect desktop environment. Supported: macOS, Hyprland (hyprpaper), Sway, GNOME, KDE, XFCE, feh".to_string(),
         )),
     }
 }
 
 fn backend_name(b: &WallpaperBackend) -> &'static str {
     match b {
+        WallpaperBackend::MacOs => "macos",
         WallpaperBackend::Hyprpaper => "hyprpaper",
         WallpaperBackend::Swaybg => "swaybg",
         WallpaperBackend::Gnome => "gnome",
@@ -270,5 +297,17 @@ mod tests {
             let path = std::path::Path::new(name);
             assert_eq!(is_wallpaper_image(path), expected, "Failed for: {}", name);
         }
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_detect_backend_macos() {
+        let backend = detect_wallpaper_backend();
+        assert_eq!(backend_name(&backend), "macos");
+    }
+
+    #[test]
+    fn test_backend_name_macos() {
+        assert_eq!(backend_name(&WallpaperBackend::MacOs), "macos");
     }
 }

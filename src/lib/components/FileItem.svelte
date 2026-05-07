@@ -339,14 +339,12 @@
   /* Drop target state - for drag-to-move */
   .file-item.drop-target {
     background: rgba(0, 120, 212, 0.15);
-    border-color: var(--accent);
     box-shadow: inset 0 0 0 1px var(--accent);
   }
 
   /* Copy drop visual - green tint when Ctrl held */
   .file-item.drop-target.copy-drop {
     background: rgba(16, 185, 129, 0.15);
-    border-color: #10b981;
     box-shadow: inset 0 0 0 1px #10b981;
   }
 

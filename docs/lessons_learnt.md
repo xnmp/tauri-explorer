@@ -4,6 +4,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/disable-git-source-control-option (#92): Fully disable git SCM
+
+**Key takeaways:**
+- Renamed `SIDEBAR_VIEWS` to `ALL_SIDEBAR_VIEWS` and made `sidebarViewsStore.views` a `$derived` that filters out the SCM view when `showGitStatus` is false. The `effectiveActiveId` derived falls back to "files" when the active view is no longer visible.
+- Also gated the diff view in `ExplorerPane.svelte` on `showGitStatus` so disabling git while viewing a diff returns to the explorer.
+
+---
+
 ## fix/recent-folders-hover-height (#91): X button overlay on long names
 
 **Key takeaways:**

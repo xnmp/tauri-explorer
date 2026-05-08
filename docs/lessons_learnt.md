@@ -58,6 +58,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## chore/improve-preview-pane-and-progress-dialog-screenshots (#82): Mock parity unlocks UI verification
+
+**Key takeaways:**
+- The SCM Ignore button shipped with no `git_add_to_gitignore` mock in `mock-invoke.ts`, so the agent-browser run that verified the button had to surface a real failure ("Unknown command"). The fix was a one-liner mock plus a `mockGitignored` set that filters subsequent `git_status` responses, so clicking Ignore now actually removes the row in dev/E2E. Treat mock-invoke parity as part of the feature when adding new Tauri commands.
+- The Operations Manager's progress dialog can be driven directly from the devtools console (`operationsManager.startOperation(...)` + `updateProgress`) for screenshots/E2E. Worth remembering: not every UI surface needs a real backend trigger — store-level public methods are usable directly.
+
+---
+
 ## fix/delete-confirm-reads-cleared-dialog-state (#80): Fire-and-forget needs captured args
 
 **Key takeaways:**

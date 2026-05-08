@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/git-scm-layout-shift-hover (#94): SCM row hover shift
+
+**Key takeaways:**
+- The action buttons in grid column 3 had `display: none/flex`, causing grid reflow on hover. Fix: position actions absolutely with `right: 4px` so they don't participate in grid layout. Add `position: relative` to `.row`.
+
+---
+
 ## fix/git-scm-amend-enter-empty-message (#99): Enter key in commit textarea
 
 **Key takeaways:**

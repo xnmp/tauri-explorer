@@ -832,6 +832,7 @@
     transition: background var(--transition-fast);
     font-size: 13px;
     min-height: 26px;
+    position: relative;
   }
 
   .row:hover {
@@ -891,11 +892,15 @@
   .row-actions {
     display: none;
     gap: 2px;
-    grid-column: 3;
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: var(--background-card-secondary, var(--surface-primary, #fff));
+    padding: 0 2px;
+    border-radius: 4px;
   }
 
-  /* On hover/focus, show inline action buttons in the same slot the folder
-     path used to occupy, so the row height never reflows to two lines. */
   .row:hover .row-actions,
   .row:focus-within .row-actions,
   .row.selected .row-actions {

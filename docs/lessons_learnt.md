@@ -4,6 +4,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## feat/scm-tree-view-group-files-by-folder (#76): Snippet-based recursion
+
+**Key takeaways:**
+- Svelte 5 `{#snippet}` recursion is a clean way to render the SCM tree without an extra component file. The `treeNode` snippet recurses on `node.children` and renders folder rows + file rows side-by-side. Indent is computed via inline `padding-left: depth * 12` to keep the grid templates simple.
+- Collapse state lives in a single `Set<string>` keyed by full directory path. Toggling clones the set rather than mutating in-place so Svelte's reactivity tracks the change.
+
+---
+
 ## feat/scm-ignore-button-add-entry-to-gitignore (#77): Idempotent append in Rust
 
 **Key takeaways:**

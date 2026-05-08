@@ -67,6 +67,22 @@ export async function fetchDirectory(
 }
 
 /**
+ * Returns true when `path` has no entries visible under the given hidden-file rule.
+ * Used by miller view's "hide empty folders" feature. Errors yield false so
+ * unreadable folders aren't optimistically hidden.
+ */
+export async function isDirectoryEmpty(
+  path: string,
+  includeHidden: boolean
+): Promise<boolean> {
+  try {
+    return await invoke<boolean>("is_directory_empty", { path, includeHidden });
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Create a new directory.
  *
  * @param parentPath - Path to parent directory

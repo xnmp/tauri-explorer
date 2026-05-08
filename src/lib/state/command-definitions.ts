@@ -350,6 +350,12 @@ const viewCommands: Command[] = [
     handler: () => settingsStore.setMillerLayers(3),
   },
   {
+    id: "view.toggleMillerHideEmpty",
+    label: "Miller Columns: Toggle Hide Empty Folders",
+    category: "view",
+    handler: () => settingsStore.toggleMillerHideEmpty(),
+  },
+  {
     id: "view.toggleSidebar",
     label: "Toggle Sidebar",
     category: "view",

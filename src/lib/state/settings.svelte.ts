@@ -69,6 +69,7 @@ export interface Settings {
   recentItemsCount: number; // number of recent locations in sidebar (0 = hidden)
   millerLayers: number; // 0-3, number of ancestor columns in miller view
   millerLayersPreferred: number; // 1-3, remembered layer count for toggle
+  millerHideEmpty: boolean; // hide folders containing no visible entries from miller columns
   quickOpenDebug: boolean; // show score breakdown in QuickOpen results
   geminiApiKey: string; // Gemini API key for Nano Banana image editing
   integratedTitleBar: boolean; // macOS: render tabs in title bar with overlay traffic lights
@@ -109,6 +110,7 @@ const DEFAULT_SETTINGS: Settings = {
   recentItemsCount: 6,
   millerLayers: 0,
   millerLayersPreferred: 2,
+  millerHideEmpty: false,
   quickOpenDebug: false,
   geminiApiKey: "",
   integratedTitleBar: false,
@@ -291,6 +293,12 @@ function createSettingsStore() {
       const updates: Partial<Settings> = { millerLayers: clamped };
       if (clamped > 0) updates.millerLayersPreferred = clamped;
       update(updates);
+    },
+    get millerHideEmpty() {
+      return settings.millerHideEmpty;
+    },
+    toggleMillerHideEmpty(): void {
+      update({ millerHideEmpty: !settings.millerHideEmpty });
     },
     get quickOpenDebug() {
       return settings.quickOpenDebug;

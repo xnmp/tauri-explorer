@@ -4,6 +4,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## feat/hide-empty-folders-in-miller-view: emptiness probe must respect the visibility rule
+
+**Key takeaways:**
+- Whether a folder counts as "empty" for the miller filter depends on `showHidden` — a folder containing only dotfiles is empty if hidden files are off, non-empty if they're on. The Rust `is_directory_empty` command takes `include_hidden` so the answer is computed once on the same rule the UI uses to display children.
+- Probes are batched per column load and the `path -> isEmpty` cache is invalidated whenever `showHidden` flips, so toggling either preference produces consistent results without stale data.
+
+---
+
 ## fix/rename-input-font-size-larger-than-file-row-font: `font: inherit` does not protect against later overrides
 
 **Key takeaways:**

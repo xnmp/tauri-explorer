@@ -280,6 +280,14 @@ const mockCommands: Record<string, CommandHandler> = {
     return { path, entries, listing_id: null } as DirectoryListing;
   },
 
+  is_directory_empty: (args) => {
+    const path = args.path as string;
+    const includeHidden = (args.includeHidden ?? args.include_hidden) as boolean;
+    if (!(path in mockFiles)) return false;
+    const entries = getDirectoryEntries(path);
+    return entries.every((e) => !includeHidden && e.name.startsWith("."));
+  },
+
   check_paths_exist: (args) => {
     const paths = args.paths as string[];
     return paths.map((p: string) => p in mockFiles || Object.keys(mockFiles).some((k) => {

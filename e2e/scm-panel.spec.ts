@@ -60,13 +60,16 @@ test.describe("SCM panel UI", () => {
     await expect(page.getByRole("button", { name: /Initialize Repository/i })).toBeVisible();
   });
 
-  test("commit button is disabled with an empty message and enables once message is typed", async ({ page }) => {
+  test("commit button switches between Commit and Amend (no edit) based on message content (#79)", async ({ page }) => {
     await openScmOnRepo(page);
 
-    const commitBtn = page.getByRole("button", { name: /^Commit$/ });
-    await expect(commitBtn).toBeDisabled();
+    // Empty message + staged files → button is enabled and reads "Amend (no edit)".
+    const amendBtn = page.getByRole("button", { name: /^Amend \(no edit\)$/ });
+    await expect(amendBtn).toBeEnabled();
 
+    // Typing a message switches the button to plain "Commit".
     await page.getByLabel("Commit message").fill("feat: ship this");
+    const commitBtn = page.getByRole("button", { name: /^Commit$/ });
     await expect(commitBtn).toBeEnabled();
   });
 

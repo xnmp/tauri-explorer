@@ -58,6 +58,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## test/update-scm-commit-button-test-for-amend-no-edit (#83): Update tests when behaviour changes
+
+**Key takeaways:**
+- The pre-existing SCM E2E asserted `commit button is disabled with empty message`. After #79 the button is enabled and reads "Amend (no edit)" in that state. Test was updated to assert the new behaviour explicitly (button label switches between Commit / Amend (no edit) by message content).
+- The merge-time `run_e2e_for_merge.sh` hook would have caught this earlier if it had executed within the 2-minute timeout. Running E2E suite afterwards is the safety net, but updating tests as part of the behaviour change keeps the gate honest.
+
+---
+
 ## chore/improve-preview-pane-and-progress-dialog-screenshots (#82): Mock parity unlocks UI verification
 
 **Key takeaways:**

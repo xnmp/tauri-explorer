@@ -6,7 +6,7 @@ import { test, expect } from "@playwright/test";
 import { HOME_URL, waitForEntries } from "./helpers";
 
 test.describe("Miller columns drag to bookmarks", () => {
-  test("miller column entries have draggable attribute", async ({ page }) => {
+  test("miller column entries are draggable", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents");
     await page.waitForSelector(".entry-item", { timeout: 5000 });
 
@@ -20,6 +20,12 @@ test.describe("Miller columns drag to bookmarks", () => {
     await page.waitForTimeout(500);
 
     const entry = page.locator(".col-entry").first();
-    await expect(entry).toHaveAttribute("draggable", "true");
+    const isMac = await page.evaluate(() => navigator.platform.startsWith("Mac"));
+    if (isMac) {
+      // macOS uses pointer-drag (onmousedown), not HTML5 draggable
+      await expect(entry).toHaveAttribute("draggable", "false");
+    } else {
+      await expect(entry).toHaveAttribute("draggable", "true");
+    }
   });
 });

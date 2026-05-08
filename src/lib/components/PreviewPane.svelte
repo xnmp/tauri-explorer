@@ -60,6 +60,9 @@
     return selected.length === 1 ? selected[0] : null;
   });
 
+  /** Stable primitive that changes only when the selected path changes */
+  const selectedPath = $derived(selectedFile?.path ?? null);
+
   // Preview content state
   let previewImageUrl = $state<string | null>(null);
   let previewText = $state<string | null>(null);
@@ -74,12 +77,13 @@
   let previewLoading = $state(false);
   let previewError = $state<string | null>(null);
   let previewTruncatedLines = $state(0);
-  let lastPreviewPath = $state<string | null>(null);
+  let lastPreviewPath: string | null = null;
 
   // Load preview when selection changes
   $effect(() => {
+    const path = selectedPath;
     const file = selectedFile;
-    if (!file) {
+    if (!file || !path) {
       lastPreviewPath = null;
       previewImageUrl = null;
       previewText = null;
@@ -90,7 +94,8 @@
       previewLoading = false;
       return;
     }
-    if (file.path === lastPreviewPath) return;
+    if (path === lastPreviewPath) return;
+    lastPreviewPath = path;
     loadPreview(file);
   });
 
@@ -103,7 +108,6 @@
   }
 
   async function loadPreview(file: FileEntry): Promise<void> {
-    lastPreviewPath = file.path;
     previewImageUrl = null;
     previewText = null;
     previewHighlightedHtml = null;

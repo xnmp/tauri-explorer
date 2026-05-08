@@ -360,7 +360,10 @@
         onblur={handleBlur}
         placeholder="Enter path..."
         autocomplete="off"
+        autocorrect="off"
+        autocapitalize="none"
         spellcheck="false"
+        name="pathbar-nofill"
       />
       {#if showSuggestions && suggestions.length > 0}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -472,7 +475,10 @@
         onkeydown={handleFilterKeydown}
         placeholder="Filter..."
         autocomplete="off"
+        autocorrect="off"
+        autocapitalize="none"
         spellcheck="false"
+        name="filter-nofill"
       />
       {#if localFilter}
         <button class="filter-clear" onclick={() => { localFilter = ""; explorer.closeFilter(); }} aria-label="Clear filter">

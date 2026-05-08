@@ -8,7 +8,10 @@
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
   import { useItemInteractions, isInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
+  import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { getFileIconColor, isImageFile } from "$lib/domain/file-types";
+
+  const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
   import { settingsStore, THUMBNAIL_SIZE_CONFIG } from "$lib/state/settings.svelte";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import FileIcon from "./FileIcon.svelte";
@@ -34,6 +37,8 @@
     getPaneNav: () => paneNav,
     selectOnContextMenu: true,
   });
+
+  const pointerDrag = isMac ? usePointerDrag({ getExplorer: () => explorer, getPaneNav: () => paneNav }) : null;
 
   const effectiveThumbnailSize = $derived(
     folderViewsStore.getThumbnailSize(explorer.currentPath, settingsStore.thumbnailSize)
@@ -140,21 +145,23 @@
     {@const iconColor = getFileIconColor(entry)}
     <button
       class="tile-item entry-item"
+      data-path={entry.path}
       class:directory={entry.kind === "directory"}
       class:selected={explorer.isSelected(entry)}
       class:cut={isClipboardCut(entry)}
       class:in-clipboard={isInClipboard(entry)}
       class:drop-target={interactions.isDropTarget(entry.path)}
       class:copy-drop={interactions.isCopyDrop(entry.path)}
-      draggable="true"
+      draggable={!isMac}
       onclick={(e) => onitemclick(entry, e)}
       ondblclick={() => onitemdblclick(entry)}
       oncontextmenu={(e) => interactions.handleContextMenu(e, entry)}
-      ondragstart={(e) => interactions.handleDragStart(e, entry, explorer.isSelected(entry))}
-      ondragend={interactions.handleDragEnd}
+      ondragstart={!isMac ? (e) => interactions.handleDragStart(e, entry, explorer.isSelected(entry)) : undefined}
+      ondragend={!isMac ? interactions.handleDragEnd : undefined}
       ondragover={(e) => interactions.handleDragOver(e, entry)}
       ondragleave={() => interactions.handleDragLeave(entry)}
       ondrop={(e) => interactions.handleDrop(e, entry)}
+      onmousedown={isMac ? (e) => { e.stopPropagation(); pointerDrag!.handlePointerDown(e, entry, explorer.isSelected(entry)); } : undefined}
     >
       <div class="tile-icon" style:color={iconColor}>
         {#if isImageFile(entry)}

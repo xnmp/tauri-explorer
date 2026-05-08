@@ -3,7 +3,7 @@
  * populate HTML5 DataTransfer so both in-app drop targets and external apps work.
  * Issue: feat/drag-out-to-external-apps
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const startDragMock = vi.fn();
 vi.mock("@crabnebula/tauri-plugin-drag", () => ({
@@ -44,12 +44,20 @@ function makeExplorer(selected: FileEntry[]): ExplorerInstance {
 }
 
 describe("external drag-out", () => {
+  const originalPlatform = Object.getOwnPropertyDescriptor(Navigator.prototype, "platform");
+
   beforeEach(() => {
     startDragMock.mockReset();
     (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
+    // Default to non-Mac so native drag is invoked
+    Object.defineProperty(Navigator.prototype, "platform", { value: "Linux x86_64", configurable: true });
   });
 
-  it("starts a native drag with the single entry path", () => {
+  afterEach(() => {
+    if (originalPlatform) Object.defineProperty(Navigator.prototype, "platform", originalPlatform);
+  });
+
+  it("starts a native drag with the single entry path (non-Mac)", () => {
     const entry = makeEntry("/home/u/file.txt", "file.txt");
     const interactions = useItemInteractions({
       getExplorer: () => makeExplorer([entry]),
@@ -63,7 +71,7 @@ describe("external drag-out", () => {
     expect(startDragMock.mock.calls[0][0].item).toEqual(["/home/u/file.txt"]);
   });
 
-  it("starts a native drag with all selected paths when multi-selected", () => {
+  it("starts a native drag with all selected paths when multi-selected (non-Mac)", () => {
     const a = makeEntry("/h/a.txt", "a.txt");
     const b = makeEntry("/h/b.txt", "b.txt");
     const c = makeEntry("/h/c.txt", "c.txt");
@@ -76,6 +84,33 @@ describe("external drag-out", () => {
     interactions.handleDragStart(event, a, true);
 
     expect(startDragMock.mock.calls[0][0].item).toEqual(["/h/a.txt", "/h/b.txt", "/h/c.txt"]);
+  });
+
+  it("skips native drag on macOS (WKWebView bridges HTML5 drag to native pasteboard)", () => {
+    Object.defineProperty(Navigator.prototype, "platform", { value: "MacIntel", configurable: true });
+    const entry = makeEntry("/h/x.txt", "x.txt");
+    const interactions = useItemInteractions({
+      getExplorer: () => makeExplorer([entry]),
+      getPaneNav: () => undefined,
+    });
+
+    interactions.handleDragStart({ dataTransfer: makeDataTransfer(), metaKey: true } as DragEvent, entry, true);
+
+    expect(startDragMock).not.toHaveBeenCalled();
+  });
+
+  it("sets text/uri-list with file:// URLs for external app drops", () => {
+    Object.defineProperty(Navigator.prototype, "platform", { value: "MacIntel", configurable: true });
+    const entry = makeEntry("/h/my file.txt", "my file.txt");
+    const interactions = useItemInteractions({
+      getExplorer: () => makeExplorer([entry]),
+      getPaneNav: () => undefined,
+    });
+
+    const dt = makeDataTransfer();
+    interactions.handleDragStart({ dataTransfer: dt } as DragEvent, entry, true);
+
+    expect(dt.getData("text/uri-list")).toBe("file:///h/my%20file.txt");
   });
 
   it("preserves HTML5 DataTransfer for in-app drops", () => {

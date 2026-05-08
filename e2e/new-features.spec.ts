@@ -9,6 +9,7 @@
  */
 
 import { test, expect } from "@playwright/test";
+import { MULTI_SELECT_MODIFIER } from "./helpers";
 
 async function waitForFileList(page: import("@playwright/test").Page) {
   await page.waitForSelector(".file-list");
@@ -328,7 +329,7 @@ test.describe("Status Bar", () => {
       // Click first item
       await items.first().click();
       // Ctrl+click second item
-      await items.nth(1).click({ modifiers: ["Control"] });
+      await items.nth(1).click({ modifiers: [MULTI_SELECT_MODIFIER] });
       await page.waitForTimeout(200);
 
       const selectedInfo = page.locator(".selected-info");

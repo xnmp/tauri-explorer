@@ -52,7 +52,10 @@
   // Guard: suppress mouseenter on results until the user actually moves the mouse.
   // Prevents selection from jumping to whatever row the cursor happened to land on
   // when the popup opened (or after results change).
+  // Track coordinates because macOS WebKit fires a synthetic mousemove (zero delta)
+  // when an element renders under a stationary cursor.
   let mouseMoved = $state(false);
+  let lastMousePos = $state<{ x: number; y: number } | null>(null);
 
   // Fetch home directory for tilde expansion
   getHomeDirectory().then((r) => { if (r.ok) homeDir = r.data; });
@@ -385,6 +388,7 @@
       results = [];
       selectedIndex = 0;
       mouseMoved = false;
+      lastMousePos = null;
       tick().then(() => inputRef?.focus());
       untrack(() => {
         recentFilesStore.pruneNonExistent();
@@ -409,7 +413,13 @@
 
 {#if open}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="quick-open-overlay" onclick={onClose} onkeydown={handleKeydown} onmousemove={() => { mouseMoved = true; }}>
+  <div class="quick-open-overlay" onclick={onClose} onkeydown={handleKeydown}
+    onmousemove={(e) => {
+      if (lastMousePos && (e.clientX !== lastMousePos.x || e.clientY !== lastMousePos.y)) {
+        mouseMoved = true;
+      }
+      lastMousePos = { x: e.clientX, y: e.clientY };
+    }}>
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="quick-open-dialog" onclick={(e) => e.stopPropagation()}>
       <div class="search-container">
@@ -421,6 +431,11 @@
           type="text"
           class="search-input"
           placeholder="Search files..."
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+          name="quickopen-nofill"
           bind:value={query}
           bind:this={inputRef}
           oninput={handleInput}

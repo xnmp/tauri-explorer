@@ -17,7 +17,9 @@ function isTauri(): boolean {
 export async function startExternalDrag(paths: string[], iconPath?: string): Promise<void> {
   if (!isTauri() || paths.length === 0) return;
   try {
+    console.debug("[external-drag] starting native drag for", paths.length, "items");
     await startDrag({ item: paths, icon: iconPath || TRANSPARENT_PNG });
+    console.debug("[external-drag] native drag completed");
   } catch (err) {
     console.warn("External drag failed:", err);
   }

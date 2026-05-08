@@ -1,8 +1,10 @@
 /**
- * Desert Theme - Ghostty "Desert" palette
+ * Desert Theme — matches Ghostty "Desert" terminal palette
  *
- * Warm brown undertones with vivid accent colors —
- * bright greens, khaki yellows, sky blues, and coral pinks.
+ * Background #333333, foreground #ffffff.
+ * Palette: warm earth tones with vivid accents —
+ * greens (#98fb98), khaki yellows (#f0e68c), peru (#cd853f),
+ * sky blues (#87ceff), corals (#ffa0a0), wheat (#f5deb3), gold (#ffd700).
  */
 
 [data-theme="desert"] {
@@ -10,51 +12,51 @@
 
   /* Theme metadata */
   --theme-name: "Desert";
-  --theme-description: "Warm earth tones with vivid accents";
+  --theme-description: "Ghostty Desert — warm earth tones with vivid accents";
   --theme-order: 6;
 
-  /* Accent colors — sky blue from palette bright-blue #87ceff */
+  /* Accent colors — bright-blue #87ceff from palette[12] */
   --accent: #87ceff;
   --accent-light: #b5d5ff;
   --accent-dark: #cd853f;
 
-  /* Text colors — warm white/cream */
-  --text-primary: #f5f0e8;
-  --text-secondary: #c8bfb0;
-  --text-tertiary: #7a7368;
-  --text-on-accent: #1a1a1a;
+  /* Text colors — foreground #ffffff, wheat #f5deb3 for secondary */
+  --text-primary: #ffffff;
+  --text-secondary: #f5deb3;
+  --text-tertiary: #626262;
+  --text-on-accent: #000000;
 
-  /* Background colors — warm brown undertones */
-  --background-solid: #2a2520;
-  --background-mica: rgba(42, 37, 32, 0.96);
-  --background-acrylic: rgba(48, 42, 38, 0.92);
-  --background-card: rgba(60, 52, 46, 0.55);
-  --background-card-secondary: rgba(50, 44, 38, 0.5);
-  --miller-bg: rgba(40, 35, 30, 0.65);
+  /* Background colors — Ghostty bg #333333 */
+  --background-solid: #333333;
+  --background-mica: rgba(51, 51, 51, 0.96);
+  --background-acrylic: rgba(55, 55, 55, 0.92);
+  --background-card: rgba(77, 77, 77, 0.55);
+  --background-card-secondary: rgba(66, 66, 66, 0.5);
+  --miller-bg: rgba(60, 60, 60, 0.65);
 
   /* Surface/border colors */
-  --surface-stroke: rgba(245, 240, 232, 0.08);
-  --surface-stroke-flyout: rgba(245, 240, 232, 0.1);
-  --divider: rgba(245, 240, 232, 0.06);
+  --surface-stroke: rgba(255, 255, 255, 0.08);
+  --surface-stroke-flyout: rgba(255, 255, 255, 0.1);
+  --divider: rgba(255, 255, 255, 0.06);
 
   /* Control/input backgrounds */
-  --control-fill: rgba(245, 240, 232, 0.07);
-  --control-fill-secondary: rgba(245, 240, 232, 0.09);
-  --control-fill-tertiary: rgba(245, 240, 232, 0.04);
-  --control-fill-disabled: rgba(245, 240, 232, 0.04);
+  --control-fill: rgba(255, 255, 255, 0.07);
+  --control-fill-secondary: rgba(255, 255, 255, 0.09);
+  --control-fill-tertiary: rgba(255, 255, 255, 0.04);
+  --control-fill-disabled: rgba(255, 255, 255, 0.04);
 
   /* Subtle hover/active fills */
   --subtle-fill: transparent;
-  --subtle-fill-secondary: rgba(245, 240, 232, 0.07);
-  --subtle-fill-tertiary: rgba(245, 240, 232, 0.04);
+  --subtle-fill-secondary: rgba(255, 255, 255, 0.07);
+  --subtle-fill-tertiary: rgba(255, 255, 255, 0.04);
 
   /* Control borders */
-  --control-stroke: rgba(245, 240, 232, 0.1);
-  --control-stroke-secondary: rgba(245, 240, 232, 0.08);
+  --control-stroke: rgba(255, 255, 255, 0.1);
+  --control-stroke-secondary: rgba(255, 255, 255, 0.08);
 
   /* Focus indicators */
-  --focus-stroke-outer: #f5f0e8;
-  --focus-stroke-inner: #2a2520;
+  --focus-stroke-outer: #ffffff;
+  --focus-stroke-inner: #333333;
 
   /* System status colors — from the desert palette */
   --system-critical: #ff5555;
@@ -68,7 +70,7 @@
   --shadow-card: 0 1px 4px rgba(0, 0, 0, 0.2), 0 0 1px rgba(0, 0, 0, 0.15);
   --shadow-subtle: 0 1px 2px rgba(0, 0, 0, 0.15);
 
-  /* Mica overlay — golden warmth */
+  /* Mica overlay — peru/sky warmth */
   --mica-overlay: linear-gradient(
     170deg,
     rgba(205, 133, 63, 0.03) 0%,
@@ -76,6 +78,6 @@
     transparent 45%
   );
 
-  /* Icon colors — warm gold for folders */
-  --icon-folder: #ffd700;
+  /* Icon colors — burnt orange, desert-sunset warmth */
+  --icon-folder: #cc7832;
 }

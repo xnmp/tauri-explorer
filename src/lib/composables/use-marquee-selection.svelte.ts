@@ -47,7 +47,7 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
   // rAF-batched pointer updates: mousemove can fire 200+ Hz, but the rubber-band
   // only needs to repaint at the display refresh rate. Coalescing caps the reactive
   // chain (dragCurrent → marqueeRect → DOM style) to one update per frame.
-  let pendingMove: { clientX: number; clientY: number; rect: DOMRect; headerHeight?: number } | null = null;
+  let pendingMove: { clientX: number; clientY: number; rect: DOMRect; headerHeight?: number; onFlush?: () => void } | null = null;
   let moveRafId: number | null = null;
 
   const marqueeRect = $derived.by((): MarqueeRect | null => {
@@ -80,8 +80,8 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     const zoom = getZoomFactor();
     const minY = headerHeight ?? config.headerHeight;
     dragStart = {
-      x: event.clientX / zoom - containerRect.left,
-      y: Math.max(minY, event.clientY / zoom - containerRect.top),
+      x: (event.clientX - containerRect.left) / zoom,
+      y: Math.max(minY, (event.clientY - containerRect.top) / zoom),
     };
     dragCurrent = { ...dragStart };
 
@@ -94,17 +94,20 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
       pendingMove = null;
       return;
     }
-    const { clientX, clientY, rect, headerHeight } = pendingMove;
+    const { clientX, clientY, rect, headerHeight, onFlush } = pendingMove;
     pendingMove = null;
     const zoom = getZoomFactor();
     const minY = headerHeight ?? config.headerHeight;
+    const cssWidth = rect.width / zoom;
+    const cssHeight = rect.height / zoom;
     dragCurrent = {
-      x: Math.max(0, Math.min(clientX / zoom - rect.left, rect.width)),
-      y: Math.max(minY, Math.min(clientY / zoom - rect.top, rect.height)),
+      x: Math.max(0, Math.min((clientX - rect.left) / zoom, cssWidth)),
+      y: Math.max(minY, Math.min((clientY - rect.top) / zoom, cssHeight)),
     };
+    onFlush?.();
   }
 
-  function move(event: MouseEvent, containerRect: DOMRect, headerHeight?: number): boolean {
+  function move(event: MouseEvent, containerRect: DOMRect, headerHeight?: number, onFlush?: () => void): boolean {
     if (!isDragging) return false;
 
     // Safety net: if mouse button was released but we missed the mouseup
@@ -119,6 +122,7 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
       clientY: event.clientY,
       rect: containerRect,
       headerHeight,
+      onFlush,
     };
     if (moveRafId === null) {
       moveRafId = requestAnimationFrame(flushPendingMove);
@@ -150,10 +154,10 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
    * @param scrollTop Current scroll position of the container
    * @param totalItems Total number of items in the list
    */
-  function getSelectedIndices(scrollTop: number, totalItems: number): number[] {
+  function getSelectedIndices(scrollTop: number, totalItems: number, headerHeight?: number): number[] {
     if (!marqueeRect) return [];
 
-    const marqueeTop = marqueeRect.top + scrollTop - config.headerHeight;
+    const marqueeTop = marqueeRect.top + scrollTop - (headerHeight ?? config.headerHeight);
     const marqueeBottom = marqueeTop + marqueeRect.height;
 
     const startIndex = Math.max(0, Math.floor(marqueeTop / config.itemHeight));
@@ -192,10 +196,11 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     const offsetDx = containerRect.left - cachedContainerOffset!.left;
     const offsetDy = containerRect.top - cachedContainerOffset!.top;
 
-    const mLeft = marqueeRect.left + containerRect.left;
-    const mTop = marqueeRect.top + containerRect.top;
-    const mRight = mLeft + marqueeRect.width;
-    const mBottom = mTop + marqueeRect.height;
+    const zoom = getZoomFactor();
+    const mLeft = marqueeRect.left * zoom + containerRect.left;
+    const mTop = marqueeRect.top * zoom + containerRect.top;
+    const mRight = mLeft + marqueeRect.width * zoom;
+    const mBottom = mTop + marqueeRect.height * zoom;
 
     const indices: number[] = [];
     for (let i = 0; i < cachedItemRects.length; i++) {

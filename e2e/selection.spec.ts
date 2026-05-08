@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { VIEW_MODES, waitForEntries, switchViewMode } from "./helpers";
+import { VIEW_MODES, waitForEntries, switchViewMode, MULTI_SELECT_MODIFIER } from "./helpers";
 
 for (const viewMode of VIEW_MODES) {
   test.describe(`Selection [${viewMode}]`, () => {
@@ -66,7 +66,7 @@ for (const viewMode of VIEW_MODES) {
         const secondFile = files.nth(1);
 
         await firstFile.click();
-        await secondFile.click({ modifiers: ["Control"] });
+        await secondFile.click({ modifiers: [MULTI_SELECT_MODIFIER] });
 
         await expect(firstFile).toHaveClass(/selected/);
         await expect(secondFile).toHaveClass(/selected/);

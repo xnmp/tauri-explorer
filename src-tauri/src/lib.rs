@@ -259,7 +259,7 @@ pub fn run(launch_dir: Option<String>) {
 
             // Create window programmatically so we can inject initialization_script.
             // This replaces the static window definition in tauri.conf.json.
-            tauri::WebviewWindowBuilder::new(
+            let mut builder = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
                 tauri::WebviewUrl::App("index.html".into()),
@@ -267,8 +267,25 @@ pub fn run(launch_dir: Option<String>) {
             .title("tauri-explorer")
             .inner_size(1200.0, 800.0)
             .decorations(cfg!(target_os = "macos"))
-            .initialization_script(&init_script)
-            .build()?;
+            .accept_first_mouse(true)
+            .initialization_script(&init_script);
+
+            #[cfg(target_os = "macos")]
+            {
+                let integrated = config::config_dir()
+                    .ok()
+                    .and_then(|dir| std::fs::read_to_string(dir.join("settings.json")).ok())
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                    .and_then(|v| v.get("integratedTitleBar")?.as_bool())
+                    .unwrap_or(false);
+                if integrated {
+                    builder = builder
+                        .title_bar_style(tauri::TitleBarStyle::Overlay)
+                        .hidden_title(true);
+                }
+            }
+
+            builder.build()?;
 
             log::info!(
                 "Startup: pre-builder={:?} builder→setup={:?} total={:?}",

@@ -16,6 +16,9 @@
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
+  import { resolveDropTarget, highlightTarget, clearHighlights } from "$lib/composables/use-native-drop-target.svelte";
+  import { dragState } from "$lib/state/drag.svelte";
+  import { handleFileDrop } from "$lib/state/drop-operations";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { copyEntry, moveEntry } from "$lib/api/files";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -72,38 +75,88 @@
     refreshAllPanes,
   });
 
-  // Track Ctrl key state for external drop modifier detection.
+  // Track copy-modifier key state for external drop detection.
   // Tauri's onDragDropEvent doesn't include keyboard modifiers,
   // so we track them globally via keydown/keyup.
-  let ctrlKeyHeld = false;
+  // macOS uses Option (Alt) for copy-on-drag; other platforms use Ctrl.
+  const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
+  let copyModifierHeld = false;
 
-  // Handle external file drops into the app.
-  // Default: move (matches internal drag behavior). Ctrl held: copy.
-  async function handleExternalDrop(paths: string[]): Promise<void> {
+  // Handle drops via Tauri's onDragDropEvent (external drops from Finder,
+  // cross-window Cmd+drag). Position-based target detection via elementFromPoint.
+  async function handleNativeDrop(paths: string[], position: { x: number; y: number }): Promise<void> {
+    clearHighlights();
+
     const explorer = getActiveExplorer();
     if (!explorer) return;
 
-    const destDir = explorer.currentPath;
-    const operation = ctrlKeyHeld ? copyEntry : moveEntry;
-    const opName = ctrlKeyHeld ? "copy" : "move";
+    const target = resolveDropTarget(position);
+    const isCopy = copyModifierHeld;
 
+    // Validate internal drag: dragState must exist AND the native drop paths must
+    // match the internal source (native drag carries the same paths we passed to startDrag).
+    // If paths differ, it's an external drop with stale dragState — ignore the state.
+    const internalPaths = dragState.current?.paths
+      ? dragState.current.paths
+      : dragState.current?.path
+        ? [dragState.current.path]
+        : null;
+    const isInternalDrag = internalPaths !== null &&
+      paths.length > 0 &&
+      internalPaths.includes(paths[0]);
+
+    // Sidebar bookmark drop
+    if (target?.type === "sidebar") {
+      const sourcePaths = isInternalDrag ? internalPaths! : paths;
+      for (const p of sourcePaths) {
+        bookmarksStore.addBookmark(p);
+      }
+      dragState.clear();
+      return;
+    }
+
+    // Determine source paths (validated internal drag state or external paths)
+    const sourcePaths = isInternalDrag ? internalPaths! : paths;
+
+    // Drop onto a specific folder
+    if (target?.type === "folder") {
+      for (const sourcePath of sourcePaths) {
+        if (sourcePath === target.path) continue;
+        if (target.path.startsWith(sourcePath + "/")) continue;
+        await handleFileDrop(sourcePath, target.path, isCopy, {
+          onRefresh: refreshAllPanes,
+        });
+      }
+      dragState.clear();
+      return;
+    }
+
+    // Background drop — move/copy to the target pane's directory
+    const destDir = target?.path || explorer.currentPath;
+    const operation = isCopy ? copyEntry : moveEntry;
+    const opName = isCopy ? "copy" : "move";
     const affectedDirs = new Set<string>();
     affectedDirs.add(destDir);
 
-    for (const path of paths) {
-      affectedDirs.add(parentDir(path));
+    for (const path of sourcePaths) {
+      const sourceDir = parentDir(path);
+      if (sourceDir === destDir) continue;
+      affectedDirs.add(sourceDir);
       const result = await operation(path, destDir);
       if (!result.ok) {
         console.error(`Failed to ${opName} dropped file:`, result.error);
       }
     }
 
+    dragState.clear();
     refreshAllPanes();
     broadcastFileChange([...affectedDirs]);
   }
 
-  const externalDrop = useExternalDrop((paths) => {
-    handleExternalDrop(paths);
+  const externalDrop = useExternalDrop({
+    onDrop: handleNativeDrop,
+    onOver: highlightTarget,
+    onLeave: clearHighlights,
   });
 
   async function handleKeydown(event: KeyboardEvent): Promise<void> {
@@ -291,9 +344,9 @@
     // Persist focused window state when this window gains focus
     window.addEventListener("focus", persistFocusedState);
 
-    // Track Ctrl key for external drop modifier detection
-    function trackCtrlDown(e: KeyboardEvent) { ctrlKeyHeld = e.ctrlKey; }
-    function trackCtrlUp(e: KeyboardEvent) { ctrlKeyHeld = e.ctrlKey; }
+    // Track copy-modifier key for external drop detection (Option on Mac, Ctrl elsewhere)
+    function trackCtrlDown(e: KeyboardEvent) { copyModifierHeld = isMac ? e.altKey : e.ctrlKey; }
+    function trackCtrlUp(e: KeyboardEvent) { copyModifierHeld = isMac ? e.altKey : e.ctrlKey; }
     window.addEventListener("keydown", trackCtrlDown, true);
     window.addEventListener("keyup", trackCtrlUp, true);
 
@@ -566,7 +619,7 @@
   .explorer {
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    height: 100%;
     background: color-mix(in srgb, var(--background-mica) calc(var(--bg-opacity, 1) * 100%), transparent);
     backdrop-filter: blur(60px) saturate(125%);
     -webkit-backdrop-filter: blur(60px) saturate(125%);

@@ -27,6 +27,10 @@ if (!allModes) {
   );
 }
 
+/** The Ctrl/Cmd modifier for multi-select clicks: Meta on macOS, Control elsewhere. */
+export const MULTI_SELECT_MODIFIER: "Meta" | "Control" =
+  process.platform === "darwin" ? "Meta" : "Control";
+
 /** Home URL for most tests */
 export const HOME_URL = "/?path=/home/user";
 

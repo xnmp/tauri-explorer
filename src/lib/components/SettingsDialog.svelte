@@ -194,6 +194,23 @@
             </label>
           </div>
 
+          {#if navigator.platform.startsWith("Mac")}
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Integrated Title Bar</span>
+              <span class="setting-description">Show tabs in the title bar alongside window controls (requires restart)</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.integratedTitleBar}
+                onchange={() => settingsStore.update({ integratedTitleBar: !settingsStore.integratedTitleBar })}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          {/if}
+
           <div class="setting-row">
             <div class="setting-info">
               <span class="setting-label">Show Address Bar</span>

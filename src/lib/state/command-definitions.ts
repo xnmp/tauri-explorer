@@ -31,12 +31,16 @@ function openNewWindow(path: string, viewMode?: ViewMode): void {
   const isMac = navigator.platform.startsWith("Mac");
   new WebviewWindow(label, {
     url,
+    title: "tauri-explorer",
     width: 1200,
     height: 800,
     decorations: isMac,
     transparent: !isMac,
     shadow: isMac,
-    dragDropEnabled: false,
+    dragDropEnabled: true,
+    acceptFirstMouse: true,
+    titleBarStyle: isMac && settingsStore.integratedTitleBar ? "overlay" : undefined,
+    hiddenTitle: isMac && settingsStore.integratedTitleBar,
   });
 }
 
@@ -362,6 +366,7 @@ const viewCommands: Command[] = [
     id: "view.toggleAddressBar",
     label: "Toggle Address Bar",
     category: "view",
+    shortcut: "Alt+M D",
     handler: () => settingsStore.toggleAddressBar(),
   },
   {
@@ -694,7 +699,7 @@ const terminalCommands: Command[] = [
     handler: () => {
       const explorer = getActiveExplorer();
       if (explorer) {
-        openInTerminal(explorer.state.currentPath);
+        openInTerminal(explorer.state.currentPath, settingsStore.terminalApp);
       }
     },
   },

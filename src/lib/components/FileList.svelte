@@ -13,6 +13,7 @@
   import { useMarqueeSelection } from "$lib/composables/use-marquee-selection.svelte";
   import { useTypeAhead } from "$lib/composables/use-type-ahead.svelte";
   import { isImageFile } from "$lib/domain/file-types";
+  import { getZoomFactor } from "$lib/domain/zoom";
   import DetailsView from "./DetailsView.svelte";
   import ListView from "./ListView.svelte";
   import TilesView from "./TilesView.svelte";
@@ -41,10 +42,18 @@
   // Track content width for ListView auto columns
   let contentWidth = $state(0);
 
+  // Cached container rect for the duration of a marquee drag (avoids forced layout per mousemove)
+  let cachedDragRect: DOMRect | null = null;
+  // Cached marquee indices to skip redundant selectByIndices calls when the covered items haven't changed
+  let lastMarqueeIndices: number[] | null = null;
+
   $effect(() => {
     if (!contentRef) return;
     const observer = new ResizeObserver((entries) => {
       contentWidth = entries[0]?.contentRect.width ?? 0;
+      if (cachedDragRect) {
+        cachedDragRect = contentRef!.getBoundingClientRect();
+      }
     });
     observer.observe(contentRef);
     return () => observer.disconnect();
@@ -142,41 +151,41 @@
   // Marquee selection
   // ===================
 
-  /** Header height for marquee clamping: 32px for details (column headers), 0 for list/tiles */
+  /** Header height for marquee clamping: measured from DOM for details view, 0 for list/tiles */
   function marqueeHeaderHeight(): number {
-    return explorer.viewMode === "details" ? 32 : 0;
+    if (explorer.viewMode !== "details") return 0;
+    const header = contentRef?.querySelector(".column-headers");
+    if (!header) return 32;
+    return header.getBoundingClientRect().height / getZoomFactor();
   }
 
   function handleMarqueeStart(event: MouseEvent): void {
     const rect = contentRef?.getBoundingClientRect();
     if (!rect) return;
+    cachedDragRect = rect;
     marquee.start(event, rect, marqueeHeaderHeight());
   }
 
-  // RAF-throttled marquee selection to avoid layout thrashing in tiles/list views
-  let marqueeRafId: number | null = null;
-
   function handleMarqueeMove(event: MouseEvent): void {
-    const rect = contentRef?.getBoundingClientRect();
-    if (!rect) return;
-    if (!marquee.move(event, rect, marqueeHeaderHeight())) return;
-    if (marqueeRafId === null) {
-      marqueeRafId = requestAnimationFrame(() => {
-        marqueeRafId = null;
-        updateMarqueeSelection();
-      });
-    }
+    if (!cachedDragRect) return;
+    marquee.move(event, cachedDragRect, marqueeHeaderHeight(), updateMarqueeSelection);
   }
 
   function handleMarqueeEnd(): void {
-    if (marqueeRafId !== null) {
-      cancelAnimationFrame(marqueeRafId);
-      marqueeRafId = null;
-    }
     if (marquee.isDragging) {
       updateMarqueeSelection();
     }
     marquee.end();
+    cachedDragRect = null;
+    lastMarqueeIndices = null;
+  }
+
+  function indicesEqual(a: number[], b: number[] | null): boolean {
+    if (!b || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
   }
 
   function updateMarqueeSelection(): void {
@@ -189,8 +198,10 @@
       indices = marquee.getSelectedIndicesFromDOM(contentRef, ".list-item");
     } else {
       const scrollTop = contentRef.querySelector('.virtual-viewport')?.scrollTop ?? 0;
-      indices = marquee.getSelectedIndices(scrollTop, explorer.displayEntries.length);
+      indices = marquee.getSelectedIndices(scrollTop, explorer.displayEntries.length, marqueeHeaderHeight());
     }
+    if (indicesEqual(indices, lastMarqueeIndices)) return;
+    lastMarqueeIndices = indices;
     explorer.selectByIndices(indices, marquee.ctrlKeyHeld);
   }
 
@@ -199,7 +210,8 @@
   // ===================
 
   function handleListDragOver(event: DragEvent): void {
-    if (!event.dataTransfer?.types.includes("application/x-explorer-path") && !dragState.readCrossWindow()) return;
+    const types = event.dataTransfer?.types;
+    if (!types?.includes("application/x-explorer-path") && !types?.includes("Files") && !dragState.readCrossWindow()) return;
 
     const target = event.target as HTMLElement;
     if (target.closest(".file-item")) return;
@@ -235,6 +247,7 @@
     if (validPaths.length === 0) return;
 
     event.preventDefault();
+    dragState.clear();
 
     const existingNames = new Set(explorer.displayEntries.map((e) => e.name));
     for (const sourcePath of validPaths) {
@@ -263,6 +276,7 @@
   <div
     class="content"
     class:drop-target={isDropTarget}
+    data-current-path={explorer.currentPath}
     bind:this={contentRef}
     onmousedown={handleMarqueeStart}
     ondragover={handleListDragOver}

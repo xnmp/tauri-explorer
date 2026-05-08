@@ -71,6 +71,7 @@ export interface Settings {
   millerLayersPreferred: number; // 1-3, remembered layer count for toggle
   quickOpenDebug: boolean; // show score breakdown in QuickOpen results
   geminiApiKey: string; // Gemini API key for Nano Banana image editing
+  integratedTitleBar: boolean; // macOS: render tabs in title bar with overlay traffic lights
 }
 
 const MIN_ZOOM = 50;
@@ -110,6 +111,7 @@ const DEFAULT_SETTINGS: Settings = {
   millerLayersPreferred: 2,
   quickOpenDebug: false,
   geminiApiKey: "",
+  integratedTitleBar: false,
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -301,6 +303,9 @@ function createSettingsStore() {
     },
     setGeminiApiKey(key: string): void {
       update({ geminiApiKey: key });
+    },
+    get integratedTitleBar() {
+      return settings.integratedTitleBar;
     },
     toggleMillerColumns(): void {
       const on = settings.millerLayers > 0;

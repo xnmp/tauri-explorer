@@ -28,7 +28,10 @@
   // Suppress mouseenter on rows until the user actually moves the mouse —
   // prevents selection from jumping to the row the cursor happened to be over
   // when the palette opened (or after arrow navigation scrolled a new row under it).
+  // Track coordinates because macOS WebKit fires a synthetic mousemove (zero delta)
+  // when an element renders under a stationary cursor.
   let mouseMoved = $state(false);
+  let lastMousePos = $state<{ x: number; y: number } | null>(null);
 
   // Get filtered and sorted commands
   const filteredCommands = $derived.by(() => {
@@ -165,6 +168,7 @@
       query = "";
       selectedIndex = 0;
       mouseMoved = false;
+      lastMousePos = null;
       tick().then(() => inputRef?.focus());
     }
   });
@@ -172,7 +176,13 @@
 
 {#if open}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="command-palette-overlay" onclick={onClose} onkeydown={handleKeydown} onmousemove={() => { mouseMoved = true; }}>
+  <div class="command-palette-overlay" onclick={onClose} onkeydown={handleKeydown}
+    onmousemove={(e) => {
+      if (lastMousePos && (e.clientX !== lastMousePos.x || e.clientY !== lastMousePos.y)) {
+        mouseMoved = true;
+      }
+      lastMousePos = { x: e.clientX, y: e.clientY };
+    }}>
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="command-palette-dialog" onclick={(e) => e.stopPropagation()}>
       <div class="search-container">
@@ -181,6 +191,11 @@
           type="text"
           class="search-input"
           placeholder="Type a command..."
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+          name="cmdpalette-nofill"
           bind:value={query}
           bind:this={inputRef}
           oninput={handleInput}

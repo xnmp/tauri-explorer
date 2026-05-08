@@ -77,16 +77,43 @@ function highlightAtCoords(cx: number, cy: number): void {
   const el = document.elementFromPoint(cx, cy);
   if (!el) {
     clearHighlights();
+    clearSidebarHighlight();
     return;
   }
 
   const folderEntry = (el as HTMLElement).closest?.(".entry-item.directory[data-path]") as HTMLElement | null;
-  const targetEl = folderEntry || (el as HTMLElement).closest?.(".content") as HTMLElement | null;
+  const sidebarEl = (el as HTMLElement).closest?.(".quick-access") as HTMLElement | null;
+  const targetEl = folderEntry || (!sidebarEl ? (el as HTMLElement).closest?.(".content") as HTMLElement | null : null);
 
-  if (targetEl !== highlightedElement) {
-    if (highlightedElement) highlightedElement.classList.remove("drop-target");
-    highlightedElement = targetEl;
-    if (highlightedElement) highlightedElement.classList.add("drop-target");
+  if (sidebarEl) {
+    if (highlightedElement) {
+      highlightedElement.classList.remove("drop-target");
+      highlightedElement = null;
+    }
+    setSidebarHighlight(sidebarEl);
+  } else {
+    clearSidebarHighlight();
+    if (targetEl !== highlightedElement) {
+      if (highlightedElement) highlightedElement.classList.remove("drop-target");
+      highlightedElement = targetEl;
+      if (highlightedElement) highlightedElement.classList.add("drop-target");
+    }
+  }
+}
+
+let highlightedSidebar: HTMLElement | null = null;
+
+function setSidebarHighlight(el: HTMLElement): void {
+  if (el === highlightedSidebar) return;
+  clearSidebarHighlight();
+  highlightedSidebar = el;
+  el.classList.add("drag-over");
+}
+
+function clearSidebarHighlight(): void {
+  if (highlightedSidebar) {
+    highlightedSidebar.classList.remove("drag-over");
+    highlightedSidebar = null;
   }
 }
 
@@ -95,4 +122,5 @@ export function clearHighlights(): void {
     highlightedElement.classList.remove("drop-target");
     highlightedElement = null;
   }
+  clearSidebarHighlight();
 }

@@ -120,6 +120,9 @@ export function usePointerDrag(deps: PointerDragDeps) {
     }
 
     clearHighlights();
+    // Hide ghost before elementFromPoint — WebKit may not reliably skip
+    // pointer-events:none elements during hit testing in WKWebView.
+    if (ghostEl) ghostEl.style.display = "none";
     const target = resolveDropTargetAtPoint(event.clientX, event.clientY);
     const isCopy = event.altKey;
     const explorer = deps.getExplorer();

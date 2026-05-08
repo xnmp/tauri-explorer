@@ -15,6 +15,8 @@
   import { dragState } from "$lib/state/drag.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { useDropTarget } from "$lib/composables/use-drop-target.svelte";
+  import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
+  import { isMac } from "$lib/domain/platform";
   import type { FileEntry } from "$lib/domain/file";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
@@ -142,6 +144,8 @@
     },
   });
 
+  const pointerDrag = isMac ? usePointerDrag({ getExplorer: () => explorer, getPaneNav: () => paneNav ?? undefined }) : null;
+
   // Resizable width
   const MILLER_WIDTH_KEY = "explorer-miller-width";
   const MIN_WIDTH = 120;
@@ -201,9 +205,10 @@
                 class:drop-target={dropTarget.isDropTarget(entry.path)}
                 class:copy-drop={dropTarget.isCopyDrop(entry.path)}
                 onclick={() => handleClick(entry)}
-                draggable="true"
-                ondragstart={(e) => handleDragStart(e, entry)}
-                ondragend={handleDragEnd}
+                draggable={!isMac}
+                ondragstart={!isMac ? (e) => handleDragStart(e, entry) : undefined}
+                ondragend={!isMac ? handleDragEnd : undefined}
+                onmousedown={isMac ? (e) => pointerDrag!.handlePointerDown(e, entry, false) : undefined}
                 ondragover={(e) => dropTarget.handleDragOver(e, entry)}
                 ondragleave={() => dropTarget.handleDragLeave(entry)}
                 ondrop={(e) => dropTarget.handleDrop(e, entry)}

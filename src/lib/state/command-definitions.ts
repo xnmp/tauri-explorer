@@ -18,6 +18,7 @@ import { dialogStore } from "./dialogs.svelte";
 import { fetchDirectory, writeTextFile, openInTerminal, clipboardPasteImage } from "$lib/api/files";
 import { pasteEntries, type PasteSource } from "./paste-operations";
 import { folderViewsStore } from "./folder-views.svelte";
+import { sidebarViewsStore } from "./sidebar-views.svelte";
 import type { ViewMode } from "./types";
 import { readFocusedWindowState } from "./focused-window";
 
@@ -383,8 +384,27 @@ const viewCommands: Command[] = [
     id: "view.toggleSidebar",
     label: "Toggle Sidebar",
     category: "view",
-    shortcut: "Alt+M B",
     handler: () => settingsStore.toggleSidebar(),
+  },
+  {
+    id: "view.focusFilesSidebar",
+    label: "Show Files Sidebar (Bookmarks & Recent)",
+    category: "view",
+    shortcut: "Alt+M B",
+    handler: () => {
+      if (!settingsStore.showSidebar) settingsStore.toggleSidebar();
+      sidebarViewsStore.setActive("files");
+    },
+  },
+  {
+    id: "view.focusScmSidebar",
+    label: "Show Source Control",
+    category: "view",
+    shortcut: "Alt+M G",
+    handler: () => {
+      if (!settingsStore.showSidebar) settingsStore.toggleSidebar();
+      sidebarViewsStore.setActive("scm");
+    },
   },
   {
     id: "view.toggleWindowControls",

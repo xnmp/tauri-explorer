@@ -4,6 +4,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## refactor/scm-as-its-own-activity-bar-panel-under-alt-m-g (#74): Two new chorded view-focus commands
+
+**Key takeaways:**
+- The activity-bar already had `files` and `scm` as separate `SIDEBAR_VIEWS`, but no keybinding switched between them — `Alt+M B` only toggled sidebar visibility. Splitting that into two new commands (`view.focusFilesSidebar` on Alt+M B, `view.focusScmSidebar` on Alt+M G) preserves toggle behaviour for users who want it (still available as the unbound `view.toggleSidebar`) while giving each view its own chord.
+- Both commands ensure the sidebar is visible before flipping the active view, so a single chord reliably surfaces the panel even from a hidden state.
+
+---
+
 ## feat/scm-tree-view-group-files-by-folder (#76): Snippet-based recursion
 
 **Key takeaways:**

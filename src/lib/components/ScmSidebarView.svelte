@@ -172,11 +172,11 @@
   }
 
   function onCommitKeydown(e: KeyboardEvent): void {
-    // Ctrl+Enter always commits. Bare Enter commits unless Shift is held
-    // (Shift+Enter inserts a newline).
+    // Ctrl+Enter and bare Enter both commit. Shift+Enter inserts a newline.
     if (e.key === "Enter") {
       if (e.shiftKey) return;
       e.preventDefault();
+      e.stopPropagation();
       doCommit();
     }
   }

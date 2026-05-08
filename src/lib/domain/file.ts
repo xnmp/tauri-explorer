@@ -23,7 +23,13 @@ export interface DirectoryListing {
   readonly listing_id: number | null;
 }
 
-export type SortField = "name" | "size" | "modified";
+export type SortField = "name" | "size" | "modified" | "type";
+
+function fileExtension(name: string): string {
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0 || dot === name.length - 1) return "";
+  return name.slice(dot + 1).toLowerCase();
+}
 
 /**
  * Sort file entries with directories first, then by specified field.
@@ -48,6 +54,13 @@ export function sortEntries(
       case "modified":
         comparison = a.modified.localeCompare(b.modified);
         break;
+      case "type": {
+        const extCmp = fileExtension(a.name).localeCompare(fileExtension(b.name));
+        comparison = extCmp !== 0
+          ? extCmp
+          : a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+        break;
+      }
       default:
         comparison = a.name.toLowerCase().localeCompare(b.name.toLowerCase());
     }

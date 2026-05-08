@@ -58,6 +58,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/delete-confirm-reads-cleared-dialog-state (#80): Fire-and-forget needs captured args
+
+**Key takeaways:**
+- When you dismiss a dialog before kicking off the async work it represents, any path that reads dialog state inside the work is racing against the close. The right shape is: capture the inputs into local variables before closing, then pass them as arguments to the async callee. Reading from a store after the source modal has been torn down is the same class of bug as the cancellation tracking from issue #61.
+- This was caught by an actual screenshot run: the merged #71 fix shipped with a placeholder screenshot, and the bug stayed invisible until the live capture surfaced "Delete failed: No entries selected for delete". Always run the UI for behavioural fixes.
+
+---
+
 ## fix/delete-modal-lingers-move-progress-to-toast: Confirm closes the modal, work runs in background
 
 **Key takeaways:**

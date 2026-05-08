@@ -533,6 +533,36 @@ const viewCommands: Command[] = [
     category: "view",
     handler: () => { const e = getActiveExplorer(); if (e) { e.setViewMode("tiles"); folderViewsStore.set(e.currentPath, { thumbnailSize: "large" }); } },
   },
+  {
+    id: "view.toggleManuallyHidden",
+    label: "Toggle Manually Hidden Files",
+    category: "view",
+    handler: () => settingsStore.toggleShowManuallyHidden(),
+  },
+  {
+    id: "view.toggleGitStatus",
+    label: "Toggle Git Status Indicators",
+    category: "view",
+    handler: () => settingsStore.toggleGitStatus(),
+  },
+  {
+    id: "view.toggleScmTreeView",
+    label: "Toggle SCM Tree View",
+    category: "view",
+    handler: () => settingsStore.toggleScmTreeView(),
+  },
+  {
+    id: "view.toggleConfirmDelete",
+    label: "Toggle Confirm on Delete",
+    category: "view",
+    handler: () => settingsStore.toggleConfirmDelete(),
+  },
+  {
+    id: "view.toggleQuickOpenDebug",
+    label: "Toggle Quick Open Debug Scores",
+    category: "view",
+    handler: () => settingsStore.toggleQuickOpenDebug(),
+  },
 ];
 
 /** Bookmark commands */

@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/command-palette-toggle-settings (#87): All toggleable settings in command palette
+
+**Key takeaways:**
+- Five boolean settings had toggle methods in the settings store but no corresponding command: `confirmDelete`, `showGitStatus`, `showManuallyHidden`, `scmTreeView`, `quickOpenDebug`. Adding them to `command-definitions.ts` is a one-liner per setting.
+
+---
+
 ## fix/rename-layout-shift (#86): Inline rename input shifts layout
 
 **Key takeaways:**

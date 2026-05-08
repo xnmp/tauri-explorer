@@ -8,6 +8,7 @@
 import type { Component } from "svelte";
 import FilesSidebarView from "$lib/components/FilesSidebarView.svelte";
 import ScmSidebarView from "$lib/components/ScmSidebarView.svelte";
+import { settingsStore } from "./settings.svelte";
 
 export interface SidebarView {
   id: string;
@@ -19,7 +20,7 @@ export interface SidebarView {
 import FilesIcon from "$lib/components/icons/FilesIcon.svelte";
 import ScmIcon from "$lib/components/icons/ScmIcon.svelte";
 
-export const SIDEBAR_VIEWS: SidebarView[] = [
+export const ALL_SIDEBAR_VIEWS: SidebarView[] = [
   { id: "files", label: "Explorer", icon: FilesIcon, component: FilesSidebarView },
   { id: "scm", label: "Source Control", icon: ScmIcon, component: ScmSidebarView },
 ];
@@ -27,20 +28,30 @@ export const SIDEBAR_VIEWS: SidebarView[] = [
 const STORAGE_KEY = "explorer-sidebar-active-view";
 
 function loadInitial(): string {
-  if (typeof localStorage === "undefined") return SIDEBAR_VIEWS[0].id;
+  if (typeof localStorage === "undefined") return ALL_SIDEBAR_VIEWS[0].id;
   const saved = localStorage.getItem(STORAGE_KEY);
-  if (saved && SIDEBAR_VIEWS.some((v) => v.id === saved)) return saved;
-  return SIDEBAR_VIEWS[0].id;
+  if (saved && ALL_SIDEBAR_VIEWS.some((v) => v.id === saved)) return saved;
+  return ALL_SIDEBAR_VIEWS[0].id;
 }
 
 function createSidebarViewStore() {
   let activeId = $state(loadInitial());
 
+  const visibleViews = $derived(
+    settingsStore.showGitStatus
+      ? ALL_SIDEBAR_VIEWS
+      : ALL_SIDEBAR_VIEWS.filter((v) => v.id !== "scm")
+  );
+
+  const effectiveActiveId = $derived(
+    visibleViews.some((v) => v.id === activeId) ? activeId : "files"
+  );
+
   return {
-    get activeId() { return activeId; },
-    get views() { return SIDEBAR_VIEWS; },
+    get activeId() { return effectiveActiveId; },
+    get views() { return visibleViews; },
     setActive(id: string) {
-      if (!SIDEBAR_VIEWS.some((v) => v.id === id)) return;
+      if (!ALL_SIDEBAR_VIEWS.some((v) => v.id === id)) return;
       activeId = id;
       if (typeof localStorage !== "undefined") {
         localStorage.setItem(STORAGE_KEY, id);

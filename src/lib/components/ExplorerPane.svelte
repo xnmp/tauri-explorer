@@ -239,7 +239,7 @@
   {#if paneExplorer}
     <NavigationBar explorer={paneExplorer} />
     <div class="pane-content">
-      {#if isActive && scmStore.activeDiff && scmStore.repoRoot}
+      {#if isActive && settingsStore.showGitStatus && scmStore.activeDiff && scmStore.repoRoot}
         <ScmDiffView
           repoPath={scmStore.repoRoot}
           path={scmStore.activeDiff.path}

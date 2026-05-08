@@ -4,6 +4,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/sidebar-removable-drives-update-on-eject: Watch the mount-base, not just poll
+
+**Key takeaways:**
+- Polling `list_drives` was the only refresh path and ran every 5s. Eject/insert latency was a function of the poll interval. Subscribing the drives store to the existing `directory-changed` fs-watcher event for the platform's mount-base directories (`/run/media/$USER`, `/media/$USER`, `/Volumes`) drops detection latency to roughly the OS notify granularity.
+- We kept polling as a backstop because not every mount-base is guaranteed to exist (refused or absent), but tightened the interval to 1.5s so the watcher and the poll together comfortably hit the ~1s acceptance.
+
+---
+
 ## feat/hide-empty-folders-in-miller-view: emptiness probe must respect the visibility rule
 
 **Key takeaways:**

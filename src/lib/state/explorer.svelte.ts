@@ -477,10 +477,13 @@ function createExplorerState(seed?: ExplorerSeed) {
     return result.error;
   }
 
-  async function confirmDelete(): Promise<string | null> {
-    const entries = dialogStore.deletingEntries;
+  async function confirmDelete(
+    entriesArg?: readonly FileEntry[],
+    isPermanentArg?: boolean,
+  ): Promise<string | null> {
+    const entries = entriesArg ?? dialogStore.deletingEntries;
     if (entries.length === 0) return "No entries selected for delete";
-    const isPermanent = dialogStore.isPermanentDelete;
+    const isPermanent = isPermanentArg ?? dialogStore.isPermanentDelete;
 
     const paths = entries.map((e) => e.path);
     let result: { ok: boolean; error?: string };

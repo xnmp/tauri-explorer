@@ -4,6 +4,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/cached-previews-update-when-file-changes: Bust mtime through both layers
+
+**Key takeaways:**
+- Two caches were hiding stale content: a path-keyed early-return inside `PreviewPane`, and the webview's URL-keyed cache for `convertFileSrc` output. Both needed to incorporate the FileEntry's `modified` (and `size`) so an external edit produces a fresh fetch.
+- Changing the early-return to a composite `previewKey = path|modified|size` works because the explorer pane already refreshes entries on `directory-changed` events — the entry handed to PreviewPane therefore updates without any extra wiring on this side.
+
+---
+
 ## feat/manual-hide-via-right-click-context-menu: Per-folder hide list piggybacks the dotfile dim
 
 **Key takeaways:**

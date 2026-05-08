@@ -569,8 +569,20 @@
     position: relative;
   }
 
+  .recent-item span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    flex: 1;
+  }
+
   .recent-item .remove-bookmark {
     display: none;
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
   }
 
   .recent-item:hover .remove-bookmark {
@@ -605,8 +617,11 @@
     justify-content: center;
     width: 18px;
     height: 18px;
-    margin-left: auto;
-    background: transparent;
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: var(--surface-primary, #fff);
     border: none;
     border-radius: 4px;
     color: var(--text-tertiary);

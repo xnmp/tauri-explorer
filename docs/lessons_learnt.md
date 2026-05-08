@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/recent-folders-hover-height (#91): X button overlay on long names
+
+**Key takeaways:**
+- The remove button (X) was in the flex flow, causing text wrapping when shown on hover for long folder names. Using `position: absolute` with `right: 8px` makes it overlay the text instead of pushing it.
+
+---
+
 ## fix/command-palette-toggle-settings (#87): All toggleable settings in command palette
 
 **Key takeaways:**

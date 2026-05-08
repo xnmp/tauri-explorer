@@ -4,6 +4,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## feat/scm-confirmation-for-remove-restore: Same backend, different copy
+
+**Key takeaways:**
+- `gitDiscard` already routes untracked entries to filesystem `remove_file` (see `git.rs::git_discard`). The SCM panel only had a Discard button on tracked rows, so the disk-deletion behaviour was reachable but never exposed. Adding the same button to untracked rows surfaces the existing semantics — the only thing that needed to differ is the confirmation copy ("permanently deleted from disk" vs "changes reverted").
+- Default-focusing the Cancel button on a destructive confirmation is a small but important accessibility detail; we focus it via `queueMicrotask` after rendering rather than relying on autofocus (which trips a lint rule).
+
+---
+
 ## fix/delete-modal-lingers-move-progress-to-toast: Confirm closes the modal, work runs in background
 
 **Key takeaways:**

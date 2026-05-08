@@ -10,6 +10,7 @@ import { undoStore } from "./undo.svelte";
 import { toastStore } from "./toast.svelte";
 import { broadcastFileChange, parentDir } from "./file-events";
 import { dragState } from "./drag.svelte";
+import { frecencyStore } from "./frecency.svelte";
 
 export interface DropOptions {
   /** Refresh callback after drop completes */
@@ -101,6 +102,7 @@ export async function handleFileDrop(
     }
     options.onRefresh();
     broadcastFileChange([parentDir(sourcePath), targetDir]);
+    frecencyStore.pruneNonExistent();
   } else {
     console.error(`Failed to ${isCopy ? "copy" : "move"}:`, result.error);
     toastStore.error(result.error);
@@ -146,6 +148,7 @@ export async function handleBackgroundDrop(
     toastStore.show(`Moved ${fileName} to ${destName}`, "info");
     options.onRefresh();
     broadcastFileChange([parentDir(sourcePath), currentPath]);
+    frecencyStore.pruneNonExistent();
   } else {
     console.error("Failed to move:", result.error);
     toastStore.error(result.error);

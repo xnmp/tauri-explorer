@@ -9,6 +9,7 @@ import { conflictResolver, type ConflictChoice } from "./conflict-resolver.svelt
 import { undoStore } from "./undo.svelte";
 import { broadcastFileChange } from "./file-events";
 import { toastStore } from "./toast.svelte";
+import { frecencyStore } from "./frecency.svelte";
 import type { FileEntry } from "$lib/domain/file";
 
 export interface PasteSource {
@@ -167,6 +168,7 @@ export async function pasteEntries(
       affectedDirs.add(dir);
     }
     broadcastFileChange([...affectedDirs]);
+    frecencyStore.pruneNonExistent();
   }
 
   await onRefresh();

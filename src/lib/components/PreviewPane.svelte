@@ -60,8 +60,12 @@
     return selected.length === 1 ? selected[0] : null;
   });
 
-  /** Stable primitive that changes only when the selected path changes */
+  /** Stable primitive that changes when the selected path OR its mtime changes,
+   * so external edits to the same file invalidate the cached preview. */
   const selectedPath = $derived(selectedFile?.path ?? null);
+  const previewKey = $derived(
+    selectedFile ? `${selectedFile.path}|${selectedFile.modified}|${selectedFile.size}` : null,
+  );
 
   // Preview content state
   let previewImageUrl = $state<string | null>(null);
@@ -78,13 +82,16 @@
   let previewError = $state<string | null>(null);
   let previewTruncatedLines = $state(0);
   let lastPreviewPath: string | null = null;
+  let lastPreviewKey: string | null = null;
 
-  // Load preview when selection changes
+  // Load preview when selection (or selected file's mtime/size) changes.
   $effect(() => {
     const path = selectedPath;
+    const key = previewKey;
     const file = selectedFile;
     if (!file || !path) {
       lastPreviewPath = null;
+      lastPreviewKey = null;
       previewImageUrl = null;
       previewText = null;
       previewHighlightedHtml = null;
@@ -94,8 +101,9 @@
       previewLoading = false;
       return;
     }
-    if (path === lastPreviewPath) return;
+    if (key === lastPreviewKey) return;
     lastPreviewPath = path;
+    lastPreviewKey = key;
     loadPreview(file);
   });
 
@@ -127,11 +135,15 @@
       return;
     }
 
+    // Cache-busting suffix derived from mtime+size — same value as previewKey,
+    // ensures the webview re-fetches when the on-disk file changes.
+    const bust = encodeURIComponent(`${file.modified}-${file.size}`);
+
     if (isPdfFile(file)) {
       if (isTauri()) {
         try {
           const { convertFileSrc } = await import("@tauri-apps/api/core");
-          previewPdfUrl = convertFileSrc(file.path);
+          previewPdfUrl = `${convertFileSrc(file.path)}?v=${bust}`;
         } catch {
           previewError = "Cannot preview PDF";
         }
@@ -147,7 +159,7 @@
         try {
           const { convertFileSrc } = await import("@tauri-apps/api/core");
           if (file.path !== lastPreviewPath) return; // Stale
-          const url = convertFileSrc(file.path);
+          const url = `${convertFileSrc(file.path)}?v=${bust}`;
           // Decode off-screen — spinner stays visible until ready
           await decodeImage(url);
           if (file.path !== lastPreviewPath) return; // Stale after decode

@@ -310,6 +310,7 @@
     flex: 1;
     min-width: 0;
     padding: 2px 6px;
+    margin: -3px 0;
     background: var(--control-fill);
     border: 1px solid var(--accent);
     border-radius: var(--radius-sm);

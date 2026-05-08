@@ -351,6 +351,40 @@ pub async fn git_init(path: String) -> Result<String, AppError> {
     .await
 }
 
+/// Append `entry` to `.gitignore` at the repo root, creating the file if
+/// missing. Idempotent — does nothing if the entry is already present.
+/// Returns the relative path that was written.
+#[tauri::command]
+pub async fn git_add_to_gitignore(repo_root: String, entry: String) -> Result<String, AppError> {
+    run_blocking(move |_cancel| {
+        let root = PathBuf::from(&repo_root);
+        let normalized = entry.trim_start_matches("./").trim_start_matches('/').to_string();
+        if normalized.is_empty() {
+            return Err(AppError::Other("ignore entry is empty".into()));
+        }
+        let gitignore_path = root.join(".gitignore");
+        let existing = std::fs::read_to_string(&gitignore_path).unwrap_or_default();
+        let already_present = existing
+            .lines()
+            .map(|l| l.trim())
+            .any(|l| l == normalized);
+        if already_present {
+            return Ok(normalized);
+        }
+        let needs_leading_newline = !existing.is_empty() && !existing.ends_with('\n');
+        let mut next = existing;
+        if needs_leading_newline {
+            next.push('\n');
+        }
+        next.push_str(&normalized);
+        next.push('\n');
+        std::fs::write(&gitignore_path, next.as_bytes())
+            .map_err(|e| AppError::Other(format!("failed to write .gitignore: {}", e)))?;
+        Ok(normalized)
+    })
+    .await
+}
+
 /// Resolve the repo root that contains `path`, or `None` if outside any repo.
 #[tauri::command]
 pub async fn git_repo_root(path: String) -> Result<Option<String>, AppError> {

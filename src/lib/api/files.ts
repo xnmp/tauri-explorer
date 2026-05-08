@@ -1003,6 +1003,20 @@ export async function gitRepoRoot(path: string): Promise<ApiResult<string | null
   }
 }
 
+/** Append a path to the repo's `.gitignore`, creating the file if needed.
+ *  Idempotent — duplicate entries are skipped. */
+export async function gitAddToGitignore(
+  repoRoot: string,
+  entry: string,
+): Promise<ApiResult<string>> {
+  try {
+    const data = await invoke<string>("git_add_to_gitignore", { repoRoot, entry });
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
 export async function gitSummary(repoPath: string): Promise<ApiResult<GitStatusSummary>> {
   try {
     const data = await invoke<GitStatusSummary>("git_status", { repoPath });

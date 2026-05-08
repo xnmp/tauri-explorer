@@ -237,6 +237,7 @@ pub fn run(launch_dir: Option<String>) {
             // Git source-control backend (#53, #54)
             git::git_init,
             git::git_repo_root,
+            git::git_add_to_gitignore,
             git::git_status,
             git::git_stage,
             git::git_unstage,

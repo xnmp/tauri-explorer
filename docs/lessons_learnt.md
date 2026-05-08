@@ -4,6 +4,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/cut-indicator-persists-after-cross-tab-paste: Refresh broadcasts must reach inactive tabs
+
+**Key takeaways:**
+- The `directory-changed` and cross-window file-change handlers in `+page.svelte` only walked the active tab's left/right panes (`windowTabsManager.getExplorer(paneId)`). Other tabs in the same window held their own explorer instances watching their own paths but were never refreshed, so a paste in tab B left tab A's listing (and any cut indicator on the source row) stale.
+- Adding `windowTabsManager.getAllExplorers()` and iterating it in both handlers fixes the cross-tab refresh path. The clipboard already broadcasts `null` after a cut-take, so once the source listing refreshes, the indicator naturally drops.
+
+---
+
 ## investigate/preview-renders-faster-than-thumbnails (issue #69): Different pipelines, not a bug
 
 **Question:** Why does the preview pane sometimes paint before the file-list thumbnail for the same image?

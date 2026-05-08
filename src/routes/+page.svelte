@@ -305,11 +305,12 @@
     // Setup external file drop handling
     externalDrop.setup();
 
-    // Listen for file changes from other windows
+    // Listen for file changes from other windows. Refresh every explorer
+    // (including inactive tabs) whose current path is in affectedDirs so
+    // the source tab sees the change without needing to be activated.
     initFileChangeListener((affectedDirs) => {
-      for (const paneId of ["left", "right"] as const) {
-        const exp = windowTabsManager.getExplorer(paneId);
-        if (exp && affectedDirs.includes(exp.currentPath)) {
+      for (const exp of windowTabsManager.getAllExplorers()) {
+        if (affectedDirs.includes(exp.currentPath)) {
           exp.refresh({ silent: true });
         }
       }
@@ -335,9 +336,8 @@
     let unlistenWatcher: UnlistenFn | undefined;
     listen<{ path: string }>("directory-changed", (event) => {
       const changedPath = event.payload.path;
-      for (const paneId of ["left", "right"] as const) {
-        const exp = windowTabsManager.getExplorer(paneId);
-        if (exp && exp.currentPath === changedPath) {
+      for (const exp of windowTabsManager.getAllExplorers()) {
+        if (exp.currentPath === changedPath) {
           exp.refresh({ silent: true });
         }
       }

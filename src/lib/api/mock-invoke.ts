@@ -262,6 +262,10 @@ function getDirectoryEntries(path: string): FileEntry[] {
 // Mock command handlers
 type CommandHandler = (args: Record<string, unknown>) => unknown;
 
+/** Tracks paths added to .gitignore via the mocked git_add_to_gitignore so
+ *  the SCM panel can hide newly-ignored entries on next git_status. */
+const mockGitignored = new Set<string>();
+
 const mockCommands: Record<string, CommandHandler> = {
   get_home_directory: () => "/home/user",
   get_launch_cwd: () => "/home/user",
@@ -576,6 +580,14 @@ const mockCommands: Record<string, CommandHandler> = {
     return null;
   },
 
+  git_add_to_gitignore: (args: Record<string, unknown>) => {
+    const entry = ((args.entry as string) || "").replace(/^\.\//, "").replace(/^\//, "");
+    if (!mockGitignored.has(entry)) {
+      mockGitignored.add(entry);
+    }
+    return entry;
+  },
+
   git_status: (args: Record<string, unknown>) => {
     const repoPath = args.repoPath as string;
     if (!repoPath?.startsWith("/home/user/Documents/project")) {
@@ -606,7 +618,7 @@ const mockCommands: Record<string, CommandHandler> = {
         { path: "src/router.tsx", old_path: null, status: "Untracked" },
         { path: ".env.example", old_path: null, status: "Untracked" },
         { path: "assets/logo.png", old_path: null, status: "Untracked" },
-      ],
+      ].filter((e) => !mockGitignored.has(e.path)),
       merge: [],
     };
   },

@@ -4,6 +4,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/recent-folders-stale-entries (#85): Reactive pruning of recent folders
+
+**Key takeaways:**
+- `frecencyStore.pruneNonExistent()` was only called on component mount and visibility change, not after file operations. When users deleted/renamed/moved folders via the explorer, stale entries persisted in the recent list until the next page load or tab switch.
+- Fix: call `pruneNonExistent()` after every successful file mutation (delete, rename, move, paste). The call is async and fire-and-forget — it doesn't block the operation.
+
+---
+
 ## refactor/scm-as-its-own-activity-bar-panel-under-alt-m-g (#74): Two new chorded view-focus commands
 
 **Key takeaways:**

@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/multifile-progress-dialog-persists-after-cancel: Cancellation must dismiss UI separately from worker abort
+
+**Key takeaways:**
+- Marking an `Operation` as `"cancelled"` only stops the worker loop — the dialog row stays visible until something filters it out. Treat "remove from UI" and "signal cancellation to worker" as two responsibilities. We solved this by tracking `cancelledIds` in a separate `Set` so workers can keep polling `isOperationCancelled` after the row is removed from the visible list.
+
+---
+
 ## fix/miller-folders-external-refresh: Cache invalidation needs registered watcher
 
 **Key takeaways:**

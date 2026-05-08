@@ -4,6 +4,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/delete-modal-lingers-move-progress-to-toast: Confirm closes the modal, work runs in background
+
+**Key takeaways:**
+- The dialog used to await `confirmDelete()` before closing, leaving it on screen for the duration of the actual delete (which can be ~1s for trash even on small files because of the system bus call). Closing the modal first and firing the async work as `void confirmDelete().then(...)` removes the lingering UI without changing the underlying delete logic.
+- We surface progress and success/error via the existing `toastStore` (an info toast for ≥multi or directory deletes, success or error toast on settle). This is cleaner than re-opening the modal on error and removes the need for `deleting`/spinner state inside the dialog.
+
+---
+
 ## fix/cut-indicator-persists-after-cross-tab-paste: Refresh broadcasts must reach inactive tabs
 
 **Key takeaways:**

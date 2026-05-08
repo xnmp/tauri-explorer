@@ -5,6 +5,7 @@
 <script lang="ts">
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
+  import { toastStore } from "$lib/state/toast.svelte";
 
   interface Props {
     explorer: ExplorerInstance;
@@ -13,7 +14,6 @@
   let { explorer }: Props = $props();
 
   let error = $state<string | null>(null);
-  let deleting = $state(false);
   let overlayEl: HTMLDivElement | undefined = $state();
 
   // Auto-focus overlay when dialog opens so keydown events are captured
@@ -23,17 +23,36 @@
     }
   });
 
-  async function handleConfirm() {
-    deleting = true;
+  function handleConfirm() {
     error = null;
+    const entries = [...dialogStore.deletingEntries];
+    const isPermanent = dialogStore.isPermanentDelete;
+    const isMultiple = entries.length > 1;
+    // Close the dialog immediately — progress and completion are reported
+    // through toast notifications so the UI doesn't appear stuck.
+    dialogStore.cancelDelete();
+    if (entries.length === 0) return;
 
-    const result = await explorer.confirmDelete();
-
-    deleting = false;
-
-    if (result) {
-      error = result;
+    let pendingToastId: number | undefined;
+    if (isMultiple || entries[0].kind === "directory") {
+      pendingToastId = toastStore.show(
+        isMultiple ? `Deleting ${entries.length} items…` : `Deleting ${entries[0].name}…`,
+        "info",
+        { duration: 30_000 },
+      );
     }
+
+    void explorer.confirmDelete().then((errMsg) => {
+      if (pendingToastId !== undefined) toastStore.dismiss(pendingToastId);
+      if (errMsg) {
+        toastStore.error(`Delete failed: ${errMsg}`);
+      } else {
+        const summary = isMultiple
+          ? `${isPermanent ? "Deleted" : "Moved to trash"}: ${entries.length} items`
+          : `${isPermanent ? "Deleted" : "Moved to trash"}: ${entries[0].name}`;
+        toastStore.success(summary);
+      }
+    });
   }
 
   function handleCancel() {
@@ -44,7 +63,7 @@
   function handleKeydown(event: KeyboardEvent) {
     if (event.key === "Escape") {
       handleCancel();
-    } else if (event.key === "Enter" && !deleting) {
+    } else if (event.key === "Enter") {
       handleConfirm();
     }
   }
@@ -129,13 +148,10 @@
       </div>
 
       <div class="dialog-actions">
-        <button type="button" class="btn secondary" onclick={handleCancel} disabled={deleting}>
+        <button type="button" class="btn secondary" onclick={handleCancel}>
           Cancel
         </button>
-        <button type="button" class="btn danger" onclick={handleConfirm} disabled={deleting}>
-          {#if deleting}
-            <span class="spinner"></span>
-          {/if}
+        <button type="button" class="btn danger" onclick={handleConfirm}>
           Delete{#if isMultiple} ({entries.length}){/if}
         </button>
       </div>

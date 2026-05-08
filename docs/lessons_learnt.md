@@ -4,6 +4,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## feat/scm-ctrl-enter-on-empty-message-does-amend-commit (and #79): Implicit amend-no-edit
+
+**Key takeaways:**
+- The Rust `git_commit` command already supports `amend=true` with an empty message — it falls back to the parent commit's message. The frontend was over-restricting the message-empty case. The fix: derive an `effectiveAmend` flag inside `scmStore.commit()` so any empty-message-with-staged-files invocation routes to amend automatically. Both Ctrl+Enter and the commit button benefit.
+- The button label/tooltip needs three modes: `commit`, `amend` (toggle on), `amend-no-edit` (empty msg + staged). Splitting the derivation into `commitMode` keeps the conditional sprawl out of the template.
+
+---
+
 ## fix/scm-file-row-expands-to-two-lines-on-hover: Two grid items in the same column collide
 
 **Key takeaways:**

@@ -119,8 +119,14 @@
   }
 
   async function doCommit(): Promise<void> {
+    const mode = commitMode;
     const result = await scmStore.commit();
-    if (result.ok) toastStore.show("Commit created", "success");
+    if (result.ok) {
+      toastStore.show(
+        mode === "amend" || mode === "amend-no-edit" ? "Amended last commit" : "Commit created",
+        "success",
+      );
+    }
   }
 
   function onCommitKeydown(e: KeyboardEvent): void {
@@ -156,10 +162,41 @@
   const untrackedCount = $derived(summary.untracked.length);
   const mergeCount = $derived(summary.merge.length);
 
-  const canCommit = $derived(
-    isRepo &&
-      (scmStore.amend || stagedCount > 0 || mergeCount > 0) &&
-      scmStore.commitMessage.trim().length > 0
+  /** Whether the commit button should be active. Allowed when either:
+   *  - the user has typed a message AND something is staged or amend is on
+   *  - the message is empty but staged files exist (button performs amend-no-edit)
+   *  - amend toggle is on (regardless of message) */
+  const canCommit = $derived.by(() => {
+    if (!isRepo) return false;
+    const msg = scmStore.commitMessage.trim();
+    if (scmStore.amend) return true;
+    const hasStaged = stagedCount > 0 || mergeCount > 0;
+    if (msg.length > 0) return hasStaged;
+    return hasStaged; // empty msg + staged → implicit amend-no-edit
+  });
+
+  /** Mode the commit button will fire in, used for label + tooltip. */
+  const commitMode = $derived.by(() => {
+    if (scmStore.amend) return "amend";
+    const msg = scmStore.commitMessage.trim();
+    if (msg.length === 0 && (stagedCount > 0 || mergeCount > 0)) return "amend-no-edit";
+    return "commit";
+  });
+
+  const commitButtonLabel = $derived(
+    commitMode === "amend"
+      ? "Commit (Amend)"
+      : commitMode === "amend-no-edit"
+        ? "Amend (no edit)"
+        : "Commit"
+  );
+
+  const commitButtonTooltip = $derived(
+    commitMode === "amend"
+      ? "Amend the previous commit using this message"
+      : commitMode === "amend-no-edit"
+        ? "Empty message — staged files will be added to the previous commit (git commit --amend --no-edit)"
+        : "Create a new commit"
   );
 </script>
 
@@ -213,8 +250,9 @@
           class="commit-btn"
           disabled={!canCommit}
           onclick={doCommit}
+          title={commitButtonTooltip}
         >
-          Commit{scmStore.amend ? " (Amend)" : ""}
+          {commitButtonLabel}
         </button>
       </div>
     </div>

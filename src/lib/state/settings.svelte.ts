@@ -71,6 +71,7 @@ export interface Settings {
   millerLayersPreferred: number; // 1-3, remembered layer count for toggle
   millerHideEmpty: boolean; // hide folders containing no visible entries from miller columns
   showManuallyHidden: boolean; // reveal manually-hidden entries (dimmed)
+  scmTreeView: boolean; // group SCM file rows by folder hierarchy
   quickOpenDebug: boolean; // show score breakdown in QuickOpen results
   geminiApiKey: string; // Gemini API key for Nano Banana image editing
   integratedTitleBar: boolean; // macOS: render tabs in title bar with overlay traffic lights
@@ -113,6 +114,7 @@ const DEFAULT_SETTINGS: Settings = {
   millerLayersPreferred: 2,
   millerHideEmpty: false,
   showManuallyHidden: false,
+  scmTreeView: false,
   quickOpenDebug: false,
   geminiApiKey: "",
   integratedTitleBar: false,
@@ -307,6 +309,12 @@ function createSettingsStore() {
     },
     toggleShowManuallyHidden(): void {
       update({ showManuallyHidden: !settings.showManuallyHidden });
+    },
+    get scmTreeView() {
+      return settings.scmTreeView;
+    },
+    toggleScmTreeView(): void {
+      update({ scmTreeView: !settings.scmTreeView });
     },
     get quickOpenDebug() {
       return settings.quickOpenDebug;

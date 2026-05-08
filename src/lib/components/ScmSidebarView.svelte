@@ -13,7 +13,49 @@
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { gitInit, gitAddToGitignore } from "$lib/api/files";
   import { toastStore } from "$lib/state/toast.svelte";
+  import { settingsStore } from "$lib/state/settings.svelte";
   import type { GitFileEntry, GitStatusCode } from "$lib/api/files";
+
+  /** Tree node used by the optional folder-grouped SCM rendering. */
+  interface ScmTreeNode {
+    name: string;
+    fullDir: string; // empty string for root
+    children: Map<string, ScmTreeNode>;
+    files: GitFileEntry[];
+  }
+
+  function buildTree(rows: GitFileEntry[]): ScmTreeNode {
+    const root: ScmTreeNode = { name: "", fullDir: "", children: new Map(), files: [] };
+    for (const row of rows) {
+      const parts = row.path.split("/").filter((p) => p !== "");
+      let cursor = root;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const segment = parts[i];
+        let next = cursor.children.get(segment);
+        if (!next) {
+          next = {
+            name: segment,
+            fullDir: cursor.fullDir ? `${cursor.fullDir}/${segment}` : segment,
+            children: new Map(),
+            files: [],
+          };
+          cursor.children.set(segment, next);
+        }
+        cursor = next;
+      }
+      cursor.files.push(row);
+    }
+    return root;
+  }
+
+  // Persisted collapsed folder set, scoped per repo so toggling between
+  // repos doesn't mix collapse state.
+  let collapsedFolders = $state(new Set<string>());
+  function toggleFolder(dir: string): void {
+    const next = new Set(collapsedFolders);
+    if (next.has(dir)) next.delete(dir); else next.add(dir);
+    collapsedFolders = next;
+  }
 
   let commitInputEl: HTMLTextAreaElement | undefined;
   let rootEl: HTMLDivElement | undefined;
@@ -233,6 +275,15 @@
         {:else}
           <span class="branch-name">{summary.branch ?? "main"}</span>
         {/if}
+        <button
+          type="button"
+          class="view-toggle"
+          aria-pressed={settingsStore.scmTreeView}
+          title={settingsStore.scmTreeView ? "Switch to flat list" : "Switch to tree view"}
+          onclick={() => settingsStore.toggleScmTreeView()}
+        >
+          {settingsStore.scmTreeView ? "Tree" : "List"}
+        </button>
       </div>
       <textarea
         bind:this={commitInputEl}
@@ -375,6 +426,10 @@
     </button>
 
     {#if opts.expanded}
+      {#if settingsStore.scmTreeView}
+        {@const tree = buildTree(opts.rows)}
+        {@render treeNode(tree, 0, opts.kind)}
+      {:else}
       <ul class="row-list" role="list">
         {#each opts.rows as row (row.path)}
           {@const parts = splitPath(row.path)}
@@ -444,8 +499,74 @@
           </li>
         {/each}
       </ul>
+      {/if}
     {/if}
   </div>
+{/snippet}
+
+{#snippet treeNode(node: ScmTreeNode, depth: number, kind: "staged" | "changes" | "untracked" | "merge")}
+  <ul class="row-list tree-list" role="list" style="padding-left: {depth === 0 ? 4 : 0}px">
+    {#each Array.from(node.children.values()) as child (child.fullDir)}
+      {@const collapsed = collapsedFolders.has(child.fullDir)}
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <li
+        class="row tree-folder"
+        style="padding-left: {depth * 12 + 4}px"
+        onclick={() => toggleFolder(child.fullDir)}
+        role="listitem"
+      >
+        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" class="chevron" class:expanded={!collapsed}>
+          <path d="M4 3L7 6L4 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span class="folder-name">{child.name}</span>
+      </li>
+      {#if !collapsed}
+        {@render treeNode(child, depth + 1, kind)}
+      {/if}
+    {/each}
+    {#each node.files as row (row.path)}
+      {@const fileName = row.path.split("/").pop() ?? row.path}
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <li
+        class="row tree-file"
+        class:selected={scmStore.selectedPath === row.path}
+        class:active-diff={scmStore.activeDiff?.path === row.path}
+        data-path={row.path}
+        data-section-kind={kind}
+        style="padding-left: {depth * 12 + 4}px"
+        tabindex="0"
+        onclick={() => { scmStore.setSelected(row.path); scmStore.openDiff(row.path, kind === 'staged'); }}
+        onkeydown={(e) => { if (e.key === 'Enter') { scmStore.setSelected(row.path); scmStore.openDiff(row.path, kind === 'staged'); } }}
+        role="listitem"
+        title={row.path}
+      >
+        <span class="status-letter {statusClass(row.status)}" aria-label={row.status}>
+          {statusLetter(row.status)}
+        </span>
+        <span class="file-name">{fileName}</span>
+        <span class="row-actions">
+          {#if kind === "staged"}
+            <button type="button" class="row-btn" title="Unstage" aria-label="Unstage {row.path}"
+              onclick={(e) => { e.stopPropagation(); scmStore.unstage([row.path]); }}>−</button>
+          {:else if kind === "merge"}
+            <button type="button" class="row-btn" title="Stage" aria-label="Stage {row.path}"
+              onclick={(e) => { e.stopPropagation(); scmStore.stage([row.path]); }}>+</button>
+          {:else}
+            <button type="button" class="row-btn"
+              title={kind === "untracked" ? "Remove file" : "Discard changes"}
+              aria-label={kind === "untracked" ? `Remove ${row.path}` : `Discard ${row.path}`}
+              onclick={(e) => { e.stopPropagation(); onDiscard(row, kind === "untracked"); }}>↺</button>
+            {#if kind === "untracked"}
+              <button type="button" class="row-btn" title="Add to .gitignore" aria-label="Ignore {row.path}"
+                onclick={(e) => { e.stopPropagation(); onIgnore(row); }}>⊘</button>
+            {/if}
+            <button type="button" class="row-btn" title="Stage" aria-label="Stage {row.path}"
+              onclick={(e) => { e.stopPropagation(); scmStore.stage([row.path]); }}>+</button>
+          {/if}
+        </span>
+      </li>
+    {/each}
+  </ul>
 {/snippet}
 
 <style>
@@ -523,6 +644,52 @@
 
   .branch-name.detached {
     color: var(--system-warning, #f59e0b);
+  }
+
+  .view-toggle {
+    margin-left: auto;
+    padding: 2px 8px;
+    background: var(--background-card);
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  .view-toggle:hover {
+    background: var(--subtle-fill-secondary);
+  }
+
+  .view-toggle[aria-pressed="true"] {
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .tree-list {
+    padding: 0 4px;
+    gap: 0;
+  }
+
+  .row.tree-folder {
+    grid-template-columns: 12px 1fr;
+    gap: 4px;
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: 12px;
+    min-height: 22px;
+  }
+
+  .folder-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .row.tree-file {
+    grid-template-columns: 18px minmax(0, 1fr) minmax(0, auto);
   }
 
   .commit-message {

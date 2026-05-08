@@ -356,6 +356,30 @@ const viewCommands: Command[] = [
     handler: () => settingsStore.toggleMillerHideEmpty(),
   },
   {
+    id: "view.sortByName",
+    label: "Sort by Name",
+    category: "view",
+    handler: () => getActiveExplorer()?.setSorting("name"),
+  },
+  {
+    id: "view.sortByDateModified",
+    label: "Sort by Date Modified",
+    category: "view",
+    handler: () => getActiveExplorer()?.setSorting("modified"),
+  },
+  {
+    id: "view.sortBySize",
+    label: "Sort by Size",
+    category: "view",
+    handler: () => getActiveExplorer()?.setSorting("size"),
+  },
+  {
+    id: "view.sortByType",
+    label: "Sort by Type",
+    category: "view",
+    handler: () => getActiveExplorer()?.setSorting("type"),
+  },
+  {
     id: "view.toggleSidebar",
     label: "Toggle Sidebar",
     category: "view",

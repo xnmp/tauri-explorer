@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## feat/command-palette-sort-modifiers: piggyback existing toggle semantics
+
+**Key takeaways:**
+- `explorer.setSorting(field)` already toggles ascending/descending when called repeatedly with the same field. Wiring command palette entries straight to that means a second invocation flips direction without needing dedicated asc/desc commands. Adding "type" required only a new `SortField` branch in `sortEntries` (lex on extension, fall back to name).
+
+---
+
 ## fix/recent-folders-list-shows-non-existent-paths: Lazy prune in the consumer
 
 **Key takeaways:**

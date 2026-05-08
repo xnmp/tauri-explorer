@@ -7,6 +7,7 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { contextMenuStore } from "$lib/state/context-menu.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
+  import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { compressToZip, extractArchive, openFile, openInTerminal, createSymlink, setAsWallpaper } from "$lib/api/files";
@@ -42,6 +43,32 @@
   const isBookmarked = $derived(
     selectedDirectory ? bookmarksStore.hasBookmark(selectedDirectory.path) : false
   );
+
+  /** Whether any selected entry is currently in the manual-hidden list. */
+  const anySelectedHidden = $derived.by(() => {
+    const entries = explorer.getSelectedEntries();
+    if (entries.length === 0) return false;
+    return entries.some((e) => manualHiddenStore.isHidden(explorer.currentPath, e.name));
+  });
+
+  /** Whether all selected entries are currently in the manual-hidden list. */
+  const allSelectedHidden = $derived.by(() => {
+    const entries = explorer.getSelectedEntries();
+    if (entries.length === 0) return false;
+    return entries.every((e) => manualHiddenStore.isHidden(explorer.currentPath, e.name));
+  });
+
+  function handleManualHide(): void {
+    const names = explorer.getSelectedEntries().map((e) => e.name);
+    if (names.length > 0) manualHiddenStore.hide(explorer.currentPath, names);
+    contextMenuStore.close();
+  }
+
+  function handleManualUnhide(): void {
+    const names = explorer.getSelectedEntries().map((e) => e.name);
+    if (names.length > 0) manualHiddenStore.unhide(explorer.currentPath, names);
+    contextMenuStore.close();
+  }
 
   function handleCut(): void {
     const selected = explorer.getSelectedEntries();
@@ -354,6 +381,24 @@
         <span>Delete</span>
         <span class="shortcut">Del</span>
       </button>
+
+      {#if allSelectedHidden}
+        <button class="menu-item" onclick={handleManualUnhide} role="menuitem">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M2 8C2 8 4 4 8 4C12 4 14 8 14 8C14 8 12 12 8 12C4 12 2 8 2 8Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+            <circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.25"/>
+          </svg>
+          <span>Unhide</span>
+        </button>
+      {:else if !anySelectedHidden}
+        <button class="menu-item" onclick={handleManualHide} role="menuitem">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M2 8C2 8 4 4 8 4C12 4 14 8 14 8C14 8 12 12 8 12C4 12 2 8 2 8Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+            <path d="M3 3L13 13" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+          </svg>
+          <span>Hide</span>
+        </button>
+      {/if}
 
       {#if selectedDirectory}
         <div class="menu-divider"></div>

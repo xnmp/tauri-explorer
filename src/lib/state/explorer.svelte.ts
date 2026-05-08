@@ -35,6 +35,7 @@ import { recentFilesStore } from "./recent-files.svelte";
 import { contextMenuStore } from "./context-menu.svelte";
 import { undoStore } from "./undo.svelte";
 import { settingsStore } from "./settings.svelte";
+import { manualHiddenStore } from "./manual-hidden.svelte";
 import { frecencyStore } from "./frecency.svelte";
 import { getSortPref, saveSortPref } from "./sort-prefs";
 import { pasteEntries, type PasteResult } from "./paste-operations";
@@ -130,6 +131,10 @@ function createExplorerState(seed?: ExplorerSeed) {
 
   const displayEntries = $derived.by(() => {
     let filtered = filterHidden(coreState.entries, settingsStore.showHidden);
+    const manualHiddenNames = manualHiddenStore.namesIn(coreState.currentPath);
+    if (manualHiddenNames.size > 0 && !settingsStore.showManuallyHidden) {
+      filtered = filtered.filter((e) => !manualHiddenNames.has(e.name));
+    }
     if (filterQuery) {
       const q = filterQuery.toLowerCase();
       filtered = filtered.filter((e) => e.name.toLowerCase().includes(q));

@@ -12,6 +12,7 @@
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
   import { useItemInteractions, isInClipboard as checkInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
@@ -56,6 +57,8 @@
   const entryInClipboard = $derived(checkInClipboard(entry));
   const isCut = $derived(isClipboardCut(entry));
 
+  const isManuallyHidden = $derived(manualHiddenStore.isHidden(explorer.currentPath, entry.name));
+
   function handleClick(event: MouseEvent) {
     if (isRenaming) {
       event.stopPropagation();
@@ -73,7 +76,7 @@
   class="file-item entry-item"
   data-path={entry.path}
   class:directory={entry.kind === "directory"}
-  class:hidden-entry={entry.name.startsWith(".")}
+  class:hidden-entry={entry.name.startsWith(".") || isManuallyHidden}
   class:cut={isCut}
   class:in-clipboard={entryInClipboard}
   class:selected

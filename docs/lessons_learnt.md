@@ -4,6 +4,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## feat/manual-hide-via-right-click-context-menu: Per-folder hide list piggybacks the dotfile dim
+
+**Key takeaways:**
+- Manually-hidden state is stored per-folder (`{folderPath: [name, ...]}`) and serialised through the same persisted-write-through pattern as bookmarks. The reveal toggle (`showManuallyHidden`) keeps the list separate from the existing dotfile filter (`showHidden`).
+- All three views (`FileItem`, `ListView`, `TilesView`) need parity: hidden-entry styling existed only in `FileItem`. Issue #67 added it to the other two with the same `.hidden-entry { opacity: 0.55 }` rule. Mirroring view-mode behaviour stays a recurring trap (see project memory).
+
+---
+
 ## feat/command-palette-sort-modifiers: piggyback existing toggle semantics
 
 **Key takeaways:**

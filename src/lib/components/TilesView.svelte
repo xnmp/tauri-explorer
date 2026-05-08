@@ -13,6 +13,7 @@
 
   const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
   import { settingsStore, THUMBNAIL_SIZE_CONFIG } from "$lib/state/settings.svelte";
+  import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import FileIcon from "./FileIcon.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
@@ -150,6 +151,7 @@
       class:selected={explorer.isSelected(entry)}
       class:cut={isClipboardCut(entry)}
       class:in-clipboard={isInClipboard(entry)}
+      class:hidden-entry={entry.name.startsWith(".") || manualHiddenStore.isHidden(explorer.currentPath, entry.name)}
       class:drop-target={interactions.isDropTarget(entry.path)}
       class:copy-drop={interactions.isCopyDrop(entry.path)}
       draggable={!isMac}
@@ -246,6 +248,10 @@
 
   .tile-item.selected:hover {
     background: var(--subtle-fill-tertiary);
+  }
+
+  .tile-item.hidden-entry {
+    opacity: 0.55;
   }
 
   .tile-item.cut {

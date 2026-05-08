@@ -20,6 +20,7 @@
   import { dragState } from "$lib/state/drag.svelte";
   import { handleFileDrop } from "$lib/state/drop-operations";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
+  import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { copyEntry, moveEntry } from "$lib/api/files";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { initFileChangeListener, cleanupFileChangeListener, broadcastFileChange, parentDir } from "$lib/state/file-events";
@@ -296,6 +297,7 @@
     settingsStore.init().then(() => themeStore.syncFromSettings());
     bookmarksStore.init();
     folderViewsStore.init();
+    manualHiddenStore.init();
 
     // Register all commands for the command palette (deferred to next tick)
     queueMicrotask(() => registerAllCommands());

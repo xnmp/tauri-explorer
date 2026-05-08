@@ -5,6 +5,7 @@
 <script lang="ts">
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
@@ -73,6 +74,7 @@
       class:selected={explorer.isSelected(entry)}
       class:cut={isClipboardCut(entry)}
       class:in-clipboard={isInClipboard(entry)}
+      class:hidden-entry={entry.name.startsWith(".") || manualHiddenStore.isHidden(explorer.currentPath, entry.name)}
       class:drop-target={interactions.isDropTarget(entry.path)}
       class:copy-drop={interactions.isCopyDrop(entry.path)}
       draggable={!isMac}
@@ -158,6 +160,10 @@
 
   .list-item.cut {
     opacity: 0.5;
+  }
+
+  .list-item.hidden-entry {
+    opacity: 0.55;
   }
 
   .list-item.in-clipboard:not(.cut) {

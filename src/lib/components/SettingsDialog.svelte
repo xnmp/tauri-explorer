@@ -323,6 +323,21 @@
 
           <div class="setting-row">
             <div class="setting-info">
+              <span class="setting-label">Show Manually Hidden Items</span>
+              <span class="setting-description">Reveal items hidden via the right-click Hide action (shown dimmed)</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.showManuallyHidden}
+                onchange={() => settingsStore.toggleShowManuallyHidden()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
               <span class="setting-label">Git Status Indicators</span>
               <span class="setting-description">Show modified/untracked indicators for files in git repositories</span>
             </div>

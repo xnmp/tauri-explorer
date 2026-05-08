@@ -10,7 +10,7 @@
   import { untrack, onMount } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { fetchDirectory, watchDirectory, unwatchDirectory } from "$lib/api/files";
+  import { fetchDirectory, watchDirectory, unwatchDirectory, isDirectoryEmpty } from "$lib/api/files";
   import FileIcon from "./FileIcon.svelte";
   import { dragState } from "$lib/state/drag.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
@@ -37,16 +37,48 @@
   let rawColumns = $state<MillerColumn[]>([]);
   const watchedPaths = new Set<string>();
 
-  function filterEntries(entries: FileEntry[]): FileEntry[] {
-    return entries.filter(
-      (e) => e.kind === "directory" && (settingsStore.showHidden || !e.name.startsWith(".")),
-    );
+  // Cache of `path -> isEmpty` keyed by the (path, showHidden) combination.
+  // Repopulated when showHidden changes via clearEmptyCache().
+  let emptyCache = $state(new Map<string, boolean>());
+  let emptyCacheKey = "";
+
+  function filterEntries(entries: FileEntry[], activeChildPath: string | null): FileEntry[] {
+    const hideEmpty = settingsStore.millerHideEmpty;
+    return entries.filter((e) => {
+      if (e.kind !== "directory") return false;
+      if (!settingsStore.showHidden && e.name.startsWith(".")) return false;
+      if (hideEmpty && e.path !== activeChildPath) {
+        const known = emptyCache.get(e.path);
+        if (known === true) return false;
+      }
+      return true;
+    });
   }
 
   // Derive displayed columns reactively so showHidden changes take effect immediately.
   const columns = $derived(
-    rawColumns.map((col) => ({ ...col, entries: filterEntries(col.entries) })),
+    rawColumns.map((col) => ({ ...col, entries: filterEntries(col.entries, col.activeChildPath) })),
   );
+
+  $effect(() => {
+    const key = `${settingsStore.showHidden ? 1 : 0}`;
+    if (key !== emptyCacheKey) {
+      emptyCacheKey = key;
+      emptyCache = new Map();
+    }
+  });
+
+  async function ensureEmptyFlags(entries: FileEntry[]): Promise<void> {
+    const includeHidden = settingsStore.showHidden;
+    const targets = entries.filter((e) => e.kind === "directory" && !emptyCache.has(e.path));
+    if (targets.length === 0) return;
+    const results = await Promise.all(
+      targets.map(async (e) => [e.path, await isDirectoryEmpty(e.path, includeHidden)] as const),
+    );
+    const next = new Map(emptyCache);
+    for (const [p, empty] of results) next.set(p, empty);
+    emptyCache = next;
+  }
 
   $effect(() => {
     const crumbs = explorer.breadcrumbs;
@@ -106,8 +138,22 @@
       rawColumns = rawColumns.map((col) =>
         col.path === path ? { ...col, entries, loading: false } : col
       );
+      if (settingsStore.millerHideEmpty) {
+        ensureEmptyFlags(entries);
+      }
     }
   }
+
+  // When the hide-empty toggle is flipped on while columns are already loaded,
+  // back-fill emptiness flags for whatever's currently visible.
+  $effect(() => {
+    if (!settingsStore.millerHideEmpty) return;
+    untrack(() => {
+      for (const col of rawColumns) {
+        ensureEmptyFlags(col.entries);
+      }
+    });
+  });
 
   // Listen for filesystem changes to invalidate stale Miller cache entries
   onMount(() => {

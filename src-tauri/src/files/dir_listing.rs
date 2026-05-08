@@ -39,6 +39,27 @@ pub fn invalidate_dir_cache(path: String) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Returns true when the directory has no entries visible under the given
+/// `include_hidden` rule. Skips directories the caller can't read (returns
+/// false so a folder isn't optimistically hidden).
+#[tauri::command]
+pub fn is_directory_empty(path: String, include_hidden: bool) -> Result<bool, AppError> {
+    let dir_path = PathBuf::from(&path);
+    let read = match fs::read_dir(&dir_path) {
+        Ok(r) => r,
+        Err(_) => return Ok(false),
+    };
+    for entry in read.flatten() {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !include_hidden && name_str.starts_with('.') {
+            continue;
+        }
+        return Ok(false);
+    }
+    Ok(true)
+}
+
 /// List directory contents.
 /// Directories are sorted before files, and items are sorted case-insensitively by name.
 #[tauri::command]

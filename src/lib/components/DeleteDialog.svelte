@@ -42,7 +42,7 @@
       );
     }
 
-    void explorer.confirmDelete().then((errMsg) => {
+    void explorer.confirmDelete(entries, isPermanent).then((errMsg) => {
       if (pendingToastId !== undefined) toastStore.dismiss(pendingToastId);
       if (errMsg) {
         toastStore.error(`Delete failed: ${errMsg}`);

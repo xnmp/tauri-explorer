@@ -261,11 +261,12 @@
     flex: 1;
   }
 
-  /* Inline rename input */
+  /* Inline rename input — negative margin cancels padding+border so row height stays unchanged */
   .rename-input {
     flex: 1;
     min-width: 0;
     padding: 2px 6px;
+    margin: -3px 0;
     font-size: 13px;
     font-family: inherit;
     font-weight: 400;

@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/rename-layout-shift (#86): Inline rename input shifts layout
+
+**Key takeaways:**
+- The rename `<input>` had `padding: 2px 6px` and `border: 1px solid` adding 6px to the height vs the plain text span. Adding `margin: -3px 0` to the `.rename-input` in all three views (Details, List, Tiles) neutralizes the extra height.
+
+---
+
 ## fix/recent-folders-stale-entries (#85): Reactive pruning of recent folders
 
 **Key takeaways:**

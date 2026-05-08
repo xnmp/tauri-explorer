@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/git-scm-amend-enter-empty-message (#99): Enter key in commit textarea
+
+**Key takeaways:**
+- The commit textarea's `onkeydown` handler was missing `stopPropagation()`, which could allow Enter events to bubble to parent handlers. Both bare Enter and Ctrl+Enter should behave identically for committing.
+
+---
+
 ## fix/disable-git-source-control-option (#92): Fully disable git SCM
 
 **Key takeaways:**

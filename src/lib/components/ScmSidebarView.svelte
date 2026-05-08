@@ -226,7 +226,11 @@
       <textarea
         bind:this={commitInputEl}
         class="commit-message"
-        placeholder={scmStore.amend ? "Amend commit message (optional)" : "Message (Enter to commit, Shift+Enter to add a newline)"}
+        placeholder={scmStore.amend
+          ? "Amend commit message (optional)"
+          : ((stagedCount > 0 || mergeCount > 0)
+              ? "Message — leave empty + Enter to amend the previous commit"
+              : "Message (Enter to commit, Shift+Enter to add a newline)")}
         value={scmStore.commitMessage}
         oninput={(e) => scmStore.setCommitMessage((e.target as HTMLTextAreaElement).value)}
         onkeydown={onCommitKeydown}

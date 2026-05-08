@@ -116,19 +116,28 @@ function createScmStore() {
     return r.ok ? { ok: true } : { ok: false, error: r.error };
   }
 
+  /**
+   * Commit staged changes. If the commit message is empty and there are
+   * staged files, automatically performs `git commit --amend --no-edit`
+   * (provided HEAD has a parent commit) — see #78/#79.
+   */
   async function commit(): Promise<{ ok: boolean; error?: string }> {
     const msg = commitMessage.trim();
     if (!repoRoot) return { ok: false, error: "not a git repository" };
-    if (msg.length === 0 && !amend) {
+    const hasStaged = summary.staged.length > 0 || summary.merge.length > 0;
+    // Empty message + staged → implicit amend-no-edit. Explicit amend toggle
+    // also still works the same.
+    const effectiveAmend = amend || (msg.length === 0 && hasStaged);
+    if (msg.length === 0 && !effectiveAmend) {
       commitError = "Commit message cannot be empty";
       return { ok: false, error: commitError };
     }
-    if (summary.staged.length === 0 && summary.merge.length === 0 && !amend) {
+    if (!hasStaged && !amend) {
       commitError = "Nothing to commit — stage some changes first";
       return { ok: false, error: commitError };
     }
     commitError = null;
-    const r = await gitCommit(repoRoot, msg, { amend });
+    const r = await gitCommit(repoRoot, msg, { amend: effectiveAmend });
     if (!r.ok) {
       commitError = r.error;
       return { ok: false, error: r.error };

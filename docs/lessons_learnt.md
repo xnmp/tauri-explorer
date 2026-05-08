@@ -4,6 +4,19 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## investigate/preview-renders-faster-than-thumbnails (issue #69): Different pipelines, not a bug
+
+**Question:** Why does the preview pane sometimes paint before the file-list thumbnail for the same image?
+
+**Findings:**
+- `PreviewPane` shows images via `convertFileSrc(path)` — a URL into the Tauri webview's asset protocol. The browser fetches and decodes the raw file natively. No Rust image processing on the hot path.
+- `ThumbnailImage` calls `getMicroThumbnail` then `getThumbnailData` in `src-tauri/src/thumbnails.rs`, which decode → resize → re-encode → write a cache file → return the cache path. The browser then fetches that smaller file. On a cold cache, the Rust pipeline is strictly slower than the preview's "decode the original" path.
+- Thumbnails are also gated by two semaphores (`microPool` cap 8, `fullPool` cap 4) for back-pressure on large grids. A late-mounted ThumbnailImage can wait behind queued peers; the preview pane has no such queue.
+
+**Decision:** Not a bug. The thumbnail pipeline is deliberately heavier so the cached output is small and crisp at micro sizes (essential for tile grids with many images). The preview pane is the privileged "show one big image fast" path. We are not adding instrumentation or rerouting preview through the thumbnail cache — that would slow the common case. If we ever want preview ↔ thumbnail to share work, the right place is letting `getThumbnailData` short-circuit to `convertFileSrc` for full-size requests on small files.
+
+---
+
 ## fix/cached-previews-update-when-file-changes: Bust mtime through both layers
 
 **Key takeaways:**

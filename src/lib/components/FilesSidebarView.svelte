@@ -11,6 +11,7 @@
   import { dragState } from "$lib/state/drag.svelte";
   import { drivesStore } from "$lib/state/drives.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
+  import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { loadPersisted, savePersisted } from "$lib/state/persisted";
 
@@ -194,6 +195,30 @@
       .map((e) => ({ path: e.path, name: e.path.split("/").pop() || e.path, score: scoreMap.get(e.path) ?? 0 }))
       .sort((a, b) => b.score - a.score)
       .slice(0, settingsStore.recentItemsCount);
+  });
+
+  // Lazily prune entries pointing at paths that no longer exist. Runs once
+  // on mount (deferred so it doesn't compete with first-paint stat I/O) and
+  // on visibility regain so deletions made elsewhere clear up promptly.
+  onMount(() => {
+    let timer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+      timer = null;
+      frecencyStore.pruneNonExistent();
+      recentFilesStore.pruneNonExistent();
+    }, 1500);
+
+    function onVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        frecencyStore.pruneNonExistent();
+        recentFilesStore.pruneNonExistent();
+      }
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   });
 
   function removeBookmark(event: MouseEvent, path: string) {

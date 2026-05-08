@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/recent-folders-list-shows-non-existent-paths: Lazy prune in the consumer
+
+**Key takeaways:**
+- The frecency/recent stores already had `pruneNonExistent`, but it was only called from QuickOpen — the sidebar's recents list never triggered it. Pruning belongs to the consumer surface, fired on a deferred `onMount` timer (so it doesn't compete with first-paint stat I/O) and on `visibilitychange` so externally-deleted paths clear up when the user tabs back to the window.
+
+---
+
 ## fix/sidebar-removable-drives-update-on-eject: Watch the mount-base, not just poll
 
 **Key takeaways:**

@@ -199,7 +199,7 @@
     border: 1px solid var(--accent);
     border-radius: var(--radius-sm);
     font: inherit;
-    font-size: var(--font-size-body);
+    font-size: 13px;
     color: var(--text-primary);
     outline: none;
   }

@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/rename-input-font-size-larger-than-file-row-font: `font: inherit` does not protect against later overrides
+
+**Key takeaways:**
+- ListView/TilesView's inline `.rename-input` started with `font: inherit` (good — picks up the row's 13px) but then explicitly set `font-size: var(--font-size-body)` (14px), reintroducing the mismatch. When mirroring a label's font into an input, hard-pin the size to match the label, not to a global token that may diverge.
+
+---
+
 ## fix/multifile-progress-dialog-persists-after-cancel: Cancellation must dismiss UI separately from worker abort
 
 **Key takeaways:**

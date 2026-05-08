@@ -405,6 +405,13 @@ function createWindowTabsManager() {
     return explorers.get(activeTab.panes[paneId].explorerId);
   }
 
+  /** Iterate all known explorer instances across every tab and pane.
+   *  Used by callers that need to broadcast a refresh to every pane that
+   *  may currently be viewing an affected directory (e.g. cross-tab paste). */
+  function getAllExplorers(): ExplorerInstance[] {
+    return Array.from(explorers.values());
+  }
+
   /** Get the active explorer (from active pane in active tab) */
   function getActiveExplorer(): ExplorerInstance | undefined {
     if (!activeTab) return undefined;
@@ -523,6 +530,7 @@ function createWindowTabsManager() {
     // Explorer access
     getExplorer,
     getActiveExplorer,
+    getAllExplorers,
 
     // Pane operations (on active tab)
     setActivePane,

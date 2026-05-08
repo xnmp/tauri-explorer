@@ -4,6 +4,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## feat/scm-ignore-button-add-entry-to-gitignore (#77): Idempotent append in Rust
+
+**Key takeaways:**
+- `git_add_to_gitignore` reads `.gitignore` (treating "missing" as empty), checks for an existing exact-line match, and only appends when the entry is new — duplicate clicks are safe. The path is normalised relative to repo root (strips leading `./` and `/`) so the entry lands as expected when the user clicked a nested file.
+- The button is only rendered for untracked rows because tracked changes can't be ignored without `git rm --cached` first; that's out of scope here.
+
+---
+
 ## feat/scm-commit-button-enabled-with-empty-message (#79): Affordance follow-up
 
 **Key takeaways:**

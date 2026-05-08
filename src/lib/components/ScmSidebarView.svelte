@@ -11,7 +11,7 @@
   import { onMount } from "svelte";
   import { scmStore } from "$lib/state/scm.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { gitInit } from "$lib/api/files";
+  import { gitInit, gitAddToGitignore } from "$lib/api/files";
   import { toastStore } from "$lib/state/toast.svelte";
   import type { GitFileEntry, GitStatusCode } from "$lib/api/files";
 
@@ -141,6 +141,17 @@
 
   function onDiscard(row: GitFileEntry, isUntracked: boolean): void {
     requestDiscard([row.path], isUntracked);
+  }
+
+  async function onIgnore(row: GitFileEntry): Promise<void> {
+    if (!scmStore.repoRoot) return;
+    const r = await gitAddToGitignore(scmStore.repoRoot, row.path);
+    if (!r.ok) {
+      toastStore.error(`Ignore failed: ${r.error}`);
+      return;
+    }
+    toastStore.success(`Added ${r.data} to .gitignore`);
+    await scmStore.refresh();
   }
 
   function onRowKeydown(e: KeyboardEvent): void {
@@ -412,6 +423,15 @@
                   aria-label={opts.kind === "untracked" ? `Remove ${row.path}` : `Discard ${row.path}`}
                   onclick={(e) => { e.stopPropagation(); onDiscard(row, opts.kind === "untracked"); }}
                 >↺</button>
+                {#if opts.kind === "untracked"}
+                  <button
+                    type="button"
+                    class="row-btn"
+                    title="Add to .gitignore"
+                    aria-label="Ignore {row.path}"
+                    onclick={(e) => { e.stopPropagation(); onIgnore(row); }}
+                  >⊘</button>
+                {/if}
                 <button
                   type="button"
                   class="row-btn"

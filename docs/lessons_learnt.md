@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## feat/scm-commit-button-enabled-with-empty-message (#79): Affordance follow-up
+
+**Key takeaways:**
+- The amend-no-edit behaviour landed with #78. The remaining bit was telling the user it's available — the placeholder now reads "leave empty + Enter to amend the previous commit" whenever there are staged files but the message is empty. Surface affordance live near where the user is about to act, not in a separate help panel.
+
+---
+
 ## feat/scm-ctrl-enter-on-empty-message-does-amend-commit (and #79): Implicit amend-no-edit
 
 **Key takeaways:**

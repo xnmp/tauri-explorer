@@ -594,7 +594,7 @@
 
   .row {
     display: grid;
-    grid-template-columns: 18px 1fr auto;
+    grid-template-columns: 18px minmax(0, 1fr) minmax(0, auto);
     align-items: center;
     gap: 6px;
     padding: 4px 8px;
@@ -647,6 +647,7 @@
   }
 
   .file-dir {
+    grid-column: 3;
     color: var(--text-tertiary);
     font-size: 11px;
     margin-left: 6px;
@@ -655,6 +656,7 @@
     white-space: nowrap;
     direction: rtl;
     text-align: left;
+    min-width: 0;
   }
 
   .row-actions {
@@ -663,10 +665,18 @@
     grid-column: 3;
   }
 
+  /* On hover/focus, show inline action buttons in the same slot the folder
+     path used to occupy, so the row height never reflows to two lines. */
   .row:hover .row-actions,
   .row:focus-within .row-actions,
   .row.selected .row-actions {
     display: flex;
+  }
+
+  .row:hover .file-dir,
+  .row:focus-within .file-dir,
+  .row.selected .file-dir {
+    display: none;
   }
 
   .row-btn {

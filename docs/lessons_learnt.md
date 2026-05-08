@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/scm-file-row-expands-to-two-lines-on-hover: Two grid items in the same column collide
+
+**Key takeaways:**
+- Both `.file-dir` and `.row-actions` were being placed in the third grid column, but `.file-dir` had no explicit `grid-column` so it auto-flowed to col 3, while `.row-actions` declared `grid-column: 3`. Once `.row-actions` flipped from `display: none` to `flex` on hover, the implicit auto-row added a second row to fit both. Pinning `.file-dir` to the same column and toggling visibility (one in, the other out) keeps the row at a fixed height.
+
+---
+
 ## feat/scm-confirmation-for-remove-restore: Same backend, different copy
 
 **Key takeaways:**

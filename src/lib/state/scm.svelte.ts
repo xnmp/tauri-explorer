@@ -84,6 +84,15 @@ function createScmStore() {
     await refresh();
   }
 
+  function filterToDir<T extends { path: string }>(entries: T[]): T[] {
+    if (!activePath || !repoRoot || activePath === repoRoot) return entries;
+    const prefix = activePath + "/";
+    return entries.filter((e) => {
+      const fullPath = repoRoot + "/" + e.path;
+      return fullPath.startsWith(prefix);
+    });
+  }
+
   async function initWatcherListener(): Promise<void> {
     if (unlistenWatcher) return;
     try {
@@ -189,6 +198,15 @@ function createScmStore() {
     get activePath() { return activePath; },
     get repoRoot() { return repoRoot; },
     get summary() { return summary; },
+    get filteredSummary(): GitStatusSummary {
+      return {
+        ...summary,
+        staged: filterToDir(summary.staged),
+        changes: filterToDir(summary.changes),
+        untracked: filterToDir(summary.untracked),
+        merge: filterToDir(summary.merge),
+      };
+    },
     get loading() { return loading; },
     get commitMessage() { return commitMessage; },
     get amend() { return amend; },

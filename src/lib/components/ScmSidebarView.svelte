@@ -207,32 +207,33 @@
     }
   }
 
-  const summary = $derived(scmStore.summary);
-  const isRepo = $derived(summary.is_repo);
+  const summary = $derived(scmStore.filteredSummary);
+  const fullSummary = $derived(scmStore.summary);
+  const isRepo = $derived(fullSummary.is_repo);
 
   const stagedCount = $derived(summary.staged.length);
   const changesCount = $derived(summary.changes.length);
   const untrackedCount = $derived(summary.untracked.length);
   const mergeCount = $derived(summary.merge.length);
 
-  /** Whether the commit button should be active. Allowed when either:
-   *  - the user has typed a message AND something is staged or amend is on
-   *  - the message is empty but staged files exist (button performs amend-no-edit)
-   *  - amend toggle is on (regardless of message) */
+  const fullStagedCount = $derived(fullSummary.staged.length);
+  const fullMergeCount = $derived(fullSummary.merge.length);
+
+  /** Whether the commit button should be active. Uses full (unfiltered) counts
+   *  since commits operate repo-wide. */
   const canCommit = $derived.by(() => {
     if (!isRepo) return false;
     const msg = scmStore.commitMessage.trim();
     if (scmStore.amend) return true;
-    const hasStaged = stagedCount > 0 || mergeCount > 0;
+    const hasStaged = fullStagedCount > 0 || fullMergeCount > 0;
     if (msg.length > 0) return hasStaged;
-    return hasStaged; // empty msg + staged → implicit amend-no-edit
+    return hasStaged;
   });
 
-  /** Mode the commit button will fire in, used for label + tooltip. */
   const commitMode = $derived.by(() => {
     if (scmStore.amend) return "amend";
     const msg = scmStore.commitMessage.trim();
-    if (msg.length === 0 && (stagedCount > 0 || mergeCount > 0)) return "amend-no-edit";
+    if (msg.length === 0 && (fullStagedCount > 0 || fullMergeCount > 0)) return "amend-no-edit";
     return "commit";
   });
 

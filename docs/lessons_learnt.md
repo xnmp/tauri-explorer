@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/git-scm-files-reflect-cwd (#95): Filter SCM to current directory
+
+**Key takeaways:**
+- Git status is repo-wide, but users expect the SCM sidebar to show only files relevant to the current directory. Added `filterToDir()` to the SCM store that filters entries by comparing their full path against `activePath`. The commit button still uses full (unfiltered) counts since commits are repo-wide.
+
+---
+
 ## fix/git-scm-layout-shift-hover (#94): SCM row hover shift
 
 **Key takeaways:**

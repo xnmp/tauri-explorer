@@ -4,6 +4,14 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/miller-folders-external-refresh: Cache invalidation needs registered watcher
+
+**Key takeaways:**
+- The Rust `fs_watcher` only emits `directory-changed` for paths registered via `watch_directory`. Components that listen to those events but don't register their visible paths will only see updates piggybacked off another consumer.
+- Miller column ancestors must call `watchDirectory` when entering the visible window and `unwatchDirectory` when leaving (and on unmount). Refcounted watches make it safe to overlap with the explorer pane's own watch on the current path.
+
+---
+
 ## fix/activity-bar-tests-flake-under-all-view-modes-parallelism: Scope role-based queries when multiple widgets share the same ARIA role
 
 **Key takeaways:**

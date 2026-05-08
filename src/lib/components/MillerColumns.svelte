@@ -10,7 +10,7 @@
   import { untrack, onMount } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { fetchDirectory } from "$lib/api/files";
+  import { fetchDirectory, watchDirectory, unwatchDirectory } from "$lib/api/files";
   import FileIcon from "./FileIcon.svelte";
   import { dragState } from "$lib/state/drag.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
@@ -35,6 +35,7 @@
   // Cache stores raw (unfiltered) directory entries; filtering is derived reactively.
   const rawCache = new Map<string, FileEntry[]>();
   let rawColumns = $state<MillerColumn[]>([]);
+  const watchedPaths = new Set<string>();
 
   function filterEntries(entries: FileEntry[]): FileEntry[] {
     return entries.filter(
@@ -77,7 +78,18 @@
     rawColumns = newColumns;
 
     untrack(() => {
+      const desiredPaths = new Set(newColumns.map((c) => c.path));
+      for (const path of watchedPaths) {
+        if (!desiredPaths.has(path)) {
+          unwatchDirectory(path);
+          watchedPaths.delete(path);
+        }
+      }
       for (const col of newColumns) {
+        if (!watchedPaths.has(col.path)) {
+          watchDirectory(col.path);
+          watchedPaths.add(col.path);
+        }
         if (!rawCache.has(col.path)) {
           loadColumn(col.path);
         }
@@ -112,7 +124,13 @@
       }
     }).then((fn) => { unlisten = fn; });
 
-    return () => { unlisten?.(); };
+    return () => {
+      unlisten?.();
+      for (const path of watchedPaths) {
+        unwatchDirectory(path);
+      }
+      watchedPaths.clear();
+    };
   });
 
   function handleClick(entry: FileEntry): void {

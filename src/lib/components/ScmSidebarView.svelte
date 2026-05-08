@@ -23,6 +23,40 @@
   let untrackedExpanded = $state(true);
   let mergeExpanded = $state(true);
 
+  // Pending confirmation for destructive Discard/Remove actions. Shown as
+  // an inline overlay; Esc cancels, Cancel is the default-focused button.
+  let pendingDiscard = $state<{ paths: string[]; isUntracked: boolean } | null>(null);
+  let cancelButtonEl: HTMLButtonElement | undefined;
+
+  function requestDiscard(paths: string[], isUntracked: boolean): void {
+    pendingDiscard = { paths, isUntracked };
+    queueMicrotask(() => cancelButtonEl?.focus());
+  }
+
+  async function confirmDiscard(): Promise<void> {
+    const target = pendingDiscard;
+    pendingDiscard = null;
+    if (!target) return;
+    const r = await scmStore.discard(target.paths);
+    if (!r.ok) {
+      toastStore.error(`${target.isUntracked ? "Remove" : "Discard"} failed: ${r.error}`);
+      return;
+    }
+    toastStore.success(
+      target.isUntracked
+        ? `Removed ${target.paths.length === 1 ? target.paths[0] : `${target.paths.length} files`}`
+        : `Discarded changes in ${target.paths.length === 1 ? target.paths[0] : `${target.paths.length} files`}`,
+    );
+  }
+
+  function cancelDiscard(): void {
+    pendingDiscard = null;
+  }
+
+  function onConfirmKeydown(e: KeyboardEvent): void {
+    if (e.key === "Escape") { e.preventDefault(); cancelDiscard(); }
+  }
+
   onMount(() => {
     scmStore.initWatcherListener();
     const active = windowTabsManager.getActiveExplorer();
@@ -99,9 +133,8 @@
     }
   }
 
-  async function onDiscard(row: GitFileEntry): Promise<void> {
-    const r = await scmStore.discard([row.path]);
-    if (!r.ok) toastStore.error(`Discard failed: ${r.error}`);
+  function onDiscard(row: GitFileEntry, isUntracked: boolean): void {
+    requestDiscard([row.path], isUntracked);
   }
 
   function onRowKeydown(e: KeyboardEvent): void {
@@ -232,6 +265,45 @@
       <div class="clean-state">Working tree clean</div>
     {/if}
   {/if}
+
+  {#if pendingDiscard}
+    {@const isUntracked = pendingDiscard.isUntracked}
+    {@const count = pendingDiscard.paths.length}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div
+      class="scm-confirm-overlay"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="scm-confirm-title"
+      onclick={(e) => { if (e.target === e.currentTarget) cancelDiscard(); }}
+      onkeydown={onConfirmKeydown}
+    >
+      <div class="scm-confirm-dialog">
+        <h2 id="scm-confirm-title" class="scm-confirm-title">
+          {#if isUntracked}
+            Remove {count === 1 ? "untracked file" : `${count} untracked files`}?
+          {:else}
+            Discard {count === 1 ? "change" : `${count} changes`}?
+          {/if}
+        </h2>
+        <p class="scm-confirm-body">
+          {#if isUntracked}
+            <strong>{count === 1 ? pendingDiscard.paths[0] : `${count} files`}</strong>
+            will be <strong>permanently deleted from disk</strong> — this is not just an unstage and cannot be undone.
+          {:else}
+            Working-tree changes to <strong>{count === 1 ? pendingDiscard.paths[0] : `${count} files`}</strong>
+            will be reverted. This cannot be undone.
+          {/if}
+        </p>
+        <div class="scm-confirm-actions">
+          <button type="button" class="scm-confirm-btn secondary" bind:this={cancelButtonEl} onclick={cancelDiscard}>Cancel</button>
+          <button type="button" class="scm-confirm-btn danger" onclick={confirmDiscard}>
+            {isUntracked ? "Remove File" : "Discard Changes"}
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
 </div>
 
 {#snippet section(opts: { id: string; label: string; count: number; expanded: boolean; toggle: () => void; rows: GitFileEntry[]; kind: "staged" | "changes" | "untracked" | "merge" })}
@@ -291,15 +363,13 @@
                   onclick={(e) => { e.stopPropagation(); scmStore.stage([row.path]); }}
                 >+</button>
               {:else}
-                {#if opts.kind !== "untracked"}
-                  <button
-                    type="button"
-                    class="row-btn"
-                    title="Discard changes"
-                    aria-label="Discard {row.path}"
-                    onclick={(e) => { e.stopPropagation(); onDiscard(row); }}
-                  >↺</button>
-                {/if}
+                <button
+                  type="button"
+                  class="row-btn"
+                  title={opts.kind === "untracked" ? "Remove file" : "Discard changes"}
+                  aria-label={opts.kind === "untracked" ? `Remove ${row.path}` : `Discard ${row.path}`}
+                  onclick={(e) => { e.stopPropagation(); onDiscard(row, opts.kind === "untracked"); }}
+                >↺</button>
                 <button
                   type="button"
                   class="row-btn"
@@ -627,5 +697,66 @@
     color: var(--text-tertiary);
     font-size: 12px;
     text-align: center;
+  }
+
+  .scm-confirm-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .scm-confirm-dialog {
+    width: min(420px, 90vw);
+    background: var(--background-solid);
+    border: 1px solid var(--surface-stroke);
+    border-radius: var(--radius-lg);
+    padding: 20px 22px 18px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+  }
+
+  .scm-confirm-title {
+    margin: 0 0 10px;
+    font-size: 15px;
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+  }
+
+  .scm-confirm-body {
+    margin: 0 0 16px;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .scm-confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .scm-confirm-btn {
+    padding: 6px 14px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--divider);
+    background: var(--background-card);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .scm-confirm-btn.danger {
+    background: var(--system-critical, #dc2626);
+    color: #fff;
+    border-color: transparent;
+  }
+
+  .scm-confirm-btn:focus-visible {
+    outline: 2px solid var(--focus-stroke-outer);
+    outline-offset: 2px;
   }
 </style>

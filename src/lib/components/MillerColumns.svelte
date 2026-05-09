@@ -338,14 +338,12 @@
   }
 
   .col-header {
-    padding: 5px 10px;
-    font-size: 10px;
-    font-weight: 600;
+    padding: 6px 8px;
+    font-size: var(--font-size-caption, 10px);
+    font-weight: var(--font-weight-semibold, 600);
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: var(--letter-spacing-wide, 0.04em);
     color: var(--text-tertiary);
-    background: var(--background-card-secondary);
-    border-bottom: 1px solid var(--divider);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -355,10 +353,10 @@
   .col-entries {
     flex: 1;
     overflow-y: auto;
-    padding: 4px;
+    padding: 0 4px 4px;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 1px;
   }
 
   .col-loading {

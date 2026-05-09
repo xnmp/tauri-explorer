@@ -4,6 +4,16 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/zoom-drag-drop-marquee-broken (#88): Zoom breaks drag-drop hit detection, column resize, and marquee
+
+**Key takeaways:**
+- `adjustForPointerZoom()` was a no-op placeholder that never got implemented. Pointer event `clientX/Y` need to be divided by the CSS zoom factor before passing to `elementFromPoint()`, which expects CSS viewport coordinates.
+- Column resize deltas (`event.clientX - resizeStartX`) are in viewport pixels but column widths are set in CSS pixels. Must divide the delta by `getZoomFactor()`.
+- Use `getZoomFactor()` from `$lib/domain/zoom` consistently instead of inline `settingsStore.zoomLevel / 100` to avoid drift between callsites.
+- CSS `zoom` on the document root scales `getBoundingClientRect()` returns and `clientX/Y` in the same way in Chrome, but WebKitGTK (Tauri on Linux) does NOT adjust mouse event coordinates, requiring explicit division.
+
+---
+
 ## fix/git-scm-diff-blinking (#98): Diff view flashes "Loading diff…" on refresh
 
 **Key takeaways:**

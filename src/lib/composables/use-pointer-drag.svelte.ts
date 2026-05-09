@@ -18,7 +18,7 @@ import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { handleFileDrop, handleBackgroundDrop } from "$lib/state/drop-operations";
 import { startExternalDrag } from "./use-external-drag.svelte";
 import { resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights } from "./use-native-drop-target.svelte";
-import { settingsStore } from "$lib/state/settings.svelte";
+import { getZoomFactor } from "$lib/domain/zoom";
 
 export interface PointerDragDeps {
   getExplorer: () => ExplorerInstance;
@@ -75,7 +75,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
       ghostEl = createGhost(dragPaths);
     }
 
-    const zoom = settingsStore.zoomLevel / 100;
+    const zoom = getZoomFactor();
     ghostEl!.style.left = `${(event.clientX + 12) / zoom}px`;
     ghostEl!.style.top = `${(event.clientY + 12) / zoom}px`;
 

@@ -7,6 +7,7 @@
  */
 
 import { settingsStore } from "$lib/state/settings.svelte";
+import { getZoomFactor } from "$lib/domain/zoom";
 
 export type DropTargetResult =
   | { type: "folder"; path: string }
@@ -23,7 +24,9 @@ function adjustForZoom(pos: { x: number; y: number }): { x: number; y: number } 
 }
 
 export function adjustForPointerZoom(pos: { x: number; y: number }): { x: number; y: number } {
-  return pos;
+  const zoom = getZoomFactor();
+  if (zoom === 1) return pos;
+  return { x: pos.x / zoom, y: pos.y / zoom };
 }
 
 function resolveFromElement(el: Element | null): DropTargetResult {

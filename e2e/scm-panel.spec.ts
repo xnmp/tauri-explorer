@@ -105,4 +105,78 @@ test.describe("SCM panel UI", () => {
     const selected = page.locator(".scm-view .row.selected");
     await expect(selected).toHaveCount(1);
   });
+
+  test("tree view shows folder nodes with depth guide lines (#97)", async ({ page }) => {
+    await openScmOnRepo(page);
+
+    // Enable tree view mode.
+    await page.evaluate(() => {
+      const raw = localStorage.getItem("explorer-settings");
+      const s = raw ? JSON.parse(raw) : {};
+      s.scmTreeView = true;
+      localStorage.setItem("explorer-settings", JSON.stringify(s));
+    });
+    await page.reload();
+    await page.waitForLoadState("domcontentloaded");
+    await page.getByText("Documents", { exact: true }).first().dblclick();
+    await page.getByText("project", { exact: true }).first().dblclick();
+
+    // The "Changes" section has src/index.css and README.md — "src" should
+    // appear as a tree-folder node.
+    const changesSection = page.locator('[data-section="changes"]');
+    await expect(changesSection).toBeVisible();
+
+    const srcFolder = changesSection.locator(".tree-folder", { hasText: "src" });
+    await expect(srcFolder).toBeVisible();
+
+    // Files nested under src/ should have depth guides.
+    const nestedFile = changesSection.locator(".tree-file", { hasText: "index.css" });
+    await expect(nestedFile).toBeVisible();
+    await expect(nestedFile.locator(".depth-guide")).toHaveCount(1);
+  });
+
+  test("tree view folder actions stage/unstage all children (#97)", async ({ page }) => {
+    await openScmOnRepo(page);
+
+    // Enable tree view mode.
+    await page.evaluate(() => {
+      const raw = localStorage.getItem("explorer-settings");
+      const s = raw ? JSON.parse(raw) : {};
+      s.scmTreeView = true;
+      localStorage.setItem("explorer-settings", JSON.stringify(s));
+    });
+    await page.reload();
+    await page.waitForLoadState("domcontentloaded");
+    await page.getByText("Documents", { exact: true }).first().dblclick();
+    await page.getByText("project", { exact: true }).first().dblclick();
+
+    // The "Untracked" section has src/router.tsx and assets/logo.png under
+    // folder nodes. Hover over the "src" folder to reveal the stage button.
+    const untrackedSection = page.locator('[data-section="untracked"]');
+    await expect(untrackedSection).toBeVisible();
+
+    const srcFolder = untrackedSection.locator(".tree-folder", { hasText: "src" });
+    await expect(srcFolder).toBeVisible();
+
+    // Folder action buttons should appear on hover.
+    await srcFolder.hover();
+    const stageBtn = srcFolder.locator('.row-btn[title="Stage folder"]');
+    await expect(stageBtn).toBeVisible();
+  });
+
+  test("tree view toggle switches between flat and tree rendering", async ({ page }) => {
+    await openScmOnRepo(page);
+
+    // Default is flat list — no tree-folder nodes should exist.
+    await expect(page.locator(".tree-folder")).toHaveCount(0);
+
+    // Click the Tree/List toggle button.
+    const toggleBtn = page.locator(".view-toggle");
+    await expect(toggleBtn).toHaveText("List");
+    await toggleBtn.click();
+
+    // Now tree-folder nodes should appear.
+    await expect(page.locator(".tree-folder").first()).toBeVisible();
+    await expect(toggleBtn).toHaveText("Tree");
+  });
 });

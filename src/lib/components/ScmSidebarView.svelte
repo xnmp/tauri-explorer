@@ -48,6 +48,14 @@
     return root;
   }
 
+  function collectPaths(node: ScmTreeNode): string[] {
+    const paths: string[] = node.files.map((f) => f.path);
+    for (const child of node.children.values()) {
+      paths.push(...collectPaths(child));
+    }
+    return paths;
+  }
+
   // Persisted collapsed folder set, scoped per repo so toggling between
   // repos doesn't mix collapse state.
   let collapsedFolders = $state(new Set<string>());
@@ -509,6 +517,7 @@
   <ul class="row-list tree-list" role="list" style="padding-left: {depth === 0 ? 4 : 0}px">
     {#each Array.from(node.children.values()) as child (child.fullDir)}
       {@const collapsed = collapsedFolders.has(child.fullDir)}
+      {@const folderPaths = collectPaths(child)}
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <li
         class="row tree-folder"
@@ -516,10 +525,25 @@
         onclick={() => toggleFolder(child.fullDir)}
         role="listitem"
       >
+        {#each { length: depth } as _, i}
+          <span class="depth-guide" style="left: {i * 12 + 10}px"></span>
+        {/each}
         <svg width="10" height="10" viewBox="0 0 12 12" fill="none" class="chevron" class:expanded={!collapsed}>
           <path d="M4 3L7 6L4 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
         <span class="folder-name">{child.name}</span>
+        <span class="row-actions folder-actions">
+          {#if kind === "staged"}
+            <button type="button" class="row-btn" title="Unstage folder" aria-label="Unstage {child.name}"
+              onclick={(e) => { e.stopPropagation(); scmStore.unstage(folderPaths); }}>−</button>
+          {:else if kind === "merge"}
+            <button type="button" class="row-btn" title="Stage folder" aria-label="Stage {child.name}"
+              onclick={(e) => { e.stopPropagation(); scmStore.stage(folderPaths); }}>+</button>
+          {:else}
+            <button type="button" class="row-btn" title="Stage folder" aria-label="Stage {child.name}"
+              onclick={(e) => { e.stopPropagation(); scmStore.stage(folderPaths); }}>+</button>
+          {/if}
+        </span>
       </li>
       {#if !collapsed}
         {@render treeNode(child, depth + 1, kind)}
@@ -541,6 +565,9 @@
         role="listitem"
         title={row.path}
       >
+        {#each { length: depth } as _, i}
+          <span class="depth-guide" style="left: {i * 12 + 10}px"></span>
+        {/each}
         <span class="status-letter {statusClass(row.status)}" aria-label={row.status}>
           {statusLetter(row.status)}
         </span>
@@ -675,12 +702,21 @@
   }
 
   .row.tree-folder {
-    grid-template-columns: 12px 1fr;
+    grid-template-columns: 12px 1fr minmax(0, auto);
     gap: 4px;
     cursor: pointer;
     color: var(--text-secondary);
     font-size: 12px;
     min-height: 22px;
+    position: relative;
+  }
+
+  .row.tree-folder .folder-actions {
+    opacity: 0;
+  }
+
+  .row.tree-folder:hover .folder-actions {
+    opacity: 1;
   }
 
   .folder-name {
@@ -691,6 +727,16 @@
 
   .row.tree-file {
     grid-template-columns: 18px minmax(0, 1fr) minmax(0, auto);
+    position: relative;
+  }
+
+  .depth-guide {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--divider);
+    pointer-events: none;
   }
 
   .commit-message {

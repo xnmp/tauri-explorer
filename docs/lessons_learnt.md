@@ -4,6 +4,16 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## feat/git-scm-tree-depth-lines (#97): SCM tree view depth guides and folder actions
+
+**Key takeaways:**
+- Svelte 5 `{#each { length: depth } as _, i}` is a clean way to render N elements without a helper array — used for depth guide `<span>` elements at each nesting level.
+- `collectPaths()` recursively gathers all descendant file paths from a `ScmTreeNode`, enabling folder-level batch stage/unstage without duplicating the traversal logic.
+- Absolutely positioned depth guides (`position: absolute; left: calc(i * 12px)`) inside relatively positioned rows give vertical connector lines that align across siblings without extra wrapper elements.
+- Folder action buttons use `opacity: 0` / `opacity: 1` on hover (not `display: none`) to avoid layout shift — the buttons occupy space but are invisible until hovered.
+
+---
+
 ## feat/git-scm-own-panel (#96): SCM as independent panel instead of sidebar tab
 
 **Key takeaways:**

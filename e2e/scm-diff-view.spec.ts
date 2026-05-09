@@ -9,7 +9,13 @@ import { test, expect, type Page } from "@playwright/test";
 
 async function openScmOnRepo(page: Page): Promise<void> {
   await page.goto("/");
-  await page.evaluate(() => localStorage.removeItem("explorer-sidebar-active-view"));
+  await page.evaluate(() => {
+    const raw = localStorage.getItem("explorer-settings");
+    const s = raw ? JSON.parse(raw) : {};
+    s.showGitStatus = true;
+    s.showScmPanel = true;
+    localStorage.setItem("explorer-settings", JSON.stringify(s));
+  });
   await page.reload();
   await page.waitForLoadState("domcontentloaded");
 
@@ -17,7 +23,6 @@ async function openScmOnRepo(page: Page): Promise<void> {
   await page.getByText("Documents", { exact: true }).first().dblclick();
   await page.getByText("project", { exact: true }).first().dblclick();
 
-  await page.getByRole("tab", { name: /Source Control/i }).click();
   await page.locator('[data-section="staged"]').waitFor({ state: "visible" });
 }
 

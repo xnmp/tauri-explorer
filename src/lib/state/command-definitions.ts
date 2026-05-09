@@ -397,13 +397,12 @@ const viewCommands: Command[] = [
     },
   },
   {
-    id: "view.focusScmSidebar",
-    label: "Show Source Control",
+    id: "view.toggleScmPanel",
+    label: "Toggle Source Control Panel",
     category: "view",
     shortcut: "Alt+M G",
     handler: () => {
-      if (!settingsStore.showSidebar) settingsStore.toggleSidebar();
-      sidebarViewsStore.setActive("scm");
+      settingsStore.toggleScmPanel();
     },
   },
   {

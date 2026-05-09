@@ -7,8 +7,6 @@
 
 import type { Component } from "svelte";
 import FilesSidebarView from "$lib/components/FilesSidebarView.svelte";
-import ScmSidebarView from "$lib/components/ScmSidebarView.svelte";
-import { settingsStore } from "./settings.svelte";
 
 export interface SidebarView {
   id: string;
@@ -18,11 +16,9 @@ export interface SidebarView {
 }
 
 import FilesIcon from "$lib/components/icons/FilesIcon.svelte";
-import ScmIcon from "$lib/components/icons/ScmIcon.svelte";
 
 export const ALL_SIDEBAR_VIEWS: SidebarView[] = [
   { id: "files", label: "Explorer", icon: FilesIcon, component: FilesSidebarView },
-  { id: "scm", label: "Source Control", icon: ScmIcon, component: ScmSidebarView },
 ];
 
 const STORAGE_KEY = "explorer-sidebar-active-view";
@@ -37,11 +33,7 @@ function loadInitial(): string {
 function createSidebarViewStore() {
   let activeId = $state(loadInitial());
 
-  const visibleViews = $derived(
-    settingsStore.showGitStatus
-      ? ALL_SIDEBAR_VIEWS
-      : ALL_SIDEBAR_VIEWS.filter((v) => v.id !== "scm")
-  );
+  const visibleViews = ALL_SIDEBAR_VIEWS;
 
   const effectiveActiveId = $derived(
     visibleViews.some((v) => v.id === activeId) ? activeId : "files"

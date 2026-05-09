@@ -11,16 +11,19 @@ import { test, expect, type Page } from "@playwright/test";
 
 async function openScmOnRepo(page: Page): Promise<void> {
   await page.goto("/");
-  await page.evaluate(() => localStorage.removeItem("explorer-sidebar-active-view"));
+  await page.evaluate(() => {
+    const raw = localStorage.getItem("explorer-settings");
+    const s = raw ? JSON.parse(raw) : {};
+    s.showGitStatus = true;
+    s.showScmPanel = true;
+    localStorage.setItem("explorer-settings", JSON.stringify(s));
+  });
   await page.reload();
   await page.waitForLoadState("domcontentloaded");
 
   // Navigate the active pane to the mocked git repo via double-clicks into Documents/project.
   await page.getByText("Documents", { exact: true }).first().dblclick();
   await page.getByText("project", { exact: true }).first().dblclick();
-
-  // Switch to the SCM view.
-  await page.getByRole("tab", { name: /Source Control/i }).click();
 }
 
 test.describe("SCM panel UI", () => {
@@ -49,13 +52,17 @@ test.describe("SCM panel UI", () => {
 
   test("empty-state shows Initialize Repository when active pane is not a repo", async ({ page }) => {
     await page.goto("/");
-    await page.evaluate(() => localStorage.removeItem("explorer-sidebar-active-view"));
+    await page.evaluate(() => {
+      const raw = localStorage.getItem("explorer-settings");
+      const s = raw ? JSON.parse(raw) : {};
+      s.showGitStatus = true;
+      s.showScmPanel = true;
+      localStorage.setItem("explorer-settings", JSON.stringify(s));
+    });
     await page.reload();
     await page.waitForLoadState("domcontentloaded");
 
     // Active pane defaults to /home/user (not a repo)
-    await page.getByRole("tab", { name: /Source Control/i }).click();
-
     await expect(page.getByText(/Not a git repository/i)).toBeVisible();
     await expect(page.getByRole("button", { name: /Initialize Repository/i })).toBeVisible();
   });

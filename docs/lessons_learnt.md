@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/thumbnails-reload-on-folder-change (#90): Watcher-triggered thumbnail reload
+
+**Key takeaways:**
+- Deleting or renaming a file triggers: (1) immediate local state mutation, then (2) filesystem watcher event → `refresh()`. Even with fingerprint comparison, the watcher refresh can replace entry objects and cause thumbnails to flash/reload. Fix: add a 1-second cooldown after local mutations during which silent (watcher-triggered) refreshes are suppressed, since the local state is already correct.
+
+---
+
 ## fix/miller-column-contiguous-title (#89): Miller column header styling
 
 **Key takeaways:**

@@ -72,4 +72,40 @@ test.describe("Miller columns panel", () => {
     );
     expect(borderBottom).toBe("none");
   });
+
+  test("miller column has ondrop handler for background drops", async ({ page }) => {
+    await page.goto(HOME_URL);
+    await waitForEntries(page);
+
+    await page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem("explorer-settings") || "{}");
+      s.millerLayers = 1;
+      localStorage.setItem("explorer-settings", JSON.stringify(s));
+      location.reload();
+    });
+    await page.waitForTimeout(1000);
+    await waitForEntries(page);
+
+    await page.locator(".entry-item").first().dblclick();
+    await page.waitForTimeout(500);
+
+    await expect(page.locator(".miller-columns")).toBeVisible();
+    const col = page.locator(".miller-col").first();
+
+    // The column element should have drag event listeners bound (Svelte wires
+    // them as properties). Verify the column responds to dragover by checking
+    // that the event is handled (preventDefault called = accepts drop).
+    const acceptsDrop = await col.evaluate((el) => {
+      const dt = new DataTransfer();
+      dt.items.add("test", "application/x-explorer-path");
+      const event = new DragEvent("dragover", {
+        dataTransfer: dt,
+        bubbles: true,
+        cancelable: true,
+      });
+      el.dispatchEvent(event);
+      return event.defaultPrevented;
+    });
+    expect(acceptsDrop).toBe(true);
+  });
 });

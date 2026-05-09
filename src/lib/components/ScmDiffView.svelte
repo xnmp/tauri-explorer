@@ -31,12 +31,13 @@
   let rootEl = $state<HTMLDivElement | null>(null);
 
   async function fetchDiff(): Promise<void> {
-    loading = true;
+    const isInitial = parsed === null;
+    if (isInitial) loading = true;
     error = null;
-    parsed = null;
     const r = await gitDiff(repoPath, path, { staged });
     if (!r.ok) {
       error = r.error;
+      parsed = null;
       loading = false;
       return;
     }
@@ -48,8 +49,16 @@
     tick().then(() => rootEl?.focus());
   });
 
-  // Single effect: refetch whenever the target or the SCM summary changes.
-  // The summary read makes us refresh after the watcher event (git-status-changed).
+  // Reset parsed when viewing a different file/mode so we show loading state.
+  $effect(() => {
+    void path;
+    void staged;
+    void repoPath;
+    parsed = null;
+    error = null;
+  });
+
+  // Refetch when target or SCM summary changes (summary tracks stage/unstage).
   $effect(() => {
     const key = `${repoPath}|${path}|${staged}|${scmStore.summary.staged.length}|${scmStore.summary.changes.length}`;
     void key;

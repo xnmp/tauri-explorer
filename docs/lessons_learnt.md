@@ -4,6 +4,15 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/git-scm-diff-blinking (#98): Diff view flashes "Loading diff…" on refresh
+
+**Key takeaways:**
+- `fetchDiff()` was setting `parsed = null` before re-fetching, which caused the template to briefly render the "Loading diff…" placeholder between every refresh. Fix: only show loading on initial fetch (when `parsed` is truly null). On subsequent refreshes, keep the old diff visible until the new one arrives.
+- The `$effect` depends on `scmStore.summary.staged.length` and `scmStore.summary.changes.length` so that stage/unstage operations trigger a re-fetch. This means ANY file's status change triggers a diff refetch, but the blink-free approach makes this invisible to the user.
+- When switching to a different file, a separate `$effect` resets `parsed = null` so the loading state appears correctly for the new file.
+
+---
+
 ## fix/git-badges-not-updating (#93): Git status badges stale after file changes
 
 **Key takeaways:**

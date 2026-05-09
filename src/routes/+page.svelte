@@ -28,6 +28,7 @@
   import "$lib/themes/index.css";
   import TitleBar from "$lib/components/TitleBar.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
+  import ScmPanel from "$lib/components/ScmPanel.svelte";
   import PaneContainer from "$lib/components/PaneContainer.svelte";
   import QuickOpen from "$lib/components/QuickOpen.svelte";
   import CommandPalette from "$lib/components/CommandPalette.svelte";
@@ -426,6 +427,9 @@
   <div class="main-content">
     {#if settingsStore.showSidebar}
       <Sidebar />
+    {/if}
+    {#if settingsStore.showGitStatus && settingsStore.showScmPanel}
+      <ScmPanel />
     {/if}
     <PaneContainer />
   </div>

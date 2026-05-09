@@ -4,6 +4,16 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## feat/git-scm-own-panel (#96): SCM as independent panel instead of sidebar tab
+
+**Key takeaways:**
+- The sidebar view registry (`sidebar-views.svelte.ts`) is pluggable — removing SCM just means deleting its entry from `ALL_SIDEBAR_VIEWS`. The `ActivityBar` and `Sidebar` components automatically adapt.
+- The SCM panel is rendered between the sidebar and `PaneContainer` in `+page.svelte`, gated by `showGitStatus && showScmPanel`. This gives it its own resize handle and independent lifecycle.
+- E2E tests that opened SCM by clicking the activity bar tab now enable the panel via `localStorage` settings (`showGitStatus: true, showScmPanel: true`) and reload.
+- `Alt+M G` now toggles the SCM panel visibility. `Alt+M B` still focuses the sidebar (bookmarks/recent).
+
+---
+
 ## fix/git-scm-diff-blinking (#98): Diff view flashes "Loading diff…" on refresh
 
 **Key takeaways:**

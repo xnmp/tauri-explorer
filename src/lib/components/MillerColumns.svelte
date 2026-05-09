@@ -15,6 +15,7 @@
   import { dragState } from "$lib/state/drag.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { useDropTarget } from "$lib/composables/use-drop-target.svelte";
+  import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
   import type { FileEntry } from "$lib/domain/file";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
@@ -199,12 +200,56 @@
 
   // Shared drop-target behavior
   const paneNav = getPaneNavigationContext();
-  const dropTarget = useDropTarget({
-    onRefresh: () => {
-      if (paneNav) paneNav.refreshAllPanes();
-      else explorer.refresh({ silent: true });
-    },
-  });
+  function onDropRefresh() {
+    if (paneNav) paneNav.refreshAllPanes();
+    else explorer.refresh({ silent: true });
+  }
+  const dropTarget = useDropTarget({ onRefresh: onDropRefresh });
+
+  // Background drop: dropping onto empty space in a column moves to that column's dir
+  let bgDropColumn = $state<string | null>(null);
+  let bgDropCopy = $state(false);
+
+  function isCopyModifier(event: DragEvent): boolean {
+    const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
+    return isMac ? event.altKey : event.ctrlKey;
+  }
+
+  function handleBgDragOver(event: DragEvent, columnPath: string): void {
+    const types = event.dataTransfer?.types;
+    if (!types?.includes("application/x-explorer-path") && !types?.includes("Files") && !dragState.readCrossWindow()) return;
+    event.preventDefault();
+    const copying = isCopyModifier(event);
+    if (event.dataTransfer) event.dataTransfer.dropEffect = copying ? "copy" : "move";
+    bgDropColumn = columnPath;
+    bgDropCopy = copying;
+  }
+
+  function handleBgDragLeave(event: DragEvent, columnEl: HTMLElement): void {
+    const related = event.relatedTarget as Node | null;
+    if (related && columnEl.contains(related)) return;
+    bgDropColumn = null;
+    bgDropCopy = false;
+  }
+
+  async function handleBgDrop(event: DragEvent, columnPath: string): Promise<void> {
+    event.preventDefault();
+    bgDropColumn = null;
+    bgDropCopy = false;
+    if (!event.dataTransfer) return;
+
+    const sourcePaths = getDropSourcePaths(event.dataTransfer);
+    if (sourcePaths.length === 0) return;
+
+    dragState.clear();
+    for (const sourcePath of sourcePaths) {
+      if (sourcePath === columnPath) continue;
+      if (columnPath.startsWith(sourcePath + "/")) continue;
+      await handleFileDrop(sourcePath, columnPath, isCopyModifier(event), {
+        onRefresh: onDropRefresh,
+      });
+    }
+  }
 
   // Resizable width
   const MILLER_WIDTH_KEY = "explorer-miller-width";
@@ -251,7 +296,15 @@
 {#if columns.length > 0}
   <div class="miller-columns" class:resizing={isResizing} style="width: {millerWidth}px">
     {#each columns as column (column.path)}
-      <div class="miller-col">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="miller-col"
+        class:bg-drop-target={bgDropColumn === column.path}
+        class:bg-copy-drop={bgDropColumn === column.path && bgDropCopy}
+        ondragover={(e) => handleBgDragOver(e, column.path)}
+        ondragleave={(e) => handleBgDragLeave(e, e.currentTarget as HTMLElement)}
+        ondrop={(e) => handleBgDrop(e, column.path)}
+      >
         <div class="col-header" title={column.path}>{column.name}</div>
         <div class="col-entries">
           {#if column.loading}
@@ -314,6 +367,15 @@
     min-width: 0;
     border-right: 1px solid var(--divider);
     overflow: hidden;
+    transition: background 150ms;
+  }
+
+  .miller-col.bg-drop-target {
+    background: rgba(0, 120, 212, 0.1);
+  }
+
+  .miller-col.bg-drop-target.bg-copy-drop {
+    background: rgba(16, 185, 129, 0.1);
   }
 
   .resize-handle {

@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/miller-column-drop-empty-space (#84): Drop onto empty space in miller columns
+
+**Key takeaways:**
+- The miller column entries only had drop handlers on individual folder buttons (`col-entry`). Dropping onto empty space (the column background) had no effect. Fix: add `ondragover`, `ondragleave`, `ondrop` handlers on the `.miller-col` div itself, targeting the column's directory path. Use `relatedTarget` in `dragleave` to avoid flickering when moving between child elements.
+
+---
+
 ## fix/thumbnails-reload-on-folder-change (#90): Watcher-triggered thumbnail reload
 
 **Key takeaways:**

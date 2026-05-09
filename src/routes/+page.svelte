@@ -42,6 +42,7 @@
   import JobsPanel from "$lib/components/JobsPanel.svelte";
   import { jobsStore } from "$lib/state/jobs.svelte";
   import { toastStore } from "$lib/state/toast.svelte";
+  import { gitStatusStore } from "$lib/state/git-status.svelte";
   import StatusBar from "$lib/components/StatusBar.svelte";
   import AnimatedBackground from "$lib/components/AnimatedBackground.svelte";
 
@@ -299,6 +300,9 @@
     folderViewsStore.init();
     manualHiddenStore.init();
 
+    // Initialize git status watcher so file badges update on changes
+    gitStatusStore.initWatcherListener();
+
     // Register all commands for the command palette (deferred to next tick)
     queueMicrotask(() => registerAllCommands());
 
@@ -340,6 +344,10 @@
         if (exp.currentPath === changedPath) {
           exp.refresh({ silent: true });
         }
+      }
+      // Also refresh git status badges for the changed directory
+      if (settingsStore.showGitStatus && gitStatusStore.currentPath === changedPath) {
+        gitStatusStore.refresh();
       }
     }).then((fn) => { unlistenWatcher = fn; });
 

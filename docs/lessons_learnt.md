@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/git-badges-not-updating (#93): Git status badges stale after file changes
+
+**Key takeaways:**
+- The `gitStatusStore` cached status per-directory and only fetched on navigation (via `fetchForDirectory`). Once cached, it never re-fetched for the same path. Fix: add a `refresh()` method that bypasses the cache, listen to `git-status-changed` events from the Rust watcher, and also refresh on `directory-changed` events. The watcher listener is initialized at the page level (not tied to the SCM panel).
+
+---
+
 ## fix/miller-column-drop-empty-space (#84): Drop onto empty space in miller columns
 
 **Key takeaways:**

@@ -46,4 +46,30 @@ test.describe("Miller columns panel", () => {
     // Miller columns should not be visible
     await expect(page.locator(".miller-columns")).toHaveCount(0);
   });
+
+  test("miller column header is contiguous with entries (no border)", async ({ page }) => {
+    await page.goto(HOME_URL);
+    await waitForEntries(page);
+
+    await page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem("explorer-settings") || "{}");
+      s.millerLayers = 1;
+      localStorage.setItem("explorer-settings", JSON.stringify(s));
+      location.reload();
+    });
+    await page.waitForTimeout(1000);
+    await waitForEntries(page);
+
+    await page.locator(".entry-item").first().dblclick();
+    await page.waitForTimeout(500);
+
+    await expect(page.locator(".miller-columns")).toBeVisible();
+    const header = page.locator(".col-header").first();
+    await expect(header).toBeVisible();
+
+    const borderBottom = await header.evaluate(
+      (el) => getComputedStyle(el).borderBottomStyle,
+    );
+    expect(borderBottom).toBe("none");
+  });
 });

@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/miller-column-contiguous-title (#89): Miller column header styling
+
+**Key takeaways:**
+- The Miller column headers had a `border-bottom` divider and separate `background` that visually detached them from the folder entries below. Removing the border and background, and reducing the entry gap from `4px` to `1px`, makes the headers flow contiguously into the folder list — matching the sidebar section header style.
+
+---
+
 ## fix/git-scm-files-reflect-cwd (#95): Filter SCM to current directory
 
 **Key takeaways:**

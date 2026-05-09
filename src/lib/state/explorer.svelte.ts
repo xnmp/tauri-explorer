@@ -108,6 +108,16 @@ function createExplorerState(seed?: ExplorerSeed) {
   // Filesystem watcher: track which path this pane is watching
   let watchedPath: string | null = null;
 
+  // Suppress redundant watcher refreshes after local mutations (delete/rename/create).
+  // Local mutations already update coreState.entries; the watcher event that follows
+  // would trigger an identical refresh causing all thumbnails to flash.
+  const MUTATION_COOLDOWN_MS = 1000;
+  let lastMutationTime = 0;
+
+  function markLocalMutation(): void {
+    lastMutationTime = Date.now();
+  }
+
   function updateWatch(newPath: string) {
     if (watchedPath === newPath) return;
     if (watchedPath) unwatchDirectory(watchedPath);
@@ -263,8 +273,16 @@ function createExplorerState(seed?: ExplorerSeed) {
   }
 
   async function refresh(options?: { silent?: boolean }) {
-    const oldFingerprint = entriesFingerprint(coreState.entries);
     const silent = options?.silent ?? false;
+
+    // Skip watcher-triggered refreshes during the cooldown after local mutations.
+    // The local mutation already updated entries; refetching would replace entry
+    // objects and cause thumbnail components to flash/reload.
+    if (silent && Date.now() - lastMutationTime < MUTATION_COOLDOWN_MS) {
+      return;
+    }
+
+    const oldFingerprint = entriesFingerprint(coreState.entries);
 
     // Fetch new data without touching UI state — avoids flash on no-change
     const result = await dirListing.load(coreState.currentPath, {
@@ -403,6 +421,7 @@ function createExplorerState(seed?: ExplorerSeed) {
         coreState.selectedPaths = new Set(
           [...coreState.selectedPaths].filter((p) => !deletedPaths.has(p))
         );
+        markLocalMutation();
         await navigateAwayIfNeeded(deletedPaths);
         frecencyStore.pruneNonExistent();
       }
@@ -442,6 +461,7 @@ function createExplorerState(seed?: ExplorerSeed) {
       const idx = displayEntries.findIndex((e) => e.path === result.data.path);
       coreState.selectionAnchorIndex = idx >= 0 ? idx : null;
       isCreatingFolder = false;
+      markLocalMutation();
       dialogStore.closeNewFolder();
       broadcastFileChange([coreState.currentPath]);
       return null;
@@ -471,6 +491,7 @@ function createExplorerState(seed?: ExplorerSeed) {
       undoStore.push({ type: "rename", path: result.data.path, oldName, newName });
       coreState.entries = coreState.entries.map((e) => (e.path === oldPath ? result.data : e));
       clipboardStore.updatePath(oldPath, result.data);
+      markLocalMutation();
       dialogStore.cancelRename();
       frecencyStore.pruneNonExistent();
       return null;
@@ -513,6 +534,7 @@ function createExplorerState(seed?: ExplorerSeed) {
       coreState.selectedPaths = new Set(
         [...coreState.selectedPaths].filter((p) => !deletedPaths.has(p))
       );
+      markLocalMutation();
       dialogStore.cancelDelete();
       await navigateAwayIfNeeded(deletedPaths);
       frecencyStore.pruneNonExistent();
@@ -547,6 +569,7 @@ function createExplorerState(seed?: ExplorerSeed) {
       existingEntries: coreState.entries,
       onEntriesAdded: (entries: FileEntry[]) => {
         coreState.entries = [...coreState.entries, ...entries];
+        markLocalMutation();
         // Remember pasted paths so onRefresh can re-select after navigation
         if (entries.length > 0) {
           pastedPaths = new Set(entries.map((e) => e.path));

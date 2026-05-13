@@ -6,14 +6,13 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
-  import { dialogStore } from "$lib/state/dialogs.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
-  import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
   import { useItemInteractions, isInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { getFileIconColor } from "$lib/domain/file-types";
 
   import { isMac } from "$lib/domain/platform";
+  import EntryName from "./EntryName.svelte";
   import FileIcon from "./FileIcon.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
   import InlineNewFolder from "./InlineNewFolder.svelte";
@@ -45,17 +44,6 @@
     if (settingsStore.listViewColumns > 0) return settingsStore.listViewColumns;
     if (contentWidth <= 0) return 1;
     return Math.max(1, Math.min(6, Math.floor(contentWidth / settingsStore.listColumnMaxWidth)));
-  });
-
-  // Inline rename composable
-  const rename = useInlineRename(() => explorer);
-
-  const renamingEntry = $derived(dialogStore.renamingEntry);
-
-  $effect(() => {
-    if (renamingEntry && rename.renameInputRef) {
-      rename.focusAndSelect(renamingEntry);
-    }
   });
 
   const totalItems = $derived(explorer.displayEntries.length + (explorer.isCreatingFolder ? 1 : 0));
@@ -91,24 +79,8 @@
       <span class="list-icon" style:color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined}>
         <FileIcon {entry} size="small" />
       </span>
-      {#if renamingEntry?.path === entry.path}
-        <!-- svelte-ignore a11y_autofocus -->
-        <input
-          type="text"
-          class="rename-input"
-          class:error={!!rename.renameError}
-          bind:value={rename.editedName}
-          bind:this={rename.renameInputRef}
-          onkeydown={(e) => rename.handleRenameKeydown(e, entry.name)}
-          onblur={() => rename.handleRenameBlur(entry.name)}
-          onclick={(e) => e.stopPropagation()}
-          disabled={rename.submittingRename}
-          autofocus
-        />
-      {:else}
-        <span class="list-name entry-name">{entry.name}</span>
-        <GitStatusBadge entryName={entry.name} />
-      {/if}
+      <EntryName {entry} {explorer} variant="list" />
+      <GitStatusBadge entryName={entry.name} />
     </button>
   {/each}
 </div>
@@ -190,28 +162,5 @@
     flex-shrink: 0;
   }
 
-  .list-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  /* Inline rename input */
-  .rename-input {
-    flex: 1;
-    min-width: 0;
-    padding: 2px 6px;
-    margin: -3px 0;
-    background: var(--control-fill);
-    border: 1px solid var(--accent);
-    border-radius: var(--radius-sm);
-    font: inherit;
-    font-size: 13px;
-    color: var(--text-primary);
-    outline: none;
-  }
-
-  .rename-input.error {
-    border-color: var(--system-critical);
-  }
+  /* Name and rename styles are handled by EntryName component */
 </style>

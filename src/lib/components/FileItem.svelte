@@ -6,6 +6,7 @@
   import type { FileEntry } from "$lib/domain/file";
   import { formatSize } from "$lib/domain/file";
   import { getFileType, getFileIconColor, formatDate } from "$lib/domain/file-types";
+  import EntryName from "./EntryName.svelte";
   import FileIcon from "./FileIcon.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
@@ -13,7 +14,6 @@
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
-  import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
   import { useItemInteractions, isInClipboard as checkInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { isMac } from "$lib/domain/platform";
@@ -39,18 +39,8 @@
 
   const pointerDrag = isMac ? usePointerDrag({ getExplorer: () => explorer, getPaneNav: () => paneNav }) : null;
 
-  // Inline rename composable
-  const rename = useInlineRename(() => explorer);
-
-  // Check if this entry is being renamed
+  // Check if this entry is being renamed (used for click guards and badge visibility)
   const isRenaming = $derived(dialogStore.renamingEntry?.path === entry.path);
-
-  // When rename mode starts, initialize and focus the input
-  $effect(() => {
-    if (isRenaming && rename.renameInputRef) {
-      rename.focusAndSelect(entry);
-    }
-  });
 
   // Clipboard state
   const entryInClipboard = $derived(checkInClipboard(entry));
@@ -97,23 +87,7 @@
     <div class="icon" style:--file-icon-color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined} aria-hidden="true">
       <FileIcon {entry} size="small" />
     </div>
-    {#if isRenaming}
-      <!-- svelte-ignore a11y_autofocus -->
-      <input
-        type="text"
-        class="rename-input"
-        class:error={!!rename.renameError}
-        bind:value={rename.editedName}
-        bind:this={rename.renameInputRef}
-        onkeydown={(e) => rename.handleRenameKeydown(e, entry.name)}
-        onblur={() => rename.handleRenameBlur(entry.name)}
-        onclick={(e) => e.stopPropagation()}
-        disabled={rename.submittingRename}
-        autofocus
-      />
-    {:else}
-      <span class="name entry-name">{entry.name}</span>
-    {/if}
+    <EntryName {entry} {explorer} variant="details" />
     <GitStatusBadge entryName={entry.name} hideOnRename={isRenaming} />
     {#if entry.is_symlink && !isRenaming}
       <div class="symlink-badge" title={entry.symlink_target ? `Link to ${entry.symlink_target}` : "Symbolic link"}>
@@ -250,45 +224,7 @@
     color: var(--icon-file-tint, var(--file-icon-color, var(--text-secondary)));
   }
 
-  /* Name */
-  .name {
-    font-size: 13px;
-    font-weight: 400;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    flex: 1;
-  }
-
-  /* Inline rename input — negative margin cancels padding+border so row height stays unchanged */
-  .rename-input {
-    flex: 1;
-    min-width: 0;
-    padding: 2px 6px;
-    margin: -3px 0;
-    font-size: 13px;
-    font-family: inherit;
-    font-weight: 400;
-    color: var(--text-primary);
-    background: var(--control-fill);
-    border: 1px solid var(--accent);
-    border-radius: 3px;
-    outline: none;
-    box-shadow: 0 0 0 1px var(--accent);
-  }
-
-  .rename-input:focus {
-    background: var(--control-fill-secondary);
-  }
-
-  .rename-input:disabled {
-    opacity: 0.6;
-  }
-
-  .rename-input.error {
-    border-color: var(--system-critical);
-    box-shadow: 0 0 0 1px var(--system-critical);
-  }
+  /* Name styles are handled by EntryName component */
 
   /* Date, Type, Size cells */
   .date-cell,

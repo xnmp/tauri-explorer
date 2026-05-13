@@ -4,9 +4,7 @@
 -->
 <script lang="ts">
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
-  import { dialogStore } from "$lib/state/dialogs.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
-  import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
   import { useItemInteractions, isInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { getFileIconColor, isImageFile } from "$lib/domain/file-types";
@@ -15,6 +13,7 @@
   import { settingsStore, THUMBNAIL_SIZE_CONFIG } from "$lib/state/settings.svelte";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
+  import EntryName from "./EntryName.svelte";
   import FileIcon from "./FileIcon.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
   import ThumbnailImage from "./ThumbnailImage.svelte";
@@ -45,17 +44,6 @@
     folderViewsStore.getThumbnailSize(explorer.currentPath, settingsStore.thumbnailSize)
   );
   const tileConfig = $derived(THUMBNAIL_SIZE_CONFIG[effectiveThumbnailSize]);
-
-  // Inline rename composable
-  const rename = useInlineRename(() => explorer);
-
-  const renamingEntry = $derived(dialogStore.renamingEntry);
-
-  $effect(() => {
-    if (renamingEntry && rename.renameInputRef) {
-      rename.focusAndSelect(renamingEntry);
-    }
-  });
 
   // Progressive rendering to avoid UI freeze on large directories.
   // Only resets the render limit when entry count increases significantly
@@ -172,23 +160,7 @@
           <FileIcon {entry} size="large" />
         {/if}
       </div>
-      {#if renamingEntry?.path === entry.path}
-        <!-- svelte-ignore a11y_autofocus -->
-        <textarea
-          class="rename-input tile-rename"
-          class:error={!!rename.renameError}
-          bind:value={rename.editedName}
-          bind:this={rename.renameInputRef}
-          onkeydown={(e) => rename.handleRenameKeydown(e, entry.name)}
-          onblur={() => rename.handleRenameBlur(entry.name)}
-          onclick={(e) => e.stopPropagation()}
-          disabled={rename.submittingRename}
-          rows="2"
-          autofocus
-        ></textarea>
-      {:else}
-        <span class="tile-name entry-name" title={entry.name}>{entry.name}</span>
-      {/if}
+      <EntryName {entry} {explorer} variant="tiles" />
       <GitStatusBadge entryName={entry.name} />
     </button>
   {/each}
@@ -291,48 +263,7 @@
     transform: scale(var(--tile-icon-scale, 1));
   }
 
-  .tile-name {
-    width: 100%;
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    text-overflow: ellipsis;
-    white-space: normal;
-    line-height: 1.4;
-    word-break: break-word;
-    overflow-wrap: break-word;
-    padding-top: 1px;
-  }
-
-  /* Inline rename input */
-  .rename-input {
-    flex: 1;
-    min-width: 0;
-    padding: 2px 6px;
-    margin: -3px 0;
-    background: var(--control-fill);
-    border: 1px solid var(--accent);
-    border-radius: var(--radius-sm);
-    font: inherit;
-    font-size: 13px;
-    color: var(--text-primary);
-    outline: none;
-  }
-
-  .rename-input.error {
-    border-color: var(--system-critical);
-  }
-
-  .rename-input.tile-rename {
-    width: 100%;
-    text-align: center;
-    resize: none;
-    line-height: 1.4;
-    word-break: break-word;
-    overflow-wrap: break-word;
-    font-size: 13px;
-  }
+  /* Name and rename styles are handled by EntryName component */
 
   /* Git status indicator — positioned top-right of tile */
   :global(.tile-item .git-indicator) {

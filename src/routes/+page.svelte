@@ -15,19 +15,12 @@
   import { executeCommand, getCommand } from "$lib/state/commands.svelte";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
-  import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
-  import { resolveDropTarget, highlightTarget, clearHighlights } from "$lib/composables/use-native-drop-target.svelte";
-  import { dragState } from "$lib/state/drag.svelte";
-  import { handleFileDrop } from "$lib/state/drop-operations";
-  import { isMac, isCopyModifier as isCopyMod } from "$lib/domain/platform";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
-  import { copyEntry, moveEntry } from "$lib/api/files";
-  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-  import { initFileChangeListener, cleanupFileChangeListener, broadcastFileChange } from "$lib/state/file-events";
-  import { requestRefresh, cancelPendingRefreshes } from "$lib/state/refresh-manager";
-  import { parentDir, basename } from "$lib/domain/path";
   import { saveFocusedWindowState } from "$lib/state/focused-window";
+  import { useNativeDropHandler } from "$lib/composables/use-native-drop-handler";
+  import { useFileWatchers } from "$lib/composables/use-file-watchers";
+  import { useWindowLifecycle } from "$lib/composables/use-window-lifecycle";
   import "$lib/themes/index.css";
   import TitleBar from "$lib/components/TitleBar.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
@@ -44,8 +37,6 @@
   import ConflictDialog from "$lib/components/ConflictDialog.svelte";
   import NanoBananaDialog from "$lib/components/NanoBananaDialog.svelte";
   import JobsPanel from "$lib/components/JobsPanel.svelte";
-  import { jobsStore } from "$lib/state/jobs.svelte";
-  import { toastStore } from "$lib/state/toast.svelte";
   import { gitStatusStore } from "$lib/state/git-status.svelte";
   import StatusBar from "$lib/components/StatusBar.svelte";
   import AnimatedBackground from "$lib/components/AnimatedBackground.svelte";
@@ -81,87 +72,15 @@
     refreshAllPanes,
   });
 
-  // Track copy-modifier key state for external drop detection.
-  // Tauri's onDragDropEvent doesn't include keyboard modifiers,
-  // so we track them globally via keydown/keyup.
-  // macOS uses Option (Alt) for copy-on-drag; other platforms use Ctrl.
-  let copyModifierHeld = false;
-
-  // Handle drops via Tauri's onDragDropEvent (external drops from Finder,
-  // cross-window Cmd+drag). Position-based target detection via elementFromPoint.
-  async function handleNativeDrop(paths: string[], position: { x: number; y: number }): Promise<void> {
-    clearHighlights();
-
-    const explorer = getActiveExplorer();
-    if (!explorer) return;
-
-    const target = resolveDropTarget(position);
-    const isCopy = copyModifierHeld;
-
-    // Validate internal drag: dragState must exist AND the native drop paths must
-    // match the internal source (native drag carries the same paths we passed to startDrag).
-    // If paths differ, it's an external drop with stale dragState — ignore the state.
-    const internalPaths = dragState.current?.paths
-      ? dragState.current.paths
-      : dragState.current?.path
-        ? [dragState.current.path]
-        : null;
-    const isInternalDrag = internalPaths !== null &&
-      paths.length > 0 &&
-      internalPaths.includes(paths[0]);
-
-    // Sidebar bookmark drop
-    if (target?.type === "sidebar") {
-      const sourcePaths = isInternalDrag ? internalPaths! : paths;
-      for (const p of sourcePaths) {
-        bookmarksStore.addBookmark(p);
-      }
-      dragState.clear();
-      return;
-    }
-
-    // Determine source paths (validated internal drag state or external paths)
-    const sourcePaths = isInternalDrag ? internalPaths! : paths;
-
-    // Drop onto a specific folder
-    if (target?.type === "folder") {
-      for (const sourcePath of sourcePaths) {
-        if (sourcePath === target.path) continue;
-        if (target.path.startsWith(sourcePath + "/")) continue;
-        await handleFileDrop(sourcePath, target.path, isCopy, {
-          onRefresh: refreshAllPanes,
-        });
-      }
-      dragState.clear();
-      return;
-    }
-
-    // Background drop — move/copy to the target pane's directory
-    const destDir = target?.path || explorer.currentPath;
-    const operation = isCopy ? copyEntry : moveEntry;
-    const opName = isCopy ? "copy" : "move";
-    const affectedDirs = new Set<string>();
-    affectedDirs.add(destDir);
-
-    for (const path of sourcePaths) {
-      const sourceDir = parentDir(path);
-      if (sourceDir === destDir) continue;
-      affectedDirs.add(sourceDir);
-      const result = await operation(path, destDir);
-      if (!result.ok) {
-        console.error(`Failed to ${opName} dropped file:`, result.error);
-      }
-    }
-
-    dragState.clear();
-    refreshAllPanes();
-    broadcastFileChange([...affectedDirs]);
-  }
-
-  const externalDrop = useExternalDrop({
-    onDrop: handleNativeDrop,
-    onOver: highlightTarget,
-    onLeave: clearHighlights,
+  // Initialize composables
+  const nativeDropHandler = useNativeDropHandler({ getActiveExplorer, refreshAllPanes });
+  const fileWatchers = useFileWatchers({
+    getAllExplorers: () => windowTabsManager.getAllExplorers(),
+    refreshAllPanes,
+  });
+  const windowLifecycle = useWindowLifecycle({
+    getActiveExplorer,
+    saveTabs: () => windowTabsManager.save(),
   });
 
   async function handleKeydown(event: KeyboardEvent): Promise<void> {
@@ -222,15 +141,6 @@
       event.preventDefault();
       await executeCommand(matchingCommandId);
       return;
-    }
-  }
-
-  // Persist the focused window's state (path + viewMode) to localStorage
-  // so new windows (Ctrl+N) inherit from the last focused window.
-  function persistFocusedState() {
-    const explorer = getActiveExplorer();
-    if (explorer) {
-      saveFocusedWindowState(explorer.currentPath, explorer.viewMode);
     }
   }
 
@@ -309,109 +219,19 @@
     // Register all commands for the command palette (deferred to next tick)
     queueMicrotask(() => registerAllCommands());
 
-    // Setup external file drop handling
-    externalDrop.setup();
-
-    // Listen for file changes from other windows. Refresh every explorer
-    // (including inactive tabs) whose current path is in affectedDirs so
-    // the source tab sees the change without needing to be activated.
-    initFileChangeListener((affectedDirs) => {
-      for (const exp of windowTabsManager.getAllExplorers()) {
-        if (affectedDirs.includes(exp.currentPath)) {
-          requestRefresh((opts) => exp.refresh(opts), exp.currentPath);
-        }
-      }
-    });
-
-    // Listen for Nano Banana completion/error events
-    let unlistenNbComplete: UnlistenFn | undefined;
-    let unlistenNbError: UnlistenFn | undefined;
-    listen<{ jobId: number; outputPath: string }>("nano-banana-complete", (event) => {
-      const { jobId, outputPath } = event.payload;
-      jobsStore.completeJob(jobId, outputPath);
-      const fileName = basename(outputPath);
-      toastStore.show(`Nano Banana complete: ${fileName}`, "success");
-      refreshAllPanes();
-    }).then((fn) => { unlistenNbComplete = fn; });
-    listen<{ jobId: number; error: string }>("nano-banana-error", (event) => {
-      const { jobId, error } = event.payload;
-      jobsStore.failJob(jobId, error);
-      toastStore.error(`Nano Banana failed: ${error.slice(0, 100)}`);
-    }).then((fn) => { unlistenNbError = fn; });
-
-    // Listen for filesystem watcher events from backend (auto-refresh)
-    let unlistenWatcher: UnlistenFn | undefined;
-    listen<{ path: string }>("directory-changed", (event) => {
-      const changedPath = event.payload.path;
-      for (const exp of windowTabsManager.getAllExplorers()) {
-        if (exp.currentPath === changedPath) {
-          requestRefresh((opts) => exp.refresh(opts), exp.currentPath);
-        }
-      }
-      // Also refresh git status badges for the changed directory
-      if (settingsStore.showGitStatus && gitStatusStore.currentPath === changedPath) {
-        gitStatusStore.refresh();
-      }
-    }).then((fn) => { unlistenWatcher = fn; });
-
-    // Persist focused window state when this window gains focus
-    window.addEventListener("focus", persistFocusedState);
-
-    // Track copy-modifier key for external drop detection (Option on Mac, Ctrl elsewhere)
-    function trackCtrlDown(e: KeyboardEvent) { copyModifierHeld = isCopyMod(e); }
-    function trackCtrlUp(e: KeyboardEvent) { copyModifierHeld = isCopyMod(e); }
-    window.addEventListener("keydown", trackCtrlDown, true);
-    window.addEventListener("keyup", trackCtrlUp, true);
+    // Setup composables
+    nativeDropHandler.setup();
+    fileWatchers.setup();
+    windowLifecycle.setup();
 
     // Global keyboard shortcuts
     window.addEventListener("keydown", handleKeydown);
 
-    // Prevent the browser's native context menu globally.
-    // The app provides its own context menu via ContextMenu.svelte.
-    function handleContextMenu(event: MouseEvent) {
-      event.preventDefault();
-    }
-    window.addEventListener("contextmenu", handleContextMenu);
-
-    // Guard against the webview navigating to dropped files. Even with
-    // Tauri's native drag-drop handler enabled, a dragover/drop that bubbles
-    // up to the document without preventDefault will let WebKitGTK (and
-    // Chromium) navigate to the file:// URL, replacing the app with an image
-    // or PDF viewer. `capture: true` ensures the guard runs before any
-    // app-level handlers can opt out.
-    function blockWebviewDefaultDnD(event: DragEvent) {
-      event.preventDefault();
-    }
-    window.addEventListener("dragover", blockWebviewDefaultDnD, { capture: true });
-    window.addEventListener("drop", blockWebviewDefaultDnD, { capture: true });
-
-    // Save tabs before window closes
-    function handleBeforeUnload() {
-      windowTabsManager.save();
-    }
-    window.addEventListener("beforeunload", handleBeforeUnload);
-
-    // Save tabs periodically (every 30 seconds) to catch navigation changes
-    const saveInterval = setInterval(() => {
-      windowTabsManager.save();
-    }, 30000);
-
     return () => {
-      window.removeEventListener("focus", persistFocusedState);
-      window.removeEventListener("keydown", trackCtrlDown, true);
-      window.removeEventListener("keyup", trackCtrlUp, true);
       window.removeEventListener("keydown", handleKeydown);
-      window.removeEventListener("contextmenu", handleContextMenu);
-      window.removeEventListener("dragover", blockWebviewDefaultDnD, { capture: true });
-      window.removeEventListener("drop", blockWebviewDefaultDnD, { capture: true });
-      window.removeEventListener("beforeunload", handleBeforeUnload);
-      clearInterval(saveInterval);
-      externalDrop.cleanup();
-      cancelPendingRefreshes();
-      cleanupFileChangeListener();
-      unlistenWatcher?.();
-      unlistenNbComplete?.();
-      unlistenNbError?.();
+      nativeDropHandler.cleanup();
+      fileWatchers.cleanup();
+      windowLifecycle.cleanup();
     };
   });
 </script>

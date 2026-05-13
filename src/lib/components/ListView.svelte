@@ -5,9 +5,8 @@
 <script lang="ts">
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
-  import { useItemInteractions, isInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
+  import { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { getFileIconColor } from "$lib/domain/file-types";
 
@@ -16,6 +15,7 @@
   import FileIcon from "./FileIcon.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
   import InlineNewFolder from "./InlineNewFolder.svelte";
+  import ItemButton from "./ItemButton.svelte";
 
   import type { FileEntry } from "$lib/domain/file";
 
@@ -55,33 +55,13 @@
     <InlineNewFolder {explorer} variant="list" />
   {/if}
   {#each explorer.displayEntries as entry (entry.path)}
-    <button
-      class="list-item entry-item"
-      data-path={entry.path}
-      class:directory={entry.kind === "directory"}
-      class:selected={explorer.isSelected(entry)}
-      class:cut={isClipboardCut(entry)}
-      class:in-clipboard={isInClipboard(entry)}
-      class:hidden-entry={entry.name.startsWith(".") || manualHiddenStore.isHidden(explorer.currentPath, entry.name)}
-      class:drop-target={interactions.isDropTarget(entry.path)}
-      class:copy-drop={interactions.isCopyDrop(entry.path)}
-      draggable={!isMac}
-      onclick={(e) => onitemclick(entry, e)}
-      ondblclick={() => onitemdblclick(entry)}
-      oncontextmenu={(e) => interactions.handleContextMenu(e, entry)}
-      ondragstart={!isMac ? (e) => interactions.handleDragStart(e, entry, explorer.isSelected(entry)) : undefined}
-      ondragend={!isMac ? interactions.handleDragEnd : undefined}
-      ondragover={(e) => interactions.handleDragOver(e, entry)}
-      ondragleave={() => interactions.handleDragLeave(entry)}
-      ondrop={(e) => interactions.handleDrop(e, entry)}
-      onmousedown={isMac ? (e) => { e.stopPropagation(); pointerDrag!.handlePointerDown(e, entry, explorer.isSelected(entry)); } : undefined}
-    >
+    <ItemButton class="list-item" {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
       <span class="list-icon" style:color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined}>
         <FileIcon {entry} size="small" />
       </span>
       <EntryName {entry} {explorer} variant="list" />
       <GitStatusBadge entryName={entry.name} />
-    </button>
+    </ItemButton>
   {/each}
 </div>
 
@@ -98,7 +78,7 @@
     align-content: start;
   }
 
-  .list-item {
+  .list-view :global(.list-item) {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -116,44 +96,44 @@
     transition: background var(--transition-fast);
   }
 
-  .list-item:focus {
+  .list-view :global(.list-item:focus) {
     outline: none;
   }
 
-  .list-item:hover {
+  .list-view :global(.list-item:hover) {
     background: var(--subtle-fill-secondary);
   }
 
-  .list-item.selected {
+  .list-view :global(.list-item.selected) {
     background: color-mix(in srgb, var(--accent) 8%, transparent);
     border-color: transparent;
     border-left-color: var(--accent);
   }
 
-  .list-item.cut {
+  .list-view :global(.list-item.cut) {
     opacity: 0.5;
   }
 
-  .list-item.hidden-entry {
+  .list-view :global(.list-item.hidden-entry) {
     opacity: 0.55;
   }
 
-  .list-item.in-clipboard:not(.cut) {
+  .list-view :global(.list-item.in-clipboard:not(.cut)) {
     outline: 1px dashed var(--accent);
     outline-offset: -1px;
   }
 
-  .list-item.drop-target {
+  .list-view :global(.list-item.drop-target) {
     background: rgba(0, 120, 212, 0.15);
     box-shadow: inset 0 0 0 1px var(--accent);
   }
 
-  .list-item.drop-target.copy-drop {
+  .list-view :global(.list-item.drop-target.copy-drop) {
     background: rgba(16, 185, 129, 0.15);
     box-shadow: inset 0 0 0 1px #10b981;
   }
 
-  .list-icon {
+  .list-view :global(.list-icon) {
     display: flex;
     align-items: center;
     justify-content: center;

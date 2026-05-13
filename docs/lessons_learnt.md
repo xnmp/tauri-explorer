@@ -4,6 +4,15 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/sidebar-ux-polish (#101): Sidebar toggle, activity bar removal, X button styling
+
+**Key takeaways:**
+- With SCM as its own panel, the ActivityBar icon strip became redundant (only one sidebar view: "files"). Removing it and its 48px width reclaims horizontal space. The `sidebar-views.svelte.ts` registry still works but the single-view case no longer needs a tab switcher.
+- Toggle commands should check the current state before acting — `Alt+M B` was "show only" but users expect it to toggle (hide if already showing the same view).
+- CSS variable fallbacks like `var(--surface-primary, #fff)` can look wrong in dark themes. Use theme-aware variables (`var(--background-card-secondary)`) instead of hardcoded fallbacks.
+
+---
+
 ## feat/git-scm-tree-depth-lines (#97): SCM tree view depth guides and folder actions
 
 **Key takeaways:**

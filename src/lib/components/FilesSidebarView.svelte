@@ -621,7 +621,7 @@
     right: 8px;
     top: 50%;
     transform: translateY(-50%);
-    background: var(--surface-primary, #fff);
+    background: var(--background-card-secondary);
     border: none;
     border-radius: 4px;
     color: var(--text-tertiary);

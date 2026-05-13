@@ -121,6 +121,11 @@
     if (path) scmStore.setActivePath(path);
   });
 
+  // DEBUG: watch store state directly
+  $effect(() => {
+    console.log("[ScmView DEBUG $effect] repoRoot:", scmStore.repoRoot, "summary.is_repo:", scmStore.summary.is_repo);
+  });
+
   function statusLetter(code: GitStatusCode): string {
     switch (code) {
       case "Modified": return "M";
@@ -213,7 +218,11 @@
 
   const summary = $derived(scmStore.filteredSummary);
   const fullSummary = $derived(scmStore.summary);
-  const isRepo = $derived(fullSummary.is_repo);
+  const isRepo = $derived.by(() => {
+    const val = fullSummary.is_repo;
+    console.log("[ScmView.$derived isRepo]", val, "repoRoot:", scmStore.repoRoot);
+    return val;
+  });
 
   const stagedCount = $derived(summary.staged.length);
   const changesCount = $derived(summary.changes.length);

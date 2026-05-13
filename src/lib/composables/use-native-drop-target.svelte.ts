@@ -38,8 +38,23 @@ function resolveFromElement(el: Element | null): DropTargetResult {
     if (path) return { type: "folder", path };
   }
 
+  // Miller column directory entries
+  const millerEntry = (el as HTMLElement).closest?.(".col-entry[data-path]");
+  if (millerEntry) {
+    const kind = millerEntry.getAttribute("data-kind");
+    const path = millerEntry.getAttribute("data-path");
+    if (kind === "directory" && path) return { type: "folder", path };
+  }
+
   const sidebar = (el as HTMLElement).closest?.(".quick-access");
   if (sidebar) return { type: "sidebar" };
+
+  // Miller column background (empty space)
+  const millerCol = (el as HTMLElement).closest?.(".miller-col[data-path]");
+  if (millerCol) {
+    const path = millerCol.getAttribute("data-path") || undefined;
+    return { type: "background", path };
+  }
 
   const fileList = (el as HTMLElement).closest?.(".content");
   if (fileList) {
@@ -82,7 +97,9 @@ function highlightAtCoords(cx: number, cy: number): void {
   }
 
   const folderEntry = (el as HTMLElement).closest?.(".entry-item.directory[data-path]") as HTMLElement | null;
-  const targetEl = folderEntry || (el as HTMLElement).closest?.(".content") as HTMLElement | null;
+  const millerEntry = (el as HTMLElement).closest?.(".col-entry[data-kind='directory'][data-path]") as HTMLElement | null;
+  const millerCol = (el as HTMLElement).closest?.(".miller-col[data-path]") as HTMLElement | null;
+  const targetEl = folderEntry || millerEntry || millerCol || (el as HTMLElement).closest?.(".content") as HTMLElement | null;
 
   if (targetEl !== highlightedElement) {
     if (highlightedElement) highlightedElement.classList.remove("drop-target");

@@ -301,6 +301,7 @@
         class="miller-col"
         class:bg-drop-target={bgDropColumn === column.path}
         class:bg-copy-drop={bgDropColumn === column.path && bgDropCopy}
+        data-path={column.path}
         ondragover={(e) => handleBgDragOver(e, column.path)}
         ondragleave={(e) => handleBgDragLeave(e, e.currentTarget as HTMLElement)}
         ondrop={(e) => handleBgDrop(e, column.path)}
@@ -316,6 +317,8 @@
                 class:active={entry.path === column.activeChildPath}
                 class:drop-target={dropTarget.isDropTarget(entry.path)}
                 class:copy-drop={dropTarget.isCopyDrop(entry.path)}
+                data-path={entry.path}
+                data-kind={entry.kind}
                 onclick={() => handleClick(entry)}
                 draggable="true"
                 ondragstart={(e) => handleDragStart(e, entry)}

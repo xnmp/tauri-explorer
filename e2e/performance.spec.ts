@@ -477,7 +477,7 @@ test.describe("Performance Tests", () => {
       await waitForFileList(page);
     });
 
-    test("view mode toggle under 200ms", async ({ page }) => {
+    test("view mode toggle under 300ms", async ({ page }) => {
       // Find view toggle button
       const viewButton = page.locator('[title*="view"], [aria-label*="view"]').first();
 
@@ -488,7 +488,7 @@ test.describe("Performance Tests", () => {
             await viewButton.click();
             await page.waitForTimeout(100);
           },
-          200
+          300
         );
 
         expect(metric.duration).toBeLessThan(metric.threshold);

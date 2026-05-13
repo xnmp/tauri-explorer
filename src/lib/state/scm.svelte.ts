@@ -70,12 +70,13 @@ function createScmStore() {
     activePath = path;
     const detected = await detectRepo(path);
     console.log("[SCM] detectRepo result:", detected, "current repoRoot:", repoRoot, "activePath still:", activePath);
-    if (activePath !== path) return;
-    if (detected === repoRoot) return;
+    if (activePath !== path) { console.log("[SCM] stale path, bailing"); return; }
+    if (detected === repoRoot) { console.log("[SCM] repo unchanged, bailing"); return; }
 
+    console.log("[SCM] repo changed! old:", repoRoot, "new:", detected);
     // tear down existing watcher
     if (watcherPath) {
-      await gitUnwatchRepo(watcherPath);
+      try { await gitUnwatchRepo(watcherPath); } catch (e) { console.error("[SCM] unwatch error:", e); }
       watcherPath = null;
     }
     repoRoot = detected;
@@ -87,6 +88,7 @@ function createScmStore() {
       watcherPath = repoRoot;
     }
     await refresh();
+    console.log("[SCM] refresh done, is_repo:", summary.is_repo, "repoRoot:", repoRoot);
   }
 
   function filterToDir<T extends { path: string }>(entries: T[]): T[] {

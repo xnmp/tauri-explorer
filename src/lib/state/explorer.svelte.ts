@@ -41,6 +41,7 @@ import { getSortPref, saveSortPref } from "./sort-prefs";
 import { pasteEntries, type PasteResult } from "./paste-operations";
 import { createDirectoryListing } from "./directory-listing";
 import { getAffectedDirs, undoActionLabel } from "./undo-helpers";
+import { renameThumbnailCache } from "$lib/state/thumbnail-cache";
 
 /** Core explorer state (per-pane) */
 interface ExplorerCoreState {
@@ -495,6 +496,7 @@ function createExplorerState(seed?: ExplorerSeed) {
 
     if (result.ok) {
       undoStore.push({ type: "rename", path: result.data.path, oldName, newName });
+      renameThumbnailCache(oldPath, result.data.path);
       coreState.entries = coreState.entries.map((e) => (e.path === oldPath ? result.data : e));
       clipboardStore.updatePath(oldPath, result.data);
       markLocalMutation();

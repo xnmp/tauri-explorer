@@ -19,6 +19,7 @@
   import { resolveDropTarget, highlightTarget, clearHighlights } from "$lib/composables/use-native-drop-target.svelte";
   import { dragState } from "$lib/state/drag.svelte";
   import { handleFileDrop } from "$lib/state/drop-operations";
+  import { isMac, isCopyModifier as isCopyMod } from "$lib/domain/platform";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { copyEntry, moveEntry } from "$lib/api/files";
@@ -83,7 +84,6 @@
   // Tauri's onDragDropEvent doesn't include keyboard modifiers,
   // so we track them globally via keydown/keyup.
   // macOS uses Option (Alt) for copy-on-drag; other platforms use Ctrl.
-  const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
   let copyModifierHeld = false;
 
   // Handle drops via Tauri's onDragDropEvent (external drops from Finder,
@@ -357,8 +357,8 @@
     window.addEventListener("focus", persistFocusedState);
 
     // Track copy-modifier key for external drop detection (Option on Mac, Ctrl elsewhere)
-    function trackCtrlDown(e: KeyboardEvent) { copyModifierHeld = isMac ? e.altKey : e.ctrlKey; }
-    function trackCtrlUp(e: KeyboardEvent) { copyModifierHeld = isMac ? e.altKey : e.ctrlKey; }
+    function trackCtrlDown(e: KeyboardEvent) { copyModifierHeld = isCopyMod(e); }
+    function trackCtrlUp(e: KeyboardEvent) { copyModifierHeld = isCopyMod(e); }
     window.addEventListener("keydown", trackCtrlDown, true);
     window.addEventListener("keyup", trackCtrlUp, true);
 

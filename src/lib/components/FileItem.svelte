@@ -16,8 +16,7 @@
   import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
   import { useItemInteractions, isInClipboard as checkInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
-
-  const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
+  import { isMac } from "$lib/domain/platform";
 
   interface Props {
     entry: FileEntry;

@@ -13,7 +13,7 @@
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { getFileIconColor } from "$lib/domain/file-types";
 
-  const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
+  import { isMac } from "$lib/domain/platform";
   import FileIcon from "./FileIcon.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
   import InlineNewFolder from "./InlineNewFolder.svelte";

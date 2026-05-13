@@ -11,7 +11,7 @@
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { getFileIconColor, isImageFile } from "$lib/domain/file-types";
 
-  const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
+  import { isMac } from "$lib/domain/platform";
   import { settingsStore, THUMBNAIL_SIZE_CONFIG } from "$lib/state/settings.svelte";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";

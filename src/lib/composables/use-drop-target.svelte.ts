@@ -5,6 +5,7 @@
  */
 
 import type { FileEntry } from "$lib/domain/file";
+import { isMac, isCopyModifier } from "$lib/domain/platform";
 import { dragState } from "$lib/state/drag.svelte";
 import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
 
@@ -14,13 +15,8 @@ interface DropTargetDeps {
 }
 
 export function useDropTarget(deps: DropTargetDeps) {
-  const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
   let dropTargets = $state<Record<string, boolean>>({});
   let copyDropTargets = $state<Record<string, boolean>>({});
-
-  function isCopyModifier(event: DragEvent | MouseEvent): boolean {
-    return isMac ? event.altKey : event.ctrlKey;
-  }
 
   function handleDragOver(event: DragEvent, entry: FileEntry): void {
     if (entry.kind !== "directory") return;

@@ -16,6 +16,7 @@
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { useDropTarget } from "$lib/composables/use-drop-target.svelte";
   import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
+  import { isCopyModifier } from "$lib/domain/platform";
   import type { FileEntry } from "$lib/domain/file";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
@@ -209,11 +210,6 @@
   // Background drop: dropping onto empty space in a column moves to that column's dir
   let bgDropColumn = $state<string | null>(null);
   let bgDropCopy = $state(false);
-
-  function isCopyModifier(event: DragEvent): boolean {
-    const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
-    return isMac ? event.altKey : event.ctrlKey;
-  }
 
   function handleBgDragOver(event: DragEvent, columnPath: string): void {
     const types = event.dataTransfer?.types;

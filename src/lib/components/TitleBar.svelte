@@ -10,8 +10,7 @@
   import WindowTabBar from "./WindowTabBar.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
-
-  const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
+  import { isMac } from "$lib/domain/platform";
   const showTabBar = $derived(settingsStore.integratedTitleBar || windowTabsManager.tabs.length > 1);
   const showTitleBar = $derived(settingsStore.integratedTitleBar || showTabBar || settingsStore.showWindowControls);
 

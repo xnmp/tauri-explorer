@@ -934,12 +934,13 @@
     display: none;
     gap: 2px;
     position: absolute;
-    right: 4px;
-    top: 50%;
-    transform: translateY(-50%);
-    background: var(--background-card-secondary, var(--surface-primary, #fff));
-    padding: 0 2px;
-    border-radius: 4px;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    align-items: center;
+    padding: 0 6px 0 16px;
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    background: linear-gradient(to right, transparent 0%, #2a2d33 30%);
   }
 
   .row:hover .row-actions,

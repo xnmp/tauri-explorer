@@ -373,7 +373,12 @@ function createExplorerState(seed?: ExplorerSeed) {
   }
 
   function getSelectedEntries(): FileEntry[] {
-    return selection.getSelectedEntries(displayEntries, coreState.selectedPaths);
+    const entries = selection.getSelectedEntries(displayEntries, coreState.selectedPaths);
+    if (contextMenuExternalEntry && coreState.selectedPaths.has(contextMenuExternalEntry.path)) {
+      const alreadyIncluded = entries.some((e) => e.path === contextMenuExternalEntry!.path);
+      if (!alreadyIncluded) return [...entries, contextMenuExternalEntry];
+    }
+    return entries;
   }
 
   function selectByIndices(indices: number[], addToSelection: boolean = false) {
@@ -443,11 +448,14 @@ function createExplorerState(seed?: ExplorerSeed) {
     dialogStore.startDelete(arr, true);
   }
 
+  let contextMenuExternalEntry: FileEntry | null = null;
+
   function openContextMenu(x: number, y: number, entry?: FileEntry) {
     if (entry && !coreState.selectedPaths.has(entry.path)) {
       coreState.selectedPaths = new Set([entry.path]);
       coreState.selectionAnchorIndex = displayEntries.findIndex((e) => e.path === entry.path);
     }
+    contextMenuExternalEntry = entry && coreState.selectionAnchorIndex === -1 ? entry : null;
     contextMenuStore.open(x, y);
   }
 

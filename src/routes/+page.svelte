@@ -94,7 +94,6 @@
     if (!explorer) return;
 
     const target = resolveDropTarget(position);
-    const isCopy = copyModifierHeld;
 
     // Validate internal drag: dragState must exist AND the native drop paths must
     // match the internal source (native drag carries the same paths we passed to startDrag).
@@ -120,6 +119,10 @@
 
     // Determine source paths (validated internal drag state or external paths)
     const sourcePaths = isInternalDrag ? internalPaths! : paths;
+
+    // Internal drags always move; only external drops respect the copy modifier
+    // (keyboard focus is lost during native drag, making copyModifierHeld unreliable)
+    const isCopy = !isInternalDrag && copyModifierHeld;
 
     // Drop onto a specific folder
     if (target?.type === "folder") {

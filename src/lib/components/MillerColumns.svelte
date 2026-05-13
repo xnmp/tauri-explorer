@@ -184,6 +184,12 @@
     explorer.navigateTo(entry.path);
   }
 
+  function handleContextMenu(event: MouseEvent, entry: FileEntry): void {
+    event.preventDefault();
+    event.stopPropagation();
+    explorer.openContextMenu(event.clientX, event.clientY, entry);
+  }
+
   function handleDragStart(event: DragEvent, entry: FileEntry): void {
     if (!event.dataTransfer) return;
     event.dataTransfer.setData("application/x-explorer-path", entry.path);
@@ -241,11 +247,13 @@
     const sourcePaths = getDropSourcePaths(event.dataTransfer);
     if (sourcePaths.length === 0) return;
 
+    const isCopy = isCopyModifier(event);
+
     dragState.clear();
     for (const sourcePath of sourcePaths) {
       if (sourcePath === columnPath) continue;
       if (columnPath.startsWith(sourcePath + "/")) continue;
-      await handleFileDrop(sourcePath, columnPath, isCopyModifier(event), {
+      await handleFileDrop(sourcePath, columnPath, isCopy, {
         onRefresh: onDropRefresh,
       });
     }
@@ -320,6 +328,7 @@
                 data-path={entry.path}
                 data-kind={entry.kind}
                 onclick={() => handleClick(entry)}
+                oncontextmenu={(e) => handleContextMenu(e, entry)}
                 draggable="true"
                 ondragstart={(e) => handleDragStart(e, entry)}
                 ondragend={handleDragEnd}

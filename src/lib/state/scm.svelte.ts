@@ -65,9 +65,11 @@ function createScmStore() {
   }
 
   async function setActivePath(path: string): Promise<void> {
+    console.log("[SCM] setActivePath called:", path, "current:", activePath);
     if (path === activePath) return;
     activePath = path;
     const detected = await detectRepo(path);
+    console.log("[SCM] detectRepo result:", detected, "current repoRoot:", repoRoot, "activePath still:", activePath);
     if (activePath !== path) return;
     if (detected === repoRoot) return;
 

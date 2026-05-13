@@ -210,6 +210,7 @@
     border-radius: var(--radius-sm, 4px);
     background: var(--subtle-fill-secondary, rgba(0, 0, 0, 0.03));
     position: relative;
+    contain: strict;
   }
 
   .thumbnail-placeholder {
@@ -248,7 +249,6 @@
     border-radius: inherit;
     image-rendering: pixelated;
     image-rendering: -moz-crisp-edges;
-    filter: blur(1px);
   }
 
   .thumbnail-full {

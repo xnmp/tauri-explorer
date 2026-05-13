@@ -1,36 +1,18 @@
 /**
- * Activity bar + sidebar view (#52).
+ * Sidebar views (#52, #101).
  *
- * With SCM moved to its own panel, the activity bar only has the Explorer view.
- * Asserts that the icon strip renders and Explorer is the default (and only) view.
+ * With SCM moved to its own panel and the activity bar removed,
+ * the sidebar renders the files view directly.
  */
 import { test, expect } from "@playwright/test";
 
-test.describe("Activity bar + sidebar views", () => {
+test.describe("Sidebar views", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/");
     await page.waitForLoadState("domcontentloaded");
-    await page.evaluate(() => localStorage.removeItem("explorer-sidebar-active-view"));
-    await page.reload();
-    await page.waitForLoadState("domcontentloaded");
-    await page.locator('.activity-button[data-view-id="files"]').waitFor({ state: "visible" });
   });
 
-  const activityBar = (page: import("@playwright/test").Page) =>
-    page.getByRole("tablist", { name: /Sidebar views/i });
-
-  test("activity bar renders with Explorer tab only", async ({ page }) => {
-    const explorerTab = activityBar(page).getByRole("tab", { name: /Explorer/i });
-    await expect(explorerTab).toBeVisible();
-
-    const tabs = activityBar(page).getByRole("tab");
-    await expect(tabs).toHaveCount(1);
-  });
-
-  test("Explorer view is active by default and shows Bookmarks section", async ({ page }) => {
-    const explorerTab = activityBar(page).getByRole("tab", { name: /Explorer/i });
-    await expect(explorerTab).toHaveAttribute("aria-selected", "true");
-
+  test("sidebar shows Bookmarks section by default", async ({ page }) => {
     await expect(page.getByRole("region", { name: /Bookmarks/i })).toBeVisible();
   });
 

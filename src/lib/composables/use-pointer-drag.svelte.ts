@@ -120,6 +120,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
     }
 
     clearHighlights();
+    if (ghostEl) ghostEl.style.display = "none";
     const target = resolveDropTargetAtPoint(event.clientX, event.clientY);
     const isCopy = event.altKey;
     const explorer = deps.getExplorer();

@@ -16,8 +16,9 @@
   import { dragState } from "$lib/state/drag.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { useDropTarget } from "$lib/composables/use-drop-target.svelte";
+  import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
-  import { isCopyModifier } from "$lib/domain/platform";
+  import { isMac, isCopyModifier } from "$lib/domain/platform";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { parentDir } from "$lib/domain/path";
   import type { FileEntry } from "$lib/domain/file";
@@ -222,6 +223,8 @@
   }
   const dropTarget = useDropTarget({ onRefresh: onDropRefresh });
 
+  const pointerDrag = isMac ? usePointerDrag({ getExplorer: () => explorer, getPaneNav: () => paneNav ?? undefined }) : null;
+
   // Background drop: dropping onto empty space in a column moves to that column's dir
   let bgDropColumn = $state<string | null>(null);
   let bgDropCopy = $state(false);
@@ -334,9 +337,10 @@
                 data-kind={entry.kind}
                 onclick={() => handleClick(entry)}
                 oncontextmenu={(e) => handleContextMenu(e, entry)}
-                draggable="true"
-                ondragstart={(e) => handleDragStart(e, entry)}
-                ondragend={handleDragEnd}
+                draggable={!isMac}
+                ondragstart={!isMac ? (e) => handleDragStart(e, entry) : undefined}
+                ondragend={!isMac ? handleDragEnd : undefined}
+                onmousedown={isMac ? (e) => pointerDrag!.handlePointerDown(e, entry, false) : undefined}
                 ondragover={(e) => dropTarget.handleDragOver(e, entry)}
                 ondragleave={() => dropTarget.handleDragLeave(entry)}
                 ondrop={(e) => dropTarget.handleDrop(e, entry)}

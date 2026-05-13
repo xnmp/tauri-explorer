@@ -8,7 +8,8 @@ import { moveEntry, copyEntry, fetchDirectory } from "$lib/api/files";
 import { conflictResolver } from "./conflict-resolver.svelte";
 import { undoStore } from "./undo.svelte";
 import { toastStore } from "./toast.svelte";
-import { broadcastFileChange, parentDir } from "./file-events";
+import { broadcastFileChange } from "./file-events";
+import { parentDir, basename } from "$lib/domain/path";
 import { dragState } from "./drag.svelte";
 import { frecencyStore } from "./frecency.svelte";
 
@@ -62,8 +63,8 @@ export async function handleFileDrop(
   isCopy: boolean,
   options: DropOptions,
 ): Promise<void> {
-  const fileName = sourcePath.split("/").pop() || sourcePath;
-  const targetName = targetDir.split("/").pop() || targetDir;
+  const fileName = basename(sourcePath);
+  const targetName = basename(targetDir);
 
   // Check for naming conflict in target directory
   let overwrite = false;
@@ -119,10 +120,10 @@ export async function handleBackgroundDrop(
   existingNames: Set<string>,
   options: DropOptions,
 ): Promise<void> {
-  const sourceDir = sourcePath.substring(0, sourcePath.lastIndexOf("/"));
+  const sourceDir = parentDir(sourcePath);
   if (sourceDir === currentPath) return;
 
-  const fileName = sourcePath.split("/").pop() || sourcePath;
+  const fileName = basename(sourcePath);
 
   // Check for naming conflict in current directory
   let overwrite = false;
@@ -138,7 +139,7 @@ export async function handleBackgroundDrop(
 
   const result = await moveEntry(sourcePath, currentPath, overwrite);
   if (result.ok) {
-    const destName = currentPath.split("/").pop() || currentPath;
+    const destName = basename(currentPath);
     undoStore.push({
       type: "move",
       sourcePath,

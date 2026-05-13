@@ -18,6 +18,7 @@
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { parentDir, basename } from "$lib/domain/path";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { getFileIconColor, getFileIconCategory, type IconCategory } from "$lib/domain/file-types";
   import type { FileEntry } from "$lib/domain/file";
@@ -133,7 +134,7 @@
     for (const entry of frecencyStore.entries) {
       if (seen.has(entry.path)) continue;
       seen.add(entry.path);
-      const name = entry.path.split("/").pop() || "";
+      const name = basename(entry.path);
       const fuzzy = fuzzyScorePath(lower, entry.path);
       if (fuzzy > 0) {
         const frecency = scoreMap.get(entry.path) ?? 0;
@@ -371,8 +372,8 @@
       if (openResult.ok) {
         recentFilesStore.add(result.path, result.name, "file");
       } else {
-        const parentDir = result.path.substring(0, result.path.lastIndexOf("/"));
-        explorer?.navigateTo(parentDir);
+        const resultDir = parentDir(result.path);
+        explorer?.navigateTo(resultDir);
       }
     }
 

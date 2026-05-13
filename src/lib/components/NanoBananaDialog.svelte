@@ -8,6 +8,7 @@
   import { toastStore } from "$lib/state/toast.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { startNanoBananaJob, checkPathsExist } from "$lib/api/files";
+  import { parentDir, basename } from "$lib/domain/path";
 
   interface Props {
     open: boolean;
@@ -29,8 +30,8 @@
   let submitting = $state(false);
   let inputRef = $state<HTMLInputElement | null>(null);
 
-  const fileName = $derived(sourcePath.split("/").pop() ?? "");
-  const outputDir = $derived(sourcePath.substring(0, sourcePath.lastIndexOf("/")));
+  const fileName = $derived(basename(sourcePath));
+  const outputDir = $derived(parentDir(sourcePath));
   const hasApiKey = $derived(!!settingsStore.geminiApiKey);
 
   /** Find next available output name: photo_edit.png, photo_edit_2.png, ... */

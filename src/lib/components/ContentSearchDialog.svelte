@@ -14,6 +14,7 @@
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+  import { parentDir } from "$lib/domain/path";
   import {
     type FlattenedResult,
     flattenBatch,
@@ -318,8 +319,8 @@
     const openResult = await openFile(result.filePath);
     if (!openResult.ok) {
       const explorer = paneNav?.getActiveExplorer() ?? windowTabsManager.getActiveExplorer();
-      const parentDir = result.filePath.substring(0, result.filePath.lastIndexOf("/"));
-      explorer?.navigateTo(parentDir);
+      const resultDir = parentDir(result.filePath);
+      explorer?.navigateTo(resultDir);
     }
     onClose();
   }

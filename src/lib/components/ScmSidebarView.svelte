@@ -13,6 +13,7 @@
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { gitInit, gitAddToGitignore } from "$lib/api/files";
   import { toastStore } from "$lib/state/toast.svelte";
+  import { parentDir, basename } from "$lib/domain/path";
   import { settingsStore } from "$lib/state/settings.svelte";
   import type { GitFileEntry, GitStatusCode } from "$lib/api/files";
 
@@ -152,7 +153,7 @@
   function splitPath(path: string): { dir: string; name: string } {
     const idx = path.lastIndexOf("/");
     if (idx < 0) return { dir: "", name: path };
-    return { dir: path.slice(0, idx), name: path.slice(idx + 1) };
+    return { dir: parentDir(path), name: basename(path) };
   }
 
   async function onInitRepo(): Promise<void> {
@@ -543,7 +544,7 @@
       {/if}
     {/each}
     {#each node.files as row (row.path)}
-      {@const fileName = row.path.split("/").pop() ?? row.path}
+      {@const fileName = basename(row.path)}
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <li
         class="row tree-file"

@@ -8,6 +8,7 @@ import { operationsManager } from "./operations.svelte";
 import { conflictResolver, type ConflictChoice } from "./conflict-resolver.svelte";
 import { undoStore } from "./undo.svelte";
 import { broadcastFileChange } from "./file-events";
+import { parentDir } from "$lib/domain/path";
 import { toastStore } from "./toast.svelte";
 import { frecencyStore } from "./frecency.svelte";
 import type { FileEntry } from "$lib/domain/file";
@@ -62,7 +63,7 @@ export async function pasteEntries(
     if (operationsManager.isOperationCancelled(op.id)) break;
 
     const source = sources[i];
-    const sourceDir = source.path.substring(0, source.path.lastIndexOf("/")) || "/";
+    const sourceDir = parentDir(source.path);
     const isSameDir = sourceDir === destPath;
 
     // Copy to same dir: Rust auto-generates "name - Copy" suffix, no conflict dialog needed.
@@ -164,7 +165,7 @@ export async function pasteEntries(
     onEntriesAdded(newEntries);
     const affectedDirs = new Set([destPath]);
     for (const source of sources) {
-      const dir = source.path.substring(0, source.path.lastIndexOf("/")) || "/";
+      const dir = parentDir(source.path);
       affectedDirs.add(dir);
     }
     broadcastFileChange([...affectedDirs]);

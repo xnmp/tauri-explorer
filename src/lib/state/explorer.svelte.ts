@@ -13,6 +13,7 @@
  */
 
 import { toastStore } from "./toast.svelte";
+import { basename } from "$lib/domain/path";
 import {
   createDirectory,
   renameEntry as apiRenameEntry,
@@ -233,7 +234,7 @@ function createExplorerState(seed?: ExplorerSeed) {
       coreState.historyIndex = newHistory.historyIndex;
 
       // Track directory navigation in recent files and frecency
-      const name = path.split("/").filter(Boolean).pop() || path;
+      const name = basename(path);
       recentFilesStore.add(path, name, "directory");
       frecencyStore.recordAccess(path);
     }

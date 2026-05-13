@@ -13,6 +13,7 @@
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import type { PaneNavigationContext } from "$lib/state/pane-context";
+import { parentDir, basename } from "$lib/domain/path";
 import { dragState } from "$lib/state/drag.svelte";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { handleFileDrop, handleBackgroundDrop } from "$lib/state/drop-operations";
@@ -139,7 +140,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
       return;
     } else if (target?.type === "background") {
       const destPath = target.path || explorer.currentPath;
-      const sourceDir = dragPaths[0]?.substring(0, dragPaths[0].lastIndexOf("/"));
+      const sourceDir = dragPaths[0] ? parentDir(dragPaths[0]) : undefined;
       if (sourceDir !== destPath) {
         const paths = [...dragPaths];
         cleanup(true);
@@ -191,7 +192,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
 function createGhost(paths: string[]): HTMLElement {
   const el = document.createElement("div");
   el.className = "pointer-drag-ghost";
-  const name = paths[0].split("/").pop() || paths[0];
+  const name = basename(paths[0]);
   el.textContent = paths.length > 1 ? `${paths.length} items` : name;
   el.style.cssText = `
     position: fixed;

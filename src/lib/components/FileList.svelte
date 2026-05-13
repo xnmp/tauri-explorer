@@ -13,6 +13,7 @@
   import { useMarqueeSelection } from "$lib/composables/use-marquee-selection.svelte";
   import { useTypeAhead } from "$lib/composables/use-type-ahead.svelte";
   import { isImageFile } from "$lib/domain/file-types";
+  import { parentDir } from "$lib/domain/path";
   import { getZoomFactor } from "$lib/domain/zoom";
   import DetailsView from "./DetailsView.svelte";
   import ListView from "./ListView.svelte";
@@ -241,7 +242,7 @@
     const currentPath = explorer.currentPath;
     // Filter out sources already in this directory
     const validPaths = sourcePaths.filter((p) => {
-      const sourceDir = p.substring(0, p.lastIndexOf("/"));
+      const sourceDir = parentDir(p);
       return sourceDir !== currentPath;
     });
     if (validPaths.length === 0) return;

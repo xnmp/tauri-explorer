@@ -23,7 +23,8 @@
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { copyEntry, moveEntry } from "$lib/api/files";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-  import { initFileChangeListener, cleanupFileChangeListener, broadcastFileChange, parentDir } from "$lib/state/file-events";
+  import { initFileChangeListener, cleanupFileChangeListener, broadcastFileChange } from "$lib/state/file-events";
+  import { parentDir, basename } from "$lib/domain/path";
   import { saveFocusedWindowState } from "$lib/state/focused-window";
   import "$lib/themes/index.css";
   import TitleBar from "$lib/components/TitleBar.svelte";
@@ -327,7 +328,7 @@
     listen<{ jobId: number; outputPath: string }>("nano-banana-complete", (event) => {
       const { jobId, outputPath } = event.payload;
       jobsStore.completeJob(jobId, outputPath);
-      const fileName = outputPath.split("/").pop() ?? "image";
+      const fileName = basename(outputPath);
       toastStore.show(`Nano Banana complete: ${fileName}`, "success");
       refreshAllPanes();
     }).then((fn) => { unlistenNbComplete = fn; });

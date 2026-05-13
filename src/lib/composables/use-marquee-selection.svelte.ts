@@ -32,7 +32,7 @@ const DEFAULT_OPTIONS: Required<MarqueeOptions> = {
   ],
 };
 
-import { getZoomFactor } from "$lib/domain/zoom";
+import { clientToCSSRelative, rectDimToCSS, cssToRect } from "$lib/domain/zoom";
 
 export function useMarqueeSelection(options: MarqueeOptions = {}) {
   const config = { ...DEFAULT_OPTIONS, ...options };
@@ -75,11 +75,10 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
 
     isDragging = true;
     ctrlKeyHeld = event.ctrlKey || event.metaKey;
-    const zoom = getZoomFactor();
     const minY = headerHeight ?? config.headerHeight;
     dragStart = {
-      x: event.clientX / zoom - containerRect.left,
-      y: Math.max(minY, event.clientY / zoom - containerRect.top),
+      x: clientToCSSRelative(event.clientX, containerRect.left),
+      y: Math.max(minY, clientToCSSRelative(event.clientY, containerRect.top)),
     };
     dragCurrent = { ...dragStart };
 
@@ -94,11 +93,10 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     }
     const { clientX, clientY, rect, headerHeight, onFlush } = pendingMove;
     pendingMove = null;
-    const zoom = getZoomFactor();
     const minY = headerHeight ?? config.headerHeight;
     dragCurrent = {
-      x: Math.max(0, Math.min(clientX / zoom - rect.left, rect.width)),
-      y: Math.max(minY, Math.min(clientY / zoom - rect.top, rect.height)),
+      x: Math.max(0, Math.min(clientToCSSRelative(clientX, rect.left), rectDimToCSS(rect.width))),
+      y: Math.max(minY, Math.min(clientToCSSRelative(clientY, rect.top), rectDimToCSS(rect.height))),
     };
     onFlush?.();
   }
@@ -192,12 +190,12 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     const offsetDx = containerRect.left - cachedContainerOffset!.left;
     const offsetDy = containerRect.top - cachedContainerOffset!.top;
 
-    // marqueeRect is in CSS (container-relative) space; containerRect from
-    // getBoundingClientRect() is also in CSS space. No zoom transform needed.
-    const mLeft = marqueeRect.left + containerRect.left;
-    const mTop = marqueeRect.top + containerRect.top;
-    const mRight = mLeft + marqueeRect.width;
-    const mBottom = mTop + marqueeRect.height;
+    // marqueeRect is in CSS space; item rects from getBoundingClientRect() are
+    // in viewport space on macOS. Scale marquee to viewport for comparison.
+    const mLeft = cssToRect(marqueeRect.left) + containerRect.left;
+    const mTop = cssToRect(marqueeRect.top) + containerRect.top;
+    const mRight = mLeft + cssToRect(marqueeRect.width);
+    const mBottom = mTop + cssToRect(marqueeRect.height);
 
     const indices: number[] = [];
     for (let i = 0; i < cachedItemRects.length; i++) {

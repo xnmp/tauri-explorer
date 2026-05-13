@@ -656,6 +656,31 @@ const mockCommands: Record<string, CommandHandler> = {
   },
   git_watch_repo: () => null,
   git_unwatch_repo: () => null,
+
+  // ----- Clipboard file operations (os-clipboard.ts) -----
+
+  clipboard_read_files: () => [] as string[],
+
+  clipboard_write_files: () => true,
+
+  // ----- Commands that launch external processes (no-op in mock) -----
+
+  open_file_with: () => {},
+
+  open_in_terminal: () => {},
+
+  set_as_wallpaper: () => {},
+
+  // ----- Misc -----
+
+  get_log_dir: () => "/tmp/tauri-explorer/logs",
+
+  clipboard_paste_image: (args: Record<string, unknown>) => {
+    const directory = args.directory as string;
+    return `${directory}/clipboard-image.png`;
+  },
+
+  start_nano_banana_job: () => 1,
 };
 
 // In-memory config file store for mock mode

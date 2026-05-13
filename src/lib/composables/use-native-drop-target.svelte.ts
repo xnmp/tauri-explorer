@@ -6,7 +6,7 @@
  * - PointerEvent.clientX/Y: CSS viewport pixels → divide by zoom only
  */
 
-import { settingsStore } from "$lib/state/settings.svelte";
+import { getZoomFactor } from "$lib/domain/zoom";
 
 export type DropTargetResult =
   | { type: "folder"; path: string }
@@ -16,14 +16,17 @@ export type DropTargetResult =
 
 let highlightedElement: HTMLElement | null = null;
 
-function adjustForZoom(pos: { x: number; y: number }): { x: number; y: number } {
+// Tauri onDragDropEvent gives physical pixels. elementFromPoint in
+// WebKitGTK expects viewport coordinates (DPR-adjusted, no zoom).
+function adjustForHitTest(pos: { x: number; y: number }): { x: number; y: number } {
   const dpr = typeof window !== "undefined" ? window.devicePixelRatio : 1;
-  const zoom = settingsStore.zoomLevel / 100;
-  return { x: pos.x / dpr / zoom, y: pos.y / dpr / zoom };
+  return { x: pos.x / dpr, y: pos.y / dpr };
 }
 
 export function adjustForPointerZoom(pos: { x: number; y: number }): { x: number; y: number } {
-  return pos;
+  const zoom = getZoomFactor();
+  if (zoom === 1) return pos;
+  return { x: pos.x / zoom, y: pos.y / zoom };
 }
 
 function resolveFromElement(el: Element | null): DropTargetResult {
@@ -49,28 +52,26 @@ function resolveFromElement(el: Element | null): DropTargetResult {
 
 /** Resolve drop target from onDragDropEvent position (physical pixels). */
 export function resolveDropTarget(position: { x: number; y: number }): DropTargetResult {
-  const adjusted = adjustForZoom(position);
+  const adjusted = adjustForHitTest(position);
   const el = document.elementFromPoint(adjusted.x, adjusted.y);
   return resolveFromElement(el);
 }
 
 /** Resolve drop target from pointer event coordinates (CSS viewport pixels). */
 export function resolveDropTargetAtPoint(x: number, y: number): DropTargetResult {
-  const adjusted = adjustForPointerZoom({ x, y });
-  const el = document.elementFromPoint(adjusted.x, adjusted.y);
+  const el = document.elementFromPoint(x, y);
   return resolveFromElement(el);
 }
 
 /** Highlight target from onDragDropEvent position (physical pixels). */
 export function highlightTarget(position: { x: number; y: number }): void {
-  const adjusted = adjustForZoom(position);
+  const adjusted = adjustForHitTest(position);
   highlightAtCoords(adjusted.x, adjusted.y);
 }
 
 /** Highlight target from pointer event coordinates (CSS viewport pixels). */
 export function highlightTargetAtPoint(x: number, y: number): void {
-  const adjusted = adjustForPointerZoom({ x, y });
-  highlightAtCoords(adjusted.x, adjusted.y);
+  highlightAtCoords(x, y);
 }
 
 function highlightAtCoords(cx: number, cy: number): void {

@@ -25,6 +25,7 @@ const DEFAULT_WIDTHS: ColumnWidths = {
 };
 
 import type { ColumnVisibility } from "$lib/state/settings.svelte";
+import { getZoomFactor } from "$lib/domain/zoom";
 
 export function useColumnResize(
   initialWidths?: Partial<ColumnWidths>,
@@ -56,7 +57,7 @@ export function useColumnResize(
 
   function handleResize(event: MouseEvent): void {
     if (!isResizing || !resizeColumn) return;
-    const delta = event.clientX - resizeStartX;
+    const delta = (event.clientX - resizeStartX) / getZoomFactor();
     const minWidth = resizeColumn === "name" ? MIN_NAME_WIDTH : MIN_COL_WIDTH;
     const newWidth = Math.max(minWidth, resizeStartWidth + delta);
     columnWidths = { ...columnWidths, [resizeColumn]: newWidth };

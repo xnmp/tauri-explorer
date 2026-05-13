@@ -40,6 +40,27 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 - The SCM panel is rendered between the sidebar and `PaneContainer` in `+page.svelte`, gated by `showGitStatus && showScmPanel`. This gives it its own resize handle and independent lifecycle.
 - E2E tests that opened SCM by clicking the activity bar tab now enable the panel via `localStorage` settings (`showGitStatus: true, showScmPanel: true`) and reload.
 - `Alt+M G` now toggles the SCM panel visibility. `Alt+M B` still focuses the sidebar (bookmarks/recent).
+## fix/zoom-drag-drop-marquee-broken (#88): Zoom breaks drag-drop hit detection, column resize, and marquee
+
+**Key takeaways — WebKitGTK coordinate spaces with CSS zoom:**
+
+Three APIs use three different coordinate spaces in WebKitGTK when CSS `zoom` is set on the document root:
+
+| API | Coordinate space |
+|---|---|
+| `MouseEvent.clientX/Y` | Raw viewport (physical pixels, NOT zoom-adjusted) |
+| `getBoundingClientRect()` | CSS pixels (zoom-adjusted) |
+| `elementFromPoint()` | Raw viewport (same as clientX, NOT zoom-adjusted) |
+| `position: fixed` CSS | CSS pixels (zoom-adjusted) |
+
+This means:
+- **Marquee (container-relative coords):** Divide `clientX` by zoom first, THEN subtract `containerRect.left`. The formula `(clientX - rect.left) / zoom` is wrong because it mixes coordinate spaces — `clientX` is physical but `rect.left` is CSS.
+- **`elementFromPoint` hit testing:** Pass raw `clientX/Y` directly — do NOT divide by zoom. The old code divided by zoom which shifted hit detection to the left.
+- **Tauri `onDragDropEvent` positions** are physical pixels: divide by DPR only for `elementFromPoint`, divide by DPR AND zoom for `position: fixed` CSS overlays.
+- **Ghost elements (`position: fixed`):** Divide `clientX` by zoom for correct visual positioning.
+- Column resize deltas (`event.clientX - resizeStartX`) are in viewport pixels but column widths are set in CSS pixels. Divide the delta by `getZoomFactor()`.
+- Use `getZoomFactor()` from `$lib/domain/zoom` consistently instead of inline `settingsStore.zoomLevel / 100` to avoid drift.
+- On Linux, drag-and-drop goes through Tauri native drag (`startExternalDrag` → `onDragDropEvent`), NOT the pointer-drag composable. The pointer-drag path is macOS-only. Debug the right code path.
 
 ---
 

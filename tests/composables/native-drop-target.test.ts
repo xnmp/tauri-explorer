@@ -116,9 +116,9 @@ describe("resolveDropTarget", () => {
     const settings = await import("$lib/state/settings.svelte");
     (settings.settingsStore as any).zoomLevel = 150;
 
-    // 300 / 2 (dpr) / 1.5 (zoom) = 100, 450 / 2 / 1.5 = 150
+    // 300 / 2 (dpr) = 150, 450 / 2 = 225 (no zoom division for elementFromPoint)
     resolveDropTarget({ x: 300, y: 450 });
-    expect(mockFn).toHaveBeenCalledWith(100, 150);
+    expect(mockFn).toHaveBeenCalledWith(150, 225);
 
     (settings.settingsStore as any).zoomLevel = 100;
   });
@@ -183,28 +183,31 @@ describe("pointer-zoom variants", () => {
     clearHighlights();
   });
 
-  it("adjustForPointerZoom passes coordinates through unchanged", async () => {
-    const settings = await import("$lib/state/settings.svelte");
-    (settings.settingsStore as any).zoomLevel = 200;
+  it("adjustForPointerZoom divides coordinates by zoom factor", async () => {
+    const docEl = { style: { zoom: "200%" } };
+    vi.stubGlobal("document", { documentElement: docEl });
+
+    const result = adjustForPointerZoom({ x: 400, y: 600 });
+    expect(result).toEqual({ x: 200, y: 300 });
+  });
+
+  it("adjustForPointerZoom returns unchanged at 100%", async () => {
+    const docEl = { style: { zoom: "100%" } };
+    vi.stubGlobal("document", { documentElement: docEl });
 
     const result = adjustForPointerZoom({ x: 400, y: 600 });
     expect(result).toEqual({ x: 400, y: 600 });
-
-    (settings.settingsStore as any).zoomLevel = 100;
   });
 
-  it("resolveDropTargetAtPoint uses raw pointer coordinates", async () => {
+  it("resolveDropTargetAtPoint adjusts pointer coordinates for zoom", async () => {
     const el = makeElement("entry-item directory", { "data-path": "/docs" });
     const mockFn = vi.fn().mockReturnValue(el);
-    vi.stubGlobal("document", { elementFromPoint: mockFn });
+    const docEl = { style: { zoom: "150%" } };
+    vi.stubGlobal("document", { elementFromPoint: mockFn, documentElement: docEl });
 
-    const settings = await import("$lib/state/settings.svelte");
-    (settings.settingsStore as any).zoomLevel = 150;
-
+    // WebKitGTK: elementFromPoint expects raw viewport coords, no zoom adjustment
     const result = resolveDropTargetAtPoint(300, 450);
     expect(mockFn).toHaveBeenCalledWith(300, 450);
     expect(result).toEqual({ type: "folder", path: "/docs" });
-
-    (settings.settingsStore as any).zoomLevel = 100;
   });
 });

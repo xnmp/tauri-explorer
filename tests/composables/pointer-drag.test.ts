@@ -5,6 +5,10 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
+vi.mock("$lib/domain/zoom", () => ({
+  getZoomFactor: () => 1,
+}));
+
 vi.mock("$lib/state/settings.svelte", () => ({
   settingsStore: { zoomLevel: 100 },
 }));

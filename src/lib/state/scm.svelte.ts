@@ -54,34 +54,35 @@ function createScmStore() {
     return r.ok ? r.data : null;
   }
 
+  let refreshGeneration = 0;
+
   async function refresh(): Promise<void> {
+    const gen = ++refreshGeneration;
     if (!repoRoot) {
       summary = emptySummary();
       return;
     }
+    const root = repoRoot;
     loading = true;
-    const result = await gitSummary(repoRoot);
+    const result = await gitSummary(root);
+    if (gen !== refreshGeneration) return;
     loading = false;
     summary = result.ok ? result.data : emptySummary();
     gitStatusStore.refresh();
   }
 
   async function setActivePath(path: string): Promise<void> {
-    console.log("[SCM.setActivePath] called:", path, "current activePath:", activePath);
-    if (path === activePath) { console.log("[SCM.setActivePath] same path, skip"); return; }
+    if (path === activePath) return;
     activePath = path;
     const detected = await detectRepo(path);
-    console.log("[SCM.setActivePath] detectRepo:", detected, "repoRoot:", repoRoot, "activePath:", activePath);
-    if (activePath !== path) { console.log("[SCM.setActivePath] stale, bail"); return; }
-    if (detected === repoRoot) { console.log("[SCM.setActivePath] repo unchanged, bail"); return; }
+    if (activePath !== path) return;
+    if (detected === repoRoot) return;
 
-    console.log("[SCM.setActivePath] repo CHANGED:", repoRoot, "→", detected);
     if (watcherPath) {
       try { await gitUnwatchRepo(watcherPath); } catch { /* non-Tauri */ }
       watcherPath = null;
     }
     repoRoot = detected;
-    console.log("[SCM.setActivePath] repoRoot now:", repoRoot);
     selectedPath = null;
     activeDiff = null;
 
@@ -90,7 +91,6 @@ function createScmStore() {
       watcherPath = repoRoot;
     }
     await refresh();
-    console.log("[SCM.setActivePath] after refresh — summary.is_repo:", summary.is_repo, "summary ref:", summary);
   }
 
   function filterToDir<T extends { path: string }>(entries: T[]): T[] {
@@ -203,7 +203,7 @@ function createScmStore() {
     // readonly accessors
     get activePath() { return activePath; },
     get repoRoot() { return repoRoot; },
-    get summary() { console.log("[SCM.get summary] is_repo:", summary.is_repo); return summary; },
+    get summary() { return summary; },
     get filteredSummary(): GitStatusSummary {
       return {
         ...summary,

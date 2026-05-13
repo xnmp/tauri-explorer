@@ -21,6 +21,7 @@ import { folderViewsStore } from "./folder-views.svelte";
 import { sidebarViewsStore } from "./sidebar-views.svelte";
 import type { ViewMode } from "./types";
 import { readFocusedWindowState } from "./focused-window";
+import { scmStore } from "./scm.svelte";
 
 /** Open a new explorer window at the given path with optional view mode */
 function openNewWindow(path: string, viewMode?: ViewMode): void {
@@ -406,6 +407,7 @@ const viewCommands: Command[] = [
     category: "view",
     shortcut: "Alt+M G",
     handler: () => {
+      if (settingsStore.showScmPanel) scmStore.closeDiff();
       settingsStore.toggleScmPanel();
     },
   },

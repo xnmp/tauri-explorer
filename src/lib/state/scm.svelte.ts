@@ -20,6 +20,7 @@ import {
   type GitStatusSummary,
 } from "$lib/api/files";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { gitStatusStore } from "./git-status.svelte";
 
 const EMPTY_SUMMARY: GitStatusSummary = {
   is_repo: false,
@@ -60,12 +61,14 @@ function createScmStore() {
     const result = await gitSummary(repoRoot);
     loading = false;
     summary = result.ok ? result.data : EMPTY_SUMMARY;
+    gitStatusStore.refresh();
   }
 
   async function setActivePath(path: string): Promise<void> {
     if (path === activePath) return;
     activePath = path;
     const detected = await detectRepo(path);
+    if (activePath !== path) return;
     if (detected === repoRoot) return;
 
     // tear down existing watcher
@@ -126,17 +129,14 @@ function createScmStore() {
   }
 
   /**
-   * Commit staged changes. If the commit message is empty and there are
-   * staged files, automatically performs `git commit --amend --no-edit`
-   * (provided HEAD has a parent commit) — see #78/#79.
+   * Commit staged changes. Amend-no-edit (empty message) only happens when
+   * the amend checkbox is ticked OR `forceAmend` is true (Ctrl+Enter).
    */
-  async function commit(): Promise<{ ok: boolean; error?: string }> {
+  async function commit(opts?: { forceAmend?: boolean }): Promise<{ ok: boolean; error?: string }> {
     const msg = commitMessage.trim();
     if (!repoRoot) return { ok: false, error: "not a git repository" };
     const hasStaged = summary.staged.length > 0 || summary.merge.length > 0;
-    // Empty message + staged → implicit amend-no-edit. Explicit amend toggle
-    // also still works the same.
-    const effectiveAmend = amend || (msg.length === 0 && hasStaged);
+    const effectiveAmend = amend || (msg.length === 0 && hasStaged && !!opts?.forceAmend);
     if (msg.length === 0 && !effectiveAmend) {
       commitError = "Commit message cannot be empty";
       return { ok: false, error: commitError };

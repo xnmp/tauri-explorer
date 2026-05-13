@@ -23,6 +23,11 @@ import {
   clipboardPasteImage,
   watchDirectory,
   unwatchDirectory,
+  extractArchive as apiExtractArchive,
+  compressToZip as apiCompressToZip,
+  createSymlink as apiCreateSymlink,
+  setAsWallpaper as apiSetAsWallpaper,
+  openInTerminal as apiOpenInTerminal,
 } from "$lib/api/files";
 import { broadcastFileChange } from "./file-events";
 import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/domain/file";
@@ -544,6 +549,60 @@ function createExplorerState(seed?: ExplorerSeed) {
   }
 
   // ===================
+  // Archive, Symlink, Wallpaper, Terminal
+  // ===================
+
+  async function extractArchive(path: string, here: boolean): Promise<void> {
+    const result = await apiExtractArchive(path, here);
+    if (result.ok) {
+      markLocalMutation();
+      refresh({ silent: true });
+      broadcastFileChange([coreState.currentPath]);
+    } else {
+      toastStore.show(`Extract failed: ${result.error}`, "error");
+    }
+  }
+
+  async function compressToZip(paths: string[]): Promise<void> {
+    const result = await apiCompressToZip(paths);
+    if (result.ok) {
+      markLocalMutation();
+      refresh({ silent: true });
+      broadcastFileChange([coreState.currentPath]);
+    } else {
+      toastStore.show(`Compress failed: ${result.error}`, "error");
+    }
+  }
+
+  async function createSymlinkForEntry(path: string): Promise<void> {
+    const name = path.split("/").filter(Boolean).pop() || path;
+    const linkName = `${name} - Link`;
+    const linkPath = `${coreState.currentPath}/${linkName}`;
+    const result = await apiCreateSymlink(path, linkPath);
+    if (result.ok) {
+      coreState.entries = [...coreState.entries, result.data];
+      markLocalMutation();
+      broadcastFileChange([coreState.currentPath]);
+    } else {
+      toastStore.show(`Symlink failed: ${result.error}`, "error");
+    }
+  }
+
+  async function setWallpaper(path: string): Promise<void> {
+    const result = await apiSetAsWallpaper(path);
+    if (!result.ok) {
+      toastStore.show(`Set wallpaper failed: ${result.error}`, "error");
+    }
+  }
+
+  async function openTerminal(): Promise<void> {
+    const result = await apiOpenInTerminal(coreState.currentPath, settingsStore.terminalApp);
+    if (!result.ok) {
+      toastStore.show(`Open terminal failed: ${result.error}`, "error");
+    }
+  }
+
+  // ===================
   // Clipboard Actions (uses global clipboardStore for cross-pane support)
   // ===================
 
@@ -754,6 +813,11 @@ function createExplorerState(seed?: ExplorerSeed) {
     createFolder,
     rename,
     confirmDelete,
+    extractArchive,
+    compressToZip,
+    createSymlink: createSymlinkForEntry,
+    setAsWallpaper: setWallpaper,
+    openInTerminal: openTerminal,
     // Clipboard
     copyToClipboard,
     cutToClipboard,

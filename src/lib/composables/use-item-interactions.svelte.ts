@@ -58,12 +58,6 @@ export function useItemInteractions(deps: ItemInteractionsDeps) {
     // Linux/Windows because their webviews don't kill JS events for native sessions).
     const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
     if (!isMac) {
-      if (typeof document !== "undefined") {
-        const blank = document.createElement("canvas");
-        blank.width = 1;
-        blank.height = 1;
-        event.dataTransfer.setDragImage(blank, 0, 0);
-      }
       void startExternalDrag(paths);
     }
   }

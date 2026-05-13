@@ -168,24 +168,20 @@
     await scmStore.setActivePath(path);
   }
 
-  async function doCommit(): Promise<void> {
-    const mode = commitMode;
-    const result = await scmStore.commit();
+  async function doCommit(opts?: { forceAmend?: boolean }): Promise<void> {
+    const wasAmend = commitMode === "amend" || opts?.forceAmend;
+    const result = await scmStore.commit(opts);
     if (result.ok) {
-      toastStore.show(
-        mode === "amend" || mode === "amend-no-edit" ? "Amended last commit" : "Commit created",
-        "success",
-      );
+      toastStore.show(wasAmend ? "Amended last commit" : "Commit created", "success");
     }
   }
 
   function onCommitKeydown(e: KeyboardEvent): void {
-    // Ctrl+Enter and bare Enter both commit. Shift+Enter inserts a newline.
     if (e.key === "Enter") {
       if (e.shiftKey) return;
       e.preventDefault();
       e.stopPropagation();
-      doCommit();
+      doCommit({ forceAmend: e.ctrlKey || e.metaKey });
     }
   }
 
@@ -193,9 +189,9 @@
     requestDiscard([row.path], isUntracked);
   }
 
-  async function onIgnore(row: GitFileEntry): Promise<void> {
+  async function onIgnore(path: string): Promise<void> {
     if (!scmStore.repoRoot) return;
-    const r = await gitAddToGitignore(scmStore.repoRoot, row.path);
+    const r = await gitAddToGitignore(scmStore.repoRoot, path);
     if (!r.ok) {
       toastStore.error(`Ignore failed: ${r.error}`);
       return;
@@ -234,31 +230,22 @@
     const msg = scmStore.commitMessage.trim();
     if (scmStore.amend) return true;
     const hasStaged = fullStagedCount > 0 || fullMergeCount > 0;
-    if (msg.length > 0) return hasStaged;
-    return hasStaged;
+    return msg.length > 0 && hasStaged;
   });
 
   const commitMode = $derived.by(() => {
     if (scmStore.amend) return "amend";
-    const msg = scmStore.commitMessage.trim();
-    if (msg.length === 0 && (fullStagedCount > 0 || fullMergeCount > 0)) return "amend-no-edit";
     return "commit";
   });
 
   const commitButtonLabel = $derived(
-    commitMode === "amend"
-      ? "Commit (Amend)"
-      : commitMode === "amend-no-edit"
-        ? "Amend (no edit)"
-        : "Commit"
+    commitMode === "amend" ? "Commit (Amend)" : "Commit"
   );
 
   const commitButtonTooltip = $derived(
     commitMode === "amend"
       ? "Amend the previous commit using this message"
-      : commitMode === "amend-no-edit"
-        ? "Empty message — staged files will be added to the previous commit (git commit --amend --no-edit)"
-        : "Create a new commit"
+      : "Create a new commit (Ctrl+Enter with empty message to amend)"
   );
 </script>
 
@@ -299,9 +286,7 @@
         class="commit-message"
         placeholder={scmStore.amend
           ? "Amend commit message (optional)"
-          : ((stagedCount > 0 || mergeCount > 0)
-              ? "Message — leave empty + Enter to amend the previous commit"
-              : "Message (Enter to commit, Shift+Enter to add a newline)")}
+          : "Message (Enter to commit, Ctrl+Enter to amend)"}
         value={scmStore.commitMessage}
         oninput={(e) => scmStore.setCommitMessage((e.target as HTMLTextAreaElement).value)}
         onkeydown={onCommitKeydown}
@@ -324,7 +309,7 @@
           type="button"
           class="commit-btn"
           disabled={!canCommit}
-          onclick={doCommit}
+          onclick={() => doCommit()}
           title={commitButtonTooltip}
         >
           {commitButtonLabel}
@@ -493,7 +478,7 @@
                     class="row-btn"
                     title="Add to .gitignore"
                     aria-label="Ignore {row.path}"
-                    onclick={(e) => { e.stopPropagation(); onIgnore(row); }}
+                    onclick={(e) => { e.stopPropagation(); onIgnore(row.path); }}
                   >⊘</button>
                 {/if}
                 <button
@@ -540,6 +525,14 @@
             <button type="button" class="row-btn" title="Stage folder" aria-label="Stage {child.name}"
               onclick={(e) => { e.stopPropagation(); scmStore.stage(folderPaths); }}>+</button>
           {:else}
+            <button type="button" class="row-btn"
+              title={kind === "untracked" ? "Remove folder" : "Discard folder changes"}
+              aria-label={kind === "untracked" ? `Remove ${child.name}` : `Discard ${child.name}`}
+              onclick={(e) => { e.stopPropagation(); requestDiscard(folderPaths, kind === "untracked"); }}>↺</button>
+            {#if kind === "untracked"}
+              <button type="button" class="row-btn" title="Add folder to .gitignore" aria-label="Ignore {child.name}"
+                onclick={(e) => { e.stopPropagation(); onIgnore(child.fullDir); }}>⊘</button>
+            {/if}
             <button type="button" class="row-btn" title="Stage folder" aria-label="Stage {child.name}"
               onclick={(e) => { e.stopPropagation(); scmStore.stage(folderPaths); }}>+</button>
           {/if}
@@ -586,7 +579,7 @@
               onclick={(e) => { e.stopPropagation(); onDiscard(row, kind === "untracked"); }}>↺</button>
             {#if kind === "untracked"}
               <button type="button" class="row-btn" title="Add to .gitignore" aria-label="Ignore {row.path}"
-                onclick={(e) => { e.stopPropagation(); onIgnore(row); }}>⊘</button>
+                onclick={(e) => { e.stopPropagation(); onIgnore(row.path); }}>⊘</button>
             {/if}
             <button type="button" class="row-btn" title="Stage" aria-label="Stage {row.path}"
               onclick={(e) => { e.stopPropagation(); scmStore.stage([row.path]); }}>+</button>

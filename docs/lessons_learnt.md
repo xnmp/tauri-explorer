@@ -13,6 +13,16 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/git-scm-behavioral-fixes (#102): SCM badges, commit, diff toggle, race guard
+
+**Key takeaways:**
+- The `gitStatusStore` (file-list badges) and `scmStore` (SCM panel summary) are separate stores. After SCM operations (stage/commit/discard), calling `scmStore.refresh()` only updates the panel. Must also call `gitStatusStore.refresh()` to update file-list badges.
+- Implicit behavior (empty Enter → amend) is surprising and dangerous. Require an explicit signal (amend checkbox or Ctrl+Enter) before performing destructive operations like amend.
+- When toggling a panel off that owns a sub-view (diff view), close the sub-view too — otherwise it persists in the main content area.
+- Async `setActivePath` has a race condition: if called twice quickly, the first `detectRepo` result may apply after the second call already set a new path. Guard with `if (activePath !== path) return` after the await.
+
+---
+
 ## feat/git-scm-tree-depth-lines (#97): SCM tree view depth guides and folder actions
 
 **Key takeaways:**

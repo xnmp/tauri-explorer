@@ -127,6 +127,22 @@ function createThemeState() {
 
   function applyTheme(themeId: string) {
     document.documentElement.setAttribute("data-theme", themeId);
+    requestAnimationFrame(() => {
+      const raw = getComputedStyle(document.body).backgroundColor || "";
+      if (raw) localStorage.setItem("explorer-bg", raw);
+      const match = raw.match(/[\d.]+/g);
+      if (match && match.length >= 3) {
+        const vals = match.map(Number);
+        const isFloat = vals[0] <= 1 && vals[1] <= 1 && vals[2] <= 1 && raw.includes("color(");
+        const r = isFloat ? Math.round(vals[0] * 255) : vals[0];
+        const g = isFloat ? Math.round(vals[1] * 255) : vals[1];
+        const b = isFloat ? Math.round(vals[2] * 255) : vals[2];
+        const a = vals[3] !== undefined
+          ? Math.round((isFloat || vals[3] <= 1 ? vals[3] : vals[3] / 255) * 255)
+          : 255;
+        localStorage.setItem("explorer-bg-rgba", JSON.stringify([r, g, b, a]));
+      }
+    });
   }
 
   /** Swap the visual theme without persisting it. Used by the theme picker

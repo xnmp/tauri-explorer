@@ -25,6 +25,7 @@
   import { copyEntry, moveEntry } from "$lib/api/files";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { initFileChangeListener, cleanupFileChangeListener, broadcastFileChange } from "$lib/state/file-events";
+  import { requestRefresh, cancelPendingRefreshes } from "$lib/state/refresh-manager";
   import { parentDir, basename } from "$lib/domain/path";
   import { saveFocusedWindowState } from "$lib/state/focused-window";
   import "$lib/themes/index.css";
@@ -317,7 +318,7 @@
     initFileChangeListener((affectedDirs) => {
       for (const exp of windowTabsManager.getAllExplorers()) {
         if (affectedDirs.includes(exp.currentPath)) {
-          exp.refresh({ silent: true });
+          requestRefresh((opts) => exp.refresh(opts), exp.currentPath);
         }
       }
     });
@@ -344,7 +345,7 @@
       const changedPath = event.payload.path;
       for (const exp of windowTabsManager.getAllExplorers()) {
         if (exp.currentPath === changedPath) {
-          exp.refresh({ silent: true });
+          requestRefresh((opts) => exp.refresh(opts), exp.currentPath);
         }
       }
       // Also refresh git status badges for the changed directory
@@ -406,6 +407,7 @@
       window.removeEventListener("beforeunload", handleBeforeUnload);
       clearInterval(saveInterval);
       externalDrop.cleanup();
+      cancelPendingRefreshes();
       cleanupFileChangeListener();
       unlistenWatcher?.();
       unlistenNbComplete?.();

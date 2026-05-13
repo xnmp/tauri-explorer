@@ -13,6 +13,7 @@
   import { openFile } from "$lib/api/files";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import type { FileEntry } from "$lib/domain/file";
+  import { parentDir } from "$lib/domain/path";
   import { isImageFile } from "$lib/domain/file-types";
   import { getZoomFactor } from "$lib/domain/zoom";
   import type { ViewMode } from "$lib/state/types";
@@ -48,25 +49,29 @@
   const anySelectedHidden = $derived.by(() => {
     const entries = explorer.getSelectedEntries();
     if (entries.length === 0) return false;
-    return entries.some((e) => manualHiddenStore.isHidden(explorer.currentPath, e.name));
+    return entries.some((e) => manualHiddenStore.isHidden(parentDir(e.path), e.name));
   });
 
   /** Whether all selected entries are currently in the manual-hidden list. */
   const allSelectedHidden = $derived.by(() => {
     const entries = explorer.getSelectedEntries();
     if (entries.length === 0) return false;
-    return entries.every((e) => manualHiddenStore.isHidden(explorer.currentPath, e.name));
+    return entries.every((e) => manualHiddenStore.isHidden(parentDir(e.path), e.name));
   });
 
   function handleManualHide(): void {
-    const names = explorer.getSelectedEntries().map((e) => e.name);
-    if (names.length > 0) manualHiddenStore.hide(explorer.currentPath, names);
+    const entries = explorer.getSelectedEntries();
+    for (const e of entries) {
+      manualHiddenStore.hide(parentDir(e.path), [e.name]);
+    }
     contextMenuStore.close();
   }
 
   function handleManualUnhide(): void {
-    const names = explorer.getSelectedEntries().map((e) => e.name);
-    if (names.length > 0) manualHiddenStore.unhide(explorer.currentPath, names);
+    const entries = explorer.getSelectedEntries();
+    for (const e of entries) {
+      manualHiddenStore.unhide(parentDir(e.path), [e.name]);
+    }
     contextMenuStore.close();
   }
 

@@ -12,11 +12,14 @@
   import { settingsStore } from "$lib/state/settings.svelte";
   import { fetchDirectory, watchDirectory, unwatchDirectory, isDirectoryEmpty } from "$lib/api/files";
   import FileIcon from "./FileIcon.svelte";
+  import EntryName from "./EntryName.svelte";
   import { dragState } from "$lib/state/drag.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { useDropTarget } from "$lib/composables/use-drop-target.svelte";
   import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
   import { isCopyModifier } from "$lib/domain/platform";
+  import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
+  import { parentDir } from "$lib/domain/path";
   import type { FileEntry } from "$lib/domain/file";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
@@ -44,11 +47,12 @@
   let emptyCache = $state(new Map<string, boolean>());
   let emptyCacheKey = "";
 
-  function filterEntries(entries: FileEntry[], activeChildPath: string | null): FileEntry[] {
+  function filterEntries(entries: FileEntry[], columnPath: string, activeChildPath: string | null): FileEntry[] {
     const hideEmpty = settingsStore.millerHideEmpty;
     return entries.filter((e) => {
       if (e.kind !== "directory") return false;
       if (!settingsStore.showHidden && e.name.startsWith(".")) return false;
+      if (!settingsStore.showManuallyHidden && manualHiddenStore.isHidden(columnPath, e.name)) return false;
       if (hideEmpty && e.path !== activeChildPath) {
         const known = emptyCache.get(e.path);
         if (known === true) return false;
@@ -59,7 +63,7 @@
 
   // Derive displayed columns reactively so showHidden changes take effect immediately.
   const columns = $derived(
-    rawColumns.map((col) => ({ ...col, entries: filterEntries(col.entries, col.activeChildPath) })),
+    rawColumns.map((col) => ({ ...col, entries: filterEntries(col.entries, col.path, col.activeChildPath) })),
   );
 
   $effect(() => {
@@ -162,9 +166,14 @@
     let unlisten: UnlistenFn | undefined;
     listen<{ path: string }>("directory-changed", (event) => {
       const changedPath = event.payload.path;
+      // Invalidate empty cache for the changed dir and its parent
+      const next = new Map(emptyCache);
+      next.delete(changedPath);
+      const parent = parentDir(changedPath);
+      if (parent !== changedPath) next.delete(parent);
+      if (next.size !== emptyCache.size) emptyCache = next;
       if (rawCache.has(changedPath)) {
         rawCache.delete(changedPath);
-        // Reload the column if it's currently visible
         const isVisible = rawColumns.some((col) => col.path === changedPath);
         if (isVisible) {
           loadColumn(changedPath);
@@ -335,7 +344,7 @@
                 <span class="col-icon">
                   <FileIcon {entry} size="small" />
                 </span>
-                <span class="col-name">{entry.name}</span>
+                <span class="col-name"><EntryName {entry} {explorer} variant="list" /></span>
                 <svg class="col-chevron" width="7" height="7" viewBox="0 0 7 7" fill="none">
                   <path d="M2 1L5 3.5L2 6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>

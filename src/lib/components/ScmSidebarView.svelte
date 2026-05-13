@@ -189,9 +189,9 @@
     requestDiscard([row.path], isUntracked);
   }
 
-  async function onIgnore(row: GitFileEntry): Promise<void> {
+  async function onIgnore(path: string): Promise<void> {
     if (!scmStore.repoRoot) return;
-    const r = await gitAddToGitignore(scmStore.repoRoot, row.path);
+    const r = await gitAddToGitignore(scmStore.repoRoot, path);
     if (!r.ok) {
       toastStore.error(`Ignore failed: ${r.error}`);
       return;
@@ -478,7 +478,7 @@
                     class="row-btn"
                     title="Add to .gitignore"
                     aria-label="Ignore {row.path}"
-                    onclick={(e) => { e.stopPropagation(); onIgnore(row); }}
+                    onclick={(e) => { e.stopPropagation(); onIgnore(row.path); }}
                   >⊘</button>
                 {/if}
                 <button
@@ -525,6 +525,14 @@
             <button type="button" class="row-btn" title="Stage folder" aria-label="Stage {child.name}"
               onclick={(e) => { e.stopPropagation(); scmStore.stage(folderPaths); }}>+</button>
           {:else}
+            <button type="button" class="row-btn"
+              title={kind === "untracked" ? "Remove folder" : "Discard folder changes"}
+              aria-label={kind === "untracked" ? `Remove ${child.name}` : `Discard ${child.name}`}
+              onclick={(e) => { e.stopPropagation(); requestDiscard(folderPaths, kind === "untracked"); }}>↺</button>
+            {#if kind === "untracked"}
+              <button type="button" class="row-btn" title="Add folder to .gitignore" aria-label="Ignore {child.name}"
+                onclick={(e) => { e.stopPropagation(); onIgnore(child.fullDir); }}>⊘</button>
+            {/if}
             <button type="button" class="row-btn" title="Stage folder" aria-label="Stage {child.name}"
               onclick={(e) => { e.stopPropagation(); scmStore.stage(folderPaths); }}>+</button>
           {/if}
@@ -571,7 +579,7 @@
               onclick={(e) => { e.stopPropagation(); onDiscard(row, kind === "untracked"); }}>↺</button>
             {#if kind === "untracked"}
               <button type="button" class="row-btn" title="Add to .gitignore" aria-label="Ignore {row.path}"
-                onclick={(e) => { e.stopPropagation(); onIgnore(row); }}>⊘</button>
+                onclick={(e) => { e.stopPropagation(); onIgnore(row.path); }}>⊘</button>
             {/if}
             <button type="button" class="row-btn" title="Stage" aria-label="Stage {row.path}"
               onclick={(e) => { e.stopPropagation(); scmStore.stage([row.path]); }}>+</button>

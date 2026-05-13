@@ -195,7 +195,7 @@
   }
 
   function handleDragEnd(): void {
-    setTimeout(() => dragState.clear(), 0);
+    dragState.clear();
     paneNav?.refreshAllPanes();
   }
 

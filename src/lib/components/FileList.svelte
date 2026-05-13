@@ -14,7 +14,7 @@
   import { useTypeAhead } from "$lib/composables/use-type-ahead.svelte";
   import { isImageFile } from "$lib/domain/file-types";
   import { parentDir } from "$lib/domain/path";
-  import { getZoomFactor } from "$lib/domain/zoom";
+  import { getZoomFactor, rectDimToCSS } from "$lib/domain/zoom";
   import DetailsView from "./DetailsView.svelte";
   import ListView from "./ListView.svelte";
   import TilesView from "./TilesView.svelte";
@@ -157,7 +157,7 @@
     if (explorer.viewMode !== "details") return 0;
     const header = contentRef?.querySelector(".column-headers");
     if (!header) return 32;
-    return header.getBoundingClientRect().height / getZoomFactor();
+    return rectDimToCSS(header.getBoundingClientRect().height);
   }
 
   function handleMarqueeStart(event: MouseEvent): void {

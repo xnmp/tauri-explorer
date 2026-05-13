@@ -9,10 +9,13 @@ use base64::Engine as _;
 use crate::error::AppError;
 use log;
 use image::{ImageFormat, ImageReader};
+use lru::LruCache;
 use sha2::{Sha256, Digest};
 use std::fs;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::io::Cursor;
+use std::sync::{Mutex, OnceLock};
 
 /// Default thumbnail size (width and height in pixels)
 const THUMBNAIL_SIZE: u32 = 128;
@@ -99,6 +102,101 @@ fn to_data_uri(data: &[u8]) -> String {
     )
 }
 
+// ─── In-memory LRU cache ────────────────────────────────────────────────────
+
+const LRU_CAPACITY: usize = 512;
+
+static THUMB_LRU: OnceLock<Mutex<LruCache<String, String>>> = OnceLock::new();
+
+fn get_lru_cache() -> &'static Mutex<LruCache<String, String>> {
+    THUMB_LRU.get_or_init(|| Mutex::new(LruCache::new(NonZeroUsize::new(LRU_CAPACITY).unwrap())))
+}
+
+fn lru_get(key: &str) -> Option<String> {
+    get_lru_cache().lock().ok()?.get(key).cloned()
+}
+
+fn lru_put(key: String, value: String) {
+    if let Ok(mut cache) = get_lru_cache().lock() {
+        cache.put(key, value);
+    }
+}
+
+fn lru_clear() {
+    if let Ok(mut cache) = get_lru_cache().lock() {
+        cache.clear();
+    }
+}
+
+// ─── JPEG DCT scaling ───────────────────────────────────────────────────────
+
+const JPEG_EXTENSIONS: &[&str] = &["jpg", "jpeg"];
+
+fn is_jpeg(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| JPEG_EXTENSIONS.contains(&e.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+fn decode_jpeg_scaled(path: &Path, target_size: u32) -> Result<image::DynamicImage, AppError> {
+    let jpeg_data = fs::read(path)?;
+    let mut decompressor = turbojpeg::Decompressor::new()
+        .map_err(|e| AppError::Other(format!("turbojpeg init failed: {}", e)))?;
+
+    let header = decompressor.read_header(&jpeg_data)
+        .map_err(|e| AppError::Other(format!("turbojpeg header read failed: {}", e)))?;
+
+    let max_dim = header.width.max(header.height) as u32;
+    let scale = if max_dim / 8 >= target_size {
+        turbojpeg::ScalingFactor::ONE_EIGHTH
+    } else if max_dim / 4 >= target_size {
+        turbojpeg::ScalingFactor::ONE_QUARTER
+    } else if max_dim / 2 >= target_size {
+        turbojpeg::ScalingFactor::ONE_HALF
+    } else {
+        turbojpeg::ScalingFactor::ONE
+    };
+
+    decompressor.set_scaling_factor(scale)
+        .map_err(|e| AppError::Other(format!("turbojpeg set scale failed: {}", e)))?;
+
+    let scaled = header.scaled(scale);
+    let format = turbojpeg::PixelFormat::RGB;
+    let pitch = scaled.width * format.size();
+    let mut output = turbojpeg::Image {
+        pixels: vec![0u8; scaled.height * pitch],
+        width: scaled.width,
+        pitch,
+        height: scaled.height,
+        format,
+    };
+
+    decompressor.decompress(&jpeg_data, output.as_deref_mut())
+        .map_err(|e| AppError::Other(format!("turbojpeg decompress failed: {}", e)))?;
+
+    let rgb = image::RgbImage::from_raw(
+        scaled.width as u32,
+        scaled.height as u32,
+        output.pixels,
+    ).ok_or_else(|| AppError::Other("Failed to create RgbImage from turbojpeg output".into()))?;
+
+    Ok(image::DynamicImage::ImageRgb8(rgb))
+}
+
+fn decode_image(path: &Path, target_size: u32) -> Result<image::DynamicImage, AppError> {
+    if is_jpeg(path) {
+        match decode_jpeg_scaled(path, target_size) {
+            Ok(img) => return Ok(img),
+            Err(e) => log::warn!("turbojpeg fast path failed for {:?}, falling back: {}", path, e),
+        }
+    }
+    ImageReader::open(path)?
+        .with_guessed_format()?
+        .decode()
+        .map_err(|e| AppError::Other(format!("Failed to decode image: {}", e)))
+}
+
 /// Validate path for thumbnail generation (exists + supported format)
 fn validate_thumbnail_path(path: &Path, path_str: &str) -> Result<(), AppError> {
     if !path.exists() {
@@ -121,14 +219,7 @@ fn generate_and_cache_thumbnail(
     // Create cache directory if it doesn't exist
     fs::create_dir_all(&cache_dir)?;
 
-    // Load and decode image (with_guessed_format for robust format detection)
-    let img = ImageReader::open(source_path)?
-        .with_guessed_format()?
-        .decode()
-        .map_err(|e| AppError::Other(format!("Failed to decode image: {}", e)))?;
-
-    // Generate thumbnail using fast Lanczos3 sampling
-    // Always convert to RGB8 for JPEG output (PNG/GIF may have alpha channels)
+    let img = decode_image(source_path, size)?;
     let thumbnail = img.thumbnail(size, size).to_rgb8();
 
     // Save to cache as JPEG for smaller size and fast loading
@@ -167,24 +258,28 @@ fn get_thumbnail_data_sync(path: String, size: Option<u32>, quality: Option<u8>)
     let cache_key = generate_cache_key(&source_path, size)
         .ok_or_else(|| AppError::Other(format!("Failed to generate cache key for: {}", path)))?;
 
-    // Check cache first
-    if let Some(cached_path) = get_cached_thumbnail(&cache_key) {
-        let data = fs::read(&cached_path)?;
-        return Ok(to_data_uri(&data));
+    // Check in-memory LRU first (fastest)
+    if let Some(uri) = lru_get(&cache_key) {
+        return Ok(uri);
     }
 
-    // Decode image
-    let img = ImageReader::open(&source_path)?
-        .with_guessed_format()?
-        .decode()
-        .map_err(|e| AppError::Other(format!("Failed to decode image: {}", e)))?;
+    // Check disk cache
+    if let Some(cached_path) = get_cached_thumbnail(&cache_key) {
+        let data = fs::read(&cached_path)?;
+        let uri = to_data_uri(&data);
+        lru_put(cache_key, uri.clone());
+        return Ok(uri);
+    }
 
+    let img = decode_image(&source_path, size)?;
     let thumbnail = img.thumbnail(size, size).to_rgb8();
 
     let data = encode_jpeg(&thumbnail, quality)?;
     save_to_cache(&cache_key, &data);
 
-    Ok(to_data_uri(&data))
+    let uri = to_data_uri(&data);
+    lru_put(cache_key, uri.clone());
+    Ok(uri)
 }
 
 fn get_micro_thumbnail_sync(path: String, prewarm_size: Option<u32>, prewarm_quality: Option<u8>) -> Result<String, AppError> {
@@ -197,17 +292,20 @@ fn get_micro_thumbnail_sync(path: String, prewarm_size: Option<u32>, prewarm_qua
         .map(|k| format!("{}_micro", k))
         .ok_or_else(|| AppError::Other(format!("Failed to generate cache key for: {}", path)))?;
 
-    // Check micro cache first
-    if let Some(cached_path) = get_cached_thumbnail(&micro_cache_key) {
-        let data = fs::read(&cached_path)?;
-        return Ok(to_data_uri(&data));
+    // Check in-memory LRU first
+    if let Some(uri) = lru_get(&micro_cache_key) {
+        return Ok(uri);
     }
 
-    // Decode image once (the expensive part)
-    let img = ImageReader::open(&source_path)?
-        .with_guessed_format()?
-        .decode()
-        .map_err(|e| AppError::Other(format!("Failed to decode image: {}", e)))?;
+    // Check disk cache
+    if let Some(cached_path) = get_cached_thumbnail(&micro_cache_key) {
+        let data = fs::read(&cached_path)?;
+        let uri = to_data_uri(&data);
+        lru_put(micro_cache_key, uri.clone());
+        return Ok(uri);
+    }
+
+    let img = decode_image(&source_path, full_size)?;
 
     // Generate micro thumbnail (Nearest = fastest resize algorithm)
     let micro = img.resize(MICRO_SIZE, MICRO_SIZE, image::imageops::FilterType::Nearest).to_rgb8();
@@ -222,11 +320,14 @@ fn get_micro_thumbnail_sync(path: String, prewarm_size: Option<u32>, prewarm_qua
             let full = img.thumbnail(full_size, full_size).to_rgb8();
             if let Ok(full_data) = encode_jpeg(&full, full_quality) {
                 save_to_cache(key, &full_data);
+                lru_put(key.clone(), to_data_uri(&full_data));
             }
         }
     }
 
-    Ok(to_data_uri(&micro_data))
+    let uri = to_data_uri(&micro_data);
+    lru_put(micro_cache_key, uri.clone());
+    Ok(uri)
 }
 
 // ─── Async Tauri commands ───────────────────────────────────────────────────
@@ -268,6 +369,7 @@ pub fn clear_thumbnail_cache() -> Result<u64, AppError> {
     }
 
     log::info!("Clearing thumbnail cache");
+    lru_clear();
     let mut cleared = 0u64;
 
     for entry in fs::read_dir(&cache_dir).map_err(AppError::Io)? {
@@ -479,10 +581,11 @@ mod tests {
 
         // Request at quality 50 with size 64
         let result_q50 = get_thumbnail_data_sync(path_str.clone(), Some(64), Some(50)).unwrap();
-        // Clear cache so next request generates fresh
+        // Clear both caches so next request generates fresh
         if let Some(cache_dir) = get_cache_dir() {
             let _ = std::fs::remove_dir_all(&cache_dir);
         }
+        lru_clear();
         let result_q90 = get_thumbnail_data_sync(path_str, Some(64), Some(90)).unwrap();
 
         // Different quality should produce different data URIs

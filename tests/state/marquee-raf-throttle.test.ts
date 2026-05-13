@@ -8,6 +8,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("$lib/domain/zoom", () => ({
   getZoomFactor: () => 1,
+  clientToCSSRelative: (c: number, r: number) => c - r,
+  rectDimToCSS: (v: number) => v,
+  cssToRect: (v: number) => v,
 }));
 
 import { useMarqueeSelection } from "$lib/composables/use-marquee-selection.svelte";

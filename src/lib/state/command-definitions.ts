@@ -388,12 +388,16 @@ const viewCommands: Command[] = [
   },
   {
     id: "view.focusFilesSidebar",
-    label: "Show Files Sidebar (Bookmarks & Recent)",
+    label: "Toggle Files Sidebar (Bookmarks & Recent)",
     category: "view",
     shortcut: "Alt+M B",
     handler: () => {
-      if (!settingsStore.showSidebar) settingsStore.toggleSidebar();
-      sidebarViewsStore.setActive("files");
+      if (settingsStore.showSidebar && sidebarViewsStore.activeId === "files") {
+        settingsStore.toggleSidebar();
+      } else {
+        if (!settingsStore.showSidebar) settingsStore.toggleSidebar();
+        sidebarViewsStore.setActive("files");
+      }
     },
   },
   {

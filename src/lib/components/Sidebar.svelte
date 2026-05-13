@@ -1,9 +1,7 @@
 <!--
-  Sidebar - host shell for pluggable activity-bar views (#52).
-  Composes ActivityBar + the active SidebarView + resize handle.
+  Sidebar - host shell for sidebar views + resize handle.
 -->
 <script lang="ts">
-  import ActivityBar from "$lib/components/ActivityBar.svelte";
   import { sidebarViewsStore } from "$lib/state/sidebar-views.svelte";
 
   const SIDEBAR_WIDTH_KEY = "explorer-sidebar-width";
@@ -51,8 +49,7 @@
   }
 </script>
 
-<div class="sidebar-container" class:resizing={isResizing} style="width: {sidebarWidth + 48}px">
-  <ActivityBar />
+<div class="sidebar-container" class:resizing={isResizing} style="width: {sidebarWidth}px">
   <div class="sidebar">
     {#each views as view (view.id)}
       {@const ViewComponent = view.component}

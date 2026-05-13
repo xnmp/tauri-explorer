@@ -78,7 +78,6 @@ export function usePointerDrag(deps: PointerDragDeps) {
     const zoom = getZoomFactor();
     ghostEl!.style.left = `${(event.clientX + 12) / zoom}px`;
     ghostEl!.style.top = `${(event.clientY + 12) / zoom}px`;
-
     // Exit window → hand off to native drag for external/cross-window.
     // With implicit mouse capture, clientX/Y extends beyond viewport bounds.
     if (

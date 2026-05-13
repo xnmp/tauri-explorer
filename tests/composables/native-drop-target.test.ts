@@ -116,9 +116,9 @@ describe("resolveDropTarget", () => {
     const settings = await import("$lib/state/settings.svelte");
     (settings.settingsStore as any).zoomLevel = 150;
 
-    // 300 / 2 (dpr) / 1.5 (zoom) = 100, 450 / 2 / 1.5 = 150
+    // 300 / 2 (dpr) = 150, 450 / 2 = 225 (no zoom division for elementFromPoint)
     resolveDropTarget({ x: 300, y: 450 });
-    expect(mockFn).toHaveBeenCalledWith(100, 150);
+    expect(mockFn).toHaveBeenCalledWith(150, 225);
 
     (settings.settingsStore as any).zoomLevel = 100;
   });
@@ -205,8 +205,9 @@ describe("pointer-zoom variants", () => {
     const docEl = { style: { zoom: "150%" } };
     vi.stubGlobal("document", { elementFromPoint: mockFn, documentElement: docEl });
 
+    // WebKitGTK: elementFromPoint expects raw viewport coords, no zoom adjustment
     const result = resolveDropTargetAtPoint(300, 450);
-    expect(mockFn).toHaveBeenCalledWith(200, 300);
+    expect(mockFn).toHaveBeenCalledWith(300, 450);
     expect(result).toEqual({ type: "folder", path: "/docs" });
   });
 });

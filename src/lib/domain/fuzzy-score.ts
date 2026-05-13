@@ -7,6 +7,8 @@
  * Returns 0 if query is not a subsequence of candidate.
  */
 
+import { basename } from "./path";
+
 /** Fast subsequence check — all query chars must appear in order. */
 function isSubsequence(query: string, candidate: string): boolean {
   let qi = 0;
@@ -99,8 +101,8 @@ export function fuzzyScore(query: string, candidate: string): number {
  * This is the main entry point for QuickOpen scoring.
  */
 export function fuzzyScorePath(query: string, filePath: string): number {
-  const basename = filePath.split("/").pop() || filePath;
-  const nameScore = fuzzyScore(query, basename);
+  const name = basename(filePath);
+  const nameScore = fuzzyScore(query, name);
   const pathScore = fuzzyScore(query, filePath);
   // Filename matches are 1.5x more valuable than path matches
   return Math.max(nameScore * 1.5, pathScore);

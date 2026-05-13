@@ -6,6 +6,7 @@
  */
 
 import type { FileEntry } from "$lib/domain/file";
+import { isMac } from "$lib/domain/platform";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { clipboardStore } from "$lib/state/clipboard.svelte";
 import { dragState } from "$lib/state/drag.svelte";
@@ -56,7 +57,6 @@ export function useItemInteractions(deps: ItemInteractionsDeps) {
 
     // On non-Mac, use tauri-plugin-drag for native file drag (HTML5 DnD still works on
     // Linux/Windows because their webviews don't kill JS events for native sessions).
-    const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
     if (!isMac) {
       void startExternalDrag(paths);
     }

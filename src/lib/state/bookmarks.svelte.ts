@@ -8,6 +8,7 @@
  */
 
 import { loadPersisted, savePersisted } from "./persisted";
+import { basename } from "$lib/domain/path";
 import { readConfigFile, writeConfigFile } from "$lib/api/files";
 
 export interface Bookmark {
@@ -63,7 +64,7 @@ function createBookmarksState() {
     }
 
     // Extract folder name from path if not provided
-    const folderName = name || path.split("/").filter(Boolean).pop() || path;
+    const folderName = name || basename(path);
 
     bookmarks = [
       ...bookmarks,

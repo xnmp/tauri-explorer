@@ -13,6 +13,7 @@
 import type { PaneId, WindowTab, WindowTabPane } from "./types";
 import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
 import { loadPersisted, savePersisted } from "./persisted";
+import { parentDir } from "$lib/domain/path";
 
 const STORAGE_KEY = "explorer-tabs";
 const CLOSED_TABS_KEY = "explorer-closed-tabs";
@@ -455,7 +456,7 @@ function createWindowTabsManager() {
         const leftPath = leftExplorer.state.currentPath;
         const rightPath = rightExplorer.state.currentPath;
         if (leftPath === rightPath) {
-          const parentPath = leftPath.substring(0, leftPath.lastIndexOf("/")) || "/";
+          const parentPath = parentDir(leftPath);
           rightExplorer.navigateTo(parentPath);
         }
       }

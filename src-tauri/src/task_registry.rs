@@ -32,19 +32,38 @@ impl TaskRegistry {
     pub fn start(&self) -> (u64, Arc<AtomicBool>) {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let cancelled = Arc::new(AtomicBool::new(false));
-        self.active_map().lock().unwrap().insert(id, cancelled.clone());
+        self.active_map()
+            .lock()
+            .unwrap_or_else(|poisoned| {
+                log::error!("task registry lock poisoned on start, recovering");
+                poisoned.into_inner()
+            })
+            .insert(id, cancelled.clone());
         (id, cancelled)
     }
 
     /// Cancel a task by ID. No-op if the task doesn't exist or already completed.
     pub fn cancel(&self, id: u64) {
-        if let Some(flag) = self.active_map().lock().unwrap().get(&id) {
+        if let Some(flag) = self.active_map()
+            .lock()
+            .unwrap_or_else(|poisoned| {
+                log::error!("task registry lock poisoned on cancel, recovering");
+                poisoned.into_inner()
+            })
+            .get(&id)
+        {
             flag.store(true, Ordering::Relaxed);
         }
     }
 
     /// Remove a completed task from the registry.
     pub fn cleanup(&self, id: u64) {
-        self.active_map().lock().unwrap().remove(&id);
+        self.active_map()
+            .lock()
+            .unwrap_or_else(|poisoned| {
+                log::error!("task registry lock poisoned on cleanup, recovering");
+                poisoned.into_inner()
+            })
+            .remove(&id);
     }
 }

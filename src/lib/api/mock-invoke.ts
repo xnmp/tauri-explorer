@@ -4,6 +4,7 @@
  */
 
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
+import { parentDir, basename } from "$lib/domain/path";
 
 // Check if we're running in Tauri v2
 // Note: Tauri v2 uses __TAURI_INTERNALS__, not __TAURI__ (v1)
@@ -312,7 +313,7 @@ const mockCommands: Record<string, CommandHandler> = {
         totalBytes += entries.filter((e) => e.kind === "file").reduce((sum, e) => sum + e.size, 0);
       } else {
         // Single file — find it in parent
-        const parentPath = p.substring(0, p.lastIndexOf("/"));
+        const parentPath = parentDir(p);
         const entry = (mockFiles[parentPath] || []).find((e) => e.path === p);
         if (entry) {
           fileCount++;
@@ -350,7 +351,7 @@ const mockCommands: Record<string, CommandHandler> = {
   rename_entry: (args) => {
     const path = args.path as string;
     const newName = args.newName as string;
-    const parentPath = path.substring(0, path.lastIndexOf("/"));
+    const parentPath = parentDir(path);
     const entries = mockFiles[parentPath] || [];
     const entryIndex = entries.findIndex((e) => e.path === path);
     if (entryIndex >= 0) {
@@ -365,7 +366,7 @@ const mockCommands: Record<string, CommandHandler> = {
 
   move_to_trash: (args) => {
     const path = args.path as string;
-    const parentPath = path.substring(0, path.lastIndexOf("/"));
+    const parentPath = parentDir(path);
     const entries = mockFiles[parentPath] || [];
     const entryIndex = entries.findIndex((e) => e.path === path);
     if (entryIndex >= 0) {
@@ -378,8 +379,8 @@ const mockCommands: Record<string, CommandHandler> = {
   move_multiple_to_trash: (args) => {
     const paths = args.paths as string[];
     for (const path of paths) {
-      const parentPath = path.substring(0, path.lastIndexOf("/"));
-      const entries = mockFiles[parentPath] || [];
+      const pp = parentDir(path);
+      const entries = mockFiles[pp] || [];
       const entryIndex = entries.findIndex((e) => e.path === path);
       if (entryIndex >= 0) {
         entries.splice(entryIndex, 1);
@@ -395,8 +396,8 @@ const mockCommands: Record<string, CommandHandler> = {
   copy_entry: (args) => {
     const source = args.source as string;
     const destDir = args.destDir as string;
-    const name = source.substring(source.lastIndexOf("/") + 1);
-    const sourcePath = source.substring(0, source.lastIndexOf("/"));
+    const name = basename(source);
+    const sourcePath = parentDir(source);
     const sourceEntries = mockFiles[sourcePath] || [];
     const sourceEntry = sourceEntries.find((e) => e.path === source);
     if (!sourceEntry) throw new Error("Source not found");
@@ -411,8 +412,8 @@ const mockCommands: Record<string, CommandHandler> = {
   move_entry: (args) => {
     const source = args.source as string;
     const destDir = args.destDir as string;
-    const name = source.substring(source.lastIndexOf("/") + 1);
-    const sourcePath = source.substring(0, source.lastIndexOf("/"));
+    const name = basename(source);
+    const sourcePath = parentDir(source);
     const sourceEntries = mockFiles[sourcePath] || [];
     const entryIndex = sourceEntries.findIndex((e) => e.path === source);
     if (entryIndex < 0) throw new Error("Source not found");
@@ -446,7 +447,7 @@ const mockCommands: Record<string, CommandHandler> = {
 
   delete_entry_permanent: (args) => {
     const path = args.path as string;
-    const parentPath = path.substring(0, path.lastIndexOf("/"));
+    const parentPath = parentDir(path);
     const entries = mockFiles[parentPath] || [];
     const entryIndex = entries.findIndex((e) => e.path === path);
     if (entryIndex >= 0) {
@@ -656,6 +657,31 @@ const mockCommands: Record<string, CommandHandler> = {
   },
   git_watch_repo: () => null,
   git_unwatch_repo: () => null,
+
+  // ----- Clipboard file operations (os-clipboard.ts) -----
+
+  clipboard_read_files: () => [] as string[],
+
+  clipboard_write_files: () => true,
+
+  // ----- Commands that launch external processes (no-op in mock) -----
+
+  open_file_with: () => {},
+
+  open_in_terminal: () => {},
+
+  set_as_wallpaper: () => {},
+
+  // ----- Misc -----
+
+  get_log_dir: () => "/tmp/tauri-explorer/logs",
+
+  clipboard_paste_image: (args: Record<string, unknown>) => {
+    const directory = args.directory as string;
+    return `${directory}/clipboard-image.png`;
+  },
+
+  start_nano_banana_job: () => 1,
 };
 
 // In-memory config file store for mock mode

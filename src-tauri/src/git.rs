@@ -676,7 +676,9 @@ pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), App
     };
     let key = repo_root.to_string_lossy().to_string();
 
-    let mut map = watchers_map().lock().unwrap();
+    let mut map = watchers_map()
+        .lock()
+        .map_err(|e| AppError::Other(format!("git watchers lock poisoned: {e}")))?;
     if map.contains_key(&key) {
         return Ok(());
     }
@@ -694,7 +696,10 @@ pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), App
             if !relevant {
                 return;
             }
-            let mut last = last_emit.lock().unwrap();
+            let mut last = last_emit.lock().unwrap_or_else(|poisoned| {
+                log::error!("git watcher last_emit lock poisoned, recovering");
+                poisoned.into_inner()
+            });
             if last.elapsed() < Duration::from_millis(200) {
                 return;
             }
@@ -726,7 +731,10 @@ pub async fn git_unwatch_repo(repo_path: String) -> Result<(), AppError> {
             .unwrap_or(repo_path),
         Err(_) => repo_path,
     };
-    watchers_map().lock().unwrap().remove(&key);
+    watchers_map()
+        .lock()
+        .map_err(|e| AppError::Other(format!("git watchers lock poisoned: {e}")))?
+        .remove(&key);
     Ok(())
 }
 

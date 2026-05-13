@@ -10,6 +10,15 @@ vi.mock("@crabnebula/tauri-plugin-drag", () => ({
   startDrag: (...args: unknown[]) => startDragMock(...args),
 }));
 
+// `isMac` is a module-level constant in domain/platform.ts, evaluated once at
+// import time. To test platform-specific behavior we mock the module and update
+// the exported value per test via `mockIsMac`.
+let mockIsMac = false;
+vi.mock("$lib/domain/platform", () => ({
+  get isMac() { return mockIsMac; },
+  isCopyModifier: (e: { altKey: boolean; ctrlKey: boolean }) => mockIsMac ? e.altKey : e.ctrlKey,
+}));
+
 import { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
@@ -44,17 +53,10 @@ function makeExplorer(selected: FileEntry[]): ExplorerInstance {
 }
 
 describe("external drag-out", () => {
-  const originalPlatform = Object.getOwnPropertyDescriptor(Navigator.prototype, "platform");
-
   beforeEach(() => {
     startDragMock.mockReset();
+    mockIsMac = false;
     (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
-    // Default to non-Mac so native drag is invoked
-    Object.defineProperty(Navigator.prototype, "platform", { value: "Linux x86_64", configurable: true });
-  });
-
-  afterEach(() => {
-    if (originalPlatform) Object.defineProperty(Navigator.prototype, "platform", originalPlatform);
   });
 
   it("starts a native drag with the single entry path (non-Mac)", () => {
@@ -87,7 +89,7 @@ describe("external drag-out", () => {
   });
 
   it("skips native drag on macOS (WKWebView bridges HTML5 drag to native pasteboard)", () => {
-    Object.defineProperty(Navigator.prototype, "platform", { value: "MacIntel", configurable: true });
+    mockIsMac = true;
     const entry = makeEntry("/h/x.txt", "x.txt");
     const interactions = useItemInteractions({
       getExplorer: () => makeExplorer([entry]),
@@ -100,7 +102,7 @@ describe("external drag-out", () => {
   });
 
   it("sets text/uri-list with file:// URLs for external app drops", () => {
-    Object.defineProperty(Navigator.prototype, "platform", { value: "MacIntel", configurable: true });
+    mockIsMac = true;
     const entry = makeEntry("/h/my file.txt", "my file.txt");
     const interactions = useItemInteractions({
       getExplorer: () => makeExplorer([entry]),

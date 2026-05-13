@@ -4,21 +4,20 @@
 -->
 <script lang="ts">
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
-  import { dialogStore } from "$lib/state/dialogs.svelte";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
-  import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
-  import { useItemInteractions, isInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
+  import { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { getFileIconColor, isImageFile } from "$lib/domain/file-types";
 
-  const isMac = typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
+  import { isMac } from "$lib/domain/platform";
   import { settingsStore, THUMBNAIL_SIZE_CONFIG } from "$lib/state/settings.svelte";
-  import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
+  import EntryName from "./EntryName.svelte";
   import FileIcon from "./FileIcon.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
   import ThumbnailImage from "./ThumbnailImage.svelte";
   import InlineNewFolder from "./InlineNewFolder.svelte";
+  import ItemButton from "./ItemButton.svelte";
 
   import type { FileEntry } from "$lib/domain/file";
 
@@ -45,17 +44,6 @@
     folderViewsStore.getThumbnailSize(explorer.currentPath, settingsStore.thumbnailSize)
   );
   const tileConfig = $derived(THUMBNAIL_SIZE_CONFIG[effectiveThumbnailSize]);
-
-  // Inline rename composable
-  const rename = useInlineRename(() => explorer);
-
-  const renamingEntry = $derived(dialogStore.renamingEntry);
-
-  $effect(() => {
-    if (renamingEntry && rename.renameInputRef) {
-      rename.focusAndSelect(renamingEntry);
-    }
-  });
 
   // Progressive rendering to avoid UI freeze on large directories.
   // Only resets the render limit when entry count increases significantly
@@ -144,27 +132,7 @@
   {/if}
   {#each visibleTileEntries as entry (entry.path)}
     {@const iconColor = getFileIconColor(entry)}
-    <button
-      class="tile-item entry-item"
-      data-path={entry.path}
-      class:directory={entry.kind === "directory"}
-      class:selected={explorer.isSelected(entry)}
-      class:cut={isClipboardCut(entry)}
-      class:in-clipboard={isInClipboard(entry)}
-      class:hidden-entry={entry.name.startsWith(".") || manualHiddenStore.isHidden(explorer.currentPath, entry.name)}
-      class:drop-target={interactions.isDropTarget(entry.path)}
-      class:copy-drop={interactions.isCopyDrop(entry.path)}
-      draggable={!isMac}
-      onclick={(e) => onitemclick(entry, e)}
-      ondblclick={() => onitemdblclick(entry)}
-      oncontextmenu={(e) => interactions.handleContextMenu(e, entry)}
-      ondragstart={!isMac ? (e) => interactions.handleDragStart(e, entry, explorer.isSelected(entry)) : undefined}
-      ondragend={!isMac ? interactions.handleDragEnd : undefined}
-      ondragover={(e) => interactions.handleDragOver(e, entry)}
-      ondragleave={() => interactions.handleDragLeave(entry)}
-      ondrop={(e) => interactions.handleDrop(e, entry)}
-      onmousedown={isMac ? (e) => { e.stopPropagation(); pointerDrag!.handlePointerDown(e, entry, explorer.isSelected(entry)); } : undefined}
-    >
+    <ItemButton class="tile-item" {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
       <div class="tile-icon" style:color={iconColor}>
         {#if isImageFile(entry)}
           <ThumbnailImage path={entry.path} size={tileConfig.displaySize} genSize={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} />
@@ -172,25 +140,9 @@
           <FileIcon {entry} size="large" />
         {/if}
       </div>
-      {#if renamingEntry?.path === entry.path}
-        <!-- svelte-ignore a11y_autofocus -->
-        <textarea
-          class="rename-input tile-rename"
-          class:error={!!rename.renameError}
-          bind:value={rename.editedName}
-          bind:this={rename.renameInputRef}
-          onkeydown={(e) => rename.handleRenameKeydown(e, entry.name)}
-          onblur={() => rename.handleRenameBlur(entry.name)}
-          onclick={(e) => e.stopPropagation()}
-          disabled={rename.submittingRename}
-          rows="2"
-          autofocus
-        ></textarea>
-      {:else}
-        <span class="tile-name entry-name" title={entry.name}>{entry.name}</span>
-      {/if}
+      <EntryName {entry} {explorer} variant="tiles" />
       <GitStatusBadge entryName={entry.name} />
-    </button>
+    </ItemButton>
   {/each}
 </div>
 
@@ -206,11 +158,7 @@
     flex: 1;
   }
 
-  .tile-item:focus {
-    outline: none;
-  }
-
-  .tile-item {
+  .tiles-view :global(.tile-item) {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -228,52 +176,57 @@
     height: fit-content;
     min-width: 0;
     contain: layout style;
+    position: relative;
   }
 
-  .tile-item:hover {
+  .tiles-view :global(.tile-item:focus) {
+    outline: none;
+  }
+
+  .tiles-view :global(.tile-item:hover) {
     background: var(--subtle-fill-secondary);
     transition: background 120ms ease;
   }
 
-  .tile-item:active {
+  .tiles-view :global(.tile-item:active) {
     transform: scale(0.97);
   }
 
-  .tile-item.selected {
+  .tiles-view :global(.tile-item.selected) {
     background: color-mix(in srgb, var(--accent) 8%, transparent);
     border-color: transparent;
     border-bottom-color: var(--accent);
     border-radius: var(--radius-md) var(--radius-md) 2px 2px;
   }
 
-  .tile-item.selected:hover {
+  .tiles-view :global(.tile-item.selected:hover) {
     background: var(--subtle-fill-tertiary);
   }
 
-  .tile-item.hidden-entry {
+  .tiles-view :global(.tile-item.hidden-entry) {
     opacity: 0.55;
   }
 
-  .tile-item.cut {
+  .tiles-view :global(.tile-item.cut) {
     opacity: 0.5;
   }
 
-  .tile-item.in-clipboard:not(.cut) {
+  .tiles-view :global(.tile-item.in-clipboard:not(.cut)) {
     outline: 1px dashed var(--accent);
     outline-offset: -1px;
   }
 
-  .tile-item.drop-target {
+  .tiles-view :global(.tile-item.drop-target) {
     background: rgba(0, 120, 212, 0.15);
     box-shadow: inset 0 0 0 1px var(--accent);
   }
 
-  .tile-item.drop-target.copy-drop {
+  .tiles-view :global(.tile-item.drop-target.copy-drop) {
     background: rgba(16, 185, 129, 0.15);
     box-shadow: inset 0 0 0 1px #10b981;
   }
 
-  .tile-icon {
+  .tiles-view :global(.tile-icon) {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -285,61 +238,18 @@
   /* Scale file icons (64px SVGs) to fill the tile at medium/large sizes.
      Uses GPU-composited transform instead of re-rasterizing SVGs.
      Only targets direct children (FileIcon output), not nested thumbnail SVGs. */
-  .tile-icon > :global(svg),
-  .tile-icon > :global(.icon-cat),
-  .tile-icon > :global(.nf-icon-badge) {
+  .tiles-view :global(.tile-icon > svg),
+  .tiles-view :global(.tile-icon > .icon-cat),
+  .tiles-view :global(.tile-icon > .nf-icon-badge) {
     transform: scale(var(--tile-icon-scale, 1));
   }
 
-  .tile-name {
-    width: 100%;
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    text-overflow: ellipsis;
-    white-space: normal;
-    line-height: 1.4;
-    word-break: break-word;
-    overflow-wrap: break-word;
-    padding-top: 1px;
-  }
-
-  /* Inline rename input */
-  .rename-input {
-    flex: 1;
-    min-width: 0;
-    padding: 2px 6px;
-    margin: -3px 0;
-    background: var(--control-fill);
-    border: 1px solid var(--accent);
-    border-radius: var(--radius-sm);
-    font: inherit;
-    font-size: 13px;
-    color: var(--text-primary);
-    outline: none;
-  }
-
-  .rename-input.error {
-    border-color: var(--system-critical);
-  }
-
-  .rename-input.tile-rename {
-    width: 100%;
-    text-align: center;
-    resize: none;
-    line-height: 1.4;
-    word-break: break-word;
-    overflow-wrap: break-word;
-    font-size: 13px;
-  }
+  /* Name and rename styles are handled by EntryName component */
 
   /* Git status indicator — positioned top-right of tile */
-  :global(.tile-item .git-indicator) {
+  .tiles-view :global(.tile-item .git-indicator) {
     position: absolute;
     top: 4px;
     right: 6px;
   }
-
-  .tile-item { position: relative; }
 </style>

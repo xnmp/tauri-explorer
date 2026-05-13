@@ -960,7 +960,7 @@ export type GitStatusCode =
   | "Copied"
   | "Untracked"
   | "Ignored"
-  | "Conflicted"
+  | "Conflict"
   | "TypeChange";
 
 export interface GitFileEntry {

@@ -33,3 +33,30 @@ export function normalizePathInput(input: string): string {
 export function isDriveRoot(path: string): boolean {
   return /^[A-Za-z]:[\\/]?$/.test(path);
 }
+
+/**
+ * Return the parent directory of a path.
+ *
+ * `"/home/user/file.txt"` → `"/home/user"`
+ * `"/file.txt"`            → `"/"`
+ * `"file.txt"` (no slash)  → `"/"`
+ */
+export function parentDir(path: string): string {
+  const idx = path.lastIndexOf("/");
+  return idx > 0 ? path.substring(0, idx) : "/";
+}
+
+/**
+ * Return the last path segment (file or directory name).
+ *
+ * `"/home/user/file.txt"` → `"file.txt"`
+ * `"/home/user/"`         → `"user"` (trailing slash stripped)
+ * `"file.txt"`            → `"file.txt"`
+ * `"/"`                   → `"/"`
+ */
+export function basename(path: string): string {
+  // Strip a single trailing slash (but not the root `/` itself)
+  const cleaned = path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
+  const idx = cleaned.lastIndexOf("/");
+  return idx < 0 ? cleaned : cleaned.substring(idx + 1) || "/";
+}

@@ -35,11 +35,7 @@ export function broadcastFileChange(affectedDirs: string[]): void {
   channel.postMessage({ affectedDirs } satisfies FileChangeEvent);
 }
 
-/** Get the parent directory of a path. */
-export function parentDir(path: string): string {
-  const idx = path.lastIndexOf("/");
-  return idx > 0 ? path.substring(0, idx) : "/";
-}
+export { parentDir } from "$lib/domain/path";
 
 /** Cleanup on window close. */
 export function cleanupFileChangeListener(): void {

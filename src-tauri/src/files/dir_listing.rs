@@ -34,7 +34,9 @@ fn get_dir_cache() -> &'static Mutex<HashMap<String, CachedListing>> {
 /// Invalidate cache for a specific directory.
 #[tauri::command]
 pub fn invalidate_dir_cache(path: String) -> Result<(), AppError> {
-    let mut cache = get_dir_cache().lock().unwrap();
+    let mut cache = get_dir_cache()
+        .lock()
+        .map_err(|e| AppError::Other(format!("dir cache lock poisoned: {e}")))?;
     cache.remove(&path);
     Ok(())
 }
@@ -68,7 +70,9 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
 
     // Check cache first
     {
-        let cache = get_dir_cache().lock().unwrap();
+        let cache = get_dir_cache()
+            .lock()
+            .map_err(|e| AppError::Other(format!("dir cache lock poisoned: {e}")))?;
         if let Some(cached) = cache.get(&path) {
             if cached.cached_at.elapsed().as_secs() < CACHE_TTL_SECS {
                 log::debug!("list_directory: cache hit ({} entries)", cached.entries.len());
@@ -102,7 +106,9 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
 
     // Update cache
     {
-        let mut cache = get_dir_cache().lock().unwrap();
+        let mut cache = get_dir_cache()
+            .lock()
+            .map_err(|e| AppError::Other(format!("dir cache lock poisoned: {e}")))?;
         if cache.len() >= MAX_CACHE_ENTRIES {
             cache.retain(|_, v| v.cached_at.elapsed().as_secs() < CACHE_TTL_SECS);
         }

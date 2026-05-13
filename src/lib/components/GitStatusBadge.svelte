@@ -44,4 +44,7 @@
   .git-deleted { color: #ef4444; }
   .git-conflict { color: #ef4444; font-weight: 800; }
   .git-renamed { color: #60a5fa; }
+  .git-copied { color: #60a5fa; }
+  .git-ignored { color: #6b7280; }
+  .git-typechange { color: #a78bfa; }
 </style>

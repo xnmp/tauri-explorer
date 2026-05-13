@@ -10,7 +10,7 @@
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
-  import { compressToZip, extractArchive, openFile, openInTerminal, createSymlink, setAsWallpaper } from "$lib/api/files";
+  import { openFile } from "$lib/api/files";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { isImageFile } from "$lib/domain/file-types";
@@ -126,36 +126,27 @@
 
   async function handleExtractHere(): Promise<void> {
     if (!selectedArchive) return;
-    await extractArchive(selectedArchive.path, true);
-    explorer.refresh({ silent: true });
+    await explorer.extractArchive(selectedArchive.path, true);
     contextMenuStore.close();
   }
 
   async function handleExtractToFolder(): Promise<void> {
     if (!selectedArchive) return;
-    await extractArchive(selectedArchive.path, false);
-    explorer.refresh({ silent: true });
+    await explorer.extractArchive(selectedArchive.path, false);
     contextMenuStore.close();
   }
 
   async function handleCompress(): Promise<void> {
     const selected = explorer.getSelectedEntries();
     if (selected.length === 0) return;
-    await compressToZip(selected.map((e) => e.path));
-    explorer.refresh({ silent: true });
+    await explorer.compressToZip(selected.map((e) => e.path));
     contextMenuStore.close();
   }
 
   async function handleCreateSymlink(): Promise<void> {
     const entries = explorer.getSelectedEntries();
     if (entries.length !== 1) return;
-    const entry = entries[0];
-    const linkName = `${entry.name} - Link`;
-    const linkPath = `${explorer.currentPath}/${linkName}`;
-    const result = await createSymlink(entry.path, linkPath);
-    if (result.ok) {
-      explorer.refresh({ silent: true });
-    }
+    await explorer.createSymlink(entries[0].path);
     contextMenuStore.close();
   }
 
@@ -180,16 +171,12 @@
 
   async function handleSetAsWallpaper(): Promise<void> {
     if (!selectedImage) return;
-    const result = await setAsWallpaper(selectedImage.path);
-    if (!result.ok) {
-      console.error("[wallpaper] Failed to set wallpaper:", result.error);
-    }
+    await explorer.setAsWallpaper(selectedImage.path);
     contextMenuStore.close();
   }
 
   async function handleOpenInTerminal(): Promise<void> {
-    const path = selectedDirectory?.path ?? explorer.currentPath;
-    await openInTerminal(path, settingsStore.terminalApp);
+    await explorer.openInTerminal();
     contextMenuStore.close();
   }
 

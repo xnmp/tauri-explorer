@@ -5,6 +5,7 @@
 <script lang="ts">
   import { settingsStore, type IconTheme, type ThumbnailSize } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
+  import { isMac } from "$lib/domain/platform";
   import KeybindingsSettings from "./KeybindingsSettings.svelte";
 
   interface Props {
@@ -194,7 +195,7 @@
             </label>
           </div>
 
-          {#if navigator.platform.startsWith("Mac")}
+          {#if isMac}
           <div class="setting-row">
             <div class="setting-info">
               <span class="setting-label">Integrated Title Bar</span>

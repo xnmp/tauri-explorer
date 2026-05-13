@@ -5,6 +5,7 @@
 <script lang="ts">
   import { jobsStore, type Job } from "$lib/state/jobs.svelte";
   import { onMount } from "svelte";
+  import { basename } from "$lib/domain/path";
 
   interface Props {
     open: boolean;
@@ -125,7 +126,7 @@
                     <div class="job-error">{job.error}</div>
                   {/if}
                   {#if job.status === "completed" && job.outputPath}
-                    <div class="job-output">{job.outputPath.split("/").pop()}</div>
+                    <div class="job-output">{basename(job.outputPath)}</div>
                   {/if}
                 </div>
                 <div class="job-time">{formatElapsed(job)}</div>

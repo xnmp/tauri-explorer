@@ -155,7 +155,8 @@
     color: var(--text-primary);
     transition: background var(--transition-fast), opacity var(--transition-fast);
     position: relative;
-    min-height: 34px;
+    box-sizing: border-box;
+    height: 32px;
   }
 
   .file-item:hover {
@@ -278,15 +279,15 @@
   /* Drop target state - for drag-to-move */
   .file-item.drop-target {
     background: rgba(0, 120, 212, 0.15);
-    border-color: var(--accent);
-    box-shadow: inset 0 0 0 1px var(--accent);
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
   }
 
   /* Copy drop visual - green tint when Ctrl held */
   .file-item.drop-target.copy-drop {
     background: rgba(16, 185, 129, 0.15);
-    border-color: #10b981;
-    box-shadow: inset 0 0 0 1px #10b981;
+    outline: 1px solid #10b981;
+    outline-offset: -1px;
   }
 
 </style>

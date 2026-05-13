@@ -47,6 +47,7 @@ import { getSortPref, saveSortPref } from "./sort-prefs";
 import { pasteEntries, type PasteResult } from "./paste-operations";
 import { createDirectoryListing } from "./directory-listing";
 import { getAffectedDirs, undoActionLabel } from "./undo-helpers";
+import { renameThumbnailCache } from "$lib/state/thumbnail-cache";
 
 /** Core explorer state (per-pane) */
 interface ExplorerCoreState {
@@ -306,14 +307,17 @@ function createExplorerState(seed?: ExplorerSeed) {
     }
 
     const newFingerprint = entriesFingerprint(result.entries);
-    if (oldFingerprint === newFingerprint) {
+    // Compare against both the pre-fetch snapshot and the current entries.
+    // A local mutation may have updated entries while the fetch was in flight
+    // (inotify on Linux fires before the IPC response returns).
+    const currentFingerprint = entriesFingerprint(coreState.entries);
+    if (oldFingerprint === newFingerprint || currentFingerprint === newFingerprint) {
       if (!silent) {
         toastStore.show("Already up to date", "info", { duration: 1500 });
       }
       return;
     }
 
-    // Entries changed — update UI state in place without full navigateInternal reset
     coreState.entries = result.entries;
     updateWatch(result.path);
 
@@ -375,7 +379,12 @@ function createExplorerState(seed?: ExplorerSeed) {
   }
 
   function getSelectedEntries(): FileEntry[] {
-    return selection.getSelectedEntries(displayEntries, coreState.selectedPaths);
+    const entries = selection.getSelectedEntries(displayEntries, coreState.selectedPaths);
+    if (contextMenuExternalEntry && coreState.selectedPaths.has(contextMenuExternalEntry.path)) {
+      const alreadyIncluded = entries.some((e) => e.path === contextMenuExternalEntry!.path);
+      if (!alreadyIncluded) return [...entries, contextMenuExternalEntry];
+    }
+    return entries;
   }
 
   function selectByIndices(indices: number[], addToSelection: boolean = false) {
@@ -416,6 +425,7 @@ function createExplorerState(seed?: ExplorerSeed) {
 
     if (!settingsStore.confirmDelete) {
       const paths = arr.map((e) => e.path);
+      markLocalMutation();
       const result = arr.length === 1
         ? await deleteEntry(paths[0])
         : await deleteMultipleEntries(paths);
@@ -444,11 +454,14 @@ function createExplorerState(seed?: ExplorerSeed) {
     dialogStore.startDelete(arr, true);
   }
 
+  let contextMenuExternalEntry: FileEntry | null = null;
+
   function openContextMenu(x: number, y: number, entry?: FileEntry) {
     if (entry && !coreState.selectedPaths.has(entry.path)) {
       coreState.selectedPaths = new Set([entry.path]);
       coreState.selectionAnchorIndex = displayEntries.findIndex((e) => e.path === entry.path);
     }
+    contextMenuExternalEntry = entry && coreState.selectionAnchorIndex === -1 ? entry : null;
     contextMenuStore.open(x, y);
   }
 
@@ -459,6 +472,7 @@ function createExplorerState(seed?: ExplorerSeed) {
   async function createFolder(name: string): Promise<string | null> {
     if (!coreState.currentPath) return "No current directory";
 
+    markLocalMutation();
     const result = await createDirectory(coreState.currentPath, name);
 
     if (result.ok) {
@@ -491,10 +505,12 @@ function createExplorerState(seed?: ExplorerSeed) {
 
     const oldName = renamingEntry.name;
     const oldPath = renamingEntry.path;
+    markLocalMutation();
     const result = await apiRenameEntry(oldPath, newName);
 
     if (result.ok) {
       undoStore.push({ type: "rename", path: result.data.path, oldName, newName });
+      renameThumbnailCache(oldPath, result.data.path);
       coreState.entries = coreState.entries.map((e) => (e.path === oldPath ? result.data : e));
       clipboardStore.updatePath(oldPath, result.data);
       markLocalMutation();
@@ -516,8 +532,8 @@ function createExplorerState(seed?: ExplorerSeed) {
     const paths = entries.map((e) => e.path);
     let result: { ok: boolean; error?: string };
 
+    markLocalMutation();
     if (isPermanent) {
-      // Permanent delete: delete each entry one by one (no batch command)
       const errors: string[] = [];
       for (const path of paths) {
         const r = await deleteEntryPermanent(path);
@@ -531,7 +547,6 @@ function createExplorerState(seed?: ExplorerSeed) {
     }
 
     if (result.ok) {
-      // Only push to undo for trash operations (permanent deletes can't be undone)
       if (!isPermanent) {
         undoStore.push({ type: "delete", paths, parentDir: coreState.currentPath });
       }
@@ -656,6 +671,7 @@ function createExplorerState(seed?: ExplorerSeed) {
     if (clipboardContent) {
       const { entries, operation } = clipboardContent;
       const isCut = operation === "cut";
+      markLocalMutation();
       const error = await pasteEntries(
         entries.map((e) => ({ path: e.path, name: e.name, size: e.size, modified: e.modified })),
         isCut,
@@ -669,6 +685,7 @@ function createExplorerState(seed?: ExplorerSeed) {
     // Fall back to OS clipboard (files from external apps)
     const osContent = await clipboardStore.readOsFiles();
     if (osContent && osContent.paths.length > 0) {
+      markLocalMutation();
       const error = await pasteEntries(
         osContent.paths.map((p) => ({ path: p, name: p.split(/[/\\]/).pop() || p })),
         false,
@@ -680,8 +697,10 @@ function createExplorerState(seed?: ExplorerSeed) {
 
     // Fall back to clipboard image
     if (await clipboardHasImage()) {
+      markLocalMutation();
       const result = await clipboardPasteImage(coreState.currentPath);
       if (result.ok) {
+        markLocalMutation();
         await navigateInternal(coreState.currentPath);
         return null;
       }
@@ -696,20 +715,24 @@ function createExplorerState(seed?: ExplorerSeed) {
   // ===================
 
   async function undo(): Promise<string | null> {
+    markLocalMutation();
     const result = await undoStore.undo();
     if ("error" in result) return result.error;
 
     toastStore.show(`Undo: ${undoActionLabel(result.action)}`, "info");
+    markLocalMutation();
     await navigateInternal(coreState.currentPath);
     broadcastFileChange(getAffectedDirs(result.action));
     return null;
   }
 
   async function redo(): Promise<string | null> {
+    markLocalMutation();
     const result = await undoStore.redo();
     if ("error" in result) return result.error;
 
     toastStore.show(`Redo: ${undoActionLabel(result.action)}`, "info");
+    markLocalMutation();
     await navigateInternal(coreState.currentPath);
     broadcastFileChange(getAffectedDirs(result.action));
     return null;

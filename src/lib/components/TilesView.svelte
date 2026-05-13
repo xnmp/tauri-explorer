@@ -175,7 +175,8 @@
     color: var(--text-primary);
     height: fit-content;
     min-width: 0;
-    contain: layout style;
+    contain: layout style paint;
+    content-visibility: auto;
     position: relative;
   }
 

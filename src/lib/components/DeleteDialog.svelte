@@ -62,8 +62,12 @@
 
   function handleKeydown(event: KeyboardEvent) {
     if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
       handleCancel();
     } else if (event.key === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
       handleConfirm();
     }
   }

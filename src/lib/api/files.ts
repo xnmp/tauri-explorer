@@ -577,13 +577,24 @@ export async function getThumbnail(
   }
 }
 
+function dataUriToBlobUrl(dataUri: string): string {
+  const comma = dataUri.indexOf(",");
+  if (comma === -1) return dataUri;
+  const meta = dataUri.slice(0, comma);
+  const mimeMatch = meta.match(/data:([^;]+)/);
+  const mime = mimeMatch ? mimeMatch[1] : "image/jpeg";
+  const raw = atob(dataUri.slice(comma + 1));
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  return URL.createObjectURL(new Blob([bytes], { type: mime }));
+}
+
 /**
- * Get thumbnail as base64 data URI.
- * More efficient for display as it avoids additional file reads.
+ * Get thumbnail as blob URL.
  *
  * @param path - Full path to image file
  * @param size - Optional thumbnail size (default 128)
- * @returns Result with data URI (data:image/jpeg;base64,...) or error
+ * @returns Result with blob URL or error
  */
 export async function getThumbnailData(
   path: string,
@@ -592,18 +603,18 @@ export async function getThumbnailData(
 ): Promise<ApiResult<string>> {
   try {
     const dataUri = await invoke<string>("get_thumbnail_data", { path, size, quality });
-    return { ok: true, data: dataUri };
+    return { ok: true, data: dataUriToBlobUrl(dataUri) };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
 }
 
 /**
- * Get micro thumbnail (16x16) as base64 data URI for progressive loading.
+ * Get micro thumbnail (16x16) as blob URL for progressive loading.
  * Also pre-warms the full thumbnail cache as a side effect.
  *
  * @param path - Full path to image file
- * @returns Result with data URI (data:image/jpeg;base64,...) or error
+ * @returns Result with blob URL or error
  */
 export async function getMicroThumbnail(
   path: string,
@@ -612,7 +623,7 @@ export async function getMicroThumbnail(
 ): Promise<ApiResult<string>> {
   try {
     const dataUri = await invoke<string>("get_micro_thumbnail", { path, prewarmSize, prewarmQuality });
-    return { ok: true, data: dataUri };
+    return { ok: true, data: dataUriToBlobUrl(dataUri) };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }

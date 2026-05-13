@@ -44,12 +44,14 @@ export function useDropTarget(deps: DropTargetDeps) {
     const sourcePaths = getDropSourcePaths(event.dataTransfer);
     if (sourcePaths.length === 0) return;
 
+    const isCopy = isCopyModifier(event);
+
     dragState.clear();
 
     for (const sourcePath of sourcePaths) {
       if (sourcePath === entry.path) continue;
       if (entry.path.startsWith(sourcePath + "/")) continue;
-      await handleFileDrop(sourcePath, entry.path, isCopyModifier(event), {
+      await handleFileDrop(sourcePath, entry.path, isCopy, {
         onRefresh: deps.onRefresh,
       });
     }

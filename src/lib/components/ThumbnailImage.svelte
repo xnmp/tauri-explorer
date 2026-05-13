@@ -42,6 +42,8 @@
 </script>
 
 <script lang="ts">
+  import { getThumbnailCache, setThumbnailCache } from "$lib/state/thumbnail-cache";
+
   interface Props {
     path: string;
     /** Display size in px (CSS container dimensions) */
@@ -93,6 +95,18 @@
 
   async function loadProgressiveThumbnail() {
     const currentPath = path;
+    const currentKey = reloadKey;
+
+    // Check frontend cache (survives renames without backend re-generation)
+    const cached = getThumbnailCache(currentKey);
+    if (cached?.full) {
+      microUrl = cached.micro;
+      fullUrl = cached.full;
+      loading = false;
+      error = false;
+      return;
+    }
+
     loading = true;
     error = false;
     microUrl = null;
@@ -101,7 +115,6 @@
     // Stage 1: micro thumbnail (fast, pixelated preview)
     await microPool.acquire();
     try {
-      // Bail if path changed while queued
       if (currentPath !== path) return;
 
       const microResult = await getMicroThumbnail(currentPath, backendSize, quality);
@@ -133,6 +146,9 @@
 
     if (currentPath === path) {
       loading = false;
+      if (fullUrl || microUrl) {
+        setThumbnailCache(currentKey, { micro: microUrl, full: fullUrl });
+      }
     }
   }
 </script>
@@ -194,6 +210,7 @@
     border-radius: var(--radius-sm, 4px);
     background: var(--subtle-fill-secondary, rgba(0, 0, 0, 0.03));
     position: relative;
+    contain: strict;
   }
 
   .thumbnail-placeholder {
@@ -232,7 +249,6 @@
     border-radius: inherit;
     image-rendering: pixelated;
     image-rendering: -moz-crisp-edges;
-    filter: blur(1px);
   }
 
   .thumbnail-full {

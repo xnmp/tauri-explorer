@@ -2,10 +2,14 @@
 export function gitStatusLetter(status: string): string {
   switch (status) {
     case "Modified": return "M";
-    case "Untracked": return "U";
     case "Added": return "A";
     case "Deleted": return "D";
+    case "Renamed": return "R";
+    case "Copied": return "C";
+    case "Untracked": return "U";
+    case "Ignored": return "I";
     case "Conflict": return "!";
-    default: return "R";
+    case "TypeChange": return "T";
+    default: return "?";
   }
 }

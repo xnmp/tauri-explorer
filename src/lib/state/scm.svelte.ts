@@ -22,21 +22,23 @@ import {
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { gitStatusStore } from "./git-status.svelte";
 
-const EMPTY_SUMMARY: GitStatusSummary = {
-  is_repo: false,
-  repo_root: null,
-  branch: null,
-  detached: false,
-  staged: [],
-  changes: [],
-  untracked: [],
-  merge: [],
-};
+function emptySummary(): GitStatusSummary {
+  return {
+    is_repo: false,
+    repo_root: null,
+    branch: null,
+    detached: false,
+    staged: [],
+    changes: [],
+    untracked: [],
+    merge: [],
+  };
+}
 
 function createScmStore() {
   let activePath = $state<string>("");
   let repoRoot = $state<string | null>(null);
-  let summary = $state<GitStatusSummary>(EMPTY_SUMMARY);
+  let summary = $state<GitStatusSummary>(emptySummary());
   let loading = $state(false);
   let commitMessage = $state("");
   let amend = $state(false);
@@ -54,29 +56,25 @@ function createScmStore() {
 
   async function refresh(): Promise<void> {
     if (!repoRoot) {
-      summary = EMPTY_SUMMARY;
+      summary = emptySummary();
       return;
     }
     loading = true;
     const result = await gitSummary(repoRoot);
     loading = false;
-    summary = result.ok ? result.data : EMPTY_SUMMARY;
+    summary = result.ok ? result.data : emptySummary();
     gitStatusStore.refresh();
   }
 
   async function setActivePath(path: string): Promise<void> {
-    console.log("[SCM] setActivePath called:", path, "current:", activePath);
     if (path === activePath) return;
     activePath = path;
     const detected = await detectRepo(path);
-    console.log("[SCM] detectRepo result:", detected, "current repoRoot:", repoRoot, "activePath still:", activePath);
-    if (activePath !== path) { console.log("[SCM] stale path, bailing"); return; }
-    if (detected === repoRoot) { console.log("[SCM] repo unchanged, bailing"); return; }
+    if (activePath !== path) return;
+    if (detected === repoRoot) return;
 
-    console.log("[SCM] repo changed! old:", repoRoot, "new:", detected);
-    // tear down existing watcher
     if (watcherPath) {
-      try { await gitUnwatchRepo(watcherPath); } catch (e) { console.error("[SCM] unwatch error:", e); }
+      try { await gitUnwatchRepo(watcherPath); } catch { /* non-Tauri */ }
       watcherPath = null;
     }
     repoRoot = detected;
@@ -88,7 +86,6 @@ function createScmStore() {
       watcherPath = repoRoot;
     }
     await refresh();
-    console.log("[SCM] refresh done, is_repo:", summary.is_repo, "repoRoot:", repoRoot);
   }
 
   function filterToDir<T extends { path: string }>(entries: T[]): T[] {

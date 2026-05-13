@@ -118,7 +118,6 @@
   $effect(() => {
     const active = windowTabsManager.getActiveExplorer();
     const path = active?.currentPath;
-    console.log("[SCM $effect] path changed:", path);
     if (path) scmStore.setActivePath(path);
   });
 

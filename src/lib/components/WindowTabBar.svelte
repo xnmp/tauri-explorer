@@ -417,11 +417,15 @@
     transform: rotate(90deg) scale(0.9);
   }
 
-  /* Vibrancy: active tab merges into main content island */
+  /* Vibrancy: tab styling */
+  :global([data-vibrancy]) .tab {
+    border-radius: var(--vibrancy-island-radius) var(--vibrancy-island-radius) 0 0;
+    transition: background var(--transition-normal), color var(--transition-normal), opacity var(--transition-normal);
+  }
+
   :global([data-vibrancy]) .tab.active {
     background: var(--vibrancy-island-bg);
     border: none;
-    border-radius: var(--vibrancy-island-radius) var(--vibrancy-island-radius) 0 0;
     box-shadow:
       inset 0 0.5px 0 rgba(255, 255, 255, 0.20),
       0 0 0 0.5px rgba(255, 255, 255, 0.08);

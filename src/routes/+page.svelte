@@ -531,6 +531,8 @@
     background: var(--vibrancy-island-bg);
     box-shadow: var(--vibrancy-island-glow);
     overflow: hidden;
+    display: flex;
+    min-height: 0;
   }
 
   :global([data-vibrancy]) .theme-background-layer {

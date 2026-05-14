@@ -119,7 +119,13 @@
 
   .resize-handle:hover,
   .sidebar-container.resizing .resize-handle {
-    background: var(--accent);
+    background: linear-gradient(
+      to bottom,
+      transparent,
+      var(--accent) 40%,
+      var(--accent) 60%,
+      transparent
+    );
   }
 
   /* Vibrancy: sidebar as floating island */

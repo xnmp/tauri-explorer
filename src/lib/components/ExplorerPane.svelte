@@ -213,9 +213,9 @@
         }
       });
     }
-    // PageUp/PageDown: jump by PAGE_STEP items
+    // PageUp/PageDown: jump by PAGE_STEP items (skip if any modifier held — likely a command shortcut)
     const PAGE_STEP = 8;
-    if (event.key === "PageUp" || event.key === "PageDown") {
+    if ((event.key === "PageUp" || event.key === "PageDown") && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
       const entries = paneExplorer.displayEntries;
       if (entries.length === 0) return;

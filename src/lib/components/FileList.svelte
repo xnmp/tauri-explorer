@@ -363,7 +363,7 @@
     flex: 1;
     overflow: auto;
     position: relative;
-    background: var(--content-bg, transparent);
+    background: transparent;
     transition: background var(--transition-fast), box-shadow var(--transition-fast);
   }
 

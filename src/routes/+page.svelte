@@ -482,11 +482,14 @@
     z-index: 1;
   }
 
-  /* macOS native vibrancy mode: make surfaces transparent so NSVisualEffectView shows through */
+  /* macOS native vibrancy mode: floating islands on NSVisualEffectView */
   :global([data-vibrancy]) {
     --titlebar-opacity: 0;
     --sidebar-opacity: 0;
     --statusbar-opacity: 0;
+    --vibrancy-island-bg: rgba(30, 30, 32, 0.45);
+    --vibrancy-island-stroke: rgba(255, 255, 255, 0.10);
+    --vibrancy-island-radius: 12px;
   }
 
   :global([data-vibrancy]) :global(body) {
@@ -498,6 +501,15 @@
     background: transparent;
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
+  }
+
+  :global([data-vibrancy]) .main-content {
+    padding: 6px;
+    gap: 6px;
+  }
+
+  :global([data-vibrancy]) :global(.status-bar) {
+    box-shadow: none;
   }
 
   :global([data-vibrancy]) .theme-background-layer {

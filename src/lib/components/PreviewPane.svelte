@@ -595,4 +595,10 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
+  /* Vibrancy: flatten inside island */
+  :global([data-vibrancy]) .preview-pane {
+    background: transparent;
+    border-left-color: var(--vibrancy-island-stroke);
+  }
 </style>

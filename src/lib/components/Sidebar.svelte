@@ -121,4 +121,17 @@
   .sidebar-container.resizing .resize-handle {
     background: var(--accent);
   }
+
+  /* Vibrancy: sidebar as floating island */
+  :global([data-vibrancy]) .sidebar-container {
+    border-radius: var(--vibrancy-island-radius);
+    overflow: hidden;
+  }
+
+  :global([data-vibrancy]) .sidebar {
+    background: var(--vibrancy-island-bg);
+    border: 1px solid var(--vibrancy-island-stroke);
+    border-radius: var(--vibrancy-island-radius);
+    box-shadow: none;
+  }
 </style>

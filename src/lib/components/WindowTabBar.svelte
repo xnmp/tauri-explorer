@@ -416,4 +416,16 @@
   .new-tab-btn:active {
     transform: rotate(90deg) scale(0.9);
   }
+
+  /* Vibrancy: active tab merges into main content island */
+  :global([data-vibrancy]) .tab.active {
+    background: var(--vibrancy-island-bg);
+    border-color: var(--vibrancy-island-stroke);
+    border-bottom-color: transparent;
+    box-shadow: none;
+  }
+
+  :global([data-vibrancy]) .tab-area::after {
+    display: none;
+  }
 </style>

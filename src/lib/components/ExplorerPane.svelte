@@ -326,4 +326,12 @@
     min-height: 0;
     overflow: hidden;
   }
+
+  /* Vibrancy: flatten inside the island */
+  :global([data-vibrancy]) .explorer-pane {
+    background: transparent;
+    border-radius: 0;
+    border-color: transparent;
+    box-shadow: none;
+  }
 </style>

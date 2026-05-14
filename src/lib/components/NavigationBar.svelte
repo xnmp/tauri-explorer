@@ -546,4 +546,10 @@
     background: var(--subtle-fill-secondary);
     color: var(--text-primary);
   }
+
+  /* Vibrancy: subtle toolbar tint inside island */
+  :global([data-vibrancy]) .navigation-bar {
+    background: rgba(255, 255, 255, 0.04);
+    border-bottom-color: var(--vibrancy-island-stroke);
+  }
 </style>

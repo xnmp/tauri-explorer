@@ -145,4 +145,11 @@
     opacity: 1;
     background: var(--text-on-accent);
   }
+
+  /* Vibrancy: main content island */
+  :global([data-vibrancy]) .pane-container {
+    border-radius: var(--vibrancy-island-radius);
+    background: var(--vibrancy-island-bg);
+    border: 1px solid var(--vibrancy-island-stroke);
+  }
 </style>

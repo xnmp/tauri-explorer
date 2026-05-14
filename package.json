@@ -25,8 +25,7 @@
     "start": "bash scripts/dev.sh",
     "start:clean": "bash scripts/dev.sh --clean",
     "tauri": "tauri",
-    "build": "tauri build && fileicon set src-tauri/target/release/bundle/macos/tauri-explorer.app src-tauri/icons/icon.png",
-    "install-app": "sudo rm -rf /Applications/tauri-explorer.app && cp -R src-tauri/target/release/bundle/macos/tauri-explorer.app /Applications/ && sudo fileicon set /Applications/tauri-explorer.app src-tauri/icons/icon.png && killall Dock"
+    "install-app": "tauri build && sudo rm -rf /Applications/tauri-explorer.app && cp -R src-tauri/target/release/bundle/macos/tauri-explorer.app /Applications/ && fileicon set /Applications/tauri-explorer.app src-tauri/icons/icon.png && killall Dock"
   },
   "license": "MIT",
   "dependencies": {

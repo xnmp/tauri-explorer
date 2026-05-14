@@ -5,7 +5,7 @@
 
 import { dragState } from "$lib/state/drag.svelte";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
-import { resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights } from "./use-native-drop-target.svelte";
+import { resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights, type DropTargetResult } from "./use-native-drop-target.svelte";
 import { createDragGhost } from "./use-pointer-drag.svelte";
 import { settingsStore } from "$lib/state/settings.svelte";
 
@@ -54,6 +54,8 @@ export function useSidebarDrag() {
     ghostEl!.style.transform = "translate(-50%, -50%)";
 
     highlightTargetAtPoint(event.clientX, event.clientY);
+    const target = resolveDropTargetAtPoint(event.clientX, event.clientY);
+    document.body.style.cursor = target?.type === "sidebar" ? "copy" : "not-allowed";
   }
 
   function onMouseUp(event: MouseEvent): void {
@@ -90,6 +92,7 @@ export function useSidebarDrag() {
     window.removeEventListener("mouseup", onMouseUp, true);
     window.removeEventListener("keydown", onKeyDown);
     window.removeEventListener("blur", onCancel);
+    document.body.style.cursor = "";
     if (ghostEl) {
       ghostEl.remove();
       ghostEl = null;

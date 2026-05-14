@@ -1111,3 +1111,11 @@ export async function gitUnwatchRepo(repoPath: string): Promise<ApiResult<void>>
     return { ok: false, error: extractError(err) };
   }
 }
+
+export async function setWindowTheme(theme: "light" | "dark"): Promise<void> {
+  try {
+    await invoke<void>("set_window_theme", { theme });
+  } catch {
+    // Non-critical — only affects vibrancy appearance
+  }
+}

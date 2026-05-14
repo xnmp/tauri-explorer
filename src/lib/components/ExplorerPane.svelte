@@ -271,7 +271,7 @@
           staged={scmStore.activeDiff.staged}
         />
       {:else}
-        {#if settingsStore.millerLayers > 0}
+        {#if settingsStore.millerLayers > 0 && !(settingsStore.macOsVibrancy && !settingsStore.showSidebar)}
           <MillerColumns explorer={paneExplorer} />
         {/if}
         <FileList explorer={paneExplorer} />
@@ -325,5 +325,13 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
+  }
+
+  /* Vibrancy: flatten inside the island */
+  :global([data-vibrancy]) .explorer-pane {
+    background: transparent;
+    border-radius: 0;
+    border-color: transparent;
+    box-shadow: none;
   }
 </style>

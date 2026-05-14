@@ -63,6 +63,17 @@ fn get_launch_cwd(state: tauri::State<'_, LaunchCwd>) -> String {
     state.0.clone()
 }
 
+/// Set the window theme (light/dark) to sync NSAppearance with the app theme.
+#[tauri::command]
+async fn set_window_theme(window: tauri::Window, theme: String) {
+    let t = match theme.as_str() {
+        "light" => Some(tauri::Theme::Light),
+        "dark" => Some(tauri::Theme::Dark),
+        _ => None,
+    };
+    let _ = window.set_theme(t);
+}
+
 /// Get the log directory path so the frontend can display it in settings.
 #[tauri::command]
 fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
@@ -252,6 +263,8 @@ pub fn run(launch_dir: Option<String>) {
             wallpaper::set_as_wallpaper,
             // Nano Banana (AI image editing)
             nano_banana::start_nano_banana_job,
+            // Window appearance
+            set_window_theme,
         ])
         .setup(move |app| {
             let t_setup = std::time::Instant::now();

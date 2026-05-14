@@ -121,4 +121,22 @@
   .sidebar-container.resizing .resize-handle {
     background: var(--accent);
   }
+
+  /* Vibrancy: sidebar as floating island */
+  :global([data-vibrancy]) .sidebar-container {
+    border-radius: var(--vibrancy-island-radius);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    box-shadow:
+      inset 0 -0.5px 0 rgba(0, 0, 0, 0.15),
+      0 2px 8px rgba(0, 0, 0, 0.12),
+      0 8px 24px rgba(0, 0, 0, 0.08);
+    background: var(--vibrancy-island-bg);
+  }
+
+  :global([data-vibrancy]) .sidebar {
+    background: transparent;
+    border: none;
+    border-radius: var(--vibrancy-island-radius);
+    box-shadow: none;
+  }
 </style>

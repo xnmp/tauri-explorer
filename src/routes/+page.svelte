@@ -40,6 +40,12 @@
   import { gitStatusStore } from "$lib/state/git-status.svelte";
   import StatusBar from "$lib/components/StatusBar.svelte";
   import AnimatedBackground from "$lib/components/AnimatedBackground.svelte";
+  import MillerColumns from "$lib/components/MillerColumns.svelte";
+
+  const millerAsLeftIsland = $derived(
+    settingsStore.macOsVibrancy && !settingsStore.showSidebar && settingsStore.millerLayers > 0
+  );
+  const leftExplorer = $derived(windowTabsManager.getExplorer("left"));
 
   /** Convert a filesystem path to a URL usable in src/background-image. */
   function convertFileSrc(path: string): string {
@@ -256,9 +262,13 @@
 
 <main class="explorer">
   <TitleBar />
-  <div class="main-content">
+  <div class="main-content" class:no-sidebar={!settingsStore.showSidebar}>
     {#if settingsStore.showSidebar}
       <Sidebar />
+    {:else if millerAsLeftIsland && leftExplorer}
+      <div class="miller-island">
+        <MillerColumns explorer={leftExplorer} />
+      </div>
     {/if}
     {#if settingsStore.showGitStatus && settingsStore.showScmPanel}
       <ScmPanel />
@@ -482,11 +492,20 @@
     z-index: 1;
   }
 
-  /* macOS native vibrancy mode: make surfaces transparent so NSVisualEffectView shows through */
+  /* macOS native vibrancy mode: floating islands on NSVisualEffectView */
   :global([data-vibrancy]) {
     --titlebar-opacity: 0;
     --sidebar-opacity: 0;
     --statusbar-opacity: 0;
+    --vibrancy-island-bg: rgba(30, 30, 32, 0.35);
+    --vibrancy-island-stroke: rgba(255, 255, 255, 0.15);
+    --vibrancy-island-radius: 14px;
+    --vibrancy-island-glow:
+      inset 0 0.5px 0 rgba(255, 255, 255, 0.20),
+      inset 0 -0.5px 0 rgba(0, 0, 0, 0.15),
+      0 0 0 0.5px rgba(255, 255, 255, 0.08),
+      0 2px 8px rgba(0, 0, 0, 0.12),
+      0 8px 24px rgba(0, 0, 0, 0.08);
   }
 
   :global([data-vibrancy]) :global(body) {
@@ -498,6 +517,22 @@
     background: transparent;
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
+  }
+
+  :global([data-vibrancy]) .main-content {
+    padding: 0 6px 6px 6px;
+    gap: 8px;
+  }
+
+  /* Miller columns as left island (when sidebar hidden + vibrancy) */
+  .miller-island {
+    flex-shrink: 0;
+    border-radius: var(--vibrancy-island-radius);
+    background: var(--vibrancy-island-bg);
+    box-shadow: var(--vibrancy-island-glow);
+    overflow: hidden;
+    display: flex;
+    min-height: 0;
   }
 
   :global([data-vibrancy]) .theme-background-layer {

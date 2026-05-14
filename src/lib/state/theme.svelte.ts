@@ -10,7 +10,7 @@
  * All themes are auto-discovered from CSS at runtime.
  */
 
-import { listUserThemes } from "$lib/api/files";
+import { listUserThemes, setWindowTheme } from "$lib/api/files";
 import { loadPersisted } from "./persisted";
 import { settingsStore } from "./settings.svelte";
 
@@ -142,6 +142,8 @@ function createThemeState() {
           : 255;
         localStorage.setItem("explorer-bg-rgba", JSON.stringify([r, g, b, a]));
       }
+      const colorScheme = getComputedStyle(document.documentElement).colorScheme;
+      setWindowTheme(colorScheme === "light" ? "light" : "dark");
     });
   }
 

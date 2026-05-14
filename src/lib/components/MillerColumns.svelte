@@ -510,4 +510,9 @@
     color: var(--accent);
     opacity: 1;
   }
+
+  /* Vibrancy: flatten inside island */
+  :global([data-vibrancy]) .miller-columns {
+    background: transparent;
+  }
 </style>

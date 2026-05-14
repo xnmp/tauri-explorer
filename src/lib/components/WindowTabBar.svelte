@@ -8,14 +8,68 @@
 <script lang="ts">
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { tick } from "svelte";
 
   const tabs = $derived(windowTabsManager.tabs);
   const activeTabId = $derived(windowTabsManager.activeTabId);
 
+  let tabAreaRef = $state<HTMLElement | null>(null);
+
+  function updateTabGap() {
+    if (!tabAreaRef || !settingsStore.macOsVibrancy) return;
+    const activeEl = tabAreaRef.querySelector(
+      ".tab.active",
+    ) as HTMLElement | null;
+    const container = document.querySelector(
+      ".pane-container",
+    ) as HTMLElement | null;
+    if (!activeEl || !container) return;
+    const containerRect = container.getBoundingClientRect();
+    const tabRect = activeEl.getBoundingClientRect();
+    const radius =
+      parseFloat(getComputedStyle(container).borderTopLeftRadius) || 14;
+    const lineWidth = containerRect.width - radius * 2;
+    const left = Math.max(0, tabRect.left - containerRect.left - radius - 3);
+    const right = Math.min(
+      lineWidth,
+      tabRect.right - containerRect.left - radius,
+    );
+    container.style.setProperty(
+      "--tab-gap-left",
+      `${(left / lineWidth) * 100}%`,
+    );
+    container.style.setProperty(
+      "--tab-gap-right",
+      `${(right / lineWidth) * 100}%`,
+    );
+  }
+
+  $effect(() => {
+    activeTabId;
+    tabs.length;
+    settingsStore.showSidebar;
+    settingsStore.millerLayers;
+    settingsStore.showPreviewPane;
+    tick().then(updateTabGap);
+  });
+
+  $effect(() => {
+    if (!tabAreaRef) return;
+    const container = document.querySelector(".pane-container");
+    const observer = new ResizeObserver(updateTabGap);
+    observer.observe(tabAreaRef);
+    if (container) observer.observe(container);
+    return () => observer.disconnect();
+  });
+
   // Show the tab strip whenever there are multiple tabs, OR when window controls
   // are enabled (Windows 11 style — the tab strip hosts the controls, so it must
   // remain visible even with one tab).
-  const showTabArea = $derived(settingsStore.integratedTitleBar || tabs.length > 1 || settingsStore.showWindowControls);
+  const showTabArea = $derived(
+    settingsStore.integratedTitleBar ||
+      tabs.length > 1 ||
+      settingsStore.showWindowControls,
+  );
 
   // Track tab IDs that existed on first render to skip entrance animation
   let knownTabIds = new Set(windowTabsManager.tabs.map((t) => t.id));
@@ -109,7 +163,7 @@
 </script>
 
 {#if showTabArea}
-  <div class="tab-area" role="tablist">
+  <div class="tab-area" role="tablist" bind:this={tabAreaRef}>
     {#each tabs as tab (tab.id)}
       <div
         class="tab"
@@ -132,8 +186,16 @@
         ondrop={(e) => handleTabDrop(e, tab.id)}
         ondragend={handleTabDragEnd}
       >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="tab-icon">
-          <path d="M2 3.5C2 2.67 2.67 2 3.5 2H6.17L8 3.83H12.5C13.33 3.83 14 4.5 14 5.33V12.5C14 13.33 13.33 14 12.5 14H3.5C2.67 14 2 13.33 2 12.5V3.5Z"/>
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 16 16"
+          fill="none"
+          class="tab-icon"
+        >
+          <path
+            d="M2 3.5C2 2.67 2.67 2 3.5 2H6.17L8 3.83H12.5C13.33 3.83 14 4.5 14 5.33V12.5C14 13.33 13.33 14 12.5 14H3.5C2.67 14 2 13.33 2 12.5V3.5Z"
+          />
         </svg>
         <span class="tab-title">{windowTabsManager.getTabTitle(tab)}</span>
         <button
@@ -143,7 +205,12 @@
           title="Close"
         >
           <svg width="10" height="10" viewBox="0 0 10 10">
-            <path d="M2 2L8 8M8 2L2 8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+            <path
+              d="M2 2L8 8M8 2L2 8"
+              stroke="currentColor"
+              stroke-width="1.25"
+              stroke-linecap="round"
+            />
           </svg>
         </button>
       </div>
@@ -156,7 +223,12 @@
       title="New Tab (Ctrl+T)"
     >
       <svg width="12" height="12" viewBox="0 0 12 12">
-        <path d="M6 2V10M2 6H10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        <path
+          d="M6 2V10M2 6H10"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+        />
       </svg>
     </button>
   </div>
@@ -415,5 +487,28 @@
 
   .new-tab-btn:active {
     transform: rotate(90deg) scale(0.9);
+  }
+
+  /* Vibrancy: tab styling */
+  :global([data-vibrancy]) .tab {
+    border-radius: var(--vibrancy-island-radius) var(--vibrancy-island-radius) 0
+      0;
+    transition:
+      background var(--transition-normal),
+      color var(--transition-normal),
+      opacity var(--transition-normal);
+  }
+
+  :global([data-vibrancy]) .tab-area::after {
+    display: none;
+  }
+
+  :global([data-vibrancy]) .tab.active {
+    background: var(--vibrancy-island-bg);
+    border: none;
+    box-shadow:
+      inset 0 0.5px 0 rgba(255, 255, 255, 0.2),
+      0 0 0 0.5px rgba(255, 255, 255, 0.08);
+    transform: none;
   }
 </style>

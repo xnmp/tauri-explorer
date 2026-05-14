@@ -187,4 +187,14 @@
     outline: 2px solid var(--focus-stroke-outer);
     outline-offset: -2px;
   }
+
+  /* Vibrancy: titlebar floats above island, no bottom divider */
+  :global([data-vibrancy]) .titlebar {
+    position: relative;
+    z-index: 2;
+    box-shadow: none;
+  }
+  :global([data-vibrancy]) .titlebar::before {
+    display: none;
+  }
 </style>

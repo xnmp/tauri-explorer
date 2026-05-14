@@ -546,4 +546,10 @@
     background: var(--subtle-fill-secondary);
     color: var(--text-primary);
   }
+
+  /* Vibrancy: transparent inside island */
+  :global([data-vibrancy]) .navigation-bar {
+    background: transparent;
+    border-bottom-color: rgba(255, 255, 255, 0.06);
+  }
 </style>

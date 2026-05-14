@@ -187,4 +187,5 @@
     );
     pointer-events: none;
   }
+
 </style>

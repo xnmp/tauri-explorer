@@ -8,9 +8,39 @@
 <script lang="ts">
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { tick } from "svelte";
 
   const tabs = $derived(windowTabsManager.tabs);
   const activeTabId = $derived(windowTabsManager.activeTabId);
+
+  let tabAreaRef = $state<HTMLElement | null>(null);
+
+  function updateTabGap() {
+    if (!tabAreaRef || !settingsStore.macOsVibrancy) return;
+    const activeEl = tabAreaRef.querySelector(".tab.active") as HTMLElement | null;
+    const container = document.querySelector(".pane-container") as HTMLElement | null;
+    if (!activeEl || !container) return;
+    const containerRect = container.getBoundingClientRect();
+    const tabRect = activeEl.getBoundingClientRect();
+    const containerWidth = containerRect.width - 28; // account for border-radius inset
+    const left = Math.max(0, tabRect.left - containerRect.left - 14);
+    const right = Math.min(containerWidth, tabRect.right - containerRect.left - 14);
+    container.style.setProperty("--tab-gap-left", `${(left / containerWidth) * 100}%`);
+    container.style.setProperty("--tab-gap-right", `${(right / containerWidth) * 100}%`);
+  }
+
+  $effect(() => {
+    activeTabId;
+    tabs.length;
+    tick().then(updateTabGap);
+  });
+
+  $effect(() => {
+    if (!tabAreaRef) return;
+    const observer = new ResizeObserver(updateTabGap);
+    observer.observe(tabAreaRef);
+    return () => observer.disconnect();
+  });
 
   // Show the tab strip whenever there are multiple tabs, OR when window controls
   // are enabled (Windows 11 style — the tab strip hosts the controls, so it must
@@ -109,7 +139,7 @@
 </script>
 
 {#if showTabArea}
-  <div class="tab-area" role="tablist">
+  <div class="tab-area" role="tablist" bind:this={tabAreaRef}>
     {#each tabs as tab (tab.id)}
       <div
         class="tab"
@@ -430,8 +460,6 @@
       inset 0 0.5px 0 rgba(255, 255, 255, 0.20),
       0 0 0 0.5px rgba(255, 255, 255, 0.08);
     transform: none;
-    margin-bottom: -1px;
-    padding-bottom: 1px;
   }
 
   :global([data-vibrancy]) .tab-area::after {

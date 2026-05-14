@@ -104,7 +104,7 @@ function createGhost(name: string): HTMLElement {
   el.style.cssText = `
     position: fixed;
     pointer-events: none;
-    z-index: 9999;
+    z-index: 2147483647;
     background: var(--surface-elevated, #2a2a2a);
     border: 1px solid var(--border-subtle, #444);
     border-radius: 6px;

@@ -105,3 +105,8 @@
   /* --icon-document: #505050; */
   /* --theme-icon-pack: 'default'; themes can suggest: 'default', 'material', 'minimal' */
 }
+
+[data-theme="light"][data-vibrancy] {
+  --vibrancy-island-bg: rgba(255, 255, 255, 0.55);
+  --vibrancy-island-stroke: rgba(0, 0, 0, 0.12);
+}

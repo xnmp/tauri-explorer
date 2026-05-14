@@ -97,3 +97,8 @@
   --icon-folder: #b58900;
   /* --icon-file-tint: unset; when set, overrides all file icon colors */
 }
+
+[data-theme="solarized-light"][data-vibrancy] {
+  --vibrancy-island-bg: rgba(253, 246, 227, 0.55);
+  --vibrancy-island-stroke: rgba(0, 0, 0, 0.10);
+}

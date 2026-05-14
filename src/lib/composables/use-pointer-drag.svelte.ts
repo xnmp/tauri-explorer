@@ -47,7 +47,6 @@ export function usePointerDrag(deps: PointerDragDeps) {
   function handlePointerDown(event: MouseEvent, entry: FileEntry, isSelected: boolean): void {
     if (event.button !== 0) return;
     event.preventDefault();
-    console.log("[pointer-drag] handlePointerDown", entry.name, { isSelected, button: event.button });
 
     const explorer = deps.getExplorer();
     const selectedEntries = explorer.getSelectedEntries();
@@ -77,10 +76,8 @@ export function usePointerDrag(deps: PointerDragDeps) {
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist < THRESHOLD_PX) return;
       dragActive = true;
-      console.log("[pointer-drag] threshold crossed, creating ghost", { dist, paths: dragPaths });
       dragState.start(entryData!);
       ghostEl = createGhost(dragPaths, sourceEl || undefined);
-      console.log("[pointer-drag] ghost created", ghostEl, { parent: ghostEl.parentElement?.tagName, display: ghostEl.style.display });
     }
 
     const zoom = getZoomFactor();
@@ -125,7 +122,6 @@ export function usePointerDrag(deps: PointerDragDeps) {
   }
 
   async function onMouseUp(event: MouseEvent): Promise<void> {
-    console.log("[pointer-drag] onMouseUp", { dragActive, button: event.button, type: event.type, isTrusted: event.isTrusted });
     if (!dragActive) {
       cleanup(false);
       return;
@@ -175,7 +171,6 @@ export function usePointerDrag(deps: PointerDragDeps) {
   }
 
   function onCancel(): void {
-    console.log("[pointer-drag] onCancel (blur)", { dragActive });
     if (dragActive) clearHighlights();
     cleanup(true);
   }
@@ -188,7 +183,6 @@ export function usePointerDrag(deps: PointerDragDeps) {
   }
 
   function cleanup(clearDrag: boolean): void {
-    console.log("[pointer-drag] cleanup", { clearDrag, hadGhost: !!ghostEl, dragActive });
     removeListeners();
     if (ghostEl) {
       ghostEl.remove();

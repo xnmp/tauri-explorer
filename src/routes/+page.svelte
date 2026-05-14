@@ -40,6 +40,12 @@
   import { gitStatusStore } from "$lib/state/git-status.svelte";
   import StatusBar from "$lib/components/StatusBar.svelte";
   import AnimatedBackground from "$lib/components/AnimatedBackground.svelte";
+  import MillerColumns from "$lib/components/MillerColumns.svelte";
+
+  const millerAsLeftIsland = $derived(
+    settingsStore.macOsVibrancy && !settingsStore.showSidebar && settingsStore.millerLayers > 0
+  );
+  const leftExplorer = $derived(windowTabsManager.getExplorer("left"));
 
   /** Convert a filesystem path to a URL usable in src/background-image. */
   function convertFileSrc(path: string): string {
@@ -259,6 +265,10 @@
   <div class="main-content" class:no-sidebar={!settingsStore.showSidebar}>
     {#if settingsStore.showSidebar}
       <Sidebar />
+    {:else if millerAsLeftIsland && leftExplorer}
+      <div class="miller-island">
+        <MillerColumns explorer={leftExplorer} />
+      </div>
     {/if}
     {#if settingsStore.showGitStatus && settingsStore.showScmPanel}
       <ScmPanel />
@@ -514,14 +524,13 @@
     gap: 8px;
   }
 
-  /* When no sidebar: miller columns appear as a separate left island */
-  :global([data-vibrancy]) .main-content.no-sidebar :global(.pane-content) {
-    gap: 8px;
-  }
-  :global([data-vibrancy]) .main-content.no-sidebar :global(.miller-columns) {
-    background: var(--vibrancy-island-bg);
+  /* Miller columns as left island (when sidebar hidden + vibrancy) */
+  .miller-island {
+    flex-shrink: 0;
     border-radius: var(--vibrancy-island-radius);
+    background: var(--vibrancy-island-bg);
     box-shadow: var(--vibrancy-island-glow);
+    overflow: hidden;
   }
 
   :global([data-vibrancy]) .theme-background-layer {

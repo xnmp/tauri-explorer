@@ -271,7 +271,7 @@
           staged={scmStore.activeDiff.staged}
         />
       {:else}
-        {#if settingsStore.millerLayers > 0}
+        {#if settingsStore.millerLayers > 0 && !(settingsStore.macOsVibrancy && !settingsStore.showSidebar)}
           <MillerColumns explorer={paneExplorer} />
         {/if}
         <FileList explorer={paneExplorer} />

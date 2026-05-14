@@ -112,6 +112,11 @@ for (const viewMode of VIEW_MODES) {
       });
 
       test("drag selection selects files within rectangle", async ({ page }) => {
+        // Navigate to a directory with few items so there's always empty background space
+        await page.goto("/?path=/home/user/Downloads");
+        await waitForEntries(page);
+        if (viewMode !== "details") await switchViewMode(page, viewMode);
+
         const files = page.locator(".entry-item");
         const count = await files.count();
         if (count < 2) { test.skip(); return; }
@@ -120,12 +125,16 @@ for (const viewMode of VIEW_MODES) {
         const box = await content.boundingBox();
         if (!box) { test.skip(); return; }
 
+        const lastItem = files.last();
+        const lastBox = await lastItem.boundingBox();
+        if (!lastBox) { test.skip(); return; }
+
         const startX = box.x + 50;
-        const startY = box.y + box.height - 20;
+        const startY = lastBox.y + lastBox.height + 10;
 
         await page.mouse.move(startX, startY);
         await page.mouse.down();
-        await page.mouse.move(startX + 200, box.y + 100);
+        await page.mouse.move(startX + 200, box.y + 10);
         await page.mouse.up();
 
         await page.waitForTimeout(100);

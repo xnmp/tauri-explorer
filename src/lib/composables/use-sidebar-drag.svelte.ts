@@ -6,6 +6,7 @@
 import { dragState } from "$lib/state/drag.svelte";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights } from "./use-native-drop-target.svelte";
+import { createDragGhost } from "./use-pointer-drag.svelte";
 import { settingsStore } from "$lib/state/settings.svelte";
 
 const THRESHOLD_PX = 5;
@@ -18,10 +19,14 @@ export function useSidebarDrag() {
   let startY = 0;
   let ghostEl: HTMLElement | null = null;
 
+  let sourceEl: HTMLElement | null = null;
+
   function handlePointerDown(event: MouseEvent, path: string, name: string): void {
     if (event.button !== 0) return;
+    event.preventDefault();
     dragPath = path;
     dragName = name;
+    sourceEl = (event.currentTarget as HTMLElement) || null;
     startX = event.clientX;
     startY = event.clientY;
     dragActive = false;
@@ -40,12 +45,14 @@ export function useSidebarDrag() {
       if (Math.sqrt(dx * dx + dy * dy) < THRESHOLD_PX) return;
       dragActive = true;
       dragState.start({ path: dragPath, name: dragName, kind: "directory" });
-      ghostEl = createGhost(dragName);
+      ghostEl = createDragGhost(sourceEl, dragName);
     }
 
     const zoom = settingsStore.zoomLevel / 100;
-    ghostEl!.style.left = `${(event.clientX + 12) / zoom}px`;
-    ghostEl!.style.top = `${(event.clientY + 12) / zoom}px`;
+    const gw = ghostEl!.offsetWidth || 0;
+    const gh = ghostEl!.offsetHeight || 0;
+    ghostEl!.style.left = `${event.clientX / zoom - gw / 2}px`;
+    ghostEl!.style.top = `${event.clientY / zoom - gh / 2}px`;
 
     highlightTargetAtPoint(event.clientX, event.clientY);
   }
@@ -88,6 +95,7 @@ export function useSidebarDrag() {
       ghostEl.remove();
       ghostEl = null;
     }
+    sourceEl = null;
     if (clearDrag) dragState.clear();
     dragActive = false;
     dragPath = "";
@@ -97,28 +105,3 @@ export function useSidebarDrag() {
   return { handlePointerDown };
 }
 
-function createGhost(name: string): HTMLElement {
-  const el = document.createElement("div");
-  el.className = "pointer-drag-ghost";
-  el.textContent = name;
-  el.style.cssText = `
-    position: fixed;
-    pointer-events: none;
-    z-index: 2147483647;
-    background: var(--surface-elevated, #2a2a2a);
-    border: 1px solid var(--border-subtle, #444);
-    border-radius: 6px;
-    padding: 4px 10px;
-    font-size: 13px;
-    font-family: inherit;
-    color: var(--text-primary, #eee);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    opacity: 0.92;
-    white-space: nowrap;
-    max-width: 200px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  `;
-  document.body.appendChild(el);
-  return el;
-}

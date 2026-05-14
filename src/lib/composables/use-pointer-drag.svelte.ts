@@ -77,7 +77,8 @@ export function usePointerDrag(deps: PointerDragDeps) {
       if (dist < THRESHOLD_PX) return;
       dragActive = true;
       dragState.start(entryData!);
-      ghostEl = createGhost(dragPaths, sourceEl || undefined);
+      const fallback = dragPaths.length > 1 ? `${dragPaths.length} items` : basename(dragPaths[0]);
+      ghostEl = createDragGhost(sourceEl, fallback);
     }
 
     const zoom = getZoomFactor();
@@ -199,7 +200,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
   return { handlePointerDown };
 }
 
-function createGhost(paths: string[], sourceEl?: HTMLElement): HTMLElement {
+export function createDragGhost(sourceEl?: HTMLElement | null, fallbackText?: string): HTMLElement {
   const el = document.createElement("div");
   el.className = "pointer-drag-ghost";
 
@@ -208,9 +209,8 @@ function createGhost(paths: string[], sourceEl?: HTMLElement): HTMLElement {
     clone.style.cssText = "position: static; margin: 0; background: none; border: none; box-shadow: none; outline: none; padding: 0;";
     clone.style.width = sourceEl.offsetWidth + "px";
     el.appendChild(clone);
-  } else {
-    const name = basename(paths[0]);
-    el.textContent = paths.length > 1 ? `${paths.length} items` : name;
+  } else if (fallbackText) {
+    el.textContent = fallbackText;
   }
 
   el.style.cssText = `

@@ -306,9 +306,10 @@
                 <path d="M8 2V10M8 10L5 7M8 10L11 7M3 12H13" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
             {:else if folder.icon === "document"}
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: {folder.color}">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: {folder.color}">
                 <path d="M4 2C4 1.44772 4.44772 1 5 1H11L15 5V14C15 14.5523 14.5523 15 14 15H5C4.44772 15 4 14.5523 4 14V2Z" stroke="currentColor" stroke-width="1.25"/>
                 <path d="M11 1V4C11 4.55228 11.4477 5 12 5H15" stroke="currentColor" stroke-width="1.25"/>
+                <path d="M6.5 7.5H12.5M6.5 10H12.5M6.5 12.5H10" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
               </svg>
             {:else if folder.icon === "picture"}
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: {folder.color}">

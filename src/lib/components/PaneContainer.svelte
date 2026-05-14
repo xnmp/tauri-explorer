@@ -149,7 +149,7 @@
   :global([data-vibrancy]) .pane-container {
     border-radius: var(--vibrancy-island-radius);
     background: var(--vibrancy-island-bg);
-    border: 1px solid rgba(255, 255, 255, 0.15);
+    border: 1px solid var(--vibrancy-island-stroke);
     border-top: none;
     box-shadow:
       inset 0 -0.5px 0 rgba(0, 0, 0, 0.15),
@@ -165,7 +165,7 @@
     left: var(--vibrancy-island-radius);
     right: var(--vibrancy-island-radius);
     height: 1px;
-    background: rgba(255, 255, 255, 0.15);
+    background: var(--vibrancy-island-stroke);
     mask-image: linear-gradient(
       to right,
       white 0%,

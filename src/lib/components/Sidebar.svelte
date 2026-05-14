@@ -125,7 +125,7 @@
   /* Vibrancy: sidebar as floating island */
   :global([data-vibrancy]) .sidebar-container {
     border-radius: var(--vibrancy-island-radius);
-    border: 1px solid rgba(255, 255, 255, 0.15);
+    border: 1px solid var(--vibrancy-island-stroke);
     box-shadow:
       inset 0 -0.5px 0 rgba(0, 0, 0, 0.15),
       0 2px 8px rgba(0, 0, 0, 0.12),

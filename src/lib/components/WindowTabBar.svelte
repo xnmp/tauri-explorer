@@ -507,8 +507,8 @@
     background: var(--vibrancy-island-bg);
     border: none;
     box-shadow:
-      inset 0 0.5px 0 rgba(255, 255, 255, 0.2),
-      0 0 0 0.5px rgba(255, 255, 255, 0.08);
+      inset 0 0.5px 0 var(--vibrancy-island-stroke),
+      0 0 0 0.5px var(--vibrancy-island-stroke);
     transform: none;
   }
 </style>

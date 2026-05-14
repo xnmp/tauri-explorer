@@ -210,6 +210,21 @@
               <span class="toggle-slider"></span>
             </label>
           </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Window Vibrancy</span>
+              <span class="setting-description">Native macOS translucent frosted-glass effect (requires restart)</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.macOsVibrancy}
+                onchange={() => settingsStore.update({ macOsVibrancy: !settingsStore.macOsVibrancy })}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
           {/if}
 
           <div class="setting-row">

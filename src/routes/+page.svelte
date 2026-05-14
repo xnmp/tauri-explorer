@@ -166,6 +166,15 @@
     document.documentElement.style.setProperty("--bg-opacity", String(opacity));
   });
 
+  // Apply vibrancy mode attribute (drives CSS transparency for native macOS vibrancy)
+  $effect(() => {
+    if (settingsStore.macOsVibrancy) {
+      document.documentElement.setAttribute("data-vibrancy", "");
+    } else {
+      document.documentElement.removeAttribute("data-vibrancy");
+    }
+  });
+
   onMount(() => {
     const t0 = performance.now();
     performance.mark("app-mount-start");
@@ -471,5 +480,27 @@
     overflow: hidden;
     position: relative;
     z-index: 1;
+  }
+
+  /* macOS native vibrancy mode: make surfaces transparent so NSVisualEffectView shows through */
+  :global([data-vibrancy]) {
+    --titlebar-opacity: 0;
+    --sidebar-opacity: 0;
+    --statusbar-opacity: 0;
+  }
+
+  :global([data-vibrancy]) :global(body) {
+    background: transparent;
+    box-shadow: none;
+  }
+
+  :global([data-vibrancy]) .explorer {
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  :global([data-vibrancy]) .theme-background-layer {
+    display: none;
   }
 </style>

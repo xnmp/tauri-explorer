@@ -291,7 +291,7 @@
     min-width: 0;
     overflow: hidden;
     background: color-mix(in srgb, var(--background-card) calc(var(--content-opacity, 1) * 100%), transparent);
-    border-radius: var(--radius-md);
+    border-radius: 0;
     border: 1px solid transparent;
     transition:
       border-color var(--transition-fast),

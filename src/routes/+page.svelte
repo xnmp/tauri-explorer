@@ -511,7 +511,7 @@
 
   :global([data-vibrancy]) .main-content {
     padding: 0 6px 6px 6px;
-    gap: 6px;
+    gap: 8px;
   }
 
   :global([data-vibrancy]) .theme-background-layer {

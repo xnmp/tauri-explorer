@@ -37,6 +37,21 @@
 
   let paneRef = $state<HTMLElement | null>(null);
 
+  // Prevent default scroll on arrow keys in capture phase (WKWebView scrolls
+  // before bubble-phase handlers can preventDefault).
+  $effect(() => {
+    const el = paneRef;
+    if (!el) return;
+    function captureArrows(e: KeyboardEvent) {
+      if (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag !== "INPUT" && tag !== "TEXTAREA") e.preventDefault();
+      }
+    }
+    el.addEventListener("keydown", captureArrows, true);
+    return () => el.removeEventListener("keydown", captureArrows, true);
+  });
+
   // Fetch git status when directory changes and setting is enabled.
   // untrack the fetch call to avoid $state reads inside fetchForDirectory
   // from becoming effect dependencies (would cause infinite loop).

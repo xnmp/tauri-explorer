@@ -256,7 +256,7 @@
 
 <main class="explorer">
   <TitleBar />
-  <div class="main-content">
+  <div class="main-content" class:no-sidebar={!settingsStore.showSidebar}>
     {#if settingsStore.showSidebar}
       <Sidebar />
     {/if}
@@ -512,6 +512,16 @@
   :global([data-vibrancy]) .main-content {
     padding: 0 6px 6px 6px;
     gap: 8px;
+  }
+
+  /* When no sidebar: miller columns appear as a separate left island */
+  :global([data-vibrancy]) .main-content.no-sidebar :global(.pane-content) {
+    gap: 8px;
+  }
+  :global([data-vibrancy]) .main-content.no-sidebar :global(.miller-columns) {
+    background: var(--vibrancy-island-bg);
+    border-radius: var(--vibrancy-island-radius);
+    box-shadow: var(--vibrancy-island-glow);
   }
 
   :global([data-vibrancy]) .theme-background-layer {

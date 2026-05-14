@@ -49,10 +49,9 @@ export function useSidebarDrag() {
     }
 
     const zoom = settingsStore.zoomLevel / 100;
-    const gw = ghostEl!.offsetWidth || 0;
-    const gh = ghostEl!.offsetHeight || 0;
-    ghostEl!.style.left = `${event.clientX / zoom - gw / 2}px`;
-    ghostEl!.style.top = `${event.clientY / zoom - gh / 2}px`;
+    ghostEl!.style.left = `${event.clientX / zoom}px`;
+    ghostEl!.style.top = `${event.clientY / zoom}px`;
+    ghostEl!.style.transform = "translate(-50%, -50%)";
 
     highlightTargetAtPoint(event.clientX, event.clientY);
   }

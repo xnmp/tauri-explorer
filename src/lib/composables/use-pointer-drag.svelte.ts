@@ -82,12 +82,9 @@ export function usePointerDrag(deps: PointerDragDeps) {
     }
 
     const zoom = getZoomFactor();
-    const gw = ghostEl!.offsetWidth || 0;
-    const gh = ghostEl!.offsetHeight || 0;
-    const left = (event.clientX) / zoom - gw / 2;
-    const top = (event.clientY) / zoom - gh / 2;
-    ghostEl!.style.left = `${left}px`;
-    ghostEl!.style.top = `${top}px`;
+    ghostEl!.style.left = `${event.clientX / zoom}px`;
+    ghostEl!.style.top = `${event.clientY / zoom}px`;
+    ghostEl!.style.transform = "translate(-50%, -50%)";
     // Exit window → hand off to native drag for external/cross-window.
     // With implicit mouse capture, clientX/Y extends beyond viewport bounds.
     if (
@@ -205,10 +202,11 @@ export function createDragGhost(sourceEl?: HTMLElement | null, fallbackText?: st
   el.className = "pointer-drag-ghost";
 
   if (sourceEl) {
-    const clone = sourceEl.cloneNode(true) as HTMLElement;
-    clone.style.cssText = "position: static; margin: 0; background: none; border: none; box-shadow: none; outline: none; padding: 0;";
-    clone.style.width = sourceEl.offsetWidth + "px";
-    el.appendChild(clone);
+    const icon = sourceEl.querySelector<HTMLElement>("[data-drag-icon]");
+    const name = sourceEl.querySelector<HTMLElement>("[data-drag-name]");
+    if (icon) el.appendChild(icon.cloneNode(true));
+    if (name) el.appendChild(name.cloneNode(true));
+    if (!icon && !name) el.textContent = fallbackText || "";
   } else if (fallbackText) {
     el.textContent = fallbackText;
   }
@@ -218,6 +216,13 @@ export function createDragGhost(sourceEl?: HTMLElement | null, fallbackText?: st
     pointer-events: none;
     z-index: 2147483647;
     opacity: 0.85;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    font-size: 13px;
+    color: var(--text-primary, #eee);
+    white-space: nowrap;
   `;
   document.body.appendChild(el);
   return el;

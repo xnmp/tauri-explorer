@@ -84,10 +84,10 @@
 >
   <!-- Name column -->
   <div class="name-cell">
-    <div class="icon" style:--file-icon-color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined} aria-hidden="true">
+    <div class="icon" data-drag-icon style:--file-icon-color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined} aria-hidden="true">
       <FileIcon {entry} size="small" />
     </div>
-    <EntryName {entry} {explorer} variant="details" />
+    <span data-drag-name><EntryName {entry} {explorer} variant="details" /></span>
     <GitStatusBadge entryName={entry.name} hideOnRename={isRenaming} />
     {#if entry.is_symlink && !isRenaming}
       <div class="symlink-badge" title={entry.symlink_target ? `Link to ${entry.symlink_target}` : "Symbolic link"}>

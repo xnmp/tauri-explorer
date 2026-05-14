@@ -133,14 +133,14 @@
   {#each visibleTileEntries as entry (entry.path)}
     {@const iconColor = getFileIconColor(entry)}
     <ItemButton class="tile-item" {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
-      <div class="tile-icon" style:color={iconColor}>
+      <div class="tile-icon" style:color={iconColor} data-drag-icon>
         {#if isImageFile(entry)}
           <ThumbnailImage path={entry.path} size={tileConfig.displaySize} genSize={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} />
         {:else}
           <FileIcon {entry} size="large" />
         {/if}
       </div>
-      <EntryName {entry} {explorer} variant="tiles" />
+      <span data-drag-name><EntryName {entry} {explorer} variant="tiles" /></span>
       <GitStatusBadge entryName={entry.name} />
     </ItemButton>
   {/each}

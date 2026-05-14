@@ -56,10 +56,10 @@
   {/if}
   {#each explorer.displayEntries as entry (entry.path)}
     <ItemButton class="list-item" {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
-      <span class="list-icon" style:color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined}>
+      <span class="list-icon" data-drag-icon style:color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined}>
         <FileIcon {entry} size="small" />
       </span>
-      <EntryName {entry} {explorer} variant="list" />
+      <span data-drag-name><EntryName {entry} {explorer} variant="list" /></span>
       <GitStatusBadge entryName={entry.name} />
     </ItemButton>
   {/each}

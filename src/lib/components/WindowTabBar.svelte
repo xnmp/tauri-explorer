@@ -299,19 +299,19 @@
     gap: 8px;
     height: 30px;
     padding: 0 10px 0 12px;
-    background: transparent;
+    background: var(--background);
     border-radius: var(--radius-sm) var(--radius-sm) 0 0;
     font-size: 12px;
     font-weight: var(--font-weight-medium);
     letter-spacing: -0.01em;
-    color: var(--text-tertiary);
+    color: var(--text-secondary, var(--text-tertiary));
     cursor: pointer;
     transition: all var(--transition-normal);
     flex-shrink: 0;
     max-width: 220px;
     position: relative;
-    border: 1px solid transparent;
-    border-bottom: none;
+    border: none;
+    border-top: 2px solid var(--surface-stroke, rgba(0, 0, 0, 0.1));
     transform-origin: bottom center;
     overflow: hidden;
   }
@@ -384,10 +384,11 @@
     background: var(--background-card);
     color: var(--text-primary);
     font-weight: var(--font-weight-semibold);
-    border-color: var(--surface-stroke);
+    border-color: color-mix(in srgb, var(--accent) 30%, var(--surface-stroke));
     box-shadow:
-      0 -1px 3px rgba(0, 0, 0, 0.05),
-      0 -2px 8px rgba(0, 0, 0, 0.03);
+      0 -1px 4px rgba(0, 0, 0, 0.08),
+      0 -3px 10px rgba(0, 0, 0, 0.05),
+      inset 0 1px 0 rgba(255, 255, 255, 0.5);
     transform: translateY(-1px);
     z-index: 2;
   }

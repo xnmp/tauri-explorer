@@ -125,13 +125,14 @@
   /* Vibrancy: sidebar as floating island */
   :global([data-vibrancy]) .sidebar-container {
     border-radius: var(--vibrancy-island-radius);
-    overflow: hidden;
+    box-shadow: var(--vibrancy-island-glow);
+    background: var(--vibrancy-island-bg);
   }
 
   :global([data-vibrancy]) .sidebar {
-    background: var(--vibrancy-island-bg);
+    background: transparent;
     border: none;
     border-radius: var(--vibrancy-island-radius);
-    box-shadow: var(--vibrancy-island-glow);
+    box-shadow: none;
   }
 </style>

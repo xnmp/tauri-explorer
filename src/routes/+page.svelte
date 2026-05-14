@@ -508,10 +508,6 @@
     gap: 6px;
   }
 
-  :global([data-vibrancy]) :global(.status-bar) {
-    box-shadow: none;
-  }
-
   :global([data-vibrancy]) .theme-background-layer {
     display: none;
   }

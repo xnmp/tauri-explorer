@@ -34,10 +34,7 @@
   }
 </script>
 
-<svelte:window
-  onmousemove={handleResize}
-  onmouseup={endResize}
-/>
+<svelte:window onmousemove={handleResize} onmouseup={endResize} />
 
 <div
   class="pane-container"
@@ -118,7 +115,9 @@
     border-right: 1px solid var(--divider);
     cursor: col-resize;
     flex-shrink: 0;
-    transition: background var(--transition-fast), border-color var(--transition-fast);
+    transition:
+      background var(--transition-fast),
+      border-color var(--transition-fast);
   }
 
   .pane-divider:hover {
@@ -150,10 +149,10 @@
   :global([data-vibrancy]) .pane-container {
     border-radius: var(--vibrancy-island-radius);
     background: var(--vibrancy-island-bg);
-    border: none;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-top: none;
     box-shadow:
       inset 0 -0.5px 0 rgba(0, 0, 0, 0.15),
-      0 0 0 0.5px rgba(255, 255, 255, 0.08),
       0 2px 8px rgba(0, 0, 0, 0.12),
       0 8px 24px rgba(0, 0, 0, 0.08);
     position: relative;
@@ -166,7 +165,7 @@
     left: var(--vibrancy-island-radius);
     right: var(--vibrancy-island-radius);
     height: 1px;
-    background: rgba(255, 255, 255, 0.20);
+    background: rgba(255, 255, 255, 0.15);
     mask-image: linear-gradient(
       to right,
       white 0%,
@@ -187,5 +186,4 @@
     );
     pointer-events: none;
   }
-
 </style>

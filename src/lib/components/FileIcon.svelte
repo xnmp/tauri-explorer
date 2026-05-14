@@ -301,6 +301,7 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.25));
   }
   .icon-image      { color: var(--icon-file-tint, var(--icon-image)); }
   .icon-archive    { color: var(--icon-file-tint, var(--icon-archive)); }
@@ -309,7 +310,10 @@
   .icon-executable { color: var(--icon-file-tint, var(--icon-executable)); }
   .icon-document   { color: var(--icon-file-tint, var(--icon-document)); }
 
-  /* Small material icons (list/details view) */
+  .folder-large {
+    filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.25));
+  }
+
   .nf-small {
     font-size: 16px;
     line-height: 16px;
@@ -328,6 +332,7 @@
     align-items: center;
     justify-content: center;
     position: relative;
+    filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.25));
   }
 
   .nf-icon-badge::before {

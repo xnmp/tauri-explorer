@@ -513,7 +513,7 @@
   }
 
   :global([data-vibrancy]) .explorer {
-    background: transparent;
+    background: var(--vibrancy-tint, transparent);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }

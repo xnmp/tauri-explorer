@@ -89,6 +89,9 @@
   --titlebar-opacity: 1;
   --statusbar-opacity: 1;
 
+  /* Vibrancy tint — subtle blue wash over native frost */
+  --vibrancy-tint: rgba(180, 210, 255, 0.3);
+
   /* Icon colors - macOS blue folders */
   --icon-folder: #5ab4f5;
 }

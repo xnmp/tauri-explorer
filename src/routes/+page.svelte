@@ -504,7 +504,7 @@
   }
 
   :global([data-vibrancy]) .main-content {
-    padding: 6px;
+    padding: 0 6px 6px 6px;
     gap: 6px;
   }
 

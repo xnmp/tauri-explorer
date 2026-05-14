@@ -188,10 +188,13 @@
     outline-offset: -2px;
   }
 
-  /* Vibrancy: titlebar overlaps main content island for tab merge */
+  /* Vibrancy: titlebar floats above island, no bottom divider */
   :global([data-vibrancy]) .titlebar {
     position: relative;
     z-index: 2;
-    margin-bottom: -1px;
+    box-shadow: none;
+  }
+  :global([data-vibrancy]) .titlebar::before {
+    display: none;
   }
 </style>

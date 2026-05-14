@@ -547,9 +547,9 @@
     color: var(--text-primary);
   }
 
-  /* Vibrancy: subtle toolbar tint inside island */
+  /* Vibrancy: transparent inside island */
   :global([data-vibrancy]) .navigation-bar {
-    background: rgba(255, 255, 255, 0.04);
+    background: transparent;
     border-bottom-color: var(--vibrancy-island-stroke);
   }
 </style>

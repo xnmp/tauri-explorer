@@ -420,9 +420,13 @@
   /* Vibrancy: active tab merges into main content island */
   :global([data-vibrancy]) .tab.active {
     background: var(--vibrancy-island-bg);
-    border-color: var(--vibrancy-island-stroke);
+    border: 1px solid var(--vibrancy-island-stroke);
     border-bottom-color: transparent;
+    border-radius: var(--vibrancy-island-radius) var(--vibrancy-island-radius) 0 0;
     box-shadow: none;
+    transform: none;
+    margin-bottom: -1px;
+    padding-bottom: 1px;
   }
 
   :global([data-vibrancy]) .tab-area::after {

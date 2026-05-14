@@ -487,9 +487,15 @@
     --titlebar-opacity: 0;
     --sidebar-opacity: 0;
     --statusbar-opacity: 0;
-    --vibrancy-island-bg: rgba(30, 30, 32, 0.45);
-    --vibrancy-island-stroke: rgba(255, 255, 255, 0.10);
-    --vibrancy-island-radius: 12px;
+    --vibrancy-island-bg: rgba(30, 30, 32, 0.35);
+    --vibrancy-island-stroke: rgba(255, 255, 255, 0.15);
+    --vibrancy-island-radius: 14px;
+    --vibrancy-island-glow:
+      inset 0 0.5px 0 rgba(255, 255, 255, 0.20),
+      inset 0 -0.5px 0 rgba(0, 0, 0, 0.15),
+      0 0 0 0.5px rgba(255, 255, 255, 0.08),
+      0 2px 8px rgba(0, 0, 0, 0.12),
+      0 8px 24px rgba(0, 0, 0, 0.08);
   }
 
   :global([data-vibrancy]) :global(body) {

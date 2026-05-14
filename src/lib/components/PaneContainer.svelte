@@ -150,6 +150,7 @@
   :global([data-vibrancy]) .pane-container {
     border-radius: var(--vibrancy-island-radius);
     background: var(--vibrancy-island-bg);
-    border: 1px solid var(--vibrancy-island-stroke);
+    border: none;
+    box-shadow: var(--vibrancy-island-glow);
   }
 </style>

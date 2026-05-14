@@ -126,13 +126,12 @@
   :global([data-vibrancy]) .sidebar-container {
     border-radius: var(--vibrancy-island-radius);
     overflow: hidden;
-    margin-top: 6px;
   }
 
   :global([data-vibrancy]) .sidebar {
     background: var(--vibrancy-island-bg);
-    border: 1px solid var(--vibrancy-island-stroke);
+    border: none;
     border-radius: var(--vibrancy-island-radius);
-    box-shadow: none;
+    box-shadow: var(--vibrancy-island-glow);
   }
 </style>

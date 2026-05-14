@@ -37,19 +37,18 @@
 
   let paneRef = $state<HTMLElement | null>(null);
 
-  // Prevent default scroll on arrow keys in capture phase (WKWebView scrolls
-  // before bubble-phase handlers can preventDefault).
+  // All keyboard navigation is handled at window level so it works regardless
+  // of focus state. Only the active pane responds.
   $effect(() => {
-    const el = paneRef;
-    if (!el) return;
-    function captureArrows(e: KeyboardEvent) {
-      if (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight") {
-        const tag = (e.target as HTMLElement)?.tagName;
-        if (tag !== "INPUT" && tag !== "TEXTAREA") e.preventDefault();
-      }
+    if (!isActive) return;
+    function onWindowKeydown(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (dialogStore.activeDialog) return;
+      handleKeydown(e);
     }
-    el.addEventListener("keydown", captureArrows, true);
-    return () => el.removeEventListener("keydown", captureArrows, true);
+    window.addEventListener("keydown", onWindowKeydown);
+    return () => window.removeEventListener("keydown", onWindowKeydown);
   });
 
   // Fetch git status when directory changes and setting is enabled.
@@ -83,6 +82,7 @@
     paneExplorer.onNavigate = focusSelectedAfterNav;
     return () => { paneExplorer.onNavigate = null; };
   });
+
 
   const isActive = $derived(windowTabsManager.activePaneId === paneId);
   const dualPaneEnabled = $derived(windowTabsManager.dualPaneEnabled);
@@ -131,6 +131,17 @@
     return isVertical ? 1 : 0;
   }
 
+  function isYaziNavView(): boolean {
+    if (!settingsStore.yaziNavigation) return false;
+    if (paneExplorer.viewMode === "details") return true;
+    if (paneExplorer.viewMode === "list") {
+      const gridEl = paneRef?.querySelector<HTMLElement>(".list-view");
+      const cols = gridEl ? parseInt(getComputedStyle(gridEl).getPropertyValue("--list-columns")) || 1 : 1;
+      return cols === 1;
+    }
+    return false;
+  }
+
   function handleKeydown(event: KeyboardEvent): void {
     // Don't process keyboard shortcuts when a dialog is open
     if (dialogStore.activeDialog) return;
@@ -146,8 +157,8 @@
     if (isArrow) {
       event.preventDefault();
 
-      // Miller + details: ArrowLeft always goes up (even in empty folders)
-      if (settingsStore.millerLayers > 0 && paneExplorer.viewMode === "details" && event.key === "ArrowLeft") {
+      // ArrowLeft goes up one level in details view, or list view with single column (yazi-style)
+      if (event.key === "ArrowLeft" && isYaziNavView()) {
         paneExplorer.goUp();
         return;
       }
@@ -170,8 +181,8 @@
         return;
       }
 
-      // Miller + details: ArrowRight on a folder navigates into it
-      if (settingsStore.millerLayers > 0 && paneExplorer.viewMode === "details" && event.key === "ArrowRight") {
+      // ArrowRight on a folder navigates into it (yazi-style)
+      if (event.key === "ArrowRight" && isYaziNavView()) {
         if (selected?.kind === "directory") {
           paneExplorer.navigateTo(selected.path);
           return;
@@ -249,7 +260,6 @@
   tabindex="0"
   onfocus={handleFocus}
   onclick={handleFocus}
-  onkeydown={handleKeydown}
 >
   {#if paneExplorer}
     <NavigationBar explorer={paneExplorer} />

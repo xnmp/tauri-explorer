@@ -339,6 +339,21 @@
 
           <div class="setting-row">
             <div class="setting-info">
+              <span class="setting-label">Yazi-style Navigation</span>
+              <span class="setting-description">Left/right arrows navigate up/into folders in details and list view</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.yaziNavigation}
+                onchange={() => settingsStore.update({ yaziNavigation: !settingsStore.yaziNavigation })}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
               <span class="setting-label">Show Manually Hidden Items</span>
               <span class="setting-description">Reveal items hidden via the right-click Hide action (shown dimmed)</span>
             </div>

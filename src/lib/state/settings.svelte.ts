@@ -77,6 +77,7 @@ export interface Settings {
   geminiApiKey: string; // Gemini API key for Nano Banana image editing
   integratedTitleBar: boolean; // macOS: render tabs in title bar with overlay traffic lights
   macOsVibrancy: boolean; // macOS: native window vibrancy (translucent frosted glass), requires restart
+  yaziNavigation: boolean; // left/right arrows navigate up/into folders in details/list view
 }
 
 const MIN_ZOOM = 50;
@@ -122,6 +123,7 @@ const DEFAULT_SETTINGS: Settings = {
   geminiApiKey: "",
   integratedTitleBar: false,
   macOsVibrancy: false,
+  yaziNavigation: true,
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -343,6 +345,9 @@ function createSettingsStore() {
     },
     get macOsVibrancy() {
       return settings.macOsVibrancy;
+    },
+    get yaziNavigation() {
+      return settings.yaziNavigation;
     },
     toggleMillerColumns(): void {
       const on = settings.millerLayers > 0;

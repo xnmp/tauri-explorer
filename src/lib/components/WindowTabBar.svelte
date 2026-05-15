@@ -304,7 +304,7 @@
     font-size: 12px;
     font-weight: var(--font-weight-medium);
     letter-spacing: -0.01em;
-    color: var(--text-secondary, var(--text-tertiary));
+    color: var(--text-tertiary);
     cursor: pointer;
     transition: all var(--transition-normal);
     flex-shrink: 0;
@@ -312,6 +312,7 @@
     position: relative;
     border: none;
     border-top: 2px solid var(--surface-stroke, rgba(0, 0, 0, 0.1));
+    opacity: 0.8;
     transform-origin: bottom center;
     overflow: hidden;
   }
@@ -363,6 +364,7 @@
     color: var(--text-secondary);
     border-color: var(--surface-stroke);
     transform: translateY(-1px);
+    opacity: 1;
   }
 
   .tab:hover::after,
@@ -384,13 +386,14 @@
     background: var(--background-card);
     color: var(--text-primary);
     font-weight: var(--font-weight-semibold);
-    border-color: color-mix(in srgb, var(--accent) 30%, var(--surface-stroke));
+    border-top: 2px solid var(--accent);
     box-shadow:
       0 -1px 4px rgba(0, 0, 0, 0.08),
       0 -3px 10px rgba(0, 0, 0, 0.05),
       inset 0 1px 0 rgba(255, 255, 255, 0.5);
     transform: translateY(-1px);
     z-index: 2;
+    opacity: 1;
   }
 
   .tab.active::before {
@@ -507,6 +510,7 @@
   :global([data-vibrancy]) .tab.active {
     background: var(--vibrancy-island-bg);
     border: none;
+    border-top: 2px solid var(--accent);
     box-shadow:
       inset 0 0.5px 0 var(--vibrancy-island-stroke),
       0 0 0 0.5px var(--vibrancy-island-stroke);

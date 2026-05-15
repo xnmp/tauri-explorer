@@ -14,11 +14,9 @@
   import ContextMenu from "./ContextMenu.svelte";
   import NewFolderDialog from "./NewFolderDialog.svelte";
   import DeleteDialog from "./DeleteDialog.svelte";
-  import ScmDiffView from "./ScmDiffView.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { gitStatusStore } from "$lib/state/git-status.svelte";
-  import { scmStore } from "$lib/state/scm.svelte";
 
   interface Props {
     paneId: PaneId;
@@ -264,18 +262,10 @@
   {#if paneExplorer}
     <NavigationBar explorer={paneExplorer} />
     <div class="pane-content">
-      {#if isActive && settingsStore.showGitStatus && scmStore.activeDiff && scmStore.repoRoot}
-        <ScmDiffView
-          repoPath={scmStore.repoRoot}
-          path={scmStore.activeDiff.path}
-          staged={scmStore.activeDiff.staged}
-        />
-      {:else}
-        {#if settingsStore.millerLayers > 0 && !(settingsStore.macOsVibrancy && !settingsStore.showSidebar)}
-          <MillerColumns explorer={paneExplorer} />
-        {/if}
-        <FileList explorer={paneExplorer} />
+      {#if settingsStore.millerLayers > 0 && !(settingsStore.macOsVibrancy && !settingsStore.showSidebar)}
+        <MillerColumns explorer={paneExplorer} />
       {/if}
+      <FileList explorer={paneExplorer} />
     </div>
     <ContextMenu explorer={paneExplorer} />
     <NewFolderDialog explorer={paneExplorer} />

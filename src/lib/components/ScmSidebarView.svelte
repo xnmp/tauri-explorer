@@ -436,8 +436,8 @@
             data-path={row.path}
             data-section-kind={opts.kind}
             tabindex="0"
-            onclick={() => { scmStore.setSelected(row.path); scmStore.openDiff(row.path, opts.kind === 'staged'); }}
-            onkeydown={(e) => { if (e.key === 'Enter') { scmStore.setSelected(row.path); scmStore.openDiff(row.path, opts.kind === 'staged'); } }}
+            onclick={() => { scmStore.setSelected(row.path); scmStore.openDiff(row.path, opts.kind === 'staged'); settingsStore.openPreviewPane(); }}
+            onkeydown={(e) => { if (e.key === 'Enter') { scmStore.setSelected(row.path); scmStore.openDiff(row.path, opts.kind === 'staged'); settingsStore.openPreviewPane(); } }}
             role="listitem"
             title={row.path}
           >
@@ -554,8 +554,8 @@
         data-section-kind={kind}
         style="padding-left: {depth * 12 + 4}px"
         tabindex="0"
-        onclick={() => { scmStore.setSelected(row.path); scmStore.openDiff(row.path, kind === 'staged'); }}
-        onkeydown={(e) => { if (e.key === 'Enter') { scmStore.setSelected(row.path); scmStore.openDiff(row.path, kind === 'staged'); } }}
+        onclick={() => { scmStore.setSelected(row.path); scmStore.openDiff(row.path, kind === 'staged'); settingsStore.openPreviewPane(); }}
+        onkeydown={(e) => { if (e.key === 'Enter') { scmStore.setSelected(row.path); scmStore.openDiff(row.path, kind === 'staged'); settingsStore.openPreviewPane(); } }}
         role="listitem"
         title={row.path}
       >

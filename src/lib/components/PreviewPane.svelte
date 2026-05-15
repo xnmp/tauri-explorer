@@ -4,13 +4,15 @@
 -->
 <script lang="ts">
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { readTextFile, fetchDirectory } from "$lib/api/files";
+  import { readTextFile, fetchDirectory, gitDiff } from "$lib/api/files";
   import { isImageFile, isTextFile, isPdfFile, getFileType, formatDate } from "$lib/domain/file-types";
   import { formatSize, type FileEntry } from "$lib/domain/file";
   import { isTauri } from "$lib/api/mock-invoke";
   import { highlightCode } from "$lib/domain/syntax-highlight";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { getFileIconColor } from "$lib/domain/file-types";
+  import { scmStore } from "$lib/state/scm.svelte";
+  import { parseUnifiedDiff, type ParsedDiff, type DiffLine } from "$lib/domain/diff";
   import FileIcon from "./FileIcon.svelte";
   /** Detect if the current theme uses a light color scheme */
   const isLightTheme = $derived.by(() => {
@@ -83,6 +85,66 @@
   let previewTruncatedLines = $state(0);
   let lastPreviewPath: string | null = null;
   let lastPreviewKey: string | null = null;
+
+  // --- Git diff preview state ---
+  const activeDiff = $derived(scmStore.activeDiff);
+  let diffParsed = $state<ParsedDiff | null>(null);
+  let diffLoading = $state(false);
+  let diffError = $state<string | null>(null);
+  let lastDiffKey: string | null = null;
+
+  const diffVisibleLines = $derived.by<DiffLine[]>(() => {
+    if (!diffParsed) return [];
+    return diffParsed.lines.filter((l) => l.kind !== "header" && l.kind !== "meta");
+  });
+
+  const diffSubtitle = $derived.by(() => {
+    if (!diffParsed) return "";
+    if (diffParsed.added) return "added";
+    if (diffParsed.deleted) return "deleted";
+    if (diffParsed.oldPath && diffParsed.newPath && diffParsed.oldPath !== diffParsed.newPath) {
+      return `renamed from ${diffParsed.oldPath}`;
+    }
+    return activeDiff?.staged ? "staged" : "unstaged";
+  });
+
+  $effect(() => {
+    if (!activeDiff || !scmStore.repoRoot) {
+      diffParsed = null;
+      diffError = null;
+      diffLoading = false;
+      lastDiffKey = null;
+      return;
+    }
+    const key = `${scmStore.repoRoot}|${activeDiff.path}|${activeDiff.staged}|${scmStore.summary.staged.length}|${scmStore.summary.changes.length}`;
+    if (key === lastDiffKey) return;
+    lastDiffKey = key;
+    loadDiff(scmStore.repoRoot, activeDiff.path, activeDiff.staged);
+  });
+
+  async function loadDiff(repoRoot: string, path: string, staged: boolean): Promise<void> {
+    diffLoading = true;
+    diffError = null;
+    const r = await gitDiff(repoRoot, path, { staged });
+    if (scmStore.activeDiff?.path !== path) return;
+    if (!r.ok) {
+      diffError = r.error;
+      diffParsed = null;
+    } else {
+      diffParsed = parseUnifiedDiff(r.data);
+    }
+    diffLoading = false;
+  }
+
+  // Clear activeDiff when explorer file selection changes (not on initial render)
+  let prevSelectedPath: string | null = null;
+  $effect(() => {
+    const current = selectedPath;
+    if (prevSelectedPath !== null && current !== prevSelectedPath && activeDiff) {
+      scmStore.closeDiff();
+    }
+    prevSelectedPath = current;
+  });
 
   // Load preview when selection (or selected file's mtime/size) changes.
   $effect(() => {
@@ -205,7 +267,42 @@
 <div class="preview-pane" class:resizing style="width: {paneWidth}px">
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="resize-handle" onmousedown={handleResizeStart}></div>
-  {#if !selectedFile}
+  {#if activeDiff}
+    <div class="preview-header">
+      <span class="preview-filename" title={activeDiff.path}>{activeDiff.path.split("/").pop()}</span>
+      <span class="preview-type-badge" class:diff-staged={activeDiff.staged} class:diff-unstaged={!activeDiff.staged}>
+        {diffSubtitle || "git diff"}
+      </span>
+    </div>
+    <div class="preview-content">
+      {#if diffLoading}
+        <div class="preview-loading"><div class="spinner"></div></div>
+      {:else if diffError}
+        <div class="preview-empty"><span class="preview-error-text">{diffError}</span></div>
+      {:else if diffParsed?.binary}
+        <div class="preview-empty"><span>Binary file changed</span></div>
+      {:else if diffVisibleLines.length === 0}
+        <div class="preview-empty"><span>No changes to display</span></div>
+      {:else}
+        <div class="diff-lines">
+          {#each diffVisibleLines as line (line.index)}
+            <div class="diff-line {line.kind}" data-line-kind={line.kind}>
+              <span class="diff-gutter old">{line.oldLine ?? ""}</span>
+              <span class="diff-gutter new">{line.newLine ?? ""}</span>
+              <span class="diff-sigil">{line.kind === "add" ? "+" : line.kind === "remove" ? "−" : line.kind === "hunk" ? "@" : " "}</span>
+              <span class="diff-content">{line.text}</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+    <div class="preview-info">
+      <div class="info-row">
+        <span class="info-label">Path</span>
+        <span class="info-value" title={activeDiff.path}>{activeDiff.path}</span>
+      </div>
+    </div>
+  {:else if !selectedFile}
     <div class="preview-empty">
       <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
         <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.25"/>
@@ -594,6 +691,63 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* --- Git diff styles --- */
+  .preview-type-badge.diff-staged {
+    background: color-mix(in srgb, #22c55e 20%, transparent);
+    color: #16a34a;
+  }
+
+  .preview-type-badge.diff-unstaged {
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    color: var(--accent);
+  }
+
+  .diff-lines {
+    flex: 1;
+    overflow: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    line-height: 18px;
+  }
+
+  .diff-line {
+    display: grid;
+    grid-template-columns: 36px 36px 14px 1fr;
+    min-height: 18px;
+    white-space: pre;
+    padding-right: 8px;
+  }
+
+  .diff-line.context { background: transparent; }
+  .diff-line.add { background: color-mix(in srgb, #22c55e 12%, transparent); }
+  .diff-line.remove { background: color-mix(in srgb, #ef4444 14%, transparent); }
+  .diff-line.hunk { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text-tertiary); }
+  .diff-line.binary { color: var(--text-tertiary); font-style: italic; }
+
+  .diff-gutter {
+    padding-right: 4px;
+    text-align: right;
+    color: var(--text-tertiary);
+    user-select: none;
+    border-right: 1px solid color-mix(in srgb, var(--divider) 50%, transparent);
+  }
+
+  .diff-sigil {
+    text-align: center;
+    color: var(--text-tertiary);
+    user-select: none;
+  }
+
+  .diff-line.add .diff-sigil { color: #16a34a; }
+  .diff-line.remove .diff-sigil { color: #dc2626; }
+
+  .diff-content {
+    padding-left: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    user-select: text;
   }
 
   /* Vibrancy: flatten inside island */

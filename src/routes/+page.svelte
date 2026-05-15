@@ -271,13 +271,14 @@
   <div class="main-content" class:no-sidebar={!settingsStore.showSidebar}>
     {#if settingsStore.showSidebar}
       <Sidebar />
-    {:else if millerAsLeftIsland && leftExplorer}
-      <div class="miller-island">
-        <MillerColumns explorer={leftExplorer} />
-      </div>
     {/if}
     {#if settingsStore.showGitStatus && settingsStore.showScmPanel}
       <ScmPanel />
+    {/if}
+    {#if millerAsLeftIsland && leftExplorer}
+      <div class="miller-island">
+        <MillerColumns explorer={leftExplorer} />
+      </div>
     {/if}
     <PaneContainer />
   </div>

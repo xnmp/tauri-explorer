@@ -8,7 +8,7 @@
   import { contextMenuStore } from "$lib/state/context-menu.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
-  import { settingsStore } from "$lib/state/settings.svelte";
+  import { settingsStore, type ThumbnailSize } from "$lib/state/settings.svelte";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { openFile } from "$lib/api/files";
   import { dialogStore } from "$lib/state/dialogs.svelte";
@@ -195,7 +195,7 @@
   let listSubmenuOpen = $state(false);
   let tilesSubmenuOpen = $state(false);
 
-  const tileSizeLabels: Record<string, string> = { small: "Small", medium: "Medium", large: "Large" };
+  const tileSizeLabels: Record<string, string> = { small: "Small", medium: "Medium", large: "Large", xlarge: "Extra Large" };
 
   const effectiveThumbnailSize = $derived(
     folderViewsStore.getThumbnailSize(explorer.currentPath, settingsStore.thumbnailSize)
@@ -573,11 +573,11 @@
             {#if tilesSubmenuOpen}
               <div class="submenu">
                 <div class="menu-section-label">Icon Size</div>
-                {#each ["small", "medium", "large"] as size}
+                {#each ["small", "medium", "large", "xlarge"] as size}
                   <button
                     class="menu-item"
                     class:selected={effectiveThumbnailSize === size}
-                    onclick={() => { folderViewsStore.set(explorer.currentPath, { thumbnailSize: size as "small" | "medium" | "large" }); contextMenuStore.close(); }}
+                    onclick={() => { folderViewsStore.set(explorer.currentPath, { thumbnailSize: size as ThumbnailSize }); contextMenuStore.close(); }}
                     role="menuitemradio"
                     aria-checked={effectiveThumbnailSize === size}
                   >

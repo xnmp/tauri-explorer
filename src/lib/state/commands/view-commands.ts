@@ -235,6 +235,12 @@ export const viewCommands: Command[] = [
     handler: () => { const e = getActiveExplorer(); if (e) { e.setViewMode("tiles"); folderViewsStore.set(e.currentPath, { thumbnailSize: "large" }); } },
   },
   {
+    id: "view.tilesSizeXLarge",
+    label: "Tiles: Extra Large Icons (this folder)",
+    category: "view",
+    handler: () => { const e = getActiveExplorer(); if (e) { e.setViewMode("tiles"); folderViewsStore.set(e.currentPath, { thumbnailSize: "xlarge" }); } },
+  },
+  {
     id: "view.toggleManuallyHidden",
     label: "Toggle Manually Hidden Files",
     category: "view",

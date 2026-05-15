@@ -21,7 +21,7 @@ export interface NavBarButtons {
 
 export type IconTheme = "default" | "material" | "minimal";
 
-export type ThumbnailSize = "small" | "medium" | "large";
+export type ThumbnailSize = "small" | "medium" | "large" | "xlarge";
 
 export interface ThumbnailSizeConfig {
   displaySize: number;
@@ -31,9 +31,10 @@ export interface ThumbnailSizeConfig {
 }
 
 export const THUMBNAIL_SIZE_CONFIG: Record<ThumbnailSize, ThumbnailSizeConfig> = {
-  small:  { displaySize: 64,  genSize: 128, quality: 80, gridMinWidth: 108 },
-  medium: { displaySize: 96,  genSize: 192, quality: 85, gridMinWidth: 140 },
-  large:  { displaySize: 128, genSize: 256, quality: 90, gridMinWidth: 172 },
+  small:  { displaySize: 48,  genSize: 96,  quality: 75, gridMinWidth: 84  },
+  medium: { displaySize: 64,  genSize: 128, quality: 80, gridMinWidth: 108 },
+  large:  { displaySize: 96,  genSize: 192, quality: 85, gridMinWidth: 140 },
+  xlarge: { displaySize: 128, genSize: 256, quality: 90, gridMinWidth: 172 },
 };
 
 /** Which columns are visible in details view (name is always shown) */

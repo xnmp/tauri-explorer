@@ -162,6 +162,7 @@
               <option value="small">Small</option>
               <option value="medium">Medium</option>
               <option value="large">Large</option>
+              <option value="xlarge">Extra Large</option>
             </select>
           </div>
 

@@ -10,6 +10,7 @@
   import { getHomeDirectory } from "$lib/api/files";
   import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
+  import { truncateBreadcrumbs } from "$lib/domain/breadcrumb-truncation";
   import BreadcrumbAutocomplete from "./BreadcrumbAutocomplete.svelte";
   import CaretPicker from "./CaretPicker.svelte";
 
@@ -47,6 +48,23 @@
   const visibleBreadcrumbs = $derived(
     isUnderHome ? explorer.breadcrumbs.slice(homeParts.length) : explorer.breadcrumbs
   );
+
+  // Measurement-based breadcrumb truncation using pretext for text width calculation
+  let breadcrumbsEl: HTMLElement | undefined = $state();
+  let containerWidth = $state(0);
+
+  $effect(() => {
+    if (!breadcrumbsEl) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        containerWidth = entry.contentRect.width;
+      }
+    });
+    ro.observe(breadcrumbsEl);
+    return () => ro.disconnect();
+  });
+
+  const displayBreadcrumbs = $derived(truncateBreadcrumbs(visibleBreadcrumbs, containerWidth));
 
   // Path editing toggle
   let editingPath = $state(false);
@@ -207,7 +225,7 @@
   {#if settingsStore.showAddressBar}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="breadcrumbs-container" class:editing={editingPath} onclick={editingPath ? undefined : startPathEdit}>
+  <div class="breadcrumbs-container" class:editing={editingPath} onclick={editingPath ? undefined : startPathEdit} bind:this={breadcrumbsEl}>
     {#if editingPath}
       <BreadcrumbAutocomplete
         currentPath={explorer.currentPath}
@@ -238,29 +256,38 @@
         </button>
       {/if}
 
-      {#each visibleBreadcrumbs as segment, i (segment.path)}
-        {@const parentOfSegment = i === 0 ? (isUnderHome ? homeDir! : rootPath) : visibleBreadcrumbs[i - 1].path}
-        <button
-          class="separator caret-btn"
-          class:caret-active={caretPickerPath === parentOfSegment}
-          aria-label="Show folders in {i === 0 ? 'parent' : visibleBreadcrumbs[i - 1].name}"
-          onclick={(e) => { e.stopPropagation(); openCaretPicker(parentOfSegment, e.currentTarget as HTMLElement); }}
-        >
-          <svg class="chevron-icon" width="12" height="12" viewBox="0 0 10 10" fill="none">
-            <path d="M3 2L6 5L3 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </button>
-        <button
-          class="crumb"
-          class:current={i === visibleBreadcrumbs.length - 1}
-          class:drop-target={dropTargetCrumb === segment.path}
-          onclick={(e) => { e.stopPropagation(); explorer.navigateTo(segment.path); }}
-          ondragover={(e) => handleCrumbDragOver(e, segment.path)}
-          ondragleave={handleCrumbDragLeave}
-          ondrop={(e) => handleCrumbDrop(e, segment.path)}
-        >
-          {segment.name}
-        </button>
+      {#each displayBreadcrumbs as segment, i (segment.path ?? "ellipsis")}
+        {#if segment.path === null}
+          <span class="separator">
+            <svg class="chevron-icon" width="12" height="12" viewBox="0 0 10 10" fill="none">
+              <path d="M3 2L6 5L3 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </span>
+          <span class="crumb ellipsis">{segment.name}</span>
+        {:else}
+          {@const parentOfSegment = i === 0 ? (isUnderHome ? homeDir! : rootPath) : (displayBreadcrumbs[i - 1]?.path ?? (isUnderHome ? homeDir! : rootPath))}
+          <button
+            class="separator caret-btn"
+            class:caret-active={caretPickerPath === parentOfSegment}
+            aria-label="Show folders in {i === 0 ? 'parent' : displayBreadcrumbs[i - 1]?.name ?? 'parent'}"
+            onclick={(e) => { e.stopPropagation(); openCaretPicker(parentOfSegment, e.currentTarget as HTMLElement); }}
+          >
+            <svg class="chevron-icon" width="12" height="12" viewBox="0 0 10 10" fill="none">
+              <path d="M3 2L6 5L3 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <button
+            class="crumb"
+            class:current={i === displayBreadcrumbs.length - 1}
+            class:drop-target={dropTargetCrumb === segment.path}
+            onclick={(e) => { e.stopPropagation(); explorer.navigateTo(segment.path!); }}
+            ondragover={(e) => handleCrumbDragOver(e, segment.path!)}
+            ondragleave={handleCrumbDragLeave}
+            ondrop={(e) => handleCrumbDrop(e, segment.path!)}
+          >
+            {segment.name}
+          </button>
+        {/if}
       {/each}
 
       {#if caretPickerPath && caretPickerEl}
@@ -431,6 +458,12 @@
   .crumb.root {
     padding: 3px 4px;
     color: var(--text-tertiary);
+  }
+
+  .crumb.ellipsis {
+    opacity: 0.5;
+    cursor: default;
+    pointer-events: none;
   }
 
   .crumb:hover {

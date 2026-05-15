@@ -1,8 +1,8 @@
 /**
- * Tahoe Theme - macOS-inspired light blue
+ * Tahoe Theme - Liquid Glass
  *
- * Soft lavender/blue tint inspired by macOS Sequoia.
- * Pairs beautifully with native vibrancy mode.
+ * Lavender-blue frosted glass aesthetic inspired by macOS Tahoe.
+ * Soft gradients, translucent surfaces, and periwinkle tints.
  */
 
 [data-theme="tahoe"] {
@@ -10,57 +10,58 @@
 
   /* Theme metadata */
   --theme-name: "Tahoe";
-  --theme-description: "macOS-inspired light blue";
+  --theme-description: "Liquid glass lavender-blue";
   --theme-order: 1;
 
-  /* Accent colors - macOS blue */
-  --accent: #007aff;
-  --accent-light: #5ac8fa;
-  --accent-dark: #0056b3;
+  /* Accent colors - periwinkle blue */
+  --accent: #4a7cff;
+  --accent-light: #7da8ff;
+  --accent-dark: #2e5cd9;
 
   /* Text colors */
-  --text-primary: #1c1c1e;
-  --text-secondary: #636366;
-  --text-tertiary: #aeaeb2;
+  --text-primary: #1a1a2e;
+  --text-secondary: #4a4a6a;
+  --text-tertiary: #8e8ea8;
   --text-on-accent: #ffffff;
 
-  /* Background colors - cool blue-tinted */
-  --background-solid: #f0f4fa;
-  --background-mica: rgba(230, 238, 250, 0.92);
-  --background-acrylic: rgba(240, 246, 255, 0.78);
-  --background-card: rgba(245, 249, 255, 0.75);
-  --background-card-secondary: rgba(235, 243, 255, 0.55);
-  --miller-bg: rgba(228, 238, 252, 0.65);
+  /* Background colors - lavender-blue gradient glass */
+  --background-solid: #e8ecf8;
+  --background: linear-gradient(145deg, #dde4f6 0%, #e8edfb 40%, #f0f2fc 100%);
+  --background-mica: rgba(218, 226, 248, 0.92);
+  --background-acrylic: rgba(225, 232, 252, 0.78);
+  --background-card: rgba(240, 244, 255, 0.8);
+  --background-card-secondary: rgba(225, 232, 252, 0.6);
+  --miller-bg: rgba(215, 225, 248, 0.7);
 
-  /* Surface/border colors */
-  --surface-stroke: rgba(0, 60, 150, 0.08);
-  --surface-stroke-flyout: rgba(0, 60, 150, 0.04);
-  --divider: rgba(0, 60, 150, 0.06);
+  /* Surface/border colors - soft lavender strokes */
+  --surface-stroke: rgba(80, 100, 180, 0.1);
+  --surface-stroke-flyout: rgba(80, 100, 180, 0.06);
+  --divider: rgba(80, 100, 180, 0.08);
 
   /* Control/input backgrounds */
-  --control-fill: rgba(255, 255, 255, 0.75);
-  --control-fill-secondary: rgba(245, 249, 255, 0.55);
-  --control-fill-tertiary: rgba(240, 246, 255, 0.35);
-  --control-fill-disabled: rgba(245, 249, 255, 0.3);
+  --control-fill: rgba(255, 255, 255, 0.7);
+  --control-fill-secondary: rgba(238, 242, 255, 0.6);
+  --control-fill-tertiary: rgba(230, 236, 252, 0.4);
+  --control-fill-disabled: rgba(238, 242, 255, 0.3);
 
   /* Subtle hover/active fills */
   --subtle-fill: transparent;
-  --subtle-fill-secondary: rgba(0, 60, 150, 0.04);
-  --subtle-fill-tertiary: rgba(0, 60, 150, 0.025);
+  --subtle-fill-secondary: rgba(80, 100, 180, 0.05);
+  --subtle-fill-tertiary: rgba(80, 100, 180, 0.03);
 
   /* Control borders */
-  --control-stroke: rgba(0, 60, 150, 0.08);
-  --control-stroke-secondary: rgba(0, 60, 150, 0.14);
+  --control-stroke: rgba(80, 100, 180, 0.1);
+  --control-stroke-secondary: rgba(80, 100, 180, 0.16);
 
   /* Address bar */
-  --address-bar-bg: rgba(0, 60, 150, 0.04);
-  --address-bar-stroke: rgba(0, 60, 150, 0.12);
-  --address-bar-highlight: rgba(255, 255, 255, 0.6);
-  --address-bar-bg-hover: rgba(0, 60, 150, 0.06);
-  --address-bar-stroke-hover: rgba(0, 60, 150, 0.18);
+  --address-bar-bg: rgba(80, 100, 180, 0.05);
+  --address-bar-stroke: rgba(80, 100, 180, 0.12);
+  --address-bar-highlight: rgba(255, 255, 255, 0.65);
+  --address-bar-bg-hover: rgba(80, 100, 180, 0.08);
+  --address-bar-stroke-hover: rgba(80, 100, 180, 0.2);
 
   /* Focus indicators */
-  --focus-stroke-outer: #007aff;
+  --focus-stroke-outer: #4a7cff;
   --focus-stroke-inner: #ffffff;
 
   /* System status colors */
@@ -68,18 +69,19 @@
   --system-success: #34c759;
   --system-caution: #ff9500;
 
-  /* Shadows */
-  --shadow-flyout: 0 8px 24px rgba(0, 40, 100, 0.12), 0 2px 8px rgba(0, 40, 100, 0.06);
-  --shadow-dialog: 0 32px 64px rgba(0, 40, 100, 0.16), 0 4px 24px rgba(0, 40, 100, 0.08);
-  --shadow-tooltip: 0 4px 12px rgba(0, 40, 100, 0.1);
-  --shadow-card: 0 1px 3px rgba(0, 40, 100, 0.05), 0 0 1px rgba(0, 40, 100, 0.03);
-  --shadow-subtle: 0 1px 2px rgba(0, 40, 100, 0.03);
+  /* Shadows - blue-violet tinted */
+  --shadow-flyout: 0 8px 24px rgba(60, 60, 120, 0.12), 0 2px 8px rgba(60, 60, 120, 0.06);
+  --shadow-dialog: 0 32px 64px rgba(60, 60, 120, 0.16), 0 4px 24px rgba(60, 60, 120, 0.08);
+  --shadow-tooltip: 0 4px 12px rgba(60, 60, 120, 0.1);
+  --shadow-card: 0 1px 4px rgba(60, 60, 120, 0.06), 0 0 1px rgba(60, 60, 120, 0.04);
+  --shadow-subtle: 0 1px 2px rgba(60, 60, 120, 0.04);
 
-  /* Mica overlay */
+  /* Mica overlay - frosted glass sheen */
   --mica-overlay: linear-gradient(
-    170deg,
-    rgba(255, 255, 255, 0.08) 0%,
-    transparent 35%
+    155deg,
+    rgba(255, 255, 255, 0.15) 0%,
+    rgba(200, 210, 255, 0.05) 50%,
+    transparent 100%
   );
 
   /* Per-section opacity tokens */
@@ -89,8 +91,8 @@
   --titlebar-opacity: 1;
   --statusbar-opacity: 1;
 
-  /* Vibrancy tint — subtle blue wash over native frost */
-  --vibrancy-tint: rgba(180, 210, 255, 0.3);
+  /* Vibrancy tint — lavender wash over native frost */
+  --vibrancy-tint: rgba(170, 190, 255, 0.35);
 
   /* Icon colors - macOS blue folders */
   --icon-folder: #5ab4f5;

@@ -5,9 +5,7 @@
 -->
 <script lang="ts">
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { settingsStore } from "$lib/state/settings.svelte";
   import ExplorerPane from "./ExplorerPane.svelte";
-  import PreviewPane from "./PreviewPane.svelte";
 
   // Get layout state from active window tab
   const dualPaneEnabled = $derived(windowTabsManager.dualPaneEnabled);
@@ -64,9 +62,6 @@
     </div>
   {/if}
 
-  {#if settingsStore.showPreviewPane}
-    <PreviewPane />
-  {/if}
 </div>
 
 <style>

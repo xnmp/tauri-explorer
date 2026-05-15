@@ -41,6 +41,7 @@
   import StatusBar from "$lib/components/StatusBar.svelte";
   import AnimatedBackground from "$lib/components/AnimatedBackground.svelte";
   import MillerColumns from "$lib/components/MillerColumns.svelte";
+  import PreviewPane from "$lib/components/PreviewPane.svelte";
 
   const millerAsLeftIsland = $derived(
     settingsStore.macOsVibrancy && !settingsStore.showSidebar && settingsStore.millerLayers > 0
@@ -281,6 +282,11 @@
       </div>
     {/if}
     <PaneContainer />
+    {#if settingsStore.showPreviewPane}
+      <div class="preview-island">
+        <PreviewPane />
+      </div>
+    {/if}
   </div>
   {#if settingsStore.showStatusBar}
     <StatusBar />
@@ -549,6 +555,21 @@
     overflow: hidden;
     display: flex;
     min-height: 0;
+  }
+
+  /* Preview pane as right island (vibrancy mode) */
+  .preview-island {
+    flex-shrink: 0;
+    display: flex;
+    min-height: 0;
+  }
+
+  :global([data-vibrancy]) .preview-island {
+    border-radius: var(--vibrancy-island-radius);
+    background: var(--vibrancy-island-bg);
+    box-shadow: var(--vibrancy-island-glow);
+    border: 1px solid var(--vibrancy-island-stroke);
+    overflow: hidden;
   }
 
   :global([data-vibrancy]) .theme-background-layer {

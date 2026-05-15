@@ -32,6 +32,8 @@
   // when an element renders under a stationary cursor.
   let mouseMoved = $state(false);
   let lastMousePos = $state<{ x: number; y: number } | null>(null);
+  let mouseTrackingReady = $state(false);
+  let mouseTrackingTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Get filtered and sorted commands
   const filteredCommands = $derived.by(() => {
@@ -169,6 +171,9 @@
       selectedIndex = 0;
       mouseMoved = false;
       lastMousePos = null;
+      mouseTrackingReady = false;
+      if (mouseTrackingTimer) clearTimeout(mouseTrackingTimer);
+      mouseTrackingTimer = setTimeout(() => { mouseTrackingReady = true; }, 150);
       tick().then(() => inputRef?.focus());
     }
   });
@@ -178,6 +183,7 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="command-palette-overlay" onclick={onClose} onkeydown={handleKeydown}
     onmousemove={(e) => {
+      if (!mouseTrackingReady) return;
       if (lastMousePos && (e.clientX !== lastMousePos.x || e.clientY !== lastMousePos.y)) {
         mouseMoved = true;
       }

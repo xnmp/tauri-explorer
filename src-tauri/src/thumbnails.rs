@@ -24,7 +24,7 @@ const THUMBNAIL_SIZE: u32 = 128;
 const MICRO_SIZE: u32 = 16;
 
 /// Supported image extensions for thumbnail generation
-const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp"];
+const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "icns"];
 
 /// Get the cache directory for thumbnails
 fn get_cache_dir() -> Option<PathBuf> {
@@ -184,12 +184,47 @@ fn decode_jpeg_scaled(path: &Path, target_size: u32) -> Result<image::DynamicIma
     Ok(image::DynamicImage::ImageRgb8(rgb))
 }
 
+fn is_icns(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("icns"))
+        .unwrap_or(false)
+}
+
+fn decode_icns(path: &Path) -> Result<image::DynamicImage, AppError> {
+    let file = fs::File::open(path)?;
+    let icon_family = icns::IconFamily::read(file)
+        .map_err(|e| AppError::Other(format!("Failed to read icns: {}", e)))?;
+
+    let best = icon_family
+        .available_icons()
+        .iter()
+        .max_by_key(|t| t.pixel_width())
+        .copied()
+        .ok_or_else(|| AppError::Other("No icons in icns file".into()))?;
+
+    let icon_image = icon_family
+        .get_icon_with_type(best)
+        .map_err(|e| AppError::Other(format!("Failed to decode icns icon: {}", e)))?;
+
+    let width = icon_image.width();
+    let height = icon_image.height();
+    let rgba_data = icon_image.data().to_vec();
+
+    image::RgbaImage::from_raw(width, height, rgba_data)
+        .map(image::DynamicImage::ImageRgba8)
+        .ok_or_else(|| AppError::Other("Failed to create image from icns data".into()))
+}
+
 fn decode_image(path: &Path, target_size: u32) -> Result<image::DynamicImage, AppError> {
     if is_jpeg(path) {
         match decode_jpeg_scaled(path, target_size) {
             Ok(img) => return Ok(img),
             Err(e) => log::warn!("turbojpeg fast path failed for {:?}, falling back: {}", path, e),
         }
+    }
+    if is_icns(path) {
+        return decode_icns(path);
     }
     ImageReader::open(path)?
         .with_guessed_format()?

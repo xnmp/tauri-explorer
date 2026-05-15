@@ -77,6 +77,7 @@ export interface Settings {
   geminiApiKey: string; // Gemini API key for Nano Banana image editing
   integratedTitleBar: boolean; // macOS: render tabs in title bar with overlay traffic lights
   macOsVibrancy: boolean; // macOS: native window vibrancy (translucent frosted glass), requires restart
+  vibrancyBlur: boolean; // macOS: enable native blur behind vibrancy (off = theme background, no blur)
   yaziNavigation: boolean; // left/right arrows navigate up/into folders in details/list view
 }
 
@@ -123,6 +124,7 @@ const DEFAULT_SETTINGS: Settings = {
   geminiApiKey: "",
   integratedTitleBar: false,
   macOsVibrancy: false,
+  vibrancyBlur: true,
   yaziNavigation: true,
 };
 
@@ -193,6 +195,10 @@ function createSettingsStore() {
 
   function togglePreviewPane(): void {
     update({ showPreviewPane: !settings.showPreviewPane });
+  }
+
+  function openPreviewPane(): void {
+    if (!settings.showPreviewPane) update({ showPreviewPane: true });
   }
 
   function toggleConfirmDelete(): void {
@@ -320,7 +326,8 @@ function createSettingsStore() {
       return settings.showScmPanel;
     },
     toggleScmPanel(): void {
-      update({ showScmPanel: !settings.showScmPanel });
+      const opening = !settings.showScmPanel;
+      update({ showScmPanel: opening, ...(opening && !settings.showGitStatus ? { showGitStatus: true } : {}) });
     },
     get scmTreeView() {
       return settings.scmTreeView;
@@ -345,6 +352,9 @@ function createSettingsStore() {
     },
     get macOsVibrancy() {
       return settings.macOsVibrancy;
+    },
+    get vibrancyBlur() {
+      return settings.vibrancyBlur;
     },
     get yaziNavigation() {
       return settings.yaziNavigation;
@@ -402,6 +412,7 @@ function createSettingsStore() {
     toggleWindowControls,
     toggleAddressBar,
     togglePreviewPane,
+    openPreviewPane,
     toggleConfirmDelete,
     zoomIn,
     zoomOut,

@@ -225,6 +225,23 @@
               <span class="toggle-slider"></span>
             </label>
           </div>
+
+          {#if settingsStore.macOsVibrancy}
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-label">Native Blur</span>
+              <span class="setting-description">Use macOS frosted glass blur (off = theme background, requires restart)</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.vibrancyBlur}
+                onchange={() => settingsStore.update({ vibrancyBlur: !settingsStore.vibrancyBlur })}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          {/if}
           {/if}
 
           <div class="setting-row">

@@ -306,17 +306,22 @@ pub fn run(launch_dir: Option<String>) {
                     .as_ref()
                     .and_then(|v| v.get("macOsVibrancy")?.as_bool())
                     .unwrap_or(false);
+                let vibrancy_blur = settings_json
+                    .as_ref()
+                    .and_then(|v| v.get("vibrancyBlur")?.as_bool())
+                    .unwrap_or(true);
                 if vibrancy {
-                    use tauri::utils::config::WindowEffectsConfig;
-                    use tauri::utils::{WindowEffect, WindowEffectState};
-                    builder = builder
-                        .transparent(true)
-                        .effects(WindowEffectsConfig {
+                    builder = builder.transparent(true);
+                    if vibrancy_blur {
+                        use tauri::utils::config::WindowEffectsConfig;
+                        use tauri::utils::{WindowEffect, WindowEffectState};
+                        builder = builder.effects(WindowEffectsConfig {
                             effects: vec![WindowEffect::UnderWindowBackground],
                             state: Some(WindowEffectState::Active),
                             radius: None,
                             color: None,
                         });
+                    }
                 }
             }
 

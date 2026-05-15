@@ -176,8 +176,14 @@
   $effect(() => {
     if (settingsStore.macOsVibrancy) {
       document.documentElement.setAttribute("data-vibrancy", "");
+      if (!settingsStore.vibrancyBlur) {
+        document.documentElement.setAttribute("data-vibrancy-no-blur", "");
+      } else {
+        document.documentElement.removeAttribute("data-vibrancy-no-blur");
+      }
     } else {
       document.documentElement.removeAttribute("data-vibrancy");
+      document.documentElement.removeAttribute("data-vibrancy-no-blur");
     }
   });
 
@@ -516,6 +522,16 @@
     background: var(--vibrancy-tint, transparent);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
+  }
+
+  /* No-blur mode: use theme background instead of transparency */
+  :global([data-vibrancy-no-blur]) :global(body) {
+    background: var(--background-solid);
+    box-shadow: none;
+  }
+
+  :global([data-vibrancy-no-blur]) .explorer {
+    background: var(--background-mica);
   }
 
   :global([data-vibrancy]) .main-content {

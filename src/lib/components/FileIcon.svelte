@@ -201,8 +201,8 @@
   -->
   {#if entry.kind === "directory"}
     <svg class="folder-large" width="64" height="64" viewBox="0 0 48 48" fill="none">
-      <path d="M4 14C4 11.79 5.79 10 8 10H16.34C17.4 10 18.42 10.42 19.17 11.17L22 14H40C42.21 14 44 15.79 44 18V37C44 39.21 42.21 41 40 41H8C5.79 41 4 39.21 4 37V14Z" fill="var(--icon-folder, #e8a800)" opacity="0.85"/>
-      <rect x="4" y="18" width="40" height="2" fill="var(--icon-folder, #e8a800)" opacity="0.2" rx="0.5"/>
+      <path d="M2 14C2 11.79 3.79 10 6 10H14.34C15.4 10 16.42 10.42 17.17 11.17L20 14H42C44.21 14 46 15.79 46 18V37C46 39.21 44.21 41 42 41H6C3.79 41 2 39.21 2 37V14Z" fill="var(--icon-folder, #e8a800)" opacity="0.85"/>
+      <rect x="2" y="18" width="44" height="2" fill="var(--icon-folder, #e8a800)" opacity="0.2" rx="0.5"/>
       <path d="M2 22C2 20.34 3.34 19 5 19H43C44.66 19 46 20.34 46 22V39C46 40.66 44.66 42 43 42H5C3.34 42 2 40.66 2 39V22Z" fill="var(--icon-folder, #f0b400)"/>
       <path d="M2 22C2 20.34 3.34 19 5 19H43C44.66 19 46 20.34 46 22V23H2V22Z" fill="white" opacity="0.25"/>
     </svg>

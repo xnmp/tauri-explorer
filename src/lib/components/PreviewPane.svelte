@@ -750,9 +750,9 @@
     user-select: text;
   }
 
-  /* Vibrancy: flatten inside island */
+  /* Vibrancy: own island, no left border needed */
   :global([data-vibrancy]) .preview-pane {
     background: transparent;
-    border-left-color: var(--vibrancy-island-stroke);
+    border-left: none;
   }
 </style>

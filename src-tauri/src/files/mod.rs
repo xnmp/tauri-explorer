@@ -25,6 +25,8 @@ pub struct FileEntry {
     pub is_symlink: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub symlink_target: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_empty: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +88,12 @@ pub(crate) fn metadata_to_entry(path: &Path, sym_meta: &fs::Metadata) -> FileEnt
         None
     };
 
+    let is_empty = if effective.is_dir() {
+        Some(fs::read_dir(path).map_or(false, |mut d| d.next().is_none()))
+    } else {
+        None
+    };
+
     FileEntry {
         name,
         path: path.to_string_lossy().to_string(),
@@ -94,6 +102,7 @@ pub(crate) fn metadata_to_entry(path: &Path, sym_meta: &fs::Metadata) -> FileEnt
         modified,
         is_symlink,
         symlink_target,
+        is_empty,
     }
 }
 

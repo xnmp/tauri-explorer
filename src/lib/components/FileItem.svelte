@@ -66,6 +66,7 @@
   data-path={entry.path}
   class:directory={entry.kind === "directory"}
   class:hidden-entry={entry.name.startsWith(".") || isManuallyHidden}
+  class:empty-folder={entry.kind === "directory" && entry.is_empty === true}
   class:cut={isCut}
   class:in-clipboard={entryInClipboard}
   class:selected
@@ -190,6 +191,15 @@
 
   .file-item.hidden-entry:hover,
   .file-item.hidden-entry.selected {
+    opacity: 0.8;
+  }
+
+  .file-item.empty-folder {
+    opacity: 0.55;
+  }
+
+  .file-item.empty-folder:hover,
+  .file-item.empty-folder.selected {
     opacity: 0.8;
   }
 

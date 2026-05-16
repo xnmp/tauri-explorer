@@ -47,6 +47,7 @@
   class:cut={isClipboardCut(entry)}
   class:in-clipboard={isInClipboard(entry)}
   class:hidden-entry={entry.name.startsWith(".") || manualHiddenStore.isHidden(explorer.currentPath, entry.name)}
+  class:empty-folder={entry.kind === "directory" && entry.is_empty === true}
   class:drop-target={interactions.isDropTarget(entry.path)}
   class:copy-drop={interactions.isCopyDrop(entry.path)}
   draggable={!isMac}

@@ -15,6 +15,7 @@ export interface FileEntry {
   readonly modified: string; // ISO 8601
   readonly is_symlink?: boolean;
   readonly symlink_target?: string;
+  readonly is_empty?: boolean;
 }
 
 export interface DirectoryListing {

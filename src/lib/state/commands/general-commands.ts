@@ -191,6 +191,7 @@ export const generalDialogCommands: Command[] = [
     label: "Quick Open",
     category: "general",
     shortcut: "Ctrl+P",
+    hidden: true,
     handler: () => {
       dialogStore.openQuickOpen();
     },
@@ -200,6 +201,7 @@ export const generalDialogCommands: Command[] = [
     label: "Command Palette",
     category: "general",
     shortcut: "Ctrl+Shift+P",
+    hidden: true,
     handler: () => {
       dialogStore.openCommandPalette();
     },

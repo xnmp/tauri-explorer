@@ -18,6 +18,8 @@ export interface Command {
   shortcut?: string;
   handler: () => void | Promise<void>;
   when?: () => boolean;
+  /** Hide from command palette (shortcut still works) */
+  hidden?: boolean;
 }
 
 /** Get the effective display shortcut for a command */
@@ -89,7 +91,7 @@ export function getCommandsByFrecency(): Command[] {
     .filter((e) => e.score > 0)
     .sort((a, b) => b.score - a.score)
     .map((e) => commands.get(e.id))
-    .filter((cmd): cmd is Command => cmd !== undefined && (!cmd.when || cmd.when()));
+    .filter((cmd): cmd is Command => cmd !== undefined && !cmd.hidden && (!cmd.when || cmd.when()));
 }
 
 /** Get the frecency score for a single command. */
@@ -133,9 +135,9 @@ export function getAllCommands(): Command[] {
   return Array.from(commands.values());
 }
 
-/** Get commands filtered by enabled state */
+/** Get commands filtered by enabled state (excludes hidden commands) */
 export function getAvailableCommands(): Command[] {
-  return getAllCommands().filter((cmd) => !cmd.when || cmd.when());
+  return getAllCommands().filter((cmd) => !cmd.hidden && (!cmd.when || cmd.when()));
 }
 
 /** Execute a command by ID */

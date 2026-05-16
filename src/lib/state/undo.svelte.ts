@@ -74,7 +74,11 @@ function createUndoStore() {
       const action = stack[stack.length - 1];
       const result = await executeUndo(action, undoApi);
 
-      if (!result.ok) return { error: result.error };
+      if (!result.ok) {
+        // Pop the failed action so the user isn't stuck
+        stack = stack.slice(0, -1);
+        return { error: result.error };
+      }
 
       stack = stack.slice(0, -1);
       redoStack = [...redoStack, action];

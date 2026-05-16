@@ -643,7 +643,8 @@ function createExplorerState(seed?: ExplorerSeed) {
       destPath: coreState.currentPath,
       existingEntries: coreState.entries,
       onEntriesAdded: (entries: FileEntry[]) => {
-        coreState.entries = [...coreState.entries, ...entries];
+        const newPaths = new Set(entries.map((e) => e.path));
+        coreState.entries = [...coreState.entries.filter((e) => !newPaths.has(e.path)), ...entries];
         markLocalMutation();
         // Remember pasted paths so onRefresh can re-select after navigation
         if (entries.length > 0) {
@@ -717,7 +718,10 @@ function createExplorerState(seed?: ExplorerSeed) {
   async function undo(): Promise<string | null> {
     markLocalMutation();
     const result = await undoStore.undo();
-    if ("error" in result) return result.error;
+    if ("error" in result) {
+      toastStore.error(result.error);
+      return result.error;
+    }
 
     toastStore.show(`Undo: ${undoActionLabel(result.action)}`, "info");
     markLocalMutation();

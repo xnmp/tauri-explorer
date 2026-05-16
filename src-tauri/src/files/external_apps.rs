@@ -29,7 +29,6 @@ const KNOWN_EDITORS: &[EditorDef] = &[
     EditorDef { app_names: &["visual studio code", "vscode", "code"], binary: "code", format: LineFormat::GotoColon },
     EditorDef { app_names: &["zed"], binary: "zed", format: LineFormat::PathColon },
     EditorDef { app_names: &["sublime text", "sublime"], binary: "subl", format: LineFormat::PathColon },
-    EditorDef { app_names: &["lite-xl", "lite xl", "litexl"], binary: "lite-xl", format: LineFormat::PathColon },
     EditorDef { app_names: &["textmate"], binary: "mate", format: LineFormat::DashLLine },
     EditorDef { app_names: &["neovim", "nvim"], binary: "nvim", format: LineFormat::PlusLine },
     EditorDef { app_names: &["vim", "macvim"], binary: "vim", format: LineFormat::PlusLine },

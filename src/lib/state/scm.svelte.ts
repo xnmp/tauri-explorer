@@ -95,9 +95,11 @@ function createScmStore() {
 
   function filterToDir<T extends { path: string }>(entries: T[]): T[] {
     if (!activePath || !repoRoot || activePath === repoRoot) return entries;
+    const root = repoRoot.endsWith("/") ? repoRoot.slice(0, -1) : repoRoot;
+    if (activePath === root) return entries;
     const prefix = activePath + "/";
     return entries.filter((e) => {
-      const fullPath = repoRoot + "/" + e.path;
+      const fullPath = root + "/" + e.path;
       return fullPath.startsWith(prefix);
     });
   }

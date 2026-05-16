@@ -583,7 +583,7 @@ const mockCommands: Record<string, CommandHandler> = {
 
   git_repo_root: (args: Record<string, unknown>) => {
     const p = args.path as string;
-    if (p?.startsWith("/home/user/Documents/project")) return "/home/user/Documents/project";
+    if (p?.startsWith("/home/user/Documents/project")) return "/home/user/Documents/project/";
     return null;
   },
 

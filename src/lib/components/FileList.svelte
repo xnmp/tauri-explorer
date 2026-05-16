@@ -305,11 +305,11 @@
           <path d="M20 27H28" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
         </svg>
         <span>This folder is empty</span>
-        <button class="go-up-button" onclick={() => explorer.goUp()}>
+        <button class="go-up-button" onclick={() => explorer.goBack()}>
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-            <path d="M8 12V4M8 4L4 8M8 4L12 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
-          Go up
+          Go back
         </button>
       </div>
     {:else if explorer.displayEntries.length === 0 && explorer.isCreatingFolder}

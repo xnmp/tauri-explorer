@@ -5,6 +5,169 @@ use std::path::PathBuf;
 
 use crate::error::AppError;
 
+/// Known text editors and their line-number invocation format.
+enum LineFormat {
+    /// `code --goto path:line`
+    GotoColon,
+    /// `editor path:line`
+    PathColon,
+    /// `editor +line path`
+    PlusLine,
+    /// `editor -l line path`
+    DashLLine,
+}
+
+struct EditorDef {
+    /// Substrings to match against the default app name (lowercase)
+    app_names: &'static [&'static str],
+    /// CLI binary to invoke
+    binary: &'static str,
+    format: LineFormat,
+}
+
+const KNOWN_EDITORS: &[EditorDef] = &[
+    EditorDef { app_names: &["visual studio code", "vscode", "code"], binary: "code", format: LineFormat::GotoColon },
+    EditorDef { app_names: &["zed"], binary: "zed", format: LineFormat::PathColon },
+    EditorDef { app_names: &["sublime text", "sublime"], binary: "subl", format: LineFormat::PathColon },
+    EditorDef { app_names: &["lite-xl", "lite xl", "litexl"], binary: "lite-xl", format: LineFormat::PathColon },
+    EditorDef { app_names: &["textmate"], binary: "mate", format: LineFormat::DashLLine },
+    EditorDef { app_names: &["neovim", "nvim"], binary: "nvim", format: LineFormat::PlusLine },
+    EditorDef { app_names: &["vim", "macvim"], binary: "vim", format: LineFormat::PlusLine },
+];
+
+/// Detect the default application for a file (returns app name/path).
+#[cfg(target_os = "macos")]
+fn get_default_app(file_path: &std::path::Path) -> Option<String> {
+    let script = format!(
+        concat!(
+            "ObjC.import('AppKit');",
+            "var ws = $.NSWorkspace.sharedWorkspace;",
+            "var url = $.NSURL.fileURLWithPath('{}');",
+            "var appUrl = ws.URLForApplicationToOpenURL(url);",
+            "appUrl ? appUrl.lastPathComponent.js : '';"
+        ),
+        file_path.display()
+    );
+    let output = std::process::Command::new("osascript")
+        .args(["-l", "JavaScript", "-e", &script])
+        .output()
+        .ok()?;
+    let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if name.is_empty() { None } else { Some(name) }
+}
+
+/// Detect the default application for a file via xdg-mime.
+#[cfg(target_os = "linux")]
+fn get_default_app(file_path: &std::path::Path) -> Option<String> {
+    // Get MIME type
+    let mime_output = std::process::Command::new("xdg-mime")
+        .args(["query", "filetype"])
+        .arg(file_path)
+        .output()
+        .ok()?;
+    let mime = String::from_utf8_lossy(&mime_output.stdout).trim().to_string();
+    if mime.is_empty() { return None; }
+
+    // Get default handler for that MIME type
+    let handler_output = std::process::Command::new("xdg-mime")
+        .args(["query", "default", &mime])
+        .output()
+        .ok()?;
+    let desktop = String::from_utf8_lossy(&handler_output.stdout).trim().to_string();
+    if desktop.is_empty() { None } else { Some(desktop) }
+}
+
+#[cfg(target_os = "windows")]
+fn get_default_app(_file_path: &std::path::Path) -> Option<String> {
+    // Windows: no simple way to query default handler by name.
+    // Fall back to checking PATH for known editors.
+    None
+}
+
+fn find_editor_in_path(binary: &str) -> bool {
+    #[cfg(windows)]
+    let cmd = std::process::Command::new("where.exe")
+        .arg(binary)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    #[cfg(not(windows))]
+    let cmd = std::process::Command::new("which")
+        .arg(binary)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    cmd.map(|s| s.success()).unwrap_or(false)
+}
+
+fn match_editor_by_app_name(app_name: &str) -> Option<&'static EditorDef> {
+    let lower = app_name.to_lowercase();
+    KNOWN_EDITORS.iter().find(|e| {
+        e.app_names.iter().any(|name| lower.contains(name))
+    })
+}
+
+fn spawn_editor(editor: &EditorDef, file_path: &std::path::Path, line: u32) -> Result<(), std::io::Error> {
+    match editor.format {
+        LineFormat::GotoColon => std::process::Command::new(editor.binary)
+            .arg("--goto")
+            .arg(format!("{}:{}", file_path.display(), line))
+            .spawn()
+            .map(|_| ()),
+        LineFormat::PathColon => std::process::Command::new(editor.binary)
+            .arg(format!("{}:{}", file_path.display(), line))
+            .spawn()
+            .map(|_| ()),
+        LineFormat::PlusLine => std::process::Command::new(editor.binary)
+            .arg(format!("+{}", line))
+            .arg(file_path)
+            .spawn()
+            .map(|_| ()),
+        LineFormat::DashLLine => std::process::Command::new(editor.binary)
+            .arg("-l")
+            .arg(line.to_string())
+            .arg(file_path)
+            .spawn()
+            .map(|_| ()),
+    }
+}
+
+/// Open a file at a specific line number using the default app if it supports
+/// line numbers, otherwise fall back to a plain open.
+#[tauri::command]
+pub fn open_file_at_line(path: String, line: u32) -> Result<(), AppError> {
+    let file_path = PathBuf::from(&path);
+    if !file_path.exists() {
+        return Err(AppError::NotFound(path));
+    }
+
+    // Try to detect the default app and match it against known editors
+    if let Some(app_name) = get_default_app(&file_path) {
+        if let Some(editor) = match_editor_by_app_name(&app_name) {
+            if find_editor_in_path(editor.binary) {
+                if spawn_editor(editor, &file_path, line).is_ok() {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    // On Windows (or when detection fails), try known editors in PATH as fallback
+    #[cfg(target_os = "windows")]
+    {
+        for editor in KNOWN_EDITORS {
+            if find_editor_in_path(editor.binary) {
+                if spawn_editor(editor, &file_path, line).is_ok() {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    // Default app doesn't support line numbers — open without them
+    open_file(path)
+}
+
 /// Open a file with the system's default application.
 #[tauri::command]
 pub fn open_file(path: String) -> Result<(), AppError> {

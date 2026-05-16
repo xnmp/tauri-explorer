@@ -462,6 +462,10 @@ const mockCommands: Record<string, CommandHandler> = {
     // No-op for mock
   },
 
+  open_file_at_line: () => {
+    // No-op for mock
+  },
+
   open_image_with_siblings: () => {
     // No-op for mock
   },

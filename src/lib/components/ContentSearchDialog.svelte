@@ -8,6 +8,7 @@
     startContentSearch,
     cancelContentSearch,
     openFile,
+    openFileAtLine,
     type ContentSearchResult,
     type ContentSearchEvent,
   } from "$lib/api/files";
@@ -316,7 +317,10 @@
   }
 
   async function selectResult(result: FlattenedResult): Promise<void> {
-    const openResult = await openFile(result.filePath);
+    const line = result.match?.lineNumber ?? 0;
+    const openResult = line > 0
+      ? await openFileAtLine(result.filePath, line)
+      : await openFile(result.filePath);
     if (!openResult.ok) {
       const explorer = paneNav?.getActiveExplorer() ?? windowTabsManager.getActiveExplorer();
       const resultDir = parentDir(result.filePath);

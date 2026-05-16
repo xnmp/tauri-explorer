@@ -239,6 +239,19 @@ export async function openFile(path: string): Promise<ApiResult<void>> {
 }
 
 /**
+ * Open a file at a specific line number using a known text editor.
+ * Falls back to default open if no known editor is found.
+ */
+export async function openFileAtLine(path: string, line: number): Promise<ApiResult<void>> {
+  try {
+    await invoke("open_file_at_line", { path, line });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+/**
  * Open a file with a specific application.
  *
  * @param path - Full path to file to open

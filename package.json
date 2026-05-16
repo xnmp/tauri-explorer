@@ -57,6 +57,6 @@
     "webdriverio": "^9.27.0"
   },
   "overrides": {
-    "tsx>esbuild": "$esbuild"
+    "esbuild": "^0.25.0"
   }
 }

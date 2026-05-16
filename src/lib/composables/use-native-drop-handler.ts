@@ -12,8 +12,6 @@ import { dragState } from "$lib/state/drag.svelte";
 import { handleFileDrop } from "$lib/state/drop-operations";
 import { isCopyModifier as isCopyMod } from "$lib/domain/platform";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
-import { copyEntry, moveEntry } from "$lib/api/files";
-import { broadcastFileChange } from "$lib/state/file-events";
 import { parentDir } from "$lib/domain/path";
 
 export interface NativeDropDeps {
@@ -32,10 +30,12 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
 
     const target = resolveDropTarget(position);
 
-    const internalPaths = dragState.current?.paths
-      ? dragState.current.paths
-      : dragState.current?.path
-        ? [dragState.current.path]
+    // Check both in-memory (same-window) and localStorage (cross-window) drag state
+    const dragData = dragState.current ?? dragState.readCrossWindow();
+    const internalPaths = dragData?.paths
+      ? dragData.paths
+      : dragData?.path
+        ? [dragData.path]
         : null;
     const isInternalDrag = internalPaths !== null &&
       paths.length > 0 &&
@@ -58,14 +58,17 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     // Determine source paths (validated internal drag state or external paths)
     const sourcePaths = isInternalDrag ? internalPaths! : paths;
 
+    const dropOptions = {
+      onRefresh: deps.refreshAllPanes,
+      broadcastToOtherWindows: isInternalDrag,
+    };
+
     // Drop onto a specific folder
     if (target?.type === "folder") {
       for (const sourcePath of sourcePaths) {
         if (sourcePath === target.path) continue;
         if (target.path.startsWith(sourcePath + "/")) continue;
-        await handleFileDrop(sourcePath, target.path, isCopy, {
-          onRefresh: deps.refreshAllPanes,
-        });
+        await handleFileDrop(sourcePath, target.path, isCopy, dropOptions);
       }
       dragState.clear();
       return;
@@ -73,24 +76,14 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
 
     // Background drop — move/copy to the target pane's directory
     const destDir = target?.path || explorer.currentPath;
-    const operation = isCopy ? copyEntry : moveEntry;
-    const opName = isCopy ? "copy" : "move";
-    const affectedDirs = new Set<string>();
-    affectedDirs.add(destDir);
 
     for (const path of sourcePaths) {
       const sourceDir = parentDir(path);
       if (sourceDir === destDir) continue;
-      affectedDirs.add(sourceDir);
-      const result = await operation(path, destDir);
-      if (!result.ok) {
-        console.error(`Failed to ${opName} dropped file:`, result.error);
-      }
+      await handleFileDrop(path, destDir, isCopy, dropOptions);
     }
 
     dragState.clear();
-    deps.refreshAllPanes();
-    broadcastFileChange([...affectedDirs]);
   }
 
   const externalDrop = useExternalDrop({

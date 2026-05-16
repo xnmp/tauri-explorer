@@ -28,6 +28,8 @@ export interface FileTransferOptions {
   suppressUndo?: boolean;
   suppressBroadcast?: boolean;
   suppressRefresh?: boolean;
+  /** Broadcast undo action and toast to other windows (for cross-window DnD). */
+  broadcastToOtherWindows?: boolean;
 }
 
 export interface FileTransferResult {
@@ -61,6 +63,7 @@ export async function performFileTransfer(
     suppressUndo = false,
     suppressBroadcast = false,
     suppressRefresh = false,
+    broadcastToOtherWindows = false,
   } = options;
 
   const fileName = basename(sourcePath);
@@ -125,17 +128,26 @@ export async function performFileTransfer(
   const targetName = basename(targetDir);
 
   if (!suppressUndo && !isCopy) {
-    undoStore.push({
-      type: "move",
+    const action = {
+      type: "move" as const,
       sourcePath,
       destPath: result.data.path,
       originalDir: sourceDir,
-    });
+    };
+    if (broadcastToOtherWindows) {
+      undoStore.pushAndBroadcast(action);
+    } else {
+      undoStore.push(action);
+    }
   }
 
   if (!suppressToast) {
     const verb = isCopy ? "Copied" : "Moved";
-    toastStore.show(`${verb} ${fileName} to ${targetName}`, "info");
+    const message = `${verb} ${fileName} to ${targetName}`;
+    toastStore.show(message, "info");
+    if (broadcastToOtherWindows) {
+      toastStore.broadcast(message, "info");
+    }
   }
 
   if (!suppressRefresh) {

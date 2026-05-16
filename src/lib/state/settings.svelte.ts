@@ -10,6 +10,7 @@
 import { loadPersisted, savePersisted } from "./persisted";
 import { readConfigFile, writeConfigFile } from "$lib/api/files";
 import type { ViewMode } from "./types";
+import type { Command, CommandCategory } from "./commands.svelte";
 
 /** Which navigation bar buttons to display */
 export interface NavBarButtons {
@@ -423,3 +424,71 @@ function createSettingsStore() {
 }
 
 export const settingsStore = createSettingsStore();
+
+// --- Toggleable settings metadata for auto-registration in command palette ---
+
+export interface ToggleSettingMeta {
+  key: keyof Settings;
+  id?: string;
+  label: string;
+  category?: CommandCategory;
+  shortcut?: string;
+  when?: () => boolean;
+  handler?: () => void;
+}
+
+export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
+  { key: "showSidebar", id: "view.toggleSidebar", label: "Toggle Sidebar" },
+  { key: "showHidden", id: "view.toggleHidden", label: "Toggle Hidden Files", shortcut: "Ctrl+H" },
+  { key: "showWindowControls", id: "view.toggleWindowControls", label: "Toggle Window Controls" },
+  { key: "showAddressBar", id: "view.toggleAddressBar", label: "Toggle Address Bar", shortcut: "Alt+M D" },
+  {
+    key: "showPreviewPane",
+    id: "view.togglePreviewPane",
+    label: "Toggle Preview Pane",
+    shortcut: "Space",
+    when: () => {
+      const active = document.activeElement;
+      const tag = active?.tagName;
+      return tag !== "INPUT" && tag !== "TEXTAREA" && !(active as HTMLElement)?.isContentEditable;
+    },
+  },
+  { key: "showStatusBar", id: "view.toggleStatusBar", label: "Toggle Status Bar", shortcut: "Alt+M U" },
+  { key: "showGitStatus", id: "view.toggleGitStatus", label: "Toggle Git Status Indicators" },
+  { key: "millerHideEmpty", id: "view.toggleMillerHideEmpty", label: "Miller Columns: Toggle Hide Empty Folders" },
+  { key: "showManuallyHidden", id: "view.toggleManuallyHidden", label: "Toggle Manually Hidden Files" },
+  {
+    key: "showScmPanel",
+    id: "view.toggleScmPanel",
+    label: "Toggle Source Control Panel",
+    shortcut: "Alt+M G",
+    handler: () => {
+      if (settingsStore.showScmPanel) {
+        import("./scm.svelte").then((m) => m.scmStore.closeDiff());
+      }
+      settingsStore.toggleScmPanel();
+    },
+  },
+  { key: "scmTreeView", id: "view.toggleScmTreeView", label: "Toggle SCM Tree View" },
+  { key: "confirmDelete", id: "view.toggleConfirmDelete", label: "Toggle Confirm on Delete" },
+  { key: "quickOpenDebug", id: "view.toggleQuickOpenDebug", label: "Toggle Quick Open Debug Scores" },
+  { key: "yaziNavigation", label: "Toggle Yazi Navigation" },
+  { key: "integratedTitleBar", label: "Toggle Integrated Title Bar" },
+  { key: "macOsVibrancy", label: "Toggle macOS Vibrancy" },
+  { key: "vibrancyBlur", label: "Toggle Vibrancy Blur" },
+];
+
+export function generateToggleCommands(): Command[] {
+  return TOGGLE_SETTINGS.map((meta) => ({
+    id: meta.id ?? `setting.toggle.${meta.key}`,
+    label: meta.label,
+    category: (meta.category ?? "view") as CommandCategory,
+    shortcut: meta.shortcut,
+    when: meta.when,
+    handler:
+      meta.handler ??
+      (() => {
+        settingsStore.update({ [meta.key]: !settingsStore.state[meta.key] });
+      }),
+  }));
+}

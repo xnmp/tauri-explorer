@@ -5,6 +5,9 @@
  * Extracted from explorer.svelte.ts to reduce god-object complexity.
  * Manages the undo stack for file operations (rename, move).
  * The stack is global to provide a unified undo experience.
+ *
+ * Cross-window: actions can be broadcast via BroadcastChannel so that
+ * e.g. a drag-drop move is undoable from both source and destination windows.
  */
 
 import { renameEntry, moveEntry, restoreFromTrash, deleteMultipleEntries, deleteEntry } from "$lib/api/files";
@@ -20,9 +23,21 @@ const undoApi: UndoApiDeps = {
   restoreFromTrash,
 };
 
+const UNDO_CHANNEL = "explorer-undo-actions";
+let channel: BroadcastChannel | null = null;
+
 function createUndoStore() {
   let stack = $state<UndoAction[]>([]);
   let redoStack = $state<UndoAction[]>([]);
+
+  // Listen for undo actions broadcast from other windows
+  if (typeof BroadcastChannel !== "undefined") {
+    channel = new BroadcastChannel(UNDO_CHANNEL);
+    channel.onmessage = (event: MessageEvent<UndoAction>) => {
+      stack = [...stack, event.data];
+      redoStack = [];
+    };
+  }
 
   return {
     // Accessors
@@ -42,6 +57,13 @@ function createUndoStore() {
       redoStack = []; // New action clears redo history
     },
 
+    /** Push an action and broadcast it to other windows. */
+    pushAndBroadcast(action: UndoAction): void {
+      stack = [...stack, action];
+      redoStack = [];
+      channel?.postMessage(action);
+    },
+
     /**
      * Execute the most recent undo action and remove it from the stack.
      * Returns { error } on failure, { action } on success (for broadcasting affected dirs).
@@ -52,7 +74,11 @@ function createUndoStore() {
       const action = stack[stack.length - 1];
       const result = await executeUndo(action, undoApi);
 
-      if (!result.ok) return { error: result.error };
+      if (!result.ok) {
+        // Pop the failed action so the user isn't stuck
+        stack = stack.slice(0, -1);
+        return { error: result.error };
+      }
 
       stack = stack.slice(0, -1);
       redoStack = [...redoStack, action];

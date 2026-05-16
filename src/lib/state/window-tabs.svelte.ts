@@ -12,7 +12,7 @@
 
 import type { PaneId, WindowTab, WindowTabPane } from "./types";
 import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
-import { loadPersisted, savePersisted } from "./persisted";
+import { loadPersisted, savePersisted, removePersisted } from "./persisted";
 import { parentDir } from "$lib/domain/path";
 
 const STORAGE_KEY = "explorer-tabs";
@@ -148,28 +148,30 @@ function createWindowTabsManager() {
   function createAndRegisterExplorer(
     path: string,
     sourceExplorer?: ExplorerInstance,
+    externalSeed?: { currentPath: string; entries: any[]; sortBy: string; sortAscending: boolean; viewMode: string },
   ): { explorerId: string; explorer: ExplorerInstance } {
     const explorerId = generateId("explorer");
     const canSeed = sourceExplorer && sourceExplorer.currentPath === path;
-    const explorer = createExplorerState(
-      canSeed
-        ? {
-            currentPath: sourceExplorer.currentPath,
-            entries: [...sourceExplorer.displayEntries],
-            sortBy: sourceExplorer.sortBy,
-            sortAscending: sourceExplorer.sortAscending,
-            viewMode: sourceExplorer.viewMode,
-          }
-        : undefined,
-    );
+    const seed = canSeed
+      ? {
+          currentPath: sourceExplorer.currentPath,
+          entries: [...sourceExplorer.displayEntries],
+          sortBy: sourceExplorer.sortBy,
+          sortAscending: sourceExplorer.sortAscending,
+          viewMode: sourceExplorer.viewMode,
+        }
+      : externalSeed?.currentPath === path
+        ? externalSeed as any
+        : undefined;
+    const explorer = createExplorerState(seed);
     explorers.set(explorerId, explorer);
     explorer.navigateTo(path);
     return { explorerId, explorer };
   }
 
   /** Create a pane object with a new explorer */
-  function createPane(path: string, sourceExplorer?: ExplorerInstance): WindowTabPane {
-    const { explorerId } = createAndRegisterExplorer(path, sourceExplorer);
+  function createPane(path: string, sourceExplorer?: ExplorerInstance, externalSeed?: any): WindowTabPane {
+    const { explorerId } = createAndRegisterExplorer(path, sourceExplorer, externalSeed);
     return {
       explorerId,
       path,
@@ -178,7 +180,7 @@ function createWindowTabsManager() {
   }
 
   /** Create a new window tab */
-  function createTab(initialPath?: string): WindowTab {
+  function createTab(initialPath?: string, externalSeed?: any): WindowTab {
     const defaultPath = "/home";
 
     // Inherit paths and entries from active tab's explorers so the new
@@ -191,7 +193,7 @@ function createWindowTabsManager() {
     const tab: WindowTab = {
       id: generateId("tab"),
       panes: {
-        left: createPane(leftPath, leftExplorer),
+        left: createPane(leftPath, leftExplorer, externalSeed),
         right: createPane(rightPath, rightExplorer),
       },
       activePaneId: "left",
@@ -270,7 +272,18 @@ function createWindowTabsManager() {
     explorers.clear();
     tabs = [];
     activeTabId = null;
-    return createTab(overridePath ?? initialPath);
+
+    // Check for parent-window seed (child windows get entries pre-loaded)
+    const targetPath = overridePath ?? initialPath;
+    const seedKey = `dir-seed:${targetPath}`;
+    const seed = loadPersisted<{ currentPath: string; entries: any[]; sortBy: string; sortAscending: boolean; viewMode: string; ts: number } | null>(seedKey, null);
+    let externalSeed: any = undefined;
+    if (seed && Date.now() - seed.ts < 5000) {
+      externalSeed = seed;
+      removePersisted(seedKey);
+    }
+
+    return createTab(targetPath, externalSeed);
   }
 
   /** Snapshot a tab for Ctrl+Shift+T restoration */

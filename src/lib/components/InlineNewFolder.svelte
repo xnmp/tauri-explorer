@@ -4,12 +4,16 @@
 -->
 <script lang="ts">
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
+  import type { FileEntry } from "$lib/domain/file";
+  import FileIcon from "./FileIcon.svelte";
   import { tick } from "svelte";
 
   interface Props {
     explorer: ExplorerInstance;
     variant: "details" | "list" | "tiles";
   }
+
+  const folderEntry: FileEntry = { name: "New folder", kind: "directory", path: "", size: 0, modified: "" };
 
   let { explorer, variant }: Props = $props();
 
@@ -68,9 +72,7 @@
 {#if variant === "details"}
   <div class="inline-new-folder">
     <span class="new-folder-icon">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="var(--icon-folder, #ffb900)"/>
-      </svg>
+      <FileIcon entry={folderEntry} size="small" />
     </span>
     <input
       type="text"
@@ -88,9 +90,7 @@
 {:else if variant === "list"}
   <div class="inline-new-folder list-inline-new-folder">
     <span class="list-icon">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="var(--icon-folder, #ffb900)"/>
-      </svg>
+      <FileIcon entry={folderEntry} size="small" />
     </span>
     <input
       type="text"
@@ -108,10 +108,7 @@
 {:else}
   <div class="tile-item tile-inline-new-folder">
     <div class="tile-icon">
-      <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
-        <path d="M4 14C4 11.79 5.79 10 8 10H16.34C17.4 10 18.42 10.42 19.17 11.17L22 14H40C42.21 14 44 15.79 44 18V37C44 39.21 42.21 41 40 41H8C5.79 41 4 39.21 4 37V14Z" fill="var(--icon-folder, #e8a800)" opacity="0.85"/>
-        <path d="M2 22C2 20.34 3.34 19 5 19H43C44.66 19 46 20.34 46 22V39C46 40.66 44.66 42 43 42H5C3.34 42 2 40.66 2 39V22Z" fill="var(--icon-folder, #f0b400)"/>
-      </svg>
+      <FileIcon entry={folderEntry} size="large" />
     </div>
     <input
       type="text"

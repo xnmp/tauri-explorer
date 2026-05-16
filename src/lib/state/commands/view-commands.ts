@@ -3,12 +3,11 @@
  */
 
 import type { Command } from "../commands.svelte";
-import { settingsStore } from "../settings.svelte";
+import { settingsStore, generateToggleCommands } from "../settings.svelte";
 import { themeStore } from "../theme.svelte";
 import { folderViewsStore } from "../folder-views.svelte";
 import { sidebarViewsStore } from "../sidebar-views.svelte";
 import { dialogStore } from "../dialogs.svelte";
-import { scmStore } from "../scm.svelte";
 import { getActiveExplorer } from "./shared";
 
 /** View commands */
@@ -63,12 +62,6 @@ export const viewCommands: Command[] = [
     handler: () => settingsStore.setMillerLayers(3),
   },
   {
-    id: "view.toggleMillerHideEmpty",
-    label: "Miller Columns: Toggle Hide Empty Folders",
-    category: "view",
-    handler: () => settingsStore.toggleMillerHideEmpty(),
-  },
-  {
     id: "view.sortByName",
     label: "Sort by Name",
     category: "view",
@@ -93,12 +86,6 @@ export const viewCommands: Command[] = [
     handler: () => getActiveExplorer()?.setSorting("type"),
   },
   {
-    id: "view.toggleSidebar",
-    label: "Toggle Sidebar",
-    category: "view",
-    handler: () => settingsStore.toggleSidebar(),
-  },
-  {
     id: "view.focusFilesSidebar",
     label: "Toggle Files Sidebar (Bookmarks & Recent)",
     category: "view",
@@ -113,42 +100,6 @@ export const viewCommands: Command[] = [
     },
   },
   {
-    id: "view.toggleScmPanel",
-    label: "Toggle Source Control Panel",
-    category: "view",
-    shortcut: "Alt+M G",
-    handler: () => {
-      if (settingsStore.showScmPanel) scmStore.closeDiff();
-      settingsStore.toggleScmPanel();
-    },
-  },
-  {
-    id: "view.toggleWindowControls",
-    label: "Toggle Window Controls",
-    category: "view",
-    handler: () => settingsStore.toggleWindowControls(),
-  },
-  {
-    id: "view.toggleAddressBar",
-    label: "Toggle Address Bar",
-    category: "view",
-    shortcut: "Alt+M D",
-    handler: () => settingsStore.toggleAddressBar(),
-  },
-  {
-    id: "view.togglePreviewPane",
-    label: "Toggle Preview Pane",
-    category: "view",
-    shortcut: "Space",
-    handler: () => settingsStore.togglePreviewPane(),
-    when: () => {
-      // Only toggle when focus is NOT in an input/textarea (e.g. file list is focused)
-      const active = document.activeElement;
-      const tag = active?.tagName;
-      return tag !== "INPUT" && tag !== "TEXTAREA" && !(active as HTMLElement)?.isContentEditable;
-    },
-  },
-  {
     id: "view.toggleTheme",
     label: "Toggle Dark/Light Theme",
     category: "view",
@@ -156,13 +107,6 @@ export const viewCommands: Command[] = [
       const current = themeStore.currentThemeId;
       themeStore.setTheme(current === "dark" ? "light" : "dark");
     },
-  },
-  {
-    id: "view.toggleHidden",
-    label: "Toggle Hidden Files",
-    category: "view",
-    shortcut: "Ctrl+H",
-    handler: () => settingsStore.toggleHidden(),
   },
   {
     id: "view.zoomIn",
@@ -186,89 +130,48 @@ export const viewCommands: Command[] = [
     handler: () => settingsStore.zoomReset(),
   },
   {
-    id: "view.toggleStatusBar",
-    label: "Toggle Status Bar",
+    id: "view.setListColumns",
+    label: "Set List View Column Count",
     category: "view",
-    shortcut: "Alt+M U",
-    handler: () => settingsStore.toggleStatusBar(),
+    handler: () => {
+      const current = settingsStore.listViewColumns;
+      dialogStore.openPicker({
+        title: "Select column count",
+        options: [
+          { id: "0", label: "Auto", current: current === 0 },
+          { id: "1", label: "1 Column", current: current === 1 },
+          { id: "2", label: "2 Columns", current: current === 2 },
+          { id: "3", label: "3 Columns", current: current === 3 },
+          { id: "4", label: "4 Columns", current: current === 4 },
+        ],
+        onSelect: (id) => settingsStore.setListViewColumns(Number(id)),
+      });
+    },
   },
   {
-    id: "view.listColumnsAuto",
-    label: "List View: Auto Columns",
+    id: "view.setTileSize",
+    label: "Tile View: Set Size",
     category: "view",
-    handler: () => settingsStore.setListViewColumns(0),
-  },
-  {
-    id: "view.listColumns1",
-    label: "List View: 1 Column",
-    category: "view",
-    handler: () => settingsStore.setListViewColumns(1),
-  },
-  {
-    id: "view.listColumns2",
-    label: "List View: 2 Columns",
-    category: "view",
-    handler: () => settingsStore.setListViewColumns(2),
-  },
-  {
-    id: "view.listColumns3",
-    label: "List View: 3 Columns",
-    category: "view",
-    handler: () => settingsStore.setListViewColumns(3),
-  },
-  {
-    id: "view.tilesSizeSmall",
-    label: "Tiles: Small Icons (this folder)",
-    category: "view",
-    handler: () => { const e = getActiveExplorer(); if (e) { e.setViewMode("tiles"); folderViewsStore.set(e.currentPath, { thumbnailSize: "small" }); } },
-  },
-  {
-    id: "view.tilesSizeMedium",
-    label: "Tiles: Medium Icons (this folder)",
-    category: "view",
-    handler: () => { const e = getActiveExplorer(); if (e) { e.setViewMode("tiles"); folderViewsStore.set(e.currentPath, { thumbnailSize: "medium" }); } },
-  },
-  {
-    id: "view.tilesSizeLarge",
-    label: "Tiles: Large Icons (this folder)",
-    category: "view",
-    handler: () => { const e = getActiveExplorer(); if (e) { e.setViewMode("tiles"); folderViewsStore.set(e.currentPath, { thumbnailSize: "large" }); } },
-  },
-  {
-    id: "view.tilesSizeXLarge",
-    label: "Tiles: Extra Large Icons (this folder)",
-    category: "view",
-    handler: () => { const e = getActiveExplorer(); if (e) { e.setViewMode("tiles"); folderViewsStore.set(e.currentPath, { thumbnailSize: "xlarge" }); } },
-  },
-  {
-    id: "view.toggleManuallyHidden",
-    label: "Toggle Manually Hidden Files",
-    category: "view",
-    handler: () => settingsStore.toggleShowManuallyHidden(),
-  },
-  {
-    id: "view.toggleGitStatus",
-    label: "Toggle Git Status Indicators",
-    category: "view",
-    handler: () => settingsStore.toggleGitStatus(),
-  },
-  {
-    id: "view.toggleScmTreeView",
-    label: "Toggle SCM Tree View",
-    category: "view",
-    handler: () => settingsStore.toggleScmTreeView(),
-  },
-  {
-    id: "view.toggleConfirmDelete",
-    label: "Toggle Confirm on Delete",
-    category: "view",
-    handler: () => settingsStore.toggleConfirmDelete(),
-  },
-  {
-    id: "view.toggleQuickOpenDebug",
-    label: "Toggle Quick Open Debug Scores",
-    category: "view",
-    handler: () => settingsStore.toggleQuickOpenDebug(),
+    handler: () => {
+      const e = getActiveExplorer();
+      const currentSize = e ? (folderViewsStore.get(e.currentPath)?.thumbnailSize ?? settingsStore.state.thumbnailSize) : settingsStore.state.thumbnailSize;
+      dialogStore.openPicker({
+        title: "Select tile size",
+        options: [
+          { id: "small", label: "Small", current: currentSize === "small" },
+          { id: "medium", label: "Medium", current: currentSize === "medium" },
+          { id: "large", label: "Large", current: currentSize === "large" },
+          { id: "xlarge", label: "Extra Large", current: currentSize === "xlarge" },
+        ],
+        onSelect: (id) => {
+          const explorer = getActiveExplorer();
+          if (explorer) {
+            explorer.setViewMode("tiles");
+            folderViewsStore.set(explorer.currentPath, { thumbnailSize: id as "small" | "medium" | "large" | "xlarge" });
+          }
+        },
+      });
+    },
   },
   {
     id: "view.switchTheme",
@@ -276,4 +179,6 @@ export const viewCommands: Command[] = [
     category: "view",
     handler: () => dialogStore.openThemePicker(),
   },
+  // Auto-generated toggle commands from TOGGLE_SETTINGS metadata
+  ...generateToggleCommands(),
 ];

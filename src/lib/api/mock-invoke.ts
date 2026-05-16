@@ -20,8 +20,8 @@ function file(name: string, path: string, size: number): FileEntry {
   return { name, path, kind: "file", size, modified: now };
 }
 
-function dir(name: string, path: string): FileEntry {
-  return { name, path, kind: "directory", size: 0, modified: now };
+function dir(name: string, path: string, is_empty?: boolean): FileEntry {
+  return { name, path, kind: "directory", size: 0, modified: now, is_empty };
 }
 
 // Mock file system structure
@@ -30,15 +30,17 @@ const mockFiles: Record<string, FileEntry[]> = {
     dir("user", "/home/user"),
   ],
   "/home/user": [
-    dir("Documents", "/home/user/Documents"),
-    dir("Downloads", "/home/user/Downloads"),
-    dir("Pictures", "/home/user/Pictures"),
-    dir("Music", "/home/user/Music"),
-    dir("Videos", "/home/user/Videos"),
-    dir(".config", "/home/user/.config"),
+    dir("Documents", "/home/user/Documents", false),
+    dir("Downloads", "/home/user/Downloads", false),
+    dir("Pictures", "/home/user/Pictures", false),
+    dir("Music", "/home/user/Music", false),
+    dir("Videos", "/home/user/Videos", false),
+    dir("Archive", "/home/user/Archive", true),
+    dir(".config", "/home/user/.config", false),
     file("readme.txt", "/home/user/readme.txt", 1024),
     file("notes.md", "/home/user/notes.md", 2048),
   ],
+  "/home/user/Archive": [],
   "/home/user/Documents": [
     dir("project", "/home/user/Documents/project"),
     file("report.pdf", "/home/user/Documents/report.pdf", 102400),
@@ -460,6 +462,10 @@ const mockCommands: Record<string, CommandHandler> = {
     // No-op for mock
   },
 
+  open_file_at_line: () => {
+    // No-op for mock
+  },
+
   open_image_with_siblings: () => {
     // No-op for mock
   },
@@ -577,7 +583,7 @@ const mockCommands: Record<string, CommandHandler> = {
 
   git_repo_root: (args: Record<string, unknown>) => {
     const p = args.path as string;
-    if (p?.startsWith("/home/user/Documents/project")) return "/home/user/Documents/project";
+    if (p?.startsWith("/home/user/Documents/project")) return "/home/user/Documents/project/";
     return null;
   },
 

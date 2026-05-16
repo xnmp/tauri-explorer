@@ -29,6 +29,7 @@
   import QuickOpen from "$lib/components/QuickOpen.svelte";
   import CommandPalette from "$lib/components/CommandPalette.svelte";
   import ThemePicker from "$lib/components/ThemePicker.svelte";
+  import OptionPicker from "$lib/components/OptionPicker.svelte";
   import SettingsDialog from "$lib/components/SettingsDialog.svelte";
   import ProgressDialog from "$lib/components/ProgressDialog.svelte";
   import ContentSearchDialog from "$lib/components/ContentSearchDialog.svelte";
@@ -41,7 +42,6 @@
   import StatusBar from "$lib/components/StatusBar.svelte";
   import AnimatedBackground from "$lib/components/AnimatedBackground.svelte";
   import MillerColumns from "$lib/components/MillerColumns.svelte";
-  import PreviewPane from "$lib/components/PreviewPane.svelte";
 
   const millerAsLeftIsland = $derived(
     settingsStore.macOsVibrancy && !settingsStore.showSidebar && settingsStore.millerLayers > 0
@@ -189,9 +189,6 @@
   });
 
   onMount(() => {
-    const t0 = performance.now();
-    performance.mark("app-mount-start");
-
     // Initialize theme from saved preference
     themeStore.initTheme();
 
@@ -214,7 +211,7 @@
     const defaultPath = urlPath || launchCwd || homePath;
 
     // If launched from a terminal with a meaningful cwd, pass it as an
-    // override so the active pane navigates there directly instead of
+    // override so the active pane navigates here directly instead of
     // racing two concurrent navigateTo calls.
     const isGenericCwd = !launchCwd || launchCwd === homePath || launchCwd === "/";
     const overridePath = (!isChildWindow && !isGenericCwd) ? launchCwd! : undefined;
@@ -224,10 +221,6 @@
       const explorer = windowTabsManager.getActiveExplorer();
       explorer?.setViewMode(urlViewMode);
     }
-    performance.mark("app-first-dir");
-
-    const tEnd = performance.now();
-    console.log(`[Perf] Frontend mount→dir: ${(tEnd - t0).toFixed(1)}ms`);
 
     // Load settings and bookmarks from config files (async, non-blocking)
     settingsStore.init().then(() => themeStore.syncFromSettings());
@@ -283,9 +276,11 @@
     {/if}
     <PaneContainer />
     {#if settingsStore.showPreviewPane}
-      <div class="preview-island">
-        <PreviewPane />
-      </div>
+      {#await import("$lib/components/PreviewPane.svelte") then { default: PreviewPane }}
+        <div class="preview-island">
+          <PreviewPane />
+        </div>
+      {/await}
     {/if}
   </div>
   {#if settingsStore.showStatusBar}
@@ -296,6 +291,7 @@
 <QuickOpen open={dialogStore.isQuickOpenOpen} onClose={() => dialogStore.closeQuickOpen()} />
 <CommandPalette open={dialogStore.isCommandPaletteOpen} onClose={() => dialogStore.closeCommandPalette()} />
 <ThemePicker open={dialogStore.isThemePickerOpen} onClose={() => dialogStore.closeThemePicker()} />
+<OptionPicker />
 <ContentSearchDialog open={dialogStore.isContentSearchOpen} onClose={() => dialogStore.closeContentSearch()} />
 <SettingsDialog open={dialogStore.isSettingsOpen} onClose={() => dialogStore.closeSettings()} />
 <WorkspaceDialog open={dialogStore.isWorkspaceOpen} onClose={() => dialogStore.closeWorkspace()} />

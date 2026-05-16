@@ -22,11 +22,20 @@ const DEFAULT_DURATIONS: Record<ToastType, number> = {
   clipboard: 3000,
 };
 
+const TOAST_CHANNEL = "explorer-toasts";
 let nextId = 0;
 
 function createToastStore() {
   let toasts = $state<Toast[]>([]);
   const timers = new Map<number, ReturnType<typeof setTimeout>>();
+
+  let channel: BroadcastChannel | null = null;
+  if (typeof BroadcastChannel !== "undefined") {
+    channel = new BroadcastChannel(TOAST_CHANNEL);
+    channel.onmessage = (event: MessageEvent<{ message: string; type: ToastType }>) => {
+      show(event.data.message, event.data.type);
+    };
+  }
 
   function show(message: string, type: ToastType = "info", options?: { isCut?: boolean; duration?: number }): number {
     const id = nextId++;
@@ -69,6 +78,11 @@ function createToastStore() {
     success: (message: string) => show(message, "success"),
     error: (message: string) => show(message, "error"),
     clipboard: (message: string, isCut: boolean) => show(message, "clipboard", { isCut }),
+
+    /** Show a toast in other windows via BroadcastChannel. */
+    broadcast: (message: string, type: ToastType = "info") => {
+      channel?.postMessage({ message, type });
+    },
   };
 }
 

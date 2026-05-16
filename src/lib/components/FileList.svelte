@@ -305,6 +305,12 @@
           <path d="M20 27H28" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
         </svg>
         <span>This folder is empty</span>
+        <button class="go-up-button" onclick={() => explorer.goBack()}>
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+            <path d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Go back
+        </button>
       </div>
     {:else if explorer.displayEntries.length === 0 && explorer.isCreatingFolder}
       <div class="empty-create-folder">
@@ -441,5 +447,25 @@
   .empty-create-folder {
     flex: 1;
     overflow: auto;
+  }
+
+  .go-up-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 6px 14px;
+    border: 1px solid var(--control-stroke);
+    border-radius: var(--radius-md);
+    background: var(--control-fill);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+  }
+
+  .go-up-button:hover {
+    background: var(--subtle-fill-secondary);
   }
 </style>

@@ -208,6 +208,15 @@
     opacity: 0.55;
   }
 
+  .tiles-view :global(.tile-item.empty-folder) {
+    opacity: 0.55;
+  }
+
+  .tiles-view :global(.tile-item.empty-folder:hover),
+  .tiles-view :global(.tile-item.empty-folder.selected) {
+    opacity: 0.8;
+  }
+
   .tiles-view :global(.tile-item.cut) {
     opacity: 0.5;
   }

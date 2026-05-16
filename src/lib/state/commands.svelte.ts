@@ -7,6 +7,8 @@
  */
 
 import { keybindingsStore } from "./keybindings.svelte";
+import { loadPersisted, savePersisted } from "./persisted";
+import { computeFrecencyScore } from "./frecency.svelte";
 
 export interface Command {
   id: string;
@@ -16,6 +18,8 @@ export interface Command {
   shortcut?: string;
   handler: () => void | Promise<void>;
   when?: () => boolean;
+  /** Hide from command palette (shortcut still works) */
+  hidden?: boolean;
 }
 
 /** Get the effective display shortcut for a command */
@@ -50,9 +54,59 @@ export function getCategoryLabel(category: CommandCategory): string {
 /** Internal command registry */
 const commands = new Map<string, Command>();
 
-/** Recently used command IDs (most recent first) */
-let recentCommands = $state<string[]>([]);
-const MAX_RECENT = 10;
+// --- Frecency tracking (persisted) ---
+
+const FRECENCY_KEY = "command-frecency";
+const MAX_COMMAND_ENTRIES = 100;
+const MAX_ACCESSES = 10;
+
+interface CommandFrecencyEntry {
+  id: string;
+  accesses: number[];
+}
+
+let frecencyData = $state<CommandFrecencyEntry[]>(loadPersisted(FRECENCY_KEY, []));
+
+function trackCommandUsage(id: string): void {
+  const now = Date.now();
+  const existing = frecencyData.find((e) => e.id === id);
+  if (existing) {
+    existing.accesses = [...existing.accesses.slice(-(MAX_ACCESSES - 1)), now];
+  } else {
+    frecencyData = [...frecencyData, { id, accesses: [now] }];
+  }
+  if (frecencyData.length > MAX_COMMAND_ENTRIES) {
+    const scored = frecencyData.map((e) => ({ entry: e, score: computeFrecencyScore(e.accesses, now) }));
+    scored.sort((a, b) => b.score - a.score);
+    frecencyData = scored.slice(0, MAX_COMMAND_ENTRIES).map((s) => s.entry);
+  }
+  savePersisted(FRECENCY_KEY, frecencyData);
+}
+
+/** Get commands ranked by frecency score (highest first). */
+export function getCommandsByFrecency(): Command[] {
+  const now = Date.now();
+  return frecencyData
+    .map((e) => ({ id: e.id, score: computeFrecencyScore(e.accesses, now) }))
+    .filter((e) => e.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map((e) => commands.get(e.id))
+    .filter((cmd): cmd is Command => cmd !== undefined && !cmd.hidden && (!cmd.when || cmd.when()));
+}
+
+/** Get the frecency score for a single command. */
+export function getCommandFrecencyScore(id: string): number {
+  const entry = frecencyData.find((e) => e.id === id);
+  if (!entry) return 0;
+  return computeFrecencyScore(entry.accesses, Date.now());
+}
+
+/** @deprecated Use getCommandsByFrecency */
+export function getRecentCommands(): Command[] {
+  return getCommandsByFrecency();
+}
+
+// --- Command registry ---
 
 /** Register a command */
 export function registerCommand(command: Command): void {
@@ -81,16 +135,9 @@ export function getAllCommands(): Command[] {
   return Array.from(commands.values());
 }
 
-/** Get commands filtered by enabled state */
+/** Get commands filtered by enabled state (excludes hidden commands) */
 export function getAvailableCommands(): Command[] {
-  return getAllCommands().filter((cmd) => !cmd.when || cmd.when());
-}
-
-/** Get recently used commands */
-export function getRecentCommands(): Command[] {
-  return recentCommands
-    .map((id) => commands.get(id))
-    .filter((cmd): cmd is Command => cmd !== undefined && (!cmd.when || cmd.when()));
+  return getAllCommands().filter((cmd) => !cmd.hidden && (!cmd.when || cmd.when()));
 }
 
 /** Execute a command by ID */
@@ -108,7 +155,7 @@ export async function executeCommand(id: string): Promise<boolean> {
 
   try {
     await command.handler();
-    trackRecentCommand(id);
+    trackCommandUsage(id);
     return true;
   } catch (err) {
     console.error(`Command failed: ${id}`, err);
@@ -116,12 +163,8 @@ export async function executeCommand(id: string): Promise<boolean> {
   }
 }
 
-/** Track a command as recently used */
-function trackRecentCommand(id: string): void {
-  recentCommands = [id, ...recentCommands.filter((rid) => rid !== id)].slice(0, MAX_RECENT);
-}
-
-/** Clear recent commands */
+/** Clear frecency history */
 export function clearRecentCommands(): void {
-  recentCommands = [];
+  frecencyData = [];
+  savePersisted(FRECENCY_KEY, frecencyData);
 }

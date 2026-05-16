@@ -12,6 +12,18 @@ import type { FileEntry } from "$lib/domain/file";
 
 export type DialogType = "newFolder" | "rename" | "delete" | null;
 
+export interface PickerOption {
+  id: string;
+  label: string;
+  current?: boolean;
+}
+
+export interface PickerConfig {
+  title: string;
+  options: PickerOption[];
+  onSelect: (id: string) => void;
+}
+
 function createDialogStore() {
   // File operation dialogs (mutually exclusive)
   let activeDialog = $state<DialogType>(null);
@@ -31,6 +43,7 @@ function createDialogStore() {
   let nanoBananaSourcePath = $state("");
   let jobsPanelOpen = $state(false);
   let themePickerOpen = $state(false);
+  let pickerConfig = $state<PickerConfig | null>(null);
 
   function closeIfActive(dialogType: DialogType): void {
     if (activeDialog === dialogType) {
@@ -104,6 +117,12 @@ function createDialogStore() {
     get isJobsPanelOpen() {
       return jobsPanelOpen;
     },
+    get isPickerOpen() {
+      return pickerConfig !== null;
+    },
+    get pickerConfig() {
+      return pickerConfig;
+    },
 
     // File operation actions
     openNewFolder(): void {
@@ -138,7 +157,7 @@ function createDialogStore() {
 
     /** True when any modal dialog is open (file ops or overlays). */
     get hasModalOpen(): boolean {
-      return activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || nanoBananaOpen || jobsPanelOpen || themePickerOpen;
+      return activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || nanoBananaOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null;
     },
 
     // Overlay dialog actions
@@ -218,6 +237,14 @@ function createDialogStore() {
       themePickerOpen = false;
     },
 
+    openPicker(config: PickerConfig): void {
+      pickerConfig = config;
+    },
+
+    closePicker(): void {
+      pickerConfig = null;
+    },
+
     closeAll(): void {
       activeDialog = null;
       targetEntry = null;
@@ -232,6 +259,7 @@ function createDialogStore() {
       nanoBananaOpen = false;
       nanoBananaSourcePath = "";
       jobsPanelOpen = false;
+      pickerConfig = null;
     },
   };
 }

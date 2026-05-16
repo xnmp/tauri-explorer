@@ -1,5 +1,5 @@
 /**
- * E2E Tests for thumbnail size setting (Small/Medium/Large).
+ * E2E Tests for thumbnail size setting (Small/Medium/Large/Extra Large).
  * Issue: tauri-explorer-jc83
  *
  * Verifies that changing the Thumbnail Size dropdown in Settings
@@ -42,7 +42,7 @@ async function switchToTilesView(page: import("@playwright/test").Page) {
 
 async function setThumbnailSize(
   page: import("@playwright/test").Page,
-  size: "small" | "medium" | "large",
+  size: "small" | "medium" | "large" | "xlarge",
 ) {
   const dialog = await openSettings(page);
 
@@ -69,7 +69,7 @@ test.describe("Thumbnail Size Setting", () => {
     await waitForFileList(page);
   });
 
-  test("settings dialog shows Thumbnail Size dropdown with 3 options", async ({ page }) => {
+  test("settings dialog shows Thumbnail Size dropdown with 4 options", async ({ page }) => {
     const dialog = await openSettings(page);
 
     const row = dialog.locator(".setting-row").filter({
@@ -79,7 +79,7 @@ test.describe("Thumbnail Size Setting", () => {
 
     const select = row.locator("select");
     const options = await select.locator("option").allTextContents();
-    expect(options).toEqual(["Small", "Medium", "Large"]);
+    expect(options).toEqual(["Small", "Medium", "Large", "Extra Large"]);
 
     // Default should be "small"
     await expect(select).toHaveValue("small");
@@ -88,24 +88,24 @@ test.describe("Thumbnail Size Setting", () => {
   test("changing to Medium increases tile icon size", async ({ page }) => {
     await switchToTilesView(page);
 
-    // Get initial tile icon size (should be 64px for small)
+    // Get initial tile icon size (should be 48px for small)
     const initialSize = await page.locator(".tile-icon").first().evaluate((el) => {
       return getComputedStyle(el).width;
     });
-    expect(initialSize).toBe("64px");
+    expect(initialSize).toBe("48px");
 
     // Change to Medium
     await setThumbnailSize(page, "medium");
     await page.waitForTimeout(200);
 
-    // Tile icon should now be 96px
+    // Tile icon should now be 64px
     const newSize = await page.locator(".tile-icon").first().evaluate((el) => {
       return getComputedStyle(el).width;
     });
-    expect(newSize).toBe("96px");
+    expect(newSize).toBe("64px");
   });
 
-  test("changing to Large increases tile icon size to 128px", async ({ page }) => {
+  test("changing to Large increases tile icon size to 96px", async ({ page }) => {
     await switchToTilesView(page);
 
     await setThumbnailSize(page, "large");
@@ -114,7 +114,7 @@ test.describe("Thumbnail Size Setting", () => {
     const size = await page.locator(".tile-icon").first().evaluate((el) => {
       return getComputedStyle(el).width;
     });
-    expect(size).toBe("128px");
+    expect(size).toBe("96px");
   });
 
   test("grid column min-width updates with thumbnail size", async ({ page }) => {
@@ -124,40 +124,20 @@ test.describe("Thumbnail Size Setting", () => {
     const smallMinCol = await page.locator(".tiles-view").evaluate((el) => {
       return getComputedStyle(el).getPropertyValue("--tile-min-col").trim();
     });
-    expect(smallMinCol).toBe("108px");
+    expect(smallMinCol).toBe("84px");
 
-    // Switch to large
-    await setThumbnailSize(page, "large");
+    // Switch to xlarge
+    await setThumbnailSize(page, "xlarge");
     await page.waitForTimeout(200);
 
-    const largeMinCol = await page.locator(".tiles-view").evaluate((el) => {
+    const xlargeMinCol = await page.locator(".tiles-view").evaluate((el) => {
       return getComputedStyle(el).getPropertyValue("--tile-min-col").trim();
     });
-    expect(largeMinCol).toBe("172px");
-  });
-
-  test("image thumbnails render at Medium size in tiles view", async ({ page }) => {
-    // Navigate to Pictures which has image files
-    await page.goto("/?path=/home/user/Pictures");
-    await waitForFileList(page);
-    await switchToTilesView(page);
-
-    // Set to Medium
-    await setThumbnailSize(page, "medium");
-    await page.waitForTimeout(300);
-
-    // Find a thumbnail container (image files get ThumbnailImage, not FileIcon)
-    const thumbnailContainer = page.locator(".tile-icon .thumbnail-container").first();
-    await expect(thumbnailContainer).toBeVisible({ timeout: 5000 });
-
-    // Thumbnail container display size matches tile icon size (96px for medium)
-    const containerSize = await thumbnailContainer.evaluate((el) => {
-      return getComputedStyle(el).width;
-    });
-    expect(containerSize).toBe("96px");
+    expect(xlargeMinCol).toBe("172px");
   });
 
   test("image thumbnails render at Large size in tiles view", async ({ page }) => {
+    // Navigate to Pictures which has image files
     await page.goto("/?path=/home/user/Pictures");
     await waitForFileList(page);
     await switchToTilesView(page);
@@ -166,10 +146,30 @@ test.describe("Thumbnail Size Setting", () => {
     await setThumbnailSize(page, "large");
     await page.waitForTimeout(300);
 
+    // Find a thumbnail container (image files get ThumbnailImage, not FileIcon)
     const thumbnailContainer = page.locator(".tile-icon .thumbnail-container").first();
     await expect(thumbnailContainer).toBeVisible({ timeout: 5000 });
 
-    // Display size matches tile icon (128px for large)
+    // Thumbnail container display size matches tile icon size (96px for large)
+    const containerSize = await thumbnailContainer.evaluate((el) => {
+      return getComputedStyle(el).width;
+    });
+    expect(containerSize).toBe("96px");
+  });
+
+  test("image thumbnails render at Extra Large size in tiles view", async ({ page }) => {
+    await page.goto("/?path=/home/user/Pictures");
+    await waitForFileList(page);
+    await switchToTilesView(page);
+
+    // Set to Extra Large
+    await setThumbnailSize(page, "xlarge");
+    await page.waitForTimeout(300);
+
+    const thumbnailContainer = page.locator(".tile-icon .thumbnail-container").first();
+    await expect(thumbnailContainer).toBeVisible({ timeout: 5000 });
+
+    // Display size matches tile icon (128px for xlarge)
     const containerSize = await thumbnailContainer.evaluate((el) => {
       return getComputedStyle(el).width;
     });

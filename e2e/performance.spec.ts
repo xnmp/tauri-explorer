@@ -97,7 +97,7 @@ test.describe("Performance Tests", () => {
     });
 
     test("folder navigation under 500ms", async ({ page }) => {
-      const folder = page.locator(".entry-item.directory").first();
+      const folder = page.locator('.entry-item.directory:has-text("Documents")');
       await folder.waitFor({ timeout: 5000 });
 
       const metric = await measureTime(
@@ -118,7 +118,7 @@ test.describe("Performance Tests", () => {
 
     test("back navigation under 300ms", async ({ page }) => {
       // First navigate into a folder
-      const folder = page.locator(".entry-item.directory").first();
+      const folder = page.locator('.entry-item.directory:has-text("Documents")');
       await folder.dblclick();
       await page.waitForTimeout(300);
 
@@ -139,12 +139,12 @@ test.describe("Performance Tests", () => {
 
     test("breadcrumb click navigation under 400ms", async ({ page }) => {
       // Navigate deep first (into a folder)
-      const folder = page.locator(".entry-item.directory").first();
+      const folder = page.locator('.entry-item.directory:has-text("Documents")');
       await folder.dblclick();
       await page.waitForTimeout(300);
 
       // Navigate deeper (into another folder)
-      const nestedFolder = page.locator(".entry-item.directory").first();
+      const nestedFolder = page.locator('.entry-item.directory:has-text("project")');
       if (await nestedFolder.count() > 0) {
         await nestedFolder.dblclick();
         await page.waitForTimeout(300);

@@ -13,6 +13,8 @@ import { performFileTransfer } from "./file-transfer";
 export interface DropOptions {
   /** Refresh callback after drop completes */
   onRefresh: () => void;
+  /** Broadcast undo/toast to other windows (for cross-window DnD) */
+  broadcastToOtherWindows?: boolean;
 }
 
 /**
@@ -62,6 +64,7 @@ export async function handleFileDrop(
 ): Promise<void> {
   await performFileTransfer(sourcePath, targetDir, isCopy, {
     onRefresh: options.onRefresh,
+    broadcastToOtherWindows: options.broadcastToOtherWindows,
   });
 }
 

@@ -8,6 +8,7 @@
     startContentSearch,
     cancelContentSearch,
     openFile,
+    openFileAtLine,
     type ContentSearchResult,
     type ContentSearchEvent,
   } from "$lib/api/files";
@@ -283,15 +284,15 @@
         break;
       case "Enter":
         event.preventDefault();
-        if (event.target === inputRef) {
-          startSearch();
-        } else if (flattenedResults[selectedIndex]) {
+        if (flattenedResults[selectedIndex]) {
           const selected = flattenedResults[selectedIndex];
           if (selected.isShowMore) {
             toggleFileExpanded(selected.filePath);
           } else {
             selectResult(selected);
           }
+        } else if (event.target === inputRef) {
+          startSearch();
         }
         break;
     }
@@ -316,7 +317,10 @@
   }
 
   async function selectResult(result: FlattenedResult): Promise<void> {
-    const openResult = await openFile(result.filePath);
+    const line = result.match?.lineNumber ?? 0;
+    const openResult = line > 0
+      ? await openFileAtLine(result.filePath, line)
+      : await openFile(result.filePath);
     if (!openResult.ok) {
       const explorer = paneNav?.getActiveExplorer() ?? windowTabsManager.getActiveExplorer();
       const resultDir = parentDir(result.filePath);
@@ -371,10 +375,14 @@
             type="text"
             class="search-input"
             placeholder="Search in files..."
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
             bind:value={query}
             bind:this={inputRef}
             oninput={handleInput}
-            onkeydown={(e) => e.key === 'Enter' && startSearch()}
+            onkeydown={(e) => { if (e.key === 'Enter' && flattenedResults.length === 0) startSearch(); }}
           />
           <div class="search-options">
             <button
@@ -412,6 +420,10 @@
               type="text"
               class="filter-input"
               placeholder="Filter results..."
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="none"
+              spellcheck="false"
               bind:value={filterQuery}
             />
           </div>

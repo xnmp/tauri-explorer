@@ -118,6 +118,15 @@
     opacity: 0.55;
   }
 
+  .list-view :global(.list-item.empty-folder) {
+    opacity: 0.55;
+  }
+
+  .list-view :global(.list-item.empty-folder:hover),
+  .list-view :global(.list-item.empty-folder.selected) {
+    opacity: 0.8;
+  }
+
   .list-view :global(.list-item.in-clipboard:not(.cut)) {
     outline: 1px dashed var(--accent);
     outline-offset: -1px;

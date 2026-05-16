@@ -29,6 +29,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@chenglou/pretext": "^0.0.7",
     "@crabnebula/tauri-plugin-drag": "^2.1.0",
     "@fontsource-variable/inter": "^5.2.8",
     "@tauri-apps/api": "^2.10.1",
@@ -54,5 +55,8 @@
     "vite": "^6.0.3",
     "vitest": "^2.0.0",
     "webdriverio": "^9.27.0"
+  },
+  "overrides": {
+    "esbuild": "^0.25.0"
   }
 }

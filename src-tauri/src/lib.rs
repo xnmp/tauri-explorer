@@ -121,7 +121,7 @@ async fn restore_from_trash(paths: Vec<String>) -> Result<(), AppError> {
 #[cfg(target_os = "macos")]
 #[tauri::command]
 async fn restore_from_trash(_paths: Vec<String>) -> Result<(), AppError> {
-    Err(AppError::Other("Trash restore is not supported on macOS".to_string()))
+    Err(AppError::Other("Cannot undo delete on macOS — use Finder to restore from Trash".to_string()))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -213,6 +213,7 @@ pub fn run(launch_dir: Option<String>) {
             files::fs_watcher::unwatch_directory,
             // File operations — external apps
             files::external_apps::open_file,
+            files::external_apps::open_file_at_line,
             files::external_apps::open_file_with,
             files::external_apps::open_image_with_siblings,
             files::external_apps::open_in_terminal,

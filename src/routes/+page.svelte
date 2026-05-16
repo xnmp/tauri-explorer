@@ -194,6 +194,7 @@
 
     // Initialize theme from saved preference
     themeStore.initTheme();
+    const tTheme = performance.now();
 
     // Read launch data injected by Rust initialization_script (synchronous, no IPC).
     // Falls back to IPC for child windows or if injection is missing.
@@ -214,20 +215,48 @@
     const defaultPath = urlPath || launchCwd || homePath;
 
     // If launched from a terminal with a meaningful cwd, pass it as an
-    // override so the active pane navigates there directly instead of
+    // override so the active pane navigates here directly instead of
     // racing two concurrent navigateTo calls.
     const isGenericCwd = !launchCwd || launchCwd === homePath || launchCwd === "/";
     const overridePath = (!isChildWindow && !isGenericCwd) ? launchCwd! : undefined;
+    const tPreInit = performance.now();
     const tab = windowTabsManager.init(defaultPath, isChildWindow, overridePath);
     // Apply inherited view mode from parent window
     if (urlViewMode && tab) {
       const explorer = windowTabsManager.getActiveExplorer();
       explorer?.setViewMode(urlViewMode);
     }
+    const tPostInit = performance.now();
     performance.mark("app-first-dir");
 
-    const tEnd = performance.now();
-    console.log(`[Perf] Frontend mount→dir: ${(tEnd - t0).toFixed(1)}ms`);
+    const seeded = windowTabsManager.getActiveExplorer()?.displayEntries.length ?? 0;
+    console.log(
+      `[Perf] Window startup (${isChildWindow ? "child" : "primary"}, seeded=${seeded > 0}):\n` +
+      `  navStart→mount: ${t0.toFixed(0)}ms\n` +
+      `  theme init: ${(tTheme - t0).toFixed(1)}ms\n` +
+      `  tabs init: ${(tPostInit - tPreInit).toFixed(1)}ms\n` +
+      `  mount→ready: ${(tPostInit - t0).toFixed(1)}ms\n` +
+      `  total (navStart→ready): ${tPostInit.toFixed(0)}ms`
+    );
+
+    // Log time-to-first-paint with entries
+    if (seeded > 0) {
+      requestAnimationFrame(() => {
+        console.log(`[Perf] First paint with entries: ${performance.now().toFixed(0)}ms from navStart`);
+      });
+    } else {
+      const explorer = windowTabsManager.getActiveExplorer();
+      if (explorer) {
+        const checkEntries = setInterval(() => {
+          if (explorer.displayEntries.length > 0) {
+            clearInterval(checkEntries);
+            requestAnimationFrame(() => {
+              console.log(`[Perf] First paint with entries: ${performance.now().toFixed(0)}ms from navStart`);
+            });
+          }
+        }, 5);
+      }
+    }
 
     // Load settings and bookmarks from config files (async, non-blocking)
     settingsStore.init().then(() => themeStore.syncFromSettings());

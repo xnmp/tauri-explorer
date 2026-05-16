@@ -29,6 +29,7 @@
   import QuickOpen from "$lib/components/QuickOpen.svelte";
   import CommandPalette from "$lib/components/CommandPalette.svelte";
   import ThemePicker from "$lib/components/ThemePicker.svelte";
+  import OptionPicker from "$lib/components/OptionPicker.svelte";
   import SettingsDialog from "$lib/components/SettingsDialog.svelte";
   import ProgressDialog from "$lib/components/ProgressDialog.svelte";
   import ContentSearchDialog from "$lib/components/ContentSearchDialog.svelte";
@@ -296,6 +297,7 @@
 <QuickOpen open={dialogStore.isQuickOpenOpen} onClose={() => dialogStore.closeQuickOpen()} />
 <CommandPalette open={dialogStore.isCommandPaletteOpen} onClose={() => dialogStore.closeCommandPalette()} />
 <ThemePicker open={dialogStore.isThemePickerOpen} onClose={() => dialogStore.closeThemePicker()} />
+<OptionPicker />
 <ContentSearchDialog open={dialogStore.isContentSearchOpen} onClose={() => dialogStore.closeContentSearch()} />
 <SettingsDialog open={dialogStore.isSettingsOpen} onClose={() => dialogStore.closeSettings()} />
 <WorkspaceDialog open={dialogStore.isWorkspaceOpen} onClose={() => dialogStore.closeWorkspace()} />

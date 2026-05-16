@@ -221,7 +221,7 @@ export function createDragGhost(sourceEl?: HTMLElement | null, fallbackText?: st
     align-items: center;
     gap: 4px;
     padding: 8px;
-    font-size: 11px;
+    font-size: 13px;
     color: var(--text-primary, #eee);
     text-align: center;
     max-width: 120px;

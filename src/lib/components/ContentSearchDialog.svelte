@@ -283,15 +283,15 @@
         break;
       case "Enter":
         event.preventDefault();
-        if (event.target === inputRef) {
-          startSearch();
-        } else if (flattenedResults[selectedIndex]) {
+        if (flattenedResults[selectedIndex]) {
           const selected = flattenedResults[selectedIndex];
           if (selected.isShowMore) {
             toggleFileExpanded(selected.filePath);
           } else {
             selectResult(selected);
           }
+        } else if (event.target === inputRef) {
+          startSearch();
         }
         break;
     }
@@ -378,7 +378,7 @@
             bind:value={query}
             bind:this={inputRef}
             oninput={handleInput}
-            onkeydown={(e) => e.key === 'Enter' && startSearch()}
+            onkeydown={(e) => { if (e.key === 'Enter' && flattenedResults.length === 0) startSearch(); }}
           />
           <div class="search-options">
             <button

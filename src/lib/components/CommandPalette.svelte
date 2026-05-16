@@ -7,7 +7,8 @@
   import {
     getAllCommands,
     getAvailableCommands,
-    getRecentCommands,
+    getCommandsByFrecency,
+    getCommandFrecencyScore,
     executeCommand,
     getCategoryLabel,
     getCommandShortcut,
@@ -38,13 +39,12 @@
   // Get filtered and sorted commands
   const filteredCommands = $derived.by(() => {
     const available = getAvailableCommands();
-    const recent = getRecentCommands();
 
     if (!query.trim()) {
-      // Show recent commands first, then all others
-      const recentIds = new Set(recent.map((c) => c.id));
-      const nonRecent = available.filter((c) => !recentIds.has(c.id));
-      return [...recent, ...nonRecent];
+      const ranked = getCommandsByFrecency();
+      const rankedIds = new Set(ranked.map((c: Command) => c.id));
+      const nonRanked = available.filter((c) => !rankedIds.has(c.id));
+      return [...ranked, ...nonRanked];
     }
 
     // Fuzzy search
@@ -98,6 +98,10 @@
     if (queryIdx < query.length) {
       return 0;
     }
+
+    // Frecency boost (capped so it doesn't dominate text relevance)
+    const frecency = getCommandFrecencyScore(cmd.id);
+    score += Math.min(30, Math.round(frecency * 10));
 
     return score;
   }

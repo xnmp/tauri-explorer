@@ -38,7 +38,7 @@
       const idx = themeStore.availableThemes.findIndex((t) => t.id === originalThemeId);
       selectedIndex = idx >= 0 ? idx : 0;
       mouseMoved = false;
-      tick().then(() => inputRef?.focus());
+      tick().then(() => { inputRef?.focus(); scrollToSelected(); });
     }
   });
 
@@ -59,6 +59,13 @@
     onClose();
   }
 
+  function scrollToSelected(): void {
+    tick().then(() => {
+      const selected = document.querySelector(".theme-item.selected");
+      selected?.scrollIntoView({ block: "nearest" });
+    });
+  }
+
   function handleKeydown(event: KeyboardEvent): void {
     switch (event.key) {
       case "Escape":
@@ -70,6 +77,7 @@
         if (filteredThemes.length > 0) {
           selectedIndex = (selectedIndex + 1) % filteredThemes.length;
           mouseMoved = false;
+          scrollToSelected();
         }
         break;
       case "ArrowUp":
@@ -77,6 +85,7 @@
         if (filteredThemes.length > 0) {
           selectedIndex = (selectedIndex - 1 + filteredThemes.length) % filteredThemes.length;
           mouseMoved = false;
+          scrollToSelected();
         }
         break;
       case "Enter":

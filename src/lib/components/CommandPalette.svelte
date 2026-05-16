@@ -15,6 +15,7 @@
     type Command,
     type CommandCategory,
   } from "$lib/state/commands.svelte";
+  import { settingsStore } from "$lib/state/settings.svelte";
 
   interface Props {
     open: boolean;
@@ -36,29 +37,41 @@
   let mouseTrackingReady = $state(false);
   let mouseTrackingTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Get filtered and sorted commands
-  const filteredCommands = $derived.by(() => {
+  interface ScoredCommand {
+    cmd: Command;
+    total: number;
+    fuzzy: number;
+    frecency: number;
+  }
+
+  // Get filtered and sorted commands with score breakdown
+  const filteredScored = $derived.by((): ScoredCommand[] => {
     const available = getAvailableCommands();
 
     if (!query.trim()) {
       const ranked = getCommandsByFrecency();
       const rankedIds = new Set(ranked.map((c: Command) => c.id));
       const nonRanked = available.filter((c) => !rankedIds.has(c.id));
-      return [...ranked, ...nonRanked];
+      return [...ranked, ...nonRanked].map((cmd) => {
+        const frecency = getCommandFrecencyScore(cmd.id);
+        return { cmd, total: Math.round(frecency * 100), fuzzy: 0, frecency: Math.round(frecency * 100) };
+      });
     }
 
-    // Fuzzy search
     const lowerQuery = query.toLowerCase();
-    const scored = available
-      .map((cmd) => ({
-        cmd,
-        score: fuzzyScore(cmd, lowerQuery),
-      }))
-      .filter((item) => item.score > 0)
-      .sort((a, b) => b.score - a.score);
-
-    return scored.map((item) => item.cmd);
+    return available
+      .map((cmd) => {
+        const frecency = getCommandFrecencyScore(cmd.id);
+        const frecencyPts = Math.min(30, Math.round(frecency * 10));
+        const total = fuzzyScore(cmd, lowerQuery);
+        const fuzzyPts = total - frecencyPts;
+        return { cmd, total, fuzzy: fuzzyPts, frecency: frecencyPts };
+      })
+      .filter((item) => item.total > 0)
+      .sort((a, b) => b.total - a.total);
   });
+
+  const filteredCommands = $derived(filteredScored.map((s) => s.cmd));
 
   // Fuzzy scoring for command search
   function fuzzyScore(cmd: Command, query: string): number {
@@ -218,6 +231,7 @@
             {#each flatCommands as cmd, index (cmd.id)}
               {@const isSelected = index === selectedIndex}
               {@const displayShortcut = getCommandShortcut(cmd.id)}
+              {@const scores = filteredScored[index]}
               <li
                 class="command-item"
                 class:selected={isSelected}
@@ -228,6 +242,17 @@
               >
                 <span class="command-category">{getCategoryLabel(cmd.category)}</span>
                 <span class="command-label">{cmd.label}</span>
+                {#if settingsStore.quickOpenDebug && scores}
+                  <span class="debug-breakdown">
+                    <span class="debug-row"><b>{scores.total}</b></span>
+                    {#if scores.fuzzy > 0}
+                      <span class="debug-row">fuzzy:{scores.fuzzy}</span>
+                    {/if}
+                    {#if scores.frecency > 0}
+                      <span class="debug-row">frec:{scores.frecency}</span>
+                    {/if}
+                  </span>
+                {/if}
                 {#if displayShortcut}
                   <span class="command-shortcut">
                     {#each displayShortcut.split("+") as key, keyIndex}
@@ -453,5 +478,32 @@
     font-family: inherit;
     font-size: 11px;
     color: var(--text-secondary);
+  }
+
+  .debug-breakdown {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: monospace;
+    font-size: 10px;
+    color: var(--text-tertiary);
+    flex-shrink: 0;
+  }
+
+  .debug-breakdown b {
+    color: var(--text-primary);
+  }
+
+  .command-item.selected .debug-breakdown {
+    color: var(--text-on-accent);
+    opacity: 0.7;
+  }
+
+  .command-item.selected .debug-breakdown b {
+    color: var(--text-on-accent);
+  }
+
+  .debug-row {
+    white-space: nowrap;
   }
 </style>

@@ -371,6 +371,10 @@
             type="text"
             class="search-input"
             placeholder="Search in files..."
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="none"
+            spellcheck="false"
             bind:value={query}
             bind:this={inputRef}
             oninput={handleInput}
@@ -412,6 +416,10 @@
               type="text"
               class="filter-input"
               placeholder="Filter results..."
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="none"
+              spellcheck="false"
               bind:value={filterQuery}
             />
           </div>

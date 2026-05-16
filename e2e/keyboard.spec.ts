@@ -133,7 +133,7 @@ for (const viewMode of VIEW_MODES) {
     test("Alt+Left navigates back in history", async ({ page }) => {
       const initialPath = await page.locator(".breadcrumbs-container").textContent();
 
-      const folder = page.locator(".entry-item.directory").first();
+      const folder = page.locator('.entry-item.directory:has-text("Documents")');
       if (await folder.count() > 0) {
         await folder.dblclick();
         await waitForEntries(page);

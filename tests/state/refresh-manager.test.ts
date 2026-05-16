@@ -88,4 +88,35 @@ describe("refresh-manager", () => {
     expect(firstRefresh).not.toHaveBeenCalled();
     expect(secondRefresh).toHaveBeenCalledOnce();
   });
+
+  it("rate-limits consecutive refreshes to the same directory", () => {
+    const refresh = vi.fn();
+
+    // First refresh fires at debounce delay (no prior history)
+    requestRefresh(refresh, "/home/user/docs");
+    vi.advanceTimersByTime(150);
+    expect(refresh).toHaveBeenCalledTimes(1);
+
+    // Immediate second request is delayed to enforce MIN_INTERVAL_MS
+    requestRefresh(refresh, "/home/user/docs");
+    vi.advanceTimersByTime(150);
+    expect(refresh).toHaveBeenCalledTimes(1); // still 1 — rate-limited
+
+    vi.advanceTimersByTime(1850);
+    expect(refresh).toHaveBeenCalledTimes(2); // fires after remaining interval
+  });
+
+  it("rate-limiting does not affect different directories", () => {
+    const refreshA = vi.fn();
+    const refreshB = vi.fn();
+
+    requestRefresh(refreshA, "/home/user/docs");
+    vi.advanceTimersByTime(150);
+    expect(refreshA).toHaveBeenCalledTimes(1);
+
+    // Different directory is not rate-limited by the first
+    requestRefresh(refreshB, "/home/user/pictures");
+    vi.advanceTimersByTime(150);
+    expect(refreshB).toHaveBeenCalledTimes(1);
+  });
 });

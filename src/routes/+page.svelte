@@ -42,7 +42,6 @@
   import StatusBar from "$lib/components/StatusBar.svelte";
   import AnimatedBackground from "$lib/components/AnimatedBackground.svelte";
   import MillerColumns from "$lib/components/MillerColumns.svelte";
-  import PreviewPane from "$lib/components/PreviewPane.svelte";
 
   const millerAsLeftIsland = $derived(
     settingsStore.macOsVibrancy && !settingsStore.showSidebar && settingsStore.millerLayers > 0
@@ -284,9 +283,11 @@
     {/if}
     <PaneContainer />
     {#if settingsStore.showPreviewPane}
-      <div class="preview-island">
-        <PreviewPane />
-      </div>
+      {#await import("$lib/components/PreviewPane.svelte") then { default: PreviewPane }}
+        <div class="preview-island">
+          <PreviewPane />
+        </div>
+      {/await}
     {/if}
   </div>
   {#if settingsStore.showStatusBar}

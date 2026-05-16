@@ -6,6 +6,7 @@ import { WebviewWindow, type Color } from "@tauri-apps/api/webviewWindow";
 import { isMac } from "$lib/domain/platform";
 import { windowTabsManager } from "../window-tabs.svelte";
 import { settingsStore } from "../settings.svelte";
+import { savePersisted } from "../persisted";
 import type { ViewMode } from "../types";
 
 function getPersistedBgColor(): Color | undefined {
@@ -21,6 +22,19 @@ function getPersistedBgColor(): Color | undefined {
 
 /** Open a new explorer window at the given path with optional view mode */
 export async function openNewWindow(path: string, viewMode?: ViewMode): Promise<void> {
+  // Seed the child window with current directory entries for instant rendering
+  const explorer = windowTabsManager.getActiveExplorer();
+  if (explorer && explorer.currentPath === path) {
+    savePersisted(`dir-seed:${path}`, {
+      currentPath: explorer.currentPath,
+      entries: explorer.displayEntries,
+      sortBy: explorer.sortBy,
+      sortAscending: explorer.sortAscending,
+      viewMode: viewMode ?? explorer.viewMode,
+      ts: Date.now(),
+    });
+  }
+
   const label = "explorer-" + Date.now();
   const baseUrl = window.location.origin + window.location.pathname;
   const params = new URLSearchParams({ path });

@@ -6,7 +6,7 @@
  */
 
 import type { FileEntry } from "$lib/domain/file";
-import { isMac } from "$lib/domain/platform";
+import { isMac, isWindows } from "$lib/domain/platform";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { clipboardStore } from "$lib/state/clipboard.svelte";
 import { dragState } from "$lib/state/drag.svelte";
@@ -54,6 +54,17 @@ export function useItemInteractions(deps: ItemInteractionsDeps) {
     event.dataTransfer.effectAllowed = "all";
 
     dragState.start({ path: entry.path, name: entry.name, kind: entry.kind, paths: isMulti ? paths : undefined });
+
+    // On Windows, suppress Chromium's HTML5 drag with preventDefault so the
+    // only OLE drag in flight is the plugin's. WebView2's own HTML5 drag
+    // puts the system into a state that makes a parallel DoDragDrop return
+    // E_FAIL immediately. With HTML5 suppressed, the plugin's OLE drag is
+    // received by WebView2's IDropTarget as an "external" drag and is
+    // still surfaced to JS as dragenter/dragover/drop events on the page —
+    // so in-app drop targets continue to work.
+    if (isWindows) {
+      event.preventDefault();
+    }
 
     // On non-Mac, use tauri-plugin-drag for native file drag (HTML5 DnD still works on
     // Linux/Windows because their webviews don't kill JS events for native sessions).

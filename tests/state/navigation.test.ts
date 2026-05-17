@@ -35,6 +35,29 @@ describe("parseBreadcrumbs", () => {
   it("handles Windows drive root alone", () => {
     expect(parseBreadcrumbs("C:\\")).toEqual([{ name: "C:", path: "C:\\" }]);
   });
+
+  it("parses UNC paths with server+share as the root breadcrumb", () => {
+    expect(
+      parseBreadcrumbs("\\\\wsl.localhost\\Ubuntu-24.04\\home\\chong")
+    ).toEqual([
+      { name: "\\\\wsl.localhost\\Ubuntu-24.04", path: "\\\\wsl.localhost\\Ubuntu-24.04" },
+      { name: "home", path: "\\\\wsl.localhost\\Ubuntu-24.04\\home" },
+      { name: "chong", path: "\\\\wsl.localhost\\Ubuntu-24.04\\home\\chong" },
+    ]);
+  });
+
+  it("handles UNC share root alone", () => {
+    expect(parseBreadcrumbs("\\\\wsl.localhost\\Ubuntu-24.04")).toEqual([
+      { name: "\\\\wsl.localhost\\Ubuntu-24.04", path: "\\\\wsl.localhost\\Ubuntu-24.04" },
+    ]);
+  });
+
+  it("parses UNC paths written with forward slashes", () => {
+    expect(parseBreadcrumbs("//wsl.localhost/Ubuntu-24.04/home")).toEqual([
+      { name: "\\\\wsl.localhost\\Ubuntu-24.04", path: "\\\\wsl.localhost\\Ubuntu-24.04" },
+      { name: "home", path: "\\\\wsl.localhost\\Ubuntu-24.04\\home" },
+    ]);
+  });
 });
 
 describe("getParentPath", () => {
@@ -54,6 +77,15 @@ describe("getParentPath", () => {
 
   it("returns null at Windows drive root (no parent)", () => {
     expect(getParentPath(parseBreadcrumbs("C:\\"))).toBeNull();
+  });
+
+  it("returns parent breadcrumb path for UNC paths", () => {
+    const bc = parseBreadcrumbs("\\\\wsl.localhost\\Ubuntu-24.04\\home\\chong");
+    expect(getParentPath(bc)).toBe("\\\\wsl.localhost\\Ubuntu-24.04\\home");
+  });
+
+  it("returns null at UNC share root (no parent above \\\\server\\share)", () => {
+    expect(getParentPath(parseBreadcrumbs("\\\\wsl.localhost\\Ubuntu-24.04"))).toBeNull();
   });
 
   it("returns null for empty breadcrumbs", () => {

@@ -99,16 +99,26 @@
     lastDragY = 0;
   }
 
+  // Accept the drop if either our in-memory drag state is set OR the
+  // DataTransfer carries our app's drag MIME. The MIME check is the fallback
+  // for cases where the drag source can't initiate the native OS shell drag
+  // (e.g. UNC paths skip tauri-plugin-drag); without it the browser's
+  // HTML5-only DnD ends up with dropEffect "none" and shows the cancel cursor.
+  function isExplorerDrag(event: DragEvent): boolean {
+    if (dragState.current) return true;
+    return event.dataTransfer?.types.includes("application/x-explorer-kind") ?? false;
+  }
+
   function onQuickAccessDragEnter(event: DragEvent) {
-    if (dragState.current) {
+    if (isExplorerDrag(event)) {
       event.preventDefault();
     }
   }
 
   function onQuickAccessDragOver(event: DragEvent) {
-    if (dragState.current) {
+    if (isExplorerDrag(event)) {
       event.preventDefault();
-      if (event.dataTransfer) event.dataTransfer.dropEffect = "link";
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
       isDragOver = true;
     }
   }
@@ -250,6 +260,7 @@
     }
     if (event.dataTransfer?.types.includes("application/x-explorer-kind")) {
       event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
     }
   }
 

@@ -15,16 +15,16 @@ function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-// UNC paths (e.g. \\wsl.localhost\Ubuntu-24.04\...) cannot be turned into a
-// valid ITEMIDLIST via the legacy ILCreateFromPathW path that tauri-plugin-drag
-// uses on Windows. The plugin then unwraps a None and aborts the whole process
-// (drag-2.1.0 platform_impl/windows/mod.rs:370). Skip the native drag for
-// these — HTML5 DnD inside the webview still works for in-app drops.
-function isUncPath(path: string): boolean {
+// UNC paths (e.g. \\wsl.localhost\Ubuntu-24.04\...) can't be turned into a
+// valid ITEMIDLIST via ILCreateFromPathW, so the OLE drag won't actually
+// engage for them — but our vendored `drag` patch returns an error instead
+// of panicking, so we still hand them to the plugin. Kept exported so
+// callers can decide whether to also suppress the HTML5 fallback.
+export function isUncPath(path: string): boolean {
   return path.startsWith("\\\\") || path.startsWith("//");
 }
 
-// ILCreateFromPathW also misbehaves on mixed-separator drive paths like
+// ILCreateFromPathW silently misbehaves on mixed-separator drive paths like
 // `C:\Users\chonw/Downloads\image.jpg` — the call appears to succeed but the
 // OLE drag never properly initiates, so the cursor stays a cancel icon and no
 // ghost renders. The mix arises because sidebar quick-links join the home dir
@@ -36,10 +36,6 @@ function normalizeForWindowsShell(path: string): string {
 
 export async function startExternalDrag(paths: string[], iconPath?: string): Promise<void> {
   if (!isTauri() || paths.length === 0) return;
-  if (paths.some(isUncPath)) {
-    console.warn("[external-drag] skipping native drag for UNC paths (would panic in tauri-plugin-drag)");
-    return;
-  }
   const item = isWindows ? paths.map(normalizeForWindowsShell) : paths;
   try {
     await startDrag({ item, icon: iconPath || TRANSPARENT_PNG });

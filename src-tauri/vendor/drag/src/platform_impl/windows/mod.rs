@@ -27,8 +27,9 @@ use windows::{
         System::SystemServices::{MK_LBUTTON, MODIFIERKEYS_FLAGS},
         UI::{
             Shell::{
-                BHID_DataObject, CLSID_DragDropHelper, Common, IDragSourceHelper, IShellItemArray,
-                SHCreateDataObject, SHCreateShellItemArrayFromIDLists, DROPFILES, SHDRAGIMAGE,
+                BHID_DataObject, CLSID_DragDropHelper, Common, IDragSourceHelper, IShellItem,
+                IShellItemArray, SHCreateDataObject, SHCreateItemFromParsingName,
+                SHCreateShellItemArrayFromIDLists, SHGetIDListFromObject, DROPFILES, SHDRAGIMAGE,
             },
             WindowsAndMessaging::GetCursorPos,
         },
@@ -238,7 +239,18 @@ pub fn start_drag<W: HasWindowHandle, F: Fn(DragResult, CursorPosition) + Send +
 
                 let mut paths = Vec::new();
                 for f in files {
-                    paths.push(dunce::canonicalize(f)?);
+                    // LOCAL PATCH: dunce::canonicalize on a UNC path like
+                    // \\wsl.localhost\... returns the NT extended-length
+                    // form \\?\UNC\wsl.localhost\..., which neither
+                    // ILCreateFromPathW nor SHCreateItemFromParsingName
+                    // accept (E_INVALIDARG). The shell wants the original
+                    // \\server\share\... form, so don't canonicalize UNC
+                    // paths — they're already absolute by construction.
+                    if f.to_string_lossy().starts_with("\\\\") {
+                        paths.push(f);
+                    } else {
+                        paths.push(dunce::canonicalize(&f)?);
+                    }
                 }
 
                 let data_object: IDataObject = match get_file_data_object(&paths) {
@@ -370,17 +382,27 @@ pub fn create_instance<T: Interface + ComInterface>(clsid: &GUID) -> Result<T> {
 
 fn get_file_data_object(paths: &[PathBuf]) -> Option<IDataObject> {
     unsafe {
-        let shell_item_array = get_shell_item_array(paths).unwrap();
+        let shell_item_array = get_shell_item_array(paths)?;
         shell_item_array.BindToHandler(None, &BHID_DataObject).ok()
     }
 }
 
 fn get_shell_item_array(paths: &[PathBuf]) -> Option<IShellItemArray> {
     unsafe {
+        // LOCAL PATCH: ILCreateFromPathW returns null for paths the shell
+        // can't parse (UNC, virtual namespaces, etc.). Filter nulls out
+        // and return None when none survive — callers surface an error
+        // rather than panicking on an unwrap.
         let list: Vec<*const Common::ITEMIDLIST> = paths
             .iter()
-            .map(|path| get_file_item_id(path).cast_const())
+            .filter_map(|path| {
+                let id = get_file_item_id(path);
+                if id.is_null() { None } else { Some(id.cast_const()) }
+            })
             .collect();
+        if list.is_empty() {
+            return None;
+        }
         SHCreateShellItemArrayFromIDLists(&list).ok()
     }
 }
@@ -388,6 +410,21 @@ fn get_shell_item_array(paths: &[PathBuf]) -> Option<IShellItemArray> {
 fn get_file_item_id(path: &Path) -> *mut Common::ITEMIDLIST {
     unsafe {
         let wide_path: Vec<u16> = path.as_os_str().encode_wide().chain(once(0)).collect();
-        windows::Win32::UI::Shell::ILCreateFromPathW(PCWSTR::from_raw(wide_path.as_ptr()))
+        // Fast path: ILCreateFromPathW handles local filesystem paths.
+        let id = windows::Win32::UI::Shell::ILCreateFromPathW(PCWSTR::from_raw(wide_path.as_ptr()));
+        if !id.is_null() {
+            return id;
+        }
+        // LOCAL PATCH: ILCreateFromPathW returns null for UNC paths
+        // (e.g. \\wsl.localhost\…) and other virtual namespace entries.
+        // SHCreateItemFromParsingName goes through the shell's
+        // IShellFolder::ParseDisplayName chain and handles them.
+        match SHCreateItemFromParsingName::<_, _, IShellItem>(
+            PCWSTR::from_raw(wide_path.as_ptr()),
+            None,
+        ) {
+            Ok(item) => SHGetIDListFromObject(&item).unwrap_or(std::ptr::null_mut()),
+            Err(_) => std::ptr::null_mut(),
+        }
     }
 }

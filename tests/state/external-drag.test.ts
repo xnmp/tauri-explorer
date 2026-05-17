@@ -146,7 +146,7 @@ describe("external drag-out", () => {
     expect(startDragMock.mock.calls[0][0].item).toEqual(["C:\\Users\\chonw\\Downloads\\image.jpg"]);
   });
 
-  it("skips native drag for UNC paths (would panic tauri-plugin-drag on Windows)", () => {
+  it("still invokes native drag for UNC paths (the vendored plugin returns an error instead of panicking, so HTML5 fallback can run)", () => {
     const entry = makeEntry("\\\\wsl.localhost\\Ubuntu-24.04\\home\\chong\\file.txt", "file.txt");
     const interactions = useItemInteractions({
       getExplorer: () => makeExplorer([entry]),
@@ -155,7 +155,10 @@ describe("external drag-out", () => {
 
     interactions.handleDragStart({ dataTransfer: makeDataTransfer() } as DragEvent, entry, true);
 
-    expect(startDragMock).not.toHaveBeenCalled();
+    expect(startDragMock).toHaveBeenCalledTimes(1);
+    expect(startDragMock.mock.calls[0][0].item).toEqual([
+      "\\\\wsl.localhost\\Ubuntu-24.04\\home\\chong\\file.txt",
+    ]);
   });
 
   it("skips native drag outside Tauri (browser dev / E2E)", () => {

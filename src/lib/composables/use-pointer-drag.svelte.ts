@@ -101,6 +101,14 @@ export function usePointerDrag(deps: PointerDragDeps) {
     }
 
     if (!nativeStarted) {
+      const target = resolveDropTargetAtPoint(event.clientX, event.clientY);
+      if (target?.type === "background") {
+        const destDir = target.path || deps.getExplorer().currentPath;
+        if (dragPaths.every((p) => parentDir(p) === destDir)) {
+          clearHighlights();
+          return;
+        }
+      }
       highlightTargetAtPoint(event.clientX, event.clientY);
     }
   }

@@ -212,10 +212,18 @@
 
   function handleListDragOver(event: DragEvent): void {
     const types = event.dataTransfer?.types;
-    if (!types?.includes("application/x-explorer-path") && !types?.includes("Files") && !dragState.readCrossWindow()) return;
+    const crossWindow = dragState.readCrossWindow();
+    if (!types?.includes("application/x-explorer-path") && !types?.includes("Files") && !crossWindow) return;
 
     const target = event.target as HTMLElement;
     if (target.closest(".file-item")) return;
+
+    // Suppress highlight when all sources are already in this directory
+    const dragData = dragState.current ?? crossWindow;
+    if (dragData) {
+      const paths = dragData.paths ?? [dragData.path];
+      if (paths.every((p) => parentDir(p) === explorer.currentPath)) return;
+    }
 
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = "move";

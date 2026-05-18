@@ -86,9 +86,28 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     dragState.clear();
   }
 
+  function handleNativeOver(position: { x: number; y: number }): void {
+    const explorer = deps.getActiveExplorer();
+    if (explorer) {
+      const dragData = dragState.current ?? dragState.readCrossWindow();
+      if (dragData) {
+        const target = resolveDropTarget(position);
+        if (target?.type === "background") {
+          const destDir = target.path || explorer.currentPath;
+          const paths = dragData.paths ?? [dragData.path];
+          if (paths.every((p) => parentDir(p) === destDir)) {
+            clearHighlights();
+            return;
+          }
+        }
+      }
+    }
+    highlightTarget(position);
+  }
+
   const externalDrop = useExternalDrop({
     onDrop: handleNativeDrop,
-    onOver: highlightTarget,
+    onOver: handleNativeOver,
     onLeave: clearHighlights,
   });
 

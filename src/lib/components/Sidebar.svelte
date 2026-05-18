@@ -132,11 +132,10 @@
   :global([data-vibrancy]) .sidebar-container {
     border-radius: var(--vibrancy-island-radius);
     border: 1px solid var(--vibrancy-island-stroke);
-    box-shadow:
-      inset 0 -0.5px 0 rgba(0, 0, 0, 0.15),
-      0 2px 8px rgba(0, 0, 0, 0.12),
-      0 8px 24px rgba(0, 0, 0, 0.08);
+    box-shadow: var(--vibrancy-island-glow);
     background: var(--vibrancy-island-bg);
+    backdrop-filter: brightness(1.08) saturate(1.2);
+    -webkit-backdrop-filter: brightness(1.08) saturate(1.2);
   }
 
   :global([data-vibrancy]) .sidebar {

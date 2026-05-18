@@ -506,14 +506,22 @@
     --titlebar-opacity: 0;
     --sidebar-opacity: 0;
     --statusbar-opacity: 0;
-    --vibrancy-island-bg: var(--background-card);
+    --vibrancy-island-bg:
+      linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.04) 0%,
+        transparent 40%,
+        rgba(0, 0, 0, 0.02) 100%
+      ),
+      color-mix(in srgb, var(--background-card) 98%, transparent);
     --vibrancy-island-stroke: var(--surface-stroke);
     --vibrancy-island-radius: 14px;
     --vibrancy-island-glow:
-      inset 0 0.5px 0 var(--surface-stroke),
-      inset 0 -0.5px 0 rgba(0, 0, 0, 0.15),
-      0 2px 8px rgba(0, 0, 0, 0.12),
-      0 8px 24px rgba(0, 0, 0, 0.08);
+      inset 0 0.5px 0 rgba(255, 255, 255, 0.09),
+      inset 0 -0.5px 0 rgba(0, 0, 0, 0.2),
+      0 1px 3px rgba(0, 0, 0, 0.15),
+      0 4px 12px rgba(0, 0, 0, 0.2),
+      0 12px 32px rgba(0, 0, 0, 0.15);
   }
 
   :global([data-vibrancy]) :global(body) {

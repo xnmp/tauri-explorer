@@ -147,8 +147,8 @@
     border: 1px solid var(--vibrancy-island-stroke);
     border-top: none;
     box-shadow: var(--vibrancy-island-glow);
-    backdrop-filter: brightness(1.08) saturate(1.2);
-    -webkit-backdrop-filter: brightness(1.08) saturate(1.2);
+    backdrop-filter: blur(12px) brightness(1.08) saturate(1.2);
+    -webkit-backdrop-filter: blur(12px) brightness(1.08) saturate(1.2);
     position: relative;
   }
 

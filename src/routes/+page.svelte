@@ -513,7 +513,7 @@
         transparent 40%,
         rgba(0, 0, 0, 0.02) 100%
       ),
-      color-mix(in srgb, var(--background-card) 98%, transparent);
+      color-mix(in srgb, var(--vibrancy-island-card, var(--background-card)) 98%, transparent);
     --vibrancy-island-stroke: var(--surface-stroke);
     --vibrancy-island-radius: 14px;
     --vibrancy-island-glow:

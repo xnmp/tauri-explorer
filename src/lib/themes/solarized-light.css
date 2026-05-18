@@ -93,6 +93,9 @@
   --shadow-card: 0 1px 3px rgba(0, 43, 54, 0.06), 0 0 1px rgba(0, 43, 54, 0.04);
   --shadow-subtle: 0 1px 2px rgba(0, 43, 54, 0.04);
 
+  /* Vibrancy: more transparent islands for light backgrounds */
+  --vibrancy-island-card: rgba(238, 232, 213, 0.4);
+
   /* Icon colors - themeable */
   --icon-folder: #b58900;
   /* --icon-file-tint: unset; when set, overrides all file icon colors */

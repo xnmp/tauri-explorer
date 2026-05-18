@@ -94,6 +94,9 @@
   /* Vibrancy tint — lavender wash over native frost */
   --vibrancy-tint: rgba(170, 190, 255, 0.35);
 
+  /* Vibrancy: more transparent islands for light backgrounds */
+  --vibrancy-island-card: rgba(240, 244, 255, 0.5);
+
   /* Icon colors - macOS blue folders */
   --icon-folder: #5ab4f5;
 }

@@ -88,7 +88,7 @@
     <div class="icon" data-drag-icon style:--file-icon-color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined} aria-hidden="true">
       <FileIcon {entry} size="small" />
     </div>
-    <span data-drag-name><EntryName {entry} {explorer} variant="details" /></span>
+    <span class="name-text" data-drag-name><EntryName {entry} {explorer} variant="details" /></span>
     <GitStatusBadge entryName={entry.name} hideOnRename={isRenaming} />
     {#if entry.is_symlink && !isRenaming}
       <div class="symlink-badge" title={entry.symlink_target ? `Link to ${entry.symlink_target}` : "Symbolic link"}>
@@ -218,6 +218,15 @@
     align-items: center;
     gap: 10px;
     min-width: 0;
+    overflow: hidden;
+  }
+
+  .name-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
   }
 
   /* Icon container */

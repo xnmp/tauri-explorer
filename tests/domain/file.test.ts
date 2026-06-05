@@ -40,6 +40,13 @@ const mockEntries: FileEntry[] = [
     size: 200,
     modified: "2025-01-04T00:00:00",
   },
+  {
+    name: "~$report.docx",
+    path: "/~$report.docx",
+    kind: "file",
+    size: 162,
+    modified: "2025-01-05T00:00:00",
+  },
 ];
 
 describe("sortEntries", () => {
@@ -51,7 +58,7 @@ describe("sortEntries", () => {
   it("sorts files alphabetically by name (case-insensitive)", () => {
     const sorted = sortEntries(mockEntries);
     const fileNames = sorted.filter((e) => e.kind === "file").map((e) => e.name);
-    expect(fileNames).toEqual([".hidden", "beta.txt", "zebra.txt"]);
+    expect(fileNames).toEqual([".hidden", "~$report.docx", "beta.txt", "zebra.txt"]);
   });
 
   it("sorts by size when specified", () => {
@@ -69,7 +76,7 @@ describe("sortEntries", () => {
   it("respects descending order", () => {
     const sorted = sortEntries(mockEntries, "name", false);
     const fileNames = sorted.filter((e) => e.kind === "file").map((e) => e.name);
-    expect(fileNames).toEqual(["zebra.txt", "beta.txt", ".hidden"]);
+    expect(fileNames).toEqual(["zebra.txt", "beta.txt", "~$report.docx", ".hidden"]);
   });
 
   it("does not mutate the original array", () => {
@@ -88,6 +95,16 @@ describe("filterHidden", () => {
   it("shows dotfiles when showHidden is true", () => {
     const filtered = filterHidden(mockEntries, true);
     expect(filtered.find((e) => e.name === ".hidden")).toBeDefined();
+  });
+
+  it("hides MS Office temp files (~$) when showHidden is false", () => {
+    const filtered = filterHidden(mockEntries, false);
+    expect(filtered.find((e) => e.name === "~$report.docx")).toBeUndefined();
+  });
+
+  it("shows MS Office temp files when showHidden is true", () => {
+    const filtered = filterHidden(mockEntries, true);
+    expect(filtered.find((e) => e.name === "~$report.docx")).toBeDefined();
   });
 
   it("does not mutate the original array", () => {

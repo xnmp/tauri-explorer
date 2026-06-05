@@ -73,7 +73,7 @@ export function sortEntries(
 }
 
 /**
- * Filter hidden files (dotfiles).
+ * Filter hidden files (dotfiles and OS/app temp files).
  * Returns a new array without mutating the original.
  */
 export function filterHidden(
@@ -81,7 +81,7 @@ export function filterHidden(
   showHidden: boolean
 ): FileEntry[] {
   if (showHidden) return [...entries];
-  return entries.filter((e) => !e.name.startsWith("."));
+  return entries.filter((e) => !e.name.startsWith(".") && !e.name.startsWith("~$"));
 }
 
 /**

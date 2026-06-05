@@ -52,7 +52,7 @@
     const hideEmpty = settingsStore.millerHideEmpty;
     return entries.filter((e) => {
       if (e.kind !== "directory") return false;
-      if (!settingsStore.showHidden && e.name.startsWith(".")) return false;
+      if (!settingsStore.showHidden && (e.name.startsWith(".") || e.name.startsWith("~$"))) return false;
       if (!settingsStore.showManuallyHidden && manualHiddenStore.isHidden(columnPath, e.name)) return false;
       if (hideEmpty && e.path !== activeChildPath) {
         const known = emptyCache.get(e.path);

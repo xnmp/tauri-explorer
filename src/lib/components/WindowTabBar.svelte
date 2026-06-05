@@ -8,6 +8,9 @@
 <script lang="ts">
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { getDropSourcePaths } from "$lib/state/drop-operations";
+  import { handleFileDrop } from "$lib/state/drop-operations";
+  import { parentDir } from "$lib/domain/path";
   import { tick } from "svelte";
 
   const tabs = $derived(windowTabsManager.tabs);
@@ -122,6 +125,7 @@
   // Tab drag-and-drop reordering
   let dragTabId = $state<string | null>(null);
   let dropTargetTabId = $state<string | null>(null);
+  let fileDropTargetTabId = $state<string | null>(null);
 
   function handleTabDragStart(event: DragEvent, tabId: string): void {
     dragTabId = tabId;
@@ -131,25 +135,76 @@
     }
   }
 
+  function isFileDrag(dataTransfer: DataTransfer | null): boolean {
+    if (!dataTransfer) return false;
+    const types = dataTransfer.types;
+    return (
+      types.includes("application/x-explorer-path") ||
+      types.includes("application/x-explorer-paths") ||
+      types.includes("Files")
+    );
+  }
+
   function handleTabDragOver(event: DragEvent, tabId: string): void {
-    if (!dragTabId || dragTabId === tabId) return;
-    event.preventDefault();
-    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-    dropTargetTabId = tabId;
+    // Tab reorder drag
+    if (dragTabId) {
+      if (dragTabId === tabId) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      dropTargetTabId = tabId;
+      return;
+    }
+
+    // File drag onto tab
+    if (isFileDrag(event.dataTransfer)) {
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      fileDropTargetTabId = tabId;
+    }
   }
 
   function handleTabDragLeave(): void {
     dropTargetTabId = null;
+    fileDropTargetTabId = null;
   }
 
   function handleTabDrop(event: DragEvent, tabId: string): void {
     event.preventDefault();
-    if (!dragTabId || dragTabId === tabId) return;
 
-    const fromIndex = tabs.findIndex((t) => t.id === dragTabId);
-    const toIndex = tabs.findIndex((t) => t.id === tabId);
-    if (fromIndex >= 0 && toIndex >= 0) {
-      windowTabsManager.reorderTabs(fromIndex, toIndex);
+    // Tab reorder
+    if (dragTabId && dragTabId !== tabId) {
+      const fromIndex = tabs.findIndex((t) => t.id === dragTabId);
+      const toIndex = tabs.findIndex((t) => t.id === tabId);
+      if (fromIndex >= 0 && toIndex >= 0) {
+        windowTabsManager.reorderTabs(fromIndex, toIndex);
+      }
+      dragTabId = null;
+      dropTargetTabId = null;
+      return;
+    }
+
+    // File drop onto tab
+    if (!dragTabId && event.dataTransfer && isFileDrag(event.dataTransfer)) {
+      fileDropTargetTabId = null;
+      const targetPath = windowTabsManager.getTabPath(tabId);
+      if (!targetPath) return;
+
+      const sourcePaths = getDropSourcePaths(event.dataTransfer);
+      if (sourcePaths.length === 0) return;
+
+      const isCopy = event.altKey;
+      const onRefresh = () => {
+        for (const explorer of windowTabsManager.getAllExplorers()) {
+          explorer.refresh({ silent: true });
+        }
+      };
+      for (const sourcePath of sourcePaths) {
+        if (parentDir(sourcePath) === targetPath) continue;
+        if (sourcePath === targetPath) continue;
+        if (targetPath.startsWith(sourcePath + "/")) continue;
+        handleFileDrop(sourcePath, targetPath, isCopy, { onRefresh });
+      }
+      return;
     }
 
     dragTabId = null;
@@ -159,6 +214,7 @@
   function handleTabDragEnd(): void {
     dragTabId = null;
     dropTargetTabId = null;
+    fileDropTargetTabId = null;
   }
 </script>
 
@@ -168,13 +224,14 @@
       <div
         class="tab"
         class:active={tab.id === activeTabId}
-        class:drag-over={dropTargetTabId === tab.id}
+        class:drag-over={dropTargetTabId === tab.id || fileDropTargetTabId === tab.id}
         class:dragging={dragTabId === tab.id}
         class:tab-entering={isNewTab(tab.id)}
         class:tab-closing={closingTabId === tab.id}
         role="tab"
         tabindex="0"
         aria-selected={tab.id === activeTabId}
+        data-tab-id={tab.id}
         onclick={() => handleTabClick(tab.id)}
         onkeydown={(e) => handleTabKeydown(e, tab.id)}
         onauxclick={(e) => handleTabMiddleClick(e, tab.id)}

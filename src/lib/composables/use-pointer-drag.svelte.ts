@@ -143,7 +143,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
       for (const p of dragPaths) {
         bookmarksStore.addBookmark(p);
       }
-    } else if (target?.type === "folder") {
+    } else if (target?.type === "folder" || target?.type === "tab") {
       const paths = [...dragPaths];
       const targetPath = target.path;
       cleanup(true);

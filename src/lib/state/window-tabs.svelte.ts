@@ -134,6 +134,13 @@ function createWindowTabsManager() {
     return explorer?.state.currentPath ?? pane.path;
   }
 
+  /** Get the active pane's directory path for any tab by ID. */
+  function getTabPath(tabId: string): string | undefined {
+    const tab = tabs.find((t) => t.id === tabId);
+    if (!tab) return undefined;
+    return getPanePath(tab.panes[tab.activePaneId]);
+  }
+
   /** Get tooltip for tab (shows both pane paths when dual-pane) */
   function getTabTooltip(tab: WindowTab): string {
     if (!tab.dualPaneEnabled) {
@@ -539,6 +546,7 @@ function createWindowTabsManager() {
     prevTab,
     reorderTabs,
     getTabTitle,
+    getTabPath,
     getTabTooltip,
 
     // Explorer access

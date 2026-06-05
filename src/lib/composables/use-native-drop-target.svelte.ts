@@ -7,9 +7,11 @@
  */
 
 import { getZoomFactor } from "$lib/domain/zoom";
+import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 
 export type DropTargetResult =
   | { type: "folder"; path: string }
+  | { type: "tab"; tabId: string; path: string }
   | { type: "background"; path?: string }
   | { type: "sidebar" }
   | null;
@@ -48,6 +50,16 @@ function resolveFromElement(el: Element | null): DropTargetResult {
 
   const sidebar = (el as HTMLElement).closest?.(".quick-access");
   if (sidebar) return { type: "sidebar" };
+
+  // Tab bar — drop files into the tab's directory
+  const tabEl = (el as HTMLElement).closest?.(".tab[data-tab-id]");
+  if (tabEl) {
+    const tabId = tabEl.getAttribute("data-tab-id");
+    if (tabId) {
+      const path = windowTabsManager.getTabPath(tabId);
+      if (path) return { type: "tab", tabId, path };
+    }
+  }
 
   // Miller column background (empty space)
   const millerCol = (el as HTMLElement).closest?.(".miller-col[data-path]");
@@ -100,8 +112,9 @@ function highlightAtCoords(cx: number, cy: number): void {
   const folderEntry = (el as HTMLElement).closest?.(".entry-item.directory[data-path]") as HTMLElement | null;
   const millerEntry = (el as HTMLElement).closest?.(".col-entry[data-kind='directory'][data-path]") as HTMLElement | null;
   const millerCol = (el as HTMLElement).closest?.(".miller-col[data-path]") as HTMLElement | null;
+  const tabEl = (el as HTMLElement).closest?.(".tab[data-tab-id]") as HTMLElement | null;
   const sidebarEl = (el as HTMLElement).closest?.(".quick-access") as HTMLElement | null;
-  const targetEl = folderEntry || millerEntry || millerCol || (!sidebarEl ? (el as HTMLElement).closest?.(".content") as HTMLElement | null : null);
+  const targetEl = folderEntry || millerEntry || tabEl || millerCol || (!sidebarEl ? (el as HTMLElement).closest?.(".content") as HTMLElement | null : null);
 
   if (sidebarEl) {
     if (highlightedElement) {

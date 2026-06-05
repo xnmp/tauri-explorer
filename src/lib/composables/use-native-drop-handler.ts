@@ -63,8 +63,8 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
       broadcastToOtherWindows: isInternalDrag,
     };
 
-    // Drop onto a specific folder
-    if (target?.type === "folder") {
+    // Drop onto a specific folder or tab
+    if (target?.type === "folder" || target?.type === "tab") {
       for (const sourcePath of sourcePaths) {
         if (sourcePath === target.path) continue;
         if (target.path.startsWith(sourcePath + "/")) continue;

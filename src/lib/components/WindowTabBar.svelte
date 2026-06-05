@@ -224,7 +224,8 @@
       <div
         class="tab"
         class:active={tab.id === activeTabId}
-        class:drag-over={dropTargetTabId === tab.id || fileDropTargetTabId === tab.id}
+        class:drag-over={dropTargetTabId === tab.id}
+        class:file-drop-target={fileDropTargetTabId === tab.id}
         class:dragging={dragTabId === tab.id}
         class:tab-entering={isNewTab(tab.id)}
         class:tab-closing={closingTabId === tab.id}
@@ -437,6 +438,17 @@
   .tab.drag-over {
     border-color: var(--accent);
     background: var(--subtle-fill-secondary);
+  }
+
+  .tab.file-drop-target,
+  .tab:global(.drop-target) {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 15%, var(--background));
+    box-shadow:
+      0 0 0 1px var(--accent),
+      0 0 8px color-mix(in srgb, var(--accent) 40%, transparent);
+    opacity: 1;
+    transform: translateY(-1px);
   }
 
   .tab.active {

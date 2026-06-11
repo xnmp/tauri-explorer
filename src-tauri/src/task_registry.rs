@@ -15,6 +15,12 @@ pub struct TaskRegistry {
     active: OnceLock<Mutex<HashMap<u64, Arc<AtomicBool>>>>,
 }
 
+impl Default for TaskRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TaskRegistry {
     pub const fn new() -> Self {
         Self {
@@ -44,7 +50,8 @@ impl TaskRegistry {
 
     /// Cancel a task by ID. No-op if the task doesn't exist or already completed.
     pub fn cancel(&self, id: u64) {
-        if let Some(flag) = self.active_map()
+        if let Some(flag) = self
+            .active_map()
             .lock()
             .unwrap_or_else(|poisoned| {
                 log::error!("task registry lock poisoned on cancel, recovering");

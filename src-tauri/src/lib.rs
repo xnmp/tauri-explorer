@@ -8,121 +8,18 @@ mod content_search;
 pub mod error;
 mod files;
 pub mod git;
+mod nano_banana;
 mod search;
+mod system;
 pub mod task_registry;
 mod thumbnails;
-mod nano_banana;
 mod wallpaper;
 
-use std::path::PathBuf;
-
-use error::AppError;
-use log;
+use system::{
+    get_launch_cwd, get_log_dir, move_multiple_to_trash, move_to_trash, restore_from_trash,
+    set_window_theme, LaunchCwd,
+};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
-
-/// Stores the working directory from which the app was launched.
-struct LaunchCwd(String);
-
-/// Move a file or directory to the system trash/recycle bin.
-/// Cross-platform: Windows Recycle Bin, macOS Trash, Linux Freedesktop Trash.
-#[tauri::command]
-async fn move_to_trash(path: String) -> Result<(), AppError> {
-    let pathbuf = PathBuf::from(&path);
-
-    if !pathbuf.exists() {
-        return Err(AppError::NotFound(path));
-    }
-
-    trash::delete(&pathbuf).map_err(|e| {
-        log::error!("Failed to move to trash: {}", e);
-        AppError::Other(format!("Failed to move to trash: {}", e))
-    })
-}
-
-/// Move multiple files/directories to trash.
-#[tauri::command]
-async fn move_multiple_to_trash(paths: Vec<String>) -> Result<(), AppError> {
-    let pathbufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
-
-    for (i, path) in pathbufs.iter().enumerate() {
-        if !path.exists() {
-            return Err(AppError::NotFound(paths[i].clone()));
-        }
-    }
-
-    log::info!("Moving {} items to trash", pathbufs.len());
-    trash::delete_all(&pathbufs).map_err(|e| {
-        log::error!("Failed to move {} items to trash: {}", pathbufs.len(), e);
-        AppError::Other(format!("Failed to move items to trash: {}", e))
-    })
-}
-
-/// Get the directory the app was launched from.
-#[tauri::command]
-fn get_launch_cwd(state: tauri::State<'_, LaunchCwd>) -> String {
-    state.0.clone()
-}
-
-/// Set the window theme (light/dark) to sync NSAppearance with the app theme.
-#[tauri::command]
-async fn set_window_theme(window: tauri::Window, theme: String) {
-    let t = match theme.as_str() {
-        "light" => Some(tauri::Theme::Light),
-        "dark" => Some(tauri::Theme::Dark),
-        _ => None,
-    };
-    let _ = window.set_theme(t);
-}
-
-/// Get the log directory path so the frontend can display it in settings.
-#[tauri::command]
-fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
-    use tauri::Manager;
-    let log_dir = app
-        .path()
-        .app_log_dir()
-        .map_err(|e| AppError::Other(format!("Failed to resolve log directory: {}", e)))?;
-    Ok(log_dir.to_string_lossy().to_string())
-}
-
-/// Restore files from the system trash by their original paths.
-/// Finds the most recently deleted item matching each path and restores it.
-/// Note: trash::os_limited is only available on Linux/Windows (not macOS).
-#[cfg(not(target_os = "macos"))]
-#[tauri::command]
-async fn restore_from_trash(paths: Vec<String>) -> Result<(), AppError> {
-    let trash_items = trash::os_limited::list()
-        .map_err(|e| AppError::Other(format!("Failed to list trash: {}", e)))?;
-
-    let mut to_restore = Vec::new();
-
-    for path_str in &paths {
-        let target = PathBuf::from(path_str);
-        // Find the most recently deleted item matching this original path
-        let mut matching: Vec<_> = trash_items
-            .iter()
-            .filter(|item| item.original_path() == target)
-            .collect();
-        matching.sort_by_key(|item| std::cmp::Reverse(item.time_deleted));
-
-        if let Some(item) = matching.into_iter().next() {
-            to_restore.push(item.clone());
-        }
-    }
-
-    if to_restore.is_empty() {
-        return Err(AppError::Other("No matching items found in trash".to_string()));
-    }
-
-    trash::os_limited::restore_all(to_restore)
-        .map_err(|e| AppError::Other(format!("Failed to restore from trash: {}", e)))
-}
-
-#[cfg(target_os = "macos")]
-#[tauri::command]
-async fn restore_from_trash(_paths: Vec<String>) -> Result<(), AppError> {
-    Err(AppError::Other("Cannot undo delete on macOS — use Finder to restore from Trash".to_string()))
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(launch_dir: Option<String>) {
@@ -136,7 +33,7 @@ pub fn run(launch_dir: Option<String>) {
     }
 
     let home_dir = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/"))
+        .unwrap_or_else(|| std::path::PathBuf::from("/"))
         .to_string_lossy()
         .to_string();
     let launch_cwd = launch_dir.unwrap_or_else(|| home_dir.clone());
@@ -271,11 +168,11 @@ pub fn run(launch_dir: Option<String>) {
             let t_setup = std::time::Instant::now();
 
             // Initialize filesystem watcher for auto-refresh
-            files::fs_watcher::init_watcher(&app.handle());
+            files::fs_watcher::init_watcher(app.handle());
 
             // Create window programmatically so we can inject initialization_script.
             // This replaces the static window definition in tauri.conf.json.
-            let mut builder = tauri::WebviewWindowBuilder::new(
+            let builder = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
                 tauri::WebviewUrl::App("index.html".into()),

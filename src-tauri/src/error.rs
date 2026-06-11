@@ -23,10 +23,22 @@ pub enum AppError {
     InvalidPath(String),
 
     #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
+    Io(std::io::Error),
 
     #[error("{0}")]
     Other(String),
+}
+
+impl From<std::io::Error> for AppError {
+    fn from(e: std::io::Error) -> Self {
+        use std::io::ErrorKind;
+        match e.kind() {
+            ErrorKind::NotFound => AppError::NotFound(e.to_string()),
+            ErrorKind::PermissionDenied => AppError::PermissionDenied(e.to_string()),
+            ErrorKind::AlreadyExists => AppError::AlreadyExists(e.to_string()),
+            _ => AppError::Io(e),
+        }
+    }
 }
 
 impl Serialize for AppError {

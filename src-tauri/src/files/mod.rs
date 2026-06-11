@@ -13,6 +13,21 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
+/// Run a blocking closure on the async runtime's blocking thread pool so
+/// heavy filesystem work doesn't stall the main async executor.
+pub(crate) async fn run_blocking<T, F>(f: F) -> Result<T, crate::error::AppError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, crate::error::AppError> + Send + 'static,
+{
+    match tauri::async_runtime::spawn_blocking(f).await {
+        Ok(result) => result,
+        Err(e) => Err(crate::error::AppError::Other(format!(
+            "Background task failed: {e}"
+        ))),
+    }
+}
+
 /// File system entry representation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileEntry {
@@ -72,12 +87,20 @@ pub(crate) fn metadata_to_entry(path: &Path, sym_meta: &fs::Metadata) -> FileEnt
         FileKind::File
     };
 
-    let size = if effective.is_dir() { 0 } else { effective.len() };
+    let size = if effective.is_dir() {
+        0
+    } else {
+        effective.len()
+    };
 
     let modified = effective
         .modified()
         .ok()
-        .map(|t| DateTime::<Local>::from(t).format("%Y-%m-%dT%H:%M:%S").to_string())
+        .map(|t| {
+            DateTime::<Local>::from(t)
+                .format("%Y-%m-%dT%H:%M:%S")
+                .to_string()
+        })
         .unwrap_or_default();
 
     let symlink_target = if is_symlink {
@@ -89,7 +112,7 @@ pub(crate) fn metadata_to_entry(path: &Path, sym_meta: &fs::Metadata) -> FileEnt
     };
 
     let is_empty = if effective.is_dir() {
-        Some(fs::read_dir(path).map_or(false, |mut d| d.next().is_none()))
+        Some(fs::read_dir(path).is_ok_and(|mut d| d.next().is_none()))
     } else {
         None
     };

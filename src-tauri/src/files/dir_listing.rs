@@ -10,8 +10,8 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 use tauri::{AppHandle, Emitter};
 
-use crate::error::AppError;
 use super::{metadata_to_entry, DirectoryListing, FileEntry, FileKind};
+use crate::error::AppError;
 
 // ===================
 // Directory Listing Cache
@@ -31,13 +31,18 @@ fn get_dir_cache() -> &'static Mutex<HashMap<String, CachedListing>> {
     DIR_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Invalidate cache for a specific directory (internal sync helper, callable
+/// from non-async contexts like the filesystem watcher callback).
+pub(crate) fn invalidate_dir_cache_sync(path: &str) {
+    if let Ok(mut cache) = get_dir_cache().lock() {
+        cache.remove(path);
+    }
+}
+
 /// Invalidate cache for a specific directory.
 #[tauri::command]
-pub fn invalidate_dir_cache(path: String) -> Result<(), AppError> {
-    let mut cache = get_dir_cache()
-        .lock()
-        .map_err(|e| AppError::Other(format!("dir cache lock poisoned: {e}")))?;
-    cache.remove(&path);
+pub async fn invalidate_dir_cache(path: String) -> Result<(), AppError> {
+    invalidate_dir_cache_sync(&path);
     Ok(())
 }
 
@@ -45,7 +50,7 @@ pub fn invalidate_dir_cache(path: String) -> Result<(), AppError> {
 /// `include_hidden` rule. Skips directories the caller can't read (returns
 /// false so a folder isn't optimistically hidden).
 #[tauri::command]
-pub fn is_directory_empty(path: String, include_hidden: bool) -> Result<bool, AppError> {
+pub async fn is_directory_empty(path: String, include_hidden: bool) -> Result<bool, AppError> {
     let dir_path = PathBuf::from(&path);
     let read = match fs::read_dir(&dir_path) {
         Ok(r) => r,
@@ -75,7 +80,10 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
             .map_err(|e| AppError::Other(format!("dir cache lock poisoned: {e}")))?;
         if let Some(cached) = cache.get(&path) {
             if cached.cached_at.elapsed().as_secs() < CACHE_TTL_SECS {
-                log::debug!("list_directory: cache hit ({} entries)", cached.entries.len());
+                log::debug!(
+                    "list_directory: cache hit ({} entries)",
+                    cached.entries.len()
+                );
                 return Ok(DirectoryListing {
                     path: path.clone(),
                     entries: cached.entries.clone(),
@@ -95,11 +103,16 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
         return Err(AppError::InvalidPath(format!("Not a directory: {}", path)));
     }
 
-    let entries = scan_directory_parallel(&dir_path);
+    // jwalk + per-entry stat calls are blocking work; keep them off the async executor.
+    let entries = super::run_blocking(move || Ok(scan_directory_parallel(&dir_path))).await?;
 
     let elapsed = t_start.elapsed();
     if elapsed.as_millis() > 100 {
-        log::warn!("Slow directory listing: {} entries in {:?}", entries.len(), elapsed);
+        log::warn!(
+            "Slow directory listing: {} entries in {:?}",
+            entries.len(),
+            elapsed
+        );
     } else {
         log::debug!("list_directory: {} entries in {:?}", entries.len(), elapsed);
     }
@@ -111,6 +124,18 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
             .map_err(|e| AppError::Other(format!("dir cache lock poisoned: {e}")))?;
         if cache.len() >= MAX_CACHE_ENTRIES {
             cache.retain(|_, v| v.cached_at.elapsed().as_secs() < CACHE_TTL_SECS);
+            // Still full (every entry fresh): evict the oldest entries so the
+            // cache can't grow past MAX_CACHE_ENTRIES.
+            while cache.len() >= MAX_CACHE_ENTRIES {
+                let Some(oldest) = cache
+                    .iter()
+                    .min_by_key(|(_, v)| v.cached_at)
+                    .map(|(k, _)| k.clone())
+                else {
+                    break;
+                };
+                cache.remove(&oldest);
+            }
         }
         cache.insert(
             path.clone(),
@@ -204,7 +229,9 @@ pub async fn start_streaming_directory(
     }
 
     let t_scan_start = std::time::Instant::now();
-    let mut all_entries = scan_directory_parallel(&dir_path);
+    // jwalk + per-entry stat calls are blocking work; keep them off the async executor.
+    let mut all_entries =
+        super::run_blocking(move || Ok(scan_directory_parallel(&dir_path))).await?;
     let t_scan_end = std::time::Instant::now();
 
     let total_count = all_entries.len();
@@ -265,7 +292,7 @@ pub async fn start_streaming_directory(
 
 /// Cancel an active directory listing.
 #[tauri::command]
-pub fn cancel_directory_listing(listing_id: u64) -> Result<(), AppError> {
+pub async fn cancel_directory_listing(listing_id: u64) -> Result<(), AppError> {
     LISTINGS.cancel(listing_id);
     Ok(())
 }
@@ -284,9 +311,7 @@ mod tests {
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt
-            .block_on(list_directory(
-                dir.path().to_string_lossy().to_string(),
-            ))
+            .block_on(list_directory(dir.path().to_string_lossy().to_string()))
             .unwrap();
 
         assert_eq!(result.entries.len(), 2);

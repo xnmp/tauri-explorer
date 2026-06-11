@@ -13,8 +13,8 @@
   import { useMarqueeSelection } from "$lib/composables/use-marquee-selection.svelte";
   import { useTypeAhead } from "$lib/composables/use-type-ahead.svelte";
   import { isImageFile } from "$lib/domain/file-types";
-  import { parentDir } from "$lib/domain/path";
-  import { getZoomFactor, rectDimToCSS } from "$lib/domain/zoom";
+  import { parentDir, basename } from "$lib/domain/path";
+  import { rectDimToCSS } from "$lib/domain/zoom";
   import DetailsView from "./DetailsView.svelte";
   import ListView from "./ListView.svelte";
   import TilesView from "./TilesView.svelte";
@@ -194,9 +194,10 @@
 
     let indices: number[];
     if (explorer.viewMode === "tiles") {
-      indices = marquee.getSelectedIndicesFromDOM(contentRef, ".tile-item");
+      // The inner view element is the actual scroller (.content never overflows)
+      indices = marquee.getSelectedIndicesFromDOM(contentRef, ".tile-item", contentRef.querySelector<HTMLElement>(".tiles-view"));
     } else if (explorer.viewMode === "list") {
-      indices = marquee.getSelectedIndicesFromDOM(contentRef, ".list-item");
+      indices = marquee.getSelectedIndicesFromDOM(contentRef, ".list-item", contentRef.querySelector<HTMLElement>(".list-view"));
     } else {
       const scrollTop = contentRef.querySelector('.virtual-viewport')?.scrollTop ?? 0;
       indices = marquee.getSelectedIndices(scrollTop, explorer.displayEntries.length, marqueeHeaderHeight());
@@ -216,7 +217,7 @@
     if (!types?.includes("application/x-explorer-path") && !types?.includes("Files") && !crossWindow) return;
 
     const target = event.target as HTMLElement;
-    if (target.closest(".file-item")) return;
+    if (target.closest(".entry-item")) return;
 
     // Suppress highlight when all sources are already in this directory
     const dragData = dragState.current ?? crossWindow;
@@ -240,7 +241,7 @@
     isDropTarget = false;
 
     const target = event.target as HTMLElement;
-    if (target.closest(".file-item")) return;
+    if (target.closest(".entry-item")) return;
 
     if (!event.dataTransfer) return;
 
@@ -266,6 +267,9 @@
           else explorer.refresh({ silent: true });
         },
       });
+      // Each transferred file now exists in the target dir — later files in
+      // this batch sharing its basename must trigger the conflict dialog.
+      existingNames.add(basename(sourcePath));
     }
   }
 </script>

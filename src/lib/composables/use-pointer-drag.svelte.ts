@@ -10,6 +10,7 @@
  * coordinates even after the cursor leaves the viewport.
  */
 
+import { onDestroy } from "svelte";
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import type { PaneNavigationContext } from "$lib/state/pane-context";
@@ -37,6 +38,17 @@ export function usePointerDrag(deps: PointerDragDeps) {
   let ghostEl: HTMLElement | null = null;
   let sourceEl: HTMLElement | null = null;
   let entryData: { path: string; name: string; kind: string; paths?: string[] } | null = null;
+
+  // Window listeners are added on pointerdown; if the owning component is
+  // destroyed mid-drag they would otherwise leak for the rest of the session.
+  try {
+    onDestroy(() => {
+      if (dragActive) clearHighlights();
+      cleanup(dragActive);
+    });
+  } catch {
+    // Not called during component init (e.g. unit tests) — caller manages lifetime.
+  }
 
   function refreshPanes(): void {
     const paneNav = deps.getPaneNav();
@@ -160,7 +172,10 @@ export function usePointerDrag(deps: PointerDragDeps) {
         const paths = [...dragPaths];
         cleanup(true);
         for (const sourcePath of paths) {
-          await handleBackgroundDrop(sourcePath, destPath, new Set(), { onRefresh: refreshPanes });
+          // No existingNames: performFileTransfer must fetch the target dir
+          // for its conflict check (an empty Set would be treated as
+          // authoritative and bypass the conflict dialog entirely).
+          await handleBackgroundDrop(sourcePath, destPath, undefined as unknown as Set<string>, { onRefresh: refreshPanes });
         }
         return;
       }

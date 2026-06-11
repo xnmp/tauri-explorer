@@ -7,6 +7,7 @@
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
+  import { useProgressiveRender } from "$lib/composables/use-progressive-render.svelte";
   import { getFileIconColor, isImageFile } from "$lib/domain/file-types";
 
   import { isMac } from "$lib/domain/platform";
@@ -49,49 +50,10 @@
   // Only resets the render limit when entry count increases significantly
   // (e.g. navigating to a new directory), not on small changes like deletions.
   const TILE_CHUNK = 60;
-  let tileRenderLimit = $state(TILE_CHUNK);
-  let tileRafId: number | null = null;
-  let prevEntryCount = 0;
-
-  $effect(() => {
-    const entries = explorer.displayEntries;
-    const count = entries.length;
-
-    if (tileRafId) cancelAnimationFrame(tileRafId);
-
-    // Entries decreased or stayed same: just clamp — don't reset
-    if (count <= tileRenderLimit) {
-      tileRenderLimit = count;
-      prevEntryCount = count;
-      return;
-    }
-
-    // Small increase (e.g. new folder created): extend without resetting
-    if (count <= prevEntryCount + TILE_CHUNK) {
-      tileRenderLimit = count;
-      prevEntryCount = count;
-      return;
-    }
-
-    // Large increase (new directory): progressive render from scratch
-    tileRenderLimit = TILE_CHUNK;
-    prevEntryCount = count;
-
-    function renderMore() {
-      tileRenderLimit = Math.min(tileRenderLimit + TILE_CHUNK, count);
-      if (tileRenderLimit < count) {
-        tileRafId = requestAnimationFrame(renderMore);
-      }
-    }
-    tileRafId = requestAnimationFrame(renderMore);
-
-    return () => {
-      if (tileRafId) cancelAnimationFrame(tileRafId);
-    };
-  });
+  const progressive = useProgressiveRender(() => explorer.displayEntries.length, TILE_CHUNK);
 
   const visibleTileEntries = $derived(
-    explorer.displayEntries.slice(0, tileRenderLimit)
+    explorer.displayEntries.slice(0, progressive.limit)
   );
 
   // Scroll performance logging (dev only)
@@ -261,5 +223,12 @@
     position: absolute;
     top: 4px;
     right: 6px;
+  }
+
+  /* Symlink badge — positioned top-left of tile (git indicator owns top-right) */
+  .tiles-view :global(.tile-item .symlink-badge) {
+    position: absolute;
+    top: 4px;
+    left: 6px;
   }
 </style>

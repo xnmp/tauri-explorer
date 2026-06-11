@@ -3,9 +3,10 @@
  * Only supports dragging to the Bookmarks section (sidebar drop target).
  */
 
+import { onDestroy } from "svelte";
 import { dragState } from "$lib/state/drag.svelte";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
-import { resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights, type DropTargetResult } from "./use-native-drop-target.svelte";
+import { resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights } from "./use-native-drop-target.svelte";
 import { createDragGhost } from "./use-pointer-drag.svelte";
 import { settingsStore } from "$lib/state/settings.svelte";
 
@@ -20,6 +21,17 @@ export function useSidebarDrag() {
   let ghostEl: HTMLElement | null = null;
 
   let sourceEl: HTMLElement | null = null;
+
+  // Window listeners are added on pointerdown; if the owning component is
+  // destroyed mid-drag they would otherwise leak for the rest of the session.
+  try {
+    onDestroy(() => {
+      if (dragActive) clearHighlights();
+      cleanup(dragActive);
+    });
+  } catch {
+    // Not called during component init (e.g. unit tests) — caller manages lifetime.
+  }
 
   function handlePointerDown(event: MouseEvent, path: string, name: string): void {
     if (event.button !== 0) return;

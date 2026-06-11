@@ -60,6 +60,8 @@
 
   let microUrl = $state<string | null>(null);
   let fullUrl = $state<string | null>(null);
+  // Set when the full <img> has actually decoded — drives the 150ms cross-fade
+  let fullLoaded = $state(false);
   let loading = $state(false);
   let error = $state(false);
   let visible = $state(false);
@@ -95,6 +97,8 @@
 
   async function loadProgressiveThumbnail() {
     const currentPath = path;
+    // Stale-response guard compares the FULL reload key (path + size + quality):
+    // comparing only path lets a slow old-size response win over a newer size.
     const currentKey = reloadKey;
 
     // Check frontend cache (survives renames without backend re-generation)
@@ -111,14 +115,15 @@
     error = false;
     microUrl = null;
     fullUrl = null;
+    fullLoaded = false;
 
     // Stage 1: micro thumbnail (fast, pixelated preview)
     await microPool.acquire();
     try {
-      if (currentPath !== path) return;
+      if (currentKey !== reloadKey) return;
 
       const microResult = await getMicroThumbnail(currentPath, backendSize, quality);
-      if (currentPath !== path) return;
+      if (currentKey !== reloadKey) return;
 
       if (microResult.ok) {
         microUrl = microResult.data;
@@ -130,10 +135,10 @@
     // Stage 2: full thumbnail (should be a cache hit from micro's pre-warm)
     await fullPool.acquire();
     try {
-      if (currentPath !== path) return;
+      if (currentKey !== reloadKey) return;
 
       const fullResult = await getThumbnailData(currentPath, backendSize, quality);
-      if (currentPath !== path) return;
+      if (currentKey !== reloadKey) return;
 
       if (fullResult.ok) {
         fullUrl = fullResult.data;
@@ -144,7 +149,7 @@
       fullPool.release();
     }
 
-    if (currentPath === path) {
+    if (currentKey === reloadKey) {
       loading = false;
       if (fullUrl || microUrl) {
         setThumbnailCache(currentKey, { micro: microUrl, full: fullUrl });
@@ -190,7 +195,8 @@
         src={fullUrl}
         alt=""
         class="thumbnail-full"
-        class:loaded={true}
+        class:loaded={fullLoaded}
+        onload={() => { fullLoaded = true; }}
         width={size}
         height={size}
         draggable="false"

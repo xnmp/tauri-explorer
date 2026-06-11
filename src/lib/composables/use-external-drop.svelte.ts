@@ -34,11 +34,15 @@ export function useExternalDrop(callbacks: ExternalDropCallbacks) {
   });
 
   let unlisten: UnlistenFn | null = null;
+  // Guards against cleanup() racing the async listener registration:
+  // if cleanup runs before registration resolves, unlisten on arrival.
+  let disposed = false;
 
   async function setup(): Promise<void> {
+    disposed = false;
     try {
       const webview = getCurrentWebview();
-      unlisten = await webview.onDragDropEvent((event) => {
+      const fn = await webview.onDragDropEvent((event) => {
         const eventType = event.payload.type;
         if (eventType === "over") {
           state.isDragging = true;
@@ -62,12 +66,18 @@ export function useExternalDrop(callbacks: ExternalDropCallbacks) {
           callbacks.onLeave?.();
         }
       });
+      if (disposed) {
+        fn();
+        return;
+      }
+      unlisten = fn;
     } catch (err) {
       // Expected when running outside Tauri (dev server, tests)
     }
   }
 
   function cleanup(): void {
+    disposed = true;
     if (unlisten) {
       unlisten();
       unlisten = null;

@@ -97,6 +97,20 @@
     const target = event.target as HTMLElement;
     const isInputField = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
 
+    // Escape closes any open modal dialog
+    if (event.key === "Escape" && dialogStore.hasModalOpen) {
+      event.preventDefault();
+      dialogStore.closeAll();
+      return;
+    }
+
+    // Skip shortcut handling (including hardcoded shortcuts below) if in an
+    // input field or a modal dialog is open — e.g. Ctrl+J while typing in a
+    // rename input must not open the jobs panel.
+    if (isInputField || dialogStore.hasModalOpen) {
+      return;
+    }
+
     // Ctrl+J: Open jobs panel (hardcoded)
     if (event.key === "j" && isModifier) {
       event.preventDefault();
@@ -116,18 +130,6 @@
     if (isBackslash && isModifier) {
       event.preventDefault();
       windowTabsManager.toggleDualPane();
-      return;
-    }
-
-    // Escape closes any open modal dialog
-    if (event.key === "Escape" && dialogStore.hasModalOpen) {
-      event.preventDefault();
-      dialogStore.closeAll();
-      return;
-    }
-
-    // Skip dynamic shortcut handling if in input field or a modal dialog is open
-    if (isInputField || dialogStore.hasModalOpen) {
       return;
     }
 

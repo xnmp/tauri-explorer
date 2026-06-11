@@ -5,7 +5,7 @@
  */
 
 import type { FileEntry } from "$lib/domain/file";
-import { isMac, isCopyModifier } from "$lib/domain/platform";
+import { isCopyModifier } from "$lib/domain/platform";
 import { dragState } from "$lib/state/drag.svelte";
 import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
 
@@ -36,6 +36,10 @@ export function useDropTarget(deps: DropTargetDeps) {
 
   async function handleDrop(event: DragEvent, entry: FileEntry): Promise<void> {
     event.preventDefault();
+    // Item-level drops are fully handled here — never let them bubble to
+    // background drop handlers (FileList content, Miller column background),
+    // which would process the same drop a second time.
+    event.stopPropagation();
     dropTargets[entry.path] = false;
     copyDropTargets[entry.path] = false;
 

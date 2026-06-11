@@ -11,6 +11,7 @@
   import type { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { isInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
+  import { dialogStore } from "$lib/state/dialogs.svelte";
   import { isMac } from "$lib/domain/platform";
 
   type ItemInteractions = ReturnType<typeof useItemInteractions>;
@@ -37,6 +38,8 @@
     onitemdblclick,
     children,
   }: Props = $props();
+
+  const isRenaming = $derived(dialogStore.renamingEntry?.path === entry.path);
 </script>
 
 <button
@@ -52,7 +55,7 @@
   class:copy-drop={interactions.isCopyDrop(entry.path)}
   draggable={!isMac}
   onclick={(e) => onitemclick(entry, e)}
-  ondblclick={() => onitemdblclick(entry)}
+  ondblclick={() => { if (!isRenaming) onitemdblclick(entry); }}
   oncontextmenu={(e) => interactions.handleContextMenu(e, entry)}
   ondragstart={!isMac ? (e) => interactions.handleDragStart(e, entry, explorer.isSelected(entry)) : undefined}
   ondragend={!isMac ? interactions.handleDragEnd : undefined}
@@ -62,4 +65,25 @@
   onmousedown={isMac ? (e) => { e.stopPropagation(); pointerDrag!.handlePointerDown(e, entry, explorer.isSelected(entry)); } : undefined}
 >
   {@render children()}
+  {#if entry.is_symlink && !isRenaming}
+    <div class="symlink-badge" title={entry.symlink_target ? `Link to ${entry.symlink_target}` : "Symbolic link"}>
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+        <path d="M7 3L3 7M3 3L3 7L7 7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+  {/if}
 </button>
+
+<style>
+  /* Symlink badge — mirrors the Details view (FileItem) indicator */
+  .symlink-badge {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    color: var(--text-tertiary);
+    flex-shrink: 0;
+    opacity: 0.7;
+  }
+</style>

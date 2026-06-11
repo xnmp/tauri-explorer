@@ -10,7 +10,10 @@
   import { settingsStore } from "$lib/state/settings.svelte";
   import { getDropSourcePaths } from "$lib/state/drop-operations";
   import { handleFileDrop } from "$lib/state/drop-operations";
+  import { dragState } from "$lib/state/drag.svelte";
   import { parentDir } from "$lib/domain/path";
+  import { isCopyModifier } from "$lib/domain/platform";
+  import { showTabArea as showTabAreaRule } from "$lib/domain/titlebar";
   import { tick } from "svelte";
 
   const tabs = $derived(windowTabsManager.tabs);
@@ -65,13 +68,12 @@
     return () => observer.disconnect();
   });
 
-  // Show the tab strip whenever there are multiple tabs, OR when window controls
-  // are enabled (Windows 11 style — the tab strip hosts the controls, so it must
-  // remain visible even with one tab).
   const showTabArea = $derived(
-    settingsStore.integratedTitleBar ||
-      tabs.length > 1 ||
+    showTabAreaRule(
+      settingsStore.integratedTitleBar,
+      tabs.length,
       settingsStore.showWindowControls,
+    ),
   );
 
   // Track tab IDs that existed on first render to skip entrance animation
@@ -155,20 +157,23 @@
       return;
     }
 
-    // File drag onto tab
-    if (isFileDrag(event.dataTransfer)) {
+    // File drag onto tab (cross-window drags carry no dataTransfer types)
+    if (isFileDrag(event.dataTransfer) || dragState.readCrossWindow()) {
       event.preventDefault();
       if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
       fileDropTargetTabId = tabId;
     }
   }
 
-  function handleTabDragLeave(): void {
+  function handleTabDragLeave(event: DragEvent): void {
+    // Ignore leave events fired when crossing into a child node of the tab
+    const related = event.relatedTarget as Node | null;
+    if (related && (event.currentTarget as HTMLElement).contains(related)) return;
     dropTargetTabId = null;
     fileDropTargetTabId = null;
   }
 
-  function handleTabDrop(event: DragEvent, tabId: string): void {
+  async function handleTabDrop(event: DragEvent, tabId: string): Promise<void> {
     event.preventDefault();
 
     // Tab reorder
@@ -183,8 +188,8 @@
       return;
     }
 
-    // File drop onto tab
-    if (!dragTabId && event.dataTransfer && isFileDrag(event.dataTransfer)) {
+    // File drop onto tab (mirror FileList: dataTransfer first, then cross-window drag state)
+    if (!dragTabId && event.dataTransfer && (isFileDrag(event.dataTransfer) || dragState.readCrossWindow())) {
       fileDropTargetTabId = null;
       const targetPath = windowTabsManager.getTabPath(tabId);
       if (!targetPath) return;
@@ -192,7 +197,8 @@
       const sourcePaths = getDropSourcePaths(event.dataTransfer);
       if (sourcePaths.length === 0) return;
 
-      const isCopy = event.altKey;
+      const isCopy = isCopyModifier(event);
+      dragState.clear();
       const onRefresh = () => {
         for (const explorer of windowTabsManager.getAllExplorers()) {
           explorer.refresh({ silent: true });
@@ -202,7 +208,8 @@
         if (parentDir(sourcePath) === targetPath) continue;
         if (sourcePath === targetPath) continue;
         if (targetPath.startsWith(sourcePath + "/")) continue;
-        handleFileDrop(sourcePath, targetPath, isCopy, { onRefresh });
+        // Await sequentially so multi-file drops can't stack conflict dialogs
+        await handleFileDrop(sourcePath, targetPath, isCopy, { onRefresh });
       }
       return;
     }

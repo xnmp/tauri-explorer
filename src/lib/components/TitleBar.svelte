@@ -11,8 +11,14 @@
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { isMac } from "$lib/domain/platform";
-  const showTabBar = $derived(settingsStore.integratedTitleBar || windowTabsManager.tabs.length > 1);
-  const showTitleBar = $derived(settingsStore.integratedTitleBar || showTabBar || settingsStore.showWindowControls);
+  import * as titlebar from "$lib/domain/titlebar";
+  const showTitleBar = $derived(
+    titlebar.showTitleBar(
+      settingsStore.integratedTitleBar,
+      windowTabsManager.tabs.length,
+      settingsStore.showWindowControls,
+    ),
+  );
 
   const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
   let appWindow: Window | null = null;

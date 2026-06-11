@@ -39,7 +39,21 @@
   }
 
   // Cache stores raw (unfiltered) directory entries; filtering is derived reactively.
+  // Bounded: oldest non-visible directories are evicted beyond MAX_RAW_CACHE.
+  const MAX_RAW_CACHE = 50;
   const rawCache = new Map<string, FileEntry[]>();
+
+  function cacheRawEntries(path: string, entries: FileEntry[]): void {
+    // Re-insert to refresh recency (Map preserves insertion order)
+    rawCache.delete(path);
+    rawCache.set(path, entries);
+    if (rawCache.size <= MAX_RAW_CACHE) return;
+    for (const key of rawCache.keys()) {
+      if (rawCache.size <= MAX_RAW_CACHE) break;
+      if (rawColumns.some((col) => col.path === key)) continue;
+      rawCache.delete(key);
+    }
+  }
   let rawColumns = $state<MillerColumn[]>([]);
   const watchedPaths = new Set<string>();
 
@@ -141,7 +155,7 @@
     if (result.ok) {
       const entries = [...result.data.entries]
         .sort((a: FileEntry, b: FileEntry) => a.name.localeCompare(b.name));
-      rawCache.set(path, entries);
+      cacheRawEntries(path, entries);
       rawColumns = rawColumns.map((col) =>
         col.path === path ? { ...col, entries, loading: false } : col
       );
@@ -165,6 +179,7 @@
   // Listen for filesystem changes to invalidate stale Miller cache entries
   onMount(() => {
     let unlisten: UnlistenFn | undefined;
+    let disposed = false;
     listen<{ path: string }>("directory-changed", (event) => {
       const changedPath = event.payload.path;
       // Invalidate empty cache for the changed dir and its parent
@@ -180,9 +195,18 @@
           loadColumn(changedPath);
         }
       }
-    }).then((fn) => { unlisten = fn; });
+    }).then((fn) => {
+      // If the component was destroyed before registration resolved,
+      // unlisten immediately instead of leaking the listener.
+      if (disposed) {
+        fn();
+        return;
+      }
+      unlisten = fn;
+    });
 
     return () => {
+      disposed = true;
       unlisten?.();
       for (const path of watchedPaths) {
         unwatchDirectory(path);

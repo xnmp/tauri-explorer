@@ -8,6 +8,7 @@
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
+  import { useProgressiveRender } from "$lib/composables/use-progressive-render.svelte";
   import { getFileIconColor } from "$lib/domain/file-types";
 
   import { isMac } from "$lib/domain/platform";
@@ -48,13 +49,20 @@
 
   const totalItems = $derived(explorer.displayEntries.length + (explorer.isCreatingFolder ? 1 : 0));
   const listRows = $derived(Math.ceil(totalItems / effectiveListColumns));
+
+  // Progressive rendering to avoid UI freeze on large directories
+  // (same rAF chunking as TilesView; list rows are cheaper, so bigger chunks).
+  const LIST_CHUNK = 150;
+  const progressive = useProgressiveRender(() => explorer.displayEntries.length, LIST_CHUNK);
+
+  const visibleListEntries = $derived(explorer.displayEntries.slice(0, progressive.limit));
 </script>
 
 <div class="list-view file-rows" style="--list-columns: {effectiveListColumns}; --list-rows: {listRows};">
   {#if explorer.isCreatingFolder}
     <InlineNewFolder {explorer} variant="list" />
   {/if}
-  {#each explorer.displayEntries as entry (entry.path)}
+  {#each visibleListEntries as entry (entry.path)}
     <ItemButton class="list-item" {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
       <span class="list-icon" data-drag-icon style:color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined}>
         <FileIcon {entry} size="small" />

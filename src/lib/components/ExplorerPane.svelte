@@ -24,14 +24,16 @@
 
   let { paneId }: Props = $props();
 
+  // paneId is a static literal per pane instance (see PaneContainer), so
+  // capturing it at init is safe. Consumed by GitStatusBadge to resolve the
+  // directory its entry is rendered in.
+  setContext(
+    "pane-id",
+    untrack(() => paneId),
+  );
+
   // Get explorer from window tabs manager
   const paneExplorer = $derived(windowTabsManager.getExplorer(paneId) ?? createExplorerState());
-
-  // Provide explorer to child components via context (reactive via $derived)
-  $effect(() => {
-    setContext("pane-explorer", paneExplorer);
-  });
-  setContext("pane-id", paneId);
 
   let paneRef = $state<HTMLElement | null>(null);
 

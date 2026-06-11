@@ -25,8 +25,23 @@ export function useFileWatchers(deps: FileWatcherDeps) {
   let unlistenWatcher: UnlistenFn | undefined;
   let unlistenNbComplete: UnlistenFn | undefined;
   let unlistenNbError: UnlistenFn | undefined;
+  // Guards against cleanup() racing the async listen() registrations:
+  // if cleanup runs before a registration resolves, unlisten on arrival.
+  let disposed = false;
+
+  /** Store an unlisten fn, or invoke it immediately if already cleaned up. */
+  function track(assign: (fn: UnlistenFn) => void): (fn: UnlistenFn) => void {
+    return (fn) => {
+      if (disposed) {
+        fn();
+        return;
+      }
+      assign(fn);
+    };
+  }
 
   function setup(): void {
+    disposed = false;
     // Listen for file changes from other windows. Refresh every explorer
     // (including inactive tabs) whose current path is in affectedDirs so
     // the source tab sees the change without needing to be activated.
@@ -45,13 +60,13 @@ export function useFileWatchers(deps: FileWatcherDeps) {
       const fileName = basename(outputPath);
       toastStore.show(`Nano Banana complete: ${fileName}`, "success");
       deps.refreshAllPanes();
-    }).then((fn) => { unlistenNbComplete = fn; });
+    }).then(track((fn) => { unlistenNbComplete = fn; }));
 
     listen<{ jobId: number; error: string }>("nano-banana-error", (event) => {
       const { jobId, error } = event.payload;
       jobsStore.failJob(jobId, error);
       toastStore.error(`Nano Banana failed: ${error.slice(0, 100)}`);
-    }).then((fn) => { unlistenNbError = fn; });
+    }).then(track((fn) => { unlistenNbError = fn; }));
 
     // Listen for filesystem watcher events from backend (auto-refresh)
     listen<{ path: string }>("directory-changed", (event) => {
@@ -65,10 +80,11 @@ export function useFileWatchers(deps: FileWatcherDeps) {
       if (settingsStore.showGitStatus && gitStatusStore.currentPath === changedPath) {
         gitStatusStore.refresh();
       }
-    }).then((fn) => { unlistenWatcher = fn; });
+    }).then(track((fn) => { unlistenWatcher = fn; }));
   }
 
   function cleanup(): void {
+    disposed = true;
     cancelPendingRefreshes();
     cleanupFileChangeListener();
     unlistenWatcher?.();

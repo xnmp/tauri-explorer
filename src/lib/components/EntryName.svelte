@@ -5,6 +5,7 @@
   Issue: #108
 -->
 <script lang="ts">
+  import { untrack } from "svelte";
   import type { FileEntry } from "$lib/domain/file";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
@@ -22,11 +23,25 @@
 
   const isRenaming = $derived(dialogStore.renamingEntry?.path === entry.path);
 
-  // Focus and select the rename input when rename mode starts
+  // Focus and select the rename input when rename mode starts.
+  // Keyed on the rename session (the renaming entry's path), NOT on `entry`
+  // identity: silent refreshes mid-rename replace the entry object, and
+  // re-running focusAndSelect would wipe the user's typed name.
+  let focusedRenamePath: string | null = null;
+
   $effect(() => {
-    if (isRenaming && rename.renameInputRef) {
+    const renamingPath = dialogStore.renamingEntry?.path ?? null;
+    const input = rename.renameInputRef;
+    untrack(() => {
+      if (!renamingPath) {
+        focusedRenamePath = null;
+        return;
+      }
+      if (renamingPath !== entry.path || !input) return;
+      if (focusedRenamePath === renamingPath) return;
+      focusedRenamePath = renamingPath;
       rename.focusAndSelect(entry);
-    }
+    });
   });
 </script>
 
@@ -41,6 +56,7 @@
       onkeydown={(e) => rename.handleRenameKeydown(e, entry.name)}
       onblur={() => rename.handleRenameBlur(entry.name)}
       onclick={(e) => e.stopPropagation()}
+      ondblclick={(e) => e.stopPropagation()}
       disabled={rename.submittingRename}
       rows="2"
       autofocus
@@ -56,6 +72,7 @@
       onkeydown={(e) => rename.handleRenameKeydown(e, entry.name)}
       onblur={() => rename.handleRenameBlur(entry.name)}
       onclick={(e) => e.stopPropagation()}
+      ondblclick={(e) => e.stopPropagation()}
       disabled={rename.submittingRename}
       autofocus
     />
@@ -131,6 +148,7 @@
     overflow: hidden;
     display: -webkit-box;
     -webkit-line-clamp: 2;
+    line-clamp: 2;
     -webkit-box-orient: vertical;
     text-overflow: ellipsis;
     white-space: normal;

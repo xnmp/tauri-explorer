@@ -46,8 +46,12 @@
 
   // Derived chain — Svelte 5 memoizes these, so downstream only
   // recomputes when startIndex/endIndex values actually change
-  const startIndex = $derived(Math.max(0, Math.floor(scrollTop / itemHeight) - BUFFER));
   const visibleCount = $derived(Math.ceil(viewportHeight / itemHeight) + BUFFER * 2);
+  // Clamp against items.length so a shrinking list (e.g. bulk delete while
+  // scrolled deep) never leaves the viewport blank with a stale scrollTop
+  const startIndex = $derived(
+    Math.max(0, Math.min(Math.floor(scrollTop / itemHeight) - BUFFER, items.length - visibleCount))
+  );
   const endIndex = $derived(Math.min(startIndex + visibleCount, items.length));
 
   const visibleItems = $derived(

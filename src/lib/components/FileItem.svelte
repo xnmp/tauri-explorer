@@ -31,10 +31,11 @@
   // Get pane context for cross-pane operations
   const paneNav = getPaneNavigationContext();
 
-  // Shared item interactions (DnD, context menu)
+  // Shared item interactions (DnD, context menu with select-on-right-click)
   const interactions = useItemInteractions({
     getExplorer: () => explorer,
     getPaneNav: () => paneNav,
+    selectOnContextMenu: true,
   });
 
   const pointerDrag = isMac ? usePointerDrag({ getExplorer: () => explorer, getPaneNav: () => paneNav }) : null;
@@ -56,7 +57,12 @@
     onclick(event);
   }
 
-  function handleDoubleClick() {
+  function handleDoubleClick(event: MouseEvent) {
+    // Double-click inside the rename input selects a word — don't open/navigate
+    if (isRenaming) {
+      event.stopPropagation();
+      return;
+    }
     ondblclick();
   }
 </script>

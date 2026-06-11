@@ -137,7 +137,7 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     dragStart = null;
     dragCurrent = null;
     cachedItemRects = null;
-    cachedContainerOffset = null;
+    cachedScroll = null;
 
     // Record end time so click handlers can ignore the immediate click
     dragEndTime = performance.now();
@@ -164,17 +164,20 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
   /**
    * Calculate selected indices by checking DOM element positions against the marquee.
    * Works for grid layouts (tiles view) where items aren't in a linear list.
-   * @param container The scrollable container element
+   * @param container The container element the marquee rect is relative to
    * @param itemSelector CSS selector for item elements
+   * @param scroller The element that actually scrolls the items (defaults to container).
+   *   In list/tiles views the inner `.list-view`/`.tiles-view` scrolls, not the container.
    */
   // Cached item rects for the current marquee drag session
   let cachedItemRects: DOMRect[] | null = null;
-  let cachedContainerOffset: { left: number; top: number } | null = null;
+  let cachedScroll: { left: number; top: number } | null = null;
 
-  function getSelectedIndicesFromDOM(container: HTMLElement, itemSelector: string): number[] {
+  function getSelectedIndicesFromDOM(container: HTMLElement, itemSelector: string, scroller?: HTMLElement | null): number[] {
     if (!marqueeRect) return [];
 
     const containerRect = container.getBoundingClientRect();
+    const scrollEl = scroller ?? container;
 
     // Cache item positions on first call per drag session (items don't move during marquee)
     if (!cachedItemRects) {
@@ -183,12 +186,12 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
       for (let i = 0; i < items.length; i++) {
         cachedItemRects[i] = items[i].getBoundingClientRect();
       }
-      cachedContainerOffset = { left: containerRect.left, top: containerRect.top };
+      cachedScroll = { left: scrollEl.scrollLeft, top: scrollEl.scrollTop };
     }
 
-    // Adjust for any container scroll since caching
-    const offsetDx = containerRect.left - cachedContainerOffset!.left;
-    const offsetDy = containerRect.top - cachedContainerOffset!.top;
+    // Items shift opposite to the scroll delta accumulated since caching
+    const offsetDx = cachedScroll!.left - scrollEl.scrollLeft;
+    const offsetDy = cachedScroll!.top - scrollEl.scrollTop;
 
     // marqueeRect is in CSS space; item rects from getBoundingClientRect() are
     // in viewport space on macOS. Scale marquee to viewport for comparison.

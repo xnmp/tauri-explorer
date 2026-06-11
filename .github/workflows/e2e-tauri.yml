@@ -57,13 +57,11 @@ jobs:
         shell: bash
         run: cargo install tauri-driver --locked || true
 
-      # bun.lock is resolved on Linux; delete it so each runner resolves
-      # platform-specific optional deps (rollup, tauri-cli) correctly.
+      # bun.lock (text format) records optional deps for every platform,
+      # so the same lockfile installs correctly on Linux and Windows.
       - name: Install frontend dependencies
         shell: bash
-        run: |
-          rm -f bun.lock
-          bun install
+        run: bun install --frozen-lockfile
 
       - name: Build frontend
         run: bun run build

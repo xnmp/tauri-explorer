@@ -1307,3 +1307,16 @@ This means:
 - **Consistency check for handlers**: When adding new context menu actions, always include `contextMenuStore.close()`. Most handlers had it, but `handleCut` and `handleCopy` were missed because they were added separately from the pattern established by `withSelectedEntry()`.
 
 ---
+
+## 2026-06-11 comprehensive review & fix campaign
+
+**Key takeaways:**
+
+- **Emit-before-listen is a systemic Tauri race.** Any backend thread that emits events immediately after a command is invoked WILL emit before the frontend's `listen()` resolves if the listener is registered after the invoke. QuickOpen had documented and fixed this; directory listing and content search shipped the same bug independently. Pattern: register the listener (buffering until the id is known) BEFORE invoking. Corollary: outside Tauri (browser/mock E2E), `listen()` rejects — every call site needs a try/catch fallback or the whole feature breaks in browser mode.
+- **`overwrite=true` file operations must be transactional.** The original copy/move deleted the destination *before* copying, so any mid-copy failure destroyed data — and when source == target (drop onto own parent), it deleted the *source*. Stage to a temp name, swap, then remove. Guard source==target and dir-into-own-descendant before any removal, in both backend and `performFileTransfer`.
+- **`git status --porcelain` paths are repo-root-relative, not cwd-relative** (and quoted/octal-escaped for non-ASCII unless `-z` is used). Badge parsing keyed by first path segment only worked at the repo root.
+- **Simulation tests are worse than no tests.** ~15 unit test files re-implemented production logic locally (or asserted on literals) and passed regardless of regressions. If a rule lives in a component, extract it to `domain/` and test the real import — see `domain/titlebar.ts`, `domain/autocomplete.ts`, `domain/scm-tree.ts`.
+- **`waitForTimeout` before an auto-waiting `expect()` is pure waste; before a snapshot read it's a race.** Replace snapshot reads (`textContent()`, `count()`, `inputValue()`) with auto-waiting assertions (`toHaveText`, `toHaveCount`, `toHaveValue`) or `expect.poll`. Streaming UIs (QuickOpen results) need polls, not first-item-visible checks — early results render before the full set settles.
+- **`raw_os_error()` is the Win32 error code on Windows, not the CRT errno** — comparing against `libc::EXDEV` never matches `ERROR_NOT_SAME_DEVICE`.
+- **Svelte 5: an `$effect` that reads state it (indirectly) writes re-runs and self-defeats** — TilesView's progressive chunking rendered everything in one frame. Use `untrack()` for the feedback variables, or extract decision logic into a pure function (`use-progressive-render.svelte.ts`).
+- **Concurrent edit agents need an ownership map AND consumer awareness**: one agent deleted a "zero consumer" `setContext` while another was adding the consumer. Cross-file contracts (context keys, event names) must stay with one owner.

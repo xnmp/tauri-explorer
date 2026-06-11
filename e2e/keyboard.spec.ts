@@ -21,7 +21,6 @@ for (const viewMode of VIEW_MODES) {
       await firstItem.click();
 
       await page.keyboard.press("Control+a");
-      await page.waitForTimeout(100);
 
       const items = page.locator(".entry-item");
       const count = await items.count();
@@ -38,8 +37,7 @@ for (const viewMode of VIEW_MODES) {
       await expect(firstItem).toHaveClass(/selected/);
 
       await pressShortcut(page, "c", { ctrlKey: true });
-      await page.waitForTimeout(100);
-
+      
       const clipboardBanner = page.locator(".toast.clipboard");
       await expect(clipboardBanner).toBeVisible({ timeout: 2000 });
       await expect(clipboardBanner).toContainText("Copied");
@@ -51,8 +49,7 @@ for (const viewMode of VIEW_MODES) {
       await expect(firstFile).toHaveClass(/selected/);
 
       await pressShortcut(page, "x", { ctrlKey: true });
-      await page.waitForTimeout(100);
-
+      
       const clipboardBanner = page.locator(".toast.clipboard.cut");
       await expect(clipboardBanner).toBeVisible({ timeout: 2000 });
       await expect(clipboardBanner).toContainText("Cut");
@@ -62,17 +59,16 @@ for (const viewMode of VIEW_MODES) {
       const firstFile = page.locator(".entry-item:not(.directory)").first();
       await firstFile.click();
       await pressShortcut(page, "c", { ctrlKey: true });
-      await page.waitForTimeout(100);
-
+      
       const clipboardBanner = page.locator(".toast.clipboard");
       await expect(clipboardBanner).toBeVisible();
 
       await pressShortcut(page, "v", { ctrlKey: true });
-      await page.waitForTimeout(500);
 
       const toast = page.locator(".toast.success, .toast.error");
-      const toastVisible = await toast.isVisible();
-      expect(toastVisible || await clipboardBanner.isVisible()).toBe(true);
+      await expect
+        .poll(async () => (await toast.isVisible()) || (await clipboardBanner.isVisible()))
+        .toBe(true);
     });
 
     test("Ctrl+Z undoes last operation", async ({ page }) => {
@@ -84,8 +80,7 @@ for (const viewMode of VIEW_MODES) {
       await explorerPane.focus();
 
       await pressShortcut(page, "z", { ctrlKey: true });
-      await page.waitForTimeout(100);
-
+      
       const fileItems = page.locator(".entry-item");
       await expect(fileItems.first()).toBeVisible();
     });
@@ -96,8 +91,7 @@ for (const viewMode of VIEW_MODES) {
       await expect(firstFile).toHaveClass(/selected/);
 
       await page.keyboard.press("Delete");
-      await page.waitForTimeout(100);
-
+      
       const deleteDialog = page.locator(".delete-dialog, .dialog:has-text('Delete')");
       await expect(deleteDialog).toBeVisible({ timeout: 2000 });
     });
@@ -108,8 +102,7 @@ for (const viewMode of VIEW_MODES) {
       await expect(firstItem).toHaveClass(/selected/);
 
       await page.keyboard.press("F2");
-      await page.waitForTimeout(100);
-
+      
       const renameInput = page.locator(".rename-input");
       await expect(renameInput).toBeVisible({ timeout: 2000 });
       await expect(renameInput).toBeFocused();
@@ -119,13 +112,11 @@ for (const viewMode of VIEW_MODES) {
       const firstItem = page.locator(".entry-item").first();
       await firstItem.click();
       await page.keyboard.press("F2");
-      await page.waitForTimeout(100);
-
+      
       const renameInput = page.locator(".rename-input");
       await expect(renameInput).toBeVisible();
 
       await page.keyboard.press("Escape");
-      await page.waitForTimeout(100);
 
       await expect(renameInput).not.toBeVisible();
     });
@@ -142,10 +133,7 @@ for (const viewMode of VIEW_MODES) {
         expect(newPath).not.toBe(initialPath);
 
         await page.keyboard.press("Control+Alt+ArrowLeft");
-        await page.waitForTimeout(200);
-
-        const backPath = await page.locator(".breadcrumbs-container").textContent();
-        expect(backPath).toBe(initialPath);
+        await expect(page.locator(".breadcrumbs-container")).toHaveText(initialPath ?? "");
       }
     });
 

@@ -22,7 +22,6 @@ test.describe("Miller columns panel", () => {
 
     // Navigate to a subdirectory so ancestor columns appear
     await page.locator(".entry-item").first().dblclick();
-    await page.waitForTimeout(500);
 
     // Miller columns should be visible
     await expect(page.locator(".miller-columns")).toBeVisible();
@@ -41,7 +40,6 @@ test.describe("Miller columns panel", () => {
       localStorage.setItem("explorer-settings", JSON.stringify(s));
       location.reload();
     });
-    await page.waitForTimeout(1000);
 
     // Miller columns should not be visible
     await expect(page.locator(".miller-columns")).toHaveCount(0);
@@ -61,7 +59,6 @@ test.describe("Miller columns panel", () => {
     await waitForEntries(page);
 
     await page.locator(".entry-item").first().dblclick();
-    await page.waitForTimeout(500);
 
     await expect(page.locator(".miller-columns")).toBeVisible();
     const header = page.locator(".col-header").first();
@@ -87,7 +84,6 @@ test.describe("Miller columns panel", () => {
     await waitForEntries(page);
 
     await page.locator(".entry-item").first().dblclick();
-    await page.waitForTimeout(500);
 
     await expect(page.locator(".miller-columns")).toBeVisible();
     const col = page.locator(".miller-col").first();

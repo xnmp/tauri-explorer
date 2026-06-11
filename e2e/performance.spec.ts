@@ -8,6 +8,11 @@
 
 import { test, expect, type Page } from "@playwright/test";
 
+// Perf budgets are measured wall-clock and flake under full-suite parallel
+// worker contention; a genuine regression still fails every retry. CI runs
+// these in a dedicated workflow (perf.yml) without contention.
+test.describe.configure({ retries: 2 });
+
 interface PerfMetric {
   name: string;
   duration: number;
@@ -186,10 +191,6 @@ test.describe("Performance Tests", () => {
     });
 
     test("scroll response under 16ms per frame", async ({ page }) => {
-      // Get the file list container
-      const fileList = page.locator(".file-list");
-      const viewport = fileList.locator(".virtual-viewport");
-
       // Measure scroll FPS
       const scrollMetrics = await page.evaluate(async () => {
         const container = document.querySelector(".virtual-viewport");

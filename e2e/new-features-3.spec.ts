@@ -31,7 +31,6 @@ for (const viewMode of VIEW_MODES) {
 
     test("filter bar input is focused when opened", async ({ page }) => {
       await pressShortcut(page, "f", { ctrlKey: true });
-      await page.waitForTimeout(200);
       const filterInput = page.locator(".filter-input");
       await expect(filterInput).toBeFocused();
     });
@@ -41,16 +40,14 @@ for (const viewMode of VIEW_MODES) {
       expect(countBefore).toBeGreaterThan(1);
 
       await pressShortcut(page, "f", { ctrlKey: true });
-      await page.waitForTimeout(200);
 
       const filterInput = page.locator(".filter-input");
+      await filterInput.waitFor({ state: "visible", timeout: 2000 });
       // Type a term that matches only some entries (e.g., "doc" for Documents)
       await filterInput.fill("doc");
-      await page.waitForTimeout(300);
 
-      const countAfter = await page.locator(".entry-item").count();
-      expect(countAfter).toBeLessThan(countBefore);
-      expect(countAfter).toBeGreaterThan(0);
+      await expect.poll(() => page.locator(".entry-item").count()).toBeLessThan(countBefore);
+      expect(await page.locator(".entry-item").count()).toBeGreaterThan(0);
     });
 
     test("Escape closes filter bar", async ({ page }) => {
@@ -64,16 +61,14 @@ for (const viewMode of VIEW_MODES) {
 
     test("filter clears when navigating to a new directory", async ({ page }) => {
       await pressShortcut(page, "f", { ctrlKey: true });
-      await page.waitForTimeout(200);
 
       const filterInput = page.locator(".filter-input");
+      await filterInput.waitFor({ state: "visible", timeout: 2000 });
       await filterInput.fill("doc");
-      await page.waitForTimeout(200);
 
       // Navigate into Documents
       const docsFolder = page.locator(".entry-item.directory", { hasText: "Documents" });
       await docsFolder.dblclick();
-      await page.waitForTimeout(500);
 
       // Filter bar should be gone
       const filterBar = page.locator(".filter-bar");
@@ -82,15 +77,13 @@ for (const viewMode of VIEW_MODES) {
 
     test("clear button clears filter and closes bar", async ({ page }) => {
       await pressShortcut(page, "f", { ctrlKey: true });
-      await page.waitForTimeout(200);
 
       const filterInput = page.locator(".filter-input");
+      await filterInput.waitFor({ state: "visible", timeout: 2000 });
       await filterInput.fill("test");
-      await page.waitForTimeout(200);
 
       const clearBtn = page.locator(".filter-clear");
       await clearBtn.click();
-      await page.waitForTimeout(200);
 
       // Filter bar should be closed
       const filterBar = page.locator(".filter-bar");
@@ -176,17 +169,11 @@ test.describe("Preview Pane Toggle", () => {
 
     // Press Space to toggle
     await pressShortcut(page, " ", {});
-    await page.waitForTimeout(300);
-
-    const afterToggle = await previewPane.isVisible();
-    expect(afterToggle).not.toBe(initiallyVisible);
+    await expect.poll(() => previewPane.isVisible()).toBe(!initiallyVisible);
 
     // Press Space again to toggle back
     await pressShortcut(page, " ", {});
-    await page.waitForTimeout(300);
-
-    const afterSecondToggle = await previewPane.isVisible();
-    expect(afterSecondToggle).toBe(initiallyVisible);
+    await expect.poll(() => previewPane.isVisible()).toBe(initiallyVisible);
   });
 
   test("Space does not toggle preview when input is focused", async ({ page }) => {
@@ -229,7 +216,6 @@ test.describe("Syntax Highlighting Preview", () => {
     // Click on index.ts
     const tsFile = page.locator(".entry-item", { hasText: "index.ts" });
     await tsFile.click();
-    await page.waitForTimeout(500);
 
     // Preview should show highlighted code
     const previewCode = page.locator(".preview-code");
@@ -245,7 +231,6 @@ test.describe("Syntax Highlighting Preview", () => {
   test("preview shows file name in header", async ({ page }) => {
     const tsFile = page.locator(".entry-item", { hasText: "index.ts" });
     await tsFile.click();
-    await page.waitForTimeout(500);
 
     const filename = page.locator(".preview-filename");
     await expect(filename).toContainText("index.ts");
@@ -254,7 +239,6 @@ test.describe("Syntax Highlighting Preview", () => {
   test("preview shows file info (size, modified)", async ({ page }) => {
     const tsFile = page.locator(".entry-item", { hasText: "index.ts" });
     await tsFile.click();
-    await page.waitForTimeout(500);
 
     const infoSection = page.locator(".preview-info");
     await expect(infoSection).toBeVisible();

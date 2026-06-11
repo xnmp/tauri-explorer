@@ -18,7 +18,6 @@ test.describe("Settings search filter", () => {
     const search = page.locator(".settings-search");
     await expect(search).toBeVisible();
     await search.fill("hidden");
-    await page.waitForTimeout(300);
 
     // "Show Hidden Files" should be visible
     await expect(page.locator("text=Show Hidden Files")).toBeVisible();

@@ -20,7 +20,7 @@ test.describe("Quick Open (Ctrl+P)", () => {
 
   test("search input is focused when opened", async ({ page }) => {
     await page.keyboard.press("Control+p");
-    await page.waitForTimeout(300);
+    await expect(page.locator(".quick-open-dialog .search-input")).toBeVisible();
 
     const searchInput = page.locator(".quick-open-dialog .search-input");
     await expect(searchInput).toBeFocused();
@@ -28,30 +28,24 @@ test.describe("Quick Open (Ctrl+P)", () => {
 
   test("typing in search input updates the value", async ({ page }) => {
     await page.keyboard.press("Control+p");
-    await page.waitForTimeout(300);
+    await expect(page.locator(".quick-open-dialog .search-input")).toBeVisible();
 
     const searchInput = page.locator(".quick-open-dialog .search-input");
     await searchInput.pressSequentially("readme", { delay: 50 });
-    await page.waitForTimeout(200);
-
-    const value = await searchInput.inputValue();
-    expect(value).toBe("readme");
+    await expect(searchInput).toHaveValue("readme");
   });
 
   test("typing does not clear input (regression)", async ({ page }) => {
     // This is the key regression test: typing should persist in the input
     // Previously, $effect re-running pruneNonExistent would reset query=""
     await page.keyboard.press("Control+p");
-    await page.waitForTimeout(300);
+    await expect(page.locator(".quick-open-dialog .search-input")).toBeVisible();
 
     const searchInput = page.locator(".quick-open-dialog .search-input");
 
     // Type character by character with delays to allow async effects
     await searchInput.pressSequentially("test", { delay: 100 });
-    await page.waitForTimeout(500);
-
-    const value = await searchInput.inputValue();
-    expect(value).toBe("test");
+    await expect(searchInput).toHaveValue("test");
   });
 
   test("Escape closes quick open", async ({ page }) => {
@@ -77,14 +71,14 @@ test.describe("Quick Open (Ctrl+P)", () => {
 
     const searchInput = quickOpen.locator(".search-input");
     await searchInput.pressSequentially("src", { delay: 50 });
-    await page.waitForTimeout(1500);
 
     // Should find the "src" folder
     const resultItems = quickOpen.locator(".result-item");
     await expect(resultItems.first()).toBeVisible({ timeout: 5000 });
 
-    const resultNames = await quickOpen.locator(".result-name").allTextContents();
-    expect(resultNames).toContain("src");
+    await expect
+      .poll(() => quickOpen.locator(".result-name").allTextContents(), { timeout: 5000 })
+      .toContain("src");
   });
 
   test("searching for a nested folder returns results", async ({ page }) => {
@@ -101,13 +95,13 @@ test.describe("Quick Open (Ctrl+P)", () => {
     // Search for "components" — nested under src/
     const searchInput = quickOpen.locator(".search-input");
     await searchInput.pressSequentially("components", { delay: 50 });
-    await page.waitForTimeout(1500);
 
     const resultItems = quickOpen.locator(".result-item");
     await expect(resultItems.first()).toBeVisible({ timeout: 5000 });
 
-    const resultNames = await quickOpen.locator(".result-name").allTextContents();
-    expect(resultNames).toContain("components");
+    await expect
+      .poll(() => quickOpen.locator(".result-name").allTextContents(), { timeout: 5000 })
+      .toContain("components");
   });
 
   test("searching for a file among many returns results", async ({ page }) => {
@@ -124,13 +118,13 @@ test.describe("Quick Open (Ctrl+P)", () => {
     // Search for "engine" — deeply nested in lib/core/engine.ts
     const searchInput = quickOpen.locator(".search-input");
     await searchInput.pressSequentially("engine", { delay: 50 });
-    await page.waitForTimeout(1500);
 
     const resultItems = quickOpen.locator(".result-item");
     await expect(resultItems.first()).toBeVisible({ timeout: 5000 });
 
-    const resultNames = await quickOpen.locator(".result-name").allTextContents();
-    expect(resultNames).toContain("engine.ts");
+    await expect
+      .poll(() => quickOpen.locator(".result-name").allTextContents(), { timeout: 5000 })
+      .toContain("engine.ts");
   });
 
   test("folders rank above files with same match", async ({ page }) => {
@@ -147,30 +141,26 @@ test.describe("Quick Open (Ctrl+P)", () => {
     // Search for "config" — matches both config/ directory and config files
     const searchInput = quickOpen.locator(".search-input");
     await searchInput.pressSequentially("config", { delay: 50 });
-    await page.waitForTimeout(1500);
 
     const resultItems = quickOpen.locator(".result-item");
     await expect(resultItems.first()).toBeVisible({ timeout: 5000 });
 
-    // First result should be the directory
-    const firstResult = resultItems.first();
-    await expect(firstResult).toHaveClass(/is-directory/);
+    // First result should settle as the directory once all results land
+    await expect(resultItems.first()).toHaveClass(/is-directory/, { timeout: 5000 });
   });
 
   test("re-opening quick open clears previous query", async ({ page }) => {
     await page.keyboard.press("Control+p");
-    await page.waitForTimeout(300);
+    await expect(page.locator(".quick-open-dialog .search-input")).toBeVisible();
     const searchInput = page.locator(".quick-open-dialog .search-input");
     await searchInput.pressSequentially("test", { delay: 50 });
-    await page.waitForTimeout(200);
+    await expect(searchInput).toHaveValue("test");
 
     await page.keyboard.press("Escape");
-    await page.waitForTimeout(200);
+    await expect(page.locator(".quick-open-dialog")).toBeHidden();
 
     await page.keyboard.press("Control+p");
-    await page.waitForTimeout(300);
-
-    const value = await searchInput.inputValue();
-    expect(value).toBe("");
+    await expect(page.locator(".quick-open-dialog .search-input")).toBeVisible();
+    await expect(searchInput).toHaveValue("");
   });
 });

@@ -121,11 +121,9 @@ for (const viewMode of VIEW_MODES) {
         await firstItem.click();
 
         await page.keyboard.press("Control+a");
-        await page.waitForTimeout(50);
 
         const totalItems = await page.locator(".entry-item").count();
-        const selectedItems = await page.locator(".entry-item.selected").count();
-        expect(selectedItems).toBe(totalItems);
+        await expect(page.locator(".entry-item.selected")).toHaveCount(totalItems);
 
         await pressShortcut(page, "c", { ctrlKey: true });
         const banner = page.locator(".toast.clipboard");
@@ -296,7 +294,6 @@ for (const viewMode of VIEW_MODES) {
       test("deleting a child folder from parent stays in parent without error", async ({ page }) => {
         const folder = page.locator(".entry-item.directory", { hasText: "Documents" });
         await folder.dblclick();
-        await page.waitForTimeout(500);
 
         const breadcrumbs = page.locator(".breadcrumbs-container");
         await expect(breadcrumbs).toContainText("Documents");
@@ -313,7 +310,6 @@ for (const viewMode of VIEW_MODES) {
         const dialog = page.locator("[role='alertdialog']");
         await expect(dialog).toBeVisible();
         await dialog.getByRole("button", { name: /^Delete/ }).click();
-        await page.waitForTimeout(500);
 
         await expect(breadcrumbs).toContainText("Documents");
         const errorState = page.locator(".error-state");
@@ -327,18 +323,15 @@ for (const viewMode of VIEW_MODES) {
       test("navigating forward to a deleted folder recovers gracefully", async ({ page }) => {
         const docsFolder = page.locator(".entry-item.directory", { hasText: "Documents" });
         await docsFolder.dblclick();
-        await page.waitForTimeout(500);
 
         const breadcrumbs = page.locator(".breadcrumbs-container");
         await expect(breadcrumbs).toContainText("Documents");
 
         const projectFolder = page.locator(".entry-item.directory", { hasText: "project" });
         await projectFolder.dblclick();
-        await page.waitForTimeout(500);
         await expect(breadcrumbs).toContainText("project");
 
         await page.locator('button[title*="Back"], button[aria-label*="Back"]').click();
-        await page.waitForTimeout(500);
         await expect(breadcrumbs).toContainText("Documents");
 
         // Re-apply view mode after navigating
@@ -353,12 +346,10 @@ for (const viewMode of VIEW_MODES) {
         const dialog = page.locator("[role='alertdialog']");
         await expect(dialog).toBeVisible();
         await dialog.getByRole("button", { name: /^Delete/ }).click();
-        await page.waitForTimeout(500);
 
         await expect(projectEntry).not.toBeVisible();
 
         await page.keyboard.press("Control+Alt+ArrowRight");
-        await page.waitForTimeout(500);
 
         const errorState = page.locator(".error-state");
         await expect(errorState).not.toBeVisible();

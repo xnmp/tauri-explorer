@@ -108,17 +108,18 @@ test.describe("SCM panel UI", () => {
   test("tree view shows folder nodes with depth guide lines (#97)", async ({ page }) => {
     await openScmOnRepo(page);
 
-    // Enable tree view mode.
+    // Enable tree view mode. Navigate back into the repo via URL — the
+    // double-click navigation path is exercised by openScmOnRepo above and
+    // the other tests; re-doing it after a reload is racy (a row re-render
+    // between the two clicks turns the dblclick into select-only).
     await page.evaluate(() => {
       const raw = localStorage.getItem("explorer-settings");
       const s = raw ? JSON.parse(raw) : {};
       s.scmTreeView = true;
       localStorage.setItem("explorer-settings", JSON.stringify(s));
     });
-    await page.reload();
-    await page.waitForLoadState("domcontentloaded");
-    await page.getByText("Documents", { exact: true }).first().dblclick();
-    await page.getByText("project", { exact: true }).first().dblclick();
+    await page.goto("/?path=/home/user/Documents/project");
+    await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
 
     // The "Changes" section has src/index.css and README.md — "src" should
     // appear as a tree-folder node.
@@ -137,17 +138,18 @@ test.describe("SCM panel UI", () => {
   test("tree view folder actions stage/unstage all children (#97)", async ({ page }) => {
     await openScmOnRepo(page);
 
-    // Enable tree view mode.
+    // Enable tree view mode. Navigate back into the repo via URL — the
+    // double-click navigation path is exercised by openScmOnRepo above and
+    // the other tests; re-doing it after a reload is racy (a row re-render
+    // between the two clicks turns the dblclick into select-only).
     await page.evaluate(() => {
       const raw = localStorage.getItem("explorer-settings");
       const s = raw ? JSON.parse(raw) : {};
       s.scmTreeView = true;
       localStorage.setItem("explorer-settings", JSON.stringify(s));
     });
-    await page.reload();
-    await page.waitForLoadState("domcontentloaded");
-    await page.getByText("Documents", { exact: true }).first().dblclick();
-    await page.getByText("project", { exact: true }).first().dblclick();
+    await page.goto("/?path=/home/user/Documents/project");
+    await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
 
     // The "Untracked" section has src/router.tsx and assets/logo.png under
     // folder nodes. Hover over the "src" folder to reveal the stage button.

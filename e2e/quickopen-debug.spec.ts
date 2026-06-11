@@ -10,16 +10,12 @@ test.describe("QuickOpen debug mode", () => {
     await page.goto(HOME_URL);
     await waitForEntries(page);
 
-    // Open QuickOpen via command system
-    await page.evaluate(() => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "p", ctrlKey: true, bubbles: true, cancelable: true }));
-    });
-    await page.waitForTimeout(500);
+    await page.keyboard.press("Control+p");
+    const quickOpen = page.locator(".quick-open-dialog");
+    await expect(quickOpen).toBeVisible({ timeout: 2000 });
 
-    // Check for Alt+D hint in footer
-    const footer = page.locator(".quick-open-dialog .footer");
-    if (await footer.isVisible()) {
-      await expect(footer).toContainText("Alt+D");
-    }
+    const footer = quickOpen.locator(".footer");
+    await expect(footer).toBeVisible();
+    await expect(footer).toContainText("Alt+D");
   });
 });

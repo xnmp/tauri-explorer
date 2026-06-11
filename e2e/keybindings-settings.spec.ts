@@ -12,7 +12,6 @@ async function waitForFileList(page: import("@playwright/test").Page) {
 
 async function openSettings(page: import("@playwright/test").Page) {
   await page.keyboard.press("Control+,");
-  await page.waitForTimeout(100);
   const dialog = page.locator(".settings-dialog");
   await expect(dialog).toBeVisible({ timeout: 2000 });
   return dialog;
@@ -23,7 +22,6 @@ async function closeSettings(page: import("@playwright/test").Page) {
   // (Escape might be captured by the keybindings recording handler)
   const closeBtn = page.locator(".settings-dialog .close-btn");
   await closeBtn.click();
-  await page.waitForTimeout(100);
   const dialog = page.locator(".settings-dialog");
   await expect(dialog).not.toBeVisible();
 }
@@ -83,19 +81,16 @@ test.describe("Keyboard Shortcuts Settings UI", () => {
 
     // Type a search query
     await searchInput.fill("copy");
-    await page.waitForTimeout(100);
 
     // Filtered results should be fewer
-    const filteredRows = page.locator(".shortcut-row");
-    const filteredCount = await filteredRows.count();
-    expect(filteredCount).toBeLessThan(initialCount);
-    expect(filteredCount).toBeGreaterThan(0);
+    await expect
+      .poll(() => page.locator(".shortcut-row").count())
+      .toBeLessThan(initialCount);
+    expect(await page.locator(".shortcut-row").count()).toBeGreaterThan(0);
 
     // Clear search to see all again
     await searchInput.fill("");
-    await page.waitForTimeout(100);
-    const afterClearCount = await page.locator(".shortcut-row").count();
-    expect(afterClearCount).toBe(initialCount);
+    await expect(page.locator(".shortcut-row")).toHaveCount(initialCount);
 
   });
 
@@ -108,7 +103,6 @@ test.describe("Keyboard Shortcuts Settings UI", () => {
 
     // Click to enter recording mode
     await shortcutBtn.click();
-    await page.waitForTimeout(100);
 
     // Check for "Press keys..." indicator
     const recordingText = page.locator(".recording-text");
@@ -127,7 +121,6 @@ test.describe("Keyboard Shortcuts Settings UI", () => {
     // Click a shortcut to enter recording mode
     const shortcutBtn = page.locator(".shortcut-btn").first();
     await shortcutBtn.click();
-    await page.waitForTimeout(100);
 
     // Verify in recording mode
     const recordingText = page.locator(".recording-text");
@@ -137,7 +130,6 @@ test.describe("Keyboard Shortcuts Settings UI", () => {
     const keybindingsArea = page.locator(".keybindings-settings");
     await keybindingsArea.focus();
     await page.keyboard.press("Escape");
-    await page.waitForTimeout(100);
 
     // Recording mode should be cancelled
     await expect(recordingText).not.toBeVisible();
@@ -153,13 +145,11 @@ test.describe("Keyboard Shortcuts Settings UI", () => {
     // Click a shortcut to enter recording mode
     const shortcutBtn = page.locator(".shortcut-btn").first();
     await shortcutBtn.click();
-    await page.waitForTimeout(100);
 
     // Click the cancel button
     const cancelBtn = page.locator(".cancel-btn");
     await expect(cancelBtn).toBeVisible();
     await cancelBtn.click();
-    await page.waitForTimeout(100);
 
     // Recording mode should be cancelled
     await expect(cancelBtn).not.toBeVisible();
@@ -180,7 +170,6 @@ test.describe("Keyboard Shortcuts Settings UI", () => {
 
     // Click to enter recording mode
     await shortcutBtn.click();
-    await page.waitForTimeout(100);
 
     // Verify in recording mode
     const recordingText = copyRow.locator(".recording-text");
@@ -192,7 +181,6 @@ test.describe("Keyboard Shortcuts Settings UI", () => {
 
     // Press a non-conflicting shortcut (Ctrl+Shift+C should not conflict with Copy)
     await page.keyboard.press("Control+Shift+c");
-    await page.waitForTimeout(200);
 
     // Check if the shortcut was updated
     await expect(recordingText).not.toBeVisible();
@@ -221,13 +209,11 @@ test.describe("Keyboard Shortcuts Settings UI", () => {
 
     // Click to enter recording mode
     await shortcutBtn.click();
-    await page.waitForTimeout(100);
 
     // Try to assign Ctrl+V (which is Paste shortcut)
     const keybindingsArea = page.locator(".keybindings-settings");
     await keybindingsArea.focus();
     await page.keyboard.press("Control+v");
-    await page.waitForTimeout(200);
 
     // Should show conflict warning
     const conflictWarning = page.locator(".conflict-warning");
@@ -255,17 +241,14 @@ test.describe("Keyboard Shortcuts Settings UI", () => {
 
     // Click to enter recording mode and set new shortcut
     await shortcutBtn.click();
-    await page.waitForTimeout(100);
 
     const keybindingsArea = page.locator(".keybindings-settings");
     await keybindingsArea.focus();
     await page.keyboard.press("Control+Shift+c");
-    await page.waitForTimeout(200);
 
     // Verify it changed
     const newShortcutBtn = copyRow.locator(".shortcut-btn");
-    const newShortcut = await newShortcutBtn.textContent();
-    expect(newShortcut).not.toBe(originalShortcut);
+    await expect(newShortcutBtn).not.toHaveText(originalShortcut ?? "");
 
     // Reset button should be visible
     const resetBtn = copyRow.locator(".reset-btn");
@@ -273,14 +256,12 @@ test.describe("Keyboard Shortcuts Settings UI", () => {
 
     // Click reset
     await resetBtn.click();
-    await page.waitForTimeout(100);
 
     // Should be back to original
     const resetShortcutBtn = copyRow.locator(".shortcut-btn");
-    const resetShortcut = await resetShortcutBtn.textContent();
-    expect(resetShortcut).toContain("Ctrl");
-    expect(resetShortcut).toContain("C");
-    expect(resetShortcut).not.toContain("Shift");
+    await expect(resetShortcutBtn).toContainText("Ctrl");
+    await expect(resetShortcutBtn).toContainText("C");
+    await expect(resetShortcutBtn).not.toContainText("Shift");
 
     // Reset button should be hidden now
     await expect(resetBtn).not.toBeVisible();
@@ -298,21 +279,17 @@ test.describe("Keyboard Shortcuts Settings UI", () => {
     // Customize first shortcut
     const firstBtn = firstRow.locator(".shortcut-btn");
     await firstBtn.click();
-    await page.waitForTimeout(100);
 
     const keybindingsArea = page.locator(".keybindings-settings");
     await keybindingsArea.focus();
     await page.keyboard.press("Control+Alt+1");
-    await page.waitForTimeout(200);
 
     // Customize second shortcut
     const secondBtn = secondRow.locator(".shortcut-btn");
     await secondBtn.click();
-    await page.waitForTimeout(100);
 
     await keybindingsArea.focus();
     await page.keyboard.press("Control+Alt+2");
-    await page.waitForTimeout(200);
 
     // Both should have reset buttons now
     await expect(firstRow.locator(".reset-btn")).toBeVisible();
@@ -325,7 +302,6 @@ test.describe("Keyboard Shortcuts Settings UI", () => {
     const resetAllBtn = page.locator(".reset-all-btn");
     await expect(resetAllBtn).toBeVisible();
     await resetAllBtn.click();
-    await page.waitForTimeout(100);
 
     // All reset buttons should be gone
     const resetBtns = page.locator(".reset-btn");
@@ -343,12 +319,10 @@ test.describe("Keyboard Shortcuts Settings UI", () => {
     const shortcutBtn = copyRow.locator(".shortcut-btn");
 
     await shortcutBtn.click();
-    await page.waitForTimeout(100);
 
     const keybindingsArea = page.locator(".keybindings-settings");
     await keybindingsArea.focus();
     await page.keyboard.press("Control+Shift+y");
-    await page.waitForTimeout(200);
 
     // Verify it changed
     const newShortcutBtn = copyRow.locator(".shortcut-btn");
@@ -388,12 +362,10 @@ test.describe("Keyboard Shortcuts Settings UI", () => {
 
     const shortcutBtn = copyRow.locator(".shortcut-btn");
     await shortcutBtn.click();
-    await page.waitForTimeout(100);
 
     const keybindingsArea = page.locator(".keybindings-settings");
     await keybindingsArea.focus();
     await page.keyboard.press("Control+Shift+c");
-    await page.waitForTimeout(200);
 
     // Now should have customized class
     await expect(copyRow).toHaveClass(/customized/);
@@ -409,7 +381,6 @@ test.describe("Keyboard Shortcuts Settings UI", () => {
 
     const searchInput = page.locator(".keybindings-settings .search-input");
     await searchInput.fill("xyznonexistent123");
-    await page.waitForTimeout(100);
 
     // Should show no results message
     const noResults = page.locator(".no-results");

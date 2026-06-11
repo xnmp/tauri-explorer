@@ -15,7 +15,6 @@ async function waitForFileList(page: import("@playwright/test").Page) {
 
 async function openSettings(page: import("@playwright/test").Page) {
   await page.keyboard.press("Control+,");
-  await page.waitForTimeout(100);
   const dialog = page.locator(".settings-dialog");
   await expect(dialog).toBeVisible({ timeout: 2000 });
   return dialog;
@@ -24,7 +23,6 @@ async function openSettings(page: import("@playwright/test").Page) {
 async function switchToTilesView(page: import("@playwright/test").Page) {
   // Clear selection, right-click, pick Tiles
   await page.keyboard.press("Escape");
-  await page.waitForTimeout(50);
 
   const content = page.locator(".file-list .content").first();
   const box = await content.boundingBox();
@@ -36,7 +34,6 @@ async function switchToTilesView(page: import("@playwright/test").Page) {
 
   const tilesOption = contextMenu.locator('.menu-item:has-text("Tiles")');
   await tilesOption.click();
-  await page.waitForTimeout(200);
   await page.locator(".tiles-view .entry-item").first().waitFor({ timeout: 3000 });
 }
 
@@ -54,11 +51,10 @@ async function setThumbnailSize(
 
   const select = row.locator("select");
   await select.selectOption(size);
-  await page.waitForTimeout(50);
 
   // Close settings
   await dialog.locator(".close-btn").click();
-  await page.waitForTimeout(100);
+  await expect(dialog).not.toBeVisible();
 }
 
 test.describe("Thumbnail Size Setting", () => {
@@ -96,25 +92,21 @@ test.describe("Thumbnail Size Setting", () => {
 
     // Change to Medium
     await setThumbnailSize(page, "medium");
-    await page.waitForTimeout(200);
 
     // Tile icon should now be 64px
-    const newSize = await page.locator(".tile-icon").first().evaluate((el) => {
-      return getComputedStyle(el).width;
-    });
-    expect(newSize).toBe("64px");
+    await expect
+      .poll(() => page.locator(".tile-icon").first().evaluate((el) => getComputedStyle(el).width))
+      .toBe("64px");
   });
 
   test("changing to Large increases tile icon size to 96px", async ({ page }) => {
     await switchToTilesView(page);
 
     await setThumbnailSize(page, "large");
-    await page.waitForTimeout(200);
 
-    const size = await page.locator(".tile-icon").first().evaluate((el) => {
-      return getComputedStyle(el).width;
-    });
-    expect(size).toBe("96px");
+    await expect
+      .poll(() => page.locator(".tile-icon").first().evaluate((el) => getComputedStyle(el).width))
+      .toBe("96px");
   });
 
   test("grid column min-width updates with thumbnail size", async ({ page }) => {
@@ -128,12 +120,14 @@ test.describe("Thumbnail Size Setting", () => {
 
     // Switch to xlarge
     await setThumbnailSize(page, "xlarge");
-    await page.waitForTimeout(200);
 
-    const xlargeMinCol = await page.locator(".tiles-view").evaluate((el) => {
-      return getComputedStyle(el).getPropertyValue("--tile-min-col").trim();
-    });
-    expect(xlargeMinCol).toBe("172px");
+    await expect
+      .poll(() =>
+        page
+          .locator(".tiles-view")
+          .evaluate((el) => getComputedStyle(el).getPropertyValue("--tile-min-col").trim()),
+      )
+      .toBe("172px");
   });
 
   test("image thumbnails render at Large size in tiles view", async ({ page }) => {
@@ -144,7 +138,6 @@ test.describe("Thumbnail Size Setting", () => {
 
     // Set to Large
     await setThumbnailSize(page, "large");
-    await page.waitForTimeout(300);
 
     // Find a thumbnail container (image files get ThumbnailImage, not FileIcon)
     const thumbnailContainer = page.locator(".tile-icon .thumbnail-container").first();
@@ -164,7 +157,6 @@ test.describe("Thumbnail Size Setting", () => {
 
     // Set to Extra Large
     await setThumbnailSize(page, "xlarge");
-    await page.waitForTimeout(300);
 
     const thumbnailContainer = page.locator(".tile-icon .thumbnail-container").first();
     await expect(thumbnailContainer).toBeVisible({ timeout: 5000 });
@@ -178,7 +170,6 @@ test.describe("Thumbnail Size Setting", () => {
 
   test("thumbnail size persists across page reloads", async ({ page }) => {
     await setThumbnailSize(page, "large");
-    await page.waitForTimeout(200);
 
     // Reload the page
     await page.reload();

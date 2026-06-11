@@ -39,8 +39,10 @@ function createDrivesStore() {
 
   async function startPolling(): Promise<void> {
     if (timer) return;
-    await refresh();
+    // Claim the interval synchronously, before any await, so concurrent
+    // startPolling calls bail immediately instead of leaking intervals.
     timer = setInterval(refresh, REFRESH_INTERVAL_MS);
+    await refresh();
 
     // Subscribe to fs events on the mount base directories so eject/insert
     // refreshes immediately rather than waiting for the next poll tick.
@@ -53,11 +55,17 @@ function createDrivesStore() {
       }
     }
     if (!unlistenFs) {
-      unlistenFs = await listen<{ path: string }>("directory-changed", (e) => {
-        if (watchedBases.has(e.payload.path)) {
-          refresh();
-        }
-      });
+      // Outside Tauri the event system is unavailable and listen() rejects;
+      // polling still covers drive changes there.
+      try {
+        unlistenFs = await listen<{ path: string }>("directory-changed", (e) => {
+          if (watchedBases.has(e.payload.path)) {
+            refresh();
+          }
+        });
+      } catch {
+        unlistenFs = null;
+      }
     }
   }
 

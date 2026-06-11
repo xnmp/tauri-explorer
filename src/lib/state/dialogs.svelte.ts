@@ -259,6 +259,7 @@ function createDialogStore() {
       nanoBananaOpen = false;
       nanoBananaSourcePath = "";
       jobsPanelOpen = false;
+      themePickerOpen = false;
       pickerConfig = null;
     },
   };

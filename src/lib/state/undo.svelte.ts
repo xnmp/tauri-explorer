@@ -75,8 +75,9 @@ function createUndoStore() {
       const result = await executeUndo(action, undoApi);
 
       if (!result.ok) {
-        // Pop the failed action so the user isn't stuck
-        stack = stack.slice(0, -1);
+        // Keep the failed action on the stack — a failed/partial undo must
+        // not silently discard history. The caller surfaces the error via
+        // toast and the user can retry once the cause is fixed.
         return { error: result.error };
       }
 

@@ -78,15 +78,41 @@ describe("refresh-manager", () => {
     expect(refresh).not.toHaveBeenCalled();
   });
 
-  it("last-writer-wins when different callbacks target the same directory", () => {
-    const firstRefresh = vi.fn();
-    const secondRefresh = vi.fn();
-    requestRefresh(firstRefresh, "/home/user/docs");
-    requestRefresh(secondRefresh, "/home/user/docs");
+  it("fans out to all distinct subscribers targeting the same directory", () => {
+    // Two panes showing the same directory must BOTH refresh
+    const paneA = vi.fn();
+    const paneB = vi.fn();
+    requestRefresh(paneA, "/home/user/docs");
+    requestRefresh(paneB, "/home/user/docs");
 
     vi.advanceTimersByTime(150);
-    expect(firstRefresh).not.toHaveBeenCalled();
-    expect(secondRefresh).toHaveBeenCalledOnce();
+    expect(paneA).toHaveBeenCalledOnce();
+    expect(paneB).toHaveBeenCalledOnce();
+  });
+
+  it("collapses repeated requests sharing a subscriber key into one refresh", () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    requestRefresh(first, "/home/user/docs", true, "pane-1");
+    requestRefresh(second, "/home/user/docs", true, "pane-1");
+
+    vi.advanceTimersByTime(150);
+    // Same subscriber: only the latest callback fires, exactly once
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledOnce();
+  });
+
+  it("fan-out flush fires each subscriber once and respects per-subscriber silent flag", () => {
+    const silentPane = vi.fn();
+    const loudPane = vi.fn();
+    requestRefresh(silentPane, "/home/user/docs", true, "pane-1");
+    requestRefresh(loudPane, "/home/user/docs", false, "pane-2");
+
+    vi.advanceTimersByTime(150);
+    expect(silentPane).toHaveBeenCalledOnce();
+    expect(silentPane).toHaveBeenCalledWith({ silent: true });
+    expect(loudPane).toHaveBeenCalledOnce();
+    expect(loudPane).toHaveBeenCalledWith({ silent: false });
   });
 
   it("rate-limits consecutive refreshes to the same directory", () => {

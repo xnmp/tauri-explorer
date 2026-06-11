@@ -11,7 +11,7 @@
  */
 
 import { listUserThemes, setWindowTheme } from "$lib/api/files";
-import { loadPersisted } from "./persisted";
+import { loadPersisted, removePersisted } from "./persisted";
 import { settingsStore } from "./settings.svelte";
 
 interface ThemeColors {
@@ -107,10 +107,18 @@ function discoverThemes(): ThemeInfo[] {
 }
 
 function createThemeState() {
-  // Migrate from old standalone localStorage key if settings doesn't have a theme yet
+  // Migrate from old standalone "theme" localStorage key (one-shot):
+  // if settings doesn't have a theme yet, adopt the legacy value into
+  // settings, then delete the legacy key so it can't resurrect stale state.
   const legacyTheme = loadPersisted<string | null>("theme", null);
   const initialTheme = settingsStore.theme !== "light" ? settingsStore.theme
     : legacyTheme || "light";
+  if (legacyTheme !== null) {
+    if (settingsStore.theme === "light" && legacyTheme !== "light") {
+      settingsStore.setTheme(legacyTheme);
+    }
+    removePersisted("theme");
+  }
 
   let currentThemeId = $state(initialTheme);
   let themes = $state<ThemeInfo[]>([]);

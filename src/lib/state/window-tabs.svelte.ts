@@ -14,8 +14,25 @@ import type { PaneId, WindowTab, WindowTabPane } from "./types";
 import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
 import { loadPersisted, savePersisted, removePersisted } from "./persisted";
 import { parentDir } from "$lib/domain/path";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
-const STORAGE_KEY = "explorer-tabs";
+/** Tauri window label, or "main" outside Tauri (browser E2E, tests). */
+function detectWindowLabel(): string {
+  try {
+    if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
+      return getCurrentWindow().label || "main";
+    }
+  } catch {
+    // Not running in Tauri
+  }
+  return "main";
+}
+
+const WINDOW_LABEL = detectWindowLabel();
+// Namespace the tabs key per window so a child window doesn't clobber the
+// main window's layout. The main window keeps the legacy un-suffixed key
+// for backward compatibility with existing saved state.
+const STORAGE_KEY = WINDOW_LABEL === "main" ? "explorer-tabs" : `explorer-tabs:${WINDOW_LABEL}`;
 const CLOSED_TABS_KEY = "explorer-closed-tabs";
 
 /** Serializable tab state for persistence */
@@ -91,6 +108,20 @@ function createWindowTabsManager() {
     closedTabStack = loadPersisted<ClosedTabSnapshot[]>(CLOSED_TABS_KEY, []);
   }
 
+  // Pick up snapshots written by other windows when this window regains
+  // focus (instead of re-reading localStorage from the canRestoreTab getter).
+  if (typeof window !== "undefined") {
+    window.addEventListener("focus", refreshClosedTabs);
+  }
+
+  /** Destroy all registered explorers (unwatch dirs, drop listeners) and clear the registry. */
+  function destroyAllExplorers(): void {
+    for (const explorer of explorers.values()) {
+      explorer.destroy();
+    }
+    explorers.clear();
+  }
+
   /** Capture the current tab state as a serializable snapshot */
   function captureState(): PersistedTabState {
     const persistedTabs: PersistedTab[] = tabs.map((tab) => ({
@@ -156,6 +187,7 @@ function createWindowTabsManager() {
     path: string,
     sourceExplorer?: ExplorerInstance,
     externalSeed?: { currentPath: string; entries: any[]; sortBy: string; sortAscending: boolean; viewMode: string },
+    track = true,
   ): { explorerId: string; explorer: ExplorerInstance } {
     const explorerId = generateId("explorer");
     const canSeed = sourceExplorer && sourceExplorer.currentPath === path;
@@ -172,13 +204,19 @@ function createWindowTabsManager() {
         : undefined;
     const explorer = createExplorerState(seed);
     explorers.set(explorerId, explorer);
-    explorer.navigateTo(path);
+    // Seeded/restored panes use a non-tracking initial load so restoring
+    // tabs doesn't double-record frecency/recent-files visits.
+    if (seed || !track) {
+      explorer.initialLoad(path);
+    } else {
+      explorer.navigateTo(path);
+    }
     return { explorerId, explorer };
   }
 
   /** Create a pane object with a new explorer */
-  function createPane(path: string, sourceExplorer?: ExplorerInstance, externalSeed?: any): WindowTabPane {
-    const { explorerId } = createAndRegisterExplorer(path, sourceExplorer, externalSeed);
+  function createPane(path: string, sourceExplorer?: ExplorerInstance, externalSeed?: any, track = true): WindowTabPane {
+    const { explorerId } = createAndRegisterExplorer(path, sourceExplorer, externalSeed, track);
     return {
       explorerId,
       path,
@@ -225,7 +263,9 @@ function createWindowTabsManager() {
    *  @param overridePath - If set, the active pane of the active tab
    *    navigates here instead of its saved path (avoids racing navigations). */
   function restoreFromState(state: PersistedTabState, overridePath?: string): void {
-    explorers.clear();
+    // Destroy before clearing — otherwise backend watch refcounts and
+    // streaming listeners leak for every replaced explorer.
+    destroyAllExplorers();
 
     const restoredTabs: WindowTab[] = state.tabs.map((persistedTab) => {
       const isActiveTab = persistedTab.id === state.activeTabId;
@@ -241,8 +281,8 @@ function createWindowTabsManager() {
       const tab: WindowTab = {
         id: persistedTab.id,
         panes: {
-          left: createPane(leftPath),
-          right: createPane(rightPath),
+          left: createPane(leftPath, undefined, undefined, false),
+          right: createPane(rightPath, undefined, undefined, false),
         },
         activePaneId: persistedTab.activePaneId,
         dualPaneEnabled: persistedTab.dualPaneEnabled,
@@ -276,7 +316,7 @@ function createWindowTabsManager() {
     }
 
     // No saved state or child window — create a fresh tab
-    explorers.clear();
+    destroyAllExplorers();
     tabs = [];
     activeTabId = null;
 
@@ -295,7 +335,7 @@ function createWindowTabsManager() {
 
   /** Snapshot a tab for Ctrl+Shift+T restoration */
   function snapshotTab(tab: WindowTab, tabIndex: number, fromClosedWindow = false): void {
-    closedTabStack.push({
+    const snapshot: ClosedTabSnapshot = {
       leftPath: getPanePath(tab.panes.left),
       rightPath: getPanePath(tab.panes.right),
       activePaneId: tab.activePaneId,
@@ -303,7 +343,27 @@ function createWindowTabsManager() {
       splitRatio: tab.splitRatio,
       closedAt: tabIndex,
       fromClosedWindow,
-    });
+    };
+
+    // Closing the last tab snapshots then attempts window.close(), which can
+    // fail silently — repeated Ctrl+W would stack identical snapshots.
+    if (fromClosedWindow) {
+      const top = closedTabStack[closedTabStack.length - 1];
+      if (
+        top &&
+        top.fromClosedWindow &&
+        top.leftPath === snapshot.leftPath &&
+        top.rightPath === snapshot.rightPath &&
+        top.activePaneId === snapshot.activePaneId &&
+        top.dualPaneEnabled === snapshot.dualPaneEnabled &&
+        top.splitRatio === snapshot.splitRatio &&
+        top.closedAt === snapshot.closedAt
+      ) {
+        return;
+      }
+    }
+
+    closedTabStack.push(snapshot);
     if (closedTabStack.length > MAX_CLOSED_TABS) {
       closedTabStack.shift();
     }
@@ -538,7 +598,8 @@ function createWindowTabsManager() {
     closeActiveTab,
     restoreClosedTab,
     get canRestoreTab() {
-      refreshClosedTabs();
+      // No side effects in the getter: the stack is refreshed on window
+      // focus and explicitly before restore (restoreClosedTab).
       return closedTabStack.length > 0;
     },
     setActiveTab,

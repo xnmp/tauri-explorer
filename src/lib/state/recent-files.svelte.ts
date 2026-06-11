@@ -51,9 +51,12 @@ function createRecentFilesState() {
     if (entries.length === 0) return;
     const paths = entries.map((e) => e.path);
     const exists = await checkPathsExist(paths);
-    const before = entries.length;
-    entries = entries.filter((_, i) => exists[i]);
-    if (entries.length < before) save();
+    // `entries` may have changed while awaiting (e.g. add) — filter by path
+    // membership against the snapshot, not by index into a stale array.
+    const missing = new Set(paths.filter((_, i) => !exists[i]));
+    if (missing.size === 0) return;
+    entries = entries.filter((e) => !missing.has(e.path));
+    save();
   }
 
   return {

@@ -29,13 +29,23 @@ function generateOperationId(): string {
 
 const DIALOG_DELAY_MS = 1500;
 
+/** How long a cancelled id stays observable for in-flight workers before
+ *  being dropped (prevents unbounded growth of the cancelled set). */
+const CANCELLED_ID_TTL_MS = 60_000;
+
 function createOperationsManager() {
   let operations = $state<Operation[]>([]);
   let showProgressDialog = $state(false);
   let dialogTimerId: ReturnType<typeof setTimeout> | null = null;
   // Tracks ids that were cancelled so in-flight workers can still see the
   // cancellation after the row has been removed from the visible list.
+  // Entries expire after CANCELLED_ID_TTL_MS so the set can't grow unbounded.
   const cancelledIds = new Set<string>();
+
+  function markCancelled(operationId: string): void {
+    cancelledIds.add(operationId);
+    setTimeout(() => cancelledIds.delete(operationId), CANCELLED_ID_TTL_MS);
+  }
 
   function closeDialogIfEmpty(): void {
     if (operations.length === 0) {
@@ -151,7 +161,7 @@ function createOperationsManager() {
    * still observes the cancelled status via `isOperationCancelled` because
    * we keep the id reachable through a short-lived cancelled set. */
   function cancelOperation(operationId: string): void {
-    cancelledIds.add(operationId);
+    markCancelled(operationId);
     operations = operations.filter((op) => op.id !== operationId);
     closeDialogIfEmpty();
   }
@@ -164,7 +174,7 @@ function createOperationsManager() {
   /** Cancel all running operations and dismiss the progress dialog. */
   function cancelAllOperations(): void {
     for (const op of operations) {
-      if (op.status === "running") cancelledIds.add(op.id);
+      if (op.status === "running") markCancelled(op.id);
     }
     operations = operations.filter((op) => op.status !== "running");
     closeDialogIfEmpty();

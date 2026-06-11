@@ -169,7 +169,13 @@ function createExplorerState(seed?: ExplorerSeed) {
 
   const dirListing = createDirectoryListing();
 
-  async function navigateInternal(path: string): Promise<boolean> {
+  // Per-pane navigation generation counter. Guards against rapid A→B
+  // navigation applying whichever result happens to land last.
+  let navGeneration = 0;
+
+  async function navigateInternal(path: string): Promise<"ok" | "error" | "stale"> {
+    const gen = ++navGeneration;
+
     // If we already have entries for this path (e.g. seeded from another tab),
     // don't show loading state — the existing entries stay visible while we refresh.
     const isSeeded = coreState.currentPath === path && coreState.entries.length > 0;
@@ -182,12 +188,17 @@ function createExplorerState(seed?: ExplorerSeed) {
 
     const result = await dirListing.load(path, {
       onEntries: (entries) => {
+        if (gen !== navGeneration) return;
         coreState.entries = [...coreState.entries, ...entries];
       },
       onDone: () => {
+        if (gen !== navGeneration) return;
         coreState.loading = false;
       },
     });
+
+    // A newer navigation started while this one was in flight — discard.
+    if (gen !== navGeneration) return "stale";
 
     if (result.ok) {
       coreState.currentPath = result.path;
@@ -215,25 +226,31 @@ function createExplorerState(seed?: ExplorerSeed) {
       if (!result.streaming) {
         coreState.loading = false;
       }
-      return true;
+      return "ok";
     } else {
       coreState.error = result.error;
       coreState.loading = false;
-      return false;
+      return "error";
     }
   }
 
-  async function navigateTo(path: string) {
-    const success = await navigateInternal(path);
-    if (success) {
-      const newHistory = navigation.pushToHistory(
-        coreState.history,
-        coreState.historyIndex,
-        coreState.currentPath
-      );
-      coreState.history = newHistory.history;
-      coreState.historyIndex = newHistory.historyIndex;
+  /** Navigate and push to history. Returns true on success. */
+  async function applyNavigation(path: string): Promise<boolean> {
+    const status = await navigateInternal(path);
+    if (status !== "ok") return false;
+    const newHistory = navigation.pushToHistory(
+      coreState.history,
+      coreState.historyIndex,
+      coreState.currentPath
+    );
+    coreState.history = newHistory.history;
+    coreState.historyIndex = newHistory.historyIndex;
+    return true;
+  }
 
+  async function navigateTo(path: string) {
+    const success = await applyNavigation(path);
+    if (success) {
       // Track directory navigation in recent files and frecency
       const name = basename(path);
       recentFilesStore.add(path, name, "directory");
@@ -241,13 +258,19 @@ function createExplorerState(seed?: ExplorerSeed) {
     }
   }
 
+  /** Initial load for restored/seeded panes: like navigateTo but does NOT
+   *  record the visit in recent files or frecency (the user didn't navigate). */
+  async function initialLoad(path: string) {
+    await applyNavigation(path);
+  }
+
   async function goBack() {
     const prevPath = navigation.getBackPath(coreState.history, coreState.historyIndex);
     if (!prevPath) return;
-    const success = await navigateInternal(prevPath);
-    if (success) {
+    const status = await navigateInternal(prevPath);
+    if (status === "ok") {
       coreState.historyIndex--;
-    } else {
+    } else if (status === "error") {
       // Path no longer exists — fall back to parent
       const parentPath = navigation.getParentPath(breadcrumbs);
       if (parentPath) await navigateInternal(parentPath);
@@ -257,10 +280,10 @@ function createExplorerState(seed?: ExplorerSeed) {
   async function goForward() {
     const nextPath = navigation.getForwardPath(coreState.history, coreState.historyIndex);
     if (!nextPath) return;
-    const success = await navigateInternal(nextPath);
-    if (success) {
+    const status = await navigateInternal(nextPath);
+    if (status === "ok") {
       coreState.historyIndex++;
-    } else {
+    } else if (status === "error") {
       // Path no longer exists — fall back to parent
       const parentPath = navigation.getParentPath(breadcrumbs);
       if (parentPath) await navigateInternal(parentPath);
@@ -289,15 +312,33 @@ function createExplorerState(seed?: ExplorerSeed) {
       return;
     }
 
+    const refreshPath = coreState.currentPath;
     const oldFingerprint = entriesFingerprint(coreState.entries);
 
-    // Fetch new data without touching UI state — avoids flash on no-change
-    const result = await dirListing.load(coreState.currentPath, {
-      onEntries: () => {},
-      onDone: () => {},
+    // Fetch new data without touching UI state — avoids flash on no-change.
+    // Accumulate streamed chunks: for >100-entry directories the invoke
+    // result only contains the first batch, the rest arrives via events.
+    let streamedEntries: FileEntry[] = [];
+    let cancelled = false;
+    let resolveDone!: () => void;
+    const donePromise = new Promise<void>((resolve) => {
+      resolveDone = resolve;
+    });
+
+    const result = await dirListing.load(refreshPath, {
+      onEntries: (entries) => {
+        streamedEntries = [...streamedEntries, ...entries];
+      },
+      onDone: () => resolveDone(),
+      onCancelled: () => {
+        cancelled = true;
+        resolveDone();
+      },
     });
 
     if (!result.ok) {
+      // The pane navigated away while the fetch was in flight — not our call.
+      if (coreState.currentPath !== refreshPath) return;
       // Directory no longer exists — fall back to parent
       const parentPath = navigation.getParentPath(breadcrumbs);
       if (parentPath) {
@@ -306,7 +347,18 @@ function createExplorerState(seed?: ExplorerSeed) {
       return;
     }
 
-    const newFingerprint = entriesFingerprint(result.entries);
+    if (result.streaming) await donePromise;
+
+    // Bail if superseded: a navigation cancelled the listing or changed path.
+    if (cancelled || coreState.currentPath !== refreshPath) return;
+
+    // We now hold a complete listing for the pane's current path. If this
+    // refresh interrupted a still-streaming navigation to the same path
+    // (cancelling its onDone), clear the spinner it left behind.
+    coreState.loading = false;
+
+    const allEntries = [...result.entries, ...streamedEntries];
+    const newFingerprint = entriesFingerprint(allEntries);
     // Compare against both the pre-fetch snapshot and the current entries.
     // A local mutation may have updated entries while the fetch was in flight
     // (inotify on Linux fires before the IPC response returns).
@@ -318,12 +370,8 @@ function createExplorerState(seed?: ExplorerSeed) {
       return;
     }
 
-    coreState.entries = result.entries;
+    coreState.entries = allEntries;
     updateWatch(result.path);
-
-    if (!result.streaming) {
-      coreState.loading = false;
-    }
 
     if (!silent) {
       toastStore.show("Refreshed", "info", { duration: 1500 });
@@ -789,6 +837,7 @@ function createExplorerState(seed?: ExplorerSeed) {
 
     // Navigation
     navigateTo,
+    initialLoad,
     goBack,
     goForward,
     goUp,
@@ -861,7 +910,12 @@ function createExplorerState(seed?: ExplorerSeed) {
       onNavigateCallback = cb;
     },
     // Cleanup
-    destroy: destroyWatch,
+    destroy: () => {
+      destroyWatch();
+      // Tear down the streaming listener and any in-flight listing,
+      // otherwise each closed tab leaks a Tauri event listener.
+      void dirListing.cleanup();
+    },
   };
 }
 

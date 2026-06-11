@@ -99,9 +99,12 @@ function createFrecencyStore() {
     if (data.length === 0) return;
     const paths = data.map((e) => e.path);
     const exists = await checkPathsExist(paths);
-    const before = data.length;
-    data = data.filter((_, i) => exists[i]);
-    if (data.length < before) save();
+    // `data` may have changed while awaiting (e.g. recordAccess) — filter by
+    // path membership against the snapshot, not by index into a stale array.
+    const missing = new Set(paths.filter((_, i) => !exists[i]));
+    if (missing.size === 0) return;
+    data = data.filter((e) => !missing.has(e.path));
+    save();
   }
 
   return {

@@ -119,6 +119,10 @@ export async function pasteEntries(
 
       if (result.ok && result.entry) {
         newEntries.push(result.entry);
+        // Track the pasted name so later sources in this batch with the same
+        // name are detected as conflicts (the snapshot taken before the loop
+        // doesn't know about entries created during the batch).
+        existingNames.add(result.entry.name);
         if (isCut) {
           undoActions.push({
             type: "move",

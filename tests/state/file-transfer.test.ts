@@ -249,12 +249,47 @@ describe("performFileTransfer", () => {
     });
   });
 
-  it("does not record undo for copy operations", async () => {
+  it("records undo for copy operations (mirrors paste)", async () => {
     await performFileTransfer("/src/file.txt", "/dest", true, {
       onRefresh: noop,
     });
 
-    expect(undoPushMock).not.toHaveBeenCalled();
+    expect(undoPushMock).toHaveBeenCalledWith({
+      type: "copy",
+      copiedPath: "/dest/file.txt",
+      parentDir: "/dest",
+    });
+  });
+
+  // --- Same-parent guard ---
+
+  it("treats a move into the source's own parent as a no-op skip", async () => {
+    const result = await performFileTransfer("/dest/file.txt", "/dest", false, {
+      onRefresh: noop,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("skipped");
+    expect(moveEntryMock).not.toHaveBeenCalled();
+    expect(conflictPromptMock).not.toHaveBeenCalled();
+  });
+
+  it("same-parent copy skips the self-conflict dialog and never overwrites", async () => {
+    // Even with the source present in the target dir and overwrite forced,
+    // a same-parent copy must route through copy-name generation.
+    fetchDirectoryMock.mockResolvedValue({
+      ok: true,
+      data: { entries: [makeEntry("file.txt", "/dest/file.txt")] },
+    });
+
+    const result = await performFileTransfer("/dest/file.txt", "/dest", true, {
+      onRefresh: noop,
+      overwrite: true,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(conflictPromptMock).not.toHaveBeenCalled();
+    expect(copyEntryMock).toHaveBeenCalledWith("/dest/file.txt", "/dest", false);
   });
 
   it("shows toast on success", async () => {

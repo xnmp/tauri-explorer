@@ -4,9 +4,12 @@
   Issue: fix/view-component-duplication
 -->
 <script lang="ts">
+  import { getContext } from "svelte";
   import { gitStatusLetter } from "$lib/domain/git";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { gitStatusStore } from "$lib/state/git-status.svelte";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+  import type { PaneId } from "$lib/state/types";
 
   interface Props {
     entryName: string;
@@ -16,7 +19,18 @@
 
   let { entryName, hideOnRename = false }: Props = $props();
 
-  const gitStatus = $derived(settingsStore.showGitStatus ? gitStatusStore.getStatus(entryName) : null);
+  // Statuses are keyed per directory; look up via the directory this entry
+  // is rendered in (the owning pane's current path) so dual panes showing
+  // different directories don't bleed badges into each other.
+  const paneId = getContext<PaneId | undefined>("pane-id");
+  const directory = $derived(
+    paneId ? windowTabsManager.getExplorer(paneId)?.currentPath ?? "" : "",
+  );
+  const gitStatus = $derived(
+    settingsStore.showGitStatus && directory
+      ? gitStatusStore.getStatus(directory, entryName)
+      : null,
+  );
 </script>
 
 {#if gitStatus && !hideOnRename}

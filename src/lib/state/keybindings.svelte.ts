@@ -102,6 +102,7 @@ function createKeybindingsStore() {
    */
   function setShortcut(commandId: string, shortcut: string | null): void {
     userShortcuts = { ...userShortcuts, [commandId]: shortcut };
+    chordCache.delete(commandId); // effective shortcut changed
     saveUserShortcuts();
   }
 
@@ -111,6 +112,7 @@ function createKeybindingsStore() {
   function resetToDefault(commandId: string): void {
     const { [commandId]: _, ...rest } = userShortcuts;
     userShortcuts = rest;
+    chordCache.delete(commandId); // effective shortcut changed
     saveUserShortcuts();
   }
 
@@ -119,6 +121,7 @@ function createKeybindingsStore() {
    */
   function resetAllToDefaults(): void {
     userShortcuts = {};
+    chordCache.clear();
     saveUserShortcuts();
   }
 
@@ -149,8 +152,8 @@ function createKeybindingsStore() {
     }
   }
 
-  /** Cache of parsed chord shortcuts (built lazily) */
-  let chordCache = new Map<string, ParsedChord>();
+  /** Cache of parsed chord shortcuts (built lazily, invalidated on rebind) */
+  const chordCache = new Map<string, ParsedChord>();
 
   function getChordForCommand(commandId: string): ParsedChord | null {
     const shortcut = getShortcut(commandId);
@@ -251,7 +254,7 @@ function createKeybindingsStore() {
   function _clearForTesting(): void {
     defaultShortcuts = {};
     userShortcuts = {};
-    chordCache = new Map();
+    chordCache.clear();
     cancelChord();
   }
 

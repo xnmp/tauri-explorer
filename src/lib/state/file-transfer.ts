@@ -68,10 +68,23 @@ export async function performFileTransfer(
 
   const fileName = basename(sourcePath);
   const sourceDir = parentDir(sourcePath);
-  let overwrite = forceOverwrite;
+  const isSameParent = sourceDir === targetDir;
+
+  // --- Central same-parent guard ---
+  // MOVE into the entry's own parent is a no-op: skip instead of prompting a
+  // bogus self-conflict (overwriting a file with itself is a data-loss path;
+  // the backend also rejects source == target).
+  if (isSameParent && !isCopy) {
+    return { ok: false, error: "skipped" };
+  }
+  // COPY into the same parent never overwrites: force overwrite off so the
+  // backend generates a "name - Copy" style name, exactly like paste does.
+  let overwrite = isSameParent ? false : forceOverwrite;
 
   // --- Conflict detection & resolution ---
-  if (!skipConflictCheck && !overwrite) {
+  // Same-parent copies skip the conflict dialog: the only "conflict" is the
+  // source itself, and copy-name generation already avoids it.
+  if (!skipConflictCheck && !overwrite && !isSameParent) {
     let conflictDetected = false;
     let destEntry: FileEntry | undefined;
 
@@ -127,13 +140,19 @@ export async function performFileTransfer(
   // --- Post-transfer side effects ---
   const targetName = basename(targetDir);
 
-  if (!suppressUndo && !isCopy) {
-    const action = {
-      type: "move" as const,
-      sourcePath,
-      destPath: result.data.path,
-      originalDir: sourceDir,
-    };
+  if (!suppressUndo) {
+    const action = isCopy
+      ? {
+          type: "copy" as const,
+          copiedPath: result.data.path,
+          parentDir: targetDir,
+        }
+      : {
+          type: "move" as const,
+          sourcePath,
+          destPath: result.data.path,
+          originalDir: sourceDir,
+        };
     if (broadcastToOtherWindows) {
       undoStore.pushAndBroadcast(action);
     } else {

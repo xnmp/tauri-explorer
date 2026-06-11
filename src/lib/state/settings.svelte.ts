@@ -7,8 +7,8 @@
  * localStorage as synchronous fallback for immediate state.
  */
 
-import { loadPersisted, savePersisted } from "./persisted";
-import { readConfigFile, writeConfigFile } from "$lib/api/files";
+import { loadPersisted, savePersisted, writeConfigQueued } from "./persisted";
+import { readConfigFile } from "$lib/api/files";
 import type { ViewMode } from "./types";
 import type { Command, CommandCategory } from "./commands.svelte";
 
@@ -140,9 +140,7 @@ function loadSettings(): Settings {
 
 function saveSettings(settings: Settings): void {
   savePersisted(STORAGE_KEY, settings);
-  writeConfigFile(CONFIG_FILENAME, JSON.stringify(settings, null, 2)).catch((err) => {
-    console.warn("Failed to save settings to config file:", err);
-  });
+  writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2));
 }
 
 function createSettingsStore() {
@@ -170,7 +168,7 @@ function createSettingsStore() {
     // If config file was empty but localStorage has data, migrate
     const saved = loadPersisted<Partial<Settings>>(STORAGE_KEY, {});
     if (Object.keys(saved).length > 0) {
-      writeConfigFile(CONFIG_FILENAME, JSON.stringify(settings, null, 2)).catch(() => {});
+      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2));
     }
   }
 

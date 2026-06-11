@@ -7,8 +7,8 @@
  * hidden entries dimmed.
  */
 
-import { loadPersisted, savePersisted } from "./persisted";
-import { readConfigFile, writeConfigFile } from "$lib/api/files";
+import { loadPersisted, savePersisted, writeConfigQueued } from "./persisted";
+import { readConfigFile } from "$lib/api/files";
 
 const STORAGE_KEY = "explorer-manual-hidden";
 const CONFIG_FILENAME = "manual-hidden.json";
@@ -21,9 +21,7 @@ function createManualHiddenStore() {
 
   function save(): void {
     savePersisted(STORAGE_KEY, raw);
-    writeConfigFile(CONFIG_FILENAME, JSON.stringify(raw, null, 2)).catch((err) => {
-      console.warn("Failed to save manual-hidden list:", err);
-    });
+    writeConfigQueued(CONFIG_FILENAME, JSON.stringify(raw, null, 2));
   }
 
   async function init(): Promise<void> {

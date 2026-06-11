@@ -11,8 +11,6 @@
     "core:window:allow-close",
     "core:window:allow-is-maximized",
     "opener:default",
-    "shell:allow-spawn",
-    "shell:allow-execute",
     "clipboard-x:default",
     "core:webview:allow-create-webview-window",
     "log:default",

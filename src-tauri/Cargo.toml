@@ -41,7 +41,7 @@ lru = "0.12"
 sha2 = "0.10"
 base64 = "0.22"
 hex = "0.4"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "2", default-features = false, features = ["deflate", "deflate64", "bzip2", "zstd", "lzma"] }
 tokio = { version = "1", features = ["rt", "time", "sync", "process"] }
 notify = "7"
 git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2"] }

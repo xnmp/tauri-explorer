@@ -7,7 +7,6 @@
 //! This module shells out to `wl-paste`/`wl-copy` (Wayland) or
 //! `xclip` (X11) to read and write file URIs directly.
 
-use log;
 use std::process::Command;
 
 /// Detect whether the session is Wayland or X11.
@@ -47,40 +46,43 @@ fn parse_file_uris(text: &str) -> Vec<String> {
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .filter_map(|line| {
             let trimmed = line.trim().trim_end_matches('\0');
-            if let Some(path) = trimmed.strip_prefix("file://") {
-                // Decode percent-encoded characters (e.g. %20 -> space)
-                Some(percent_decode(path))
-            } else {
-                None
-            }
+            trimmed.strip_prefix("file://").map(percent_decode)
         })
         .collect()
 }
 
 /// Minimal percent-decoding for file paths.
+/// Decodes to raw bytes first, then interprets the whole result as UTF-8 so
+/// multi-byte sequences (e.g. %C3%A9 -> é) aren't mangled byte-by-byte.
 fn percent_decode(input: &str) -> String {
-    let mut result = String::with_capacity(input.len());
-    let mut chars = input.bytes();
-    while let Some(b) = chars.next() {
+    let mut bytes = Vec::with_capacity(input.len());
+    let mut iter = input.bytes();
+    while let Some(b) = iter.next() {
         if b == b'%' {
-            let hi = chars.next();
-            let lo = chars.next();
+            let hi = iter.next();
+            let lo = iter.next();
             if let (Some(hi), Some(lo)) = (hi, lo) {
                 let hex = [hi, lo];
                 if let Ok(s) = std::str::from_utf8(&hex) {
                     if let Ok(byte) = u8::from_str_radix(s, 16) {
-                        result.push(byte as char);
+                        bytes.push(byte);
                         continue;
                     }
                 }
+                // Malformed %-sequence, emit literally
+                bytes.push(b'%');
+                bytes.push(hi);
+                bytes.push(lo);
+            } else {
+                bytes.push(b'%');
+                bytes.extend(hi);
+                bytes.extend(lo);
             }
-            // Malformed %-sequence, emit literally
-            result.push('%');
         } else {
-            result.push(b as char);
+            bytes.push(b);
         }
     }
-    result
+    String::from_utf8(bytes).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned())
 }
 
 /// Read file paths from the OS clipboard.
@@ -173,6 +175,14 @@ fn write_mime(mime: &str, data: &[u8]) -> bool {
 
 /// Write file paths to the OS clipboard in formats understood by
 /// GTK file managers (Thunar, Nautilus, Nemo, Caja, etc.).
+///
+/// Limitation: `wl-copy` and `xclip` can only own the clipboard with a single
+/// MIME type per invocation, and each new invocation replaces the previous
+/// clipboard owner. We therefore cannot offer `x-special/gnome-copied-files`
+/// AND `text/uri-list` simultaneously — invoking the tool a second time would
+/// clobber the first format instead of adding to it. We write the GNOME format
+/// (richest: carries copy/cut semantics); KDE/Dolphin paste of our copies is
+/// not supported until a multi-target clipboard backend is used.
 fn write_clipboard_file_paths(paths: &[String]) -> bool {
     if paths.is_empty() {
         return false;
@@ -215,6 +225,12 @@ fn read_clipboard_image() -> Option<Vec<u8>> {
 /// Check if the clipboard contains image data.
 #[tauri::command]
 pub async fn clipboard_has_image() -> bool {
+    tokio::task::spawn_blocking(clipboard_has_image_sync)
+        .await
+        .unwrap_or(false)
+}
+
+fn clipboard_has_image_sync() -> bool {
     let output = if is_wayland() {
         Command::new("wl-paste")
             .args(["--list-types"])
@@ -240,6 +256,12 @@ pub async fn clipboard_has_image() -> bool {
 /// Returns the path of the created file, or an error.
 #[tauri::command]
 pub async fn clipboard_paste_image(directory: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || clipboard_paste_image_sync(directory))
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?
+}
+
+fn clipboard_paste_image_sync(directory: String) -> Result<String, String> {
     let data = read_clipboard_image().ok_or("No image data in clipboard")?;
 
     let dir = std::path::Path::new(&directory);
@@ -257,13 +279,11 @@ pub async fn clipboard_paste_image(directory: String) -> Result<String, String> 
         // Add milliseconds to disambiguate
         let filename = format!("img-{}.png", now.format("%Y%m%d-%H%M%S-%3f"));
         let filepath = dir.join(&filename);
-        std::fs::write(&filepath, &data)
-            .map_err(|e| format!("Failed to write image: {}", e))?;
+        std::fs::write(&filepath, &data).map_err(|e| format!("Failed to write image: {}", e))?;
         return Ok(filepath.to_string_lossy().to_string());
     }
 
-    std::fs::write(&filepath, &data)
-        .map_err(|e| format!("Failed to write image: {}", e))?;
+    std::fs::write(&filepath, &data).map_err(|e| format!("Failed to write image: {}", e))?;
 
     log::info!("Pasted clipboard image to: {}", filename);
     Ok(filepath.to_string_lossy().to_string())
@@ -271,17 +291,23 @@ pub async fn clipboard_paste_image(directory: String) -> Result<String, String> 
 
 #[tauri::command]
 pub async fn clipboard_has_files() -> bool {
-    !read_clipboard_file_paths().is_empty()
+    tokio::task::spawn_blocking(|| !read_clipboard_file_paths().is_empty())
+        .await
+        .unwrap_or(false)
 }
 
 #[tauri::command]
 pub async fn clipboard_read_files() -> Vec<String> {
-    read_clipboard_file_paths()
+    tokio::task::spawn_blocking(read_clipboard_file_paths)
+        .await
+        .unwrap_or_default()
 }
 
 #[tauri::command]
 pub async fn clipboard_write_files(paths: Vec<String>) -> bool {
-    write_clipboard_file_paths(&paths)
+    tokio::task::spawn_blocking(move || write_clipboard_file_paths(&paths))
+        .await
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -339,13 +365,36 @@ mod tests {
     }
 
     #[test]
+    fn percent_decode_utf8_multibyte() {
+        // %C3%A9 = é (2 bytes), %E6%97%A5 = 日 (3 bytes)
+        assert_eq!(percent_decode("/home/user/%C3%A9t%C3%A9"), "/home/user/été");
+        assert_eq!(
+            percent_decode("/tmp/%E6%97%A5%E6%9C%AC.txt"),
+            "/tmp/日本.txt"
+        );
+    }
+
+    #[test]
+    fn percent_decode_utf8_roundtrip() {
+        let original = "/home/user/Téléchargements/файл 日本.png";
+        let encoded = percent_encode_path(original);
+        assert_eq!(percent_decode(&encoded), original);
+    }
+
+    #[test]
     fn percent_encode_path_basic() {
-        assert_eq!(percent_encode_path("/home/user/file.txt"), "/home/user/file.txt");
+        assert_eq!(
+            percent_encode_path("/home/user/file.txt"),
+            "/home/user/file.txt"
+        );
     }
 
     #[test]
     fn percent_encode_path_spaces() {
-        assert_eq!(percent_encode_path("/home/user/My Documents"), "/home/user/My%20Documents");
+        assert_eq!(
+            percent_encode_path("/home/user/My Documents"),
+            "/home/user/My%20Documents"
+        );
     }
 
     #[test]
@@ -363,9 +412,9 @@ mod tests {
             "/tmp/test file.txt".to_string(),
         ];
         let uris = paths_to_uris(&paths);
-        assert_eq!(uris, vec![
-            "file:///home/user/doc.txt",
-            "file:///tmp/test%20file.txt",
-        ]);
+        assert_eq!(
+            uris,
+            vec!["file:///home/user/doc.txt", "file:///tmp/test%20file.txt",]
+        );
     }
 }

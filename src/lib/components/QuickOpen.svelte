@@ -21,6 +21,7 @@
   import { parentDir, basename, expandTilde as expandTildePath } from "$lib/domain/path";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import FileIcon from "./FileIcon.svelte";
+  import Modal from "./Modal.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { frecencyStore } from "$lib/state/frecency.svelte";
 
@@ -319,6 +320,7 @@
     query.trim() ? results : recentResults.slice(0, 10)
   );
 
+  // Escape is handled by Modal; everything else lands here.
   function handleKeydown(event: KeyboardEvent): void {
     // Alt+D toggles debug mode (shows score breakdown)
     if (event.key === "d" && event.altKey) {
@@ -327,10 +329,6 @@
       return;
     }
     switch (event.key) {
-      case "Escape":
-        event.preventDefault();
-        onClose();
-        break;
       case "ArrowDown":
         event.preventDefault();
         if (displayResults.length > 0) {
@@ -428,9 +426,17 @@
   });
 </script>
 
-{#if open}
+<Modal
+  {open}
+  {onClose}
+  overlayClass="quick-open-overlay"
+  align="top"
+  topOffset="15vh"
+  label="Quick open"
+  onkeydown={handleKeydown}
+>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="quick-open-overlay" onclick={onClose} onkeydown={handleKeydown}
+  <div class="quick-open-dialog"
     onmousemove={(e) => {
       if (!mouseTrackingReady) return;
       if (lastMousePos && (e.clientX !== lastMousePos.x || e.clientY !== lastMousePos.y)) {
@@ -438,8 +444,6 @@
       }
       lastMousePos = { x: e.clientX, y: e.clientY };
     }}>
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div class="quick-open-dialog" onclick={(e) => e.stopPropagation()}>
       <div class="search-container">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="search-icon">
           <circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.5"/>
@@ -472,6 +476,7 @@
         {#if results.length > 0}
           <ul class="results-list" role="listbox">
             {#each results as result, index (result.path)}
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
               <li
                 class="result-item"
                 class:selected={index === selectedIndex}
@@ -526,6 +531,7 @@
           <div class="section-label">Recent</div>
           <ul class="results-list" role="listbox">
             {#each recentResults.slice(0, 10) as result, index (result.path)}
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
               <li
                 class="result-item"
                 class:selected={index === selectedIndex}
@@ -557,28 +563,10 @@
         <span class="shortcut"><kbd>Esc</kbd> Close</span>
         <span class="shortcut"><kbd>Alt+D</kbd> {settingsStore.quickOpenDebug ? "Debug ON" : "Debug"}</span>
       </div>
-    </div>
   </div>
-{/if}
+</Modal>
 
 <style>
-  .quick-open-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-    padding-top: 15vh;
-    z-index: 1000;
-    animation: fadeIn 100ms ease-out;
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-
   .quick-open-dialog {
     width: 600px;
     max-width: 90vw;

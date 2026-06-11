@@ -620,12 +620,12 @@
   .context-menu-backdrop {
     position: fixed;
     inset: 0;
-    z-index: 999;
+    z-index: calc(var(--z-menu) - 1);
   }
 
   .context-menu {
     position: fixed;
-    z-index: 1000;
+    z-index: var(--z-menu);
     min-width: 220px;
     padding: 6px;
     background: var(--background-acrylic);

@@ -12,7 +12,6 @@
   import FileList from "./FileList.svelte";
   import MillerColumns from "./MillerColumns.svelte";
   import ContextMenu from "./ContextMenu.svelte";
-  import NewFolderDialog from "./NewFolderDialog.svelte";
   import DeleteDialog from "./DeleteDialog.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
@@ -270,7 +269,6 @@
       <FileList explorer={paneExplorer} />
     </div>
     <ContextMenu explorer={paneExplorer} />
-    <NewFolderDialog explorer={paneExplorer} />
     <DeleteDialog explorer={paneExplorer} />
   {/if}
 </section>

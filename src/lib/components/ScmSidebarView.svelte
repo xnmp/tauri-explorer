@@ -16,6 +16,7 @@
   import { parentDir, basename } from "$lib/domain/path";
   import { settingsStore } from "$lib/state/settings.svelte";
   import type { GitFileEntry, GitStatusCode } from "$lib/api/files";
+  import Modal from "./Modal.svelte";
 
   import { buildTree, collectPaths, type ScmTreeNode } from "$lib/domain/scm-tree";
 
@@ -69,10 +70,6 @@
 
   function cancelDiscard(): void {
     pendingDiscard = null;
-  }
-
-  function onConfirmKeydown(e: KeyboardEvent): void {
-    if (e.key === "Escape") { e.preventDefault(); cancelDiscard(); }
   }
 
   onMount(() => {
@@ -377,19 +374,16 @@
     {/if}
   {/if}
 
-  {#if pendingDiscard}
-    {@const isUntracked = pendingDiscard.isUntracked}
-    {@const count = pendingDiscard.paths.length}
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div
-      class="scm-confirm-overlay"
-      role="alertdialog"
-      tabindex="-1"
-      aria-modal="true"
-      aria-labelledby="scm-confirm-title"
-      onclick={(e) => { if (e.target === e.currentTarget) cancelDiscard(); }}
-      onkeydown={onConfirmKeydown}
-    >
+  <Modal
+    open={!!pendingDiscard}
+    onClose={cancelDiscard}
+    overlayClass="scm-confirm-overlay"
+    role="alertdialog"
+    labelledby="scm-confirm-title"
+  >
+    {#if pendingDiscard}
+      {@const isUntracked = pendingDiscard.isUntracked}
+      {@const count = pendingDiscard.paths.length}
       <div class="scm-confirm-dialog">
         <h2 id="scm-confirm-title" class="scm-confirm-title">
           {#if isUntracked}
@@ -414,8 +408,8 @@
           </button>
         </div>
       </div>
-    </div>
-  {/if}
+    {/if}
+  </Modal>
 </div>
 
 {#snippet section(opts: { id: string; label: string; count: number; expanded: boolean; toggle: () => void; rows: GitFileEntry[]; kind: "staged" | "changes" | "untracked" | "merge" })}
@@ -997,16 +991,6 @@
     color: var(--text-tertiary);
     font-size: 12px;
     text-align: center;
-  }
-
-  .scm-confirm-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.45);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
   }
 
   .scm-confirm-dialog {

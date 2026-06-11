@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
   import { renameEntry } from "$lib/api/files";
+  import Modal from "./Modal.svelte";
   import type { FileEntry } from "$lib/domain/file";
 
   interface Props {
@@ -108,17 +109,20 @@
     }
   }
 
+  // Escape is handled by Modal.
   function handleKeydown(event: KeyboardEvent): void {
-    if (event.key === "Escape") onClose();
     if (event.key === "Enter" && canRename) handleRename();
   }
 </script>
 
-{#if open}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="dialog-backdrop" onclick={onClose} onkeydown={handleKeydown}>
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="dialog" onclick={(e) => e.stopPropagation()}>
+<Modal
+  {open}
+  {onClose}
+  overlayClass="dialog-backdrop"
+  label="Bulk rename"
+  onkeydown={handleKeydown}
+>
+    <div class="dialog">
       <div class="dialog-header">
         <h2>Bulk Rename ({entries.length} files)</h2>
         <button class="close-btn" onclick={onClose}>×</button>
@@ -182,20 +186,9 @@
         </div>
       </div>
     </div>
-  </div>
-{/if}
+</Modal>
 
 <style>
-  .dialog-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
-
   .dialog {
     background: var(--layer-default);
     border: 1px solid var(--surface-stroke);

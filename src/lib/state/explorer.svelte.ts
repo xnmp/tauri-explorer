@@ -530,7 +530,6 @@ function createExplorerState(seed?: ExplorerSeed) {
       coreState.selectionAnchorIndex = idx >= 0 ? idx : null;
       isCreatingFolder = false;
       markLocalMutation();
-      dialogStore.closeNewFolder();
       broadcastFileChange([coreState.currentPath]);
       return null;
     }

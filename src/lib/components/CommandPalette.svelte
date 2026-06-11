@@ -14,6 +14,7 @@
     type Command,
   } from "$lib/state/commands.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import Modal from "./Modal.svelte";
 
   interface Props {
     open: boolean;
@@ -121,12 +122,9 @@
   // Flat list for keyboard navigation
   const flatCommands = $derived(filteredCommands);
 
+  // Escape is handled by Modal; everything else lands here.
   function handleKeydown(event: KeyboardEvent): void {
     switch (event.key) {
-      case "Escape":
-        event.preventDefault();
-        onClose();
-        break;
       case "ArrowDown":
         event.preventDefault();
         if (flatCommands.length > 0) {
@@ -183,9 +181,17 @@
   });
 </script>
 
-{#if open}
+<Modal
+  {open}
+  {onClose}
+  overlayClass="command-palette-overlay"
+  align="top"
+  topOffset="15vh"
+  label="Command palette"
+  onkeydown={handleKeydown}
+>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="command-palette-overlay" onclick={onClose} onkeydown={handleKeydown}
+  <div class="command-palette-dialog"
     onmousemove={(e) => {
       if (!mouseTrackingReady) return;
       if (lastMousePos && (e.clientX !== lastMousePos.x || e.clientY !== lastMousePos.y)) {
@@ -193,8 +199,6 @@
       }
       lastMousePos = { x: e.clientX, y: e.clientY };
     }}>
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div class="command-palette-dialog" onclick={(e) => e.stopPropagation()}>
       <div class="search-container">
         <span class="search-prefix">&gt;</span>
         <input
@@ -219,6 +223,7 @@
               {@const isSelected = index === selectedIndex}
               {@const displayShortcut = getCommandShortcut(cmd.id)}
               {@const scores = filteredScored[index]}
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
               <li
                 class="command-item"
                 class:selected={isSelected}
@@ -263,28 +268,10 @@
         <span class="shortcut"><kbd>Enter</kbd> Execute</span>
         <span class="shortcut"><kbd>Esc</kbd> Close</span>
       </div>
-    </div>
   </div>
-{/if}
+</Modal>
 
 <style>
-  .command-palette-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-    padding-top: 15vh;
-    z-index: 1000;
-    animation: fadeIn 100ms ease-out;
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-
   .command-palette-dialog {
     width: 600px;
     max-width: 90vw;

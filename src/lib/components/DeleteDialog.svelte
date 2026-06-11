@@ -6,21 +6,13 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { toastStore } from "$lib/state/toast.svelte";
+  import Modal from "./Modal.svelte";
 
   interface Props {
     explorer: ExplorerInstance;
   }
 
   let { explorer }: Props = $props();
-
-  let overlayEl: HTMLDivElement | undefined = $state();
-
-  // Auto-focus overlay when dialog opens so keydown events are captured
-  $effect(() => {
-    if (overlayEl) {
-      overlayEl.focus();
-    }
-  });
 
   function handleConfirm() {
     const entries = [...dialogStore.deletingEntries];
@@ -58,138 +50,88 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-      handleCancel();
-    } else if (event.key === "Enter") {
+    // Enter confirms — unless a button has focus (e.g. the user tabbed to
+    // Cancel), in which case the button's own activation must win.
+    if (event.key === "Enter" && !(event.target instanceof HTMLButtonElement)) {
       event.preventDefault();
       event.stopPropagation();
       handleConfirm();
     }
   }
-
-  function handleBackdropClick(event: MouseEvent) {
-    if (event.target === event.currentTarget) {
-      handleCancel();
-    }
-  }
 </script>
 
-{#if dialogStore.deletingEntries.length > 0}
+<Modal
+  open={dialogStore.deletingEntries.length > 0}
+  onClose={handleCancel}
+  overlayClass="overlay"
+  role="alertdialog"
+  labelledby="dialog-title"
+  describedby="dialog-description"
+  onkeydown={handleKeydown}
+>
   {@const entries = dialogStore.deletingEntries}
   {@const isMultiple = entries.length > 1}
   {@const singleEntry = entries[0]}
   {@const hasFolders = entries.some((e) => e.kind === "directory")}
   {@const isPermanent = dialogStore.isPermanentDelete}
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <div
-    class="overlay"
-    role="alertdialog"
-    aria-modal="true"
-    aria-labelledby="dialog-title"
-    aria-describedby="dialog-description"
-    tabindex="-1"
-    bind:this={overlayEl}
-    onkeydown={handleKeydown}
-    onclick={handleBackdropClick}
-  >
-    <div class="dialog">
-      <div class="dialog-icon">
-        <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-          <circle cx="16" cy="16" r="14" stroke="currentColor" stroke-width="2"/>
-          <path d="M16 9V18M16 23V21" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
-        </svg>
-      </div>
+  <div class="dialog modal-card">
+    <div class="dialog-icon">
+      <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+        <circle cx="16" cy="16" r="14" stroke="currentColor" stroke-width="2"/>
+        <path d="M16 9V18M16 23V21" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+      </svg>
+    </div>
 
-      <div class="dialog-content">
-        {#if isMultiple}
-          <h2 id="dialog-title">{isPermanent ? "Permanently delete" : "Delete"} {entries.length} items?</h2>
-          <p id="dialog-description" class="message">
-            {#if isPermanent}
-              These {entries.length} items will be <strong>permanently deleted</strong>. This cannot be undone.
-            {:else}
-              These {entries.length} items will be moved to the Recycle Bin.
-            {/if}
-            {#if hasFolders}
-              <span class="info">Folders and all their contents will also be {isPermanent ? "deleted" : "moved"}.</span>
-            {/if}
-          </p>
-          <div class="entry-list">
-            {#each entries.slice(0, 5) as entry}
-              <span class="entry-name">{entry.name}</span>
-            {/each}
-            {#if entries.length > 5}
-              <span class="entry-more">and {entries.length - 5} more...</span>
-            {/if}
-          </div>
-        {:else}
-          <h2 id="dialog-title">{isPermanent ? "Permanently delete" : "Delete"} {singleEntry.kind === "directory" ? "folder" : "file"}?</h2>
-          <p id="dialog-description" class="message">
-            {#if isPermanent}
-              <strong>{singleEntry.name}</strong> will be <strong>permanently deleted</strong>. This cannot be undone.
-            {:else}
-              <strong>{singleEntry.name}</strong> will be moved to the Recycle Bin.
-            {/if}
-            {#if singleEntry.kind === "directory"}
-              <span class="info">All files and folders inside will also be {isPermanent ? "deleted" : "moved"}.</span>
-            {/if}
-          </p>
-        {/if}
+    <div class="dialog-content">
+      {#if isMultiple}
+        <h2 id="dialog-title">{isPermanent ? "Permanently delete" : "Delete"} {entries.length} items?</h2>
+        <p id="dialog-description" class="message">
+          {#if isPermanent}
+            These {entries.length} items will be <strong>permanently deleted</strong>. This cannot be undone.
+          {:else}
+            These {entries.length} items will be moved to the Recycle Bin.
+          {/if}
+          {#if hasFolders}
+            <span class="info">Folders and all their contents will also be {isPermanent ? "deleted" : "moved"}.</span>
+          {/if}
+        </p>
+        <div class="entry-list">
+          {#each entries.slice(0, 5) as entry}
+            <span class="entry-name">{entry.name}</span>
+          {/each}
+          {#if entries.length > 5}
+            <span class="entry-more">and {entries.length - 5} more...</span>
+          {/if}
+        </div>
+      {:else if singleEntry}
+        <h2 id="dialog-title">{isPermanent ? "Permanently delete" : "Delete"} {singleEntry.kind === "directory" ? "folder" : "file"}?</h2>
+        <p id="dialog-description" class="message">
+          {#if isPermanent}
+            <strong>{singleEntry.name}</strong> will be <strong>permanently deleted</strong>. This cannot be undone.
+          {:else}
+            <strong>{singleEntry.name}</strong> will be moved to the Recycle Bin.
+          {/if}
+          {#if singleEntry.kind === "directory"}
+            <span class="info">All files and folders inside will also be {isPermanent ? "deleted" : "moved"}.</span>
+          {/if}
+        </p>
+      {/if}
+    </div>
 
-      </div>
-
-      <div class="dialog-actions">
-        <button type="button" class="btn secondary" onclick={handleCancel}>
-          Cancel
-        </button>
-        <button type="button" class="btn danger" onclick={handleConfirm}>
-          Delete{#if isMultiple} ({entries.length}){/if}
-        </button>
-      </div>
+    <div class="dialog-actions">
+      <button type="button" class="btn secondary" onclick={handleCancel}>
+        Cancel
+      </button>
+      <button type="button" class="btn danger" onclick={handleConfirm}>
+        Delete{#if isMultiple} ({entries.length}){/if}
+      </button>
     </div>
   </div>
-{/if}
+</Modal>
 
 <style>
-  .overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.3);
-    backdrop-filter: blur(4px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    animation: overlayIn 80ms cubic-bezier(0, 0, 0, 1);
-  }
-
-  @keyframes overlayIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-
   .dialog {
-    background: var(--background-acrylic);
-    backdrop-filter: blur(60px) saturate(125%);
-    border: 1px solid var(--surface-stroke-flyout);
-    border-radius: var(--radius-lg);
-    padding: var(--spacing-xl);
-    min-width: 360px;
     max-width: 420px;
-    box-shadow: var(--shadow-dialog);
-    animation: dialogIn 250ms cubic-bezier(0.1, 0.9, 0.2, 1);
-  }
-
-  @keyframes dialogIn {
-    from {
-      opacity: 0;
-      transform: scale(0.95) translateY(8px);
-    }
-    to {
-      opacity: 1;
-      transform: scale(1) translateY(0);
-    }
   }
 
   .dialog-icon {
@@ -271,77 +213,10 @@
     font-style: italic;
   }
 
-  .dialog-actions {
-    display: flex;
+  /* Confirm dialogs center their actions (extra .dialog level beats the
+     shared .modal-card .dialog-actions rule from modal.css). */
+  .dialog .dialog-actions {
     justify-content: center;
-    gap: var(--spacing-sm);
-  }
-
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--spacing-sm);
-    min-width: 100px;
-    padding: 8px var(--spacing-lg);
-    border-radius: var(--radius-sm);
-    font-size: var(--font-size-body);
-    font-family: inherit;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all var(--transition-fast);
-  }
-
-  .btn.secondary {
-    background: var(--control-fill);
-    border: 1px solid var(--control-stroke);
-    color: var(--text-primary);
-  }
-
-  .btn.secondary:hover:not(:disabled) {
-    background: var(--control-fill-secondary);
-  }
-
-  .btn.secondary:active:not(:disabled) {
-    background: var(--control-fill-tertiary);
-  }
-
-  .btn.danger {
-    background: var(--system-critical);
-    border: 1px solid transparent;
-    color: white;
-  }
-
-  .btn.danger:hover:not(:disabled) {
-    background: #a61b0f;
-  }
-
-  .btn.danger:active:not(:disabled) {
-    background: #8a1610;
-    transform: scale(0.98);
-  }
-
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn:focus-visible {
-    outline: 2px solid var(--focus-stroke-outer);
-    outline-offset: 1px;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .overlay {
-      background: rgba(0, 0, 0, 0.5);
-    }
-
-    .btn.danger {
-      background: #dc3545;
-    }
-
-    .btn.danger:hover:not(:disabled) {
-      background: #c82333;
-    }
+    margin-top: 0;
   }
 </style>

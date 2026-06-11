@@ -7,6 +7,7 @@
   import { themeStore } from "$lib/state/theme.svelte";
   import { isMac } from "$lib/domain/platform";
   import KeybindingsSettings from "./KeybindingsSettings.svelte";
+  import Modal from "./Modal.svelte";
 
   interface Props {
     open: boolean;
@@ -77,6 +78,8 @@
     rows.backgroundOpacity, rows.backgroundImage, rows.wallpaperBlur, rows.terminalApp,
   ];
 
+  // Escape clears the search filter before closing, so the Modal default
+  // (close on Escape) is disabled and Escape is handled here instead.
   function handleKeydown(event: KeyboardEvent): void {
     if (event.key === "f" && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
@@ -93,25 +96,16 @@
       }
     }
   }
-
-  function handleBackdropClick(event: MouseEvent): void {
-    if (event.target === event.currentTarget) {
-      onClose();
-    }
-  }
 </script>
 
-{#if open}
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <div
-    class="settings-overlay"
-    onclick={handleBackdropClick}
-    onkeydown={handleKeydown}
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="settings-title"
-    tabindex="-1"
-  >
+<Modal
+  {open}
+  {onClose}
+  overlayClass="settings-overlay"
+  labelledby="settings-title"
+  closeOnEscape={false}
+  onkeydown={handleKeydown}
+>
     <div class="settings-dialog">
       <header class="dialog-header">
         <h2 id="settings-title">Settings</h2>
@@ -559,26 +553,9 @@
         </section>
       </div>
     </div>
-  </div>
-{/if}
+</Modal>
 
 <style>
-  .settings-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    animation: fadeIn 100ms ease-out;
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-
   .settings-dialog {
     width: 600px;
     max-width: 90vw;

@@ -219,7 +219,7 @@
     position: fixed;
     bottom: 16px;
     right: 16px;
-    z-index: 900;
+    z-index: var(--z-progress); /* corner panel: stays visible above modal dialogs */
     animation: slideUp 200ms cubic-bezier(0, 0, 0, 1);
   }
 

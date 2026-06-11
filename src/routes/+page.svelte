@@ -386,6 +386,14 @@
 
     /* Selection indicator */
     --selection-indicator-width: 3px;
+
+    /* Z-index scale — every overlay layer uses these tokens so layers can't
+       silently collide. Component-local stacking inside panes stays < 200. */
+    --z-modal: 1000;          /* modal dialogs + their backdrops (Modal.svelte) */
+    --z-modal-popover: 1100;  /* dropdowns that must beat an open modal (pickers) */
+    --z-menu: 1200;           /* context menus */
+    --z-progress: 1300;       /* corner progress panel — visible above modals */
+    --z-toast: 1400;          /* notifications — topmost */
   }
 
   /* Window frame styling for transparent decorationless window */

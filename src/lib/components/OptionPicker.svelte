@@ -136,7 +136,7 @@
     align-items: flex-start;
     justify-content: center;
     padding-top: 15vh;
-    z-index: 1001;
+    z-index: var(--z-modal-popover);
   }
 
   .option-picker-dialog {

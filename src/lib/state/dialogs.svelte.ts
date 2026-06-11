@@ -10,7 +10,7 @@
 
 import type { FileEntry } from "$lib/domain/file";
 
-export type DialogType = "newFolder" | "rename" | "delete" | null;
+export type DialogType = "rename" | "delete" | null;
 
 export interface PickerOption {
   id: string;
@@ -60,9 +60,6 @@ function createDialogStore() {
     },
     get targetEntry() {
       return targetEntry;
-    },
-    get isNewFolderOpen() {
-      return activeDialog === "newFolder";
     },
     get isRenameOpen() {
       return activeDialog === "rename";
@@ -125,15 +122,6 @@ function createDialogStore() {
     },
 
     // File operation actions
-    openNewFolder(): void {
-      activeDialog = "newFolder";
-      targetEntry = null;
-    },
-
-    closeNewFolder(): void {
-      closeIfActive("newFolder");
-    },
-
     startRename(entry: FileEntry): void {
       activeDialog = "rename";
       targetEntry = entry;

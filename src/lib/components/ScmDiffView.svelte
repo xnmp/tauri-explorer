@@ -29,12 +29,17 @@
   let error = $state<string | null>(null);
   let parsed = $state<ParsedDiff | null>(null);
   let rootEl = $state<HTMLDivElement | null>(null);
+  let requestGen = 0;
 
-  async function fetchDiff(): Promise<void> {
+  async function fetchDiff(repo: string, file: string, isStaged: boolean): Promise<void> {
+    const gen = ++requestGen;
     const isInitial = parsed === null;
     if (isInitial) loading = true;
     error = null;
-    const r = await gitDiff(repoPath, path, { staged });
+    const r = await gitDiff(repo, file, { staged: isStaged });
+    // Drop stale responses — a newer request (different row / staged flag /
+    // refresh) superseded this one while it was in flight.
+    if (gen !== requestGen) return;
     if (!r.ok) {
       error = r.error;
       parsed = null;
@@ -58,11 +63,12 @@
     error = null;
   });
 
-  // Refetch when target or SCM summary changes (summary tracks stage/unstage).
+  // Refetch when the target or the SCM summary changes. Depend on the summary
+  // object itself (replaced wholesale on refresh) — counts can stay identical
+  // while contents change, so a count-based key would miss updates.
   $effect(() => {
-    const key = `${repoPath}|${path}|${staged}|${scmStore.summary.staged.length}|${scmStore.summary.changes.length}`;
-    void key;
-    fetchDiff();
+    void scmStore.summary;
+    fetchDiff(repoPath, path, staged);
   });
 
   function onKeydown(e: KeyboardEvent): void {

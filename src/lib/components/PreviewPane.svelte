@@ -14,12 +14,18 @@
   import { scmStore } from "$lib/state/scm.svelte";
   import { parseUnifiedDiff, type ParsedDiff, type DiffLine } from "$lib/domain/diff";
   import FileIcon from "./FileIcon.svelte";
-  /** Detect if the current theme uses a light color scheme */
-  const isLightTheme = $derived.by(() => {
-    // Force re-evaluation when theme changes by reading the theme ID
-    const _theme = settingsStore.theme;
-    if (typeof document === "undefined") return false;
-    return getComputedStyle(document.documentElement).colorScheme === "light";
+  /** Detect if the current theme uses a light color scheme.
+   * Recomputed via a MutationObserver on the documentElement's `data-theme`
+   * attribute (set by theme.svelte.ts) — getComputedStyle only reflects the
+   * new theme after the attribute has actually been applied to the DOM. */
+  let isLightTheme = $state(false);
+  $effect(() => {
+    const compute = () =>
+      (isLightTheme = getComputedStyle(document.documentElement).colorScheme === "light");
+    compute();
+    const observer = new MutationObserver(compute);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
   });
 
   // Resize handle state
@@ -91,7 +97,7 @@
   let diffParsed = $state<ParsedDiff | null>(null);
   let diffLoading = $state(false);
   let diffError = $state<string | null>(null);
-  let lastDiffKey: string | null = null;
+  let diffRequestGen = 0;
 
   const diffVisibleLines = $derived.by<DiffLine[]>(() => {
     if (!diffParsed) return [];
@@ -110,23 +116,29 @@
 
   $effect(() => {
     if (!activeDiff || !scmStore.repoRoot) {
+      diffRequestGen++; // invalidate any in-flight request
       diffParsed = null;
       diffError = null;
       diffLoading = false;
-      lastDiffKey = null;
       return;
     }
-    const key = `${scmStore.repoRoot}|${activeDiff.path}|${activeDiff.staged}|${scmStore.summary.staged.length}|${scmStore.summary.changes.length}`;
-    if (key === lastDiffKey) return;
-    lastDiffKey = key;
+    // Depend on the summary object itself (replaced wholesale on refresh) —
+    // counts can stay identical while file contents change, so a count-based
+    // key would miss content updates.
+    void scmStore.summary;
     loadDiff(scmStore.repoRoot, activeDiff.path, activeDiff.staged);
   });
 
   async function loadDiff(repoRoot: string, path: string, staged: boolean): Promise<void> {
+    const gen = ++diffRequestGen;
     diffLoading = true;
     diffError = null;
     const r = await gitDiff(repoRoot, path, { staged });
-    if (scmStore.activeDiff?.path !== path) return;
+    // Drop stale responses: a newer request superseded this one, or the
+    // target (path OR staged flag) changed while we were fetching.
+    if (gen !== diffRequestGen) return;
+    const current = scmStore.activeDiff;
+    if (!current || current.path !== path || current.staged !== staged) return;
     if (!r.ok) {
       diffError = r.error;
       diffParsed = null;

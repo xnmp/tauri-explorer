@@ -13,9 +13,10 @@
   const MAX_WIDTH = 500;
   const DEFAULT_WIDTH = 280;
 
-  let savedWidth = typeof localStorage !== "undefined"
-    ? parseInt(localStorage.getItem(PANEL_WIDTH_KEY) || String(DEFAULT_WIDTH), 10)
-    : DEFAULT_WIDTH;
+  const parsedWidth = typeof localStorage !== "undefined"
+    ? parseInt(localStorage.getItem(PANEL_WIDTH_KEY) ?? "", 10)
+    : NaN;
+  const savedWidth = Number.isNaN(parsedWidth) ? DEFAULT_WIDTH : parsedWidth;
 
   let panelWidth = $state(Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, savedWidth)));
   let isResizing = $state(false);

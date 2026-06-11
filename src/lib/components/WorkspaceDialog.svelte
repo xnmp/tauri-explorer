@@ -117,7 +117,7 @@
             <div class="workspace-list">
               {#each workspacesStore.list as workspace (workspace.id)}
                 <div class="workspace-item">
-                  <div class="workspace-info" onclick={() => handleRestore(workspace.id)} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter") handleRestore(workspace.id); }}>
+                  <div class="workspace-info" onclick={() => handleRestore(workspace.id)} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) handleRestore(workspace.id); }}>
                     {#if editingId === workspace.id}
                       <input
                         type="text"

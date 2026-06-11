@@ -5,7 +5,8 @@
 <script lang="ts">
   import { tick } from "svelte";
   import type { FileEntry } from "$lib/domain/file";
-  import { normalizePathInput } from "$lib/domain/path";
+  import { expandTilde as expandTildePath, normalizePathInput } from "$lib/domain/path";
+  import { parsePathInput, filterDirectorySuggestions } from "$lib/domain/autocomplete";
   import { fetchDirectory } from "$lib/api/files";
 
   interface Props {
@@ -33,27 +34,12 @@
   });
 
   function expandTilde(path: string): string {
-    if (!homeDir) return path;
-    if (path === "~") return homeDir;
-    if (path.startsWith("~/")) return homeDir + path.slice(1);
-    return path;
-  }
-
-  function parsePathInput(input: string): { parentDir: string; prefix: string } {
-    const expanded = expandTilde(input);
-    if (!expanded || expanded === "/") return { parentDir: "/", prefix: "" };
-    if (expanded.endsWith("/")) return { parentDir: expanded, prefix: "" };
-    const lastSlash = expanded.lastIndexOf("/");
-    if (lastSlash < 0) return { parentDir: "/", prefix: expanded };
-    return {
-      parentDir: expanded.substring(0, lastSlash + 1),
-      prefix: expanded.substring(lastSlash + 1),
-    };
+    return expandTildePath(path, homeDir);
   }
 
   async function fetchSuggestionsImpl(): Promise<void> {
     const gen = ++fetchGeneration;
-    const { parentDir, prefix } = parsePathInput(editedPath);
+    const { parentDir, prefix } = parsePathInput(editedPath, homeDir);
 
     const result = await fetchDirectory(parentDir);
     if (gen !== fetchGeneration) return;
@@ -64,11 +50,7 @@
       return;
     }
 
-    const lowerPrefix = prefix.toLowerCase();
-    const filtered = result.data.entries
-      .filter((e) => e.kind === "directory" && e.name.toLowerCase().startsWith(lowerPrefix))
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .slice(0, 12);
+    const filtered = filterDirectorySuggestions(result.data.entries, prefix);
 
     suggestions = filtered;
     selectedIndex = filtered.length > 0 ? 0 : -1;

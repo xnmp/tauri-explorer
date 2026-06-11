@@ -5,7 +5,6 @@
 <script lang="ts">
   import { tick } from "svelte";
   import {
-    getAllCommands,
     getAvailableCommands,
     getCommandsByFrecency,
     getCommandFrecencyScore,
@@ -13,7 +12,6 @@
     getCategoryLabel,
     getCommandShortcut,
     type Command,
-    type CommandCategory,
   } from "$lib/state/commands.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
 
@@ -27,6 +25,7 @@
   let query = $state("");
   let selectedIndex = $state(0);
   let inputRef = $state<HTMLInputElement | null>(null);
+  let commandsContainerRef = $state<HTMLElement | null>(null);
   // Suppress mouseenter on rows until the user actually moves the mouse —
   // prevents selection from jumping to the row the cursor happened to be over
   // when the palette opened (or after arrow navigation scrolled a new row under it).
@@ -119,18 +118,6 @@
     return score;
   }
 
-  // Group commands by category for display
-  const groupedCommands = $derived.by(() => {
-    const groups = new Map<CommandCategory, Command[]>();
-
-    for (const cmd of filteredCommands) {
-      const existing = groups.get(cmd.category) || [];
-      groups.set(cmd.category, [...existing, cmd]);
-    }
-
-    return groups;
-  });
-
   // Flat list for keyboard navigation
   const flatCommands = $derived(filteredCommands);
 
@@ -167,7 +154,7 @@
 
   function scrollToSelected(): void {
     tick().then(() => {
-      const selected = document.querySelector(".command-item.selected");
+      const selected = commandsContainerRef?.querySelector(".command-item.selected");
       selected?.scrollIntoView({ block: "nearest" });
     });
   }
@@ -225,7 +212,7 @@
         />
       </div>
 
-      <div class="commands-container">
+      <div class="commands-container" bind:this={commandsContainerRef}>
         {#if flatCommands.length > 0}
           <ul class="commands-list" role="listbox">
             {#each flatCommands as cmd, index (cmd.id)}

@@ -18,8 +18,9 @@
   let { explorer, variant }: Props = $props();
 
   let newFolderName = $state("New folder");
-  let newFolderInput: HTMLInputElement | null = null;
+  let newFolderInput = $state<HTMLInputElement | null>(null);
   let newFolderError = $state<string | null>(null);
+  let submitting = $state(false);
 
   function getNextFolderName(): string {
     const base = "New folder";
@@ -47,14 +48,22 @@
   });
 
   async function confirmNewFolder(): Promise<void> {
+    // Guard against double submission — Enter triggers confirm and the
+    // resulting blur would otherwise call createFolder a second time.
+    if (submitting) return;
     const name = newFolderName.trim();
     if (!name) {
       explorer.cancelInlineNewFolder();
       return;
     }
-    const error = await explorer.createFolder(name);
-    if (error) {
-      newFolderError = error;
+    submitting = true;
+    try {
+      const error = await explorer.createFolder(name);
+      if (error) {
+        newFolderError = error;
+      }
+    } finally {
+      submitting = false;
     }
   }
 

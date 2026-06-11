@@ -82,6 +82,22 @@
     explorer.navigateTo(path);
   }
 
+  /** Resolve the directory the caret before crumb `index` should list.
+   * When the preceding crumb is the truncation ellipsis (path === null) the
+   * real parent is hidden, so derive it from the crumb's own path — breadcrumb
+   * paths are accumulated prefixes (Windows separators tolerated). */
+  function resolveCaretParent(index: number): { path: string; name: string | null } {
+    const fallback = { path: isUnderHome && homeDir ? homeDir : rootPath, name: null };
+    const prev = displayBreadcrumbs[index - 1];
+    if (!prev) return fallback;
+    if (prev.path !== null) return { path: prev.path, name: prev.name };
+    const own = displayBreadcrumbs[index].path!;
+    const sepIdx = Math.max(own.lastIndexOf("/"), own.lastIndexOf("\\"));
+    if (sepIdx <= 0) return fallback;
+    const parent = own.substring(0, sepIdx);
+    return { path: /^[A-Za-z]:$/.test(parent) ? `${parent}\\` : parent, name: null };
+  }
+
   // Caret picker state
   let caretPickerPath = $state<string | null>(null);
   let caretPickerEl = $state<HTMLElement | null>(null);
@@ -265,12 +281,12 @@
           </span>
           <span class="crumb ellipsis">{segment.name}</span>
         {:else}
-          {@const parentOfSegment = i === 0 ? (isUnderHome ? homeDir! : rootPath) : (displayBreadcrumbs[i - 1]?.path ?? (isUnderHome ? homeDir! : rootPath))}
+          {@const caretParent = resolveCaretParent(i)}
           <button
             class="separator caret-btn"
-            class:caret-active={caretPickerPath === parentOfSegment}
-            aria-label="Show folders in {i === 0 ? 'parent' : displayBreadcrumbs[i - 1]?.name ?? 'parent'}"
-            onclick={(e) => { e.stopPropagation(); openCaretPicker(parentOfSegment, e.currentTarget as HTMLElement); }}
+            class:caret-active={caretPickerPath === caretParent.path}
+            aria-label="Show folders in {caretParent.name ?? 'parent'}"
+            onclick={(e) => { e.stopPropagation(); openCaretPicker(caretParent.path, e.currentTarget as HTMLElement); }}
           >
             <svg class="chevron-icon" width="12" height="12" viewBox="0 0 10 10" fill="none">
               <path d="M3 2L6 5L3 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>

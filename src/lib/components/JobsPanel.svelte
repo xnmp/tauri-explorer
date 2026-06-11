@@ -4,7 +4,6 @@
 -->
 <script lang="ts">
   import { jobsStore, type Job } from "$lib/state/jobs.svelte";
-  import { onMount } from "svelte";
   import { basename } from "$lib/domain/path";
 
   interface Props {
@@ -16,23 +15,11 @@
 
   // Live elapsed time counter for running jobs
   let now = $state(Date.now());
-  let intervalId: ReturnType<typeof setInterval> | undefined;
 
   $effect(() => {
-    if (open && jobsStore.hasRunningJobs) {
-      intervalId = setInterval(() => { now = Date.now(); }, 1000);
-    } else {
-      if (intervalId) {
-        clearInterval(intervalId);
-        intervalId = undefined;
-      }
-    }
-  });
-
-  onMount(() => {
-    return () => {
-      if (intervalId) clearInterval(intervalId);
-    };
+    if (!open || !jobsStore.hasRunningJobs) return;
+    const intervalId = setInterval(() => { now = Date.now(); }, 1000);
+    return () => clearInterval(intervalId);
   });
 
   function formatElapsed(job: Job): string {

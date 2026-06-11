@@ -13,7 +13,6 @@
 
   let { explorer }: Props = $props();
 
-  let error = $state<string | null>(null);
   let overlayEl: HTMLDivElement | undefined = $state();
 
   // Auto-focus overlay when dialog opens so keydown events are captured
@@ -24,7 +23,6 @@
   });
 
   function handleConfirm() {
-    error = null;
     const entries = [...dialogStore.deletingEntries];
     const isPermanent = dialogStore.isPermanentDelete;
     const isMultiple = entries.length > 1;
@@ -56,7 +54,6 @@
   }
 
   function handleCancel() {
-    error = null;
     dialogStore.cancelDelete();
   }
 
@@ -140,15 +137,6 @@
           </p>
         {/if}
 
-        {#if error}
-          <p class="error-message" role="alert">
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <circle cx="6" cy="6" r="5" stroke="currentColor" stroke-width="1.25"/>
-              <path d="M6 3.5V6.5M6 8.5V8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
-            </svg>
-            {error}
-          </p>
-        {/if}
       </div>
 
       <div class="dialog-actions">
@@ -283,23 +271,6 @@
     font-style: italic;
   }
 
-  .error-message {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--spacing-xs);
-    margin: var(--spacing-md) 0 0;
-    font-size: var(--font-size-caption);
-    color: var(--system-critical);
-    animation: shake 300ms ease-out;
-  }
-
-  @keyframes shake {
-    0%, 100% { transform: translateX(0); }
-    20%, 60% { transform: translateX(-4px); }
-    40%, 80% { transform: translateX(4px); }
-  }
-
   .dialog-actions {
     display: flex;
     justify-content: center;
@@ -358,19 +329,6 @@
   .btn:focus-visible {
     outline: 2px solid var(--focus-stroke-outer);
     outline-offset: 1px;
-  }
-
-  .spinner {
-    width: 14px;
-    height: 14px;
-    border: 2px solid rgba(255, 255, 255, 0.3);
-    border-top-color: white;
-    border-radius: 50%;
-    animation: spin 600ms linear infinite;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
   }
 
   @media (prefers-color-scheme: dark) {

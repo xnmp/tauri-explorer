@@ -170,6 +170,21 @@
     savePersisted("explorer-hidden-system-folders", [...hiddenSystemFolders]);
   }
 
+  // Context menu on the Bookmarks header offering to restore removed
+  // system folders — without this, hiding one is irreversible.
+  let bookmarksMenuPos = $state<{ x: number; y: number } | null>(null);
+
+  function onBookmarksHeaderContextMenu(event: MouseEvent) {
+    event.preventDefault();
+    bookmarksMenuPos = { x: event.clientX, y: event.clientY };
+  }
+
+  function restoreDefaultFolders() {
+    hiddenSystemFolders = new Set();
+    savePersisted("explorer-hidden-system-folders", []);
+    bookmarksMenuPos = null;
+  }
+
   const quickAccessFolders = $derived(
     allSystemFolders.filter((f) => !hiddenSystemFolders.has(f.name))
   );
@@ -284,6 +299,7 @@
     <button
       class="section-header"
       onclick={() => quickAccessExpanded = !quickAccessExpanded}
+      oncontextmenu={onBookmarksHeaderContextMenu}
       aria-expanded={quickAccessExpanded}
     >
       <svg width="12" height="12" viewBox="0 0 12 12" fill="none" class="chevron" class:expanded={quickAccessExpanded}>
@@ -298,9 +314,13 @@
     {#if quickAccessExpanded}
       <div class="section-content">
         {#each quickAccessFolders as folder}
-          <!-- svelte-ignore a11y_click_events_have_key_events -->
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="nav-item folder-item" onclick={() => navigateTo(folder.path)}>
+          <div
+            class="nav-item folder-item"
+            onclick={() => navigateTo(folder.path)}
+            onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigateTo(folder.path); }}}
+            role="button"
+            tabindex="0"
+          >
             {#if folder.icon === "download"}
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: {folder.color}">
                 <path d="M8 2V10M8 10L5 7M8 10L11 7M3 12H13" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
@@ -383,6 +403,26 @@
             </button>
           </div>
         {/each}
+      </div>
+    {/if}
+
+    {#if bookmarksMenuPos}
+      <div
+        class="section-menu-backdrop"
+        onclick={() => bookmarksMenuPos = null}
+        oncontextmenu={(e) => { e.preventDefault(); bookmarksMenuPos = null; }}
+        onkeydown={(e) => { if (e.key === 'Escape') bookmarksMenuPos = null; }}
+        role="presentation"
+      ></div>
+      <div class="section-menu" style="left: {bookmarksMenuPos.x}px; top: {bookmarksMenuPos.y}px;" role="menu">
+        <button
+          class="section-menu-item"
+          role="menuitem"
+          onclick={restoreDefaultFolders}
+          disabled={hiddenSystemFolders.size === 0}
+        >
+          Restore default folders
+        </button>
       </div>
     {/if}
   </div>
@@ -655,5 +695,45 @@
   .user-bookmark.drop-target {
     background: var(--subtle-fill-secondary);
     box-shadow: 0 -2px 0 0 var(--accent);
+  }
+
+  .section-menu-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 99;
+  }
+
+  .section-menu {
+    position: fixed;
+    z-index: 100;
+    min-width: 180px;
+    padding: 4px;
+    background: var(--background-card, var(--background-solid));
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-md, 6px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  }
+
+  .section-menu-item {
+    display: block;
+    width: 100%;
+    padding: 6px 10px;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-family: inherit;
+    font-size: 13px;
+    color: var(--text-primary);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .section-menu-item:hover:not(:disabled) {
+    background: var(--subtle-fill-secondary);
+  }
+
+  .section-menu-item:disabled {
+    color: var(--text-tertiary);
+    cursor: default;
   }
 </style>

@@ -9,9 +9,10 @@
   const MAX_WIDTH = 400;
   const DEFAULT_WIDTH = 240;
 
-  let savedWidth = typeof localStorage !== "undefined"
-    ? parseInt(localStorage.getItem(SIDEBAR_WIDTH_KEY) || String(DEFAULT_WIDTH), 10)
-    : DEFAULT_WIDTH;
+  const parsedWidth = typeof localStorage !== "undefined"
+    ? parseInt(localStorage.getItem(SIDEBAR_WIDTH_KEY) ?? "", 10)
+    : NaN;
+  const savedWidth = Number.isNaN(parsedWidth) ? DEFAULT_WIDTH : parsedWidth;
 
   let sidebarWidth = $state(Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, savedWidth)));
   let isResizing = $state(false);

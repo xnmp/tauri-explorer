@@ -36,9 +36,13 @@
   const top = $derived(anchorEl.getBoundingClientRect().bottom + 4);
 </script>
 
+<svelte:window onkeydown={(e) => { if (e.key === "Escape") { e.preventDefault(); onClose(); } }} />
+
+<!-- Backdrop always renders while open so the picker can be dismissed even
+     when the directory has no subdirectories. -->
+<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+<div class="caret-picker-backdrop" onclick={(e) => { e.stopPropagation(); onClose(); }}></div>
 {#if dirs.length > 0}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="caret-picker-backdrop" onclick={(e) => { e.stopPropagation(); onClose(); }} onkeydown={(e) => { if (e.key === "Escape") onClose(); }}></div>
   <div class="caret-picker" style="left: {left}px; top: {top}px;">
     {#each dirs as dir (dir.path)}
       <button class="caret-picker-item" onclick={() => select(dir.path)}>

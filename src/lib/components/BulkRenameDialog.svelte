@@ -22,11 +22,26 @@
   let isRenaming = $state(false);
   let error = $state<string | null>(null);
 
+  // Reset inputs when the dialog is (re)opened so stale patterns from a
+  // previous session don't apply silently.
+  $effect(() => {
+    if (open) {
+      findPattern = "";
+      replaceWith = "";
+      useRegex = false;
+      caseSensitive = false;
+      error = null;
+    }
+  });
+
   /** Preview the renamed filenames */
   const previews = $derived.by(() => {
     return entries.map((entry) => {
-      const ext = entry.name.includes(".") ? entry.name.substring(entry.name.lastIndexOf(".")) : "";
-      const nameWithoutExt = entry.name.includes(".") ? entry.name.substring(0, entry.name.lastIndexOf(".")) : entry.name;
+      // A leading dot marks a hidden file, not an extension (".bashrc" has no ext)
+      const dotIndex = entry.name.lastIndexOf(".");
+      const hasExt = dotIndex > 0;
+      const ext = hasExt ? entry.name.substring(dotIndex) : "";
+      const nameWithoutExt = hasExt ? entry.name.substring(0, dotIndex) : entry.name;
 
       if (!findPattern) return { original: entry.name, renamed: entry.name, changed: false };
 
@@ -53,32 +68,49 @@
 
   const changedCount = $derived(previews.filter((p) => p.changed).length);
 
+  /** Target names that more than one file would end up with — renaming would clobber. */
+  const duplicateTargets = $derived.by(() => {
+    const counts = new Map<string, number>();
+    for (const p of previews) counts.set(p.renamed, (counts.get(p.renamed) ?? 0) + 1);
+    return [...counts.entries()]
+      .filter(([name, count]) => count > 1 && previews.some((p) => p.changed && p.renamed === name))
+      .map(([name]) => name);
+  });
+
+  const canRename = $derived(changedCount > 0 && duplicateTargets.length === 0 && !isRenaming);
+
   async function handleRename(): Promise<void> {
-    if (changedCount === 0) return;
+    if (!canRename) return;
     isRenaming = true;
     error = null;
 
+    const failures: string[] = [];
+    let renamedAny = false;
     for (let i = 0; i < entries.length; i++) {
       const preview = previews[i];
       if (!preview.changed) continue;
 
       const result = await renameEntry(entries[i].path, preview.renamed);
-      if (!result.ok) {
-        error = `Failed to rename "${entries[i].name}": ${result.error}`;
-        break;
+      if (result.ok) {
+        renamedAny = true;
+      } else {
+        failures.push(`"${entries[i].name}": ${result.error}`);
       }
     }
 
     isRenaming = false;
-    if (!error) {
-      onComplete();
+    // Refresh the list even on partial failure — some files were renamed.
+    if (renamedAny) onComplete();
+    if (failures.length > 0) {
+      error = `Failed to rename ${failures.length} file${failures.length !== 1 ? "s" : ""} — ${failures.join("; ")}`;
+    } else {
       onClose();
     }
   }
 
   function handleKeydown(event: KeyboardEvent): void {
     if (event.key === "Escape") onClose();
-    if (event.key === "Enter" && changedCount > 0 && !isRenaming) handleRename();
+    if (event.key === "Enter" && canRename) handleRename();
   }
 </script>
 
@@ -119,6 +151,12 @@
           <div class="error-msg">{error}</div>
         {/if}
 
+        {#if duplicateTargets.length > 0}
+          <div class="error-msg">
+            Multiple files would be renamed to the same name: {duplicateTargets.join(", ")}. Adjust the pattern to keep names unique.
+          </div>
+        {/if}
+
         <div class="preview-list">
           <div class="preview-header">
             <span>Original</span>
@@ -138,7 +176,7 @@
         <span class="change-count">{changedCount} file{changedCount !== 1 ? "s" : ""} will be renamed</span>
         <div class="footer-actions">
           <button class="btn btn-secondary" onclick={onClose}>Cancel</button>
-          <button class="btn btn-primary" onclick={handleRename} disabled={changedCount === 0 || isRenaming}>
+          <button class="btn btn-primary" onclick={handleRename} disabled={!canRename}>
             {isRenaming ? "Renaming..." : "Rename"}
           </button>
         </div>

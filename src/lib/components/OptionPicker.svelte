@@ -4,11 +4,12 @@
 -->
 <script lang="ts">
   import { tick } from "svelte";
-  import { dialogStore, type PickerConfig } from "$lib/state/dialogs.svelte";
+  import { dialogStore } from "$lib/state/dialogs.svelte";
 
   let query = $state("");
   let selectedIndex = $state(0);
   let inputRef = $state<HTMLInputElement | null>(null);
+  let optionsContainerRef = $state<HTMLElement | null>(null);
   let mouseMoved = $state(false);
 
   const config = $derived(dialogStore.pickerConfig);
@@ -33,7 +34,7 @@
 
   function scrollToSelected(): void {
     tick().then(() => {
-      const selected = document.querySelector(".option-picker-item.selected");
+      const selected = optionsContainerRef?.querySelector(".option-picker-item.selected");
       selected?.scrollIntoView({ block: "nearest" });
     });
   }
@@ -98,7 +99,7 @@
         />
       </div>
 
-      <div class="options-container">
+      <div class="options-container" bind:this={optionsContainerRef}>
         {#if filteredOptions.length > 0}
           <ul class="options-list" role="listbox">
             {#each filteredOptions as option, index (option.id)}

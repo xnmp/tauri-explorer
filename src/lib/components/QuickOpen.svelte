@@ -18,9 +18,9 @@
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { parentDir, basename } from "$lib/domain/path";
+  import { parentDir, basename, expandTilde as expandTildePath } from "$lib/domain/path";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { getFileIconColor, getFileIconCategory, type IconCategory } from "$lib/domain/file-types";
+  import FileIcon from "./FileIcon.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { frecencyStore } from "$lib/state/frecency.svelte";
 
@@ -49,6 +49,7 @@
   let selectedIndex = $state(0);
   let loading = $state(false);
   let inputRef = $state<HTMLInputElement | null>(null);
+  let resultsContainerRef = $state<HTMLElement | null>(null);
   let homeDir = $state<string | null>(null);
   // Guard: suppress mouseenter on results until the user actually moves the mouse.
   // Prevents selection from jumping to whatever row the cursor happened to land on
@@ -65,10 +66,7 @@
 
   /** Expand leading ~ to home directory path */
   function expandTilde(path: string): string {
-    if (!homeDir) return path;
-    if (path === "~") return homeDir;
-    if (path.startsWith("~/")) return homeDir + path.slice(1);
-    return path;
+    return expandTildePath(path, homeDir);
   }
 
   // Debounce timer for search
@@ -95,15 +93,6 @@
     if (nameLower.startsWith(queryLower)) return 150; // prefix match
     if (nameLower.includes(queryLower)) return 100;   // substring match
     return 0; // filename doesn't match
-  }
-
-  /** Score an entry against a query, heavily weighting filename matches. */
-  function scoreEntry(name: string, path: string, queryLower: string): number {
-    const nameScore = filenameMatchScore(name, queryLower);
-    if (nameScore > 0) return nameScore;
-    // Path-only match (filename doesn't contain query)
-    if (path.toLowerCase().includes(queryLower)) return 30;
-    return 0;
   }
 
   /** Match recent files and frecency entries against a search term.
@@ -274,11 +263,13 @@
 
     loading = true;
     searchTimer = setTimeout(async () => {
+      // Claim a generation synchronously so debounce callbacks that
+      // interleave across the awaits below can detect they're stale.
+      const generation = ++searchGeneration;
+
       // Cancel any previous search
       await cancelActiveSearch();
-
-      // Bump generation so stale listeners are discarded
-      const generation = ++searchGeneration;
+      if (generation !== searchGeneration) return;
 
       // Show frecency/recent matches immediately (before backend responds)
       const frecencyMatches = matchFrecencyAndRecent(query);
@@ -296,9 +287,15 @@
       } catch {
         streamingAvailable = false;
       }
+      if (generation !== searchGeneration) return;
 
       if (streamingAvailable) {
         const result = await startStreamingSearch(query, cwd, 20);
+        if (generation !== searchGeneration) {
+          // Superseded while awaiting: cancel the now-orphaned backend search
+          if (result.ok) cancelSearch(result.data);
+          return;
+        }
         if (result.ok) {
           activeSearchId = result.data;
         } else {
@@ -307,6 +304,7 @@
       } else {
         // Fallback: non-streaming search
         const result = await fuzzySearch(query, cwd, 20);
+        if (generation !== searchGeneration) return;
         if (result.ok) {
           const ranked = rankWithFrecency(result.data);
           results = mergeResultsByScore(ranked, frecencyMatches);
@@ -338,6 +336,7 @@
         if (displayResults.length > 0) {
           selectedIndex = (selectedIndex + 1) % displayResults.length;
           mouseMoved = false;
+          scrollToSelected();
         }
         break;
       case "ArrowUp":
@@ -345,6 +344,7 @@
         if (displayResults.length > 0) {
           selectedIndex = (selectedIndex - 1 + displayResults.length) % displayResults.length;
           mouseMoved = false;
+          scrollToSelected();
         }
         break;
       case "Enter":
@@ -359,6 +359,13 @@
         }
         break;
     }
+  }
+
+  function scrollToSelected(): void {
+    tick().then(() => {
+      const selected = resultsContainerRef?.querySelector(".result-item.selected");
+      selected?.scrollIntoView({ block: "nearest" });
+    });
   }
 
   async function selectResult(result: SearchResult): Promise<void> {
@@ -461,7 +468,7 @@
         {/if}
       </div>
 
-      <div class="results-container">
+      <div class="results-container" bind:this={resultsContainerRef}>
         {#if results.length > 0}
           <ul class="results-list" role="listbox">
             {#each results as result, index (result.path)}
@@ -474,57 +481,9 @@
                 onclick={() => selectResult(result)}
                 onmouseenter={() => { if (mouseMoved) selectedIndex = index; }}
               >
-                {#if result.kind === "directory"}
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="folder-icon">
-                    <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="var(--icon-folder, #FFB900)"/>
-                  </svg>
-                {:else}
-                  {@const entry = toFileEntry(result)}
-                  {@const iconColor = getFileIconColor(entry)}
-                  {@const iconCategory = getFileIconCategory(entry)}
-                  {#if iconCategory === "image"}
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
-                      <rect x="2" y="2" width="12" height="12" rx="1.5" fill={iconColor} fill-opacity="0.15"/>
-                      <rect x="2" y="2" width="12" height="12" rx="1.5" stroke={iconColor} stroke-width="1"/>
-                      <circle cx="5.5" cy="5.5" r="1.25" fill={iconColor}/>
-                      <path d="M2 11L5 8L7.5 10.5L10 7L14 11V12.5C14 13.3284 13.3284 14 12.5 14H3.5C2.67157 14 2 13.3284 2 12.5V11Z" fill={iconColor} fill-opacity="0.4"/>
-                    </svg>
-                  {:else if iconCategory === "archive"}
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
-                      <path d="M3 2C3 1.44772 3.44772 1 4 1H12C12.5523 1 13 1.44772 13 2V14C13 14.5523 12.5523 15 12 15H4C3.44772 15 3 14.5523 3 14V2Z" fill={iconColor} fill-opacity="0.15"/>
-                      <path d="M3 2C3 1.44772 3.44772 1 4 1H12C12.5523 1 13 1.44772 13 2V14C13 14.5523 12.5523 15 12 15H4C3.44772 15 3 14.5523 3 14V2Z" stroke={iconColor} stroke-width="1"/>
-                      <rect x="6" y="3" width="4" height="2" rx="0.5" fill={iconColor}/>
-                      <rect x="6" y="6" width="4" height="2" rx="0.5" fill={iconColor}/>
-                      <rect x="6" y="9" width="4" height="3" rx="0.5" fill={iconColor}/>
-                    </svg>
-                  {:else if iconCategory === "code"}
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
-                      <path d="M3 2C3 1.44772 3.44772 1 4 1H9L13 5V14C13 14.5523 12.5523 15 12 15H4C3.44772 15 3 14.5523 3 14V2Z" fill={iconColor} fill-opacity="0.15"/>
-                      <path d="M3 2C3 1.44772 3.44772 1 4 1H9L13 5V14C13 14.5523 12.5523 15 12 15H4C3.44772 15 3 14.5523 3 14V2Z" stroke={iconColor} stroke-width="1"/>
-                      <path d="M9 1V4C9 4.55228 9.44772 5 10 5H13" stroke={iconColor} stroke-width="1"/>
-                      <path d="M6 8L4.5 9.5L6 11M10 8L11.5 9.5L10 11" stroke={iconColor} stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                  {:else if iconCategory === "media"}
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
-                      <rect x="2" y="3" width="12" height="10" rx="1.5" fill={iconColor} fill-opacity="0.15"/>
-                      <rect x="2" y="3" width="12" height="10" rx="1.5" stroke={iconColor} stroke-width="1"/>
-                      <path d="M6 6V10L10 8L6 6Z" fill={iconColor}/>
-                    </svg>
-                  {:else if iconCategory === "executable"}
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
-                      <rect x="2" y="2" width="12" height="12" rx="2" fill={iconColor} fill-opacity="0.15"/>
-                      <rect x="2" y="2" width="12" height="12" rx="2" stroke={iconColor} stroke-width="1"/>
-                      <path d="M5 8H11M8 5V11" stroke={iconColor} stroke-width="1.25" stroke-linecap="round"/>
-                    </svg>
-                  {:else}
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
-                      <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" fill={iconColor} fill-opacity="0.15"/>
-                      <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" stroke={iconColor} stroke-width="1"/>
-                      <path d="M9 1V5C9 5.55228 9.44772 6 10 6H14" stroke={iconColor} stroke-width="1"/>
-                      <path d="M5.5 9H10.5M5.5 11.5H9" stroke={iconColor} stroke-width="0.75" stroke-linecap="round"/>
-                    </svg>
-                  {/if}
-                {/if}
+                <span class="result-icon" class:file-icon={result.kind !== "directory"}>
+                  <FileIcon entry={toFileEntry(result)} size="small" />
+                </span>
                 <div class="result-content">
                   <span class="result-name">{result.name}</span>
                   <span class="result-path">{result.relativePath}</span>
@@ -576,19 +535,9 @@
                 onclick={() => selectResult(result)}
                 onmouseenter={() => { if (mouseMoved) selectedIndex = index; }}
               >
-                {#if result.kind === "directory"}
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="folder-icon">
-                    <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="var(--icon-folder, #FFB900)"/>
-                  </svg>
-                {:else}
-                  {@const entry = toFileEntry(result)}
-                  {@const iconColor = getFileIconColor(entry)}
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
-                    <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" fill={iconColor} fill-opacity="0.15"/>
-                    <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" stroke={iconColor} stroke-width="1"/>
-                    <path d="M9 1V5C9 5.55228 9.44772 6 10 6H14" stroke={iconColor} stroke-width="1"/>
-                  </svg>
-                {/if}
+                <span class="result-icon" class:file-icon={result.kind !== "directory"}>
+                  <FileIcon entry={toFileEntry(result)} size="small" />
+                </span>
                 <div class="result-content">
                   <span class="result-name">{result.name}</span>
                   <span class="result-path">{result.relativePath}</span>
@@ -742,9 +691,10 @@
     opacity: 0.8;
   }
 
-  .file-icon,
-  .folder-icon {
+  .result-icon {
     flex-shrink: 0;
+    display: flex;
+    align-items: center;
   }
 
   /* When selected, make file icons use white with transparency */

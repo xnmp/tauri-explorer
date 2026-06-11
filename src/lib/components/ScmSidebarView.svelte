@@ -17,56 +17,23 @@
   import { settingsStore } from "$lib/state/settings.svelte";
   import type { GitFileEntry, GitStatusCode } from "$lib/api/files";
 
-  /** Tree node used by the optional folder-grouped SCM rendering. */
-  interface ScmTreeNode {
-    name: string;
-    fullDir: string; // empty string for root
-    children: Map<string, ScmTreeNode>;
-    files: GitFileEntry[];
-  }
+  import { buildTree, collectPaths, type ScmTreeNode } from "$lib/domain/scm-tree";
 
-  function buildTree(rows: GitFileEntry[]): ScmTreeNode {
-    const root: ScmTreeNode = { name: "", fullDir: "", children: new Map(), files: [] };
-    for (const row of rows) {
-      const parts = row.path.split("/").filter((p) => p !== "");
-      let cursor = root;
-      for (let i = 0; i < parts.length - 1; i++) {
-        const segment = parts[i];
-        let next = cursor.children.get(segment);
-        if (!next) {
-          next = {
-            name: segment,
-            fullDir: cursor.fullDir ? `${cursor.fullDir}/${segment}` : segment,
-            children: new Map(),
-            files: [],
-          };
-          cursor.children.set(segment, next);
-        }
-        cursor = next;
-      }
-      cursor.files.push(row);
-    }
-    return root;
-  }
-
-  function collectPaths(node: ScmTreeNode): string[] {
-    const paths: string[] = node.files.map((f) => f.path);
-    for (const child of node.children.values()) {
-      paths.push(...collectPaths(child));
-    }
-    return paths;
-  }
-
-  // Persisted collapsed folder set, scoped per repo so toggling between
-  // repos doesn't mix collapse state.
-  let collapsedFolders = $state(new Set<string>());
+  // Collapsed folder sets, keyed per repo root so toggling between repos
+  // doesn't mix collapse state.
+  let collapsedByRepo = $state(new Map<string, Set<string>>());
+  const collapsedFolders = $derived(
+    collapsedByRepo.get(scmStore.repoRoot ?? "") ?? new Set<string>()
+  );
   function toggleFolder(dir: string): void {
-    const next = new Set(collapsedFolders);
+    const repo = scmStore.repoRoot ?? "";
+    const next = new Set(collapsedByRepo.get(repo) ?? []);
     if (next.has(dir)) next.delete(dir); else next.add(dir);
-    collapsedFolders = next;
+    const map = new Map(collapsedByRepo);
+    map.set(repo, next);
+    collapsedByRepo = map;
   }
 
-  let commitInputEl: HTMLTextAreaElement | undefined;
   let rootEl: HTMLDivElement | undefined;
 
   let stagedExpanded = $state(true);
@@ -77,7 +44,7 @@
   // Pending confirmation for destructive Discard/Remove actions. Shown as
   // an inline overlay; Esc cancels, Cancel is the default-focused button.
   let pendingDiscard = $state<{ paths: string[]; isUntracked: boolean } | null>(null);
-  let cancelButtonEl: HTMLButtonElement | undefined;
+  let cancelButtonEl: HTMLButtonElement | undefined = $state();
 
   function requestDiscard(paths: string[], isUntracked: boolean): void {
     pendingDiscard = { paths, isUntracked };
@@ -201,14 +168,60 @@
     await scmStore.refresh();
   }
 
+  /** File paths in visual order, walking the tree the same way the template
+   *  renders it (subfolders first, then own files; collapsed subtrees skipped). */
+  function visibleTreePaths(rows: GitFileEntry[]): string[] {
+    function walk(node: ScmTreeNode): string[] {
+      const out: string[] = [];
+      for (const child of node.children.values()) {
+        if (!collapsedFolders.has(child.fullDir)) out.push(...walk(child));
+      }
+      out.push(...node.files.map((f) => f.path));
+      return out;
+    }
+    return walk(buildTree(rows));
+  }
+
+  /** Row paths in the order the user actually sees them: filtered summary,
+   *  collapsed sections and collapsed tree folders excluded. */
+  const visibleRowPaths = $derived.by(() => {
+    const sections: Array<{ rows: GitFileEntry[]; expanded: boolean }> = [
+      { rows: summary.merge, expanded: mergeExpanded },
+      { rows: summary.staged, expanded: stagedExpanded },
+      { rows: summary.changes, expanded: changesExpanded },
+      { rows: summary.untracked, expanded: untrackedExpanded },
+    ];
+    const paths: string[] = [];
+    for (const { rows, expanded } of sections) {
+      if (!expanded) continue;
+      paths.push(...(settingsStore.scmTreeView ? visibleTreePaths(rows) : rows.map((r) => r.path)));
+    }
+    return paths;
+  });
+
+  /** Move selection over the visible rows and move DOM focus with it so a
+   *  subsequent Enter acts on the newly selected row. */
+  function moveSelection(delta: 1 | -1): void {
+    const rows = visibleRowPaths;
+    if (rows.length === 0) return;
+    const currentIdx = scmStore.selectedPath == null ? -1 : rows.indexOf(scmStore.selectedPath);
+    const next = currentIdx < 0
+      ? (delta > 0 ? 0 : rows.length - 1)
+      : Math.max(0, Math.min(rows.length - 1, currentIdx + delta));
+    const path = rows[next];
+    if (path === undefined) return;
+    scmStore.setSelected(path);
+    rootEl?.querySelector<HTMLElement>(`[data-path="${CSS.escape(path)}"]`)?.focus();
+  }
+
   function onRowKeydown(e: KeyboardEvent): void {
     if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      scmStore.moveSelection(1);
+      moveSelection(1);
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      scmStore.moveSelection(-1);
+      moveSelection(-1);
     }
   }
 
@@ -283,7 +296,6 @@
         </button>
       </div>
       <textarea
-        bind:this={commitInputEl}
         class="commit-message"
         placeholder={scmStore.amend
           ? "Amend commit message (optional)"
@@ -372,6 +384,7 @@
     <div
       class="scm-confirm-overlay"
       role="alertdialog"
+      tabindex="-1"
       aria-modal="true"
       aria-labelledby="scm-confirm-title"
       onclick={(e) => { if (e.target === e.currentTarget) cancelDiscard(); }}
@@ -902,13 +915,14 @@
     line-height: 1;
   }
 
-  .s-modified { color: #0ea5e9; }
-  .s-added { color: #22c55e; }
-  .s-deleted { color: #ef4444; }
-  .s-renamed { color: #a855f7; }
-  .s-conflict { color: #f97316; }
+  /* Status letter colors: themeable via --scm-* vars with sensible defaults. */
+  .s-modified { color: var(--scm-modified, #0ea5e9); }
+  .s-added { color: var(--scm-added, #22c55e); }
+  .s-deleted { color: var(--scm-deleted, #ef4444); }
+  .s-renamed { color: var(--scm-renamed, #a855f7); }
+  .s-conflict { color: var(--scm-conflict, #f97316); }
   .s-ignored { color: var(--text-tertiary); }
-  .s-type { color: #eab308; }
+  .s-type { color: var(--scm-typechange, #eab308); }
 
   .file-name {
     color: var(--text-primary);
@@ -940,7 +954,7 @@
     align-items: center;
     padding: 0 6px 0 16px;
     border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-    background: linear-gradient(to right, transparent 0%, #2a2d33 30%);
+    background: linear-gradient(to right, transparent 0%, var(--background-solid) 30%);
   }
 
   .row:hover .row-actions,

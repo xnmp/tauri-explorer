@@ -9,6 +9,17 @@
 
   const conflict = $derived(conflictResolver.activeConflict);
 
+  let cancelButtonEl: HTMLButtonElement | undefined = $state();
+  let overlayEl: HTMLDivElement | undefined = $state();
+
+  // Focus the safe default (Cancel) when the dialog opens so keyboard users
+  // aren't stranded and Escape is captured by the overlay's keydown handler.
+  $effect(() => {
+    if (conflict) {
+      (cancelButtonEl ?? overlayEl)?.focus();
+    }
+  });
+
   function handleChoice(choice: ConflictChoice, applyToAll = false): void {
     conflictResolver.resolve(choice, applyToAll);
   }
@@ -23,7 +34,7 @@
 
 {#if conflict}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="conflict-overlay" onkeydown={handleKeydown}>
+  <div class="conflict-overlay" tabindex="-1" bind:this={overlayEl} onkeydown={handleKeydown}>
     <div class="conflict-dialog" role="alertdialog" aria-label="File conflict">
       <div class="conflict-header">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
@@ -81,7 +92,7 @@
           </button>
         {/if}
         <div class="separator"></div>
-        <button class="btn btn-cancel" onclick={() => handleChoice("cancel")}>
+        <button class="btn btn-cancel" bind:this={cancelButtonEl} onclick={() => handleChoice("cancel")}>
           Cancel
         </button>
       </div>

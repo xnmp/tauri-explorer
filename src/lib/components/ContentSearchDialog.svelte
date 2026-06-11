@@ -42,7 +42,15 @@
   let selectedIndex = $state(0);
   let loading = $state(false);
   let inputRef = $state<HTMLInputElement | null>(null);
-  let listRef = $state<HTMLUListElement | null>(null);
+  let listRef = $state<HTMLElement | null>(null);
+  // Guard: suppress mouseenter on results until the user actually moves the mouse.
+  // Prevents selection from jumping as streamed rows shift under a stationary cursor.
+  // Track coordinates because macOS WebKit fires a synthetic mousemove (zero delta)
+  // when an element renders under a stationary cursor.
+  let mouseMoved = $state(false);
+  let lastMousePos = $state<{ x: number; y: number } | null>(null);
+  let mouseTrackingReady = $state(false);
+  let mouseTrackingTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Stats
   let filesSearched = $state(0);
@@ -63,7 +71,6 @@
 
   // Pagination constants
   const PAGE_SIZE = 200;
-  const COLLAPSED_LIMIT = 5;
 
   // Track which files the user has expanded (show all matches)
   let expandedFiles = $state<Set<string>>(new Set());
@@ -74,11 +81,9 @@
   // Reactive page slice -- only this triggers UI updates
   let flattenedResults = $state<FlattenedResult[]>([]);
   let pageEnd = $state(PAGE_SIZE);
-  let totalFlattenedCount = $state(0);
 
   function rebuildFlattened(filterLower: string): void {
     allFlattened = rebuildAllFlattened(results, filterLower, expandedFiles);
-    totalFlattenedCount = allFlattened.length;
     pageEnd = PAGE_SIZE;
     updatePage();
   }
@@ -101,7 +106,7 @@
   function resetSearchState(): void {
     query = "";
     filterQuery = "";
-    prevFilter = "";
+    queryDirty = false;
     results = [];
     allFlattened = [];
     flattenedResults = [];
@@ -109,22 +114,11 @@
     expandedFiles = new Set();
     selectedIndex = 0;
     pageEnd = PAGE_SIZE;
-    totalFlattenedCount = 0;
     filesSearched = 0;
     totalMatches = 0;
     scrollTop = 0;
     loading = false;
   }
-
-  // React to filter changes by rebuilding
-  let prevFilter = "";
-  $effect(() => {
-    const f = filterQuery;
-    if (f !== prevFilter) {
-      prevFilter = f;
-      rebuildFlattened(f.toLowerCase());
-    }
-  });
 
   // Cached offsets array -- recomputed only when flattenedResults changes, not on scroll
   let cachedOffsets = $derived(computeOffsets(flattenedResults, FILE_HEADER_HEIGHT, ITEM_HEIGHT));
@@ -176,8 +170,14 @@
     }
   }
 
-  // Setup event listener for streaming search results
-  async function setupSearchListener(searchId: number): Promise<void> {
+  // Monotonically increasing search generation counter.
+  // Used to discard stale results without needing to wait for searchId.
+  let searchGeneration = 0;
+
+  // Setup event listener for streaming search results.
+  // Must be called BEFORE starting the search to avoid missing events
+  // from fast-completing searches (e.g. small directories).
+  async function setupSearchListener(generation: number): Promise<void> {
     if (unlisten) {
       unlisten();
     }
@@ -185,7 +185,17 @@
     unlisten = await listen<ContentSearchEvent>("content-search-results", (event) => {
       const payload = event.payload;
 
-      if (payload.searchId !== searchId || activeSearchId !== searchId) {
+      // Discard events from stale searches (user re-searched)
+      if (generation !== searchGeneration) {
+        return;
+      }
+
+      // Accept events that match our search ID, OR if we haven't received
+      // the search ID yet (race: backend thread emits before invoke returns).
+      // Once we learn the ID from the first event, lock to it.
+      if (activeSearchId === null) {
+        activeSearchId = payload.searchId;
+      } else if (payload.searchId !== activeSearchId) {
         return;
       }
 
@@ -204,7 +214,6 @@
         const batch = flattenBatch(newResults, filterLower, expandedFiles);
         if (batch.length > 0) {
           allFlattened.push(...batch);
-          totalFlattenedCount = allFlattened.length;
           updatePage();
         }
       }
@@ -226,7 +235,12 @@
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   const DEBOUNCE_MS = 300;
 
+  // True when the query changed since the last search was started, so Enter
+  // re-runs the search instead of opening a stale selected result.
+  let queryDirty = false;
+
   function handleInput(): void {
+    queryDirty = true;
     if (debounceTimer) clearTimeout(debounceTimer);
     if (!query.trim()) return;
     debounceTimer = setTimeout(() => {
@@ -235,7 +249,10 @@
   }
 
   function startSearch(): void {
-    if (debounceTimer) clearTimeout(debounceTimer);
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
     if (!query.trim()) {
       return;
     }
@@ -245,16 +262,36 @@
     resetSearchState();
     query = currentQuery;
     filterQuery = currentFilter;
-    prevFilter = currentFilter;
     loading = true;
 
     cancelActiveSearch().then(async () => {
+      // Claim a generation so interleaved searches can detect they're stale
+      const generation = ++searchGeneration;
       const root = getRootPath();
+
+      // Register the listener BEFORE invoking, so fast searches can't emit
+      // batches (or `done`) before we're listening. Outside Tauri the event
+      // system is unavailable and listen() rejects — no results can stream,
+      // so don't leave the dialog stuck in loading.
+      let streamingAvailable = true;
+      try {
+        await setupSearchListener(generation);
+      } catch {
+        streamingAvailable = false;
+      }
+      if (generation !== searchGeneration) return;
+
       const result = await startContentSearch(query, root, caseSensitive, regexMode, 2000);
+
+      if (generation !== searchGeneration) {
+        // Superseded while awaiting: cancel the now-orphaned backend search
+        if (result.ok) cancelContentSearch(result.data);
+        return;
+      }
 
       if (result.ok) {
         activeSearchId = result.data;
-        await setupSearchListener(result.data);
+        if (!streamingAvailable) loading = false;
       } else {
         results = [];
         loading = false;
@@ -263,6 +300,20 @@
   }
 
   function handleKeydown(event: KeyboardEvent): void {
+    // Alt+C toggles match case, Alt+R toggles regex (advertised in tooltips).
+    // event.code is used because macOS Option+key produces special characters.
+    if (event.altKey && event.code === "KeyC") {
+      event.preventDefault();
+      caseSensitive = !caseSensitive;
+      if (query.trim()) startSearch();
+      return;
+    }
+    if (event.altKey && event.code === "KeyR") {
+      event.preventDefault();
+      regexMode = !regexMode;
+      if (query.trim()) startSearch();
+      return;
+    }
     switch (event.key) {
       case "Escape":
         event.preventDefault();
@@ -272,6 +323,7 @@
         event.preventDefault();
         if (flattenedResults.length > 0) {
           selectedIndex = (selectedIndex + 1) % flattenedResults.length;
+          mouseMoved = false;
           scrollToSelected();
         }
         break;
@@ -279,20 +331,21 @@
         event.preventDefault();
         if (flattenedResults.length > 0) {
           selectedIndex = (selectedIndex - 1 + flattenedResults.length) % flattenedResults.length;
+          mouseMoved = false;
           scrollToSelected();
         }
         break;
       case "Enter":
         event.preventDefault();
-        if (flattenedResults[selectedIndex]) {
+        if (event.target === inputRef && (queryDirty || flattenedResults.length === 0)) {
+          startSearch();
+        } else if (flattenedResults[selectedIndex]) {
           const selected = flattenedResults[selectedIndex];
           if (selected.isShowMore) {
             toggleFileExpanded(selected.filePath);
           } else {
             selectResult(selected);
           }
-        } else if (event.target === inputRef) {
-          startSearch();
         }
         break;
     }
@@ -348,6 +401,11 @@
   $effect(() => {
     if (open && inputRef) {
       resetSearchState();
+      mouseMoved = false;
+      lastMousePos = null;
+      mouseTrackingReady = false;
+      if (mouseTrackingTimer) clearTimeout(mouseTrackingTimer);
+      mouseTrackingTimer = setTimeout(() => { mouseTrackingReady = true; }, 150);
       tick().then(() => inputRef?.focus());
     }
   });
@@ -355,6 +413,14 @@
   // Cleanup on close
   $effect(() => {
     if (!open) {
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
+        debounceTimer = null;
+      }
+      if (mouseTrackingTimer) {
+        clearTimeout(mouseTrackingTimer);
+        mouseTrackingTimer = null;
+      }
       cancelActiveSearch();
     }
   });
@@ -362,7 +428,14 @@
 
 {#if open}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="content-search-overlay" onclick={onClose} onkeydown={handleKeydown}>
+  <div class="content-search-overlay" onclick={onClose} onkeydown={handleKeydown}
+    onmousemove={(e) => {
+      if (!mouseTrackingReady) return;
+      if (lastMousePos && (e.clientX !== lastMousePos.x || e.clientY !== lastMousePos.y)) {
+        mouseMoved = true;
+      }
+      lastMousePos = { x: e.clientX, y: e.clientY };
+    }}>
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="content-search-dialog" onclick={(e) => e.stopPropagation()}>
       <div class="search-header">
@@ -382,7 +455,6 @@
             bind:value={query}
             bind:this={inputRef}
             oninput={handleInput}
-            onkeydown={(e) => { if (e.key === 'Enter' && flattenedResults.length === 0) startSearch(); }}
           />
           <div class="search-options">
             <button
@@ -425,6 +497,7 @@
               autocapitalize="none"
               spellcheck="false"
               bind:value={filterQuery}
+              oninput={() => rebuildFlattened(filterQuery.toLowerCase())}
             />
           </div>
         {/if}
@@ -439,8 +512,8 @@
         {/if}
 
         {#if flattenedResults.length > 0}
-          <ul class="results-list" bind:this={listRef} style="height: {virtualWindow.totalHeight}px; position: relative;">
-            <div style="position: absolute; top: 0; left: 0; right: 0; transform: translateY({virtualWindow.offsetY}px);">
+          <div class="results-list" bind:this={listRef} style="height: {virtualWindow.totalHeight}px; position: relative;">
+            <ul class="results-virtual" role="listbox" style="transform: translateY({virtualWindow.offsetY}px);">
               {#each visibleItems as result, i (result.filePath + ':' + (result.isShowMore ? 'more' : result.match.lineNumber + ':' + result.match.column))}
                 {@const globalIndex = virtualWindow.startIndex + i}
                 {#if result.isShowMore}
@@ -450,7 +523,7 @@
                     role="option"
                     aria-selected={globalIndex === selectedIndex}
                     onclick={() => toggleFileExpanded(result.filePath)}
-                    onmouseenter={() => selectedIndex = globalIndex}
+                    onmouseenter={() => { if (mouseMoved) selectedIndex = globalIndex; }}
                     style="height: {ITEM_HEIGHT}px;"
                   >
                     <span class="show-more-text">{result.hiddenCount} more matches...</span>
@@ -463,7 +536,7 @@
                     role="option"
                     aria-selected={globalIndex === selectedIndex}
                     onclick={() => selectResult(result)}
-                    onmouseenter={() => selectedIndex = globalIndex}
+                    onmouseenter={() => { if (mouseMoved) selectedIndex = globalIndex; }}
                     style="height: {result.isFirstInFile ? FILE_HEADER_HEIGHT : ITEM_HEIGHT}px;"
                   >
                     {#if result.isFirstInFile}
@@ -495,8 +568,8 @@
                   </li>
                 {/if}
               {/each}
-            </div>
-          </ul>
+            </ul>
+          </div>
         {:else if query && !loading && results.length === 0}
           <div class="no-results">No matches found</div>
         {:else if !query && !loading}
@@ -507,7 +580,7 @@
       <div class="footer">
         <div class="stats">
           {#if results.length > 0}
-            <span>{flattenedResults.length}{#if totalFlattenedCount > flattenedResults.length} of {totalFlattenedCount}{/if} matches in {results.length} files</span>
+            <span>{totalMatches.toLocaleString()} matches in {results.length} files</span>
           {/if}
         </div>
         <div class="shortcuts">
@@ -703,10 +776,17 @@
   }
 
   .results-list {
+    overflow: hidden;
+  }
+
+  .results-virtual {
     list-style: none;
     margin: 0;
     padding: 0;
-    overflow: hidden;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
   }
 
   .result-item {

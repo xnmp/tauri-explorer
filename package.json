@@ -18,8 +18,8 @@
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:perf": "playwright test e2e/performance.spec.ts",
     "test:e2e:tauri": "wdio run e2e-tauri/wdio.conf.ts",
-    "perf:check": "npx tsx scripts/perf-check.ts",
-    "perf:baseline": "npx tsx scripts/perf-check.ts --update",
+    "perf:check": "bun run scripts/perf-check.ts",
+    "perf:baseline": "bun run scripts/perf-check.ts --update",
     "clean": "bash scripts/clean-rebuild.sh",
     "clean:fast": "bash scripts/clean-rebuild.sh --no-rust",
     "start": "bash scripts/dev.sh",
@@ -33,10 +33,7 @@
     "@crabnebula/tauri-plugin-drag": "^2.1.0",
     "@fontsource-variable/inter": "^5.2.8",
     "@tauri-apps/api": "^2.10.1",
-    "@tauri-apps/plugin-opener": "^2",
-    "@tauri-apps/plugin-shell": "^2",
-    "highlight.js": "^11.11.1",
-    "tauri-plugin-clipboard-x-api": "^2.0.1"
+    "highlight.js": "^11.11.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",

@@ -2,10 +2,14 @@
  * Explorer state management using Svelte 5 runes.
  * Issue: tauri-explorer-gcl, tauri-explorer-jql, tauri-explorer-h3n, tauri-explorer-x25, tauri-explorer-bhw5, tauri-explorer-u7bg, tauri-explorer-1k9k
  *
- * Refactored to use extracted stores for:
+ * This store owns per-pane core state (path/history/entries/selection/
+ * sort/view) and navigation. Supporting concerns live in extracted modules:
  * - Types (types.ts)
  * - Selection logic (selection.ts)
  * - Navigation/history (navigation.ts)
+ * - Filesystem watch + mutation cooldown (pane-watch.ts)
+ * - Refresh lifecycle (pane-refresh.ts)
+ * - File mutations: create/rename/delete/symlink/archive (pane-mutations.ts)
  * - Clipboard (clipboard.svelte.ts) - shared between panes
  * - Dialogs (dialogs.svelte.ts) - global dialog state
  * - Context menu (context-menu.svelte.ts) - global context menu state
@@ -14,25 +18,9 @@
 
 import { toastStore } from "./toast.svelte";
 import { basename } from "$lib/domain/path";
-import {
-  createDirectory,
-  renameEntry as apiRenameEntry,
-  deleteEntry,
-  deleteMultipleEntries,
-  deleteEntryPermanent,
-  clipboardHasImage,
-  clipboardPasteImage,
-  watchDirectory,
-  unwatchDirectory,
-  extractArchive as apiExtractArchive,
-  compressToZip as apiCompressToZip,
-  createSymlink as apiCreateSymlink,
-  setAsWallpaper as apiSetAsWallpaper,
-  openInTerminal as apiOpenInTerminal,
-} from "$lib/api/files";
-import { broadcastFileChange } from "./file-events";
+import { clipboardHasImage, clipboardPasteImage } from "$lib/api/files";
 import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/domain/file";
-import type { SelectOptions, ViewMode } from "./types";
+import type { ExplorerCoreState, SelectOptions, ViewMode } from "./types";
 import * as selection from "./selection";
 import * as navigation from "./navigation";
 import { clipboardStore } from "./clipboard.svelte";
@@ -46,30 +34,11 @@ import { frecencyStore } from "./frecency.svelte";
 import { getSortPref, saveSortPref } from "./sort-prefs";
 import { pasteEntries, type PasteResult } from "./paste-operations";
 import { createDirectoryListing } from "./directory-listing";
+import { createPaneWatch } from "./pane-watch";
+import { createPaneRefresh } from "./pane-refresh";
+import { createPaneMutations } from "./pane-mutations";
 import { getAffectedDirs, undoActionLabel } from "./undo-helpers";
-import { renameThumbnailCache } from "$lib/state/thumbnail-cache";
-
-/** Core explorer state (per-pane) */
-interface ExplorerCoreState {
-  // Navigation
-  currentPath: string;
-  history: string[];
-  historyIndex: number;
-
-  // Entries
-  entries: FileEntry[];
-  loading: boolean;
-  error: string | null;
-
-  // View options (showHidden is in settingsStore, shared across panes)
-  sortBy: SortField;
-  sortAscending: boolean;
-  viewMode: ViewMode;
-
-  // Selection
-  selectedPaths: Set<string>;
-  selectionAnchorIndex: number | null;
-}
+import { broadcastFileChange } from "./file-events";
 
 interface ExplorerSeed {
   currentPath: string;
@@ -112,32 +81,9 @@ function createExplorerState(seed?: ExplorerSeed) {
   // Navigation callback for UI (e.g. focusing the selected item after nav)
   let onNavigateCallback: (() => void) | null = null;
 
-  // Filesystem watcher: track which path this pane is watching
-  let watchedPath: string | null = null;
-
-  // Suppress redundant watcher refreshes after local mutations (delete/rename/create).
-  // Local mutations already update coreState.entries; the watcher event that follows
-  // would trigger an identical refresh causing all thumbnails to flash.
-  const MUTATION_COOLDOWN_MS = 1000;
-  let lastMutationTime = 0;
-
-  function markLocalMutation(): void {
-    lastMutationTime = Date.now();
-  }
-
-  function updateWatch(newPath: string) {
-    if (watchedPath === newPath) return;
-    if (watchedPath) unwatchDirectory(watchedPath);
-    watchDirectory(newPath);
-    watchedPath = newPath;
-  }
-
-  function destroyWatch() {
-    if (watchedPath) {
-      unwatchDirectory(watchedPath);
-      watchedPath = null;
-    }
-  }
+  // Filesystem watcher + local-mutation cooldown
+  const watch = createPaneWatch();
+  const markLocalMutation = watch.markLocalMutation;
 
   // Read-only state accessor for components that need the raw state bag
   const state = $derived({ ...coreState });
@@ -203,7 +149,7 @@ function createExplorerState(seed?: ExplorerSeed) {
     if (result.ok) {
       coreState.currentPath = result.path;
       coreState.entries = result.entries;
-      updateWatch(result.path);
+      watch.update(result.path);
 
       const savedSort = getSortPref(result.path);
       if (savedSort) {
@@ -272,8 +218,7 @@ function createExplorerState(seed?: ExplorerSeed) {
       coreState.historyIndex--;
     } else if (status === "error") {
       // Path no longer exists — fall back to parent
-      const parentPath = navigation.getParentPath(breadcrumbs);
-      if (parentPath) await navigateInternal(parentPath);
+      await navigateToParent();
     }
   }
 
@@ -285,8 +230,7 @@ function createExplorerState(seed?: ExplorerSeed) {
       coreState.historyIndex++;
     } else if (status === "error") {
       // Path no longer exists — fall back to parent
-      const parentPath = navigation.getParentPath(breadcrumbs);
-      if (parentPath) await navigateInternal(parentPath);
+      await navigateToParent();
     }
   }
 
@@ -297,86 +241,34 @@ function createExplorerState(seed?: ExplorerSeed) {
     }
   }
 
-  /** Build a fingerprint string for change detection. */
-  function entriesFingerprint(entries: FileEntry[]): string {
-    return entries.map((e) => `${e.path}\0${e.size}\0${e.modified}`).join("\n");
+  /** Fallback navigation when the current directory no longer exists. */
+  async function navigateToParent(): Promise<void> {
+    const parentPath = navigation.getParentPath(breadcrumbs);
+    if (parentPath) await navigateInternal(parentPath);
   }
 
-  async function refresh(options?: { silent?: boolean }) {
-    const silent = options?.silent ?? false;
+  // ===================
+  // Refresh & Mutations (extracted modules sharing this pane's state)
+  // ===================
 
-    // Skip watcher-triggered refreshes during the cooldown after local mutations.
-    // The local mutation already updated entries; refetching would replace entry
-    // objects and cause thumbnail components to flash/reload.
-    if (silent && Date.now() - lastMutationTime < MUTATION_COOLDOWN_MS) {
-      return;
-    }
+  const refresh = createPaneRefresh({
+    coreState,
+    dirListing,
+    inMutationCooldown: watch.inMutationCooldown,
+    updateWatch: watch.update,
+    navigateToParent,
+  });
 
-    const refreshPath = coreState.currentPath;
-    const oldFingerprint = entriesFingerprint(coreState.entries);
-
-    // Fetch new data without touching UI state — avoids flash on no-change.
-    // Accumulate streamed chunks: for >100-entry directories the invoke
-    // result only contains the first batch, the rest arrives via events.
-    let streamedEntries: FileEntry[] = [];
-    let cancelled = false;
-    let resolveDone!: () => void;
-    const donePromise = new Promise<void>((resolve) => {
-      resolveDone = resolve;
-    });
-
-    const result = await dirListing.load(refreshPath, {
-      onEntries: (entries) => {
-        streamedEntries = [...streamedEntries, ...entries];
-      },
-      onDone: () => resolveDone(),
-      onCancelled: () => {
-        cancelled = true;
-        resolveDone();
-      },
-    });
-
-    if (!result.ok) {
-      // The pane navigated away while the fetch was in flight — not our call.
-      if (coreState.currentPath !== refreshPath) return;
-      // Directory no longer exists — fall back to parent
-      const parentPath = navigation.getParentPath(breadcrumbs);
-      if (parentPath) {
-        await navigateInternal(parentPath);
-      }
-      return;
-    }
-
-    if (result.streaming) await donePromise;
-
-    // Bail if superseded: a navigation cancelled the listing or changed path.
-    if (cancelled || coreState.currentPath !== refreshPath) return;
-
-    // We now hold a complete listing for the pane's current path. If this
-    // refresh interrupted a still-streaming navigation to the same path
-    // (cancelling its onDone), clear the spinner it left behind.
-    coreState.loading = false;
-
-    const allEntries = [...result.entries, ...streamedEntries];
-    const newFingerprint = entriesFingerprint(allEntries);
-    // Compare against both the pre-fetch snapshot and the current entries.
-    // A local mutation may have updated entries while the fetch was in flight
-    // (inotify on Linux fires before the IPC response returns).
-    const currentFingerprint = entriesFingerprint(coreState.entries);
-    if (oldFingerprint === newFingerprint || currentFingerprint === newFingerprint) {
-      if (!silent) {
-        toastStore.show("Already up to date", "info", { duration: 1500 });
-      }
-      return;
-    }
-
-    coreState.entries = allEntries;
-    updateWatch(result.path);
-
-    if (!silent) {
-      toastStore.show("Refreshed", "info", { duration: 1500 });
-    }
-  }
+  const mutations = createPaneMutations({
+    coreState,
+    displayEntries: () => displayEntries,
+    markLocalMutation,
+    getParentPath: () => navigation.getParentPath(breadcrumbs),
+    navigateTo,
+    refreshSilent: () => {
+      void refresh({ silent: true });
+    },
+  });
 
   // ===================
   // View Actions
@@ -456,39 +348,14 @@ function createExplorerState(seed?: ExplorerSeed) {
   // Dialog & Context Menu Actions
   // ===================
 
-  async function navigateAwayIfNeeded(deletedPaths: Set<string>): Promise<void> {
-    const current = coreState.currentPath;
-    const shouldNavigateAway = [...deletedPaths].some(
-      (dp) => current === dp || current.startsWith(dp + "/")
-    );
-    if (shouldNavigateAway) {
-      const parentPath = navigation.getParentPath(breadcrumbs);
-      if (parentPath) await navigateTo(parentPath);
-    }
-  }
-
   async function startDelete(entries: FileEntry | FileEntry[]) {
     const arr = Array.isArray(entries) ? entries : [entries];
     if (arr.length === 0) return;
 
     if (!settingsStore.confirmDelete) {
-      const paths = arr.map((e) => e.path);
-      markLocalMutation();
-      const result = arr.length === 1
-        ? await deleteEntry(paths[0])
-        : await deleteMultipleEntries(paths);
-
-      if (result.ok) {
-        undoStore.push({ type: "delete", paths, parentDir: coreState.currentPath });
-        const deletedPaths = new Set(paths);
-        coreState.entries = coreState.entries.filter((e) => !deletedPaths.has(e.path));
-        coreState.selectedPaths = new Set(
-          [...coreState.selectedPaths].filter((p) => !deletedPaths.has(p))
-        );
-        markLocalMutation();
-        await navigateAwayIfNeeded(deletedPaths);
-        frecencyStore.pruneNonExistent();
-      }
+      // Delete immediately — confirmDelete handles the undo push, entry
+      // removal, navigating away from deleted dirs and frecency pruning.
+      await mutations.confirmDelete(arr, false);
       return;
     }
 
@@ -518,22 +385,9 @@ function createExplorerState(seed?: ExplorerSeed) {
   // ===================
 
   async function createFolder(name: string): Promise<string | null> {
-    if (!coreState.currentPath) return "No current directory";
-
-    markLocalMutation();
-    const result = await createDirectory(coreState.currentPath, name);
-
-    if (result.ok) {
-      coreState.entries = [...coreState.entries, result.data];
-      coreState.selectedPaths = new Set([result.data.path]);
-      const idx = displayEntries.findIndex((e) => e.path === result.data.path);
-      coreState.selectionAnchorIndex = idx >= 0 ? idx : null;
-      isCreatingFolder = false;
-      markLocalMutation();
-      broadcastFileChange([coreState.currentPath]);
-      return null;
-    }
-    return result.error;
+    const error = await mutations.createFolder(name);
+    if (!error) isCreatingFolder = false;
+    return error;
   }
 
   /** Start inline folder creation (shows editable placeholder in file list) */
@@ -544,125 +398,6 @@ function createExplorerState(seed?: ExplorerSeed) {
   /** Cancel inline folder creation */
   function cancelInlineNewFolder(): void {
     isCreatingFolder = false;
-  }
-
-  async function rename(newName: string): Promise<string | null> {
-    const renamingEntry = dialogStore.renamingEntry;
-    if (!renamingEntry) return "No entry selected for rename";
-
-    const oldName = renamingEntry.name;
-    const oldPath = renamingEntry.path;
-    markLocalMutation();
-    const result = await apiRenameEntry(oldPath, newName);
-
-    if (result.ok) {
-      undoStore.push({ type: "rename", path: result.data.path, oldName, newName });
-      renameThumbnailCache(oldPath, result.data.path);
-      coreState.entries = coreState.entries.map((e) => (e.path === oldPath ? result.data : e));
-      clipboardStore.updatePath(oldPath, result.data);
-      markLocalMutation();
-      dialogStore.cancelRename();
-      frecencyStore.pruneNonExistent();
-      return null;
-    }
-    return result.error;
-  }
-
-  async function confirmDelete(
-    entriesArg?: readonly FileEntry[],
-    isPermanentArg?: boolean,
-  ): Promise<string | null> {
-    const entries = entriesArg ?? dialogStore.deletingEntries;
-    if (entries.length === 0) return "No entries selected for delete";
-    const isPermanent = isPermanentArg ?? dialogStore.isPermanentDelete;
-
-    const paths = entries.map((e) => e.path);
-    let result: { ok: boolean; error?: string };
-
-    markLocalMutation();
-    if (isPermanent) {
-      const errors: string[] = [];
-      for (const path of paths) {
-        const r = await deleteEntryPermanent(path);
-        if (!r.ok) errors.push(r.error);
-      }
-      result = errors.length > 0 ? { ok: false, error: errors.join("; ") } : { ok: true };
-    } else {
-      result = entries.length === 1
-        ? await deleteEntry(paths[0])
-        : await deleteMultipleEntries(paths);
-    }
-
-    if (result.ok) {
-      if (!isPermanent) {
-        undoStore.push({ type: "delete", paths, parentDir: coreState.currentPath });
-      }
-      const deletedPaths = new Set(paths);
-      coreState.entries = coreState.entries.filter((e) => !deletedPaths.has(e.path));
-      coreState.selectedPaths = new Set(
-        [...coreState.selectedPaths].filter((p) => !deletedPaths.has(p))
-      );
-      markLocalMutation();
-      dialogStore.cancelDelete();
-      await navigateAwayIfNeeded(deletedPaths);
-      frecencyStore.pruneNonExistent();
-      return null;
-    }
-    return result.error ?? "Unknown error";
-  }
-
-  // ===================
-  // Archive, Symlink, Wallpaper, Terminal
-  // ===================
-
-  async function extractArchive(path: string, here: boolean): Promise<void> {
-    const result = await apiExtractArchive(path, here);
-    if (result.ok) {
-      markLocalMutation();
-      refresh({ silent: true });
-      broadcastFileChange([coreState.currentPath]);
-    } else {
-      toastStore.show(`Extract failed: ${result.error}`, "error");
-    }
-  }
-
-  async function compressToZip(paths: string[]): Promise<void> {
-    const result = await apiCompressToZip(paths);
-    if (result.ok) {
-      markLocalMutation();
-      refresh({ silent: true });
-      broadcastFileChange([coreState.currentPath]);
-    } else {
-      toastStore.show(`Compress failed: ${result.error}`, "error");
-    }
-  }
-
-  async function createSymlinkForEntry(path: string): Promise<void> {
-    const name = path.split("/").filter(Boolean).pop() || path;
-    const linkName = `${name} - Link`;
-    const linkPath = `${coreState.currentPath}/${linkName}`;
-    const result = await apiCreateSymlink(path, linkPath);
-    if (result.ok) {
-      coreState.entries = [...coreState.entries, result.data];
-      markLocalMutation();
-      broadcastFileChange([coreState.currentPath]);
-    } else {
-      toastStore.show(`Symlink failed: ${result.error}`, "error");
-    }
-  }
-
-  async function setWallpaper(path: string): Promise<void> {
-    const result = await apiSetAsWallpaper(path);
-    if (!result.ok) {
-      toastStore.show(`Set wallpaper failed: ${result.error}`, "error");
-    }
-  }
-
-  async function openTerminal(): Promise<void> {
-    const result = await apiOpenInTerminal(coreState.currentPath, settingsStore.terminalApp);
-    if (!result.ok) {
-      toastStore.show(`Open terminal failed: ${result.error}`, "error");
-    }
   }
 
   // ===================
@@ -885,15 +620,13 @@ function createExplorerState(seed?: ExplorerSeed) {
     },
     startInlineNewFolder,
     cancelInlineNewFolder,
-    // File operations
+    // File operations (pane-mutations.ts)
     createFolder,
-    rename,
-    confirmDelete,
-    extractArchive,
-    compressToZip,
-    createSymlink: createSymlinkForEntry,
-    setAsWallpaper: setWallpaper,
-    openInTerminal: openTerminal,
+    rename: mutations.rename,
+    confirmDelete: mutations.confirmDelete,
+    extractArchive: mutations.extractArchive,
+    compressToZip: mutations.compressToZip,
+    createSymlink: mutations.createSymlinkForEntry,
     // Clipboard
     copyToClipboard,
     cutToClipboard,
@@ -910,7 +643,7 @@ function createExplorerState(seed?: ExplorerSeed) {
     },
     // Cleanup
     destroy: () => {
-      destroyWatch();
+      watch.destroy();
       // Tear down the streaming listener and any in-flight listing,
       // otherwise each closed tab leaks a Tauri event listener.
       void dirListing.cleanup();

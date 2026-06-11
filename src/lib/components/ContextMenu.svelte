@@ -11,6 +11,7 @@
   import { settingsStore, type ThumbnailSize } from "$lib/state/settings.svelte";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { openFile } from "$lib/api/files";
+  import { setWallpaper, openTerminal } from "$lib/state/commands/system-actions";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { parentDir } from "$lib/domain/path";
@@ -176,12 +177,12 @@
 
   async function handleSetAsWallpaper(): Promise<void> {
     if (!selectedImage) return;
-    await explorer.setAsWallpaper(selectedImage.path);
+    await setWallpaper(selectedImage.path);
     contextMenuStore.close();
   }
 
   async function handleOpenInTerminal(): Promise<void> {
-    await explorer.openInTerminal();
+    await openTerminal(explorer.currentPath);
     contextMenuStore.close();
   }
 

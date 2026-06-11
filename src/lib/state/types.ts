@@ -20,6 +20,32 @@ export interface SelectOptions {
   shiftKey?: boolean;
 }
 
+/**
+ * Core per-pane explorer state. Owned by explorer.svelte.ts (as a $state
+ * proxy) and shared with the pane-* modules, which mutate it through the
+ * proxy so reactivity is preserved.
+ */
+export interface ExplorerCoreState {
+  // Navigation
+  currentPath: string;
+  history: string[];
+  historyIndex: number;
+
+  // Entries
+  entries: import("$lib/domain/file").FileEntry[];
+  loading: boolean;
+  error: string | null;
+
+  // View options (showHidden is in settingsStore, shared across panes)
+  sortBy: import("$lib/domain/file").SortField;
+  sortAscending: boolean;
+  viewMode: ViewMode;
+
+  // Selection
+  selectedPaths: Set<string>;
+  selectionAnchorIndex: number | null;
+}
+
 /** Pane identifiers for dual pane layout */
 export type PaneId = "left" | "right";
 

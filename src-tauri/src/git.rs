@@ -10,7 +10,7 @@
 //! by libgit2. Cancellation is wired through the shared `TaskRegistry`.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use git2::{
@@ -43,6 +43,8 @@ pub enum GitStatusCode {
     Copied,
     Untracked,
     Ignored,
+    /// The TS `GitStatusCode` union expects "Conflict".
+    #[serde(rename = "Conflict")]
     Conflicted,
     TypeChange,
 }
@@ -108,7 +110,9 @@ fn status_code(flags: Status) -> Option<GitStatusCode> {
         return Some(C::Conflicted);
     }
     if flags.contains(Status::INDEX_NEW) || flags.contains(Status::WT_NEW) {
-        if flags.contains(Status::WT_NEW) && !flags.intersects(Status::INDEX_NEW | Status::INDEX_MODIFIED | Status::INDEX_DELETED) {
+        if flags.contains(Status::WT_NEW)
+            && !flags.intersects(Status::INDEX_NEW | Status::INDEX_MODIFIED | Status::INDEX_DELETED)
+        {
             return Some(C::Untracked);
         }
         return Some(C::Added);
@@ -206,10 +210,8 @@ fn classify(entry: &git2::StatusEntry<'_>, workdir: &Path) -> Classified {
         }
     }
 
-    let wt_flags = Status::WT_MODIFIED
-        | Status::WT_DELETED
-        | Status::WT_RENAMED
-        | Status::WT_TYPECHANGE;
+    let wt_flags =
+        Status::WT_MODIFIED | Status::WT_DELETED | Status::WT_RENAMED | Status::WT_TYPECHANGE;
 
     // Worktree side (index → workdir)
     if flags.intersects(wt_flags) {
@@ -311,9 +313,8 @@ fn map_non_repo(path: &Path) -> Result<GitStatusSummary, AppError> {
         untracked: Vec::new(),
         merge: Vec::new(),
     })
-    .map(|s| {
+    .inspect(|_s| {
         let _ = path;
-        s
     })
 }
 
@@ -324,9 +325,9 @@ where
 {
     let (id, cancelled) = GIT_TASKS.start();
     let handle = tokio::task::spawn_blocking(move || f(cancelled));
-    let result = handle.await.map_err(|e| AppError::Other(format!("git task join: {e}")))?;
+    let result = handle.await;
     GIT_TASKS.cleanup(id);
-    result
+    result.map_err(|e| AppError::Other(format!("git task join: {e}")))?
 }
 
 /// Initialize a new git repository at `path`. No-op if one already exists.
@@ -358,16 +359,16 @@ pub async fn git_init(path: String) -> Result<String, AppError> {
 pub async fn git_add_to_gitignore(repo_root: String, entry: String) -> Result<String, AppError> {
     run_blocking(move |_cancel| {
         let root = PathBuf::from(&repo_root);
-        let normalized = entry.trim_start_matches("./").trim_start_matches('/').to_string();
+        let normalized = entry
+            .trim_start_matches("./")
+            .trim_start_matches('/')
+            .to_string();
         if normalized.is_empty() {
             return Err(AppError::Other("ignore entry is empty".into()));
         }
         let gitignore_path = root.join(".gitignore");
         let existing = std::fs::read_to_string(&gitignore_path).unwrap_or_default();
-        let already_present = existing
-            .lines()
-            .map(|l| l.trim())
-            .any(|l| l == normalized);
+        let already_present = existing.lines().map(|l| l.trim()).any(|l| l == normalized);
         if already_present {
             return Ok(normalized);
         }
@@ -391,9 +392,7 @@ pub async fn git_repo_root(path: String) -> Result<Option<String>, AppError> {
     run_blocking(move |_cancel| {
         let p = PathBuf::from(&path);
         match open_repo(&p) {
-            Ok(repo) => Ok(repo
-                .workdir()
-                .map(|wd| wd.to_string_lossy().to_string())),
+            Ok(repo) => Ok(repo.workdir().map(|wd| wd.to_string_lossy().to_string())),
             Err(_) => Ok(None),
         }
     })
@@ -414,10 +413,12 @@ pub async fn git_status(repo_path: String) -> Result<GitStatusSummary, AppError>
 
 fn stage_paths_inner(repo: &Repository, paths: &[String]) -> Result<(), AppError> {
     let mut index = repo.index().map_err(to_app_err)?;
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| AppError::Other("git: bare repository has no working tree".into()))?;
     for p in paths {
         let pp = Path::new(p);
         // Deleted files: remove from index. Others: add.
-        let workdir = repo.workdir().unwrap();
         let abs = workdir.join(pp);
         if abs.exists() {
             index.add_path(pp).map_err(to_app_err)?;
@@ -549,9 +550,7 @@ fn render_diff(diff: git2::Diff<'_>) -> Result<String, AppError> {
             DiffLineType::Addition => "+",
             DiffLineType::Deletion => "-",
             DiffLineType::Context => " ",
-            DiffLineType::FileHeader
-            | DiffLineType::HunkHeader
-            | DiffLineType::Binary => "",
+            DiffLineType::FileHeader | DiffLineType::HunkHeader | DiffLineType::Binary => "",
             _ => "",
         };
         out.push_str(prefix);
@@ -607,7 +606,9 @@ pub async fn git_commit(
         let repo = open_repo(Path::new(&repo_path))?;
         let sig = match repo.signature() {
             Ok(s) => s,
-            Err(_) => Signature::now("tauri-explorer", "noreply@example.com").map_err(to_app_err)?,
+            Err(_) => {
+                Signature::now("tauri-explorer", "noreply@example.com").map_err(to_app_err)?
+            }
         };
 
         let mut index = repo.index().map_err(to_app_err)?;
@@ -626,18 +627,25 @@ pub async fn git_commit(
         };
 
         let oid = if opts.amend {
-            let parent = parent_commit
-                .ok_or_else(|| AppError::Other("nothing to amend".into()))?;
+            let parent = parent_commit.ok_or_else(|| AppError::Other("nothing to amend".into()))?;
             let msg = if message.trim().is_empty() {
                 parent.message().unwrap_or("").to_string()
             } else {
                 message.clone()
             };
             parent
-                .amend(Some("HEAD"), Some(&sig), Some(&sig), None, Some(&msg), Some(&tree))
+                .amend(
+                    Some("HEAD"),
+                    Some(&sig),
+                    Some(&sig),
+                    None,
+                    Some(&msg),
+                    Some(&tree),
+                )
                 .map_err(to_app_err)?
         } else {
-            let parents: Vec<&git2::Commit<'_>> = parent_commit.as_ref().map(|p| vec![p]).unwrap_or_default();
+            let parents: Vec<&git2::Commit<'_>> =
+                parent_commit.as_ref().map(|p| vec![p]).unwrap_or_default();
             repo.commit(Some("HEAD"), &sig, &sig, &message, &tree, &parents)
                 .map_err(to_app_err)?
         };
@@ -667,11 +675,14 @@ fn watchers_map() -> &'static Mutex<std::collections::HashMap<String, WatcherEnt
 /// with the repo root path. Idempotent per-repo.
 #[tauri::command]
 pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), AppError> {
-    let repo_root = match open_repo(Path::new(&repo_path)) {
-        Ok(r) => r
-            .workdir()
-            .map(|p| p.to_path_buf())
-            .ok_or_else(|| AppError::Other("git: bare repo cannot be watched".into()))?,
+    let (repo_root, git_dir) = match open_repo(Path::new(&repo_path)) {
+        Ok(r) => {
+            let root = r
+                .workdir()
+                .map(|p| p.to_path_buf())
+                .ok_or_else(|| AppError::Other("git: bare repo cannot be watched".into()))?;
+            (root, r.path().to_path_buf())
+        }
         Err(_) => return Ok(()), // silently no-op when not a repo
     };
     let key = repo_root.to_string_lossy().to_string();
@@ -685,7 +696,9 @@ pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), App
 
     let app_for_watcher = app.clone();
     let key_for_event = key.clone();
-    let last_emit: Arc<Mutex<Instant>> = Arc::new(Mutex::new(Instant::now() - Duration::from_secs(1)));
+    let last_emit: Arc<Mutex<Instant>> =
+        Arc::new(Mutex::new(Instant::now() - Duration::from_secs(1)));
+    let trailing_pending = Arc::new(AtomicBool::new(false));
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         if let Ok(event) = res {
             // Ignore ephemeral lock files; coalesce emits to at most once per 200ms.
@@ -701,6 +714,26 @@ pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), App
                 poisoned.into_inner()
             });
             if last.elapsed() < Duration::from_millis(200) {
+                drop(last);
+                // Within the quiet window: schedule a single trailing emit so
+                // the last change in a burst is not dropped.
+                if !trailing_pending.swap(true, Ordering::SeqCst) {
+                    let app = app_for_watcher.clone();
+                    let key = key_for_event.clone();
+                    let last_emit = Arc::clone(&last_emit);
+                    let trailing_pending = Arc::clone(&trailing_pending);
+                    std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_millis(200));
+                        let mut last = last_emit.lock().unwrap_or_else(|poisoned| {
+                            log::error!("git watcher last_emit lock poisoned, recovering");
+                            poisoned.into_inner()
+                        });
+                        *last = Instant::now();
+                        drop(last);
+                        trailing_pending.store(false, Ordering::SeqCst);
+                        let _ = app.emit("git-status-changed", &key);
+                    });
+                }
                 return;
             }
             *last = Instant::now();
@@ -713,8 +746,10 @@ pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), App
     watcher
         .watch(&repo_root, RecursiveMode::Recursive)
         .map_err(|e| AppError::Other(format!("git watch: {e}")))?;
-    let git_dir = repo_root.join(".git");
-    if git_dir.is_dir() {
+    // The recursive worktree watch above already covers `.git` when it lives
+    // inside the work tree; watching it again would double every event. Only
+    // watch the git dir separately when it lives elsewhere (linked worktrees).
+    if !git_dir.starts_with(&repo_root) {
         let _ = watcher.watch(&git_dir, RecursiveMode::Recursive);
     }
     map.insert(key, WatcherEntry { _watcher: watcher });

@@ -9,7 +9,7 @@
  */
 
 import { getGitStatus, type GitFileStatus } from "$lib/api/files";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { subscribeGitChanges } from "./git-refresh";
 
 interface DirGitStatus {
   isGitRepo: boolean;
@@ -25,7 +25,7 @@ function createGitStatusStore() {
   /** Most recently requested directory (kept for watcher compatibility). */
   let currentPath = $state<string>("");
   let loading = $state(false);
-  let unlistenWatcher: UnlistenFn | null = null;
+  let subscribed = false;
 
   async function fetchForDirectory(path: string): Promise<void> {
     currentPath = path;
@@ -75,14 +75,13 @@ function createGitStatusStore() {
   }
 
   async function initWatcherListener(): Promise<void> {
-    if (unlistenWatcher) return;
-    try {
-      unlistenWatcher = await listen<string>("git-status-changed", () => {
-        refresh();
-      });
-    } catch {
-      // Listener attach fails gracefully in non-Tauri contexts (E2E browser).
-    }
+    if (subscribed) return;
+    subscribed = true;
+    // Badges refresh on every git change, whether from the backend watcher
+    // or a local action (stage/commit/discard in the SCM panel).
+    await subscribeGitChanges(() => {
+      void refresh();
+    });
   }
 
   return {

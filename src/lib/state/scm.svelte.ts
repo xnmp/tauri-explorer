@@ -19,8 +19,7 @@ import {
   type GitFileEntry,
   type GitStatusSummary,
 } from "$lib/api/files";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { gitStatusStore } from "./git-status.svelte";
+import { subscribeGitChanges, notifyLocalGitChange } from "./git-refresh";
 
 function emptySummary(): GitStatusSummary {
   return {
@@ -46,7 +45,7 @@ function createScmStore() {
   let selectedPath = $state<string | null>(null);
   let activeDiff = $state<{ path: string; staged: boolean } | null>(null);
   let watcherPath: string | null = null;
-  let unlistenWatcher: UnlistenFn | null = null;
+  let subscribed = false;
 
   async function detectRepo(path: string): Promise<string | null> {
     if (!path) return null;
@@ -56,7 +55,8 @@ function createScmStore() {
 
   let refreshGeneration = 0;
 
-  async function refresh(): Promise<void> {
+  /** Re-fetch this store's summary only (no cross-store side effects). */
+  async function refreshSummary(): Promise<void> {
     const gen = ++refreshGeneration;
     if (!repoRoot) {
       summary = emptySummary();
@@ -68,7 +68,13 @@ function createScmStore() {
     if (gen !== refreshGeneration) return;
     loading = false;
     summary = result.ok ? result.data : emptySummary();
-    gitStatusStore.refresh();
+  }
+
+  /** Refresh the summary and announce the change so other git consumers
+   *  (per-directory badges) update from the same source. */
+  async function refresh(): Promise<void> {
+    await refreshSummary();
+    notifyLocalGitChange(repoRoot);
   }
 
   async function setActivePath(path: string): Promise<void> {
@@ -90,7 +96,7 @@ function createScmStore() {
       await gitWatchRepo(repoRoot);
       watcherPath = repoRoot;
     }
-    await refresh();
+    await refreshSummary();
   }
 
   function filterToDir<T extends { path: string }>(entries: T[]): T[] {
@@ -105,16 +111,15 @@ function createScmStore() {
   }
 
   async function initWatcherListener(): Promise<void> {
-    if (unlistenWatcher) return;
-    try {
-      unlistenWatcher = await listen<string>("git-status-changed", (event) => {
-        if (repoRoot && event.payload === repoRoot) {
-          refresh();
-        }
-      });
-    } catch {
-      // Listener attach fails gracefully in non-Tauri contexts (E2E browser).
-    }
+    if (subscribed) return;
+    subscribed = true;
+    // Local changes already refreshed the summary before notifying, so only
+    // watcher events (changes made outside this store) trigger a re-fetch.
+    await subscribeGitChanges((change) => {
+      if (change.source === "watcher" && repoRoot && change.repoRoot === repoRoot) {
+        void refreshSummary();
+      }
+    });
   }
 
   async function stage(paths: string[]): Promise<void> {

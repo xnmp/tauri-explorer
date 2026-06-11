@@ -68,7 +68,7 @@ static CONTENT_SEARCHES: crate::task_registry::TaskRegistry =
 /// Start a streaming content search using ripgrep.
 /// Returns search ID immediately, emits results via 'content-search-results' events.
 #[tauri::command]
-pub fn start_content_search(
+pub async fn start_content_search(
     app: AppHandle,
     query: String,
     root: String,
@@ -150,19 +150,37 @@ pub fn start_content_search(
     Ok(search_id)
 }
 
-/// Convert a byte offset within `s` to a UTF-16 code-unit offset.
-/// Clamps gracefully if `byte_offset` exceeds the string length.
-fn byte_to_utf16_offset(s: &str, byte_offset: usize) -> usize {
-    let mut bytes = 0;
-    let mut utf16 = 0;
-    for c in s.chars() {
-        if bytes >= byte_offset {
-            break;
+/// Incrementally converts byte offsets to UTF-16 code-unit offsets.
+/// Offsets must be fed in non-decreasing order; the cursor carries its
+/// position so a match-dense line is scanned once instead of once per offset.
+struct Utf16Cursor<'a> {
+    chars: std::str::Chars<'a>,
+    byte_pos: usize,
+    utf16_pos: usize,
+}
+
+impl<'a> Utf16Cursor<'a> {
+    fn new(s: &'a str) -> Self {
+        Self {
+            chars: s.chars(),
+            byte_pos: 0,
+            utf16_pos: 0,
         }
-        bytes += c.len_utf8();
-        utf16 += c.len_utf16();
     }
-    utf16
+
+    /// UTF-16 offset for `byte_offset`. Clamps gracefully past end-of-string.
+    fn advance_to(&mut self, byte_offset: usize) -> usize {
+        while self.byte_pos < byte_offset {
+            match self.chars.next() {
+                Some(c) => {
+                    self.byte_pos += c.len_utf8();
+                    self.utf16_pos += c.len_utf16();
+                }
+                None => break,
+            }
+        }
+        self.utf16_pos
+    }
 }
 
 /// Find all matches of `matcher` within a single line, appending up to
@@ -174,6 +192,20 @@ fn collect_line_matches(
     line: &str,
     file_matches: &mut Vec<ContentMatch>,
 ) {
+    // Trim/truncate once per line, not once per match: the display string is
+    // identical for every match on the line.
+    let trimmed = line.trim_end();
+    let (line_content, clamp_at) = if trimmed.len() > MAX_LINE_LENGTH {
+        let end = trimmed.floor_char_boundary(MAX_LINE_LENGTH);
+        (format!("{}...", &trimmed[..end]), end)
+    } else {
+        (trimmed.to_string(), trimmed.len())
+    };
+
+    // Matches arrive left-to-right, so byte→UTF-16 conversion can share one
+    // forward-only cursor across all matches on the line.
+    let mut utf16 = Utf16Cursor::new(&line_content);
+
     let mut byte_offset = 0;
     while let Ok(Some(m)) = matcher.find(&line.as_bytes()[byte_offset..]) {
         if file_matches.len() >= MAX_MATCHES_PER_FILE {
@@ -183,27 +215,15 @@ fn collect_line_matches(
         let match_start = byte_offset + m.start();
         let match_end = byte_offset + m.end();
 
-        // Truncate long lines before IPC serialization
-        let trimmed = line.trim_end();
-        let (line_content, clamped_start, clamped_end) = if trimmed.len() > MAX_LINE_LENGTH {
-            let end = trimmed.floor_char_boundary(MAX_LINE_LENGTH);
-            (
-                format!("{}...", &trimmed[..end]),
-                match_start.min(end),
-                match_end.min(end),
-            )
-        } else {
-            (trimmed.to_string(), match_start, match_end)
-        };
-
-        // Convert byte offsets to UTF-16 code units for the JS frontend.
-        let start_utf16 = byte_to_utf16_offset(&line_content, clamped_start);
-        let end_utf16 = byte_to_utf16_offset(&line_content, clamped_end);
+        // Convert byte offsets (clamped to the truncation point) to UTF-16
+        // code units for the JS frontend.
+        let start_utf16 = utf16.advance_to(match_start.min(clamp_at));
+        let end_utf16 = utf16.advance_to(match_end.min(clamp_at));
 
         file_matches.push(ContentMatch {
             line_number: line_num,
             column: (start_utf16 + 1) as u64,
-            line_content,
+            line_content: line_content.clone(),
             match_start: start_utf16,
             match_end: end_utf16,
         });
@@ -414,7 +434,7 @@ fn is_binary_file(path: &std::path::Path) -> bool {
 
 /// Cancel an active content search.
 #[tauri::command]
-pub fn cancel_content_search(search_id: u64) -> Result<(), AppError> {
+pub async fn cancel_content_search(search_id: u64) -> Result<(), AppError> {
     CONTENT_SEARCHES.cancel(search_id);
     Ok(())
 }
@@ -537,6 +557,30 @@ mod tests {
         let utf16: Vec<u16> = m.line_content.encode_utf16().collect();
         let highlighted = String::from_utf16(&utf16[m.match_start..m.match_end]).unwrap();
         assert_eq!(highlighted, "wörld");
+    }
+
+    #[test]
+    fn test_utf16_offsets_for_multiple_matches_on_one_line() {
+        let matcher = RegexMatcherBuilder::new()
+            .case_insensitive(false)
+            .line_terminator(Some(b'\n'))
+            .build("ab")
+            .unwrap();
+
+        // Multi-byte chars between matches: the shared UTF-16 cursor must
+        // produce the same offsets as independent per-match conversion.
+        let mut matches = Vec::new();
+        collect_line_matches(&matcher, 1, "ab é ab 日 ab\n", &mut matches);
+
+        assert_eq!(matches.len(), 3);
+        for m in &matches {
+            let utf16: Vec<u16> = m.line_content.encode_utf16().collect();
+            let s = String::from_utf16(&utf16[m.match_start..m.match_end]).unwrap();
+            assert_eq!(s, "ab");
+        }
+        assert_eq!(matches[0].match_start, 0);
+        assert_eq!(matches[1].match_start, 5);
+        assert_eq!(matches[2].match_start, 10);
     }
 
     #[test]

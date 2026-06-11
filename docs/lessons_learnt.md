@@ -1320,3 +1320,15 @@ This means:
 - **`raw_os_error()` is the Win32 error code on Windows, not the CRT errno** — comparing against `libc::EXDEV` never matches `ERROR_NOT_SAME_DEVICE`.
 - **Svelte 5: an `$effect` that reads state it (indirectly) writes re-runs and self-defeats** — TilesView's progressive chunking rendered everything in one frame. Use `untrack()` for the feedback variables, or extract decision logic into a pure function (`use-progressive-render.svelte.ts`).
 - **Concurrent edit agents need an ownership map AND consumer awareness**: one agent deleted a "zero consumer" `setContext` while another was adding the consumer. Cross-file contracts (context keys, event names) must stay with one owner.
+
+---
+
+## 2026-06-12 structural refactors (Modal primitive, store decomposition, search perf)
+
+**Key takeaways:**
+
+- **Debug builds make dependency-heavy features look broken.** Ctrl+Shift+F felt 10-50x slower than terminal `rg` solely because `tauri dev` compiled the regex/grep/ignore stack at opt-level 0. `[profile.dev.package."*"] opt-level = 3` fixes every dependency-bound hot path (search, thumbnails) while keeping our own crate fast to rebuild. Check the build profile before optimizing code.
+- **Audit reachability before refactoring a component.** RenameDialog and NewFolderDialog looked like 2 of the "11 dialogs to convert" but were unreachable dead code — rename and folder creation had moved to inline flows, and nothing called `dialogStore.openNewFolder()`. Mounted-but-unopenable components pass type checks and silently rot.
+- **Svelte scoped CSS shapes how a shared primitive must be split**: a child's scoped styles can't target elements rendered by a parent component. Modal owns the overlay element (and its styles); callers render their own dialog card so their scoped card styles keep working, opting into shared chrome via a global `modal.css` class (`.modal-card`).
+- **Per-dialog overrides of shared global rules need one extra selector level** (`.dialog .dialog-actions`, not `.dialog-actions`): a scoped selector compiles to the same (0,2,0) specificity as `.modal-card .dialog-actions` and stylesheet order between component CSS and imported CSS is not guaranteed.
+- **`$state.raw` for large result lists**: deep-proxying thousands of streamed match objects costs real time; replacing the array reference re-renders just as well. Pair with full virtualization instead of "load more" pagination — page-append scroll jumps read as jank.

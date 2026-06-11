@@ -42,6 +42,27 @@ All state lives in `src/lib/state/`. Svelte 5 runes (`$state`, `$derived`, `$eff
 - **State:** `currentPath`, `history[]`, `historyIndex`, `entries[]`, `loading`, `error`, `sortBy`, `sortAscending`, `viewMode`, `selectedPaths`, `selectionAnchorIndex`, `isCreatingFolder`
 - **Derived:** `displayEntries` (filtered by hidden + sorted), `breadcrumbs`, `canGoBack`, `canGoForward`
 - **Key methods:** `navigateTo`, `goBack/goForward/goUp`, `refresh`, `selectEntry`, `createFolder`, `rename`, `paste`, `undo/redo`, `startDelete`, `setSorting`, `setViewMode`
+- **Extracted collaborators** (each receives the pane's `$state` proxy / narrow callbacks):
+  - `pane-watch.ts` — filesystem watch + local-mutation cooldown
+  - `pane-refresh.ts` — no-flash refresh (streamed-chunk accumulation, path-change bail)
+  - `pane-mutations.ts` — create/rename/delete/symlink/archive plumbing
+  - `commands/system-actions.ts` — wallpaper/terminal actions (no pane state)
+
+#### Active-pane access rule
+Components rendered *inside* a pane receive `explorer` as a prop (or resolve
+their pane via `pane-context.ts`'s `setPaneIdContext`/`getPaneIdContext`, the
+typed channel between `ExplorerPane` and per-entry components like
+`GitStatusBadge`). Only window-global surfaces (QuickOpen, CommandPalette,
+ContentSearchDialog, sidebar views, status bar, preview) use the
+`windowTabsManager` singleton; cross-pane refresh after drops/pastes goes
+through `windowTabsManager.refreshAllPanes()`.
+
+#### Git change propagation
+`git-refresh.ts` owns the single `git-status-changed` Tauri listener and fans
+`GitChange` events ("watcher" or "local") out to subscribers. Per-directory
+badges (`git-status.svelte.ts`) refresh on every change; the SCM summary
+(`scm.svelte.ts`) refreshes on watcher events and announces its own mutations
+through the same channel after re-fetching.
 
 #### `window-tabs.svelte.ts` — Window-Level Tabs
 - **Singleton:** `windowTabsManager`

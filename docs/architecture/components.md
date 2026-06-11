@@ -37,6 +37,7 @@
 | **KeybindingsSettings** | `KeybindingsSettings.svelte` | Keybinding customization: search, record, conflict detection |
 | **WorkspaceDialog** | `WorkspaceDialog.svelte` | Save/restore named tab layout snapshots |
 | **BulkRenameDialog** | `BulkRenameDialog.svelte` | Multi-file rename with find/replace, regex, sequence patterns |
+| **Modal** | `Modal.svelte` | Shared overlay primitive used by every dialog: backdrop, Escape, focus trap, focus restore, ARIA, z-index layer (`--z-modal`); standard card chrome in `modal.css` (`.modal-card`) |
 | **ProgressDialog** | `ProgressDialog.svelte` | Copy/move progress (appears after 1.5s delay), cancellable |
 | **ConflictDialog** | `ConflictDialog.svelte` | Overwrite/Skip/Cancel for file conflicts, with "Apply to all" |
 | **DeleteDialog** | `DeleteDialog.svelte` | Delete confirmation |

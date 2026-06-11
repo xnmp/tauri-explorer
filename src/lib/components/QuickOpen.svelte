@@ -16,7 +16,6 @@
   } from "$lib/api/files";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-  import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { parentDir, basename, expandTilde as expandTildePath } from "$lib/domain/path";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
@@ -42,8 +41,6 @@
   }
 
   let { open, onClose }: Props = $props();
-
-  const paneNav = getPaneNavigationContext();
 
   let query = $state("");
   let results = $state<SearchResult[]>([]);
@@ -185,7 +182,7 @@
 
   // Get current working directory from active explorer
   function getCwdPath(): string {
-    const explorer = paneNav?.getActiveExplorer() ?? windowTabsManager.getActiveExplorer();
+    const explorer = windowTabsManager.getActiveExplorer();
     return explorer?.currentPath ?? "/";
   }
 
@@ -349,7 +346,7 @@
         event.preventDefault();
         // If query looks like a path (starts with / or ~), navigate directly
         if (query.startsWith("/") || query.startsWith("~")) {
-          const explorer = paneNav?.getActiveExplorer() ?? windowTabsManager.getActiveExplorer();
+          const explorer = windowTabsManager.getActiveExplorer();
           explorer?.navigateTo(expandTilde(query.trim()));
           onClose();
         } else if (displayResults[selectedIndex]) {
@@ -367,7 +364,7 @@
   }
 
   async function selectResult(result: SearchResult): Promise<void> {
-    const explorer = paneNav?.getActiveExplorer() ?? windowTabsManager.getActiveExplorer();
+    const explorer = windowTabsManager.getActiveExplorer();
 
     // Record access for frecency ranking
     frecencyStore.recordAccess(result.path);

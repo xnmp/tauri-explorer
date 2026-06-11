@@ -1,23 +1,27 @@
 /**
- * Context key for pane navigation.
- * Used to communicate navigation requests from Sidebar to PaneContainer.
+ * Pane-scoped Svelte context.
+ *
+ * Access rule (refactor #4): components rendered *inside* a pane resolve
+ * their pane via this context (or receive `explorer` as a prop); only
+ * window-global surfaces (QuickOpen, CommandPalette, ContentSearchDialog,
+ * SCM panel, status bar, preview) use the windowTabsManager singleton.
  */
 
 import { getContext, setContext } from "svelte";
-import type { ExplorerInstance } from "./explorer.svelte";
+import type { PaneId } from "./types";
 
-const PANE_NAV_KEY = Symbol("pane-navigation");
+const PANE_ID_KEY = "pane-id";
 
-export interface PaneNavigationContext {
-  navigateTo: (path: string) => void;
-  getActiveExplorer: () => ExplorerInstance | null;
-  refreshAllPanes: () => void;
+/** Set by ExplorerPane at init (paneId is a static literal per pane). */
+export function setPaneIdContext(paneId: PaneId): void {
+  setContext(PANE_ID_KEY, paneId);
 }
 
-export function setPaneNavigationContext(ctx: PaneNavigationContext) {
-  setContext(PANE_NAV_KEY, ctx);
-}
-
-export function getPaneNavigationContext(): PaneNavigationContext | undefined {
-  return getContext<PaneNavigationContext>(PANE_NAV_KEY);
+/**
+ * Consumed by per-entry components (e.g. GitStatusBadge) to resolve which
+ * pane — and therefore which directory — they are rendered in, so dual
+ * panes showing different directories don't bleed state into each other.
+ */
+export function getPaneIdContext(): PaneId | undefined {
+  return getContext<PaneId | undefined>(PANE_ID_KEY);
 }

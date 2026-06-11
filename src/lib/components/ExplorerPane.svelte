@@ -4,7 +4,8 @@
   Issue: tauri-explorer-auj, tauri-explorer-ldfx (window-level tabs)
 -->
 <script lang="ts">
-  import { setContext, tick, untrack } from "svelte";
+  import { tick, untrack } from "svelte";
+  import { setPaneIdContext } from "$lib/state/pane-context";
   import { createExplorerState } from "$lib/state/explorer.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import type { PaneId } from "$lib/state/types";
@@ -26,10 +27,7 @@
   // paneId is a static literal per pane instance (see PaneContainer), so
   // capturing it at init is safe. Consumed by GitStatusBadge to resolve the
   // directory its entry is rendered in.
-  setContext(
-    "pane-id",
-    untrack(() => paneId),
-  );
+  setPaneIdContext(untrack(() => paneId));
 
   // Get explorer from window tabs manager
   const paneExplorer = $derived(windowTabsManager.getExplorer(paneId) ?? createExplorerState());

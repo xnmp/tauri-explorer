@@ -4,12 +4,11 @@
   Issue: fix/view-component-duplication
 -->
 <script lang="ts">
-  import { getContext } from "svelte";
   import { gitStatusLetter } from "$lib/domain/git";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { gitStatusStore } from "$lib/state/git-status.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import type { PaneId } from "$lib/state/types";
+  import { getPaneIdContext } from "$lib/state/pane-context";
 
   interface Props {
     entryName: string;
@@ -22,7 +21,7 @@
   // Statuses are keyed per directory; look up via the directory this entry
   // is rendered in (the owning pane's current path) so dual panes showing
   // different directories don't bleed badges into each other.
-  const paneId = getContext<PaneId | undefined>("pane-id");
+  const paneId = getPaneIdContext();
   const directory = $derived(
     paneId ? windowTabsManager.getExplorer(paneId)?.currentPath ?? "" : "",
   );

@@ -5,8 +5,8 @@
 <script lang="ts">
   import { tick } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
-  import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { openFile, openImageWithSiblings } from "$lib/api/files";
   import { dragState } from "$lib/state/drag.svelte";
   import { getDropSourcePaths, handleBackgroundDrop } from "$lib/state/drop-operations";
@@ -29,7 +29,6 @@
 
   let { explorer }: Props = $props();
 
-  const paneNav = getPaneNavigationContext();
 
   // Drop target state for dropping files into current directory
   let isDropTarget = $state(false);
@@ -262,10 +261,7 @@
     const existingNames = new Set(explorer.displayEntries.map((e) => e.name));
     for (const sourcePath of validPaths) {
       await handleBackgroundDrop(sourcePath, currentPath, existingNames, {
-        onRefresh: () => {
-          if (paneNav) paneNav.refreshAllPanes();
-          else explorer.refresh({ silent: true });
-        },
+        onRefresh: () => windowTabsManager.refreshAllPanes(),
       });
       // Each transferred file now exists in the target dir — later files in
       // this batch sharing its basename must trigger the conflict dialog.

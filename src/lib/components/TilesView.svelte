@@ -4,9 +4,9 @@
 -->
 <script lang="ts">
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
-  import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { useProgressiveRender } from "$lib/composables/use-progressive-render.svelte";
   import { getFileIconColor, isImageFile } from "$lib/domain/file-types";
 
@@ -30,16 +30,15 @@
 
   let { explorer, onitemclick, onitemdblclick }: Props = $props();
 
-  const paneNav = getPaneNavigationContext();
 
   // Shared item interactions (DnD, context menu with select-on-right-click)
   const interactions = useItemInteractions({
     getExplorer: () => explorer,
-    getPaneNav: () => paneNav,
+    refreshPanes: () => windowTabsManager.refreshAllPanes(),
     selectOnContextMenu: true,
   });
 
-  const pointerDrag = isMac ? usePointerDrag({ getExplorer: () => explorer, getPaneNav: () => paneNav }) : null;
+  const pointerDrag = isMac ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
 
   const effectiveThumbnailSize = $derived(
     folderViewsStore.getThumbnailSize(explorer.currentPath, settingsStore.thumbnailSize)

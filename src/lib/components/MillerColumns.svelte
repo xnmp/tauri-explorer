@@ -14,7 +14,7 @@
   import FileIcon from "./FileIcon.svelte";
   import EntryName from "./EntryName.svelte";
   import { dragState } from "$lib/state/drag.svelte";
-  import { getPaneNavigationContext } from "$lib/state/pane-context";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { useDropTarget } from "$lib/composables/use-drop-target.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
@@ -236,18 +236,13 @@
 
   function handleDragEnd(): void {
     dragState.clear();
-    paneNav?.refreshAllPanes();
+    windowTabsManager.refreshAllPanes();
   }
 
   // Shared drop-target behavior
-  const paneNav = getPaneNavigationContext();
-  function onDropRefresh() {
-    if (paneNav) paneNav.refreshAllPanes();
-    else explorer.refresh({ silent: true });
-  }
-  const dropTarget = useDropTarget({ onRefresh: onDropRefresh });
+  const dropTarget = useDropTarget({ onRefresh: () => windowTabsManager.refreshAllPanes() });
 
-  const pointerDrag = isMac ? usePointerDrag({ getExplorer: () => explorer, getPaneNav: () => paneNav ?? undefined }) : null;
+  const pointerDrag = isMac ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
 
   // Background drop: dropping onto empty space in a column moves to that column's dir
   let bgDropColumn = $state<string | null>(null);
@@ -286,7 +281,7 @@
       if (sourcePath === columnPath) continue;
       if (columnPath.startsWith(sourcePath + "/")) continue;
       await handleFileDrop(sourcePath, columnPath, isCopy, {
-        onRefresh: onDropRefresh,
+        onRefresh: () => windowTabsManager.refreshAllPanes(),
       });
     }
   }

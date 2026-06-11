@@ -11,11 +11,11 @@
   import GitStatusBadge from "./GitStatusBadge.svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
-  import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { useItemInteractions, isInClipboard as checkInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { isMac } from "$lib/domain/platform";
 
   interface Props {
@@ -29,16 +29,15 @@
   let { entry, onclick, ondblclick, selected = false, explorer }: Props = $props();
 
   // Get pane context for cross-pane operations
-  const paneNav = getPaneNavigationContext();
 
   // Shared item interactions (DnD, context menu with select-on-right-click)
   const interactions = useItemInteractions({
     getExplorer: () => explorer,
-    getPaneNav: () => paneNav,
+    refreshPanes: () => windowTabsManager.refreshAllPanes(),
     selectOnContextMenu: true,
   });
 
-  const pointerDrag = isMac ? usePointerDrag({ getExplorer: () => explorer, getPaneNav: () => paneNav }) : null;
+  const pointerDrag = isMac ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
 
   // Check if this entry is being renamed (used for click guards and badge visibility)
   const isRenaming = $derived(dialogStore.renamingEntry?.path === entry.path);

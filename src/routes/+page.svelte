@@ -10,7 +10,6 @@
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
-  import { setPaneNavigationContext } from "$lib/state/pane-context";
   import { registerAllCommands } from "$lib/state/command-definitions";
   import { executeCommand, getCommand } from "$lib/state/commands.svelte";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
@@ -62,22 +61,7 @@
     return windowTabsManager.getActiveExplorer();
   }
 
-  function navigateTo(path: string) {
-    getActiveExplorer()?.navigateTo(path);
-  }
-
-  function refreshAllPanes() {
-    // Refresh both panes in active tab (silent — triggered by file operations, not user action)
-    for (const paneId of ["left", "right"] as const) {
-      windowTabsManager.getExplorer(paneId)?.refresh({ silent: true });
-    }
-  }
-
-  setPaneNavigationContext({
-    navigateTo,
-    getActiveExplorer: getActiveExplorer as () => ExplorerInstance,
-    refreshAllPanes,
-  });
+  const refreshAllPanes = () => windowTabsManager.refreshAllPanes();
 
   // Initialize composables
   const nativeDropHandler = useNativeDropHandler({ getActiveExplorer, refreshAllPanes });

@@ -10,23 +10,23 @@ import { isMac } from "$lib/domain/platform";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { clipboardStore } from "$lib/state/clipboard.svelte";
 import { dragState } from "$lib/state/drag.svelte";
-import type { PaneNavigationContext } from "$lib/state/pane-context";
 import { useDropTarget } from "./use-drop-target.svelte";
 import { startExternalDrag } from "./use-external-drag.svelte";
 
 interface ItemInteractionsDeps {
   getExplorer: () => ExplorerInstance;
-  getPaneNav: () => PaneNavigationContext | undefined;
+  /** Refresh every pane that may show an affected directory after a drop.
+   *  Defaults to refreshing only the owning pane. */
+  refreshPanes?: () => void;
   /** If true, selects unselected entries on right-click before opening menu (ListView/TilesView behavior) */
   selectOnContextMenu?: boolean;
 }
 
 export function useItemInteractions(deps: ItemInteractionsDeps) {
-  const { getExplorer, getPaneNav, selectOnContextMenu = false } = deps;
+  const { getExplorer, selectOnContextMenu = false } = deps;
 
   function refreshPanes(): void {
-    const paneNav = getPaneNav();
-    if (paneNav) paneNav.refreshAllPanes();
+    if (deps.refreshPanes) deps.refreshPanes();
     else getExplorer().refresh({ silent: true });
   }
 

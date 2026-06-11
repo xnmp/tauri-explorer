@@ -4,7 +4,6 @@
 -->
 <script lang="ts">
   import { onMount } from "svelte";
-  import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { getHomeDirectory } from "$lib/api/files";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
@@ -20,13 +19,9 @@
 
   const sidebarDrag = isMac ? useSidebarDrag() : null;
 
-  const paneNav = getPaneNavigationContext();
+  // Window-global surface: navigates whichever pane is active.
   const navigateTo = (path: string) => {
-    if (paneNav) {
-      paneNav.navigateTo(path);
-    } else {
-      windowTabsManager.getActiveExplorer()?.navigateTo(path);
-    }
+    windowTabsManager.getActiveExplorer()?.navigateTo(path);
   };
 
   let homeDir = $state("/home");

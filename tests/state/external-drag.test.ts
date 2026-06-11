@@ -63,7 +63,7 @@ describe("external drag-out", () => {
     const entry = makeEntry("/home/u/file.txt", "file.txt");
     const interactions = useItemInteractions({
       getExplorer: () => makeExplorer([entry]),
-      getPaneNav: () => undefined,
+      refreshPanes: undefined,
     });
 
     const event = { dataTransfer: makeDataTransfer() } as DragEvent;
@@ -79,7 +79,7 @@ describe("external drag-out", () => {
     const c = makeEntry("/h/c.txt", "c.txt");
     const interactions = useItemInteractions({
       getExplorer: () => makeExplorer([a, b, c]),
-      getPaneNav: () => undefined,
+      refreshPanes: undefined,
     });
 
     const event = { dataTransfer: makeDataTransfer() } as DragEvent;
@@ -93,7 +93,7 @@ describe("external drag-out", () => {
     const entry = makeEntry("/h/x.txt", "x.txt");
     const interactions = useItemInteractions({
       getExplorer: () => makeExplorer([entry]),
-      getPaneNav: () => undefined,
+      refreshPanes: undefined,
     });
 
     interactions.handleDragStart({ dataTransfer: makeDataTransfer(), metaKey: true } as DragEvent, entry, true);
@@ -106,7 +106,7 @@ describe("external drag-out", () => {
     const entry = makeEntry("/h/my file.txt", "my file.txt");
     const interactions = useItemInteractions({
       getExplorer: () => makeExplorer([entry]),
-      getPaneNav: () => undefined,
+      refreshPanes: undefined,
     });
 
     const dt = makeDataTransfer();
@@ -119,7 +119,7 @@ describe("external drag-out", () => {
     const entry = makeEntry("/h/x.txt", "x.txt");
     const interactions = useItemInteractions({
       getExplorer: () => makeExplorer([entry]),
-      getPaneNav: () => undefined,
+      refreshPanes: undefined,
     });
 
     const dt = makeDataTransfer();
@@ -134,7 +134,7 @@ describe("external drag-out", () => {
     const entry = makeEntry("/h/x.txt", "x.txt");
     const interactions = useItemInteractions({
       getExplorer: () => makeExplorer([entry]),
-      getPaneNav: () => undefined,
+      refreshPanes: undefined,
     });
 
     interactions.handleDragStart({ dataTransfer: makeDataTransfer() } as DragEvent, entry, true);

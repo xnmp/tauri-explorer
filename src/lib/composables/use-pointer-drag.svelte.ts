@@ -13,7 +13,6 @@
 import { onDestroy } from "svelte";
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
-import type { PaneNavigationContext } from "$lib/state/pane-context";
 import { parentDir, basename } from "$lib/domain/path";
 import { dragState } from "$lib/state/drag.svelte";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
@@ -24,7 +23,9 @@ import { getZoomFactor } from "$lib/domain/zoom";
 
 export interface PointerDragDeps {
   getExplorer: () => ExplorerInstance;
-  getPaneNav: () => PaneNavigationContext | undefined;
+  /** Refresh every pane that may show an affected directory after a drop.
+   *  Defaults to refreshing only the owning pane. */
+  refreshPanes?: () => void;
 }
 
 const THRESHOLD_PX = 5;
@@ -51,8 +52,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
   }
 
   function refreshPanes(): void {
-    const paneNav = deps.getPaneNav();
-    if (paneNav) paneNav.refreshAllPanes();
+    if (deps.refreshPanes) deps.refreshPanes();
     else deps.getExplorer().refresh({ silent: true });
   }
 

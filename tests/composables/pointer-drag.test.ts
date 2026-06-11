@@ -125,7 +125,7 @@ describe("usePointerDrag", () => {
 
   it("ignores non-left-button clicks", () => {
     const explorer = makeMockExplorer();
-    const drag = usePointerDrag({ getExplorer: () => explorer, getPaneNav: () => undefined });
+    const drag = usePointerDrag({ getExplorer: () => explorer, refreshPanes: undefined });
     const entry = makeEntry("file.txt");
 
     drag.handlePointerDown(makeMouseEvent({ button: 2 }), entry, false);
@@ -134,7 +134,7 @@ describe("usePointerDrag", () => {
 
   it("registers window listeners on left-click", () => {
     const explorer = makeMockExplorer();
-    const drag = usePointerDrag({ getExplorer: () => explorer, getPaneNav: () => undefined });
+    const drag = usePointerDrag({ getExplorer: () => explorer, refreshPanes: undefined });
     const entry = makeEntry("file.txt");
 
     drag.handlePointerDown(makeMouseEvent(), entry, false);
@@ -146,7 +146,7 @@ describe("usePointerDrag", () => {
 
   it("does not activate drag below threshold (5px)", () => {
     const explorer = makeMockExplorer();
-    const drag = usePointerDrag({ getExplorer: () => explorer, getPaneNav: () => undefined });
+    const drag = usePointerDrag({ getExplorer: () => explorer, refreshPanes: undefined });
     const entry = makeEntry("file.txt");
 
     drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), entry, false);
@@ -157,7 +157,7 @@ describe("usePointerDrag", () => {
 
   it("activates drag above threshold", () => {
     const explorer = makeMockExplorer();
-    const drag = usePointerDrag({ getExplorer: () => explorer, getPaneNav: () => undefined });
+    const drag = usePointerDrag({ getExplorer: () => explorer, refreshPanes: undefined });
     const entry = makeEntry("file.txt");
 
     drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), entry, false);
@@ -171,7 +171,7 @@ describe("usePointerDrag", () => {
   it("uses multi-selection paths when entry is already selected", () => {
     const entries = [makeEntry("a.txt"), makeEntry("b.txt")];
     const explorer = makeMockExplorer(entries, entries);
-    const drag = usePointerDrag({ getExplorer: () => explorer, getPaneNav: () => undefined });
+    const drag = usePointerDrag({ getExplorer: () => explorer, refreshPanes: undefined });
 
     drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), entries[0], true);
     fireWindowEvent("mousemove", { clientX: 110, clientY: 100 });
@@ -183,7 +183,7 @@ describe("usePointerDrag", () => {
 
   it("triggers native drag when cursor exits window bounds", () => {
     const explorer = makeMockExplorer();
-    const drag = usePointerDrag({ getExplorer: () => explorer, getPaneNav: () => undefined });
+    const drag = usePointerDrag({ getExplorer: () => explorer, refreshPanes: undefined });
     const entry = makeEntry("file.txt");
 
     drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), entry, false);
@@ -198,7 +198,7 @@ describe("usePointerDrag", () => {
 
   it("calls highlightTargetAtPoint during drag within window", () => {
     const explorer = makeMockExplorer();
-    const drag = usePointerDrag({ getExplorer: () => explorer, getPaneNav: () => undefined });
+    const drag = usePointerDrag({ getExplorer: () => explorer, refreshPanes: undefined });
     const entry = makeEntry("file.txt");
 
     drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), entry, false);
@@ -212,7 +212,7 @@ describe("usePointerDrag", () => {
     vi.mocked(resolveDropTargetAtPoint).mockReturnValue({ type: "folder", path: "/home/user/Documents" });
 
     const explorer = makeMockExplorer();
-    const drag = usePointerDrag({ getExplorer: () => explorer, getPaneNav: () => undefined });
+    const drag = usePointerDrag({ getExplorer: () => explorer, refreshPanes: undefined });
     const entry = makeEntry("file.txt");
 
     drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), entry, false);
@@ -231,7 +231,7 @@ describe("usePointerDrag", () => {
     vi.mocked(resolveDropTargetAtPoint).mockReturnValue({ type: "folder", path: "/home/user/Docs" });
 
     const explorer = makeMockExplorer();
-    const drag = usePointerDrag({ getExplorer: () => explorer, getPaneNav: () => undefined });
+    const drag = usePointerDrag({ getExplorer: () => explorer, refreshPanes: undefined });
     const entry = makeEntry("file.txt");
 
     drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), entry, false);
@@ -250,7 +250,7 @@ describe("usePointerDrag", () => {
     vi.mocked(resolveDropTargetAtPoint).mockReturnValue({ type: "sidebar" });
 
     const explorer = makeMockExplorer();
-    const drag = usePointerDrag({ getExplorer: () => explorer, getPaneNav: () => undefined });
+    const drag = usePointerDrag({ getExplorer: () => explorer, refreshPanes: undefined });
     const entry = makeEntry("Documents", "directory");
 
     drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), entry, false);
@@ -262,7 +262,7 @@ describe("usePointerDrag", () => {
 
   it("escape cancels active drag", () => {
     const explorer = makeMockExplorer();
-    const drag = usePointerDrag({ getExplorer: () => explorer, getPaneNav: () => undefined });
+    const drag = usePointerDrag({ getExplorer: () => explorer, refreshPanes: undefined });
     const entry = makeEntry("file.txt");
 
     drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), entry, false);
@@ -275,7 +275,7 @@ describe("usePointerDrag", () => {
 
   it("mouseup without threshold does not drop (click-through)", async () => {
     const explorer = makeMockExplorer();
-    const drag = usePointerDrag({ getExplorer: () => explorer, getPaneNav: () => undefined });
+    const drag = usePointerDrag({ getExplorer: () => explorer, refreshPanes: undefined });
     const entry = makeEntry("file.txt");
 
     drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), entry, false);
@@ -289,7 +289,7 @@ describe("usePointerDrag", () => {
     vi.mocked(resolveDropTargetAtPoint).mockReturnValue(null);
 
     const explorer = makeMockExplorer();
-    const drag = usePointerDrag({ getExplorer: () => explorer, getPaneNav: () => undefined });
+    const drag = usePointerDrag({ getExplorer: () => explorer, refreshPanes: undefined });
     const entry = makeEntry("file.txt");
 
     drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), entry, false);

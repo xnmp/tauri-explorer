@@ -4,12 +4,12 @@
   Issue: tauri-u00y, tauri-nxfi
 -->
 <script lang="ts">
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { tick, onMount } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { getHomeDirectory } from "$lib/api/files";
   import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
-  import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { truncateBreadcrumbs } from "$lib/domain/breadcrumb-truncation";
   import BreadcrumbAutocomplete from "./BreadcrumbAutocomplete.svelte";
   import CaretPicker from "./CaretPicker.svelte";
@@ -146,7 +146,6 @@
   }
 
   // Breadcrumb drop target state
-  const paneNav = getPaneNavigationContext();
   let dropTargetCrumb = $state<string | null>(null);
 
   function handleCrumbDragOver(event: DragEvent, path: string): void {
@@ -170,7 +169,7 @@
       if (sourcePath === targetPath) continue;
       if (targetPath.startsWith(sourcePath + "/")) continue;
       await handleFileDrop(sourcePath, targetPath, false, {
-        onRefresh: () => paneNav?.refreshAllPanes(),
+        onRefresh: () => windowTabsManager.refreshAllPanes(),
       });
     }
   }

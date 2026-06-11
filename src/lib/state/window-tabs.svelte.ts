@@ -499,6 +499,14 @@ function createWindowTabsManager() {
     return getExplorer(activeTab.activePaneId);
   }
 
+  /** Silently refresh both panes of the active tab — for file operations
+   *  (drops, pastes, external changes) that may affect either pane. */
+  function refreshAllPanes(): void {
+    for (const paneId of ["left", "right"] as const) {
+      getExplorer(paneId)?.refresh({ silent: true });
+    }
+  }
+
   /** Update the active tab with partial changes */
   function updateActiveTab(updates: Partial<WindowTab>): void {
     if (!activeTabId) return;
@@ -614,6 +622,7 @@ function createWindowTabsManager() {
     getExplorer,
     getActiveExplorer,
     getAllExplorers,
+    refreshAllPanes,
 
     // Pane operations (on active tab)
     setActivePane,

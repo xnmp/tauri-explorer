@@ -9,7 +9,6 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { openFile, openFileAtLine } from "$lib/api/files";
-  import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { parentDir } from "$lib/domain/path";
   import { highlightMatch, type FlattenedResult } from "$lib/domain/content-search-flatten";
@@ -24,7 +23,6 @@
 
   let { open, onClose }: Props = $props();
 
-  const paneNav = getPaneNavigationContext();
   const search = useContentSearch();
 
   let query = $state("");
@@ -55,7 +53,7 @@
 
   // Get root directory from active explorer
   function getRootPath(): string {
-    const explorer = paneNav?.getActiveExplorer() ?? windowTabsManager.getActiveExplorer();
+    const explorer = windowTabsManager.getActiveExplorer();
     return explorer?.currentPath ?? "/";
   }
 
@@ -144,7 +142,7 @@
       ? await openFileAtLine(result.filePath, line)
       : await openFile(result.filePath);
     if (!openResult.ok) {
-      const explorer = paneNav?.getActiveExplorer() ?? windowTabsManager.getActiveExplorer();
+      const explorer = windowTabsManager.getActiveExplorer();
       const resultDir = parentDir(result.filePath);
       explorer?.navigateTo(resultDir);
     }

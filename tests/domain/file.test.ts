@@ -115,8 +115,26 @@ describe("filterHidden", () => {
 });
 
 describe("formatSize", () => {
-  it("returns empty string for 0 (directories)", () => {
-    expect(formatSize(0)).toBe("");
+  // Previous expectation encoded a bug: formatSize(0) returned "" so 0-byte
+  // files showed no size. Directory blanks are handled by callers (which
+  // skip formatSize for directories), not by the formatter.
+  it("formats 0 as '0 bytes' so empty files show a size", () => {
+    expect(formatSize(0)).toBe("0 bytes");
+  });
+
+  it("returns empty string for negative sizes (malformed input)", () => {
+    expect(formatSize(-1)).toBe("");
+    expect(formatSize(-1048576)).toBe("");
+  });
+
+  it("returns empty string for non-finite input", () => {
+    expect(formatSize(NaN)).toBe("");
+    expect(formatSize(Infinity)).toBe("");
+  });
+
+  it("clamps sizes >= 1 PB to TB instead of rendering 'undefined'", () => {
+    const twoPB = 2 * Math.pow(1024, 5);
+    expect(formatSize(twoPB)).toBe("2048 TB");
   });
 
   it("formats bytes correctly - Windows 11 style", () => {

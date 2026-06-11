@@ -18,8 +18,28 @@ function isSubsequence(query: string, candidate: string): boolean {
   return qi === query.length;
 }
 
+/**
+ * Lowercase a string without changing its length.
+ *
+ * `String.prototype.toLowerCase` can change the number of UTF-16 code units
+ * (e.g. Turkish "İ" → "i̇"), which would misalign indices between the folded
+ * and original strings. Characters whose lowercase form has a different
+ * length are kept as-is.
+ */
+function foldCase(s: string): string {
+  const lower = s.toLowerCase();
+  if (lower.length === s.length) return lower;
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    const lc = s[i].toLowerCase();
+    out += lc.length === 1 ? lc : s[i];
+  }
+  return out;
+}
+
 /** Character bonus based on position context. */
 function charBonus(candidate: string, ci: number): number {
+  if (ci >= candidate.length) return 0; // defensive bounds check
   if (ci === 0) return 8; // prefix
   const prev = candidate[ci - 1];
   if (prev === "/" || prev === "\\") return 7; // path separator
@@ -39,8 +59,8 @@ function charBonus(candidate: string, ci: number): number {
  */
 export function fuzzyScore(query: string, candidate: string): number {
   if (!query) return 0;
-  const q = query.toLowerCase();
-  const c = candidate.toLowerCase();
+  const q = foldCase(query);
+  const c = foldCase(candidate);
   if (!isSubsequence(q, c)) return 0;
 
   const qLen = q.length;
@@ -72,9 +92,10 @@ export function fuzzyScore(query: string, candidate: string): number {
         // Consecutive: previous query char matched at ci-1
         const consecutive = prevConsec[ci - 1] > 0
           ? prevConsec[ci - 1] + bonus + Math.min(5, qi) // growing run bonus
-          : prev[ci - 1] + bonus;
+          : -Infinity;
         // Non-consecutive: best score from prev row up to ci-1
-        fromPrev = consecutive;
+        const nonConsecutive = prev[ci - 1] + bonus;
+        fromPrev = Math.max(consecutive, nonConsecutive);
       }
 
       curConsec[ci] = fromPrev;
@@ -92,8 +113,10 @@ export function fuzzyScore(query: string, candidate: string): number {
     if (prev[ci] > best) best = prev[ci];
   }
 
-  // Slight preference for shorter candidates (exact name > longer path)
-  return best > 0 ? best - cLen * 0.02 : 0;
+  // Slight preference for shorter candidates (exact name > longer path).
+  // Clamp to a small positive epsilon so genuine matches in very long
+  // candidates are never dropped by `score > 0` callers.
+  return best > 0 ? Math.max(best - cLen * 0.02, 0.01) : 0;
 }
 
 /**

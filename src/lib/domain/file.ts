@@ -86,14 +86,20 @@ export function filterHidden(
 
 /**
  * Format file size for display - Windows 11 style.
- * Returns empty string for 0 (directories).
  * Shows whole numbers without decimals (e.g., "1 KB" instead of "1.0 KB").
+ * Sizes ≥ 1 PB are clamped to TB; negative/non-finite input yields "".
+ * Callers that render directories (which have no meaningful size) are
+ * expected to skip formatting and show a blank/dash themselves.
  */
 export function formatSize(bytes: number): string {
-  if (bytes === 0) return "";
+  if (!Number.isFinite(bytes) || bytes < 0) return "";
+  if (bytes === 0) return "0 bytes";
 
   const units = ["bytes", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  const i = Math.min(
+    units.length - 1,
+    Math.floor(Math.log(bytes) / Math.log(1024))
+  );
   const value = bytes / Math.pow(1024, i);
 
   // For bytes, show exact count

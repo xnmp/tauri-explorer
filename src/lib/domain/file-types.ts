@@ -327,9 +327,11 @@ export function isPdfFile(entry: FileEntry): boolean {
   return getExtension(entry.name) === "pdf";
 }
 
-/** Format modified date - Windows 11 style: M/D/YYYY h:mm AM/PM */
+/** Format modified date - Windows 11 style: M/D/YYYY h:mm AM/PM.
+ *  Returns "" for unparseable input instead of "Invalid Date". */
 export function formatDate(isoString: string): string {
   const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleString(undefined, {
     month: "numeric",
     day: "numeric",

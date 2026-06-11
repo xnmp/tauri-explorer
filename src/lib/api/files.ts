@@ -7,15 +7,19 @@ import type { DirectoryListing, FileEntry } from "$lib/domain/file";
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { isTauri, mockInvoke } from "./mock-invoke";
 
-// Cached Tauri detection - starts null, set on first invoke call.
-// Once detected, no further checks are needed.
-let cachedIsTauri: boolean | null = null;
+// Cached Tauri detection. Only the positive result is latched: an invoke
+// racing ahead of __TAURI_INTERNALS__ injection must not permanently stick
+// the real app on the mock, so we re-detect until Tauri is found.
+let cachedIsTauri = false;
 
-// Lazy invoke with cached detection.
-// First call checks isTauri() (handles late __TAURI__ injection), then caches result.
-async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  if (cachedIsTauri === null) {
-    cachedIsTauri = isTauri();
+/**
+ * Mock-aware invoke: dispatches to the real Tauri IPC when available,
+ * otherwise to the in-memory mock (browser E2E). All API modules should use
+ * this instead of importing `invoke` from @tauri-apps/api directly.
+ */
+export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  if (!cachedIsTauri && isTauri()) {
+    cachedIsTauri = true;
   }
   const invoker = cachedIsTauri ? tauriInvoke<T> : mockInvoke<T>;
   return args !== undefined ? invoker(cmd, args) : invoker(cmd);
@@ -29,18 +33,34 @@ export interface AppError {
   message: string;
 }
 
+const APP_ERROR_KINDS: ReadonlySet<string> = new Set<AppErrorKind>([
+  "not_found", "permission_denied", "already_exists", "invalid_path", "io", "other",
+]);
+
 /** Extract error message from Tauri command error (structured or string) */
 function extractError(err: unknown): string {
-  if (err && typeof err === "object" && "message" in err) {
-    return (err as AppError).message;
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === "object") {
+    const message = (err as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+    // Plain object without a usable message — serialize rather than "[object Object]"
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return String(err);
+    }
   }
   return String(err);
 }
 
-/** Extract structured error kind from Tauri command error */
+/** Extract structured error kind from Tauri command error.
+ *  Returns null unless the kind is a known AppErrorKind. */
 export function extractErrorKind(err: unknown): AppErrorKind | null {
   if (err && typeof err === "object" && "kind" in err) {
-    return (err as AppError).kind;
+    const kind = (err as { kind: unknown }).kind;
+    if (typeof kind === "string" && APP_ERROR_KINDS.has(kind)) {
+      return kind as AppErrorKind;
+    }
   }
   return null;
 }

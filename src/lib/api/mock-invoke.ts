@@ -12,16 +12,22 @@ export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-// Helper to create ISO date string
-const now = new Date().toISOString();
+// Deterministic, varied timestamps: each created entry gets a distinct
+// modified time (1h apart from a fixed base) so sort-by-modified is testable.
+const TIMESTAMP_BASE = Date.UTC(2024, 0, 1, 12, 0, 0);
+const TIMESTAMP_STEP_MS = 60 * 60 * 1000;
+let timestampSeq = 0;
+function nextTimestamp(): string {
+  return new Date(TIMESTAMP_BASE + timestampSeq++ * TIMESTAMP_STEP_MS).toISOString();
+}
 
 // Helper to create mock file entry
 function file(name: string, path: string, size: number): FileEntry {
-  return { name, path, kind: "file", size, modified: now };
+  return { name, path, kind: "file", size, modified: nextTimestamp() };
 }
 
 function dir(name: string, path: string, is_empty?: boolean): FileEntry {
-  return { name, path, kind: "directory", size: 0, modified: now, is_empty };
+  return { name, path, kind: "directory", size: 0, modified: nextTimestamp(), is_empty };
 }
 
 // Mock file system structure
@@ -269,6 +275,9 @@ type CommandHandler = (args: Record<string, unknown>) => unknown;
  *  the SCM panel can hide newly-ignored entries on next git_status. */
 const mockGitignored = new Set<string>();
 
+/** Contents of files created via the mocked write_text_file. */
+const mockWrittenFiles: Record<string, string> = {};
+
 const mockCommands: Record<string, CommandHandler> = {
   get_home_directory: () => "/home/user",
   get_launch_cwd: () => "/home/user",
@@ -430,8 +439,22 @@ const mockCommands: Record<string, CommandHandler> = {
     return newEntry;
   },
 
+  write_text_file: (args) => {
+    const path = args.path as string;
+    const content = (args.content as string) ?? "";
+    const parentPath = parentDir(path);
+    mockWrittenFiles[path] = content;
+    const entries = mockFiles[parentPath] || (mockFiles[parentPath] = []);
+    const existingIndex = entries.findIndex((e) => e.path === path);
+    const entry = file(basename(path), path, content.length);
+    if (existingIndex >= 0) entries[existingIndex] = entry;
+    else entries.push(entry);
+    return entry;
+  },
+
   read_text_file: (args) => {
     const path = args.path as string;
+    if (path in mockWrittenFiles) return mockWrittenFiles[path];
     // Return mock code content based on file extension
     const mockContent: Record<string, string> = {
       "/home/user/Documents/project/index.ts": 'export function greet(name: string): string {\n  return `Hello, ${name}!`;\n}\n',
@@ -583,7 +606,8 @@ const mockCommands: Record<string, CommandHandler> = {
 
   git_repo_root: (args: Record<string, unknown>) => {
     const p = args.path as string;
-    if (p?.startsWith("/home/user/Documents/project")) return "/home/user/Documents/project/";
+    // No trailing slash — must stay consistent with git_status.repo_root
+    if (p?.startsWith("/home/user/Documents/project")) return "/home/user/Documents/project";
     return null;
   },
 
@@ -626,7 +650,9 @@ const mockCommands: Record<string, CommandHandler> = {
         { path: ".env.example", old_path: null, status: "Untracked" },
         { path: "assets/logo.png", old_path: null, status: "Untracked" },
       ].filter((e) => !mockGitignored.has(e.path)),
-      merge: [],
+      merge: [
+        { path: "src/constants.ts", old_path: null, status: "Conflict" },
+      ],
     };
   },
 
@@ -664,11 +690,72 @@ const mockCommands: Record<string, CommandHandler> = {
   git_watch_repo: () => null,
   git_unwatch_repo: () => null,
 
+  // ----- Symlinks -----
+
+  create_symlink: (args) => {
+    const targetPath = args.targetPath as string;
+    const linkPath = args.linkPath as string;
+    const parentPath = parentDir(linkPath);
+    const entry: FileEntry = {
+      ...file(basename(linkPath), linkPath, 0),
+      is_symlink: true,
+      symlink_target: targetPath,
+    };
+    const entries = mockFiles[parentPath] || (mockFiles[parentPath] = []);
+    entries.push(entry);
+    return entry;
+  },
+
+  // ----- Archives -----
+
+  compress_to_zip: (args) => {
+    const paths = args.paths as string[];
+    if (!paths?.length) throw new Error("No paths to compress");
+    const first = paths[0];
+    const parentPath = parentDir(first);
+    const zipName = `${basename(first)}.zip`;
+    const zipPath = `${parentPath}/${zipName}`;
+    const entries = mockFiles[parentPath] || (mockFiles[parentPath] = []);
+    if (!entries.some((e) => e.path === zipPath)) {
+      entries.push(file(zipName, zipPath, 1024));
+    }
+    return zipPath;
+  },
+
+  extract_archive: (args) => {
+    const archivePath = args.archivePath as string;
+    const extractHere = (args.extractHere as boolean) ?? false;
+    const parentPath = parentDir(archivePath);
+    if (extractHere) return parentPath;
+    const folderName = basename(archivePath).replace(/\.zip$/i, "");
+    const destPath = `${parentPath}/${folderName}`;
+    const entries = mockFiles[parentPath] || (mockFiles[parentPath] = []);
+    if (!entries.some((e) => e.path === destPath)) {
+      entries.push(dir(folderName, destPath, true));
+      mockFiles[destPath] = [];
+    }
+    return destPath;
+  },
+
+  // ----- Filesystem watcher (no-op in mock) -----
+
+  watch_directory: () => {},
+
+  unwatch_directory: () => {},
+
+  // ----- Window theming (no-op in mock) -----
+
+  set_window_theme: () => {},
+
   // ----- Clipboard file operations (os-clipboard.ts) -----
+
+  clipboard_has_files: () => false,
 
   clipboard_read_files: () => [] as string[],
 
   clipboard_write_files: () => true,
+
+  clipboard_has_image: () => false,
 
   // ----- Commands that launch external processes (no-op in mock) -----
 

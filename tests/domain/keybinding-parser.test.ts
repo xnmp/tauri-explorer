@@ -507,13 +507,8 @@ describe("macOS shortcut behaviour", () => {
 
   it("explicit Meta+P matches when metaKey is pressed", () => {
     const parsed = parseShortcut("Meta+P")!;
-    // meta alone: eventCtrl = metaKey = true, but shortcut.ctrl = false
-    // -> mismatch on ctrl check. This asserts the current behaviour:
-    // "Meta+P" written explicitly cannot match because matchesShortcut
-    // conflates Ctrl and Meta on the ctrl-flag. This is a known shape of
-    // the current API and documents the behavior for future reference.
     const event = macEvent({ key: "p", meta: true });
-    expect(matchesShortcut(event as unknown as KeyboardEvent, parsed)).toBe(false);
+    expect(matchesShortcut(event as unknown as KeyboardEvent, parsed)).toBe(true);
   });
 
   it("Alt+letter on Mac uses event.code when event.key is a special char", () => {
@@ -532,5 +527,61 @@ describe("macOS shortcut behaviour", () => {
     // Sanity: the event.code path only kicks in when altKey is true.
     const event = macEvent({ key: "m", code: "KeyM" });
     expect(matchesShortcutString(event as unknown as KeyboardEvent, "M")).toBe(true);
+  });
+});
+
+describe("exact modifier matching (Ctrl vs Meta)", () => {
+  it("Ctrl+Meta+P does NOT match a Ctrl+P binding", () => {
+    const parsed = parseShortcut("Ctrl+P")!;
+    const event = createKeyboardEvent({ key: "p", ctrlKey: true, metaKey: true });
+    expect(matchesShortcut(event as unknown as KeyboardEvent, parsed)).toBe(false);
+  });
+
+  it("Ctrl+Meta+P binding matches only when both modifiers are held", () => {
+    const parsed = parseShortcut("Ctrl+Meta+P")!;
+    const both = createKeyboardEvent({ key: "p", ctrlKey: true, metaKey: true });
+    const ctrlOnly = createKeyboardEvent({ key: "p", ctrlKey: true });
+    const metaOnly = createKeyboardEvent({ key: "p", metaKey: true });
+    expect(matchesShortcut(both as unknown as KeyboardEvent, parsed)).toBe(true);
+    expect(matchesShortcut(ctrlOnly as unknown as KeyboardEvent, parsed)).toBe(false);
+    expect(matchesShortcut(metaOnly as unknown as KeyboardEvent, parsed)).toBe(false);
+  });
+
+  it("unmodified binding does not fire when Ctrl or Meta is held", () => {
+    const parsed = parseShortcut("F2")!;
+    const ctrlEvent = createKeyboardEvent({ key: "F2", ctrlKey: true });
+    const metaEvent = createKeyboardEvent({ key: "F2", metaKey: true });
+    expect(matchesShortcut(ctrlEvent as unknown as KeyboardEvent, parsed)).toBe(false);
+    expect(matchesShortcut(metaEvent as unknown as KeyboardEvent, parsed)).toBe(false);
+  });
+});
+
+describe("literal '+' key and malformed definitions", () => {
+  it("parses 'Ctrl++' as Ctrl with the '+' key", () => {
+    const parsed = parseShortcut("Ctrl++");
+    expect(parsed).toEqual({ key: "+", ctrl: true, shift: false, alt: false, meta: false });
+  });
+
+  it("parses bare '+' as the '+' key with no modifiers", () => {
+    const parsed = parseShortcut("+");
+    expect(parsed).toEqual({ key: "+", ctrl: false, shift: false, alt: false, meta: false });
+  });
+
+  it("matches a Ctrl++ binding against a Ctrl '+' keypress", () => {
+    const event = createKeyboardEvent({ key: "+", ctrlKey: true });
+    expect(matchesShortcutString(event as unknown as KeyboardEvent, "Ctrl++")).toBe(true);
+  });
+
+  it("rejects a dangling separator like 'Ctrl+'", () => {
+    expect(parseShortcut("Ctrl+")).toBeNull();
+  });
+
+  it("rejects multi-key definitions instead of keeping the last key", () => {
+    expect(parseShortcut("Ctrl+A+B")).toBeNull();
+    expect(parseShortcut("A+B")).toBeNull();
+  });
+
+  it("rejects garbage separator runs like 'Ctrl+++A'", () => {
+    expect(parseShortcut("Ctrl+++A")).toBeNull();
   });
 });

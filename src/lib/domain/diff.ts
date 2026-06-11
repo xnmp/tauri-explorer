@@ -60,26 +60,29 @@ export function parseUnifiedDiff(text: string): ParsedDiff {
       lines.push({ index: index++, kind: "header", text: line, oldLine: null, newLine: null });
       continue;
     }
-    if (line.startsWith("--- ")) {
+    // File headers only appear between hunks. Inside a hunk, lines like
+    // "--- foo" are removed lines whose content starts with "-- " — treating
+    // them as headers would corrupt oldPath and desync the line cursors.
+    if (!inHunk && line.startsWith("--- ")) {
       const p = line.slice(4).trim();
       if (p === "/dev/null") added = true;
       else oldPath = stripPrefix(p);
       lines.push({ index: index++, kind: "meta", text: line, oldLine: null, newLine: null });
       continue;
     }
-    if (line.startsWith("+++ ")) {
+    if (!inHunk && line.startsWith("+++ ")) {
       const p = line.slice(4).trim();
       if (p === "/dev/null") deleted = true;
       else newPath = stripPrefix(p);
       lines.push({ index: index++, kind: "meta", text: line, oldLine: null, newLine: null });
       continue;
     }
-    if (line.startsWith("rename from ")) {
+    if (!inHunk && line.startsWith("rename from ")) {
       oldPath = line.slice("rename from ".length);
       lines.push({ index: index++, kind: "meta", text: line, oldLine: null, newLine: null });
       continue;
     }
-    if (line.startsWith("rename to ")) {
+    if (!inHunk && line.startsWith("rename to ")) {
       newPath = line.slice("rename to ".length);
       lines.push({ index: index++, kind: "meta", text: line, oldLine: null, newLine: null });
       continue;

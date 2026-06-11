@@ -15,10 +15,11 @@
  *   - To get container-relative CSS coords: (clientX - rect.left) / zoom
  */
 
-const isMac =
-  typeof navigator !== "undefined" && navigator.platform.startsWith("Mac");
+import { isMac } from "./platform";
 
-/** Get the current CSS zoom factor (1.0 = 100%). */
+/** Get the current CSS zoom factor (1.0 = 100%).
+ *  Intentionally impure: reads the live zoom from the document root, which is
+ *  the single source of truth set by the zoom commands. */
 export function getZoomFactor(): number {
   const zoomStr = document.documentElement.style.zoom;
   return zoomStr ? parseFloat(zoomStr) / 100 : 1;

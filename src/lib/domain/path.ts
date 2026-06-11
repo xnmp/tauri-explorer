@@ -47,6 +47,31 @@ export function parentDir(path: string): string {
 }
 
 /**
+ * Join a directory path and a child name with a single separator.
+ *
+ * `joinPath("/home/user", "file.txt")` → `"/home/user/file.txt"`
+ * `joinPath("/", "file.txt")`          → `"/file.txt"`
+ */
+export function joinPath(dir: string, name: string): string {
+  return dir.endsWith("/") ? dir + name : `${dir}/${name}`;
+}
+
+/**
+ * Expand a leading `~` to the user's home directory.
+ *
+ * `expandTilde("~", "/home/u")`      → `"/home/u"`
+ * `expandTilde("~/docs", "/home/u")` → `"/home/u/docs"`
+ * `expandTilde("/etc", "/home/u")`   → `"/etc"` (unchanged)
+ * With a null/unknown homeDir the input passes through unchanged.
+ */
+export function expandTilde(path: string, homeDir: string | null): string {
+  if (!homeDir) return path;
+  if (path === "~") return homeDir;
+  if (path.startsWith("~/")) return homeDir + path.slice(1);
+  return path;
+}
+
+/**
  * Return the last path segment (file or directory name).
  *
  * `"/home/user/file.txt"` → `"file.txt"`

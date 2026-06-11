@@ -7,6 +7,7 @@
  */
 
 import type { UndoAction } from "$lib/state/types";
+import { parentDir, basename, joinPath } from "./path";
 
 /** Minimal result type matching the API contract (data is irrelevant for undo/redo). */
 export type UndoResult = { ok: true } | { ok: false; error: string };
@@ -61,14 +62,13 @@ export async function executeRedo(
 ): Promise<UndoResult> {
   switch (action.type) {
     case "rename": {
-      const parentDir = action.path.substring(0, action.path.lastIndexOf("/"));
-      const currentPath = parentDir + "/" + action.oldName;
+      const currentPath = joinPath(parentDir(action.path), action.oldName);
       return api.renameEntry(currentPath, action.newName);
     }
     case "move": {
-      const fileName = action.destPath.substring(action.destPath.lastIndexOf("/") + 1);
-      const currentPath = action.originalDir + "/" + fileName;
-      const destDir = action.destPath.substring(0, action.destPath.lastIndexOf("/"));
+      const fileName = basename(action.destPath);
+      const currentPath = joinPath(action.originalDir, fileName);
+      const destDir = parentDir(action.destPath);
       return api.moveEntry(currentPath, destDir);
     }
     case "copy":

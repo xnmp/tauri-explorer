@@ -1,29 +1,21 @@
 <!--
   ContentSearchDialog - Ctrl+Shift+F content search using ripgrep
   Issue: tauri-explorer-evim, tauri-explorer-3a1q, tauri-explorer-en98, tauri-nczo
+
+  Stream lifecycle (search id, event listener, generation counter, dedup)
+  lives in composables/use-content-search.svelte.ts; pure flattening in
+  domain/content-search-flatten.ts. This component owns input/selection UI.
 -->
 <script lang="ts">
   import { tick } from "svelte";
-  import {
-    startContentSearch,
-    cancelContentSearch,
-    openFile,
-    openFileAtLine,
-    type ContentSearchResult,
-    type ContentSearchEvent,
-  } from "$lib/api/files";
-  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+  import { openFile, openFileAtLine } from "$lib/api/files";
   import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { parentDir } from "$lib/domain/path";
-  import {
-    type FlattenedResult,
-    flattenBatch,
-    rebuildAllFlattened,
-    computeOffsets,
-    findFirstVisible,
-    highlightMatch,
-  } from "$lib/domain/content-search-flatten";
+  import { highlightMatch, type FlattenedResult } from "$lib/domain/content-search-flatten";
+  import { useContentSearch } from "$lib/composables/use-content-search.svelte";
+  import VirtualList from "./VirtualList.svelte";
+  import Modal from "./Modal.svelte";
 
   interface Props {
     open: boolean;
@@ -33,16 +25,16 @@
   let { open, onClose }: Props = $props();
 
   const paneNav = getPaneNavigationContext();
+  const search = useContentSearch();
 
   let query = $state("");
   let filterQuery = $state("");
   let caseSensitive = $state(false);
   let regexMode = $state(false);
-  let results = $state<ContentSearchResult[]>([]);
   let selectedIndex = $state(0);
-  let loading = $state(false);
   let inputRef = $state<HTMLInputElement | null>(null);
-  let listRef = $state<HTMLElement | null>(null);
+  let scrollToIndex = $state<((index: number) => void) | undefined>();
+
   // Guard: suppress mouseenter on results until the user actually moves the mouse.
   // Prevents selection from jumping as streamed rows shift under a stationary cursor.
   // Track coordinates because macOS WebKit fires a synthetic mousemove (zero delta)
@@ -52,104 +44,13 @@
   let mouseTrackingReady = $state(false);
   let mouseTrackingTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Stats
-  let filesSearched = $state(0);
-  let totalMatches = $state(0);
-
-  // Streaming search state
-  let activeSearchId: number | null = null;
-  let unlisten: UnlistenFn | null = null;
-
-  // Deduplication set - persists across batches, avoids O(n) rebuild
-  let seenPaths = new Set<string>();
-
-  // Virtual scroll state
   const ITEM_HEIGHT = 30;
   const FILE_HEADER_HEIGHT = 54;
-  let scrollTop = $state(0);
-  let containerHeight = $state(400);
 
-  // Pagination constants
-  const PAGE_SIZE = 200;
-
-  // Track which files the user has expanded (show all matches)
-  let expandedFiles = $state<Set<string>>(new Set());
-
-  // Non-reactive backing store for all flattened results (appended to incrementally)
-  let allFlattened: FlattenedResult[] = [];
-
-  // Reactive page slice -- only this triggers UI updates
-  let flattenedResults = $state<FlattenedResult[]>([]);
-  let pageEnd = $state(PAGE_SIZE);
-
-  function rebuildFlattened(filterLower: string): void {
-    allFlattened = rebuildAllFlattened(results, filterLower, expandedFiles);
-    pageEnd = PAGE_SIZE;
-    updatePage();
-  }
-
-  function toggleFileExpanded(filePath: string): void {
-    const next = new Set(expandedFiles);
-    if (next.has(filePath)) {
-      next.delete(filePath);
-    } else {
-      next.add(filePath);
-    }
-    expandedFiles = next;
-    rebuildFlattened(filterQuery.toLowerCase());
-  }
-
-  function updatePage(): void {
-    flattenedResults = allFlattened.slice(0, pageEnd);
-  }
-
-  function resetSearchState(): void {
-    query = "";
-    filterQuery = "";
-    queryDirty = false;
-    results = [];
-    allFlattened = [];
-    flattenedResults = [];
-    seenPaths = new Set();
-    expandedFiles = new Set();
-    selectedIndex = 0;
-    pageEnd = PAGE_SIZE;
-    filesSearched = 0;
-    totalMatches = 0;
-    scrollTop = 0;
-    loading = false;
-  }
-
-  // Cached offsets array -- recomputed only when flattenedResults changes, not on scroll
-  let cachedOffsets = $derived(computeOffsets(flattenedResults, FILE_HEADER_HEIGHT, ITEM_HEIGHT));
-
-  // Compute virtual scroll window using cached offsets
-  let virtualWindow = $derived.by(() => {
-    const items = flattenedResults;
-    const { offsets, totalHeight } = cachedOffsets;
-    if (items.length === 0) return { startIndex: 0, endIndex: 0, offsetY: 0, totalHeight: 0 };
-
-    const lo = findFirstVisible(items, offsets, scrollTop, FILE_HEADER_HEIGHT, ITEM_HEIGHT);
-    const overscan = 10;
-    const startIndex = Math.max(0, lo - overscan);
-
-    const viewEnd = scrollTop + containerHeight;
-    let endIndex = lo;
-    while (endIndex < items.length && offsets[endIndex] < viewEnd) {
-      endIndex++;
-    }
-    endIndex = Math.min(items.length, endIndex + overscan);
-
-    return {
-      startIndex,
-      endIndex,
-      offsetY: offsets[startIndex] ?? 0,
-      totalHeight,
-    };
-  });
-
-  let visibleItems = $derived(
-    flattenedResults.slice(virtualWindow.startIndex, virtualWindow.endIndex)
+  // Selection clamped to the live list — streamed batches and filter changes
+  // shrink/grow the list without needing imperative re-clamping.
+  const sel = $derived(
+    Math.max(0, Math.min(selectedIndex, search.flattened.length - 1))
   );
 
   // Get root directory from active explorer
@@ -158,82 +59,9 @@
     return explorer?.currentPath ?? "/";
   }
 
-  // Cancel active search and cleanup listener
-  async function cancelActiveSearch(): Promise<void> {
-    if (activeSearchId !== null) {
-      await cancelContentSearch(activeSearchId);
-      activeSearchId = null;
-    }
-    if (unlisten) {
-      unlisten();
-      unlisten = null;
-    }
-  }
-
-  // Monotonically increasing search generation counter.
-  // Used to discard stale results without needing to wait for searchId.
-  let searchGeneration = 0;
-
-  // Setup event listener for streaming search results.
-  // Must be called BEFORE starting the search to avoid missing events
-  // from fast-completing searches (e.g. small directories).
-  async function setupSearchListener(generation: number): Promise<void> {
-    if (unlisten) {
-      unlisten();
-    }
-
-    unlisten = await listen<ContentSearchEvent>("content-search-results", (event) => {
-      const payload = event.payload;
-
-      // Discard events from stale searches (user re-searched)
-      if (generation !== searchGeneration) {
-        return;
-      }
-
-      // Accept events that match our search ID, OR if we haven't received
-      // the search ID yet (race: backend thread emits before invoke returns).
-      // Once we learn the ID from the first event, lock to it.
-      if (activeSearchId === null) {
-        activeSearchId = payload.searchId;
-      } else if (payload.searchId !== activeSearchId) {
-        return;
-      }
-
-      // Deduplicate using persistent set (O(batch) instead of O(total))
-      const newResults = payload.results.filter(r => {
-        if (seenPaths.has(r.path)) return false;
-        seenPaths.add(r.path);
-        return true;
-      });
-
-      if (newResults.length > 0) {
-        results.push(...newResults);
-
-        // Incremental flatten: only process new batch, append to backing store
-        const filterLower = filterQuery.toLowerCase();
-        const batch = flattenBatch(newResults, filterLower, expandedFiles);
-        if (batch.length > 0) {
-          allFlattened.push(...batch);
-          updatePage();
-        }
-      }
-
-      filesSearched = payload.filesSearched;
-      totalMatches = payload.totalMatches;
-
-      if (selectedIndex >= flattenedResults.length) {
-        selectedIndex = Math.max(0, flattenedResults.length - 1);
-      }
-
-      if (payload.done) {
-        loading = false;
-      }
-    });
-  }
-
   // Debounced auto-search: triggers search as user types
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  const DEBOUNCE_MS = 300;
+  const DEBOUNCE_MS = 200;
 
   // True when the query changed since the last search was started, so Enter
   // re-runs the search instead of opening a stale selected result.
@@ -256,49 +84,12 @@
     if (!query.trim()) {
       return;
     }
-
-    const currentQuery = query;
-    const currentFilter = filterQuery;
-    resetSearchState();
-    query = currentQuery;
-    filterQuery = currentFilter;
-    loading = true;
-
-    cancelActiveSearch().then(async () => {
-      // Claim a generation so interleaved searches can detect they're stale
-      const generation = ++searchGeneration;
-      const root = getRootPath();
-
-      // Register the listener BEFORE invoking, so fast searches can't emit
-      // batches (or `done`) before we're listening. Outside Tauri the event
-      // system is unavailable and listen() rejects — no results can stream,
-      // so don't leave the dialog stuck in loading.
-      let streamingAvailable = true;
-      try {
-        await setupSearchListener(generation);
-      } catch {
-        streamingAvailable = false;
-      }
-      if (generation !== searchGeneration) return;
-
-      const result = await startContentSearch(query, root, caseSensitive, regexMode, 2000);
-
-      if (generation !== searchGeneration) {
-        // Superseded while awaiting: cancel the now-orphaned backend search
-        if (result.ok) cancelContentSearch(result.data);
-        return;
-      }
-
-      if (result.ok) {
-        activeSearchId = result.data;
-        if (!streamingAvailable) loading = false;
-      } else {
-        results = [];
-        loading = false;
-      }
-    });
+    queryDirty = false;
+    selectedIndex = 0;
+    void search.start(query, getRootPath(), { caseSensitive, regexMode });
   }
 
+  // Escape is handled by Modal; everything else lands here.
   function handleKeydown(event: KeyboardEvent): void {
     // Alt+C toggles match case, Alt+R toggles regex (advertised in tooltips).
     // event.code is used because macOS Option+key produces special characters.
@@ -315,57 +106,35 @@
       return;
     }
     switch (event.key) {
-      case "Escape":
-        event.preventDefault();
-        onClose();
-        break;
       case "ArrowDown":
         event.preventDefault();
-        if (flattenedResults.length > 0) {
-          selectedIndex = (selectedIndex + 1) % flattenedResults.length;
+        if (search.flattened.length > 0) {
+          selectedIndex = (sel + 1) % search.flattened.length;
           mouseMoved = false;
-          scrollToSelected();
+          scrollToIndex?.(selectedIndex);
         }
         break;
       case "ArrowUp":
         event.preventDefault();
-        if (flattenedResults.length > 0) {
-          selectedIndex = (selectedIndex - 1 + flattenedResults.length) % flattenedResults.length;
+        if (search.flattened.length > 0) {
+          selectedIndex = (sel - 1 + search.flattened.length) % search.flattened.length;
           mouseMoved = false;
-          scrollToSelected();
+          scrollToIndex?.(selectedIndex);
         }
         break;
       case "Enter":
         event.preventDefault();
-        if (event.target === inputRef && (queryDirty || flattenedResults.length === 0)) {
+        if (event.target === inputRef && (queryDirty || search.flattened.length === 0)) {
           startSearch();
-        } else if (flattenedResults[selectedIndex]) {
-          const selected = flattenedResults[selectedIndex];
+        } else if (search.flattened[sel]) {
+          const selected = search.flattened[sel];
           if (selected.isShowMore) {
-            toggleFileExpanded(selected.filePath);
+            search.toggleExpanded(selected.filePath);
           } else {
             selectResult(selected);
           }
         }
         break;
-    }
-  }
-
-  function scrollToSelected(): void {
-    if (!listRef) return;
-    const { offsets } = cachedOffsets;
-    if (selectedIndex >= offsets.length) return;
-
-    // O(1) offset lookup via cached array
-    const offset = offsets[selectedIndex];
-    const itemH = flattenedResults[selectedIndex]?.isFirstInFile ? FILE_HEADER_HEIGHT : ITEM_HEIGHT;
-
-    const container = listRef.parentElement;
-    if (!container) return;
-    if (offset < container.scrollTop) {
-      container.scrollTop = offset;
-    } else if (offset + itemH > container.scrollTop + container.clientHeight) {
-      container.scrollTop = offset + itemH - container.clientHeight;
     }
   }
 
@@ -382,25 +151,14 @@
     onClose();
   }
 
-
-  function handleScroll(e: Event): void {
-    const target = e.target as HTMLElement;
-    scrollTop = target.scrollTop;
-    containerHeight = target.clientHeight;
-
-    // Infinite scroll: load next page when near bottom
-    if (target.scrollTop + target.clientHeight >= target.scrollHeight - 100) {
-      if (pageEnd < allFlattened.length) {
-        pageEnd = Math.min(pageEnd + PAGE_SIZE, allFlattened.length);
-        updatePage();
-      }
-    }
-  }
-
   // Focus input when dialog opens
   $effect(() => {
     if (open && inputRef) {
-      resetSearchState();
+      query = "";
+      filterQuery = "";
+      queryDirty = false;
+      selectedIndex = 0;
+      search.reset();
       mouseMoved = false;
       lastMousePos = null;
       mouseTrackingReady = false;
@@ -421,14 +179,22 @@
         clearTimeout(mouseTrackingTimer);
         mouseTrackingTimer = null;
       }
-      cancelActiveSearch();
+      search.reset();
     }
   });
 </script>
 
-{#if open}
+<Modal
+  {open}
+  {onClose}
+  overlayClass="content-search-overlay"
+  align="top"
+  topOffset="10vh"
+  label="Search in files"
+  onkeydown={handleKeydown}
+>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="content-search-overlay" onclick={onClose} onkeydown={handleKeydown}
+  <div class="content-search-dialog"
     onmousemove={(e) => {
       if (!mouseTrackingReady) return;
       if (lastMousePos && (e.clientX !== lastMousePos.x || e.clientY !== lastMousePos.y)) {
@@ -436,8 +202,6 @@
       }
       lastMousePos = { x: e.clientX, y: e.clientY };
     }}>
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div class="content-search-dialog" onclick={(e) => e.stopPropagation()}>
       <div class="search-header">
         <div class="search-container">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="search-icon">
@@ -476,14 +240,14 @@
             <button
               class="search-btn"
               onclick={startSearch}
-              disabled={!query.trim() || loading}
+              disabled={!query.trim() || search.loading}
             >
               Search
             </button>
           </div>
         </div>
 
-        {#if results.length > 0}
+        {#if search.fileCount > 0}
           <div class="filter-container">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" class="filter-icon">
               <path d="M2 4H14M4 8H12M6 12H10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
@@ -497,90 +261,96 @@
               autocapitalize="none"
               spellcheck="false"
               bind:value={filterQuery}
-              oninput={() => rebuildFlattened(filterQuery.toLowerCase())}
+              oninput={() => search.setFilter(filterQuery)}
             />
           </div>
         {/if}
       </div>
 
-      <div class="results-container" onscroll={handleScroll}>
-        {#if loading}
+      <div class="results-container">
+        {#if search.loading}
           <div class="search-status">
             <div class="spinner"></div>
-            <span>Searching... {filesSearched.toLocaleString()} files scanned, {totalMatches.toLocaleString()} matches</span>
+            <span>Searching... {search.filesSearched.toLocaleString()} files scanned, {search.totalMatches.toLocaleString()} matches</span>
           </div>
         {/if}
 
-        {#if flattenedResults.length > 0}
-          <div class="results-list" bind:this={listRef} style="height: {virtualWindow.totalHeight}px; position: relative;">
-            <ul class="results-virtual" role="listbox" style="transform: translateY({virtualWindow.offsetY}px);">
-              {#each visibleItems as result, i (result.filePath + ':' + (result.isShowMore ? 'more' : result.match.lineNumber + ':' + result.match.column))}
-                {@const globalIndex = virtualWindow.startIndex + i}
-                {#if result.isShowMore}
-                  <li
-                    class="result-item show-more-row"
-                    class:selected={globalIndex === selectedIndex}
-                    role="option"
-                    aria-selected={globalIndex === selectedIndex}
-                    onclick={() => toggleFileExpanded(result.filePath)}
-                    onmouseenter={() => { if (mouseMoved) selectedIndex = globalIndex; }}
-                    style="height: {ITEM_HEIGHT}px;"
-                  >
-                    <span class="show-more-text">{result.hiddenCount} more matches...</span>
-                  </li>
-                {:else}
-                  <li
-                    class="result-item"
-                    class:selected={globalIndex === selectedIndex}
-                    class:file-header={result.isFirstInFile}
-                    role="option"
-                    aria-selected={globalIndex === selectedIndex}
-                    onclick={() => selectResult(result)}
-                    onmouseenter={() => { if (mouseMoved) selectedIndex = globalIndex; }}
-                    style="height: {result.isFirstInFile ? FILE_HEADER_HEIGHT : ITEM_HEIGHT}px;"
-                  >
-                    {#if result.isFirstInFile}
-                      <div class="file-path">
-                        <!-- svelte-ignore a11y_click_events_have_key_events -->
-                        <!-- svelte-ignore a11y_no_static_element_interactions -->
-                        <span
-                          class="expand-chevron"
-                          class:expanded={expandedFiles.has(result.filePath)}
-                          onclick={(e: MouseEvent) => { e.stopPropagation(); toggleFileExpanded(result.filePath); }}
-                        >
-                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                            <path d="M3 2L7 5L3 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                          </svg>
-                        </span>
-                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" class="file-icon">
-                          <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" fill="var(--accent)" fill-opacity="0.15"/>
-                          <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" stroke="var(--accent)" stroke-width="1"/>
-                          <path d="M9 1V5C9 5.55228 9.44772 6 10 6H14" stroke="var(--accent)" stroke-width="1"/>
+        {#if search.flattened.length > 0}
+          <VirtualList
+            items={search.flattened}
+            itemHeight={ITEM_HEIGHT}
+            getItemHeight={(r) => (r.isFirstInFile ? FILE_HEADER_HEIGHT : ITEM_HEIGHT)}
+            getKey={(r) => r.filePath + ":" + (r.isShowMore ? "more" : r.match.lineNumber + ":" + r.match.column)}
+            role="listbox"
+            bind:scrollToIndex
+          >
+            {#snippet children(result, index)}
+              {#if result.isShowMore}
+                <!-- svelte-ignore a11y_click_events_have_key_events -->
+                <div
+                  class="result-item show-more-row"
+                  class:selected={index === sel}
+                  role="option"
+                  aria-selected={index === sel}
+                  tabindex="-1"
+                  onclick={() => search.toggleExpanded(result.filePath)}
+                  onmouseenter={() => { if (mouseMoved) selectedIndex = index; }}
+                >
+                  <span class="show-more-text">{result.hiddenCount} more matches...</span>
+                </div>
+              {:else}
+                <!-- svelte-ignore a11y_click_events_have_key_events -->
+                <div
+                  class="result-item"
+                  class:selected={index === sel}
+                  class:file-header={result.isFirstInFile}
+                  role="option"
+                  aria-selected={index === sel}
+                  tabindex="-1"
+                  onclick={() => selectResult(result)}
+                  onmouseenter={() => { if (mouseMoved) selectedIndex = index; }}
+                >
+                  {#if result.isFirstInFile}
+                    <div class="file-path">
+                      <!-- svelte-ignore a11y_click_events_have_key_events -->
+                      <!-- svelte-ignore a11y_no_static_element_interactions -->
+                      <span
+                        class="expand-chevron"
+                        class:expanded={search.expandedFiles.has(result.filePath)}
+                        onclick={(e: MouseEvent) => { e.stopPropagation(); search.toggleExpanded(result.filePath); }}
+                      >
+                        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                          <path d="M3 2L7 5L3 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                         </svg>
-                        <span class="file-name">{result.relativePath}</span>
-                        <span class="match-count">{result.totalFileMatches}</span>
-                      </div>
-                    {/if}
-                    <div class="match-row">
-                      <span class="line-number">{result.match.lineNumber}</span>
-                      <span class="line-content">{@html highlightMatch(result.match.lineContent, result.match.matchStart, result.match.matchEnd)}</span>
+                      </span>
+                      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" class="file-icon">
+                        <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" fill="var(--accent)" fill-opacity="0.15"/>
+                        <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" stroke="var(--accent)" stroke-width="1"/>
+                        <path d="M9 1V5C9 5.55228 9.44772 6 10 6H14" stroke="var(--accent)" stroke-width="1"/>
+                      </svg>
+                      <span class="file-name">{result.relativePath}</span>
+                      <span class="match-count">{result.totalFileMatches}</span>
                     </div>
-                  </li>
-                {/if}
-              {/each}
-            </ul>
-          </div>
-        {:else if query && !loading && results.length === 0}
+                  {/if}
+                  <div class="match-row">
+                    <span class="line-number">{result.match.lineNumber}</span>
+                    <span class="line-content">{@html highlightMatch(result.match.lineContent, result.match.matchStart, result.match.matchEnd)}</span>
+                  </div>
+                </div>
+              {/if}
+            {/snippet}
+          </VirtualList>
+        {:else if query && !search.loading && search.fileCount === 0}
           <div class="no-results">No matches found</div>
-        {:else if !query && !loading}
+        {:else if !query && !search.loading}
           <div class="no-results hint">Start typing to search in files</div>
         {/if}
       </div>
 
       <div class="footer">
         <div class="stats">
-          {#if results.length > 0}
-            <span>{totalMatches.toLocaleString()} matches in {results.length} files</span>
+          {#if search.fileCount > 0}
+            <span>{search.totalMatches.toLocaleString()} matches in {search.fileCount} files</span>
           {/if}
         </div>
         <div class="shortcuts">
@@ -589,28 +359,10 @@
           <span class="shortcut"><kbd>Esc</kbd> Close</span>
         </div>
       </div>
-    </div>
   </div>
-{/if}
+</Modal>
 
 <style>
-  .content-search-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-    padding-top: 10vh;
-    z-index: 1000;
-    animation: fadeIn 100ms ease-out;
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-
   .content-search-dialog {
     width: 700px;
     max-width: 90vw;
@@ -745,7 +497,9 @@
 
   .results-container {
     flex: 1;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     min-height: 200px;
     max-height: 500px;
   }
@@ -759,6 +513,7 @@
     font-size: 13px;
     background: var(--background-card-secondary);
     border-bottom: 1px solid var(--divider);
+    flex-shrink: 0;
   }
 
   .spinner {
@@ -775,21 +530,8 @@
     to { transform: rotate(360deg); }
   }
 
-  .results-list {
-    overflow: hidden;
-  }
-
-  .results-virtual {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-  }
-
   .result-item {
+    height: 100%;
     padding: 0 8px;
     border-radius: var(--radius-sm);
     cursor: pointer;
@@ -883,6 +625,7 @@
 
   .show-more-row {
     display: flex;
+    flex-direction: row;
     align-items: center;
     padding-left: 48px;
   }

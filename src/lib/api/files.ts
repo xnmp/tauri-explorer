@@ -736,6 +736,18 @@ export interface ContentSearchEvent {
 }
 
 /**
+ * Result of starting a content search. With the real backend, results stream
+ * via 'content-search-results' events and `searchId` identifies the stream.
+ * Outside Tauri (browser/mock mode) the event system is unavailable, so the
+ * mock returns the complete result set inline (`searchId` null) — same
+ * fallback shape as the streaming directory listing.
+ */
+export interface ContentSearchStart {
+  searchId: number | null;
+  inline: ContentSearchEvent | null;
+}
+
+/**
  * Start a streaming content search using ripgrep.
  * Listen for 'content-search-results' events to receive results.
  *
@@ -744,7 +756,7 @@ export interface ContentSearchEvent {
  * @param caseSensitive - Whether search is case-sensitive
  * @param regexMode - Whether to treat query as regex pattern
  * @param maxResults - Maximum number of results
- * @returns Result with search ID or error message
+ * @returns Result with stream id or inline results, or an error message
  */
 export async function startContentSearch(
   query: string,
@@ -752,16 +764,18 @@ export async function startContentSearch(
   caseSensitive: boolean = false,
   regexMode: boolean = false,
   maxResults: number = 500
-): Promise<ApiResult<number>> {
+): Promise<ApiResult<ContentSearchStart>> {
   try {
-    const searchId = await invoke<number>("start_content_search", {
+    const raw = await invoke<number | ContentSearchEvent>("start_content_search", {
       query,
       root,
       caseSensitive,
       regexMode,
       maxResults,
     });
-    return { ok: true, data: searchId };
+    return typeof raw === "number"
+      ? { ok: true, data: { searchId: raw, inline: null } }
+      : { ok: true, data: { searchId: null, inline: raw } };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }

@@ -1,13 +1,20 @@
 <!--
   VirtualList component - Renders only visible items for performance
-  Optimized for fixed-height items (32px file rows)
+  Fixed-height items by default (32px file rows); pass `getItemHeight` for
+  variable-height lists (offsets become prefix sums, lookup a binary search).
 -->
 <script lang="ts" generics="T">
   import type { Snippet } from "svelte";
 
   interface Props {
     items: T[];
+    /** Row height; in variable mode the fallback when getItemHeight is absent for an index. */
     itemHeight: number;
+    /** Variable-height mode: per-item height. Must be pure and fast — it runs for every item when `items` changes. */
+    getItemHeight?: (item: T, index: number) => number;
+    /** ARIA role for the scroll viewport (e.g. "listbox"). Item wrappers
+     *  become presentational so snippet content can carry "option" roles. */
+    role?: string;
     children: Snippet<[T, number]>;
     getKey?: (item: T, index: number) => string | number;
     scrollToIndex?: (index: number) => void;
@@ -16,6 +23,8 @@
   let {
     items,
     itemHeight,
+    getItemHeight,
+    role,
     children,
     getKey = (_item: T, index: number) => index,
     scrollToIndex = $bindable(),
@@ -32,11 +41,40 @@
     scrollTop = (event.target as HTMLElement).scrollTop;
   }
 
+  // Variable-height layout: prefix-sum offsets, recomputed only when the
+  // items array changes (memoized by $derived), never on scroll.
+  const layout = $derived.by(() => {
+    if (!getItemHeight) return null;
+    const offsets = new Array<number>(items.length);
+    let cumulative = 0;
+    for (let i = 0; i < items.length; i++) {
+      offsets[i] = cumulative;
+      cumulative += getItemHeight(items[i], i);
+    }
+    return { offsets, totalHeight: cumulative };
+  });
+
+  /** Largest index whose offset is <= scrollTop (binary search). */
+  function firstVisibleIndex(offsets: number[], top: number): number {
+    let lo = 0;
+    let hi = offsets.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >>> 1;
+      if (offsets[mid] <= top) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  }
+
+  function heightAt(index: number): number {
+    return getItemHeight?.(items[index], index) ?? itemHeight;
+  }
+
   /** Scroll the viewport so that the item at `index` is visible. */
   scrollToIndex = (index: number) => {
-    if (!viewportRef) return;
-    const targetTop = index * itemHeight;
-    const targetBottom = targetTop + itemHeight;
+    if (!viewportRef || index < 0 || index >= items.length) return;
+    const targetTop = layout ? layout.offsets[index] : index * itemHeight;
+    const targetBottom = targetTop + heightAt(index);
     if (targetTop < viewportRef.scrollTop) {
       viewportRef.scrollTop = targetTop;
     } else if (targetBottom > viewportRef.scrollTop + viewportRef.clientHeight) {
@@ -49,10 +87,25 @@
   const visibleCount = $derived(Math.ceil(viewportHeight / itemHeight) + BUFFER * 2);
   // Clamp against items.length so a shrinking list (e.g. bulk delete while
   // scrolled deep) never leaves the viewport blank with a stale scrollTop
-  const startIndex = $derived(
-    Math.max(0, Math.min(Math.floor(scrollTop / itemHeight) - BUFFER, items.length - visibleCount))
-  );
-  const endIndex = $derived(Math.min(startIndex + visibleCount, items.length));
+  const startIndex = $derived.by(() => {
+    if (items.length === 0) return 0;
+    if (layout) {
+      return Math.max(0, firstVisibleIndex(layout.offsets, scrollTop) - BUFFER);
+    }
+    return Math.max(
+      0,
+      Math.min(Math.floor(scrollTop / itemHeight) - BUFFER, items.length - visibleCount)
+    );
+  });
+  const endIndex = $derived.by(() => {
+    if (layout) {
+      const viewBottom = scrollTop + viewportHeight;
+      let i = startIndex;
+      while (i < items.length && layout.offsets[i] < viewBottom) i++;
+      return Math.min(items.length, i + BUFFER);
+    }
+    return Math.min(startIndex + visibleCount, items.length);
+  });
 
   const visibleItems = $derived(
     items.slice(startIndex, endIndex).map((item, offset) => ({
@@ -62,8 +115,16 @@
     }))
   );
 
-  const paddingTop = $derived(startIndex * itemHeight);
-  const paddingBottom = $derived(Math.max(0, (items.length - endIndex) * itemHeight));
+  const paddingTop = $derived(
+    layout ? (layout.offsets[startIndex] ?? 0) : startIndex * itemHeight
+  );
+  const paddingBottom = $derived.by(() => {
+    if (layout) {
+      const endOffset = endIndex < items.length ? layout.offsets[endIndex] : layout.totalHeight;
+      return Math.max(0, layout.totalHeight - endOffset);
+    }
+    return Math.max(0, (items.length - endIndex) * itemHeight);
+  });
 </script>
 
 <div
@@ -71,16 +132,21 @@
   bind:this={viewportRef}
   bind:clientHeight={viewportHeight}
   onscroll={handleScroll}
+  {role}
 >
-  <div class="virtual-spacer-top" style:height="{paddingTop}px"></div>
+  <div class="virtual-spacer-top" style:height="{paddingTop}px" aria-hidden="true"></div>
 
   {#each visibleItems as { item, index, key } (key)}
-    <div class="virtual-item" style:height="{itemHeight}px">
+    <div
+      class="virtual-item"
+      style:height="{layout ? heightAt(index) : itemHeight}px"
+      role={role ? "presentation" : undefined}
+    >
       {@render children(item, index)}
     </div>
   {/each}
 
-  <div class="virtual-spacer-bottom" style:height="{paddingBottom}px"></div>
+  <div class="virtual-spacer-bottom" style:height="{paddingBottom}px" aria-hidden="true"></div>
 </div>
 
 <style>

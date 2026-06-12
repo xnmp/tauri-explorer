@@ -29,6 +29,8 @@
   let filterQuery = $state("");
   let caseSensitive = $state(false);
   let regexMode = $state(false);
+  // View-level toggle: show every occurrence, or one compact row per file.
+  let filesOnly = $state(false);
   let selectedIndex = $state(0);
   let inputRef = $state<HTMLInputElement | null>(null);
   let scrollToIndex = $state<((index: number) => void) | undefined>();
@@ -44,12 +46,23 @@
 
   const ITEM_HEIGHT = 30;
   const FILE_HEADER_HEIGHT = 54;
+  const FILES_ONLY_HEIGHT = 32;
 
-  // Selection clamped to the live list — streamed batches and filter changes
-  // shrink/grow the list without needing imperative re-clamping.
-  const sel = $derived(
-    Math.max(0, Math.min(selectedIndex, search.flattened.length - 1))
+  // Rows actually rendered: full occurrence list, or one header row per file.
+  const rows = $derived(
+    filesOnly
+      ? search.flattened.filter((r) => !r.isShowMore && r.isFirstInFile)
+      : search.flattened
   );
+
+  // Selection clamped to the live list — streamed batches, filter changes and
+  // the files-only toggle shrink/grow the list without imperative re-clamping.
+  const sel = $derived(Math.max(0, Math.min(selectedIndex, rows.length - 1)));
+
+  function toggleFilesOnly(): void {
+    filesOnly = !filesOnly;
+    selectedIndex = 0;
+  }
 
   // Get root directory from active explorer
   function getRootPath(): string {
@@ -103,29 +116,34 @@
       if (query.trim()) startSearch();
       return;
     }
+    if (event.altKey && event.code === "KeyF") {
+      event.preventDefault();
+      toggleFilesOnly();
+      return;
+    }
     switch (event.key) {
       case "ArrowDown":
         event.preventDefault();
-        if (search.flattened.length > 0) {
-          selectedIndex = (sel + 1) % search.flattened.length;
+        if (rows.length > 0) {
+          selectedIndex = (sel + 1) % rows.length;
           mouseMoved = false;
           scrollToIndex?.(selectedIndex);
         }
         break;
       case "ArrowUp":
         event.preventDefault();
-        if (search.flattened.length > 0) {
-          selectedIndex = (sel - 1 + search.flattened.length) % search.flattened.length;
+        if (rows.length > 0) {
+          selectedIndex = (sel - 1 + rows.length) % rows.length;
           mouseMoved = false;
           scrollToIndex?.(selectedIndex);
         }
         break;
       case "Enter":
         event.preventDefault();
-        if (event.target === inputRef && (queryDirty || search.flattened.length === 0)) {
+        if (event.target === inputRef && (queryDirty || rows.length === 0)) {
           startSearch();
-        } else if (search.flattened[sel]) {
-          const selected = search.flattened[sel];
+        } else if (rows[sel]) {
+          const selected = rows[sel];
           if (selected.isShowMore) {
             search.toggleExpanded(selected.filePath);
           } else {
@@ -236,6 +254,17 @@
               .*
             </button>
             <button
+              class="option-btn files-only-btn"
+              class:active={filesOnly}
+              onclick={toggleFilesOnly}
+              title="Filenames only — hide occurrences (Alt+F)"
+            >
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                <path d="M3 2C3 1.44772 3.44772 1 4 1H9L13 5V14C13 14.5523 12.5523 15 12 15H4C3.44772 15 3 14.5523 3 14V2Z" stroke="currentColor" stroke-width="1.5"/>
+                <path d="M9 1V5H13" stroke="currentColor" stroke-width="1.5"/>
+              </svg>
+            </button>
+            <button
               class="search-btn"
               onclick={startSearch}
               disabled={!query.trim() || search.loading}
@@ -273,17 +302,39 @@
           </div>
         {/if}
 
-        {#if search.flattened.length > 0}
+        {#if rows.length > 0}
           <VirtualList
-            items={search.flattened}
+            items={rows}
             itemHeight={ITEM_HEIGHT}
-            getItemHeight={(r) => (r.isFirstInFile ? FILE_HEADER_HEIGHT : ITEM_HEIGHT)}
+            getItemHeight={(r) =>
+              filesOnly ? FILES_ONLY_HEIGHT : r.isFirstInFile ? FILE_HEADER_HEIGHT : ITEM_HEIGHT}
             getKey={(r) => r.filePath + ":" + (r.isShowMore ? "more" : r.match.lineNumber + ":" + r.match.column)}
             role="listbox"
             bind:scrollToIndex
           >
             {#snippet children(result, index)}
-              {#if result.isShowMore}
+              {#if filesOnly}
+                <!-- svelte-ignore a11y_click_events_have_key_events -->
+                <div
+                  class="result-item files-only-row"
+                  class:selected={index === sel}
+                  role="option"
+                  aria-selected={index === sel}
+                  tabindex="-1"
+                  onclick={() => selectResult(result)}
+                  onmouseenter={() => { if (mouseMoved) selectedIndex = index; }}
+                >
+                  <div class="file-path">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" class="file-icon">
+                      <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" fill="var(--accent)" fill-opacity="0.15"/>
+                      <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" stroke="var(--accent)" stroke-width="1"/>
+                      <path d="M9 1V5C9 5.55228 9.44772 6 10 6H14" stroke="var(--accent)" stroke-width="1"/>
+                    </svg>
+                    <span class="file-name">{result.relativePath}</span>
+                    <span class="match-count">{result.totalFileMatches}</span>
+                  </div>
+                </div>
+              {:else if result.isShowMore}
                 <!-- svelte-ignore a11y_click_events_have_key_events -->
                 <div
                   class="result-item show-more-row"
@@ -619,6 +670,15 @@
 
   .result-item.selected .file-name {
     color: var(--text-on-accent);
+  }
+
+  .files-only-row .file-path {
+    margin-bottom: 0;
+  }
+
+  .files-only-btn {
+    display: inline-flex;
+    align-items: center;
   }
 
   .show-more-row {

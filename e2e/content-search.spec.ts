@@ -137,6 +137,45 @@ test.describe("Content search (Ctrl+Shift+F)", () => {
       .toBeGreaterThan(collapsedCount);
   });
 
+  test("filenames-only toggle collapses results to one row per file and back", async ({ page }) => {
+    await openContentSearch(page);
+
+    await page.locator(".content-search-dialog .search-input").fill("greet");
+    const items = page.locator(".result-item");
+    await expect(items.first()).toBeVisible();
+    // Occurrence rows present in normal mode.
+    await expect(page.locator(".match-row").first()).toBeVisible();
+
+    await page.locator(".files-only-btn").click();
+
+    // One compact row per file, no occurrence rows.
+    await expect(page.locator(".files-only-row")).toHaveCount(2);
+    await expect(page.locator(".match-row")).toHaveCount(0);
+    await expect(page.locator(".files-only-row").filter({ hasText: "index.ts" })).toBeVisible();
+    await expect(page.locator(".files-only-row").filter({ hasText: "main.py" })).toBeVisible();
+    // Footer totals unchanged — this is a view toggle, not a re-search.
+    await expect(page.locator(".footer .stats")).toHaveText(/2 matches in 2 files/);
+
+    // Enter still opens the selected file.
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".content-search-dialog")).toHaveCount(0);
+  });
+
+  test("Alt+F toggles filenames-only mode", async ({ page }) => {
+    await openContentSearch(page);
+
+    await page.locator(".content-search-dialog .search-input").fill("greet");
+    await expect(page.locator(".result-item").first()).toBeVisible();
+
+    await page.keyboard.press("Alt+f");
+    await expect(page.locator(".files-only-row")).toHaveCount(2);
+    await expect(page.locator(".files-only-btn")).toHaveClass(/active/);
+
+    await page.keyboard.press("Alt+f");
+    await expect(page.locator(".files-only-row")).toHaveCount(0);
+    await expect(page.locator(".match-row").first()).toBeVisible();
+  });
+
   test("Enter re-runs the search when the query changed instead of opening a result", async ({ page }) => {
     await openContentSearch(page);
 

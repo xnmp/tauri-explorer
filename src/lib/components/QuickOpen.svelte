@@ -49,11 +49,12 @@
   let inputRef = $state<HTMLInputElement | null>(null);
   let resultsContainerRef = $state<HTMLElement | null>(null);
   let homeDir = $state<string | null>(null);
-  // Guard: suppress mouseenter on results until the user actually moves the mouse.
-  // Prevents selection from jumping to whatever row the cursor happened to land on
-  // when the popup opened (or after results change).
-  // Track coordinates because macOS WebKit fires a synthetic mousemove (zero delta)
-  // when an element renders under a stationary cursor.
+  // Guard: hover may only change the selection after a REAL pointer move.
+  // Rows react to mousemove (not mouseenter — that also fires when a row
+  // re-renders or scrolls under a stationary cursor), coordinates must have
+  // actually changed (WebKit/Chromium emit synthetic zero-delta mousemoves
+  // after relayout/scroll), and every results update revokes the
+  // authorization so movement from before a re-render can't steal selection.
   let mouseMoved = $state(false);
   let lastMousePos = $state<{ x: number; y: number } | null>(null);
   let mouseTrackingReady = $state(false);
@@ -232,6 +233,7 @@
       const ranked = rankWithFrecency(payload.results);
       const frecencyMatches = matchFrecencyAndRecent(query);
       results = mergeResultsByScore(ranked, frecencyMatches);
+      mouseMoved = false;
       totalScanned = payload.totalScanned;
 
       // Reset selection if needed
@@ -249,6 +251,7 @@
   // Debounced streaming search
   function handleInput(): void {
     if (searchTimer) clearTimeout(searchTimer);
+    mouseMoved = false;
 
     if (!query.trim()) {
       cancelActiveSearch();
@@ -260,6 +263,9 @@
     }
 
     loading = true;
+    // New query → selection pins back to the top result (VSCode behavior),
+    // even if hover or arrows had moved it in the previous result set.
+    selectedIndex = 0;
     searchTimer = setTimeout(async () => {
       // Claim a generation synchronously so debounce callbacks that
       // interleave across the awaits below can detect they're stale.
@@ -306,6 +312,7 @@
         if (result.ok) {
           const ranked = rankWithFrecency(result.data);
           results = mergeResultsByScore(ranked, frecencyMatches);
+          mouseMoved = false;
         }
         loading = false;
       }
@@ -353,6 +360,20 @@
           selectResult(displayResults[selectedIndex]);
         }
         break;
+    }
+  }
+
+  /** Hover-selection via real pointer movement only. Runs before the
+   *  dialog-level tracker (mousemove bubbles), so it does the same
+   *  coordinate-change bookkeeping itself. */
+  function handleRowMouseMove(event: MouseEvent, index: number): void {
+    if (!mouseTrackingReady) return;
+    if (lastMousePos && (event.clientX !== lastMousePos.x || event.clientY !== lastMousePos.y)) {
+      mouseMoved = true;
+    }
+    lastMousePos = { x: event.clientX, y: event.clientY };
+    if (mouseMoved && selectedIndex !== index) {
+      selectedIndex = index;
     }
   }
 
@@ -481,7 +502,7 @@
                 role="option"
                 aria-selected={index === selectedIndex}
                 onclick={() => selectResult(result)}
-                onmouseenter={() => { if (mouseMoved) selectedIndex = index; }}
+                onmousemove={(e) => handleRowMouseMove(e, index)}
               >
                 <span class="result-icon" class:file-icon={result.kind !== "directory"}>
                   <FileIcon entry={toFileEntry(result)} size="small" />
@@ -536,7 +557,7 @@
                 role="option"
                 aria-selected={index === selectedIndex}
                 onclick={() => selectResult(result)}
-                onmouseenter={() => { if (mouseMoved) selectedIndex = index; }}
+                onmousemove={(e) => handleRowMouseMove(e, index)}
               >
                 <span class="result-icon" class:file-icon={result.kind !== "directory"}>
                   <FileIcon entry={toFileEntry(result)} size="small" />

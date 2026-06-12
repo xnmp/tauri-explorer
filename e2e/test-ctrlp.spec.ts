@@ -149,6 +149,73 @@ test.describe("Quick Open (Ctrl+P)", () => {
     await expect(resultItems.first()).toHaveClass(/is-directory/, { timeout: 5000 });
   });
 
+  test("selection does not jump to the row under a stationary cursor when results re-render", async ({ page }) => {
+    // Navigate to Documents/project for a deep result set
+    await page.locator(".entry-item", { hasText: "Documents" }).first().dblclick();
+    await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
+    await page.locator(".entry-item", { hasText: "project" }).first().dblclick();
+    await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
+
+    await page.keyboard.press("Control+p");
+    const quickOpen = page.locator(".quick-open-dialog");
+    await expect(quickOpen).toBeVisible({ timeout: 2000 });
+
+    const searchInput = quickOpen.locator(".search-input");
+    await searchInput.pressSequentially("co", { delay: 50 });
+
+    const resultItems = quickOpen.locator(".result-item");
+    await expect(resultItems.nth(3)).toBeVisible({ timeout: 5000 });
+    // Let streaming settle — a results update revokes hover authorization.
+    await page.waitForTimeout(400);
+
+    // Park the cursor over the 4th row — a real multi-step movement, which
+    // legitimately hover-selects it... (a single mousemove never authorizes:
+    // the first observed position is indistinguishable from a synthetic event)
+    const box = await resultItems.nth(3).boundingBox();
+    if (!box) throw new Error("row 3 has no bounding box");
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 5 });
+    await expect(resultItems.nth(3)).toHaveClass(/selected/);
+
+    // ...then KEEP IT STILL and continue typing. New results render under the
+    // stationary cursor; selection must pin to the top result, not whatever
+    // row happens to land under the pointer.
+    await searchInput.pressSequentially("nfig", { delay: 80 });
+    await expect
+      .poll(() => quickOpen.locator(".result-name").allTextContents(), { timeout: 5000 })
+      .toContain("config");
+
+    await expect(resultItems.first()).toHaveClass(/selected/);
+    // Give any late streamed chunks a chance to re-render, then re-assert.
+    await page.waitForTimeout(400);
+    await expect(resultItems.first()).toHaveClass(/selected/);
+  });
+
+  test("moving the mouse onto a row still hover-selects it", async ({ page }) => {
+    await page.locator(".entry-item", { hasText: "Documents" }).first().dblclick();
+    await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
+    await page.locator(".entry-item", { hasText: "project" }).first().dblclick();
+    await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
+
+    await page.keyboard.press("Control+p");
+    const quickOpen = page.locator(".quick-open-dialog");
+    await expect(quickOpen).toBeVisible({ timeout: 2000 });
+
+    await quickOpen.locator(".search-input").pressSequentially("config", { delay: 50 });
+    const resultItems = quickOpen.locator(".result-item");
+    await expect(resultItems.nth(2)).toBeVisible({ timeout: 5000 });
+    // Let streaming settle so a results update doesn't revoke the hover
+    // authorization between the move and the assertion.
+    await page.waitForTimeout(400);
+
+    const first = await resultItems.nth(0).boundingBox();
+    const third = await resultItems.nth(2).boundingBox();
+    if (!first || !third) throw new Error("rows have no bounding box");
+    await page.mouse.move(first.x + first.width / 2, first.y + first.height / 2);
+    await page.mouse.move(third.x + third.width / 2, third.y + third.height / 2, { steps: 5 });
+
+    await expect(resultItems.nth(2)).toHaveClass(/selected/);
+  });
+
   test("re-opening quick open clears previous query", async ({ page }) => {
     await page.keyboard.press("Control+p");
     await expect(page.locator(".quick-open-dialog .search-input")).toBeVisible();

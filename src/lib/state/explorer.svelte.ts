@@ -371,13 +371,17 @@ function createExplorerState(seed?: ExplorerSeed) {
 
   let contextMenuExternalEntry: FileEntry | null = null;
 
+  // Identity token marking this pane as the context menu's owner, so only
+  // this pane's ContextMenu instance renders the (global) menu state.
+  const contextMenuOwner: object = {};
+
   function openContextMenu(x: number, y: number, entry?: FileEntry) {
     if (entry && !coreState.selectedPaths.has(entry.path)) {
       coreState.selectedPaths = new Set([entry.path]);
       coreState.selectionAnchorIndex = displayEntries.findIndex((e) => e.path === entry.path);
     }
     contextMenuExternalEntry = entry && coreState.selectionAnchorIndex === -1 ? entry : null;
-    contextMenuStore.open(x, y);
+    contextMenuStore.open(x, y, contextMenuOwner);
   }
 
   // ===================
@@ -614,6 +618,9 @@ function createExplorerState(seed?: ExplorerSeed) {
     startPermanentDelete,
     // Context menu
     openContextMenu,
+    get contextMenuOwner() {
+      return contextMenuOwner;
+    },
     // Inline folder creation
     get isCreatingFolder() {
       return isCreatingFolder;

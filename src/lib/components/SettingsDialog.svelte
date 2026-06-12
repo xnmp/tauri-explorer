@@ -89,6 +89,10 @@
     }
     if (event.key === "Escape") {
       event.preventDefault();
+      // Stop the window-level Escape handler (dialogStore.closeAll) from
+      // also firing — it would close the dialog while we only clear the
+      // filter on the first press.
+      event.stopPropagation();
       if (searchQuery) {
         searchQuery = "";
       } else {

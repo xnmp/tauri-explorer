@@ -17,6 +17,12 @@ export interface ContextMenuPosition {
 function createContextMenuStore() {
   let isOpen = $state(false);
   let position = $state<ContextMenuPosition | null>(null);
+  // Which pane opened the menu. Every ExplorerPane renders a ContextMenu
+  // instance against this global store; without ownership, dual-pane mode
+  // rendered two identical stacked menus and clicks hit the wrong pane's.
+  // $state.raw: the token is compared by identity, and plain $state would
+  // wrap it in a proxy that breaks reference equality.
+  let owner = $state.raw<object | null>(null);
 
   return {
     // Accessors
@@ -26,16 +32,21 @@ function createContextMenuStore() {
     get position() {
       return position;
     },
+    get owner() {
+      return owner;
+    },
 
     // Actions
-    open(x: number, y: number): void {
+    open(x: number, y: number, ownerToken: object | null = null): void {
       position = adjustForZoom(x, y);
+      owner = ownerToken;
       isOpen = true;
     },
 
     close(): void {
       isOpen = false;
       position = null;
+      owner = null;
     },
   };
 }

@@ -273,7 +273,7 @@
 
 <svelte:window on:keydown={handleKeydown} />
 
-{#if contextMenuStore.isOpen && contextMenuStore.position}
+{#if contextMenuStore.isOpen && contextMenuStore.position && contextMenuStore.owner === explorer.contextMenuOwner}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div

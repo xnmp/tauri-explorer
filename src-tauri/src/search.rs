@@ -218,7 +218,7 @@ fn fuzzy_search_sync(
         })
         .collect();
 
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|s| std::cmp::Reverse(s.0));
 
     let results: Vec<SearchResult> = scored
         .into_iter()
@@ -460,7 +460,7 @@ fn process_batch(
     // Merge with existing results — keep a generous buffer so subdirectory
     // matches from later batches aren't prematurely dropped.
     all_results.append(&mut new_results);
-    all_results.sort_by(|a, b| b.score.cmp(&a.score));
+    all_results.sort_by_key(|r| std::cmp::Reverse(r.score));
     all_results.truncate(limit * 10);
 
     // Emit current top results

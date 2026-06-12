@@ -22,6 +22,17 @@ const tauriDriverBin = path.resolve(
   isWindows ? "tauri-driver.exe" : "tauri-driver",
 );
 
+// On Windows, tauri-driver proxies WebDriver commands to msedgedriver.exe and
+// needs an explicit path to it. GitHub windows runners preinstall it and
+// export EDGEWEBDRIVER; locally, TAURI_NATIVE_DRIVER overrides.
+const nativeDriver =
+  process.env.TAURI_NATIVE_DRIVER ??
+  (isWindows && process.env.EDGEWEBDRIVER
+    ? path.join(process.env.EDGEWEBDRIVER, "msedgedriver.exe")
+    : undefined);
+
+const tauriDriverArgs = nativeDriver ? ["--native-driver", nativeDriver] : [];
+
 let tauriDriver: ChildProcess | undefined;
 
 export const config: WebdriverIO.Config = {
@@ -50,7 +61,7 @@ export const config: WebdriverIO.Config = {
   },
 
   beforeSession: () => {
-    tauriDriver = spawn(tauriDriverBin, [], {
+    tauriDriver = spawn(tauriDriverBin, tauriDriverArgs, {
       stdio: [null, process.stdout, process.stderr],
     });
   },

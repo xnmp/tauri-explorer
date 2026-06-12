@@ -8,6 +8,7 @@ url="https://github.com/xnmp/tauri-explorer"
 license=('MIT')
 depends=(
   'cairo'
+  'dav1d'
   'desktop-file-utils'
   'gdk-pixbuf2'
   'glib2'

@@ -24,7 +24,12 @@ const THUMBNAIL_SIZE: u32 = 128;
 /// Micro thumbnail size for progressive loading preview
 const MICRO_SIZE: u32 = 16;
 
-/// Supported image extensions for thumbnail generation
+/// Supported image extensions for thumbnail generation.
+/// AVIF decodes via image's avif-native (dav1d), which is Linux-only here —
+/// see the target-specific dependency in Cargo.toml.
+#[cfg(target_os = "linux")]
+const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "icns", "avif"];
+#[cfg(not(target_os = "linux"))]
 const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "icns"];
 
 /// Get the cache directory for thumbnails
@@ -656,6 +661,22 @@ mod tests {
         assert!(is_supported_image(Path::new("test.bmp")));
         assert!(!is_supported_image(Path::new("test.txt")));
         assert!(!is_supported_image(Path::new("test.pdf")));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn avif_is_supported_and_decodes() {
+        assert!(is_supported_image(Path::new("photo.avif")));
+        assert!(is_supported_image(Path::new("PHOTO.AVIF")));
+
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/red32.avif");
+        let img = decode_image(&fixture, 64).expect("AVIF fixture must decode");
+        assert_eq!((img.width(), img.height()), (32, 32));
+        let pixel = img.to_rgb8().get_pixel(16, 16).0;
+        assert!(
+            pixel[0] > 200 && pixel[1] < 60 && pixel[2] < 60,
+            "expected red center pixel, got {pixel:?}"
+        );
     }
 
     #[test]

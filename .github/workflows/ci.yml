@@ -48,12 +48,13 @@ jobs:
       - uses: actions/checkout@v4
 
       # nasm: required by turbojpeg-sys (x86 SIMD assembler).
+      # libdav1d-dev: AVIF decode (image avif-native, Linux-only feature).
       - name: Install Tauri Linux system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
-            libjavascriptcoregtk-4.1-dev nasm
+            libjavascriptcoregtk-4.1-dev nasm libdav1d-dev
 
       - uses: dtolnay/rust-toolchain@stable
         with:

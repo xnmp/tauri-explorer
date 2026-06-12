@@ -76,3 +76,30 @@ describe("extractFolderName", () => {
   });
 });
 
+
+describe("refreshAllPanes", () => {
+  it("silently refreshes both panes of the active tab", async () => {
+    const { createWindowTabsManager } = await import("$lib/state/window-tabs.svelte");
+    const manager = createWindowTabsManager();
+    manager.init("/home/user", true);
+
+    const calls: Array<{ pane: string; silent: boolean | undefined }> = [];
+    for (const pane of ["left", "right"] as const) {
+      const explorer = manager.getExplorer(pane);
+      expect(explorer).toBeDefined();
+      const original = explorer!.refresh;
+      // Wrap rather than fake: assert the real method is invoked with silent
+      (explorer as any).refresh = (opts?: { silent?: boolean }) => {
+        calls.push({ pane, silent: opts?.silent });
+        return original(opts);
+      };
+    }
+
+    manager.refreshAllPanes();
+
+    expect(calls).toEqual([
+      { pane: "left", silent: true },
+      { pane: "right", silent: true },
+    ]);
+  });
+});

@@ -113,4 +113,43 @@ test.describe("Content search (Ctrl+Shift+F)", () => {
     await page.keyboard.press("Escape");
     await expect(page.locator(".content-search-dialog")).toHaveCount(0);
   });
+
+  test("files with many matches collapse behind a 'more matches' row that expands", async ({ page }) => {
+    // index.ts has 7 case-insensitive "n" matches — over the collapse limit
+    // of 5; main.py and package.json stay under it.
+    await page.goto("/?path=/home/user/Documents/project");
+    await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
+    await page.keyboard.press("Control+Shift+F");
+    await expect(page.locator(".content-search-dialog")).toBeVisible();
+
+    await page.locator(".content-search-dialog .search-input").fill("n");
+
+    const showMore = page.locator(".show-more-row");
+    await expect(showMore).toHaveText(/2 more matches/);
+    const collapsedCount = await page.locator(".result-item").count();
+
+    await showMore.click();
+
+    // Expanding reveals the hidden rows and removes the show-more row.
+    await expect(page.locator(".show-more-row")).toHaveCount(0);
+    await expect
+      .poll(() => page.locator(".result-item").count())
+      .toBeGreaterThan(collapsedCount);
+  });
+
+  test("Enter re-runs the search when the query changed instead of opening a result", async ({ page }) => {
+    await openContentSearch(page);
+
+    const input = page.locator(".content-search-dialog .search-input");
+    await input.fill("greet");
+    await expect(page.locator(".result-item").first()).toBeVisible();
+
+    // Change the query and hit Enter before the debounce fires: this must
+    // start a new search (finding nothing), not open the stale selection.
+    await input.pressSequentially("zz");
+    await page.keyboard.press("Enter");
+
+    await expect(page.locator(".no-results")).toHaveText("No matches found");
+    await expect(page.locator(".content-search-dialog")).toBeVisible();
+  });
 });

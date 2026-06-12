@@ -2,36 +2,24 @@
  * Content search performance benchmarks.
  * Issue: tauri-x129
  *
- * Tests incremental flattening, offset computation, and page slicing
- * that drive the ContentSearchDialog's performance.
- * Run with: bun run test -- tests/perf/content-search.bench.ts
+ * Benchmarks the REAL implementations driving ContentSearchDialog:
+ * domain/content-search-flatten (incremental flatten, filter rebuild) and
+ * domain/virtual-layout (offsets + binary search used by VirtualList's
+ * variable-height mode). Run with: bun run test -- tests/perf/content-search.bench.ts
  */
 
 import { describe, it } from "vitest";
 import { benchmark, formatResult, assertPerformance } from "./perf-utils";
-
-// --- Types mirroring ContentSearchDialog ---
-
-interface ContentMatch {
-  lineNumber: number;
-  column: number;
-  lineContent: string;
-  matchStart: number;
-  matchEnd: number;
-}
-
-interface ContentSearchResult {
-  path: string;
-  relativePath: string;
-  matches: ContentMatch[];
-}
-
-interface FlattenedResult {
-  filePath: string;
-  relativePath: string;
-  match: ContentMatch;
-  isFirstInFile: boolean;
-}
+import {
+  flattenBatch,
+  rebuildAllFlattened,
+  type FlattenedResult,
+} from "../../src/lib/domain/content-search-flatten";
+import {
+  computeOffsets,
+  firstVisibleIndex,
+} from "../../src/lib/domain/virtual-layout";
+import type { ContentSearchResult, ContentMatch } from "../../src/lib/api/files";
 
 // --- Mock data generators ---
 
@@ -57,81 +45,52 @@ function generateSearchResults(fileCount: number, matchesPerFile: number): Conte
   return results;
 }
 
-function flattenResults(results: ContentSearchResult[]): FlattenedResult[] {
-  const flattened: FlattenedResult[] = [];
-  for (const file of results) {
-    let isFirst = true;
-    for (const match of file.matches) {
-      flattened.push({
-        filePath: file.path,
-        relativePath: file.relativePath,
-        match,
-        isFirstInFile: isFirst,
-      });
-      isFirst = false;
-    }
-  }
-  return flattened;
-}
+const ROW_HEIGHT = (item: FlattenedResult) => (item.isFirstInFile ? 54 : 30);
 
-function flattenBatchIncremental(
-  existing: FlattenedResult[],
-  newResults: ContentSearchResult[],
-): FlattenedResult[] {
-  const existingPaths = new Set(existing.map(r => r.filePath));
-  const batch: FlattenedResult[] = [];
-  for (const file of newResults) {
-    let isFirst = !existingPaths.has(file.path);
-    for (const match of file.matches) {
-      batch.push({
-        filePath: file.path,
-        relativePath: file.relativePath,
-        match,
-        isFirstInFile: isFirst,
-      });
-      isFirst = false;
-    }
-  }
-  return batch;
-}
-
-function computeOffsets(items: FlattenedResult[], itemHeight: number, headerHeight: number): { offsets: number[]; totalHeight: number } {
-  const offsets = new Array(items.length);
-  let cumulative = 0;
-  for (let i = 0; i < items.length; i++) {
-    offsets[i] = cumulative;
-    cumulative += items[i].isFirstInFile ? headerHeight : itemHeight;
-  }
-  return { offsets, totalHeight: cumulative };
+// All files expanded so every match flattens to a row (worst case).
+function expandedSet(results: ContentSearchResult[]): Set<string> {
+  return new Set(results.map((r) => r.path));
 }
 
 // --- Shared test fixtures ---
 
-const smallResults = generateSearchResults(50, 10);  // 500 items
-const smallFlattened = flattenResults(smallResults);
-const smallBatch = generateSearchResults(5, 10);     // 50 new items
+const smallResults = generateSearchResults(50, 10); // 500 matches
+const smallExpanded = expandedSet(smallResults);
+const smallBatch = generateSearchResults(5, 10); // 50 new matches
 
-const largeResults = generateSearchResults(200, 10); // 2000 items
-const largeFlattened = flattenResults(largeResults);
-const largeOffsets = computeOffsets(largeFlattened, 28, 36);
+const largeResults = generateSearchResults(200, 10); // 2000 matches
+const largeExpanded = expandedSet(largeResults);
+const largeFlattened = rebuildAllFlattened(largeResults, "", largeExpanded);
+const largeLayout = computeOffsets(largeFlattened, ROW_HEIGHT);
 
 // --- Benchmarks ---
 
-describe("Content Search: Incremental Flatten", () => {
-  it("appends 50 new results onto 500 existing under 0.5ms", () => {
+describe("Content Search: Incremental Flatten (flattenBatch)", () => {
+  it("flattens a 50-match batch under 0.5ms", () => {
+    const batchExpanded = expandedSet(smallBatch);
     const result = benchmark(
-      "flattenBatch-50-onto-500",
-      () => flattenBatchIncremental(smallFlattened, smallBatch),
+      "flattenBatch-50",
+      () => flattenBatch(smallBatch, "", batchExpanded),
       200
     );
     console.log(formatResult(result));
     assertPerformance(result, 0.5);
   });
 
-  it("full re-flatten of 500 items (filter change baseline)", () => {
+  it("full re-flatten of 500 matches (filter change baseline) under 2ms", () => {
     const result = benchmark(
-      "fullFlatten-500",
-      () => flattenResults(smallResults),
+      "rebuildAllFlattened-500",
+      () => rebuildAllFlattened(smallResults, "", smallExpanded),
+      200
+    );
+    console.log(formatResult(result));
+    assertPerformance(result, 2);
+  });
+
+  it("filtered re-flatten of 500 matches under 2ms", () => {
+    const result = benchmark(
+      "rebuildAllFlattened-500-filtered",
+      () => rebuildAllFlattened(smallResults, "value7", smallExpanded),
       200
     );
     console.log(formatResult(result));
@@ -139,22 +98,22 @@ describe("Content Search: Incremental Flatten", () => {
   });
 });
 
-describe("Content Search: Offset Computation", () => {
-  it("computes offsets for 2000 items under 1ms", () => {
+describe("Content Search: VirtualList layout (computeOffsets)", () => {
+  it("computes offsets for ~2200 rows under 1ms", () => {
     const result = benchmark(
-      "computeOffsets-2000",
-      () => computeOffsets(largeFlattened, 28, 36),
+      "computeOffsets-2200",
+      () => computeOffsets(largeFlattened, ROW_HEIGHT),
       200
     );
     console.log(formatResult(result));
     assertPerformance(result, 1);
   });
 
-  it("computes offsets for 500 items under 0.3ms", () => {
+  it("computes offsets for 500 rows under 0.3ms", () => {
     const items500 = largeFlattened.slice(0, 500);
     const result = benchmark(
       "computeOffsets-500",
-      () => computeOffsets(items500, 28, 36),
+      () => computeOffsets(items500, ROW_HEIGHT),
       200
     );
     console.log(formatResult(result));
@@ -162,43 +121,21 @@ describe("Content Search: Offset Computation", () => {
   });
 });
 
-describe("Content Search: Page Slice", () => {
-  it("slices page of 200 items from 2000 under 0.1ms", () => {
+describe("Content Search: scroll lookup (firstVisibleIndex)", () => {
+  it("binary-search lookups across the scroll range are near-instant", () => {
+    const positions = [0, 1000, 10_000, 30_000, largeLayout.totalHeight - 1];
     const result = benchmark(
-      "pageSlice-200-from-2000",
-      () => largeFlattened.slice(0, 200),
-      500
-    );
-    console.log(formatResult(result));
-    assertPerformance(result, 0.1);
-  });
-
-  it("slices mid-range page under 0.1ms", () => {
-    const result = benchmark(
-      "pageSlice-mid-200-from-2000",
-      () => largeFlattened.slice(800, 1000),
-      500
-    );
-    console.log(formatResult(result));
-    assertPerformance(result, 0.1);
-  });
-});
-
-describe("Content Search: scrollToSelected O(1) lookup", () => {
-  it("O(1) offset lookup is near-instant", () => {
-    const indices = [0, 100, 500, 999, 1500, 1999];
-    const result = benchmark(
-      "offsetLookup-O1",
+      "firstVisibleIndex-lookups",
       () => {
-        for (const idx of indices) {
-          const _offset = largeOffsets.offsets[idx];
+        for (const top of positions) {
+          firstVisibleIndex(largeLayout.offsets, top);
         }
       },
       1000
     );
     console.log(formatResult(result));
-    // 0.01ms was measurement noise on a loaded machine; an O(n) regression
-    // over 2000 entries would still exceed this by orders of magnitude.
+    // Measurement noise floor on a loaded machine; an O(n) regression over
+    // ~2200 offsets would exceed this by orders of magnitude.
     assertPerformance(result, 0.1);
   });
 });

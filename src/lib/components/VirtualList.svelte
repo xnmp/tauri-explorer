@@ -5,6 +5,11 @@
 -->
 <script lang="ts" generics="T">
   import type { Snippet } from "svelte";
+  import {
+    computeOffsets,
+    firstVisibleIndex,
+    lastVisibleIndexExclusive,
+  } from "$lib/domain/virtual-layout";
 
   interface Props {
     items: T[];
@@ -43,28 +48,11 @@
 
   // Variable-height layout: prefix-sum offsets, recomputed only when the
   // items array changes (memoized by $derived), never on scroll.
+  // Layout math lives in domain/virtual-layout.ts (pure, unit-tested).
   const layout = $derived.by(() => {
     if (!getItemHeight) return null;
-    const offsets = new Array<number>(items.length);
-    let cumulative = 0;
-    for (let i = 0; i < items.length; i++) {
-      offsets[i] = cumulative;
-      cumulative += getItemHeight(items[i], i);
-    }
-    return { offsets, totalHeight: cumulative };
+    return computeOffsets(items, getItemHeight);
   });
-
-  /** Largest index whose offset is <= scrollTop (binary search). */
-  function firstVisibleIndex(offsets: number[], top: number): number {
-    let lo = 0;
-    let hi = offsets.length - 1;
-    while (lo < hi) {
-      const mid = (lo + hi + 1) >>> 1;
-      if (offsets[mid] <= top) lo = mid;
-      else hi = mid - 1;
-    }
-    return lo;
-  }
 
   function heightAt(index: number): number {
     return getItemHeight?.(items[index], index) ?? itemHeight;
@@ -100,9 +88,8 @@
   const endIndex = $derived.by(() => {
     if (layout) {
       const viewBottom = scrollTop + viewportHeight;
-      let i = startIndex;
-      while (i < items.length && layout.offsets[i] < viewBottom) i++;
-      return Math.min(items.length, i + BUFFER);
+      const lastExclusive = lastVisibleIndexExclusive(layout.offsets, startIndex, viewBottom);
+      return Math.min(items.length, lastExclusive + BUFFER);
     }
     return Math.min(startIndex + visibleCount, items.length);
   });

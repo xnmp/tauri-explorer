@@ -217,6 +217,15 @@
 
   /* Name and rename styles are handled by EntryName component */
 
+  /* While renaming, the floating rename box must overflow the tile:
+     contain:paint and content-visibility:auto both clip, so lift them on
+     the renaming tile only, and raise it above its siblings. */
+  .tiles-view :global(.tile-item:has(.tile-rename)) {
+    contain: layout style;
+    content-visibility: visible;
+    z-index: 10;
+  }
+
   /* Git status indicator — positioned top-right of tile */
   .tiles-view :global(.tile-item .git-indicator) {
     position: absolute;

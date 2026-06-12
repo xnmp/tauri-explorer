@@ -5,7 +5,7 @@
   Issue: #108
 -->
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import type { FileEntry } from "$lib/domain/file";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
@@ -41,26 +41,41 @@
       if (focusedRenamePath === renamingPath) return;
       focusedRenamePath = renamingPath;
       rename.focusAndSelect(entry);
+      if (variant === "tiles") tick().then(autoGrowTileRename);
     });
   });
+
+  /** Grow the floating tile rename box to fit its content instead of
+   *  scrolling inside a fixed two-line textarea. */
+  function autoGrowTileRename(): void {
+    const el = rename.renameInputRef;
+    if (!(el instanceof HTMLTextAreaElement)) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight + 2}px`;
+  }
 </script>
 
 {#if isRenaming}
   {#if variant === "tiles"}
-    <!-- svelte-ignore a11y_autofocus -->
-    <textarea
-      class="rename-input tile-rename"
-      class:error={!!rename.renameError}
-      bind:value={rename.editedName}
-      bind:this={rename.renameInputRef}
-      onkeydown={(e) => rename.handleRenameKeydown(e, entry.name)}
-      onblur={() => rename.handleRenameBlur(entry.name)}
-      onclick={(e) => e.stopPropagation()}
-      ondblclick={(e) => e.stopPropagation()}
-      disabled={rename.submittingRename}
-      rows="2"
-      autofocus
-    ></textarea>
+    <!-- Anchor keeps the tile's two-line name space while the textarea
+         floats above neighboring tiles. -->
+    <div class="tile-rename-anchor">
+      <!-- svelte-ignore a11y_autofocus -->
+      <textarea
+        class="rename-input tile-rename"
+        class:error={!!rename.renameError}
+        bind:value={rename.editedName}
+        bind:this={rename.renameInputRef}
+        oninput={autoGrowTileRename}
+        onkeydown={(e) => rename.handleRenameKeydown(e, entry.name)}
+        onblur={() => rename.handleRenameBlur(entry.name)}
+        onclick={(e) => e.stopPropagation()}
+        ondblclick={(e) => e.stopPropagation()}
+        disabled={rename.submittingRename}
+        rows="1"
+        autofocus
+      ></textarea>
+    </div>
   {:else}
     <!-- svelte-ignore a11y_autofocus -->
     <input
@@ -117,14 +132,38 @@
     box-shadow: 0 0 0 1px var(--system-critical);
   }
 
-  .rename-input.tile-rename {
+  .tile-rename-anchor {
+    position: relative;
     width: 100%;
+    /* Reserve the two-line space the name occupied so the tile keeps its
+       size while the input floats above neighbors. */
+    min-height: calc(1.4em * 2);
+  }
+
+  .rename-input.tile-rename {
+    position: absolute;
+    top: -2px;
+    left: 50%;
+    transform: translateX(-50%);
+    /* Comfortably wider than the tile; overflowing neighbors is fine. */
+    width: max(180px, calc(100% + 48px));
+    max-width: 300px;
     text-align: center;
     resize: none;
     line-height: 1.4;
     word-break: break-word;
     overflow-wrap: break-word;
     font-size: 13px;
+    /* Height is grown to fit content by autoGrowTileRename — never scroll. */
+    overflow: hidden;
+    z-index: 10;
+    /* Opaque: the box floats over tile borders and neighboring names. */
+    background: var(--background-solid);
+    box-shadow: 0 0 0 1px var(--accent), 0 8px 24px rgba(0, 0, 0, 0.25);
+  }
+
+  .rename-input.tile-rename:focus {
+    background: var(--background-solid);
   }
 
   /* Name display — variant-specific styles */

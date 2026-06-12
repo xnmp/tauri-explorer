@@ -372,3 +372,37 @@ for (const viewMode of VIEW_MODES) {
     });
   });
 }
+
+// Tiles-only: the rename box floats above neighboring tiles and grows to fit
+// long names instead of scrolling inside a fixed two-line textarea.
+test.describe("Tiles rename box", () => {
+  test("grows to fit a long name without internal scrolling", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents&viewMode=tiles");
+    await waitForEntries(page);
+
+    await page.locator(".tile-item", { hasText: "presentation.pptx" }).click();
+    await page.keyboard.press("F2");
+    const box = page.locator(".tile-rename");
+    await expect(box).toBeVisible();
+
+    await box.fill(
+      "this is a really long file name to test the comfortable rename box behavior.pptx",
+    );
+
+    // Wider than a tile (floats over neighbors) ...
+    const width = await box.evaluate((el) => el.getBoundingClientRect().width);
+    expect(width).toBeGreaterThanOrEqual(180);
+
+    // ... and tall enough that nothing needs scrolling.
+    await expect
+      .poll(() =>
+        box.evaluate((el) => ({
+          fits: el.clientHeight >= el.scrollHeight - 1,
+          lines: el.clientHeight,
+        })),
+      )
+      .toMatchObject({ fits: true });
+    const height = await box.evaluate((el) => el.clientHeight);
+    expect(height).toBeGreaterThan(40); // more than the old two-line box
+  });
+});

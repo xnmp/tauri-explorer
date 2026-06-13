@@ -93,6 +93,17 @@
       : previewFolderChildrenRaw.filter((e) => !e.name.startsWith("."))
   );
   let previewLoading = $state(false);
+  // Defer the spinner: a preview that resolves in under 150ms shouldn't flash
+  // a spinner. Show it only once loading has been pending long enough to read.
+  let showPreviewSpinner = $state(false);
+  $effect(() => {
+    if (!previewLoading) {
+      showPreviewSpinner = false;
+      return;
+    }
+    const timer = setTimeout(() => (showPreviewSpinner = true), 150);
+    return () => clearTimeout(timer);
+  });
   let previewError = $state<string | null>(null);
   let previewTruncatedLines = $state(0);
   let lastPreviewPath: string | null = null;
@@ -394,9 +405,11 @@
 
     <div class="preview-content">
       {#if previewLoading}
-        <div class="preview-loading">
-          <div class="spinner"></div>
-        </div>
+        {#if showPreviewSpinner}
+          <div class="preview-loading">
+            <div class="spinner"></div>
+          </div>
+        {/if}
       {:else if previewPdfUrl}
         <div class="preview-pdf-container">
           <iframe src={previewPdfUrl} title={selectedFile.name} class="preview-pdf"></iframe>

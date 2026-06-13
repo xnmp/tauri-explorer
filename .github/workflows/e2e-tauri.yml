@@ -77,6 +77,20 @@ jobs:
         if: runner.os == 'Linux'
         run: xvfb-run -a --server-args="-screen 0 1280x1024x24" bun run test:e2e:tauri
 
+      # The runner's EDGEWEBDRIVER matches the Edge *browser*, but tauri apps
+      # run on the WebView2 *runtime*, whose version can differ — msedgedriver
+      # hard-rejects mismatches. Download the driver matching the runtime.
+      - name: Install msedgedriver matching the WebView2 runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $key = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+          $version = (Get-ItemProperty $key).pv
+          Write-Host "WebView2 runtime version: $version"
+          Invoke-WebRequest "https://msedgedriver.microsoft.com/$version/edgedriver_win64.zip" -OutFile edgedriver.zip
+          Expand-Archive edgedriver.zip -DestinationPath "$env:RUNNER_TEMP\edgedriver"
+          "TAURI_NATIVE_DRIVER=$env:RUNNER_TEMP\edgedriver\msedgedriver.exe" >> $env:GITHUB_ENV
+
       - name: Run smoke suite (Windows)
         if: runner.os == 'Windows'
         run: bun run test:e2e:tauri

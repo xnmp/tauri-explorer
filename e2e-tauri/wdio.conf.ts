@@ -41,7 +41,11 @@ export const config: WebdriverIO.Config = {
   maxInstances: 1,
   capabilities: [
     {
-      browserName: isWindows ? "webview2" : "wry",
+      // No browserName: tauri-driver fills it in for the platform's native
+      // driver. WDIO v9 defaults to WebDriver BiDi (webSocketUrl), which
+      // WebKitWebDriver/msedgedriver reject with "Failed to match
+      // capabilities" — enforce classic.
+      "wdio:enforceWebDriverClassic": true,
       "tauri:options": { application },
     } as WebdriverIO.Capabilities,
   ],

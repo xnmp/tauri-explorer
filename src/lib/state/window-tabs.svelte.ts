@@ -56,6 +56,21 @@ export interface PersistedTabState {
   activeTabId: string | null;
 }
 
+/** Serializable snapshot of a live tab, used for cross-window tab moves
+ *  and tear-off into a new window. */
+export interface TabSnapshot {
+  leftPath: string;
+  rightPath: string;
+  activePaneId: PaneId;
+  dualPaneEnabled: boolean;
+  splitRatio: number;
+}
+
+/** localStorage key a freshly spawned tear-off window reads its tab from. */
+export function tabSeedKey(windowLabel: string): string {
+  return `tab-seed:${windowLabel}`;
+}
+
 /** Generate unique IDs for tabs and explorers */
 export function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -162,7 +177,9 @@ function createWindowTabsManager() {
   /** Get path for a pane from its explorer */
   function getPanePath(pane: WindowTabPane): string {
     const explorer = explorers.get(pane.explorerId);
-    return explorer?.state.currentPath ?? pane.path;
+    // || not ??: an explorer that hasn't completed its first navigation
+    // reports "" — fall back to the pane's creation path, never persist "".
+    return explorer?.state.currentPath || pane.path;
   }
 
   /** Get the active pane's directory path for any tab by ID. */
@@ -259,6 +276,42 @@ function createWindowTabsManager() {
     return tab;
   }
 
+  /** Serialize a live tab for cross-window transfer / tear-off. */
+  function exportTab(tabId: string): TabSnapshot | null {
+    const tab = tabs.find((t) => t.id === tabId);
+    if (!tab) return null;
+    return {
+      leftPath: getPanePath(tab.panes.left),
+      rightPath: getPanePath(tab.panes.right),
+      activePaneId: tab.activePaneId,
+      dualPaneEnabled: tab.dualPaneEnabled,
+      splitRatio: tab.splitRatio,
+    };
+  }
+
+  /** Adopt a tab transferred from another window: create fresh explorers
+   *  from the snapshot, insert at `index` (default: end), and activate. */
+  function adoptTab(snapshot: TabSnapshot, index?: number): WindowTab {
+    const tab: WindowTab = {
+      id: generateId("tab"),
+      panes: {
+        left: createPane(snapshot.leftPath),
+        right: createPane(snapshot.rightPath),
+      },
+      activePaneId: snapshot.activePaneId,
+      dualPaneEnabled: snapshot.dualPaneEnabled,
+      splitRatio: snapshot.splitRatio,
+    };
+
+    const newTabs = [...tabs];
+    const at = index === undefined ? newTabs.length : Math.max(0, Math.min(index, newTabs.length));
+    newTabs.splice(at, 0, tab);
+    tabs = newTabs;
+    activeTabId = tab.id;
+    saveState();
+    return tab;
+  }
+
   /** Restore tabs from a persisted state.
    *  @param overridePath - If set, the active pane of the active tab
    *    navigates here instead of its saved path (avoids racing navigations). */
@@ -320,6 +373,17 @@ function createWindowTabsManager() {
     tabs = [];
     activeTabId = null;
 
+    // Tear-off windows receive their full tab (dual-pane layout included)
+    // through a label-keyed localStorage seed written by the source window.
+    const tabSeed = loadPersisted<{ snapshot: TabSnapshot; ts: number } | null>(
+      tabSeedKey(WINDOW_LABEL),
+      null,
+    );
+    if (tabSeed && Date.now() - tabSeed.ts < 10_000) {
+      removePersisted(tabSeedKey(WINDOW_LABEL));
+      return adoptTab(tabSeed.snapshot);
+    }
+
     // Check for parent-window seed (child windows get entries pre-loaded)
     const targetPath = overridePath ?? initialPath;
     const seedKey = `dir-seed:${targetPath}`;
@@ -372,6 +436,17 @@ function createWindowTabsManager() {
 
   /** Close a tab by ID. Closes the window if it's the last tab. */
   function closeTab(tabId: string): void {
+    removeTab(tabId, { snapshot: true });
+  }
+
+  /** Remove a tab that moved to another window. No Ctrl+Shift+T snapshot —
+   *  the tab still lives, just elsewhere. Closes the window if it was the
+   *  last tab. */
+  function removeTransferredTab(tabId: string): void {
+    removeTab(tabId, { snapshot: false });
+  }
+
+  function removeTab(tabId: string, opts: { snapshot: boolean }): void {
     const tabIndex = tabs.findIndex((t) => t.id === tabId);
     if (tabIndex === -1) return;
 
@@ -380,7 +455,9 @@ function createWindowTabsManager() {
     const isLastTab = tabs.length <= 1;
 
     // Snapshot before closing (even if it's the last tab)
-    snapshotTab(tab, tabIndex, isLastTab);
+    if (opts.snapshot) {
+      snapshotTab(tab, tabIndex, isLastTab);
+    }
 
     if (isLastTab) {
       // Close the window when closing the last tab
@@ -604,6 +681,12 @@ function createWindowTabsManager() {
     createTab,
     closeTab,
     closeActiveTab,
+    exportTab,
+    adoptTab,
+    removeTransferredTab,
+    get windowLabel() {
+      return WINDOW_LABEL;
+    },
     restoreClosedTab,
     get canRestoreTab() {
       // No side effects in the getter: the stack is refreshed on window

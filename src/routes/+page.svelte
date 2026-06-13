@@ -38,6 +38,7 @@
   import NanoBananaDialog from "$lib/components/NanoBananaDialog.svelte";
   import JobsPanel from "$lib/components/JobsPanel.svelte";
   import { gitStatusStore } from "$lib/state/git-status.svelte";
+  import { initTabTransferListener } from "$lib/state/tab-transfer";
   import StatusBar from "$lib/components/StatusBar.svelte";
   import AnimatedBackground from "$lib/components/AnimatedBackground.svelte";
   import MillerColumns from "$lib/components/MillerColumns.svelte";
@@ -217,6 +218,10 @@
     // Initialize git status watcher so file badges update on changes
     gitStatusStore.initWatcherListener();
 
+    // Cross-window tab moves: remove our copy when another window claims a
+    // tab dragged out of this one.
+    const stopTabTransfer = initTabTransferListener();
+
     // Register all commands for the command palette (deferred to next tick)
     queueMicrotask(() => registerAllCommands());
 
@@ -233,6 +238,7 @@
       nativeDropHandler.cleanup();
       fileWatchers.cleanup();
       windowLifecycle.cleanup();
+      stopTabTransfer();
     };
   });
 </script>

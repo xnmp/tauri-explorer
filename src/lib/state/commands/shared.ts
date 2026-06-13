@@ -4,7 +4,7 @@
 
 import { WebviewWindow, type Color } from "@tauri-apps/api/webviewWindow";
 import { isMac } from "$lib/domain/platform";
-import { windowTabsManager } from "../window-tabs.svelte";
+import { windowTabsManager, tabSeedKey, type TabSnapshot } from "../window-tabs.svelte";
 import { settingsStore } from "../settings.svelte";
 import { savePersisted } from "../persisted";
 import type { ViewMode } from "../types";
@@ -20,8 +20,14 @@ function getPersistedBgColor(): Color | undefined {
   }
 }
 
-/** Open a new explorer window at the given path with optional view mode */
-export async function openNewWindow(path: string, viewMode?: ViewMode): Promise<void> {
+/** Open a new explorer window at the given path with optional view mode.
+ *  When `tabSnapshot` is set (tab tear-off), the new window restores the
+ *  full tab — dual-pane layout included — from a label-keyed seed. */
+export async function openNewWindow(
+  path: string,
+  viewMode?: ViewMode,
+  tabSnapshot?: TabSnapshot,
+): Promise<void> {
   // Seed the child window with current directory entries for instant rendering
   const explorer = windowTabsManager.getActiveExplorer();
   if (explorer && explorer.currentPath === path) {
@@ -36,6 +42,9 @@ export async function openNewWindow(path: string, viewMode?: ViewMode): Promise<
   }
 
   const label = "explorer-" + Date.now();
+  if (tabSnapshot) {
+    savePersisted(tabSeedKey(label), { snapshot: tabSnapshot, ts: Date.now() });
+  }
   const baseUrl = window.location.origin + window.location.pathname;
   const params = new URLSearchParams({ path });
   if (viewMode) params.set("viewMode", viewMode);

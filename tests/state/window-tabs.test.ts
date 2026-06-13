@@ -103,3 +103,79 @@ describe("refreshAllPanes", () => {
     ]);
   });
 });
+
+describe("cross-window tab transfer primitives", () => {
+  async function freshManager() {
+    const { createWindowTabsManager } = await import("$lib/state/window-tabs.svelte");
+    const manager = createWindowTabsManager();
+    manager.init("/home/user", true);
+    return manager;
+  }
+
+  it("exportTab serializes the live tab layout", async () => {
+    const manager = await freshManager();
+    manager.setDualPane(true);
+    manager.setSplitRatio(0.7);
+
+    const snapshot = manager.exportTab(manager.activeTabId!);
+    expect(snapshot).toMatchObject({
+      leftPath: "/home/user",
+      dualPaneEnabled: true,
+      splitRatio: 0.7,
+      activePaneId: expect.any(String),
+    });
+  });
+
+  it("exportTab returns null for unknown tabs", async () => {
+    const manager = await freshManager();
+    expect(manager.exportTab("nope")).toBeNull();
+  });
+
+  it("adoptTab inserts at the requested index and activates it", async () => {
+    const manager = await freshManager();
+    manager.createTab("/tmp/second");
+    expect(manager.tabs.length).toBe(2);
+
+    const adopted = manager.adoptTab(
+      {
+        leftPath: "/srv/incoming",
+        rightPath: "/srv",
+        activePaneId: "left",
+        dualPaneEnabled: true,
+        splitRatio: 0.6,
+      },
+      1,
+    );
+
+    expect(manager.tabs.length).toBe(3);
+    expect(manager.tabs[1].id).toBe(adopted.id);
+    expect(manager.activeTabId).toBe(adopted.id);
+    expect(manager.dualPaneEnabled).toBe(true);
+    expect(manager.getTabPath(adopted.id)).toBe("/srv/incoming");
+  });
+
+  it("adoptTab without an index appends at the end", async () => {
+    const manager = await freshManager();
+    const adopted = manager.adoptTab({
+      leftPath: "/var/log",
+      rightPath: "/var",
+      activePaneId: "left",
+      dualPaneEnabled: false,
+      splitRatio: 0.5,
+    });
+    expect(manager.tabs[manager.tabs.length - 1].id).toBe(adopted.id);
+  });
+
+  it("removeTransferredTab removes without adding a closed-tab snapshot", async () => {
+    const manager = await freshManager();
+    const moved = manager.createTab("/tmp/moving");
+    expect(manager.tabs.length).toBe(2);
+
+    manager.removeTransferredTab(moved.id);
+
+    expect(manager.tabs.length).toBe(1);
+    expect(manager.tabs.some((t) => t.id === moved.id)).toBe(false);
+    // The tab moved elsewhere — Ctrl+Shift+T must not resurrect it here.
+    expect(manager.canRestoreTab).toBe(false);
+  });
+});

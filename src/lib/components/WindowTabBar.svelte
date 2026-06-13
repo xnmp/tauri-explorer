@@ -11,6 +11,8 @@
   import { getDropSourcePaths } from "$lib/state/drop-operations";
   import { handleFileDrop } from "$lib/state/drop-operations";
   import { dragState } from "$lib/state/drag.svelte";
+  import { tabDragState, isForeignTabDrag, claimDraggedTab } from "$lib/state/tab-transfer";
+  import { openNewWindow } from "$lib/state/commands/shared";
   import { parentDir } from "$lib/domain/path";
   import { isCopyModifier } from "$lib/domain/platform";
   import { showTabArea as showTabAreaRule } from "$lib/domain/titlebar";
@@ -124,13 +126,38 @@
     }
   }
 
-  // Tab drag-and-drop reordering
+  // Tab drag-and-drop: in-window reordering, cross-window moves (shared
+  // localStorage drag marker — see tab-transfer.ts) and tear-off.
   let dragTabId = $state<string | null>(null);
   let dropTargetTabId = $state<string | null>(null);
   let fileDropTargetTabId = $state<string | null>(null);
 
+  // Whether the dragged tab is currently over THIS window. dragover fires
+  // continuously while inside; a dragleave with no relatedTarget means the
+  // pointer left the window. Used at dragend to detect desktop drops.
+  let pointerInsideWindow = true;
+
+  function onWindowDragOver(): void {
+    pointerInsideWindow = true;
+  }
+
+  function onWindowDragLeave(event: DragEvent): void {
+    if (!event.relatedTarget) pointerInsideWindow = false;
+  }
+
   function handleTabDragStart(event: DragEvent, tabId: string): void {
     dragTabId = tabId;
+    pointerInsideWindow = true;
+    const snapshot = windowTabsManager.exportTab(tabId);
+    if (snapshot) {
+      tabDragState.start({
+        sourceWindow: windowTabsManager.windowLabel,
+        tabId,
+        snapshot,
+      });
+    }
+    window.addEventListener("dragover", onWindowDragOver);
+    window.addEventListener("dragleave", onWindowDragLeave);
     if (event.dataTransfer) {
       event.dataTransfer.effectAllowed = "move";
       event.dataTransfer.setData("text/plain", tabId);
@@ -151,6 +178,14 @@
     // Tab reorder drag
     if (dragTabId) {
       if (dragTabId === tabId) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      dropTargetTabId = tabId;
+      return;
+    }
+
+    // Tab dragged in from another window
+    if (isForeignTabDrag(tabDragState.read())) {
       event.preventDefault();
       if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
       dropTargetTabId = tabId;
@@ -188,6 +223,17 @@
       return;
     }
 
+    // Tab dropped here from another window: adopt it at this position.
+    if (!dragTabId) {
+      const foreign = tabDragState.read();
+      if (isForeignTabDrag(foreign)) {
+        dropTargetTabId = null;
+        const index = tabs.findIndex((t) => t.id === tabId);
+        claimDraggedTab(foreign, index >= 0 ? index : undefined);
+        return;
+      }
+    }
+
     // File drop onto tab (mirror FileList: dataTransfer first, then cross-window drag state)
     if (!dragTabId && event.dataTransfer && (isFileDrag(event.dataTransfer) || dragState.readCrossWindow())) {
       fileDropTargetTabId = null;
@@ -218,15 +264,69 @@
     dropTargetTabId = null;
   }
 
-  function handleTabDragEnd(): void {
+  function handleTabDragEnd(event: DragEvent): void {
+    window.removeEventListener("dragover", onWindowDragOver);
+    window.removeEventListener("dragleave", onWindowDragLeave);
+
     dragTabId = null;
     dropTargetTabId = null;
     fileDropTargetTabId = null;
+
+    const wasInside = pointerInsideWindow;
+    pointerInsideWindow = true;
+
+    // If the marker is gone, another window claimed the tab (its
+    // "tab-claimed" broadcast removes our copy). If it's still ours,
+    // always clear it — in-window reorders end here too.
+    const pending = tabDragState.read();
+    if (!pending || pending.sourceWindow !== windowTabsManager.windowLabel) return;
+    tabDragState.clear();
+
+    // Tear-off: drag ended outside this window with nobody accepting the
+    // drop → spawn a new window with just this tab. A single-tab window
+    // would only recreate itself, so skip that case.
+    const dropEffect = event.dataTransfer?.dropEffect ?? "none";
+    if (dropEffect === "none" && !wasInside && tabs.length > 1) {
+      const { snapshot } = pending;
+      const activePath =
+        snapshot.activePaneId === "right" ? snapshot.rightPath : snapshot.leftPath;
+      void openNewWindow(activePath, undefined, snapshot);
+      windowTabsManager.removeTransferredTab(pending.tabId);
+    }
+  }
+
+  /** Drops on the empty strip area (right of the tabs) append the foreign
+   *  tab at the end. Per-tab handlers cover drops on tabs themselves. */
+  function handleAreaDragOver(event: DragEvent): void {
+    if ((event.target as HTMLElement).closest(".tab")) return;
+    if (!dragTabId && isForeignTabDrag(tabDragState.read())) {
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    }
+  }
+
+  function handleAreaDrop(event: DragEvent): void {
+    if ((event.target as HTMLElement).closest(".tab")) return;
+    if (dragTabId) return;
+    const foreign = tabDragState.read();
+    if (isForeignTabDrag(foreign)) {
+      event.preventDefault();
+      claimDraggedTab(foreign);
+    }
   }
 </script>
 
 {#if showTabArea}
-  <div class="tab-area" role="tablist" bind:this={tabAreaRef}>
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <!-- Drag handlers only — keyboard interaction lives on the tabs. -->
+  <!-- svelte-ignore a11y_interactive_supports_focus -->
+  <div
+    class="tab-area"
+    role="tablist"
+    bind:this={tabAreaRef}
+    ondragover={handleAreaDragOver}
+    ondrop={handleAreaDrop}
+  >
     {#each tabs as tab (tab.id)}
       <div
         class="tab"

@@ -55,10 +55,24 @@ const mockFiles: Record<string, FileEntry[]> = {
     file("notes.md", "/home/user/Documents/notes.md", 4096),
   ],
   "/home/user/Downloads": [
+    dir("wrapper", "/home/user/Downloads/wrapper", false),
     file("archive.zip", "/home/user/Downloads/archive.zip", 1048576),
     file("bundle.zip", "/home/user/Downloads/bundle.zip", 2097152),
     file("installer.exe", "/home/user/Downloads/installer.exe", 5242880),
     file("image.png", "/home/user/Downloads/image.png", 524288),
+  ],
+  // A chain of single-child folders: wrapper → payload → inner → {real content}.
+  // Previewing "wrapper" descends through the chain and shows inner's contents.
+  "/home/user/Downloads/wrapper": [
+    dir("payload", "/home/user/Downloads/wrapper/payload", false),
+  ],
+  "/home/user/Downloads/wrapper/payload": [
+    dir("inner", "/home/user/Downloads/wrapper/payload/inner", false),
+  ],
+  "/home/user/Downloads/wrapper/payload/inner": [
+    dir("assets", "/home/user/Downloads/wrapper/payload/inner/assets"),
+    file("app.js", "/home/user/Downloads/wrapper/payload/inner/app.js", 1024),
+    file("style.css", "/home/user/Downloads/wrapper/payload/inner/style.css", 512),
   ],
   "/home/user/Pictures": [
     dir("vacation", "/home/user/Pictures/vacation"),

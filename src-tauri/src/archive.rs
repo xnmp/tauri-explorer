@@ -632,19 +632,27 @@ fn list_archive_contents_sync(archive_path: &str) -> Result<ArchiveListing, AppE
         });
     }
 
-    // Start at the top level. If the sole entry there is a directory, descend
-    // into it and report its name, so a single-root archive shows the useful
-    // contents instead of one lonely folder.
+    // Start at the top level and keep descending while the sole entry at the
+    // current level is a directory, so a single-root archive — or a chain of
+    // nested single folders (a/b/c/…) — shows the useful contents instead of
+    // one lonely folder. `root_folder` reports the descended path (e.g. "a/b").
     let mut prefix: Vec<String> = Vec::new();
-    let mut root_folder: Option<String> = None;
-    let top = level_under(&infos, &prefix);
-    if top.len() == 1 {
-        let (name, (is_dir, _)) = top.iter().next().unwrap();
-        if *is_dir {
-            root_folder = Some(name.clone());
-            prefix.push(name.clone());
+    loop {
+        let level = level_under(&infos, &prefix);
+        if level.len() != 1 {
+            break;
         }
+        let (name, (is_dir, _)) = level.iter().next().unwrap();
+        if !*is_dir {
+            break;
+        }
+        prefix.push(name.clone());
     }
+    let root_folder = if prefix.is_empty() {
+        None
+    } else {
+        Some(prefix.join("/"))
+    };
     let level = level_under(&infos, &prefix);
 
     let mut entries: Vec<FileEntry> = level
@@ -743,6 +751,27 @@ mod tests {
         assert!(data.path.ends_with("!/root/data.bin"));
         let nested = listing.entries.iter().find(|e| e.name == "nested").unwrap();
         assert!(matches!(nested.kind, FileKind::Directory));
+    }
+
+    #[test]
+    fn test_list_archive_contents_descends_through_nested_single_folders() {
+        // root/only/deep/{a.txt,b.txt} — each level above "deep" has a single
+        // sub-directory, so descent continues until it reaches real content.
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("root");
+        let deep = root.join("only").join("deep");
+        fs::create_dir_all(&deep).unwrap();
+        fs::write(deep.join("a.txt"), "a").unwrap();
+        fs::write(deep.join("b.txt"), "b").unwrap();
+
+        let zip_path =
+            compress_to_zip_sync(None, vec![root.to_string_lossy().to_string()], None).unwrap();
+        let listing = list_archive_contents_sync(&zip_path).unwrap();
+        assert_eq!(listing.root_folder.as_deref(), Some("root/only/deep"));
+        let names: Vec<&str> = listing.entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["a.txt", "b.txt"]);
+        let a = listing.entries.iter().find(|e| e.name == "a.txt").unwrap();
+        assert!(a.path.ends_with("!/root/only/deep/a.txt"));
     }
 
     #[test]

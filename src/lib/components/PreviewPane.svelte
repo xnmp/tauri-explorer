@@ -83,9 +83,10 @@
   let previewMarkdownHtml = $state<string | null>(null);
   let previewPdfUrl = $state<string | null>(null);
   let previewFolderChildrenRaw = $state<readonly FileEntry[]>([]);
-  // Set when previewing a ZIP whose sole top-level item is a folder we
-  // descended into — its name, for the "contains one folder" indicator.
-  let previewArchiveRoot = $state<string | null>(null);
+  // Set when a folder/ZIP preview descended through one or more single-child
+  // folders: the collapsed path (e.g. "a/b") and a short note describing it.
+  let previewCollapsedRoot = $state<string | null>(null);
+  let previewCollapsedNote = $state<string | null>(null);
   const previewFolderChildren = $derived(
     settingsStore.showHidden
       ? previewFolderChildrenRaw
@@ -177,7 +178,8 @@
       previewMarkdownHtml = null;
       previewPdfUrl = null;
       previewFolderChildrenRaw = [];
-      previewArchiveRoot = null;
+      previewCollapsedRoot = null;
+      previewCollapsedNote = null;
       previewError = null;
       previewLoading = false;
       return;
@@ -203,30 +205,57 @@
     previewMarkdownHtml = null;
     previewPdfUrl = null;
     previewFolderChildrenRaw = [];
-    previewArchiveRoot = null;
+    previewCollapsedRoot = null;
+    previewCollapsedNote = null;
     previewError = null;
     previewTruncatedLines = 0;
     previewLoading = true;
 
     if (file.kind === "directory") {
-      const result = await fetchDirectory(file.path);
-      if (file.path !== lastPreviewPath) return;
-      if (result.ok) {
-        previewFolderChildrenRaw = result.data.entries;
+      // Descend through any chain of single-child folders so the preview
+      // shows useful content instead of one lonely folder, then report the
+      // collapsed path (e.g. "a/b") in the indicator. Capped to guard against
+      // symlink cycles.
+      const MAX_DESCENT = 40;
+      let dirPath = file.path;
+      const chain: string[] = [];
+      for (let depth = 0; depth < MAX_DESCENT; depth++) {
+        const result = await fetchDirectory(dirPath);
+        if (file.path !== lastPreviewPath) return;
+        if (!result.ok) {
+          previewError = result.error;
+          previewLoading = false;
+          return;
+        }
+        const entries = result.data.entries;
+        if (entries.length === 1 && entries[0].kind === "directory") {
+          chain.push(entries[0].name);
+          dirPath = entries[0].path;
+          continue;
+        }
+        previewFolderChildrenRaw = entries;
+        if (chain.length > 0) {
+          previewCollapsedRoot = chain.join("/");
+          previewCollapsedNote = chain.length === 1 ? "single subfolder" : "single-folder chain";
+        }
+        break;
       }
       previewLoading = false;
       return;
     }
 
     // ZIP files preview their contents in the same folder-list format as a
-    // directory (one level deep, directories first). When the archive's sole
-    // top-level item is a folder, descend into it and show that folder's name.
+    // directory (one level deep, directories first). When the archive collapses
+    // to a single top-level folder (or chain of them), descend and show its name.
     if (isZipFile(file)) {
       const result = await listArchiveContents(file.path);
       if (file.path !== lastPreviewPath) return;
       if (result.ok) {
         previewFolderChildrenRaw = result.data.entries;
-        previewArchiveRoot = result.data.rootFolder;
+        if (result.data.rootFolder) {
+          previewCollapsedRoot = result.data.rootFolder;
+          previewCollapsedNote = "single top-level folder";
+        }
       } else {
         previewError = result.error;
       }
@@ -378,13 +407,13 @@
         </div>
       {:else if previewFolderChildren.length > 0}
         <div class="preview-folder-list">
-          {#if previewArchiveRoot}
-            <div class="archive-root-indicator" title="This archive contains a single top-level folder">
-              <svg class="archive-root-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          {#if previewCollapsedRoot}
+            <div class="collapsed-root-indicator" title="Showing the contents of the only folder inside">
+              <svg class="collapsed-root-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M2 4C2 3.45 2.45 3 3 3H6L7.5 4.5H13C13.55 4.5 14 4.95 14 5.5V12C14 12.55 13.55 13 13 13H3C2.45 13 2 12.55 2 12V4Z" fill="currentColor" fill-opacity="0.2" stroke="currentColor" stroke-width="1.1"/>
               </svg>
-              <span class="archive-root-name">{previewArchiveRoot}/</span>
-              <span class="archive-root-note">single top-level folder</span>
+              <span class="collapsed-root-name">{previewCollapsedRoot}/</span>
+              <span class="collapsed-root-note">{previewCollapsedNote}</span>
             </div>
           {/if}
           {#each previewFolderChildren as child}
@@ -852,7 +881,7 @@
     padding: 4px 0;
   }
 
-  .archive-root-indicator {
+  .collapsed-root-indicator {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -865,12 +894,12 @@
     color: var(--text-secondary);
   }
 
-  .archive-root-icon {
+  .collapsed-root-icon {
     color: var(--accent);
     flex-shrink: 0;
   }
 
-  .archive-root-name {
+  .collapsed-root-name {
     font-weight: 600;
     color: var(--text-primary);
     overflow: hidden;
@@ -878,7 +907,7 @@
     white-space: nowrap;
   }
 
-  .archive-root-note {
+  .collapsed-root-note {
     margin-left: auto;
     color: var(--text-tertiary);
     font-size: 11px;

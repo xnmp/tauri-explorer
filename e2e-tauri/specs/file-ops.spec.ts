@@ -63,10 +63,16 @@ describe("file operations against the real backend", () => {
   it("moves the folder to trash", async () => {
     await fileOp({ op: "delete", path: path.join(scratchDir, "renamed-roundtrip") });
 
+    // The listing only drops the entry after the backend trash resolves;
+    // Windows Recycle Bin operations are noticeably slower, so allow extra
+    // headroom (the assertion is the eventual result, not its latency).
     await browser.waitUntil(
       async () => !(await entryNames()).includes("renamed-roundtrip"),
-      { timeoutMsg: "trashed folder still listed" },
+      { timeout: 25_000, timeoutMsg: "trashed folder still listed" },
     );
-    expect(fs.existsSync(path.join(scratchDir, "renamed-roundtrip"))).toBe(false);
+    await browser.waitUntil(
+      () => !fs.existsSync(path.join(scratchDir, "renamed-roundtrip")),
+      { timeout: 25_000, timeoutMsg: "folder still on disk after trash" },
+    );
   });
 });

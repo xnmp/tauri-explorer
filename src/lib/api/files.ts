@@ -980,15 +980,24 @@ export async function extractArchive(
   }
 }
 
+/** Preview listing of a ZIP archive. `rootFolder` is set when the archive's
+ *  sole top-level item is a directory we descended into — its name, for a
+ *  "contains one folder: X" indicator. */
+export interface ArchiveListing {
+  entries: FileEntry[];
+  rootFolder: string | null;
+}
+
 /**
- * List the top-level contents of a ZIP archive (one level deep), for the
- * preview pane. Returns FileEntry rows with synthetic `archive.zip!/name`
- * paths, directories first.
+ * List the contents of a ZIP archive (one level deep), for the preview pane.
+ * Returns FileEntry rows with synthetic `archive.zip!/name` paths,
+ * directories first. If the only top-level item is a folder, descends into
+ * it and reports its name as `rootFolder`.
  */
-export async function listArchiveContents(archivePath: string): Promise<ApiResult<FileEntry[]>> {
+export async function listArchiveContents(archivePath: string): Promise<ApiResult<ArchiveListing>> {
   try {
-    const entries = await invoke<FileEntry[]>("list_archive_contents", { archivePath });
-    return { ok: true, data: entries };
+    const listing = await invoke<ArchiveListing>("list_archive_contents", { archivePath });
+    return { ok: true, data: listing };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }

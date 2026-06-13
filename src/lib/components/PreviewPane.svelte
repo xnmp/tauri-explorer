@@ -83,6 +83,9 @@
   let previewMarkdownHtml = $state<string | null>(null);
   let previewPdfUrl = $state<string | null>(null);
   let previewFolderChildrenRaw = $state<readonly FileEntry[]>([]);
+  // Set when previewing a ZIP whose sole top-level item is a folder we
+  // descended into — its name, for the "contains one folder" indicator.
+  let previewArchiveRoot = $state<string | null>(null);
   const previewFolderChildren = $derived(
     settingsStore.showHidden
       ? previewFolderChildrenRaw
@@ -174,6 +177,7 @@
       previewMarkdownHtml = null;
       previewPdfUrl = null;
       previewFolderChildrenRaw = [];
+      previewArchiveRoot = null;
       previewError = null;
       previewLoading = false;
       return;
@@ -199,6 +203,7 @@
     previewMarkdownHtml = null;
     previewPdfUrl = null;
     previewFolderChildrenRaw = [];
+    previewArchiveRoot = null;
     previewError = null;
     previewTruncatedLines = 0;
     previewLoading = true;
@@ -213,13 +218,15 @@
       return;
     }
 
-    // ZIP files preview their top-level contents in the same folder-list
-    // format as a directory (one level deep, directories first).
+    // ZIP files preview their contents in the same folder-list format as a
+    // directory (one level deep, directories first). When the archive's sole
+    // top-level item is a folder, descend into it and show that folder's name.
     if (isZipFile(file)) {
       const result = await listArchiveContents(file.path);
       if (file.path !== lastPreviewPath) return;
       if (result.ok) {
-        previewFolderChildrenRaw = result.data;
+        previewFolderChildrenRaw = result.data.entries;
+        previewArchiveRoot = result.data.rootFolder;
       } else {
         previewError = result.error;
       }
@@ -371,6 +378,15 @@
         </div>
       {:else if previewFolderChildren.length > 0}
         <div class="preview-folder-list">
+          {#if previewArchiveRoot}
+            <div class="archive-root-indicator" title="This archive contains a single top-level folder">
+              <svg class="archive-root-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M2 4C2 3.45 2.45 3 3 3H6L7.5 4.5H13C13.55 4.5 14 4.95 14 5.5V12C14 12.55 13.55 13 13 13H3C2.45 13 2 12.55 2 12V4Z" fill="currentColor" fill-opacity="0.2" stroke="currentColor" stroke-width="1.1"/>
+              </svg>
+              <span class="archive-root-name">{previewArchiveRoot}/</span>
+              <span class="archive-root-note">single top-level folder</span>
+            </div>
+          {/if}
           {#each previewFolderChildren as child}
             <div class="folder-item" class:is-directory={child.kind === "directory"}>
               <span class="folder-item-icon" style:color={child.kind !== "directory" ? getFileIconColor(child) : undefined}>
@@ -834,6 +850,39 @@
     flex: 1;
     overflow: auto;
     padding: 4px 0;
+  }
+
+  .archive-root-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 2px 8px 6px;
+    padding: 5px 8px;
+    background: var(--subtle-fill-secondary);
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .archive-root-icon {
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .archive-root-name {
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .archive-root-note {
+    margin-left: auto;
+    color: var(--text-tertiary);
+    font-size: 11px;
+    flex-shrink: 0;
   }
 
   .folder-item {

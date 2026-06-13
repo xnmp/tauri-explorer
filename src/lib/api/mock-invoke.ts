@@ -56,6 +56,7 @@ const mockFiles: Record<string, FileEntry[]> = {
   ],
   "/home/user/Downloads": [
     file("archive.zip", "/home/user/Downloads/archive.zip", 1048576),
+    file("bundle.zip", "/home/user/Downloads/bundle.zip", 2097152),
     file("installer.exe", "/home/user/Downloads/installer.exe", 5242880),
     file("image.png", "/home/user/Downloads/image.png", 524288),
   ],
@@ -819,13 +820,30 @@ const mockCommands: Record<string, CommandHandler> = {
 
   list_archive_contents: (args) => {
     const archivePath = args.archivePath as string;
-    // Browser/e2e mode has no real zips — return a stable fake top-level
-    // listing (a folder + two files) so the preview renders.
-    return [
-      dir("src", `${archivePath}!/src`),
-      file("README.md", `${archivePath}!/README.md`, 512),
-      file("data.json", `${archivePath}!/data.json`, 2048),
-    ];
+    const name = basename(archivePath);
+    // Browser/e2e mode has no real zips — return stable fake listings.
+    // A "bundle*.zip" stands in for an archive with a single top-level
+    // folder (descended into, with the root-folder indicator); anything
+    // else has multiple top-level entries.
+    if (name.startsWith("bundle")) {
+      const root = name.replace(/\.zip$/i, "");
+      return {
+        entries: [
+          dir("src", `${archivePath}!/${root}/src`),
+          file("Cargo.toml", `${archivePath}!/${root}/Cargo.toml`, 320),
+          file("main.rs", `${archivePath}!/${root}/main.rs`, 640),
+        ],
+        rootFolder: root,
+      };
+    }
+    return {
+      entries: [
+        dir("src", `${archivePath}!/src`),
+        file("README.md", `${archivePath}!/README.md`, 512),
+        file("data.json", `${archivePath}!/data.json`, 2048),
+      ],
+      rootFolder: null,
+    };
   },
 
   compress_to_zip: (args) => {

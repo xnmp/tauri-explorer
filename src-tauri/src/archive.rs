@@ -530,18 +530,64 @@ fn find_unique_path(dir: &Path, base_name: &str, extension: &str) -> PathBuf {
     make_path(" (overflow)")
 }
 
-/// List the top-level contents of a ZIP archive (one level deep), for the
-/// preview pane — mirrors how a folder preview shows its direct children.
-/// Returns `FileEntry`s with synthetic `archive.zip!/name` paths; directories
-/// are sorted first, then alphabetically (case-insensitive).
+/// Preview listing of a ZIP archive: its entries plus, when the archive's
+/// sole top-level item is a directory, the name of that directory we
+/// descended into (so the UI can show "contains one folder: X").
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArchiveListing {
+    pub entries: Vec<FileEntry>,
+    pub root_folder: Option<String>,
+}
+
+/// List the contents of a ZIP archive (one level deep) for the preview pane —
+/// mirrors how a folder preview shows its direct children. If the only
+/// top-level item is a directory, descend into it and report its name as
+/// `root_folder`. Directories sort first, then alphabetically.
 #[tauri::command]
-pub async fn list_archive_contents(archive_path: String) -> Result<Vec<FileEntry>, AppError> {
+pub async fn list_archive_contents(archive_path: String) -> Result<ArchiveListing, AppError> {
     tokio::task::spawn_blocking(move || list_archive_contents_sync(&archive_path))
         .await
         .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
 }
 
-fn list_archive_contents_sync(archive_path: &str) -> Result<Vec<FileEntry>, AppError> {
+/// One zip entry reduced to its path components + classification.
+struct ZipEntryInfo {
+    comps: Vec<String>,
+    is_dir: bool,
+    size: u64,
+}
+
+/// Collapse entries to the level directly under `prefix`: the component at
+/// index `prefix.len()` of every entry that nests below `prefix`. A name is a
+/// directory if anything nests deeper under it, or its own entry is a dir.
+/// Returns `name -> (is_dir, size)`.
+fn level_under(entries: &[ZipEntryInfo], prefix: &[String]) -> BTreeMap<String, (bool, u64)> {
+    let depth = prefix.len();
+    let mut level: BTreeMap<String, (bool, u64)> = BTreeMap::new();
+    for e in entries {
+        if e.comps.len() <= depth || e.comps[..depth] != *prefix {
+            continue;
+        }
+        let name = e.comps[depth].clone();
+        let has_more = e.comps.len() > depth + 1;
+        let is_dir = has_more || (e.comps.len() == depth + 1 && e.is_dir);
+        let size = if is_dir { 0 } else { e.size };
+        level
+            .entry(name)
+            .and_modify(|(d, s)| {
+                if is_dir {
+                    *d = true;
+                } else {
+                    *s = size;
+                }
+            })
+            .or_insert((is_dir, size));
+    }
+    level
+}
+
+fn list_archive_contents_sync(archive_path: &str) -> Result<ArchiveListing, AppError> {
     let path = Path::new(archive_path);
     if !path.exists() {
         return Err(AppError::NotFound(archive_path.to_string()));
@@ -562,10 +608,8 @@ fn list_archive_contents_sync(archive_path: &str) -> Result<Vec<FileEntry>, AppE
     let mut zip = zip::ZipArchive::new(file)
         .map_err(|e| AppError::Other(format!("Failed to read ZIP archive: {}", e)))?;
 
-    // Collapse every entry to its first path component. A name is a directory
-    // if any entry nests under it (has a deeper component) or is itself a dir;
-    // otherwise it's a file and we keep its uncompressed size.
-    let mut top: BTreeMap<String, (bool, u64)> = BTreeMap::new();
+    // Read every entry's path components once (metadata only, no decoding).
+    let mut infos: Vec<ZipEntryInfo> = Vec::with_capacity(zip.len());
     for i in 0..zip.len() {
         let entry = zip
             .by_index(i)
@@ -573,42 +617,55 @@ fn list_archive_contents_sync(archive_path: &str) -> Result<Vec<FileEntry>, AppE
         let Some(enclosed) = entry.enclosed_name() else {
             continue; // skip entries with unsafe/invalid names
         };
-        let mut comps = enclosed.components();
-        let Some(first) = comps.next() else {
-            continue;
-        };
-        let name = first.as_os_str().to_string_lossy().to_string();
-        if name.is_empty() {
+        let comps: Vec<String> = enclosed
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().to_string())
+            .filter(|c| !c.is_empty())
+            .collect();
+        if comps.is_empty() {
             continue;
         }
-        let is_dir = comps.next().is_some() || entry.is_dir();
-        let size = if is_dir { 0 } else { entry.size() };
-        top.entry(name)
-            .and_modify(|(d, s)| {
-                if is_dir {
-                    *d = true;
-                } else {
-                    *s = size;
-                }
-            })
-            .or_insert((is_dir, size));
+        infos.push(ZipEntryInfo {
+            comps,
+            is_dir: entry.is_dir(),
+            size: entry.size(),
+        });
     }
 
-    let mut entries: Vec<FileEntry> = top
+    // Start at the top level. If the sole entry there is a directory, descend
+    // into it and report its name, so a single-root archive shows the useful
+    // contents instead of one lonely folder.
+    let mut prefix: Vec<String> = Vec::new();
+    let mut root_folder: Option<String> = None;
+    let top = level_under(&infos, &prefix);
+    if top.len() == 1 {
+        let (name, (is_dir, _)) = top.iter().next().unwrap();
+        if *is_dir {
+            root_folder = Some(name.clone());
+            prefix.push(name.clone());
+        }
+    }
+    let level = level_under(&infos, &prefix);
+
+    let mut entries: Vec<FileEntry> = level
         .into_iter()
-        .map(|(name, (is_dir, size))| FileEntry {
-            path: format!("{}!/{}", archive_path, name),
-            kind: if is_dir {
-                FileKind::Directory
-            } else {
-                FileKind::File
-            },
-            size,
-            modified: modified.clone(),
-            is_symlink: false,
-            symlink_target: None,
-            is_empty: None,
-            name,
+        .map(|(name, (is_dir, size))| {
+            let mut full = prefix.clone();
+            full.push(name.clone());
+            FileEntry {
+                path: format!("{}!/{}", archive_path, full.join("/")),
+                kind: if is_dir {
+                    FileKind::Directory
+                } else {
+                    FileKind::File
+                },
+                size,
+                modified: modified.clone(),
+                is_symlink: false,
+                symlink_target: None,
+                is_empty: None,
+                name,
+            }
         })
         .collect();
 
@@ -620,7 +677,10 @@ fn list_archive_contents_sync(archive_path: &str) -> Result<Vec<FileEntry>, AppE
             .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
 
-    Ok(entries)
+    Ok(ArchiveListing {
+        entries,
+        root_folder,
+    })
 }
 
 #[cfg(test)]
@@ -653,7 +713,7 @@ mod tests {
     }
 
     #[test]
-    fn test_list_archive_contents_top_level() {
+    fn test_list_archive_contents_descends_into_sole_root_folder() {
         let dir = tempdir().unwrap();
         let src = dir.path().join("root");
         fs::create_dir(&src).unwrap();
@@ -662,33 +722,65 @@ mod tests {
         fs::create_dir(src.join("nested")).unwrap();
         fs::write(src.join("nested/deep.txt"), "deep").unwrap();
 
-        // Zipping the dir yields entries like root/, root/readme.txt,
-        // root/nested/deep.txt — so the single top-level entry is "root".
+        // Zipping the dir yields root/, root/readme.txt, root/nested/deep.txt
+        // — the sole top-level item is the directory "root", so we descend
+        // into it and show ITS contents, reporting root_folder = "root".
         let zip_path =
             compress_to_zip_sync(None, vec![src.to_string_lossy().to_string()], None).unwrap();
-        let top = list_archive_contents_sync(&zip_path).unwrap();
-        assert_eq!(top.len(), 1);
-        assert_eq!(top[0].name, "root");
-        assert!(matches!(top[0].kind, FileKind::Directory));
+        let listing = list_archive_contents_sync(&zip_path).unwrap();
+        assert_eq!(listing.root_folder.as_deref(), Some("root"));
+        let names: Vec<&str> = listing.entries.iter().map(|e| e.name.as_str()).collect();
+        // nested (dir) first, then files alphabetically.
+        assert_eq!(names, vec!["nested", "data.bin", "readme.txt"]);
+        let data = listing
+            .entries
+            .iter()
+            .find(|e| e.name == "data.bin")
+            .unwrap();
+        assert!(matches!(data.kind, FileKind::File));
+        assert_eq!(data.size, 1234);
+        // Synthetic paths carry the descended prefix.
+        assert!(data.path.ends_with("!/root/data.bin"));
+        let nested = listing.entries.iter().find(|e| e.name == "nested").unwrap();
+        assert!(matches!(nested.kind, FileKind::Directory));
+    }
 
-        // Re-zip the *files* directly (multiple top-level entries) to check
-        // file vs dir classification, sizes, and dir-first ordering.
+    #[test]
+    fn test_list_archive_contents_multiple_top_level_no_descent() {
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("root");
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("readme.txt"), "hi").unwrap();
+        fs::write(src.join("data.bin"), vec![0u8; 1234]).unwrap();
+        fs::create_dir(src.join("nested")).unwrap();
+        fs::write(src.join("nested/deep.txt"), "deep").unwrap();
+
+        // Zip the files/dir directly → multiple top-level entries → no descent.
         let files = vec![
             src.join("readme.txt").to_string_lossy().to_string(),
             src.join("data.bin").to_string_lossy().to_string(),
             src.join("nested").to_string_lossy().to_string(),
         ];
-        let zip2 = compress_to_zip_sync(None, files, None).unwrap();
-        let entries = list_archive_contents_sync(&zip2).unwrap();
-        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
-        // Directory ("nested") sorts before files, then files alphabetically.
+        let zip = compress_to_zip_sync(None, files, None).unwrap();
+        let listing = list_archive_contents_sync(&zip).unwrap();
+        assert_eq!(listing.root_folder, None);
+        let names: Vec<&str> = listing.entries.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(names, vec!["nested", "data.bin", "readme.txt"]);
-        let data = entries.iter().find(|e| e.name == "data.bin").unwrap();
-        assert!(matches!(data.kind, FileKind::File));
-        assert_eq!(data.size, 1234);
-        let nested = entries.iter().find(|e| e.name == "nested").unwrap();
-        assert!(matches!(nested.kind, FileKind::Directory));
+        let nested = listing.entries.iter().find(|e| e.name == "nested").unwrap();
         assert!(nested.path.ends_with("!/nested"));
+    }
+
+    #[test]
+    fn test_list_archive_contents_single_top_level_file_no_descent() {
+        // A lone top-level *file* (not a folder) must not trigger descent.
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("solo.txt");
+        fs::write(&f, "hi").unwrap();
+        let zip = compress_to_zip_sync(None, vec![f.to_string_lossy().to_string()], None).unwrap();
+        let listing = list_archive_contents_sync(&zip).unwrap();
+        assert_eq!(listing.root_folder, None);
+        assert_eq!(listing.entries.len(), 1);
+        assert_eq!(listing.entries[0].name, "solo.txt");
     }
 
     #[test]

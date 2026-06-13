@@ -196,7 +196,11 @@ pub fn run(launch_dir: Option<String>) {
 
             // Create window programmatically so we can inject initialization_script.
             // This replaces the static window definition in tauri.conf.json.
-            let builder = tauri::WebviewWindowBuilder::new(
+            // `mut` is only used by the macOS-only block below (title bar /
+            // vibrancy); allow the otherwise-unused mut on Linux/Windows so
+            // clippy -D warnings stays green there.
+            #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+            let mut builder = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
                 tauri::WebviewUrl::App("index.html".into()),

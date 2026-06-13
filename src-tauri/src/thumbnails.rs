@@ -25,11 +25,11 @@ const THUMBNAIL_SIZE: u32 = 128;
 const MICRO_SIZE: u32 = 16;
 
 /// Supported image extensions for thumbnail generation.
-/// AVIF decodes via image's avif-native (dav1d), which is Linux-only here —
-/// see the target-specific dependency in Cargo.toml.
-#[cfg(target_os = "linux")]
+/// AVIF decodes via image's avif-native (dav1d), gated behind the optional
+/// `avif` cargo feature (see Cargo.toml). Enabled by the Arch PKGBUILD.
+#[cfg(feature = "avif")]
 const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "icns", "avif"];
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(feature = "avif"))]
 const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "icns"];
 
 /// Get the cache directory for thumbnails
@@ -664,7 +664,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_os = "linux")]
+    #[cfg(feature = "avif")]
     fn avif_is_supported_and_decodes() {
         assert!(is_supported_image(Path::new("photo.avif")));
         assert!(is_supported_image(Path::new("PHOTO.AVIF")));

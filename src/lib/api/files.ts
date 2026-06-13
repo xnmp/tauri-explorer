@@ -980,6 +980,20 @@ export async function extractArchive(
   }
 }
 
+/**
+ * List the top-level contents of a ZIP archive (one level deep), for the
+ * preview pane. Returns FileEntry rows with synthetic `archive.zip!/name`
+ * paths, directories first.
+ */
+export async function listArchiveContents(archivePath: string): Promise<ApiResult<FileEntry[]>> {
+  try {
+    const entries = await invoke<FileEntry[]>("list_archive_contents", { archivePath });
+    return { ok: true, data: entries };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
 /** Cancel a running extraction job. The pending extractArchive call fails
  *  with "Extraction cancelled" and the partial output is removed. */
 export async function cancelExtract(jobId: number): Promise<void> {

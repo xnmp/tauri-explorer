@@ -817,6 +817,17 @@ const mockCommands: Record<string, CommandHandler> = {
 
   // ----- Archives -----
 
+  list_archive_contents: (args) => {
+    const archivePath = args.archivePath as string;
+    // Browser/e2e mode has no real zips — return a stable fake top-level
+    // listing (a folder + two files) so the preview renders.
+    return [
+      dir("src", `${archivePath}!/src`),
+      file("README.md", `${archivePath}!/README.md`, 512),
+      file("data.json", `${archivePath}!/data.json`, 2048),
+    ];
+  },
+
   compress_to_zip: (args) => {
     const paths = args.paths as string[];
     if (!paths?.length) throw new Error("No paths to compress");

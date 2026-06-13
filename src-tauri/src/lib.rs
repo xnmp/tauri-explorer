@@ -150,6 +150,7 @@ pub fn run(launch_dir: Option<String>) {
             archive::cancel_compress,
             archive::cancel_extract,
             archive::extract_archive,
+            archive::list_archive_contents,
             // Config file persistence
             config::read_config_file,
             config::write_config_file,

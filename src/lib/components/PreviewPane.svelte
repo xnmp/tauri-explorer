@@ -4,8 +4,8 @@
 -->
 <script lang="ts">
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { readTextFile, fetchDirectory, gitDiff } from "$lib/api/files";
-  import { isImageFile, isTextFile, isPdfFile, getFileType, formatDate } from "$lib/domain/file-types";
+  import { readTextFile, fetchDirectory, gitDiff, listArchiveContents } from "$lib/api/files";
+  import { isImageFile, isTextFile, isPdfFile, isZipFile, getFileType, formatDate } from "$lib/domain/file-types";
   import { formatSize, type FileEntry } from "$lib/domain/file";
   import { isTauri } from "$lib/api/mock-invoke";
   import { highlightCode } from "$lib/domain/syntax-highlight";
@@ -208,6 +208,20 @@
       if (file.path !== lastPreviewPath) return;
       if (result.ok) {
         previewFolderChildrenRaw = result.data.entries;
+      }
+      previewLoading = false;
+      return;
+    }
+
+    // ZIP files preview their top-level contents in the same folder-list
+    // format as a directory (one level deep, directories first).
+    if (isZipFile(file)) {
+      const result = await listArchiveContents(file.path);
+      if (file.path !== lastPreviewPath) return;
+      if (result.ok) {
+        previewFolderChildrenRaw = result.data;
+      } else {
+        previewError = result.error;
       }
       previewLoading = false;
       return;

@@ -2,7 +2,10 @@
 //! Issue: tauri-explorer-0xr, tauri-explorer-kez
 
 use crate::error::AppError;
+use crate::files::{FileEntry, FileKind};
 use crate::task_registry::TaskRegistry;
+use chrono::{DateTime, Local};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -527,6 +530,99 @@ fn find_unique_path(dir: &Path, base_name: &str, extension: &str) -> PathBuf {
     make_path(" (overflow)")
 }
 
+/// List the top-level contents of a ZIP archive (one level deep), for the
+/// preview pane — mirrors how a folder preview shows its direct children.
+/// Returns `FileEntry`s with synthetic `archive.zip!/name` paths; directories
+/// are sorted first, then alphabetically (case-insensitive).
+#[tauri::command]
+pub async fn list_archive_contents(archive_path: String) -> Result<Vec<FileEntry>, AppError> {
+    tokio::task::spawn_blocking(move || list_archive_contents_sync(&archive_path))
+        .await
+        .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
+}
+
+fn list_archive_contents_sync(archive_path: &str) -> Result<Vec<FileEntry>, AppError> {
+    let path = Path::new(archive_path);
+    if !path.exists() {
+        return Err(AppError::NotFound(archive_path.to_string()));
+    }
+
+    // ZIP entries carry no per-file mtime we surface here; use the archive's
+    // own mtime for every row (the preview row doesn't display it anyway).
+    let modified = fs::metadata(path)
+        .and_then(|m| m.modified())
+        .map(|t| {
+            DateTime::<Local>::from(t)
+                .format("%Y-%m-%dT%H:%M:%S")
+                .to_string()
+        })
+        .unwrap_or_default();
+
+    let file = fs::File::open(path)?;
+    let mut zip = zip::ZipArchive::new(file)
+        .map_err(|e| AppError::Other(format!("Failed to read ZIP archive: {}", e)))?;
+
+    // Collapse every entry to its first path component. A name is a directory
+    // if any entry nests under it (has a deeper component) or is itself a dir;
+    // otherwise it's a file and we keep its uncompressed size.
+    let mut top: BTreeMap<String, (bool, u64)> = BTreeMap::new();
+    for i in 0..zip.len() {
+        let entry = zip
+            .by_index(i)
+            .map_err(|e| AppError::Other(format!("Failed to read ZIP entry: {}", e)))?;
+        let Some(enclosed) = entry.enclosed_name() else {
+            continue; // skip entries with unsafe/invalid names
+        };
+        let mut comps = enclosed.components();
+        let Some(first) = comps.next() else {
+            continue;
+        };
+        let name = first.as_os_str().to_string_lossy().to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let is_dir = comps.next().is_some() || entry.is_dir();
+        let size = if is_dir { 0 } else { entry.size() };
+        top.entry(name)
+            .and_modify(|(d, s)| {
+                if is_dir {
+                    *d = true;
+                } else {
+                    *s = size;
+                }
+            })
+            .or_insert((is_dir, size));
+    }
+
+    let mut entries: Vec<FileEntry> = top
+        .into_iter()
+        .map(|(name, (is_dir, size))| FileEntry {
+            path: format!("{}!/{}", archive_path, name),
+            kind: if is_dir {
+                FileKind::Directory
+            } else {
+                FileKind::File
+            },
+            size,
+            modified: modified.clone(),
+            is_symlink: false,
+            symlink_target: None,
+            is_empty: None,
+            name,
+        })
+        .collect();
+
+    entries.sort_by(|a, b| {
+        let a_dir = matches!(a.kind, FileKind::Directory);
+        let b_dir = matches!(b.kind, FileKind::Directory);
+        b_dir
+            .cmp(&a_dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+
+    Ok(entries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -554,6 +650,51 @@ mod tests {
 
         let content = fs::read_to_string(dest_path.join("source/hello.txt")).unwrap();
         assert_eq!(content, "hello world");
+    }
+
+    #[test]
+    fn test_list_archive_contents_top_level() {
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("root");
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("readme.txt"), "hi").unwrap();
+        fs::write(src.join("data.bin"), vec![0u8; 1234]).unwrap();
+        fs::create_dir(src.join("nested")).unwrap();
+        fs::write(src.join("nested/deep.txt"), "deep").unwrap();
+
+        // Zipping the dir yields entries like root/, root/readme.txt,
+        // root/nested/deep.txt — so the single top-level entry is "root".
+        let zip_path =
+            compress_to_zip_sync(None, vec![src.to_string_lossy().to_string()], None).unwrap();
+        let top = list_archive_contents_sync(&zip_path).unwrap();
+        assert_eq!(top.len(), 1);
+        assert_eq!(top[0].name, "root");
+        assert!(matches!(top[0].kind, FileKind::Directory));
+
+        // Re-zip the *files* directly (multiple top-level entries) to check
+        // file vs dir classification, sizes, and dir-first ordering.
+        let files = vec![
+            src.join("readme.txt").to_string_lossy().to_string(),
+            src.join("data.bin").to_string_lossy().to_string(),
+            src.join("nested").to_string_lossy().to_string(),
+        ];
+        let zip2 = compress_to_zip_sync(None, files, None).unwrap();
+        let entries = list_archive_contents_sync(&zip2).unwrap();
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        // Directory ("nested") sorts before files, then files alphabetically.
+        assert_eq!(names, vec!["nested", "data.bin", "readme.txt"]);
+        let data = entries.iter().find(|e| e.name == "data.bin").unwrap();
+        assert!(matches!(data.kind, FileKind::File));
+        assert_eq!(data.size, 1234);
+        let nested = entries.iter().find(|e| e.name == "nested").unwrap();
+        assert!(matches!(nested.kind, FileKind::Directory));
+        assert!(nested.path.ends_with("!/nested"));
+    }
+
+    #[test]
+    fn test_list_archive_contents_missing_file() {
+        let err = list_archive_contents_sync("/no/such/archive.zip").expect_err("must error");
+        assert!(matches!(err, AppError::NotFound(_)));
     }
 
     #[test]

@@ -328,6 +328,12 @@ export function isPdfFile(entry: FileEntry): boolean {
   return getExtension(entry.name) === "pdf";
 }
 
+/** Check if a file is a ZIP archive (previewable as a folder-style listing). */
+export function isZipFile(entry: FileEntry): boolean {
+  if (entry.kind === "directory") return false;
+  return getExtension(entry.name) === "zip";
+}
+
 /** Format modified date - Windows 11 style: M/D/YYYY h:mm AM/PM.
  *  Returns "" for unparseable input instead of "Invalid Date". */
 export function formatDate(isoString: string): string {

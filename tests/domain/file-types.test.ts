@@ -3,7 +3,16 @@
  * getExtension semantics (shared with nerd-icons).
  */
 import { describe, it, expect } from "vitest";
-import { formatDate, getExtension } from "$lib/domain/file-types";
+import { formatDate, getExtension, isZipFile } from "$lib/domain/file-types";
+import type { FileEntry } from "$lib/domain/file";
+
+const entry = (name: string, kind: "file" | "directory" = "file"): FileEntry => ({
+  name,
+  path: `/x/${name}`,
+  kind,
+  size: 0,
+  modified: "",
+});
 
 describe("formatDate", () => {
   it("formats a valid ISO timestamp", () => {
@@ -40,5 +49,19 @@ describe("getExtension", () => {
   it("returns empty string for extensionless names", () => {
     expect(getExtension("Makefile")).toBe("");
     expect(getExtension("")).toBe("");
+  });
+});
+
+describe("isZipFile", () => {
+  it("matches .zip files case-insensitively", () => {
+    expect(isZipFile(entry("archive.zip"))).toBe(true);
+    expect(isZipFile(entry("Backup.ZIP"))).toBe(true);
+  });
+
+  it("rejects non-zip files and directories", () => {
+    expect(isZipFile(entry("notes.txt"))).toBe(false);
+    expect(isZipFile(entry("photo.zip.bak"))).toBe(false);
+    expect(isZipFile(entry("archive.tar.gz"))).toBe(false);
+    expect(isZipFile(entry("archive.zip", "directory"))).toBe(false);
   });
 });

@@ -33,6 +33,19 @@
   // Drop target state for dropping files into current directory
   let isDropTarget = $state(false);
 
+  // Defer the loading spinner: a directory that lists in under 150ms shouldn't
+  // flash a spinner. While loading but before the spinner shows, the list area
+  // stays blank (the loading branch hides stale entries) rather than flickering.
+  let showLoadingSpinner = $state(false);
+  $effect(() => {
+    if (!explorer.loading) {
+      showLoadingSpinner = false;
+      return;
+    }
+    const timer = setTimeout(() => (showLoadingSpinner = true), 150);
+    return () => clearTimeout(timer);
+  });
+
   // Content container ref
   let contentRef = $state<HTMLElement | null>(null);
 
@@ -293,10 +306,12 @@
     ondrop={handleListDrop}
   >
     {#if explorer.loading}
-      <div class="status">
-        <div class="spinner"></div>
-        <span>Loading...</span>
-      </div>
+      {#if showLoadingSpinner}
+        <div class="status">
+          <div class="spinner"></div>
+          <span>Loading...</span>
+        </div>
+      {/if}
     {:else if explorer.error}
       <div class="status error-state">
         <svg width="48" height="48" viewBox="0 0 48 48" fill="none">

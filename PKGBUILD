@@ -47,6 +47,14 @@ package() {
 
   install -Dm755 src-tauri/target/release/tauri-explorer "$pkgdir/usr/bin/tauri-explorer"
 
+  # xdg-desktop-portal FileChooser backend (system file picker).
+  # Enable by adding to ~/.config/xdg-desktop-portal/portals.conf:
+  #   org.freedesktop.impl.portal.FileChooser=tauri-explorer
+  install -Dm644 packaging/tauri-explorer.portal \
+    "$pkgdir/usr/share/xdg-desktop-portal/portals/tauri-explorer.portal"
+  install -Dm644 packaging/org.freedesktop.impl.portal.desktop.tauri_explorer.service \
+    "$pkgdir/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.tauri_explorer.service"
+
   install -Dm644 src-tauri/icons/32x32.png \
     "$pkgdir/usr/share/icons/hicolor/32x32/apps/tauri-explorer.png"
   install -Dm644 src-tauri/icons/128x128.png \

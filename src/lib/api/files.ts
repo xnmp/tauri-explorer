@@ -934,6 +934,20 @@ export async function compressToZip(paths: string[], jobId?: number): Promise<Ap
   }
 }
 
+/** File-picker portal window → backend: deliver the user's choice.
+ *  `paths` are absolute filesystem paths; `cancelled` aborts the request. */
+export async function pickerRespond(
+  token: string,
+  paths: string[],
+  cancelled: boolean,
+): Promise<void> {
+  try {
+    await invoke("picker_respond", { token, paths, cancelled });
+  } catch {
+    // Browser/mock mode — the e2e mock records the call instead.
+  }
+}
+
 /** Cancel a running compression job. The pending compressToZip call fails
  *  with "Compression cancelled" and the partial archive is removed. */
 export async function cancelCompress(jobId: number): Promise<void> {

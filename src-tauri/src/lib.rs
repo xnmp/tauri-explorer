@@ -9,6 +9,18 @@ pub mod error;
 mod files;
 pub mod git;
 mod nano_banana;
+#[cfg(target_os = "linux")]
+mod portal;
+/// Non-Linux stub so the command registry stays platform-independent.
+#[cfg(not(target_os = "linux"))]
+mod portal {
+    #[tauri::command]
+    pub async fn picker_respond(_token: String, _paths: Vec<String>, _cancelled: bool) {}
+
+    pub fn is_portal_mode() -> bool {
+        false
+    }
+}
 mod search;
 mod system;
 pub mod task_registry;
@@ -162,6 +174,8 @@ pub fn run(launch_dir: Option<String>) {
             wallpaper::set_as_wallpaper,
             // Nano Banana (AI image editing)
             nano_banana::start_nano_banana_job,
+            // File-picker portal (xdg-desktop-portal FileChooser backend)
+            portal::picker_respond,
             // Window appearance
             set_window_theme,
         ])
@@ -170,6 +184,14 @@ pub fn run(launch_dir: Option<String>) {
 
             // Initialize filesystem watcher for auto-refresh
             files::fs_watcher::init_watcher(app.handle());
+
+            // Portal-backend mode: no main window — serve the FileChooser
+            // D-Bus interface and open picker windows on demand.
+            if portal::is_portal_mode() {
+                #[cfg(target_os = "linux")]
+                portal::start_portal_service(app.handle());
+                return Ok(());
+            }
 
             // Create window programmatically so we can inject initialization_script.
             // This replaces the static window definition in tauri.conf.json.
@@ -234,6 +256,15 @@ pub fn run(launch_dir: Option<String>) {
             );
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_app, event| {
+            // Portal mode has no persistent window: closing a picker window
+            // must not exit the service, or the D-Bus name would drop.
+            if portal::is_portal_mode() {
+                if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                    api.prevent_exit();
+                }
+            }
+        });
 }

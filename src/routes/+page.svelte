@@ -22,6 +22,7 @@
   import { useWindowLifecycle } from "$lib/composables/use-window-lifecycle";
   import "$lib/themes/index.css";
   import TitleBar from "$lib/components/TitleBar.svelte";
+  import FilePicker, { type PickerInfo } from "$lib/components/FilePicker.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import ScmPanel from "$lib/components/ScmPanel.svelte";
   import PaneContainer from "$lib/components/PaneContainer.svelte";
@@ -175,9 +176,33 @@
     }
   });
 
+  // Lightweight file-picker mode (portal windows): ?picker=open|save.
+  // Rendered instead of the full app — see FilePicker.svelte / portal.rs.
+  const pickerInfo: PickerInfo | null = (() => {
+    if (typeof window === "undefined") return null;
+    const params = new URLSearchParams(window.location.search);
+    const mode = params.get("picker");
+    if (mode !== "open" && mode !== "save") return null;
+    return {
+      mode,
+      token: params.get("token") ?? "",
+      multiple: params.get("multiple") === "1",
+      directory: params.get("directory") === "1",
+      folder: params.get("folder"),
+      name: params.get("name") ?? "",
+      title: params.get("title") ?? "",
+    };
+  })();
+
   onMount(() => {
     // Initialize theme from saved preference
     themeStore.initTheme();
+
+    // Picker windows skip the full app init (tabs, watchers, commands).
+    if (pickerInfo) {
+      settingsStore.init().then(() => themeStore.syncFromSettings());
+      return;
+    }
 
     // Read launch data injected by Rust initialization_script (synchronous, no IPC).
     // Falls back to IPC for child windows or if injection is missing.
@@ -252,6 +277,9 @@
 ></div>
 <AnimatedBackground />
 
+{#if pickerInfo}
+  <FilePicker info={pickerInfo} />
+{:else}
 <main class="explorer">
   <TitleBar />
   <div class="main-content" class:no-sidebar={!settingsStore.showSidebar}>
@@ -304,6 +332,7 @@
 />
 <ProgressDialog />
 <ConflictDialog />
+{/if}
 
 <style>
   /* Windows 11 Fluent Design System */

@@ -52,8 +52,11 @@ tauri-plugin-log = "2"
 # AVIF decode (image's avif-native uses dav1d). Linux-only: libdav1d is a
 # standard distro package there, but a build-host headache on Windows/macOS.
 # Feature flags unify with the base `image` dependency above.
+# zbus/url: xdg-desktop-portal FileChooser backend (system file picker).
 [target.'cfg(target_os = "linux")'.dependencies]
 image = { version = "0.25", default-features = false, features = ["avif-native"] }
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+url = "2"
 
 [dev-dependencies]
 tempfile = "3"

@@ -9,8 +9,10 @@ fn main() {
         .ok()
         .map(|p| p.to_string_lossy().to_string());
 
-    // Support `tauri-explorer /some/path` CLI argument.
-    let cli_path = std::env::args().nth(1);
+    // Support `tauri-explorer /some/path` CLI argument (flags like
+    // --file-chooser-portal are not paths).
+    let cli_path = std::env::args().nth(1).filter(|a| !a.starts_with("--"));
+    let portal_mode = std::env::args().any(|a| a == "--file-chooser-portal");
 
     // On macOS, launching from Finder/DMG sets cwd to "/" which is not useful.
     // Fall back to the home directory in that case.
@@ -24,19 +26,25 @@ fn main() {
     // macOS: fork() is not safe after Cocoa/AppKit initialization — it breaks
     // WKWebView's XPC connections, causing blank windows. Use `open -a` to launch
     // the .app bundle detached from the terminal instead.
+    // Portal mode must not fork: D-Bus activation tracks the spawned
+    // process, which has to be the one acquiring the bus name.
     #[cfg(all(target_os = "linux", not(debug_assertions)))]
-    unsafe {
-        let pid = libc::fork();
-        if pid > 0 {
-            // Parent — exit immediately to free the terminal.
-            libc::_exit(0);
+    if !portal_mode {
+        unsafe {
+            let pid = libc::fork();
+            if pid > 0 {
+                // Parent — exit immediately to free the terminal.
+                libc::_exit(0);
+            }
+            if pid == 0 {
+                // Child — start a new session so we're fully detached.
+                libc::setsid();
+            }
+            // pid < 0: fork failed, just continue in the original process.
         }
-        if pid == 0 {
-            // Child — start a new session so we're fully detached.
-            libc::setsid();
-        }
-        // pid < 0: fork failed, just continue in the original process.
     }
+    #[cfg(not(all(target_os = "linux", not(debug_assertions))))]
+    let _ = portal_mode;
 
     #[cfg(debug_assertions)]
     eprintln!("[Perf] main() pre-run: {:?}", t_main.elapsed());

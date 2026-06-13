@@ -807,6 +807,14 @@ const mockCommands: Record<string, CommandHandler> = {
     return entry;
   },
 
+  // ----- File-picker portal -----
+
+  // Records the response so e2e tests can assert on the actual outcome.
+  picker_respond: (args) => {
+    localStorage.setItem("mock-picker-response", JSON.stringify(args));
+    return null;
+  },
+
   // ----- Archives -----
 
   compress_to_zip: (args) => {

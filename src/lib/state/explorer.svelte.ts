@@ -266,7 +266,11 @@ function createExplorerState(seed?: ExplorerSeed) {
     getParentPath: () => navigation.getParentPath(breadcrumbs),
     navigateTo,
     refreshSilent: () => {
-      void refresh({ silent: true });
+      // force: this is an explicit post-mutation refresh (zip create /
+      // extract), which must run even though markLocalMutation just started
+      // the cooldown — without force the cooldown would swallow it and the
+      // result wouldn't appear until a manual refresh.
+      void refresh({ silent: true, force: true });
     },
   });
 

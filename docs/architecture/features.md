@@ -105,7 +105,7 @@
 | Progressive loading | `ThumbnailImage.svelte` (micro → full), `files.ts:getMicroThumbnail/getThumbnailData` |
 | Cache management | Settings dialog, `thumbnails.rs:clear_thumbnail_cache/get_thumbnail_cache_stats` |
 | Supported formats | `thumbnails.rs:SUPPORTED_EXTENSIONS` + `file-types.ts:THUMBNAIL_EXTENSIONS` (AVIF is Linux-only, via image avif-native/dav1d) |
-| Zip with progress | `archive.rs` (chunked writes, zip-progress events, cancel_compress), `pane-mutations.ts:compressToZip`, `operations.svelte.ts` ("compress" type) |
+| Zip / unzip with progress | `archive.rs` (chunked writes, zip-progress/unzip-progress events, cancel_compress/cancel_extract), `pane-mutations.ts:runArchiveJob` (shared compress/extract), `operations.svelte.ts` ("compress"/"extract" types). Progress panel auto-hides per-operation after a short linger. |
 | Markdown preview | `domain/markdown.ts` (marked + hljs, escaped raw HTML), `PreviewPane.svelte` (.preview-markdown) |
 
 ### Sidebar & Bookmarks

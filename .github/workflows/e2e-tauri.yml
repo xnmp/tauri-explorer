@@ -27,16 +27,18 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo registry + tauri-driver binary
+      # Registry/git only — NOT the tauri-driver binary. Caching the binary
+      # under a Cargo.lock-derived key let a run where `cargo install` failed
+      # save a binary-less cache, which later runs then restored (ENOENT at
+      # spawn). tauri-driver is now installed unconditionally below.
+      - name: Cache cargo registry
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ~/.cargo/bin/tauri-driver
-            ~/.cargo/bin/tauri-driver.exe
-          key: ${{ runner.os }}-tauri-driver-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-tauri-driver-
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-registry-
 
       - name: Cache Rust target
         uses: actions/cache@v4
@@ -56,9 +58,13 @@ jobs:
             libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
             libjavascriptcoregtk-4.1-dev webkit2gtk-driver xvfb nasm libdav1d-dev
 
+      # Install unconditionally and fail loudly: a missing binary surfaces
+      # here, not as an opaque ENOENT when wdio spawns it. Verify it lands.
       - name: Install tauri-driver
         shell: bash
-        run: cargo install tauri-driver --locked || true
+        run: |
+          cargo install tauri-driver --locked
+          ls -l "$HOME/.cargo/bin/tauri-driver"*
 
       # bun.lock (text format) records optional deps for every platform,
       # so the same lockfile installs correctly on Linux and Windows.

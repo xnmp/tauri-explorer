@@ -6,7 +6,7 @@
  * cancellation support, and error handling.
  */
 
-export type OperationType = "copy" | "move" | "delete" | "compress";
+export type OperationType = "copy" | "move" | "delete" | "compress" | "extract";
 
 export interface Operation {
   id: string;
@@ -112,6 +112,10 @@ function createOperationsManager() {
     );
   }
 
+  /** How long a finished operation stays visible (showing "Complete")
+   *  before it auto-dismisses. */
+  const COMPLETED_LINGER_MS = 1500;
+
   /** Complete an operation */
   function completeOperation(operationId: string): void {
     operations = operations.map((op) =>
@@ -120,12 +124,11 @@ function createOperationsManager() {
         : op
     );
 
-    // Auto-hide dialog after delay if all operations complete
-    setTimeout(() => {
-      if (operations.every((op) => op.status === "completed" || op.status === "cancelled")) {
-        cleanupCompletedOperations();
-      }
-    }, 2000);
+    // Auto-dismiss THIS operation after a short linger so the panel hides
+    // when the last operation finishes. Per-operation (not "all done"): a
+    // single stuck/running operation must not keep a completed one — and the
+    // whole panel — visible forever.
+    setTimeout(() => clearOperation(operationId), COMPLETED_LINGER_MS);
   }
 
   /** Mark operation as error — show dialog immediately so user sees the error */
@@ -269,5 +272,7 @@ export function getOperationLabel(type: OperationType): string {
       return "Deleting";
     case "compress":
       return "Compressing";
+    case "extract":
+      return "Extracting";
   }
 }

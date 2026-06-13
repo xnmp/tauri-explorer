@@ -17,7 +17,9 @@ import {
   extractArchive as apiExtractArchive,
   compressToZip as apiCompressToZip,
   cancelCompress as apiCancelCompress,
+  cancelExtract as apiCancelExtract,
   createSymlink as apiCreateSymlink,
+  type ApiResult,
   type ZipProgressEvent,
 } from "$lib/api/files";
 import { operationsManager } from "./operations.svelte";
@@ -153,57 +155,93 @@ export function createPaneMutations(ctx: PaneMutationContext) {
     }
   }
 
-  async function extractArchive(path: string, here: boolean): Promise<void> {
-    const result = await apiExtractArchive(path, here);
-    if (result.ok) {
-      ctx.markLocalMutation();
-      ctx.refreshSilent();
-      broadcastFileChange([coreState.currentPath]);
-    } else {
-      toastStore.show(`Extract failed: ${result.error}`, "error");
-    }
-  }
-
-  async function compressToZip(paths: string[]): Promise<void> {
+  /**
+   * Run a long archive operation (compress/extract) with the shared progress
+   * dialog: listen for byte-progress events before invoking (so fast jobs
+   * can't emit first), relay a dialog Cancel to the backend, and settle the
+   * operation. Returns true on success so the caller can refresh.
+   */
+  async function runArchiveJob(opts: {
+    type: "compress" | "extract";
+    label: string;
+    event: "zip-progress" | "unzip-progress";
+    cancelledToast: string;
+    failPrefix: string;
+    invoke: (jobId: number) => Promise<ApiResult<string>>;
+    cancel: (jobId: number) => Promise<void>;
+  }): Promise<boolean> {
     // Client-generated job id keys progress events and backend cancellation.
     const jobId = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
-    const op = operationsManager.startOperation("compress", paths[0] ?? "");
+    const op = operationsManager.startOperation(opts.type, opts.label);
 
-    // Listen before invoking so fast jobs can't emit before we subscribe.
     // In browser/mock mode there is no event system — progress is skipped.
     let unlisten: (() => void) | null = null;
     try {
       const { listen } = await import("@tauri-apps/api/event");
-      unlisten = await listen<ZipProgressEvent>("zip-progress", (event) => {
+      unlisten = await listen<ZipProgressEvent>(opts.event, (event) => {
         const p = event.payload;
         if (p.jobId !== jobId) return;
         // The dialog's Cancel removes the operation; relay to the backend.
         if (operationsManager.isOperationCancelled(op.id)) {
-          void apiCancelCompress(jobId);
+          void opts.cancel(jobId);
           return;
         }
         const pct = p.bytesTotal > 0 ? (p.bytesDone / p.bytesTotal) * 100 : 0;
         operationsManager.updateProgress(op.id, pct, p.bytesDone, p.bytesTotal);
       });
     } catch {
-      // Not running in Tauri — mock compress completes instantly.
+      // Not running in Tauri — the mock completes instantly.
     }
 
-    const result = await apiCompressToZip(paths, jobId);
+    const result = await opts.invoke(jobId);
     unlisten?.();
 
     if (result.ok) {
       operationsManager.completeOperation(op.id);
+      return true;
+    }
+    if (operationsManager.isOperationCancelled(op.id) || /cancelled/i.test(result.error)) {
+      // User-initiated cancel: the backend removed the partial output.
+      operationsManager.clearOperation(op.id);
+      toastStore.show(opts.cancelledToast, "info");
+    } else {
+      operationsManager.failOperation(op.id, result.error);
+      toastStore.show(`${opts.failPrefix}: ${result.error}`, "error");
+    }
+    return false;
+  }
+
+  async function extractArchive(path: string, here: boolean): Promise<void> {
+    const ok = await runArchiveJob({
+      type: "extract",
+      label: path,
+      event: "unzip-progress",
+      cancelledToast: "Extraction cancelled",
+      failPrefix: "Extract failed",
+      invoke: (jobId) => apiExtractArchive(path, here, jobId),
+      cancel: apiCancelExtract,
+    });
+    if (ok) {
       ctx.markLocalMutation();
       ctx.refreshSilent();
       broadcastFileChange([coreState.currentPath]);
-    } else if (operationsManager.isOperationCancelled(op.id) || /cancelled/i.test(result.error)) {
-      // User-initiated cancel: the backend removed the partial archive.
-      operationsManager.clearOperation(op.id);
-      toastStore.show("Compression cancelled", "info");
-    } else {
-      operationsManager.failOperation(op.id, result.error);
-      toastStore.show(`Compress failed: ${result.error}`, "error");
+    }
+  }
+
+  async function compressToZip(paths: string[]): Promise<void> {
+    const ok = await runArchiveJob({
+      type: "compress",
+      label: paths[0] ?? "",
+      event: "zip-progress",
+      cancelledToast: "Compression cancelled",
+      failPrefix: "Compress failed",
+      invoke: (jobId) => apiCompressToZip(paths, jobId),
+      cancel: apiCancelCompress,
+    });
+    if (ok) {
+      ctx.markLocalMutation();
+      ctx.refreshSilent();
+      broadcastFileChange([coreState.currentPath]);
     }
   }
 

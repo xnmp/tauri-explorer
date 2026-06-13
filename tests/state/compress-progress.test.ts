@@ -23,15 +23,24 @@ type CompressResult = { ok: true; data: string } | { ok: false; error: string };
 const apiMocks = vi.hoisted(() => {
   const state = {
     resolveCompress: null as ((r: CompressResult) => void) | null,
+    resolveExtract: null as ((r: CompressResult) => void) | null,
     capturedJobId: undefined as number | undefined,
+    capturedExtractJobId: undefined as number | undefined,
   };
   return {
     state,
     cancelCompress: vi.fn(async () => {}),
+    cancelExtract: vi.fn(async () => {}),
     compressToZip: vi.fn((_paths: string[], jobId?: number) => {
       state.capturedJobId = jobId;
       return new Promise<CompressResult>((resolve) => {
         state.resolveCompress = resolve;
+      });
+    }),
+    extractArchive: vi.fn((_path: string, _here?: boolean, jobId?: number) => {
+      state.capturedExtractJobId = jobId;
+      return new Promise<CompressResult>((resolve) => {
+        state.resolveExtract = resolve;
       });
     }),
   };
@@ -43,6 +52,8 @@ vi.mock(import("../../src/lib/api/files"), async (importOriginal) => {
     ...actual,
     compressToZip: apiMocks.compressToZip,
     cancelCompress: apiMocks.cancelCompress,
+    extractArchive: apiMocks.extractArchive,
+    cancelExtract: apiMocks.cancelExtract,
   };
 });
 
@@ -71,8 +82,11 @@ function compressOp() {
 beforeEach(() => {
   zipEventHandler = null;
   apiMocks.state.resolveCompress = null;
+  apiMocks.state.resolveExtract = null;
   apiMocks.state.capturedJobId = undefined;
+  apiMocks.state.capturedExtractJobId = undefined;
   apiMocks.cancelCompress.mockClear();
+  apiMocks.cancelExtract.mockClear();
 });
 
 afterEach(() => {
@@ -143,5 +157,52 @@ describe("compressToZip progress", () => {
 
     expect(compressOp()!.status).toBe("error");
     expect(compressOp()!.error).toBe("disk full");
+  });
+});
+
+function extractOp() {
+  return operationsManager.operations.find((op) => op.type === "extract");
+}
+
+describe("extractArchive progress", () => {
+  it("tracks streamed byte progress and completes the operation", async () => {
+    const mutations = makeMutations();
+    const done = mutations.extractArchive("/home/user/big.zip", false);
+
+    await vi.waitFor(() => expect(zipEventHandler).not.toBeNull());
+    expect(apiMocks.state.capturedExtractJobId).toBeTypeOf("number");
+
+    const op = extractOp();
+    expect(op).toBeDefined();
+    expect(op!.status).toBe("running");
+    expect(op!.fileName).toBe("big.zip");
+
+    zipEventHandler!({
+      payload: { jobId: apiMocks.state.capturedExtractJobId, bytesDone: 750, bytesTotal: 1000, currentFile: "a" },
+    });
+    expect(extractOp()!.progress).toBe(75);
+    expect(extractOp()!.totalBytes).toBe(1000);
+
+    apiMocks.state.resolveExtract!({ ok: true, data: "/home/user/big" });
+    await done;
+    expect(extractOp()!.status).toBe("completed");
+  });
+
+  it("relays dialog cancellation to the backend and clears the operation", async () => {
+    const mutations = makeMutations();
+    const done = mutations.extractArchive("/home/user/big.zip", true);
+    await vi.waitFor(() => expect(zipEventHandler).not.toBeNull());
+
+    const op = extractOp()!;
+    operationsManager.cancelOperation(op.id);
+
+    zipEventHandler!({
+      payload: { jobId: apiMocks.state.capturedExtractJobId, bytesDone: 500, bytesTotal: 1000, currentFile: "a" },
+    });
+    expect(apiMocks.cancelExtract).toHaveBeenCalledWith(apiMocks.state.capturedExtractJobId);
+
+    apiMocks.state.resolveExtract!({ ok: false, error: "Extraction cancelled" });
+    await done;
+    expect(extractOp()).toBeUndefined();
   });
 });

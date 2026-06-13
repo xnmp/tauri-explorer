@@ -148,6 +148,7 @@ pub fn run(launch_dir: Option<String>) {
             // Archive operations
             archive::compress_to_zip,
             archive::cancel_compress,
+            archive::cancel_extract,
             archive::extract_archive,
             // Config file persistence
             config::read_config_file,

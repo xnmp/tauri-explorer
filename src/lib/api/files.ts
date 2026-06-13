@@ -963,17 +963,30 @@ export async function cancelCompress(jobId: number): Promise<void> {
  *
  * @param archivePath - Path to the archive file
  * @param extractHere - If true, extract to archive's directory; if false, extract to new folder
+ * @param jobId - Client-generated id keying `unzip-progress` events and
+ *                cancellation via cancelExtract
  * @returns Result with extraction destination path or error
  */
 export async function extractArchive(
   archivePath: string,
-  extractHere: boolean = false
+  extractHere: boolean = false,
+  jobId?: number,
 ): Promise<ApiResult<string>> {
   try {
-    const destPath = await invoke<string>("extract_archive", { archivePath, extractHere });
+    const destPath = await invoke<string>("extract_archive", { archivePath, extractHere, jobId });
     return { ok: true, data: destPath };
   } catch (err) {
     return { ok: false, error: extractError(err) };
+  }
+}
+
+/** Cancel a running extraction job. The pending extractArchive call fails
+ *  with "Extraction cancelled" and the partial output is removed. */
+export async function cancelExtract(jobId: number): Promise<void> {
+  try {
+    await invoke("cancel_extract", { jobId });
+  } catch {
+    // Cancellation is best-effort; the job may already have finished.
   }
 }
 

@@ -73,6 +73,34 @@ jobs:
         shell: bash
         run: cargo build --manifest-path src-tauri/Cargo.toml
 
+      # Debug-profile tauri binaries embed build.devUrl (localhost:1420)
+      # instead of the bundled frontend — the webview is blank unless the
+      # dev server is up.
+      - name: Start frontend dev server (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          nohup bun run dev > /tmp/vite.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:1420 > /dev/null && exit 0
+            sleep 1
+          done
+          echo "dev server never came up" >&2
+          cat /tmp/vite.log >&2
+          exit 1
+
+      - name: Start frontend dev server (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Start-Process bun -ArgumentList 'run','dev' -WindowStyle Hidden
+          foreach ($i in 1..60) {
+            try {
+              Invoke-WebRequest -UseBasicParsing http://localhost:1420 | Out-Null
+              exit 0
+            } catch { Start-Sleep -Seconds 1 }
+          }
+          Write-Error "dev server never came up"
+
       - name: Run smoke suite (Linux, under Xvfb)
         if: runner.os == 'Linux'
         run: xvfb-run -a --server-args="-screen 0 1280x1024x24" bun run test:e2e:tauri

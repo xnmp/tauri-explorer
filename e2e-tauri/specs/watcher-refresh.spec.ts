@@ -7,17 +7,13 @@
  * watcher only exists in the Rust backend, and it is also what drives
  * automatic cross-pane refresh in dual-pane mode.
  */
-import { browser, $, $$ } from "@wdio/globals";
+import { browser } from "@wdio/globals";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { navigateTo } from "./helpers";
+import { navigateTo, entryNames } from "./helpers";
 
 const scratchDir = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-e2e-watch-"));
-
-async function entryNames(): Promise<string[]> {
-  return await $$(".entry-item .entry-name").map((el) => el.getText());
-}
 
 describe("filesystem watcher refresh", () => {
   before(() => {

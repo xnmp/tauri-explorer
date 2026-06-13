@@ -5,19 +5,26 @@
  * browser-mode Playwright runs against mock-invoke and cannot catch real
  * filesystem/IPC regressions.
  */
-import { browser, $, $$, expect } from "@wdio/globals";
+import { browser, $, expect } from "@wdio/globals";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { navigateTo } from "./helpers";
+import { navigateTo, entryNames } from "./helpers";
 
 // Under $HOME (not /tmp) so trashing works on tmpfs-mounted /tmp setups —
 // Freedesktop trash needs a Trash dir on the same mount or the home fallback.
 const scratchDir = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-e2e-"));
 
-async function entryNames(): Promise<string[]> {
-  const names = await $$(".entry-item .entry-name").map((el) => el.getText());
-  return names;
+/** Run a command-palette action by name. More robust headless than raw
+ *  shortcuts: some Ctrl+Shift+<key> combos are swallowed by wry/the WM. */
+async function runCommand(label: string): Promise<void> {
+  await browser.keys(["Control", "Shift", "p"]);
+  const input = $(".command-palette-dialog .search-input");
+  await input.waitForDisplayed();
+  await input.setValue(label);
+  // Top match is auto-selected; Enter runs it.
+  await $(".command-item").waitForDisplayed();
+  await browser.keys(["Enter"]);
 }
 
 describe("file operations against the real backend", () => {
@@ -28,7 +35,7 @@ describe("file operations against the real backend", () => {
   it("creates a folder on the real filesystem", async () => {
     await navigateTo(scratchDir);
 
-    await browser.keys(["Control", "Shift", "n"]);
+    await runCommand("New Folder");
     const input = $(".new-folder-input");
     await input.waitForDisplayed();
     await input.setValue("roundtrip");
@@ -42,7 +49,8 @@ describe("file operations against the real backend", () => {
   });
 
   it("renames the folder via F2", async () => {
-    const entry = $(".entry-item*=roundtrip");
+    // Select by data-path (text selectors hit the same getText clipping).
+    const entry = $(`.entry-item[data-path="${path.join(scratchDir, "roundtrip")}"]`);
     await entry.click();
     await browser.keys(["F2"]);
 
@@ -61,7 +69,7 @@ describe("file operations against the real backend", () => {
   });
 
   it("moves the folder to trash via Delete", async () => {
-    const entry = $(".entry-item*=renamed-roundtrip");
+    const entry = $(`.entry-item[data-path="${path.join(scratchDir, "renamed-roundtrip")}"]`);
     await entry.click();
     await browser.keys(["Delete"]);
 

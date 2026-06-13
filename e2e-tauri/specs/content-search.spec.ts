@@ -10,7 +10,7 @@ import { browser, $, $$, expect } from "@wdio/globals";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { navigateTo } from "./helpers";
+import { navigateTo, domText } from "./helpers";
 
 const scratchDir = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-e2e-search-"));
 
@@ -46,7 +46,7 @@ describe("content search against the real backend", () => {
       { timeoutMsg: "no streamed results appeared" },
     );
 
-    const text = await $(".content-search-dialog").getText();
+    const text = await domText(".content-search-dialog");
     expect(text).toContain("alpha.txt");
     expect(text).toContain("many.txt");
     // Subdirectory file found, listed with its relative path.
@@ -56,7 +56,7 @@ describe("content search against the real backend", () => {
 
     // 1 + 1 + 8 = 10 real matches across 3 files.
     await browser.waitUntil(
-      async () => (await $(".footer .stats").getText()).includes("10 matches in 3 files"),
+      async () => (await domText(".footer .stats")).includes("10 matches in 3 files"),
       { timeoutMsg: "footer never reported the full match count" },
     );
   });
@@ -64,7 +64,7 @@ describe("content search against the real backend", () => {
   it("collapses the many-match file and expands it on demand", async () => {
     const showMore = $(".show-more-row");
     await showMore.waitForDisplayed();
-    expect(await showMore.getText()).toContain("3 more matches");
+    expect(await domText(".show-more-row")).toContain("3 more matches");
 
     const collapsedCount = await $$(".result-item").length;
     await showMore.click();
@@ -81,11 +81,11 @@ describe("content search against the real backend", () => {
     await input.setValue("plain line"); // setValue clears the previous query first
 
     await browser.waitUntil(async () => {
-      const stats = await $(".footer .stats").getText();
+      const stats = await domText(".footer .stats");
       return stats.includes("1 matches in 1 files") || stats.includes("1 match");
     }, { timeoutMsg: "narrowed search never settled on the single match" });
 
-    const text = await $(".content-search-dialog").getText();
+    const text = await domText(".content-search-dialog");
     expect(text).toContain("alpha.txt");
     expect(text).not.toContain("many.txt");
 

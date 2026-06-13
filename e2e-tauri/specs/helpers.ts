@@ -1,4 +1,30 @@
-import { browser, $ } from "@wdio/globals";
+import { browser, $, $$ } from "@wdio/globals";
+
+/**
+ * Raw DOM textContent of the element(s) matching `selector`, joined.
+ *
+ * WebKitWebDriver's "Get Element Text" returns *rendered* text, which is
+ * empty for elements clipped to zero width by `overflow:hidden` +
+ * `white-space:nowrap` when they lack `flex:1` (e.g. the content-search
+ * `.file-name` and the file-list `.entry-name`). textContent is the raw
+ * DOM string and is immune to that, so assertions stay stable headless.
+ */
+export async function domText(selector: string): Promise<string> {
+  const el = $(selector);
+  return ((await el.getProperty("textContent")) as string | null) ?? "";
+}
+
+/** textContent of every match for `selector`, as an array. */
+export async function domTexts(selector: string): Promise<string[]> {
+  return await $$(selector).map(
+    async (el) => ((await el.getProperty("textContent")) as string | null) ?? "",
+  );
+}
+
+/** Visible file/folder names in the active listing (CSS-clip-immune). */
+export async function entryNames(): Promise<string[]> {
+  return await domTexts(".entry-item .entry-name");
+}
 
 /**
  * Navigate the active pane to `dir`.

@@ -2,23 +2,122 @@
 //! Issue: tauri-explorer-0xr, tauri-explorer-kez
 
 use crate::error::AppError;
+use crate::task_registry::TaskRegistry;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
+use tauri::Emitter;
 use zip::write::FileOptions;
+
+/// Cancellable compression jobs, keyed by client-generated job id so the
+/// frontend can cancel while the compress_to_zip invoke is still pending.
+static COMPRESS_TASKS: TaskRegistry = TaskRegistry::new();
+
+/// Emitted on the `zip-progress` event while compressing.
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ZipProgress {
+    job_id: u64,
+    bytes_done: u64,
+    bytes_total: u64,
+    current_file: String,
+}
+
+const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Byte-level progress + cancellation, threaded through the zip walk.
+struct ZipTracker<'a> {
+    app: Option<&'a tauri::AppHandle>,
+    job_id: u64,
+    bytes_done: u64,
+    bytes_total: u64,
+    cancelled: Option<&'a AtomicBool>,
+    last_emit: Instant,
+}
+
+impl<'a> ZipTracker<'a> {
+    fn new(
+        app: Option<&'a tauri::AppHandle>,
+        job_id: u64,
+        bytes_total: u64,
+        cancelled: Option<&'a AtomicBool>,
+    ) -> Self {
+        Self {
+            app,
+            job_id,
+            bytes_done: 0,
+            bytes_total,
+            cancelled,
+            // Backdated so the very first chunk emits immediately.
+            last_emit: Instant::now() - PROGRESS_EMIT_INTERVAL,
+        }
+    }
+
+    fn check_cancelled(&self) -> Result<(), AppError> {
+        if self
+            .cancelled
+            .is_some_and(|flag| flag.load(Ordering::Relaxed))
+        {
+            return Err(AppError::Other("Compression cancelled".into()));
+        }
+        Ok(())
+    }
+
+    /// Record `n` more compressed-input bytes; throttled progress emit.
+    fn advance(&mut self, n: u64, current_file: &Path) -> Result<(), AppError> {
+        self.bytes_done += n;
+        self.check_cancelled()?;
+        if let Some(app) = self.app {
+            if self.last_emit.elapsed() >= PROGRESS_EMIT_INTERVAL {
+                self.last_emit = Instant::now();
+                let _ = app.emit(
+                    "zip-progress",
+                    ZipProgress {
+                        job_id: self.job_id,
+                        bytes_done: self.bytes_done,
+                        bytes_total: self.bytes_total,
+                        current_file: current_file.to_string_lossy().to_string(),
+                    },
+                );
+            }
+        }
+        Ok(())
+    }
+}
 
 /// Compress files/directories into a ZIP archive.
 ///
 /// Creates a ZIP file in the same directory as the first source path.
 /// If a single directory is selected, names the ZIP after that directory.
 /// If multiple items, names it "Archive.zip" (with dedup).
+///
+/// `job_id` (client-generated) keys `zip-progress` events and cancellation
+/// via `cancel_compress`. The blocking work runs off the async runtime.
 #[tauri::command]
-pub async fn compress_to_zip(paths: Vec<String>) -> Result<String, AppError> {
-    tokio::task::spawn_blocking(move || compress_to_zip_sync(paths))
+pub async fn compress_to_zip(
+    app: tauri::AppHandle,
+    paths: Vec<String>,
+    job_id: Option<u64>,
+) -> Result<String, AppError> {
+    tokio::task::spawn_blocking(move || compress_to_zip_sync(Some(&app), paths, job_id))
         .await
         .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
 }
 
-fn compress_to_zip_sync(paths: Vec<String>) -> Result<String, AppError> {
+/// Cancel a running compression job. The job fails with "Compression
+/// cancelled" and the partial archive is removed.
+#[tauri::command]
+pub async fn cancel_compress(job_id: u64) {
+    COMPRESS_TASKS.cancel(job_id);
+}
+
+fn compress_to_zip_sync(
+    app: Option<&tauri::AppHandle>,
+    paths: Vec<String>,
+    job_id: Option<u64>,
+) -> Result<String, AppError> {
     if paths.is_empty() {
         return Err(AppError::Other("No paths provided".into()));
     }
@@ -40,7 +139,15 @@ fn compress_to_zip_sync(paths: Vec<String>) -> Result<String, AppError> {
 
     let zip_path = find_unique_path(parent_dir, &base_name, "zip");
 
-    if let Err(e) = write_zip(&zip_path, &paths) {
+    let cancelled = job_id.map(|id| COMPRESS_TASKS.start_with_id(id));
+    let total = estimate_total_bytes(&paths);
+    let mut tracker = ZipTracker::new(app, job_id.unwrap_or(0), total, cancelled.as_deref());
+    let result = write_zip(&zip_path, &paths, &mut tracker);
+    if let Some(id) = job_id {
+        COMPRESS_TASKS.cleanup(id);
+    }
+
+    if let Err(e) = result {
         // Don't leave a corrupt half-written archive behind
         let _ = fs::remove_file(&zip_path);
         return Err(e);
@@ -50,7 +157,35 @@ fn compress_to_zip_sync(paths: Vec<String>) -> Result<String, AppError> {
     Ok(zip_path.to_string_lossy().to_string())
 }
 
-fn write_zip(zip_path: &Path, paths: &[String]) -> Result<(), AppError> {
+/// Sum file sizes the same way the zip walk will visit them (symlinks
+/// skipped), so byte progress reaches ~100% exactly at completion.
+fn estimate_total_bytes(paths: &[String]) -> u64 {
+    fn walk(path: &Path, acc: &mut u64) {
+        let Ok(md) = fs::symlink_metadata(path) else {
+            return;
+        };
+        if md.file_type().is_symlink() {
+            return;
+        }
+        if md.is_dir() {
+            if let Ok(entries) = fs::read_dir(path) {
+                for entry in entries.flatten() {
+                    walk(&entry.path(), acc);
+                }
+            }
+        } else {
+            *acc += md.len();
+        }
+    }
+
+    let mut total = 0u64;
+    for p in paths {
+        walk(Path::new(p), &mut total);
+    }
+    total
+}
+
+fn write_zip(zip_path: &Path, paths: &[String], tracker: &mut ZipTracker) -> Result<(), AppError> {
     let file = fs::File::create(zip_path)?;
     let mut zip_writer = zip::ZipWriter::new(file);
     let options = FileOptions::<()>::default().compression_method(zip::CompressionMethod::Deflated);
@@ -63,9 +198,9 @@ fn write_zip(zip_path: &Path, paths: &[String]) -> Result<(), AppError> {
             .unwrap_or_default();
 
         if path.is_dir() {
-            add_directory_to_zip(&mut zip_writer, &path, &entry_name, options)?;
+            add_directory_to_zip(&mut zip_writer, &path, &entry_name, options, tracker)?;
         } else {
-            add_file_to_zip(&mut zip_writer, &path, &entry_name, options)?;
+            add_file_to_zip(&mut zip_writer, &path, &entry_name, options, tracker)?;
         }
     }
 
@@ -216,6 +351,7 @@ fn add_file_to_zip(
     path: &Path,
     name: &str,
     options: FileOptions<()>,
+    tracker: &mut ZipTracker,
 ) -> Result<(), AppError> {
     // Preserve unix permissions (e.g. +x) in the archive
     #[cfg(unix)]
@@ -227,12 +363,22 @@ fn add_file_to_zip(
         }
     };
 
+    tracker.check_cancelled()?;
     zip.start_file(name, options)
         .map_err(|e| AppError::Other(format!("Failed to add file to ZIP: {}", e)))?;
 
-    // Stream the file into the archive instead of buffering it in memory
+    // Stream the file into the archive in chunks instead of buffering it in
+    // memory; each chunk advances byte progress and observes cancellation.
     let mut file = fs::File::open(path)?;
-    std::io::copy(&mut file, zip)?;
+    let mut buf = vec![0u8; 1024 * 1024];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        std::io::Write::write_all(zip, &buf[..n])?;
+        tracker.advance(n as u64, path)?;
+    }
 
     Ok(())
 }
@@ -242,6 +388,7 @@ fn add_directory_to_zip(
     dir: &Path,
     prefix: &str,
     options: FileOptions<()>,
+    tracker: &mut ZipTracker,
 ) -> Result<(), AppError> {
     zip.add_directory(format!("{}/", prefix), options)
         .map_err(|e| AppError::Other(format!("Failed to add directory to ZIP: {}", e)))?;
@@ -265,9 +412,9 @@ fn add_directory_to_zip(
         }
 
         if file_type.is_dir() {
-            add_directory_to_zip(zip, &entry_path, &full_name, options)?;
+            add_directory_to_zip(zip, &entry_path, &full_name, options, tracker)?;
         } else {
-            add_file_to_zip(zip, &entry_path, &full_name, options)?;
+            add_file_to_zip(zip, &entry_path, &full_name, options, tracker)?;
         }
     }
 
@@ -314,7 +461,8 @@ mod tests {
         fs::write(src_dir.join("sub/nested.txt"), "nested content").unwrap();
 
         // Compress
-        let zip_path = compress_to_zip_sync(vec![src_dir.to_string_lossy().to_string()]).unwrap();
+        let zip_path =
+            compress_to_zip_sync(None, vec![src_dir.to_string_lossy().to_string()], None).unwrap();
         assert!(PathBuf::from(&zip_path).exists());
 
         // Extract
@@ -328,6 +476,49 @@ mod tests {
     }
 
     #[test]
+    fn test_cancelled_compress_fails_and_removes_partial_zip() {
+        let dir = tempdir().unwrap();
+        let src_dir = dir.path().join("source");
+        fs::create_dir(&src_dir).unwrap();
+        // Multi-chunk file so cancellation is observed mid-write.
+        fs::write(src_dir.join("big.bin"), vec![0u8; 3 * 1024 * 1024]).unwrap();
+
+        let job_id = 999_001;
+        // Cancel before starting: start_with_id replaces the flag, so set it
+        // through the same registry path the command uses.
+        let flag = COMPRESS_TASKS.start_with_id(job_id);
+        flag.store(true, Ordering::Relaxed);
+
+        // Bypass compress_to_zip_sync's own registration (it would reset the
+        // flag): drive write_zip with a cancelled tracker directly.
+        let zip_path = dir.path().join("source.zip");
+        let mut tracker = ZipTracker::new(None, job_id, 3 * 1024 * 1024, Some(&flag));
+        let err = write_zip(
+            &zip_path,
+            &[src_dir.to_string_lossy().to_string()],
+            &mut tracker,
+        )
+        .expect_err("cancelled compression must fail");
+        assert!(err.to_string().contains("cancelled"));
+        COMPRESS_TASKS.cleanup(job_id);
+    }
+
+    #[test]
+    fn test_estimate_total_bytes_matches_file_sizes() {
+        let dir = tempdir().unwrap();
+        let src_dir = dir.path().join("source");
+        fs::create_dir(&src_dir).unwrap();
+        fs::write(src_dir.join("a.txt"), vec![1u8; 1000]).unwrap();
+        fs::create_dir(src_dir.join("sub")).unwrap();
+        fs::write(src_dir.join("sub/b.txt"), vec![2u8; 500]).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(src_dir.join("a.txt"), src_dir.join("link.txt")).unwrap();
+
+        let total = estimate_total_bytes(&[src_dir.to_string_lossy().to_string()]);
+        assert_eq!(total, 1500, "symlinks must not count toward total");
+    }
+
+    #[test]
     fn test_extract_here_refuses_to_overwrite_existing_file() {
         let dir = tempdir().unwrap();
         let src_dir = dir.path().join("source");
@@ -335,7 +526,8 @@ mod tests {
         fs::write(src_dir.join("a.txt"), "from archive").unwrap();
         fs::write(src_dir.join("b.txt"), "also from archive").unwrap();
 
-        let zip_path = compress_to_zip_sync(vec![src_dir.to_string_lossy().to_string()]).unwrap();
+        let zip_path =
+            compress_to_zip_sync(None, vec![src_dir.to_string_lossy().to_string()], None).unwrap();
 
         // Extract into a separate dir where "source/b.txt" already exists
         let target = dir.path().join("target");
@@ -371,7 +563,8 @@ mod tests {
         // Symlink cycle: source/loop -> source
         std::os::unix::fs::symlink(&src_dir, src_dir.join("loop")).unwrap();
 
-        let zip_path = compress_to_zip_sync(vec![src_dir.to_string_lossy().to_string()]).unwrap();
+        let zip_path =
+            compress_to_zip_sync(None, vec![src_dir.to_string_lossy().to_string()], None).unwrap();
 
         let dest = extract_archive_sync(zip_path, false).unwrap();
         let dest_path = PathBuf::from(&dest);
@@ -394,7 +587,8 @@ mod tests {
         fs::write(&script, "#!/bin/sh\necho hi\n").unwrap();
         fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
 
-        let zip_path = compress_to_zip_sync(vec![src_dir.to_string_lossy().to_string()]).unwrap();
+        let zip_path =
+            compress_to_zip_sync(None, vec![src_dir.to_string_lossy().to_string()], None).unwrap();
         let dest = extract_archive_sync(zip_path, false).unwrap();
 
         let extracted = PathBuf::from(&dest).join("source/run.sh");

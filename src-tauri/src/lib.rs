@@ -135,6 +135,7 @@ pub fn run(launch_dir: Option<String>) {
             thumbnails::get_thumbnail_cache_stats,
             // Archive operations
             archive::compress_to_zip,
+            archive::cancel_compress,
             archive::extract_archive,
             // Config file persistence
             config::read_config_file,

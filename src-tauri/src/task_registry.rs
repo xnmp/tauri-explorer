@@ -48,6 +48,21 @@ impl TaskRegistry {
         (id, cancelled)
     }
 
+    /// Register a task under a caller-chosen ID. Used when the client
+    /// generates the job id itself so it can cancel before the command
+    /// returns (e.g. zip compression progress).
+    pub fn start_with_id(&self, id: u64) -> Arc<AtomicBool> {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.active_map()
+            .lock()
+            .unwrap_or_else(|poisoned| {
+                log::error!("task registry lock poisoned on start_with_id, recovering");
+                poisoned.into_inner()
+            })
+            .insert(id, cancelled.clone());
+        cancelled
+    }
+
     /// Cancel a task by ID. No-op if the task doesn't exist or already completed.
     pub fn cancel(&self, id: u64) {
         if let Some(flag) = self

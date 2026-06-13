@@ -6,7 +6,7 @@
  * cancellation support, and error handling.
  */
 
-export type OperationType = "copy" | "move" | "delete";
+export type OperationType = "copy" | "move" | "delete" | "compress";
 
 export interface Operation {
   id: string;
@@ -267,5 +267,7 @@ export function getOperationLabel(type: OperationType): string {
       return "Moving";
     case "delete":
       return "Deleting";
+    case "compress":
+      return "Compressing";
   }
 }

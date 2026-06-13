@@ -909,18 +909,38 @@ export async function startNanoBananaJob(
 // Issue: tauri-explorer-0xr, tauri-explorer-kez
 // ===================
 
+/** Payload of `zip-progress` events emitted while a compression job runs. */
+export interface ZipProgressEvent {
+  jobId: number;
+  bytesDone: number;
+  bytesTotal: number;
+  currentFile: string;
+}
+
 /**
  * Compress files/directories into a ZIP archive.
  *
  * @param paths - List of file/directory paths to compress
+ * @param jobId - Client-generated id keying `zip-progress` events and
+ *                cancellation via cancelCompress
  * @returns Result with path to created ZIP file or error
  */
-export async function compressToZip(paths: string[]): Promise<ApiResult<string>> {
+export async function compressToZip(paths: string[], jobId?: number): Promise<ApiResult<string>> {
   try {
-    const zipPath = await invoke<string>("compress_to_zip", { paths });
+    const zipPath = await invoke<string>("compress_to_zip", { paths, jobId });
     return { ok: true, data: zipPath };
   } catch (err) {
     return { ok: false, error: extractError(err) };
+  }
+}
+
+/** Cancel a running compression job. The pending compressToZip call fails
+ *  with "Compression cancelled" and the partial archive is removed. */
+export async function cancelCompress(jobId: number): Promise<void> {
+  try {
+    await invoke("cancel_compress", { jobId });
+  } catch {
+    // Cancellation is best-effort; the job may already have finished.
   }
 }
 

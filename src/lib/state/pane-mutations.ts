@@ -16,8 +16,11 @@ import {
   deleteEntryPermanent,
   extractArchive as apiExtractArchive,
   compressToZip as apiCompressToZip,
+  cancelCompress as apiCancelCompress,
   createSymlink as apiCreateSymlink,
+  type ZipProgressEvent,
 } from "$lib/api/files";
+import { operationsManager } from "./operations.svelte";
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerCoreState } from "./types";
 import { broadcastFileChange } from "./file-events";
@@ -162,12 +165,44 @@ export function createPaneMutations(ctx: PaneMutationContext) {
   }
 
   async function compressToZip(paths: string[]): Promise<void> {
-    const result = await apiCompressToZip(paths);
+    // Client-generated job id keys progress events and backend cancellation.
+    const jobId = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
+    const op = operationsManager.startOperation("compress", paths[0] ?? "");
+
+    // Listen before invoking so fast jobs can't emit before we subscribe.
+    // In browser/mock mode there is no event system — progress is skipped.
+    let unlisten: (() => void) | null = null;
+    try {
+      const { listen } = await import("@tauri-apps/api/event");
+      unlisten = await listen<ZipProgressEvent>("zip-progress", (event) => {
+        const p = event.payload;
+        if (p.jobId !== jobId) return;
+        // The dialog's Cancel removes the operation; relay to the backend.
+        if (operationsManager.isOperationCancelled(op.id)) {
+          void apiCancelCompress(jobId);
+          return;
+        }
+        const pct = p.bytesTotal > 0 ? (p.bytesDone / p.bytesTotal) * 100 : 0;
+        operationsManager.updateProgress(op.id, pct, p.bytesDone, p.bytesTotal);
+      });
+    } catch {
+      // Not running in Tauri — mock compress completes instantly.
+    }
+
+    const result = await apiCompressToZip(paths, jobId);
+    unlisten?.();
+
     if (result.ok) {
+      operationsManager.completeOperation(op.id);
       ctx.markLocalMutation();
       ctx.refreshSilent();
       broadcastFileChange([coreState.currentPath]);
+    } else if (operationsManager.isOperationCancelled(op.id) || /cancelled/i.test(result.error)) {
+      // User-initiated cancel: the backend removed the partial archive.
+      operationsManager.clearOperation(op.id);
+      toastStore.show("Compression cancelled", "info");
     } else {
+      operationsManager.failOperation(op.id, result.error);
       toastStore.show(`Compress failed: ${result.error}`, "error");
     }
   }

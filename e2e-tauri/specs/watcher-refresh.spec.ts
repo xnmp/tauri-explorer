@@ -33,8 +33,11 @@ describe("filesystem watcher refresh", () => {
     fs.writeFileSync(path.join(scratchDir, "external.txt"), "created externally\n");
 
     // No refresh, no keypress — the backend watcher must push the change.
+    // Windows ReadDirectoryChangesW notifications can lag several seconds, so
+    // allow generous headroom: the assertion is *eventual* consistency, not
+    // sub-second latency.
     await browser.waitUntil(async () => (await entryNames()).includes("external.txt"), {
-      timeout: 10_000,
+      timeout: 25_000,
       timeoutMsg: "watcher never surfaced the externally created file",
     });
   });
@@ -42,8 +45,10 @@ describe("filesystem watcher refresh", () => {
   it("a file deleted outside the app disappears without any UI action", async () => {
     fs.rmSync(path.join(scratchDir, "external.txt"));
 
+    // Delete notifications are the slowest/least reliable on Windows'
+    // ReadDirectoryChangesW backend — give the watcher ample time.
     await browser.waitUntil(async () => !(await entryNames()).includes("external.txt"), {
-      timeout: 10_000,
+      timeout: 25_000,
       timeoutMsg: "watcher never removed the externally deleted file",
     });
   });

@@ -1,6 +1,10 @@
 # Maintainer: Your Name <email>
 pkgname=tauri-explorer
-pkgver=0.2.7
+# Single source of truth: derive the version from package.json so the
+# package never drifts from the app (it sat at 0.2.7 while the app was
+# 0.3.0). pkgver() updates it automatically during makepkg; the literal
+# below is just a fallback for tooling that reads it without running pkgver.
+pkgver=0.4.0
 pkgrel=1
 pkgdesc="A minimalistic, high-performance file explorer"
 arch=('x86_64' 'aarch64')
@@ -30,6 +34,14 @@ sha256sums=()
 # When building locally, set _srcdir to the repo root.
 # In CI, the repo is copied into $srcdir/tauri-explorer before makepkg runs.
 _srcdir="${_srcdir:-$srcdir/$pkgname}"
+
+# Read the version straight from package.json (the app's source of truth).
+pkgver() {
+  cd "$_srcdir"
+  local v
+  v=$(grep -m1 '"version"' package.json | sed -E 's/.*"version" *: *"([^"]+)".*/\1/')
+  printf '%s' "${v:-0.4.0}"
+}
 
 prepare() {
   cd "$_srcdir"

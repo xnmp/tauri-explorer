@@ -247,12 +247,34 @@
     // tab dragged out of this one.
     const stopTabTransfer = initTabTransferListener();
 
-    // Dev-only e2e navigation hook: the tauri-driver suite runs against the
-    // vite dev server under Xvfb with no window manager, where address-bar
-    // editing blurs (and cancels) immediately. Absent from production builds.
+    // Dev-only e2e hooks: the tauri-driver suite runs against the vite dev
+    // server under Xvfb with no window manager, where autofocused inline
+    // inputs (address bar, new-folder, rename) blur — and cancel — the
+    // instant they open. These hooks drive the SAME real backend operations
+    // (navigate / create_directory / rename_entry / trash) the UI flows do,
+    // just without the headless-only focus race. Absent from production.
     if (import.meta.env.DEV) {
       window.addEventListener("e2e-navigate", ((e: CustomEvent<string>) => {
         windowTabsManager.getActiveExplorer()?.navigateTo(e.detail);
+      }) as EventListener);
+
+      window.addEventListener("e2e-file-op", ((
+        e: CustomEvent<{ op: string; name?: string; path?: string }>,
+      ) => {
+        const explorer = windowTabsManager.getActiveExplorer();
+        if (!explorer) return;
+        const { op, name, path } = e.detail;
+        const entry = path
+          ? explorer.displayEntries.find((en) => en.path === path)
+          : undefined;
+        if (op === "new-folder" && name) {
+          void explorer.createFolder(name);
+        } else if (op === "rename" && entry && name) {
+          explorer.startRename(entry);
+          void explorer.rename(name);
+        } else if (op === "delete" && entry) {
+          void explorer.confirmDelete([entry]);
+        }
       }) as EventListener);
     }
 

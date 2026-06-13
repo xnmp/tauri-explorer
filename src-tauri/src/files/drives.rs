@@ -43,7 +43,9 @@ fn enumerate_drives() -> Vec<Drive> {
     ];
 
     for base in bases.iter() {
-        let Ok(entries) = std::fs::read_dir(base) else { continue };
+        let Ok(entries) = std::fs::read_dir(base) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
             // In /media, skip the user's own home-like subdir (which is /media/$USER itself).
@@ -82,7 +84,11 @@ fn enumerate_drives() -> Vec<Drive> {
         drives.push(Drive {
             name,
             path: path.to_string_lossy().to_string(),
-            kind: if is_boot { DriveKind::Fixed } else { DriveKind::Removable },
+            kind: if is_boot {
+                DriveKind::Fixed
+            } else {
+                DriveKind::Removable
+            },
         });
     }
     drives
@@ -97,7 +103,11 @@ fn enumerate_drives() -> Vec<Drive> {
         if std::path::Path::new(&path).exists() {
             // Without winapi GetDriveType we can't distinguish removable reliably.
             // Heuristic: C: is conventionally the system/fixed drive; others may be removable.
-            let kind = if letter == 'C' { DriveKind::Fixed } else { DriveKind::Unknown };
+            let kind = if letter == 'C' {
+                DriveKind::Fixed
+            } else {
+                DriveKind::Unknown
+            };
             drives.push(Drive {
                 name: format!("{}:", letter),
                 path,

@@ -1,24 +1,30 @@
 # Tauri Explorer
 
-A minimal, keyboard-driven file manager for people who actually use their file manager.
+**A file manager with Ctrl+P, Ctrl+Shift+F, and a command palette.**
 
-Most file explorers fall into two camps: bloated and slow, or lightweight and missing half the features you need. Tauri Explorer is neither. It's a clean, fast, fully-featured file manager built for power users who want things to work the way they expect — and to customize the rest.
-
-Built with Tauri v2 (Rust backend) and Svelte 5. Runs native on Linux, macOS, and Windows. The Rust backend handles directory listing, search, and thumbnails, so large directories don't choke the UI.
+If you've ever opened VSCode just to navigate files faster than your file manager lets you, this is for you. Tauri Explorer brings the editor workflow to your filesystem: fuzzy file open with frecency ranking, ripgrep-backed content search, a command palette for every action, fully rebindable keybindings, and a UI you can strip down to nothing.
 
 ![Minimal mode — just the file pane and address bar](screenshots/readme/minimal.png)
 
-Everything else is toggleable. Turn on what you need.
+Built with Tauri v2 (Rust backend) and Svelte 5. Runs native on Linux, macOS, and Windows. The Rust backend handles directory listing, search, and thumbnails, so large directories don't choke the UI.
+
+Every piece of chrome is toggleable. Turn on what you need.
 
 ![Details view with sidebar](screenshots/readme/details-view.png)
 
 ## Features
 
-**Keyboard-first.** Every operation has a shortcut. F2 to rename. Delete to trash. Ctrl+P for fuzzy search with frecency ranking. Ctrl+Shift+F for ripgrep-backed content search. Arrow keys, type-ahead, marquee selection. Every shortcut is rebindable, including chord sequences (e.g. `g then h` to go home).
+**The shortcuts you already know.** `Ctrl+P` for fuzzy file open with frecency ranking — the same workflow as VSCode, but over your entire filesystem. `Ctrl+Shift+F` for ripgrep-backed content search across any directory. `Ctrl+Shift+P` for a command palette that surfaces every action in the app. Every shortcut is rebindable, including chord sequences (e.g. `g then h` to go home).
 
 ![Quick open fuzzy search](screenshots/readme/quick-open.png)
 
-**Tabs and dual pane.** Ctrl+T / Ctrl+W for tabs. Ctrl+\ for side-by-side dual pane with a draggable split. Restore closed tabs. New windows inherit context from the last focused one. Workspaces to save and restore layouts.
+**Keyboard-first throughout.** `F2` to rename, `Delete` to trash, arrow keys and type-ahead to jump to entries, marquee selection with the mouse when you want it. Every operation has a shortcut, and you can rebind any of them.
+
+**Minimal by default, customizable everywhere.** Hide the sidebar, toolbar, status bar, and breadcrumbs until you're looking at nothing but files. 8 built-in themes plus drop-in custom CSS (`~/.config/tauri-explorer/themes/`). Adjustable background opacity and wallpaper. Per-directory column visibility and sort preferences. Sidebar bookmarks with drag-to-add and reorder.
+
+![Dark theme](screenshots/readme/dark-theme.png)
+
+**Tabs and dual pane.** `Ctrl+T` / `Ctrl+W` for tabs. `Ctrl+\` for side-by-side dual pane with a draggable split. Restore closed tabs. New windows inherit context from the last focused one. Workspaces to save and restore layouts.
 
 ![Dual pane](screenshots/readme/dual-pane.png)
 
@@ -28,11 +34,7 @@ Everything else is toggleable. Turn on what you need.
 
 **Full file operations.** Copy, move, rename, bulk rename, delete, compress/extract ZIP, create symlinks, undo/redo. Conflict resolution dialogs for overwrites. Progress tracking for large operations. Paste images directly from clipboard.
 
-**Deeply customizable.** 8 built-in themes. Drop a `.css` file in `~/.config/tauri-explorer/themes/` to add your own. Adjustable background opacity and wallpaper. Zoom controls. Column visibility and sort preferences per-directory. Sidebar bookmarks with drag-to-add and reorder.
-
-![Dark theme](screenshots/readme/dark-theme.png)
-
-**Navigation that stays out of the way.** Editable breadcrumb bar with path autocomplete. Chevron pickers to browse subdirectories without navigating. Back/forward/up history. Type-ahead to jump to entries by name.
+**Navigation that stays out of the way.** Editable breadcrumb bar with path autocomplete. Chevron pickers to browse subdirectories without navigating into them. Back/forward/up history.
 
 ## Building
 

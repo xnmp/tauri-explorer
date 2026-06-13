@@ -4,14 +4,15 @@
  */
 
 import type { UndoAction } from "./types";
+import { parentDir, basename } from "$lib/domain/path";
 
 /** Compute directories affected by an undo/redo action for broadcasting. */
 export function getAffectedDirs(action: UndoAction): string[] {
   switch (action.type) {
     case "rename":
-      return [action.path.substring(0, action.path.lastIndexOf("/"))];
+      return [parentDir(action.path)];
     case "move":
-      return [action.originalDir, action.destPath.substring(0, action.destPath.lastIndexOf("/"))];
+      return [action.originalDir, parentDir(action.destPath)];
     case "copy":
       return [action.parentDir];
     case "batch":
@@ -24,8 +25,8 @@ export function getAffectedDirs(action: UndoAction): string[] {
 export function undoActionLabel(action: UndoAction): string {
   switch (action.type) {
     case "rename": return `Renamed ${action.oldName}`;
-    case "move": return `Moved to ${action.destPath.split("/").pop()}`;
-    case "copy": return `Copied ${action.copiedPath.split("/").pop()}`;
+    case "move": return `Moved to ${basename(action.destPath)}`;
+    case "copy": return `Copied ${basename(action.copiedPath)}`;
     case "batch": return action.label;
     case "delete": return `Deleted ${action.paths.length} item${action.paths.length > 1 ? "s" : ""}`;
   }

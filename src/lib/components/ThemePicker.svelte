@@ -17,9 +17,10 @@
   let query = $state("");
   let selectedIndex = $state(0);
   let inputRef = $state<HTMLInputElement | null>(null);
+  let themesContainerRef = $state<HTMLElement | null>(null);
   let mouseMoved = $state(false);
-  // Theme active before the picker opened — restored on Escape.
-  let originalThemeId = "";
+  // Theme active before the picker opened — marks the "current" row in the list.
+  let originalThemeId = $state("");
 
   const filteredThemes = $derived.by(() => {
     const q = query.trim().toLowerCase();
@@ -38,7 +39,11 @@
       const idx = themeStore.availableThemes.findIndex((t) => t.id === originalThemeId);
       selectedIndex = idx >= 0 ? idx : 0;
       mouseMoved = false;
-      tick().then(() => inputRef?.focus());
+      tick().then(() => { inputRef?.focus(); scrollToSelected(); });
+      // Revert any un-committed preview on every close path (Escape, click
+      // outside, or the parent flipping `open` externally). After a commit,
+      // currentThemeId is the newly-set theme, so re-applying it is a no-op.
+      return () => themeStore.previewTheme(themeStore.currentThemeId);
     }
   });
 
@@ -55,8 +60,16 @@
   }
 
   function cancel(): void {
-    if (originalThemeId) themeStore.previewTheme(originalThemeId);
+    // Preview revert happens in the open-$effect cleanup, which covers
+    // every close path (including the parent flipping `open` externally).
     onClose();
+  }
+
+  function scrollToSelected(): void {
+    tick().then(() => {
+      const selected = themesContainerRef?.querySelector(".theme-item.selected");
+      selected?.scrollIntoView({ block: "nearest" });
+    });
   }
 
   function handleKeydown(event: KeyboardEvent): void {
@@ -70,6 +83,7 @@
         if (filteredThemes.length > 0) {
           selectedIndex = (selectedIndex + 1) % filteredThemes.length;
           mouseMoved = false;
+          scrollToSelected();
         }
         break;
       case "ArrowUp":
@@ -77,6 +91,7 @@
         if (filteredThemes.length > 0) {
           selectedIndex = (selectedIndex - 1 + filteredThemes.length) % filteredThemes.length;
           mouseMoved = false;
+          scrollToSelected();
         }
         break;
       case "Enter":
@@ -108,7 +123,7 @@
         />
       </div>
 
-      <div class="themes-container">
+      <div class="themes-container" bind:this={themesContainerRef}>
         {#if filteredThemes.length > 0}
           <ul class="themes-list" role="listbox">
             {#each filteredThemes as theme, index (theme.id)}
@@ -147,7 +162,7 @@
     align-items: flex-start;
     justify-content: center;
     padding-top: 15vh;
-    z-index: 1001;
+    z-index: var(--z-modal-popover);
   }
 
   .theme-picker-dialog {

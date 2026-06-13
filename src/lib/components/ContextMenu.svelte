@@ -7,11 +7,14 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { contextMenuStore } from "$lib/state/context-menu.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
-  import { settingsStore } from "$lib/state/settings.svelte";
+  import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
+  import { settingsStore, type ThumbnailSize } from "$lib/state/settings.svelte";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
-  import { compressToZip, extractArchive, openFile, openInTerminal, createSymlink, setAsWallpaper } from "$lib/api/files";
+  import { openFile } from "$lib/api/files";
+  import { setWallpaper, openTerminal } from "$lib/state/commands/system-actions";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import type { FileEntry } from "$lib/domain/file";
+  import { parentDir } from "$lib/domain/path";
   import { isImageFile } from "$lib/domain/file-types";
   import { getZoomFactor } from "$lib/domain/zoom";
   import type { ViewMode } from "$lib/state/types";
@@ -42,6 +45,36 @@
   const isBookmarked = $derived(
     selectedDirectory ? bookmarksStore.hasBookmark(selectedDirectory.path) : false
   );
+
+  /** Whether any selected entry is currently in the manual-hidden list. */
+  const anySelectedHidden = $derived.by(() => {
+    const entries = explorer.getSelectedEntries();
+    if (entries.length === 0) return false;
+    return entries.some((e) => manualHiddenStore.isHidden(parentDir(e.path), e.name));
+  });
+
+  /** Whether all selected entries are currently in the manual-hidden list. */
+  const allSelectedHidden = $derived.by(() => {
+    const entries = explorer.getSelectedEntries();
+    if (entries.length === 0) return false;
+    return entries.every((e) => manualHiddenStore.isHidden(parentDir(e.path), e.name));
+  });
+
+  function handleManualHide(): void {
+    const entries = explorer.getSelectedEntries();
+    for (const e of entries) {
+      manualHiddenStore.hide(parentDir(e.path), [e.name]);
+    }
+    contextMenuStore.close();
+  }
+
+  function handleManualUnhide(): void {
+    const entries = explorer.getSelectedEntries();
+    for (const e of entries) {
+      manualHiddenStore.unhide(parentDir(e.path), [e.name]);
+    }
+    contextMenuStore.close();
+  }
 
   function handleCut(): void {
     const selected = explorer.getSelectedEntries();
@@ -99,36 +132,27 @@
 
   async function handleExtractHere(): Promise<void> {
     if (!selectedArchive) return;
-    await extractArchive(selectedArchive.path, true);
-    explorer.refresh({ silent: true });
+    await explorer.extractArchive(selectedArchive.path, true);
     contextMenuStore.close();
   }
 
   async function handleExtractToFolder(): Promise<void> {
     if (!selectedArchive) return;
-    await extractArchive(selectedArchive.path, false);
-    explorer.refresh({ silent: true });
+    await explorer.extractArchive(selectedArchive.path, false);
     contextMenuStore.close();
   }
 
   async function handleCompress(): Promise<void> {
     const selected = explorer.getSelectedEntries();
     if (selected.length === 0) return;
-    await compressToZip(selected.map((e) => e.path));
-    explorer.refresh({ silent: true });
+    await explorer.compressToZip(selected.map((e) => e.path));
     contextMenuStore.close();
   }
 
   async function handleCreateSymlink(): Promise<void> {
     const entries = explorer.getSelectedEntries();
     if (entries.length !== 1) return;
-    const entry = entries[0];
-    const linkName = `${entry.name} - Link`;
-    const linkPath = `${explorer.currentPath}/${linkName}`;
-    const result = await createSymlink(entry.path, linkPath);
-    if (result.ok) {
-      explorer.refresh({ silent: true });
-    }
+    await explorer.createSymlink(entries[0].path);
     contextMenuStore.close();
   }
 
@@ -153,16 +177,12 @@
 
   async function handleSetAsWallpaper(): Promise<void> {
     if (!selectedImage) return;
-    const result = await setAsWallpaper(selectedImage.path);
-    if (!result.ok) {
-      console.error("[wallpaper] Failed to set wallpaper:", result.error);
-    }
+    await setWallpaper(selectedImage.path);
     contextMenuStore.close();
   }
 
   async function handleOpenInTerminal(): Promise<void> {
-    const path = selectedDirectory?.path ?? explorer.currentPath;
-    await openInTerminal(path, settingsStore.terminalApp);
+    await openTerminal(explorer.currentPath);
     contextMenuStore.close();
   }
 
@@ -176,7 +196,7 @@
   let listSubmenuOpen = $state(false);
   let tilesSubmenuOpen = $state(false);
 
-  const tileSizeLabels: Record<string, string> = { small: "Small", medium: "Medium", large: "Large" };
+  const tileSizeLabels: Record<string, string> = { small: "Small", medium: "Medium", large: "Large", xlarge: "Extra Large" };
 
   const effectiveThumbnailSize = $derived(
     folderViewsStore.getThumbnailSize(explorer.currentPath, settingsStore.thumbnailSize)
@@ -253,7 +273,7 @@
 
 <svelte:window on:keydown={handleKeydown} />
 
-{#if contextMenuStore.isOpen && contextMenuStore.position}
+{#if contextMenuStore.isOpen && contextMenuStore.position && contextMenuStore.owner === explorer.contextMenuOwner}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <div
@@ -354,6 +374,24 @@
         <span>Delete</span>
         <span class="shortcut">Del</span>
       </button>
+
+      {#if allSelectedHidden}
+        <button class="menu-item" onclick={handleManualUnhide} role="menuitem">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M2 8C2 8 4 4 8 4C12 4 14 8 14 8C14 8 12 12 8 12C4 12 2 8 2 8Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+            <circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.25"/>
+          </svg>
+          <span>Unhide</span>
+        </button>
+      {:else if !anySelectedHidden}
+        <button class="menu-item" onclick={handleManualHide} role="menuitem">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M2 8C2 8 4 4 8 4C12 4 14 8 14 8C14 8 12 12 8 12C4 12 2 8 2 8Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+            <path d="M3 3L13 13" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+          </svg>
+          <span>Hide</span>
+        </button>
+      {/if}
 
       {#if selectedDirectory}
         <div class="menu-divider"></div>
@@ -536,11 +574,11 @@
             {#if tilesSubmenuOpen}
               <div class="submenu">
                 <div class="menu-section-label">Icon Size</div>
-                {#each ["small", "medium", "large"] as size}
+                {#each ["small", "medium", "large", "xlarge"] as size}
                   <button
                     class="menu-item"
                     class:selected={effectiveThumbnailSize === size}
-                    onclick={() => { folderViewsStore.set(explorer.currentPath, { thumbnailSize: size as "small" | "medium" | "large" }); contextMenuStore.close(); }}
+                    onclick={() => { folderViewsStore.set(explorer.currentPath, { thumbnailSize: size as ThumbnailSize }); contextMenuStore.close(); }}
                     role="menuitemradio"
                     aria-checked={effectiveThumbnailSize === size}
                   >
@@ -583,12 +621,12 @@
   .context-menu-backdrop {
     position: fixed;
     inset: 0;
-    z-index: 999;
+    z-index: calc(var(--z-menu) - 1);
   }
 
   .context-menu {
     position: fixed;
-    z-index: 1000;
+    z-index: var(--z-menu);
     min-width: 220px;
     padding: 6px;
     background: var(--background-acrylic);

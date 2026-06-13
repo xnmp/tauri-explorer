@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window",
-  "windows": ["main", "explorer-*"],
+  "windows": ["main", "explorer-*", "picker-*"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
@@ -11,8 +11,6 @@
     "core:window:allow-close",
     "core:window:allow-is-maximized",
     "opener:default",
-    "shell:allow-spawn",
-    "shell:allow-execute",
     "clipboard-x:default",
     "core:webview:allow-create-webview-window",
     "log:default",

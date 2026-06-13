@@ -103,6 +103,18 @@ Split into focused submodules. Shared types live in `mod.rs`.
 - Auto-detects: Hyprland/hyprpaper, Sway/swaybg, GNOME, KDE, XFCE, MATE, feh fallback
 - **Command:** `set_as_wallpaper(path)`
 
+### `git.rs` — Source Control Backend (#53)
+- `git2` (vendored libgit2) wrapper for the SCM panel + git graph. Every command runs on `tokio::task::spawn_blocking` and is registered with the shared `TaskRegistry` for cancellation.
+- **Commands (all `async`):**
+  - `git_repo_root(path)` → repo root or `null`
+  - `git_status(repo_path)` → `{ is_repo, repo_root, branch, detached, staged, changes, untracked, merge }` with per-file `{ path, old_path, status }`
+  - `git_stage(repo_path, paths)` / `git_unstage(repo_path, paths)` — stage via `Index.add_path`; unstage resets index to HEAD (or removes from index on unborn branches)
+  - `git_discard(repo_path, paths, { force })` — checkout-from-HEAD for tracked paths, filesystem delete for untracked; refuses to blow away staged changes unless `force=true`
+  - `git_diff(repo_path, path, { staged })` → unified diff text
+  - `git_commit(repo_path, message, { amend })` → `{ commit_id, summary }` (empty message rejected unless amending)
+  - `git_watch_repo(repo_path)` / `git_unwatch_repo(repo_path)` — `notify` watcher on work tree + `.git`; emits `git-status-changed` with the repo root (200 ms debounced, ignores `.lock`/`~` files)
+- Legacy `files::git_status::get_git_status` remains for per-file status badges in the file list; the SCM panel uses the richer module above.
+
 ### `config.rs` — Config File Persistence
 - Config directory: `~/.config/tauri-explorer/`
 - **Commands:**
@@ -119,3 +131,29 @@ Split into focused submodules. Shared types live in `mod.rs`.
 - Thread-safe registry (`AtomicU64` counter + `Mutex<HashMap<u64, Arc<AtomicBool>>>`)
 - Used by: streaming directory listing, streaming search, content search
 - API: `start()` → `(id, cancelled_flag)`, `cancel(id)`, `cleanup(id)`
+
+## File-picker portal (`portal.rs`, Linux)
+
+tauri-explorer can serve as the **system file picker** by implementing the
+`org.freedesktop.impl.portal.FileChooser` D-Bus backend interface. When a
+sandboxed/portal-aware app (e.g. a browser choosing a download location)
+opens a file dialog, xdg-desktop-portal routes the request here; the service
+spawns a lightweight picker window (`?picker=...` → `FilePicker.svelte`:
+address bar + miller columns only) and replies with `file://` URIs.
+
+- Service mode: `tauri-explorer --file-chooser-portal` (no main window,
+  `ExitRequested` is suppressed so closing a picker doesn't drop the bus
+  name). D-Bus activation + portal definition files live in `packaging/`
+  and are installed by the PKGBUILD.
+- Enable by adding to `~/.config/xdg-desktop-portal/portals.conf` (or the
+  compositor-specific variant, e.g. `hyprland-portals.conf`):
+
+  ```ini
+  [preferred]
+  org.freedesktop.impl.portal.FileChooser=tauri-explorer
+  ```
+
+  then `systemctl --user restart xdg-desktop-portal`.
+- Flow: D-Bus `OpenFile`/`SaveFile` → picker window with a one-shot token →
+  frontend `picker_respond` command resolves the pending call. Closing the
+  window cancels. `SaveFiles` (rarely used) responds cancelled.

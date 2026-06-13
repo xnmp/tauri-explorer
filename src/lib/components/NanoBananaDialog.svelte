@@ -4,10 +4,12 @@
 -->
 <script lang="ts">
   import { settingsStore } from "$lib/state/settings.svelte";
+  import Modal from "./Modal.svelte";
   import { jobsStore } from "$lib/state/jobs.svelte";
   import { toastStore } from "$lib/state/toast.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { startNanoBananaJob, checkPathsExist } from "$lib/api/files";
+  import { parentDir, basename } from "$lib/domain/path";
 
   interface Props {
     open: boolean;
@@ -29,8 +31,8 @@
   let submitting = $state(false);
   let inputRef = $state<HTMLInputElement | null>(null);
 
-  const fileName = $derived(sourcePath.split("/").pop() ?? "");
-  const outputDir = $derived(sourcePath.substring(0, sourcePath.lastIndexOf("/")));
+  const fileName = $derived(basename(sourcePath));
+  const outputDir = $derived(parentDir(sourcePath));
   const hasApiKey = $derived(!!settingsStore.geminiApiKey);
 
   /** Find next available output name: photo_edit.png, photo_edit_2.png, ... */
@@ -91,35 +93,23 @@
     }
   }
 
+  // Escape is handled by Modal; Enter (no Shift) submits — unless a button
+  // has focus, whose own activation must win.
   function handleKeydown(event: KeyboardEvent): void {
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (event.key === "Enter" && !event.shiftKey && !(event.target instanceof HTMLButtonElement)) {
       event.preventDefault();
       handleGenerate();
-    }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      onClose();
-    }
-  }
-
-  function handleBackdropClick(event: MouseEvent): void {
-    if (event.target === event.currentTarget) {
-      onClose();
     }
   }
 </script>
 
-{#if open}
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <div
-    class="dialog-overlay"
-    onclick={handleBackdropClick}
-    onkeydown={handleKeydown}
-    role="dialog"
-    tabindex="-1"
-    aria-modal="true"
-    aria-labelledby="nano-banana-title"
-  >
+<Modal
+  {open}
+  {onClose}
+  overlayClass="dialog-overlay"
+  labelledby="nano-banana-title"
+  onkeydown={handleKeydown}
+>
     <div class="dialog">
       <header class="dialog-header">
         <div class="header-content">
@@ -205,26 +195,9 @@
         {/if}
       </div>
     </div>
-  </div>
-{/if}
+</Modal>
 
 <style>
-  .dialog-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    animation: fadeIn 100ms ease-out;
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-
   .dialog {
     width: 480px;
     max-width: 90vw;

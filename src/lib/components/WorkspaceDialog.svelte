@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
   import { workspacesStore } from "$lib/state/workspaces.svelte";
+  import Modal from "./Modal.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 
   interface Props {
@@ -51,6 +52,8 @@
     editName = "";
   }
 
+  // Escape steps back through edit → save-form → close, so the Modal
+  // default (close on Escape) is disabled and Escape is handled here.
   function handleKeydown(event: KeyboardEvent): void {
     if (event.key === "Escape") {
       if (editingId) {
@@ -80,11 +83,15 @@
   });
 </script>
 
-{#if open}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="dialog-backdrop" onclick={onClose} onkeydown={handleKeydown}>
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="dialog" onclick={(e) => e.stopPropagation()}>
+<Modal
+  {open}
+  {onClose}
+  overlayClass="dialog-backdrop"
+  label="Workspaces"
+  closeOnEscape={false}
+  onkeydown={handleKeydown}
+>
+    <div class="dialog">
       <div class="dialog-header">
         <h2>{mode === "save" ? "Save Workspace" : "Workspaces"}</h2>
         <button class="close-btn" onclick={onClose}>×</button>
@@ -117,7 +124,7 @@
             <div class="workspace-list">
               {#each workspacesStore.list as workspace (workspace.id)}
                 <div class="workspace-item">
-                  <div class="workspace-info" onclick={() => handleRestore(workspace.id)} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter") handleRestore(workspace.id); }}>
+                  <div class="workspace-info" onclick={() => handleRestore(workspace.id)} role="button" tabindex="0" onkeydown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) handleRestore(workspace.id); }}>
                     {#if editingId === workspace.id}
                       <input
                         type="text"
@@ -150,20 +157,9 @@
         {/if}
       </div>
     </div>
-  </div>
-{/if}
+</Modal>
 
 <style>
-  .dialog-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
-
   .dialog {
     background: var(--layer-default);
     border: 1px solid var(--surface-stroke);

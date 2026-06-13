@@ -34,7 +34,9 @@ const FILE_TYPE_MAP: Record<string, string> = {
   bmp: "BMP Image",
   svg: "SVG Image",
   webp: "WebP Image",
+  avif: "AVIF Image",
   ico: "Icon",
+  icns: "Apple Icon",
 
   // Archives
   zip: "Compressed (zipped) Folder",
@@ -134,7 +136,7 @@ const FILE_COLOR_MAP: Record<string, string> = {
 
   // Images - Teal/Cyan
   jpg: "#008272", jpeg: "#008272", png: "#008272", gif: "#008272",
-  bmp: "#008272", svg: "#008272", webp: "#008272", ico: "#008272",
+  bmp: "#008272", svg: "#008272", webp: "#008272", ico: "#008272", icns: "#008272", avif: "#008272",
 
   // Archives - Purple
   zip: "#744da9", rar: "#744da9", "7z": "#744da9", tar: "#744da9", gz: "#744da9",
@@ -184,7 +186,7 @@ const ICON_CATEGORY_MAP: Record<string, IconCategory> = {
 
   // Images
   jpg: "image", jpeg: "image", png: "image", gif: "image",
-  bmp: "image", svg: "image", webp: "image", ico: "image",
+  bmp: "image", svg: "image", webp: "image", ico: "image", icns: "image", avif: "image",
 
   // Archives
   zip: "archive", rar: "archive", "7z": "archive", tar: "archive", gz: "archive",
@@ -207,7 +209,7 @@ const ICON_CATEGORY_MAP: Record<string, IconCategory> = {
 };
 
 /** Extract file extension from filename (empty if no dot or dot-only prefix like ".gitignore") */
-function getExtension(name: string): string {
+export function getExtension(name: string): string {
   const dotIndex = name.lastIndexOf(".");
   if (dotIndex <= 0) return "";
   return name.slice(dotIndex + 1).toLowerCase();
@@ -242,7 +244,7 @@ export function getFileIconCategory(entry: FileEntry): IconCategory {
 }
 
 /** Image extensions that support thumbnail generation */
-const THUMBNAIL_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp"]);
+const THUMBNAIL_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "icns", "avif"]);
 
 /** Check if a file is an image that supports thumbnails */
 export function isImageFile(entry: FileEntry): boolean {
@@ -326,9 +328,11 @@ export function isPdfFile(entry: FileEntry): boolean {
   return getExtension(entry.name) === "pdf";
 }
 
-/** Format modified date - Windows 11 style: M/D/YYYY h:mm AM/PM */
+/** Format modified date - Windows 11 style: M/D/YYYY h:mm AM/PM.
+ *  Returns "" for unparseable input instead of "Invalid Date". */
 export function formatDate(isoString: string): string {
   const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleString(undefined, {
     month: "numeric",
     day: "numeric",

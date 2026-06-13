@@ -9,6 +9,7 @@
  */
 
 import { test, expect } from "@playwright/test";
+import { MULTI_SELECT_MODIFIER } from "./helpers";
 
 async function waitForFileList(page: import("@playwright/test").Page) {
   await page.waitForSelector(".file-list");
@@ -17,7 +18,6 @@ async function waitForFileList(page: import("@playwright/test").Page) {
 
 async function openSettings(page: import("@playwright/test").Page) {
   await page.keyboard.press("Control+,");
-  await page.waitForTimeout(100);
   const dialog = page.locator(".settings-dialog");
   await expect(dialog).toBeVisible({ timeout: 2000 });
   return dialog;
@@ -26,7 +26,6 @@ async function openSettings(page: import("@playwright/test").Page) {
 async function closeSettings(page: import("@playwright/test").Page) {
   const closeBtn = page.locator(".settings-dialog .close-btn");
   await closeBtn.click();
-  await page.waitForTimeout(100);
   await expect(page.locator(".settings-dialog")).not.toBeVisible();
 }
 
@@ -51,7 +50,6 @@ async function getSettingToggle(
 
   // Scroll the row into view within the dialog's scrollable .dialog-content
   await row.scrollIntoViewIfNeeded();
-  await page.waitForTimeout(50);
 
   const input = row.locator('input[type="checkbox"]');
   const toggleLabel = row.locator("label.toggle");
@@ -103,19 +101,11 @@ test.describe("Theme System", () => {
 
     // Switch to dark
     await themeSelect.selectOption("dark");
-    await page.waitForTimeout(100);
-    let theme = await page.evaluate(() =>
-      document.documentElement.getAttribute("data-theme")
-    );
-    expect(theme).toBe("dark");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 
     // Switch to hacker
     await themeSelect.selectOption("hacker");
-    await page.waitForTimeout(100);
-    theme = await page.evaluate(() =>
-      document.documentElement.getAttribute("data-theme")
-    );
-    expect(theme).toBe("hacker");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "hacker");
   });
 
   test("folder icons use --icon-folder CSS variable", async ({ page }) => {
@@ -137,7 +127,7 @@ test.describe("Theme System", () => {
     const themeSelect = page.locator(".color-theme-select");
     await themeSelect.selectOption("hacker");
     await closeSettings(page);
-    await page.waitForTimeout(200);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "hacker");
 
     // Verify the hacker theme's monospace font rule exists in the loaded stylesheets.
     // (The CSS variable on :root may be overridden by component styles due to specificity,
@@ -167,7 +157,7 @@ test.describe("Theme System", () => {
     const themeSelect = page.locator(".color-theme-select");
     await themeSelect.selectOption("hacker");
     await closeSettings(page);
-    await page.waitForTimeout(200);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "hacker");
 
     // Powerline separators should be visible, chevrons hidden
     const powerline = page.locator(".breadcrumb-powerline").first();
@@ -240,7 +230,6 @@ test.describe("Navigation Bar Buttons", () => {
     await expect(backToggle.input).toBeChecked();
 
     await backToggle.uncheck();
-    await page.waitForTimeout(100);
 
     await closeSettings(page);
 
@@ -255,7 +244,6 @@ test.describe("Navigation Bar Buttons", () => {
     await expect(refreshToggle.input).not.toBeChecked();
 
     await refreshToggle.check();
-    await page.waitForTimeout(100);
 
     await closeSettings(page);
 
@@ -313,7 +301,6 @@ test.describe("Status Bar", () => {
     // Click a file to select it
     const fileItem = page.locator(".entry-item").first();
     await fileItem.click();
-    await page.waitForTimeout(200);
 
     // Status bar should show selection info
     const selectedInfo = page.locator(".selected-info");
@@ -328,8 +315,7 @@ test.describe("Status Bar", () => {
       // Click first item
       await items.first().click();
       // Ctrl+click second item
-      await items.nth(1).click({ modifiers: ["Control"] });
-      await page.waitForTimeout(200);
+      await items.nth(1).click({ modifiers: [MULTI_SELECT_MODIFIER] });
 
       const selectedInfo = page.locator(".selected-info");
       await expect(selectedInfo).toContainText(/2 selected/);
@@ -344,7 +330,6 @@ test.describe("Status Bar", () => {
 
     await toggle.uncheck();
     await closeSettings(page);
-    await page.waitForTimeout(100);
 
     // Status bar should be hidden
     await expect(page.locator(".status-bar")).not.toBeVisible();
@@ -354,7 +339,6 @@ test.describe("Status Bar", () => {
     const toggle2 = await getSettingToggle(page, "Show Status Bar");
     await toggle2.check();
     await closeSettings(page);
-    await page.waitForTimeout(100);
 
     await expect(page.locator(".status-bar")).toBeVisible();
   });
@@ -408,7 +392,7 @@ test.describe("Bookmarks", () => {
 
     // Drag the folder to Quick Access
     await folder.dragTo(quickAccess);
-    await page.waitForTimeout(300);
+    await page.locator(".user-bookmark").first().waitFor({ timeout: 1500 }).catch(() => {});
 
     // Check if the folder was added as a bookmark
     const userBookmarks = page.locator(".user-bookmark");
@@ -428,7 +412,7 @@ test.describe("Bookmarks", () => {
     const folder = page.locator(".entry-item.directory").first();
     const quickAccess = page.locator(".quick-access");
     await folder.dragTo(quickAccess);
-    await page.waitForTimeout(300);
+    await page.locator(".user-bookmark").first().waitFor({ timeout: 1500 }).catch(() => {});
 
     const bookmarks = page.locator(".user-bookmark");
     const initialCount = await bookmarks.count();
@@ -436,16 +420,13 @@ test.describe("Bookmarks", () => {
     if (initialCount > 0) {
       // Hover over the bookmark to reveal remove button
       await bookmarks.first().hover();
-      await page.waitForTimeout(100);
 
       // Click the remove button
       const removeBtn = bookmarks.first().locator(".remove-bookmark");
       await removeBtn.click();
-      await page.waitForTimeout(200);
 
       // Count should decrease
-      const newCount = await page.locator(".user-bookmark").count();
-      expect(newCount).toBe(initialCount - 1);
+      await expect(page.locator(".user-bookmark")).toHaveCount(initialCount - 1);
     }
   });
 
@@ -454,7 +435,6 @@ test.describe("Bookmarks", () => {
       .locator(".sidebar .folder-item")
       .filter({ hasText: "Documents" });
     await documentsBtn.click();
-    await page.waitForTimeout(500);
 
     // Breadcrumbs should contain "Documents"
     const breadcrumbs = page.locator(".breadcrumbs-container");
@@ -466,7 +446,7 @@ test.describe("Bookmarks", () => {
     const folder = page.locator(".entry-item.directory").first();
     const quickAccess = page.locator(".quick-access");
     await folder.dragTo(quickAccess);
-    await page.waitForTimeout(300);
+    await page.locator(".user-bookmark").first().waitFor({ timeout: 1500 }).catch(() => {});
 
     const countBefore = await page.locator(".user-bookmark").count();
 
@@ -489,9 +469,9 @@ test.describe("Bookmarks", () => {
 
     const quickAccess = page.locator(".quick-access");
     await folders.first().dragTo(quickAccess);
-    await page.waitForTimeout(300);
+    await page.locator(".user-bookmark").first().waitFor({ timeout: 1500 }).catch(() => {});
     await folders.nth(1).dragTo(quickAccess);
-    await page.waitForTimeout(300);
+    await page.locator(".user-bookmark").nth(1).waitFor({ timeout: 1500 }).catch(() => {});
 
     const bookmarks = page.locator(".user-bookmark");
     const count = await bookmarks.count();
@@ -603,11 +583,9 @@ test.describe("Feature Interactions", () => {
       .locator(".sidebar .folder-item")
       .filter({ hasText: "Documents" });
     await documentsBtn.click();
-    await page.waitForTimeout(500);
 
-    const newPath = await statusPath.textContent();
-    expect(newPath).not.toBe(initialPath);
-    expect(newPath).toContain("Documents");
+    await expect(statusPath).not.toHaveText(initialPath ?? "");
+    await expect(statusPath).toContainText("Documents");
   });
 
   test("theme change preserves status bar visibility", async ({ page }) => {
@@ -618,7 +596,6 @@ test.describe("Feature Interactions", () => {
     await openSettings(page);
     await page.locator(".color-theme-select").selectOption("dark");
     await closeSettings(page);
-    await page.waitForTimeout(100);
 
     // Status bar still visible
     await expect(page.locator(".status-bar")).toBeVisible();
@@ -634,7 +611,6 @@ test.describe("Feature Interactions", () => {
     const sidebarToggle = await getSettingToggle(page, "Show Sidebar");
     await sidebarToggle.uncheck();
     await closeSettings(page);
-    await page.waitForTimeout(100);
 
     // Sidebar hidden, but status bar and nav buttons still visible
     await expect(page.locator(".sidebar")).not.toBeVisible();

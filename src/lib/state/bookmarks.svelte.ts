@@ -7,8 +7,9 @@
  * localStorage as synchronous fallback for immediate state.
  */
 
-import { loadPersisted, savePersisted } from "./persisted";
-import { readConfigFile, writeConfigFile } from "$lib/api/files";
+import { loadPersisted, savePersisted, writeConfigQueued } from "./persisted";
+import { basename } from "$lib/domain/path";
+import { readConfigFile } from "$lib/api/files";
 
 export interface Bookmark {
   name: string;
@@ -26,9 +27,7 @@ function createBookmarksState() {
   function save() {
     // Write-through: save to both localStorage (sync) and config file (async)
     savePersisted(STORAGE_KEY, bookmarks);
-    writeConfigFile(CONFIG_FILENAME, JSON.stringify(bookmarks, null, 2)).catch((err) => {
-      console.warn("Failed to save bookmarks to config file:", err);
-    });
+    writeConfigQueued(CONFIG_FILENAME, JSON.stringify(bookmarks, null, 2));
   }
 
   /**
@@ -52,7 +51,7 @@ function createBookmarksState() {
 
     // If config file was empty but localStorage has data, migrate
     if (bookmarks.length > 0) {
-      writeConfigFile(CONFIG_FILENAME, JSON.stringify(bookmarks, null, 2)).catch(() => {});
+      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(bookmarks, null, 2));
     }
   }
 
@@ -63,7 +62,7 @@ function createBookmarksState() {
     }
 
     // Extract folder name from path if not provided
-    const folderName = name || path.split("/").filter(Boolean).pop() || path;
+    const folderName = name || basename(path);
 
     bookmarks = [
       ...bookmarks,

@@ -10,24 +10,26 @@
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
-  import { setPaneNavigationContext } from "$lib/state/pane-context";
   import { registerAllCommands } from "$lib/state/command-definitions";
   import { executeCommand, getCommand } from "$lib/state/commands.svelte";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
-  import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
-  import { copyEntry, moveEntry } from "$lib/api/files";
-  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-  import { initFileChangeListener, cleanupFileChangeListener, broadcastFileChange, parentDir } from "$lib/state/file-events";
+  import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { saveFocusedWindowState } from "$lib/state/focused-window";
+  import { useNativeDropHandler } from "$lib/composables/use-native-drop-handler";
+  import { useFileWatchers } from "$lib/composables/use-file-watchers";
+  import { useWindowLifecycle } from "$lib/composables/use-window-lifecycle";
   import "$lib/themes/index.css";
   import TitleBar from "$lib/components/TitleBar.svelte";
+  import FilePicker, { type PickerInfo } from "$lib/components/FilePicker.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
+  import ScmPanel from "$lib/components/ScmPanel.svelte";
   import PaneContainer from "$lib/components/PaneContainer.svelte";
   import QuickOpen from "$lib/components/QuickOpen.svelte";
   import CommandPalette from "$lib/components/CommandPalette.svelte";
   import ThemePicker from "$lib/components/ThemePicker.svelte";
+  import OptionPicker from "$lib/components/OptionPicker.svelte";
   import SettingsDialog from "$lib/components/SettingsDialog.svelte";
   import ProgressDialog from "$lib/components/ProgressDialog.svelte";
   import ContentSearchDialog from "$lib/components/ContentSearchDialog.svelte";
@@ -36,10 +38,16 @@
   import ConflictDialog from "$lib/components/ConflictDialog.svelte";
   import NanoBananaDialog from "$lib/components/NanoBananaDialog.svelte";
   import JobsPanel from "$lib/components/JobsPanel.svelte";
-  import { jobsStore } from "$lib/state/jobs.svelte";
-  import { toastStore } from "$lib/state/toast.svelte";
+  import { gitStatusStore } from "$lib/state/git-status.svelte";
+  import { initTabTransferListener } from "$lib/state/tab-transfer";
   import StatusBar from "$lib/components/StatusBar.svelte";
   import AnimatedBackground from "$lib/components/AnimatedBackground.svelte";
+  import MillerColumns from "$lib/components/MillerColumns.svelte";
+
+  const millerAsLeftIsland = $derived(
+    settingsStore.macOsVibrancy && !settingsStore.showSidebar && settingsStore.millerLayers > 0
+  );
+  const leftExplorer = $derived(windowTabsManager.getExplorer("left"));
 
   /** Convert a filesystem path to a URL usable in src/background-image. */
   function convertFileSrc(path: string): string {
@@ -55,55 +63,17 @@
     return windowTabsManager.getActiveExplorer();
   }
 
-  function navigateTo(path: string) {
-    getActiveExplorer()?.navigateTo(path);
-  }
+  const refreshAllPanes = () => windowTabsManager.refreshAllPanes();
 
-  function refreshAllPanes() {
-    // Refresh both panes in active tab (silent — triggered by file operations, not user action)
-    for (const paneId of ["left", "right"] as const) {
-      windowTabsManager.getExplorer(paneId)?.refresh({ silent: true });
-    }
-  }
-
-  setPaneNavigationContext({
-    navigateTo,
-    getActiveExplorer: getActiveExplorer as () => ExplorerInstance,
+  // Initialize composables
+  const nativeDropHandler = useNativeDropHandler({ getActiveExplorer, refreshAllPanes });
+  const fileWatchers = useFileWatchers({
+    getAllExplorers: () => windowTabsManager.getAllExplorers(),
     refreshAllPanes,
   });
-
-  // Track Ctrl key state for external drop modifier detection.
-  // Tauri's onDragDropEvent doesn't include keyboard modifiers,
-  // so we track them globally via keydown/keyup.
-  let ctrlKeyHeld = false;
-
-  // Handle external file drops into the app.
-  // Default: move (matches internal drag behavior). Ctrl held: copy.
-  async function handleExternalDrop(paths: string[]): Promise<void> {
-    const explorer = getActiveExplorer();
-    if (!explorer) return;
-
-    const destDir = explorer.currentPath;
-    const operation = ctrlKeyHeld ? copyEntry : moveEntry;
-    const opName = ctrlKeyHeld ? "copy" : "move";
-
-    const affectedDirs = new Set<string>();
-    affectedDirs.add(destDir);
-
-    for (const path of paths) {
-      affectedDirs.add(parentDir(path));
-      const result = await operation(path, destDir);
-      if (!result.ok) {
-        console.error(`Failed to ${opName} dropped file:`, result.error);
-      }
-    }
-
-    refreshAllPanes();
-    broadcastFileChange([...affectedDirs]);
-  }
-
-  const externalDrop = useExternalDrop((paths) => {
-    handleExternalDrop(paths);
+  const windowLifecycle = useWindowLifecycle({
+    getActiveExplorer,
+    saveTabs: () => windowTabsManager.save(),
   });
 
   async function handleKeydown(event: KeyboardEvent): Promise<void> {
@@ -112,6 +82,20 @@
     // Skip if focus is in an input field (except for special cases)
     const target = event.target as HTMLElement;
     const isInputField = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+
+    // Escape closes any open modal dialog
+    if (event.key === "Escape" && dialogStore.hasModalOpen) {
+      event.preventDefault();
+      dialogStore.closeAll();
+      return;
+    }
+
+    // Skip shortcut handling (including hardcoded shortcuts below) if in an
+    // input field or a modal dialog is open — e.g. Ctrl+J while typing in a
+    // rename input must not open the jobs panel.
+    if (isInputField || dialogStore.hasModalOpen) {
+      return;
+    }
 
     // Ctrl+J: Open jobs panel (hardcoded)
     if (event.key === "j" && isModifier) {
@@ -135,18 +119,6 @@
       return;
     }
 
-    // Escape closes any open modal dialog
-    if (event.key === "Escape" && dialogStore.hasModalOpen) {
-      event.preventDefault();
-      dialogStore.closeAll();
-      return;
-    }
-
-    // Skip dynamic shortcut handling if in input field or a modal dialog is open
-    if (isInputField || dialogStore.hasModalOpen) {
-      return;
-    }
-
     // Find matching command from keybindings store, skipping commands whose `when` guard fails.
     // This ensures that when multiple commands share a shortcut (e.g. F5 for refresh vs copy-to-other-pane),
     // the first available one is selected rather than the first registered one.
@@ -164,15 +136,6 @@
       event.preventDefault();
       await executeCommand(matchingCommandId);
       return;
-    }
-  }
-
-  // Persist the focused window's state (path + viewMode) to localStorage
-  // so new windows (Ctrl+N) inherit from the last focused window.
-  function persistFocusedState() {
-    const explorer = getActiveExplorer();
-    if (explorer) {
-      saveFocusedWindowState(explorer.currentPath, explorer.viewMode);
     }
   }
 
@@ -198,12 +161,48 @@
     document.documentElement.style.setProperty("--bg-opacity", String(opacity));
   });
 
-  onMount(() => {
-    const t0 = performance.now();
-    performance.mark("app-mount-start");
+  // Apply vibrancy mode attribute (drives CSS transparency for native macOS vibrancy)
+  $effect(() => {
+    if (settingsStore.macOsVibrancy) {
+      document.documentElement.setAttribute("data-vibrancy", "");
+      if (!settingsStore.vibrancyBlur) {
+        document.documentElement.setAttribute("data-vibrancy-no-blur", "");
+      } else {
+        document.documentElement.removeAttribute("data-vibrancy-no-blur");
+      }
+    } else {
+      document.documentElement.removeAttribute("data-vibrancy");
+      document.documentElement.removeAttribute("data-vibrancy-no-blur");
+    }
+  });
 
+  // Lightweight file-picker mode (portal windows): ?picker=open|save.
+  // Rendered instead of the full app — see FilePicker.svelte / portal.rs.
+  const pickerInfo: PickerInfo | null = (() => {
+    if (typeof window === "undefined") return null;
+    const params = new URLSearchParams(window.location.search);
+    const mode = params.get("picker");
+    if (mode !== "open" && mode !== "save") return null;
+    return {
+      mode,
+      token: params.get("token") ?? "",
+      multiple: params.get("multiple") === "1",
+      directory: params.get("directory") === "1",
+      folder: params.get("folder"),
+      name: params.get("name") ?? "",
+      title: params.get("title") ?? "",
+    };
+  })();
+
+  onMount(() => {
     // Initialize theme from saved preference
     themeStore.initTheme();
+
+    // Picker windows skip the full app init (tabs, watchers, commands).
+    if (pickerInfo) {
+      settingsStore.init().then(() => themeStore.syncFromSettings());
+      return;
+    }
 
     // Read launch data injected by Rust initialization_script (synchronous, no IPC).
     // Falls back to IPC for child windows or if injection is missing.
@@ -224,7 +223,7 @@
     const defaultPath = urlPath || launchCwd || homePath;
 
     // If launched from a terminal with a meaningful cwd, pass it as an
-    // override so the active pane navigates there directly instead of
+    // override so the active pane navigates here directly instead of
     // racing two concurrent navigateTo calls.
     const isGenericCwd = !launchCwd || launchCwd === homePath || launchCwd === "/";
     const overridePath = (!isChildWindow && !isGenericCwd) ? launchCwd! : undefined;
@@ -234,103 +233,68 @@
       const explorer = windowTabsManager.getActiveExplorer();
       explorer?.setViewMode(urlViewMode);
     }
-    performance.mark("app-first-dir");
-
-    const tEnd = performance.now();
-    console.log(`[Perf] Frontend mount→dir: ${(tEnd - t0).toFixed(1)}ms`);
 
     // Load settings and bookmarks from config files (async, non-blocking)
     settingsStore.init().then(() => themeStore.syncFromSettings());
     bookmarksStore.init();
     folderViewsStore.init();
+    manualHiddenStore.init();
+
+    // Initialize git status watcher so file badges update on changes
+    gitStatusStore.initWatcherListener();
+
+    // Cross-window tab moves: remove our copy when another window claims a
+    // tab dragged out of this one.
+    const stopTabTransfer = initTabTransferListener();
+
+    // Dev-only e2e hooks: the tauri-driver suite runs against the vite dev
+    // server under Xvfb with no window manager, where autofocused inline
+    // inputs (address bar, new-folder, rename) blur — and cancel — the
+    // instant they open. These hooks drive the SAME real backend operations
+    // (navigate / create_directory / rename_entry / trash) the UI flows do,
+    // just without the headless-only focus race. Absent from production.
+    if (import.meta.env.DEV) {
+      window.addEventListener("e2e-navigate", ((e: CustomEvent<string>) => {
+        windowTabsManager.getActiveExplorer()?.navigateTo(e.detail);
+      }) as EventListener);
+
+      window.addEventListener("e2e-file-op", ((
+        e: CustomEvent<{ op: string; name?: string; path?: string }>,
+      ) => {
+        const explorer = windowTabsManager.getActiveExplorer();
+        if (!explorer) return;
+        const { op, name, path } = e.detail;
+        const entry = path
+          ? explorer.displayEntries.find((en) => en.path === path)
+          : undefined;
+        if (op === "new-folder" && name) {
+          void explorer.createFolder(name);
+        } else if (op === "rename" && entry && name) {
+          explorer.startRename(entry);
+          void explorer.rename(name);
+        } else if (op === "delete" && entry) {
+          void explorer.confirmDelete([entry]);
+        }
+      }) as EventListener);
+    }
 
     // Register all commands for the command palette (deferred to next tick)
     queueMicrotask(() => registerAllCommands());
 
-    // Setup external file drop handling
-    externalDrop.setup();
-
-    // Listen for file changes from other windows
-    initFileChangeListener((affectedDirs) => {
-      for (const paneId of ["left", "right"] as const) {
-        const exp = windowTabsManager.getExplorer(paneId);
-        if (exp && affectedDirs.includes(exp.currentPath)) {
-          exp.refresh({ silent: true });
-        }
-      }
-    });
-
-    // Listen for Nano Banana completion/error events
-    let unlistenNbComplete: UnlistenFn | undefined;
-    let unlistenNbError: UnlistenFn | undefined;
-    listen<{ jobId: number; outputPath: string }>("nano-banana-complete", (event) => {
-      const { jobId, outputPath } = event.payload;
-      jobsStore.completeJob(jobId, outputPath);
-      const fileName = outputPath.split("/").pop() ?? "image";
-      toastStore.show(`Nano Banana complete: ${fileName}`, "success");
-      refreshAllPanes();
-    }).then((fn) => { unlistenNbComplete = fn; });
-    listen<{ jobId: number; error: string }>("nano-banana-error", (event) => {
-      const { jobId, error } = event.payload;
-      jobsStore.failJob(jobId, error);
-      toastStore.error(`Nano Banana failed: ${error.slice(0, 100)}`);
-    }).then((fn) => { unlistenNbError = fn; });
-
-    // Listen for filesystem watcher events from backend (auto-refresh)
-    let unlistenWatcher: UnlistenFn | undefined;
-    listen<{ path: string }>("directory-changed", (event) => {
-      const changedPath = event.payload.path;
-      for (const paneId of ["left", "right"] as const) {
-        const exp = windowTabsManager.getExplorer(paneId);
-        if (exp && exp.currentPath === changedPath) {
-          exp.refresh({ silent: true });
-        }
-      }
-    }).then((fn) => { unlistenWatcher = fn; });
-
-    // Persist focused window state when this window gains focus
-    window.addEventListener("focus", persistFocusedState);
-
-    // Track Ctrl key for external drop modifier detection
-    function trackCtrlDown(e: KeyboardEvent) { ctrlKeyHeld = e.ctrlKey; }
-    function trackCtrlUp(e: KeyboardEvent) { ctrlKeyHeld = e.ctrlKey; }
-    window.addEventListener("keydown", trackCtrlDown, true);
-    window.addEventListener("keyup", trackCtrlUp, true);
+    // Setup composables
+    nativeDropHandler.setup();
+    fileWatchers.setup();
+    windowLifecycle.setup();
 
     // Global keyboard shortcuts
     window.addEventListener("keydown", handleKeydown);
 
-    // Prevent the browser's native context menu globally.
-    // The app provides its own context menu via ContextMenu.svelte.
-    function handleContextMenu(event: MouseEvent) {
-      event.preventDefault();
-    }
-    window.addEventListener("contextmenu", handleContextMenu);
-
-    // Save tabs before window closes
-    function handleBeforeUnload() {
-      windowTabsManager.save();
-    }
-    window.addEventListener("beforeunload", handleBeforeUnload);
-
-    // Save tabs periodically (every 30 seconds) to catch navigation changes
-    const saveInterval = setInterval(() => {
-      windowTabsManager.save();
-    }, 30000);
-
     return () => {
-      window.removeEventListener("focus", persistFocusedState);
-      window.removeEventListener("keydown", trackCtrlDown, true);
-      window.removeEventListener("keyup", trackCtrlUp, true);
       window.removeEventListener("keydown", handleKeydown);
-      window.removeEventListener("contextmenu", handleContextMenu);
-      window.removeEventListener("beforeunload", handleBeforeUnload);
-      clearInterval(saveInterval);
-      externalDrop.cleanup();
-      cleanupFileChangeListener();
-      unlistenWatcher?.();
-      unlistenNbComplete?.();
-      unlistenNbError?.();
+      nativeDropHandler.cleanup();
+      fileWatchers.cleanup();
+      windowLifecycle.cleanup();
+      stopTabTransfer();
     };
   });
 </script>
@@ -344,13 +308,31 @@
 ></div>
 <AnimatedBackground />
 
+{#if pickerInfo}
+  <FilePicker info={pickerInfo} />
+{:else}
 <main class="explorer">
   <TitleBar />
-  <div class="main-content">
+  <div class="main-content" class:no-sidebar={!settingsStore.showSidebar}>
     {#if settingsStore.showSidebar}
       <Sidebar />
     {/if}
+    {#if settingsStore.showGitStatus && settingsStore.showScmPanel}
+      <ScmPanel />
+    {/if}
+    {#if millerAsLeftIsland && leftExplorer}
+      <div class="miller-island">
+        <MillerColumns explorer={leftExplorer} />
+      </div>
+    {/if}
     <PaneContainer />
+    {#if settingsStore.showPreviewPane}
+      {#await import("$lib/components/PreviewPane.svelte") then { default: PreviewPane }}
+        <div class="preview-island">
+          <PreviewPane />
+        </div>
+      {/await}
+    {/if}
   </div>
   {#if settingsStore.showStatusBar}
     <StatusBar />
@@ -360,6 +342,7 @@
 <QuickOpen open={dialogStore.isQuickOpenOpen} onClose={() => dialogStore.closeQuickOpen()} />
 <CommandPalette open={dialogStore.isCommandPaletteOpen} onClose={() => dialogStore.closeCommandPalette()} />
 <ThemePicker open={dialogStore.isThemePickerOpen} onClose={() => dialogStore.closeThemePicker()} />
+<OptionPicker />
 <ContentSearchDialog open={dialogStore.isContentSearchOpen} onClose={() => dialogStore.closeContentSearch()} />
 <SettingsDialog open={dialogStore.isSettingsOpen} onClose={() => dialogStore.closeSettings()} />
 <WorkspaceDialog open={dialogStore.isWorkspaceOpen} onClose={() => dialogStore.closeWorkspace()} />
@@ -380,6 +363,7 @@
 />
 <ProgressDialog />
 <ConflictDialog />
+{/if}
 
 <style>
   /* Windows 11 Fluent Design System */
@@ -452,6 +436,14 @@
 
     /* Selection indicator */
     --selection-indicator-width: 3px;
+
+    /* Z-index scale — every overlay layer uses these tokens so layers can't
+       silently collide. Component-local stacking inside panes stays < 200. */
+    --z-modal: 1000;          /* modal dialogs + their backdrops (Modal.svelte) */
+    --z-modal-popover: 1100;  /* dropdowns that must beat an open modal (pickers) */
+    --z-menu: 1200;           /* context menus */
+    --z-progress: 1300;       /* corner progress panel — visible above modals */
+    --z-toast: 1400;          /* notifications — topmost */
   }
 
   /* Window frame styling for transparent decorationless window */
@@ -552,7 +544,7 @@
   .explorer {
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    height: 100%;
     background: color-mix(in srgb, var(--background-mica) calc(var(--bg-opacity, 1) * 100%), transparent);
     backdrop-filter: blur(60px) saturate(125%);
     -webkit-backdrop-filter: blur(60px) saturate(125%);
@@ -567,5 +559,84 @@
     overflow: hidden;
     position: relative;
     z-index: 1;
+  }
+
+  /* macOS native vibrancy mode: floating islands on NSVisualEffectView */
+  :global([data-vibrancy]) {
+    --titlebar-opacity: 0;
+    --sidebar-opacity: 0;
+    --statusbar-opacity: 0;
+    --vibrancy-island-bg:
+      linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.04) 0%,
+        transparent 40%,
+        rgba(0, 0, 0, 0.02) 100%
+      ),
+      color-mix(in srgb, var(--vibrancy-island-card, var(--background-card)) 98%, transparent);
+    --vibrancy-island-stroke: var(--surface-stroke);
+    --vibrancy-island-radius: 14px;
+    --vibrancy-island-glow:
+      inset 0 0.5px 0 rgba(255, 255, 255, 0.09),
+      inset 0 -0.5px 0 rgba(0, 0, 0, 0.2),
+      0 1px 3px rgba(0, 0, 0, 0.15),
+      0 4px 12px rgba(0, 0, 0, 0.2),
+      0 12px 32px rgba(0, 0, 0, 0.15);
+  }
+
+  :global([data-vibrancy]) :global(body) {
+    background: transparent;
+    box-shadow: none;
+  }
+
+  :global([data-vibrancy]) .explorer {
+    background: var(--vibrancy-tint, transparent);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  /* No-blur mode: use theme background instead of transparency */
+  :global([data-vibrancy-no-blur]) :global(body) {
+    background: var(--background-solid);
+    box-shadow: none;
+  }
+
+  :global([data-vibrancy-no-blur]) .explorer {
+    background: var(--background-mica);
+  }
+
+  :global([data-vibrancy]) .main-content {
+    padding: 0 6px 6px 6px;
+    gap: 8px;
+  }
+
+  /* Miller columns as left island (when sidebar hidden + vibrancy) */
+  .miller-island {
+    flex-shrink: 0;
+    border-radius: var(--vibrancy-island-radius);
+    background: var(--vibrancy-island-bg);
+    box-shadow: var(--vibrancy-island-glow);
+    overflow: hidden;
+    display: flex;
+    min-height: 0;
+  }
+
+  /* Preview pane as right island (vibrancy mode) */
+  .preview-island {
+    flex-shrink: 0;
+    display: flex;
+    min-height: 0;
+  }
+
+  :global([data-vibrancy]) .preview-island {
+    border-radius: var(--vibrancy-island-radius);
+    background: var(--vibrancy-island-bg);
+    box-shadow: var(--vibrancy-island-glow);
+    border: 1px solid var(--vibrancy-island-stroke);
+    overflow: hidden;
+  }
+
+  :global([data-vibrancy]) .theme-background-layer {
+    display: none;
   }
 </style>

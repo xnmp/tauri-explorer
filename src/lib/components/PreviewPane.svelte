@@ -4,20 +4,29 @@
 -->
 <script lang="ts">
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { readTextFile, fetchDirectory } from "$lib/api/files";
+  import { readTextFile, fetchDirectory, gitDiff } from "$lib/api/files";
   import { isImageFile, isTextFile, isPdfFile, getFileType, formatDate } from "$lib/domain/file-types";
   import { formatSize, type FileEntry } from "$lib/domain/file";
   import { isTauri } from "$lib/api/mock-invoke";
   import { highlightCode } from "$lib/domain/syntax-highlight";
+  import { renderMarkdown } from "$lib/domain/markdown";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { getFileIconColor } from "$lib/domain/file-types";
+  import { scmStore } from "$lib/state/scm.svelte";
+  import { parseUnifiedDiff, type ParsedDiff, type DiffLine } from "$lib/domain/diff";
   import FileIcon from "./FileIcon.svelte";
-  /** Detect if the current theme uses a light color scheme */
-  const isLightTheme = $derived.by(() => {
-    // Force re-evaluation when theme changes by reading the theme ID
-    const _theme = settingsStore.theme;
-    if (typeof document === "undefined") return false;
-    return getComputedStyle(document.documentElement).colorScheme === "light";
+  /** Detect if the current theme uses a light color scheme.
+   * Recomputed via a MutationObserver on the documentElement's `data-theme`
+   * attribute (set by theme.svelte.ts) — getComputedStyle only reflects the
+   * new theme after the attribute has actually been applied to the DOM. */
+  let isLightTheme = $state(false);
+  $effect(() => {
+    const compute = () =>
+      (isLightTheme = getComputedStyle(document.documentElement).colorScheme === "light");
+    compute();
+    const observer = new MutationObserver(compute);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
   });
 
   // Resize handle state
@@ -60,10 +69,18 @@
     return selected.length === 1 ? selected[0] : null;
   });
 
+  /** Stable primitive that changes when the selected path OR its mtime changes,
+   * so external edits to the same file invalidate the cached preview. */
+  const selectedPath = $derived(selectedFile?.path ?? null);
+  const previewKey = $derived(
+    selectedFile ? `${selectedFile.path}|${selectedFile.modified}|${selectedFile.size}` : null,
+  );
+
   // Preview content state
   let previewImageUrl = $state<string | null>(null);
   let previewText = $state<string | null>(null);
   let previewHighlightedHtml = $state<string | null>(null);
+  let previewMarkdownHtml = $state<string | null>(null);
   let previewPdfUrl = $state<string | null>(null);
   let previewFolderChildrenRaw = $state<readonly FileEntry[]>([]);
   const previewFolderChildren = $derived(
@@ -74,23 +91,96 @@
   let previewLoading = $state(false);
   let previewError = $state<string | null>(null);
   let previewTruncatedLines = $state(0);
-  let lastPreviewPath = $state<string | null>(null);
+  let lastPreviewPath: string | null = null;
+  let lastPreviewKey: string | null = null;
 
-  // Load preview when selection changes
+  // --- Git diff preview state ---
+  const activeDiff = $derived(scmStore.activeDiff);
+  let diffParsed = $state<ParsedDiff | null>(null);
+  let diffLoading = $state(false);
+  let diffError = $state<string | null>(null);
+  let diffRequestGen = 0;
+
+  const diffVisibleLines = $derived.by<DiffLine[]>(() => {
+    if (!diffParsed) return [];
+    return diffParsed.lines.filter((l) => l.kind !== "header" && l.kind !== "meta");
+  });
+
+  const diffSubtitle = $derived.by(() => {
+    if (!diffParsed) return "";
+    if (diffParsed.added) return "added";
+    if (diffParsed.deleted) return "deleted";
+    if (diffParsed.oldPath && diffParsed.newPath && diffParsed.oldPath !== diffParsed.newPath) {
+      return `renamed from ${diffParsed.oldPath}`;
+    }
+    return activeDiff?.staged ? "staged" : "unstaged";
+  });
+
   $effect(() => {
+    if (!activeDiff || !scmStore.repoRoot) {
+      diffRequestGen++; // invalidate any in-flight request
+      diffParsed = null;
+      diffError = null;
+      diffLoading = false;
+      return;
+    }
+    // Depend on the summary object itself (replaced wholesale on refresh) —
+    // counts can stay identical while file contents change, so a count-based
+    // key would miss content updates.
+    void scmStore.summary;
+    loadDiff(scmStore.repoRoot, activeDiff.path, activeDiff.staged);
+  });
+
+  async function loadDiff(repoRoot: string, path: string, staged: boolean): Promise<void> {
+    const gen = ++diffRequestGen;
+    diffLoading = true;
+    diffError = null;
+    const r = await gitDiff(repoRoot, path, { staged });
+    // Drop stale responses: a newer request superseded this one, or the
+    // target (path OR staged flag) changed while we were fetching.
+    if (gen !== diffRequestGen) return;
+    const current = scmStore.activeDiff;
+    if (!current || current.path !== path || current.staged !== staged) return;
+    if (!r.ok) {
+      diffError = r.error;
+      diffParsed = null;
+    } else {
+      diffParsed = parseUnifiedDiff(r.data);
+    }
+    diffLoading = false;
+  }
+
+  // Clear activeDiff when explorer file selection changes (not on initial render)
+  let prevSelectedPath: string | null = null;
+  $effect(() => {
+    const current = selectedPath;
+    if (prevSelectedPath !== null && current !== prevSelectedPath && activeDiff) {
+      scmStore.closeDiff();
+    }
+    prevSelectedPath = current;
+  });
+
+  // Load preview when selection (or selected file's mtime/size) changes.
+  $effect(() => {
+    const path = selectedPath;
+    const key = previewKey;
     const file = selectedFile;
-    if (!file) {
+    if (!file || !path) {
       lastPreviewPath = null;
+      lastPreviewKey = null;
       previewImageUrl = null;
       previewText = null;
       previewHighlightedHtml = null;
+      previewMarkdownHtml = null;
       previewPdfUrl = null;
       previewFolderChildrenRaw = [];
       previewError = null;
       previewLoading = false;
       return;
     }
-    if (file.path === lastPreviewPath) return;
+    if (key === lastPreviewKey) return;
+    lastPreviewPath = path;
+    lastPreviewKey = key;
     loadPreview(file);
   });
 
@@ -103,10 +193,10 @@
   }
 
   async function loadPreview(file: FileEntry): Promise<void> {
-    lastPreviewPath = file.path;
     previewImageUrl = null;
     previewText = null;
     previewHighlightedHtml = null;
+    previewMarkdownHtml = null;
     previewPdfUrl = null;
     previewFolderChildrenRaw = [];
     previewError = null;
@@ -123,11 +213,15 @@
       return;
     }
 
+    // Cache-busting suffix derived from mtime+size — same value as previewKey,
+    // ensures the webview re-fetches when the on-disk file changes.
+    const bust = encodeURIComponent(`${file.modified}-${file.size}`);
+
     if (isPdfFile(file)) {
       if (isTauri()) {
         try {
           const { convertFileSrc } = await import("@tauri-apps/api/core");
-          previewPdfUrl = convertFileSrc(file.path);
+          previewPdfUrl = `${convertFileSrc(file.path)}?v=${bust}`;
         } catch {
           previewError = "Cannot preview PDF";
         }
@@ -143,7 +237,7 @@
         try {
           const { convertFileSrc } = await import("@tauri-apps/api/core");
           if (file.path !== lastPreviewPath) return; // Stale
-          const url = convertFileSrc(file.path);
+          const url = `${convertFileSrc(file.path)}?v=${bust}`;
           // Decode off-screen — spinner stays visible until ready
           await decodeImage(url);
           if (file.path !== lastPreviewPath) return; // Stale after decode
@@ -167,6 +261,16 @@
           : result.data;
         previewText = displayText;
         previewTruncatedLines = truncated ? lines.length : 0;
+        const isMarkdown = /\.(md|markdown)$/i.test(file.name);
+        if (isMarkdown && displayText.length < 200_000) {
+          // Obsidian-style: render the markdown; fenced code blocks keep
+          // syntax highlighting via the shared hljs setup.
+          try {
+            previewMarkdownHtml = renderMarkdown(displayText);
+          } catch {
+            previewMarkdownHtml = null;
+          }
+        }
         // Only syntax-highlight if content is reasonably small (< 50KB)
         if (displayText.length < 50_000) {
           try {
@@ -189,7 +293,42 @@
 <div class="preview-pane" class:resizing style="width: {paneWidth}px">
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="resize-handle" onmousedown={handleResizeStart}></div>
-  {#if !selectedFile}
+  {#if activeDiff}
+    <div class="preview-header">
+      <span class="preview-filename" title={activeDiff.path}>{activeDiff.path.split("/").pop()}</span>
+      <span class="preview-type-badge" class:diff-staged={activeDiff.staged} class:diff-unstaged={!activeDiff.staged}>
+        {diffSubtitle || "git diff"}
+      </span>
+    </div>
+    <div class="preview-content">
+      {#if diffLoading}
+        <div class="preview-loading"><div class="spinner"></div></div>
+      {:else if diffError}
+        <div class="preview-empty"><span class="preview-error-text">{diffError}</span></div>
+      {:else if diffParsed?.binary}
+        <div class="preview-empty"><span>Binary file changed</span></div>
+      {:else if diffVisibleLines.length === 0}
+        <div class="preview-empty"><span>No changes to display</span></div>
+      {:else}
+        <div class="diff-lines">
+          {#each diffVisibleLines as line (line.index)}
+            <div class="diff-line {line.kind}" data-line-kind={line.kind}>
+              <span class="diff-gutter old">{line.oldLine ?? ""}</span>
+              <span class="diff-gutter new">{line.newLine ?? ""}</span>
+              <span class="diff-sigil">{line.kind === "add" ? "+" : line.kind === "remove" ? "−" : line.kind === "hunk" ? "@" : " "}</span>
+              <span class="diff-content">{line.text}</span>
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+    <div class="preview-info">
+      <div class="info-row">
+        <span class="info-label">Path</span>
+        <span class="info-value" title={activeDiff.path}>{activeDiff.path}</span>
+      </div>
+    </div>
+  {:else if !selectedFile}
     <div class="preview-empty">
       <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
         <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.25"/>
@@ -227,6 +366,11 @@
             </div>
           {/each}
         </div>
+      {:else if previewMarkdownHtml !== null}
+        <div class="preview-markdown" class:hljs-light={isLightTheme} class:hljs-dark={!isLightTheme}>{@html previewMarkdownHtml}</div>
+        {#if previewTruncatedLines > 0}
+          <div class="preview-truncated">Showing first 200 of {previewTruncatedLines.toLocaleString()} lines</div>
+        {/if}
       {:else if previewHighlightedHtml !== null}
         <pre class="preview-text preview-code" class:hljs-light={isLightTheme} class:hljs-dark={!isLightTheme}><code class="hljs">{@html previewHighlightedHtml}</code></pre>
         {#if previewTruncatedLines > 0}
@@ -426,6 +570,133 @@
     flex-shrink: 0;
   }
 
+  /* Rendered markdown (Obsidian-style). Content comes from {@html}, so
+     descendants need :global. */
+  .preview-markdown {
+    padding: 16px;
+    font-size: 12px;
+    line-height: 1.65;
+    color: var(--text-secondary);
+    flex: 1;
+    overflow-wrap: break-word;
+  }
+
+  .preview-markdown :global(h1),
+  .preview-markdown :global(h2),
+  .preview-markdown :global(h3),
+  .preview-markdown :global(h4),
+  .preview-markdown :global(h5),
+  .preview-markdown :global(h6) {
+    color: var(--text-primary);
+    font-weight: 600;
+    line-height: 1.3;
+    margin: 14px 0 6px;
+  }
+
+  .preview-markdown :global(h1) { font-size: 17px; padding-bottom: 4px; border-bottom: 1px solid var(--divider); }
+  .preview-markdown :global(h2) { font-size: 15px; padding-bottom: 3px; border-bottom: 1px solid var(--divider); }
+  .preview-markdown :global(h3) { font-size: 13px; }
+  .preview-markdown :global(h4) { font-size: 12px; }
+
+  .preview-markdown :global(h1:first-child),
+  .preview-markdown :global(h2:first-child),
+  .preview-markdown :global(p:first-child) {
+    margin-top: 0;
+  }
+
+  .preview-markdown :global(p) {
+    margin: 6px 0;
+  }
+
+  .preview-markdown :global(a) {
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  .preview-markdown :global(a:hover) {
+    text-decoration: underline;
+  }
+
+  .preview-markdown :global(code) {
+    font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+    font-size: 11px;
+    background: var(--subtle-fill-secondary);
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+
+  .preview-markdown :global(pre.md-code) {
+    background: var(--subtle-fill-secondary);
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    margin: 8px 0;
+    overflow-x: auto;
+  }
+
+  .preview-markdown :global(pre.md-code code) {
+    background: transparent;
+    padding: 0;
+    white-space: pre;
+  }
+
+  .preview-markdown :global(blockquote) {
+    margin: 8px 0;
+    padding: 2px 12px;
+    border-left: 3px solid var(--accent);
+    color: var(--text-tertiary);
+  }
+
+  .preview-markdown :global(ul),
+  .preview-markdown :global(ol) {
+    margin: 6px 0;
+    padding-left: 22px;
+  }
+
+  .preview-markdown :global(li) {
+    margin: 2px 0;
+  }
+
+  .preview-markdown :global(li input[type="checkbox"]) {
+    margin-right: 6px;
+  }
+
+  .preview-markdown :global(hr) {
+    border: none;
+    border-top: 1px solid var(--divider);
+    margin: 12px 0;
+  }
+
+  .preview-markdown :global(table) {
+    border-collapse: collapse;
+    margin: 8px 0;
+    font-size: 11px;
+    display: block;
+    overflow-x: auto;
+  }
+
+  .preview-markdown :global(th),
+  .preview-markdown :global(td) {
+    border: 1px solid var(--divider);
+    padding: 4px 8px;
+    text-align: left;
+  }
+
+  .preview-markdown :global(th) {
+    background: var(--subtle-fill-secondary);
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  .preview-markdown :global(img) {
+    max-width: 100%;
+  }
+
+  .preview-markdown :global(.md-image-placeholder) {
+    color: var(--text-tertiary);
+    font-style: italic;
+  }
+
   /* GitHub Dark hljs theme (default) */
   .hljs-dark :global(.hljs) { color: #c9d1d9; }
   .hljs-dark :global(.hljs-keyword),
@@ -578,5 +849,68 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* --- Git diff styles --- */
+  .preview-type-badge.diff-staged {
+    background: color-mix(in srgb, #22c55e 20%, transparent);
+    color: #16a34a;
+  }
+
+  .preview-type-badge.diff-unstaged {
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    color: var(--accent);
+  }
+
+  .diff-lines {
+    flex: 1;
+    overflow: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    line-height: 18px;
+  }
+
+  .diff-line {
+    display: grid;
+    grid-template-columns: 36px 36px 14px 1fr;
+    min-height: 18px;
+    white-space: pre;
+    padding-right: 8px;
+  }
+
+  .diff-line.context { background: transparent; }
+  .diff-line.add { background: color-mix(in srgb, #22c55e 12%, transparent); }
+  .diff-line.remove { background: color-mix(in srgb, #ef4444 14%, transparent); }
+  .diff-line.hunk { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text-tertiary); }
+  .diff-line.binary { color: var(--text-tertiary); font-style: italic; }
+
+  .diff-gutter {
+    padding-right: 4px;
+    text-align: right;
+    color: var(--text-tertiary);
+    user-select: none;
+    border-right: 1px solid color-mix(in srgb, var(--divider) 50%, transparent);
+  }
+
+  .diff-sigil {
+    text-align: center;
+    color: var(--text-tertiary);
+    user-select: none;
+  }
+
+  .diff-line.add .diff-sigil { color: #16a34a; }
+  .diff-line.remove .diff-sigil { color: #dc2626; }
+
+  .diff-content {
+    padding-left: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    user-select: text;
+  }
+
+  /* Vibrancy: own island, no left border needed */
+  :global([data-vibrancy]) .preview-pane {
+    background: transparent;
+    border-left: none;
   }
 </style>

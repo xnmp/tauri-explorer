@@ -27,6 +27,10 @@ if (!allModes) {
   );
 }
 
+/** The Ctrl/Cmd modifier for multi-select clicks: Meta on macOS, Control elsewhere. */
+export const MULTI_SELECT_MODIFIER: "Meta" | "Control" =
+  process.platform === "darwin" ? "Meta" : "Control";
+
 /** Home URL for most tests */
 export const HOME_URL = "/?path=/home/user";
 
@@ -49,7 +53,7 @@ export async function switchViewMode(page: Page, mode: ViewMode) {
 
   // Clear selection first — view options only appear in background context menu
   await page.keyboard.press("Escape");
-  await page.waitForTimeout(50);
+  await page.locator(".entry-item.selected").first().waitFor({ state: "detached", timeout: 2000 }).catch(() => {});
 
   // Right-click in the middle of the content area so the context menu
   // has room to render fully (it contains Paste, New folder, Open in
@@ -67,10 +71,13 @@ export async function switchViewMode(page: Page, mode: ViewMode) {
   const viewOption = contextMenu.locator(`.menu-item:has-text("${modeLabels[mode]}")`);
   await viewOption.click();
 
-  // Wait for re-render
-  await page.waitForTimeout(200);
-
-  // Wait for entries to appear in the new view mode
+  // Wait for the new view container, then for entries to appear in it
+  const viewSelector: Record<ViewMode, string> = {
+    details: ".details-view",
+    list: ".list-view",
+    tiles: ".tiles-view",
+  };
+  await page.locator(viewSelector[mode]).waitFor({ timeout: 3000 });
   await page.locator(".entry-item").first().waitFor({ timeout: 3000 });
 }
 

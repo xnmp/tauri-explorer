@@ -12,7 +12,6 @@ test.describe("Recent items count setting", () => {
 
     // Open settings
     await page.keyboard.press("Control+,");
-    await page.waitForTimeout(500);
 
     // Check for the setting
     await expect(page.locator("text=Recent Items in Sidebar")).toBeVisible();

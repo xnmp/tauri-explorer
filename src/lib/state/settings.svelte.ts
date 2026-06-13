@@ -7,9 +7,10 @@
  * localStorage as synchronous fallback for immediate state.
  */
 
-import { loadPersisted, savePersisted } from "./persisted";
-import { readConfigFile, writeConfigFile } from "$lib/api/files";
+import { loadPersisted, savePersisted, writeConfigQueued } from "./persisted";
+import { readConfigFile } from "$lib/api/files";
 import type { ViewMode } from "./types";
+import type { Command, CommandCategory } from "./commands.svelte";
 
 /** Which navigation bar buttons to display */
 export interface NavBarButtons {
@@ -21,7 +22,7 @@ export interface NavBarButtons {
 
 export type IconTheme = "default" | "material" | "minimal";
 
-export type ThumbnailSize = "small" | "medium" | "large";
+export type ThumbnailSize = "small" | "medium" | "large" | "xlarge";
 
 export interface ThumbnailSizeConfig {
   displaySize: number;
@@ -31,9 +32,10 @@ export interface ThumbnailSizeConfig {
 }
 
 export const THUMBNAIL_SIZE_CONFIG: Record<ThumbnailSize, ThumbnailSizeConfig> = {
-  small:  { displaySize: 64,  genSize: 128, quality: 80, gridMinWidth: 108 },
-  medium: { displaySize: 96,  genSize: 192, quality: 85, gridMinWidth: 140 },
-  large:  { displaySize: 128, genSize: 256, quality: 90, gridMinWidth: 172 },
+  small:  { displaySize: 48,  genSize: 96,  quality: 75, gridMinWidth: 84  },
+  medium: { displaySize: 64,  genSize: 128, quality: 80, gridMinWidth: 108 },
+  large:  { displaySize: 96,  genSize: 192, quality: 85, gridMinWidth: 140 },
+  xlarge: { displaySize: 128, genSize: 256, quality: 90, gridMinWidth: 172 },
 };
 
 /** Which columns are visible in details view (name is always shown) */
@@ -69,8 +71,16 @@ export interface Settings {
   recentItemsCount: number; // number of recent locations in sidebar (0 = hidden)
   millerLayers: number; // 0-3, number of ancestor columns in miller view
   millerLayersPreferred: number; // 1-3, remembered layer count for toggle
+  millerHideEmpty: boolean; // hide folders containing no visible entries from miller columns
+  showManuallyHidden: boolean; // reveal manually-hidden entries (dimmed)
+  showScmPanel: boolean; // show SCM panel (independent of sidebar)
+  scmTreeView: boolean; // group SCM file rows by folder hierarchy
   quickOpenDebug: boolean; // show score breakdown in QuickOpen results
   geminiApiKey: string; // Gemini API key for Nano Banana image editing
+  integratedTitleBar: boolean; // macOS: render tabs in title bar with overlay traffic lights
+  macOsVibrancy: boolean; // macOS: native window vibrancy (translucent frosted glass), requires restart
+  vibrancyBlur: boolean; // macOS: enable native blur behind vibrancy (off = theme background, no blur)
+  yaziNavigation: boolean; // left/right arrows navigate up/into folders in details/list view
 }
 
 const MIN_ZOOM = 50;
@@ -108,8 +118,16 @@ const DEFAULT_SETTINGS: Settings = {
   recentItemsCount: 6,
   millerLayers: 0,
   millerLayersPreferred: 2,
+  millerHideEmpty: false,
+  showManuallyHidden: false,
+  showScmPanel: false,
+  scmTreeView: false,
   quickOpenDebug: false,
   geminiApiKey: "",
+  integratedTitleBar: false,
+  macOsVibrancy: false,
+  vibrancyBlur: true,
+  yaziNavigation: true,
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -122,9 +140,7 @@ function loadSettings(): Settings {
 
 function saveSettings(settings: Settings): void {
   savePersisted(STORAGE_KEY, settings);
-  writeConfigFile(CONFIG_FILENAME, JSON.stringify(settings, null, 2)).catch((err) => {
-    console.warn("Failed to save settings to config file:", err);
-  });
+  writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2));
 }
 
 function createSettingsStore() {
@@ -152,7 +168,7 @@ function createSettingsStore() {
     // If config file was empty but localStorage has data, migrate
     const saved = loadPersisted<Partial<Settings>>(STORAGE_KEY, {});
     if (Object.keys(saved).length > 0) {
-      writeConfigFile(CONFIG_FILENAME, JSON.stringify(settings, null, 2)).catch(() => {});
+      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2));
     }
   }
 
@@ -179,6 +195,10 @@ function createSettingsStore() {
 
   function togglePreviewPane(): void {
     update({ showPreviewPane: !settings.showPreviewPane });
+  }
+
+  function openPreviewPane(): void {
+    if (!settings.showPreviewPane) update({ showPreviewPane: true });
   }
 
   function toggleConfirmDelete(): void {
@@ -290,6 +310,31 @@ function createSettingsStore() {
       if (clamped > 0) updates.millerLayersPreferred = clamped;
       update(updates);
     },
+    get millerHideEmpty() {
+      return settings.millerHideEmpty;
+    },
+    toggleMillerHideEmpty(): void {
+      update({ millerHideEmpty: !settings.millerHideEmpty });
+    },
+    get showManuallyHidden() {
+      return settings.showManuallyHidden;
+    },
+    toggleShowManuallyHidden(): void {
+      update({ showManuallyHidden: !settings.showManuallyHidden });
+    },
+    get showScmPanel() {
+      return settings.showScmPanel;
+    },
+    toggleScmPanel(): void {
+      const opening = !settings.showScmPanel;
+      update({ showScmPanel: opening, ...(opening && !settings.showGitStatus ? { showGitStatus: true } : {}) });
+    },
+    get scmTreeView() {
+      return settings.scmTreeView;
+    },
+    toggleScmTreeView(): void {
+      update({ scmTreeView: !settings.scmTreeView });
+    },
     get quickOpenDebug() {
       return settings.quickOpenDebug;
     },
@@ -301,6 +346,18 @@ function createSettingsStore() {
     },
     setGeminiApiKey(key: string): void {
       update({ geminiApiKey: key });
+    },
+    get integratedTitleBar() {
+      return settings.integratedTitleBar;
+    },
+    get macOsVibrancy() {
+      return settings.macOsVibrancy;
+    },
+    get vibrancyBlur() {
+      return settings.vibrancyBlur;
+    },
+    get yaziNavigation() {
+      return settings.yaziNavigation;
     },
     toggleMillerColumns(): void {
       const on = settings.millerLayers > 0;
@@ -355,6 +412,7 @@ function createSettingsStore() {
     toggleWindowControls,
     toggleAddressBar,
     togglePreviewPane,
+    openPreviewPane,
     toggleConfirmDelete,
     zoomIn,
     zoomOut,
@@ -364,3 +422,71 @@ function createSettingsStore() {
 }
 
 export const settingsStore = createSettingsStore();
+
+// --- Toggleable settings metadata for auto-registration in command palette ---
+
+export interface ToggleSettingMeta {
+  key: keyof Settings;
+  id?: string;
+  label: string;
+  category?: CommandCategory;
+  shortcut?: string;
+  when?: () => boolean;
+  handler?: () => void;
+}
+
+export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
+  { key: "showSidebar", id: "view.toggleSidebar", label: "Toggle Sidebar" },
+  { key: "showHidden", id: "view.toggleHidden", label: "Toggle Hidden Files", shortcut: "Ctrl+H" },
+  { key: "showWindowControls", id: "view.toggleWindowControls", label: "Toggle Window Controls" },
+  { key: "showAddressBar", id: "view.toggleAddressBar", label: "Toggle Address Bar", shortcut: "Alt+M D" },
+  {
+    key: "showPreviewPane",
+    id: "view.togglePreviewPane",
+    label: "Toggle Preview Pane",
+    shortcut: "Space",
+    when: () => {
+      const active = document.activeElement;
+      const tag = active?.tagName;
+      return tag !== "INPUT" && tag !== "TEXTAREA" && !(active as HTMLElement)?.isContentEditable;
+    },
+  },
+  { key: "showStatusBar", id: "view.toggleStatusBar", label: "Toggle Status Bar", shortcut: "Alt+M U" },
+  { key: "showGitStatus", id: "view.toggleGitStatus", label: "Toggle Git Status Indicators" },
+  { key: "millerHideEmpty", id: "view.toggleMillerHideEmpty", label: "Miller Columns: Toggle Hide Empty Folders" },
+  { key: "showManuallyHidden", id: "view.toggleManuallyHidden", label: "Toggle Manually Hidden Files" },
+  {
+    key: "showScmPanel",
+    id: "view.toggleScmPanel",
+    label: "Toggle Source Control Panel",
+    shortcut: "Alt+M G",
+    handler: () => {
+      if (settingsStore.showScmPanel) {
+        import("./scm.svelte").then((m) => m.scmStore.closeDiff());
+      }
+      settingsStore.toggleScmPanel();
+    },
+  },
+  { key: "scmTreeView", id: "view.toggleScmTreeView", label: "Toggle SCM Tree View" },
+  { key: "confirmDelete", id: "view.toggleConfirmDelete", label: "Toggle Confirm on Delete" },
+  { key: "quickOpenDebug", id: "view.toggleQuickOpenDebug", label: "Toggle Quick Open Debug Scores" },
+  { key: "yaziNavigation", label: "Toggle Yazi Navigation" },
+  { key: "integratedTitleBar", label: "Toggle Integrated Title Bar" },
+  { key: "macOsVibrancy", label: "Toggle macOS Vibrancy" },
+  { key: "vibrancyBlur", label: "Toggle Vibrancy Blur" },
+];
+
+export function generateToggleCommands(): Command[] {
+  return TOGGLE_SETTINGS.map((meta) => ({
+    id: meta.id ?? `setting.toggle.${meta.key}`,
+    label: meta.label,
+    category: (meta.category ?? "view") as CommandCategory,
+    shortcut: meta.shortcut,
+    when: meta.when,
+    handler:
+      meta.handler ??
+      (() => {
+        settingsStore.update({ [meta.key]: !settingsStore.state[meta.key] });
+      }),
+  }));
+}

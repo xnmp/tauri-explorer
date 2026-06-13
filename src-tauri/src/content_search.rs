@@ -3,7 +3,7 @@
 
 use crate::error::AppError;
 use grep_matcher::Matcher;
-use grep_regex::RegexMatcherBuilder;
+use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::sinks::UTF8;
 use grep_searcher::{BinaryDetection, MmapChoice, SearcherBuilder};
 use ignore::{WalkBuilder, WalkState};
@@ -24,11 +24,14 @@ const MAX_LINE_LENGTH: usize = 300;
 pub struct ContentMatch {
     #[serde(rename = "lineNumber")]
     pub line_number: u64,
+    /// 1-based column in UTF-16 code units (matches JS string indexing).
     pub column: u64,
     #[serde(rename = "lineContent")]
     pub line_content: String,
+    /// Match start within `line_content`, in UTF-16 code units.
     #[serde(rename = "matchStart")]
     pub match_start: usize,
+    /// Match end (exclusive) within `line_content`, in UTF-16 code units.
     #[serde(rename = "matchEnd")]
     pub match_end: usize,
 }
@@ -53,15 +56,19 @@ pub struct ContentSearchEvent {
     pub files_searched: usize,
     #[serde(rename = "totalMatches")]
     pub total_matches: usize,
+    /// Error message if the search failed mid-run; absent on success.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Registry for active content searches
-static CONTENT_SEARCHES: crate::task_registry::TaskRegistry = crate::task_registry::TaskRegistry::new();
+static CONTENT_SEARCHES: crate::task_registry::TaskRegistry =
+    crate::task_registry::TaskRegistry::new();
 
 /// Start a streaming content search using ripgrep.
 /// Returns search ID immediately, emits results via 'content-search-results' events.
 #[tauri::command]
-pub fn start_content_search(
+pub async fn start_content_search(
     app: AppHandle,
     query: String,
     root: String,
@@ -79,65 +86,23 @@ pub fn start_content_search(
         return Err(AppError::InvalidPath(format!("Not a directory: {}", root)));
     }
 
-    log::debug!("start_content_search: regex={} case_sensitive={} max={}", regex_mode, case_sensitive, max_results);
+    log::debug!(
+        "start_content_search: regex={} case_sensitive={} max={}",
+        regex_mode,
+        case_sensitive,
+        max_results
+    );
 
     if query.is_empty() {
         return Err(AppError::Other("Search query cannot be empty".into()));
     }
 
-    let (search_id, cancelled) = CONTENT_SEARCHES.start();
-    let max_results = max_results.min(5000).max(1);
-
-    // Spawn search in background thread
-    std::thread::spawn(move || {
-        let result = perform_content_search(
-            &app,
-            search_id,
-            &query,
-            &root_path,
-            case_sensitive,
-            regex_mode,
-            max_results,
-            &cancelled,
-        );
-
-        CONTENT_SEARCHES.cleanup(search_id);
-
-        if let Err(e) = result {
-            // Emit error event
-            let _ = app.emit(
-                "content-search-results",
-                ContentSearchEvent {
-                    search_id,
-                    results: vec![],
-                    done: true,
-                    files_searched: 0,
-                    total_matches: 0,
-                },
-            );
-            #[cfg(debug_assertions)]
-            eprintln!("Content search error: {}", e);
-        }
-    });
-
-    Ok(search_id)
-}
-
-fn perform_content_search(
-    app: &AppHandle,
-    search_id: u64,
-    query: &str,
-    root_path: &std::path::Path,
-    case_sensitive: bool,
-    regex_mode: bool,
-    max_results: usize,
-    cancelled: &Arc<AtomicBool>,
-) -> Result<(), AppError> {
-    // Build the regex matcher
+    // Build and validate the regex matcher BEFORE spawning so an invalid
+    // pattern surfaces as a command error instead of an empty result set.
     let pattern = if regex_mode {
-        query.to_string()
+        query
     } else {
-        regex::escape(query)
+        regex::escape(&query)
     };
 
     let matcher = RegexMatcherBuilder::new()
@@ -148,6 +113,145 @@ fn perform_content_search(
 
     let matcher = Arc::new(matcher);
 
+    let (search_id, cancelled) = CONTENT_SEARCHES.start();
+    let max_results = max_results.clamp(1, 5000);
+
+    // Spawn search in background thread
+    std::thread::spawn(move || {
+        let result = perform_content_search(
+            &app,
+            search_id,
+            matcher,
+            &root_path,
+            max_results,
+            &cancelled,
+        );
+
+        CONTENT_SEARCHES.cleanup(search_id);
+
+        if let Err(e) = result {
+            // Emit error event so the frontend can surface mid-run failures
+            let _ = app.emit(
+                "content-search-results",
+                ContentSearchEvent {
+                    search_id,
+                    results: vec![],
+                    done: true,
+                    files_searched: 0,
+                    total_matches: 0,
+                    error: Some(e.to_string()),
+                },
+            );
+            #[cfg(debug_assertions)]
+            eprintln!("Content search error: {}", e);
+        }
+    });
+
+    Ok(search_id)
+}
+
+/// Incrementally converts byte offsets to UTF-16 code-unit offsets.
+/// Offsets must be fed in non-decreasing order; the cursor carries its
+/// position so a match-dense line is scanned once instead of once per offset.
+struct Utf16Cursor<'a> {
+    chars: std::str::Chars<'a>,
+    byte_pos: usize,
+    utf16_pos: usize,
+}
+
+impl<'a> Utf16Cursor<'a> {
+    fn new(s: &'a str) -> Self {
+        Self {
+            chars: s.chars(),
+            byte_pos: 0,
+            utf16_pos: 0,
+        }
+    }
+
+    /// UTF-16 offset for `byte_offset`. Clamps gracefully past end-of-string.
+    fn advance_to(&mut self, byte_offset: usize) -> usize {
+        while self.byte_pos < byte_offset {
+            match self.chars.next() {
+                Some(c) => {
+                    self.byte_pos += c.len_utf8();
+                    self.utf16_pos += c.len_utf16();
+                }
+                None => break,
+            }
+        }
+        self.utf16_pos
+    }
+}
+
+/// Find all matches of `matcher` within a single line, appending up to
+/// `MAX_MATCHES_PER_FILE` entries to `file_matches`. Offsets in the produced
+/// `ContentMatch` are UTF-16 code units into `line_content` (JS indexing).
+fn collect_line_matches(
+    matcher: &RegexMatcher,
+    line_num: u64,
+    line: &str,
+    file_matches: &mut Vec<ContentMatch>,
+) {
+    // Trim/truncate once per line, not once per match: the display string is
+    // identical for every match on the line.
+    let trimmed = line.trim_end();
+    let (line_content, clamp_at) = if trimmed.len() > MAX_LINE_LENGTH {
+        let end = trimmed.floor_char_boundary(MAX_LINE_LENGTH);
+        (format!("{}...", &trimmed[..end]), end)
+    } else {
+        (trimmed.to_string(), trimmed.len())
+    };
+
+    // Matches arrive left-to-right, so byte→UTF-16 conversion can share one
+    // forward-only cursor across all matches on the line.
+    let mut utf16 = Utf16Cursor::new(&line_content);
+
+    let mut byte_offset = 0;
+    while let Ok(Some(m)) = matcher.find(&line.as_bytes()[byte_offset..]) {
+        if file_matches.len() >= MAX_MATCHES_PER_FILE {
+            return;
+        }
+
+        let match_start = byte_offset + m.start();
+        let match_end = byte_offset + m.end();
+
+        // Convert byte offsets (clamped to the truncation point) to UTF-16
+        // code units for the JS frontend.
+        let start_utf16 = utf16.advance_to(match_start.min(clamp_at));
+        let end_utf16 = utf16.advance_to(match_end.min(clamp_at));
+
+        file_matches.push(ContentMatch {
+            line_number: line_num,
+            column: (start_utf16 + 1) as u64,
+            line_content: line_content.clone(),
+            match_start: start_utf16,
+            match_end: end_utf16,
+        });
+
+        // Advance past the match; a zero-width match (e.g. `a*`, `()`) must
+        // advance by at least one character to avoid looping in place.
+        byte_offset = if match_end > byte_offset {
+            match_end
+        } else {
+            match line[byte_offset..].chars().next() {
+                Some(c) => byte_offset + c.len_utf8(),
+                None => break,
+            }
+        };
+        if byte_offset >= line.len() {
+            break;
+        }
+    }
+}
+
+fn perform_content_search(
+    app: &AppHandle,
+    search_id: u64,
+    matcher: Arc<RegexMatcher>,
+    root_path: &std::path::Path,
+    max_results: usize,
+    cancelled: &Arc<AtomicBool>,
+) -> Result<(), AppError> {
     // Shared counters for parallel access
     let files_searched = Arc::new(AtomicUsize::new(0));
     let total_matches = Arc::new(AtomicUsize::new(0));
@@ -181,10 +285,11 @@ fn perform_content_search(
             let total_matches = total_matches_clone.clone();
 
             // Create searcher once per worker thread: avoids buffer re-allocation per file.
-            // mmap avoids read syscalls; binary_detection::quit stops on first NUL byte.
+            // binary_detection::quit stops on first NUL byte. Memory maps are deliberately
+            // disabled: a file truncated mid-search would raise SIGBUS and kill the process.
             let mut searcher = SearcherBuilder::new()
                 .binary_detection(BinaryDetection::quit(b'\x00'))
-                .memory_map(unsafe { MmapChoice::auto() })
+                .memory_map(MmapChoice::never())
                 .build();
 
             Box::new(move |entry| {
@@ -206,7 +311,7 @@ fn perform_content_search(
                 let path = entry.path();
 
                 // Skip directories using file_type() (avoids extra stat syscall)
-                if entry.file_type().map_or(true, |ft| ft.is_dir()) {
+                if entry.file_type().is_none_or(|ft| ft.is_dir()) {
                     return WalkState::Continue;
                 }
 
@@ -229,43 +334,8 @@ fn perform_content_search(
                             return Ok(false);
                         }
 
-                        let mut byte_offset = 0;
-                        while let Ok(Some(m)) = matcher.find(&line.as_bytes()[byte_offset..]) {
-                            if file_matches.len() >= MAX_MATCHES_PER_FILE {
-                                return Ok(false);
-                            }
-
-                            let match_start = byte_offset + m.start();
-                            let match_end = byte_offset + m.end();
-
-                            // Truncate long lines before IPC serialization
-                            let trimmed = line.trim_end();
-                            let (line_content, clamped_start, clamped_end) =
-                                if trimmed.len() > MAX_LINE_LENGTH {
-                                    let end = trimmed.floor_char_boundary(MAX_LINE_LENGTH);
-                                    (
-                                        format!("{}...", &trimmed[..end]),
-                                        match_start.min(end),
-                                        match_end.min(end),
-                                    )
-                                } else {
-                                    (trimmed.to_string(), match_start, match_end)
-                                };
-
-                            file_matches.push(ContentMatch {
-                                line_number: line_num,
-                                column: (clamped_start + 1) as u64,
-                                line_content,
-                                match_start: clamped_start,
-                                match_end: clamped_end,
-                            });
-
-                            byte_offset = match_end;
-                            if byte_offset >= line.len() {
-                                break;
-                            }
-                        }
-                        Ok(true)
+                        collect_line_matches(matcher.as_ref(), line_num, line, &mut file_matches);
+                        Ok(file_matches.len() < MAX_MATCHES_PER_FILE)
                     }),
                 );
 
@@ -316,6 +386,7 @@ fn perform_content_search(
                     done: false,
                     files_searched: files_searched.load(Ordering::Relaxed),
                     total_matches: total_matches.load(Ordering::Relaxed),
+                    error: None,
                 },
             );
             last_emit = std::time::Instant::now();
@@ -337,6 +408,7 @@ fn perform_content_search(
                 done: true,
                 files_searched: files_searched.load(Ordering::Relaxed),
                 total_matches: total_matches.load(Ordering::Relaxed),
+                error: None,
             },
         );
     }
@@ -362,7 +434,7 @@ fn is_binary_file(path: &std::path::Path) -> bool {
 
 /// Cancel an active content search.
 #[tauri::command]
-pub fn cancel_content_search(search_id: u64) -> Result<(), AppError> {
+pub async fn cancel_content_search(search_id: u64) -> Result<(), AppError> {
     CONTENT_SEARCHES.cancel(search_id);
     Ok(())
 }
@@ -422,7 +494,7 @@ mod tests {
 
         let mut searcher = SearcherBuilder::new()
             .binary_detection(BinaryDetection::quit(b'\x00'))
-            .memory_map(unsafe { MmapChoice::auto() })
+            .memory_map(MmapChoice::never())
             .build();
 
         // Text file: should find matches
@@ -461,6 +533,78 @@ mod tests {
             let truncated = format!("{}...", &trimmed[..end]);
             assert_eq!(truncated.len(), MAX_LINE_LENGTH + 3); // 300 + "..."
         }
+    }
+
+    #[test]
+    fn test_utf16_offsets_for_non_ascii_line() {
+        let matcher = RegexMatcherBuilder::new()
+            .case_insensitive(false)
+            .line_terminator(Some(b'\n'))
+            .build("wörld")
+            .unwrap();
+
+        // "héllo " is 7 bytes (é = 2 bytes) but only 6 UTF-16 code units.
+        let mut matches = Vec::new();
+        collect_line_matches(&matcher, 1, "héllo wörld\n", &mut matches);
+
+        assert_eq!(matches.len(), 1);
+        let m = &matches[0];
+        assert_eq!(m.match_start, 6, "start must be UTF-16 units, not bytes");
+        assert_eq!(m.match_end, 11, "wörld is 5 UTF-16 units");
+        assert_eq!(m.column, 7);
+
+        // Offsets must slice the line correctly when treated as a JS string.
+        let utf16: Vec<u16> = m.line_content.encode_utf16().collect();
+        let highlighted = String::from_utf16(&utf16[m.match_start..m.match_end]).unwrap();
+        assert_eq!(highlighted, "wörld");
+    }
+
+    #[test]
+    fn test_utf16_offsets_for_multiple_matches_on_one_line() {
+        let matcher = RegexMatcherBuilder::new()
+            .case_insensitive(false)
+            .line_terminator(Some(b'\n'))
+            .build("ab")
+            .unwrap();
+
+        // Multi-byte chars between matches: the shared UTF-16 cursor must
+        // produce the same offsets as independent per-match conversion.
+        let mut matches = Vec::new();
+        collect_line_matches(&matcher, 1, "ab é ab 日 ab\n", &mut matches);
+
+        assert_eq!(matches.len(), 3);
+        for m in &matches {
+            let utf16: Vec<u16> = m.line_content.encode_utf16().collect();
+            let s = String::from_utf16(&utf16[m.match_start..m.match_end]).unwrap();
+            assert_eq!(s, "ab");
+        }
+        assert_eq!(matches[0].match_start, 0);
+        assert_eq!(matches[1].match_start, 5);
+        assert_eq!(matches[2].match_start, 10);
+    }
+
+    #[test]
+    fn test_zero_width_matches_advance() {
+        let matcher = RegexMatcherBuilder::new()
+            .case_insensitive(false)
+            .line_terminator(Some(b'\n'))
+            .build("a*")
+            .unwrap();
+
+        let mut matches = Vec::new();
+        collect_line_matches(&matcher, 1, "xyz\n", &mut matches);
+
+        // One zero-width match per position — not MAX_MATCHES_PER_FILE
+        // duplicates piled up at the same column.
+        assert!(
+            matches.len() <= 4,
+            "zero-width matches must advance, got {} matches",
+            matches.len()
+        );
+        let columns: Vec<u64> = matches.iter().map(|m| m.column).collect();
+        let mut deduped = columns.clone();
+        deduped.dedup();
+        assert_eq!(columns, deduped, "matches must not repeat a column");
     }
 
     #[test]

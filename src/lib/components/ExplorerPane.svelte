@@ -4,7 +4,8 @@
   Issue: tauri-explorer-auj, tauri-explorer-ldfx (window-level tabs)
 -->
 <script lang="ts">
-  import { setContext, tick, untrack } from "svelte";
+  import { tick, untrack } from "svelte";
+  import { setPaneIdContext } from "$lib/state/pane-context";
   import { createExplorerState } from "$lib/state/explorer.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import type { PaneId } from "$lib/state/types";
@@ -12,7 +13,6 @@
   import FileList from "./FileList.svelte";
   import MillerColumns from "./MillerColumns.svelte";
   import ContextMenu from "./ContextMenu.svelte";
-  import NewFolderDialog from "./NewFolderDialog.svelte";
   import DeleteDialog from "./DeleteDialog.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
@@ -24,16 +24,29 @@
 
   let { paneId }: Props = $props();
 
+  // paneId is a static literal per pane instance (see PaneContainer), so
+  // capturing it at init is safe. Consumed by GitStatusBadge to resolve the
+  // directory its entry is rendered in.
+  setPaneIdContext(untrack(() => paneId));
+
   // Get explorer from window tabs manager
   const paneExplorer = $derived(windowTabsManager.getExplorer(paneId) ?? createExplorerState());
 
-  // Provide explorer to child components via context (reactive via $derived)
-  $effect(() => {
-    setContext("pane-explorer", paneExplorer);
-  });
-  setContext("pane-id", paneId);
-
   let paneRef = $state<HTMLElement | null>(null);
+
+  // All keyboard navigation is handled at window level so it works regardless
+  // of focus state. Only the active pane responds.
+  $effect(() => {
+    if (!isActive) return;
+    function onWindowKeydown(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (dialogStore.activeDialog) return;
+      handleKeydown(e);
+    }
+    window.addEventListener("keydown", onWindowKeydown);
+    return () => window.removeEventListener("keydown", onWindowKeydown);
+  });
 
   // Fetch git status when directory changes and setting is enabled.
   // untrack the fetch call to avoid $state reads inside fetchForDirectory
@@ -66,6 +79,7 @@
     paneExplorer.onNavigate = focusSelectedAfterNav;
     return () => { paneExplorer.onNavigate = null; };
   });
+
 
   const isActive = $derived(windowTabsManager.activePaneId === paneId);
   const dualPaneEnabled = $derived(windowTabsManager.dualPaneEnabled);
@@ -114,6 +128,17 @@
     return isVertical ? 1 : 0;
   }
 
+  function isYaziNavView(): boolean {
+    if (!settingsStore.yaziNavigation) return false;
+    if (paneExplorer.viewMode === "details") return true;
+    if (paneExplorer.viewMode === "list") {
+      const gridEl = paneRef?.querySelector<HTMLElement>(".list-view");
+      const cols = gridEl ? parseInt(getComputedStyle(gridEl).getPropertyValue("--list-columns")) || 1 : 1;
+      return cols === 1;
+    }
+    return false;
+  }
+
   function handleKeydown(event: KeyboardEvent): void {
     // Don't process keyboard shortcuts when a dialog is open
     if (dialogStore.activeDialog) return;
@@ -129,8 +154,8 @@
     if (isArrow) {
       event.preventDefault();
 
-      // Miller + details: ArrowLeft always goes up (even in empty folders)
-      if (settingsStore.millerLayers > 0 && paneExplorer.viewMode === "details" && event.key === "ArrowLeft") {
+      // ArrowLeft goes up one level in details view, or list view with single column (yazi-style)
+      if (event.key === "ArrowLeft" && isYaziNavView()) {
         paneExplorer.goUp();
         return;
       }
@@ -153,8 +178,8 @@
         return;
       }
 
-      // Miller + details: ArrowRight on a folder navigates into it
-      if (settingsStore.millerLayers > 0 && paneExplorer.viewMode === "details" && event.key === "ArrowRight") {
+      // ArrowRight on a folder navigates into it (yazi-style)
+      if (event.key === "ArrowRight" && isYaziNavView()) {
         if (selected?.kind === "directory") {
           paneExplorer.navigateTo(selected.path);
           return;
@@ -185,9 +210,9 @@
         }
       });
     }
-    // PageUp/PageDown: jump by PAGE_STEP items
+    // PageUp/PageDown: jump by PAGE_STEP items (skip if any modifier held — likely a command shortcut)
     const PAGE_STEP = 8;
-    if (event.key === "PageUp" || event.key === "PageDown") {
+    if ((event.key === "PageUp" || event.key === "PageDown") && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault();
       const entries = paneExplorer.displayEntries;
       if (entries.length === 0) return;
@@ -232,18 +257,16 @@
   tabindex="0"
   onfocus={handleFocus}
   onclick={handleFocus}
-  onkeydown={handleKeydown}
 >
   {#if paneExplorer}
     <NavigationBar explorer={paneExplorer} />
     <div class="pane-content">
-      {#if settingsStore.millerLayers > 0}
+      {#if settingsStore.millerLayers > 0 && !(settingsStore.macOsVibrancy && !settingsStore.showSidebar)}
         <MillerColumns explorer={paneExplorer} />
       {/if}
       <FileList explorer={paneExplorer} />
     </div>
     <ContextMenu explorer={paneExplorer} />
-    <NewFolderDialog explorer={paneExplorer} />
     <DeleteDialog explorer={paneExplorer} />
   {/if}
 </section>
@@ -256,7 +279,7 @@
     min-width: 0;
     overflow: hidden;
     background: color-mix(in srgb, var(--background-card) calc(var(--content-opacity, 1) * 100%), transparent);
-    border-radius: var(--radius-md);
+    border-radius: 0;
     border: 1px solid transparent;
     transition:
       border-color var(--transition-fast),
@@ -290,5 +313,13 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
+  }
+
+  /* Vibrancy: flatten inside the island */
+  :global([data-vibrancy]) .explorer-pane {
+    background: transparent;
+    border-radius: 0;
+    border-color: transparent;
+    box-shadow: none;
   }
 </style>

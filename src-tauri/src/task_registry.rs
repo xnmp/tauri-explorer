@@ -15,6 +15,12 @@ pub struct TaskRegistry {
     active: OnceLock<Mutex<HashMap<u64, Arc<AtomicBool>>>>,
 }
 
+impl Default for TaskRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TaskRegistry {
     pub const fn new() -> Self {
         Self {
@@ -32,19 +38,54 @@ impl TaskRegistry {
     pub fn start(&self) -> (u64, Arc<AtomicBool>) {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let cancelled = Arc::new(AtomicBool::new(false));
-        self.active_map().lock().unwrap().insert(id, cancelled.clone());
+        self.active_map()
+            .lock()
+            .unwrap_or_else(|poisoned| {
+                log::error!("task registry lock poisoned on start, recovering");
+                poisoned.into_inner()
+            })
+            .insert(id, cancelled.clone());
         (id, cancelled)
+    }
+
+    /// Register a task under a caller-chosen ID. Used when the client
+    /// generates the job id itself so it can cancel before the command
+    /// returns (e.g. zip compression progress).
+    pub fn start_with_id(&self, id: u64) -> Arc<AtomicBool> {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.active_map()
+            .lock()
+            .unwrap_or_else(|poisoned| {
+                log::error!("task registry lock poisoned on start_with_id, recovering");
+                poisoned.into_inner()
+            })
+            .insert(id, cancelled.clone());
+        cancelled
     }
 
     /// Cancel a task by ID. No-op if the task doesn't exist or already completed.
     pub fn cancel(&self, id: u64) {
-        if let Some(flag) = self.active_map().lock().unwrap().get(&id) {
+        if let Some(flag) = self
+            .active_map()
+            .lock()
+            .unwrap_or_else(|poisoned| {
+                log::error!("task registry lock poisoned on cancel, recovering");
+                poisoned.into_inner()
+            })
+            .get(&id)
+        {
             flag.store(true, Ordering::Relaxed);
         }
     }
 
     /// Remove a completed task from the registry.
     pub fn cleanup(&self, id: u64) {
-        self.active_map().lock().unwrap().remove(&id);
+        self.active_map()
+            .lock()
+            .unwrap_or_else(|poisoned| {
+                log::error!("task registry lock poisoned on cleanup, recovering");
+                poisoned.into_inner()
+            })
+            .remove(&id);
     }
 }

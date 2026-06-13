@@ -4,14 +4,15 @@
   Issue: tauri-u00y, tauri-nxfi
 -->
 <script lang="ts">
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { tick, onMount } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { fetchDirectory, getHomeDirectory } from "$lib/api/files";
+  import { getHomeDirectory } from "$lib/api/files";
   import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
-  import { getPaneNavigationContext } from "$lib/state/pane-context";
-  import type { FileEntry } from "$lib/domain/file";
-  import { normalizePathInput } from "$lib/domain/path";
+  import { truncateBreadcrumbs } from "$lib/domain/breadcrumb-truncation";
+  import BreadcrumbAutocomplete from "./BreadcrumbAutocomplete.svelte";
+  import CaretPicker from "./CaretPicker.svelte";
 
   interface Props {
     explorer: ExplorerInstance;
@@ -48,183 +49,76 @@
     isUnderHome ? explorer.breadcrumbs.slice(homeParts.length) : explorer.breadcrumbs
   );
 
+  // Measurement-based breadcrumb truncation using pretext for text width calculation
+  let breadcrumbsEl: HTMLElement | undefined = $state();
+  let containerWidth = $state(0);
+
+  $effect(() => {
+    if (!breadcrumbsEl) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        containerWidth = entry.contentRect.width;
+      }
+    });
+    ro.observe(breadcrumbsEl);
+    return () => ro.disconnect();
+  });
+
+  const displayBreadcrumbs = $derived(truncateBreadcrumbs(visibleBreadcrumbs, containerWidth));
+
+  // Path editing toggle
   let editingPath = $state(false);
-  let editedPath = $state("");
-  let pathInputRef: HTMLInputElement | null = null;
 
-  // Autocomplete state
-  let suggestions = $state<FileEntry[]>([]);
-  let selectedIndex = $state(-1);
-  let showSuggestions = $state(false);
-  let fetchGeneration = 0; // Discard stale fetches
+  function startPathEdit() {
+    editingPath = true;
+  }
 
-  // Caret picker state - shows subdirectories when clicking a breadcrumb separator
+  function cancelPathEdit() {
+    editingPath = false;
+  }
+
+  function handleNavigate(path: string) {
+    editingPath = false;
+    explorer.navigateTo(path);
+  }
+
+  /** Resolve the directory the caret before crumb `index` should list.
+   * When the preceding crumb is the truncation ellipsis (path === null) the
+   * real parent is hidden, so derive it from the crumb's own path — breadcrumb
+   * paths are accumulated prefixes (Windows separators tolerated). */
+  function resolveCaretParent(index: number): { path: string; name: string | null } {
+    const fallback = { path: isUnderHome && homeDir ? homeDir : rootPath, name: null };
+    const prev = displayBreadcrumbs[index - 1];
+    if (!prev) return fallback;
+    if (prev.path !== null) return { path: prev.path, name: prev.name };
+    const own = displayBreadcrumbs[index].path!;
+    const sepIdx = Math.max(own.lastIndexOf("/"), own.lastIndexOf("\\"));
+    if (sepIdx <= 0) return fallback;
+    const parent = own.substring(0, sepIdx);
+    return { path: /^[A-Za-z]:$/.test(parent) ? `${parent}\\` : parent, name: null };
+  }
+
+  // Caret picker state
   let caretPickerPath = $state<string | null>(null);
-  let caretPickerDirs = $state<FileEntry[]>([]);
   let caretPickerEl = $state<HTMLElement | null>(null);
 
-  async function openCaretPicker(parentPath: string, el: HTMLElement) {
+  function openCaretPicker(parentPath: string, el: HTMLElement) {
     if (caretPickerPath === parentPath) {
       closeCaretPicker();
       return;
     }
     caretPickerPath = parentPath;
     caretPickerEl = el;
-    caretPickerDirs = [];
-    const result = await fetchDirectory(parentPath);
-    if (result.ok && caretPickerPath === parentPath) {
-      caretPickerDirs = result.data.entries.filter((e) => e.kind === "directory");
-    }
   }
 
   function closeCaretPicker() {
     caretPickerPath = null;
-    caretPickerDirs = [];
     caretPickerEl = null;
   }
 
   function navigateFromCaret(path: string) {
     closeCaretPicker();
     explorer.navigateTo(path);
-  }
-
-  function startPathEdit() {
-    editedPath = explorer.currentPath;
-    editingPath = true;
-    suggestions = [];
-    showSuggestions = false;
-    selectedIndex = -1;
-    tick().then(() => pathInputRef?.select());
-  }
-
-  function cancelPathEdit() {
-    editingPath = false;
-    editedPath = "";
-    suggestions = [];
-    showSuggestions = false;
-  }
-
-  /** Expand leading ~ to home directory path */
-  function expandTilde(path: string): string {
-    if (!homeDir) return path;
-    if (path === "~") return homeDir;
-    if (path.startsWith("~/")) return homeDir + path.slice(1);
-    return path;
-  }
-
-  function confirmPathEdit() {
-    const trimmed = editedPath.trim();
-    if (trimmed) {
-      explorer.navigateTo(expandTilde(normalizePathInput(trimmed)));
-    }
-    editingPath = false;
-    editedPath = "";
-    suggestions = [];
-    showSuggestions = false;
-  }
-
-  /** Parse typed path into parent directory and name prefix */
-  function parsePathInput(input: string): { parentDir: string; prefix: string } {
-    const expanded = expandTilde(input);
-    if (!expanded || expanded === "/") return { parentDir: "/", prefix: "" };
-    // If path ends with /, list contents of that directory
-    if (expanded.endsWith("/")) return { parentDir: expanded, prefix: "" };
-    const lastSlash = expanded.lastIndexOf("/");
-    if (lastSlash < 0) return { parentDir: "/", prefix: expanded };
-    return {
-      parentDir: expanded.substring(0, lastSlash + 1),
-      prefix: expanded.substring(lastSlash + 1),
-    };
-  }
-
-  /** Fetch autocomplete suggestions for the current input */
-  async function fetchSuggestions(): Promise<void> {
-    const gen = ++fetchGeneration;
-    const { parentDir, prefix } = parsePathInput(editedPath);
-
-    const result = await fetchDirectory(parentDir);
-    if (gen !== fetchGeneration) return; // Stale
-
-    if (!result.ok) {
-      suggestions = [];
-      showSuggestions = false;
-      return;
-    }
-
-    const lowerPrefix = prefix.toLowerCase();
-    // Address bar navigates to directories — only show folders in autocomplete
-    const filtered = result.data.entries
-      .filter((e) => e.kind === "directory" && e.name.toLowerCase().startsWith(lowerPrefix))
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .slice(0, 12);
-
-    suggestions = filtered;
-    selectedIndex = filtered.length > 0 ? 0 : -1;
-    showSuggestions = filtered.length > 0;
-  }
-
-  /** Apply a suggestion to the input */
-  function applySuggestion(entry: FileEntry): void {
-    editedPath = entry.path + (entry.kind === "directory" ? "/" : "");
-    suggestions = [];
-    showSuggestions = false;
-    selectedIndex = -1;
-    // If it's a directory, fetch next level
-    if (entry.kind === "directory") {
-      fetchSuggestions();
-    }
-  }
-
-  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
-
-  function handleInput(): void {
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(fetchSuggestions, 150);
-  }
-
-  function handlePathKeydown(event: KeyboardEvent) {
-    if (showSuggestions && suggestions.length > 0) {
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        selectedIndex = (selectedIndex + 1) % suggestions.length;
-        return;
-      }
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        selectedIndex = selectedIndex <= 0 ? suggestions.length - 1 : selectedIndex - 1;
-        return;
-      }
-      if (event.key === "Tab") {
-        event.preventDefault();
-        const target = selectedIndex >= 0 ? suggestions[selectedIndex] : suggestions[0];
-        if (target) applySuggestion(target);
-        return;
-      }
-    }
-
-    if (event.key === "Enter") {
-      event.preventDefault();
-      if (showSuggestions && selectedIndex >= 0) {
-        applySuggestion(suggestions[selectedIndex]);
-      } else {
-        confirmPathEdit();
-      }
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      if (showSuggestions) {
-        suggestions = [];
-        showSuggestions = false;
-      } else {
-        cancelPathEdit();
-      }
-    }
-  }
-
-  function handleBlur(event: FocusEvent) {
-    // Don't cancel if clicking a suggestion
-    const related = event.relatedTarget as HTMLElement | null;
-    if (related?.closest(".suggestions-dropdown")) return;
-    cancelPathEdit();
   }
 
   // Filter input
@@ -252,7 +146,6 @@
   }
 
   // Breadcrumb drop target state
-  const paneNav = getPaneNavigationContext();
   let dropTargetCrumb = $state<string | null>(null);
 
   function handleCrumbDragOver(event: DragEvent, path: string): void {
@@ -276,7 +169,7 @@
       if (sourcePath === targetPath) continue;
       if (targetPath.startsWith(sourcePath + "/")) continue;
       await handleFileDrop(sourcePath, targetPath, false, {
-        onRefresh: () => paneNav?.refreshAllPanes(),
+        onRefresh: () => windowTabsManager.refreshAllPanes(),
       });
     }
   }
@@ -347,49 +240,14 @@
   {#if settingsStore.showAddressBar}
   <!-- svelte-ignore a11y_click_events_have_key_events -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="breadcrumbs-container" class:editing={editingPath} onclick={editingPath ? undefined : startPathEdit}>
+  <div class="breadcrumbs-container" class:editing={editingPath} onclick={editingPath ? undefined : startPathEdit} bind:this={breadcrumbsEl}>
     {#if editingPath}
-      <!-- Editable path input with autocomplete -->
-      <input
-        type="text"
-        class="path-input"
-        bind:value={editedPath}
-        bind:this={pathInputRef}
-        onkeydown={handlePathKeydown}
-        oninput={handleInput}
-        onblur={handleBlur}
-        placeholder="Enter path..."
-        autocomplete="off"
-        spellcheck="false"
+      <BreadcrumbAutocomplete
+        currentPath={explorer.currentPath}
+        {homeDir}
+        onNavigate={handleNavigate}
+        onCancel={cancelPathEdit}
       />
-      {#if showSuggestions && suggestions.length > 0}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="suggestions-dropdown" onmousedown={(e) => e.preventDefault()}>
-          {#each suggestions as entry, i (entry.path)}
-            <button
-              class="suggestion-item"
-              class:selected={i === selectedIndex}
-              class:directory={entry.kind === "directory"}
-              onmousedown={() => applySuggestion(entry)}
-              onmouseenter={() => { selectedIndex = i; }}
-            >
-              <span class="suggestion-icon">
-                {#if entry.kind === "directory"}
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                    <path d="M3 3.5C3 2.67 3.67 2 4.5 2H7L8.5 3.5H12.5C13.33 3.5 14 4.17 14 5V12C14 12.83 13.33 13.5 12.5 13.5H4.5C3.67 13.5 3 12.83 3 12V3.5Z" stroke="currentColor" stroke-width="1.2" fill="none"/>
-                  </svg>
-                {:else}
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                    <path d="M4 2H10L13 5V13C13 13.55 12.55 14 12 14H4C3.45 14 3 13.55 3 13V3C3 2.45 3.45 2 4 2Z" stroke="currentColor" stroke-width="1.2" fill="none"/>
-                    <path d="M10 2V5H13" stroke="currentColor" stroke-width="1.2"/>
-                  </svg>
-                {/if}
-              </span>
-              <span class="suggestion-name">{entry.name}</span>
-            </button>
-          {/each}
-        </div>
-      {/if}
     {:else}
       <!-- Breadcrumb view -->
       {#if isUnderHome}
@@ -413,44 +271,47 @@
         </button>
       {/if}
 
-      {#each visibleBreadcrumbs as segment, i (segment.path)}
-        {@const parentOfSegment = i === 0 ? (isUnderHome ? homeDir! : rootPath) : visibleBreadcrumbs[i - 1].path}
-        <button
-          class="separator caret-btn"
-          class:caret-active={caretPickerPath === parentOfSegment}
-          aria-label="Show folders in {i === 0 ? 'parent' : visibleBreadcrumbs[i - 1].name}"
-          onclick={(e) => { e.stopPropagation(); openCaretPicker(parentOfSegment, e.currentTarget as HTMLElement); }}
-        >
-          <svg class="chevron-icon" width="12" height="12" viewBox="0 0 10 10" fill="none">
-            <path d="M3 2L6 5L3 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </button>
-        <button
-          class="crumb"
-          class:current={i === visibleBreadcrumbs.length - 1}
-          class:drop-target={dropTargetCrumb === segment.path}
-          onclick={(e) => { e.stopPropagation(); explorer.navigateTo(segment.path); }}
-          ondragover={(e) => handleCrumbDragOver(e, segment.path)}
-          ondragleave={handleCrumbDragLeave}
-          ondrop={(e) => handleCrumbDrop(e, segment.path)}
-        >
-          {segment.name}
-        </button>
+      {#each displayBreadcrumbs as segment, i (segment.path ?? "ellipsis")}
+        {#if segment.path === null}
+          <span class="separator">
+            <svg class="chevron-icon" width="12" height="12" viewBox="0 0 10 10" fill="none">
+              <path d="M3 2L6 5L3 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </span>
+          <span class="crumb ellipsis">{segment.name}</span>
+        {:else}
+          {@const caretParent = resolveCaretParent(i)}
+          <button
+            class="separator caret-btn"
+            class:caret-active={caretPickerPath === caretParent.path}
+            aria-label="Show folders in {caretParent.name ?? 'parent'}"
+            onclick={(e) => { e.stopPropagation(); openCaretPicker(caretParent.path, e.currentTarget as HTMLElement); }}
+          >
+            <svg class="chevron-icon" width="12" height="12" viewBox="0 0 10 10" fill="none">
+              <path d="M3 2L6 5L3 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <button
+            class="crumb"
+            class:current={i === displayBreadcrumbs.length - 1}
+            class:drop-target={dropTargetCrumb === segment.path}
+            onclick={(e) => { e.stopPropagation(); explorer.navigateTo(segment.path!); }}
+            ondragover={(e) => handleCrumbDragOver(e, segment.path!)}
+            ondragleave={handleCrumbDragLeave}
+            ondrop={(e) => handleCrumbDrop(e, segment.path!)}
+          >
+            {segment.name}
+          </button>
+        {/if}
       {/each}
 
-      {#if caretPickerPath && caretPickerDirs.length > 0}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="caret-picker-backdrop" onclick={(e) => { e.stopPropagation(); closeCaretPicker(); }} onkeydown={(e) => { if (e.key === "Escape") closeCaretPicker(); }}></div>
-        <div class="caret-picker" style="left: {caretPickerEl ? caretPickerEl.getBoundingClientRect().left : 0}px; top: {caretPickerEl ? caretPickerEl.getBoundingClientRect().bottom + 4 : 0}px;">
-          {#each caretPickerDirs as dir (dir.path)}
-            <button class="caret-picker-item" onclick={() => navigateFromCaret(dir.path)}>
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                <path d="M3 3.5C3 2.67 3.67 2 4.5 2H7L8.5 3.5H12.5C13.33 3.5 14 4.17 14 5V12C14 12.83 13.33 13.5 12.5 13.5H4.5C3.67 13.5 3 12.83 3 12V3.5Z" fill="var(--icon-folder, #ffb900)" opacity="0.8"/>
-              </svg>
-              {dir.name}
-            </button>
-          {/each}
-        </div>
+      {#if caretPickerPath && caretPickerEl}
+        <CaretPicker
+          parentPath={caretPickerPath}
+          anchorEl={caretPickerEl}
+          onNavigate={navigateFromCaret}
+          onClose={closeCaretPicker}
+        />
       {/if}
 
     {/if}
@@ -472,7 +333,10 @@
         onkeydown={handleFilterKeydown}
         placeholder="Filter..."
         autocomplete="off"
+        autocorrect="off"
+        autocapitalize="none"
         spellcheck="false"
+        name="filter-nofill"
       />
       {#if localFilter}
         <button class="filter-clear" onclick={() => { localFilter = ""; explorer.closeFilter(); }} aria-label="Clear filter">
@@ -588,23 +452,6 @@
     border-color: var(--address-bar-stroke-hover, rgba(255, 255, 255, 0.24));
   }
 
-  .path-input {
-    flex: 1;
-    height: 100%;
-    border: none;
-    background: transparent;
-    font-family: inherit;
-    font-size: 13px;
-    color: var(--text-primary);
-    caret-color: var(--accent);
-    outline: none;
-    padding: 0;
-  }
-
-  .path-input::placeholder {
-    color: var(--text-tertiary);
-  }
-
   .crumb {
     display: flex;
     align-items: center;
@@ -626,6 +473,12 @@
   .crumb.root {
     padding: 3px 4px;
     color: var(--text-tertiary);
+  }
+
+  .crumb.ellipsis {
+    opacity: 0.5;
+    cursor: default;
+    pointer-events: none;
   }
 
   .crumb:hover {
@@ -685,103 +538,6 @@
     width: 8px;
   }
 
-  /* Caret picker dropdown */
-  .caret-picker-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 99;
-  }
-
-  .caret-picker {
-    position: fixed;
-    background: var(--background-solid);
-    border: 1px solid var(--surface-stroke);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-flyout, 0 4px 16px rgba(0, 0, 0, 0.15));
-    max-height: 300px;
-    min-width: 180px;
-    overflow-y: auto;
-    z-index: 100;
-    padding: 4px;
-  }
-
-  .caret-picker-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 5px 8px;
-    background: transparent;
-    border: none;
-    border-radius: 4px;
-    font-family: inherit;
-    font-size: 12px;
-    color: var(--text-primary);
-    cursor: pointer;
-    text-align: left;
-    transition: background var(--transition-fast);
-  }
-
-  .caret-picker-item:hover {
-    background: var(--subtle-fill-secondary);
-  }
-
-  /* Autocomplete suggestions dropdown */
-  .suggestions-dropdown {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    margin-top: 2px;
-    background: var(--background-solid);
-    border: 1px solid var(--surface-stroke);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-flyout, 0 4px 16px rgba(0, 0, 0, 0.15));
-    max-height: 240px;
-    overflow-y: auto;
-    z-index: 100;
-    padding: 4px;
-  }
-
-  .suggestion-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 5px 8px;
-    background: transparent;
-    border: none;
-    border-radius: 4px;
-    font-family: inherit;
-    font-size: 12px;
-    color: var(--text-primary);
-    cursor: pointer;
-    text-align: left;
-    transition: background var(--transition-fast);
-  }
-
-  .suggestion-item:hover,
-  .suggestion-item.selected {
-    background: var(--subtle-fill-secondary);
-  }
-
-  .suggestion-icon {
-    display: flex;
-    align-items: center;
-    flex-shrink: 0;
-    color: var(--text-tertiary);
-  }
-
-  .suggestion-item.directory .suggestion-icon {
-    color: var(--accent);
-  }
-
-  .suggestion-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
   /* Filter bar */
   .filter-bar {
     display: flex;
@@ -837,5 +593,11 @@
   .filter-clear:hover {
     background: var(--subtle-fill-secondary);
     color: var(--text-primary);
+  }
+
+  /* Vibrancy: transparent inside island */
+  :global([data-vibrancy]) .navigation-bar {
+    background: transparent;
+    border-bottom-color: var(--vibrancy-island-stroke);
   }
 </style>

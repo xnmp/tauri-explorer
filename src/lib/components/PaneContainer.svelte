@@ -5,9 +5,7 @@
 -->
 <script lang="ts">
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { settingsStore } from "$lib/state/settings.svelte";
   import ExplorerPane from "./ExplorerPane.svelte";
-  import PreviewPane from "./PreviewPane.svelte";
 
   // Get layout state from active window tab
   const dualPaneEnabled = $derived(windowTabsManager.dualPaneEnabled);
@@ -34,10 +32,7 @@
   }
 </script>
 
-<svelte:window
-  onmousemove={handleResize}
-  onmouseup={endResize}
-/>
+<svelte:window onmousemove={handleResize} onmouseup={endResize} />
 
 <div
   class="pane-container"
@@ -67,9 +62,6 @@
     </div>
   {/if}
 
-  {#if settingsStore.showPreviewPane}
-    <PreviewPane />
-  {/if}
 </div>
 
 <style>
@@ -118,7 +110,9 @@
     border-right: 1px solid var(--divider);
     cursor: col-resize;
     flex-shrink: 0;
-    transition: background var(--transition-fast), border-color var(--transition-fast);
+    transition:
+      background var(--transition-fast),
+      border-color var(--transition-fast);
   }
 
   .pane-divider:hover {
@@ -144,5 +138,46 @@
   .pane-container.resizing .divider-handle {
     opacity: 1;
     background: var(--text-on-accent);
+  }
+
+  /* Vibrancy: main content island — top highlight drawn via ::before with tab gap */
+  :global([data-vibrancy]) .pane-container {
+    border-radius: var(--vibrancy-island-radius);
+    background: var(--vibrancy-island-bg);
+    border: 1px solid var(--vibrancy-island-stroke);
+    border-top: none;
+    box-shadow: var(--vibrancy-island-glow);
+    backdrop-filter: blur(12px) brightness(1.08) saturate(1.2);
+    -webkit-backdrop-filter: blur(12px) brightness(1.08) saturate(1.2);
+    position: relative;
+  }
+
+  :global([data-vibrancy]) .pane-container::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: var(--vibrancy-island-radius);
+    right: var(--vibrancy-island-radius);
+    height: 1px;
+    background: var(--vibrancy-island-stroke);
+    mask-image: linear-gradient(
+      to right,
+      white 0%,
+      white var(--tab-gap-left, 30%),
+      transparent var(--tab-gap-left, 30%),
+      transparent var(--tab-gap-right, 60%),
+      white var(--tab-gap-right, 60%),
+      white 100%
+    );
+    -webkit-mask-image: linear-gradient(
+      to right,
+      white 0%,
+      white var(--tab-gap-left, 30%),
+      transparent var(--tab-gap-left, 30%),
+      transparent var(--tab-gap-right, 60%),
+      white var(--tab-gap-right, 60%),
+      white 100%
+    );
+    pointer-events: none;
   }
 </style>

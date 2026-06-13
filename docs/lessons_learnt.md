@@ -4,6 +4,385 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## fix/sidebar-ux-polish (#101): Sidebar toggle, activity bar removal, X button styling
+
+**Key takeaways:**
+- With SCM as its own panel, the ActivityBar icon strip became redundant (only one sidebar view: "files"). Removing it and its 48px width reclaims horizontal space. The `sidebar-views.svelte.ts` registry still works but the single-view case no longer needs a tab switcher.
+- Toggle commands should check the current state before acting — `Alt+M B` was "show only" but users expect it to toggle (hide if already showing the same view).
+- CSS variable fallbacks like `var(--surface-primary, #fff)` can look wrong in dark themes. Use theme-aware variables (`var(--background-card-secondary)`) instead of hardcoded fallbacks.
+
+---
+
+## fix/git-scm-behavioral-fixes (#102): SCM badges, commit, diff toggle, race guard
+
+**Key takeaways:**
+- The `gitStatusStore` (file-list badges) and `scmStore` (SCM panel summary) are separate stores. After SCM operations (stage/commit/discard), calling `scmStore.refresh()` only updates the panel. Must also call `gitStatusStore.refresh()` to update file-list badges.
+- Implicit behavior (empty Enter → amend) is surprising and dangerous. Require an explicit signal (amend checkbox or Ctrl+Enter) before performing destructive operations like amend.
+- When toggling a panel off that owns a sub-view (diff view), close the sub-view too — otherwise it persists in the main content area.
+- Async `setActivePath` has a race condition: if called twice quickly, the first `detectRepo` result may apply after the second call already set a new path. Guard with `if (activePath !== path) return` after the await.
+
+---
+
+## feat/git-scm-tree-depth-lines (#97): SCM tree view depth guides and folder actions
+
+**Key takeaways:**
+- Svelte 5 `{#each { length: depth } as _, i}` is a clean way to render N elements without a helper array — used for depth guide `<span>` elements at each nesting level.
+- `collectPaths()` recursively gathers all descendant file paths from a `ScmTreeNode`, enabling folder-level batch stage/unstage without duplicating the traversal logic.
+- Absolutely positioned depth guides (`position: absolute; left: calc(i * 12px)`) inside relatively positioned rows give vertical connector lines that align across siblings without extra wrapper elements.
+- Folder action buttons use `opacity: 0` / `opacity: 1` on hover (not `display: none`) to avoid layout shift — the buttons occupy space but are invisible until hovered.
+
+---
+
+## feat/git-scm-own-panel (#96): SCM as independent panel instead of sidebar tab
+
+**Key takeaways:**
+- The sidebar view registry (`sidebar-views.svelte.ts`) is pluggable — removing SCM just means deleting its entry from `ALL_SIDEBAR_VIEWS`. The `ActivityBar` and `Sidebar` components automatically adapt.
+- The SCM panel is rendered between the sidebar and `PaneContainer` in `+page.svelte`, gated by `showGitStatus && showScmPanel`. This gives it its own resize handle and independent lifecycle.
+- E2E tests that opened SCM by clicking the activity bar tab now enable the panel via `localStorage` settings (`showGitStatus: true, showScmPanel: true`) and reload.
+- `Alt+M G` now toggles the SCM panel visibility. `Alt+M B` still focuses the sidebar (bookmarks/recent).
+## fix/zoom-drag-drop-marquee-broken (#88): Zoom breaks drag-drop hit detection, column resize, and marquee
+
+**Key takeaways — WebKitGTK coordinate spaces with CSS zoom:**
+
+Three APIs use three different coordinate spaces in WebKitGTK when CSS `zoom` is set on the document root:
+
+| API | Coordinate space |
+|---|---|
+| `MouseEvent.clientX/Y` | Raw viewport (physical pixels, NOT zoom-adjusted) |
+| `getBoundingClientRect()` | CSS pixels (zoom-adjusted) |
+| `elementFromPoint()` | Raw viewport (same as clientX, NOT zoom-adjusted) |
+| `position: fixed` CSS | CSS pixels (zoom-adjusted) |
+
+This means:
+- **Marquee (container-relative coords):** Divide `clientX` by zoom first, THEN subtract `containerRect.left`. The formula `(clientX - rect.left) / zoom` is wrong because it mixes coordinate spaces — `clientX` is physical but `rect.left` is CSS.
+- **`elementFromPoint` hit testing:** Pass raw `clientX/Y` directly — do NOT divide by zoom. The old code divided by zoom which shifted hit detection to the left.
+- **Tauri `onDragDropEvent` positions** are physical pixels: divide by DPR only for `elementFromPoint`, divide by DPR AND zoom for `position: fixed` CSS overlays.
+- **Ghost elements (`position: fixed`):** Divide `clientX` by zoom for correct visual positioning.
+- Column resize deltas (`event.clientX - resizeStartX`) are in viewport pixels but column widths are set in CSS pixels. Divide the delta by `getZoomFactor()`.
+- Use `getZoomFactor()` from `$lib/domain/zoom` consistently instead of inline `settingsStore.zoomLevel / 100` to avoid drift.
+- On Linux, drag-and-drop goes through Tauri native drag (`startExternalDrag` → `onDragDropEvent`), NOT the pointer-drag composable. The pointer-drag path is macOS-only. Debug the right code path.
+
+---
+
+## fix/git-scm-diff-blinking (#98): Diff view flashes "Loading diff…" on refresh
+
+**Key takeaways:**
+- `fetchDiff()` was setting `parsed = null` before re-fetching, which caused the template to briefly render the "Loading diff…" placeholder between every refresh. Fix: only show loading on initial fetch (when `parsed` is truly null). On subsequent refreshes, keep the old diff visible until the new one arrives.
+- The `$effect` depends on `scmStore.summary.staged.length` and `scmStore.summary.changes.length` so that stage/unstage operations trigger a re-fetch. This means ANY file's status change triggers a diff refetch, but the blink-free approach makes this invisible to the user.
+- When switching to a different file, a separate `$effect` resets `parsed = null` so the loading state appears correctly for the new file.
+
+---
+
+## fix/git-badges-not-updating (#93): Git status badges stale after file changes
+
+**Key takeaways:**
+- The `gitStatusStore` cached status per-directory and only fetched on navigation (via `fetchForDirectory`). Once cached, it never re-fetched for the same path. Fix: add a `refresh()` method that bypasses the cache, listen to `git-status-changed` events from the Rust watcher, and also refresh on `directory-changed` events. The watcher listener is initialized at the page level (not tied to the SCM panel).
+
+---
+
+## fix/miller-column-drop-empty-space (#84): Drop onto empty space in miller columns
+
+**Key takeaways:**
+- The miller column entries only had drop handlers on individual folder buttons (`col-entry`). Dropping onto empty space (the column background) had no effect. Fix: add `ondragover`, `ondragleave`, `ondrop` handlers on the `.miller-col` div itself, targeting the column's directory path. Use `relatedTarget` in `dragleave` to avoid flickering when moving between child elements.
+
+---
+
+## fix/thumbnails-reload-on-folder-change (#90): Watcher-triggered thumbnail reload
+
+**Key takeaways:**
+- Deleting or renaming a file triggers: (1) immediate local state mutation, then (2) filesystem watcher event → `refresh()`. Even with fingerprint comparison, the watcher refresh can replace entry objects and cause thumbnails to flash/reload. Fix: add a 1-second cooldown after local mutations during which silent (watcher-triggered) refreshes are suppressed, since the local state is already correct.
+
+---
+
+## fix/miller-column-contiguous-title (#89): Miller column header styling
+
+**Key takeaways:**
+- The Miller column headers had a `border-bottom` divider and separate `background` that visually detached them from the folder entries below. Removing the border and background, and reducing the entry gap from `4px` to `1px`, makes the headers flow contiguously into the folder list — matching the sidebar section header style.
+
+---
+
+## fix/git-scm-files-reflect-cwd (#95): Filter SCM to current directory
+
+**Key takeaways:**
+- Git status is repo-wide, but users expect the SCM sidebar to show only files relevant to the current directory. Added `filterToDir()` to the SCM store that filters entries by comparing their full path against `activePath`. The commit button still uses full (unfiltered) counts since commits are repo-wide.
+
+---
+
+## fix/git-scm-layout-shift-hover (#94): SCM row hover shift
+
+**Key takeaways:**
+- The action buttons in grid column 3 had `display: none/flex`, causing grid reflow on hover. Fix: position actions absolutely with `right: 4px` so they don't participate in grid layout. Add `position: relative` to `.row`.
+
+---
+
+## fix/git-scm-amend-enter-empty-message (#99): Enter key in commit textarea
+
+**Key takeaways:**
+- The commit textarea's `onkeydown` handler was missing `stopPropagation()`, which could allow Enter events to bubble to parent handlers. Both bare Enter and Ctrl+Enter should behave identically for committing.
+
+---
+
+## fix/disable-git-source-control-option (#92): Fully disable git SCM
+
+**Key takeaways:**
+- Renamed `SIDEBAR_VIEWS` to `ALL_SIDEBAR_VIEWS` and made `sidebarViewsStore.views` a `$derived` that filters out the SCM view when `showGitStatus` is false. The `effectiveActiveId` derived falls back to "files" when the active view is no longer visible.
+- Also gated the diff view in `ExplorerPane.svelte` on `showGitStatus` so disabling git while viewing a diff returns to the explorer.
+
+---
+
+## fix/recent-folders-hover-height (#91): X button overlay on long names
+
+**Key takeaways:**
+- The remove button (X) was in the flex flow, causing text wrapping when shown on hover for long folder names. Using `position: absolute` with `right: 8px` makes it overlay the text instead of pushing it.
+
+---
+
+## fix/command-palette-toggle-settings (#87): All toggleable settings in command palette
+
+**Key takeaways:**
+- Five boolean settings had toggle methods in the settings store but no corresponding command: `confirmDelete`, `showGitStatus`, `showManuallyHidden`, `scmTreeView`, `quickOpenDebug`. Adding them to `command-definitions.ts` is a one-liner per setting.
+
+---
+
+## fix/rename-layout-shift (#86): Inline rename input shifts layout
+
+**Key takeaways:**
+- The rename `<input>` had `padding: 2px 6px` and `border: 1px solid` adding 6px to the height vs the plain text span. Adding `margin: -3px 0` to the `.rename-input` in all three views (Details, List, Tiles) neutralizes the extra height.
+
+---
+
+## fix/recent-folders-stale-entries (#85): Reactive pruning of recent folders
+
+**Key takeaways:**
+- `frecencyStore.pruneNonExistent()` was only called on component mount and visibility change, not after file operations. When users deleted/renamed/moved folders via the explorer, stale entries persisted in the recent list until the next page load or tab switch.
+- Fix: call `pruneNonExistent()` after every successful file mutation (delete, rename, move, paste). The call is async and fire-and-forget — it doesn't block the operation.
+
+---
+
+## refactor/scm-as-its-own-activity-bar-panel-under-alt-m-g (#74): Two new chorded view-focus commands
+
+**Key takeaways:**
+- The activity-bar already had `files` and `scm` as separate `SIDEBAR_VIEWS`, but no keybinding switched between them — `Alt+M B` only toggled sidebar visibility. Splitting that into two new commands (`view.focusFilesSidebar` on Alt+M B, `view.focusScmSidebar` on Alt+M G) preserves toggle behaviour for users who want it (still available as the unbound `view.toggleSidebar`) while giving each view its own chord.
+- Both commands ensure the sidebar is visible before flipping the active view, so a single chord reliably surfaces the panel even from a hidden state.
+
+---
+
+## feat/scm-tree-view-group-files-by-folder (#76): Snippet-based recursion
+
+**Key takeaways:**
+- Svelte 5 `{#snippet}` recursion is a clean way to render the SCM tree without an extra component file. The `treeNode` snippet recurses on `node.children` and renders folder rows + file rows side-by-side. Indent is computed via inline `padding-left: depth * 12` to keep the grid templates simple.
+- Collapse state lives in a single `Set<string>` keyed by full directory path. Toggling clones the set rather than mutating in-place so Svelte's reactivity tracks the change.
+
+---
+
+## feat/scm-ignore-button-add-entry-to-gitignore (#77): Idempotent append in Rust
+
+**Key takeaways:**
+- `git_add_to_gitignore` reads `.gitignore` (treating "missing" as empty), checks for an existing exact-line match, and only appends when the entry is new — duplicate clicks are safe. The path is normalised relative to repo root (strips leading `./` and `/`) so the entry lands as expected when the user clicked a nested file.
+- The button is only rendered for untracked rows because tracked changes can't be ignored without `git rm --cached` first; that's out of scope here.
+
+---
+
+## feat/scm-commit-button-enabled-with-empty-message (#79): Affordance follow-up
+
+**Key takeaways:**
+- The amend-no-edit behaviour landed with #78. The remaining bit was telling the user it's available — the placeholder now reads "leave empty + Enter to amend the previous commit" whenever there are staged files but the message is empty. Surface affordance live near where the user is about to act, not in a separate help panel.
+
+---
+
+## feat/scm-ctrl-enter-on-empty-message-does-amend-commit (and #79): Implicit amend-no-edit
+
+**Key takeaways:**
+- The Rust `git_commit` command already supports `amend=true` with an empty message — it falls back to the parent commit's message. The frontend was over-restricting the message-empty case. The fix: derive an `effectiveAmend` flag inside `scmStore.commit()` so any empty-message-with-staged-files invocation routes to amend automatically. Both Ctrl+Enter and the commit button benefit.
+- The button label/tooltip needs three modes: `commit`, `amend` (toggle on), `amend-no-edit` (empty msg + staged). Splitting the derivation into `commitMode` keeps the conditional sprawl out of the template.
+
+---
+
+## fix/scm-file-row-expands-to-two-lines-on-hover: Two grid items in the same column collide
+
+**Key takeaways:**
+- Both `.file-dir` and `.row-actions` were being placed in the third grid column, but `.file-dir` had no explicit `grid-column` so it auto-flowed to col 3, while `.row-actions` declared `grid-column: 3`. Once `.row-actions` flipped from `display: none` to `flex` on hover, the implicit auto-row added a second row to fit both. Pinning `.file-dir` to the same column and toggling visibility (one in, the other out) keeps the row at a fixed height.
+
+---
+
+## feat/scm-confirmation-for-remove-restore: Same backend, different copy
+
+**Key takeaways:**
+- `gitDiscard` already routes untracked entries to filesystem `remove_file` (see `git.rs::git_discard`). The SCM panel only had a Discard button on tracked rows, so the disk-deletion behaviour was reachable but never exposed. Adding the same button to untracked rows surfaces the existing semantics — the only thing that needed to differ is the confirmation copy ("permanently deleted from disk" vs "changes reverted").
+- Default-focusing the Cancel button on a destructive confirmation is a small but important accessibility detail; we focus it via `queueMicrotask` after rendering rather than relying on autofocus (which trips a lint rule).
+
+---
+
+## test/update-scm-commit-button-test-for-amend-no-edit (#83): Update tests when behaviour changes
+
+**Key takeaways:**
+- The pre-existing SCM E2E asserted `commit button is disabled with empty message`. After #79 the button is enabled and reads "Amend (no edit)" in that state. Test was updated to assert the new behaviour explicitly (button label switches between Commit / Amend (no edit) by message content).
+- The merge-time `run_e2e_for_merge.sh` hook would have caught this earlier if it had executed within the 2-minute timeout. Running E2E suite afterwards is the safety net, but updating tests as part of the behaviour change keeps the gate honest.
+
+---
+
+## chore/improve-preview-pane-and-progress-dialog-screenshots (#82): Mock parity unlocks UI verification
+
+**Key takeaways:**
+- The SCM Ignore button shipped with no `git_add_to_gitignore` mock in `mock-invoke.ts`, so the agent-browser run that verified the button had to surface a real failure ("Unknown command"). The fix was a one-liner mock plus a `mockGitignored` set that filters subsequent `git_status` responses, so clicking Ignore now actually removes the row in dev/E2E. Treat mock-invoke parity as part of the feature when adding new Tauri commands.
+- The Operations Manager's progress dialog can be driven directly from the devtools console (`operationsManager.startOperation(...)` + `updateProgress`) for screenshots/E2E. Worth remembering: not every UI surface needs a real backend trigger — store-level public methods are usable directly.
+
+---
+
+## fix/delete-confirm-reads-cleared-dialog-state (#80): Fire-and-forget needs captured args
+
+**Key takeaways:**
+- When you dismiss a dialog before kicking off the async work it represents, any path that reads dialog state inside the work is racing against the close. The right shape is: capture the inputs into local variables before closing, then pass them as arguments to the async callee. Reading from a store after the source modal has been torn down is the same class of bug as the cancellation tracking from issue #61.
+- This was caught by an actual screenshot run: the merged #71 fix shipped with a placeholder screenshot, and the bug stayed invisible until the live capture surfaced "Delete failed: No entries selected for delete". Always run the UI for behavioural fixes.
+
+---
+
+## fix/delete-modal-lingers-move-progress-to-toast: Confirm closes the modal, work runs in background
+
+**Key takeaways:**
+- The dialog used to await `confirmDelete()` before closing, leaving it on screen for the duration of the actual delete (which can be ~1s for trash even on small files because of the system bus call). Closing the modal first and firing the async work as `void confirmDelete().then(...)` removes the lingering UI without changing the underlying delete logic.
+- We surface progress and success/error via the existing `toastStore` (an info toast for ≥multi or directory deletes, success or error toast on settle). This is cleaner than re-opening the modal on error and removes the need for `deleting`/spinner state inside the dialog.
+
+---
+
+## fix/cut-indicator-persists-after-cross-tab-paste: Refresh broadcasts must reach inactive tabs
+
+**Key takeaways:**
+- The `directory-changed` and cross-window file-change handlers in `+page.svelte` only walked the active tab's left/right panes (`windowTabsManager.getExplorer(paneId)`). Other tabs in the same window held their own explorer instances watching their own paths but were never refreshed, so a paste in tab B left tab A's listing (and any cut indicator on the source row) stale.
+- Adding `windowTabsManager.getAllExplorers()` and iterating it in both handlers fixes the cross-tab refresh path. The clipboard already broadcasts `null` after a cut-take, so once the source listing refreshes, the indicator naturally drops.
+
+---
+
+## investigate/preview-renders-faster-than-thumbnails (issue #69): Different pipelines, not a bug
+
+**Question:** Why does the preview pane sometimes paint before the file-list thumbnail for the same image?
+
+**Findings:**
+- `PreviewPane` shows images via `convertFileSrc(path)` — a URL into the Tauri webview's asset protocol. The browser fetches and decodes the raw file natively. No Rust image processing on the hot path.
+- `ThumbnailImage` calls `getMicroThumbnail` then `getThumbnailData` in `src-tauri/src/thumbnails.rs`, which decode → resize → re-encode → write a cache file → return the cache path. The browser then fetches that smaller file. On a cold cache, the Rust pipeline is strictly slower than the preview's "decode the original" path.
+- Thumbnails are also gated by two semaphores (`microPool` cap 8, `fullPool` cap 4) for back-pressure on large grids. A late-mounted ThumbnailImage can wait behind queued peers; the preview pane has no such queue.
+
+**Decision:** Not a bug. The thumbnail pipeline is deliberately heavier so the cached output is small and crisp at micro sizes (essential for tile grids with many images). The preview pane is the privileged "show one big image fast" path. We are not adding instrumentation or rerouting preview through the thumbnail cache — that would slow the common case. If we ever want preview ↔ thumbnail to share work, the right place is letting `getThumbnailData` short-circuit to `convertFileSrc` for full-size requests on small files.
+
+---
+
+## fix/cached-previews-update-when-file-changes: Bust mtime through both layers
+
+**Key takeaways:**
+- Two caches were hiding stale content: a path-keyed early-return inside `PreviewPane`, and the webview's URL-keyed cache for `convertFileSrc` output. Both needed to incorporate the FileEntry's `modified` (and `size`) so an external edit produces a fresh fetch.
+- Changing the early-return to a composite `previewKey = path|modified|size` works because the explorer pane already refreshes entries on `directory-changed` events — the entry handed to PreviewPane therefore updates without any extra wiring on this side.
+
+---
+
+## feat/manual-hide-via-right-click-context-menu: Per-folder hide list piggybacks the dotfile dim
+
+**Key takeaways:**
+- Manually-hidden state is stored per-folder (`{folderPath: [name, ...]}`) and serialised through the same persisted-write-through pattern as bookmarks. The reveal toggle (`showManuallyHidden`) keeps the list separate from the existing dotfile filter (`showHidden`).
+- All three views (`FileItem`, `ListView`, `TilesView`) need parity: hidden-entry styling existed only in `FileItem`. Issue #67 added it to the other two with the same `.hidden-entry { opacity: 0.55 }` rule. Mirroring view-mode behaviour stays a recurring trap (see project memory).
+
+---
+
+## feat/command-palette-sort-modifiers: piggyback existing toggle semantics
+
+**Key takeaways:**
+- `explorer.setSorting(field)` already toggles ascending/descending when called repeatedly with the same field. Wiring command palette entries straight to that means a second invocation flips direction without needing dedicated asc/desc commands. Adding "type" required only a new `SortField` branch in `sortEntries` (lex on extension, fall back to name).
+
+---
+
+## fix/recent-folders-list-shows-non-existent-paths: Lazy prune in the consumer
+
+**Key takeaways:**
+- The frecency/recent stores already had `pruneNonExistent`, but it was only called from QuickOpen — the sidebar's recents list never triggered it. Pruning belongs to the consumer surface, fired on a deferred `onMount` timer (so it doesn't compete with first-paint stat I/O) and on `visibilitychange` so externally-deleted paths clear up when the user tabs back to the window.
+
+---
+
+## fix/sidebar-removable-drives-update-on-eject: Watch the mount-base, not just poll
+
+**Key takeaways:**
+- Polling `list_drives` was the only refresh path and ran every 5s. Eject/insert latency was a function of the poll interval. Subscribing the drives store to the existing `directory-changed` fs-watcher event for the platform's mount-base directories (`/run/media/$USER`, `/media/$USER`, `/Volumes`) drops detection latency to roughly the OS notify granularity.
+- We kept polling as a backstop because not every mount-base is guaranteed to exist (refused or absent), but tightened the interval to 1.5s so the watcher and the poll together comfortably hit the ~1s acceptance.
+
+---
+
+## feat/hide-empty-folders-in-miller-view: emptiness probe must respect the visibility rule
+
+**Key takeaways:**
+- Whether a folder counts as "empty" for the miller filter depends on `showHidden` — a folder containing only dotfiles is empty if hidden files are off, non-empty if they're on. The Rust `is_directory_empty` command takes `include_hidden` so the answer is computed once on the same rule the UI uses to display children.
+- Probes are batched per column load and the `path -> isEmpty` cache is invalidated whenever `showHidden` flips, so toggling either preference produces consistent results without stale data.
+
+---
+
+## fix/rename-input-font-size-larger-than-file-row-font: `font: inherit` does not protect against later overrides
+
+**Key takeaways:**
+- ListView/TilesView's inline `.rename-input` started with `font: inherit` (good — picks up the row's 13px) but then explicitly set `font-size: var(--font-size-body)` (14px), reintroducing the mismatch. When mirroring a label's font into an input, hard-pin the size to match the label, not to a global token that may diverge.
+
+---
+
+## fix/multifile-progress-dialog-persists-after-cancel: Cancellation must dismiss UI separately from worker abort
+
+**Key takeaways:**
+- Marking an `Operation` as `"cancelled"` only stops the worker loop — the dialog row stays visible until something filters it out. Treat "remove from UI" and "signal cancellation to worker" as two responsibilities. We solved this by tracking `cancelledIds` in a separate `Set` so workers can keep polling `isOperationCancelled` after the row is removed from the visible list.
+
+---
+
+## fix/miller-folders-external-refresh: Cache invalidation needs registered watcher
+
+**Key takeaways:**
+- The Rust `fs_watcher` only emits `directory-changed` for paths registered via `watch_directory`. Components that listen to those events but don't register their visible paths will only see updates piggybacked off another consumer.
+- Miller column ancestors must call `watchDirectory` when entering the visible window and `unwatchDirectory` when leaving (and on unmount). Refcounted watches make it safe to overlap with the explorer pane's own watch on the current path.
+
+---
+
+## fix/activity-bar-tests-flake-under-all-view-modes-parallelism: Scope role-based queries when multiple widgets share the same ARIA role
+
+**Key takeaways:**
+- The app has two independent widgets that both expose `role="tab"`: the window-tab strip (per open folder/pane) and the sidebar activity bar. Under `ALL_VIEW_MODES=1` with parallel workers, a prior test could leave a window-tab labelled "Explorer" in localStorage, which then satisfies `getByRole("tab", { name: /Explorer/i })` alongside the activity-bar tab — strict-mode violation.
+- Fix: always scope the locator to its parent tablist (`getByRole("tablist", { name: "Sidebar views" })`), or use a structural selector like `.activity-button[data-view-id="files"]`. Same principle applies anywhere roles are reused at multiple layers of the UI.
+- Wait for the structural anchor (the `activity-button`) before asserting visibility on role-based locators — under high parallelism, the sidebar shell is still mounting when `waitForLoadState("domcontentloaded")` resolves.
+
+---
+
+## fix/marquee-zoom-hit-test: CSS zoom breaks coordinate math when mixing viewport and container-relative spaces
+
+**Key takeaways:**
+- `clientX` and `getBoundingClientRect().left` are both in viewport pixels. To get a container-relative position in CSS space under zoom, subtract first then divide: `(clientX - rect.left) / zoom`. The wrong order (`clientX / zoom - rect.left`) shifts the result left at zoom > 1.
+- Clamp bounds from `getBoundingClientRect()` (`.width`, `.height`) are also in viewport pixels — divide by zoom to get CSS-space bounds.
+- When converting CSS-space marquee coordinates back to viewport for DOM hit-testing (`getBoundingClientRect()` rects), multiply by zoom: `marqueeRect.left * zoom + containerRect.left`.
+- At zoom = 1 the bug is invisible since all transforms are identity. Always test selection features at a non-default zoom level.
+
+---
+
+## perf/marquee-selection-remaining-lag: Eliminate remaining marquee selection lag sources
+
+**Key takeaways:**
+- **Double rAF pipeline**: FileList had its own `requestAnimationFrame` wrapper around the composable's rAF-batched `move()`. Fix: add an `onFlush` callback to the composable's `move()` so the selection update runs inside the same rAF frame — one pipeline instead of two.
+- **Forced layout per mousemove**: `getBoundingClientRect()` was called on every `mousemove` during drag. Fix: cache the rect at drag-start and refresh it only on `ResizeObserver` events.
+- **Index-level dedup**: `selectByIndices` was called every frame even when the covered items hadn't changed. Fix: cache the last indices array and skip the call when identical.
+- **Svelte 5 reactive Set gotcha**: In-place `Set.add()`/`.delete()` on a `$state` Set creates fine-grained `.has()` subscriptions on a specific proxy instance. If you later replace the entire Set (`state = new Set()`), those subscriptions become orphaned — the old proxy's `.has()` stops updating but components still read from it. Stick with full Set replacement + identity checks, not mixed mutation strategies.
+- **macOS Ctrl+click**: `Ctrl+click` is intercepted by macOS as right-click (context menu). E2E tests using `{ modifiers: ["Control"] }` for multi-select must use `"Meta"` on macOS. Fix: platform-aware `MULTI_SELECT_MODIFIER` constant in test helpers.
+
+---
+
+## perf/marquee-selection-raf-throttle: Coalesce high-frequency pointer events to display refresh rate
+
+**Key takeaways:**
+- High-poll mice fire `mousemove` at 200+ Hz, but the screen only repaints at ~60 Hz. Synchronously updating a `$state` value on every event makes the reactive chain (`$state` → `$derived` → Svelte DOM update) run 3–4× more often than the user can ever see. On slower machines this manifests as rubber-band lag during marquee selection.
+- Fix pattern: inside the event handler, stash the latest event on a scratch variable and schedule an rAF only if none is pending; inside the rAF, commit the value to `$state`. That coalesces N events per frame into one reactive flush, preserving the latest coordinates. Remember to `cancelAnimationFrame` on teardown (`end()`) so a pending frame doesn't fire after the drag is over.
+- Orthogonal compositor win: position the overlay with `transform: translate(x, y)` instead of `left/top`, keep `will-change: transform`, and only mutate `width/height` inline. `transform` updates stay on the compositor thread; `left/top` on an absolutely-positioned element still triggers paint on the ancestor.
+- Verify this kind of perf change with a contract test (see `tests/state/marquee-raf-throttle.test.ts`), not a screenshot — assert that N move() calls schedule exactly 1 rAF and the committed value matches the last event. A screenshot can't distinguish 60 Hz from 240 Hz updates.
+
+---
+
+## fix/reenable-native-drag-drop: External drops need Tauri's native handler
+
+**Key takeaways:**
+- `WebviewWindowBuilder::disable_drag_drop_handler()` had been added incidentally in a perf commit about `initialization_script`. With it disabled, Tauri does not intercept OS-level file drops, so `webview.onDragDropEvent` (wired in `use-external-drop.svelte.ts`) never fires. WebKitGTK's default then kicks in: the webview navigates to the `file://` URL and shows the picture full-screen with no way back.
+- Removing `.disable_drag_drop_handler()` is safe: internal HTML5 DnD (bookmark reorder, file items, recent→bookmark) doesn't cross the OS boundary and keeps working. `tauri-plugin-drag` handles *outgoing* drags via a separate native API — orthogonal to the incoming handler.
+- If the webview ever traps on a file URL again, `Ctrl+R` reloads it back to the app.
+
+---
+
 ## fix/address-bar-hides-nav-buttons: Hide the whole navigation bar, not just the address portion
 
 **Key takeaways:**
@@ -43,7 +422,7 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 **Key takeaways:**
 - The Quick Access (bookmarks) region already had native dragover/drop listeners that bookmark any `dragState.current` where `kind === "directory"`. Making recent-location entries `draggable="true"` and populating `dragState.start({...})` on dragstart makes promotion Just Work — no new drop handler needed. Setting the `application/x-explorer-kind` data attribute keeps the existing dropEffect logic happy.
-- **Drag sources MUST defer `dragState.clear()` with `setTimeout(..., 0)` in `ondragend`** (see `fix/drag-to-bookmarks` below). A synchronous clear passes the browser but breaks in Tauri/WebKitGTK because `dragover`/`drop` don't fire on the sidebar — the sidebar falls back to reading `dragState.current` inside a document-level `dragend` listener, which runs *after* element-level handlers. E2E tests run on Chromium and can't catch this regression.
+- Sidebar's document-level `dragend` listener is registered with `{ capture: true }` so it reads `dragState.current` BEFORE any drag source's bubble-phase `ondragend` can clear it. Drag sources then clear synchronously — no `setTimeout` needed. This replaces the earlier workaround pattern (see `fix/drag-to-bookmarks` below, which originally used `setTimeout(() => dragState.clear(), 0)` to work around the same race).
 
 ---
 
@@ -81,7 +460,7 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 ## fix/quickopen-hover-selection: Don't let initial hover override keyboard selection
 
 **Key takeaways:**
-- `onmouseenter` on a row fires the moment the popup renders over the cursor, silently overriding the initial top-result selection before the user can press Enter. Fix with a `mouseMoved` flag gated on `onmousemove` on the overlay — reset to `false` on open and on arrow-key nav, so hover only wins after the user actually moves the pointer.
+- `onmouseenter` on a row fires the moment the popup renders over the cursor, silently overriding the initial top-result selection before the user can press Enter. Fix with a `mouseMoved` flag gated on `onmousemove` — reset to `false` on open and on arrow-key nav, so hover only wins after the user actually moves the pointer. **Important:** a bare `onmousemove` handler isn't enough — macOS WebKit fires a synthetic `mousemove` event (zero physical delta) when a new element renders under a stationary cursor. Compare `clientX/clientY` against the last recorded position so that only genuine coordinate changes set the flag.
 
 ---
 
@@ -928,3 +1307,31 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 - **Consistency check for handlers**: When adding new context menu actions, always include `contextMenuStore.close()`. Most handlers had it, but `handleCut` and `handleCopy` were missed because they were added separately from the pattern established by `withSelectedEntry()`.
 
 ---
+
+## 2026-06-11 comprehensive review & fix campaign
+
+**Key takeaways:**
+
+- **Emit-before-listen is a systemic Tauri race.** Any backend thread that emits events immediately after a command is invoked WILL emit before the frontend's `listen()` resolves if the listener is registered after the invoke. QuickOpen had documented and fixed this; directory listing and content search shipped the same bug independently. Pattern: register the listener (buffering until the id is known) BEFORE invoking. Corollary: outside Tauri (browser/mock E2E), `listen()` rejects — every call site needs a try/catch fallback or the whole feature breaks in browser mode.
+- **`overwrite=true` file operations must be transactional.** The original copy/move deleted the destination *before* copying, so any mid-copy failure destroyed data — and when source == target (drop onto own parent), it deleted the *source*. Stage to a temp name, swap, then remove. Guard source==target and dir-into-own-descendant before any removal, in both backend and `performFileTransfer`.
+- **`git status --porcelain` paths are repo-root-relative, not cwd-relative** (and quoted/octal-escaped for non-ASCII unless `-z` is used). Badge parsing keyed by first path segment only worked at the repo root.
+- **Simulation tests are worse than no tests.** ~15 unit test files re-implemented production logic locally (or asserted on literals) and passed regardless of regressions. If a rule lives in a component, extract it to `domain/` and test the real import — see `domain/titlebar.ts`, `domain/autocomplete.ts`, `domain/scm-tree.ts`.
+- **`waitForTimeout` before an auto-waiting `expect()` is pure waste; before a snapshot read it's a race.** Replace snapshot reads (`textContent()`, `count()`, `inputValue()`) with auto-waiting assertions (`toHaveText`, `toHaveCount`, `toHaveValue`) or `expect.poll`. Streaming UIs (QuickOpen results) need polls, not first-item-visible checks — early results render before the full set settles.
+- **`raw_os_error()` is the Win32 error code on Windows, not the CRT errno** — comparing against `libc::EXDEV` never matches `ERROR_NOT_SAME_DEVICE`.
+- **Svelte 5: an `$effect` that reads state it (indirectly) writes re-runs and self-defeats** — TilesView's progressive chunking rendered everything in one frame. Use `untrack()` for the feedback variables, or extract decision logic into a pure function (`use-progressive-render.svelte.ts`).
+- **Concurrent edit agents need an ownership map AND consumer awareness**: one agent deleted a "zero consumer" `setContext` while another was adding the consumer. Cross-file contracts (context keys, event names) must stay with one owner.
+
+---
+
+## 2026-06-12 structural refactors (Modal primitive, store decomposition, search perf)
+
+**Key takeaways:**
+
+- **Debug builds make dependency-heavy features look broken.** Ctrl+Shift+F felt 10-50x slower than terminal `rg` solely because `tauri dev` compiled the regex/grep/ignore stack at opt-level 0. `[profile.dev.package."*"] opt-level = 3` fixes every dependency-bound hot path (search, thumbnails) while keeping our own crate fast to rebuild. Check the build profile before optimizing code.
+- **Audit reachability before refactoring a component.** RenameDialog and NewFolderDialog looked like 2 of the "11 dialogs to convert" but were unreachable dead code — rename and folder creation had moved to inline flows, and nothing called `dialogStore.openNewFolder()`. Mounted-but-unopenable components pass type checks and silently rot.
+- **Svelte scoped CSS shapes how a shared primitive must be split**: a child's scoped styles can't target elements rendered by a parent component. Modal owns the overlay element (and its styles); callers render their own dialog card so their scoped card styles keep working, opting into shared chrome via a global `modal.css` class (`.modal-card`).
+- **Per-dialog overrides of shared global rules need one extra selector level** (`.dialog .dialog-actions`, not `.dialog-actions`): a scoped selector compiles to the same (0,2,0) specificity as `.modal-card .dialog-actions` and stylesheet order between component CSS and imported CSS is not guaranteed.
+- **`$state.raw` for large result lists**: deep-proxying thousands of streamed match objects costs real time; replacing the array reference re-renders just as well. Pair with full virtualization instead of "load more" pagination — page-append scroll jumps read as jank.
+- **New e2e coverage immediately caught two real bugs.** (1) Dual-pane mode rendered the global context menu in *both* panes — clicks hit the topmost (right pane's) menu and actions targeted the wrong explorer; fixed with an owner token on the context-menu store. (2) SettingsDialog's staged Escape (clear filter, then close) was silently defeated by the window-level Escape handler because it didn't `stopPropagation()`. Corollary gotcha: an identity token stored in plain `$state` gets wrapped in a reactive proxy and breaks `===` comparison — use `$state.raw` for anything compared by reference.
+- **Component init that touches reactive state belongs in `onMount`, not `$effect`.** FilePicker's initializer built the column chain via helpers that *read* `entriesByPath` synchronously — making it a tracked dependency, so every user navigation re-ran the "init" effect and reset the chain back to the starting folder. The failure is subtle: it looks like clicks randomly not sticking.
+- **"Clear all when all done" auto-hide is fragile; clear per-operation.** The progress panel only auto-dismissed when *every* operation was completed/cancelled, so one stuck "running" job (from any feature) pinned completed ones — and the whole panel — on screen indefinitely. `completeOperation` now schedules a per-operation auto-clear; the panel hides once the last op clears, independent of others.

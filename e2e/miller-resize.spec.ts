@@ -17,7 +17,6 @@ test.describe("Miller columns resize", () => {
       location.reload();
     });
     await page.waitForSelector(".entry-item", { timeout: 5000 });
-    await page.waitForTimeout(500);
 
     // Resize handle should exist
     await expect(page.locator(".miller-columns .resize-handle")).toBeVisible();

@@ -1,6 +1,10 @@
 # Maintainer: Your Name <email>
 pkgname=tauri-explorer
-pkgver=0.2.7
+# Single source of truth: derive the version from package.json so the
+# package never drifts from the app (it sat at 0.2.7 while the app was
+# 0.3.0). pkgver() updates it automatically during makepkg; the literal
+# below is just a fallback for tooling that reads it without running pkgver.
+pkgver=0.4.0
 pkgrel=1
 pkgdesc="A minimalistic, high-performance file explorer"
 arch=('x86_64' 'aarch64')
@@ -8,6 +12,7 @@ url="https://github.com/xnmp/tauri-explorer"
 license=('MIT')
 depends=(
   'cairo'
+  'dav1d'
   'desktop-file-utils'
   'gdk-pixbuf2'
   'glib2'
@@ -30,6 +35,14 @@ sha256sums=()
 # In CI, the repo is copied into $srcdir/tauri-explorer before makepkg runs.
 _srcdir="${_srcdir:-$srcdir/$pkgname}"
 
+# Read the version straight from package.json (the app's source of truth).
+pkgver() {
+  cd "$_srcdir"
+  local v
+  v=$(grep -m1 '"version"' package.json | sed -E 's/.*"version" *: *"([^"]+)".*/\1/')
+  printf '%s' "${v:-0.4.0}"
+}
+
 prepare() {
   cd "$_srcdir"
   bun install --frozen-lockfile
@@ -45,6 +58,14 @@ package() {
   cd "$_srcdir"
 
   install -Dm755 src-tauri/target/release/tauri-explorer "$pkgdir/usr/bin/tauri-explorer"
+
+  # xdg-desktop-portal FileChooser backend (system file picker).
+  # Enable by adding to ~/.config/xdg-desktop-portal/portals.conf:
+  #   org.freedesktop.impl.portal.FileChooser=tauri-explorer
+  install -Dm644 packaging/tauri-explorer.portal \
+    "$pkgdir/usr/share/xdg-desktop-portal/portals/tauri-explorer.portal"
+  install -Dm644 packaging/org.freedesktop.impl.portal.desktop.tauri_explorer.service \
+    "$pkgdir/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.tauri_explorer.service"
 
   install -Dm644 src-tauri/icons/32x32.png \
     "$pkgdir/usr/share/icons/hicolor/32x32/apps/tauri-explorer.png"

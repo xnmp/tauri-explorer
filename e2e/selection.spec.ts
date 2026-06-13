@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { VIEW_MODES, waitForEntries, switchViewMode } from "./helpers";
+import { VIEW_MODES, waitForEntries, switchViewMode, MULTI_SELECT_MODIFIER } from "./helpers";
 
 for (const viewMode of VIEW_MODES) {
   test.describe(`Selection [${viewMode}]`, () => {
@@ -66,7 +66,7 @@ for (const viewMode of VIEW_MODES) {
         const secondFile = files.nth(1);
 
         await firstFile.click();
-        await secondFile.click({ modifiers: ["Control"] });
+        await secondFile.click({ modifiers: [MULTI_SELECT_MODIFIER] });
 
         await expect(firstFile).toHaveClass(/selected/);
         await expect(secondFile).toHaveClass(/selected/);
@@ -75,10 +75,7 @@ for (const viewMode of VIEW_MODES) {
       test("Shift+click selects range", async ({ page }) => {
         const files = page.locator(".entry-item");
         const count = await files.count();
-        if (count < 3) {
-          test.skip();
-          return;
-        }
+        expect(count, "mock home dir must provide at least 3 entries").toBeGreaterThanOrEqual(3);
 
         const firstFile = files.nth(0);
         const thirdFile = files.nth(2);
@@ -96,7 +93,8 @@ for (const viewMode of VIEW_MODES) {
       test("drag in empty space creates selection rectangle", async ({ page }) => {
         const content = page.locator(".file-list .content").first();
         const box = await content.boundingBox();
-        if (!box) { test.skip(); return; }
+        expect(box, "file list must have a bounding box").not.toBeNull();
+        if (!box) return;
 
         const startX = box.x + 50;
         const startY = box.y + box.height - 50;
@@ -112,20 +110,31 @@ for (const viewMode of VIEW_MODES) {
       });
 
       test("drag selection selects files within rectangle", async ({ page }) => {
+        // Navigate to a directory with few items so there's always empty background space
+        await page.goto("/?path=/home/user/Downloads");
+        await waitForEntries(page);
+        if (viewMode !== "details") await switchViewMode(page, viewMode);
+
         const files = page.locator(".entry-item");
         const count = await files.count();
-        if (count < 2) { test.skip(); return; }
+        expect(count, "mock home dir must provide at least 2 entries").toBeGreaterThanOrEqual(2);
 
         const content = page.locator(".file-list .content").first();
         const box = await content.boundingBox();
-        if (!box) { test.skip(); return; }
+        expect(box, "file list must have a bounding box").not.toBeNull();
+        if (!box) return;
+
+        const lastItem = files.last();
+        const lastBox = await lastItem.boundingBox();
+        expect(lastBox, "last entry must have a bounding box").not.toBeNull();
+        if (!lastBox) return;
 
         const startX = box.x + 50;
-        const startY = box.y + box.height - 20;
+        const startY = lastBox.y + lastBox.height + 10;
 
         await page.mouse.move(startX, startY);
         await page.mouse.down();
-        await page.mouse.move(startX + 200, box.y + 100);
+        await page.mouse.move(startX + 200, box.y + 10);
         await page.mouse.up();
 
         await page.waitForTimeout(100);
@@ -149,7 +158,8 @@ for (const viewMode of VIEW_MODES) {
       test("mousemove with buttons=0 does not update selection after drag", async ({ page }) => {
         const content = page.locator(".file-list .content").first();
         const box = await content.boundingBox();
-        if (!box) { test.skip(); return; }
+        expect(box, "file list must have a bounding box").not.toBeNull();
+        if (!box) return;
 
         await page.mouse.move(box.x + 50, box.y + box.height - 50);
         await page.mouse.down();
@@ -163,7 +173,8 @@ for (const viewMode of VIEW_MODES) {
       test("drag release registers even when mouseup fires on overlay element", async ({ page }) => {
         const content = page.locator(".file-list .content").first();
         const box = await content.boundingBox();
-        if (!box) { test.skip(); return; }
+        expect(box, "file list must have a bounding box").not.toBeNull();
+        if (!box) return;
 
         await page.mouse.move(box.x + 50, box.y + box.height - 50);
         await page.mouse.down();
@@ -192,7 +203,8 @@ for (const viewMode of VIEW_MODES) {
       test("native dragstart during marquee doesn't leave drag stuck", async ({ page }) => {
         const content = page.locator(".file-list .content").first();
         const box = await content.boundingBox();
-        if (!box) { test.skip(); return; }
+        expect(box, "file list must have a bounding box").not.toBeNull();
+        if (!box) return;
 
         await page.mouse.move(box.x + 50, box.y + box.height - 50);
         await page.mouse.down();
@@ -217,7 +229,8 @@ for (const viewMode of VIEW_MODES) {
       test("mousemove with buttons=0 is detected as stale drag", async ({ page }) => {
         const content = page.locator(".file-list .content").first();
         const box = await content.boundingBox();
-        if (!box) { test.skip(); return; }
+        expect(box, "file list must have a bounding box").not.toBeNull();
+        if (!box) return;
 
         await page.mouse.move(box.x + 50, box.y + box.height - 50);
         await page.mouse.down();
@@ -232,7 +245,6 @@ for (const viewMode of VIEW_MODES) {
           }));
         }, { x: box.x + 200, y: box.y + 60 });
 
-        await page.waitForTimeout(100);
 
         await expect(marquee).not.toBeVisible();
       });
@@ -240,7 +252,8 @@ for (const viewMode of VIEW_MODES) {
       test("window blur during drag cancels marquee", async ({ page }) => {
         const content = page.locator(".file-list .content").first();
         const box = await content.boundingBox();
-        if (!box) { test.skip(); return; }
+        expect(box, "file list must have a bounding box").not.toBeNull();
+        if (!box) return;
 
         await page.mouse.move(box.x + 50, box.y + box.height - 50);
         await page.mouse.down();
@@ -258,7 +271,8 @@ for (const viewMode of VIEW_MODES) {
       test("contextmenu during drag cancels marquee", async ({ page }) => {
         const content = page.locator(".file-list .content").first();
         const box = await content.boundingBox();
-        if (!box) { test.skip(); return; }
+        expect(box, "file list must have a bounding box").not.toBeNull();
+        if (!box) return;
 
         await page.mouse.move(box.x + 50, box.y + box.height - 50);
         await page.mouse.down();
@@ -290,7 +304,8 @@ for (const viewMode of VIEW_MODES) {
       test("pointercancel during drag cancels marquee", async ({ page }) => {
         const content = page.locator(".file-list .content").first();
         const box = await content.boundingBox();
-        if (!box) { test.skip(); return; }
+        expect(box, "file list must have a bounding box").not.toBeNull();
+        if (!box) return;
 
         await page.mouse.move(box.x + 50, box.y + box.height - 50);
         await page.mouse.down();

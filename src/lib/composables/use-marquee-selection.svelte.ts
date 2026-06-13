@@ -32,7 +32,7 @@ const DEFAULT_OPTIONS: Required<MarqueeOptions> = {
   ],
 };
 
-import { getZoomFactor } from "$lib/domain/zoom";
+import { clientToCSSRelative, rectDimToCSS, cssToRect } from "$lib/domain/zoom";
 
 export function useMarqueeSelection(options: MarqueeOptions = {}) {
   const config = { ...DEFAULT_OPTIONS, ...options };
@@ -43,6 +43,12 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
   let dragStart = $state<{ x: number; y: number } | null>(null);
   let dragCurrent = $state<{ x: number; y: number } | null>(null);
   let ctrlKeyHeld = $state(false);
+
+  // rAF-batched pointer updates: mousemove can fire 200+ Hz, but the rubber-band
+  // only needs to repaint at the display refresh rate. Coalescing caps the reactive
+  // chain (dragCurrent → marqueeRect → DOM style) to one update per frame.
+  let pendingMove: { clientX: number; clientY: number; rect: DOMRect; headerHeight?: number; onFlush?: () => void } | null = null;
+  let moveRafId: number | null = null;
 
   const marqueeRect = $derived.by((): MarqueeRect | null => {
     if (!dragStart || !dragCurrent) return null;
@@ -69,20 +75,33 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
 
     isDragging = true;
     ctrlKeyHeld = event.ctrlKey || event.metaKey;
-    // Compensate for CSS zoom: clientX/Y are physical pixels in WebKitGTK,
-    // but containerRect is in CSS (zoomed) pixels.
-    const zoom = getZoomFactor();
     const minY = headerHeight ?? config.headerHeight;
     dragStart = {
-      x: event.clientX / zoom - containerRect.left,
-      y: Math.max(minY, event.clientY / zoom - containerRect.top),
+      x: clientToCSSRelative(event.clientX, containerRect.left),
+      y: Math.max(minY, clientToCSSRelative(event.clientY, containerRect.top)),
     };
     dragCurrent = { ...dragStart };
 
     event.preventDefault();
   }
 
-  function move(event: MouseEvent, containerRect: DOMRect, headerHeight?: number): boolean {
+  function flushPendingMove(): void {
+    moveRafId = null;
+    if (!pendingMove || !isDragging) {
+      pendingMove = null;
+      return;
+    }
+    const { clientX, clientY, rect, headerHeight, onFlush } = pendingMove;
+    pendingMove = null;
+    const minY = headerHeight ?? config.headerHeight;
+    dragCurrent = {
+      x: Math.max(0, Math.min(clientToCSSRelative(clientX, rect.left), rectDimToCSS(rect.width))),
+      y: Math.max(minY, Math.min(clientToCSSRelative(clientY, rect.top), rectDimToCSS(rect.height))),
+    };
+    onFlush?.();
+  }
+
+  function move(event: MouseEvent, containerRect: DOMRect, headerHeight?: number, onFlush?: () => void): boolean {
     if (!isDragging) return false;
 
     // Safety net: if mouse button was released but we missed the mouseup
@@ -92,23 +111,33 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
       return false;
     }
 
-    const zoom = getZoomFactor();
-    const minY = headerHeight ?? config.headerHeight;
-    dragCurrent = {
-      x: Math.max(0, Math.min(event.clientX / zoom - containerRect.left, containerRect.width)),
-      y: Math.max(minY, Math.min(event.clientY / zoom - containerRect.top, containerRect.height)),
+    pendingMove = {
+      clientX: event.clientX,
+      clientY: event.clientY,
+      rect: containerRect,
+      headerHeight,
+      onFlush,
     };
+    if (moveRafId === null) {
+      moveRafId = requestAnimationFrame(flushPendingMove);
+    }
     return true;
   }
 
   function end(): void {
     if (!isDragging) return;
 
+    if (moveRafId !== null) {
+      cancelAnimationFrame(moveRafId);
+      moveRafId = null;
+    }
+    pendingMove = null;
+
     isDragging = false;
     dragStart = null;
     dragCurrent = null;
     cachedItemRects = null;
-    cachedContainerOffset = null;
+    cachedScroll = null;
 
     // Record end time so click handlers can ignore the immediate click
     dragEndTime = performance.now();
@@ -119,10 +148,10 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
    * @param scrollTop Current scroll position of the container
    * @param totalItems Total number of items in the list
    */
-  function getSelectedIndices(scrollTop: number, totalItems: number): number[] {
+  function getSelectedIndices(scrollTop: number, totalItems: number, headerHeight?: number): number[] {
     if (!marqueeRect) return [];
 
-    const marqueeTop = marqueeRect.top + scrollTop - config.headerHeight;
+    const marqueeTop = marqueeRect.top + scrollTop - (headerHeight ?? config.headerHeight);
     const marqueeBottom = marqueeTop + marqueeRect.height;
 
     const startIndex = Math.max(0, Math.floor(marqueeTop / config.itemHeight));
@@ -135,17 +164,20 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
   /**
    * Calculate selected indices by checking DOM element positions against the marquee.
    * Works for grid layouts (tiles view) where items aren't in a linear list.
-   * @param container The scrollable container element
+   * @param container The container element the marquee rect is relative to
    * @param itemSelector CSS selector for item elements
+   * @param scroller The element that actually scrolls the items (defaults to container).
+   *   In list/tiles views the inner `.list-view`/`.tiles-view` scrolls, not the container.
    */
   // Cached item rects for the current marquee drag session
   let cachedItemRects: DOMRect[] | null = null;
-  let cachedContainerOffset: { left: number; top: number } | null = null;
+  let cachedScroll: { left: number; top: number } | null = null;
 
-  function getSelectedIndicesFromDOM(container: HTMLElement, itemSelector: string): number[] {
+  function getSelectedIndicesFromDOM(container: HTMLElement, itemSelector: string, scroller?: HTMLElement | null): number[] {
     if (!marqueeRect) return [];
 
     const containerRect = container.getBoundingClientRect();
+    const scrollEl = scroller ?? container;
 
     // Cache item positions on first call per drag session (items don't move during marquee)
     if (!cachedItemRects) {
@@ -154,17 +186,19 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
       for (let i = 0; i < items.length; i++) {
         cachedItemRects[i] = items[i].getBoundingClientRect();
       }
-      cachedContainerOffset = { left: containerRect.left, top: containerRect.top };
+      cachedScroll = { left: scrollEl.scrollLeft, top: scrollEl.scrollTop };
     }
 
-    // Adjust for any container scroll since caching
-    const offsetDx = containerRect.left - cachedContainerOffset!.left;
-    const offsetDy = containerRect.top - cachedContainerOffset!.top;
+    // Items shift opposite to the scroll delta accumulated since caching
+    const offsetDx = cachedScroll!.left - scrollEl.scrollLeft;
+    const offsetDy = cachedScroll!.top - scrollEl.scrollTop;
 
-    const mLeft = marqueeRect.left + containerRect.left;
-    const mTop = marqueeRect.top + containerRect.top;
-    const mRight = mLeft + marqueeRect.width;
-    const mBottom = mTop + marqueeRect.height;
+    // marqueeRect is in CSS space; item rects from getBoundingClientRect() are
+    // in viewport space on macOS. Scale marquee to viewport for comparison.
+    const mLeft = cssToRect(marqueeRect.left) + containerRect.left;
+    const mTop = cssToRect(marqueeRect.top) + containerRect.top;
+    const mRight = mLeft + cssToRect(marqueeRect.width);
+    const mBottom = mTop + cssToRect(marqueeRect.height);
 
     const indices: number[] = [];
     for (let i = 0; i < cachedItemRects.length; i++) {

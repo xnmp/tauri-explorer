@@ -67,13 +67,9 @@ for (const viewMode of VIEW_MODES) {
         const folder = page.locator(".entry-item.directory").first();
         await folder.dblclick();
         await page.locator(".entry-item").first().waitFor({ timeout: 5000 }).catch(() => {});
-        await page.waitForTimeout(300);
 
         await page.locator('button[title*="Back"], button[aria-label*="Back"]').click();
-        await page.waitForTimeout(500);
-
-        const currentBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
-        expect(currentBreadcrumbs).toBe(initialBreadcrumbs);
+        await expect(page.locator(".breadcrumbs-container")).toHaveText(initialBreadcrumbs ?? "");
       });
 
       test("up button navigates to parent directory", async ({ page }) => {
@@ -85,10 +81,7 @@ for (const viewMode of VIEW_MODES) {
         await expect(breadcrumbs).toContainText(folderName!, { timeout: 5000 });
 
         await page.locator('button[aria-label="Go up one level"]').click();
-        await page.waitForTimeout(500);
-
-        const breadcrumbsAfter = await breadcrumbs.textContent();
-        expect(breadcrumbsAfter?.includes(folderName!)).toBe(false);
+        await expect(breadcrumbs).not.toContainText(folderName!);
       });
     });
 
@@ -97,10 +90,7 @@ for (const viewMode of VIEW_MODES) {
         const initialCount = await page.locator(".entry-item").count();
 
         await page.keyboard.press("F5");
-        await page.waitForTimeout(500);
-
-        const newCount = await page.locator(".entry-item").count();
-        expect(newCount).toBe(initialCount);
+        await expect(page.locator(".entry-item")).toHaveCount(initialCount);
       });
 
       test("Alt+Left goes back", async ({ page }) => {
@@ -108,13 +98,10 @@ for (const viewMode of VIEW_MODES) {
 
         const folder = page.locator(".entry-item.directory").first();
         await folder.dblclick();
-        await page.waitForTimeout(500);
+        await expect(page.locator(".breadcrumbs-container")).not.toHaveText(initialBreadcrumbs ?? "");
 
         await page.keyboard.press("Control+Alt+ArrowLeft");
-        await page.waitForTimeout(500);
-
-        const currentBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
-        expect(currentBreadcrumbs).toBe(initialBreadcrumbs);
+        await expect(page.locator(".breadcrumbs-container")).toHaveText(initialBreadcrumbs ?? "");
       });
     });
   });

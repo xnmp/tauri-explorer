@@ -1,15 +1,12 @@
-//! Set desktop wallpaper across different Linux desktop environments.
+//! Set desktop wallpaper across macOS and Linux desktop environments.
 //! Issue: tauri-explorer-mj32
 
 use crate::error::AppError;
-use log;
 use std::path::PathBuf;
 use std::process::Command;
 
 /// Image extensions supported for wallpaper setting.
-const WALLPAPER_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff", "tif",
-];
+const WALLPAPER_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff", "tif"];
 
 /// Check if a file is a supported wallpaper image.
 fn is_wallpaper_image(path: &std::path::Path) -> bool {
@@ -21,6 +18,10 @@ fn is_wallpaper_image(path: &std::path::Path) -> bool {
 
 /// Detect the current desktop environment / wallpaper tool.
 fn detect_wallpaper_backend() -> WallpaperBackend {
+    if cfg!(target_os = "macos") {
+        return WallpaperBackend::MacOs;
+    }
+
     // Check for Hyprland first (hyprpaper)
     if std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok() {
         return WallpaperBackend::Hyprpaper;
@@ -46,7 +47,12 @@ fn detect_wallpaper_backend() -> WallpaperBackend {
     }
 
     // Fallback: try feh (common for X11 WMs like i3, bspwm)
-    if Command::new("which").arg("feh").output().map(|o| o.status.success()).unwrap_or(false) {
+    if Command::new("which")
+        .arg("feh")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
         return WallpaperBackend::Feh;
     }
 
@@ -54,6 +60,7 @@ fn detect_wallpaper_backend() -> WallpaperBackend {
 }
 
 enum WallpaperBackend {
+    MacOs,
     Hyprpaper,
     Swaybg,
     Gnome,
@@ -63,19 +70,51 @@ enum WallpaperBackend {
     Unknown,
 }
 
-/// Set wallpaper using hyprpaper: update config then restart hyprpaper.
-/// Restarting is more reliable than IPC since the Tauri process may not
-/// inherit the Hyprland socket environment variables.
+/// Set wallpaper on macOS using osascript (AppleScript).
+/// The path is passed as an argv item (never interpolated into the script)
+/// so quotes/backslashes in filenames can't break or inject the script.
+fn set_macos(path: &str) -> Result<(), AppError> {
+    let output = Command::new("osascript")
+        .args([
+            "-e", "on run argv",
+            "-e", "tell application \"System Events\" to tell every desktop to set picture to (item 1 of argv)",
+            "-e", "end run",
+            path,
+        ])
+        .output()
+        .map_err(|e| AppError::Other(format!("osascript failed: {}", e)))?;
+
+    if !output.status.success() {
+        return Err(AppError::Other(format!(
+            "Failed to set wallpaper: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+    Ok(())
+}
+
+/// Set wallpaper using hyprpaper.
+///
+/// Prefers `hyprctl hyprpaper preload/wallpaper` IPC, which doesn't touch the
+/// user's config or restart hyprpaper. Falls back to rewriting
+/// hyprpaper.conf + restarting hyprpaper only if IPC fails (e.g. hyprpaper
+/// not running, or the Tauri process lacks the Hyprland socket env).
 fn set_hyprpaper(path: &str) -> Result<(), AppError> {
     let abs_path = std::fs::canonicalize(path)
         .map_err(|e| AppError::Other(format!("Failed to resolve path: {}", e)))?
         .to_string_lossy()
         .to_string();
 
-    // Get current monitors for config
-    let monitors = get_hyprland_monitors()?;
+    match set_hyprpaper_via_ipc(&abs_path) {
+        Ok(()) => return Ok(()),
+        Err(e) => log::warn!(
+            "hyprpaper IPC failed ({}), falling back to config rewrite",
+            e
+        ),
+    }
 
-    // Update config file
+    // Fallback: rewrite config and restart hyprpaper
+    let monitors = get_hyprland_monitors()?;
     update_hyprpaper_conf(&abs_path, &monitors)?;
 
     // Restart hyprpaper to pick up the new config
@@ -91,12 +130,51 @@ fn set_hyprpaper(path: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Run a `hyprctl hyprpaper` subcommand and verify it succeeded.
+/// hyprctl can exit 0 while printing an error, so also require "ok" in stdout.
+fn hyprctl_hyprpaper(args: &[&str]) -> Result<(), AppError> {
+    let output = Command::new("hyprctl")
+        .arg("hyprpaper")
+        .args(args)
+        .output()
+        .map_err(|e| AppError::Other(format!("hyprctl failed to run: {}", e)))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !output.status.success() || !stdout.to_lowercase().contains("ok") {
+        return Err(AppError::Other(format!(
+            "hyprctl hyprpaper {} failed: {}{}",
+            args.join(" "),
+            stdout.trim(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(())
+}
+
+/// Set the wallpaper on all monitors via hyprpaper IPC.
+fn set_hyprpaper_via_ipc(abs_path: &str) -> Result<(), AppError> {
+    hyprctl_hyprpaper(&["preload", abs_path])?;
+
+    let monitors = get_hyprland_monitors()?;
+    for monitor in &monitors {
+        hyprctl_hyprpaper(&["wallpaper", &format!("{},{}", monitor, abs_path)])?;
+    }
+    Ok(())
+}
+
 /// Get list of active monitor names from Hyprland.
 fn get_hyprland_monitors() -> Result<Vec<String>, AppError> {
     let output = Command::new("hyprctl")
         .args(["monitors", "-j"])
         .output()
         .map_err(|e| AppError::Other(format!("Failed to query monitors: {}", e)))?;
+
+    if !output.status.success() {
+        return Err(AppError::Other(format!(
+            "hyprctl monitors failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
 
     let json_str = String::from_utf8_lossy(&output.stdout);
     let monitors: Vec<serde_json::Value> = serde_json::from_str(&json_str)
@@ -115,11 +193,21 @@ fn get_hyprland_monitors() -> Result<Vec<String>, AppError> {
 }
 
 /// Update ~/.config/hypr/hyprpaper.conf with the new wallpaper.
+/// Backs up any existing config to hyprpaper.conf.bak before overwriting,
+/// since the rewrite discards comments and custom multi-monitor setups.
 fn update_hyprpaper_conf(image_path: &str, monitors: &[String]) -> Result<(), AppError> {
-    let config_path = dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("hypr")
-        .join("hyprpaper.conf");
+    let config_dir = dirs::config_dir()
+        .ok_or_else(|| AppError::Other("Could not determine config directory".into()))?
+        .join("hypr");
+    std::fs::create_dir_all(&config_dir)
+        .map_err(|e| AppError::Other(format!("Failed to create hypr config dir: {}", e)))?;
+    let config_path = config_dir.join("hyprpaper.conf");
+
+    if config_path.exists() {
+        let backup_path = config_dir.join("hyprpaper.conf.bak");
+        std::fs::copy(&config_path, &backup_path)
+            .map_err(|e| AppError::Other(format!("Failed to back up hyprpaper.conf: {}", e)))?;
+    }
 
     let mut content = format!("preload = {}\n\n", image_path);
 
@@ -152,10 +240,17 @@ fn set_swaybg(path: &str) -> Result<(), AppError> {
 fn set_gnome(path: &str) -> Result<(), AppError> {
     let uri = format!("file://{}", path);
     for key in &["picture-uri", "picture-uri-dark"] {
-        Command::new("gsettings")
+        let output = Command::new("gsettings")
             .args(["set", "org.gnome.desktop.background", key, &uri])
             .output()
             .map_err(|e| AppError::Other(format!("gsettings failed: {}", e)))?;
+        if !output.status.success() {
+            return Err(AppError::Other(format!(
+                "gsettings set {} failed: {}",
+                key,
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
+        }
     }
     Ok(())
 }
@@ -184,30 +279,65 @@ fn set_xfce(path: &str) -> Result<(), AppError> {
         .output()
         .map_err(|e| AppError::Other(format!("xfconf-query failed: {}", e)))?;
 
+    if !output.status.success() {
+        return Err(AppError::Other(format!(
+            "xfconf-query list failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+
     let props = String::from_utf8_lossy(&output.stdout);
+    let mut applied = false;
     for line in props.lines() {
         if line.contains("last-image") {
-            let _ = Command::new("xfconf-query")
+            let set_output = Command::new("xfconf-query")
                 .args(["-c", "xfce4-desktop", "-p", line.trim(), "-s", path])
-                .output();
+                .output()
+                .map_err(|e| AppError::Other(format!("xfconf-query failed: {}", e)))?;
+            if !set_output.status.success() {
+                return Err(AppError::Other(format!(
+                    "xfconf-query set {} failed: {}",
+                    line.trim(),
+                    String::from_utf8_lossy(&set_output.stderr).trim()
+                )));
+            }
+            applied = true;
         }
+    }
+
+    if !applied {
+        return Err(AppError::Other(
+            "No XFCE desktop last-image properties found".to_string(),
+        ));
     }
     Ok(())
 }
 
 /// Set wallpaper using feh (generic X11 WMs).
 fn set_feh(path: &str) -> Result<(), AppError> {
-    Command::new("feh")
+    let output = Command::new("feh")
         .args(["--bg-fill", path])
         .output()
         .map_err(|e| AppError::Other(format!("feh failed: {}", e)))?;
+    if !output.status.success() {
+        return Err(AppError::Other(format!(
+            "feh failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
     Ok(())
 }
 
 /// Set the given image as desktop wallpaper.
 /// Auto-detects the desktop environment and uses the appropriate tool.
 #[tauri::command]
-pub fn set_as_wallpaper(path: String) -> Result<(), AppError> {
+pub async fn set_as_wallpaper(path: String) -> Result<(), AppError> {
+    tokio::task::spawn_blocking(move || set_as_wallpaper_sync(path))
+        .await
+        .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
+}
+
+fn set_as_wallpaper_sync(path: String) -> Result<(), AppError> {
     let file_path = PathBuf::from(&path);
 
     if !file_path.exists() {
@@ -215,7 +345,9 @@ pub fn set_as_wallpaper(path: String) -> Result<(), AppError> {
     }
 
     if !is_wallpaper_image(&file_path) {
-        return Err(AppError::Other("File is not a supported image format".to_string()));
+        return Err(AppError::Other(
+            "File is not a supported image format".to_string(),
+        ));
     }
 
     let abs_path = std::fs::canonicalize(&file_path)
@@ -226,6 +358,7 @@ pub fn set_as_wallpaper(path: String) -> Result<(), AppError> {
     let backend = detect_wallpaper_backend();
     log::info!("Setting wallpaper via {:?} backend", backend_name(&backend));
     match backend {
+        WallpaperBackend::MacOs => set_macos(&abs_path),
         WallpaperBackend::Hyprpaper => set_hyprpaper(&abs_path),
         WallpaperBackend::Swaybg => set_swaybg(&abs_path),
         WallpaperBackend::Gnome => set_gnome(&abs_path),
@@ -233,13 +366,14 @@ pub fn set_as_wallpaper(path: String) -> Result<(), AppError> {
         WallpaperBackend::Xfce => set_xfce(&abs_path),
         WallpaperBackend::Feh => set_feh(&abs_path),
         WallpaperBackend::Unknown => Err(AppError::Other(
-            "Could not detect desktop environment. Supported: Hyprland (hyprpaper), Sway, GNOME, KDE, XFCE, feh".to_string(),
+            "Could not detect desktop environment. Supported: macOS, Hyprland (hyprpaper), Sway, GNOME, KDE, XFCE, feh".to_string(),
         )),
     }
 }
 
 fn backend_name(b: &WallpaperBackend) -> &'static str {
     match b {
+        WallpaperBackend::MacOs => "macos",
         WallpaperBackend::Hyprpaper => "hyprpaper",
         WallpaperBackend::Swaybg => "swaybg",
         WallpaperBackend::Gnome => "gnome",

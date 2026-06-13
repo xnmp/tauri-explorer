@@ -1,15 +1,118 @@
 //! File CRUD operations: create, rename, copy, move, delete, symlink, estimate, read/write text.
 
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use super::{metadata_to_entry, run_blocking, FileEntry, SizeEstimate};
 use crate::error::AppError;
 use log;
-use super::{metadata_to_entry, FileEntry, SizeEstimate};
+
+/// Check whether a path exists without following symlinks, so broken
+/// symlinks are still treated as existing entries.
+fn entry_exists(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok()
+}
+
+/// Validate a user-supplied entry name: must be non-empty and must not
+/// contain path separators or traversal components.
+fn validate_entry_name(name: &str) -> Result<(), AppError> {
+    if name.is_empty() {
+        return Err(AppError::InvalidPath("Name cannot be empty".to_string()));
+    }
+    if name.contains('/') || name.contains('\\') {
+        return Err(AppError::InvalidPath(format!(
+            "Name cannot contain path separators: {}",
+            name
+        )));
+    }
+    if name == "." || name == ".." {
+        return Err(AppError::InvalidPath(format!("Invalid name: {}", name)));
+    }
+    Ok(())
+}
+
+/// True when two paths refer to the same filesystem entry.
+/// Uses canonicalization; falls back to comparing canonicalized parents and
+/// exact file names for paths that can't be canonicalized (e.g. broken symlinks).
+fn is_same_entry(a: &Path, b: &Path) -> bool {
+    if let (Ok(ca), Ok(cb)) = (fs::canonicalize(a), fs::canonicalize(b)) {
+        return ca == cb;
+    }
+    match (a.parent(), b.parent()) {
+        (Some(pa), Some(pb)) => match (fs::canonicalize(pa), fs::canonicalize(pb)) {
+            (Ok(ca), Ok(cb)) => ca == cb && a.file_name() == b.file_name(),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// Reject copying/moving a directory into itself or one of its descendants.
+fn reject_dir_into_itself(source: &Path, dest_dir: &Path) -> Result<(), AppError> {
+    if source.is_dir() {
+        if let (Ok(canon_src), Ok(canon_dest)) =
+            (fs::canonicalize(source), fs::canonicalize(dest_dir))
+        {
+            if canon_dest.starts_with(&canon_src) {
+                return Err(AppError::InvalidPath(format!(
+                    "Cannot copy or move a directory into itself: {}",
+                    source.display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Generate a unique hidden staging path inside `dest_dir` for transactional
+/// copy/move operations.
+fn unique_staging_path(dest_dir: &Path, name: &str) -> PathBuf {
+    let pid = std::process::id();
+    for counter in 0u64.. {
+        let candidate = dest_dir.join(format!(".{}.tmp.{}.{}", name, pid, counter));
+        if !entry_exists(&candidate) {
+            return candidate;
+        }
+    }
+    unreachable!("exhausted staging path candidates")
+}
+
+/// Remove a file, directory tree, or symlink (the link itself, not its target).
+fn remove_entry_at(path: &Path) -> Result<(), AppError> {
+    let meta = fs::symlink_metadata(path)?;
+    if meta.is_dir() {
+        fs::remove_dir_all(path)?;
+    } else if meta.file_type().is_symlink() {
+        #[cfg(windows)]
+        fs::remove_file(path).or_else(|_| fs::remove_dir(path))?;
+        #[cfg(not(windows))]
+        fs::remove_file(path)?;
+    } else {
+        fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
+/// Copy a file or a directory tree from `source` to `target`.
+/// `target` must not exist yet.
+fn copy_recursively(source: &Path, target: &Path) -> Result<(), AppError> {
+    if source.is_dir() {
+        fs::create_dir_all(target)?;
+        let mut options = fs_extra::dir::CopyOptions::new();
+        options.content_only = true;
+        options.overwrite = false;
+        fs_extra::dir::copy(source, target, &options)
+            .map_err(|e| AppError::Other(e.to_string()))?;
+    } else {
+        fs::copy(source, target)?;
+    }
+    Ok(())
+}
 
 /// Get the user's home directory.
 #[tauri::command]
-pub fn get_home_directory() -> Result<String, AppError> {
+pub async fn get_home_directory() -> Result<String, AppError> {
     dirs::home_dir()
         .map(|p| p.to_string_lossy().to_string())
         .ok_or_else(|| AppError::NotFound("Home directory not found".to_string()))
@@ -18,11 +121,7 @@ pub fn get_home_directory() -> Result<String, AppError> {
 /// Create a new directory.
 #[tauri::command]
 pub async fn create_directory(parent_path: String, name: String) -> Result<FileEntry, AppError> {
-    if name.is_empty() {
-        return Err(AppError::InvalidPath(
-            "Directory name cannot be empty".to_string(),
-        ));
-    }
+    validate_entry_name(&name)?;
 
     let parent = PathBuf::from(&parent_path);
     if !parent.exists() {
@@ -33,7 +132,7 @@ pub async fn create_directory(parent_path: String, name: String) -> Result<FileE
     }
 
     let new_path = parent.join(&name);
-    if new_path.exists() {
+    if entry_exists(&new_path) {
         return Err(AppError::AlreadyExists(
             new_path.to_string_lossy().to_string(),
         ));
@@ -46,17 +145,24 @@ pub async fn create_directory(parent_path: String, name: String) -> Result<FileE
     Ok(metadata_to_entry(&new_path, &metadata))
 }
 
+/// True when renaming only changes the filename's case and both paths refer
+/// to the same entry. On case-insensitive filesystems the target appears to
+/// exist even though it is the source itself; such renames must be allowed.
+fn is_case_only_rename(source: &Path, target: &Path, new_name: &str) -> bool {
+    let same_name_ci = source
+        .file_name()
+        .map(|n| n.to_string_lossy().to_lowercase() == new_name.to_lowercase())
+        .unwrap_or(false);
+    same_name_ci && is_same_entry(source, target)
+}
+
 /// Rename a file or directory.
 #[tauri::command]
 pub async fn rename_entry(path: String, new_name: String) -> Result<FileEntry, AppError> {
-    if new_name.is_empty() {
-        return Err(AppError::InvalidPath(
-            "New name cannot be empty".to_string(),
-        ));
-    }
+    validate_entry_name(&new_name)?;
 
     let source = PathBuf::from(&path);
-    if !source.exists() {
+    if !entry_exists(&source) {
         return Err(AppError::NotFound(path.clone()));
     }
 
@@ -65,7 +171,7 @@ pub async fn rename_entry(path: String, new_name: String) -> Result<FileEntry, A
     })?;
 
     let target = parent.join(&new_name);
-    if target.exists() {
+    if entry_exists(&target) && !is_case_only_rename(&source, &target, &new_name) {
         return Err(AppError::AlreadyExists(
             target.to_string_lossy().to_string(),
         ));
@@ -79,9 +185,11 @@ pub async fn rename_entry(path: String, new_name: String) -> Result<FileEntry, A
 
 /// Generate a unique copy name like "name - Copy.ext" or "name - Copy (2).ext".
 fn generate_copy_name(dest_dir: &Path, source_name: &str, is_directory: bool) -> PathBuf {
+    // Only split off an extension when the dot isn't the leading character,
+    // so dotfiles like ".bashrc" keep their full name as the base.
     let (base_name, extension) = if is_directory {
         (source_name.to_string(), String::new())
-    } else if let Some(dot_pos) = source_name.rfind('.') {
+    } else if let Some(dot_pos) = source_name.rfind('.').filter(|&p| p > 0) {
         (
             source_name[..dot_pos].to_string(),
             source_name[dot_pos..].to_string(),
@@ -92,22 +200,29 @@ fn generate_copy_name(dest_dir: &Path, source_name: &str, is_directory: bool) ->
 
     let copy_name = format!("{} - Copy{}", base_name, extension);
     let target = dest_dir.join(&copy_name);
-    if !target.exists() {
+    if !entry_exists(&target) {
         return target;
     }
 
     for counter in 2..=1000 {
         let copy_name = format!("{} - Copy ({}){}", base_name, counter, extension);
         let target = dest_dir.join(&copy_name);
-        if !target.exists() {
+        if !entry_exists(&target) {
             return target;
         }
     }
 
-    dest_dir.join(format!(
-        "{} - Copy (overflow){}",
-        base_name, extension
-    ))
+    // Last resort: pid-tagged names, re-checked for existence so we never
+    // silently pick a name that's already taken.
+    let pid = std::process::id();
+    for counter in 0u64.. {
+        let copy_name = format!("{} - Copy ({}-{}){}", base_name, pid, counter, extension);
+        let target = dest_dir.join(&copy_name);
+        if !entry_exists(&target) {
+            return target;
+        }
+    }
+    unreachable!("exhausted copy name candidates")
 }
 
 /// Copy a file or directory.
@@ -118,10 +233,18 @@ pub async fn copy_entry(
     dest_dir: String,
     overwrite: Option<bool>,
 ) -> Result<FileEntry, AppError> {
+    run_blocking(move || copy_entry_impl(source, dest_dir, overwrite)).await
+}
+
+fn copy_entry_impl(
+    source: String,
+    dest_dir: String,
+    overwrite: Option<bool>,
+) -> Result<FileEntry, AppError> {
     let source_path = PathBuf::from(&source);
     let dest_dir_path = PathBuf::from(&dest_dir);
 
-    if !source_path.exists() {
+    if !entry_exists(&source_path) {
         return Err(AppError::NotFound(source.clone()));
     }
 
@@ -138,34 +261,66 @@ pub async fn copy_entry(
         .to_string_lossy()
         .to_string();
 
+    reject_dir_into_itself(&source_path, &dest_dir_path)?;
+
     let mut target = dest_dir_path.join(&source_name);
 
-    if target.exists() {
+    if entry_exists(&target) {
         if overwrite.unwrap_or(false) {
-            if target.is_dir() {
-                fs::remove_dir_all(&target)?;
-            } else {
-                fs::remove_file(&target)?;
+            if is_same_entry(&source_path, &target) {
+                return Err(AppError::InvalidPath(format!(
+                    "Source and destination are the same: {}",
+                    source
+                )));
             }
+            return copy_entry_overwriting(&source_path, &dest_dir_path, &target, &source_name);
         } else {
             target = generate_copy_name(&dest_dir_path, &source_name, source_path.is_dir());
         }
     }
 
-    if source_path.is_dir() {
-        fs::create_dir_all(&target)?;
-        let mut options = fs_extra::dir::CopyOptions::new();
-        options.content_only = true;
-        options.overwrite = false;
-        fs_extra::dir::copy(&source_path, &target, &options)
-            .map_err(|e| AppError::Other(e.to_string()))?;
-    } else {
-        fs::copy(&source_path, &target)?;
-    }
+    copy_recursively(&source_path, &target)?;
 
-    log::info!("Copied entry (is_dir={}) overwrite={}", source_path.is_dir(), overwrite.unwrap_or(false));
+    log::info!(
+        "Copied entry (is_dir={}) overwrite={}",
+        source_path.is_dir(),
+        overwrite.unwrap_or(false)
+    );
     let metadata = fs::symlink_metadata(&target)?;
     Ok(metadata_to_entry(&target, &metadata))
+}
+
+/// Overwrite-copy transactionally: stage the copy under a temp name in the
+/// destination dir, and only swap it into place (displacing the old target)
+/// after the copy fully succeeded. The old target is removed last; on any
+/// failure the old target is restored and the staging copy cleaned up.
+fn copy_entry_overwriting(
+    source: &Path,
+    dest_dir: &Path,
+    target: &Path,
+    source_name: &str,
+) -> Result<FileEntry, AppError> {
+    let staging = unique_staging_path(dest_dir, source_name);
+    if let Err(e) = copy_recursively(source, &staging) {
+        let _ = remove_entry_at(&staging);
+        return Err(e);
+    }
+
+    let displaced = unique_staging_path(dest_dir, source_name);
+    if let Err(e) = fs::rename(target, &displaced) {
+        let _ = remove_entry_at(&staging);
+        return Err(AppError::from(e));
+    }
+    if let Err(e) = fs::rename(&staging, target) {
+        let _ = fs::rename(&displaced, target); // restore the old target
+        let _ = remove_entry_at(&staging);
+        return Err(AppError::from(e));
+    }
+    let _ = remove_entry_at(&displaced);
+
+    log::info!("Copied entry over existing target (overwrite=true)");
+    let metadata = fs::symlink_metadata(target)?;
+    Ok(metadata_to_entry(target, &metadata))
 }
 
 /// Move a file or directory.
@@ -176,10 +331,18 @@ pub async fn move_entry(
     dest_dir: String,
     overwrite: Option<bool>,
 ) -> Result<FileEntry, AppError> {
+    run_blocking(move || move_entry_impl(source, dest_dir, overwrite)).await
+}
+
+fn move_entry_impl(
+    source: String,
+    dest_dir: String,
+    overwrite: Option<bool>,
+) -> Result<FileEntry, AppError> {
     let source_path = PathBuf::from(&source);
     let dest_dir_path = PathBuf::from(&dest_dir);
 
-    if !source_path.exists() {
+    if !entry_exists(&source_path) {
         return Err(AppError::NotFound(source.clone()));
     }
 
@@ -196,25 +359,60 @@ pub async fn move_entry(
         .to_string_lossy()
         .to_string();
 
+    reject_dir_into_itself(&source_path, &dest_dir_path)?;
+
     let target = dest_dir_path.join(&source_name);
 
-    if target.exists() {
-        if overwrite.unwrap_or(false) {
-            if target.is_dir() {
-                fs::remove_dir_all(&target)?;
-            } else {
-                fs::remove_file(&target)?;
-            }
-        } else {
+    // If the target exists, displace it to a temp name (cheap same-dir rename)
+    // instead of deleting it; it's only removed after the move succeeds.
+    let mut displaced: Option<PathBuf> = None;
+    if entry_exists(&target) {
+        if !overwrite.unwrap_or(false) {
             return Err(AppError::AlreadyExists(
                 target.to_string_lossy().to_string(),
             ));
         }
+        if is_same_entry(&source_path, &target) {
+            return Err(AppError::InvalidPath(format!(
+                "Source and destination are the same: {}",
+                source
+            )));
+        }
+        let tmp = unique_staging_path(&dest_dir_path, &source_name);
+        fs::rename(&target, &tmp)?;
+        displaced = Some(tmp);
     }
 
+    match perform_move(&source_path, &dest_dir_path, &target, &source_name) {
+        Ok(()) => {
+            if let Some(tmp) = displaced {
+                let _ = remove_entry_at(&tmp);
+            }
+        }
+        Err(e) => {
+            // Restore the displaced target before reporting the error.
+            if let Some(tmp) = displaced {
+                let _ = fs::rename(&tmp, &target);
+            }
+            return Err(e);
+        }
+    }
+
+    let metadata = fs::symlink_metadata(&target)?;
+    Ok(metadata_to_entry(&target, &metadata))
+}
+
+/// Move `source` to `target`: rename when possible, staged copy+delete for
+/// cross-filesystem moves. `target` must not exist.
+fn perform_move(
+    source_path: &Path,
+    dest_dir_path: &Path,
+    target: &Path,
+    source_name: &str,
+) -> Result<(), AppError> {
     // Try a simple rename first (works if same filesystem)
-    match fs::rename(&source_path, &target) {
-        Ok(()) => {}
+    match fs::rename(source_path, target) {
+        Ok(()) => Ok(()),
         Err(e) => {
             // Only fall back to copy+delete for cross-filesystem moves (EXDEV).
             // Other errors (permission denied, etc.) should be returned immediately.
@@ -224,45 +422,72 @@ pub async fn move_entry(
                 return Err(AppError::Io(e));
             }
             log::info!("Cross-device move detected, falling back to copy+delete");
-            // Fall back to copy + delete for cross-filesystem moves
-            if source_path.is_dir() {
-                fs::create_dir_all(&target)?;
-                let mut options = fs_extra::dir::CopyOptions::new();
-                options.content_only = true;
-                fs_extra::dir::copy(&source_path, &target, &options)
-                    .map_err(|e| AppError::Other(e.to_string()))?;
-                fs::remove_dir_all(&source_path)?;
-            } else {
-                fs::copy(&source_path, &target)?;
-                fs::remove_file(&source_path)?;
+            // Stage the copy in the destination dir, swap it into place once
+            // complete, and only then delete the source.
+            let staging = unique_staging_path(dest_dir_path, source_name);
+            if let Err(e) = copy_recursively(source_path, &staging) {
+                let _ = remove_entry_at(&staging);
+                return Err(e);
             }
+            if let Err(e) = fs::rename(&staging, target) {
+                let _ = remove_entry_at(&staging);
+                return Err(AppError::from(e));
+            }
+            remove_entry_at(source_path)?;
+            Ok(())
         }
     }
-
-    let metadata = fs::symlink_metadata(&target)?;
-    Ok(metadata_to_entry(&target, &metadata))
 }
 
 /// Read a text file's contents with a size limit (default 1MB).
 #[tauri::command]
 pub async fn read_text_file(path: String, max_bytes: Option<u64>) -> Result<String, AppError> {
+    run_blocking(move || read_text_file_impl(path, max_bytes)).await
+}
+
+fn read_text_file_impl(path: String, max_bytes: Option<u64>) -> Result<String, AppError> {
     let file_path = PathBuf::from(&path);
-
-    if !file_path.exists() {
-        return Err(AppError::NotFound(path));
-    }
-
     let limit = max_bytes.unwrap_or(1_048_576);
-    let metadata = fs::metadata(&file_path)?;
+
+    let metadata = match fs::metadata(&file_path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(AppError::NotFound(path)),
+        Err(e) => return Err(AppError::from(e)),
+    };
+
+    // Reject non-regular files (directories, FIFOs, sockets, devices) up
+    // front — opening a FIFO for reading would block forever.
+    if !metadata.is_file() {
+        return Err(AppError::InvalidPath(format!(
+            "Not a regular file: {}",
+            path
+        )));
+    }
 
     if metadata.len() > limit {
         return Err(AppError::Io(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("File too large: {} bytes (limit: {})", metadata.len(), limit),
+            format!(
+                "File too large: {} bytes (limit: {})",
+                metadata.len(),
+                limit
+            ),
         )));
     }
 
-    let content = fs::read(&file_path)?;
+    // Read through a limited reader so a file that grows between the size
+    // check and the read can't blow past the limit.
+    let file = fs::File::open(&file_path)?;
+    let mut content = Vec::with_capacity(metadata.len() as usize);
+    file.take(limit.saturating_add(1))
+        .read_to_end(&mut content)?;
+    if content.len() as u64 > limit {
+        return Err(AppError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("File too large: exceeds limit of {} bytes", limit),
+        )));
+    }
+
     String::from_utf8(content).map_err(|_| {
         AppError::Io(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -276,7 +501,7 @@ pub async fn read_text_file(path: String, max_bytes: Option<u64>) -> Result<Stri
 pub async fn write_text_file(path: String, content: String) -> Result<FileEntry, AppError> {
     let file_path = PathBuf::from(&path);
 
-    if file_path.exists() {
+    if entry_exists(&file_path) {
         return Err(AppError::AlreadyExists(path));
     }
 
@@ -288,21 +513,19 @@ pub async fn write_text_file(path: String, content: String) -> Result<FileEntry,
 /// Delete a file or directory permanently (not to trash).
 #[tauri::command]
 pub async fn delete_entry_permanent(path: String) -> Result<(), AppError> {
-    let file_path = PathBuf::from(&path);
+    run_blocking(move || {
+        let file_path = PathBuf::from(&path);
 
-    if !file_path.exists() {
-        return Err(AppError::NotFound(path));
-    }
+        let meta =
+            fs::symlink_metadata(&file_path).map_err(|_| AppError::NotFound(path.clone()))?;
 
-    let is_dir = file_path.is_dir();
-    if is_dir {
-        fs::remove_dir_all(&file_path)?;
-    } else {
-        fs::remove_file(&file_path)?;
-    }
+        let is_dir = meta.is_dir();
+        remove_entry_at(&file_path)?;
 
-    log::info!("Permanently deleted entry (is_dir={})", is_dir);
-    Ok(())
+        log::info!("Permanently deleted entry (is_dir={})", is_dir);
+        Ok(())
+    })
+    .await
 }
 
 /// Create a symbolic link.
@@ -311,11 +534,11 @@ pub async fn create_symlink(target_path: String, link_path: String) -> Result<Fi
     let target = PathBuf::from(&target_path);
     let link = PathBuf::from(&link_path);
 
-    if !target.exists() {
+    if !entry_exists(&target) {
         return Err(AppError::NotFound(target_path));
     }
 
-    if link.exists() {
+    if entry_exists(&link) {
         return Err(AppError::AlreadyExists(link_path));
     }
 
@@ -338,41 +561,51 @@ pub async fn create_symlink(target_path: String, link_path: String) -> Result<Fi
 /// Estimate total file count and size for a list of paths.
 #[tauri::command]
 pub async fn estimate_size(paths: Vec<String>) -> Result<SizeEstimate, AppError> {
-    let mut file_count: u64 = 0;
-    let mut total_bytes: u64 = 0;
+    run_blocking(move || {
+        let mut file_count: u64 = 0;
+        let mut total_bytes: u64 = 0;
 
-    for path_str in &paths {
-        let path = PathBuf::from(path_str);
-        if !path.exists() {
-            return Err(AppError::NotFound(path_str.clone()));
+        for path_str in &paths {
+            let path = PathBuf::from(path_str);
+            if !entry_exists(&path) {
+                return Err(AppError::NotFound(path_str.clone()));
+            }
+            estimate_path_size(&path, &mut file_count, &mut total_bytes);
         }
-        estimate_path_size(&path, &mut file_count, &mut total_bytes);
-    }
 
-    Ok(SizeEstimate {
-        file_count,
-        total_bytes,
+        Ok(SizeEstimate {
+            file_count,
+            total_bytes,
+        })
     })
+    .await
 }
 
 /// Batch-check which paths exist on the filesystem.
+/// Uses lstat so broken symlinks still count as existing entries.
 #[tauri::command]
 pub async fn check_paths_exist(paths: Vec<String>) -> Vec<bool> {
-    paths.iter().map(|p| PathBuf::from(p).exists()).collect()
+    paths.iter().map(|p| entry_exists(Path::new(p))).collect()
 }
 
+/// Walk a path accumulating file count and byte size. Never follows
+/// symlinks: a symlink counts as a single entry with the link's own size,
+/// so cycles can't cause unbounded recursion.
 fn estimate_path_size(path: &Path, file_count: &mut u64, total_bytes: &mut u64) {
-    if path.is_file() {
-        *file_count += 1;
-        if let Ok(metadata) = fs::metadata(path) {
-            *total_bytes += metadata.len();
-        }
-    } else if path.is_dir() {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return;
+    };
+    let file_type = metadata.file_type();
+    if file_type.is_dir() {
         if let Ok(entries) = fs::read_dir(path) {
             for entry in entries.flatten() {
                 estimate_path_size(&entry.path(), file_count, total_bytes);
             }
         }
+    } else {
+        // Regular files and symlinks (counted as the link itself).
+        *file_count += 1;
+        *total_bytes += metadata.len();
     }
 }
 
@@ -402,9 +635,11 @@ mod tests {
         let file_path = dir.path().join("old_name.txt");
         File::create(&file_path).unwrap();
 
-        let result =
-            block_on(rename_entry(file_path.to_string_lossy().to_string(), "new_name.txt".to_string()))
-                .unwrap();
+        let result = block_on(rename_entry(
+            file_path.to_string_lossy().to_string(),
+            "new_name.txt".to_string(),
+        ))
+        .unwrap();
 
         assert_eq!(result.name, "new_name.txt");
         assert!(!file_path.exists());
@@ -427,6 +662,63 @@ mod tests {
             name2.file_name().unwrap().to_str().unwrap(),
             "test - Copy (2).txt"
         );
+    }
+
+    #[test]
+    fn test_generate_copy_name_dotfile() {
+        let dir = tempdir().unwrap();
+
+        let name = generate_copy_name(dir.path(), ".bashrc", false);
+        assert_eq!(
+            name.file_name().unwrap().to_str().unwrap(),
+            ".bashrc - Copy"
+        );
+
+        File::create(&name).unwrap();
+        let name2 = generate_copy_name(dir.path(), ".bashrc", false);
+        assert_eq!(
+            name2.file_name().unwrap().to_str().unwrap(),
+            ".bashrc - Copy (2)"
+        );
+    }
+
+    #[test]
+    fn test_validate_entry_name() {
+        assert!(validate_entry_name("normal.txt").is_ok());
+        assert!(validate_entry_name(".hidden").is_ok());
+        assert!(validate_entry_name("with spaces and (parens)").is_ok());
+
+        assert!(validate_entry_name("").is_err());
+        assert!(validate_entry_name("a/b").is_err());
+        assert!(validate_entry_name("a\\b").is_err());
+        assert!(validate_entry_name("/abs").is_err());
+        assert!(validate_entry_name("..").is_err());
+        assert!(validate_entry_name(".").is_err());
+        assert!(validate_entry_name("../escape").is_err());
+    }
+
+    #[test]
+    fn test_create_directory_rejects_separators() {
+        let dir = tempdir().unwrap();
+        let result = block_on(create_directory(
+            dir.path().to_string_lossy().to_string(),
+            "../evil".to_string(),
+        ));
+        assert!(matches!(result, Err(AppError::InvalidPath(_))));
+    }
+
+    #[test]
+    fn test_rename_entry_rejects_traversal() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("victim.txt");
+        File::create(&file_path).unwrap();
+
+        let result = block_on(rename_entry(
+            file_path.to_string_lossy().to_string(),
+            "sub/dir.txt".to_string(),
+        ));
+        assert!(matches!(result, Err(AppError::InvalidPath(_))));
+        assert!(file_path.exists());
     }
 
     fn block_on<F: std::future::Future>(f: F) -> F::Output {
@@ -498,6 +790,150 @@ mod tests {
     }
 
     #[test]
+    fn test_copy_entry_overwrite_same_path_preserves_source() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("precious.txt");
+        fs::write(&file_path, "do not destroy").unwrap();
+
+        // Copy into the file's own parent with overwrite=true: target == source.
+        let result = block_on(copy_entry(
+            file_path.to_string_lossy().to_string(),
+            dir.path().to_string_lossy().to_string(),
+            Some(true),
+        ));
+
+        assert!(result.is_err(), "expected same-path copy to error");
+        assert_eq!(fs::read_to_string(&file_path).unwrap(), "do not destroy");
+    }
+
+    #[test]
+    fn test_move_entry_overwrite_same_path_preserves_source() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("precious.txt");
+        fs::write(&file_path, "do not destroy").unwrap();
+
+        let result = block_on(move_entry(
+            file_path.to_string_lossy().to_string(),
+            dir.path().to_string_lossy().to_string(),
+            Some(true),
+        ));
+
+        assert!(result.is_err(), "expected same-path move to error");
+        assert_eq!(fs::read_to_string(&file_path).unwrap(), "do not destroy");
+    }
+
+    #[test]
+    fn test_copy_entry_dir_into_own_subdir_rejected() {
+        let dir = tempdir().unwrap();
+        let source_dir = dir.path().join("outer");
+        let inner = source_dir.join("inner");
+        fs::create_dir_all(&inner).unwrap();
+
+        let result = block_on(copy_entry(
+            source_dir.to_string_lossy().to_string(),
+            inner.to_string_lossy().to_string(),
+            None,
+        ));
+
+        assert!(matches!(result, Err(AppError::InvalidPath(_))));
+        assert!(source_dir.exists());
+    }
+
+    #[test]
+    fn test_copy_entry_overwrite_replaces_target() {
+        let dir = tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        let dst_dir = dir.path().join("dst");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dst_dir).unwrap();
+        fs::write(src_dir.join("a.txt"), "new content").unwrap();
+        fs::write(dst_dir.join("a.txt"), "old content").unwrap();
+
+        let result = block_on(copy_entry(
+            src_dir.join("a.txt").to_string_lossy().to_string(),
+            dst_dir.to_string_lossy().to_string(),
+            Some(true),
+        ));
+
+        assert!(result.is_ok(), "overwrite copy failed: {:?}", result.err());
+        assert_eq!(
+            fs::read_to_string(dst_dir.join("a.txt")).unwrap(),
+            "new content"
+        );
+        // Source untouched, no staging leftovers.
+        assert_eq!(
+            fs::read_to_string(src_dir.join("a.txt")).unwrap(),
+            "new content"
+        );
+        let leftovers: Vec<_> = fs::read_dir(&dst_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp."))
+            .collect();
+        assert!(leftovers.is_empty(), "staging leftovers: {:?}", leftovers);
+    }
+
+    #[test]
+    fn test_move_entry_overwrite_replaces_target() {
+        let dir = tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        let dst_dir = dir.path().join("dst");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dst_dir).unwrap();
+        fs::write(src_dir.join("a.txt"), "new content").unwrap();
+        fs::write(dst_dir.join("a.txt"), "old content").unwrap();
+
+        let result = block_on(move_entry(
+            src_dir.join("a.txt").to_string_lossy().to_string(),
+            dst_dir.to_string_lossy().to_string(),
+            Some(true),
+        ));
+
+        assert!(result.is_ok(), "overwrite move failed: {:?}", result.err());
+        assert_eq!(
+            fs::read_to_string(dst_dir.join("a.txt")).unwrap(),
+            "new content"
+        );
+        assert!(!src_dir.join("a.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_delete_broken_symlink() {
+        let dir = tempdir().unwrap();
+        let link = dir.path().join("dangling");
+        std::os::unix::fs::symlink(dir.path().join("nonexistent"), &link).unwrap();
+        assert!(fs::symlink_metadata(&link).is_ok());
+
+        let result = block_on(delete_entry_permanent(link.to_string_lossy().to_string()));
+        assert!(
+            result.is_ok(),
+            "delete broken symlink failed: {:?}",
+            result.err()
+        );
+        assert!(fs::symlink_metadata(&link).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_rename_broken_symlink() {
+        let dir = tempdir().unwrap();
+        let link = dir.path().join("dangling");
+        std::os::unix::fs::symlink(dir.path().join("nonexistent"), &link).unwrap();
+
+        let result = block_on(rename_entry(
+            link.to_string_lossy().to_string(),
+            "renamed_link".to_string(),
+        ));
+        assert!(
+            result.is_ok(),
+            "rename broken symlink failed: {:?}",
+            result.err()
+        );
+        assert!(fs::symlink_metadata(dir.path().join("renamed_link")).is_ok());
+    }
+
+    #[test]
     fn test_estimate_size() {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join("file1.txt"), "hello").unwrap();
@@ -505,8 +941,41 @@ mod tests {
         fs::create_dir(dir.path().join("subdir")).unwrap();
         fs::write(dir.path().join("subdir/nested.txt"), "abc").unwrap();
 
-        let result = block_on(estimate_size(vec![dir.path().to_string_lossy().to_string()])).unwrap();
+        let result = block_on(estimate_size(vec![dir
+            .path()
+            .to_string_lossy()
+            .to_string()]))
+        .unwrap();
         assert_eq!(result.file_count, 3);
         assert_eq!(result.total_bytes, 14);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_estimate_size_does_not_follow_symlink_cycle() {
+        let dir = tempdir().unwrap();
+        let sub = dir.path().join("sub");
+        fs::create_dir(&sub).unwrap();
+        fs::write(sub.join("file.txt"), "data").unwrap();
+        // Cycle: sub/loop -> parent dir
+        std::os::unix::fs::symlink(dir.path(), sub.join("loop")).unwrap();
+
+        let result = block_on(estimate_size(vec![dir
+            .path()
+            .to_string_lossy()
+            .to_string()]))
+        .unwrap();
+        // file.txt + the symlink itself; must terminate.
+        assert_eq!(result.file_count, 2);
+    }
+
+    #[test]
+    fn test_read_text_file_rejects_directory() {
+        let dir = tempdir().unwrap();
+        let result = block_on(read_text_file(
+            dir.path().to_string_lossy().to_string(),
+            None,
+        ));
+        assert!(matches!(result, Err(AppError::InvalidPath(_))));
     }
 }

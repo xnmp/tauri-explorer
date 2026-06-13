@@ -5,6 +5,7 @@
  */
 
 import type { FileEntry } from "$lib/domain/file";
+import { isCopyModifier } from "$lib/domain/platform";
 import { dragState } from "$lib/state/drag.svelte";
 import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
 
@@ -19,9 +20,10 @@ export function useDropTarget(deps: DropTargetDeps) {
 
   function handleDragOver(event: DragEvent, entry: FileEntry): void {
     if (entry.kind !== "directory") return;
-    if (!event.dataTransfer?.types.includes("application/x-explorer-path") && !dragState.readCrossWindow()) return;
+    const types = event.dataTransfer?.types;
+    if (!types?.includes("application/x-explorer-path") && !types?.includes("Files") && !dragState.readCrossWindow()) return;
     event.preventDefault();
-    const copying = event.ctrlKey;
+    const copying = isCopyModifier(event);
     if (event.dataTransfer) event.dataTransfer.dropEffect = copying ? "copy" : "move";
     dropTargets[entry.path] = true;
     copyDropTargets[entry.path] = copying;
@@ -34,6 +36,10 @@ export function useDropTarget(deps: DropTargetDeps) {
 
   async function handleDrop(event: DragEvent, entry: FileEntry): Promise<void> {
     event.preventDefault();
+    // Item-level drops are fully handled here — never let them bubble to
+    // background drop handlers (FileList content, Miller column background),
+    // which would process the same drop a second time.
+    event.stopPropagation();
     dropTargets[entry.path] = false;
     copyDropTargets[entry.path] = false;
 
@@ -42,10 +48,14 @@ export function useDropTarget(deps: DropTargetDeps) {
     const sourcePaths = getDropSourcePaths(event.dataTransfer);
     if (sourcePaths.length === 0) return;
 
+    const isCopy = isCopyModifier(event);
+
+    dragState.clear();
+
     for (const sourcePath of sourcePaths) {
       if (sourcePath === entry.path) continue;
       if (entry.path.startsWith(sourcePath + "/")) continue;
-      await handleFileDrop(sourcePath, entry.path, event.ctrlKey, {
+      await handleFileDrop(sourcePath, entry.path, isCopy, {
         onRefresh: deps.onRefresh,
       });
     }

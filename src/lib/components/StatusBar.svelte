@@ -122,4 +122,11 @@
     direction: rtl;
     text-align: right;
   }
+
+  /* Vibrancy: status bar floats as bare text, no container */
+  :global([data-vibrancy]) .status-bar {
+    background: transparent;
+    box-shadow: none;
+    height: 18px;
+  }
 </style>

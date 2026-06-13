@@ -2,10 +2,14 @@
  * Explorer state management using Svelte 5 runes.
  * Issue: tauri-explorer-gcl, tauri-explorer-jql, tauri-explorer-h3n, tauri-explorer-x25, tauri-explorer-bhw5, tauri-explorer-u7bg, tauri-explorer-1k9k
  *
- * Refactored to use extracted stores for:
+ * This store owns per-pane core state (path/history/entries/selection/
+ * sort/view) and navigation. Supporting concerns live in extracted modules:
  * - Types (types.ts)
  * - Selection logic (selection.ts)
  * - Navigation/history (navigation.ts)
+ * - Filesystem watch + mutation cooldown (pane-watch.ts)
+ * - Refresh lifecycle (pane-refresh.ts)
+ * - File mutations: create/rename/delete/symlink/archive (pane-mutations.ts)
  * - Clipboard (clipboard.svelte.ts) - shared between panes
  * - Dialogs (dialogs.svelte.ts) - global dialog state
  * - Context menu (context-menu.svelte.ts) - global context menu state
@@ -13,20 +17,10 @@
  */
 
 import { toastStore } from "./toast.svelte";
-import {
-  createDirectory,
-  renameEntry as apiRenameEntry,
-  deleteEntry,
-  deleteMultipleEntries,
-  deleteEntryPermanent,
-  clipboardHasImage,
-  clipboardPasteImage,
-  watchDirectory,
-  unwatchDirectory,
-} from "$lib/api/files";
-import { broadcastFileChange } from "./file-events";
+import { basename } from "$lib/domain/path";
+import { clipboardHasImage, clipboardPasteImage } from "$lib/api/files";
 import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/domain/file";
-import type { SelectOptions, ViewMode } from "./types";
+import type { ExplorerCoreState, SelectOptions, ViewMode } from "./types";
 import * as selection from "./selection";
 import * as navigation from "./navigation";
 import { clipboardStore } from "./clipboard.svelte";
@@ -35,33 +29,16 @@ import { recentFilesStore } from "./recent-files.svelte";
 import { contextMenuStore } from "./context-menu.svelte";
 import { undoStore } from "./undo.svelte";
 import { settingsStore } from "./settings.svelte";
+import { manualHiddenStore } from "./manual-hidden.svelte";
 import { frecencyStore } from "./frecency.svelte";
 import { getSortPref, saveSortPref } from "./sort-prefs";
 import { pasteEntries, type PasteResult } from "./paste-operations";
 import { createDirectoryListing } from "./directory-listing";
+import { createPaneWatch } from "./pane-watch";
+import { createPaneRefresh } from "./pane-refresh";
+import { createPaneMutations } from "./pane-mutations";
 import { getAffectedDirs, undoActionLabel } from "./undo-helpers";
-
-/** Core explorer state (per-pane) */
-interface ExplorerCoreState {
-  // Navigation
-  currentPath: string;
-  history: string[];
-  historyIndex: number;
-
-  // Entries
-  entries: FileEntry[];
-  loading: boolean;
-  error: string | null;
-
-  // View options (showHidden is in settingsStore, shared across panes)
-  sortBy: SortField;
-  sortAscending: boolean;
-  viewMode: ViewMode;
-
-  // Selection
-  selectedPaths: Set<string>;
-  selectionAnchorIndex: number | null;
-}
+import { broadcastFileChange } from "./file-events";
 
 interface ExplorerSeed {
   currentPath: string;
@@ -104,22 +81,9 @@ function createExplorerState(seed?: ExplorerSeed) {
   // Navigation callback for UI (e.g. focusing the selected item after nav)
   let onNavigateCallback: (() => void) | null = null;
 
-  // Filesystem watcher: track which path this pane is watching
-  let watchedPath: string | null = null;
-
-  function updateWatch(newPath: string) {
-    if (watchedPath === newPath) return;
-    if (watchedPath) unwatchDirectory(watchedPath);
-    watchDirectory(newPath);
-    watchedPath = newPath;
-  }
-
-  function destroyWatch() {
-    if (watchedPath) {
-      unwatchDirectory(watchedPath);
-      watchedPath = null;
-    }
-  }
+  // Filesystem watcher + local-mutation cooldown
+  const watch = createPaneWatch();
+  const markLocalMutation = watch.markLocalMutation;
 
   // Read-only state accessor for components that need the raw state bag
   const state = $derived({ ...coreState });
@@ -130,6 +94,10 @@ function createExplorerState(seed?: ExplorerSeed) {
 
   const displayEntries = $derived.by(() => {
     let filtered = filterHidden(coreState.entries, settingsStore.showHidden);
+    const manualHiddenNames = manualHiddenStore.namesIn(coreState.currentPath);
+    if (manualHiddenNames.size > 0 && !settingsStore.showManuallyHidden) {
+      filtered = filtered.filter((e) => !manualHiddenNames.has(e.name));
+    }
     if (filterQuery) {
       const q = filterQuery.toLowerCase();
       filtered = filtered.filter((e) => e.name.toLowerCase().includes(q));
@@ -147,7 +115,13 @@ function createExplorerState(seed?: ExplorerSeed) {
 
   const dirListing = createDirectoryListing();
 
-  async function navigateInternal(path: string): Promise<boolean> {
+  // Per-pane navigation generation counter. Guards against rapid A→B
+  // navigation applying whichever result happens to land last.
+  let navGeneration = 0;
+
+  async function navigateInternal(path: string): Promise<"ok" | "error" | "stale"> {
+    const gen = ++navGeneration;
+
     // If we already have entries for this path (e.g. seeded from another tab),
     // don't show loading state — the existing entries stay visible while we refresh.
     const isSeeded = coreState.currentPath === path && coreState.entries.length > 0;
@@ -160,17 +134,22 @@ function createExplorerState(seed?: ExplorerSeed) {
 
     const result = await dirListing.load(path, {
       onEntries: (entries) => {
+        if (gen !== navGeneration) return;
         coreState.entries = [...coreState.entries, ...entries];
       },
       onDone: () => {
+        if (gen !== navGeneration) return;
         coreState.loading = false;
       },
     });
 
+    // A newer navigation started while this one was in flight — discard.
+    if (gen !== navGeneration) return "stale";
+
     if (result.ok) {
       coreState.currentPath = result.path;
       coreState.entries = result.entries;
-      updateWatch(result.path);
+      watch.update(result.path);
 
       const savedSort = getSortPref(result.path);
       if (savedSort) {
@@ -193,55 +172,65 @@ function createExplorerState(seed?: ExplorerSeed) {
       if (!result.streaming) {
         coreState.loading = false;
       }
-      return true;
+      return "ok";
     } else {
       coreState.error = result.error;
       coreState.loading = false;
-      return false;
+      return "error";
     }
   }
 
-  async function navigateTo(path: string) {
-    const success = await navigateInternal(path);
-    if (success) {
-      const newHistory = navigation.pushToHistory(
-        coreState.history,
-        coreState.historyIndex,
-        coreState.currentPath
-      );
-      coreState.history = newHistory.history;
-      coreState.historyIndex = newHistory.historyIndex;
+  /** Navigate and push to history. Returns true on success. */
+  async function applyNavigation(path: string): Promise<boolean> {
+    const status = await navigateInternal(path);
+    if (status !== "ok") return false;
+    const newHistory = navigation.pushToHistory(
+      coreState.history,
+      coreState.historyIndex,
+      coreState.currentPath
+    );
+    coreState.history = newHistory.history;
+    coreState.historyIndex = newHistory.historyIndex;
+    return true;
+  }
 
+  async function navigateTo(path: string) {
+    const success = await applyNavigation(path);
+    if (success) {
       // Track directory navigation in recent files and frecency
-      const name = path.split("/").filter(Boolean).pop() || path;
+      const name = basename(path);
       recentFilesStore.add(path, name, "directory");
       frecencyStore.recordAccess(path);
     }
   }
 
+  /** Initial load for restored/seeded panes: like navigateTo but does NOT
+   *  record the visit in recent files or frecency (the user didn't navigate). */
+  async function initialLoad(path: string) {
+    await applyNavigation(path);
+  }
+
   async function goBack() {
     const prevPath = navigation.getBackPath(coreState.history, coreState.historyIndex);
     if (!prevPath) return;
-    const success = await navigateInternal(prevPath);
-    if (success) {
+    const status = await navigateInternal(prevPath);
+    if (status === "ok") {
       coreState.historyIndex--;
-    } else {
+    } else if (status === "error") {
       // Path no longer exists — fall back to parent
-      const parentPath = navigation.getParentPath(breadcrumbs);
-      if (parentPath) await navigateInternal(parentPath);
+      await navigateToParent();
     }
   }
 
   async function goForward() {
     const nextPath = navigation.getForwardPath(coreState.history, coreState.historyIndex);
     if (!nextPath) return;
-    const success = await navigateInternal(nextPath);
-    if (success) {
+    const status = await navigateInternal(nextPath);
+    if (status === "ok") {
       coreState.historyIndex++;
-    } else {
+    } else if (status === "error") {
       // Path no longer exists — fall back to parent
-      const parentPath = navigation.getParentPath(breadcrumbs);
-      if (parentPath) await navigateInternal(parentPath);
+      await navigateToParent();
     }
   }
 
@@ -252,50 +241,34 @@ function createExplorerState(seed?: ExplorerSeed) {
     }
   }
 
-  /** Build a fingerprint string for change detection. */
-  function entriesFingerprint(entries: FileEntry[]): string {
-    return entries.map((e) => `${e.path}\0${e.size}\0${e.modified}`).join("\n");
+  /** Fallback navigation when the current directory no longer exists. */
+  async function navigateToParent(): Promise<void> {
+    const parentPath = navigation.getParentPath(breadcrumbs);
+    if (parentPath) await navigateInternal(parentPath);
   }
 
-  async function refresh(options?: { silent?: boolean }) {
-    const oldFingerprint = entriesFingerprint(coreState.entries);
-    const silent = options?.silent ?? false;
+  // ===================
+  // Refresh & Mutations (extracted modules sharing this pane's state)
+  // ===================
 
-    // Fetch new data without touching UI state — avoids flash on no-change
-    const result = await dirListing.load(coreState.currentPath, {
-      onEntries: () => {},
-      onDone: () => {},
-    });
+  const refresh = createPaneRefresh({
+    coreState,
+    dirListing,
+    inMutationCooldown: watch.inMutationCooldown,
+    updateWatch: watch.update,
+    navigateToParent,
+  });
 
-    if (!result.ok) {
-      // Directory no longer exists — fall back to parent
-      const parentPath = navigation.getParentPath(breadcrumbs);
-      if (parentPath) {
-        await navigateInternal(parentPath);
-      }
-      return;
-    }
-
-    const newFingerprint = entriesFingerprint(result.entries);
-    if (oldFingerprint === newFingerprint) {
-      if (!silent) {
-        toastStore.show("Already up to date", "info", { duration: 1500 });
-      }
-      return;
-    }
-
-    // Entries changed — update UI state in place without full navigateInternal reset
-    coreState.entries = result.entries;
-    updateWatch(result.path);
-
-    if (!result.streaming) {
-      coreState.loading = false;
-    }
-
-    if (!silent) {
-      toastStore.show("Refreshed", "info", { duration: 1500 });
-    }
-  }
+  const mutations = createPaneMutations({
+    coreState,
+    displayEntries: () => displayEntries,
+    markLocalMutation,
+    getParentPath: () => navigation.getParentPath(breadcrumbs),
+    navigateTo,
+    refreshSilent: () => {
+      void refresh({ silent: true });
+    },
+  });
 
   // ===================
   // View Actions
@@ -346,16 +319,24 @@ function createExplorerState(seed?: ExplorerSeed) {
   }
 
   function getSelectedEntries(): FileEntry[] {
-    return selection.getSelectedEntries(displayEntries, coreState.selectedPaths);
+    const entries = selection.getSelectedEntries(displayEntries, coreState.selectedPaths);
+    if (contextMenuExternalEntry && coreState.selectedPaths.has(contextMenuExternalEntry.path)) {
+      const alreadyIncluded = entries.some((e) => e.path === contextMenuExternalEntry!.path);
+      if (!alreadyIncluded) return [...entries, contextMenuExternalEntry];
+    }
+    return entries;
   }
 
   function selectByIndices(indices: number[], addToSelection: boolean = false) {
-    coreState.selectedPaths = selection.selectByIndices(
+    const nextSet = selection.selectByIndices(
       displayEntries,
       indices,
       coreState.selectedPaths,
-      addToSelection
+      addToSelection,
     );
+    // selection.selectByIndices returns the same reference when nothing changed
+    if (nextSet === coreState.selectedPaths) return;
+    coreState.selectedPaths = nextSet;
   }
 
   function selectAll() {
@@ -367,36 +348,14 @@ function createExplorerState(seed?: ExplorerSeed) {
   // Dialog & Context Menu Actions
   // ===================
 
-  async function navigateAwayIfNeeded(deletedPaths: Set<string>): Promise<void> {
-    const current = coreState.currentPath;
-    const shouldNavigateAway = [...deletedPaths].some(
-      (dp) => current === dp || current.startsWith(dp + "/")
-    );
-    if (shouldNavigateAway) {
-      const parentPath = navigation.getParentPath(breadcrumbs);
-      if (parentPath) await navigateTo(parentPath);
-    }
-  }
-
   async function startDelete(entries: FileEntry | FileEntry[]) {
     const arr = Array.isArray(entries) ? entries : [entries];
     if (arr.length === 0) return;
 
     if (!settingsStore.confirmDelete) {
-      const paths = arr.map((e) => e.path);
-      const result = arr.length === 1
-        ? await deleteEntry(paths[0])
-        : await deleteMultipleEntries(paths);
-
-      if (result.ok) {
-        undoStore.push({ type: "delete", paths, parentDir: coreState.currentPath });
-        const deletedPaths = new Set(paths);
-        coreState.entries = coreState.entries.filter((e) => !deletedPaths.has(e.path));
-        coreState.selectedPaths = new Set(
-          [...coreState.selectedPaths].filter((p) => !deletedPaths.has(p))
-        );
-        await navigateAwayIfNeeded(deletedPaths);
-      }
+      // Delete immediately — confirmDelete handles the undo push, entry
+      // removal, navigating away from deleted dirs and frecency pruning.
+      await mutations.confirmDelete(arr, false);
       return;
     }
 
@@ -410,12 +369,19 @@ function createExplorerState(seed?: ExplorerSeed) {
     dialogStore.startDelete(arr, true);
   }
 
+  let contextMenuExternalEntry: FileEntry | null = null;
+
+  // Identity token marking this pane as the context menu's owner, so only
+  // this pane's ContextMenu instance renders the (global) menu state.
+  const contextMenuOwner: object = {};
+
   function openContextMenu(x: number, y: number, entry?: FileEntry) {
     if (entry && !coreState.selectedPaths.has(entry.path)) {
       coreState.selectedPaths = new Set([entry.path]);
       coreState.selectionAnchorIndex = displayEntries.findIndex((e) => e.path === entry.path);
     }
-    contextMenuStore.open(x, y);
+    contextMenuExternalEntry = entry && coreState.selectionAnchorIndex === -1 ? entry : null;
+    contextMenuStore.open(x, y, contextMenuOwner);
   }
 
   // ===================
@@ -423,21 +389,9 @@ function createExplorerState(seed?: ExplorerSeed) {
   // ===================
 
   async function createFolder(name: string): Promise<string | null> {
-    if (!coreState.currentPath) return "No current directory";
-
-    const result = await createDirectory(coreState.currentPath, name);
-
-    if (result.ok) {
-      coreState.entries = [...coreState.entries, result.data];
-      coreState.selectedPaths = new Set([result.data.path]);
-      const idx = displayEntries.findIndex((e) => e.path === result.data.path);
-      coreState.selectionAnchorIndex = idx >= 0 ? idx : null;
-      isCreatingFolder = false;
-      dialogStore.closeNewFolder();
-      broadcastFileChange([coreState.currentPath]);
-      return null;
-    }
-    return result.error;
+    const error = await mutations.createFolder(name);
+    if (!error) isCreatingFolder = false;
+    return error;
   }
 
   /** Start inline folder creation (shows editable placeholder in file list) */
@@ -448,64 +402,6 @@ function createExplorerState(seed?: ExplorerSeed) {
   /** Cancel inline folder creation */
   function cancelInlineNewFolder(): void {
     isCreatingFolder = false;
-  }
-
-  async function rename(newName: string): Promise<string | null> {
-    const renamingEntry = dialogStore.renamingEntry;
-    if (!renamingEntry) return "No entry selected for rename";
-
-    const oldName = renamingEntry.name;
-    const oldPath = renamingEntry.path;
-    const result = await apiRenameEntry(oldPath, newName);
-
-    if (result.ok) {
-      undoStore.push({ type: "rename", path: result.data.path, oldName, newName });
-      coreState.entries = coreState.entries.map((e) => (e.path === oldPath ? result.data : e));
-      // Update clipboard if renamed file was in it (fixes stale path after rename)
-      clipboardStore.updatePath(oldPath, result.data);
-      dialogStore.cancelRename();
-      return null;
-    }
-    return result.error;
-  }
-
-  async function confirmDelete(): Promise<string | null> {
-    const entries = dialogStore.deletingEntries;
-    if (entries.length === 0) return "No entries selected for delete";
-    const isPermanent = dialogStore.isPermanentDelete;
-
-    const paths = entries.map((e) => e.path);
-    let result: { ok: boolean; error?: string };
-
-    if (isPermanent) {
-      // Permanent delete: delete each entry one by one (no batch command)
-      const errors: string[] = [];
-      for (const path of paths) {
-        const r = await deleteEntryPermanent(path);
-        if (!r.ok) errors.push(r.error);
-      }
-      result = errors.length > 0 ? { ok: false, error: errors.join("; ") } : { ok: true };
-    } else {
-      result = entries.length === 1
-        ? await deleteEntry(paths[0])
-        : await deleteMultipleEntries(paths);
-    }
-
-    if (result.ok) {
-      // Only push to undo for trash operations (permanent deletes can't be undone)
-      if (!isPermanent) {
-        undoStore.push({ type: "delete", paths, parentDir: coreState.currentPath });
-      }
-      const deletedPaths = new Set(paths);
-      coreState.entries = coreState.entries.filter((e) => !deletedPaths.has(e.path));
-      coreState.selectedPaths = new Set(
-        [...coreState.selectedPaths].filter((p) => !deletedPaths.has(p))
-      );
-      dialogStore.cancelDelete();
-      await navigateAwayIfNeeded(deletedPaths);
-      return null;
-    }
-    return result.error ?? "Unknown error";
   }
 
   // ===================
@@ -533,7 +429,9 @@ function createExplorerState(seed?: ExplorerSeed) {
       destPath: coreState.currentPath,
       existingEntries: coreState.entries,
       onEntriesAdded: (entries: FileEntry[]) => {
-        coreState.entries = [...coreState.entries, ...entries];
+        const newPaths = new Set(entries.map((e) => e.path));
+        coreState.entries = [...coreState.entries.filter((e) => !newPaths.has(e.path)), ...entries];
+        markLocalMutation();
         // Remember pasted paths so onRefresh can re-select after navigation
         if (entries.length > 0) {
           pastedPaths = new Set(entries.map((e) => e.path));
@@ -560,6 +458,7 @@ function createExplorerState(seed?: ExplorerSeed) {
     if (clipboardContent) {
       const { entries, operation } = clipboardContent;
       const isCut = operation === "cut";
+      markLocalMutation();
       const error = await pasteEntries(
         entries.map((e) => ({ path: e.path, name: e.name, size: e.size, modified: e.modified })),
         isCut,
@@ -573,6 +472,7 @@ function createExplorerState(seed?: ExplorerSeed) {
     // Fall back to OS clipboard (files from external apps)
     const osContent = await clipboardStore.readOsFiles();
     if (osContent && osContent.paths.length > 0) {
+      markLocalMutation();
       const error = await pasteEntries(
         osContent.paths.map((p) => ({ path: p, name: p.split(/[/\\]/).pop() || p })),
         false,
@@ -584,8 +484,10 @@ function createExplorerState(seed?: ExplorerSeed) {
 
     // Fall back to clipboard image
     if (await clipboardHasImage()) {
+      markLocalMutation();
       const result = await clipboardPasteImage(coreState.currentPath);
       if (result.ok) {
+        markLocalMutation();
         await navigateInternal(coreState.currentPath);
         return null;
       }
@@ -600,20 +502,27 @@ function createExplorerState(seed?: ExplorerSeed) {
   // ===================
 
   async function undo(): Promise<string | null> {
+    markLocalMutation();
     const result = await undoStore.undo();
-    if ("error" in result) return result.error;
+    if ("error" in result) {
+      toastStore.error(result.error);
+      return result.error;
+    }
 
     toastStore.show(`Undo: ${undoActionLabel(result.action)}`, "info");
+    markLocalMutation();
     await navigateInternal(coreState.currentPath);
     broadcastFileChange(getAffectedDirs(result.action));
     return null;
   }
 
   async function redo(): Promise<string | null> {
+    markLocalMutation();
     const result = await undoStore.redo();
     if ("error" in result) return result.error;
 
     toastStore.show(`Redo: ${undoActionLabel(result.action)}`, "info");
+    markLocalMutation();
     await navigateInternal(coreState.currentPath);
     broadcastFileChange(getAffectedDirs(result.action));
     return null;
@@ -666,6 +575,7 @@ function createExplorerState(seed?: ExplorerSeed) {
 
     // Navigation
     navigateTo,
+    initialLoad,
     goBack,
     goForward,
     goUp,
@@ -708,16 +618,22 @@ function createExplorerState(seed?: ExplorerSeed) {
     startPermanentDelete,
     // Context menu
     openContextMenu,
+    get contextMenuOwner() {
+      return contextMenuOwner;
+    },
     // Inline folder creation
     get isCreatingFolder() {
       return isCreatingFolder;
     },
     startInlineNewFolder,
     cancelInlineNewFolder,
-    // File operations
+    // File operations (pane-mutations.ts)
     createFolder,
-    rename,
-    confirmDelete,
+    rename: mutations.rename,
+    confirmDelete: mutations.confirmDelete,
+    extractArchive: mutations.extractArchive,
+    compressToZip: mutations.compressToZip,
+    createSymlink: mutations.createSymlinkForEntry,
     // Clipboard
     copyToClipboard,
     cutToClipboard,
@@ -733,7 +649,12 @@ function createExplorerState(seed?: ExplorerSeed) {
       onNavigateCallback = cb;
     },
     // Cleanup
-    destroy: destroyWatch,
+    destroy: () => {
+      watch.destroy();
+      // Tear down the streaming listener and any in-flight listing,
+      // otherwise each closed tab leaks a Tauri event listener.
+      void dirListing.cleanup();
+    },
   };
 }
 

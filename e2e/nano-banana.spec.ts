@@ -79,7 +79,6 @@ test.describe("Nano Banana integration", () => {
     // Search for the API key setting
     const search = page.locator(".settings-search");
     await search.fill("Gemini");
-    await page.waitForTimeout(300);
 
     // "Gemini API Key" should be visible
     await expect(page.locator("text=Gemini API Key")).toBeVisible();

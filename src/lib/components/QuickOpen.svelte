@@ -16,10 +16,11 @@
   } from "$lib/api/files";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-  import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { parentDir, basename, expandTilde as expandTildePath } from "$lib/domain/path";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { getFileIconColor, getFileIconCategory, type IconCategory } from "$lib/domain/file-types";
+  import FileIcon from "./FileIcon.svelte";
+  import Modal from "./Modal.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { frecencyStore } from "$lib/state/frecency.svelte";
 
@@ -41,28 +42,30 @@
 
   let { open, onClose }: Props = $props();
 
-  const paneNav = getPaneNavigationContext();
-
   let query = $state("");
   let results = $state<SearchResult[]>([]);
   let selectedIndex = $state(0);
   let loading = $state(false);
   let inputRef = $state<HTMLInputElement | null>(null);
+  let resultsContainerRef = $state<HTMLElement | null>(null);
   let homeDir = $state<string | null>(null);
-  // Guard: suppress mouseenter on results until the user actually moves the mouse.
-  // Prevents selection from jumping to whatever row the cursor happened to land on
-  // when the popup opened (or after results change).
+  // Guard: hover may only change the selection after a REAL pointer move.
+  // Rows react to mousemove (not mouseenter — that also fires when a row
+  // re-renders or scrolls under a stationary cursor), coordinates must have
+  // actually changed (WebKit/Chromium emit synthetic zero-delta mousemoves
+  // after relayout/scroll), and every results update revokes the
+  // authorization so movement from before a re-render can't steal selection.
   let mouseMoved = $state(false);
+  let lastMousePos = $state<{ x: number; y: number } | null>(null);
+  let mouseTrackingReady = $state(false);
+  let mouseTrackingTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Fetch home directory for tilde expansion
   getHomeDirectory().then((r) => { if (r.ok) homeDir = r.data; });
 
   /** Expand leading ~ to home directory path */
   function expandTilde(path: string): string {
-    if (!homeDir) return path;
-    if (path === "~") return homeDir;
-    if (path.startsWith("~/")) return homeDir + path.slice(1);
-    return path;
+    return expandTildePath(path, homeDir);
   }
 
   // Debounce timer for search
@@ -89,15 +92,6 @@
     if (nameLower.startsWith(queryLower)) return 150; // prefix match
     if (nameLower.includes(queryLower)) return 100;   // substring match
     return 0; // filename doesn't match
-  }
-
-  /** Score an entry against a query, heavily weighting filename matches. */
-  function scoreEntry(name: string, path: string, queryLower: string): number {
-    const nameScore = filenameMatchScore(name, queryLower);
-    if (nameScore > 0) return nameScore;
-    // Path-only match (filename doesn't contain query)
-    if (path.toLowerCase().includes(queryLower)) return 30;
-    return 0;
   }
 
   /** Match recent files and frecency entries against a search term.
@@ -130,7 +124,7 @@
     for (const entry of frecencyStore.entries) {
       if (seen.has(entry.path)) continue;
       seen.add(entry.path);
-      const name = entry.path.split("/").pop() || "";
+      const name = basename(entry.path);
       const fuzzy = fuzzyScorePath(lower, entry.path);
       if (fuzzy > 0) {
         const frecency = scoreMap.get(entry.path) ?? 0;
@@ -189,7 +183,7 @@
 
   // Get current working directory from active explorer
   function getCwdPath(): string {
-    const explorer = paneNav?.getActiveExplorer() ?? windowTabsManager.getActiveExplorer();
+    const explorer = windowTabsManager.getActiveExplorer();
     return explorer?.currentPath ?? "/";
   }
 
@@ -239,6 +233,7 @@
       const ranked = rankWithFrecency(payload.results);
       const frecencyMatches = matchFrecencyAndRecent(query);
       results = mergeResultsByScore(ranked, frecencyMatches);
+      mouseMoved = false;
       totalScanned = payload.totalScanned;
 
       // Reset selection if needed
@@ -256,6 +251,7 @@
   // Debounced streaming search
   function handleInput(): void {
     if (searchTimer) clearTimeout(searchTimer);
+    mouseMoved = false;
 
     if (!query.trim()) {
       cancelActiveSearch();
@@ -267,12 +263,17 @@
     }
 
     loading = true;
+    // New query → selection pins back to the top result (VSCode behavior),
+    // even if hover or arrows had moved it in the previous result set.
+    selectedIndex = 0;
     searchTimer = setTimeout(async () => {
+      // Claim a generation synchronously so debounce callbacks that
+      // interleave across the awaits below can detect they're stale.
+      const generation = ++searchGeneration;
+
       // Cancel any previous search
       await cancelActiveSearch();
-
-      // Bump generation so stale listeners are discarded
-      const generation = ++searchGeneration;
+      if (generation !== searchGeneration) return;
 
       // Show frecency/recent matches immediately (before backend responds)
       const frecencyMatches = matchFrecencyAndRecent(query);
@@ -290,9 +291,15 @@
       } catch {
         streamingAvailable = false;
       }
+      if (generation !== searchGeneration) return;
 
       if (streamingAvailable) {
         const result = await startStreamingSearch(query, cwd, 20);
+        if (generation !== searchGeneration) {
+          // Superseded while awaiting: cancel the now-orphaned backend search
+          if (result.ok) cancelSearch(result.data);
+          return;
+        }
         if (result.ok) {
           activeSearchId = result.data;
         } else {
@@ -301,9 +308,11 @@
       } else {
         // Fallback: non-streaming search
         const result = await fuzzySearch(query, cwd, 20);
+        if (generation !== searchGeneration) return;
         if (result.ok) {
           const ranked = rankWithFrecency(result.data);
           results = mergeResultsByScore(ranked, frecencyMatches);
+          mouseMoved = false;
         }
         loading = false;
       }
@@ -315,6 +324,7 @@
     query.trim() ? results : recentResults.slice(0, 10)
   );
 
+  // Escape is handled by Modal; everything else lands here.
   function handleKeydown(event: KeyboardEvent): void {
     // Alt+D toggles debug mode (shows score breakdown)
     if (event.key === "d" && event.altKey) {
@@ -323,15 +333,12 @@
       return;
     }
     switch (event.key) {
-      case "Escape":
-        event.preventDefault();
-        onClose();
-        break;
       case "ArrowDown":
         event.preventDefault();
         if (displayResults.length > 0) {
           selectedIndex = (selectedIndex + 1) % displayResults.length;
           mouseMoved = false;
+          scrollToSelected();
         }
         break;
       case "ArrowUp":
@@ -339,13 +346,14 @@
         if (displayResults.length > 0) {
           selectedIndex = (selectedIndex - 1 + displayResults.length) % displayResults.length;
           mouseMoved = false;
+          scrollToSelected();
         }
         break;
       case "Enter":
         event.preventDefault();
         // If query looks like a path (starts with / or ~), navigate directly
         if (query.startsWith("/") || query.startsWith("~")) {
-          const explorer = paneNav?.getActiveExplorer() ?? windowTabsManager.getActiveExplorer();
+          const explorer = windowTabsManager.getActiveExplorer();
           explorer?.navigateTo(expandTilde(query.trim()));
           onClose();
         } else if (displayResults[selectedIndex]) {
@@ -355,8 +363,29 @@
     }
   }
 
+  /** Hover-selection via real pointer movement only. Runs before the
+   *  dialog-level tracker (mousemove bubbles), so it does the same
+   *  coordinate-change bookkeeping itself. */
+  function handleRowMouseMove(event: MouseEvent, index: number): void {
+    if (!mouseTrackingReady) return;
+    if (lastMousePos && (event.clientX !== lastMousePos.x || event.clientY !== lastMousePos.y)) {
+      mouseMoved = true;
+    }
+    lastMousePos = { x: event.clientX, y: event.clientY };
+    if (mouseMoved && selectedIndex !== index) {
+      selectedIndex = index;
+    }
+  }
+
+  function scrollToSelected(): void {
+    tick().then(() => {
+      const selected = resultsContainerRef?.querySelector(".result-item.selected");
+      selected?.scrollIntoView({ block: "nearest" });
+    });
+  }
+
   async function selectResult(result: SearchResult): Promise<void> {
-    const explorer = paneNav?.getActiveExplorer() ?? windowTabsManager.getActiveExplorer();
+    const explorer = windowTabsManager.getActiveExplorer();
 
     // Record access for frecency ranking
     frecencyStore.recordAccess(result.path);
@@ -368,8 +397,8 @@
       if (openResult.ok) {
         recentFilesStore.add(result.path, result.name, "file");
       } else {
-        const parentDir = result.path.substring(0, result.path.lastIndexOf("/"));
-        explorer?.navigateTo(parentDir);
+        const resultDir = parentDir(result.path);
+        explorer?.navigateTo(resultDir);
       }
     }
 
@@ -385,6 +414,10 @@
       results = [];
       selectedIndex = 0;
       mouseMoved = false;
+      lastMousePos = null;
+      mouseTrackingReady = false;
+      if (mouseTrackingTimer) clearTimeout(mouseTrackingTimer);
+      mouseTrackingTimer = setTimeout(() => { mouseTrackingReady = true; }, 150);
       tick().then(() => inputRef?.focus());
       untrack(() => {
         recentFilesStore.pruneNonExistent();
@@ -400,6 +433,10 @@
         clearTimeout(searchTimer);
         searchTimer = null;
       }
+      if (mouseTrackingTimer) {
+        clearTimeout(mouseTrackingTimer);
+        mouseTrackingTimer = null;
+      }
       // Cancel any active streaming search
       cancelActiveSearch();
       totalScanned = 0;
@@ -407,11 +444,24 @@
   });
 </script>
 
-{#if open}
+<Modal
+  {open}
+  {onClose}
+  overlayClass="quick-open-overlay"
+  align="top"
+  topOffset="15vh"
+  label="Quick open"
+  onkeydown={handleKeydown}
+>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="quick-open-overlay" onclick={onClose} onkeydown={handleKeydown} onmousemove={() => { mouseMoved = true; }}>
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div class="quick-open-dialog" onclick={(e) => e.stopPropagation()}>
+  <div class="quick-open-dialog"
+    onmousemove={(e) => {
+      if (!mouseTrackingReady) return;
+      if (lastMousePos && (e.clientX !== lastMousePos.x || e.clientY !== lastMousePos.y)) {
+        mouseMoved = true;
+      }
+      lastMousePos = { x: e.clientX, y: e.clientY };
+    }}>
       <div class="search-container">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="search-icon">
           <circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.5"/>
@@ -421,6 +471,11 @@
           type="text"
           class="search-input"
           placeholder="Search files..."
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+          name="quickopen-nofill"
           bind:value={query}
           bind:this={inputRef}
           oninput={handleInput}
@@ -435,10 +490,11 @@
         {/if}
       </div>
 
-      <div class="results-container">
+      <div class="results-container" bind:this={resultsContainerRef}>
         {#if results.length > 0}
           <ul class="results-list" role="listbox">
             {#each results as result, index (result.path)}
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
               <li
                 class="result-item"
                 class:selected={index === selectedIndex}
@@ -446,59 +502,11 @@
                 role="option"
                 aria-selected={index === selectedIndex}
                 onclick={() => selectResult(result)}
-                onmouseenter={() => { if (mouseMoved) selectedIndex = index; }}
+                onmousemove={(e) => handleRowMouseMove(e, index)}
               >
-                {#if result.kind === "directory"}
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="folder-icon">
-                    <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="var(--icon-folder, #FFB900)"/>
-                  </svg>
-                {:else}
-                  {@const entry = toFileEntry(result)}
-                  {@const iconColor = getFileIconColor(entry)}
-                  {@const iconCategory = getFileIconCategory(entry)}
-                  {#if iconCategory === "image"}
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
-                      <rect x="2" y="2" width="12" height="12" rx="1.5" fill={iconColor} fill-opacity="0.15"/>
-                      <rect x="2" y="2" width="12" height="12" rx="1.5" stroke={iconColor} stroke-width="1"/>
-                      <circle cx="5.5" cy="5.5" r="1.25" fill={iconColor}/>
-                      <path d="M2 11L5 8L7.5 10.5L10 7L14 11V12.5C14 13.3284 13.3284 14 12.5 14H3.5C2.67157 14 2 13.3284 2 12.5V11Z" fill={iconColor} fill-opacity="0.4"/>
-                    </svg>
-                  {:else if iconCategory === "archive"}
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
-                      <path d="M3 2C3 1.44772 3.44772 1 4 1H12C12.5523 1 13 1.44772 13 2V14C13 14.5523 12.5523 15 12 15H4C3.44772 15 3 14.5523 3 14V2Z" fill={iconColor} fill-opacity="0.15"/>
-                      <path d="M3 2C3 1.44772 3.44772 1 4 1H12C12.5523 1 13 1.44772 13 2V14C13 14.5523 12.5523 15 12 15H4C3.44772 15 3 14.5523 3 14V2Z" stroke={iconColor} stroke-width="1"/>
-                      <rect x="6" y="3" width="4" height="2" rx="0.5" fill={iconColor}/>
-                      <rect x="6" y="6" width="4" height="2" rx="0.5" fill={iconColor}/>
-                      <rect x="6" y="9" width="4" height="3" rx="0.5" fill={iconColor}/>
-                    </svg>
-                  {:else if iconCategory === "code"}
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
-                      <path d="M3 2C3 1.44772 3.44772 1 4 1H9L13 5V14C13 14.5523 12.5523 15 12 15H4C3.44772 15 3 14.5523 3 14V2Z" fill={iconColor} fill-opacity="0.15"/>
-                      <path d="M3 2C3 1.44772 3.44772 1 4 1H9L13 5V14C13 14.5523 12.5523 15 12 15H4C3.44772 15 3 14.5523 3 14V2Z" stroke={iconColor} stroke-width="1"/>
-                      <path d="M9 1V4C9 4.55228 9.44772 5 10 5H13" stroke={iconColor} stroke-width="1"/>
-                      <path d="M6 8L4.5 9.5L6 11M10 8L11.5 9.5L10 11" stroke={iconColor} stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
-                    </svg>
-                  {:else if iconCategory === "media"}
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
-                      <rect x="2" y="3" width="12" height="10" rx="1.5" fill={iconColor} fill-opacity="0.15"/>
-                      <rect x="2" y="3" width="12" height="10" rx="1.5" stroke={iconColor} stroke-width="1"/>
-                      <path d="M6 6V10L10 8L6 6Z" fill={iconColor}/>
-                    </svg>
-                  {:else if iconCategory === "executable"}
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
-                      <rect x="2" y="2" width="12" height="12" rx="2" fill={iconColor} fill-opacity="0.15"/>
-                      <rect x="2" y="2" width="12" height="12" rx="2" stroke={iconColor} stroke-width="1"/>
-                      <path d="M5 8H11M8 5V11" stroke={iconColor} stroke-width="1.25" stroke-linecap="round"/>
-                    </svg>
-                  {:else}
-                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
-                      <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" fill={iconColor} fill-opacity="0.15"/>
-                      <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" stroke={iconColor} stroke-width="1"/>
-                      <path d="M9 1V5C9 5.55228 9.44772 6 10 6H14" stroke={iconColor} stroke-width="1"/>
-                      <path d="M5.5 9H10.5M5.5 11.5H9" stroke={iconColor} stroke-width="0.75" stroke-linecap="round"/>
-                    </svg>
-                  {/if}
-                {/if}
+                <span class="result-icon" class:file-icon={result.kind !== "directory"}>
+                  <FileIcon entry={toFileEntry(result)} size="small" />
+                </span>
                 <div class="result-content">
                   <span class="result-name">{result.name}</span>
                   <span class="result-path">{result.relativePath}</span>
@@ -541,6 +549,7 @@
           <div class="section-label">Recent</div>
           <ul class="results-list" role="listbox">
             {#each recentResults.slice(0, 10) as result, index (result.path)}
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
               <li
                 class="result-item"
                 class:selected={index === selectedIndex}
@@ -548,21 +557,11 @@
                 role="option"
                 aria-selected={index === selectedIndex}
                 onclick={() => selectResult(result)}
-                onmouseenter={() => { if (mouseMoved) selectedIndex = index; }}
+                onmousemove={(e) => handleRowMouseMove(e, index)}
               >
-                {#if result.kind === "directory"}
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="folder-icon">
-                    <path d="M2 5C2 4.44772 2.44772 4 3 4H5.58579C5.851 4 6.10536 4.10536 6.29289 4.29289L7 5H13C13.5523 5 14 5.44772 14 6V12C14 12.5523 13.5523 13 13 13H3C2.44772 13 2 12.5523 2 12V5Z" fill="var(--icon-folder, #FFB900)"/>
-                  </svg>
-                {:else}
-                  {@const entry = toFileEntry(result)}
-                  {@const iconColor = getFileIconColor(entry)}
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="file-icon">
-                    <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" fill={iconColor} fill-opacity="0.15"/>
-                    <path d="M3 2C3 1.44772 3.44772 1 4 1H9L14 6V14C14 14.5523 13.5523 15 13 15H4C3.44772 15 3 14.5523 3 14V2Z" stroke={iconColor} stroke-width="1"/>
-                    <path d="M9 1V5C9 5.55228 9.44772 6 10 6H14" stroke={iconColor} stroke-width="1"/>
-                  </svg>
-                {/if}
+                <span class="result-icon" class:file-icon={result.kind !== "directory"}>
+                  <FileIcon entry={toFileEntry(result)} size="small" />
+                </span>
                 <div class="result-content">
                   <span class="result-name">{result.name}</span>
                   <span class="result-path">{result.relativePath}</span>
@@ -582,28 +581,10 @@
         <span class="shortcut"><kbd>Esc</kbd> Close</span>
         <span class="shortcut"><kbd>Alt+D</kbd> {settingsStore.quickOpenDebug ? "Debug ON" : "Debug"}</span>
       </div>
-    </div>
   </div>
-{/if}
+</Modal>
 
 <style>
-  .quick-open-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-    padding-top: 15vh;
-    z-index: 1000;
-    animation: fadeIn 100ms ease-out;
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-
   .quick-open-dialog {
     width: 600px;
     max-width: 90vw;
@@ -716,9 +697,10 @@
     opacity: 0.8;
   }
 
-  .file-icon,
-  .folder-icon {
+  .result-icon {
     flex-shrink: 0;
+    display: flex;
+    align-items: center;
   }
 
   /* When selected, make file icons use white with transparency */

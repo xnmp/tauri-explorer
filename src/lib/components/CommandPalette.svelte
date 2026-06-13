@@ -5,15 +5,16 @@
 <script lang="ts">
   import { tick } from "svelte";
   import {
-    getAllCommands,
     getAvailableCommands,
-    getRecentCommands,
+    getCommandsByFrecency,
+    getCommandFrecencyScore,
     executeCommand,
     getCategoryLabel,
     getCommandShortcut,
     type Command,
-    type CommandCategory,
   } from "$lib/state/commands.svelte";
+  import { settingsStore } from "$lib/state/settings.svelte";
+  import Modal from "./Modal.svelte";
 
   interface Props {
     open: boolean;
@@ -25,35 +26,52 @@
   let query = $state("");
   let selectedIndex = $state(0);
   let inputRef = $state<HTMLInputElement | null>(null);
+  let commandsContainerRef = $state<HTMLElement | null>(null);
   // Suppress mouseenter on rows until the user actually moves the mouse —
   // prevents selection from jumping to the row the cursor happened to be over
   // when the palette opened (or after arrow navigation scrolled a new row under it).
+  // Track coordinates because macOS WebKit fires a synthetic mousemove (zero delta)
+  // when an element renders under a stationary cursor.
   let mouseMoved = $state(false);
+  let lastMousePos = $state<{ x: number; y: number } | null>(null);
+  let mouseTrackingReady = $state(false);
+  let mouseTrackingTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // Get filtered and sorted commands
-  const filteredCommands = $derived.by(() => {
+  interface ScoredCommand {
+    cmd: Command;
+    total: number;
+    fuzzy: number;
+    frecency: number;
+  }
+
+  // Get filtered and sorted commands with score breakdown
+  const filteredScored = $derived.by((): ScoredCommand[] => {
     const available = getAvailableCommands();
-    const recent = getRecentCommands();
 
     if (!query.trim()) {
-      // Show recent commands first, then all others
-      const recentIds = new Set(recent.map((c) => c.id));
-      const nonRecent = available.filter((c) => !recentIds.has(c.id));
-      return [...recent, ...nonRecent];
+      const ranked = getCommandsByFrecency();
+      const rankedIds = new Set(ranked.map((c: Command) => c.id));
+      const nonRanked = available.filter((c) => !rankedIds.has(c.id));
+      return [...ranked, ...nonRanked].map((cmd) => {
+        const frecency = getCommandFrecencyScore(cmd.id);
+        return { cmd, total: Math.round(frecency * 100), fuzzy: 0, frecency: Math.round(frecency * 100) };
+      });
     }
 
-    // Fuzzy search
     const lowerQuery = query.toLowerCase();
-    const scored = available
-      .map((cmd) => ({
-        cmd,
-        score: fuzzyScore(cmd, lowerQuery),
-      }))
-      .filter((item) => item.score > 0)
-      .sort((a, b) => b.score - a.score);
-
-    return scored.map((item) => item.cmd);
+    return available
+      .map((cmd) => {
+        const frecency = getCommandFrecencyScore(cmd.id);
+        const frecencyPts = Math.min(30, Math.round(frecency * 10));
+        const total = fuzzyScore(cmd, lowerQuery);
+        const fuzzyPts = total - frecencyPts;
+        return { cmd, total, fuzzy: fuzzyPts, frecency: frecencyPts };
+      })
+      .filter((item) => item.total > 0)
+      .sort((a, b) => b.total - a.total);
   });
+
+  const filteredCommands = $derived(filteredScored.map((s) => s.cmd));
 
   // Fuzzy scoring for command search
   function fuzzyScore(cmd: Command, query: string): number {
@@ -94,30 +112,19 @@
       return 0;
     }
 
+    // Frecency boost (capped so it doesn't dominate text relevance)
+    const frecency = getCommandFrecencyScore(cmd.id);
+    score += Math.min(30, Math.round(frecency * 10));
+
     return score;
   }
-
-  // Group commands by category for display
-  const groupedCommands = $derived.by(() => {
-    const groups = new Map<CommandCategory, Command[]>();
-
-    for (const cmd of filteredCommands) {
-      const existing = groups.get(cmd.category) || [];
-      groups.set(cmd.category, [...existing, cmd]);
-    }
-
-    return groups;
-  });
 
   // Flat list for keyboard navigation
   const flatCommands = $derived(filteredCommands);
 
+  // Escape is handled by Modal; everything else lands here.
   function handleKeydown(event: KeyboardEvent): void {
     switch (event.key) {
-      case "Escape":
-        event.preventDefault();
-        onClose();
-        break;
       case "ArrowDown":
         event.preventDefault();
         if (flatCommands.length > 0) {
@@ -145,7 +152,7 @@
 
   function scrollToSelected(): void {
     tick().then(() => {
-      const selected = document.querySelector(".command-item.selected");
+      const selected = commandsContainerRef?.querySelector(".command-item.selected");
       selected?.scrollIntoView({ block: "nearest" });
     });
   }
@@ -165,34 +172,58 @@
       query = "";
       selectedIndex = 0;
       mouseMoved = false;
+      lastMousePos = null;
+      mouseTrackingReady = false;
+      if (mouseTrackingTimer) clearTimeout(mouseTrackingTimer);
+      mouseTrackingTimer = setTimeout(() => { mouseTrackingReady = true; }, 150);
       tick().then(() => inputRef?.focus());
     }
   });
 </script>
 
-{#if open}
+<Modal
+  {open}
+  {onClose}
+  overlayClass="command-palette-overlay"
+  align="top"
+  topOffset="15vh"
+  label="Command palette"
+  onkeydown={handleKeydown}
+>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="command-palette-overlay" onclick={onClose} onkeydown={handleKeydown} onmousemove={() => { mouseMoved = true; }}>
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div class="command-palette-dialog" onclick={(e) => e.stopPropagation()}>
+  <div class="command-palette-dialog"
+    onmousemove={(e) => {
+      if (!mouseTrackingReady) return;
+      if (lastMousePos && (e.clientX !== lastMousePos.x || e.clientY !== lastMousePos.y)) {
+        mouseMoved = true;
+      }
+      lastMousePos = { x: e.clientX, y: e.clientY };
+    }}>
       <div class="search-container">
         <span class="search-prefix">&gt;</span>
         <input
           type="text"
           class="search-input"
           placeholder="Type a command..."
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+          name="cmdpalette-nofill"
           bind:value={query}
           bind:this={inputRef}
           oninput={handleInput}
         />
       </div>
 
-      <div class="commands-container">
+      <div class="commands-container" bind:this={commandsContainerRef}>
         {#if flatCommands.length > 0}
           <ul class="commands-list" role="listbox">
             {#each flatCommands as cmd, index (cmd.id)}
               {@const isSelected = index === selectedIndex}
               {@const displayShortcut = getCommandShortcut(cmd.id)}
+              {@const scores = filteredScored[index]}
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
               <li
                 class="command-item"
                 class:selected={isSelected}
@@ -203,6 +234,17 @@
               >
                 <span class="command-category">{getCategoryLabel(cmd.category)}</span>
                 <span class="command-label">{cmd.label}</span>
+                {#if settingsStore.quickOpenDebug && scores}
+                  <span class="debug-breakdown">
+                    <span class="debug-row"><b>{scores.total}</b></span>
+                    {#if scores.fuzzy > 0}
+                      <span class="debug-row">fuzzy:{scores.fuzzy}</span>
+                    {/if}
+                    {#if scores.frecency > 0}
+                      <span class="debug-row">frec:{scores.frecency}</span>
+                    {/if}
+                  </span>
+                {/if}
                 {#if displayShortcut}
                   <span class="command-shortcut">
                     {#each displayShortcut.split("+") as key, keyIndex}
@@ -226,28 +268,10 @@
         <span class="shortcut"><kbd>Enter</kbd> Execute</span>
         <span class="shortcut"><kbd>Esc</kbd> Close</span>
       </div>
-    </div>
   </div>
-{/if}
+</Modal>
 
 <style>
-  .command-palette-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-    padding-top: 15vh;
-    z-index: 1000;
-    animation: fadeIn 100ms ease-out;
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-
   .command-palette-dialog {
     width: 600px;
     max-width: 90vw;
@@ -428,5 +452,32 @@
     font-family: inherit;
     font-size: 11px;
     color: var(--text-secondary);
+  }
+
+  .debug-breakdown {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: monospace;
+    font-size: 10px;
+    color: var(--text-tertiary);
+    flex-shrink: 0;
+  }
+
+  .debug-breakdown b {
+    color: var(--text-primary);
+  }
+
+  .command-item.selected .debug-breakdown {
+    color: var(--text-on-accent);
+    opacity: 0.7;
+  }
+
+  .command-item.selected .debug-breakdown b {
+    color: var(--text-on-accent);
+  }
+
+  .debug-row {
+    white-space: nowrap;
   }
 </style>

@@ -8,14 +8,75 @@
 <script lang="ts">
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { getDropSourcePaths } from "$lib/state/drop-operations";
+  import { handleFileDrop } from "$lib/state/drop-operations";
+  import { dragState } from "$lib/state/drag.svelte";
+  import { tabDragState, isForeignTabDrag, claimDraggedTab } from "$lib/state/tab-transfer";
+  import { openNewWindow } from "$lib/state/commands/shared";
+  import { parentDir } from "$lib/domain/path";
+  import { isCopyModifier } from "$lib/domain/platform";
+  import { showTabArea as showTabAreaRule } from "$lib/domain/titlebar";
+  import { tick } from "svelte";
 
   const tabs = $derived(windowTabsManager.tabs);
   const activeTabId = $derived(windowTabsManager.activeTabId);
 
-  // Show the tab strip whenever there are multiple tabs, OR when window controls
-  // are enabled (Windows 11 style — the tab strip hosts the controls, so it must
-  // remain visible even with one tab).
-  const showTabArea = $derived(tabs.length > 1 || settingsStore.showWindowControls);
+  let tabAreaRef = $state<HTMLElement | null>(null);
+
+  function updateTabGap() {
+    if (!tabAreaRef || !settingsStore.macOsVibrancy) return;
+    const activeEl = tabAreaRef.querySelector(
+      ".tab.active",
+    ) as HTMLElement | null;
+    const container = document.querySelector(
+      ".pane-container",
+    ) as HTMLElement | null;
+    if (!activeEl || !container) return;
+    const containerRect = container.getBoundingClientRect();
+    const tabRect = activeEl.getBoundingClientRect();
+    const radius =
+      parseFloat(getComputedStyle(container).borderTopLeftRadius) || 14;
+    const lineWidth = containerRect.width - radius * 2;
+    const left = Math.max(0, tabRect.left - containerRect.left - radius - 3);
+    const right = Math.min(
+      lineWidth,
+      tabRect.right - containerRect.left - radius,
+    );
+    container.style.setProperty(
+      "--tab-gap-left",
+      `${(left / lineWidth) * 100}%`,
+    );
+    container.style.setProperty(
+      "--tab-gap-right",
+      `${(right / lineWidth) * 100}%`,
+    );
+  }
+
+  $effect(() => {
+    activeTabId;
+    tabs.length;
+    settingsStore.showSidebar;
+    settingsStore.millerLayers;
+    settingsStore.showPreviewPane;
+    tick().then(updateTabGap);
+  });
+
+  $effect(() => {
+    if (!tabAreaRef) return;
+    const container = document.querySelector(".pane-container");
+    const observer = new ResizeObserver(updateTabGap);
+    observer.observe(tabAreaRef);
+    if (container) observer.observe(container);
+    return () => observer.disconnect();
+  });
+
+  const showTabArea = $derived(
+    showTabAreaRule(
+      settingsStore.integratedTitleBar,
+      tabs.length,
+      settingsStore.showWindowControls,
+    ),
+  );
 
   // Track tab IDs that existed on first render to skip entrance animation
   let knownTabIds = new Set(windowTabsManager.tabs.map((t) => t.id));
@@ -65,62 +126,220 @@
     }
   }
 
-  // Tab drag-and-drop reordering
+  // Tab drag-and-drop: in-window reordering, cross-window moves (shared
+  // localStorage drag marker — see tab-transfer.ts) and tear-off.
   let dragTabId = $state<string | null>(null);
   let dropTargetTabId = $state<string | null>(null);
+  let fileDropTargetTabId = $state<string | null>(null);
+
+  // Whether the dragged tab is currently over THIS window. dragover fires
+  // continuously while inside; a dragleave with no relatedTarget means the
+  // pointer left the window. Used at dragend to detect desktop drops.
+  let pointerInsideWindow = true;
+
+  function onWindowDragOver(): void {
+    pointerInsideWindow = true;
+  }
+
+  function onWindowDragLeave(event: DragEvent): void {
+    if (!event.relatedTarget) pointerInsideWindow = false;
+  }
 
   function handleTabDragStart(event: DragEvent, tabId: string): void {
     dragTabId = tabId;
+    pointerInsideWindow = true;
+    const snapshot = windowTabsManager.exportTab(tabId);
+    if (snapshot) {
+      tabDragState.start({
+        sourceWindow: windowTabsManager.windowLabel,
+        tabId,
+        snapshot,
+      });
+    }
+    window.addEventListener("dragover", onWindowDragOver);
+    window.addEventListener("dragleave", onWindowDragLeave);
     if (event.dataTransfer) {
       event.dataTransfer.effectAllowed = "move";
       event.dataTransfer.setData("text/plain", tabId);
     }
   }
 
+  function isFileDrag(dataTransfer: DataTransfer | null): boolean {
+    if (!dataTransfer) return false;
+    const types = dataTransfer.types;
+    return (
+      types.includes("application/x-explorer-path") ||
+      types.includes("application/x-explorer-paths") ||
+      types.includes("Files")
+    );
+  }
+
   function handleTabDragOver(event: DragEvent, tabId: string): void {
-    if (!dragTabId || dragTabId === tabId) return;
-    event.preventDefault();
-    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-    dropTargetTabId = tabId;
+    // Tab reorder drag
+    if (dragTabId) {
+      if (dragTabId === tabId) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      dropTargetTabId = tabId;
+      return;
+    }
+
+    // Tab dragged in from another window
+    if (isForeignTabDrag(tabDragState.read())) {
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      dropTargetTabId = tabId;
+      return;
+    }
+
+    // File drag onto tab (cross-window drags carry no dataTransfer types)
+    if (isFileDrag(event.dataTransfer) || dragState.readCrossWindow()) {
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      fileDropTargetTabId = tabId;
+    }
   }
 
-  function handleTabDragLeave(): void {
+  function handleTabDragLeave(event: DragEvent): void {
+    // Ignore leave events fired when crossing into a child node of the tab
+    const related = event.relatedTarget as Node | null;
+    if (related && (event.currentTarget as HTMLElement).contains(related)) return;
     dropTargetTabId = null;
+    fileDropTargetTabId = null;
   }
 
-  function handleTabDrop(event: DragEvent, tabId: string): void {
+  async function handleTabDrop(event: DragEvent, tabId: string): Promise<void> {
     event.preventDefault();
-    if (!dragTabId || dragTabId === tabId) return;
 
-    const fromIndex = tabs.findIndex((t) => t.id === dragTabId);
-    const toIndex = tabs.findIndex((t) => t.id === tabId);
-    if (fromIndex >= 0 && toIndex >= 0) {
-      windowTabsManager.reorderTabs(fromIndex, toIndex);
+    // Tab reorder
+    if (dragTabId && dragTabId !== tabId) {
+      const fromIndex = tabs.findIndex((t) => t.id === dragTabId);
+      const toIndex = tabs.findIndex((t) => t.id === tabId);
+      if (fromIndex >= 0 && toIndex >= 0) {
+        windowTabsManager.reorderTabs(fromIndex, toIndex);
+      }
+      dragTabId = null;
+      dropTargetTabId = null;
+      return;
+    }
+
+    // Tab dropped here from another window: adopt it at this position.
+    if (!dragTabId) {
+      const foreign = tabDragState.read();
+      if (isForeignTabDrag(foreign)) {
+        dropTargetTabId = null;
+        const index = tabs.findIndex((t) => t.id === tabId);
+        claimDraggedTab(foreign, index >= 0 ? index : undefined);
+        return;
+      }
+    }
+
+    // File drop onto tab (mirror FileList: dataTransfer first, then cross-window drag state)
+    if (!dragTabId && event.dataTransfer && (isFileDrag(event.dataTransfer) || dragState.readCrossWindow())) {
+      fileDropTargetTabId = null;
+      const targetPath = windowTabsManager.getTabPath(tabId);
+      if (!targetPath) return;
+
+      const sourcePaths = getDropSourcePaths(event.dataTransfer);
+      if (sourcePaths.length === 0) return;
+
+      const isCopy = isCopyModifier(event);
+      dragState.clear();
+      const onRefresh = () => {
+        for (const explorer of windowTabsManager.getAllExplorers()) {
+          explorer.refresh({ silent: true });
+        }
+      };
+      for (const sourcePath of sourcePaths) {
+        if (parentDir(sourcePath) === targetPath) continue;
+        if (sourcePath === targetPath) continue;
+        if (targetPath.startsWith(sourcePath + "/")) continue;
+        // Await sequentially so multi-file drops can't stack conflict dialogs
+        await handleFileDrop(sourcePath, targetPath, isCopy, { onRefresh });
+      }
+      return;
     }
 
     dragTabId = null;
     dropTargetTabId = null;
   }
 
-  function handleTabDragEnd(): void {
+  function handleTabDragEnd(event: DragEvent): void {
+    window.removeEventListener("dragover", onWindowDragOver);
+    window.removeEventListener("dragleave", onWindowDragLeave);
+
     dragTabId = null;
     dropTargetTabId = null;
+    fileDropTargetTabId = null;
+
+    const wasInside = pointerInsideWindow;
+    pointerInsideWindow = true;
+
+    // If the marker is gone, another window claimed the tab (its
+    // "tab-claimed" broadcast removes our copy). If it's still ours,
+    // always clear it — in-window reorders end here too.
+    const pending = tabDragState.read();
+    if (!pending || pending.sourceWindow !== windowTabsManager.windowLabel) return;
+    tabDragState.clear();
+
+    // Tear-off: drag ended outside this window with nobody accepting the
+    // drop → spawn a new window with just this tab. A single-tab window
+    // would only recreate itself, so skip that case.
+    const dropEffect = event.dataTransfer?.dropEffect ?? "none";
+    if (dropEffect === "none" && !wasInside && tabs.length > 1) {
+      const { snapshot } = pending;
+      const activePath =
+        snapshot.activePaneId === "right" ? snapshot.rightPath : snapshot.leftPath;
+      void openNewWindow(activePath, undefined, snapshot);
+      windowTabsManager.removeTransferredTab(pending.tabId);
+    }
+  }
+
+  /** Drops on the empty strip area (right of the tabs) append the foreign
+   *  tab at the end. Per-tab handlers cover drops on tabs themselves. */
+  function handleAreaDragOver(event: DragEvent): void {
+    if ((event.target as HTMLElement).closest(".tab")) return;
+    if (!dragTabId && isForeignTabDrag(tabDragState.read())) {
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    }
+  }
+
+  function handleAreaDrop(event: DragEvent): void {
+    if ((event.target as HTMLElement).closest(".tab")) return;
+    if (dragTabId) return;
+    const foreign = tabDragState.read();
+    if (isForeignTabDrag(foreign)) {
+      event.preventDefault();
+      claimDraggedTab(foreign);
+    }
   }
 </script>
 
 {#if showTabArea}
-  <div class="tab-area" role="tablist">
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <!-- Drag handlers only — keyboard interaction lives on the tabs. -->
+  <!-- svelte-ignore a11y_interactive_supports_focus -->
+  <div
+    class="tab-area"
+    role="tablist"
+    bind:this={tabAreaRef}
+    ondragover={handleAreaDragOver}
+    ondrop={handleAreaDrop}
+  >
     {#each tabs as tab (tab.id)}
       <div
         class="tab"
         class:active={tab.id === activeTabId}
         class:drag-over={dropTargetTabId === tab.id}
+        class:file-drop-target={fileDropTargetTabId === tab.id}
         class:dragging={dragTabId === tab.id}
         class:tab-entering={isNewTab(tab.id)}
         class:tab-closing={closingTabId === tab.id}
         role="tab"
         tabindex="0"
         aria-selected={tab.id === activeTabId}
+        data-tab-id={tab.id}
         onclick={() => handleTabClick(tab.id)}
         onkeydown={(e) => handleTabKeydown(e, tab.id)}
         onauxclick={(e) => handleTabMiddleClick(e, tab.id)}
@@ -132,8 +351,16 @@
         ondrop={(e) => handleTabDrop(e, tab.id)}
         ondragend={handleTabDragEnd}
       >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="tab-icon">
-          <path d="M2 3.5C2 2.67 2.67 2 3.5 2H6.17L8 3.83H12.5C13.33 3.83 14 4.5 14 5.33V12.5C14 13.33 13.33 14 12.5 14H3.5C2.67 14 2 13.33 2 12.5V3.5Z"/>
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 16 16"
+          fill="none"
+          class="tab-icon"
+        >
+          <path
+            d="M2 3.5C2 2.67 2.67 2 3.5 2H6.17L8 3.83H12.5C13.33 3.83 14 4.5 14 5.33V12.5C14 13.33 13.33 14 12.5 14H3.5C2.67 14 2 13.33 2 12.5V3.5Z"
+          />
         </svg>
         <span class="tab-title">{windowTabsManager.getTabTitle(tab)}</span>
         <button
@@ -143,7 +370,12 @@
           title="Close"
         >
           <svg width="10" height="10" viewBox="0 0 10 10">
-            <path d="M2 2L8 8M8 2L2 8" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+            <path
+              d="M2 2L8 8M8 2L2 8"
+              stroke="currentColor"
+              stroke-width="1.25"
+              stroke-linecap="round"
+            />
           </svg>
         </button>
       </div>
@@ -156,7 +388,12 @@
       title="New Tab (Ctrl+T)"
     >
       <svg width="12" height="12" viewBox="0 0 12 12">
-        <path d="M6 2V10M2 6H10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        <path
+          d="M6 2V10M2 6H10"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+        />
       </svg>
     </button>
   </div>
@@ -227,7 +464,7 @@
     gap: 8px;
     height: 30px;
     padding: 0 10px 0 12px;
-    background: transparent;
+    background: var(--background);
     border-radius: var(--radius-sm) var(--radius-sm) 0 0;
     font-size: 12px;
     font-weight: var(--font-weight-medium);
@@ -238,8 +475,9 @@
     flex-shrink: 0;
     max-width: 220px;
     position: relative;
-    border: 1px solid transparent;
-    border-bottom: none;
+    border: none;
+    border-top: 2px solid var(--surface-stroke, rgba(0, 0, 0, 0.1));
+    opacity: 0.8;
     transform-origin: bottom center;
     overflow: hidden;
   }
@@ -291,6 +529,7 @@
     color: var(--text-secondary);
     border-color: var(--surface-stroke);
     transform: translateY(-1px);
+    opacity: 1;
   }
 
   .tab:hover::after,
@@ -308,16 +547,29 @@
     background: var(--subtle-fill-secondary);
   }
 
+  .tab.file-drop-target,
+  .tab:global(.drop-target) {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 15%, var(--background));
+    box-shadow:
+      0 0 0 1px var(--accent),
+      0 0 8px color-mix(in srgb, var(--accent) 40%, transparent);
+    opacity: 1;
+    transform: translateY(-1px);
+  }
+
   .tab.active {
     background: var(--background-card);
     color: var(--text-primary);
     font-weight: var(--font-weight-semibold);
-    border-color: var(--surface-stroke);
+    border-top: 2px solid var(--accent);
     box-shadow:
-      0 -1px 3px rgba(0, 0, 0, 0.05),
-      0 -2px 8px rgba(0, 0, 0, 0.03);
+      0 -1px 4px rgba(0, 0, 0, 0.08),
+      0 -3px 10px rgba(0, 0, 0, 0.05),
+      inset 0 1px 0 rgba(255, 255, 255, 0.5);
     transform: translateY(-1px);
     z-index: 2;
+    opacity: 1;
   }
 
   .tab.active::before {
@@ -415,5 +667,29 @@
 
   .new-tab-btn:active {
     transform: rotate(90deg) scale(0.9);
+  }
+
+  /* Vibrancy: tab styling */
+  :global([data-vibrancy]) .tab {
+    border-radius: var(--vibrancy-island-radius) var(--vibrancy-island-radius) 0
+      0;
+    transition:
+      background var(--transition-normal),
+      color var(--transition-normal),
+      opacity var(--transition-normal);
+  }
+
+  :global([data-vibrancy]) .tab-area::after {
+    display: none;
+  }
+
+  :global([data-vibrancy]) .tab.active {
+    background: var(--vibrancy-island-bg);
+    border: none;
+    border-top: 2px solid var(--accent);
+    box-shadow:
+      inset 0 0.5px 0 var(--vibrancy-island-stroke),
+      0 0 0 0.5px var(--vibrancy-island-stroke);
+    transform: none;
   }
 </style>

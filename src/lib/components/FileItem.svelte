@@ -6,14 +6,17 @@
   import type { FileEntry } from "$lib/domain/file";
   import { formatSize } from "$lib/domain/file";
   import { getFileType, getFileIconColor, formatDate } from "$lib/domain/file-types";
+  import EntryName from "./EntryName.svelte";
   import FileIcon from "./FileIcon.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
-  import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
+  import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { useItemInteractions, isInClipboard as checkInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
+  import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+  import { isMac } from "$lib/domain/platform";
 
   interface Props {
     entry: FileEntry;
@@ -26,30 +29,24 @@
   let { entry, onclick, ondblclick, selected = false, explorer }: Props = $props();
 
   // Get pane context for cross-pane operations
-  const paneNav = getPaneNavigationContext();
 
-  // Shared item interactions (DnD, context menu)
+  // Shared item interactions (DnD, context menu with select-on-right-click)
   const interactions = useItemInteractions({
     getExplorer: () => explorer,
-    getPaneNav: () => paneNav,
+    refreshPanes: () => windowTabsManager.refreshAllPanes(),
+    selectOnContextMenu: true,
   });
 
-  // Inline rename composable
-  const rename = useInlineRename(() => explorer);
+  const pointerDrag = isMac ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
 
-  // Check if this entry is being renamed
+  // Check if this entry is being renamed (used for click guards and badge visibility)
   const isRenaming = $derived(dialogStore.renamingEntry?.path === entry.path);
-
-  // When rename mode starts, initialize and focus the input
-  $effect(() => {
-    if (isRenaming && rename.renameInputRef) {
-      rename.focusAndSelect(entry);
-    }
-  });
 
   // Clipboard state
   const entryInClipboard = $derived(checkInClipboard(entry));
   const isCut = $derived(isClipboardCut(entry));
+
+  const isManuallyHidden = $derived(manualHiddenStore.isHidden(explorer.currentPath, entry.name));
 
   function handleClick(event: MouseEvent) {
     if (isRenaming) {
@@ -59,15 +56,22 @@
     onclick(event);
   }
 
-  function handleDoubleClick() {
+  function handleDoubleClick(event: MouseEvent) {
+    // Double-click inside the rename input selects a word — don't open/navigate
+    if (isRenaming) {
+      event.stopPropagation();
+      return;
+    }
     ondblclick();
   }
 </script>
 
 <button
   class="file-item entry-item"
+  data-path={entry.path}
   class:directory={entry.kind === "directory"}
-  class:hidden-entry={entry.name.startsWith(".")}
+  class:hidden-entry={entry.name.startsWith(".") || isManuallyHidden}
+  class:empty-folder={entry.kind === "directory" && entry.is_empty === true}
   class:cut={isCut}
   class:in-clipboard={entryInClipboard}
   class:selected
@@ -76,35 +80,20 @@
   onclick={handleClick}
   ondblclick={handleDoubleClick}
   oncontextmenu={(e) => interactions.handleContextMenu(e, entry)}
-  draggable="true"
-  ondragstart={(e) => interactions.handleDragStart(e, entry, selected)}
-  ondragend={interactions.handleDragEnd}
+  draggable={!isMac}
+  ondragstart={!isMac ? (e) => interactions.handleDragStart(e, entry, selected) : undefined}
+  ondragend={!isMac ? interactions.handleDragEnd : undefined}
   ondragover={(e) => interactions.handleDragOver(e, entry)}
   ondragleave={() => interactions.handleDragLeave(entry)}
   ondrop={(e) => interactions.handleDrop(e, entry)}
+  onmousedown={isMac ? (e) => { e.stopPropagation(); pointerDrag!.handlePointerDown(e, entry, selected); } : undefined}
 >
   <!-- Name column -->
   <div class="name-cell">
-    <div class="icon" style:--file-icon-color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined} aria-hidden="true">
+    <div class="icon" data-drag-icon style:--file-icon-color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined} aria-hidden="true">
       <FileIcon {entry} size="small" />
     </div>
-    {#if isRenaming}
-      <!-- svelte-ignore a11y_autofocus -->
-      <input
-        type="text"
-        class="rename-input"
-        class:error={!!rename.renameError}
-        bind:value={rename.editedName}
-        bind:this={rename.renameInputRef}
-        onkeydown={(e) => rename.handleRenameKeydown(e, entry.name)}
-        onblur={() => rename.handleRenameBlur(entry.name)}
-        onclick={(e) => e.stopPropagation()}
-        disabled={rename.submittingRename}
-        autofocus
-      />
-    {:else}
-      <span class="name entry-name">{entry.name}</span>
-    {/if}
+    <span class="name-text" data-drag-name><EntryName {entry} {explorer} variant="details" /></span>
     <GitStatusBadge entryName={entry.name} hideOnRename={isRenaming} />
     {#if entry.is_symlink && !isRenaming}
       <div class="symlink-badge" title={entry.symlink_target ? `Link to ${entry.symlink_target}` : "Symbolic link"}>
@@ -172,7 +161,8 @@
     color: var(--text-primary);
     transition: background var(--transition-fast), opacity var(--transition-fast);
     position: relative;
-    min-height: 34px;
+    box-sizing: border-box;
+    height: 32px;
   }
 
   .file-item:hover {
@@ -209,6 +199,15 @@
     opacity: 0.8;
   }
 
+  .file-item.empty-folder {
+    opacity: 0.55;
+  }
+
+  .file-item.empty-folder:hover,
+  .file-item.empty-folder.selected {
+    opacity: 0.8;
+  }
+
   .file-item.cut {
     opacity: 0.5;
   }
@@ -224,6 +223,15 @@
     align-items: center;
     gap: 10px;
     min-width: 0;
+    overflow: hidden;
+  }
+
+  .name-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
   }
 
   /* Icon container */
@@ -241,44 +249,7 @@
     color: var(--icon-file-tint, var(--file-icon-color, var(--text-secondary)));
   }
 
-  /* Name */
-  .name {
-    font-size: 13px;
-    font-weight: 400;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    flex: 1;
-  }
-
-  /* Inline rename input */
-  .rename-input {
-    flex: 1;
-    min-width: 0;
-    padding: 2px 6px;
-    font-size: 13px;
-    font-family: inherit;
-    font-weight: 400;
-    color: var(--text-primary);
-    background: var(--control-fill);
-    border: 1px solid var(--accent);
-    border-radius: 3px;
-    outline: none;
-    box-shadow: 0 0 0 1px var(--accent);
-  }
-
-  .rename-input:focus {
-    background: var(--control-fill-secondary);
-  }
-
-  .rename-input:disabled {
-    opacity: 0.6;
-  }
-
-  .rename-input.error {
-    border-color: var(--system-critical);
-    box-shadow: 0 0 0 1px var(--system-critical);
-  }
+  /* Name styles are handled by EntryName component */
 
   /* Date, Type, Size cells */
   .date-cell,
@@ -332,15 +303,15 @@
   /* Drop target state - for drag-to-move */
   .file-item.drop-target {
     background: rgba(0, 120, 212, 0.15);
-    border-color: var(--accent);
-    box-shadow: inset 0 0 0 1px var(--accent);
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
   }
 
   /* Copy drop visual - green tint when Ctrl held */
   .file-item.drop-target.copy-drop {
     background: rgba(16, 185, 129, 0.15);
-    border-color: #10b981;
-    box-shadow: inset 0 0 0 1px #10b981;
+    outline: 1px solid #10b981;
+    outline-offset: -1px;
   }
 
 </style>

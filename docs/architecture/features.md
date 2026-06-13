@@ -70,6 +70,7 @@
 | Quick Open (Ctrl+P) | `QuickOpen.svelte`, `files.ts:startStreamingSearch`, `search.rs` |
 | Quick Open debug mode | `QuickOpen.svelte` + `settingsStore.quickOpenDebug` — shows name/frecency/dir score breakdown per result |
 | Content search (Ctrl+Shift+F) | `ContentSearchDialog.svelte`, `files.ts:startContentSearch`, `content_search.rs` |
+| Filenames-only toggle (Alt+F) | `ContentSearchDialog.svelte` — view-level collapse to one row per file, no re-search |
 | Directory filter (Ctrl+F) | `NavigationBar.svelte` (filter bar UI), `explorer.svelte.ts:setFilter` (auto-selects first match) |
 | Frecency ranking | `frecency.svelte.ts`, used by `QuickOpen.svelte` |
 
@@ -85,6 +86,8 @@
 | Dual pane (Ctrl+\\) | `windowTabsManager.toggleDualPane()`, `PaneContainer.svelte` |
 | Split ratio resize | `PaneContainer.svelte` mouse handlers, `windowTabsManager.setSplitRatio()` |
 | Workspaces | `workspaces.svelte.ts`, `WorkspaceDialog.svelte` |
+| Tab tear-off / cross-window move | `tab-transfer.ts` (localStorage marker + BroadcastChannel claim), `WindowTabBar.svelte` (drag handlers), `windowTabsManager.exportTab/adoptTab/removeTransferredTab`, label-keyed `tab-seed` in `openNewWindow` |
+| System file picker (portal) | `portal.rs` (D-Bus FileChooser backend), `FilePicker.svelte` (?picker= mode), `packaging/` (.portal + .service) |
 
 ### Clipboard
 | Feature | Files to change |
@@ -101,6 +104,9 @@
 | Thumbnail generation | `thumbnails.rs` |
 | Progressive loading | `ThumbnailImage.svelte` (micro → full), `files.ts:getMicroThumbnail/getThumbnailData` |
 | Cache management | Settings dialog, `thumbnails.rs:clear_thumbnail_cache/get_thumbnail_cache_stats` |
+| Supported formats | `thumbnails.rs:SUPPORTED_EXTENSIONS` + `file-types.ts:THUMBNAIL_EXTENSIONS` (AVIF is Linux-only, via image avif-native/dav1d) |
+| Zip / unzip with progress | `archive.rs` (chunked writes, zip-progress/unzip-progress events, cancel_compress/cancel_extract), `pane-mutations.ts:runArchiveJob` (shared compress/extract), `operations.svelte.ts` ("compress"/"extract" types). Progress panel auto-hides per-operation after a short linger. |
+| Markdown preview | `domain/markdown.ts` (marked + hljs, escaped raw HTML), `PreviewPane.svelte` (.preview-markdown) |
 
 ### Sidebar & Bookmarks
 | Feature | Files to change |

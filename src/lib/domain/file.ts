@@ -15,6 +15,7 @@ export interface FileEntry {
   readonly modified: string; // ISO 8601
   readonly is_symlink?: boolean;
   readonly symlink_target?: string;
+  readonly is_empty?: boolean;
 }
 
 export interface DirectoryListing {
@@ -23,7 +24,13 @@ export interface DirectoryListing {
   readonly listing_id: number | null;
 }
 
-export type SortField = "name" | "size" | "modified";
+export type SortField = "name" | "size" | "modified" | "type";
+
+function fileExtension(name: string): string {
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0 || dot === name.length - 1) return "";
+  return name.slice(dot + 1).toLowerCase();
+}
 
 /**
  * Sort file entries with directories first, then by specified field.
@@ -48,6 +55,13 @@ export function sortEntries(
       case "modified":
         comparison = a.modified.localeCompare(b.modified);
         break;
+      case "type": {
+        const extCmp = fileExtension(a.name).localeCompare(fileExtension(b.name));
+        comparison = extCmp !== 0
+          ? extCmp
+          : a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+        break;
+      }
       default:
         comparison = a.name.toLowerCase().localeCompare(b.name.toLowerCase());
     }
@@ -59,7 +73,7 @@ export function sortEntries(
 }
 
 /**
- * Filter hidden files (dotfiles).
+ * Filter hidden files (dotfiles and OS/app temp files).
  * Returns a new array without mutating the original.
  */
 export function filterHidden(
@@ -67,19 +81,25 @@ export function filterHidden(
   showHidden: boolean
 ): FileEntry[] {
   if (showHidden) return [...entries];
-  return entries.filter((e) => !e.name.startsWith("."));
+  return entries.filter((e) => !e.name.startsWith(".") && !e.name.startsWith("~$"));
 }
 
 /**
  * Format file size for display - Windows 11 style.
- * Returns empty string for 0 (directories).
  * Shows whole numbers without decimals (e.g., "1 KB" instead of "1.0 KB").
+ * Sizes ≥ 1 PB are clamped to TB; negative/non-finite input yields "".
+ * Callers that render directories (which have no meaningful size) are
+ * expected to skip formatting and show a blank/dash themselves.
  */
 export function formatSize(bytes: number): string {
-  if (bytes === 0) return "";
+  if (!Number.isFinite(bytes) || bytes < 0) return "";
+  if (bytes === 0) return "0 bytes";
 
   const units = ["bytes", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  const i = Math.min(
+    units.length - 1,
+    Math.floor(Math.log(bytes) / Math.log(1024))
+  );
   const value = bytes / Math.pow(1024, i);
 
   // For bytes, show exact count

@@ -6,7 +6,7 @@ use jwalk::WalkDir;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter};
 
@@ -74,18 +74,16 @@ const WALK_SAFETY_CAP: usize = 500_000;
 fn walk_entries(root_path: &PathBuf) -> Vec<(String, String, bool)> {
     let mut entries: Vec<(String, String, bool)> = Vec::new();
 
-    let walker = WalkDir::new(root_path)
-        .skip_hidden(true)
-        .process_read_dir(|_depth, _path, _read_dir_state, children| {
-            for entry in children.iter_mut() {
-                if let Ok(e) = entry {
-                    let name = e.file_name().to_string_lossy();
-                    if SKIP_DIRS.contains(&name.as_ref()) {
-                        e.read_children_path = None;
-                    }
+    let walker = WalkDir::new(root_path).skip_hidden(true).process_read_dir(
+        |_depth, _path, _read_dir_state, children| {
+            for e in children.iter_mut().flatten() {
+                let name = e.file_name().to_string_lossy();
+                if SKIP_DIRS.contains(&name.as_ref()) {
+                    e.read_children_path = None;
                 }
             }
-        });
+        },
+    );
 
     for entry in walker.into_iter().take(WALK_SAFETY_CAP) {
         let entry = match entry {
@@ -155,13 +153,33 @@ fn score_entry(
     let depth = relative_path.matches('/').count() + 1;
     let depth_bonus = (50u32).saturating_sub((depth as u32 - 1) * 5);
     let dir_bonus = if is_dir { DIRECTORY_BONUS } else { 0 };
-    Some(base_score.saturating_add(depth_bonus).saturating_add(dir_bonus))
+    Some(
+        base_score
+            .saturating_add(depth_bonus)
+            .saturating_add(dir_bonus),
+    )
 }
 
 /// Fuzzy search for files and directories recursively (non-streaming version).
 /// Uses nucleo for fast fuzzy matching and jwalk for parallel traversal.
+/// Async with the walk offloaded to a blocking thread so the IPC thread
+/// is never blocked by large directory trees.
 #[tauri::command]
-pub fn fuzzy_search(query: String, root: String, limit: usize) -> Result<SearchResponse, AppError> {
+pub async fn fuzzy_search(
+    query: String,
+    root: String,
+    limit: usize,
+) -> Result<SearchResponse, AppError> {
+    tokio::task::spawn_blocking(move || fuzzy_search_sync(query, root, limit))
+        .await
+        .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
+}
+
+fn fuzzy_search_sync(
+    query: String,
+    root: String,
+    limit: usize,
+) -> Result<SearchResponse, AppError> {
     let root_path = PathBuf::from(&root);
 
     if !root_path.exists() {
@@ -172,7 +190,7 @@ pub fn fuzzy_search(query: String, root: String, limit: usize) -> Result<SearchR
         return Err(AppError::InvalidPath(format!("Not a directory: {}", root)));
     }
 
-    let limit = limit.min(100).max(1);
+    let limit = limit.clamp(1, 100);
     let entries = walk_entries(&root_path);
     log::debug!("fuzzy_search: query={:?} entries={}", query, entries.len());
 
@@ -188,12 +206,19 @@ pub fn fuzzy_search(query: String, root: String, limit: usize) -> Result<SearchR
         .iter()
         .enumerate()
         .filter_map(|(idx, (relative_path, name, is_dir))| {
-            score_entry(name, relative_path, *is_dir, &query_lower, &pattern, &mut matcher)
-                .map(|score| (score, idx))
+            score_entry(
+                name,
+                relative_path,
+                *is_dir,
+                &query_lower,
+                &pattern,
+                &mut matcher,
+            )
+            .map(|score| (score, idx))
         })
         .collect();
 
-    scored.sort_by(|a, b| b.0.cmp(&a.0));
+    scored.sort_by_key(|s| std::cmp::Reverse(s.0));
 
     let results: Vec<SearchResult> = scored
         .into_iter()
@@ -239,8 +264,12 @@ pub fn start_streaming_search(
         return Err(AppError::InvalidPath(format!("Not a directory: {}", root)));
     }
 
-    let limit = limit.min(100).max(1);
-    log::debug!("start_streaming_search: id=pending query={:?} root={:?}", query, root);
+    let limit = limit.clamp(1, 100);
+    log::debug!(
+        "start_streaming_search: id=pending query={:?} root={:?}",
+        query,
+        root
+    );
     let (search_id, cancelled) = SEARCHES.start();
 
     let boost_path = boost_prefix.map(PathBuf::from);
@@ -255,21 +284,19 @@ pub fn start_streaming_search(
         let mut matcher = Matcher::new(Config::DEFAULT);
         let pattern = Pattern::parse(&query, CaseMatching::Ignore, Normalization::Smart);
 
-        let walker = WalkDir::new(&root_path)
-            .skip_hidden(true)
-            .process_read_dir(|_depth, _path, _read_dir_state, children| {
+        let walker = WalkDir::new(&root_path).skip_hidden(true).process_read_dir(
+            |_depth, _path, _read_dir_state, children| {
                 // Don't remove skip-listed dirs — they should still appear as
                 // search results. Instead, prevent descent by clearing
                 // read_children_path so their contents aren't walked.
-                for entry in children.iter_mut() {
-                    if let Ok(e) = entry {
-                        let name = e.file_name().to_string_lossy();
-                        if SKIP_DIRS.contains(&name.as_ref()) {
-                            e.read_children_path = None;
-                        }
+                for e in children.iter_mut().flatten() {
+                    let name = e.file_name().to_string_lossy();
+                    if SKIP_DIRS.contains(&name.as_ref()) {
+                        e.read_children_path = None;
                     }
                 }
-            });
+            },
+        );
 
         let mut pending_entries: Vec<(String, String, bool)> = Vec::new();
 
@@ -311,36 +338,42 @@ pub fn start_streaming_search(
 
             // Process batch and emit results
             if pending_entries.len() >= batch_size {
-                process_batch(
-                    &app,
+                let ctx = BatchContext {
+                    app: &app,
                     search_id,
+                    root_path: &root_path,
+                    pattern: &pattern,
+                    limit,
+                    boost_prefix: boost_path.as_deref(),
+                    query_lower: &query_lower,
+                };
+                process_batch(
+                    &ctx,
                     &mut pending_entries,
                     &mut all_results,
-                    &root_path,
-                    &pattern,
                     &mut matcher,
-                    limit,
                     total_scanned,
-                    boost_path.as_ref(),
-                    &query_lower,
                 );
             }
         }
 
         // Process remaining entries
         if !pending_entries.is_empty() && !cancelled.load(Ordering::Relaxed) {
-            process_batch(
-                &app,
+            let ctx = BatchContext {
+                app: &app,
                 search_id,
+                root_path: &root_path,
+                pattern: &pattern,
+                limit,
+                boost_prefix: boost_path.as_deref(),
+                query_lower: &query_lower,
+            };
+            process_batch(
+                &ctx,
                 &mut pending_entries,
                 &mut all_results,
-                &root_path,
-                &pattern,
                 &mut matcher,
-                limit,
                 total_scanned,
-                boost_path.as_ref(),
-                    &query_lower,
             );
         }
 
@@ -363,19 +396,33 @@ pub fn start_streaming_search(
     Ok(search_id)
 }
 
-fn process_batch(
-    app: &AppHandle,
+/// Per-search constants shared by every `process_batch` call.
+struct BatchContext<'a> {
+    app: &'a AppHandle,
     search_id: u64,
+    root_path: &'a Path,
+    pattern: &'a Pattern,
+    limit: usize,
+    boost_prefix: Option<&'a Path>,
+    query_lower: &'a str,
+}
+
+fn process_batch(
+    ctx: &BatchContext<'_>,
     pending: &mut Vec<(String, String, bool)>,
     all_results: &mut Vec<SearchResult>,
-    root_path: &PathBuf,
-    pattern: &Pattern,
     matcher: &mut Matcher,
-    limit: usize,
     total_scanned: usize,
-    boost_prefix: Option<&PathBuf>,
-    query_lower: &str,
 ) {
+    let BatchContext {
+        app,
+        search_id,
+        root_path,
+        pattern,
+        limit,
+        boost_prefix,
+        query_lower,
+    } = *ctx;
     // Score boost for results under the priority prefix (e.g. CWD)
     const BOOST_SCORE: u32 = 100;
 
@@ -413,7 +460,7 @@ fn process_batch(
     // Merge with existing results — keep a generous buffer so subdirectory
     // matches from later batches aren't prematurely dropped.
     all_results.append(&mut new_results);
-    all_results.sort_by(|a, b| b.score.cmp(&a.score));
+    all_results.sort_by_key(|r| std::cmp::Reverse(r.score));
     all_results.truncate(limit * 10);
 
     // Emit current top results
@@ -457,7 +504,12 @@ mod tests {
     fn fmt_results(results: &[SearchResult]) -> Vec<String> {
         results
             .iter()
-            .map(|r| format!("{} ({}) @ {} [score={}]", r.name, r.kind, r.relative_path, r.score))
+            .map(|r| {
+                format!(
+                    "{} ({}) @ {} [score={}]",
+                    r.name, r.kind, r.relative_path, r.score
+                )
+            })
             .collect()
     }
 
@@ -484,11 +536,17 @@ mod tests {
         assert!(names.contains(&"utils"), "Should find src/utils");
 
         // Depth-3 items
-        assert!(names.contains(&"Button"), "Should find src/components/Button");
+        assert!(
+            names.contains(&"Button"),
+            "Should find src/components/Button"
+        );
         assert!(names.contains(&"Modal"), "Should find src/components/Modal");
 
         // Depth-4 items (files inside deeply nested dirs)
-        assert!(names.contains(&"Button.test.ts"), "Should find deeply nested file");
+        assert!(
+            names.contains(&"Button.test.ts"),
+            "Should find deeply nested file"
+        );
 
         // Check that relative paths are correct
         assert!(
@@ -522,7 +580,10 @@ mod tests {
             abc_dirs.len(),
             2,
             "Should find both 'abc' directories, entries: {:?}",
-            entries.iter().map(|(r, n, d)| format!("{n} @ {r} dir={d}")).collect::<Vec<_>>()
+            entries
+                .iter()
+                .map(|(r, n, d)| format!("{n} @ {r} dir={d}"))
+                .collect::<Vec<_>>()
         );
 
         // Count "abc.txt" files
@@ -550,10 +611,16 @@ mod tests {
 
         // Must find the deeply nested folder despite 200 root siblings
         assert!(
-            entries.iter().any(|(_, name, is_dir)| name == "target_folder" && *is_dir),
+            entries
+                .iter()
+                .any(|(_, name, is_dir)| name == "target_folder" && *is_dir),
             "Should find deeply nested folder. Total entries: {}. Dirs found: {:?}",
             entries.len(),
-            entries.iter().filter(|(_, _, d)| *d).map(|(r, n, _)| format!("{n} @ {r}")).collect::<Vec<_>>()
+            entries
+                .iter()
+                .filter(|(_, _, d)| *d)
+                .map(|(r, n, _)| format!("{n} @ {r}"))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -567,7 +634,7 @@ mod tests {
         File::create(root.join("goodbye.txt")).unwrap();
         fs::create_dir(root.join("hello_folder")).unwrap();
 
-        let result = fuzzy_search("hello".into(), root.to_string_lossy().into(), 10).unwrap();
+        let result = fuzzy_search_sync("hello".into(), root.to_string_lossy().into(), 10).unwrap();
 
         assert!(
             result.results.iter().any(|r| r.name.contains("hello")),
@@ -583,7 +650,7 @@ mod tests {
         File::create(root.join("test.txt")).unwrap();
 
         let result =
-            fuzzy_search("zzzzzznotfound".into(), root.to_string_lossy().into(), 10).unwrap();
+            fuzzy_search_sync("zzzzzznotfound".into(), root.to_string_lossy().into(), 10).unwrap();
         assert!(result.results.is_empty());
     }
 
@@ -595,7 +662,7 @@ mod tests {
         File::create(root.join(".git").join("config")).unwrap();
         File::create(root.join("visible.txt")).unwrap();
 
-        let result = fuzzy_search("config".into(), root.to_string_lossy().into(), 10).unwrap();
+        let result = fuzzy_search_sync("config".into(), root.to_string_lossy().into(), 10).unwrap();
         assert!(result.results.iter().all(|r| !r.path.contains(".git")));
     }
 
@@ -609,14 +676,17 @@ mod tests {
         File::create(root.join("src").join("utils.ts")).unwrap();
 
         let result =
-            fuzzy_search("component".into(), root.to_string_lossy().into(), 10).unwrap();
+            fuzzy_search_sync("component".into(), root.to_string_lossy().into(), 10).unwrap();
         assert!(
-            result.results.iter().any(|r| r.name == "my-component.test.tsx"),
+            result
+                .results
+                .iter()
+                .any(|r| r.name == "my-component.test.tsx"),
             "Substring match should work, got: {:?}",
             fmt_results(&result.results)
         );
 
-        let result = fuzzy_search("readme".into(), root.to_string_lossy().into(), 10).unwrap();
+        let result = fuzzy_search_sync("readme".into(), root.to_string_lossy().into(), 10).unwrap();
         assert!(
             result.results.iter().any(|r| r.name == "README.md"),
             "Case-insensitive substring match should work"
@@ -695,24 +765,30 @@ mod tests {
         build_project_tree(&root);
 
         // Deeply nested folder
-        let result = fuzzy_search("Button".into(), root.to_string_lossy().into(), 20).unwrap();
+        let result = fuzzy_search_sync("Button".into(), root.to_string_lossy().into(), 20).unwrap();
         assert!(
-            result.results.iter().any(|r| r.name == "Button" && r.kind == "directory"),
+            result
+                .results
+                .iter()
+                .any(|r| r.name == "Button" && r.kind == "directory"),
             "Should find folder 'Button' in subdirectory, got: {:?}",
             fmt_results(&result.results)
         );
 
         // Another nested folder
-        let result = fuzzy_search("core".into(), root.to_string_lossy().into(), 20).unwrap();
+        let result = fuzzy_search_sync("core".into(), root.to_string_lossy().into(), 20).unwrap();
         assert!(
-            result.results.iter().any(|r| r.name == "core" && r.kind == "directory"),
+            result
+                .results
+                .iter()
+                .any(|r| r.name == "core" && r.kind == "directory"),
             "Should find folder 'core' in subdirectory, got: {:?}",
             fmt_results(&result.results)
         );
 
         // Nested folder + file that share the name
         let result =
-            fuzzy_search("integration".into(), root.to_string_lossy().into(), 20).unwrap();
+            fuzzy_search_sync("integration".into(), root.to_string_lossy().into(), 20).unwrap();
         assert!(
             result
                 .results
@@ -741,7 +817,7 @@ mod tests {
         fs::create_dir(root.join("folder2")).unwrap();
         File::create(root.join("folder2/abc.txt")).unwrap();
 
-        let result = fuzzy_search("abc".into(), root.to_string_lossy().into(), 20).unwrap();
+        let result = fuzzy_search_sync("abc".into(), root.to_string_lossy().into(), 20).unwrap();
 
         // Should find ALL instances of "abc"
         let abc_dirs: Vec<&SearchResult> = result
@@ -800,7 +876,7 @@ mod tests {
         File::create(root.join("a/target_folder/other.txt")).unwrap();
 
         let result =
-            fuzzy_search("target_folder".into(), root.to_string_lossy().into(), 20).unwrap();
+            fuzzy_search_sync("target_folder".into(), root.to_string_lossy().into(), 20).unwrap();
 
         let target_dirs: Vec<&SearchResult> = result
             .results
@@ -823,7 +899,7 @@ mod tests {
 
         // Search for a file that only exists deep in the tree
         let result =
-            fuzzy_search("api.test.ts".into(), root.to_string_lossy().into(), 20).unwrap();
+            fuzzy_search_sync("api.test.ts".into(), root.to_string_lossy().into(), 20).unwrap();
         assert!(
             result.results.iter().any(|r| r.name == "api.test.ts"),
             "Should find deeply nested file, got: {:?}",
@@ -831,7 +907,7 @@ mod tests {
         );
 
         // Search for "deploy" — only scripts/deploy.sh matches
-        let result = fuzzy_search("deploy".into(), root.to_string_lossy().into(), 20).unwrap();
+        let result = fuzzy_search_sync("deploy".into(), root.to_string_lossy().into(), 20).unwrap();
         assert!(
             result.results.iter().any(|r| r.name == "deploy.sh"),
             "Should find file in subdirectory, got: {:?}",
@@ -849,20 +925,28 @@ mod tests {
         fs::create_dir_all(root.join("a/b/config")).unwrap();
         fs::create_dir_all(root.join("a/b/c/d/config")).unwrap();
 
-        let result = fuzzy_search("config".into(), root.to_string_lossy().into(), 20).unwrap();
+        let result = fuzzy_search_sync("config".into(), root.to_string_lossy().into(), 20).unwrap();
 
         let configs: Vec<&SearchResult> = result
             .results
             .iter()
             .filter(|r| r.name == "config")
             .collect();
-        assert_eq!(configs.len(), 3, "Should find all 3, got: {:?}", fmt_results(&result.results));
+        assert_eq!(
+            configs.len(),
+            3,
+            "Should find all 3, got: {:?}",
+            fmt_results(&result.results)
+        );
 
         // Scores should decrease with depth
         assert!(
             configs[0].score > configs[1].score && configs[1].score > configs[2].score,
             "Shallower should score higher: {:?}",
-            configs.iter().map(|r| (&r.relative_path, r.score)).collect::<Vec<_>>()
+            configs
+                .iter()
+                .map(|r| (&r.relative_path, r.score))
+                .collect::<Vec<_>>()
         );
 
         // Shallowest should be first

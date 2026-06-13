@@ -16,7 +16,6 @@ test.describe("Tilde Expansion", () => {
     // Click breadcrumbs to start path editing
     const breadcrumbs = page.locator(".breadcrumbs-container");
     await breadcrumbs.click();
-    await page.waitForTimeout(200);
 
     const pathInput = page.locator(".path-input");
     await expect(pathInput).toBeVisible();
@@ -24,7 +23,6 @@ test.describe("Tilde Expansion", () => {
     // Clear and type ~ path
     await pathInput.fill("~/Documents");
     await page.keyboard.press("Enter");
-    await page.waitForTimeout(500);
 
     // Should navigate to /home/user/Documents
     const newBreadcrumbs = page.locator(".breadcrumbs-container");
@@ -34,28 +32,26 @@ test.describe("Tilde Expansion", () => {
   test("address bar autocomplete works with ~ prefix", async ({ page }) => {
     const breadcrumbs = page.locator(".breadcrumbs-container");
     await breadcrumbs.click();
-    await page.waitForTimeout(200);
 
     const pathInput = page.locator(".path-input");
+    await expect(pathInput).toBeVisible();
     await pathInput.fill("~/");
-    await page.waitForTimeout(500);
 
     // Autocomplete suggestions should appear for home directory contents
-    const suggestions = page.locator(".suggestion-item");
-    const count = await suggestions.count();
-    expect(count).toBeGreaterThan(0);
+    await expect
+      .poll(() => page.locator(".suggestion-item").count())
+      .toBeGreaterThan(0);
   });
 
   test("QuickOpen navigates to ~/Documents on Enter", async ({ page }) => {
     await page.keyboard.press("Control+p");
-    await page.waitForTimeout(300);
 
     const searchInput = page.locator(".quick-open-dialog .search-input");
+    await expect(searchInput).toBeVisible();
     await searchInput.fill("~/Documents");
-    await page.waitForTimeout(200);
+    await expect(searchInput).toHaveValue("~/Documents");
 
     await page.keyboard.press("Enter");
-    await page.waitForTimeout(500);
 
     // Quick open should close
     const quickOpen = page.locator(".quick-open-dialog");
@@ -68,14 +64,13 @@ test.describe("Tilde Expansion", () => {
 
   test("QuickOpen navigates to / path on Enter", async ({ page }) => {
     await page.keyboard.press("Control+p");
-    await page.waitForTimeout(300);
 
     const searchInput = page.locator(".quick-open-dialog .search-input");
+    await expect(searchInput).toBeVisible();
     await searchInput.fill("/home");
-    await page.waitForTimeout(200);
+    await expect(searchInput).toHaveValue("/home");
 
     await page.keyboard.press("Enter");
-    await page.waitForTimeout(500);
 
     const quickOpen = page.locator(".quick-open-dialog");
     await expect(quickOpen).not.toBeVisible();

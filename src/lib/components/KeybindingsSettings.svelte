@@ -6,7 +6,12 @@
   import { onMount, onDestroy } from "svelte";
   import { getAllCommands, getCategoryLabel, type Command, type CommandCategory } from "$lib/state/commands.svelte";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
-  import { eventToShortcutString } from "$lib/domain/keybinding-parser";
+  import {
+    eventToShortcutString,
+    isChordShortcut,
+    parseChord,
+    parseShortcut,
+  } from "$lib/domain/keybinding-parser";
 
   /** Currently recording shortcut for this command ID */
   let recordingCommandId = $state<string | null>(null);
@@ -111,13 +116,29 @@
     return shortcut ? shortcut.split("+") : [];
   }
 
-  // Use window-level event listener in capture phase when recording
-  // This ensures we intercept keyboard events before any other handler
+  /** Cancel recording when the window loses focus (keys would otherwise stay swallowed app-wide). */
+  function handleWindowBlur(): void {
+    if (recordingCommandId) cancelRecording();
+  }
+
+  /** Cancel recording on pointer-down outside the recording row. */
+  function handleWindowPointerDown(event: PointerEvent): void {
+    if (!recordingCommandId) return;
+    const target = event.target as Element | null;
+    if (target?.closest(".shortcut-row.recording")) return;
+    cancelRecording();
+  }
+
+  // Use window-level event listeners in capture phase when recording
+  // This ensures we intercept events before any other handler
   onMount(() => {
     window.addEventListener("keydown", handleRecordKeydown, true);
+    window.addEventListener("blur", handleWindowBlur);
+    window.addEventListener("pointerdown", handleWindowPointerDown, true);
   });
 
   let importInput: HTMLInputElement;
+  let importStatus = $state<string | null>(null);
 
   function exportKeybindings(): void {
     const data = JSON.stringify(keybindingsStore.userShortcuts, null, 2);
@@ -130,25 +151,59 @@
     URL.revokeObjectURL(url);
   }
 
+  /** A shortcut string is valid when it parses as a single shortcut or a chord. */
+  function isValidShortcutString(shortcut: string): boolean {
+    return isChordShortcut(shortcut) ? parseChord(shortcut) !== null : parseShortcut(shortcut) !== null;
+  }
+
+  /** Validate and apply imported keybindings; skipped entries are reported. */
+  function importKeybindings(text: string): void {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      importStatus = "Import failed: file is not valid JSON";
+      return;
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      importStatus = "Import failed: expected an object mapping command ids to shortcuts";
+      return;
+    }
+
+    const knownIds = new Set(getAllCommands().map((c) => c.id));
+    const invalid: string[] = [];
+    let applied = 0;
+    for (const [commandId, shortcut] of Object.entries(parsed as Record<string, unknown>)) {
+      const valid =
+        knownIds.has(commandId) &&
+        (shortcut === null || (typeof shortcut === "string" && isValidShortcutString(shortcut)));
+      if (!valid) {
+        invalid.push(commandId);
+        continue;
+      }
+      keybindingsStore.setShortcut(commandId, shortcut as string | null);
+      applied++;
+    }
+    importStatus = invalid.length > 0
+      ? `Imported ${applied} shortcuts, skipped invalid entries: ${invalid.join(", ")}`
+      : `Imported ${applied} shortcuts`;
+  }
+
   function handleImport(event: Event): void {
-    const file = (event.target as HTMLInputElement).files?.[0];
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    // Reset so selecting the same file again re-triggers the change event
+    input.value = "";
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const shortcuts = JSON.parse(reader.result as string) as Record<string, string | null>;
-        for (const [commandId, shortcut] of Object.entries(shortcuts)) {
-          keybindingsStore.setShortcut(commandId, shortcut);
-        }
-      } catch {
-        // Invalid JSON - silently ignore
-      }
-    };
+    reader.onload = () => importKeybindings(reader.result as string);
     reader.readAsText(file);
   }
 
   onDestroy(() => {
     window.removeEventListener("keydown", handleRecordKeydown, true);
+    window.removeEventListener("blur", handleWindowBlur);
+    window.removeEventListener("pointerdown", handleWindowPointerDown, true);
   });
 </script>
 
@@ -171,6 +226,10 @@
       Reset All
     </button>
   </div>
+
+  {#if importStatus}
+    <div class="import-status">{importStatus}</div>
+  {/if}
 
   <div class="keybindings-list">
     {#each [...groupedCommands] as [category, commands] (category)}
@@ -301,6 +360,14 @@
   .reset-all-btn:hover {
     background: var(--control-fill-secondary);
     color: var(--text-primary);
+  }
+
+  .import-status {
+    font-size: 12px;
+    color: var(--text-secondary);
+    padding: 4px 8px;
+    background: var(--subtle-fill-secondary);
+    border-radius: var(--radius-sm);
   }
 
   .keybindings-list {

@@ -7,15 +7,19 @@ import type { DirectoryListing, FileEntry } from "$lib/domain/file";
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { isTauri, mockInvoke } from "./mock-invoke";
 
-// Cached Tauri detection - starts null, set on first invoke call.
-// Once detected, no further checks are needed.
-let cachedIsTauri: boolean | null = null;
+// Cached Tauri detection. Only the positive result is latched: an invoke
+// racing ahead of __TAURI_INTERNALS__ injection must not permanently stick
+// the real app on the mock, so we re-detect until Tauri is found.
+let cachedIsTauri = false;
 
-// Lazy invoke with cached detection.
-// First call checks isTauri() (handles late __TAURI__ injection), then caches result.
-async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  if (cachedIsTauri === null) {
-    cachedIsTauri = isTauri();
+/**
+ * Mock-aware invoke: dispatches to the real Tauri IPC when available,
+ * otherwise to the in-memory mock (browser E2E). All API modules should use
+ * this instead of importing `invoke` from @tauri-apps/api directly.
+ */
+export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  if (!cachedIsTauri && isTauri()) {
+    cachedIsTauri = true;
   }
   const invoker = cachedIsTauri ? tauriInvoke<T> : mockInvoke<T>;
   return args !== undefined ? invoker(cmd, args) : invoker(cmd);
@@ -29,18 +33,34 @@ export interface AppError {
   message: string;
 }
 
+const APP_ERROR_KINDS: ReadonlySet<string> = new Set<AppErrorKind>([
+  "not_found", "permission_denied", "already_exists", "invalid_path", "io", "other",
+]);
+
 /** Extract error message from Tauri command error (structured or string) */
 function extractError(err: unknown): string {
-  if (err && typeof err === "object" && "message" in err) {
-    return (err as AppError).message;
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === "object") {
+    const message = (err as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+    // Plain object without a usable message — serialize rather than "[object Object]"
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return String(err);
+    }
   }
   return String(err);
 }
 
-/** Extract structured error kind from Tauri command error */
+/** Extract structured error kind from Tauri command error.
+ *  Returns null unless the kind is a known AppErrorKind. */
 export function extractErrorKind(err: unknown): AppErrorKind | null {
   if (err && typeof err === "object" && "kind" in err) {
-    return (err as AppError).kind;
+    const kind = (err as { kind: unknown }).kind;
+    if (typeof kind === "string" && APP_ERROR_KINDS.has(kind)) {
+      return kind as AppErrorKind;
+    }
   }
   return null;
 }
@@ -63,6 +83,22 @@ export async function fetchDirectory(
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: extractError(err) };
+  }
+}
+
+/**
+ * Returns true when `path` has no entries visible under the given hidden-file rule.
+ * Used by miller view's "hide empty folders" feature. Errors yield false so
+ * unreadable folders aren't optimistically hidden.
+ */
+export async function isDirectoryEmpty(
+  path: string,
+  includeHidden: boolean
+): Promise<boolean> {
+  try {
+    return await invoke<boolean>("is_directory_empty", { path, includeHidden });
+  } catch {
+    return false;
   }
 }
 
@@ -216,6 +252,19 @@ export async function moveEntry(
 export async function openFile(path: string): Promise<ApiResult<void>> {
   try {
     await invoke("open_file", { path });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+/**
+ * Open a file at a specific line number using a known text editor.
+ * Falls back to default open if no known editor is found.
+ */
+export async function openFileAtLine(path: string, line: number): Promise<ApiResult<void>> {
+  try {
+    await invoke("open_file_at_line", { path, line });
     return { ok: true, data: undefined };
   } catch (err) {
     return { ok: false, error: extractError(err) };
@@ -561,13 +610,24 @@ export async function getThumbnail(
   }
 }
 
+function dataUriToBlobUrl(dataUri: string): string {
+  const comma = dataUri.indexOf(",");
+  if (comma === -1) return dataUri;
+  const meta = dataUri.slice(0, comma);
+  const mimeMatch = meta.match(/data:([^;]+)/);
+  const mime = mimeMatch ? mimeMatch[1] : "image/jpeg";
+  const raw = atob(dataUri.slice(comma + 1));
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  return URL.createObjectURL(new Blob([bytes], { type: mime }));
+}
+
 /**
- * Get thumbnail as base64 data URI.
- * More efficient for display as it avoids additional file reads.
+ * Get thumbnail as blob URL.
  *
  * @param path - Full path to image file
  * @param size - Optional thumbnail size (default 128)
- * @returns Result with data URI (data:image/jpeg;base64,...) or error
+ * @returns Result with blob URL or error
  */
 export async function getThumbnailData(
   path: string,
@@ -576,18 +636,18 @@ export async function getThumbnailData(
 ): Promise<ApiResult<string>> {
   try {
     const dataUri = await invoke<string>("get_thumbnail_data", { path, size, quality });
-    return { ok: true, data: dataUri };
+    return { ok: true, data: dataUriToBlobUrl(dataUri) };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
 }
 
 /**
- * Get micro thumbnail (16x16) as base64 data URI for progressive loading.
+ * Get micro thumbnail (16x16) as blob URL for progressive loading.
  * Also pre-warms the full thumbnail cache as a side effect.
  *
  * @param path - Full path to image file
- * @returns Result with data URI (data:image/jpeg;base64,...) or error
+ * @returns Result with blob URL or error
  */
 export async function getMicroThumbnail(
   path: string,
@@ -596,7 +656,7 @@ export async function getMicroThumbnail(
 ): Promise<ApiResult<string>> {
   try {
     const dataUri = await invoke<string>("get_micro_thumbnail", { path, prewarmSize, prewarmQuality });
-    return { ok: true, data: dataUri };
+    return { ok: true, data: dataUriToBlobUrl(dataUri) };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
@@ -676,6 +736,18 @@ export interface ContentSearchEvent {
 }
 
 /**
+ * Result of starting a content search. With the real backend, results stream
+ * via 'content-search-results' events and `searchId` identifies the stream.
+ * Outside Tauri (browser/mock mode) the event system is unavailable, so the
+ * mock returns the complete result set inline (`searchId` null) — same
+ * fallback shape as the streaming directory listing.
+ */
+export interface ContentSearchStart {
+  searchId: number | null;
+  inline: ContentSearchEvent | null;
+}
+
+/**
  * Start a streaming content search using ripgrep.
  * Listen for 'content-search-results' events to receive results.
  *
@@ -684,7 +756,7 @@ export interface ContentSearchEvent {
  * @param caseSensitive - Whether search is case-sensitive
  * @param regexMode - Whether to treat query as regex pattern
  * @param maxResults - Maximum number of results
- * @returns Result with search ID or error message
+ * @returns Result with stream id or inline results, or an error message
  */
 export async function startContentSearch(
   query: string,
@@ -692,16 +764,18 @@ export async function startContentSearch(
   caseSensitive: boolean = false,
   regexMode: boolean = false,
   maxResults: number = 500
-): Promise<ApiResult<number>> {
+): Promise<ApiResult<ContentSearchStart>> {
   try {
-    const searchId = await invoke<number>("start_content_search", {
+    const raw = await invoke<number | ContentSearchEvent>("start_content_search", {
       query,
       root,
       caseSensitive,
       regexMode,
       maxResults,
     });
-    return { ok: true, data: searchId };
+    return typeof raw === "number"
+      ? { ok: true, data: { searchId: raw, inline: null } }
+      : { ok: true, data: { searchId: null, inline: raw } };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
@@ -835,18 +909,52 @@ export async function startNanoBananaJob(
 // Issue: tauri-explorer-0xr, tauri-explorer-kez
 // ===================
 
+/** Payload of `zip-progress` events emitted while a compression job runs. */
+export interface ZipProgressEvent {
+  jobId: number;
+  bytesDone: number;
+  bytesTotal: number;
+  currentFile: string;
+}
+
 /**
  * Compress files/directories into a ZIP archive.
  *
  * @param paths - List of file/directory paths to compress
+ * @param jobId - Client-generated id keying `zip-progress` events and
+ *                cancellation via cancelCompress
  * @returns Result with path to created ZIP file or error
  */
-export async function compressToZip(paths: string[]): Promise<ApiResult<string>> {
+export async function compressToZip(paths: string[], jobId?: number): Promise<ApiResult<string>> {
   try {
-    const zipPath = await invoke<string>("compress_to_zip", { paths });
+    const zipPath = await invoke<string>("compress_to_zip", { paths, jobId });
     return { ok: true, data: zipPath };
   } catch (err) {
     return { ok: false, error: extractError(err) };
+  }
+}
+
+/** File-picker portal window → backend: deliver the user's choice.
+ *  `paths` are absolute filesystem paths; `cancelled` aborts the request. */
+export async function pickerRespond(
+  token: string,
+  paths: string[],
+  cancelled: boolean,
+): Promise<void> {
+  try {
+    await invoke("picker_respond", { token, paths, cancelled });
+  } catch {
+    // Browser/mock mode — the e2e mock records the call instead.
+  }
+}
+
+/** Cancel a running compression job. The pending compressToZip call fails
+ *  with "Compression cancelled" and the partial archive is removed. */
+export async function cancelCompress(jobId: number): Promise<void> {
+  try {
+    await invoke("cancel_compress", { jobId });
+  } catch {
+    // Cancellation is best-effort; the job may already have finished.
   }
 }
 
@@ -855,17 +963,30 @@ export async function compressToZip(paths: string[]): Promise<ApiResult<string>>
  *
  * @param archivePath - Path to the archive file
  * @param extractHere - If true, extract to archive's directory; if false, extract to new folder
+ * @param jobId - Client-generated id keying `unzip-progress` events and
+ *                cancellation via cancelExtract
  * @returns Result with extraction destination path or error
  */
 export async function extractArchive(
   archivePath: string,
-  extractHere: boolean = false
+  extractHere: boolean = false,
+  jobId?: number,
 ): Promise<ApiResult<string>> {
   try {
-    const destPath = await invoke<string>("extract_archive", { archivePath, extractHere });
+    const destPath = await invoke<string>("extract_archive", { archivePath, extractHere, jobId });
     return { ok: true, data: destPath };
   } catch (err) {
     return { ok: false, error: extractError(err) };
+  }
+}
+
+/** Cancel a running extraction job. The pending extractArchive call fails
+ *  with "Extraction cancelled" and the partial output is removed. */
+export async function cancelExtract(jobId: number): Promise<void> {
+  try {
+    await invoke("cancel_extract", { jobId });
+  } catch {
+    // Cancellation is best-effort; the job may already have finished.
   }
 }
 
@@ -931,5 +1052,164 @@ export async function getGitStatus(path: string): Promise<ApiResult<GitStatusRes
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: extractError(err) };
+  }
+}
+
+// ----- SCM git backend (#53) ----- //
+
+export type GitStatusCode =
+  | "Modified"
+  | "Added"
+  | "Deleted"
+  | "Renamed"
+  | "Copied"
+  | "Untracked"
+  | "Ignored"
+  | "Conflict"
+  | "TypeChange";
+
+export interface GitFileEntry {
+  path: string;
+  old_path: string | null;
+  status: GitStatusCode;
+}
+
+export interface GitStatusSummary {
+  is_repo: boolean;
+  repo_root: string | null;
+  branch: string | null;
+  detached: boolean;
+  staged: GitFileEntry[];
+  changes: GitFileEntry[];
+  untracked: GitFileEntry[];
+  merge: GitFileEntry[];
+}
+
+export interface GitCommitResult {
+  commit_id: string;
+  summary: string;
+}
+
+export async function gitInit(path: string): Promise<ApiResult<string>> {
+  try {
+    const data = await invoke<string>("git_init", { path });
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+export async function gitRepoRoot(path: string): Promise<ApiResult<string | null>> {
+  try {
+    const data = await invoke<string | null>("git_repo_root", { path });
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+/** Append a path to the repo's `.gitignore`, creating the file if needed.
+ *  Idempotent — duplicate entries are skipped. */
+export async function gitAddToGitignore(
+  repoRoot: string,
+  entry: string,
+): Promise<ApiResult<string>> {
+  try {
+    const data = await invoke<string>("git_add_to_gitignore", { repoRoot, entry });
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+export async function gitSummary(repoPath: string): Promise<ApiResult<GitStatusSummary>> {
+  try {
+    const data = await invoke<GitStatusSummary>("git_status", { repoPath });
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+export async function gitStage(repoPath: string, paths: string[]): Promise<ApiResult<void>> {
+  try {
+    await invoke<void>("git_stage", { repoPath, paths });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+export async function gitUnstage(repoPath: string, paths: string[]): Promise<ApiResult<void>> {
+  try {
+    await invoke<void>("git_unstage", { repoPath, paths });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+export async function gitDiscard(
+  repoPath: string,
+  paths: string[],
+  options?: { force?: boolean },
+): Promise<ApiResult<void>> {
+  try {
+    await invoke<void>("git_discard", { repoPath, paths, options: options ?? null });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+export async function gitDiff(
+  repoPath: string,
+  path: string,
+  options?: { staged?: boolean },
+): Promise<ApiResult<string>> {
+  try {
+    const data = await invoke<string>("git_diff", { repoPath, path, options: options ?? null });
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+export async function gitCommit(
+  repoPath: string,
+  message: string,
+  options?: { amend?: boolean },
+): Promise<ApiResult<GitCommitResult>> {
+  try {
+    const data = await invoke<GitCommitResult>("git_commit", { repoPath, message, options: options ?? null });
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+export async function gitWatchRepo(repoPath: string): Promise<ApiResult<void>> {
+  try {
+    await invoke<void>("git_watch_repo", { repoPath });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+export async function gitUnwatchRepo(repoPath: string): Promise<ApiResult<void>> {
+  try {
+    await invoke<void>("git_unwatch_repo", { repoPath });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+export async function setWindowTheme(theme: "light" | "dark"): Promise<void> {
+  try {
+    await invoke<void>("set_window_theme", { theme });
+  } catch {
+    // Non-critical — only affects vibrancy appearance
   }
 }

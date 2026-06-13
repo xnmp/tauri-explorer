@@ -5,14 +5,16 @@
 <script lang="ts">
   import { tick } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
-  import { getPaneNavigationContext } from "$lib/state/pane-context";
   import { openFile, openImageWithSiblings } from "$lib/api/files";
   import { dragState } from "$lib/state/drag.svelte";
   import { getDropSourcePaths, handleBackgroundDrop } from "$lib/state/drop-operations";
   import { useMarqueeSelection } from "$lib/composables/use-marquee-selection.svelte";
   import { useTypeAhead } from "$lib/composables/use-type-ahead.svelte";
   import { isImageFile } from "$lib/domain/file-types";
+  import { parentDir, basename } from "$lib/domain/path";
+  import { rectDimToCSS } from "$lib/domain/zoom";
   import DetailsView from "./DetailsView.svelte";
   import ListView from "./ListView.svelte";
   import TilesView from "./TilesView.svelte";
@@ -27,7 +29,6 @@
 
   let { explorer }: Props = $props();
 
-  const paneNav = getPaneNavigationContext();
 
   // Drop target state for dropping files into current directory
   let isDropTarget = $state(false);
@@ -41,10 +42,18 @@
   // Track content width for ListView auto columns
   let contentWidth = $state(0);
 
+  // Cached container rect for the duration of a marquee drag (avoids forced layout per mousemove)
+  let cachedDragRect: DOMRect | null = null;
+  // Cached marquee indices to skip redundant selectByIndices calls when the covered items haven't changed
+  let lastMarqueeIndices: number[] | null = null;
+
   $effect(() => {
     if (!contentRef) return;
     const observer = new ResizeObserver((entries) => {
       contentWidth = entries[0]?.contentRect.width ?? 0;
+      if (cachedDragRect) {
+        cachedDragRect = contentRef!.getBoundingClientRect();
+      }
     });
     observer.observe(contentRef);
     return () => observer.disconnect();
@@ -142,41 +151,41 @@
   // Marquee selection
   // ===================
 
-  /** Header height for marquee clamping: 32px for details (column headers), 0 for list/tiles */
+  /** Header height for marquee clamping: measured from DOM for details view, 0 for list/tiles */
   function marqueeHeaderHeight(): number {
-    return explorer.viewMode === "details" ? 32 : 0;
+    if (explorer.viewMode !== "details") return 0;
+    const header = contentRef?.querySelector(".column-headers");
+    if (!header) return 32;
+    return rectDimToCSS(header.getBoundingClientRect().height);
   }
 
   function handleMarqueeStart(event: MouseEvent): void {
     const rect = contentRef?.getBoundingClientRect();
     if (!rect) return;
+    cachedDragRect = rect;
     marquee.start(event, rect, marqueeHeaderHeight());
   }
 
-  // RAF-throttled marquee selection to avoid layout thrashing in tiles/list views
-  let marqueeRafId: number | null = null;
-
   function handleMarqueeMove(event: MouseEvent): void {
-    const rect = contentRef?.getBoundingClientRect();
-    if (!rect) return;
-    if (!marquee.move(event, rect, marqueeHeaderHeight())) return;
-    if (marqueeRafId === null) {
-      marqueeRafId = requestAnimationFrame(() => {
-        marqueeRafId = null;
-        updateMarqueeSelection();
-      });
-    }
+    if (!cachedDragRect) return;
+    marquee.move(event, cachedDragRect, marqueeHeaderHeight(), updateMarqueeSelection);
   }
 
   function handleMarqueeEnd(): void {
-    if (marqueeRafId !== null) {
-      cancelAnimationFrame(marqueeRafId);
-      marqueeRafId = null;
-    }
     if (marquee.isDragging) {
       updateMarqueeSelection();
     }
     marquee.end();
+    cachedDragRect = null;
+    lastMarqueeIndices = null;
+  }
+
+  function indicesEqual(a: number[], b: number[] | null): boolean {
+    if (!b || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
   }
 
   function updateMarqueeSelection(): void {
@@ -184,13 +193,16 @@
 
     let indices: number[];
     if (explorer.viewMode === "tiles") {
-      indices = marquee.getSelectedIndicesFromDOM(contentRef, ".tile-item");
+      // The inner view element is the actual scroller (.content never overflows)
+      indices = marquee.getSelectedIndicesFromDOM(contentRef, ".tile-item", contentRef.querySelector<HTMLElement>(".tiles-view"));
     } else if (explorer.viewMode === "list") {
-      indices = marquee.getSelectedIndicesFromDOM(contentRef, ".list-item");
+      indices = marquee.getSelectedIndicesFromDOM(contentRef, ".list-item", contentRef.querySelector<HTMLElement>(".list-view"));
     } else {
       const scrollTop = contentRef.querySelector('.virtual-viewport')?.scrollTop ?? 0;
-      indices = marquee.getSelectedIndices(scrollTop, explorer.displayEntries.length);
+      indices = marquee.getSelectedIndices(scrollTop, explorer.displayEntries.length, marqueeHeaderHeight());
     }
+    if (indicesEqual(indices, lastMarqueeIndices)) return;
+    lastMarqueeIndices = indices;
     explorer.selectByIndices(indices, marquee.ctrlKeyHeld);
   }
 
@@ -199,10 +211,19 @@
   // ===================
 
   function handleListDragOver(event: DragEvent): void {
-    if (!event.dataTransfer?.types.includes("application/x-explorer-path") && !dragState.readCrossWindow()) return;
+    const types = event.dataTransfer?.types;
+    const crossWindow = dragState.readCrossWindow();
+    if (!types?.includes("application/x-explorer-path") && !types?.includes("Files") && !crossWindow) return;
 
     const target = event.target as HTMLElement;
-    if (target.closest(".file-item")) return;
+    if (target.closest(".entry-item")) return;
+
+    // Suppress highlight when all sources are already in this directory
+    const dragData = dragState.current ?? crossWindow;
+    if (dragData) {
+      const paths = dragData.paths ?? [dragData.path];
+      if (paths.every((p) => parentDir(p) === explorer.currentPath)) return;
+    }
 
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
@@ -219,7 +240,7 @@
     isDropTarget = false;
 
     const target = event.target as HTMLElement;
-    if (target.closest(".file-item")) return;
+    if (target.closest(".entry-item")) return;
 
     if (!event.dataTransfer) return;
 
@@ -229,21 +250,22 @@
     const currentPath = explorer.currentPath;
     // Filter out sources already in this directory
     const validPaths = sourcePaths.filter((p) => {
-      const sourceDir = p.substring(0, p.lastIndexOf("/"));
+      const sourceDir = parentDir(p);
       return sourceDir !== currentPath;
     });
     if (validPaths.length === 0) return;
 
     event.preventDefault();
+    dragState.clear();
 
     const existingNames = new Set(explorer.displayEntries.map((e) => e.name));
     for (const sourcePath of validPaths) {
       await handleBackgroundDrop(sourcePath, currentPath, existingNames, {
-        onRefresh: () => {
-          if (paneNav) paneNav.refreshAllPanes();
-          else explorer.refresh({ silent: true });
-        },
+        onRefresh: () => windowTabsManager.refreshAllPanes(),
       });
+      // Each transferred file now exists in the target dir — later files in
+      // this batch sharing its basename must trigger the conflict dialog.
+      existingNames.add(basename(sourcePath));
     }
   }
 </script>
@@ -263,6 +285,7 @@
   <div
     class="content"
     class:drop-target={isDropTarget}
+    data-current-path={explorer.currentPath}
     bind:this={contentRef}
     onmousedown={handleMarqueeStart}
     ondragover={handleListDragOver}
@@ -290,6 +313,12 @@
           <path d="M20 27H28" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
         </svg>
         <span>This folder is empty</span>
+        <button class="go-up-button" onclick={() => explorer.goBack()}>
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+            <path d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Go back
+        </button>
       </div>
     {:else if explorer.displayEntries.length === 0 && explorer.isCreatingFolder}
       <div class="empty-create-folder">
@@ -321,7 +350,7 @@
     {#if marquee.isDragging && marquee.marqueeRect}
       <div
         class="marquee-rect"
-        style="left: {marquee.marqueeRect.left}px; top: {marquee.marqueeRect.top}px; width: {marquee.marqueeRect.width}px; height: {marquee.marqueeRect.height}px;"
+        style="transform: translate({marquee.marqueeRect.left}px, {marquee.marqueeRect.top}px); width: {marquee.marqueeRect.width}px; height: {marquee.marqueeRect.height}px;"
       ></div>
     {/if}
   </div>
@@ -348,7 +377,7 @@
     flex: 1;
     overflow: auto;
     position: relative;
-    background: var(--content-bg, transparent);
+    background: transparent;
     transition: background var(--transition-fast), box-shadow var(--transition-fast);
   }
 
@@ -360,11 +389,14 @@
   /* Marquee selection rectangle */
   .marquee-rect {
     position: absolute;
+    left: 0;
+    top: 0;
     background: color-mix(in srgb, var(--accent) 15%, transparent);
     border: 1px solid var(--accent);
     border-radius: 2px;
     pointer-events: none;
     z-index: 10;
+    will-change: transform, width, height;
   }
 
   /* Status states */
@@ -423,5 +455,25 @@
   .empty-create-folder {
     flex: 1;
     overflow: auto;
+  }
+
+  .go-up-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 6px 14px;
+    border: 1px solid var(--control-stroke);
+    border-radius: var(--radius-md);
+    background: var(--control-fill);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+  }
+
+  .go-up-button:hover {
+    background: var(--subtle-fill-secondary);
   }
 </style>

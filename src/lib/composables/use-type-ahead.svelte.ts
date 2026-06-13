@@ -42,6 +42,14 @@ export function useTypeAhead(
       !event.ctrlKey && !event.metaKey && !event.altKey &&
       !keybindingsStore.isChordActive
     ) {
+      if (event.key === " ") {
+        // Space only continues an in-progress match (names with spaces).
+        // With an empty buffer, leave Space to its default behavior
+        // (activating the focused row / scrolling) instead of consuming it.
+        if (buffer === "") return false;
+        // Mid-match: prevent the default action so Space only types.
+        event.preventDefault();
+      }
       handleKey(event.key);
       return true;
     }

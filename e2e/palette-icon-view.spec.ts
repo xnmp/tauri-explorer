@@ -6,7 +6,7 @@ import { test, expect } from "@playwright/test";
 import { HOME_URL, waitForEntries } from "./helpers";
 
 test.describe("Command palette icon view switch", () => {
-  test("selecting tiles size command switches view to tiles", async ({ page }) => {
+  test("selecting tile size command switches view to tiles", async ({ page }) => {
     await page.goto(HOME_URL);
     await waitForEntries(page);
 
@@ -18,17 +18,26 @@ test.describe("Command palette icon view switch", () => {
     const palette = page.locator(".command-palette-dialog");
     await palette.waitFor({ state: "visible", timeout: 2000 });
 
-    // Type "tiles" to filter to tile commands
-    await palette.locator(".search-input").fill("Tiles: Medium");
+    // Type to filter to the tile size command
+    await palette.locator(".search-input").fill("Tile View: Set Size");
     await page.waitForTimeout(200);
 
-    // Select the "Tiles: Medium Icons" command
-    const mediumCmd = palette.locator('.command-item:has-text("Tiles: Medium Icons")');
-    await expect(mediumCmd).toBeVisible();
-    await mediumCmd.click();
+    // Select the "Tile View: Set Size" command
+    const cmd = palette.locator('.command-item:has-text("Tile View: Set Size")');
+    await expect(cmd).toBeVisible();
+    await cmd.click();
 
-    // Palette should close and view should switch to tiles
+    // Palette closes and option picker opens
     await expect(palette).toBeHidden();
+    const picker = page.locator(".option-picker-dialog");
+    await expect(picker).toBeVisible({ timeout: 2000 });
+
+    // Select "Medium" from the picker
+    const mediumOption = picker.locator('.option-picker-item:has-text("Medium")');
+    await mediumOption.click();
+
+    // Picker should close and view should switch to tiles
+    await expect(picker).toBeHidden();
     await expect(page.locator(".tiles-view")).toBeVisible({ timeout: 2000 });
   });
 });

@@ -10,9 +10,15 @@
   import WindowTabBar from "./WindowTabBar.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
-
-  const showTabBar = $derived(windowTabsManager.tabs.length > 1);
-  const showTitleBar = $derived(showTabBar || settingsStore.showWindowControls);
+  import { isMac } from "$lib/domain/platform";
+  import * as titlebar from "$lib/domain/titlebar";
+  const showTitleBar = $derived(
+    titlebar.showTitleBar(
+      settingsStore.integratedTitleBar,
+      windowTabsManager.tabs.length,
+      settingsStore.showWindowControls,
+    ),
+  );
 
   const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
   let appWindow: Window | null = null;
@@ -65,7 +71,7 @@
 
 {#if showTitleBar}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="titlebar" onmousedown={handleDragStart}>
+  <div class="titlebar" class:integrated={isMac && settingsStore.integratedTitleBar} onmousedown={handleDragStart}>
     <WindowTabBar />
     <div class="spacer"></div>
 
@@ -140,6 +146,10 @@
     pointer-events: none;
   }
 
+  .titlebar.integrated {
+    padding-left: 70px;
+  }
+
   .spacer {
     flex: 1;
     height: 100%;
@@ -182,5 +192,15 @@
   .control-btn:focus-visible {
     outline: 2px solid var(--focus-stroke-outer);
     outline-offset: -2px;
+  }
+
+  /* Vibrancy: titlebar floats above island, no bottom divider */
+  :global([data-vibrancy]) .titlebar {
+    position: relative;
+    z-index: 2;
+    box-shadow: none;
+  }
+  :global([data-vibrancy]) .titlebar::before {
+    display: none;
   }
 </style>

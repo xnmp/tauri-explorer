@@ -13,29 +13,29 @@ test.describe("Paste selects pasted files", () => {
     // Navigate into Documents
     const docsDir = page.locator(".entry-item", { hasText: "Documents" }).first();
     await docsDir.dblclick();
-    await page.waitForTimeout(500);
+    await expect(page.locator(".breadcrumbs-container")).toContainText("Documents");
     await waitForEntries(page);
 
     // Copy a file
     const file = page.locator(".entry-item:not(.directory)").first();
     await file.click();
-    await page.waitForTimeout(200);
+    await expect(file).toHaveClass(/selected/);
     const fileName = await file.locator(".entry-name").textContent();
 
     await pressShortcut(page, "c", { ctrlKey: true });
-    await page.waitForTimeout(500);
+    await expect(page.locator(".toast.clipboard")).toBeVisible();
 
     // Navigate back
     await page.keyboard.press("Control+Alt+ArrowLeft");
-    await page.waitForTimeout(500);
+    await expect(page.locator(".breadcrumbs-container")).not.toContainText("Documents");
     await waitForEntries(page);
 
-    // Paste
+    // Paste — the pasted file should end up selected
     await pressShortcut(page, "v", { ctrlKey: true });
-    await page.waitForTimeout(2000);
-
-    // The pasted file should be selected
-    const selectedEntries = await page.locator(".entry-item.selected .entry-name").allTextContents();
-    expect(selectedEntries).toContain(fileName);
+    await expect
+      .poll(() => page.locator(".entry-item.selected .entry-name").allTextContents(), {
+        timeout: 5000,
+      })
+      .toContain(fileName);
   });
 });

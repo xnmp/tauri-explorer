@@ -6,25 +6,35 @@
   import { conflictResolver, type ConflictChoice } from "$lib/state/conflict-resolver.svelte";
   import { formatSize } from "$lib/domain/file";
   import { formatDate } from "$lib/domain/file-types";
+  import Modal from "./Modal.svelte";
 
   const conflict = $derived(conflictResolver.activeConflict);
+
+  let cancelButtonEl: HTMLButtonElement | undefined = $state();
+
+  // Focus the safe default (Cancel) when the dialog opens so keyboard users
+  // aren't stranded (Modal only claims focus if nothing inside has it).
+  $effect(() => {
+    if (conflict) {
+      cancelButtonEl?.focus();
+    }
+  });
 
   function handleChoice(choice: ConflictChoice, applyToAll = false): void {
     conflictResolver.resolve(choice, applyToAll);
   }
-
-  function handleKeydown(event: KeyboardEvent): void {
-    if (!conflict) return;
-    if (event.key === "Escape") {
-      handleChoice("cancel");
-    }
-  }
 </script>
 
-{#if conflict}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="conflict-overlay" onkeydown={handleKeydown}>
-    <div class="conflict-dialog" role="alertdialog" aria-label="File conflict">
+<Modal
+  open={!!conflict}
+  onClose={() => handleChoice("cancel")}
+  overlayClass="conflict-overlay"
+  role="alertdialog"
+  label="File conflict"
+  closeOnBackdrop={false}
+>
+  {#if conflict}
+    <div class="conflict-dialog">
       <div class="conflict-header">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
           <path d="M12 2L22 20H2L12 2Z" stroke="var(--system-caution)" stroke-width="1.5" fill="var(--system-caution)" fill-opacity="0.15"/>
@@ -81,25 +91,15 @@
           </button>
         {/if}
         <div class="separator"></div>
-        <button class="btn btn-cancel" onclick={() => handleChoice("cancel")}>
+        <button class="btn btn-cancel" bind:this={cancelButtonEl} onclick={() => handleChoice("cancel")}>
           Cancel
         </button>
       </div>
     </div>
-  </div>
-{/if}
+  {/if}
+</Modal>
 
 <style>
-  .conflict-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-  }
-
   .conflict-dialog {
     background: var(--background-solid);
     border: 1px solid var(--divider);

@@ -40,6 +40,13 @@ const mockEntries: FileEntry[] = [
     size: 200,
     modified: "2025-01-04T00:00:00",
   },
+  {
+    name: "~$report.docx",
+    path: "/~$report.docx",
+    kind: "file",
+    size: 162,
+    modified: "2025-01-05T00:00:00",
+  },
 ];
 
 describe("sortEntries", () => {
@@ -51,7 +58,7 @@ describe("sortEntries", () => {
   it("sorts files alphabetically by name (case-insensitive)", () => {
     const sorted = sortEntries(mockEntries);
     const fileNames = sorted.filter((e) => e.kind === "file").map((e) => e.name);
-    expect(fileNames).toEqual([".hidden", "beta.txt", "zebra.txt"]);
+    expect(fileNames).toEqual([".hidden", "~$report.docx", "beta.txt", "zebra.txt"]);
   });
 
   it("sorts by size when specified", () => {
@@ -69,7 +76,7 @@ describe("sortEntries", () => {
   it("respects descending order", () => {
     const sorted = sortEntries(mockEntries, "name", false);
     const fileNames = sorted.filter((e) => e.kind === "file").map((e) => e.name);
-    expect(fileNames).toEqual(["zebra.txt", "beta.txt", ".hidden"]);
+    expect(fileNames).toEqual(["zebra.txt", "beta.txt", "~$report.docx", ".hidden"]);
   });
 
   it("does not mutate the original array", () => {
@@ -90,6 +97,16 @@ describe("filterHidden", () => {
     expect(filtered.find((e) => e.name === ".hidden")).toBeDefined();
   });
 
+  it("hides MS Office temp files (~$) when showHidden is false", () => {
+    const filtered = filterHidden(mockEntries, false);
+    expect(filtered.find((e) => e.name === "~$report.docx")).toBeUndefined();
+  });
+
+  it("shows MS Office temp files when showHidden is true", () => {
+    const filtered = filterHidden(mockEntries, true);
+    expect(filtered.find((e) => e.name === "~$report.docx")).toBeDefined();
+  });
+
   it("does not mutate the original array", () => {
     const original = [...mockEntries];
     filterHidden(mockEntries, false);
@@ -98,8 +115,26 @@ describe("filterHidden", () => {
 });
 
 describe("formatSize", () => {
-  it("returns empty string for 0 (directories)", () => {
-    expect(formatSize(0)).toBe("");
+  // Previous expectation encoded a bug: formatSize(0) returned "" so 0-byte
+  // files showed no size. Directory blanks are handled by callers (which
+  // skip formatSize for directories), not by the formatter.
+  it("formats 0 as '0 bytes' so empty files show a size", () => {
+    expect(formatSize(0)).toBe("0 bytes");
+  });
+
+  it("returns empty string for negative sizes (malformed input)", () => {
+    expect(formatSize(-1)).toBe("");
+    expect(formatSize(-1048576)).toBe("");
+  });
+
+  it("returns empty string for non-finite input", () => {
+    expect(formatSize(NaN)).toBe("");
+    expect(formatSize(Infinity)).toBe("");
+  });
+
+  it("clamps sizes >= 1 PB to TB instead of rendering 'undefined'", () => {
+    const twoPB = 2 * Math.pow(1024, 5);
+    expect(formatSize(twoPB)).toBe("2048 TB");
   });
 
   it("formats bytes correctly - Windows 11 style", () => {

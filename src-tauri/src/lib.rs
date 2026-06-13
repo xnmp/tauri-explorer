@@ -7,110 +7,31 @@ mod config;
 mod content_search;
 pub mod error;
 mod files;
+pub mod git;
+mod nano_banana;
+#[cfg(target_os = "linux")]
+mod portal;
+/// Non-Linux stub so the command registry stays platform-independent.
+#[cfg(not(target_os = "linux"))]
+mod portal {
+    #[tauri::command]
+    pub async fn picker_respond(_token: String, _paths: Vec<String>, _cancelled: bool) {}
+
+    pub fn is_portal_mode() -> bool {
+        false
+    }
+}
 mod search;
+mod system;
 pub mod task_registry;
 mod thumbnails;
-mod nano_banana;
 mod wallpaper;
 
-use std::path::PathBuf;
-
-use error::AppError;
-use log;
+use system::{
+    get_launch_cwd, get_log_dir, move_multiple_to_trash, move_to_trash, restore_from_trash,
+    set_window_theme, LaunchCwd,
+};
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
-
-/// Stores the working directory from which the app was launched.
-struct LaunchCwd(String);
-
-/// Move a file or directory to the system trash/recycle bin.
-/// Cross-platform: Windows Recycle Bin, macOS Trash, Linux Freedesktop Trash.
-#[tauri::command]
-async fn move_to_trash(path: String) -> Result<(), AppError> {
-    let pathbuf = PathBuf::from(&path);
-
-    if !pathbuf.exists() {
-        return Err(AppError::NotFound(path));
-    }
-
-    trash::delete(&pathbuf).map_err(|e| {
-        log::error!("Failed to move to trash: {}", e);
-        AppError::Other(format!("Failed to move to trash: {}", e))
-    })
-}
-
-/// Move multiple files/directories to trash.
-#[tauri::command]
-async fn move_multiple_to_trash(paths: Vec<String>) -> Result<(), AppError> {
-    let pathbufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
-
-    for (i, path) in pathbufs.iter().enumerate() {
-        if !path.exists() {
-            return Err(AppError::NotFound(paths[i].clone()));
-        }
-    }
-
-    log::info!("Moving {} items to trash", pathbufs.len());
-    trash::delete_all(&pathbufs).map_err(|e| {
-        log::error!("Failed to move {} items to trash: {}", pathbufs.len(), e);
-        AppError::Other(format!("Failed to move items to trash: {}", e))
-    })
-}
-
-/// Get the directory the app was launched from.
-#[tauri::command]
-fn get_launch_cwd(state: tauri::State<'_, LaunchCwd>) -> String {
-    state.0.clone()
-}
-
-/// Get the log directory path so the frontend can display it in settings.
-#[tauri::command]
-fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
-    use tauri::Manager;
-    let log_dir = app
-        .path()
-        .app_log_dir()
-        .map_err(|e| AppError::Other(format!("Failed to resolve log directory: {}", e)))?;
-    Ok(log_dir.to_string_lossy().to_string())
-}
-
-/// Restore files from the system trash by their original paths.
-/// Finds the most recently deleted item matching each path and restores it.
-/// Note: trash::os_limited is only available on Linux/Windows (not macOS).
-#[cfg(not(target_os = "macos"))]
-#[tauri::command]
-async fn restore_from_trash(paths: Vec<String>) -> Result<(), AppError> {
-    let trash_items = trash::os_limited::list()
-        .map_err(|e| AppError::Other(format!("Failed to list trash: {}", e)))?;
-
-    let mut to_restore = Vec::new();
-
-    for path_str in &paths {
-        let target = PathBuf::from(path_str);
-        // Find the most recently deleted item matching this original path
-        let mut matching: Vec<_> = trash_items
-            .iter()
-            .filter(|item| item.original_path() == target)
-            .collect();
-        matching.sort_by_key(|item| std::cmp::Reverse(item.time_deleted));
-
-        if let Some(item) = matching.into_iter().next() {
-            to_restore.push(item.clone());
-        }
-    }
-
-    if to_restore.is_empty() {
-        return Err(AppError::Other("No matching items found in trash".to_string()));
-    }
-
-    trash::os_limited::restore_all(to_restore)
-        .map_err(|e| AppError::Other(format!("Failed to restore from trash: {}", e)))
-}
-
-#[cfg(target_os = "macos")]
-#[tauri::command]
-async fn restore_from_trash(_paths: Vec<String>) -> Result<(), AppError> {
-    Err(AppError::Other("Trash restore is not supported on macOS".to_string()))
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(launch_dir: Option<String>) {
@@ -124,7 +45,7 @@ pub fn run(launch_dir: Option<String>) {
     }
 
     let home_dir = dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("/"))
+        .unwrap_or_else(|| std::path::PathBuf::from("/"))
         .to_string_lossy()
         .to_string();
     let launch_cwd = launch_dir.unwrap_or_else(|| home_dir.clone());
@@ -181,6 +102,7 @@ pub fn run(launch_dir: Option<String>) {
             // File operations — directory listing
             files::dir_listing::list_directory,
             files::dir_listing::invalidate_dir_cache,
+            files::dir_listing::is_directory_empty,
             files::dir_listing::start_streaming_directory,
             files::dir_listing::cancel_directory_listing,
             // File operations — CRUD
@@ -200,6 +122,7 @@ pub fn run(launch_dir: Option<String>) {
             files::fs_watcher::unwatch_directory,
             // File operations — external apps
             files::external_apps::open_file,
+            files::external_apps::open_file_at_line,
             files::external_apps::open_file_with,
             files::external_apps::open_image_with_siblings,
             files::external_apps::open_in_terminal,
@@ -224,30 +147,56 @@ pub fn run(launch_dir: Option<String>) {
             thumbnails::get_thumbnail_cache_stats,
             // Archive operations
             archive::compress_to_zip,
+            archive::cancel_compress,
+            archive::cancel_extract,
             archive::extract_archive,
             // Config file persistence
             config::read_config_file,
             config::write_config_file,
             config::get_config_dir,
             config::list_user_themes,
-            // Git status
+            // Git status (legacy: per-file indicators for file list)
             files::git_status::get_git_status,
+            // Git source-control backend (#53, #54)
+            git::git_init,
+            git::git_repo_root,
+            git::git_add_to_gitignore,
+            git::git_status,
+            git::git_stage,
+            git::git_unstage,
+            git::git_discard,
+            git::git_diff,
+            git::git_commit,
+            git::git_watch_repo,
+            git::git_unwatch_repo,
             // Drives / volumes
             files::drives::list_drives,
             // Wallpaper
             wallpaper::set_as_wallpaper,
             // Nano Banana (AI image editing)
             nano_banana::start_nano_banana_job,
+            // File-picker portal (xdg-desktop-portal FileChooser backend)
+            portal::picker_respond,
+            // Window appearance
+            set_window_theme,
         ])
         .setup(move |app| {
             let t_setup = std::time::Instant::now();
 
             // Initialize filesystem watcher for auto-refresh
-            files::fs_watcher::init_watcher(&app.handle());
+            files::fs_watcher::init_watcher(app.handle());
+
+            // Portal-backend mode: no main window — serve the FileChooser
+            // D-Bus interface and open picker windows on demand.
+            if portal::is_portal_mode() {
+                #[cfg(target_os = "linux")]
+                portal::start_portal_service(app.handle());
+                return Ok(());
+            }
 
             // Create window programmatically so we can inject initialization_script.
             // This replaces the static window definition in tauri.conf.json.
-            tauri::WebviewWindowBuilder::new(
+            let builder = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
                 tauri::WebviewUrl::App("index.html".into()),
@@ -255,9 +204,50 @@ pub fn run(launch_dir: Option<String>) {
             .title("tauri-explorer")
             .inner_size(1200.0, 800.0)
             .decorations(cfg!(target_os = "macos"))
-            .disable_drag_drop_handler()
-            .initialization_script(&init_script)
-            .build()?;
+            .accept_first_mouse(true)
+            .initialization_script(&init_script);
+
+            #[cfg(target_os = "macos")]
+            {
+                let settings_json = config::config_dir()
+                    .ok()
+                    .and_then(|dir| std::fs::read_to_string(dir.join("settings.json")).ok())
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
+
+                let integrated = settings_json
+                    .as_ref()
+                    .and_then(|v| v.get("integratedTitleBar")?.as_bool())
+                    .unwrap_or(false);
+                if integrated {
+                    builder = builder
+                        .title_bar_style(tauri::TitleBarStyle::Overlay)
+                        .hidden_title(true);
+                }
+
+                let vibrancy = settings_json
+                    .as_ref()
+                    .and_then(|v| v.get("macOsVibrancy")?.as_bool())
+                    .unwrap_or(false);
+                let vibrancy_blur = settings_json
+                    .as_ref()
+                    .and_then(|v| v.get("vibrancyBlur")?.as_bool())
+                    .unwrap_or(true);
+                if vibrancy {
+                    builder = builder.transparent(true);
+                    if vibrancy_blur {
+                        use tauri::utils::config::WindowEffectsConfig;
+                        use tauri::utils::{WindowEffect, WindowEffectState};
+                        builder = builder.effects(WindowEffectsConfig {
+                            effects: vec![WindowEffect::UnderWindowBackground],
+                            state: Some(WindowEffectState::Active),
+                            radius: None,
+                            color: None,
+                        });
+                    }
+                }
+            }
+
+            builder.build()?;
 
             log::info!(
                 "Startup: pre-builder={:?} builder→setup={:?} total={:?}",
@@ -267,6 +257,15 @@ pub fn run(launch_dir: Option<String>) {
             );
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_app, event| {
+            // Portal mode has no persistent window: closing a picker window
+            // must not exit the service, or the D-Bus name would drop.
+            if portal::is_portal_mode() {
+                if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                    api.prevent_exit();
+                }
+            }
+        });
 }

@@ -9,6 +9,7 @@ import { tick } from "svelte";
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
+import { findNextWordBoundary, findPrevWordBoundary } from "$lib/domain/word-boundary";
 
 export interface InlineRenameState {
   editedName: string;
@@ -73,6 +74,25 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
       event.preventDefault();
       event.stopPropagation();
       cancelRename();
+    } else if ((event.ctrlKey || event.metaKey) && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+      event.preventDefault();
+      const input = renameInputRef;
+      if (!input) return;
+      const text = input.value;
+      const movingRight = event.key === "ArrowRight";
+      const caretPos = movingRight
+        ? (input.selectionEnd ?? 0)
+        : (input.selectionStart ?? 0);
+      const newPos = movingRight
+        ? findNextWordBoundary(text, caretPos)
+        : findPrevWordBoundary(text, caretPos);
+      if (event.shiftKey) {
+        const anchor = input.selectionDirection === "backward" ? input.selectionEnd! : input.selectionStart!;
+        const [start, end] = newPos < anchor ? [newPos, anchor] : [anchor, newPos];
+        input.setSelectionRange(start, end, newPos < anchor ? "backward" : "forward");
+      } else {
+        input.setSelectionRange(newPos, newPos);
+      }
     }
   }
 

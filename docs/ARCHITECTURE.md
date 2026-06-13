@@ -27,7 +27,7 @@
 │  │  +page.svelte (root)                            │    │
 │  │  ├── TitleBar / WindowTabBar                    │    │
 │  │  ├── SharedToolbar (search, theme, win controls)│    │
-│  │  ├── Sidebar (quick access, bookmarks, drives)  │    │
+│  │  ├── Sidebar (activity bar + files / SCM views) │    │
 │  │  ├── PaneContainer                              │    │
 │  │  │   ├── ExplorerPane (left)                    │    │
 │  │  │   │   ├── NavigationBar (breadcrumbs)        │    │
@@ -75,7 +75,8 @@
 | `src/lib/themes/` | Bundled CSS themes → [cross-cutting.md](architecture/cross-cutting.md) |
 | `src-tauri/src/` | Rust backend modules → [backend.md](architecture/backend.md) |
 | `tests/` | Vitest unit tests |
-| `e2e/` | Playwright e2e tests |
+| `e2e/` | Playwright e2e tests (browser + mocked IPC) |
+| `e2e-tauri/` | WebdriverIO + tauri-driver smoke suite against the real binary (Linux + Windows only) |
 
 ---
 
@@ -99,6 +100,7 @@
 - `svelte.config.js` — Svelte config
 - `vitest.config.ts` — Vitest config
 - `playwright.config.ts` — Playwright e2e config
+- `e2e-tauri/wdio.conf.ts` — WebdriverIO config for the Tauri-binary smoke suite
 - `src-tauri/tauri.conf.json` — Tauri window/build/security config
 - `src-tauri/Cargo.toml` — Rust dependencies
 # test

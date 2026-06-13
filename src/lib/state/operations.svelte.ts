@@ -6,7 +6,7 @@
  * cancellation support, and error handling.
  */
 
-export type OperationType = "copy" | "move" | "delete";
+export type OperationType = "copy" | "move" | "delete" | "compress" | "extract";
 
 export interface Operation {
   id: string;
@@ -29,10 +29,33 @@ function generateOperationId(): string {
 
 const DIALOG_DELAY_MS = 1500;
 
+/** How long a cancelled id stays observable for in-flight workers before
+ *  being dropped (prevents unbounded growth of the cancelled set). */
+const CANCELLED_ID_TTL_MS = 60_000;
+
 function createOperationsManager() {
   let operations = $state<Operation[]>([]);
   let showProgressDialog = $state(false);
   let dialogTimerId: ReturnType<typeof setTimeout> | null = null;
+  // Tracks ids that were cancelled so in-flight workers can still see the
+  // cancellation after the row has been removed from the visible list.
+  // Entries expire after CANCELLED_ID_TTL_MS so the set can't grow unbounded.
+  const cancelledIds = new Set<string>();
+
+  function markCancelled(operationId: string): void {
+    cancelledIds.add(operationId);
+    setTimeout(() => cancelledIds.delete(operationId), CANCELLED_ID_TTL_MS);
+  }
+
+  function closeDialogIfEmpty(): void {
+    if (operations.length === 0) {
+      if (dialogTimerId) {
+        clearTimeout(dialogTimerId);
+        dialogTimerId = null;
+      }
+      showProgressDialog = false;
+    }
+  }
 
   /** Start a new operation */
   function startOperation(
@@ -89,6 +112,10 @@ function createOperationsManager() {
     );
   }
 
+  /** How long a finished operation stays visible (showing "Complete")
+   *  before it auto-dismisses. */
+  const COMPLETED_LINGER_MS = 1500;
+
   /** Complete an operation */
   function completeOperation(operationId: string): void {
     operations = operations.map((op) =>
@@ -97,12 +124,11 @@ function createOperationsManager() {
         : op
     );
 
-    // Auto-hide dialog after delay if all operations complete
-    setTimeout(() => {
-      if (operations.every((op) => op.status === "completed" || op.status === "cancelled")) {
-        cleanupCompletedOperations();
-      }
-    }, 2000);
+    // Auto-dismiss THIS operation after a short linger so the panel hides
+    // when the last operation finishes. Per-operation (not "all done"): a
+    // single stuck/running operation must not keep a completed one — and the
+    // whole panel — visible forever.
+    setTimeout(() => clearOperation(operationId), COMPLETED_LINGER_MS);
   }
 
   /** Mark operation as error — show dialog immediately so user sees the error */
@@ -133,55 +159,48 @@ function createOperationsManager() {
     }
   }
 
-  /** Cancel an operation */
+  /** Cancel an operation. Removes it from the list immediately so the
+   * progress dialog dismisses without lingering. In-flight worker code
+   * still observes the cancelled status via `isOperationCancelled` because
+   * we keep the id reachable through a short-lived cancelled set. */
   function cancelOperation(operationId: string): void {
-    operations = operations.map((op) =>
-      op.id === operationId && op.status === "running"
-        ? { ...op, status: "cancelled" }
-        : op
-    );
+    markCancelled(operationId);
+    operations = operations.filter((op) => op.id !== operationId);
+    closeDialogIfEmpty();
   }
 
   /** Check if an operation has been cancelled */
   function isOperationCancelled(operationId: string): boolean {
-    return operations.some((op) => op.id === operationId && op.status === "cancelled");
+    return cancelledIds.has(operationId);
   }
 
-  /** Cancel all running operations */
+  /** Cancel all running operations and dismiss the progress dialog. */
   function cancelAllOperations(): void {
-    operations = operations.map((op) =>
-      op.status === "running"
-        ? { ...op, status: "cancelled" }
-        : op
-    );
+    for (const op of operations) {
+      if (op.status === "running") markCancelled(op.id);
+    }
+    operations = operations.filter((op) => op.status !== "running");
+    closeDialogIfEmpty();
   }
 
   /** Remove completed/cancelled operations */
   function cleanupCompletedOperations(): void {
+    for (const op of operations) {
+      if (op.status !== "running" && op.status !== "pending") {
+        cancelledIds.delete(op.id);
+      }
+    }
     operations = operations.filter(
       (op) => op.status === "running" || op.status === "pending"
     );
-
-    if (operations.length === 0) {
-      if (dialogTimerId) {
-        clearTimeout(dialogTimerId);
-        dialogTimerId = null;
-      }
-      showProgressDialog = false;
-    }
+    closeDialogIfEmpty();
   }
 
   /** Clear a specific operation */
   function clearOperation(operationId: string): void {
+    cancelledIds.delete(operationId);
     operations = operations.filter((op) => op.id !== operationId);
-
-    if (operations.length === 0) {
-      if (dialogTimerId) {
-        clearTimeout(dialogTimerId);
-        dialogTimerId = null;
-      }
-      showProgressDialog = false;
-    }
+    closeDialogIfEmpty();
   }
 
   /** Hide the progress dialog */
@@ -251,5 +270,9 @@ export function getOperationLabel(type: OperationType): string {
       return "Moving";
     case "delete":
       return "Deleting";
+    case "compress":
+      return "Compressing";
+    case "extract":
+      return "Extracting";
   }
 }

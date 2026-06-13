@@ -22,7 +22,7 @@ const COLLAPSED_LIMIT = 5;
 export function flattenFile(
   file: ContentSearchResult,
   filterLower: string,
-  expandedFiles: Set<string>,
+  expandedFiles: ReadonlySet<string>,
 ): FlattenedResult[] {
   const isExpanded = expandedFiles.has(file.path);
   const filtered: ContentMatch[] = [];
@@ -65,7 +65,7 @@ export function flattenFile(
 export function flattenBatch(
   newResults: ContentSearchResult[],
   filterLower: string,
-  expandedFiles: Set<string>,
+  expandedFiles: ReadonlySet<string>,
 ): FlattenedResult[] {
   const batch: FlattenedResult[] = [];
   for (const file of newResults) {
@@ -78,48 +78,13 @@ export function flattenBatch(
 export function rebuildAllFlattened(
   results: ContentSearchResult[],
   filterLower: string,
-  expandedFiles: Set<string>,
+  expandedFiles: ReadonlySet<string>,
 ): FlattenedResult[] {
   const rebuilt: FlattenedResult[] = [];
   for (const file of results) {
     rebuilt.push(...flattenFile(file, filterLower, expandedFiles));
   }
   return rebuilt;
-}
-
-/** Compute cached offsets for virtual scrolling with variable-height items. */
-export function computeOffsets(
-  items: FlattenedResult[],
-  fileHeaderHeight: number,
-  itemHeight: number,
-): { offsets: number[]; totalHeight: number } {
-  const offsets: number[] = new Array(items.length);
-  let cumulative = 0;
-  for (let i = 0; i < items.length; i++) {
-    offsets[i] = cumulative;
-    cumulative += items[i].isFirstInFile ? fileHeaderHeight : itemHeight;
-  }
-  return { offsets, totalHeight: cumulative };
-}
-
-/** Binary search for the first visible item index given a scrollTop. */
-export function findFirstVisible(
-  items: FlattenedResult[],
-  offsets: number[],
-  scrollTop: number,
-  fileHeaderHeight: number,
-  itemHeight: number,
-): number {
-  let lo = 0, hi = items.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi) >>> 1;
-    if (offsets[mid] + (items[mid].isFirstInFile ? fileHeaderHeight : itemHeight) <= scrollTop) {
-      lo = mid + 1;
-    } else {
-      hi = mid;
-    }
-  }
-  return lo;
 }
 
 export function escapeHtml(str: string): string {

@@ -5,7 +5,9 @@
 <script lang="ts">
   import { settingsStore, type IconTheme, type ThumbnailSize } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
+  import { isMac } from "$lib/domain/platform";
   import KeybindingsSettings from "./KeybindingsSettings.svelte";
+  import Modal from "./Modal.svelte";
 
   interface Props {
     open: boolean;
@@ -31,33 +33,53 @@
     return terms.some((t) => matchesSearch(...t));
   }
 
-  let dialogContentRef = $state<HTMLElement | null>(null);
+  // Searchable terms (label + description) per setting row. These drive both
+  // row visibility (matchesSearch) and section visibility (sectionVisible).
+  const rows = {
+    theme: ["Theme", "Choose the color theme for the app"],
+    iconTheme: ["Icon Theme", "Choose file icon style"],
+    thumbnailSize: ["Thumbnail Size", "Size of image thumbnails in tiles view"],
+    showSidebar: ["Show Sidebar", "Display bookmarks and quick access panel"],
+    windowControls: ["Show Window Controls", "Display minimize, maximize and close buttons"],
+    integratedTitleBar: ["Integrated Title Bar", "Show tabs in the title bar alongside window controls (requires restart)"],
+    vibrancy: ["Window Vibrancy", "Native macOS translucent frosted-glass effect (requires restart)"],
+    nativeBlur: ["Native Blur", "Use macOS frosted glass blur (off = theme background, requires restart)"],
+    addressBar: ["Show Address Bar", "Display the breadcrumb/path bar above the file list"],
+    statusBar: ["Show Status Bar", "Display file info bar at the bottom (Alt+M U)"],
+    navBack: ["Back", "Show the back navigation button"],
+    navForward: ["Forward", "Show the forward navigation button"],
+    navUp: ["Up", "Show the go-up-one-level button"],
+    navRefresh: ["Refresh", "Show the refresh/reload button"],
+    showHidden: ["Show Hidden Files", "Show files and folders starting with a dot (Ctrl+H)"],
+    millerHideEmpty: ["Hide Empty Folders in Miller View", "Don't show folders that have no visible entries in miller columns"],
+    yaziNavigation: ["Yazi-style Navigation", "Left/right arrows navigate up/into folders in details and list view"],
+    showManuallyHidden: ["Show Manually Hidden Items", "Reveal items hidden via the right-click Hide action (shown dimmed)"],
+    gitStatus: ["Git Status Indicators", "Show modified/untracked indicators for files in git repositories"],
+    recentItems: ["Recent Items in Sidebar", "Number of recent locations to show (0 to hide)"],
+    quickOpenDebug: ["QuickOpen Debug Scores", "Show score breakdown (name, frecency, dir bonus) in Ctrl+P results"],
+    confirmDelete: ["Confirm before deleting", "Show confirmation dialog when moving files to trash"],
+    backgroundOpacity: ["Background Opacity", "Window background transparency"],
+    backgroundImage: ["Background Image", "Custom wallpaper path (PNG, JPG, WEBP, SVG)"],
+    wallpaperBlur: ["Wallpaper Blur", "Blur the background image"],
+    terminalApp: ["Terminal Application", "Command to open terminal (empty = auto-detect)"],
+    geminiApiKey: ["Gemini API Key", "Required for Nano Banana image editing (right-click images)", "AI", "Nano Banana"],
+    keyboardShortcuts: ["Keyboard Shortcuts", "keybindings", "hotkeys", "Click on a shortcut to change it"],
+  };
 
-  // Filter settings rows based on search query
-  $effect(() => {
-    if (!dialogContentRef) return;
-    const q = queryLower;
-    const rows = dialogContentRef.querySelectorAll<HTMLElement>(".setting-row, .setting-item");
-    const sections = dialogContentRef.querySelectorAll<HTMLElement>(".settings-section");
+  const appearanceRows = [
+    rows.theme, rows.iconTheme, rows.thumbnailSize, rows.showSidebar, rows.windowControls,
+    ...(isMac ? [rows.integratedTitleBar, rows.vibrancy, rows.nativeBlur] : []),
+    rows.addressBar, rows.statusBar,
+  ];
+  const navBarRows = [rows.navBack, rows.navForward, rows.navUp, rows.navRefresh];
+  const behaviorRows = [
+    rows.showHidden, rows.millerHideEmpty, rows.yaziNavigation, rows.showManuallyHidden,
+    rows.gitStatus, rows.recentItems, rows.quickOpenDebug, rows.confirmDelete,
+    rows.backgroundOpacity, rows.backgroundImage, rows.wallpaperBlur, rows.terminalApp,
+  ];
 
-    if (!q) {
-      rows.forEach((r) => r.style.display = "");
-      sections.forEach((s) => s.style.display = "");
-      return;
-    }
-
-    rows.forEach((row) => {
-      const text = row.textContent?.toLowerCase() ?? "";
-      row.style.display = text.includes(q) ? "" : "none";
-    });
-
-    // Hide sections where all rows are hidden
-    sections.forEach((section) => {
-      const visibleRows = section.querySelectorAll<HTMLElement>(".setting-row:not([style*='display: none']), .setting-item:not([style*='display: none'])");
-      section.style.display = visibleRows.length > 0 ? "" : "none";
-    });
-  });
-
+  // Escape clears the search filter before closing, so the Modal default
+  // (close on Escape) is disabled and Escape is handled here instead.
   function handleKeydown(event: KeyboardEvent): void {
     if (event.key === "f" && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
@@ -67,6 +89,10 @@
     }
     if (event.key === "Escape") {
       event.preventDefault();
+      // Stop the window-level Escape handler (dialogStore.closeAll) from
+      // also firing — it would close the dialog while we only clear the
+      // filter on the first press.
+      event.stopPropagation();
       if (searchQuery) {
         searchQuery = "";
       } else {
@@ -74,24 +100,16 @@
       }
     }
   }
-
-  function handleBackdropClick(event: MouseEvent): void {
-    if (event.target === event.currentTarget) {
-      onClose();
-    }
-  }
 </script>
 
-{#if open}
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <div
-    class="settings-overlay"
-    onclick={handleBackdropClick}
-    onkeydown={handleKeydown}
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="settings-title"
-  >
+<Modal
+  {open}
+  {onClose}
+  overlayClass="settings-overlay"
+  labelledby="settings-title"
+  closeOnEscape={false}
+  onkeydown={handleKeydown}
+>
     <div class="settings-dialog">
       <header class="dialog-header">
         <h2 id="settings-title">Settings</h2>
@@ -111,12 +129,12 @@
         </button>
       </header>
 
-      <div class="dialog-content" bind:this={dialogContentRef}>
+      <div class="dialog-content">
         <!-- Appearance Section -->
-        <section class="settings-section">
+        <section class="settings-section" class:hidden={!sectionVisible(...appearanceRows)}>
           <h3 class="section-title">Appearance</h3>
 
-          <div class="setting-row">
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.theme)}>
             <div class="setting-info">
               <span class="setting-label">Theme</span>
               <span class="setting-description">Choose the color theme for the app</span>
@@ -132,7 +150,7 @@
             </select>
           </div>
 
-          <div class="setting-row">
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.iconTheme)}>
             <div class="setting-info">
               <span class="setting-label">Icon Theme</span>
               <span class="setting-description">Choose file icon style</span>
@@ -148,7 +166,7 @@
             </select>
           </div>
 
-          <div class="setting-row">
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.thumbnailSize)}>
             <div class="setting-info">
               <span class="setting-label">Thumbnail Size</span>
               <span class="setting-description">Size of image thumbnails in tiles view</span>
@@ -161,10 +179,11 @@
               <option value="small">Small</option>
               <option value="medium">Medium</option>
               <option value="large">Large</option>
+              <option value="xlarge">Extra Large</option>
             </select>
           </div>
 
-          <div class="setting-row">
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.showSidebar)}>
             <div class="setting-info">
               <span class="setting-label">Show Sidebar</span>
               <span class="setting-description">Display bookmarks and quick access panel</span>
@@ -179,7 +198,7 @@
             </label>
           </div>
 
-          <div class="setting-row">
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.windowControls)}>
             <div class="setting-info">
               <span class="setting-label">Show Window Controls</span>
               <span class="setting-description">Display minimize, maximize and close buttons</span>
@@ -194,7 +213,56 @@
             </label>
           </div>
 
-          <div class="setting-row">
+          {#if isMac}
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.integratedTitleBar)}>
+            <div class="setting-info">
+              <span class="setting-label">Integrated Title Bar</span>
+              <span class="setting-description">Show tabs in the title bar alongside window controls (requires restart)</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.integratedTitleBar}
+                onchange={() => settingsStore.update({ integratedTitleBar: !settingsStore.integratedTitleBar })}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.vibrancy)}>
+            <div class="setting-info">
+              <span class="setting-label">Window Vibrancy</span>
+              <span class="setting-description">Native macOS translucent frosted-glass effect (requires restart)</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.macOsVibrancy}
+                onchange={() => settingsStore.update({ macOsVibrancy: !settingsStore.macOsVibrancy })}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          {#if settingsStore.macOsVibrancy}
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.nativeBlur)}>
+            <div class="setting-info">
+              <span class="setting-label">Native Blur</span>
+              <span class="setting-description">Use macOS frosted glass blur (off = theme background, requires restart)</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.vibrancyBlur}
+                onchange={() => settingsStore.update({ vibrancyBlur: !settingsStore.vibrancyBlur })}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          {/if}
+          {/if}
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.addressBar)}>
             <div class="setting-info">
               <span class="setting-label">Show Address Bar</span>
               <span class="setting-description">Display the breadcrumb/path bar above the file list</span>
@@ -209,7 +277,7 @@
             </label>
           </div>
 
-          <div class="setting-row">
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.statusBar)}>
             <div class="setting-info">
               <span class="setting-label">Show Status Bar</span>
               <span class="setting-description">Display file info bar at the bottom (Alt+M U)</span>
@@ -226,9 +294,9 @@
         </section>
 
         <!-- Navigation Bar Section -->
-        <section class="settings-section">
+        <section class="settings-section" class:hidden={!sectionVisible(...navBarRows)}>
           <h3 class="section-title">Navigation Bar Buttons</h3>
-          <div class="setting-row">
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.navBack)}>
             <div class="setting-info">
               <span class="setting-label">Back</span>
               <span class="setting-description">Show the back navigation button</span>
@@ -238,7 +306,7 @@
               <span class="toggle-slider"></span>
             </label>
           </div>
-          <div class="setting-row">
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.navForward)}>
             <div class="setting-info">
               <span class="setting-label">Forward</span>
               <span class="setting-description">Show the forward navigation button</span>
@@ -248,7 +316,7 @@
               <span class="toggle-slider"></span>
             </label>
           </div>
-          <div class="setting-row">
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.navUp)}>
             <div class="setting-info">
               <span class="setting-label">Up</span>
               <span class="setting-description">Show the go-up-one-level button</span>
@@ -258,7 +326,7 @@
               <span class="toggle-slider"></span>
             </label>
           </div>
-          <div class="setting-row">
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.navRefresh)}>
             <div class="setting-info">
               <span class="setting-label">Refresh</span>
               <span class="setting-description">Show the refresh/reload button</span>
@@ -271,10 +339,10 @@
         </section>
 
         <!-- Behavior Section -->
-        <section class="settings-section">
+        <section class="settings-section" class:hidden={!sectionVisible(...behaviorRows)}>
           <h3 class="section-title">Behavior</h3>
 
-          <div class="setting-row">
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.showHidden)}>
             <div class="setting-info">
               <span class="setting-label">Show Hidden Files</span>
               <span class="setting-description">Show files and folders starting with a dot (Ctrl+H)</span>
@@ -289,7 +357,52 @@
             </label>
           </div>
 
-          <div class="setting-row">
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.millerHideEmpty)}>
+            <div class="setting-info">
+              <span class="setting-label">Hide Empty Folders in Miller View</span>
+              <span class="setting-description">Don't show folders that have no visible entries in miller columns</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.millerHideEmpty}
+                onchange={() => settingsStore.toggleMillerHideEmpty()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.yaziNavigation)}>
+            <div class="setting-info">
+              <span class="setting-label">Yazi-style Navigation</span>
+              <span class="setting-description">Left/right arrows navigate up/into folders in details and list view</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.yaziNavigation}
+                onchange={() => settingsStore.update({ yaziNavigation: !settingsStore.yaziNavigation })}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.showManuallyHidden)}>
+            <div class="setting-info">
+              <span class="setting-label">Show Manually Hidden Items</span>
+              <span class="setting-description">Reveal items hidden via the right-click Hide action (shown dimmed)</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.showManuallyHidden}
+                onchange={() => settingsStore.toggleShowManuallyHidden()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.gitStatus)}>
             <div class="setting-info">
               <span class="setting-label">Git Status Indicators</span>
               <span class="setting-description">Show modified/untracked indicators for files in git repositories</span>
@@ -304,7 +417,7 @@
             </label>
           </div>
 
-          <div class="setting-row">
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.recentItems)}>
             <div class="setting-info">
               <span class="setting-label">Recent Items in Sidebar</span>
               <span class="setting-description">Number of recent locations to show (0 to hide)</span>
@@ -319,7 +432,7 @@
             />
           </div>
 
-          <div class="setting-row">
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.quickOpenDebug)}>
             <div class="setting-info">
               <span class="setting-label">QuickOpen Debug Scores</span>
               <span class="setting-description">Show score breakdown (name, frecency, dir bonus) in Ctrl+P results</span>
@@ -334,7 +447,7 @@
             </label>
           </div>
 
-          <div class="setting-item">
+          <div class="setting-item" class:hidden={!matchesSearch(...rows.confirmDelete)}>
             <div class="setting-label">
               <span>Confirm before deleting</span>
               <span class="setting-description">Show confirmation dialog when moving files to trash</span>
@@ -349,7 +462,7 @@
             </label>
           </div>
 
-          <div class="setting-row">
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.backgroundOpacity)}>
             <div class="setting-info">
               <span class="setting-label">Background Opacity</span>
               <span class="setting-description">Window background transparency ({settingsStore.backgroundOpacity}%)</span>
@@ -365,7 +478,7 @@
             />
           </div>
 
-          <div class="setting-row">
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.backgroundImage)}>
             <div class="setting-info">
               <span class="setting-label">Background Image</span>
               <span class="setting-description">Custom wallpaper path (PNG, JPG, WEBP, SVG)</span>
@@ -385,7 +498,7 @@
           </div>
 
           {#if settingsStore.backgroundImage}
-            <div class="setting-row">
+            <div class="setting-row" class:hidden={!matchesSearch(...rows.wallpaperBlur)}>
               <div class="setting-info">
                 <span class="setting-label">Wallpaper Blur</span>
                 <span class="setting-description">Blur the background image ({settingsStore.backgroundBlur}px)</span>
@@ -402,7 +515,7 @@
             </div>
           {/if}
 
-          <div class="setting-row">
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.terminalApp)}>
             <div class="setting-info">
               <span class="setting-label">Terminal Application</span>
               <span class="setting-description">Command to open terminal (empty = auto-detect)</span>
@@ -418,10 +531,10 @@
         </section>
 
         <!-- AI / Nano Banana Section -->
-        <section class="settings-section">
+        <section class="settings-section" class:hidden={!sectionVisible(rows.geminiApiKey)}>
           <h3 class="section-title">AI / Nano Banana</h3>
 
-          <div class="setting-row">
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.geminiApiKey)}>
             <div class="setting-info">
               <span class="setting-label">Gemini API Key</span>
               <span class="setting-description">Required for Nano Banana image editing (right-click images)</span>
@@ -437,33 +550,16 @@
         </section>
 
         <!-- Keyboard Shortcuts Section -->
-        <section class="settings-section">
+        <section class="settings-section" class:hidden={!sectionVisible(rows.keyboardShortcuts)}>
           <h3 class="section-title">Keyboard Shortcuts</h3>
           <p class="section-hint">Click on a shortcut to change it. Press Escape to cancel.</p>
           <KeybindingsSettings />
         </section>
       </div>
     </div>
-  </div>
-{/if}
+</Modal>
 
 <style>
-  .settings-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    animation: fadeIn 100ms ease-out;
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-
   .settings-dialog {
     width: 600px;
     max-width: 90vw;
@@ -553,6 +649,11 @@
 
   .settings-section {
     margin-bottom: 24px;
+  }
+
+  /* Rows/sections filtered out by the settings search */
+  .hidden {
+    display: none;
   }
 
   .settings-section:last-child {

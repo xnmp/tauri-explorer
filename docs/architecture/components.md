@@ -10,7 +10,11 @@
 | **WindowTabBar** | `WindowTabBar.svelte` | Tab strip: tab buttons (closeable, reorderable), new tab button |
 | **SharedToolbar** | `SharedToolbar.svelte` | Search box, theme switcher, settings gear button, window controls (minimize/maximize/close) |
 | **ThemeSwitcher** | `ThemeSwitcher.svelte` | Dropdown to select theme |
-| **Sidebar** | `Sidebar.svelte` | Bookmarks (system folders + user bookmarks with drag-to-reorder, custom icons for Repos/Code folders), Recent locations (sorted by frecency score, excludes bookmarked paths, configurable count). Resizable (180-400px) |
+| **Sidebar** | `Sidebar.svelte` | Host shell: activity-bar icon strip + active view + resize handle (180-400px). Views switch instantly; inactive views stay mounted (hidden) so scroll/selection survive. Active view persists per-window. |
+| **ActivityBar** | `ActivityBar.svelte` | VSCode-style narrow icon strip on the sidebar's leftmost edge. Each button corresponds to a registered `SidebarView`. |
+| **FilesSidebarView** | `FilesSidebarView.svelte` | Explorer view: Bookmarks (system folders + user bookmarks with drag-to-reorder, custom icons for Repos/Code folders), Removable Drives, Recent locations (sorted by frecency score, excludes bookmarked paths, configurable count). |
+| **ScmSidebarView** | `ScmSidebarView.svelte` | Source Control view: branch line, commit input (Enter commits, Shift+Enter newline, amend toggle), Merge / Staged / Changes / Untracked sections with hover actions (stage / unstage / discard). Empty state with Initialize Repository button when not a git repo. Arrow keys move row selection. Clicking a row opens `ScmDiffView` in the active pane. |
+| **ScmDiffView** | `ScmDiffView.svelte` | Unified-diff viewer that replaces the `FileList` in the active pane when a SCM row is clicked (#55). Virtualized via `VirtualList` for large diffs, renders +/− gutters with old/new line numbers, shows a "Binary file changed" placeholder for binary diffs, header actions (Open File, Stage/Unstage, Discard). Escape or Back returns to the file list. |
 | **PaneContainer** | `PaneContainer.svelte` | Manages single/dual pane layout with resizable divider |
 | **ExplorerPane** | `ExplorerPane.svelte` | Self-contained pane with NavigationBar + FileList + ContextMenu + dialogs. Handles arrow-key navigation |
 | **NavigationBar** | `NavigationBar.svelte` | Back/Forward/Up/Refresh buttons, breadcrumb bar with editable path input and autocomplete |
@@ -33,6 +37,7 @@
 | **KeybindingsSettings** | `KeybindingsSettings.svelte` | Keybinding customization: search, record, conflict detection |
 | **WorkspaceDialog** | `WorkspaceDialog.svelte` | Save/restore named tab layout snapshots |
 | **BulkRenameDialog** | `BulkRenameDialog.svelte` | Multi-file rename with find/replace, regex, sequence patterns |
+| **Modal** | `Modal.svelte` | Shared overlay primitive used by every dialog: backdrop, Escape, focus trap, focus restore, ARIA, z-index layer (`--z-modal`); standard card chrome in `modal.css` (`.modal-card`) |
 | **ProgressDialog** | `ProgressDialog.svelte` | Copy/move progress (appears after 1.5s delay), cancellable |
 | **ConflictDialog** | `ConflictDialog.svelte` | Overwrite/Skip/Cancel for file conflicts, with "Apply to all" |
 | **DeleteDialog** | `DeleteDialog.svelte` | Delete confirmation |

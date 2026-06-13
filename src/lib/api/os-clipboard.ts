@@ -7,7 +7,7 @@
  * (x-special/gnome-copied-files, text/uri-list) via wl-paste/xclip.
  */
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./files";
 
 /**
  * Check if the OS clipboard contains files.

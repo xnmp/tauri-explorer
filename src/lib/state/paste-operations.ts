@@ -1,14 +1,21 @@
 /**
  * Paste operation logic with conflict resolution and progress tracking.
  * Extracted from explorer.svelte.ts.
+ *
+ * Delegates per-file transfer to performFileTransfer (file-transfer.ts)
+ * while managing batch concerns: conflict "apply to all", progress tracking,
+ * batch undo, and aggregate toast/broadcast.
  */
 
-import { moveEntry, copyEntry, estimateSize } from "$lib/api/files";
+import { estimateSize } from "$lib/api/files";
 import { operationsManager } from "./operations.svelte";
 import { conflictResolver, type ConflictChoice } from "./conflict-resolver.svelte";
 import { undoStore } from "./undo.svelte";
 import { broadcastFileChange } from "./file-events";
+import { parentDir } from "$lib/domain/path";
 import { toastStore } from "./toast.svelte";
+import { frecencyStore } from "./frecency.svelte";
+import { performFileTransfer } from "./file-transfer";
 import type { FileEntry } from "$lib/domain/file";
 
 export interface PasteSource {
@@ -61,7 +68,7 @@ export async function pasteEntries(
     if (operationsManager.isOperationCancelled(op.id)) break;
 
     const source = sources[i];
-    const sourceDir = source.path.substring(0, source.path.lastIndexOf("/")) || "/";
+    const sourceDir = parentDir(source.path);
     const isSameDir = sourceDir === destPath;
 
     // Copy to same dir: Rust auto-generates "name - Copy" suffix, no conflict dialog needed.
@@ -98,27 +105,39 @@ export async function pasteEntries(
       const existing = existingEntries.find((e) => e.name === source.name);
       if (existing) newEntries.push(existing);
     } else {
-      const result = isCut
-        ? await moveEntry(source.path, destPath, overwrite)
-        : await copyEntry(source.path, destPath, overwrite);
+      // Delegate the actual transfer to shared logic.
+      // Paste manages batch undo/toast/broadcast/refresh itself.
+      const result = await performFileTransfer(source.path, destPath, !isCut, {
+        onRefresh: () => {},
+        overwrite,
+        skipConflictCheck: true,
+        suppressToast: true,
+        suppressUndo: true,
+        suppressBroadcast: true,
+        suppressRefresh: true,
+      });
 
-      if (result.ok) {
-        newEntries.push(result.data);
+      if (result.ok && result.entry) {
+        newEntries.push(result.entry);
+        // Track the pasted name so later sources in this batch with the same
+        // name are detected as conflicts (the snapshot taken before the loop
+        // doesn't know about entries created during the batch).
+        existingNames.add(result.entry.name);
         if (isCut) {
           undoActions.push({
             type: "move",
             sourcePath: source.path,
-            destPath: result.data.path,
+            destPath: result.entry.path,
             originalDir: sourceDir,
           });
         } else {
           undoActions.push({
             type: "copy",
-            copiedPath: result.data.path,
+            copiedPath: result.entry.path,
             parentDir: destPath,
           });
         }
-      } else {
+      } else if (!result.ok && result.error && result.error !== "skipped") {
         errors.push(`${source.name}: ${result.error}`);
       }
     }
@@ -163,10 +182,11 @@ export async function pasteEntries(
     onEntriesAdded(newEntries);
     const affectedDirs = new Set([destPath]);
     for (const source of sources) {
-      const dir = source.path.substring(0, source.path.lastIndexOf("/")) || "/";
+      const dir = parentDir(source.path);
       affectedDirs.add(dir);
     }
     broadcastFileChange([...affectedDirs]);
+    frecencyStore.pruneNonExistent();
   }
 
   await onRefresh();

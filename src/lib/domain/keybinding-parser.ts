@@ -91,13 +91,22 @@ export function parseShortcut(shortcut: string): ParsedShortcut | null {
     return null;
   }
 
-  const parts = shortcut.split("+").map((p) => p.trim());
-  if (parts.length === 0) {
-    return null;
+  // A trailing literal "+" key is written as "Ctrl++" (or just "+").
+  // Peel it off before splitting so the separator split doesn't eat it.
+  let body = shortcut.trim();
+  let literalPlusKey = false;
+  if (body === "+") {
+    literalPlusKey = true;
+    body = "";
+  } else if (body.endsWith("++")) {
+    literalPlusKey = true;
+    body = body.slice(0, -2);
   }
 
+  const parts = body === "" ? [] : body.split("+").map((p) => p.trim());
+
   const result: ParsedShortcut = {
-    key: "",
+    key: literalPlusKey ? "+" : "",
     ctrl: false,
     shift: false,
     alt: false,
@@ -108,6 +117,11 @@ export function parseShortcut(shortcut: string): ParsedShortcut | null {
     const part = parts[i];
     const lowerPart = part.toLowerCase();
 
+    // Empty segment means a malformed definition like "Ctrl+" or "Ctrl+++A"
+    if (part === "") {
+      return null;
+    }
+
     // Check if it's a modifier
     const modifierKey = MODIFIER_ALIASES[lowerPart];
     if (modifierKey) {
@@ -115,7 +129,12 @@ export function parseShortcut(shortcut: string): ParsedShortcut | null {
       continue;
     }
 
-    // Last part (or only non-modifier part) is the key
+    // Reject multi-key definitions like "Ctrl+A+B" instead of silently
+    // keeping only the last key.
+    if (result.key) {
+      return null;
+    }
+
     const aliasedKey = KEY_ALIASES[lowerPart];
     if (aliasedKey) {
       result.key = aliasedKey;
@@ -143,14 +162,23 @@ export function matchesShortcut(
   event: KeyboardEvent,
   shortcut: ParsedShortcut
 ): boolean {
-  // Check modifiers
-  // Use both ctrlKey and metaKey for cross-platform support (Ctrl on Windows, Cmd on Mac)
-  const eventCtrl = event.ctrlKey || event.metaKey;
-  if (shortcut.ctrl !== eventCtrl) return false;
+  // Check modifiers — exact in both directions so extra held modifiers
+  // (e.g. Ctrl+Meta+P against a Ctrl+P binding) never leak through.
+  if (shortcut.meta) {
+    // Explicit Meta binding: metaKey required, ctrl must match exactly.
+    if (!event.metaKey) return false;
+    if (shortcut.ctrl !== event.ctrlKey) return false;
+  } else if (shortcut.ctrl) {
+    // "Ctrl" bindings fire on either Ctrl or Cmd (mac convention, matching
+    // eventToShortcutString which records Cmd as "Ctrl") — but exactly one
+    // of the two, never both and never neither.
+    if (event.ctrlKey === event.metaKey) return false;
+  } else {
+    // Binding has no ctrl/meta: the event must not have them either.
+    if (event.ctrlKey || event.metaKey) return false;
+  }
   if (shortcut.shift !== event.shiftKey) return false;
   if (shortcut.alt !== event.altKey) return false;
-  // Meta is checked separately for explicit meta shortcuts
-  if (shortcut.meta && !event.metaKey) return false;
 
   // On macOS, Option/Alt produces special characters in event.key (e.g., Alt+M → "µ").
   // Use event.code (physical key) when Alt is held to match the intended key.

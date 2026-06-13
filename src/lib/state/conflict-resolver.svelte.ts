@@ -26,20 +26,35 @@ export interface ConflictResult {
 function createConflictResolver() {
   let activeConflict = $state<ConflictInfo | null>(null);
   let pendingResolve: ((result: ConflictResult) => void) | null = null;
+  // Concurrent batches (e.g. two simultaneous drops) each prompt; only one
+  // dialog can show at a time, so later prompts queue until resolution.
+  const queue: Array<{ info: ConflictInfo; resolve: (result: ConflictResult) => void }> = [];
 
-  /** Show conflict dialog and await user choice */
+  /** Show conflict dialog and await user choice. Queues if a dialog is already active. */
   function prompt(info: ConflictInfo): Promise<ConflictResult> {
-    activeConflict = { ...info };
-    return new Promise<ConflictResult>((resolve) => {
-      pendingResolve = resolve;
+    return new Promise<ConflictResult>((resolvePromise) => {
+      if (activeConflict !== null) {
+        queue.push({ info, resolve: resolvePromise });
+        return;
+      }
+      activeConflict = { ...info };
+      pendingResolve = resolvePromise;
     });
   }
 
   /** Called from the dialog when user makes a choice */
   function resolve(choice: ConflictChoice, applyToAll = false): void {
-    activeConflict = null;
-    pendingResolve?.({ choice, applyToAll });
+    const current = pendingResolve;
     pendingResolve = null;
+    activeConflict = null;
+    current?.({ choice, applyToAll });
+
+    // Show the next queued conflict, if any.
+    const next = queue.shift();
+    if (next) {
+      activeConflict = { ...next.info };
+      pendingResolve = next.resolve;
+    }
   }
 
   return {

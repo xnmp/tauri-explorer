@@ -4,7 +4,8 @@
 -->
 <script lang="ts">
   import { jobsStore, type Job } from "$lib/state/jobs.svelte";
-  import { onMount } from "svelte";
+  import { basename } from "$lib/domain/path";
+  import Modal from "./Modal.svelte";
 
   interface Props {
     open: boolean;
@@ -15,23 +16,11 @@
 
   // Live elapsed time counter for running jobs
   let now = $state(Date.now());
-  let intervalId: ReturnType<typeof setInterval> | undefined;
 
   $effect(() => {
-    if (open && jobsStore.hasRunningJobs) {
-      intervalId = setInterval(() => { now = Date.now(); }, 1000);
-    } else {
-      if (intervalId) {
-        clearInterval(intervalId);
-        intervalId = undefined;
-      }
-    }
-  });
-
-  onMount(() => {
-    return () => {
-      if (intervalId) clearInterval(intervalId);
-    };
+    if (!open || !jobsStore.hasRunningJobs) return;
+    const intervalId = setInterval(() => { now = Date.now(); }, 1000);
+    return () => clearInterval(intervalId);
   });
 
   function formatElapsed(job: Job): string {
@@ -47,31 +36,14 @@
     return prompt.length > maxLen ? prompt.slice(0, maxLen) + "..." : prompt;
   }
 
-  function handleKeydown(event: KeyboardEvent): void {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      onClose();
-    }
-  }
-
-  function handleBackdropClick(event: MouseEvent): void {
-    if (event.target === event.currentTarget) {
-      onClose();
-    }
-  }
 </script>
 
-{#if open}
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <div
-    class="panel-overlay"
-    onclick={handleBackdropClick}
-    onkeydown={handleKeydown}
-    role="dialog"
-    tabindex="-1"
-    aria-modal="true"
-    aria-labelledby="jobs-panel-title"
-  >
+<Modal
+  {open}
+  {onClose}
+  overlayClass="panel-overlay"
+  labelledby="jobs-panel-title"
+>
     <div class="panel">
       <header class="panel-header">
         <h2 id="jobs-panel-title">Background Jobs</h2>
@@ -125,7 +97,7 @@
                     <div class="job-error">{job.error}</div>
                   {/if}
                   {#if job.status === "completed" && job.outputPath}
-                    <div class="job-output">{job.outputPath.split("/").pop()}</div>
+                    <div class="job-output">{basename(job.outputPath)}</div>
                   {/if}
                 </div>
                 <div class="job-time">{formatElapsed(job)}</div>
@@ -135,26 +107,9 @@
         {/if}
       </div>
     </div>
-  </div>
-{/if}
+</Modal>
 
 <style>
-  .panel-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.4);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    animation: fadeIn 100ms ease-out;
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-
   .panel {
     width: 520px;
     max-width: 90vw;

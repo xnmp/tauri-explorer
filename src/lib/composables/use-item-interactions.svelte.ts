@@ -6,26 +6,27 @@
  */
 
 import type { FileEntry } from "$lib/domain/file";
+import { isMac } from "$lib/domain/platform";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { clipboardStore } from "$lib/state/clipboard.svelte";
 import { dragState } from "$lib/state/drag.svelte";
-import type { PaneNavigationContext } from "$lib/state/pane-context";
 import { useDropTarget } from "./use-drop-target.svelte";
 import { startExternalDrag } from "./use-external-drag.svelte";
 
 interface ItemInteractionsDeps {
   getExplorer: () => ExplorerInstance;
-  getPaneNav: () => PaneNavigationContext | undefined;
+  /** Refresh every pane that may show an affected directory after a drop.
+   *  Defaults to refreshing only the owning pane. */
+  refreshPanes?: () => void;
   /** If true, selects unselected entries on right-click before opening menu (ListView/TilesView behavior) */
   selectOnContextMenu?: boolean;
 }
 
 export function useItemInteractions(deps: ItemInteractionsDeps) {
-  const { getExplorer, getPaneNav, selectOnContextMenu = false } = deps;
+  const { getExplorer, selectOnContextMenu = false } = deps;
 
   function refreshPanes(): void {
-    const paneNav = getPaneNav();
-    if (paneNav) paneNav.refreshAllPanes();
+    if (deps.refreshPanes) deps.refreshPanes();
     else getExplorer().refresh({ silent: true });
   }
 
@@ -47,28 +48,25 @@ export function useItemInteractions(deps: ItemInteractionsDeps) {
     if (isMulti) {
       event.dataTransfer.setData("application/x-explorer-paths", JSON.stringify(paths));
     }
+    // file:// URIs for external apps (Finder, VSCode, etc.) via native pasteboard bridge
+    const uriList = paths.map((p) => "file://" + encodeURI(p)).join("\r\n");
+    event.dataTransfer.setData("text/uri-list", uriList);
     event.dataTransfer.effectAllowed = "all";
-
-    // Suppress the browser's auto-generated drag preview — when the dragged element
-    // contains an image thumbnail, Chromium picks it up and turns the external drop
-    // into a data: URL instead of a file upload. A 1×1 transparent element forces
-    // the native plugin's drag icon to be the only preview that reaches external apps.
-    if (typeof document !== "undefined") {
-      const blank = document.createElement("canvas");
-      blank.width = 1;
-      blank.height = 1;
-      event.dataTransfer.setDragImage(blank, 0, 0);
-    }
 
     dragState.start({ path: entry.path, name: entry.name, kind: entry.kind, paths: isMulti ? paths : undefined });
 
-    // Kick off OS-level drag session so external apps (VSCode, browsers, Finder) accept the drop.
-    // Fire-and-forget: dragstart must return synchronously; the plugin handles the native session.
-    void startExternalDrag(paths);
+    // On non-Mac, use tauri-plugin-drag for native file drag (HTML5 DnD still works on
+    // Linux/Windows because their webviews don't kill JS events for native sessions).
+    if (!isMac) {
+      void startExternalDrag(paths);
+    }
   }
 
   function handleDragEnd(): void {
-    setTimeout(() => dragState.clear(), 0);
+    // Sidebar's document-level dragend runs in capture phase and reads
+    // `dragState.current` before this bubble-phase handler fires, so
+    // clearing synchronously is safe.
+    dragState.clear();
     refreshPanes();
   }
 

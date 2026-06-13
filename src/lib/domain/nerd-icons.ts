@@ -6,6 +6,8 @@
  * Uses BMP-range codepoints (dev/fa/custom) to avoid surrogate pair complexity.
  */
 
+import { getExtension } from "./file-types";
+
 export interface NerdIcon {
   readonly glyph: string;
   readonly color: string;
@@ -186,7 +188,8 @@ export function getNerdIcon(name: string, kind: string): NerdIcon {
   const filenameIcon = FILENAME_ICONS[lowerName];
   if (filenameIcon) return filenameIcon;
 
-  // Then check by extension
-  const ext = lowerName.split(".").pop() || "";
+  // Then check by extension (same semantics as file-types getExtension:
+  // dotfiles like ".bashrc" and extensionless names have no extension)
+  const ext = getExtension(name);
   return EXT_ICONS[ext] ?? DEFAULT_FILE_ICON;
 }

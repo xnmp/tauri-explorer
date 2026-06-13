@@ -87,13 +87,27 @@ hljs.registerAliases(["sass"], { languageName: "scss" });
 hljs.registerAliases(["ts", "mts", "cts"], { languageName: "typescript" });
 hljs.registerAliases(["yml"], { languageName: "yaml" });
 
+/** Above this size, auto-detection (which runs every registered grammar
+ *  over the whole input) is too slow — fall back to escaped plaintext. */
+const AUTO_DETECT_MAX_BYTES = 200 * 1024;
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 /** Highlight code based on filename extension. Returns HTML string. */
 export function highlightCode(code: string, filename: string): string {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
   if (ext && hljs.getLanguage(ext)) {
     return hljs.highlight(code, { language: ext, ignoreIllegals: true }).value;
   }
-  // Try auto-detection as fallback
+  // Auto-detection fallback, capped for large files
+  if (code.length > AUTO_DETECT_MAX_BYTES) {
+    return escapeHtml(code);
+  }
   const result = hljs.highlightAuto(code);
   return result.value;
 }
@@ -102,4 +116,14 @@ export function highlightCode(code: string, filename: string): string {
 export function hasLanguageSupport(filename: string): boolean {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
   return !!hljs.getLanguage(ext);
+}
+
+/** Highlight a code snippet by language name/alias (e.g. a fenced code
+ *  block's info string). Falls back to escaped plaintext for unknown
+ *  languages. Returns HTML. */
+export function highlightLanguage(code: string, lang: string | undefined): string {
+  if (lang && hljs.getLanguage(lang)) {
+    return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
+  }
+  return escapeHtml(code);
 }

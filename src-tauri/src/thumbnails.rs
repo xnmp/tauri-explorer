@@ -5,14 +5,18 @@
 //! Uses async commands with spawn_blocking to avoid freezing the UI.
 //! Supports two-tier progressive loading: micro (16x16) + full (128x128).
 
-use base64::Engine as _;
 use crate::error::AppError;
-use log;
+use base64::Engine as _;
 use image::{ImageFormat, ImageReader};
-use sha2::{Sha256, Digest};
+use lru::LruCache;
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::io::Cursor;
+use std::num::NonZeroUsize;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Default thumbnail size (width and height in pixels)
 const THUMBNAIL_SIZE: u32 = 128;
@@ -20,8 +24,13 @@ const THUMBNAIL_SIZE: u32 = 128;
 /// Micro thumbnail size for progressive loading preview
 const MICRO_SIZE: u32 = 16;
 
-/// Supported image extensions for thumbnail generation
-const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp"];
+/// Supported image extensions for thumbnail generation.
+/// AVIF decodes via image's avif-native (dav1d), which is Linux-only here —
+/// see the target-specific dependency in Cargo.toml.
+#[cfg(target_os = "linux")]
+const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "icns", "avif"];
+#[cfg(not(target_os = "linux"))]
+const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "icns"];
 
 /// Get the cache directory for thumbnails
 fn get_cache_dir() -> Option<PathBuf> {
@@ -29,20 +38,20 @@ fn get_cache_dir() -> Option<PathBuf> {
 }
 
 /// Cache version - bump when thumbnail generation logic changes to invalidate stale cache
-const CACHE_VERSION: u8 = 2;
+const CACHE_VERSION: u8 = 3;
 
-/// Generate a cache key (hash) for a file path + modification time + size + cache version
+/// Generate a cache key (hash) for a file path + modification time (secs + nanos)
+/// + file length + thumbnail size + cache version.
 fn generate_cache_key(path: &Path, size: u32) -> Option<String> {
     let metadata = fs::metadata(path).ok()?;
     let modified = metadata.modified().ok()?;
-    let modified_secs = modified
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_secs();
+    let modified_dur = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
 
     let mut hasher = Sha256::new();
     hasher.update(path.to_string_lossy().as_bytes());
-    hasher.update(modified_secs.to_le_bytes());
+    hasher.update(modified_dur.as_secs().to_le_bytes());
+    hasher.update(modified_dur.subsec_nanos().to_le_bytes());
+    hasher.update(metadata.len().to_le_bytes());
     hasher.update(size.to_le_bytes());
     hasher.update([CACHE_VERSION]);
 
@@ -69,25 +78,145 @@ fn get_cached_thumbnail(cache_key: &str) -> Option<PathBuf> {
     }
 }
 
-/// Save raw JPEG bytes to cache
+/// Write bytes to `dest` atomically: write a temp file in the same directory,
+/// then rename over the destination so readers never see a half-written file.
+fn write_file_atomic(dest: &Path, data: &[u8]) -> std::io::Result<()> {
+    let parent = dest
+        .parent()
+        .ok_or_else(|| std::io::Error::other("Cache path has no parent directory"))?;
+    let file_name = dest
+        .file_name()
+        .ok_or_else(|| std::io::Error::other("Cache path has no file name"))?
+        .to_string_lossy()
+        .into_owned();
+    let tmp = parent.join(format!(".{}.tmp-{}", file_name, std::process::id()));
+    if let Err(e) = fs::write(&tmp, data) {
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
+    }
+    fs::rename(&tmp, dest).inspect_err(|_| {
+        let _ = fs::remove_file(&tmp);
+    })
+}
+
+/// Save raw JPEG bytes to cache (atomic write), occasionally pruning the cache.
 fn save_to_cache(cache_key: &str, data: &[u8]) {
     if let Some(cache_dir) = get_cache_dir() {
         let _ = fs::create_dir_all(&cache_dir);
         let cache_path = cache_dir.join(format!("{}.jpg", cache_key));
-        let _ = fs::write(&cache_path, data);
+        let _ = write_file_atomic(&cache_path, data);
+        maybe_prune_disk_cache(&cache_dir);
     }
+}
+
+// ─── Disk cache pruning ─────────────────────────────────────────────────────
+
+/// Maximum total size of the on-disk thumbnail cache (~500 MB).
+const MAX_DISK_CACHE_BYTES: u64 = 500 * 1024 * 1024;
+
+/// Prune at most every N cache writes to keep the directory scan cheap.
+const PRUNE_EVERY_N_WRITES: u64 = 256;
+
+static CACHE_WRITE_COUNT: AtomicU64 = AtomicU64::new(0);
+
+/// Every `PRUNE_EVERY_N_WRITES` writes (including the first of a session),
+/// evict oldest-mtime entries until the cache fits under the size cap.
+/// Callers are already on a blocking thread (spawn_blocking), so the
+/// directory scan never runs on the async runtime.
+fn maybe_prune_disk_cache(cache_dir: &Path) {
+    let count = CACHE_WRITE_COUNT.fetch_add(1, Ordering::Relaxed);
+    if !count.is_multiple_of(PRUNE_EVERY_N_WRITES) {
+        return;
+    }
+    prune_disk_cache(cache_dir, MAX_DISK_CACHE_BYTES);
+}
+
+fn prune_disk_cache(cache_dir: &Path, max_bytes: u64) {
+    let Ok(read_dir) = fs::read_dir(cache_dir) else {
+        return;
+    };
+
+    let mut entries: Vec<(PathBuf, std::time::SystemTime, u64)> = read_dir
+        .flatten()
+        .filter_map(|entry| {
+            let metadata = entry.metadata().ok()?;
+            if !metadata.is_file() {
+                return None;
+            }
+            let modified = metadata.modified().ok()?;
+            Some((entry.path(), modified, metadata.len()))
+        })
+        .collect();
+
+    let mut total: u64 = entries.iter().map(|(_, _, len)| len).sum();
+    if total <= max_bytes {
+        return;
+    }
+
+    // Oldest first
+    entries.sort_by_key(|(_, modified, _)| *modified);
+    for (path, _, len) in entries {
+        if total <= max_bytes {
+            break;
+        }
+        if fs::remove_file(&path).is_ok() {
+            total = total.saturating_sub(len);
+        }
+    }
+    log::info!("Pruned thumbnail disk cache to {} bytes", total);
+}
+
+// ─── In-flight generation dedup ─────────────────────────────────────────────
+
+/// Per-cache-key locks so concurrent requests for the same thumbnail don't
+/// decode the same image twice. The second caller blocks until the first
+/// finishes, then hits the freshly written cache.
+static INFLIGHT: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
+
+fn inflight_map() -> &'static Mutex<HashMap<String, Arc<Mutex<()>>>> {
+    INFLIGHT.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Acquire the lock object for a cache key (creating it if absent).
+fn inflight_lock(cache_key: &str) -> Arc<Mutex<()>> {
+    let mut map = inflight_map().lock().unwrap_or_else(|p| p.into_inner());
+    map.entry(cache_key.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
+
+/// Drop the map entry once no other caller holds the lock.
+fn inflight_release(cache_key: &str, lock: Arc<Mutex<()>>) {
+    let mut map = inflight_map().lock().unwrap_or_else(|p| p.into_inner());
+    // 2 = the map's clone + ours; nobody else is waiting on this key.
+    if Arc::strong_count(&lock) <= 2 {
+        map.remove(cache_key);
+    }
+}
+
+/// Run `work` while holding the per-key in-flight lock for `cache_key`.
+fn with_inflight_lock<T>(cache_key: &str, work: impl FnOnce() -> T) -> T {
+    let lock = inflight_lock(cache_key);
+    let result = {
+        let _guard = lock.lock().unwrap_or_else(|p| p.into_inner());
+        work()
+    };
+    inflight_release(cache_key, lock);
+    result
 }
 
 /// Encode an RGB8 image to JPEG bytes at the given quality
 fn encode_jpeg(img: &image::RgbImage, quality: u8) -> Result<Vec<u8>, AppError> {
     let mut buffer = Cursor::new(Vec::new());
     let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buffer, quality);
-    encoder.encode(
-        img.as_raw(),
-        img.width(),
-        img.height(),
-        image::ExtendedColorType::Rgb8,
-    ).map_err(|e| AppError::Other(format!("Failed to encode JPEG: {}", e)))?;
+    encoder
+        .encode(
+            img.as_raw(),
+            img.width(),
+            img.height(),
+            image::ExtendedColorType::Rgb8,
+        )
+        .map_err(|e| AppError::Other(format!("Failed to encode JPEG: {}", e)))?;
     Ok(buffer.into_inner())
 }
 
@@ -99,13 +228,152 @@ fn to_data_uri(data: &[u8]) -> String {
     )
 }
 
+// ─── In-memory LRU cache ────────────────────────────────────────────────────
+
+const LRU_CAPACITY: usize = 512;
+
+static THUMB_LRU: OnceLock<Mutex<LruCache<String, String>>> = OnceLock::new();
+
+fn get_lru_cache() -> &'static Mutex<LruCache<String, String>> {
+    THUMB_LRU.get_or_init(|| Mutex::new(LruCache::new(NonZeroUsize::new(LRU_CAPACITY).unwrap())))
+}
+
+fn lru_get(key: &str) -> Option<String> {
+    get_lru_cache().lock().ok()?.get(key).cloned()
+}
+
+fn lru_put(key: String, value: String) {
+    if let Ok(mut cache) = get_lru_cache().lock() {
+        cache.put(key, value);
+    }
+}
+
+fn lru_clear() {
+    if let Ok(mut cache) = get_lru_cache().lock() {
+        cache.clear();
+    }
+}
+
+// ─── JPEG DCT scaling ───────────────────────────────────────────────────────
+
+const JPEG_EXTENSIONS: &[&str] = &["jpg", "jpeg"];
+
+fn is_jpeg(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| JPEG_EXTENSIONS.contains(&e.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+fn decode_jpeg_scaled(path: &Path, target_size: u32) -> Result<image::DynamicImage, AppError> {
+    let jpeg_data = fs::read(path)?;
+    let mut decompressor = turbojpeg::Decompressor::new()
+        .map_err(|e| AppError::Other(format!("turbojpeg init failed: {}", e)))?;
+
+    let header = decompressor
+        .read_header(&jpeg_data)
+        .map_err(|e| AppError::Other(format!("turbojpeg header read failed: {}", e)))?;
+
+    let max_dim = header.width.max(header.height) as u32;
+    let scale = if max_dim / 8 >= target_size {
+        turbojpeg::ScalingFactor::ONE_EIGHTH
+    } else if max_dim / 4 >= target_size {
+        turbojpeg::ScalingFactor::ONE_QUARTER
+    } else if max_dim / 2 >= target_size {
+        turbojpeg::ScalingFactor::ONE_HALF
+    } else {
+        turbojpeg::ScalingFactor::ONE
+    };
+
+    decompressor
+        .set_scaling_factor(scale)
+        .map_err(|e| AppError::Other(format!("turbojpeg set scale failed: {}", e)))?;
+
+    let scaled = header.scaled(scale);
+    let format = turbojpeg::PixelFormat::RGB;
+    let pitch = scaled.width * format.size();
+    let mut output = turbojpeg::Image {
+        pixels: vec![0u8; scaled.height * pitch],
+        width: scaled.width,
+        pitch,
+        height: scaled.height,
+        format,
+    };
+
+    decompressor
+        .decompress(&jpeg_data, output.as_deref_mut())
+        .map_err(|e| AppError::Other(format!("turbojpeg decompress failed: {}", e)))?;
+
+    let rgb = image::RgbImage::from_raw(scaled.width as u32, scaled.height as u32, output.pixels)
+        .ok_or_else(|| {
+        AppError::Other("Failed to create RgbImage from turbojpeg output".into())
+    })?;
+
+    Ok(image::DynamicImage::ImageRgb8(rgb))
+}
+
+fn is_icns(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("icns"))
+        .unwrap_or(false)
+}
+
+fn decode_icns(path: &Path) -> Result<image::DynamicImage, AppError> {
+    let file = fs::File::open(path)?;
+    let icon_family = icns::IconFamily::read(file)
+        .map_err(|e| AppError::Other(format!("Failed to read icns: {}", e)))?;
+
+    let best = icon_family
+        .available_icons()
+        .iter()
+        .max_by_key(|t| t.pixel_width())
+        .copied()
+        .ok_or_else(|| AppError::Other("No icons in icns file".into()))?;
+
+    let icon_image = icon_family
+        .get_icon_with_type(best)
+        .map_err(|e| AppError::Other(format!("Failed to decode icns icon: {}", e)))?;
+
+    let width = icon_image.width();
+    let height = icon_image.height();
+    let rgba_data = icon_image.data().to_vec();
+
+    image::RgbaImage::from_raw(width, height, rgba_data)
+        .map(image::DynamicImage::ImageRgba8)
+        .ok_or_else(|| AppError::Other("Failed to create image from icns data".into()))
+}
+
+fn decode_image(path: &Path, target_size: u32) -> Result<image::DynamicImage, AppError> {
+    if is_jpeg(path) {
+        match decode_jpeg_scaled(path, target_size) {
+            Ok(img) => return Ok(img),
+            Err(e) => log::warn!(
+                "turbojpeg fast path failed for {:?}, falling back: {}",
+                path,
+                e
+            ),
+        }
+    }
+    if is_icns(path) {
+        return decode_icns(path);
+    }
+    ImageReader::open(path)?
+        .with_guessed_format()?
+        .decode()
+        .map_err(|e| AppError::Other(format!("Failed to decode image: {}", e)))
+}
+
 /// Validate path for thumbnail generation (exists + supported format)
 fn validate_thumbnail_path(path: &Path, path_str: &str) -> Result<(), AppError> {
     if !path.exists() {
         return Err(AppError::NotFound(path_str.to_string()));
     }
     if !is_supported_image(path) {
-        return Err(AppError::InvalidPath(format!("Unsupported image format: {}", path_str)));
+        return Err(AppError::InvalidPath(format!(
+            "Unsupported image format: {}",
+            path_str
+        )));
     }
     Ok(())
 }
@@ -116,26 +384,25 @@ fn generate_and_cache_thumbnail(
     cache_key: &str,
     size: u32,
 ) -> Result<PathBuf, AppError> {
-    let cache_dir = get_cache_dir().ok_or(AppError::Other("Failed to get cache directory".into()))?;
+    let cache_dir =
+        get_cache_dir().ok_or(AppError::Other("Failed to get cache directory".into()))?;
 
     // Create cache directory if it doesn't exist
     fs::create_dir_all(&cache_dir)?;
 
-    // Load and decode image (with_guessed_format for robust format detection)
-    let img = ImageReader::open(source_path)?
-        .with_guessed_format()?
-        .decode()
-        .map_err(|e| AppError::Other(format!("Failed to decode image: {}", e)))?;
-
-    // Generate thumbnail using fast Lanczos3 sampling
-    // Always convert to RGB8 for JPEG output (PNG/GIF may have alpha channels)
+    let img = decode_image(source_path, size)?;
     let thumbnail = img.thumbnail(size, size).to_rgb8();
 
-    // Save to cache as JPEG for smaller size and fast loading
+    // Save to cache as JPEG for smaller size and fast loading.
+    // Encode in memory, then write atomically (temp + rename).
     let cache_path = cache_dir.join(format!("{}.jpg", cache_key));
-    thumbnail
-        .save_with_format(&cache_path, ImageFormat::Jpeg)
+    let mut buffer = Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(thumbnail)
+        .write_to(&mut buffer, ImageFormat::Jpeg)
+        .map_err(|e| AppError::Other(format!("Failed to encode thumbnail: {}", e)))?;
+    write_file_atomic(&cache_path, buffer.get_ref())
         .map_err(|e| AppError::Other(format!("Failed to save thumbnail: {}", e)))?;
+    maybe_prune_disk_cache(&cache_dir);
 
     Ok(cache_path)
 }
@@ -150,15 +417,21 @@ fn get_thumbnail_sync(path: String, size: Option<u32>) -> Result<String, AppErro
     let cache_key = generate_cache_key(&source_path, size)
         .ok_or_else(|| AppError::Other(format!("Failed to generate cache key for: {}", path)))?;
 
-    if let Some(cached_path) = get_cached_thumbnail(&cache_key) {
-        return Ok(cached_path.to_string_lossy().to_string());
-    }
+    with_inflight_lock(&cache_key, || {
+        if let Some(cached_path) = get_cached_thumbnail(&cache_key) {
+            return Ok(cached_path.to_string_lossy().to_string());
+        }
 
-    let thumb_path = generate_and_cache_thumbnail(&source_path, &cache_key, size)?;
-    Ok(thumb_path.to_string_lossy().to_string())
+        let thumb_path = generate_and_cache_thumbnail(&source_path, &cache_key, size)?;
+        Ok(thumb_path.to_string_lossy().to_string())
+    })
 }
 
-fn get_thumbnail_data_sync(path: String, size: Option<u32>, quality: Option<u8>) -> Result<String, AppError> {
+fn get_thumbnail_data_sync(
+    path: String,
+    size: Option<u32>,
+    quality: Option<u8>,
+) -> Result<String, AppError> {
     let source_path = PathBuf::from(&path);
     let size = size.unwrap_or(THUMBNAIL_SIZE);
     let quality = quality.unwrap_or(80);
@@ -167,27 +440,40 @@ fn get_thumbnail_data_sync(path: String, size: Option<u32>, quality: Option<u8>)
     let cache_key = generate_cache_key(&source_path, size)
         .ok_or_else(|| AppError::Other(format!("Failed to generate cache key for: {}", path)))?;
 
-    // Check cache first
-    if let Some(cached_path) = get_cached_thumbnail(&cache_key) {
-        let data = fs::read(&cached_path)?;
-        return Ok(to_data_uri(&data));
+    // Check in-memory LRU first (fastest)
+    if let Some(uri) = lru_get(&cache_key) {
+        return Ok(uri);
     }
 
-    // Decode image
-    let img = ImageReader::open(&source_path)?
-        .with_guessed_format()?
-        .decode()
-        .map_err(|e| AppError::Other(format!("Failed to decode image: {}", e)))?;
+    with_inflight_lock(&cache_key.clone(), || {
+        // Re-check caches: another request may have generated while we waited
+        if let Some(uri) = lru_get(&cache_key) {
+            return Ok(uri);
+        }
+        if let Some(cached_path) = get_cached_thumbnail(&cache_key) {
+            let data = fs::read(&cached_path)?;
+            let uri = to_data_uri(&data);
+            lru_put(cache_key.clone(), uri.clone());
+            return Ok(uri);
+        }
 
-    let thumbnail = img.thumbnail(size, size).to_rgb8();
+        let img = decode_image(&source_path, size)?;
+        let thumbnail = img.thumbnail(size, size).to_rgb8();
 
-    let data = encode_jpeg(&thumbnail, quality)?;
-    save_to_cache(&cache_key, &data);
+        let data = encode_jpeg(&thumbnail, quality)?;
+        save_to_cache(&cache_key, &data);
 
-    Ok(to_data_uri(&data))
+        let uri = to_data_uri(&data);
+        lru_put(cache_key.clone(), uri.clone());
+        Ok(uri)
+    })
 }
 
-fn get_micro_thumbnail_sync(path: String, prewarm_size: Option<u32>, prewarm_quality: Option<u8>) -> Result<String, AppError> {
+fn get_micro_thumbnail_sync(
+    path: String,
+    prewarm_size: Option<u32>,
+    prewarm_quality: Option<u8>,
+) -> Result<String, AppError> {
     let source_path = PathBuf::from(&path);
     let full_size = prewarm_size.unwrap_or(THUMBNAIL_SIZE);
     let full_quality = prewarm_quality.unwrap_or(80);
@@ -197,36 +483,49 @@ fn get_micro_thumbnail_sync(path: String, prewarm_size: Option<u32>, prewarm_qua
         .map(|k| format!("{}_micro", k))
         .ok_or_else(|| AppError::Other(format!("Failed to generate cache key for: {}", path)))?;
 
-    // Check micro cache first
-    if let Some(cached_path) = get_cached_thumbnail(&micro_cache_key) {
-        let data = fs::read(&cached_path)?;
-        return Ok(to_data_uri(&data));
+    // Check in-memory LRU first
+    if let Some(uri) = lru_get(&micro_cache_key) {
+        return Ok(uri);
     }
 
-    // Decode image once (the expensive part)
-    let img = ImageReader::open(&source_path)?
-        .with_guessed_format()?
-        .decode()
-        .map_err(|e| AppError::Other(format!("Failed to decode image: {}", e)))?;
+    with_inflight_lock(&micro_cache_key.clone(), || {
+        // Re-check caches: another request may have generated while we waited
+        if let Some(uri) = lru_get(&micro_cache_key) {
+            return Ok(uri);
+        }
+        if let Some(cached_path) = get_cached_thumbnail(&micro_cache_key) {
+            let data = fs::read(&cached_path)?;
+            let uri = to_data_uri(&data);
+            lru_put(micro_cache_key.clone(), uri.clone());
+            return Ok(uri);
+        }
 
-    // Generate micro thumbnail (Nearest = fastest resize algorithm)
-    let micro = img.resize(MICRO_SIZE, MICRO_SIZE, image::imageops::FilterType::Nearest).to_rgb8();
-    let micro_data = encode_jpeg(&micro, 50)?;
-    save_to_cache(&micro_cache_key, &micro_data);
+        let img = decode_image(&source_path, full_size)?;
 
-    // Pre-warm full thumbnail cache if not already present.
-    // Since the image is already decoded in memory, this is nearly free.
-    let full_cache_key = generate_cache_key(&source_path, full_size);
-    if let Some(ref key) = full_cache_key {
-        if get_cached_thumbnail(key).is_none() {
-            let full = img.thumbnail(full_size, full_size).to_rgb8();
-            if let Ok(full_data) = encode_jpeg(&full, full_quality) {
-                save_to_cache(key, &full_data);
+        // Generate micro thumbnail (Nearest = fastest resize algorithm)
+        let micro = img
+            .resize(MICRO_SIZE, MICRO_SIZE, image::imageops::FilterType::Nearest)
+            .to_rgb8();
+        let micro_data = encode_jpeg(&micro, 50)?;
+        save_to_cache(&micro_cache_key, &micro_data);
+
+        // Pre-warm full thumbnail cache if not already present.
+        // Since the image is already decoded in memory, this is nearly free.
+        let full_cache_key = generate_cache_key(&source_path, full_size);
+        if let Some(ref key) = full_cache_key {
+            if get_cached_thumbnail(key).is_none() {
+                let full = img.thumbnail(full_size, full_size).to_rgb8();
+                if let Ok(full_data) = encode_jpeg(&full, full_quality) {
+                    save_to_cache(key, &full_data);
+                    lru_put(key.clone(), to_data_uri(&full_data));
+                }
             }
         }
-    }
 
-    Ok(to_data_uri(&micro_data))
+        let uri = to_data_uri(&micro_data);
+        lru_put(micro_cache_key.clone(), uri.clone());
+        Ok(uri)
+    })
 }
 
 // ─── Async Tauri commands ───────────────────────────────────────────────────
@@ -243,7 +542,11 @@ pub async fn get_thumbnail(path: String, size: Option<u32>) -> Result<String, Ap
 /// Get thumbnail as base64-encoded data URI.
 /// More efficient for small thumbnails as it avoids file I/O.
 #[tauri::command]
-pub async fn get_thumbnail_data(path: String, size: Option<u32>, quality: Option<u8>) -> Result<String, AppError> {
+pub async fn get_thumbnail_data(
+    path: String,
+    size: Option<u32>,
+    quality: Option<u8>,
+) -> Result<String, AppError> {
     tokio::task::spawn_blocking(move || get_thumbnail_data_sync(path, size, quality))
         .await
         .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
@@ -252,32 +555,42 @@ pub async fn get_thumbnail_data(path: String, size: Option<u32>, quality: Option
 /// Get a tiny 16x16 micro thumbnail for progressive loading.
 /// Also pre-warms the full thumbnail cache as a side effect.
 #[tauri::command]
-pub async fn get_micro_thumbnail(path: String, prewarm_size: Option<u32>, prewarm_quality: Option<u8>) -> Result<String, AppError> {
-    tokio::task::spawn_blocking(move || get_micro_thumbnail_sync(path, prewarm_size, prewarm_quality))
-        .await
-        .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
+pub async fn get_micro_thumbnail(
+    path: String,
+    prewarm_size: Option<u32>,
+    prewarm_quality: Option<u8>,
+) -> Result<String, AppError> {
+    tokio::task::spawn_blocking(move || {
+        get_micro_thumbnail_sync(path, prewarm_size, prewarm_quality)
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
 }
 
 /// Clear the thumbnail cache
 #[tauri::command]
-pub fn clear_thumbnail_cache() -> Result<u64, AppError> {
-    let cache_dir = get_cache_dir().ok_or(AppError::Other("Failed to get cache directory".into()))?;
+pub async fn clear_thumbnail_cache() -> Result<u64, AppError> {
+    tokio::task::spawn_blocking(clear_thumbnail_cache_sync)
+        .await
+        .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
+}
+
+fn clear_thumbnail_cache_sync() -> Result<u64, AppError> {
+    let cache_dir =
+        get_cache_dir().ok_or(AppError::Other("Failed to get cache directory".into()))?;
 
     if !cache_dir.exists() {
         return Ok(0);
     }
 
     log::info!("Clearing thumbnail cache");
+    lru_clear();
     let mut cleared = 0u64;
 
-    for entry in fs::read_dir(&cache_dir).map_err(AppError::Io)? {
-        if let Ok(entry) = entry {
-            if let Ok(metadata) = entry.metadata() {
-                if metadata.is_file() {
-                    if fs::remove_file(entry.path()).is_ok() {
-                        cleared += metadata.len();
-                    }
-                }
+    for entry in fs::read_dir(&cache_dir).map_err(AppError::Io)?.flatten() {
+        if let Ok(metadata) = entry.metadata() {
+            if metadata.is_file() && fs::remove_file(entry.path()).is_ok() {
+                cleared += metadata.len();
             }
         }
     }
@@ -287,8 +600,15 @@ pub fn clear_thumbnail_cache() -> Result<u64, AppError> {
 
 /// Get cache statistics
 #[tauri::command]
-pub fn get_thumbnail_cache_stats() -> Result<ThumbnailCacheStats, AppError> {
-    let cache_dir = get_cache_dir().ok_or(AppError::Other("Failed to get cache directory".into()))?;
+pub async fn get_thumbnail_cache_stats() -> Result<ThumbnailCacheStats, AppError> {
+    tokio::task::spawn_blocking(get_thumbnail_cache_stats_sync)
+        .await
+        .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
+}
+
+fn get_thumbnail_cache_stats_sync() -> Result<ThumbnailCacheStats, AppError> {
+    let cache_dir =
+        get_cache_dir().ok_or(AppError::Other("Failed to get cache directory".into()))?;
 
     if !cache_dir.exists() {
         return Ok(ThumbnailCacheStats {
@@ -301,13 +621,11 @@ pub fn get_thumbnail_cache_stats() -> Result<ThumbnailCacheStats, AppError> {
     let mut count = 0;
     let mut total_size = 0u64;
 
-    for entry in fs::read_dir(&cache_dir).map_err(AppError::Io)? {
-        if let Ok(entry) = entry {
-            if let Ok(metadata) = entry.metadata() {
-                if metadata.is_file() {
-                    count += 1;
-                    total_size += metadata.len();
-                }
+    for entry in fs::read_dir(&cache_dir).map_err(AppError::Io)?.flatten() {
+        if let Ok(metadata) = entry.metadata() {
+            if metadata.is_file() {
+                count += 1;
+                total_size += metadata.len();
             }
         }
     }
@@ -346,6 +664,22 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
+    fn avif_is_supported_and_decodes() {
+        assert!(is_supported_image(Path::new("photo.avif")));
+        assert!(is_supported_image(Path::new("PHOTO.AVIF")));
+
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/red32.avif");
+        let img = decode_image(&fixture, 64).expect("AVIF fixture must decode");
+        assert_eq!((img.width(), img.height()), (32, 32));
+        let pixel = img.to_rgb8().get_pixel(16, 16).0;
+        assert!(
+            pixel[0] > 200 && pixel[1] < 60 && pixel[2] < 60,
+            "expected red center pixel, got {pixel:?}"
+        );
+    }
+
+    #[test]
     fn test_generate_cache_key() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test.jpg");
@@ -381,10 +715,19 @@ mod tests {
         img.save(&png_path).unwrap();
 
         // Test get_thumbnail_data_sync succeeds for PNG
-        let result = get_thumbnail_data_sync(png_path.to_string_lossy().to_string(), Some(64), None);
-        assert!(result.is_ok(), "PNG thumbnail generation failed: {:?}", result.err());
+        let result =
+            get_thumbnail_data_sync(png_path.to_string_lossy().to_string(), Some(64), None);
+        assert!(
+            result.is_ok(),
+            "PNG thumbnail generation failed: {:?}",
+            result.err()
+        );
         let data_uri = result.unwrap();
-        assert!(data_uri.starts_with("data:image/jpeg;base64,"), "Expected JPEG data URI, got: {}", &data_uri[..50]);
+        assert!(
+            data_uri.starts_with("data:image/jpeg;base64,"),
+            "Expected JPEG data URI, got: {}",
+            &data_uri[..50]
+        );
     }
 
     #[test]
@@ -395,8 +738,13 @@ mod tests {
             return; // Skip if not available
         }
 
-        let result = get_thumbnail_data_sync(icon_path.to_string_lossy().to_string(), Some(64), None);
-        assert!(result.is_ok(), "Real PNG thumbnail failed: {:?}", result.err());
+        let result =
+            get_thumbnail_data_sync(icon_path.to_string_lossy().to_string(), Some(64), None);
+        assert!(
+            result.is_ok(),
+            "Real PNG thumbnail failed: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -405,13 +753,17 @@ mod tests {
         let dir = tempdir().unwrap();
         let jpg_path = dir.path().join("test.jpg");
 
-        let img = image::RgbImage::from_fn(100, 100, |x, _y| {
-            image::Rgb([(x % 256) as u8, 128, 64])
-        });
+        let img =
+            image::RgbImage::from_fn(100, 100, |x, _y| image::Rgb([(x % 256) as u8, 128, 64]));
         img.save(&jpg_path).unwrap();
 
-        let result = get_thumbnail_data_sync(jpg_path.to_string_lossy().to_string(), Some(64), None);
-        assert!(result.is_ok(), "JPEG thumbnail generation failed: {:?}", result.err());
+        let result =
+            get_thumbnail_data_sync(jpg_path.to_string_lossy().to_string(), Some(64), None);
+        assert!(
+            result.is_ok(),
+            "JPEG thumbnail generation failed: {:?}",
+            result.err()
+        );
         let data_uri = result.unwrap();
         assert!(data_uri.starts_with("data:image/jpeg;base64,"));
     }
@@ -441,6 +793,39 @@ mod tests {
     }
 
     #[test]
+    fn test_cache_key_changes_with_file_length_same_second() {
+        // Two writes within the same second must produce different cache keys
+        // (key includes mtime nanos + file length, not just whole seconds).
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.jpg");
+
+        fs::write(&file_path, b"aaaa").unwrap();
+        let key1 = generate_cache_key(&file_path, THUMBNAIL_SIZE).unwrap();
+
+        fs::write(&file_path, b"aaaaaaaa").unwrap();
+        let key2 = generate_cache_key(&file_path, THUMBNAIL_SIZE).unwrap();
+
+        assert_ne!(key1, key2, "modifying a file must invalidate the cache key");
+    }
+
+    #[test]
+    fn test_prune_disk_cache_evicts_oldest_first() {
+        let dir = tempdir().unwrap();
+        let old = dir.path().join("old.jpg");
+        let newer = dir.path().join("new.jpg");
+
+        fs::write(&old, vec![0u8; 100]).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(&newer, vec![0u8; 100]).unwrap();
+
+        // Cap of 150 bytes: must evict the oldest entry only.
+        prune_disk_cache(dir.path(), 150);
+
+        assert!(!old.exists(), "oldest entry should be evicted");
+        assert!(newer.exists(), "newest entry should survive");
+    }
+
+    #[test]
     fn test_quality_affects_jpeg_output_size() {
         // Higher JPEG quality should produce larger files
         let img = image::RgbImage::from_fn(200, 200, |x, y| {
@@ -454,12 +839,14 @@ mod tests {
         assert!(
             low.len() < mid.len(),
             "quality 50 ({} bytes) should be smaller than quality 80 ({} bytes)",
-            low.len(), mid.len()
+            low.len(),
+            mid.len()
         );
         assert!(
             mid.len() < high.len(),
             "quality 80 ({} bytes) should be smaller than quality 90 ({} bytes)",
-            mid.len(), high.len()
+            mid.len(),
+            high.len()
         );
     }
 
@@ -479,10 +866,11 @@ mod tests {
 
         // Request at quality 50 with size 64
         let result_q50 = get_thumbnail_data_sync(path_str.clone(), Some(64), Some(50)).unwrap();
-        // Clear cache so next request generates fresh
+        // Clear both caches so next request generates fresh
         if let Some(cache_dir) = get_cache_dir() {
             let _ = std::fs::remove_dir_all(&cache_dir);
         }
+        lru_clear();
         let result_q90 = get_thumbnail_data_sync(path_str, Some(64), Some(90)).unwrap();
 
         // Different quality should produce different data URIs
@@ -494,7 +882,8 @@ mod tests {
         assert!(
             result_q50.len() < result_q90.len(),
             "quality 90 ({} chars) should be larger than quality 50 ({} chars)",
-            result_q90.len(), result_q50.len()
+            result_q90.len(),
+            result_q50.len()
         );
     }
 }

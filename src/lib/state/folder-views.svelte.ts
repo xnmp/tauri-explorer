@@ -7,8 +7,8 @@
  * file with localStorage as synchronous fallback.
  */
 
-import { loadPersisted, savePersisted } from "./persisted";
-import { readConfigFile, writeConfigFile } from "$lib/api/files";
+import { loadPersisted, savePersisted, writeConfigQueued } from "./persisted";
+import { readConfigFile } from "$lib/api/files";
 import type { ThumbnailSize } from "./settings.svelte";
 
 /** View properties that can be overridden per folder */
@@ -26,9 +26,7 @@ function createFolderViewsStore() {
 
   function save(): void {
     savePersisted(STORAGE_KEY, views);
-    writeConfigFile(CONFIG_FILENAME, JSON.stringify(views, null, 2)).catch((err) => {
-      console.warn("Failed to save folder views:", err);
-    });
+    writeConfigQueued(CONFIG_FILENAME, JSON.stringify(views, null, 2));
   }
 
   async function init(): Promise<void> {
@@ -49,7 +47,7 @@ function createFolderViewsStore() {
     // Migrate from localStorage if config file was empty
     const saved = loadPersisted<FolderViewMap>(STORAGE_KEY, {});
     if (Object.keys(saved).length > 0) {
-      writeConfigFile(CONFIG_FILENAME, JSON.stringify(saved, null, 2)).catch(() => {});
+      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(saved, null, 2));
     }
   }
 

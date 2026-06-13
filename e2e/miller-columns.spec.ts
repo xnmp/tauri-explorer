@@ -22,7 +22,6 @@ test.describe("Miller columns panel", () => {
 
     // Navigate to a subdirectory so ancestor columns appear
     await page.locator(".entry-item").first().dblclick();
-    await page.waitForTimeout(500);
 
     // Miller columns should be visible
     await expect(page.locator(".miller-columns")).toBeVisible();
@@ -41,9 +40,68 @@ test.describe("Miller columns panel", () => {
       localStorage.setItem("explorer-settings", JSON.stringify(s));
       location.reload();
     });
-    await page.waitForTimeout(1000);
 
     // Miller columns should not be visible
     await expect(page.locator(".miller-columns")).toHaveCount(0);
+  });
+
+  test("miller column header is contiguous with entries (no border)", async ({ page }) => {
+    await page.goto(HOME_URL);
+    await waitForEntries(page);
+
+    await page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem("explorer-settings") || "{}");
+      s.millerLayers = 1;
+      localStorage.setItem("explorer-settings", JSON.stringify(s));
+      location.reload();
+    });
+    await page.waitForTimeout(1000);
+    await waitForEntries(page);
+
+    await page.locator(".entry-item").first().dblclick();
+
+    await expect(page.locator(".miller-columns")).toBeVisible();
+    const header = page.locator(".col-header").first();
+    await expect(header).toBeVisible();
+
+    const borderBottom = await header.evaluate(
+      (el) => getComputedStyle(el).borderBottomStyle,
+    );
+    expect(borderBottom).toBe("none");
+  });
+
+  test("miller column has ondrop handler for background drops", async ({ page }) => {
+    await page.goto(HOME_URL);
+    await waitForEntries(page);
+
+    await page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem("explorer-settings") || "{}");
+      s.millerLayers = 1;
+      localStorage.setItem("explorer-settings", JSON.stringify(s));
+      location.reload();
+    });
+    await page.waitForTimeout(1000);
+    await waitForEntries(page);
+
+    await page.locator(".entry-item").first().dblclick();
+
+    await expect(page.locator(".miller-columns")).toBeVisible();
+    const col = page.locator(".miller-col").first();
+
+    // The column element should have drag event listeners bound (Svelte wires
+    // them as properties). Verify the column responds to dragover by checking
+    // that the event is handled (preventDefault called = accepts drop).
+    const acceptsDrop = await col.evaluate((el) => {
+      const dt = new DataTransfer();
+      dt.items.add("test", "application/x-explorer-path");
+      const event = new DragEvent("dragover", {
+        dataTransfer: dt,
+        bubbles: true,
+        cancelable: true,
+      });
+      el.dispatchEvent(event);
+      return event.defaultPrevented;
+    });
+    expect(acceptsDrop).toBe(true);
   });
 });

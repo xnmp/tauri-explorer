@@ -7,6 +7,8 @@
   import { gitStatusLetter } from "$lib/domain/git";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { gitStatusStore } from "$lib/state/git-status.svelte";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+  import { getPaneIdContext } from "$lib/state/pane-context";
 
   interface Props {
     entryName: string;
@@ -16,7 +18,18 @@
 
   let { entryName, hideOnRename = false }: Props = $props();
 
-  const gitStatus = $derived(settingsStore.showGitStatus ? gitStatusStore.getStatus(entryName) : null);
+  // Statuses are keyed per directory; look up via the directory this entry
+  // is rendered in (the owning pane's current path) so dual panes showing
+  // different directories don't bleed badges into each other.
+  const paneId = getPaneIdContext();
+  const directory = $derived(
+    paneId ? windowTabsManager.getExplorer(paneId)?.currentPath ?? "" : "",
+  );
+  const gitStatus = $derived(
+    settingsStore.showGitStatus && directory
+      ? gitStatusStore.getStatus(directory, entryName)
+      : null,
+  );
 </script>
 
 {#if gitStatus && !hideOnRename}
@@ -44,4 +57,7 @@
   .git-deleted { color: #ef4444; }
   .git-conflict { color: #ef4444; font-weight: 800; }
   .git-renamed { color: #60a5fa; }
+  .git-copied { color: #60a5fa; }
+  .git-ignored { color: #6b7280; }
+  .git-typechange { color: #a78bfa; }
 </style>

@@ -117,3 +117,13 @@ export function hasLanguageSupport(filename: string): boolean {
   const ext = filename.split(".").pop()?.toLowerCase() ?? "";
   return !!hljs.getLanguage(ext);
 }
+
+/** Highlight a code snippet by language name/alias (e.g. a fenced code
+ *  block's info string). Falls back to escaped plaintext for unknown
+ *  languages. Returns HTML. */
+export function highlightLanguage(code: string, lang: string | undefined): string {
+  if (lang && hljs.getLanguage(lang)) {
+    return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
+  }
+  return escapeHtml(code);
+}

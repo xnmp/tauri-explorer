@@ -9,6 +9,7 @@
   import { formatSize, type FileEntry } from "$lib/domain/file";
   import { isTauri } from "$lib/api/mock-invoke";
   import { highlightCode } from "$lib/domain/syntax-highlight";
+  import { renderMarkdown } from "$lib/domain/markdown";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { getFileIconColor } from "$lib/domain/file-types";
   import { scmStore } from "$lib/state/scm.svelte";
@@ -79,6 +80,7 @@
   let previewImageUrl = $state<string | null>(null);
   let previewText = $state<string | null>(null);
   let previewHighlightedHtml = $state<string | null>(null);
+  let previewMarkdownHtml = $state<string | null>(null);
   let previewPdfUrl = $state<string | null>(null);
   let previewFolderChildrenRaw = $state<readonly FileEntry[]>([]);
   const previewFolderChildren = $derived(
@@ -169,6 +171,7 @@
       previewImageUrl = null;
       previewText = null;
       previewHighlightedHtml = null;
+      previewMarkdownHtml = null;
       previewPdfUrl = null;
       previewFolderChildrenRaw = [];
       previewError = null;
@@ -193,6 +196,7 @@
     previewImageUrl = null;
     previewText = null;
     previewHighlightedHtml = null;
+    previewMarkdownHtml = null;
     previewPdfUrl = null;
     previewFolderChildrenRaw = [];
     previewError = null;
@@ -257,6 +261,16 @@
           : result.data;
         previewText = displayText;
         previewTruncatedLines = truncated ? lines.length : 0;
+        const isMarkdown = /\.(md|markdown)$/i.test(file.name);
+        if (isMarkdown && displayText.length < 200_000) {
+          // Obsidian-style: render the markdown; fenced code blocks keep
+          // syntax highlighting via the shared hljs setup.
+          try {
+            previewMarkdownHtml = renderMarkdown(displayText);
+          } catch {
+            previewMarkdownHtml = null;
+          }
+        }
         // Only syntax-highlight if content is reasonably small (< 50KB)
         if (displayText.length < 50_000) {
           try {
@@ -352,6 +366,11 @@
             </div>
           {/each}
         </div>
+      {:else if previewMarkdownHtml !== null}
+        <div class="preview-markdown" class:hljs-light={isLightTheme} class:hljs-dark={!isLightTheme}>{@html previewMarkdownHtml}</div>
+        {#if previewTruncatedLines > 0}
+          <div class="preview-truncated">Showing first 200 of {previewTruncatedLines.toLocaleString()} lines</div>
+        {/if}
       {:else if previewHighlightedHtml !== null}
         <pre class="preview-text preview-code" class:hljs-light={isLightTheme} class:hljs-dark={!isLightTheme}><code class="hljs">{@html previewHighlightedHtml}</code></pre>
         {#if previewTruncatedLines > 0}
@@ -549,6 +568,133 @@
     text-align: center;
     border-top: 1px solid var(--divider);
     flex-shrink: 0;
+  }
+
+  /* Rendered markdown (Obsidian-style). Content comes from {@html}, so
+     descendants need :global. */
+  .preview-markdown {
+    padding: 16px;
+    font-size: 12px;
+    line-height: 1.65;
+    color: var(--text-secondary);
+    flex: 1;
+    overflow-wrap: break-word;
+  }
+
+  .preview-markdown :global(h1),
+  .preview-markdown :global(h2),
+  .preview-markdown :global(h3),
+  .preview-markdown :global(h4),
+  .preview-markdown :global(h5),
+  .preview-markdown :global(h6) {
+    color: var(--text-primary);
+    font-weight: 600;
+    line-height: 1.3;
+    margin: 14px 0 6px;
+  }
+
+  .preview-markdown :global(h1) { font-size: 17px; padding-bottom: 4px; border-bottom: 1px solid var(--divider); }
+  .preview-markdown :global(h2) { font-size: 15px; padding-bottom: 3px; border-bottom: 1px solid var(--divider); }
+  .preview-markdown :global(h3) { font-size: 13px; }
+  .preview-markdown :global(h4) { font-size: 12px; }
+
+  .preview-markdown :global(h1:first-child),
+  .preview-markdown :global(h2:first-child),
+  .preview-markdown :global(p:first-child) {
+    margin-top: 0;
+  }
+
+  .preview-markdown :global(p) {
+    margin: 6px 0;
+  }
+
+  .preview-markdown :global(a) {
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  .preview-markdown :global(a:hover) {
+    text-decoration: underline;
+  }
+
+  .preview-markdown :global(code) {
+    font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+    font-size: 11px;
+    background: var(--subtle-fill-secondary);
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+
+  .preview-markdown :global(pre.md-code) {
+    background: var(--subtle-fill-secondary);
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    margin: 8px 0;
+    overflow-x: auto;
+  }
+
+  .preview-markdown :global(pre.md-code code) {
+    background: transparent;
+    padding: 0;
+    white-space: pre;
+  }
+
+  .preview-markdown :global(blockquote) {
+    margin: 8px 0;
+    padding: 2px 12px;
+    border-left: 3px solid var(--accent);
+    color: var(--text-tertiary);
+  }
+
+  .preview-markdown :global(ul),
+  .preview-markdown :global(ol) {
+    margin: 6px 0;
+    padding-left: 22px;
+  }
+
+  .preview-markdown :global(li) {
+    margin: 2px 0;
+  }
+
+  .preview-markdown :global(li input[type="checkbox"]) {
+    margin-right: 6px;
+  }
+
+  .preview-markdown :global(hr) {
+    border: none;
+    border-top: 1px solid var(--divider);
+    margin: 12px 0;
+  }
+
+  .preview-markdown :global(table) {
+    border-collapse: collapse;
+    margin: 8px 0;
+    font-size: 11px;
+    display: block;
+    overflow-x: auto;
+  }
+
+  .preview-markdown :global(th),
+  .preview-markdown :global(td) {
+    border: 1px solid var(--divider);
+    padding: 4px 8px;
+    text-align: left;
+  }
+
+  .preview-markdown :global(th) {
+    background: var(--subtle-fill-secondary);
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  .preview-markdown :global(img) {
+    max-width: 100%;
+  }
+
+  .preview-markdown :global(.md-image-placeholder) {
+    color: var(--text-tertiary);
+    font-style: italic;
   }
 
   /* GitHub Dark hljs theme (default) */

@@ -12,11 +12,17 @@ import { browser, $ } from "@wdio/globals";
  * appear in them verbatim.
  */
 export async function navigateTo(dir: string): Promise<void> {
-  await browser.execute((target: string) => {
-    window.dispatchEvent(new CustomEvent("e2e-navigate", { detail: target }));
-  }, dir);
+  // App must be initialized before the hook exists.
+  await $(".file-list").waitForExist({ timeout: 15_000 });
+  // Re-dispatch on every poll: a single dispatch can race listener
+  // registration in onMount and then nothing would ever navigate.
   await browser.waitUntil(
-    async () => (await $(".status-path").getAttribute("title")) === dir,
+    async () => {
+      await browser.execute((target: string) => {
+        window.dispatchEvent(new CustomEvent("e2e-navigate", { detail: target }));
+      }, dir);
+      return (await $(".status-path").getAttribute("title")) === dir;
+    },
     { timeoutMsg: `status bar never showed ${dir}` },
   );
 }

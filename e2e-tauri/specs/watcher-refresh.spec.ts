@@ -11,20 +11,9 @@ import { browser, $, $$ } from "@wdio/globals";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { navigateTo } from "./helpers";
 
 const scratchDir = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-e2e-watch-"));
-
-async function navigateTo(dir: string): Promise<void> {
-  await $(".breadcrumbs-container").click();
-  const pathInput = $(".path-input");
-  await pathInput.waitForDisplayed();
-  await pathInput.setValue(dir);
-  await browser.keys(["Enter"]);
-  await browser.waitUntil(
-    async () => (await $(".breadcrumbs-container").getText()).includes(path.basename(dir)),
-    { timeoutMsg: `breadcrumbs never showed ${dir}` },
-  );
-}
 
 async function entryNames(): Promise<string[]> {
   return await $$(".entry-item .entry-name").map((el) => el.getText());

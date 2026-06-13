@@ -247,6 +247,15 @@
     // tab dragged out of this one.
     const stopTabTransfer = initTabTransferListener();
 
+    // Dev-only e2e navigation hook: the tauri-driver suite runs against the
+    // vite dev server under Xvfb with no window manager, where address-bar
+    // editing blurs (and cancels) immediately. Absent from production builds.
+    if (import.meta.env.DEV) {
+      window.addEventListener("e2e-navigate", ((e: CustomEvent<string>) => {
+        windowTabsManager.getActiveExplorer()?.navigateTo(e.detail);
+      }) as EventListener);
+    }
+
     // Register all commands for the command palette (deferred to next tick)
     queueMicrotask(() => registerAllCommands());
 

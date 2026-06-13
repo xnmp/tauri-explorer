@@ -9,22 +9,11 @@ import { browser, $, $$, expect } from "@wdio/globals";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { navigateTo } from "./helpers";
 
 // Under $HOME (not /tmp) so trashing works on tmpfs-mounted /tmp setups —
 // Freedesktop trash needs a Trash dir on the same mount or the home fallback.
 const scratchDir = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-e2e-"));
-
-async function navigateTo(dir: string): Promise<void> {
-  await $(".breadcrumbs-container").click();
-  const pathInput = $(".path-input");
-  await pathInput.waitForDisplayed();
-  await pathInput.setValue(dir);
-  await browser.keys(["Enter"]);
-  await browser.waitUntil(
-    async () => (await $(".breadcrumbs-container").getText()).includes(path.basename(dir)),
-    { timeoutMsg: `breadcrumbs never showed ${dir}` },
-  );
-}
 
 async function entryNames(): Promise<string[]> {
   const names = await $$(".entry-item .entry-name").map((el) => el.getText());

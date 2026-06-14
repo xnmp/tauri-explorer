@@ -277,7 +277,9 @@ fn clipboard_has_image_sync() -> bool {
 /// launch. `envs` carries data into the script via environment variables.
 #[cfg(windows)]
 fn run_powershell(script: &str, envs: &[(&str, &str)]) -> Option<std::process::Output> {
+    use crate::process_ext::NoConsole;
     let mut cmd = Command::new("powershell");
+    cmd.no_console();
     cmd.args(["-NoProfile", "-NonInteractive", "-STA", "-Command", script]);
     for (key, val) in envs {
         cmd.env(key, val);

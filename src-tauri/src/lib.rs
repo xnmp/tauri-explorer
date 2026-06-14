@@ -9,6 +9,7 @@ pub mod error;
 mod files;
 pub mod git;
 mod nano_banana;
+mod process_ext;
 #[cfg(target_os = "linux")]
 mod portal;
 /// Non-Linux stub so the command registry stays platform-independent.

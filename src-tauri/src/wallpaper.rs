@@ -360,7 +360,9 @@ if (-not $ok) {{ exit 1 }}
         SPI_SETDESKWALLPAPER, SPIF_UPDATEINIFILE_SENDCHANGE
     );
 
+    use crate::process_ext::NoConsole;
     let output = Command::new("powershell")
+        .no_console()
         .args(["-NoProfile", "-NonInteractive", "-Command", &script])
         .env("WALLPAPER_PATH", clean)
         .output()

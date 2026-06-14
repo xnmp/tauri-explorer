@@ -11,6 +11,7 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::error::AppError;
+use crate::process_ext::NoConsole;
 
 /// Git status for a single file.
 #[derive(Debug, Clone, Serialize)]
@@ -110,6 +111,7 @@ fn get_git_status_sync(path: &str) -> Result<GitStatusResponse, AppError> {
     // Check if inside a git repo and resolve the browsed dir's path relative
     // to the repo root in one call: stdout is "true\n<prefix>\n".
     let output = Command::new("git")
+        .no_console()
         .args(["rev-parse", "--is-inside-work-tree", "--show-prefix"])
         .current_dir(dir)
         .output();
@@ -137,6 +139,7 @@ fn get_git_status_sync(path: &str) -> Result<GitStatusResponse, AppError> {
     // Get porcelain status. `-z` avoids quoting/octal-escaping of non-ASCII
     // paths that the default line format applies.
     let output = Command::new("git")
+        .no_console()
         .args(["status", "--porcelain", "-z", "-uall", "."])
         .current_dir(dir)
         .output()

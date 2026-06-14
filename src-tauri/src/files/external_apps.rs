@@ -134,14 +134,17 @@ fn get_default_app(_file_path: &std::path::Path) -> Option<String> {
 }
 
 fn find_editor_in_path(binary: &str) -> bool {
+    use crate::process_ext::NoConsole;
     #[cfg(windows)]
     let cmd = std::process::Command::new("where.exe")
+        .no_console()
         .arg(binary)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();
     #[cfg(not(windows))]
     let cmd = std::process::Command::new("which")
+        .no_console()
         .arg(binary)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

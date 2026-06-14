@@ -55,20 +55,23 @@ export function useItemInteractions(deps: ItemInteractionsDeps) {
 
     dragState.start({ path: entry.path, name: entry.name, kind: entry.kind, paths: isMulti ? paths : undefined });
 
-    // On Windows, suppress Chromium's HTML5 drag with preventDefault so the
-    // only OLE drag in flight is the plugin's. WebView2's own HTML5 drag
-    // puts the system into a state that makes a parallel DoDragDrop return
-    // E_FAIL immediately. With HTML5 suppressed, the plugin's OLE drag is
-    // received by WebView2's IDropTarget as an "external" drag and is
-    // still surfaced to JS as dragenter/dragover/drop events on the page —
-    // so in-app drop targets continue to work.
-    if (isWindows) {
-      event.preventDefault();
-    }
-
-    // On non-Mac, use tauri-plugin-drag for native file drag (HTML5 DnD still works on
-    // Linux/Windows because their webviews don't kill JS events for native sessions).
-    if (!isMac) {
+    // Per-engine in-app drag strategy:
+    //
+    // - Windows (WebView2 = Chromium): use plain HTML5 DnD, exactly like the dev
+    //   browser. The DOM dragover/drop handlers on folders, miller columns,
+    //   breadcrumbs, tabs and the sidebar all work, and the engine renders a
+    //   native drag ghost. We must NOT start the OLE drag here: that turns the
+    //   gesture into an OS-level drag which Tauri (dragDropEnabled defaults true)
+    //   intercepts, suppressing the DOM drag events — which is exactly what left
+    //   the cursor stuck on "cancel" and only the polling-based sidebar working.
+    //   Trade-off: dragging files OUT to Explorer needs OLE and is not supported
+    //   on Windows for now (none of the in-app targets need it).
+    //
+    // - Linux (WebKitGTK): in-app DnD goes through the native drag session +
+    //   Tauri onDragDropEvent (see use-native-drop-handler), so start it here.
+    //
+    // - macOS: handled by the pointer-drag composable, not this HTML5 path.
+    if (!isMac && !isWindows) {
       void startExternalDrag(paths);
     }
   }

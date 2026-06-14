@@ -18,7 +18,7 @@
   import { useDropTarget } from "$lib/composables/use-drop-target.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
-  import { isMac, isCopyModifier } from "$lib/domain/platform";
+  import { isCopyModifier, usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { parentDir } from "$lib/domain/path";
   import type { FileEntry } from "$lib/domain/file";
@@ -242,7 +242,7 @@
   // Shared drop-target behavior
   const dropTarget = useDropTarget({ onRefresh: () => windowTabsManager.refreshAllPanes() });
 
-  const pointerDrag = isMac ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
+  const pointerDrag = usesPointerDrag ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
 
   // Background drop: dropping onto empty space in a column moves to that column's dir
   let bgDropColumn = $state<string | null>(null);
@@ -356,10 +356,10 @@
                 data-kind={entry.kind}
                 onclick={() => handleClick(entry)}
                 oncontextmenu={(e) => handleContextMenu(e, entry)}
-                draggable={!isMac}
-                ondragstart={!isMac ? (e) => handleDragStart(e, entry) : undefined}
-                ondragend={!isMac ? handleDragEnd : undefined}
-                onmousedown={isMac ? (e) => pointerDrag!.handlePointerDown(e, entry, false) : undefined}
+                draggable={usesHtml5Drag}
+                ondragstart={usesHtml5Drag ? (e) => handleDragStart(e, entry) : undefined}
+                ondragend={usesHtml5Drag ? handleDragEnd : undefined}
+                onmousedown={usesPointerDrag ? (e) => pointerDrag!.handlePointerDown(e, entry, false) : undefined}
                 ondragover={(e) => dropTarget.handleDragOver(e, entry)}
                 ondragleave={() => dropTarget.handleDragLeave(entry)}
                 ondrop={(e) => dropTarget.handleDrop(e, entry)}

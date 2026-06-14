@@ -20,6 +20,7 @@ import { handleFileDrop, handleBackgroundDrop } from "$lib/state/drop-operations
 import { startExternalDrag } from "./use-external-drag.svelte";
 import { resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights } from "./use-native-drop-target.svelte";
 import { getZoomFactor } from "$lib/domain/zoom";
+import { isWindows } from "$lib/domain/platform";
 
 export interface PointerDragDeps {
   getExplorer: () => ExplorerInstance;
@@ -99,7 +100,11 @@ export function usePointerDrag(deps: PointerDragDeps) {
     ghostEl!.style.transform = "translate(-50%, -50%)";
     // Exit window → hand off to native drag for external/cross-window.
     // With implicit mouse capture, clientX/Y extends beyond viewport bounds.
+    // Skipped on Windows: the OLE drag is intercepted by WebView2 (cancel
+    // cursor / E_FAIL), so we keep the in-app pointer-drag going instead and
+    // simply don't support dragging files out to Explorer for now.
     if (
+      !isWindows &&
       !nativeStarted && (
         event.clientX <= 0 ||
         event.clientX >= window.innerWidth - 1 ||

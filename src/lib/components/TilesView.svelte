@@ -10,7 +10,7 @@
   import { useProgressiveRender } from "$lib/composables/use-progressive-render.svelte";
   import { getFileIconColor, isImageFile } from "$lib/domain/file-types";
 
-  import { isMac } from "$lib/domain/platform";
+  import { usesPointerDrag } from "$lib/domain/platform";
   import { settingsStore, THUMBNAIL_SIZE_CONFIG } from "$lib/state/settings.svelte";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import EntryName from "./EntryName.svelte";
@@ -38,7 +38,7 @@
     selectOnContextMenu: true,
   });
 
-  const pointerDrag = isMac ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
+  const pointerDrag = usesPointerDrag ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
 
   const effectiveThumbnailSize = $derived(
     folderViewsStore.getThumbnailSize(explorer.currentPath, settingsStore.thumbnailSize)

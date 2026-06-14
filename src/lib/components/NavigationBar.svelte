@@ -295,6 +295,7 @@
             class="crumb"
             class:current={i === displayBreadcrumbs.length - 1}
             class:drop-target={dropTargetCrumb === segment.path}
+            data-path={segment.path}
             onclick={(e) => { e.stopPropagation(); explorer.navigateTo(segment.path!); }}
             ondragover={(e) => handleCrumbDragOver(e, segment.path!)}
             ondragleave={handleCrumbDragLeave}

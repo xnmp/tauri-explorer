@@ -48,6 +48,13 @@ function resolveFromElement(el: Element | null): DropTargetResult {
     if (kind === "directory" && path) return { type: "folder", path };
   }
 
+  // Breadcrumb segment — drop into that ancestor directory.
+  const crumb = (el as HTMLElement).closest?.(".crumb[data-path]");
+  if (crumb) {
+    const path = crumb.getAttribute("data-path");
+    if (path) return { type: "folder", path };
+  }
+
   const sidebar = (el as HTMLElement).closest?.(".quick-access");
   if (sidebar) return { type: "sidebar" };
 
@@ -113,8 +120,9 @@ function highlightAtCoords(cx: number, cy: number): void {
   const millerEntry = (el as HTMLElement).closest?.(".col-entry[data-kind='directory'][data-path]") as HTMLElement | null;
   const millerCol = (el as HTMLElement).closest?.(".miller-col[data-path]") as HTMLElement | null;
   const tabEl = (el as HTMLElement).closest?.(".tab[data-tab-id]") as HTMLElement | null;
+  const crumbEl = (el as HTMLElement).closest?.(".crumb[data-path]") as HTMLElement | null;
   const sidebarEl = (el as HTMLElement).closest?.(".quick-access") as HTMLElement | null;
-  const targetEl = folderEntry || millerEntry || tabEl || millerCol || (!sidebarEl ? (el as HTMLElement).closest?.(".content") as HTMLElement | null : null);
+  const targetEl = folderEntry || millerEntry || tabEl || crumbEl || millerCol || (!sidebarEl ? (el as HTMLElement).closest?.(".content") as HTMLElement | null : null);
 
   if (sidebarEl) {
     if (highlightedElement) {

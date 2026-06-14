@@ -11,7 +11,7 @@
   import { useProgressiveRender } from "$lib/composables/use-progressive-render.svelte";
   import { getFileIconColor } from "$lib/domain/file-types";
 
-  import { isMac } from "$lib/domain/platform";
+  import { usesPointerDrag } from "$lib/domain/platform";
   import EntryName from "./EntryName.svelte";
   import FileIcon from "./FileIcon.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
@@ -37,7 +37,7 @@
     selectOnContextMenu: true,
   });
 
-  const pointerDrag = isMac ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
+  const pointerDrag = usesPointerDrag ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
 
   // Compute effective list column count (auto or fixed)
   const effectiveListColumns = $derived.by(() => {

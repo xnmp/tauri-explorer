@@ -16,7 +16,7 @@
   import { useItemInteractions, isInClipboard as checkInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { isMac } from "$lib/domain/platform";
+  import { usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
 
   interface Props {
     entry: FileEntry;
@@ -37,7 +37,7 @@
     selectOnContextMenu: true,
   });
 
-  const pointerDrag = isMac ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
+  const pointerDrag = usesPointerDrag ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
 
   // Check if this entry is being renamed (used for click guards and badge visibility)
   const isRenaming = $derived(dialogStore.renamingEntry?.path === entry.path);
@@ -80,13 +80,13 @@
   onclick={handleClick}
   ondblclick={handleDoubleClick}
   oncontextmenu={(e) => interactions.handleContextMenu(e, entry)}
-  draggable={!isMac}
-  ondragstart={!isMac ? (e) => interactions.handleDragStart(e, entry, selected) : undefined}
-  ondragend={!isMac ? interactions.handleDragEnd : undefined}
+  draggable={usesHtml5Drag}
+  ondragstart={usesHtml5Drag ? (e) => interactions.handleDragStart(e, entry, selected) : undefined}
+  ondragend={usesHtml5Drag ? interactions.handleDragEnd : undefined}
   ondragover={(e) => interactions.handleDragOver(e, entry)}
   ondragleave={() => interactions.handleDragLeave(entry)}
   ondrop={(e) => interactions.handleDrop(e, entry)}
-  onmousedown={isMac ? (e) => { e.stopPropagation(); pointerDrag!.handlePointerDown(e, entry, selected); } : undefined}
+  onmousedown={usesPointerDrag ? (e) => { e.stopPropagation(); pointerDrag!.handlePointerDown(e, entry, selected); } : undefined}
 >
   <!-- Name column -->
   <div class="name-cell">

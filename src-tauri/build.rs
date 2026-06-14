@@ -1,4 +1,10 @@
 fn main() {
+    // Re-run (and re-embed the Windows .exe icon) whenever the icon changes.
+    // Without this, an incremental `tauri build` keeps the previously embedded
+    // icon, so a regenerated icon.ico shows up in `tauri dev` but not in the
+    // installed binary.
+    println!("cargo:rerun-if-changed=icons/icon.ico");
+
     let mut windows = tauri_build::WindowsAttributes::new();
 
     // Windows manifest for Per-Monitor V2 DPI awareness.

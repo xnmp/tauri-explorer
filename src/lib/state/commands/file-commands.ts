@@ -80,11 +80,14 @@ export const fileCommands: Command[] = [
       const explorer = getActiveExplorer();
       const selected = explorer?.getSelectedEntries()[0];
       if (selected) {
-        if (selected.kind === "directory") {
-          explorer?.navigateTo(selected.path);
+        // Follow Windows .lnk shortcuts to their target (no-op otherwise).
+        const { resolveActivation } = await import("$lib/api/activate");
+        const target = await resolveActivation(selected);
+        if (target.kind === "directory") {
+          explorer?.navigateTo(target.path);
         } else {
           const { openFile } = await import("$lib/api/files");
-          await openFile(selected.path);
+          await openFile(target.path);
         }
       }
     },

@@ -246,6 +246,11 @@ export function getFileIconCategory(entry: FileEntry): IconCategory {
 /** Image extensions that support thumbnail generation */
 const THUMBNAIL_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "icns", "avif"]);
 
+/** Check if an entry is a Windows `.lnk` shortcut file. */
+export function isShortcut(entry: FileEntry): boolean {
+  return entry.kind === "file" && entry.name.toLowerCase().endsWith(".lnk");
+}
+
 /** Check if a file is an image that supports thumbnails */
 export function isImageFile(entry: FileEntry): boolean {
   if (entry.kind === "directory") return false;

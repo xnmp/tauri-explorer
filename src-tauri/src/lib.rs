@@ -127,6 +127,7 @@ pub fn run(launch_dir: Option<String>) {
             files::external_apps::open_file_with,
             files::external_apps::open_image_with_siblings,
             files::external_apps::open_in_terminal,
+            files::shortcuts::resolve_shortcut,
             // Search
             search::fuzzy_search,
             search::start_streaming_search,

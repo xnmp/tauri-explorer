@@ -456,11 +456,25 @@ function createExplorerState(seed?: ExplorerSeed) {
   async function paste(): Promise<string | null> {
     if (!coreState.currentPath) return "No current directory";
 
-    // First check internal clipboard
-    const clipboardContent = clipboardStore.content;
+    // The OS clipboard is the single source of truth for what was most
+    // recently copied. We keep an internal clipboard too (it carries cut
+    // semantics and richer metadata), but it's only authoritative while it
+    // still matches the OS clipboard. If the user copied something in another
+    // app since, the OS clipboard differs and must win — otherwise pasting a
+    // file copied in Explorer silently pastes our stale internal selection.
+    const internal = clipboardStore.content;
+    const osContent = await clipboardStore.readOsFiles();
 
-    if (clipboardContent) {
-      const { entries, operation } = clipboardContent;
+    const internalPaths = internal ? internal.entries.map((e) => e.path) : null;
+    const osMatchesInternal =
+      internalPaths !== null &&
+      osContent !== null &&
+      osContent.paths.length === internalPaths.length &&
+      osContent.paths.every((p) => internalPaths.includes(p));
+    const useInternal = internal !== null && (osContent === null || osMatchesInternal);
+
+    if (useInternal) {
+      const { entries, operation } = internal!;
       const isCut = operation === "cut";
       markLocalMutation();
       const error = await pasteEntries(
@@ -473,8 +487,7 @@ function createExplorerState(seed?: ExplorerSeed) {
       return error;
     }
 
-    // Fall back to OS clipboard (files from external apps)
-    const osContent = await clipboardStore.readOsFiles();
+    // OS clipboard (files copied from external apps like Explorer/Finder)
     if (osContent && osContent.paths.length > 0) {
       markLocalMutation();
       const error = await pasteEntries(

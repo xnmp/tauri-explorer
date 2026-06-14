@@ -8,6 +8,7 @@
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { openFile, openImageWithSiblings } from "$lib/api/files";
+  import { resolveActivation } from "$lib/api/activate";
   import { dragState } from "$lib/state/drag.svelte";
   import { getDropSourcePaths, handleBackgroundDrop } from "$lib/state/drop-operations";
   import { useMarqueeSelection } from "$lib/composables/use-marquee-selection.svelte";
@@ -124,14 +125,17 @@
   }
 
   async function handleDoubleClick(entry: FileEntry): Promise<void> {
-    if (entry.kind === "directory") {
-      explorer.navigateTo(entry.path);
+    // Follow Windows .lnk shortcuts to their target (no-op for other entries).
+    const target = await resolveActivation(entry);
+    if (target.kind === "directory") {
+      explorer.navigateTo(target.path);
     } else {
-      const result = isImageFile(entry)
-        ? await openImageWithSiblings(entry.path)
-        : await openFile(entry.path);
+      const asImage = isImageFile({ ...entry, kind: "file", name: target.name, path: target.path });
+      const result = asImage
+        ? await openImageWithSiblings(target.path)
+        : await openFile(target.path);
       if (result.ok) {
-        recentFilesStore.add(entry.path, entry.name, "file");
+        recentFilesStore.add(target.path, target.name, "file");
       } else {
         console.error("Failed to open file:", result.error);
       }

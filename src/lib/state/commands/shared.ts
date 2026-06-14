@@ -3,7 +3,7 @@
  */
 
 import { WebviewWindow, type Color } from "@tauri-apps/api/webviewWindow";
-import { isMac } from "$lib/domain/platform";
+import { isMac, isWindows } from "$lib/domain/platform";
 import { windowTabsManager, tabSeedKey, type TabSnapshot } from "../window-tabs.svelte";
 import { settingsStore } from "../settings.svelte";
 import { savePersisted } from "../persisted";
@@ -62,8 +62,11 @@ export async function openNewWindow(
     y: pos.y + 30,
     backgroundColor: getPersistedBgColor(),
     decorations: isMac,
-    transparent: !isMac,
-    shadow: isMac,
+    // Windows 11 only rounds corners (and draws the DWM shadow) on opaque
+    // windows. The main window is opaque on Windows, so new windows must be
+    // too — a transparent window keeps the sharp corners the bug reports.
+    transparent: !isMac && !isWindows,
+    shadow: isMac || isWindows,
     dragDropEnabled: true,
     acceptFirstMouse: true,
     titleBarStyle: isMac && settingsStore.integratedTitleBar ? "overlay" : undefined,

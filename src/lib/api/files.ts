@@ -258,6 +258,25 @@ export async function openFile(path: string): Promise<ApiResult<void>> {
   }
 }
 
+/** Resolved target of a Windows `.lnk` shortcut. */
+export interface ShortcutTarget {
+  target: string;
+  isDir: boolean;
+}
+
+/**
+ * Resolve a Windows `.lnk` shortcut to the file/folder it points at.
+ * Returns null when `path` isn't a (resolvable, existing) shortcut — callers
+ * should then act on the original path.
+ */
+export async function resolveShortcut(path: string): Promise<ShortcutTarget | null> {
+  try {
+    return (await invoke<ShortcutTarget | null>("resolve_shortcut", { path })) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Open a file at a specific line number using a known text editor.
  * Falls back to default open if no known editor is found.

@@ -1,21 +1,29 @@
-//! OS clipboard file operations for Linux.
+//! OS clipboard file operations.
 //! Issue: tauri-explorer-rdra, tauri-gkfr
 //!
 //! Linux file managers use MIME types like `x-special/gnome-copied-files`
 //! and `text/uri-list` that `tauri-plugin-clipboard-x` doesn't handle
 //! reliably (its `clipboard-rs` backend is X11-only, broken on Wayland).
-//! This module shells out to `wl-paste`/`wl-copy` (Wayland) or
+//! On Linux this module shells out to `wl-paste`/`wl-copy` (Wayland) or
 //! `xclip` (X11) to read and write file URIs directly.
+//!
+//! On Windows the same operations go through the native clipboard's
+//! `CF_HDROP` (file drop list) and bitmap formats via a short PowerShell
+//! shell-out (`System.Windows.Forms.Clipboard`), keeping copy/paste of files
+//! interoperable with Explorer. Data is passed via environment variables, never
+//! interpolated into the script, so filenames can't break or inject it.
 
 use std::process::Command;
 
 /// Detect whether the session is Wayland or X11.
+#[cfg(not(windows))]
 fn is_wayland() -> bool {
     std::env::var("WAYLAND_DISPLAY").is_ok()
 }
 
 /// Try to read a specific MIME type from the clipboard.
 /// Returns `None` if the tool isn't available or the MIME type isn't present.
+#[cfg(not(windows))]
 fn read_mime(mime: &str) -> Option<String> {
     let output = if is_wayland() {
         Command::new("wl-paste")
@@ -87,6 +95,7 @@ fn percent_decode(input: &str) -> String {
 
 /// Read file paths from the OS clipboard.
 /// Tries `x-special/gnome-copied-files` first (GNOME/XFCE/MATE), then `text/uri-list` (KDE).
+#[cfg(not(windows))]
 fn read_clipboard_file_paths() -> Vec<String> {
     // GNOME/XFCE format: first line is "copy" or "cut", rest are URIs
     if let Some(text) = read_mime("x-special/gnome-copied-files") {
@@ -140,6 +149,7 @@ fn paths_to_uris(paths: &[String]) -> Vec<String> {
 
 /// Write clipboard data with a specific MIME type using native tools.
 /// Uses wl-copy on Wayland, xclip on X11.
+#[cfg(not(windows))]
 fn write_mime(mime: &str, data: &[u8]) -> bool {
     let mut child = if is_wayland() {
         match Command::new("wl-copy")
@@ -183,6 +193,7 @@ fn write_mime(mime: &str, data: &[u8]) -> bool {
 /// clobber the first format instead of adding to it. We write the GNOME format
 /// (richest: carries copy/cut semantics); KDE/Dolphin paste of our copies is
 /// not supported until a multi-target clipboard backend is used.
+#[cfg(not(windows))]
 fn write_clipboard_file_paths(paths: &[String]) -> bool {
     if paths.is_empty() {
         return false;
@@ -197,6 +208,7 @@ fn write_clipboard_file_paths(paths: &[String]) -> bool {
 
 /// Read raw image data (PNG) from the OS clipboard.
 /// Returns the raw bytes or None if no image is available.
+#[cfg(not(windows))]
 fn read_clipboard_image() -> Option<Vec<u8>> {
     let output = if is_wayland() {
         Command::new("wl-paste")
@@ -230,6 +242,7 @@ pub async fn clipboard_has_image() -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(not(windows))]
 fn clipboard_has_image_sync() -> bool {
     let output = if is_wayland() {
         Command::new("wl-paste")
@@ -250,6 +263,105 @@ fn clipboard_has_image_sync() -> bool {
         }
         _ => false,
     }
+}
+
+// ===========================================================================
+// Windows backend: native clipboard via PowerShell + System.Windows.Forms.
+// CF_HDROP for file lists, bitmap for images. STA is required for the WinForms
+// clipboard APIs; `powershell.exe` (Windows PowerShell 5.1) is always present
+// and runs STA. Data is carried in env vars so filenames can't break/inject
+// the script.
+// ===========================================================================
+
+/// Run a PowerShell script and return its output, or `None` if it failed to
+/// launch. `envs` carries data into the script via environment variables.
+#[cfg(windows)]
+fn run_powershell(script: &str, envs: &[(&str, &str)]) -> Option<std::process::Output> {
+    let mut cmd = Command::new("powershell");
+    cmd.args(["-NoProfile", "-NonInteractive", "-STA", "-Command", script]);
+    for (key, val) in envs {
+        cmd.env(key, val);
+    }
+    cmd.output().ok()
+}
+
+/// Split PowerShell stdout (CRLF-terminated) into trimmed, non-empty lines.
+#[cfg(windows)]
+fn ps_lines(stdout: &[u8]) -> Vec<String> {
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .map(|l| l.trim_end_matches('\r').to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
+#[cfg(windows)]
+fn read_clipboard_file_paths() -> Vec<String> {
+    let script = r#"
+Add-Type -AssemblyName System.Windows.Forms
+$files = [System.Windows.Forms.Clipboard]::GetFileDropList()
+if ($files) { $files -join "`n" }
+"#;
+    match run_powershell(script, &[]) {
+        Some(o) if o.status.success() => ps_lines(&o.stdout),
+        _ => Vec::new(),
+    }
+}
+
+/// Write file paths to the Windows clipboard as a `CF_HDROP` file drop list,
+/// so Explorer (and other apps) can paste them. Copy semantics, matching the
+/// Linux path (which only offers "copy").
+#[cfg(windows)]
+fn write_clipboard_file_paths(paths: &[String]) -> bool {
+    if paths.is_empty() {
+        return false;
+    }
+    let joined = paths.join("\n");
+    let script = r#"
+Add-Type -AssemblyName System.Windows.Forms
+$col = New-Object System.Collections.Specialized.StringCollection
+foreach ($p in ($env:CLIP_PATHS -split "`n")) { if ($p) { [void]$col.Add($p) } }
+[System.Windows.Forms.Clipboard]::SetFileDropList($col)
+"#;
+    run_powershell(script, &[("CLIP_PATHS", &joined)])
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn clipboard_has_image_sync() -> bool {
+    let script = r#"
+Add-Type -AssemblyName System.Windows.Forms
+if ([System.Windows.Forms.Clipboard]::ContainsImage()) { 'yes' } else { 'no' }
+"#;
+    run_powershell(script, &[])
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("yes"))
+        .unwrap_or(false)
+}
+
+/// Read the clipboard image and re-encode it as PNG bytes (the format the
+/// frontend expects), so the cross-platform paste path works unchanged.
+#[cfg(windows)]
+fn read_clipboard_image() -> Option<Vec<u8>> {
+    use base64::Engine as _;
+    let script = r#"
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$img = [System.Windows.Forms.Clipboard]::GetImage()
+if ($null -eq $img) { exit 1 }
+$ms = New-Object System.IO.MemoryStream
+$img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+[Convert]::ToBase64String($ms.ToArray())
+"#;
+    let output = run_powershell(script, &[])?;
+    if !output.status.success() {
+        return None;
+    }
+    let b64: String = ps_lines(&output.stdout).concat();
+    if b64.is_empty() {
+        return None;
+    }
+    base64::engine::general_purpose::STANDARD.decode(b64).ok()
 }
 
 /// Paste clipboard image data to a file in the given directory.

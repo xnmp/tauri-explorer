@@ -13,7 +13,7 @@
 import { onDestroy } from "svelte";
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
-import { parentDir, basename } from "$lib/domain/path";
+import { parentDir, basename, isInsideDir } from "$lib/domain/path";
 import { dragState } from "$lib/state/drag.svelte";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { handleFileDrop, handleBackgroundDrop } from "$lib/state/drop-operations";
@@ -160,8 +160,8 @@ export function usePointerDrag(deps: PointerDragDeps) {
       const targetPath = target.path;
       cleanup(true);
       for (const sourcePath of paths) {
-        if (sourcePath === targetPath) continue;
-        if (targetPath.startsWith(sourcePath + "/")) continue;
+        // Skip dropping onto self or into one's own descendant.
+        if (isInsideDir(targetPath, sourcePath)) continue;
         await handleFileDrop(sourcePath, targetPath, isCopy, { onRefresh: refreshPanes });
       }
       return;

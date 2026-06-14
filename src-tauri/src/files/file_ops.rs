@@ -410,13 +410,28 @@ fn perform_move(
     target: &Path,
     source_name: &str,
 ) -> Result<(), AppError> {
+    // Raw OS error for a cross-filesystem rename, as a fallback for platforms
+    // where std hasn't categorized the code into `ErrorKind::CrossesDevices`.
+    // Unix `EXDEV` = 18; Windows `ERROR_NOT_SAME_DEVICE` = 17. `raw_os_error()`
+    // returns the Win32 code on Windows, NOT the CRT errno, so the constant
+    // must be 17 there — comparing against `libc::EXDEV` would never match.
+    #[cfg(unix)]
+    const CROSS_DEVICE_ERRNO: i32 = libc::EXDEV;
+    #[cfg(windows)]
+    const CROSS_DEVICE_ERRNO: i32 = 17;
+    #[cfg(not(any(unix, windows)))]
+    const CROSS_DEVICE_ERRNO: i32 = -1;
+
     // Try a simple rename first (works if same filesystem)
     match fs::rename(source_path, target) {
         Ok(()) => Ok(()),
         Err(e) => {
-            // Only fall back to copy+delete for cross-filesystem moves (EXDEV).
+            // Only fall back to copy+delete for cross-filesystem moves.
             // Other errors (permission denied, etc.) should be returned immediately.
-            let is_cross_device = e.raw_os_error() == Some(libc::EXDEV);
+            // `CrossesDevices` (stable since Rust 1.85) is the portable signal;
+            // the raw-errno check is a belt-and-suspenders fallback.
+            let is_cross_device = e.kind() == std::io::ErrorKind::CrossesDevices
+                || e.raw_os_error() == Some(CROSS_DEVICE_ERRNO);
             if !is_cross_device {
                 log::warn!("Move failed (not cross-device): {}", e);
                 return Err(AppError::Io(e));

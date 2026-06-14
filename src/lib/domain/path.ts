@@ -1,9 +1,28 @@
 /**
  * Path normalization helpers.
  * Pure functions — no framework or filesystem deps.
+ *
+ * Separator policy: these helpers accept either `/` or `\` on input (Windows
+ * backends emit backslash-separated paths) and emit `/`-separated results.
+ * Forward slashes round-trip correctly through the Windows APIs the backend
+ * uses, so callers can stay separator-agnostic.
  */
 
 const BARE_DRIVE_LETTER = /^([A-Za-z]):$/;
+/** A Windows drive prefix capturing the letter and the remainder, e.g. `C:/Users`. */
+const DRIVE_PREFIX = /^([A-Za-z]):(.*)$/;
+/** A UNC share root like `//server/share` (after backslash normalization). */
+const UNC_ROOT = /^\/\/[^/]+\/[^/]+/;
+
+/** Normalize all backslash separators to forward slashes. */
+export function toForwardSlashes(path: string): string {
+  return path.replace(/\\/g, "/");
+}
+
+/** Strip a single trailing separator, but never reduce a bare root (`/`) to empty. */
+function stripTrailingSlash(path: string): string {
+  return path.length > 1 && path.endsWith("/") ? path.replace(/\/+$/, "") : path;
+}
 
 /**
  * Normalize a path string entered by the user (typically in the address bar).
@@ -15,7 +34,9 @@ const BARE_DRIVE_LETTER = /^([A-Za-z]):$/;
  * - The case of the drive letter is preserved uppercase so paths normalize to
  *   a canonical form.
  * - All other inputs pass through unchanged; callers should continue to do
- *   tilde expansion, whitespace trimming, etc. separately.
+ *   tilde expansion, whitespace trimming, etc. separately. In particular,
+ *   backslashes are left intact here (a backslash is a legal character in a
+ *   Unix filename), so navigation input is taken literally.
  */
 export function normalizePathInput(input: string): string {
   const trimmed = input.trim();
@@ -35,25 +56,52 @@ export function isDriveRoot(path: string): boolean {
 }
 
 /**
- * Return the parent directory of a path.
+ * Return the parent directory of a path. Separator-agnostic; emits `/`.
  *
- * `"/home/user/file.txt"` → `"/home/user"`
+ * `"/home/user/file.txt"`  → `"/home/user"`
  * `"/file.txt"`            → `"/"`
  * `"file.txt"` (no slash)  → `"/"`
+ * `"C:\\Users\\foo"`        → `"C:/Users"`
+ * `"C:\\Users"`             → `"C:/"`   (top-level dir's parent is the drive root)
+ * `"C:/"` / `"C:"`          → `"C:/"`   (a drive root is its own parent)
+ * `"\\\\server\\share\\d"`     → `"//server/share"`
+ * `"\\\\server\\share"`       → `"//server/share"` (a share root is its own parent)
  */
 export function parentDir(path: string): string {
-  const idx = path.lastIndexOf("/");
-  return idx > 0 ? path.substring(0, idx) : "/";
+  const p = toForwardSlashes(path);
+
+  // Windows drive paths (`C:` / `C:/` / `C:/Users/...`).
+  const drive = p.match(DRIVE_PREFIX);
+  if (drive) {
+    const letter = drive[1];
+    const root = `${letter}:/`;
+    const rest = stripTrailingSlash(drive[2]); // "" | "/Users" | "/Users/foo"
+    if (rest === "") return root;
+    const idx = rest.lastIndexOf("/");
+    // A single top-level segment ("/Users") has its parent at the drive root.
+    return idx > 0 ? `${letter}:${rest.substring(0, idx)}` : root;
+  }
+
+  // UNC share root (`//server/share`) is its own parent.
+  const unc = p.match(UNC_ROOT);
+  if (unc && stripTrailingSlash(p) === unc[0]) return unc[0];
+
+  // POSIX (and UNC subpaths, which fall through to here correctly).
+  const cleaned = stripTrailingSlash(p);
+  const idx = cleaned.lastIndexOf("/");
+  return idx > 0 ? cleaned.substring(0, idx) : "/";
 }
 
 /**
  * Join a directory path and a child name with a single separator.
+ * Preserves a trailing separator of either kind already on `dir`.
  *
- * `joinPath("/home/user", "file.txt")` → `"/home/user/file.txt"`
- * `joinPath("/", "file.txt")`          → `"/file.txt"`
+ * `joinPath("/home/user", "file.txt")`  → `"/home/user/file.txt"`
+ * `joinPath("/", "file.txt")`           → `"/file.txt"`
+ * `joinPath("C:\\Users", "f.txt")`       → `"C:\\Users/f.txt"`
  */
 export function joinPath(dir: string, name: string): string {
-  return dir.endsWith("/") ? dir + name : `${dir}/${name}`;
+  return /[\\/]$/.test(dir) ? dir + name : `${dir}/${name}`;
 }
 
 /**
@@ -72,16 +120,32 @@ export function expandTilde(path: string, homeDir: string | null): string {
 }
 
 /**
- * Return the last path segment (file or directory name).
+ * Return the last path segment (file or directory name). Separator-agnostic.
  *
- * `"/home/user/file.txt"` → `"file.txt"`
+ * `"/home/user/file.txt"`  → `"file.txt"`
  * `"/home/user/"`         → `"user"` (trailing slash stripped)
+ * `"C:\\Users\\foo"`        → `"foo"`
  * `"file.txt"`            → `"file.txt"`
  * `"/"`                   → `"/"`
  */
 export function basename(path: string): string {
+  const p = toForwardSlashes(path);
   // Strip a single trailing slash (but not the root `/` itself)
-  const cleaned = path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
+  const cleaned = p.length > 1 && p.endsWith("/") ? p.slice(0, -1) : p;
   const idx = cleaned.lastIndexOf("/");
   return idx < 0 ? cleaned : cleaned.substring(idx + 1) || "/";
+}
+
+/**
+ * True if `child` is the same path as, or nested inside, `parent`.
+ * Separator-agnostic so it works for both Unix and Windows paths.
+ *
+ * `isInsideDir("/a/b/c", "/a/b")`           → true
+ * `isInsideDir("C:\\a\\b", "C:\\a")`           → true
+ * `isInsideDir("/a/bc", "/a/b")`            → false (not a path-segment prefix)
+ */
+export function isInsideDir(child: string, parent: string): boolean {
+  const c = toForwardSlashes(child);
+  const p = stripTrailingSlash(toForwardSlashes(parent));
+  return c === p || c.startsWith(p + "/");
 }

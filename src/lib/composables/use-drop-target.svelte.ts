@@ -6,6 +6,7 @@
 
 import type { FileEntry } from "$lib/domain/file";
 import { isCopyModifier } from "$lib/domain/platform";
+import { isInsideDir } from "$lib/domain/path";
 import { dragState } from "$lib/state/drag.svelte";
 import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
 
@@ -53,8 +54,8 @@ export function useDropTarget(deps: DropTargetDeps) {
     dragState.clear();
 
     for (const sourcePath of sourcePaths) {
-      if (sourcePath === entry.path) continue;
-      if (entry.path.startsWith(sourcePath + "/")) continue;
+      // Skip dropping onto self or into one's own descendant.
+      if (isInsideDir(entry.path, sourcePath)) continue;
       await handleFileDrop(sourcePath, entry.path, isCopy, {
         onRefresh: deps.onRefresh,
       });

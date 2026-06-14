@@ -40,7 +40,14 @@ const DISPLAY_NAMES: Record<string, string> = {
 /** Modifier keys in ParsedShortcut (excludes "key") */
 type ModifierKey = "ctrl" | "shift" | "alt" | "meta";
 
-/** Modifier key aliases (for parsing user input) */
+/**
+ * Modifier key aliases (for parsing user input).
+ *
+ * The Windows/"Super" key maps to `meta`, the same slot as macOS Cmd. Note
+ * that Windows itself reserves most Win-key combinations at the OS level, so
+ * pure Win bindings rarely reach the app — `meta` is kept mainly so cross-
+ * platform bindings authored as "Cmd+…" still parse on Windows.
+ */
 const MODIFIER_ALIASES: Record<string, ModifierKey> = {
   ctrl: "ctrl",
   control: "ctrl",
@@ -49,6 +56,7 @@ const MODIFIER_ALIASES: Record<string, ModifierKey> = {
   meta: "meta",
   win: "meta",
   windows: "meta",
+  super: "meta",
   alt: "alt",
   option: "alt",
   opt: "alt",
@@ -186,10 +194,33 @@ export function matchesShortcut(
     ? event.code.slice(3).toLowerCase()
     : event.key;
 
-  const normalizedEventKey = normalizeKeyForShortcut(eventKey);
   const normalizedShortcutKey = normalizeKeyForShortcut(shortcut.key);
 
-  return normalizedEventKey === normalizedShortcutKey;
+  if (normalizeKeyForShortcut(eventKey) === normalizedShortcutKey) return true;
+
+  // Layout fallback: on non-US (and Windows) layouts a shifted digit yields a
+  // symbol in event.key (e.g. Shift+1 → "!"), so "Ctrl+Shift+1" would never
+  // match. Recover the layout-independent letter/digit from the physical
+  // event.code and compare that. Used only as a fallback so logical matching
+  // (the common case) still wins first.
+  const physical = physicalKeyFromCode(event.code);
+  if (physical && normalizeKeyForShortcut(physical) === normalizedShortcutKey) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Recover the layout-independent character a physical key represents from
+ * `event.code`. Letters (`KeyA` → `"a"`) and digits (`Digit1` → `"1"`) only;
+ * returns null for other codes so the caller falls back to `event.key`.
+ */
+function physicalKeyFromCode(code: string | undefined): string | null {
+  if (!code) return null;
+  if (code.startsWith("Key")) return code.slice(3).toLowerCase();
+  if (code.startsWith("Digit")) return code.slice(5);
+  return null;
 }
 
 /**
@@ -291,10 +322,14 @@ export function eventToShortcutString(event: KeyboardEvent): string | null {
   if (event.shiftKey) parts.push("Shift");
   if (event.altKey) parts.push("Alt");
 
-  // On macOS, Option/Alt produces special characters — use event.code for the real key
+  // On macOS, Option/Alt produces special characters — use event.code for the real key.
+  // With Shift, non-US/Windows layouts turn digits into symbols (Shift+1 → "!"),
+  // so recover the digit from event.code to record "Ctrl+Shift+1", not "Ctrl+Shift+!".
   const rawKey = event.altKey && event.code?.startsWith("Key")
     ? event.code.slice(3).toLowerCase()
-    : event.key;
+    : event.shiftKey && event.code?.startsWith("Digit")
+      ? event.code.slice(5)
+      : event.key;
 
   // Format the key using lookup or uppercase for single chars
   const key = KEY_TO_SHORTCUT[rawKey] ??

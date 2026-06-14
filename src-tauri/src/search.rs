@@ -68,6 +68,20 @@ static SEARCHES: crate::task_registry::TaskRegistry = crate::task_registry::Task
 /// need this cap.
 const WALK_SAFETY_CAP: usize = 500_000;
 
+/// Normalize OS path separators in a relative path to forward slashes.
+///
+/// `strip_prefix` yields `\`-separated components on Windows, which would make
+/// depth ranking (which counts `/`) dead and break the frontend `relativePath`
+/// convention. Only the platform separator is replaced, so literal backslashes
+/// in Unix filenames are preserved.
+fn normalize_rel_separators(p: String) -> String {
+    if std::path::MAIN_SEPARATOR == '/' {
+        p
+    } else {
+        p.replace(std::path::MAIN_SEPARATOR, "/")
+    }
+}
+
 /// Collect file/directory entries under `root_path` using jwalk.
 /// Returns `(relative_path, name, is_dir)` tuples.
 /// Capped at `WALK_SAFETY_CAP` to bound memory for the non-streaming path.
@@ -98,7 +112,7 @@ fn walk_entries(root_path: &PathBuf) -> Vec<(String, String, bool)> {
 
         let path = entry.path();
         let relative_path = match path.strip_prefix(root_path) {
-            Ok(p) => p.to_string_lossy().to_string(),
+            Ok(p) => normalize_rel_separators(p.to_string_lossy().to_string()),
             Err(_) => continue,
         };
 
@@ -318,7 +332,7 @@ pub fn start_streaming_search(
 
             let path = entry.path();
             let relative_path = match path.strip_prefix(&root_path) {
-                Ok(p) => p.to_string_lossy().to_string(),
+                Ok(p) => normalize_rel_separators(p.to_string_lossy().to_string()),
                 Err(_) => continue,
             };
 

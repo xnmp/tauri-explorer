@@ -1,4 +1,4 @@
-//! Set desktop wallpaper across macOS and Linux desktop environments.
+//! Set desktop wallpaper across macOS, Linux desktop environments, and Windows.
 //! Issue: tauri-explorer-mj32
 
 use crate::error::AppError;
@@ -17,6 +17,13 @@ fn is_wallpaper_image(path: &std::path::Path) -> bool {
 }
 
 /// Detect the current desktop environment / wallpaper tool.
+#[cfg(windows)]
+fn detect_wallpaper_backend() -> WallpaperBackend {
+    WallpaperBackend::Windows
+}
+
+/// Detect the current desktop environment / wallpaper tool.
+#[cfg(not(windows))]
 fn detect_wallpaper_backend() -> WallpaperBackend {
     if cfg!(target_os = "macos") {
         return WallpaperBackend::MacOs;
@@ -67,6 +74,8 @@ enum WallpaperBackend {
     Kde,
     Xfce,
     Feh,
+    #[cfg(windows)]
+    Windows,
     Unknown,
 }
 
@@ -328,6 +337,44 @@ fn set_feh(path: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Set wallpaper on Windows via `SystemParametersInfo(SPI_SETDESKWALLPAPER)`.
+///
+/// Shells out to PowerShell (always present as `powershell.exe`) rather than
+/// linking user32 directly, so no unsafe FFI or extra crate is needed. The
+/// path is passed in an env var, never interpolated into the script. Windows 7+
+/// accepts JPG/PNG here (no BMP conversion required).
+#[cfg(windows)]
+fn set_windows(path: &str) -> Result<(), AppError> {
+    // `fs::canonicalize` yields a verbatim `\\?\C:\...` path on Windows, which
+    // SystemParametersInfo rejects — strip the prefix back to a plain path.
+    let clean = path.strip_prefix(r"\\?\").unwrap_or(path);
+
+    const SPI_SETDESKWALLPAPER: i32 = 0x0014; // 20
+    const SPIF_UPDATEINIFILE_SENDCHANGE: i32 = 0x03; // persist + broadcast
+    let script = format!(
+        r#"
+Add-Type -Namespace Win32 -Name Wp -MemberDefinition '[DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern bool SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);'
+$ok = [Win32.Wp]::SystemParametersInfo({}, 0, $env:WALLPAPER_PATH, {})
+if (-not $ok) {{ exit 1 }}
+"#,
+        SPI_SETDESKWALLPAPER, SPIF_UPDATEINIFILE_SENDCHANGE
+    );
+
+    let output = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .env("WALLPAPER_PATH", clean)
+        .output()
+        .map_err(|e| AppError::Other(format!("powershell failed: {}", e)))?;
+
+    if !output.status.success() {
+        return Err(AppError::Other(format!(
+            "Failed to set wallpaper: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(())
+}
+
 /// Set the given image as desktop wallpaper.
 /// Auto-detects the desktop environment and uses the appropriate tool.
 #[tauri::command]
@@ -365,6 +412,8 @@ fn set_as_wallpaper_sync(path: String) -> Result<(), AppError> {
         WallpaperBackend::Kde => set_kde(&abs_path),
         WallpaperBackend::Xfce => set_xfce(&abs_path),
         WallpaperBackend::Feh => set_feh(&abs_path),
+        #[cfg(windows)]
+        WallpaperBackend::Windows => set_windows(&abs_path),
         WallpaperBackend::Unknown => Err(AppError::Other(
             "Could not detect desktop environment. Supported: macOS, Hyprland (hyprpaper), Sway, GNOME, KDE, XFCE, feh".to_string(),
         )),
@@ -380,6 +429,8 @@ fn backend_name(b: &WallpaperBackend) -> &'static str {
         WallpaperBackend::Kde => "kde",
         WallpaperBackend::Xfce => "xfce",
         WallpaperBackend::Feh => "feh",
+        #[cfg(windows)]
+        WallpaperBackend::Windows => "windows",
         WallpaperBackend::Unknown => "unknown",
     }
 }

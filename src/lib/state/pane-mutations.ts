@@ -32,6 +32,7 @@ import { undoStore } from "./undo.svelte";
 import { frecencyStore } from "./frecency.svelte";
 import { toastStore } from "./toast.svelte";
 import { renameThumbnailCache } from "$lib/state/thumbnail-cache";
+import { basename, joinPath, isInsideDir } from "$lib/domain/path";
 
 export interface PaneMutationContext {
   coreState: ExplorerCoreState;
@@ -50,7 +51,7 @@ export function createPaneMutations(ctx: PaneMutationContext) {
   async function navigateAwayIfNeeded(deletedPaths: Set<string>): Promise<void> {
     const current = coreState.currentPath;
     const shouldNavigateAway = [...deletedPaths].some(
-      (dp) => current === dp || current.startsWith(dp + "/")
+      (dp) => isInsideDir(current, dp)
     );
     if (shouldNavigateAway) {
       const parentPath = ctx.getParentPath();
@@ -142,9 +143,9 @@ export function createPaneMutations(ctx: PaneMutationContext) {
   }
 
   async function createSymlinkForEntry(path: string): Promise<void> {
-    const name = path.split("/").filter(Boolean).pop() || path;
+    const name = basename(path);
     const linkName = `${name} - Link`;
-    const linkPath = `${coreState.currentPath}/${linkName}`;
+    const linkPath = joinPath(coreState.currentPath, linkName);
     const result = await apiCreateSymlink(path, linkPath);
     if (result.ok) {
       coreState.entries = [...coreState.entries, result.data];

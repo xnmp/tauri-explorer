@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { normalizePathInput, isDriveRoot, parentDir, basename } from "../../src/lib/domain/path";
+import {
+  normalizePathInput,
+  isDriveRoot,
+  parentDir,
+  basename,
+  joinPath,
+  isInsideDir,
+  toForwardSlashes,
+} from "../../src/lib/domain/path";
 
 describe("normalizePathInput", () => {
   it("appends a slash to a bare drive letter and uppercases it", () => {
@@ -71,6 +79,29 @@ describe("parentDir", () => {
   it("handles deeply nested paths", () => {
     expect(parentDir("/a/b/c/d/e")).toBe("/a/b/c/d");
   });
+
+  it("handles Windows backslash paths", () => {
+    expect(parentDir("C:\\Users\\foo")).toBe("C:/Users");
+    expect(parentDir("C:\\Users")).toBe("C:/");
+  });
+
+  it("handles Windows forward-slash drive paths", () => {
+    expect(parentDir("C:/Users/foo")).toBe("C:/Users");
+    expect(parentDir("C:/Users")).toBe("C:/");
+  });
+
+  it("returns the drive root as its own parent (never bare 'C:')", () => {
+    expect(parentDir("C:/")).toBe("C:/");
+    expect(parentDir("C:\\")).toBe("C:/");
+    expect(parentDir("C:")).toBe("C:/");
+  });
+
+  it("handles UNC paths", () => {
+    expect(parentDir("\\\\server\\share\\dir\\file")).toBe("//server/share/dir");
+    expect(parentDir("\\\\server\\share\\dir")).toBe("//server/share");
+    // A share root is its own parent (can't go above the share)
+    expect(parentDir("\\\\server\\share")).toBe("//server/share");
+  });
 });
 
 describe("basename", () => {
@@ -101,5 +132,55 @@ describe("basename", () => {
 
   it("handles empty string", () => {
     expect(basename("")).toBe("");
+  });
+
+  it("handles Windows backslash paths", () => {
+    expect(basename("C:\\Users\\foo")).toBe("foo");
+    expect(basename("C:\\Users\\foo.txt")).toBe("foo.txt");
+    expect(basename("\\\\server\\share\\file.txt")).toBe("file.txt");
+  });
+
+  it("handles mixed separators", () => {
+    expect(basename("C:\\Users/foo - Link")).toBe("foo - Link");
+  });
+});
+
+describe("joinPath", () => {
+  it("joins with a forward slash", () => {
+    expect(joinPath("/home/user", "file.txt")).toBe("/home/user/file.txt");
+    expect(joinPath("/", "file.txt")).toBe("/file.txt");
+  });
+
+  it("does not double a trailing separator of either kind", () => {
+    expect(joinPath("/home/", "file.txt")).toBe("/home/file.txt");
+    expect(joinPath("C:\\Users\\", "file.txt")).toBe("C:\\Users\\file.txt");
+  });
+});
+
+describe("isInsideDir", () => {
+  it("matches nested unix paths", () => {
+    expect(isInsideDir("/a/b/c", "/a/b")).toBe(true);
+    expect(isInsideDir("/a/b", "/a/b")).toBe(true);
+  });
+
+  it("matches nested windows paths regardless of separator", () => {
+    expect(isInsideDir("C:\\a\\b\\c", "C:\\a")).toBe(true);
+    expect(isInsideDir("C:/a/b", "C:\\a")).toBe(true);
+  });
+
+  it("rejects sibling paths that merely share a string prefix", () => {
+    expect(isInsideDir("/a/bc", "/a/b")).toBe(false);
+    expect(isInsideDir("C:\\abc", "C:\\a")).toBe(false);
+  });
+
+  it("tolerates a trailing separator on the parent", () => {
+    expect(isInsideDir("/a/b/c", "/a/b/")).toBe(true);
+  });
+});
+
+describe("toForwardSlashes", () => {
+  it("converts backslashes", () => {
+    expect(toForwardSlashes("C:\\Users\\foo")).toBe("C:/Users/foo");
+    expect(toForwardSlashes("/already/posix")).toBe("/already/posix");
   });
 });

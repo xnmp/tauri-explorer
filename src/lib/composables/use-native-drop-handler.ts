@@ -12,7 +12,7 @@ import { dragState } from "$lib/state/drag.svelte";
 import { handleFileDrop } from "$lib/state/drop-operations";
 import { isCopyModifier as isCopyMod } from "$lib/domain/platform";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
-import { parentDir } from "$lib/domain/path";
+import { parentDir, isInsideDir } from "$lib/domain/path";
 
 export interface NativeDropDeps {
   getActiveExplorer: () => ExplorerInstance | undefined;
@@ -66,8 +66,8 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     // Drop onto a specific folder or tab
     if (target?.type === "folder" || target?.type === "tab") {
       for (const sourcePath of sourcePaths) {
-        if (sourcePath === target.path) continue;
-        if (target.path.startsWith(sourcePath + "/")) continue;
+        // Skip dropping onto self or into one's own descendant.
+        if (isInsideDir(target.path, sourcePath)) continue;
         await handleFileDrop(sourcePath, target.path, isCopy, dropOptions);
       }
       dragState.clear();

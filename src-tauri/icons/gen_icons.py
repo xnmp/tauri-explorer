@@ -16,11 +16,21 @@ png = Image.open(icons_dir / "icon.png").convert("RGBA")
 # Generate .ico (Windows). Each sub-image is stored as PNG so the full
 # alpha channel survives — Pillow's default BMP encoding for ICO sub-frames
 # loses transparency on Windows and looks pixelated/whitewashed.
+# The source art carries macOS-style padding (glyph fills ~77% of the canvas),
+# which is the .icns convention but makes the Windows taskbar / title-bar icon
+# read noticeably small next to other apps. Zoom the glyph in slightly for the
+# .ico only (centered crop of a scaled copy) so it fills more of the frame. The
+# .icns below keeps the original padding.
+ICO_CONTENT_SCALE = 1.15
 ico_sizes = [16, 32, 48, 64, 128, 256]
 frames: list[tuple[int, bytes]] = []
 for size in ico_sizes:
+    inner = max(size, round(size * ICO_CONTENT_SCALE))
+    scaled = png.resize((inner, inner), Image.LANCZOS)
+    left = (inner - size) // 2
+    frame = scaled.crop((left, left, left + size, left + size))
     buf = io.BytesIO()
-    png.resize((size, size), Image.LANCZOS).save(buf, format="PNG")
+    frame.save(buf, format="PNG")
     frames.append((size, buf.getvalue()))
 
 with (icons_dir / "icon.ico").open("wb") as f:

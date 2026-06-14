@@ -149,3 +149,17 @@ export function isInsideDir(child: string, parent: string): boolean {
   const p = stripTrailingSlash(toForwardSlashes(parent));
   return c === p || c.startsWith(p + "/");
 }
+
+/**
+ * Separator-agnostic path equality. Needed because `parentDir`/`basename`
+ * emit forward slashes while backend-provided paths (and DOM `data-path`
+ * attributes) use the OS separator — on Windows a naive `===` between the two
+ * always fails. Compares the forward-slash normal form of both, ignoring a
+ * single trailing separator.
+ *
+ * `samePath("C:/Users/x", "C:\\Users\\x")` → true
+ * `samePath("/a/b/", "/a/b")`              → true
+ */
+export function samePath(a: string, b: string): boolean {
+  return stripTrailingSlash(toForwardSlashes(a)) === stripTrailingSlash(toForwardSlashes(b));
+}

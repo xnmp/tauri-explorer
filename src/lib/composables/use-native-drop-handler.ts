@@ -12,7 +12,7 @@ import { dragState } from "$lib/state/drag.svelte";
 import { handleFileDrop } from "$lib/state/drop-operations";
 import { isCopyModifier as isCopyMod } from "$lib/domain/platform";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
-import { parentDir, isInsideDir } from "$lib/domain/path";
+import { parentDir, isInsideDir, samePath } from "$lib/domain/path";
 
 export interface NativeDropDeps {
   getActiveExplorer: () => ExplorerInstance | undefined;
@@ -79,7 +79,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
 
     for (const path of sourcePaths) {
       const sourceDir = parentDir(path);
-      if (sourceDir === destDir) continue;
+      if (samePath(sourceDir, destDir)) continue;
       await handleFileDrop(path, destDir, isCopy, dropOptions);
     }
 
@@ -95,7 +95,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
         if (target?.type === "background") {
           const destDir = target.path || explorer.currentPath;
           const paths = dragData.paths ?? [dragData.path];
-          if (paths.every((p) => parentDir(p) === destDir)) {
+          if (paths.every((p) => samePath(parentDir(p), destDir))) {
             clearHighlights();
             return;
           }

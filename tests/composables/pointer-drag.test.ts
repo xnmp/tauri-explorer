@@ -256,6 +256,23 @@ describe("usePointerDrag", () => {
     expect(handleFileDrop).not.toHaveBeenCalled();
   });
 
+  it("no-op detection survives mixed separators (Windows: parentDir is '/', data-path is '\\')", async () => {
+    // The folder data-path comes from the DOM as a native backslash path, while
+    // parentDir(source) yields forward slashes; a naive === would miss the no-op
+    // and pop the conflict dialog. samePath must catch it.
+    const entry = { path: "C:\\Users\\me\\file.txt", name: "file.txt", kind: "file" } as any;
+    vi.mocked(resolveDropTargetAtPoint).mockReturnValue({ type: "folder", path: "C:\\Users\\me" });
+
+    const explorer = makeMockExplorer();
+    const drag = usePointerDrag({ getExplorer: () => explorer, refreshPanes: undefined });
+
+    drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), entry, false);
+    fireWindowEvent("mousemove", { clientX: 110, clientY: 100 });
+    await fireWindowEvent("mouseup", { clientX: 200, clientY: 200, altKey: false });
+
+    expect(handleFileDrop).not.toHaveBeenCalled();
+  });
+
   it("option+mouseup triggers copy (altKey=true)", async () => {
     vi.mocked(resolveDropTargetAtPoint).mockReturnValue({ type: "folder", path: "/home/user/Docs" });
 

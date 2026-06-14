@@ -6,6 +6,7 @@ import {
   basename,
   joinPath,
   isInsideDir,
+  samePath,
   toForwardSlashes,
 } from "../../src/lib/domain/path";
 
@@ -175,6 +176,28 @@ describe("isInsideDir", () => {
 
   it("tolerates a trailing separator on the parent", () => {
     expect(isInsideDir("/a/b/c", "/a/b/")).toBe(true);
+  });
+});
+
+describe("samePath", () => {
+  it("treats forward- and back-slash forms of the same path as equal", () => {
+    expect(samePath("C:/Users/x", "C:\\Users\\x")).toBe(true);
+    expect(samePath("C:\\Users\\x\\Documents", "C:/Users/x/Documents")).toBe(true);
+  });
+
+  it("ignores a single trailing separator", () => {
+    expect(samePath("/a/b/", "/a/b")).toBe(true);
+    expect(samePath("C:\\a\\", "C:/a")).toBe(true);
+  });
+
+  it("distinguishes genuinely different paths", () => {
+    expect(samePath("/a/b", "/a/c")).toBe(false);
+    expect(samePath("C:\\Users\\x", "C:\\Users\\y")).toBe(false);
+  });
+
+  it("matches parentDir output against a native backslash dir (the Windows drop bug)", () => {
+    // parentDir emits forward slashes; the DOM data-path is backslash.
+    expect(samePath(parentDir("C:\\Users\\x\\file.txt"), "C:\\Users\\x")).toBe(true);
   });
 });
 

@@ -13,7 +13,7 @@
 import { onDestroy } from "svelte";
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
-import { parentDir, basename, isInsideDir } from "$lib/domain/path";
+import { parentDir, basename, isInsideDir, samePath } from "$lib/domain/path";
 import { dragState } from "$lib/state/drag.svelte";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { handleFileDrop, handleBackgroundDrop } from "$lib/state/drop-operations";
@@ -37,7 +37,9 @@ const THRESHOLD_PX = 5;
  * of it (can't move a folder into itself).
  */
 function isNoOpDropPath(targetDir: string, source: string): boolean {
-  return parentDir(source) === targetDir || isInsideDir(targetDir, source);
+  // samePath (not ===) because parentDir emits forward slashes while targetDir
+  // comes from a DOM data-path (native backslashes on Windows).
+  return samePath(parentDir(source), targetDir) || isInsideDir(targetDir, source);
 }
 
 export function usePointerDrag(deps: PointerDragDeps) {
@@ -188,7 +190,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
     } else if (target?.type === "background") {
       const destPath = target.path || explorer.currentPath;
       const sourceDir = dragPaths[0] ? parentDir(dragPaths[0]) : undefined;
-      if (sourceDir !== destPath) {
+      if (sourceDir !== undefined && !samePath(sourceDir, destPath)) {
         const paths = [...dragPaths];
         cleanup(true);
         for (const sourcePath of paths) {

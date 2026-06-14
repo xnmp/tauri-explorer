@@ -4,6 +4,7 @@
  */
 
 import { startDrag } from "@crabnebula/tauri-plugin-drag";
+import { isWindows } from "$lib/domain/platform";
 
 // 1×1 transparent PNG. The plugin requires a valid image for the drag preview;
 // an empty string deserializes to a bogus PathBuf and fails at runtime on some platforms.
@@ -14,12 +15,30 @@ function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+// UNC paths (e.g. \\wsl.localhost\Ubuntu-24.04\...) can't be turned into a
+// valid ITEMIDLIST via ILCreateFromPathW, so the OLE drag won't actually
+// engage for them — but our vendored `drag` patch returns an error instead
+// of panicking, so we still hand them to the plugin. Kept exported so
+// callers can decide whether to also suppress the HTML5 fallback.
+export function isUncPath(path: string): boolean {
+  return path.startsWith("\\\\") || path.startsWith("//");
+}
+
+// ILCreateFromPathW silently misbehaves on mixed-separator drive paths like
+// `C:\Users\chonw/Downloads\image.jpg` — the call appears to succeed but the
+// OLE drag never properly initiates, so the cursor stays a cancel icon and no
+// ghost renders. The mix arises because sidebar quick-links join the home dir
+// (backslashes) with `"/Downloads"` etc.; normalize at the boundary.
+function normalizeForWindowsShell(path: string): string {
+  if (isUncPath(path)) return path;
+  return path.replace(/\//g, "\\");
+}
+
 export async function startExternalDrag(paths: string[], iconPath?: string): Promise<void> {
   if (!isTauri() || paths.length === 0) return;
+  const item = isWindows ? paths.map(normalizeForWindowsShell) : paths;
   try {
-    console.debug("[external-drag] starting native drag for", paths.length, "items");
-    await startDrag({ item: paths, icon: iconPath || TRANSPARENT_PNG });
-    console.debug("[external-drag] native drag completed");
+    await startDrag({ item, icon: iconPath || TRANSPARENT_PNG });
   } catch (err) {
     console.warn("External drag failed:", err);
   }

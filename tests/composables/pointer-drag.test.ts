@@ -227,6 +227,35 @@ describe("usePointerDrag", () => {
     );
   });
 
+  it("does nothing when dropping onto the file's own folder (no conflict dialog)", async () => {
+    // /home/user/file.txt dropped onto its own parent /home/user is a no-op.
+    vi.mocked(resolveDropTargetAtPoint).mockReturnValue({ type: "folder", path: "/home/user" });
+
+    const explorer = makeMockExplorer();
+    const drag = usePointerDrag({ getExplorer: () => explorer, refreshPanes: undefined });
+    const entry = makeEntry("file.txt");
+
+    drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), entry, false);
+    fireWindowEvent("mousemove", { clientX: 110, clientY: 100 });
+    await fireWindowEvent("mouseup", { clientX: 200, clientY: 200, altKey: false });
+
+    expect(handleFileDrop).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when dropping a folder onto itself", async () => {
+    const entry = makeEntry("Documents", "directory"); // /home/user/Documents
+    vi.mocked(resolveDropTargetAtPoint).mockReturnValue({ type: "folder", path: entry.path });
+
+    const explorer = makeMockExplorer();
+    const drag = usePointerDrag({ getExplorer: () => explorer, refreshPanes: undefined });
+
+    drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), entry, false);
+    fireWindowEvent("mousemove", { clientX: 110, clientY: 100 });
+    await fireWindowEvent("mouseup", { clientX: 200, clientY: 200, altKey: false });
+
+    expect(handleFileDrop).not.toHaveBeenCalled();
+  });
+
   it("option+mouseup triggers copy (altKey=true)", async () => {
     vi.mocked(resolveDropTargetAtPoint).mockReturnValue({ type: "folder", path: "/home/user/Docs" });
 

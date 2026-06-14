@@ -309,22 +309,13 @@ fn open_image_with_siblings_blocking(path: String) -> Result<(), AppError> {
         return Err(AppError::NotFound(path));
     }
 
-    // Windows: launch through Explorer so the default viewer (Photos) opens with
-    // the parent-folder context and can step through sibling images with the
-    // arrow keys — exactly like double-clicking the image in File Explorer.
-    // `opener::open` (a bare ShellExecute on the file) opens it in isolation, so
-    // left/right does nothing. `explorer.exe <file>` defers to the shell's
-    // default-verb open with the folder pidl, which is what gives Photos its
-    // navigation. (Sibling-list passing below is for Linux viewers like imv.)
+    // Windows: open with the default viewer via the shell. (`explorer.exe
+    // <file>` was tried to get Photos' folder navigation but it opened a File
+    // Explorer window instead, so we use opener::open. The sibling-list passing
+    // below is for Linux viewers like imv and doesn't apply here.)
     #[cfg(windows)]
     {
-        use crate::process_ext::NoConsole;
-        return std::process::Command::new("explorer.exe")
-            .no_console()
-            .arg(&file_path)
-            .spawn()
-            .map(reap_in_background)
-            .map_err(AppError::Io);
+        return opener::open(&file_path).map_err(|e| AppError::Other(e.to_string()));
     }
 
     #[cfg(not(windows))]

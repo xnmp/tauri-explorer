@@ -21,7 +21,7 @@ png = Image.open(icons_dir / "icon.png").convert("RGBA")
 # read noticeably small next to other apps. Zoom the glyph in slightly for the
 # .ico only (centered crop of a scaled copy) so it fills more of the frame. The
 # .icns below keeps the original padding.
-ICO_CONTENT_SCALE = 1.15
+ICO_CONTENT_SCALE = 1.08
 ico_sizes = [16, 32, 48, 64, 128, 256]
 frames: list[tuple[int, bytes]] = []
 for size in ico_sizes:

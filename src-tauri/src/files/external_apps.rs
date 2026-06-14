@@ -309,12 +309,40 @@ fn open_image_with_siblings_blocking(path: String) -> Result<(), AppError> {
         return Err(AppError::NotFound(path));
     }
 
-    // Windows: open with the default viewer via the shell. (`explorer.exe
-    // <file>` was tried to get Photos' folder navigation but it opened a File
-    // Explorer window instead, so we use opener::open. The sibling-list passing
-    // below is for Linux viewers like imv and doesn't apply here.)
+    // Windows: replicate an Explorer double-click so the default viewer (Photos)
+    // gets the parent-folder context and can step through sibling images with
+    // the arrow keys. A plain ShellExecute (opener::open) hands Photos only the
+    // single file, so left/right does nothing. Instead invoke the item's default
+    // verb *from within its folder namespace* via Shell.Application — exactly
+    // what double-clicking does — using a short PowerShell shell-out (the path
+    // is passed in an env var, never interpolated into the script). Fall back to
+    // opener::open if anything fails so the image still opens.
+    // (The sibling-list passing below is for Linux viewers like imv.)
     #[cfg(windows)]
     {
+        use crate::process_ext::NoConsole;
+        const SCRIPT: &str = r#"
+$ErrorActionPreference = 'Stop'
+$p = $env:IMG_PATH
+$dir = Split-Path -LiteralPath $p -Parent
+$leaf = Split-Path -LiteralPath $p -Leaf
+$shell = New-Object -ComObject Shell.Application
+$folder = $shell.Namespace($dir)
+if ($null -eq $folder) { exit 1 }
+$item = $folder.ParseName($leaf)
+if ($null -eq $item) { exit 1 }
+$item.InvokeVerb()
+"#;
+        let invoked = std::process::Command::new("powershell")
+            .no_console()
+            .args(["-NoProfile", "-NonInteractive", "-STA", "-Command", SCRIPT])
+            .env("IMG_PATH", &file_path)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if invoked {
+            return Ok(());
+        }
         return opener::open(&file_path).map_err(|e| AppError::Other(e.to_string()));
     }
 

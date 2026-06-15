@@ -216,6 +216,7 @@ struct WindowsVolInfo {
 /// empty map and we fall back to drive letters.
 #[cfg(target_os = "windows")]
 fn windows_volume_info() -> std::collections::HashMap<char, WindowsVolInfo> {
+    use crate::process_ext::NoConsole;
     use std::collections::HashMap;
     use std::process::Command;
 
@@ -227,6 +228,7 @@ fn windows_volume_info() -> std::collections::HashMap<char, WindowsVolInfo> {
 
     let output = Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .no_console()
         .output();
 
     let Ok(output) = output else {
@@ -264,11 +266,12 @@ fn windows_volume_info() -> std::collections::HashMap<char, WindowsVolInfo> {
 /// without WSL this returns empty.
 #[cfg(target_os = "windows")]
 fn windows_wsl_drives() -> Vec<Drive> {
+    use crate::process_ext::NoConsole;
     use std::process::Command;
 
     let mut drives = Vec::new();
 
-    let output = Command::new("wsl").args(["-l", "-q"]).output();
+    let output = Command::new("wsl").args(["-l", "-q"]).no_console().output();
     let Ok(output) = output else {
         return drives;
     };

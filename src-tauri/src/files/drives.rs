@@ -226,7 +226,6 @@ fn windows_volume_info() -> std::collections::HashMap<char, WindowsVolInfo> {
     let script = "Get-CimInstance Win32_LogicalDisk | ForEach-Object { \
          \"$($_.DeviceID)|$($_.VolumeName)|$($_.ProviderName)|$($_.DriveType)\" }";
 
-    log::info!("[spawn-diag] drives: spawning powershell (Win32_LogicalDisk volume info)");
     let output = Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .no_console()
@@ -272,7 +271,6 @@ fn windows_wsl_drives() -> Vec<Drive> {
 
     let mut drives = Vec::new();
 
-    log::info!("[spawn-diag] drives: spawning wsl -l -q");
     let output = Command::new("wsl").args(["-l", "-q"]).no_console().output();
     let Ok(output) = output else {
         return drives;

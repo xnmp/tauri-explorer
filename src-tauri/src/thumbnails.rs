@@ -561,7 +561,6 @@ fn get_micro_thumbnail_sync(
 fn ffmpeg_runs(cmd: &Path) -> bool {
     use crate::process_ext::NoConsole;
     use std::process::Command;
-    log::info!("[spawn-diag] thumbnails: probing ffmpeg candidate {}", cmd.display());
     Command::new(cmd)
         .arg("-version")
         .no_console()
@@ -714,7 +713,6 @@ fn extract_media_thumbnail(source: &Path, size: u32, is_audio: bool) -> Result<V
     let vf =
         format!("scale='min({size},iw)':'min({size},ih)':force_original_aspect_ratio=decrease");
 
-    log::info!("[spawn-diag] thumbnails: spawning ffmpeg to extract frame from {}", source.display());
     let mut cmd = Command::new(ffmpeg);
     if is_audio {
         // Cover art is an attached-picture video stream; select it explicitly,

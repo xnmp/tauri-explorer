@@ -20,6 +20,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Rust build only | `cd src-tauri && cargo build` |
 | Rust tests only | `cd src-tauri && cargo test` |
 
+### WSL ↔ Windows: always `git push` after committing
+
+When developing in WSL (e.g. on the `windows` branch), the Windows side builds/tests by pulling from the remote — it does **not** see your WSL working tree. After committing a change you want verified on Windows, **`git push`**. A commit that isn't pushed will not reach the Windows build, so the fix appears to "not work" when it simply never arrived.
+
 ## Architecture Overview
 
 **Stack:** Tauri v2 (Rust backend) + Svelte 5 (runes) + TypeScript + Vite 6. Package manager: `bun`.

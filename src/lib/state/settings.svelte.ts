@@ -88,6 +88,7 @@ export interface Settings {
   yaziNavigation: boolean; // left/right arrows navigate up/into folders in details/list view
   previewFontSize: number; // base font size (px) for text/code/markdown previews
   autoEnterSingleSubdir: boolean; // when entering a dir with exactly one visible subdir (and nothing else), descend into it recursively
+  ffmpegPath: string; // explicit path to ffmpeg binary for video/audio thumbnails (empty = auto-detect)
 }
 
 const MIN_ZOOM = 50;
@@ -139,6 +140,7 @@ const DEFAULT_SETTINGS: Settings = {
   yaziNavigation: true,
   previewFontSize: 12,
   autoEnterSingleSubdir: false,
+  ffmpegPath: "",
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -387,6 +389,9 @@ function createSettingsStore() {
     },
     get autoEnterSingleSubdir() {
       return settings.autoEnterSingleSubdir;
+    },
+    get ffmpegPath() {
+      return settings.ffmpegPath;
     },
     toggleMillerColumns(): void {
       const on = settings.millerLayers > 0;

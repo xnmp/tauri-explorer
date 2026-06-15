@@ -589,6 +589,31 @@ fn ffmpeg_fallback_candidates() -> Vec<PathBuf> {
         }
         v.push(PathBuf::from(r"C:\ffmpeg\bin\ffmpeg.exe"));
         v.push(PathBuf::from(r"C:\ProgramData\chocolatey\bin\ffmpeg.exe"));
+
+        // winget installs into versioned package subdirs (e.g.
+        // %LOCALAPPDATA%\Microsoft\WinGet\Packages\Gyan.FFmpeg_…\ffmpeg-7.x-full_build\bin\ffmpeg.exe),
+        // so glob: for each package dir whose name contains "ffmpeg", look for
+        // <pkg>/<any>/bin/ffmpeg.exe.
+        if let Some(local) = env("LOCALAPPDATA") {
+            let packages = PathBuf::from(local).join(r"Microsoft\WinGet\Packages");
+            if let Ok(pkg_dirs) = std::fs::read_dir(&packages) {
+                for pkg in pkg_dirs.flatten() {
+                    if !pkg
+                        .file_name()
+                        .to_string_lossy()
+                        .to_lowercase()
+                        .contains("ffmpeg")
+                    {
+                        continue;
+                    }
+                    if let Ok(inner) = std::fs::read_dir(pkg.path()) {
+                        for sub in inner.flatten() {
+                            v.push(sub.path().join(r"bin\ffmpeg.exe"));
+                        }
+                    }
+                }
+            }
+        }
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -604,30 +629,72 @@ fn ffmpeg_fallback_candidates() -> Vec<PathBuf> {
     v
 }
 
-/// Locate a working `ffmpeg` binary: PATH first, then common install locations.
-/// Cached after the first probe so we don't re-spawn `ffmpeg -version` per tile.
-fn ffmpeg_path() -> Option<&'static Path> {
-    static FFMPEG: OnceLock<Option<PathBuf>> = OnceLock::new();
-    FFMPEG
-        .get_or_init(|| {
-            if ffmpeg_runs(Path::new("ffmpeg")) {
-                log::info!("[thumbnails] ffmpeg found on PATH");
-                return Some(PathBuf::from("ffmpeg"));
-            }
-            let candidates = ffmpeg_fallback_candidates();
-            for c in &candidates {
-                if c.exists() && ffmpeg_runs(c) {
-                    log::info!("[thumbnails] ffmpeg found at {}", c.display());
-                    return Some(c.clone());
-                }
-            }
-            log::warn!(
-                "[thumbnails] ffmpeg NOT found on PATH or in {} fallback locations — video/audio thumbnails will be unavailable",
-                candidates.len()
+/// User-configured explicit ffmpeg path (from settings). Takes priority over
+/// auto-detection. Empty/unset = auto-detect only.
+fn ffmpeg_override() -> &'static Mutex<Option<String>> {
+    static OVERRIDE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    OVERRIDE.get_or_init(|| Mutex::new(None))
+}
+
+/// Cached resolution: `None` = not yet computed, `Some(opt)` = computed.
+/// Invalidated by `set_ffmpeg_path` so a newly-configured path takes effect.
+fn ffmpeg_resolved() -> &'static Mutex<Option<Option<PathBuf>>> {
+    static RESOLVED: OnceLock<Mutex<Option<Option<PathBuf>>>> = OnceLock::new();
+    RESOLVED.get_or_init(|| Mutex::new(None))
+}
+
+/// Set (or clear) the explicit ffmpeg path and invalidate the cached lookup so
+/// the next thumbnail request re-resolves. Called from the frontend when the
+/// "FFmpeg path" setting changes.
+fn set_ffmpeg_path_impl(path: Option<String>) {
+    *ffmpeg_override().lock().unwrap() = path.filter(|p| !p.trim().is_empty());
+    *ffmpeg_resolved().lock().unwrap() = None;
+}
+
+fn resolve_ffmpeg_path() -> Option<PathBuf> {
+    // 1. Explicit user-configured path wins.
+    if let Some(p) = ffmpeg_override().lock().unwrap().clone() {
+        let pb = PathBuf::from(&p);
+        if ffmpeg_runs(&pb) {
+            log::info!(
+                "[thumbnails] using configured ffmpeg path: {}",
+                pb.display()
             );
-            None
-        })
-        .as_deref()
+            return Some(pb);
+        }
+        log::warn!("[thumbnails] configured ffmpeg path does not run: {}", p);
+    }
+    // 2. PATH.
+    if ffmpeg_runs(Path::new("ffmpeg")) {
+        log::info!("[thumbnails] ffmpeg found on PATH");
+        return Some(PathBuf::from("ffmpeg"));
+    }
+    // 3. Common install locations.
+    let candidates = ffmpeg_fallback_candidates();
+    for c in &candidates {
+        if c.exists() && ffmpeg_runs(c) {
+            log::info!("[thumbnails] ffmpeg found at {}", c.display());
+            return Some(c.clone());
+        }
+    }
+    log::warn!(
+        "[thumbnails] ffmpeg NOT found on PATH or in {} fallback locations — set an explicit FFmpeg path in Settings, or add ffmpeg to PATH and restart. Video/audio thumbnails are unavailable.",
+        candidates.len()
+    );
+    None
+}
+
+/// Locate a working `ffmpeg` binary (configured path → PATH → install locations).
+/// Result is cached until `set_ffmpeg_path` invalidates it.
+fn ffmpeg_path() -> Option<PathBuf> {
+    let cell = ffmpeg_resolved();
+    let mut guard = cell.lock().unwrap();
+    if let Some(ref resolved) = *guard {
+        return resolved.clone();
+    }
+    let resolved = resolve_ffmpeg_path();
+    *guard = Some(resolved.clone());
+    resolved
 }
 
 /// Extract a thumbnail JPEG of `size`x`size` (aspect-preserved, fit inside the
@@ -965,6 +1032,17 @@ pub async fn get_video_thumbnail_data(
     tokio::task::spawn_blocking(move || get_video_thumbnail_data_sync(path, size, quality))
         .await
         .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
+}
+
+/// Configure an explicit ffmpeg binary path (from Settings). Pass an empty
+/// string to clear it and fall back to auto-detection.
+#[tauri::command]
+pub async fn set_ffmpeg_path(path: String) {
+    set_ffmpeg_path_impl(if path.trim().is_empty() {
+        None
+    } else {
+        Some(path)
+    });
 }
 
 /// Get a folder collage thumbnail (up to a 2x2 grid of the folder's images) as a

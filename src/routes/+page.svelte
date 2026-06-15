@@ -18,6 +18,7 @@
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { saveFocusedWindowState } from "$lib/state/focused-window";
+  import { setFfmpegPath } from "$lib/api/files";
   import { useNativeDropHandler } from "$lib/composables/use-native-drop-handler";
   import { useFileWatchers } from "$lib/composables/use-file-watchers";
   import { useWindowLifecycle } from "$lib/composables/use-window-lifecycle";
@@ -183,6 +184,12 @@
   // Apply zoom level reactively
   $effect(() => {
     document.documentElement.style.zoom = `${settingsStore.zoomLevel}%`;
+  });
+
+  // Push the configured ffmpeg path to the backend on startup and whenever it
+  // changes, so video/audio thumbnails can find ffmpeg when it isn't on PATH.
+  $effect(() => {
+    void setFfmpegPath(settingsStore.ffmpegPath);
   });
 
   // Apply background opacity reactively (for window transparency)

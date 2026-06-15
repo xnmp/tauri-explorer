@@ -956,6 +956,7 @@ const mockCommands: Record<string, CommandHandler> = {
 
   open_in_terminal: () => {},
   list_installed_terminals: () => ["ghostty", "kitty", "alacritty", "gnome-terminal", "xterm"],
+  set_ffmpeg_path: () => {},
 
   set_as_wallpaper: () => {},
 

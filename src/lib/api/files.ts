@@ -348,6 +348,18 @@ export async function listInstalledTerminals(): Promise<ApiResult<string[]>> {
 }
 
 /**
+ * Set an explicit ffmpeg binary path for video/audio thumbnails (empty string
+ * clears it and reverts to auto-detection). Best-effort; ignores errors.
+ */
+export async function setFfmpegPath(path: string): Promise<void> {
+  try {
+    await invoke("set_ffmpeg_path", { path });
+  } catch {
+    // Not in Tauri runtime or command unavailable — ignore.
+  }
+}
+
+/**
  * Write text content to a new file.
  */
 export async function writeTextFile(path: string, content: string): Promise<ApiResult<FileEntry>> {

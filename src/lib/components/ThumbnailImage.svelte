@@ -262,8 +262,9 @@
          tab behind the photo, lighter front flap over the photo's bottom. -->
     <div class="folder-thumb">
       <svg class="folder-layer" viewBox="0 0 48 48" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-        <!-- Whole folder body + tab (theme folder colour, slightly darkened) -->
-        <path d="M3.5 13.5C3.5 12.4 4.4 11.5 5.5 11.5H17.5C18 11.5 18.5 11.7 18.9 12.1L21 14.2H42.5C43.6 14.2 44.5 15.1 44.5 16.2V37.5C44.5 38.6 43.6 39.5 42.5 39.5H5.5C4.4 39.5 3.5 38.6 3.5 37.5V13.5Z" class="folder-back-fill"/>
+        <!-- Whole folder body + tab (theme folder colour, slightly darkened).
+             The tab sits at the top so it stays visible ABOVE the photo. -->
+        <path d="M4 11.5C4 10.4 4.9 9.5 6 9.5H17C17.5 9.5 18 9.7 18.4 10.1L20.5 12.2H42C43.1 12.2 44 13.1 44 14.2V37C44 38.1 43.1 39 42 39H6C4.9 39 4 38.1 4 37V11.5Z" class="folder-back-fill"/>
       </svg>
       <img
         src={fullUrl}
@@ -275,8 +276,8 @@
       />
       <svg class="folder-layer" viewBox="0 0 48 48" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
         <!-- Front flap (theme folder colour) covering the photo's lower edge -->
-        <path d="M3.5 29H44.5V37.5C44.5 38.6 43.6 39.5 42.5 39.5H5.5C4.4 39.5 3.5 38.6 3.5 37.5V29Z" class="folder-front-fill"/>
-        <path d="M3.5 29H44.5V30.5H3.5V29Z" fill="#fff" fill-opacity="0.3"/>
+        <path d="M4 27H44V37C44 38.1 43.1 39 42 39H6C4.9 39 4 38.1 4 37V27Z" class="folder-front-fill"/>
+        <path d="M4 27H44V28.5H4V27Z" fill="#fff" fill-opacity="0.3"/>
       </svg>
     </div>
   {:else}
@@ -399,12 +400,13 @@
 
   .folder-photo {
     position: absolute;
-    /* Photo sits in the folder, bottom edge (~68%) tucked behind the front flap
-       (front top at y29 ≈ 60%), most of it visible above. */
-    top: 22%;
-    left: 14%;
-    right: 14%;
-    bottom: 32%;
+    /* Photo sits as a strip in the folder body, BELOW the tab (tab top ≈20%) so
+       the folder tab stays visible above it; its bottom edge (~64%) is tucked
+       behind the front flap (front top at y27 ≈ 56%). */
+    top: 31%;
+    left: 13%;
+    right: 13%;
+    bottom: 36%;
     width: auto;
     height: auto;
     object-fit: cover;

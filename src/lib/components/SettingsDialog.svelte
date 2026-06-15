@@ -102,6 +102,7 @@
     wallpaperBlur: ["Wallpaper Blur", "Blur the background image"],
     terminalApp: ["Terminal Application", "Command to open terminal (empty = auto-detect)"],
     previewFontSize: ["Preview Font Size", "Font size for text, code and markdown previews"],
+    ffmpegPath: ["FFmpeg Path", "Path to the ffmpeg binary for video/audio thumbnails (leave empty to auto-detect)", "video", "thumbnail"],
     geminiApiKey: ["Gemini API Key", "Required for Nano Banana image editing (right-click images)", "AI", "Nano Banana"],
     keyboardShortcuts: ["Keyboard Shortcuts", "keybindings", "hotkeys", "Click on a shortcut to change it"],
   };
@@ -117,7 +118,7 @@
     rows.showHidden, rows.millerHideEmpty, rows.yaziNavigation, rows.autoEnterSingleSubdir, rows.showManuallyHidden,
     rows.gitStatus, rows.recentItems, rows.quickOpenDebug, rows.confirmDelete,
     rows.backgroundOpacity, rows.backgroundImage, rows.wallpaperBlur, rows.terminalApp,
-    rows.previewFontSize,
+    rows.previewFontSize, rows.ffmpegPath,
   ];
 
   // Escape clears the search filter before closing, so the Modal default
@@ -638,6 +639,20 @@
               step="1"
               value={settingsStore.previewFontSize}
               oninput={(e) => settingsStore.setPreviewFontSize(Number(e.currentTarget.value))}
+            />
+          </div>
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.ffmpegPath)}>
+            <div class="setting-info">
+              <span class="setting-label">FFmpeg Path</span>
+              <span class="setting-description">Path to ffmpeg for video/audio thumbnails (empty = auto-detect)</span>
+            </div>
+            <input
+              class="text-input"
+              type="text"
+              value={settingsStore.ffmpegPath}
+              placeholder="e.g. C:\\ffmpeg\\bin\\ffmpeg.exe"
+              onchange={(e) => settingsStore.update({ ffmpegPath: e.currentTarget.value })}
             />
           </div>
         </section>

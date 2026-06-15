@@ -28,6 +28,9 @@ export async function openNewWindow(
   path: string,
   viewMode?: ViewMode,
   tabSnapshot?: TabSnapshot,
+  /** Physical-pixel top-left to place the new window at (e.g. a tab tear-off at
+   *  the cursor). Defaults to a small offset from the current window. */
+  at?: { x: number; y: number },
 ): Promise<void> {
   // Seed the child window with current directory entries for instant rendering
   const explorer = windowTabsManager.getActiveExplorer();
@@ -66,8 +69,10 @@ export async function openNewWindow(
     title: "tauri-explorer",
     width: size.width,
     height: size.height,
-    x: pos.x + 30,
-    y: pos.y + 30,
+    // Tear-off places the new window so its title bar sits under the cursor;
+    // otherwise offset slightly from the current window.
+    x: at ? Math.round(at.x - 120) : pos.x + 30,
+    y: at ? Math.round(at.y - 16) : pos.y + 30,
     backgroundColor: winBackdrop ? undefined : getPersistedBgColor(),
     decorations: isMac,
     // Windows 11 only rounds corners (and draws the DWM shadow) on opaque

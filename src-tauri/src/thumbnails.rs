@@ -557,24 +557,65 @@ fn get_micro_thumbnail_sync(
 
 // ─── Video frame thumbnails (ffmpeg) ────────────────────────────────────────
 
-/// Locate an `ffmpeg` binary on PATH. Cached after the first probe so we don't
-/// re-spawn `ffmpeg -version` for every video tile.
-fn ffmpeg_path() -> Option<&'static Path> {
+/// Return true if `cmd` runs `-version` successfully (i.e. it's a real ffmpeg).
+fn ffmpeg_runs(cmd: &Path) -> bool {
     use crate::process_ext::NoConsole;
     use std::process::Command;
+    Command::new(cmd)
+        .arg("-version")
+        .no_console()
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
 
+/// Common absolute install locations to try when `ffmpeg` isn't on PATH — most
+/// relevant on Windows, where ffmpeg is usually unzipped into a folder rather
+/// than added to PATH (winget/scoop/choco/manual), and macOS Homebrew.
+fn ffmpeg_fallback_candidates() -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    let env = |k: &str| std::env::var(k).ok();
+    #[cfg(target_os = "windows")]
+    {
+        for base in [env("LOCALAPPDATA"), env("ProgramFiles"), env("USERPROFILE")]
+            .into_iter()
+            .flatten()
+        {
+            v.push(PathBuf::from(&base).join(r"Microsoft\WinGet\Links\ffmpeg.exe"));
+            v.push(PathBuf::from(&base).join(r"ffmpeg\bin\ffmpeg.exe"));
+            v.push(PathBuf::from(&base).join(r"scoop\shims\ffmpeg.exe"));
+        }
+        v.push(PathBuf::from(r"C:\ffmpeg\bin\ffmpeg.exe"));
+        v.push(PathBuf::from(r"C:\ProgramData\chocolatey\bin\ffmpeg.exe"));
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = env; // unused on non-windows
+        for p in [
+            "/opt/homebrew/bin/ffmpeg",
+            "/usr/local/bin/ffmpeg",
+            "/usr/bin/ffmpeg",
+        ] {
+            v.push(PathBuf::from(p));
+        }
+    }
+    v
+}
+
+/// Locate a working `ffmpeg` binary: PATH first, then common install locations.
+/// Cached after the first probe so we don't re-spawn `ffmpeg -version` per tile.
+fn ffmpeg_path() -> Option<&'static Path> {
     static FFMPEG: OnceLock<Option<PathBuf>> = OnceLock::new();
     FFMPEG
         .get_or_init(|| {
-            let found = Command::new("ffmpeg")
-                .arg("-version")
-                .no_console()
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-            found.then(|| PathBuf::from("ffmpeg"))
+            if ffmpeg_runs(Path::new("ffmpeg")) {
+                return Some(PathBuf::from("ffmpeg"));
+            }
+            ffmpeg_fallback_candidates()
+                .into_iter()
+                .find(|c| c.exists() && ffmpeg_runs(c))
         })
         .as_deref()
 }

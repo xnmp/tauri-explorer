@@ -734,13 +734,24 @@
     min-height: 0;
   }
 
-  /* Fullscreen: image fits the whole screen (no width-fit overflow/scroll). */
+  /* Fullscreen: image fills the whole screen symmetrically — hide the header
+     and info bar (which created an asymmetric top margin) and drop the image
+     container padding and the image's rounded corners. */
+  .preview-pane.fullscreen .preview-header,
+  .preview-pane.fullscreen .preview-info {
+    display: none;
+  }
   .preview-pane.fullscreen .preview-content {
     overflow: hidden;
   }
   .preview-pane.fullscreen .preview-image-container {
     min-height: 0;
     overflow: hidden;
+    padding: 0;
+  }
+  .preview-pane.fullscreen .preview-image {
+    border-radius: 0;
+    box-shadow: none;
   }
   .preview-pane.fullscreen .preview-image {
     transition: transform 80ms ease-out;

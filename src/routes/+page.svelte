@@ -7,6 +7,7 @@
   import { onMount } from "svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
@@ -179,6 +180,17 @@
       document.documentElement.removeAttribute("data-vibrancy");
       document.documentElement.removeAttribute("data-vibrancy-no-blur");
     }
+  });
+
+  // Windows Mica/Acrylic: apply the native backdrop with a theme-matched tint
+  // at runtime so changing material, opacity, or theme updates the live window
+  // (the tint controls how see-through Acrylic is). Re-runs when any of those
+  // reactive inputs change; theme is read so the tint follows the palette.
+  $effect(() => {
+    void settingsStore.windowsBackdrop;
+    void settingsStore.windowsBackdropOpacity;
+    void settingsStore.theme;
+    applyWindowsBackdrop();
   });
 
   // Lightweight file-picker mode (portal windows): ?picker=open|save.

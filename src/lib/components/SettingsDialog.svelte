@@ -44,7 +44,8 @@
     integratedTitleBar: ["Integrated Title Bar", "Show tabs in the title bar alongside window controls (requires restart)"],
     vibrancy: ["Window Vibrancy", "Native macOS translucent frosted-glass effect (requires restart)"],
     nativeBlur: ["Native Blur", "Use macOS frosted glass blur (off = theme background, requires restart)"],
-    windowsBackdrop: ["Window Backdrop", "Windows translucent Mica/Acrylic frosted-glass effect (requires restart)"],
+    windowsBackdrop: ["Window Backdrop", "Windows translucent Mica/Acrylic frosted-glass effect (enabling from Off requires restart)"],
+    windowsBackdropOpacity: ["Backdrop Opacity", "How see-through the Acrylic backdrop is (lower = more transparent)"],
     addressBar: ["Show Address Bar", "Display the breadcrumb/path bar above the file list"],
     statusBar: ["Show Status Bar", "Display file info bar at the bottom (Alt+M U)"],
     navBack: ["Back", "Show the back navigation button"],
@@ -70,7 +71,7 @@
   const appearanceRows = [
     rows.theme, rows.iconTheme, rows.thumbnailSize, rows.showSidebar, rows.windowControls,
     ...(isMac ? [rows.integratedTitleBar, rows.vibrancy, rows.nativeBlur] : []),
-    ...(isWindows ? [rows.windowsBackdrop] : []),
+    ...(isWindows ? [rows.windowsBackdrop, rows.windowsBackdropOpacity] : []),
     rows.addressBar, rows.statusBar,
   ];
   const navBarRows = [rows.navBack, rows.navForward, rows.navUp, rows.navRefresh];
@@ -268,7 +269,7 @@
           <div class="setting-row" class:hidden={!matchesSearch(...rows.windowsBackdrop)}>
             <div class="setting-info">
               <span class="setting-label">Window Backdrop</span>
-              <span class="setting-description">Windows translucent Mica/Acrylic frosted-glass effect (requires restart)</span>
+              <span class="setting-description">Translucent frosted-glass effect (enabling from Off requires restart)</span>
             </div>
             <select
               class="theme-select"
@@ -276,10 +277,28 @@
               onchange={(e) => settingsStore.setWindowsBackdrop(e.currentTarget.value as WindowsBackdrop)}
             >
               <option value="off">Off</option>
-              <option value="mica">Mica</option>
-              <option value="acrylic">Acrylic</option>
+              <option value="mica">Mica (wallpaper tint)</option>
+              <option value="acrylic">Acrylic (see-through)</option>
             </select>
           </div>
+
+          {#if settingsStore.windowsBackdrop === "acrylic"}
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.windowsBackdropOpacity)}>
+            <div class="setting-info">
+              <span class="setting-label">Backdrop Opacity</span>
+              <span class="setting-description">How see-through the Acrylic backdrop is ({settingsStore.windowsBackdropOpacity}%, lower = more transparent)</span>
+            </div>
+            <input
+              class="range-input"
+              type="range"
+              min="0"
+              max="100"
+              step="5"
+              value={settingsStore.windowsBackdropOpacity}
+              oninput={(e) => settingsStore.update({ windowsBackdropOpacity: Number(e.currentTarget.value) })}
+            />
+          </div>
+          {/if}
           {/if}
 
           <div class="setting-row" class:hidden={!matchesSearch(...rows.addressBar)}>

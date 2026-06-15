@@ -84,6 +84,7 @@ export interface Settings {
   macOsVibrancy: boolean; // macOS: native window vibrancy (translucent frosted glass), requires restart
   vibrancyBlur: boolean; // macOS: enable native blur behind vibrancy (off = theme background, no blur)
   windowsBackdrop: WindowsBackdrop; // Windows: translucent system backdrop (Mica/Acrylic), requires restart
+  windowsBackdropOpacity: number; // Windows: acrylic tint opacity 0-100 (lower = more see-through)
   yaziNavigation: boolean; // left/right arrows navigate up/into folders in details/list view
 }
 
@@ -132,6 +133,7 @@ const DEFAULT_SETTINGS: Settings = {
   macOsVibrancy: false,
   vibrancyBlur: true,
   windowsBackdrop: "off",
+  windowsBackdropOpacity: 65,
   yaziNavigation: true,
 };
 
@@ -366,6 +368,9 @@ function createSettingsStore() {
     },
     setWindowsBackdrop(value: WindowsBackdrop): void {
       update({ windowsBackdrop: value });
+    },
+    get windowsBackdropOpacity() {
+      return settings.windowsBackdropOpacity;
     },
     get yaziNavigation() {
       return settings.yaziNavigation;

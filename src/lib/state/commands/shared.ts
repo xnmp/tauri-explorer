@@ -3,8 +3,8 @@
  */
 
 import { WebviewWindow, type Color } from "@tauri-apps/api/webviewWindow";
-import { Effect, EffectState, type Effects } from "@tauri-apps/api/window";
 import { isMac, isWindows } from "$lib/domain/platform";
+import { windowsBackdropEffects } from "../window-backdrop";
 import { windowTabsManager, tabSeedKey, type TabSnapshot } from "../window-tabs.svelte";
 import { settingsStore } from "../settings.svelte";
 import { savePersisted } from "../persisted";
@@ -58,11 +58,8 @@ export async function openNewWindow(
   // Mirror the main window's backdrop so new windows match (issue: Windows
   // Mica/Acrylic). A translucent backdrop needs a transparent window and no
   // opaque background color; the DWM system backdrop still rounds the corners.
-  const winBackdrop =
-    isWindows && settingsStore.windowsBackdrop !== "off" ? settingsStore.windowsBackdrop : null;
-  const windowEffects: Effects | undefined = winBackdrop
-    ? { effects: [winBackdrop === "mica" ? Effect.Mica : Effect.Acrylic], state: EffectState.Active }
-    : undefined;
+  const windowEffects = windowsBackdropEffects();
+  const winBackdrop = windowEffects !== undefined;
 
   new WebviewWindow(label, {
     url,

@@ -37,6 +37,12 @@ const SUPPORTED_VIDEO_EXTENSIONS: &[&str] = &[
     "mp4", "mov", "mkv", "webm", "avi", "wmv", "flv", "m4v", "mpg", "mpeg",
 ];
 
+/// Audio extensions that can carry embedded cover art. We extract the attached
+/// picture (not a frame) via ffmpeg. m4a/mp3/flac/etc. commonly have album art.
+const SUPPORTED_AUDIO_EXTENSIONS: &[&str] = &[
+    "m4a", "mp3", "flac", "ogg", "opus", "aac", "wma", "m4b", "aiff", "alac",
+];
+
 /// Get the cache directory for thumbnails
 fn get_cache_dir() -> Option<PathBuf> {
     dirs::cache_dir().map(|p| p.join("tauri-explorer").join("thumbnails"))
@@ -68,6 +74,14 @@ pub fn is_supported_image(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .map(|e| SUPPORTED_EXTENSIONS.contains(&e.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+/// Check if a file is a supported audio type (thumbnail via embedded cover art)
+pub fn is_supported_audio(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| SUPPORTED_AUDIO_EXTENSIONS.contains(&e.to_lowercase().as_str()))
         .unwrap_or(false)
 }
 
@@ -565,34 +579,37 @@ fn ffmpeg_path() -> Option<&'static Path> {
         .as_deref()
 }
 
-/// Extract a single frame from a video into a JPEG of `size`x`size` (preserving
-/// aspect, fitting inside the box). Returns the JPEG bytes. Requires ffmpeg.
-fn extract_video_frame(source: &Path, size: u32) -> Result<Vec<u8>, AppError> {
+/// Extract a thumbnail JPEG of `size`x`size` (aspect-preserved, fit inside the
+/// box) from a media file via ffmpeg. For video this grabs a frame ~1s in; for
+/// audio (`is_audio`) it extracts the embedded cover art (attached picture) and
+/// does not seek. Returns the JPEG bytes; errors if ffmpeg is missing or the
+/// file has no usable image (e.g. an audio file with no album art).
+fn extract_media_thumbnail(source: &Path, size: u32, is_audio: bool) -> Result<Vec<u8>, AppError> {
     use crate::process_ext::NoConsole;
     use std::process::Command;
 
     let ffmpeg = ffmpeg_path().ok_or_else(|| {
-        AppError::Other("ffmpeg not found on PATH; cannot generate video thumbnail".into())
+        AppError::Other("ffmpeg not found on PATH; cannot generate media thumbnail".into())
     })?;
 
-    // Seek 1s in to skip black intro frames, grab one frame, scale to fit the
-    // box (-1 keeps aspect, divisible by 2), emit JPEG to stdout.
     let vf =
         format!("scale='min({size},iw)':'min({size},ih)':force_original_aspect_ratio=decrease");
-    let output = Command::new(ffmpeg)
-        .args(["-ss", "1", "-i"])
-        .arg(source)
-        .args([
-            "-frames:v",
-            "1",
-            "-vf",
-            &vf,
-            "-f",
-            "image2",
-            "-vcodec",
-            "mjpeg",
-            "-",
-        ])
+
+    let mut cmd = Command::new(ffmpeg);
+    if is_audio {
+        // Cover art is an attached-picture video stream; select it explicitly,
+        // drop audio, take one frame. No -ss (it's a static image).
+        cmd.arg("-i")
+            .arg(source)
+            .args(["-an", "-map", "0:v:0", "-frames:v", "1"]);
+    } else {
+        // Seek 1s in to skip black intro frames, then grab one frame.
+        cmd.args(["-ss", "1", "-i"])
+            .arg(source)
+            .args(["-frames:v", "1"]);
+    }
+    let output = cmd
+        .args(["-vf", &vf, "-f", "image2", "-vcodec", "mjpeg", "-"])
         .no_console()
         .stderr(std::process::Stdio::null())
         .output()
@@ -600,7 +617,8 @@ fn extract_video_frame(source: &Path, size: u32) -> Result<Vec<u8>, AppError> {
 
     if !output.status.success() || output.stdout.is_empty() {
         return Err(AppError::Other(format!(
-            "ffmpeg failed to extract frame from {}",
+            "ffmpeg failed to extract {} thumbnail from {}",
+            if is_audio { "cover-art" } else { "frame" },
             source.display()
         )));
     }
@@ -620,9 +638,10 @@ fn get_video_thumbnail_data_sync(
     if !source_path.exists() {
         return Err(AppError::NotFound(path.clone()));
     }
-    if !is_supported_video(&source_path) {
+    let is_audio = is_supported_audio(&source_path);
+    if !is_supported_video(&source_path) && !is_audio {
         return Err(AppError::InvalidPath(format!(
-            "Unsupported video format: {}",
+            "Unsupported media format: {}",
             path
         )));
     }
@@ -649,7 +668,7 @@ fn get_video_thumbnail_data_sync(
 
         // ffmpeg already scales the frame; re-encode through the image crate so
         // the output is a clean square-fit JPEG at the requested quality.
-        let frame = extract_video_frame(&source_path, size)?;
+        let frame = extract_media_thumbnail(&source_path, size, is_audio)?;
         let img = ImageReader::new(Cursor::new(frame))
             .with_guessed_format()?
             .decode()
@@ -987,6 +1006,18 @@ mod tests {
         assert!(is_supported_video(Path::new("stream.webm")));
         assert!(!is_supported_video(Path::new("photo.jpg")));
         assert!(!is_supported_video(Path::new("notes.txt")));
+        // Audio files are NOT videos (they go through the cover-art path).
+        assert!(!is_supported_video(Path::new("song.m4a")));
+    }
+
+    #[test]
+    fn test_is_supported_audio() {
+        assert!(is_supported_audio(Path::new("song.m4a")));
+        assert!(is_supported_audio(Path::new("TRACK.MP3")));
+        assert!(is_supported_audio(Path::new("lossless.flac")));
+        assert!(is_supported_audio(Path::new("audiobook.m4b")));
+        assert!(!is_supported_audio(Path::new("clip.mp4")));
+        assert!(!is_supported_audio(Path::new("photo.jpg")));
     }
 
     #[test]

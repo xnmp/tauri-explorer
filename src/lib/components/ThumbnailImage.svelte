@@ -253,6 +253,26 @@
       <circle cx="16" cy="16" r="4" fill={fallbackColor}/>
       <path d="M6 33L15 24L22 31L30 21L42 33V38C42 40.2091 40.2091 42 38 42H10C7.79086 42 6 40.2091 6 38V33Z" fill={fallbackColor} fill-opacity="0.4"/>
     </svg>
+  {:else if kind === "folder" && fullUrl}
+    <!-- Folder thumbnail: the collage tucked inside a folder shape (Explorer-style):
+         folder back + tab behind, the photo peeking above a colored front flap. -->
+    <div class="folder-thumb" style="--fc: {fallbackColor}">
+      <svg class="folder-layer folder-back" viewBox="0 0 48 48" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M4 14C4 12.34 5.34 11 7 11H18L21 14H41C42.66 14 44 15.34 44 17V39C44 40.66 42.66 42 41 42H7C5.34 42 4 40.66 4 39V14Z" fill="var(--fc)"/>
+      </svg>
+      <img
+        src={fullUrl}
+        alt=""
+        class="folder-photo"
+        class:loaded={fullLoaded}
+        onload={() => { fullLoaded = true; }}
+        draggable="false"
+      />
+      <svg class="folder-layer folder-front" viewBox="0 0 48 48" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M4 25H44V39C44 40.66 42.66 42 41 42H7C5.34 42 4 40.66 4 39V25Z" fill="var(--fc)"/>
+        <path d="M4 25H44V39C44 40.66 42.66 42 41 42H7C5.34 42 4 40.66 4 39V25Z" fill="#fff" fill-opacity="0.12"/>
+      </svg>
+    </div>
   {:else}
     <!-- Two-layer thumbnail: micro (pixelated) underneath, full on top -->
     {#if microUrl}
@@ -344,6 +364,49 @@
   }
 
   .thumbnail-full.loaded {
+    opacity: 1;
+  }
+
+  /* Folder thumbnail: photo tucked inside a folder shape */
+  .folder-thumb {
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
+
+  .folder-layer {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  .folder-back {
+    filter: brightness(0.85);
+  }
+
+  .folder-front {
+    /* Drawn over the lower part of the photo so it looks tucked in. */
+    pointer-events: none;
+  }
+
+  .folder-photo {
+    position: absolute;
+    /* Sit inside the folder body, peeking above the front flap (~y52%). */
+    top: 26%;
+    left: 16%;
+    right: 16%;
+    bottom: 22%;
+    width: auto;
+    height: auto;
+    object-fit: cover;
+    border-radius: 2px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    opacity: 0;
+    transition: opacity 150ms ease;
+  }
+
+  .folder-photo.loaded {
     opacity: 1;
   }
 </style>

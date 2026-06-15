@@ -22,6 +22,7 @@
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { parentDir } from "$lib/domain/path";
   import type { FileEntry } from "$lib/domain/file";
+  import { isSystemHidden } from "$lib/domain/file";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
   interface Props {
@@ -66,7 +67,7 @@
     const hideEmpty = settingsStore.millerHideEmpty;
     return entries.filter((e) => {
       if (e.kind !== "directory") return false;
-      if (!settingsStore.showHidden && (e.name.startsWith(".") || e.name.startsWith("~$"))) return false;
+      if (!settingsStore.showHidden && (e.name.startsWith(".") || e.name.startsWith("~$") || isSystemHidden(e.name))) return false;
       if (!settingsStore.showManuallyHidden && manualHiddenStore.isHidden(columnPath, e.name)) return false;
       if (hideEmpty && e.path !== activeChildPath) {
         const known = emptyCache.get(e.path);

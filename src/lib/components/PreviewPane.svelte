@@ -6,7 +6,7 @@
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { readTextFile, fetchDirectory, gitDiff, listArchiveContents } from "$lib/api/files";
   import { isImageFile, isTextFile, isPdfFile, isZipFile, getFileType, formatDate } from "$lib/domain/file-types";
-  import { formatSize, type FileEntry } from "$lib/domain/file";
+  import { formatSize, isSystemHidden, type FileEntry } from "$lib/domain/file";
   import { isTauri } from "$lib/api/mock-invoke";
   import { highlightCode } from "$lib/domain/syntax-highlight";
   import { renderMarkdown } from "$lib/domain/markdown";
@@ -40,33 +40,115 @@
   const paneWidth = $derived(settingsStore.previewPaneWidth || DEFAULT_WIDTH);
 
   // --- Fullscreen preview (double-click to toggle, Esc to exit) ---
+  // The image fits the screen (object-fit: contain). Zoom with +/- or Ctrl+wheel;
+  // when zoomed, arrows pan. At base zoom, Left/Right step to the previous/next
+  // previewable sibling file. The window tab bar hides while fullscreen.
   let fullscreen = $state(false);
-  let contentEl = $state<HTMLElement | null>(null);
+  const MIN_ZOOM = 1;
+  const MAX_ZOOM = 8;
+  let zoom = $state(1);
+  let panX = $state(0);
+  let panY = $state(0);
+
+  const imageTransform = $derived(
+    fullscreen && zoom !== 1
+      ? `translate(${panX}px, ${panY}px) scale(${zoom})`
+      : fullscreen
+        ? "scale(1)"
+        : "",
+  );
+
+  function resetZoom(): void {
+    zoom = 1;
+    panX = 0;
+    panY = 0;
+  }
+
+  function setZoom(next: number): void {
+    zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, next));
+    if (zoom === 1) {
+      panX = 0;
+      panY = 0;
+    }
+  }
 
   function toggleFullscreen(): void {
     fullscreen = !fullscreen;
+    resetZoom();
   }
 
-  // While fullscreen: Esc exits; Left/Right arrows scroll the content
-  // horizontally (instead of being captured for file-list navigation).
-  // Capture phase + stopImmediatePropagation so this wins over the global
-  // keyboard handler in +page.svelte.
+  /** Step to the previous/next previewable (non-directory) sibling file. */
+  function navigateSibling(delta: number): void {
+    const explorer = windowTabsManager.getActiveExplorer();
+    if (!explorer || !selectedFile) return;
+    const files = explorer.displayEntries.filter((e) => e.kind !== "directory");
+    if (files.length === 0) return;
+    const idx = files.findIndex((e) => e.path === selectedFile!.path);
+    if (idx < 0) return;
+    const next = files[(idx + delta + files.length) % files.length];
+    explorer.selectEntry(next);
+    resetZoom();
+  }
+
+  function handleFullscreenWheel(event: WheelEvent): void {
+    if (!fullscreen || !event.ctrlKey) return;
+    event.preventDefault();
+    setZoom(zoom * (event.deltaY < 0 ? 1.15 : 1 / 1.15));
+  }
+
+  // While fullscreen: Esc exits; +/- and 0 zoom; arrows pan when zoomed,
+  // else step between sibling files. Capture phase + stopImmediatePropagation
+  // so this wins over the global keyboard handler in +page.svelte.
   $effect(() => {
     if (!fullscreen) return;
+    const PAN = 60;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      const k = event.key;
+      const stop = () => {
         event.preventDefault();
         event.stopImmediatePropagation();
+      };
+      if (k === "Escape") {
+        stop();
         fullscreen = false;
-      } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-        if (!contentEl) return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        contentEl.scrollBy({ left: event.key === "ArrowLeft" ? -120 : 120 });
+        resetZoom();
+      } else if (k === "+" || k === "=") {
+        stop();
+        setZoom(zoom * 1.25);
+      } else if (k === "-" || k === "_") {
+        stop();
+        setZoom(zoom / 1.25);
+      } else if (k === "0") {
+        stop();
+        resetZoom();
+      } else if (k === "ArrowLeft") {
+        stop();
+        if (zoom > 1) panX += PAN;
+        else navigateSibling(-1);
+      } else if (k === "ArrowRight") {
+        stop();
+        if (zoom > 1) panX -= PAN;
+        else navigateSibling(1);
+      } else if (k === "ArrowUp" && zoom > 1) {
+        stop();
+        panY += PAN;
+      } else if (k === "ArrowDown" && zoom > 1) {
+        stop();
+        panY -= PAN;
       }
     };
     window.addEventListener("keydown", onKey, { capture: true });
     return () => window.removeEventListener("keydown", onKey, { capture: true });
+  });
+
+  // Hide the window tab bar (and other chrome) while a preview is fullscreen,
+  // via a document attribute that global CSS keys off (the tab bar lives far up
+  // the tree, outside this component).
+  $effect(() => {
+    if (fullscreen) {
+      document.documentElement.setAttribute("data-preview-fullscreen", "");
+      return () => document.documentElement.removeAttribute("data-preview-fullscreen");
+    }
   });
 
   function handleResizeStart(event: MouseEvent): void {
@@ -120,7 +202,7 @@
   const previewFolderChildren = $derived(
     settingsStore.showHidden
       ? previewFolderChildrenRaw
-      : previewFolderChildrenRaw.filter((e) => !e.name.startsWith("."))
+      : previewFolderChildrenRaw.filter((e) => !e.name.startsWith(".") && !isSystemHidden(e.name))
   );
   let previewLoading = $state(false);
   // Defer the spinner: a preview that resolves in under 150ms shouldn't flash
@@ -405,7 +487,7 @@
         {diffSubtitle || "git diff"}
       </span>
     </div>
-    <div class="preview-content" bind:this={contentEl}>
+    <div class="preview-content">
       {#if diffLoading}
         <div class="preview-loading"><div class="spinner"></div></div>
       {:else if diffError}
@@ -447,7 +529,7 @@
       <span class="preview-type-badge">{getFileType(selectedFile)}</span>
     </div>
 
-    <div class="preview-content" bind:this={contentEl}>
+    <div class="preview-content">
       {#if previewLoading}
         {#if showPreviewSpinner}
           <div class="preview-loading">
@@ -459,8 +541,18 @@
           <iframe src={previewPdfUrl} title={selectedFile.name} class="preview-pdf"></iframe>
         </div>
       {:else if previewImageUrl}
-        <div class="preview-image-container">
-          <img src={previewImageUrl} alt={selectedFile.name} class="preview-image" />
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="preview-image-container" onwheel={handleFullscreenWheel}>
+          <img
+            src={previewImageUrl}
+            alt={selectedFile.name}
+            class="preview-image"
+            class:zoomed={fullscreen && zoom > 1}
+            style:transform={imageTransform}
+          />
+          {#if fullscreen}
+            <div class="fs-zoom-indicator">{Math.round(zoom * 100)}%</div>
+          {/if}
         </div>
       {:else if previewFolderChildren.length > 0}
         <div class="preview-folder-list">
@@ -639,6 +731,43 @@
     overflow: auto;
     display: flex;
     flex-direction: column;
+    min-height: 0;
+  }
+
+  /* Fullscreen: image fits the whole screen (no width-fit overflow/scroll). */
+  .preview-pane.fullscreen .preview-content {
+    overflow: hidden;
+  }
+  .preview-pane.fullscreen .preview-image-container {
+    min-height: 0;
+    overflow: hidden;
+  }
+  .preview-pane.fullscreen .preview-image {
+    transition: transform 80ms ease-out;
+    cursor: zoom-in;
+  }
+  .preview-pane.fullscreen .preview-image.zoomed {
+    cursor: grab;
+    transition: none;
+  }
+
+  /* Hide the window tab bar / title bar while a preview is fullscreen. */
+  :global(html[data-preview-fullscreen] .titlebar) {
+    display: none !important;
+  }
+
+  .fs-zoom-indicator {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 4px 12px;
+    border-radius: var(--radius-pill, 999px);
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
   }
 
   .preview-loading {

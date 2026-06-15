@@ -263,11 +263,20 @@ const VIDEO_THUMBNAIL_EXTENSIONS = new Set([
   "mp4", "mov", "mkv", "webm", "avi", "wmv", "flv", "m4v", "mpg", "mpeg",
 ]);
 
-/** Check if a file is a video that supports frame-extraction thumbnails */
+/** Audio extensions that may carry embedded cover art (thumbnail via ffmpeg) */
+const AUDIO_THUMBNAIL_EXTENSIONS = new Set([
+  "m4a", "mp3", "flac", "ogg", "opus", "aac", "wma", "m4b", "aiff", "alac",
+]);
+
+/**
+ * Check if a file gets a media thumbnail via ffmpeg — a video frame, or the
+ * embedded cover art of an audio file (m4a, mp3, …). Both go through the same
+ * backend command (`get_video_thumbnail_data`).
+ */
 export function isVideoFile(entry: FileEntry): boolean {
   if (entry.kind === "directory") return false;
   const ext = getExtension(entry.name);
-  return VIDEO_THUMBNAIL_EXTENSIONS.has(ext);
+  return VIDEO_THUMBNAIL_EXTENSIONS.has(ext) || AUDIO_THUMBNAIL_EXTENSIONS.has(ext);
 }
 
 /** Labels for well-known extensionless files */

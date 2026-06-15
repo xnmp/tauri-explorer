@@ -415,11 +415,41 @@ fn try_spawn_terminal(term: &str, dir: &std::path::Path) -> bool {
 
     #[cfg(not(target_os = "macos"))]
     {
-        std::process::Command::new(term)
-            .current_dir(dir)
-            .spawn()
-            .map(reap_in_background)
-            .is_ok()
+        let mut cmd = std::process::Command::new(term);
+        cmd.current_dir(dir);
+
+        // Several terminals open the *new* window at their own default directory
+        // and ignore the spawned process cwd (notably wezterm and Windows
+        // Terminal). Pass an explicit working-directory argument for those.
+        let base = std::path::Path::new(term)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(term)
+            .to_lowercase();
+        let dir_str = dir.to_string_lossy();
+        match base.as_str() {
+            "wezterm" | "wezterm-gui" => {
+                cmd.args(["start", "--cwd"]).arg(dir);
+            }
+            "wt" | "windowsterminal" => {
+                cmd.arg("-d").arg(dir);
+            }
+            "alacritty" => {
+                cmd.arg("--working-directory").arg(dir);
+            }
+            "kitty" => {
+                cmd.arg("--directory").arg(dir);
+            }
+            "konsole" => {
+                cmd.arg("--workdir").arg(dir);
+            }
+            "gnome-terminal" | "xfce4-terminal" | "tilix" | "terminator" | "ghostty" => {
+                cmd.arg(format!("--working-directory={}", dir_str));
+            }
+            _ => {}
+        }
+
+        cmd.spawn().map(reap_in_background).is_ok()
     }
 }
 

@@ -2,8 +2,9 @@
 //!
 //! Linux: scans `/run/media/$USER` and `/media/$USER` for user mounts, `/media` as fallback.
 //! macOS: scans `/Volumes/`, skipping the root-mapped system volume.
-//! Windows: iterates drive letters that exist; the volume label is read via
-//! PowerShell `Get-Volume` (no winapi dependency), and Google Drive / WSL
+//! Windows: iterates drive letters that exist; volume label + provider + type
+//! are read via PowerShell `Win32_LogicalDisk` (no winapi dependency, and unlike
+//! `Get-Volume` it includes Google Drive File Stream), and Google Drive / WSL
 //! mounts are surfaced as their own `Cloud` kind so the sidebar can group them.
 
 use serde::{Deserialize, Serialize};
@@ -127,7 +128,7 @@ fn enumerate_drives() -> Vec<Drive> {
 
 #[cfg(target_os = "windows")]
 fn enumerate_drives() -> Vec<Drive> {
-    let labels = windows_volume_labels();
+    let info = windows_volume_info();
     let mut drives = Vec::new();
 
     for c in b'A'..=b'Z' {
@@ -138,15 +139,13 @@ fn enumerate_drives() -> Vec<Drive> {
         }
 
         let letter_label = format!("{}:", letter);
-        let volume_label = labels.get(&letter).filter(|l| !l.is_empty()).cloned();
+        let vol = info.get(&letter).cloned().unwrap_or_default();
+        let volume_label = (!vol.label.is_empty()).then(|| vol.label.clone());
 
-        // Google Drive (File Stream) mounts as a removable/fixed volume whose
-        // label contains "Google Drive". Surface it in the Cloud section.
-        if volume_label
-            .as_deref()
-            .map(is_google_drive_label)
-            .unwrap_or(false)
-        {
+        // Google Drive (File Stream) mounts as a virtual/network drive. Detect it
+        // by its volume label OR its provider name (it may have no label but a
+        // Google provider). Surface it in the Cloud section with the Google icon.
+        if is_google_drive_label(&vol.label) || is_google_drive_label(&vol.provider) {
             drives.push(Drive {
                 name: volume_label
                     .clone()
@@ -159,10 +158,14 @@ fn enumerate_drives() -> Vec<Drive> {
             continue;
         }
 
-        let kind = if letter == 'C' {
-            DriveKind::Fixed
-        } else {
-            DriveKind::Unknown
+        // Classify by Win32 DriveType (2=removable, 4=network), falling back to
+        // C:=fixed / everything-else=unknown when the type is unavailable.
+        let kind = match vol.drive_type {
+            2 => DriveKind::Removable,
+            3 => DriveKind::Fixed,
+            4 => DriveKind::Network,
+            _ if letter == 'C' => DriveKind::Fixed,
+            _ => DriveKind::Unknown,
         };
 
         // Prefer the volume label, keep the letter as the dimmed detail.
@@ -190,20 +193,37 @@ fn is_google_drive_label(label: &str) -> bool {
     label.to_lowercase().contains("google drive")
 }
 
-/// Read drive-letter → volume-label via PowerShell `Get-Volume`. We avoid a
-/// winapi dependency; PowerShell ships with every supported Windows. Failures
-/// (no PowerShell, locked-down host) just yield an empty map and we fall back
-/// to drive letters.
+/// Per-drive volume metadata read from `Win32_LogicalDisk`.
 #[cfg(target_os = "windows")]
-fn windows_volume_labels() -> std::collections::HashMap<char, String> {
+#[derive(Default, Clone)]
+struct WindowsVolInfo {
+    /// Volume label (e.g. "Google Drive", "USB Backup"). May be empty.
+    label: String,
+    /// Network/redirector provider name. Google Drive File Stream surfaces here
+    /// (e.g. a Google path) when it mounts as a network/virtual drive.
+    provider: String,
+    /// Win32 DriveType: 2=removable, 3=local disk, 4=network, 6=RAM.
+    drive_type: u32,
+}
+
+/// Read drive-letter → volume metadata via PowerShell `Win32_LogicalDisk`.
+///
+/// We use `Win32_LogicalDisk` (not `Get-Volume`) deliberately: Google Drive
+/// File Stream and other virtual/network drives are **absent from
+/// `Get-Volume`** but present here, complete with `VolumeName`/`ProviderName`.
+/// That's what previously left Google Drive showing as a bare "G:". No winapi
+/// dependency — PowerShell ships with every supported Windows; failures yield an
+/// empty map and we fall back to drive letters.
+#[cfg(target_os = "windows")]
+fn windows_volume_info() -> std::collections::HashMap<char, WindowsVolInfo> {
     use std::collections::HashMap;
     use std::process::Command;
 
     let mut map = HashMap::new();
 
-    // CSV is easy to parse and stable across PowerShell versions.
-    let script = "Get-Volume | Where-Object { $_.DriveLetter } | \
-         Select-Object DriveLetter,FileSystemLabel | ConvertTo-Csv -NoTypeInformation";
+    // `|` separator avoids the comma-in-label ambiguity of CSV.
+    let script = "Get-CimInstance Win32_LogicalDisk | ForEach-Object { \
+         \"$($_.DeviceID)|$($_.VolumeName)|$($_.ProviderName)|$($_.DriveType)\" }";
 
     let output = Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
@@ -217,18 +237,23 @@ fn windows_volume_labels() -> std::collections::HashMap<char, String> {
     }
 
     let text = String::from_utf8_lossy(&output.stdout);
-    for line in text.lines().skip(1) {
-        // Lines look like: "E","Google Drive"  (fields are quoted)
-        let fields: Vec<String> = line
-            .split(',')
-            .map(|f| f.trim().trim_matches('"').to_string())
-            .collect();
-        if fields.len() < 2 {
+    for line in text.lines() {
+        // Lines look like: "G:|Google Drive||3"
+        let fields: Vec<&str> = line.trim().split('|').collect();
+        if fields.len() < 4 {
             continue;
         }
-        if let Some(letter) = fields[0].chars().next() {
-            map.insert(letter.to_ascii_uppercase(), fields[1].clone());
-        }
+        let Some(letter) = fields[0].chars().next() else {
+            continue;
+        };
+        map.insert(
+            letter.to_ascii_uppercase(),
+            WindowsVolInfo {
+                label: fields[1].trim().to_string(),
+                provider: fields[2].trim().to_string(),
+                drive_type: fields[3].trim().parse().unwrap_or(0),
+            },
+        );
     }
 
     map

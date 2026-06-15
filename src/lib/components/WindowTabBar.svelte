@@ -11,7 +11,13 @@
   import { getDropSourcePaths } from "$lib/state/drop-operations";
   import { handleFileDrop } from "$lib/state/drop-operations";
   import { dragState } from "$lib/state/drag.svelte";
-  import { tabDragState, isForeignTabDrag, claimDraggedTab } from "$lib/state/tab-transfer";
+  import {
+    tabDragState,
+    isForeignTabDrag,
+    claimDraggedTab,
+    windowAtScreenPos,
+    sendTabToWindow,
+  } from "$lib/state/tab-transfer";
   import { openNewWindow } from "$lib/state/commands/shared";
   import { parentDir } from "$lib/domain/path";
   import { isCopyModifier } from "$lib/domain/platform";
@@ -131,23 +137,13 @@
   let dragTabId = $state<string | null>(null);
   let dropTargetTabId = $state<string | null>(null);
   let fileDropTargetTabId = $state<string | null>(null);
-
-  // Whether the dragged tab is currently over THIS window. dragover fires
-  // continuously while inside; a dragleave with no relatedTarget means the
-  // pointer left the window. Used at dragend to detect desktop drops.
-  let pointerInsideWindow = true;
-
-  function onWindowDragOver(): void {
-    pointerInsideWindow = true;
-  }
-
-  function onWindowDragLeave(event: DragEvent): void {
-    if (!event.relatedTarget) pointerInsideWindow = false;
-  }
+  // Set when an HTML5 drop landed inside THIS window (reorder / same-window
+  // adopt), so dragend knows it wasn't a cross-window move or a tear-off.
+  let droppedInThisWindow = false;
 
   function handleTabDragStart(event: DragEvent, tabId: string): void {
     dragTabId = tabId;
-    pointerInsideWindow = true;
+    droppedInThisWindow = false;
     const snapshot = windowTabsManager.exportTab(tabId);
     if (snapshot) {
       tabDragState.start({
@@ -156,8 +152,6 @@
         snapshot,
       });
     }
-    window.addEventListener("dragover", onWindowDragOver);
-    window.addEventListener("dragleave", onWindowDragLeave);
     if (event.dataTransfer) {
       event.dataTransfer.effectAllowed = "move";
       event.dataTransfer.setData("text/plain", tabId);
@@ -211,8 +205,9 @@
   async function handleTabDrop(event: DragEvent, tabId: string): Promise<void> {
     event.preventDefault();
 
-    // Tab reorder
+    // Tab reorder (same window)
     if (dragTabId && dragTabId !== tabId) {
+      droppedInThisWindow = true;
       const fromIndex = tabs.findIndex((t) => t.id === dragTabId);
       const toIndex = tabs.findIndex((t) => t.id === tabId);
       if (fromIndex >= 0 && toIndex >= 0) {
@@ -221,6 +216,12 @@
       dragTabId = null;
       dropTargetTabId = null;
       return;
+    }
+
+    // Dropping a tab back onto its own bar (same position) is a no-op, not a
+    // tear-off — mark it as handled in-window.
+    if (dragTabId && dragTabId === tabId) {
+      droppedInThisWindow = true;
     }
 
     // Tab dropped here from another window: adopt it at this position.
@@ -264,35 +265,44 @@
     dropTargetTabId = null;
   }
 
-  function handleTabDragEnd(event: DragEvent): void {
-    window.removeEventListener("dragover", onWindowDragOver);
-    window.removeEventListener("dragleave", onWindowDragLeave);
-
+  async function handleTabDragEnd(event: DragEvent): Promise<void> {
+    const wasReorder = droppedInThisWindow;
     dragTabId = null;
     dropTargetTabId = null;
     fileDropTargetTabId = null;
+    droppedInThisWindow = false;
 
-    const wasInside = pointerInsideWindow;
-    pointerInsideWindow = true;
-
-    // If the marker is gone, another window claimed the tab (its
-    // "tab-claimed" broadcast removes our copy). If it's still ours,
-    // always clear it — in-window reorders end here too.
+    // If the marker is gone, another window already claimed the tab.
     const pending = tabDragState.read();
     if (!pending || pending.sourceWindow !== windowTabsManager.windowLabel) return;
     tabDragState.clear();
 
-    // Tear-off: drag ended outside this window with nobody accepting the
-    // drop → spawn a new window with just this tab. A single-tab window
-    // would only recreate itself, so skip that case.
-    const dropEffect = event.dataTransfer?.dropEffect ?? "none";
-    if (dropEffect === "none" && !wasInside && tabs.length > 1) {
+    // An in-window drop (reorder / drop on own bar) is fully handled already.
+    if (wasReorder) return;
+
+    // Cross-window moves and tear-off can't rely on HTML5 drop events reaching
+    // another webview, so resolve the RELEASE position (screen pixels) against
+    // every open window. dragend gives screenX/screenY in CSS px; convert to
+    // physical to compare with Tauri window bounds.
+    const dpr = window.devicePixelRatio || 1;
+    const physX = event.screenX * dpr;
+    const physY = event.screenY * dpr;
+    const targetLabel = await windowAtScreenPos(physX, physY);
+
+    if (targetLabel && targetLabel !== windowTabsManager.windowLabel) {
+      // Dropped over another explorer window → hand the tab off to it.
+      await sendTabToWindow(targetLabel, pending.snapshot);
+      windowTabsManager.removeTransferredTab(pending.tabId);
+    } else if (targetLabel === null && tabs.length > 1) {
+      // Dropped outside every window → tear off into a new window. A single-tab
+      // window would only recreate itself, so skip that case.
       const { snapshot } = pending;
       const activePath =
         snapshot.activePaneId === "right" ? snapshot.rightPath : snapshot.leftPath;
       void openNewWindow(activePath, undefined, snapshot);
       windowTabsManager.removeTransferredTab(pending.tabId);
     }
+    // targetLabel === own window (and not a reorder) → no-op.
   }
 
   /** Drops on the empty strip area (right of the tabs) append the foreign

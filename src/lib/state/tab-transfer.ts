@@ -20,6 +20,8 @@ import { windowTabsManager, type TabSnapshot } from "./window-tabs.svelte";
 
 const DRAG_KEY = "explorer-tab-drag";
 const CHANNEL_NAME = "explorer-tab-transfer";
+/** Tauri event used to hand a tab off to a specific window (cross-window move). */
+const ADOPT_EVENT = "explorer://adopt-tab";
 
 export interface TabDragData {
   sourceWindow: string;
@@ -76,17 +78,77 @@ export function claimDraggedTab(data: TabDragData, index?: number): void {
     .catch(() => {}); // Not in Tauri runtime
 }
 
-/** Source side: remove tabs that other windows claim. Call once per window;
- *  returns an unsubscribe. */
+/**
+ * Resolve which explorer window (if any) contains the given SCREEN position
+ * (physical pixels). Returns the window label, or null if the point is outside
+ * every window. This is how a cross-window tab drop is detected: HTML5 drag
+ * events never reach another Tauri webview, so the SOURCE window resolves the
+ * release position itself instead of relying on the target receiving a drop.
+ */
+export async function windowAtScreenPos(physX: number, physY: number): Promise<string | null> {
+  try {
+    const { getAllWindows } = await import("@tauri-apps/api/window");
+    const wins = await getAllWindows();
+    for (const w of wins) {
+      const pos = await w.outerPosition();
+      const size = await w.outerSize();
+      if (
+        physX >= pos.x &&
+        physX < pos.x + size.width &&
+        physY >= pos.y &&
+        physY < pos.y + size.height
+      ) {
+        return w.label;
+      }
+    }
+  } catch {
+    // Not running under Tauri (e.g. browser E2E) — no windows to resolve.
+  }
+  return null;
+}
+
+/** Source side: push the dragged tab to another window via a Tauri event. */
+export async function sendTabToWindow(targetLabel: string, snapshot: TabSnapshot): Promise<void> {
+  try {
+    const { emitTo } = await import("@tauri-apps/api/event");
+    await emitTo(targetLabel, ADOPT_EVENT, snapshot);
+  } catch {
+    // Not in Tauri runtime.
+  }
+}
+
+/** Source side: remove tabs that other windows claim, and (target side) adopt
+ *  tabs handed to us via the Tauri adopt event. Call once per window; returns
+ *  an unsubscribe. */
 export function initTabTransferListener(): () => void {
+  // Source side: BroadcastChannel removal when a same-document drop claims a tab.
   const ch = getChannel();
-  if (!ch) return () => {};
   const onMessage = (event: MessageEvent) => {
     const msg = event.data as TabClaimedMessage | null;
     if (msg?.type !== "tab-claimed") return;
     if (msg.sourceWindow !== windowTabsManager.windowLabel) return;
     windowTabsManager.removeTransferredTab(msg.tabId);
   };
-  ch.addEventListener("message", onMessage);
-  return () => ch.removeEventListener("message", onMessage);
+  ch?.addEventListener("message", onMessage);
+
+  // Target side: adopt a tab handed to us from another window via Tauri event.
+  let unlistenAdopt: (() => void) | null = null;
+  import("@tauri-apps/api/event")
+    .then(({ listen }) =>
+      listen<TabSnapshot>(ADOPT_EVENT, (event) => {
+        windowTabsManager.adoptTab(event.payload);
+        import("@tauri-apps/api/window")
+          .then(({ getCurrentWindow }) => getCurrentWindow().setFocus())
+          .catch(() => {});
+      }),
+    )
+    .then((un) => {
+      unlistenAdopt = un;
+    })
+    .catch(() => {}); // Not in Tauri runtime.
+
+  return () => {
+    ch?.removeEventListener("message", onMessage);
+    unlistenAdopt?.();
+  };
 }

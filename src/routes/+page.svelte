@@ -612,6 +612,16 @@
     -webkit-backdrop-filter: none;
   }
 
+  /* Windows Acrylic strength: a theme-coloured tint over the whole window
+     (behind every island), driven by the Backdrop Opacity slider. Higher
+     alpha = more opaque = less of the native Acrylic blur shows through. Must
+     follow the [data-vibrancy] body rule above to win the equal-specificity
+     tie. The native Acrylic tint colour is ignored on Windows 11, so this is
+     the only reliable strength control. */
+  :global([data-win-acrylic]) :global(body) {
+    background: var(--win-acrylic-tint, transparent);
+  }
+
   /* No-blur mode: use theme background instead of transparency */
   :global([data-vibrancy-no-blur]) :global(body) {
     background: var(--background-solid);

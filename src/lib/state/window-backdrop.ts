@@ -1,20 +1,28 @@
 /**
  * Windows translucent backdrop (Mica / Acrylic).
  *
- * Acrylic's native tint is very thin, so we tint it with the current theme's
- * background colour at a user-controlled alpha (`windowsBackdropOpacity`) —
- * lower alpha = more see-through. Mica samples the desktop wallpaper and
- * ignores a tint colour on Windows 11, so it's left untinted.
+ * The native effect just turns the material on. We can't control Acrylic's
+ * strength with the effect's tint colour — that's ignored on Windows 11 (it
+ * only works on Windows 10 v1903+) — so strength is controlled in CSS instead:
+ * `applyWindowsBackdrop` paints a theme-coloured tint over the window at a
+ * user-chosen alpha (`windowsBackdropOpacity`). Lower alpha = more see-through.
+ * This works the same on Windows 10 and 11.
  *
- * The same `Effects` object seeds new windows (build time) and is re-applied
- * at runtime via `setEffects`, so changing material/opacity/theme updates the
- * live window without a restart (only toggling the backdrop on from "off"
- * needs one, since window transparency is fixed at creation).
+ * Mica samples the desktop wallpaper (never see-through to windows behind it),
+ * so it's left untinted.
+ *
+ * The material is applied at runtime via `setEffects` and also seeds new
+ * windows at build time, so changing material/opacity/theme updates the live
+ * window without a restart — only enabling the backdrop from "off" needs one,
+ * since window transparency is fixed at creation.
  */
 
-import { Effect, type Effects, type Color } from "@tauri-apps/api/window";
+import { Effect, type Effects } from "@tauri-apps/api/window";
 import { isWindows } from "$lib/domain/platform";
 import { settingsStore } from "./settings.svelte";
+
+const TINT_ATTR = "data-win-acrylic";
+const TINT_VAR = "--win-acrylic-tint";
 
 /** Read the active theme's solid background as an [r, g, b] triple (0-255). */
 function themeBackgroundRgb(): [number, number, number] {
@@ -36,22 +44,38 @@ function themeBackgroundRgb(): [number, number, number] {
   return [Number(parts[0]), Number(parts[1]), Number(parts[2])];
 }
 
-/** Build the window `Effects` for the current backdrop settings, or undefined. */
+/** Build the native window `Effects` (material only) for the current settings. */
 export function windowsBackdropEffects(): Effects | undefined {
   if (!isWindows) return undefined;
-  const mode = settingsStore.windowsBackdrop;
-  if (mode === "off") return undefined;
-  if (mode === "mica") return { effects: [Effect.Mica] };
+  switch (settingsStore.windowsBackdrop) {
+    case "mica":
+      return { effects: [Effect.Mica] };
+    case "acrylic":
+      return { effects: [Effect.Acrylic] };
+    default:
+      return undefined;
+  }
+}
 
-  const [r, g, b] = themeBackgroundRgb();
-  const alpha = Math.round(Math.min(100, Math.max(0, settingsStore.windowsBackdropOpacity)) * 2.55);
-  const color: Color = [r, g, b, alpha];
-  return { effects: [Effect.Acrylic], color };
+/** Paint (or clear) the CSS strength tint that controls how see-through Acrylic is. */
+function applyTint(): void {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement;
+  if (settingsStore.windowsBackdrop === "acrylic") {
+    const [r, g, b] = themeBackgroundRgb();
+    const alpha = Math.min(100, Math.max(0, settingsStore.windowsBackdropOpacity)) / 100;
+    root.style.setProperty(TINT_VAR, `rgba(${r}, ${g}, ${b}, ${alpha})`);
+    root.setAttribute(TINT_ATTR, "");
+  } else {
+    root.style.removeProperty(TINT_VAR);
+    root.removeAttribute(TINT_ATTR);
+  }
 }
 
 /** Apply (or clear) the backdrop on the current window at runtime. No-op off Windows. */
 export async function applyWindowsBackdrop(): Promise<void> {
   if (!isWindows) return;
+  applyTint();
   const effects = windowsBackdropEffects();
   try {
     const { getCurrentWindow } = await import("@tauri-apps/api/window");

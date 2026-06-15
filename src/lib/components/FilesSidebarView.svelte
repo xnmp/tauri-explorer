@@ -209,14 +209,44 @@
   let quickAccessExpanded = $state(true);
   let recentExpanded = $state(true);
   let drivesExpanded = $state(true);
+  let cloudExpanded = $state(true);
+
+  // A recent path that lives on a removable/mounted drive must disappear when
+  // that drive is ejected. We detect a "removable root" for a path (a Windows
+  // drive letter, or a Linux/macOS mount base) and hide the path when that root
+  // isn't in the currently-mounted set. Fixed locations (no removable root) are
+  // never hidden by this rule. Recomputes when drivesStore refreshes.
+  function ejectedDriveHidesPath(path: string, mounted: Set<string>): boolean {
+    // Windows drive letter (e.g. "E:\\foo" or "E:/foo").
+    const win = path.match(/^([a-zA-Z]):[\\/]/);
+    if (win) {
+      const root = `${win[1].toLowerCase()}:`;
+      // C: is the system drive and always mounted; only guard other letters.
+      if (root === "c:") return false;
+      return !mounted.has(root);
+    }
+    // WSL / UNC roots (\\wsl$\Distro\... or \\server\share\...).
+    const unc = path.match(/^\\\\[^\\]+\\[^\\]+/);
+    if (unc) {
+      return !mounted.has(unc[0].toLowerCase());
+    }
+    // Linux/macOS removable mount bases.
+    const mountBase = path.match(/^(\/(?:run\/)?media\/[^/]+\/[^/]+|\/Volumes\/[^/]+)/);
+    if (mountBase) {
+      return !mounted.has(mountBase[1].toLowerCase());
+    }
+    return false;
+  }
 
   const recentLocations = $derived.by(() => {
     const bookmarkedPaths = new Set(bookmarksStore.list.map((b) => b.path));
     const systemPaths = new Set(quickAccessFolders.map((f) => f.path));
     const scoreMap = frecencyStore.getScoreMap();
+    const mounted = drivesStore.mountedRoots;
 
     return frecencyStore.entries
       .filter((e) => e.path !== homeDir && e.path !== "/home" && e.path !== "/" && !bookmarkedPaths.has(e.path) && !systemPaths.has(e.path))
+      .filter((e) => !ejectedDriveHidesPath(e.path, mounted))
       .map((e) => ({ path: e.path, name: basename(e.path), score: scoreMap.get(e.path) ?? 0 }))
       .sort((a, b) => b.score - a.score)
       .slice(0, settingsStore.recentItemsCount);
@@ -451,13 +481,69 @@
       {#if drivesExpanded}
         <div class="section-content">
           {#each drivesStore.removable as drive (drive.path)}
-            <button class="nav-item" onclick={() => navigateTo(drive.path)} title={drive.path}>
+            <button class="nav-item drive-item" onclick={() => navigateTo(drive.path)} title={drive.path}>
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: #10b981">
                 <rect x="2" y="4" width="12" height="8" rx="1.5" stroke="currentColor" stroke-width="1.25"/>
                 <circle cx="11" cy="8" r="0.9" fill="currentColor"/>
                 <path d="M4 4V3M6 4V3" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
               </svg>
-              <span>{drive.name}</span>
+              <span class="drive-name">{drive.name}</span>
+              {#if drive.detail}
+                <span class="drive-detail">{drive.detail}</span>
+              {/if}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
+
+  {#if drivesStore.cloud.length > 0}
+    <div class="divider"></div>
+
+    <div class="nav-section">
+      <button
+        class="section-header"
+        onclick={() => cloudExpanded = !cloudExpanded}
+        aria-expanded={cloudExpanded}
+      >
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" class="chevron" class:expanded={cloudExpanded}>
+          <path d="M4 3L7 6L4 9" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span>Cloud &amp; Remote</span>
+      </button>
+
+      {#if cloudExpanded}
+        <div class="section-content">
+          {#each drivesStore.cloud as drive (drive.path)}
+            <button class="nav-item drive-item" onclick={() => navigateTo(drive.path)} title={drive.path}>
+              {#if drive.provider === "googledrive"}
+                <!-- Google "G" multi-colour mark -->
+                <svg width="16" height="16" viewBox="0 0 48 48" class="nav-icon">
+                  <path fill="#4285F4" d="M45.12 24.5c0-1.56-.14-3.06-.4-4.5H24v8.51h11.84c-.51 2.75-2.06 5.08-4.39 6.64v5.52h7.11c4.16-3.83 6.56-9.47 6.56-16.17z"/>
+                  <path fill="#34A853" d="M24 46c5.94 0 10.92-1.97 14.56-5.33l-7.11-5.52c-1.97 1.32-4.49 2.1-7.45 2.1-5.73 0-10.58-3.87-12.31-9.07H4.34v5.7C7.96 41.07 15.4 46 24 46z"/>
+                  <path fill="#FBBC05" d="M11.69 28.18c-.44-1.32-.69-2.73-.69-4.18s.25-2.86.69-4.18v-5.7H4.34A21.99 21.99 0 0 0 2 24c0 3.55.85 6.91 2.34 9.88l7.35-5.7z"/>
+                  <path fill="#EA4335" d="M24 10.75c3.23 0 6.13 1.11 8.41 3.29l6.31-6.31C34.91 4.18 29.93 2 24 2 15.4 2 7.96 6.93 4.34 14.12l7.35 5.7c1.73-5.2 6.58-9.07 12.31-9.07z"/>
+                </svg>
+              {:else if drive.provider === "wsl"}
+                <!-- Tux penguin (monochrome, themed) -->
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: #4d4d4d">
+                  <path d="M8 1.5c-1.66 0-2.6 1.3-2.6 3 0 .77.2 1.4.2 1.9 0 .6-.9 1.4-1.5 2.6-.6 1.2-1.1 2.3-1.4 2.9-.2.5.1.9.6.8.6-.1 1-.3 1.3-.3.2 0 .3.1.3.4.1.6.2 1.2.3 1.5.1.3.5.4 1 .4h3.6c.5 0 .9-.1 1-.4.1-.3.2-.9.3-1.5 0-.3.1-.4.3-.4.3 0 .7.2 1.3.3.5.1.8-.3.6-.8-.3-.6-.8-1.7-1.4-2.9-.6-1.2-1.5-2-1.5-2.6 0-.5.2-1.13.2-1.9 0-1.7-.94-3-2.6-3z" fill="currentColor"/>
+                  <circle cx="6.7" cy="5" r="0.7" fill="#fff"/>
+                  <circle cx="9.3" cy="5" r="0.7" fill="#fff"/>
+                  <circle cx="6.8" cy="5.1" r="0.35" fill="#000"/>
+                  <circle cx="9.2" cy="5.1" r="0.35" fill="#000"/>
+                  <path d="M7.2 6.2L8 7l.8-.8z" fill="#f5a623"/>
+                </svg>
+              {:else}
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: #3b82f6">
+                  <path d="M4 11a3 3 0 0 1 0-6 4 4 0 0 1 7.6-1.2A3 3 0 0 1 12 11H4z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+                </svg>
+              {/if}
+              <span class="drive-name">{drive.name}</span>
+              {#if drive.detail}
+                <span class="drive-detail">{drive.detail}</span>
+              {/if}
             </button>
           {/each}
         </div>
@@ -616,6 +702,21 @@
 
   .nav-icon {
     flex-shrink: 0;
+  }
+
+  .drive-item .drive-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .drive-detail {
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--text-tertiary);
+    letter-spacing: var(--letter-spacing-wide);
   }
 
   .folder-item {

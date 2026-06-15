@@ -7,6 +7,7 @@ import {
   joinPath,
   isInsideDir,
   samePath,
+  sameDirectory,
   toForwardSlashes,
 } from "../../src/lib/domain/path";
 
@@ -205,5 +206,31 @@ describe("toForwardSlashes", () => {
   it("converts backslashes", () => {
     expect(toForwardSlashes("C:\\Users\\foo")).toBe("C:/Users/foo");
     expect(toForwardSlashes("/already/posix")).toBe("/already/posix");
+  });
+});
+
+describe("sameDirectory", () => {
+  it("matches identical posix paths", () => {
+    expect(sameDirectory("/home/user", "/home/user")).toBe(true);
+    expect(sameDirectory("/home/user", "/home/other")).toBe(false);
+  });
+
+  it("ignores a trailing slash", () => {
+    expect(sameDirectory("/home/user/", "/home/user")).toBe(true);
+  });
+
+  it("treats Windows separators as equivalent", () => {
+    expect(sameDirectory("C:\\Users\\foo", "C:/Users/foo")).toBe(true);
+  });
+
+  it("is case-insensitive for Windows paths only", () => {
+    expect(sameDirectory("C:/Users/Foo", "c:/users/foo")).toBe(true);
+    expect(sameDirectory("//Server/Share/x", "//server/share/x")).toBe(true);
+    // POSIX stays case-sensitive
+    expect(sameDirectory("/home/Foo", "/home/foo")).toBe(false);
+  });
+
+  it("distinguishes genuinely different Windows dirs", () => {
+    expect(sameDirectory("C:/Users/foo", "C:/Users/bar")).toBe(false);
   });
 });

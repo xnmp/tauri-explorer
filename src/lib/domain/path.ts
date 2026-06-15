@@ -93,6 +93,27 @@ export function parentDir(path: string): string {
 }
 
 /**
+ * True when two paths refer to the same directory, tolerant of separator style
+ * (`\` vs `/`), a trailing slash, and — for Windows-style paths (drive letter or
+ * UNC) — drive-letter and casing differences (Windows file systems are
+ * case-insensitive). This is what makes "paste into the same folder produces a
+ * copy" work on Windows, where the clipboard source dir and the current dir can
+ * differ only by separator or case and a raw `===` would wrongly see them as
+ * different (triggering a conflict prompt instead of a silent " - Copy").
+ */
+export function sameDirectory(a: string, b: string): boolean {
+  const norm = (p: string) => stripTrailingSlash(toForwardSlashes(p));
+  let na = norm(a);
+  let nb = norm(b);
+  const isWindowsPath = (p: string) => /^[A-Za-z]:/.test(p) || p.startsWith("//");
+  if (isWindowsPath(na) || isWindowsPath(nb)) {
+    na = na.toLowerCase();
+    nb = nb.toLowerCase();
+  }
+  return na === nb;
+}
+
+/**
  * Join a directory path and a child name with a single separator.
  * Preserves a trailing separator of either kind already on `dir`.
  *

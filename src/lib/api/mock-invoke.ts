@@ -331,8 +331,12 @@ const mockCommands: Record<string, CommandHandler> = {
   get_home_directory: () => "/home/user",
   get_launch_cwd: () => "/home/user",
   list_drives: () => [
-    { name: "USB Drive", path: "/media/user/USB_DRIVE", kind: "removable" },
-    { name: "Memory Stick", path: "/media/user/Memory_Stick", kind: "removable" },
+    // Removable drive showing a volume label with the drive letter as dimmed detail.
+    { name: "USB Backup", path: "/media/user/USB_DRIVE", kind: "removable", detail: "E:" },
+    { name: "Memory Stick", path: "/media/user/Memory_Stick", kind: "removable", detail: "F:" },
+    // Cloud / remote section: Google Drive File Stream + a WSL home mount.
+    { name: "Google Drive", path: "/media/user/GoogleDrive", kind: "cloud", detail: "G:", provider: "googledrive" },
+    { name: "Ubuntu", path: "\\\\wsl$\\Ubuntu\\home", kind: "cloud", detail: "WSL", provider: "wsl" },
   ],
 
   list_directory: (args) => {
@@ -456,16 +460,36 @@ const mockCommands: Record<string, CommandHandler> = {
   copy_entry: (args) => {
     const source = args.source as string;
     const destDir = args.destDir as string;
+    const overwrite = (args.overwrite as boolean) ?? false;
     const name = basename(source);
     const sourcePath = parentDir(source);
     const sourceEntries = mockFiles[sourcePath] || [];
     const sourceEntry = sourceEntries.find((e) => e.path === source);
     if (!sourceEntry) throw new Error("Source not found");
 
-    const newPath = `${destDir}/${name}`;
-    const newEntry: FileEntry = { ...sourceEntry, path: newPath };
     if (!mockFiles[destDir]) mockFiles[destDir] = [];
-    mockFiles[destDir].push(newEntry);
+    const dest = mockFiles[destDir];
+
+    // Mirror the Rust backend: when the target name already exists and we're not
+    // overwriting (e.g. pasting into the same folder), generate a "X - Copy"
+    // name instead of clobbering. Used by the same-folder paste-copy behavior.
+    let finalName = name;
+    if (dest.some((e) => e.name === name) && !overwrite) {
+      const isDir = sourceEntry.kind === "directory";
+      const dot = isDir ? -1 : name.lastIndexOf(".");
+      const base = dot > 0 ? name.slice(0, dot) : name;
+      const ext = dot > 0 ? name.slice(dot) : "";
+      finalName = `${base} - Copy${ext}`;
+      for (let n = 2; dest.some((e) => e.name === finalName); n++) {
+        finalName = `${base} - Copy (${n})${ext}`;
+      }
+    }
+
+    const newPath = `${destDir}/${finalName}`;
+    const newEntry: FileEntry = { ...sourceEntry, name: finalName, path: newPath };
+    const existingIdx = dest.findIndex((e) => e.name === finalName);
+    if (existingIdx >= 0) dest[existingIdx] = newEntry;
+    else dest.push(newEntry);
     return newEntry;
   },
 

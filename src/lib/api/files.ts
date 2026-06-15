@@ -401,12 +401,18 @@ export async function getLaunchCwd(): Promise<ApiResult<string>> {
   }
 }
 
-export type DriveKind = "fixed" | "removable" | "network" | "unknown";
+export type DriveKind = "fixed" | "removable" | "network" | "cloud" | "unknown";
+
+export type CloudProvider = "googledrive" | "wsl";
 
 export interface Drive {
   name: string;
   path: string;
   kind: DriveKind;
+  /** Secondary/dimmed label (e.g. the drive letter "E:" when name is the volume label). */
+  detail?: string;
+  /** Set for cloud/remote drives — selects the sidebar icon. */
+  provider?: CloudProvider;
 }
 
 export async function listDrives(): Promise<ApiResult<Drive[]>> {

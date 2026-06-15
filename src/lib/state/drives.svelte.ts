@@ -91,6 +91,18 @@ function createDrivesStore() {
     get removable() {
       return drives.filter((d) => d.kind === "removable" || d.kind === "unknown");
     },
+    /** Cloud / remote mounts (Google Drive, WSL home) for the dedicated section. */
+    get cloud() {
+      return drives.filter((d) => d.kind === "cloud");
+    },
+    /**
+     * Set of currently-mounted drive roots, lowercased and normalised, used to
+     * hide Recent locations that live on an ejected drive. On Windows a root is
+     * the drive letter prefix (e.g. "e:"); elsewhere it's the mount path.
+     */
+    get mountedRoots() {
+      return new Set(drives.map((d) => d.path.replace(/[\\/]+$/, "").toLowerCase()));
+    },
     refresh,
     startPolling,
     stopPolling,

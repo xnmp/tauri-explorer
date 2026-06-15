@@ -254,12 +254,13 @@
       <path d="M6 33L15 24L22 31L30 21L42 33V38C42 40.2091 40.2091 42 38 42H10C7.79086 42 6 40.2091 6 38V33Z" fill={fallbackColor} fill-opacity="0.4"/>
     </svg>
   {:else if kind === "folder" && fullUrl}
-    <!-- Folder thumbnail (Explorer-style): the photo sits in the folder, sticking
-         up out of it, with the folder's back+tab behind and a front flap pocket
-         covering only the bottom edge. -->
-    <div class="folder-thumb" style="--fc: {fallbackColor}">
-      <svg class="folder-layer folder-back" viewBox="0 0 48 48" preserveAspectRatio="none" aria-hidden="true">
-        <path d="M3 17C3 15.34 4.34 14 6 14H18L21.5 17.5H42C43.66 17.5 45 18.84 45 20.5V40C45 41.66 43.66 43 42 43H6C4.34 43 3 41.66 3 40V17Z" fill="var(--fc)"/>
+    <!-- Folder thumbnail (Windows Explorer-style): a yellow folder with the photo
+         tucked into the front pocket, peeking above the front flap. Back panel +
+         tab behind the photo, lighter front flap over the photo's bottom. -->
+    <div class="folder-thumb">
+      <svg class="folder-layer" viewBox="0 0 48 48" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+        <!-- Whole folder body + tab (theme folder colour, slightly darkened) -->
+        <path d="M3.5 13.5C3.5 12.4 4.4 11.5 5.5 11.5H17.5C18 11.5 18.5 11.7 18.9 12.1L21 14.2H42.5C43.6 14.2 44.5 15.1 44.5 16.2V37.5C44.5 38.6 43.6 39.5 42.5 39.5H5.5C4.4 39.5 3.5 38.6 3.5 37.5V13.5Z" class="folder-back-fill"/>
       </svg>
       <img
         src={fullUrl}
@@ -269,9 +270,10 @@
         onload={() => { fullLoaded = true; }}
         draggable="false"
       />
-      <svg class="folder-layer folder-front" viewBox="0 0 48 48" preserveAspectRatio="none" aria-hidden="true">
-        <path d="M3 31H45V40C45 41.66 43.66 43 42 43H6C4.34 43 3 41.66 3 40V31Z" fill="var(--fc)"/>
-        <path d="M3 31H45V33H3V31Z" fill="#fff" fill-opacity="0.25"/>
+      <svg class="folder-layer" viewBox="0 0 48 48" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+        <!-- Front flap (theme folder colour) covering the photo's lower edge -->
+        <path d="M3.5 29H44.5V37.5C44.5 38.6 43.6 39.5 42.5 39.5H5.5C4.4 39.5 3.5 38.6 3.5 37.5V29Z" class="folder-front-fill"/>
+        <path d="M3.5 29H44.5V30.5H3.5V29Z" fill="#fff" fill-opacity="0.3"/>
       </svg>
     </div>
   {:else}
@@ -382,24 +384,29 @@
     height: 100%;
   }
 
-  .folder-front {
-    /* Drawn over the bottom edge of the photo so it looks tucked into the folder. */
-    pointer-events: none;
+  /* Folder colour follows the active theme (--icon-folder), with a darker back
+     panel and the base colour on the front flap. */
+  .folder-back-fill {
+    fill: color-mix(in srgb, var(--icon-folder, #e8a800) 82%, #000);
+  }
+
+  .folder-front-fill {
+    fill: var(--icon-folder, #e8a800);
   }
 
   .folder-photo {
     position: absolute;
-    /* Large photo that sticks up out of the folder; only its bottom edge is
-       covered by the front flap (~y64%), leaving most of it visible. */
-    top: 10%;
+    /* Photo sits in the folder, bottom edge (~68%) tucked behind the front flap
+       (front top at y29 ≈ 60%), most of it visible above. */
+    top: 22%;
     left: 14%;
     right: 14%;
-    bottom: 28%;
+    bottom: 32%;
     width: auto;
     height: auto;
     object-fit: cover;
-    border-radius: 2px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+    border-radius: 1.5px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
     opacity: 0;
     transition: opacity 150ms ease;
   }

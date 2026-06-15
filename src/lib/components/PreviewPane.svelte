@@ -745,9 +745,16 @@
     overflow: hidden;
   }
   .preview-pane.fullscreen .preview-image-container {
+    /* Fill the whole fullscreen pane and centre the image both ways,
+       independent of the flex chain. */
+    position: absolute;
+    inset: 0;
     min-height: 0;
     overflow: hidden;
     padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
   .preview-pane.fullscreen .preview-image {
     border-radius: 0;

@@ -21,6 +21,7 @@ import { Effect, type Effects } from "@tauri-apps/api/window";
 import { isWindows } from "$lib/domain/platform";
 import { settingsStore } from "./settings.svelte";
 
+const BACKDROP_ATTR = "data-win-backdrop";
 const TINT_ATTR = "data-win-acrylic";
 const TINT_VAR = "--win-acrylic-tint";
 
@@ -57,11 +58,19 @@ export function windowsBackdropEffects(): Effects | undefined {
   }
 }
 
-/** Paint (or clear) the CSS strength tint that controls how see-through Acrylic is. */
-function applyTint(): void {
+/** Set the CSS attributes/vars that style the app for the current backdrop. */
+function applyBackdropStyling(): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
-  if (settingsStore.windowsBackdrop === "acrylic") {
+  const mode = settingsStore.windowsBackdrop;
+
+  // Any backdrop keeps the app's normal (darker) surface colours instead of the
+  // lighter macOS island tint, so enabling Mica/Acrylic doesn't wash colours out.
+  root.toggleAttribute(BACKDROP_ATTR, mode !== "off");
+
+  // Acrylic strength tint controls how see-through it is. Mica isn't see-through
+  // (it samples the wallpaper), so it gets no tint.
+  if (mode === "acrylic") {
     const [r, g, b] = themeBackgroundRgb();
     const alpha = Math.min(100, Math.max(0, settingsStore.windowsBackdropOpacity)) / 100;
     root.style.setProperty(TINT_VAR, `rgba(${r}, ${g}, ${b}, ${alpha})`);
@@ -75,7 +84,7 @@ function applyTint(): void {
 /** Apply (or clear) the backdrop on the current window at runtime. No-op off Windows. */
 export async function applyWindowsBackdrop(): Promise<void> {
   if (!isWindows) return;
-  applyTint();
+  applyBackdropStyling();
   const effects = windowsBackdropEffects();
   try {
     const { getCurrentWindow } = await import("@tauri-apps/api/window");

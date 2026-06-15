@@ -622,6 +622,15 @@
     background: var(--win-acrylic-tint, transparent);
   }
 
+  /* Windows Mica/Acrylic: the macOS island tint (a white sheen over a lighter,
+     translucent card) washes the UI out compared to normal mode. Repaint the
+     islands with the app's normal opaque surface so colours match normal mode;
+     the frost still shows through the chrome/gaps (titlebar, sidebar, padding).
+     Must follow the [data-vibrancy] var block to win the specificity tie. */
+  :global([data-win-backdrop]) {
+    --vibrancy-island-bg: var(--background-mica);
+  }
+
   /* No-blur mode: use theme background instead of transparency */
   :global([data-vibrancy-no-blur]) :global(body) {
     background: var(--background-solid);

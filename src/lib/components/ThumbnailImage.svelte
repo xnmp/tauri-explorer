@@ -262,9 +262,8 @@
          tab behind the photo, lighter front flap over the photo's bottom. -->
     <div class="folder-thumb">
       <svg class="folder-layer" viewBox="0 0 48 48" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-        <!-- Whole folder body + tab (theme folder colour, slightly darkened).
-             The tab sits at the top so it stays visible ABOVE the photo. -->
-        <path d="M4 11.5C4 10.4 4.9 9.5 6 9.5H17C17.5 9.5 18 9.7 18.4 10.1L20.5 12.2H42C43.1 12.2 44 13.1 44 14.2V37C44 38.1 43.1 39 42 39H6C4.9 39 4 38.1 4 37V11.5Z" class="folder-back-fill"/>
+        <!-- Folder back: tab (top-left) + body, theme colour slightly darkened. -->
+        <path d="M3 13C3 11.9 3.9 11 5 11H15.5C16 11 16.5 11.2 16.9 11.6L18.5 13.2H43C44.1 13.2 45 14.1 45 15.2V38C45 39.1 44.1 40 43 40H5C3.9 40 3 39.1 3 38V13Z" class="folder-back-fill"/>
       </svg>
       <img
         src={fullUrl}
@@ -275,9 +274,10 @@
         draggable="false"
       />
       <svg class="folder-layer" viewBox="0 0 48 48" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-        <!-- Front flap (theme folder colour) covering the photo's lower edge -->
-        <path d="M4 27H44V37C44 38.1 43.1 39 42 39H6C4.9 39 4 38.1 4 37V27Z" class="folder-front-fill"/>
-        <path d="M4 27H44V28.5H4V27Z" fill="#fff" fill-opacity="0.3"/>
+        <!-- Front flap (theme colour) covering the photo's lower edge so it reads
+             as tucked into the folder pocket. -->
+        <path d="M3 30H45V38C45 39.1 44.1 40 43 40H5C3.9 40 3 39.1 3 38V30Z" class="folder-front-fill"/>
+        <path d="M3 30H45V31.5H3V30Z" fill="#fff" fill-opacity="0.35"/>
       </svg>
     </div>
   {:else}
@@ -400,18 +400,18 @@
 
   .folder-photo {
     position: absolute;
-    /* Photo sits as a strip in the folder body, BELOW the tab (tab top ≈20%) so
-       the folder tab stays visible above it; its bottom edge (~64%) is tucked
-       behind the front flap (front top at y27 ≈ 56%). */
-    top: 31%;
-    left: 13%;
-    right: 13%;
-    bottom: 36%;
+    /* Large, prominent photo sitting in the folder: it spans most of the tile,
+       its bottom edge (~78%) tucked behind the front flap (front top at y30 ≈
+       63%), with the gold folder framing it and the tab peeking top-left. */
+    top: 17%;
+    left: 11%;
+    right: 11%;
+    bottom: 22%;
     width: auto;
     height: auto;
     object-fit: cover;
-    border-radius: 1.5px;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    border-radius: 2px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
     opacity: 0;
     transition: opacity 150ms ease;
   }

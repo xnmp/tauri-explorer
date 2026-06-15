@@ -701,17 +701,6 @@ const mockCommands: Record<string, CommandHandler> = {
     return mockInvoke<string>("get_thumbnail_data");
   },
 
-  get_folder_thumbnail_data: (args) => {
-    // Mock a folder collage. Return a thumbnail for any folder whose path
-    // contains "Pictures" or "Images" (so E2E can demo the feature) and throw
-    // otherwise to exercise the icon fallback path.
-    const path = ((args.path as string) ?? "").toLowerCase();
-    if (path.includes("picture") || path.includes("image") || path.includes("photo")) {
-      return mockInvoke<string>("get_thumbnail_data");
-    }
-    throw new Error("No images in folder (mock)");
-  },
-
   clear_thumbnail_cache: () => 0,
 
   get_thumbnail_cache_stats: () => ({

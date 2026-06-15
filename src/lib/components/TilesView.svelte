@@ -45,14 +45,8 @@
   );
   const tileConfig = $derived(THUMBNAIL_SIZE_CONFIG[effectiveThumbnailSize]);
 
-  // Folder collage thumbnails only render at large/xlarge tile sizes
-  // (smaller tiles keep the plain folder icon, like Windows Explorer).
-  const showFolderThumbnails = $derived(
-    effectiveThumbnailSize === "large" || effectiveThumbnailSize === "xlarge"
-  );
-
-  // Folders/videos whose thumbnail generation failed (no images / no ffmpeg) —
-  // these fall back to the plain icon. Keyed by path; reset on navigation.
+  // Videos whose thumbnail generation failed (e.g. no ffmpeg) fall back to the
+  // plain icon. Keyed by path; reset on navigation.
   let unavailableThumbs = $state(new Set<string>());
   $effect(() => {
     // Reset when the directory changes.
@@ -120,8 +114,6 @@
           <ThumbnailImage path={entry.path} size={tileConfig.displaySize} genSize={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} />
         {:else if isVideoFile(entry) && !unavailableThumbs.has(entry.path)}
           <ThumbnailImage kind="video" path={entry.path} size={tileConfig.displaySize} genSize={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} onunavailable={() => markUnavailable(entry.path)} />
-        {:else if entry.kind === "directory" && showFolderThumbnails && !unavailableThumbs.has(entry.path)}
-          <ThumbnailImage kind="folder" path={entry.path} size={tileConfig.displaySize} genSize={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} onunavailable={() => markUnavailable(entry.path)} />
         {:else}
           <FileIcon {entry} size="large" />
         {/if}

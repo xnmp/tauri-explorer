@@ -735,28 +735,6 @@ export async function getVideoThumbnailData(
 }
 
 /**
- * Get a folder collage thumbnail (a 2x2 grid of the folder's images) as a blob
- * URL. Returns an error when the folder has no images so callers can fall back
- * to the normal folder icon.
- *
- * @param path - Full path to folder
- * @param size - Optional generation size
- * @param quality - Optional JPEG quality
- */
-export async function getFolderThumbnailData(
-  path: string,
-  size?: number,
-  quality?: number
-): Promise<ApiResult<string>> {
-  try {
-    const dataUri = await invoke<string>("get_folder_thumbnail_data", { path, size, quality });
-    return { ok: true, data: dataUriToBlobUrl(dataUri) };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/**
  * Thumbnail cache statistics.
  */
 export interface ThumbnailCacheStats {

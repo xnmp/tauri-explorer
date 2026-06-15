@@ -13,7 +13,6 @@
     getMicroThumbnail,
     getThumbnailData,
     getVideoThumbnailData,
-    getFolderThumbnailData,
   } from "$lib/api/files";
 
   // Dual concurrency pools: micro is fast (small payload), full is heavier
@@ -52,15 +51,14 @@
   /**
    * "image"  — progressive micro+full image thumbnail (default).
    * "video"  — single ffmpeg frame-extraction thumbnail.
-   * "folder" — single 2x2 collage of the folder's images.
-   * Video and folder are single-shot fetches with no micro pre-warm; on error
-   * the parent renders its own fallback icon (we set `error` and emit nothing).
+   * Video is a single-shot fetch with no micro pre-warm; on error the parent
+   * renders its own fallback icon (we set `error` and emit nothing).
    */
-  type ThumbnailKind = "image" | "video" | "folder";
+  type ThumbnailKind = "image" | "video";
 
   interface Props {
     path: string;
-    /** What to generate: image (default), video frame, or folder collage */
+    /** What to generate: image (default) or video frame */
     kind?: ThumbnailKind;
     /** Display size in px (CSS container dimensions) */
     size?: number;
@@ -126,8 +124,8 @@
     }
   });
 
-  // Video/folder thumbnails are single-shot (no micro pre-warm). On failure we
-  // notify the parent so it can fall back to its own file-type / folder icon.
+  // Video thumbnails are single-shot (no micro pre-warm). On failure we notify
+  // the parent so it can fall back to its own file-type icon.
   async function loadSingleThumbnail() {
     const currentPath = path;
     const currentKey = reloadKey;
@@ -151,10 +149,7 @@
     try {
       if (currentKey !== reloadKey) return;
 
-      const result =
-        kind === "video"
-          ? await getVideoThumbnailData(currentPath, backendSize, quality)
-          : await getFolderThumbnailData(currentPath, backendSize, quality);
+      const result = await getVideoThumbnailData(currentPath, backendSize, quality);
       if (currentKey !== reloadKey) return;
 
       if (result.ok) {
@@ -256,30 +251,6 @@
       <circle cx="16" cy="16" r="4" fill={fallbackColor}/>
       <path d="M6 33L15 24L22 31L30 21L42 33V38C42 40.2091 40.2091 42 38 42H10C7.79086 42 6 40.2091 6 38V33Z" fill={fallbackColor} fill-opacity="0.4"/>
     </svg>
-  {:else if kind === "folder" && fullUrl}
-    <!-- Folder thumbnail (Windows Explorer-style): a yellow folder with the photo
-         tucked into the front pocket, peeking above the front flap. Back panel +
-         tab behind the photo, lighter front flap over the photo's bottom. -->
-    <div class="folder-thumb">
-      <svg class="folder-layer" viewBox="0 0 48 48" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-        <!-- Folder back: tab (top-left) + body, theme colour slightly darkened. -->
-        <path d="M3 13C3 11.9 3.9 11 5 11H15.5C16 11 16.5 11.2 16.9 11.6L18.5 13.2H43C44.1 13.2 45 14.1 45 15.2V38C45 39.1 44.1 40 43 40H5C3.9 40 3 39.1 3 38V13Z" class="folder-back-fill"/>
-      </svg>
-      <img
-        src={fullUrl}
-        alt=""
-        class="folder-photo"
-        class:loaded={fullLoaded}
-        onload={() => { fullLoaded = true; }}
-        draggable="false"
-      />
-      <svg class="folder-layer" viewBox="0 0 48 48" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-        <!-- Front flap (theme colour) covering the photo's lower edge so it reads
-             as tucked into the folder pocket. -->
-        <path d="M3 30H45V38C45 39.1 44.1 40 43 40H5C3.9 40 3 39.1 3 38V30Z" class="folder-front-fill"/>
-        <path d="M3 30H45V31.5H3V30Z" fill="#fff" fill-opacity="0.35"/>
-      </svg>
-    </div>
   {:else}
     <!-- Two-layer thumbnail: micro (pixelated) underneath, full on top -->
     {#if microUrl}
@@ -374,49 +345,4 @@
     opacity: 1;
   }
 
-  /* Folder thumbnail: photo tucked inside a folder shape */
-  .folder-thumb {
-    position: relative;
-    width: 100%;
-    height: 100%;
-  }
-
-  .folder-layer {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-  }
-
-  /* Folder colour follows the active theme (--icon-folder), with a darker back
-     panel and the base colour on the front flap. */
-  .folder-back-fill {
-    fill: color-mix(in srgb, var(--icon-folder, #e8a800) 82%, #000);
-  }
-
-  .folder-front-fill {
-    fill: var(--icon-folder, #e8a800);
-  }
-
-  .folder-photo {
-    position: absolute;
-    /* Large, prominent photo sitting in the folder: it spans most of the tile,
-       its bottom edge (~78%) tucked behind the front flap (front top at y30 ≈
-       63%), with the gold folder framing it and the tab peeking top-left. */
-    top: 17%;
-    left: 11%;
-    right: 11%;
-    bottom: 22%;
-    width: auto;
-    height: auto;
-    object-fit: cover;
-    border-radius: 2px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
-    opacity: 0;
-    transition: opacity 150ms ease;
-  }
-
-  .folder-photo.loaded {
-    opacity: 1;
-  }
 </style>

@@ -846,141 +846,6 @@ fn get_video_thumbnail_data_sync(
     })
 }
 
-// ─── Folder collage thumbnails ──────────────────────────────────────────────
-
-/// Find up to `max` supported image files directly inside `dir` (non-recursive),
-/// sorted by name for deterministic collages.
-fn collect_folder_images(dir: &Path, max: usize) -> Vec<PathBuf> {
-    let Ok(read_dir) = fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut images: Vec<PathBuf> = read_dir
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.is_file() && is_supported_image(p))
-        .collect();
-    images.sort();
-    images.truncate(max);
-    images
-}
-
-/// Decode an image to a centre-cropped square RGB tile of `cell`x`cell`.
-fn decode_square_tile(path: &Path, cell: u32) -> Result<image::RgbImage, AppError> {
-    let img = decode_image(path, cell)?;
-    // Fill the cell (cover), then centre-crop to a square.
-    let filled = img.resize_to_fill(cell, cell, image::imageops::FilterType::Triangle);
-    Ok(filled.to_rgb8())
-}
-
-/// Build a folder thumbnail: a 2x2 collage of up to 4 images, or the single
-/// image scaled to fill when only one is present.
-fn render_folder_collage(images: &[PathBuf], size: u32) -> Result<image::RgbImage, AppError> {
-    if images.is_empty() {
-        return Err(AppError::Other("Folder contains no images".into()));
-    }
-
-    if images.len() == 1 {
-        return decode_square_tile(&images[0], size);
-    }
-
-    // 2x2 grid with a thin gutter between cells.
-    let gutter: u32 = (size / 64).max(1);
-    let cell = (size.saturating_sub(gutter)) / 2;
-    if cell == 0 {
-        return decode_square_tile(&images[0], size);
-    }
-
-    // Light background so gutters read as separators, not black bars.
-    let mut canvas = image::RgbImage::from_pixel(size, size, image::Rgb([240, 240, 240]));
-    let positions = [
-        (0u32, 0u32),
-        (cell + gutter, 0),
-        (0, cell + gutter),
-        (cell + gutter, cell + gutter),
-    ];
-
-    for (i, pos) in positions.iter().enumerate() {
-        // Fewer than 4 images: leave remaining cells as background.
-        let Some(src) = images.get(i) else { break };
-        if let Ok(tile) = decode_square_tile(src, cell) {
-            image::imageops::overlay(&mut canvas, &tile, pos.0 as i64, pos.1 as i64);
-        }
-    }
-
-    Ok(canvas)
-}
-
-/// Cache key for a folder collage: derived from the folder's mtime + the chosen
-/// image set, so adding/removing images invalidates it.
-fn folder_cache_key(dir: &Path, images: &[PathBuf], size: u32) -> Option<String> {
-    let metadata = fs::metadata(dir).ok()?;
-    let modified = metadata.modified().ok()?;
-    let modified_dur = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
-
-    let mut hasher = Sha256::new();
-    hasher.update(dir.to_string_lossy().as_bytes());
-    hasher.update(modified_dur.as_secs().to_le_bytes());
-    hasher.update(modified_dur.subsec_nanos().to_le_bytes());
-    for img in images {
-        hasher.update(img.to_string_lossy().as_bytes());
-        if let Ok(m) = fs::metadata(img).and_then(|md| md.modified()) {
-            if let Ok(d) = m.duration_since(std::time::UNIX_EPOCH) {
-                hasher.update(d.as_secs().to_le_bytes());
-            }
-        }
-    }
-    hasher.update(size.to_le_bytes());
-    hasher.update([CACHE_VERSION]);
-    Some(format!("{}_folder", hex::encode(hasher.finalize())))
-}
-
-fn get_folder_thumbnail_data_sync(
-    path: String,
-    size: Option<u32>,
-    quality: Option<u8>,
-) -> Result<String, AppError> {
-    let dir = PathBuf::from(&path);
-    let size = size.unwrap_or(THUMBNAIL_SIZE);
-    let quality = quality.unwrap_or(80);
-
-    if !dir.is_dir() {
-        return Err(AppError::InvalidPath(format!("Not a directory: {}", path)));
-    }
-
-    let images = collect_folder_images(&dir, 4);
-    if images.is_empty() {
-        // Caller falls back to the normal folder icon.
-        return Err(AppError::NotFound(format!("No images in folder: {}", path)));
-    }
-
-    let cache_key = folder_cache_key(&dir, &images, size)
-        .ok_or_else(|| AppError::Other(format!("Failed to generate cache key for: {}", path)))?;
-
-    if let Some(uri) = lru_get(&cache_key) {
-        return Ok(uri);
-    }
-
-    with_inflight_lock(&cache_key.clone(), || {
-        if let Some(uri) = lru_get(&cache_key) {
-            return Ok(uri);
-        }
-        if let Some(cached_path) = get_cached_thumbnail(&cache_key) {
-            let data = fs::read(&cached_path)?;
-            let uri = to_data_uri(&data);
-            lru_put(cache_key.clone(), uri.clone());
-            return Ok(uri);
-        }
-
-        let collage = render_folder_collage(&images, size)?;
-        let data = encode_jpeg(&collage, quality)?;
-        save_to_cache(&cache_key, &data);
-
-        let uri = to_data_uri(&data);
-        lru_put(cache_key.clone(), uri.clone());
-        Ok(uri)
-    })
-}
-
 // ─── Async Tauri commands ───────────────────────────────────────────────────
 
 /// Get or generate thumbnail for an image file.
@@ -1043,20 +908,6 @@ pub async fn set_ffmpeg_path(path: String) {
     } else {
         Some(path)
     });
-}
-
-/// Get a folder collage thumbnail (up to a 2x2 grid of the folder's images) as a
-/// base64 data URI. Errors when the folder has no images so the UI falls back to
-/// the normal folder icon.
-#[tauri::command]
-pub async fn get_folder_thumbnail_data(
-    path: String,
-    size: Option<u32>,
-    quality: Option<u8>,
-) -> Result<String, AppError> {
-    tokio::task::spawn_blocking(move || get_folder_thumbnail_data_sync(path, size, quality))
-        .await
-        .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
 }
 
 /// Clear the thumbnail cache
@@ -1191,43 +1042,6 @@ mod tests {
         assert!(is_supported_audio(Path::new("audiobook.m4b")));
         assert!(!is_supported_audio(Path::new("clip.mp4")));
         assert!(!is_supported_audio(Path::new("photo.jpg")));
-    }
-
-    #[test]
-    fn test_folder_collage_from_images() {
-        // A folder with multiple images produces a valid square collage thumbnail.
-        let dir = tempdir().unwrap();
-        for i in 0..3 {
-            let p = dir.path().join(format!("img{i}.png"));
-            image::RgbImage::from_fn(40, 40, |x, y| {
-                image::Rgb([(x + i * 30) as u8, (y % 256) as u8, 100])
-            })
-            .save(&p)
-            .unwrap();
-        }
-
-        let result = get_folder_thumbnail_data_sync(
-            dir.path().to_string_lossy().to_string(),
-            Some(128),
-            None,
-        );
-        assert!(
-            result.is_ok(),
-            "folder collage generation failed: {:?}",
-            result.err()
-        );
-        assert!(result.unwrap().starts_with("data:image/jpeg;base64,"));
-    }
-
-    #[test]
-    fn test_folder_thumbnail_errors_when_no_images() {
-        // An image-less folder must error so the UI falls back to the folder icon.
-        let dir = tempdir().unwrap();
-        File::create(dir.path().join("notes.txt")).unwrap();
-
-        let result =
-            get_folder_thumbnail_data_sync(dir.path().to_string_lossy().to_string(), None, None);
-        assert!(result.is_err(), "empty-of-images folder should error");
     }
 
     #[test]

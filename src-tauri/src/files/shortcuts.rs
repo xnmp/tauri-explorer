@@ -34,6 +34,7 @@ $sh = New-Object -ComObject WScript.Shell
 $sc = $sh.CreateShortcut($env:LNK_PATH)
 [Console]::Out.Write($sc.TargetPath)
 "#;
+    log::info!("[spawn-diag] shortcuts: spawning powershell to resolve .lnk {}", path);
     let mut cmd = Command::new("powershell");
     cmd.no_console();
     cmd.args(["-NoProfile", "-NonInteractive", "-Command", script]);

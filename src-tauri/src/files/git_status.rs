@@ -110,6 +110,7 @@ fn get_git_status_sync(path: &str) -> Result<GitStatusResponse, AppError> {
 
     // Check if inside a git repo and resolve the browsed dir's path relative
     // to the repo root in one call: stdout is "true\n<prefix>\n".
+    log::info!("[spawn-diag] git_status: spawning git rev-parse for {}", dir.display());
     let output = Command::new("git")
         .no_console()
         .args(["rev-parse", "--is-inside-work-tree", "--show-prefix"])

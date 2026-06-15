@@ -611,11 +611,21 @@ fn ffmpeg_path() -> Option<&'static Path> {
     FFMPEG
         .get_or_init(|| {
             if ffmpeg_runs(Path::new("ffmpeg")) {
+                log::info!("[thumbnails] ffmpeg found on PATH");
                 return Some(PathBuf::from("ffmpeg"));
             }
-            ffmpeg_fallback_candidates()
-                .into_iter()
-                .find(|c| c.exists() && ffmpeg_runs(c))
+            let candidates = ffmpeg_fallback_candidates();
+            for c in &candidates {
+                if c.exists() && ffmpeg_runs(c) {
+                    log::info!("[thumbnails] ffmpeg found at {}", c.display());
+                    return Some(c.clone());
+                }
+            }
+            log::warn!(
+                "[thumbnails] ffmpeg NOT found on PATH or in {} fallback locations — video/audio thumbnails will be unavailable",
+                candidates.len()
+            );
+            None
         })
         .as_deref()
 }
@@ -649,21 +659,46 @@ fn extract_media_thumbnail(source: &Path, size: u32, is_audio: bool) -> Result<V
             .arg(source)
             .args(["-frames:v", "1"]);
     }
+    // Capture stderr so failures are diagnosable in the logs (ffmpeg is chatty,
+    // but the last line usually says exactly why it failed).
     let output = cmd
         .args(["-vf", &vf, "-f", "image2", "-vcodec", "mjpeg", "-"])
         .no_console()
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .output()
-        .map_err(|e| AppError::Other(format!("Failed to run ffmpeg: {}", e)))?;
+        .map_err(|e| {
+            log::warn!(
+                "[thumbnails] failed to spawn ffmpeg for {}: {}",
+                source.display(),
+                e
+            );
+            AppError::Other(format!("Failed to run ffmpeg: {}", e))
+        })?;
 
     if !output.status.success() || output.stdout.is_empty() {
-        return Err(AppError::Other(format!(
-            "ffmpeg failed to extract {} thumbnail from {}",
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let reason = stderr.lines().last().unwrap_or("").trim();
+        log::warn!(
+            "[thumbnails] ffmpeg {} extraction failed for {} (exit {:?}, {} stdout bytes): {}",
             if is_audio { "cover-art" } else { "frame" },
-            source.display()
+            source.display(),
+            output.status.code(),
+            output.stdout.len(),
+            reason
+        );
+        return Err(AppError::Other(format!(
+            "ffmpeg failed to extract {} thumbnail from {}: {}",
+            if is_audio { "cover-art" } else { "frame" },
+            source.display(),
+            reason
         )));
     }
 
+    log::info!(
+        "[thumbnails] ffmpeg extracted {} bytes from {}",
+        output.stdout.len(),
+        source.display()
+    );
     Ok(output.stdout)
 }
 
@@ -676,11 +711,18 @@ fn get_video_thumbnail_data_sync(
     let size = size.unwrap_or(THUMBNAIL_SIZE);
     let quality = quality.unwrap_or(80);
 
+    log::info!("[thumbnails] media thumbnail requested: {}", path);
+
     if !source_path.exists() {
+        log::warn!("[thumbnails] media path does not exist: {}", path);
         return Err(AppError::NotFound(path.clone()));
     }
     let is_audio = is_supported_audio(&source_path);
     if !is_supported_video(&source_path) && !is_audio {
+        log::warn!(
+            "[thumbnails] unsupported media format (not video/audio): {}",
+            path
+        );
         return Err(AppError::InvalidPath(format!(
             "Unsupported media format: {}",
             path
@@ -713,12 +755,24 @@ fn get_video_thumbnail_data_sync(
         let img = ImageReader::new(Cursor::new(frame))
             .with_guessed_format()?
             .decode()
-            .map_err(|e| AppError::Other(format!("Failed to decode video frame: {}", e)))?;
+            .map_err(|e| {
+                log::warn!(
+                    "[thumbnails] failed to decode ffmpeg output for {}: {}",
+                    source_path.display(),
+                    e
+                );
+                AppError::Other(format!("Failed to decode video frame: {}", e))
+            })?;
         let thumbnail = img.thumbnail(size, size).to_rgb8();
 
         let data = encode_jpeg(&thumbnail, quality)?;
         save_to_cache(&cache_key, &data);
 
+        log::info!(
+            "[thumbnails] generated media thumbnail for {} ({} bytes)",
+            source_path.display(),
+            data.len()
+        );
         let uri = to_data_uri(&data);
         lru_put(cache_key.clone(), uri.clone());
         Ok(uri)

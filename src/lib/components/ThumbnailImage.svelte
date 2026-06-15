@@ -161,6 +161,9 @@
         fullUrl = result.data;
         setThumbnailCache(currentKey, { micro: null, full: fullUrl });
       } else {
+        // Diagnostic: surfaces backend reasons (e.g. "ffmpeg not found",
+        // "no album art") in the dev console so missing thumbnails are explainable.
+        console.warn(`[thumbnail] ${kind} thumbnail unavailable for ${currentPath}: ${result.error}`);
         error = true;
         onunavailable?.();
       }

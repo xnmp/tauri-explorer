@@ -24,6 +24,9 @@ export type IconTheme = "default" | "material" | "minimal";
 
 export type ThumbnailSize = "small" | "medium" | "large" | "xlarge";
 
+/** Windows translucent system backdrop (Mica/Acrylic). "off" = opaque window. */
+export type WindowsBackdrop = "off" | "mica" | "acrylic";
+
 export interface ThumbnailSizeConfig {
   displaySize: number;
   genSize: number;
@@ -80,6 +83,7 @@ export interface Settings {
   integratedTitleBar: boolean; // macOS: render tabs in title bar with overlay traffic lights
   macOsVibrancy: boolean; // macOS: native window vibrancy (translucent frosted glass), requires restart
   vibrancyBlur: boolean; // macOS: enable native blur behind vibrancy (off = theme background, no blur)
+  windowsBackdrop: WindowsBackdrop; // Windows: translucent system backdrop (Mica/Acrylic), requires restart
   yaziNavigation: boolean; // left/right arrows navigate up/into folders in details/list view
 }
 
@@ -127,6 +131,7 @@ const DEFAULT_SETTINGS: Settings = {
   integratedTitleBar: false,
   macOsVibrancy: false,
   vibrancyBlur: true,
+  windowsBackdrop: "off",
   yaziNavigation: true,
 };
 
@@ -355,6 +360,12 @@ function createSettingsStore() {
     },
     get vibrancyBlur() {
       return settings.vibrancyBlur;
+    },
+    get windowsBackdrop() {
+      return settings.windowsBackdrop;
+    },
+    setWindowsBackdrop(value: WindowsBackdrop): void {
+      update({ windowsBackdrop: value });
     },
     get yaziNavigation() {
       return settings.yaziNavigation;

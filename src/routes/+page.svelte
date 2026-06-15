@@ -161,11 +161,16 @@
     document.documentElement.style.setProperty("--bg-opacity", String(opacity));
   });
 
-  // Apply vibrancy mode attribute (drives CSS transparency for native macOS vibrancy)
+  // Apply vibrancy mode attribute. It drives the translucent "floating island"
+  // CSS shared by macOS vibrancy and the Windows Mica/Acrylic backdrop — both
+  // need the app background to go transparent so the native effect shows through.
   $effect(() => {
-    if (settingsStore.macOsVibrancy) {
+    const windowsBackdrop = settingsStore.windowsBackdrop !== "off";
+    if (settingsStore.macOsVibrancy || windowsBackdrop) {
       document.documentElement.setAttribute("data-vibrancy", "");
-      if (!settingsStore.vibrancyBlur) {
+      // No-blur is a macOS-only fallback (solid theme background); Windows
+      // backdrops always blur, so never apply it there.
+      if (settingsStore.macOsVibrancy && !settingsStore.vibrancyBlur) {
         document.documentElement.setAttribute("data-vibrancy-no-blur", "");
       } else {
         document.documentElement.removeAttribute("data-vibrancy-no-blur");

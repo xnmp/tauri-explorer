@@ -3,9 +3,9 @@
   Issue: tauri-explorer-npjh.1, tauri-explorer-oytv
 -->
 <script lang="ts">
-  import { settingsStore, type IconTheme, type ThumbnailSize } from "$lib/state/settings.svelte";
+  import { settingsStore, type IconTheme, type ThumbnailSize, type WindowsBackdrop } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
-  import { isMac } from "$lib/domain/platform";
+  import { isMac, isWindows } from "$lib/domain/platform";
   import KeybindingsSettings from "./KeybindingsSettings.svelte";
   import Modal from "./Modal.svelte";
 
@@ -44,6 +44,7 @@
     integratedTitleBar: ["Integrated Title Bar", "Show tabs in the title bar alongside window controls (requires restart)"],
     vibrancy: ["Window Vibrancy", "Native macOS translucent frosted-glass effect (requires restart)"],
     nativeBlur: ["Native Blur", "Use macOS frosted glass blur (off = theme background, requires restart)"],
+    windowsBackdrop: ["Window Backdrop", "Windows translucent Mica/Acrylic frosted-glass effect (requires restart)"],
     addressBar: ["Show Address Bar", "Display the breadcrumb/path bar above the file list"],
     statusBar: ["Show Status Bar", "Display file info bar at the bottom (Alt+M U)"],
     navBack: ["Back", "Show the back navigation button"],
@@ -69,6 +70,7 @@
   const appearanceRows = [
     rows.theme, rows.iconTheme, rows.thumbnailSize, rows.showSidebar, rows.windowControls,
     ...(isMac ? [rows.integratedTitleBar, rows.vibrancy, rows.nativeBlur] : []),
+    ...(isWindows ? [rows.windowsBackdrop] : []),
     rows.addressBar, rows.statusBar,
   ];
   const navBarRows = [rows.navBack, rows.navForward, rows.navUp, rows.navRefresh];
@@ -260,6 +262,24 @@
             </label>
           </div>
           {/if}
+          {/if}
+
+          {#if isWindows}
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.windowsBackdrop)}>
+            <div class="setting-info">
+              <span class="setting-label">Window Backdrop</span>
+              <span class="setting-description">Windows translucent Mica/Acrylic frosted-glass effect (requires restart)</span>
+            </div>
+            <select
+              class="theme-select"
+              value={settingsStore.windowsBackdrop}
+              onchange={(e) => settingsStore.setWindowsBackdrop(e.currentTarget.value as WindowsBackdrop)}
+            >
+              <option value="off">Off</option>
+              <option value="mica">Mica</option>
+              <option value="acrylic">Acrylic</option>
+            </select>
+          </div>
           {/if}
 
           <div class="setting-row" class:hidden={!matchesSearch(...rows.addressBar)}>

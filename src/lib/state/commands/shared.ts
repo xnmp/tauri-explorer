@@ -3,6 +3,7 @@
  */
 
 import { WebviewWindow, type Color } from "@tauri-apps/api/webviewWindow";
+import { Effect, EffectState, type Effects } from "@tauri-apps/api/window";
 import { isMac, isWindows } from "$lib/domain/platform";
 import { windowTabsManager, tabSeedKey, type TabSnapshot } from "../window-tabs.svelte";
 import { settingsStore } from "../settings.svelte";
@@ -53,6 +54,16 @@ export async function openNewWindow(
   const win = getCurrentWindow();
   const pos = await win.outerPosition();
   const size = await win.outerSize();
+
+  // Mirror the main window's backdrop so new windows match (issue: Windows
+  // Mica/Acrylic). A translucent backdrop needs a transparent window and no
+  // opaque background color; the DWM system backdrop still rounds the corners.
+  const winBackdrop =
+    isWindows && settingsStore.windowsBackdrop !== "off" ? settingsStore.windowsBackdrop : null;
+  const windowEffects: Effects | undefined = winBackdrop
+    ? { effects: [winBackdrop === "mica" ? Effect.Mica : Effect.Acrylic], state: EffectState.Active }
+    : undefined;
+
   new WebviewWindow(label, {
     url,
     title: "tauri-explorer",
@@ -60,13 +71,15 @@ export async function openNewWindow(
     height: size.height,
     x: pos.x + 30,
     y: pos.y + 30,
-    backgroundColor: getPersistedBgColor(),
+    backgroundColor: winBackdrop ? undefined : getPersistedBgColor(),
     decorations: isMac,
     // Windows 11 only rounds corners (and draws the DWM shadow) on opaque
-    // windows. The main window is opaque on Windows, so new windows must be
-    // too — a transparent window keeps the sharp corners the bug reports.
-    transparent: !isMac && !isWindows,
+    // windows OR ones with a system backdrop. So an opaque window OR a
+    // Mica/Acrylic backdrop keeps rounded corners; a plain transparent window
+    // (no backdrop) is what produced the sharp-corner bug.
+    transparent: winBackdrop ? true : !isMac && !isWindows,
     shadow: isMac || isWindows,
+    windowEffects,
     dragDropEnabled: true,
     acceptFirstMouse: true,
     titleBarStyle: isMac && settingsStore.integratedTitleBar ? "overlay" : undefined,

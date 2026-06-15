@@ -201,6 +201,35 @@ function createExplorerState(seed?: ExplorerSeed) {
       const name = basename(path);
       recentFilesStore.add(path, name, "directory");
       frecencyStore.recordAccess(path);
+      await maybeAutoEnterSingleSubdir();
+    }
+  }
+
+  /** When the "auto-enter single subfolder" setting is on, and the directory we
+   *  just landed in contains exactly one *visible* entry that is itself a
+   *  subdirectory (visible = respects the user's hidden / manually-hidden
+   *  settings, via displayEntries), descend into it — recursively. The final
+   *  destination replaces the just-pushed history entry, so Back undoes the
+   *  whole jump in one press. Bounded to avoid pathological loops. */
+  async function maybeAutoEnterSingleSubdir() {
+    if (!settingsStore.autoEnterSingleSubdir) return;
+    let descended = false;
+    let guard = 0;
+    while (guard++ < 64) {
+      const visible = displayEntries;
+      if (visible.length !== 1 || visible[0].kind !== "directory") break;
+      const status = await navigateInternal(visible[0].path);
+      if (status !== "ok") break;
+      descended = true;
+      recentFilesStore.add(coreState.currentPath, basename(coreState.currentPath), "directory");
+      frecencyStore.recordAccess(coreState.currentPath);
+    }
+    if (descended) {
+      // Point the current history slot at the final folder so Back/Forward
+      // treat the auto-descent as part of the original navigation.
+      const h = [...coreState.history];
+      h[coreState.historyIndex] = coreState.currentPath;
+      coreState.history = h;
     }
   }
 

@@ -671,6 +671,23 @@ const mockCommands: Record<string, CommandHandler> = {
     return "data:image/jpeg;base64,/9j//gAQTGF2YzYyLjExLjEwMAD/2wBDAAgUFBcUFxsbGxsbGyAeICEhISAgICAhISEkJCQqKiokJCQhISQkKCgqKi4vLisrKisvLzIyMjw8OTlGRkhWVmf/xABiAAEBAQAAAAAAAAAAAAAAAAAGAwUBAQAAAAAAAAAAAAAAAAAAAAQQAAIBAwQCAwEAAAAAAAAAAAECAxESACExIgRxYRNBUTIRAQACAwEBAAAAAAAAAAAAAAEhADFBAoED/8AAEQgAEAAQAwEiAAIRAAMRAP/aAAwDAQACEQMRAD8AjOYesy3q4rUW2Vq3o4en70YNEis21Ycq+M3WvdI7ecjm0En+PwA/VddsDTjrpGx+UO9RooLbb8mpp4GN4UJZKn6Zjfl//9k=";
   },
 
+  get_video_thumbnail_data: () => {
+    // Same realistic 128px thumbnail as images — stands in for an extracted
+    // video frame so the tiles view can be demoed in browser/E2E mode.
+    return mockInvoke<string>("get_thumbnail_data");
+  },
+
+  get_folder_thumbnail_data: (args) => {
+    // Mock a folder collage. Return a thumbnail for any folder whose path
+    // contains "Pictures" or "Images" (so E2E can demo the feature) and throw
+    // otherwise to exercise the icon fallback path.
+    const path = ((args.path as string) ?? "").toLowerCase();
+    if (path.includes("picture") || path.includes("image") || path.includes("photo")) {
+      return mockInvoke<string>("get_thumbnail_data");
+    }
+    throw new Error("No images in folder (mock)");
+  },
+
   clear_thumbnail_cache: () => 0,
 
   get_thumbnail_cache_stats: () => ({
@@ -914,6 +931,7 @@ const mockCommands: Record<string, CommandHandler> = {
   open_file_with: () => {},
 
   open_in_terminal: () => {},
+  list_installed_terminals: () => ["ghostty", "kitty", "alacritty", "gnome-terminal", "xterm"],
 
   set_as_wallpaper: () => {},
 

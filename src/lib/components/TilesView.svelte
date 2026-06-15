@@ -8,7 +8,7 @@
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { useProgressiveRender } from "$lib/composables/use-progressive-render.svelte";
-  import { getFileIconColor, isImageFile } from "$lib/domain/file-types";
+  import { getFileIconColor, isImageFile, isVideoFile } from "$lib/domain/file-types";
 
   import { usesPointerDrag } from "$lib/domain/platform";
   import { settingsStore, THUMBNAIL_SIZE_CONFIG } from "$lib/state/settings.svelte";
@@ -44,6 +44,27 @@
     folderViewsStore.getThumbnailSize(explorer.currentPath, settingsStore.thumbnailSize)
   );
   const tileConfig = $derived(THUMBNAIL_SIZE_CONFIG[effectiveThumbnailSize]);
+
+  // Folder collage thumbnails only render at large/xlarge tile sizes
+  // (smaller tiles keep the plain folder icon, like Windows Explorer).
+  const showFolderThumbnails = $derived(
+    effectiveThumbnailSize === "large" || effectiveThumbnailSize === "xlarge"
+  );
+
+  // Folders/videos whose thumbnail generation failed (no images / no ffmpeg) —
+  // these fall back to the plain icon. Keyed by path; reset on navigation.
+  let unavailableThumbs = $state(new Set<string>());
+  $effect(() => {
+    // Reset when the directory changes.
+    explorer.currentPath;
+    unavailableThumbs = new Set<string>();
+  });
+  function markUnavailable(path: string) {
+    if (unavailableThumbs.has(path)) return;
+    const next = new Set(unavailableThumbs);
+    next.add(path);
+    unavailableThumbs = next;
+  }
 
   // Progressive rendering to avoid UI freeze on large directories.
   // Only resets the render limit when entry count increases significantly
@@ -97,6 +118,10 @@
       <div class="tile-icon" style:color={iconColor} data-drag-icon>
         {#if isImageFile(entry)}
           <ThumbnailImage path={entry.path} size={tileConfig.displaySize} genSize={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} />
+        {:else if isVideoFile(entry) && !unavailableThumbs.has(entry.path)}
+          <ThumbnailImage kind="video" path={entry.path} size={tileConfig.displaySize} genSize={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} onunavailable={() => markUnavailable(entry.path)} />
+        {:else if entry.kind === "directory" && showFolderThumbnails && !unavailableThumbs.has(entry.path)}
+          <ThumbnailImage kind="folder" path={entry.path} size={tileConfig.displaySize} genSize={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} onunavailable={() => markUnavailable(entry.path)} />
         {:else}
           <FileIcon {entry} size="large" />
         {/if}

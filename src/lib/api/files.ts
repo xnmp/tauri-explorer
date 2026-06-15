@@ -335,6 +335,19 @@ export async function openInTerminal(path: string, terminal?: string): Promise<A
 }
 
 /**
+ * List terminal emulators that are actually installed on this machine, so the
+ * settings UI can offer a dropdown instead of a free-text command.
+ */
+export async function listInstalledTerminals(): Promise<ApiResult<string[]>> {
+  try {
+    const data = await invoke<string[]>("list_installed_terminals");
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+/**
  * Write text content to a new file.
  */
 export async function writeTextFile(path: string, content: string): Promise<ApiResult<FileEntry>> {
@@ -675,6 +688,50 @@ export async function getMicroThumbnail(
 ): Promise<ApiResult<string>> {
   try {
     const dataUri = await invoke<string>("get_micro_thumbnail", { path, prewarmSize, prewarmQuality });
+    return { ok: true, data: dataUriToBlobUrl(dataUri) };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+/**
+ * Get a video thumbnail (extracted frame) as a blob URL.
+ * Requires ffmpeg on PATH; returns an error otherwise so callers can fall back
+ * to the file-type icon.
+ *
+ * @param path - Full path to video file
+ * @param size - Optional generation size
+ * @param quality - Optional JPEG quality
+ */
+export async function getVideoThumbnailData(
+  path: string,
+  size?: number,
+  quality?: number
+): Promise<ApiResult<string>> {
+  try {
+    const dataUri = await invoke<string>("get_video_thumbnail_data", { path, size, quality });
+    return { ok: true, data: dataUriToBlobUrl(dataUri) };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+/**
+ * Get a folder collage thumbnail (a 2x2 grid of the folder's images) as a blob
+ * URL. Returns an error when the folder has no images so callers can fall back
+ * to the normal folder icon.
+ *
+ * @param path - Full path to folder
+ * @param size - Optional generation size
+ * @param quality - Optional JPEG quality
+ */
+export async function getFolderThumbnailData(
+  path: string,
+  size?: number,
+  quality?: number
+): Promise<ApiResult<string>> {
+  try {
+    const dataUri = await invoke<string>("get_folder_thumbnail_data", { path, size, quality });
     return { ok: true, data: dataUriToBlobUrl(dataUri) };
   } catch (err) {
     return { ok: false, error: extractError(err) };

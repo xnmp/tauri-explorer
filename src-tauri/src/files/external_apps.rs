@@ -502,6 +502,65 @@ fn open_in_terminal_blocking(path: String, terminal: Option<String>) -> Result<(
     Ok(())
 }
 
+/// Known terminal emulator commands per platform, in preference order.
+/// Used both for auto-detect ordering and for the settings dropdown.
+#[cfg(target_os = "linux")]
+const KNOWN_TERMINALS: &[&str] = &[
+    "ghostty",
+    "kitty",
+    "alacritty",
+    "wezterm",
+    "gnome-terminal",
+    "konsole",
+    "xfce4-terminal",
+    "tilix",
+    "terminator",
+    "xterm",
+];
+#[cfg(target_os = "macos")]
+const KNOWN_TERMINALS: &[&str] = &[
+    "iTerm",
+    "Ghostty",
+    "Alacritty",
+    "kitty",
+    "WezTerm",
+    "Terminal",
+];
+#[cfg(target_os = "windows")]
+const KNOWN_TERMINALS: &[&str] = &["wt", "pwsh", "powershell", "alacritty", "wezterm", "cmd"];
+
+/// Return the subset of known terminal emulators that are actually installed
+/// on this machine, so the settings UI can present a dropdown instead of a
+/// free-text command field. On macOS the entries are app names (looked up via
+/// the Applications dirs); elsewhere they are PATH binaries.
+#[tauri::command]
+pub async fn list_installed_terminals() -> Result<Vec<String>, AppError> {
+    run_blocking(|| {
+        let mut found: Vec<String> = Vec::new();
+        for term in KNOWN_TERMINALS {
+            #[cfg(target_os = "macos")]
+            let installed = {
+                let app = format!("/Applications/{term}.app");
+                std::path::Path::new(&app).exists()
+                    || std::path::Path::new(&format!(
+                        "{}/Applications/{term}.app",
+                        std::env::var("HOME").unwrap_or_default()
+                    ))
+                    .exists()
+                    || *term == "Terminal" // always present on macOS
+            };
+            #[cfg(not(target_os = "macos"))]
+            let installed = find_editor_in_path(term);
+
+            if installed {
+                found.push((*term).to_string());
+            }
+        }
+        Ok(found)
+    })
+    .await
+}
+
 /// Map file extension to MIME type for cases where content-based detection
 /// (used by `xdg-open`) gives the wrong result. Only includes types where
 /// extension-based lookup is more reliable than content sniffing.

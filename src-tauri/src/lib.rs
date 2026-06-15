@@ -127,6 +127,7 @@ pub fn run(launch_dir: Option<String>) {
             files::external_apps::open_file_with,
             files::external_apps::open_image_with_siblings,
             files::external_apps::open_in_terminal,
+            files::external_apps::list_installed_terminals,
             files::shortcuts::resolve_shortcut,
             // Search
             search::fuzzy_search,
@@ -145,6 +146,8 @@ pub fn run(launch_dir: Option<String>) {
             thumbnails::get_thumbnail,
             thumbnails::get_thumbnail_data,
             thumbnails::get_micro_thumbnail,
+            thumbnails::get_video_thumbnail_data,
+            thumbnails::get_folder_thumbnail_data,
             thumbnails::clear_thumbnail_cache,
             thumbnails::get_thumbnail_cache_stats,
             // Archive operations

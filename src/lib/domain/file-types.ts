@@ -258,6 +258,18 @@ export function isImageFile(entry: FileEntry): boolean {
   return THUMBNAIL_EXTENSIONS.has(ext);
 }
 
+/** Video extensions that support frame-extraction thumbnails (requires ffmpeg) */
+const VIDEO_THUMBNAIL_EXTENSIONS = new Set([
+  "mp4", "mov", "mkv", "webm", "avi", "wmv", "flv", "m4v", "mpg", "mpeg",
+]);
+
+/** Check if a file is a video that supports frame-extraction thumbnails */
+export function isVideoFile(entry: FileEntry): boolean {
+  if (entry.kind === "directory") return false;
+  const ext = getExtension(entry.name);
+  return VIDEO_THUMBNAIL_EXTENSIONS.has(ext);
+}
+
 /** Labels for well-known extensionless files */
 const EXTENSIONLESS_LABELS: Record<string, string> = {
   "Dockerfile": "DOCK",

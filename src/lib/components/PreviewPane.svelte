@@ -39,6 +39,36 @@
 
   const paneWidth = $derived(settingsStore.previewPaneWidth || DEFAULT_WIDTH);
 
+  // --- Fullscreen preview (double-click to toggle, Esc to exit) ---
+  let fullscreen = $state(false);
+  let contentEl = $state<HTMLElement | null>(null);
+
+  function toggleFullscreen(): void {
+    fullscreen = !fullscreen;
+  }
+
+  // While fullscreen: Esc exits; Left/Right arrows scroll the content
+  // horizontally (instead of being captured for file-list navigation).
+  // Capture phase + stopImmediatePropagation so this wins over the global
+  // keyboard handler in +page.svelte.
+  $effect(() => {
+    if (!fullscreen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        fullscreen = false;
+      } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        if (!contentEl) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        contentEl.scrollBy({ left: event.key === "ArrowLeft" ? -120 : 120 });
+      }
+    };
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true });
+  });
+
   function handleResizeStart(event: MouseEvent): void {
     event.preventDefault();
     resizing = true;
@@ -351,9 +381,23 @@
   }
 </script>
 
-<div class="preview-pane" class:resizing style="width: {paneWidth}px">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="preview-pane"
+  class:resizing
+  class:fullscreen
+  style="width: {paneWidth}px; --preview-font-size: {settingsStore.previewFontSize}px;"
+  ondblclick={toggleFullscreen}
+>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="resize-handle" onmousedown={handleResizeStart}></div>
+  {#if fullscreen}
+    <button class="fullscreen-exit" onclick={(e) => { e.stopPropagation(); fullscreen = false; }} title="Exit full screen (Esc)" aria-label="Exit full screen">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+        <path d="M3 3L13 13M13 3L3 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+    </button>
+  {/if}
   {#if activeDiff}
     <div class="preview-header">
       <span class="preview-filename" title={activeDiff.path}>{activeDiff.path.split("/").pop()}</span>
@@ -361,7 +405,7 @@
         {diffSubtitle || "git diff"}
       </span>
     </div>
-    <div class="preview-content">
+    <div class="preview-content" bind:this={contentEl}>
       {#if diffLoading}
         <div class="preview-loading"><div class="spinner"></div></div>
       {:else if diffError}
@@ -403,7 +447,7 @@
       <span class="preview-type-badge">{getFileType(selectedFile)}</span>
     </div>
 
-    <div class="preview-content">
+    <div class="preview-content" bind:this={contentEl}>
       {#if previewLoading}
         {#if showPreviewSpinner}
           <div class="preview-loading">
@@ -492,6 +536,40 @@
 
   .preview-pane.resizing {
     user-select: none;
+  }
+
+  /* Fullscreen: cover the whole window (overrides the inline width). */
+  .preview-pane.fullscreen {
+    position: fixed;
+    inset: 0;
+    width: 100vw !important;
+    height: 100vh;
+    z-index: 1000;
+    background: var(--background-solid, var(--background-card-secondary));
+    border-left: none;
+  }
+
+  .fullscreen-exit {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 1001;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background: var(--subtle-fill-secondary);
+    border: 1px solid var(--control-stroke);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  .fullscreen-exit:hover {
+    background: var(--subtle-fill-tertiary);
+    color: var(--text-primary);
   }
 
   .resize-handle {
@@ -619,7 +697,7 @@
   .preview-text {
     padding: 16px;
     font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
-    font-size: 11px;
+    font-size: var(--preview-font-size, 11px);
     line-height: 1.6;
     color: var(--text-secondary);
     white-space: pre-wrap;
@@ -646,7 +724,7 @@
      descendants need :global. */
   .preview-markdown {
     padding: 16px;
-    font-size: 12px;
+    font-size: var(--preview-font-size, 12px);
     line-height: 1.65;
     color: var(--text-secondary);
     flex: 1;

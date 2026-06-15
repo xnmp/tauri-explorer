@@ -86,6 +86,8 @@ export interface Settings {
   windowsBackdrop: WindowsBackdrop; // Windows: translucent system backdrop (Mica/Acrylic), requires restart
   windowsBackdropOpacity: number; // Windows: acrylic tint opacity 0-100 (lower = more see-through)
   yaziNavigation: boolean; // left/right arrows navigate up/into folders in details/list view
+  previewFontSize: number; // base font size (px) for text/code/markdown previews
+  autoEnterSingleSubdir: boolean; // when entering a dir with exactly one visible subdir (and nothing else), descend into it recursively
 }
 
 const MIN_ZOOM = 50;
@@ -135,6 +137,8 @@ const DEFAULT_SETTINGS: Settings = {
   windowsBackdrop: "off",
   windowsBackdropOpacity: 65,
   yaziNavigation: true,
+  previewFontSize: 12,
+  autoEnterSingleSubdir: false,
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -375,6 +379,15 @@ function createSettingsStore() {
     get yaziNavigation() {
       return settings.yaziNavigation;
     },
+    get previewFontSize() {
+      return settings.previewFontSize;
+    },
+    setPreviewFontSize(px: number): void {
+      update({ previewFontSize: Math.max(8, Math.min(28, Math.round(px))) });
+    },
+    get autoEnterSingleSubdir() {
+      return settings.autoEnterSingleSubdir;
+    },
     toggleMillerColumns(): void {
       const on = settings.millerLayers > 0;
       update({ millerLayers: on ? 0 : settings.millerLayersPreferred });
@@ -487,6 +500,7 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
   { key: "confirmDelete", id: "view.toggleConfirmDelete", label: "Toggle Confirm on Delete" },
   { key: "quickOpenDebug", id: "view.toggleQuickOpenDebug", label: "Toggle Quick Open Debug Scores" },
   { key: "yaziNavigation", label: "Toggle Yazi Navigation" },
+  { key: "autoEnterSingleSubdir", label: "Toggle Auto-Enter Single Subfolder" },
   { key: "integratedTitleBar", label: "Toggle Integrated Title Bar" },
   { key: "macOsVibrancy", label: "Toggle macOS Vibrancy" },
   { key: "vibrancyBlur", label: "Toggle Vibrancy Blur" },

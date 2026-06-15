@@ -73,7 +73,35 @@ export function sortEntries(
 }
 
 /**
- * Filter hidden files (dotfiles and OS/app temp files).
+ * Windows/OS system folders that aren't dotfiles but should be hidden by
+ * default (they show up at drive roots). Matched case-insensitively against the
+ * full entry name. Revealed when "show hidden" is on, like dotfiles.
+ */
+const SYSTEM_HIDDEN_NAMES: ReadonlySet<string> = new Set([
+  "$recycle.bin",
+  "$recycler",
+  "recycler",
+  "recycled",
+  "system volume information",
+  "$winreagent",
+  "$sysreset",
+  "$getcurrent",
+  "config.msi",
+  "documents and settings", // legacy junction
+  "msocache",
+  "recovery",
+  "found.000",
+]);
+
+/** True if `name` is an OS/system folder hidden by default (separate from dotfiles). */
+export function isSystemHidden(name: string): boolean {
+  return SYSTEM_HIDDEN_NAMES.has(name.toLowerCase());
+}
+
+/**
+ * Filter hidden files: dotfiles, OS/app temp files (`~$`), and known system
+ * folders ($RECYCLE.BIN, System Volume Information, …) that don't start with a
+ * dot but should still be hidden by default.
  * Returns a new array without mutating the original.
  */
 export function filterHidden(
@@ -81,7 +109,9 @@ export function filterHidden(
   showHidden: boolean
 ): FileEntry[] {
   if (showHidden) return [...entries];
-  return entries.filter((e) => !e.name.startsWith(".") && !e.name.startsWith("~$"));
+  return entries.filter(
+    (e) => !e.name.startsWith(".") && !e.name.startsWith("~$") && !isSystemHidden(e.name)
+  );
 }
 
 /**

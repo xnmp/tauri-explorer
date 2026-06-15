@@ -112,6 +112,23 @@ describe("filterHidden", () => {
     filterHidden(mockEntries, false);
     expect(mockEntries).toEqual(original);
   });
+
+  it("hides Windows system folders (case-insensitive) by default", () => {
+    const sysEntries = [
+      { name: "$RECYCLE.BIN", path: "/$RECYCLE.BIN", kind: "directory", size: 0, modified: "" },
+      { name: "System Volume Information", path: "/System Volume Information", kind: "directory", size: 0, modified: "" },
+      { name: "Documents", path: "/Documents", kind: "directory", size: 0, modified: "" },
+    ] as unknown as typeof mockEntries;
+    const filtered = filterHidden(sysEntries, false);
+    expect(filtered.map((e) => e.name)).toEqual(["Documents"]);
+  });
+
+  it("shows system folders when showHidden is true", () => {
+    const sysEntries = [
+      { name: "$Recycle.Bin", path: "/$Recycle.Bin", kind: "directory", size: 0, modified: "" },
+    ] as unknown as typeof mockEntries;
+    expect(filterHidden(sysEntries, true)).toHaveLength(1);
+  });
 });
 
 describe("formatSize", () => {

@@ -234,6 +234,10 @@
               >
                 <span class="command-category">{getCategoryLabel(cmd.category)}</span>
                 <span class="command-label">{cmd.label}</span>
+                {#if cmd.toggleState}
+                  {@const on = cmd.toggleState()}
+                  <span class="toggle-badge" class:on aria-label={on ? "On" : "Off"}>{on ? "ON" : "OFF"}</span>
+                {/if}
                 {#if settingsStore.quickOpenDebug && scores}
                   <span class="debug-breakdown">
                     <span class="debug-row"><b>{scores.total}</b></span>
@@ -375,6 +379,30 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .toggle-badge {
+    flex-shrink: 0;
+    padding: 1px 7px;
+    border-radius: var(--radius-pill, 999px);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    background: var(--subtle-fill-tertiary);
+    color: var(--text-tertiary);
+    border: 1px solid var(--control-stroke);
+  }
+
+  .toggle-badge.on {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+
+  .command-item.selected .toggle-badge {
+    background: rgba(255, 255, 255, 0.2);
+    border-color: transparent;
+    color: var(--text-on-accent);
   }
 
   .command-shortcut {

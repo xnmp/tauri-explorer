@@ -499,6 +499,7 @@ export function generateToggleCommands(): Command[] {
     category: (meta.category ?? "view") as CommandCategory,
     shortcut: meta.shortcut,
     when: meta.when,
+    toggleState: () => Boolean(settingsStore.state[meta.key]),
     handler:
       meta.handler ??
       (() => {

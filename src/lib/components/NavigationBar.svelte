@@ -539,21 +539,32 @@
     width: 8px;
   }
 
-  /* Filter bar */
+  /* Filter bar — styled to match the address bar (.breadcrumbs-container).
+     Fixed width so it does not grow when the clear button appears on type. */
   .filter-bar {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
     flex-shrink: 0;
-    padding: 2px 8px;
-    background: var(--control-fill);
-    border: 1px solid var(--control-stroke);
-    border-radius: var(--radius-sm);
+    box-sizing: border-box;
+    width: 220px;
+    height: 30px;
+    padding: 0 10px;
+    background: var(--address-bar-bg, rgba(255, 255, 255, 0.12));
+    border: 1px solid var(--address-bar-stroke, rgba(255, 255, 255, 0.18));
+    border-radius: var(--radius-pill);
+    box-shadow: inset 0 1px 0 var(--address-bar-highlight, rgba(255, 255, 255, 0.04));
     animation: filterIn 150ms cubic-bezier(0, 0, 0, 1);
   }
 
+  .filter-bar:focus-within {
+    border-color: var(--accent);
+    background: var(--control-fill-secondary);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 15%, transparent);
+  }
+
   @keyframes filterIn {
-    from { opacity: 0; width: 0; padding: 0; }
+    from { opacity: 0; }
     to { opacity: 1; }
   }
 
@@ -563,14 +574,15 @@
   }
 
   .filter-input {
-    width: 120px;
-    padding: 2px 4px;
+    flex: 1;
+    min-width: 0;
+    padding: 2px 0;
     background: transparent;
     border: none;
     outline: none;
     color: var(--text-primary);
     font-family: inherit;
-    font-size: var(--font-size-caption);
+    font-size: 13px;
   }
 
   .filter-input::placeholder {

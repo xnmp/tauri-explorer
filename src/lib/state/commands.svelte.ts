@@ -20,6 +20,9 @@ export interface Command {
   when?: () => boolean;
   /** Hide from command palette (shortcut still works) */
   hidden?: boolean;
+  /** For toggle commands: returns the current on/off state so the palette can
+   *  show an ON/OFF badge. Omit for non-toggle commands. */
+  toggleState?: () => boolean;
 }
 
 /** Get the effective display shortcut for a command */

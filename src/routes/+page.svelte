@@ -91,6 +91,35 @@
       return;
     }
 
+    // Ctrl+F: open the directory filter. Handled explicitly *before* the
+    // input-field early-return so pressing it again while the filter input is
+    // focused is swallowed — this stops the WebView's native find bar — and is
+    // a no-op rather than a toggle. (Ctrl+Shift+F = Search in Files is excluded.)
+    if (
+      (event.key === "f" || event.key === "F") &&
+      isModifier &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !dialogStore.hasModalOpen
+    ) {
+      event.preventDefault();
+      const explorer = getActiveExplorer();
+      if (explorer && !explorer.showFilter) explorer.openFilter();
+      return;
+    }
+
+    // Escape exits the directory filter from anywhere. The filter input handles
+    // its own Escape (and stops propagation); this covers the case where focus
+    // is on the file list or elsewhere outside an input.
+    if (event.key === "Escape" && !isInputField) {
+      const explorer = getActiveExplorer();
+      if (explorer?.showFilter) {
+        event.preventDefault();
+        explorer.closeFilter();
+        return;
+      }
+    }
+
     // Skip shortcut handling (including hardcoded shortcuts below) if in an
     // input field or a modal dialog is open — e.g. Ctrl+J while typing in a
     // rename input must not open the jobs panel.

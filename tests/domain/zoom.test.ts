@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { detectViewportZoomCoords } from "../../src/lib/domain/zoom";
+import { detectViewportZoomCoords, detectChromiumEngine } from "../../src/lib/domain/zoom";
 
 /**
  * The marquee-zoom bug on Windows was an ENGINE misclassification: WebView2
@@ -36,5 +36,29 @@ describe("detectViewportZoomCoords", () => {
     expect(detectViewportZoomCoords(UA.wkWebView, true)).toBe(true);
     // Even with an empty UA, the isMac flag forces the post-zoom regime.
     expect(detectViewportZoomCoords("", true)).toBe(true);
+  });
+
+  /**
+   * The context-menu (position:fixed) offset was Windows-only: under root CSS
+   * `zoom`, only Chromium needs a single client→CSS division; WebKitGTK and
+   * WKWebView (incl. mac) keep the legacy double division. So this classifier
+   * must — unlike detectViewportZoomCoords — exclude mac's WKWebView.
+   */
+  describe("detectChromiumEngine", () => {
+    it("is true for Windows WebView2", () => {
+      expect(detectChromiumEngine(UA.webView2)).toBe(true);
+    });
+
+    it("is true for the Chromium dev browser", () => {
+      expect(detectChromiumEngine(UA.chromeLinux)).toBe(true);
+    });
+
+    it("is false for WebKitGTK (Tauri Linux webview)", () => {
+      expect(detectChromiumEngine(UA.webkitGtk)).toBe(false);
+    });
+
+    it("is false for macOS WKWebView (unlike detectViewportZoomCoords)", () => {
+      expect(detectChromiumEngine(UA.wkWebView)).toBe(false);
+    });
   });
 });

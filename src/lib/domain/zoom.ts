@@ -45,6 +45,26 @@ const usesViewportZoomCoords: boolean = detectViewportZoomCoords(
   isMac,
 );
 
+/**
+ * Is this a Chromium-family engine (WebView2 on Windows + the Chromium dev
+ * browser)? Deliberately distinct from detectViewportZoomCoords, which also
+ * groups in mac's WKWebView.
+ *
+ * Needed for position:fixed overlays (the context menu): under root CSS `zoom`,
+ * only Chromium needs a SINGLE client→CSS division to land the overlay at the
+ * cursor; WebKitGTK and WKWebView need a double division. The context-menu
+ * offset was observed only on Windows, so the legacy double-division must be
+ * preserved on every engine except Chromium. Pure for unit testing.
+ */
+export function detectChromiumEngine(userAgent: string): boolean {
+  return /Chrome|Chromium/.test(userAgent);
+}
+
+/** Resolved once at load: Chromium-family engine (see detectChromiumEngine). */
+export const isChromiumEngine: boolean = detectChromiumEngine(
+  typeof navigator !== "undefined" ? navigator.userAgent : "",
+);
+
 /** Get the current CSS zoom factor (1.0 = 100%).
  *  Intentionally impure: reads the live zoom from the document root, which is
  *  the single source of truth set by the zoom commands. */

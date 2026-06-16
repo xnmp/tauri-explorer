@@ -16,7 +16,7 @@
   import type { FileEntry } from "$lib/domain/file";
   import { parentDir } from "$lib/domain/path";
   import { isImageFile } from "$lib/domain/file-types";
-  import { getZoomFactor } from "$lib/domain/zoom";
+  import { getZoomFactor, isChromiumEngine } from "$lib/domain/zoom";
   import type { ViewMode } from "$lib/state/types";
 
   interface Props {
@@ -258,8 +258,12 @@
       const menuW = menuEl.offsetWidth;
       const menuH = menuEl.offsetHeight;
       const pad = 12;
-      let x = rawX / zoom;
-      let y = rawY / zoom;
+      // rawX/rawY are the raw event.clientX/Y (the store no longer pre-divides).
+      // position:fixed under root `zoom`: Chromium/WebView2 lands at the cursor
+      // with a single division, while WebKitGTK and WKWebView need a double
+      // division (the offset was Windows-only — keep their legacy behavior).
+      let x = isChromiumEngine ? rawX / zoom : rawX / (zoom * zoom);
+      let y = isChromiumEngine ? rawY / zoom : rawY / (zoom * zoom);
       if (x + menuW > vw - pad) x = vw - menuW - pad;
       if (y + menuH > vh - pad) y = vh - menuH - pad;
       if (x < pad) x = pad;

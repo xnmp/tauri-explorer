@@ -4,7 +4,7 @@
 -->
 <script lang="ts">
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { readTextFile, fetchDirectory, gitDiff, listArchiveContents } from "$lib/api/files";
+  import { readTextFile, fetchDirectory, gitDiff, listArchiveContents, readImageAsBlobUrl } from "$lib/api/files";
   import { isImageFile, isTextFile, isPdfFile, isZipFile, getFileType, formatDate } from "$lib/domain/file-types";
   import { formatSize, isSystemHidden, type FileEntry } from "$lib/domain/file";
   import { isTauri } from "$lib/api/mock-invoke";
@@ -322,6 +322,9 @@
   }
 
   async function loadPreview(file: FileEntry): Promise<void> {
+    // Release any object-URL from a previous backend-fallback image so the
+    // bytes aren't pinned in memory across navigations.
+    if (previewImageUrl?.startsWith("blob:")) URL.revokeObjectURL(previewImageUrl);
     previewImageUrl = null;
     previewText = null;
     previewHighlightedHtml = null;
@@ -415,8 +418,25 @@
           await decodeImage(url);
           if (file.path !== lastPreviewPath) return; // Stale after decode
           previewImageUrl = url;
-        } catch {
-          previewError = "Cannot preview image";
+        } catch (assetErr) {
+          // The asset: protocol can't stream some files — notably cloud-mounted
+          // images (Google Drive, OneDrive) whose placeholder paths it fails to
+          // read. Fall back to pulling the bytes through the backend, which
+          // forces the cloud client to hydrate the file first.
+          console.warn("asset:// image preview failed, falling back to backend read:", assetErr);
+          const fallback = await readImageAsBlobUrl(file.path);
+          if (file.path !== lastPreviewPath) return; // Stale after fetch
+          if (fallback.ok) {
+            try {
+              await decodeImage(fallback.data);
+              if (file.path !== lastPreviewPath) return; // Stale after decode
+              previewImageUrl = fallback.data;
+            } catch {
+              previewError = "Cannot preview image";
+            }
+          } else {
+            previewError = "Cannot preview image";
+          }
         }
       } else {
         previewError = "Image preview requires Tauri runtime";

@@ -388,6 +388,33 @@ export async function readTextFile(path: string, maxBytes?: number): Promise<Api
 }
 
 /**
+ * Read an image file's bytes through the backend and return them as a blob URL.
+ *
+ * Fallback for previewing images the `asset:` protocol can't serve — chiefly
+ * cloud-mounted files (Google Drive, OneDrive) whose placeholder paths the
+ * asset server fails to stream. Reading via `fs` forces the cloud client to
+ * hydrate the file first.
+ *
+ * @param path - Full path to the image file
+ * @param maxBytes - Optional size cap (backend default 32 MB)
+ * @returns Result with an object-URL (blob:) or error
+ */
+export async function readImageAsBlobUrl(
+  path: string,
+  maxBytes?: number
+): Promise<ApiResult<string>> {
+  try {
+    const dataUri = await invoke<string>("read_image_data_url", {
+      path,
+      maxBytes: maxBytes ?? null,
+    });
+    return { ok: true, data: dataUriToBlobUrl(dataUri) };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+/**
  * Get the user's home directory path.
  *
  * @returns Result with home directory path or error message

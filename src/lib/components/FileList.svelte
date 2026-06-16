@@ -153,11 +153,15 @@
   }
 
   function handleBackgroundContextMenu(event: MouseEvent): void {
-    if (marquee.isBackgroundClick(event.target as HTMLElement)) {
-      event.preventDefault();
-      explorer.clearSelection();
-      explorer.openContextMenu(event.clientX, event.clientY);
-    }
+    // File/folder items handle their own right-click (and stopPropagation),
+    // so anything reaching here that isn't an entry is "background" — including
+    // the empty-folder placeholder and the error state, which aren't in the
+    // marquee background-class allowlist. Guard on entry-item so the directory
+    // context menu still opens on empty folders.
+    if ((event.target as HTMLElement).closest(".entry-item")) return;
+    event.preventDefault();
+    explorer.clearSelection();
+    explorer.openContextMenu(event.clientX, event.clientY);
   }
 
   function handleKeydown(event: KeyboardEvent): void {
@@ -309,7 +313,23 @@
     ondragleave={handleListDragLeave}
     ondrop={handleListDrop}
   >
-    {#if explorer.loading}
+    {#if explorer.driveGone}
+      <div class="status drive-gone-state">
+        <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+          <rect x="6" y="14" width="36" height="20" rx="3" stroke="currentColor" stroke-width="2" opacity="0.4"/>
+          <circle cx="34" cy="24" r="2" fill="currentColor"/>
+          <path d="M10 8L38 40" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+        </svg>
+        <span class="error-title">Removable drive gone</span>
+        <span class="error-message">This drive was removed or ejected. Reconnect it, or navigate elsewhere.</span>
+        <button class="go-up-button" onclick={() => explorer.goBack()}>
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+            <path d="M10 3L5 8L10 13" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Go back
+        </button>
+      </div>
+    {:else if explorer.loading}
       {#if showLoadingSpinner}
         <div class="status">
           <div class="spinner"></div>
@@ -433,8 +453,13 @@
   }
 
   .empty-state,
-  .error-state {
+  .error-state,
+  .drive-gone-state {
     animation: fadeIn 300ms cubic-bezier(0, 0, 0, 1);
+  }
+
+  .drive-gone-state {
+    color: var(--system-caution, var(--system-critical));
   }
 
   @keyframes fadeIn {

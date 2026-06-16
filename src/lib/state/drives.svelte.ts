@@ -96,6 +96,16 @@ function createDrivesStore() {
       return drives.filter((d) => d.kind === "cloud");
     },
     /**
+     * Normalised mount roots of currently-present removable drives (same
+     * normalisation as mountedRoots). Used to detect when a pane is sitting on
+     * a removable drive so it can show a "drive removed" state once it ejects.
+     */
+    get removableRoots() {
+      return drives
+        .filter((d) => d.kind === "removable" || d.kind === "unknown")
+        .map((d) => d.path.replace(/[\\/]+$/, "").toLowerCase());
+    },
+    /**
      * Set of currently-mounted drive roots, lowercased and normalised, used to
      * hide Recent locations that live on an ejected drive. On Windows a root is
      * the drive letter prefix (e.g. "e:"); elsewhere it's the mount path.

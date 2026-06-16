@@ -74,6 +74,10 @@ function createExplorerState(seed?: ExplorerSeed) {
   // Inline folder creation state
   let isCreatingFolder = $state(false);
 
+  // True when the current path lives on a removable drive that has been
+  // ejected/unplugged. Set by ExplorerPane, which watches the drives store.
+  let driveGone = $state(false);
+
   // Filter query for filtering displayed entries (Ctrl+F)
   let filterQuery = $state("");
   let showFilter = $state(false);
@@ -102,7 +106,13 @@ function createExplorerState(seed?: ExplorerSeed) {
       const q = filterQuery.toLowerCase();
       filtered = filtered.filter((e) => e.name.toLowerCase().includes(q));
     }
-    return sortEntries(filtered, coreState.sortBy, coreState.sortAscending);
+    // Only Details view exposes sortable column headers. List and Tiles have no
+    // sort UI, so they always sort by name ascending for a predictable order
+    // regardless of the per-folder sort preference set in Details view.
+    if (coreState.viewMode === "details") {
+      return sortEntries(filtered, coreState.sortBy, coreState.sortAscending);
+    }
+    return sortEntries(filtered, "name", true);
   });
 
   const breadcrumbs = $derived(navigation.parseBreadcrumbs(coreState.currentPath));
@@ -213,23 +223,26 @@ function createExplorerState(seed?: ExplorerSeed) {
    *  whole jump in one press. Bounded to avoid pathological loops. */
   async function maybeAutoEnterSingleSubdir() {
     if (!settingsStore.autoEnterSingleSubdir) return;
-    let descended = false;
+    let descended = 0;
     let guard = 0;
     while (guard++ < 64) {
       const visible = displayEntries;
       if (visible.length !== 1 || visible[0].kind !== "directory") break;
       const status = await navigateInternal(visible[0].path);
       if (status !== "ok") break;
-      descended = true;
+      descended++;
       recentFilesStore.add(coreState.currentPath, basename(coreState.currentPath), "directory");
       frecencyStore.recordAccess(coreState.currentPath);
     }
-    if (descended) {
+    if (descended > 0) {
       // Point the current history slot at the final folder so Back/Forward
       // treat the auto-descent as part of the original navigation.
       const h = [...coreState.history];
       h[coreState.historyIndex] = coreState.currentPath;
       coreState.history = h;
+      // Let the user know the view jumped past one or more single-child folders.
+      const levels = descended === 1 ? "subfolder" : `${descended} subfolders`;
+      toastStore.show(`Entered ${basename(coreState.currentPath)} (skipped ${levels})`, "info");
     }
   }
 
@@ -267,6 +280,20 @@ function createExplorerState(seed?: ExplorerSeed) {
     const parentPath = navigation.getParentPath(breadcrumbs);
     if (parentPath) {
       navigateTo(parentPath);
+    }
+  }
+
+  /** Jump directly to a slot in the navigation history (back/forward history
+   *  popup). No-op for the current slot or an out-of-range index. */
+  async function goToHistoryIndex(index: number) {
+    if (index < 0 || index >= coreState.history.length) return;
+    if (index === coreState.historyIndex) return;
+    const path = coreState.history[index];
+    const status = await navigateInternal(path);
+    if (status === "ok") {
+      coreState.historyIndex = index;
+    } else if (status === "error") {
+      await navigateToParent();
     }
   }
 
@@ -618,12 +645,19 @@ function createExplorerState(seed?: ExplorerSeed) {
     get canGoForward() {
       return canGoForward;
     },
+    get history() {
+      return coreState.history;
+    },
+    get historyIndex() {
+      return coreState.historyIndex;
+    },
 
     // Navigation
     navigateTo,
     initialLoad,
     goBack,
     goForward,
+    goToHistoryIndex,
     goUp,
     refresh,
     // View
@@ -666,6 +700,13 @@ function createExplorerState(seed?: ExplorerSeed) {
     openContextMenu,
     get contextMenuOwner() {
       return contextMenuOwner;
+    },
+    // Removable-drive-removed state (driven by ExplorerPane watching drives)
+    get driveGone() {
+      return driveGone;
+    },
+    setDriveGone(value: boolean) {
+      driveGone = value;
     },
     // Inline folder creation
     get isCreatingFolder() {

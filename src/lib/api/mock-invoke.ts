@@ -47,6 +47,16 @@ const mockFiles: Record<string, FileEntry[]> = {
     file("notes.md", "/home/user/notes.md", 2048),
   ],
   "/home/user/Archive": [],
+  // Removable drive contents — lets the browser mock navigate onto a removable
+  // drive so the "removable drive removed" state can be exercised.
+  "/media/user/USB_DRIVE": [
+    dir("Backups", "/media/user/USB_DRIVE/Backups"),
+    file("photo.jpg", "/media/user/USB_DRIVE/photo.jpg", 1048576),
+    file("notes.txt", "/media/user/USB_DRIVE/notes.txt", 2048),
+  ],
+  "/media/user/USB_DRIVE/Backups": [
+    file("backup-2024.zip", "/media/user/USB_DRIVE/Backups/backup-2024.zip", 8388608),
+  ],
   "/home/user/Documents": [
     dir("project", "/home/user/Documents/project"),
     file("report.pdf", "/home/user/Documents/report.pdf", 102400),
@@ -327,17 +337,29 @@ const mockFileContent: Record<string, string> = {
   ].join("\n"),
 };
 
+// Mutable so manual/E2E testing can simulate ejecting a removable drive: the
+// drives store re-polls `list_drives` every ~1.5s, so replacing this list makes
+// the change propagate. `window.__mockEjectDrive(path)` (set below) removes one.
+let mockDrives: { name: string; path: string; kind: string; detail?: string; provider?: string }[] = [
+  // Removable drive showing a volume label with the drive letter as dimmed detail.
+  { name: "USB Backup", path: "/media/user/USB_DRIVE", kind: "removable", detail: "E:" },
+  { name: "Memory Stick", path: "/media/user/Memory_Stick", kind: "removable", detail: "F:" },
+  // Cloud / remote section: Google Drive File Stream + a WSL home mount.
+  { name: "Google Drive", path: "/media/user/GoogleDrive", kind: "cloud", detail: "G:", provider: "googledrive" },
+  { name: "Ubuntu", path: "\\\\wsl$\\Ubuntu\\home", kind: "cloud", detail: "WSL", provider: "wsl" },
+];
+
+if (typeof window !== "undefined") {
+  // Test affordance (mock/browser only): drop a drive to mimic an eject.
+  (window as unknown as { __mockEjectDrive?: (path: string) => void }).__mockEjectDrive = (path: string) => {
+    mockDrives = mockDrives.filter((d) => d.path !== path);
+  };
+}
+
 const mockCommands: Record<string, CommandHandler> = {
   get_home_directory: () => "/home/user",
   get_launch_cwd: () => "/home/user",
-  list_drives: () => [
-    // Removable drive showing a volume label with the drive letter as dimmed detail.
-    { name: "USB Backup", path: "/media/user/USB_DRIVE", kind: "removable", detail: "E:" },
-    { name: "Memory Stick", path: "/media/user/Memory_Stick", kind: "removable", detail: "F:" },
-    // Cloud / remote section: Google Drive File Stream + a WSL home mount.
-    { name: "Google Drive", path: "/media/user/GoogleDrive", kind: "cloud", detail: "G:", provider: "googledrive" },
-    { name: "Ubuntu", path: "\\\\wsl$\\Ubuntu\\home", kind: "cloud", detail: "WSL", provider: "wsl" },
-  ],
+  list_drives: () => mockDrives,
 
   list_directory: (args) => {
     const raw = args.path as string;

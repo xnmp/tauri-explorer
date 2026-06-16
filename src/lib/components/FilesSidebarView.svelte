@@ -526,15 +526,8 @@
                   <path fill="#EA4335" d="M24 10.75c3.23 0 6.13 1.11 8.41 3.29l6.31-6.31C34.91 4.18 29.93 2 24 2 15.4 2 7.96 6.93 4.34 14.12l7.35 5.7c1.73-5.2 6.58-9.07 12.31-9.07z"/>
                 </svg>
               {:else if drive.provider === "wsl"}
-                <!-- Tux penguin (monochrome, themed) -->
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: #4d4d4d">
-                  <path d="M8 1.5c-1.66 0-2.6 1.3-2.6 3 0 .77.2 1.4.2 1.9 0 .6-.9 1.4-1.5 2.6-.6 1.2-1.1 2.3-1.4 2.9-.2.5.1.9.6.8.6-.1 1-.3 1.3-.3.2 0 .3.1.3.4.1.6.2 1.2.3 1.5.1.3.5.4 1 .4h3.6c.5 0 .9-.1 1-.4.1-.3.2-.9.3-1.5 0-.3.1-.4.3-.4.3 0 .7.2 1.3.3.5.1.8-.3.6-.8-.3-.6-.8-1.7-1.4-2.9-.6-1.2-1.5-2-1.5-2.6 0-.5.2-1.13.2-1.9 0-1.7-.94-3-2.6-3z" fill="currentColor"/>
-                  <circle cx="6.7" cy="5" r="0.7" fill="#fff"/>
-                  <circle cx="9.3" cy="5" r="0.7" fill="#fff"/>
-                  <circle cx="6.8" cy="5.1" r="0.35" fill="#000"/>
-                  <circle cx="9.2" cy="5.1" r="0.35" fill="#000"/>
-                  <path d="M7.2 6.2L8 7l.8-.8z" fill="#f5a623"/>
-                </svg>
+                <!-- Tux: the official Linux mascot asset (static/tux.svg) -->
+                <img src="/tux.svg" alt="" class="nav-icon tux-icon" width="16" height="16" />
               {:else}
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" style="color: #3b82f6">
                   <path d="M4 11a3 3 0 0 1 0-6 4 4 0 0 1 7.6-1.2A3 3 0 0 1 12 11H4z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
@@ -702,6 +695,14 @@
 
   .nav-icon {
     flex-shrink: 0;
+  }
+
+  /* Tux is taller than wide (216×256); contain keeps the mascot un-squished
+     inside the 16×16 icon slot. */
+  .tux-icon {
+    width: 16px;
+    height: 16px;
+    object-fit: contain;
   }
 
   .drive-item .drive-name {

@@ -9,6 +9,7 @@
   import { listInstalledTerminals } from "$lib/api/files";
   import KeybindingsSettings from "./KeybindingsSettings.svelte";
   import Modal from "./Modal.svelte";
+  import { tick } from "svelte";
 
   interface Props {
     open: boolean;
@@ -37,6 +38,15 @@
 
   let searchQuery = $state("");
   let searchInputRef = $state<HTMLInputElement | null>(null);
+
+  // Focus the search field whenever the dialog opens so the user can filter
+  // settings by typing immediately. tick() waits for the Modal to mount the
+  // input before focusing.
+  $effect(() => {
+    if (open && searchInputRef) {
+      tick().then(() => searchInputRef?.focus());
+    }
+  });
 
   const queryLower = $derived(searchQuery.toLowerCase().trim());
 

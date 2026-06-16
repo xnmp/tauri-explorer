@@ -13,6 +13,7 @@
   import { truncateBreadcrumbs } from "$lib/domain/breadcrumb-truncation";
   import BreadcrumbAutocomplete from "./BreadcrumbAutocomplete.svelte";
   import CaretPicker from "./CaretPicker.svelte";
+  import NavigationHistoryMenu from "./NavigationHistoryMenu.svelte";
 
   interface Props {
     explorer: ExplorerInstance;
@@ -145,6 +146,19 @@
     }
   }
 
+  // Navigation history popup (right-click on back/forward)
+  let historyMenuAnchor = $state<HTMLElement | null>(null);
+
+  function openHistoryMenu(event: MouseEvent): void {
+    event.preventDefault();
+    if (explorer.history.length === 0) return;
+    historyMenuAnchor = event.currentTarget as HTMLElement;
+  }
+
+  function closeHistoryMenu(): void {
+    historyMenuAnchor = null;
+  }
+
   // Breadcrumb drop target state
   let dropTargetCrumb = $state<string | null>(null);
 
@@ -182,11 +196,16 @@
   <!-- Navigation controls next to address bar -->
   <div class="nav-controls">
     {#if settingsStore.navBarButtons.back}
+      <!-- Not the `disabled` attribute: disabled buttons swallow contextmenu,
+           which would block the right-click history popup at the start of the
+           history. goBack() already no-ops when there's nowhere to go back to. -->
       <button
         class="nav-btn"
-        title="Back (Alt+Left)"
-        disabled={!explorer.canGoBack}
+        class:disabled={!explorer.canGoBack}
+        title="Back (Alt+Left) — right-click for history"
+        aria-disabled={!explorer.canGoBack}
         onclick={() => explorer.goBack()}
+        oncontextmenu={openHistoryMenu}
         aria-label="Go back"
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -198,9 +217,11 @@
     {#if settingsStore.navBarButtons.forward}
       <button
         class="nav-btn"
-        title="Forward (Alt+Right)"
-        disabled={!explorer.canGoForward}
+        class:disabled={!explorer.canGoForward}
+        title="Forward (Alt+Right) — right-click for history"
+        aria-disabled={!explorer.canGoForward}
         onclick={() => explorer.goForward()}
+        oncontextmenu={openHistoryMenu}
         aria-label="Go forward"
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -235,6 +256,10 @@
       </button>
     {/if}
   </div>
+  {/if}
+
+  {#if historyMenuAnchor}
+    <NavigationHistoryMenu {explorer} anchorEl={historyMenuAnchor} onClose={closeHistoryMenu} />
   {/if}
 
   {#if settingsStore.showAddressBar}
@@ -408,9 +433,18 @@
     transform: scale(0.96);
   }
 
-  .nav-btn:disabled {
+  .nav-btn:disabled,
+  .nav-btn.disabled {
     opacity: 0.4;
     cursor: not-allowed;
+  }
+
+  /* Suppress the normal hover/active feedback on the styled-disabled buttons,
+     but keep them able to receive the right-click history popup. */
+  .nav-btn.disabled:hover,
+  .nav-btn.disabled:active {
+    background: transparent;
+    transform: none;
   }
 
   .nav-btn:focus-visible {

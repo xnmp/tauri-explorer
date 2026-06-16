@@ -113,6 +113,7 @@ pub fn run(launch_dir: Option<String>) {
             files::file_ops::copy_entry,
             files::file_ops::move_entry,
             files::file_ops::read_text_file,
+            files::file_ops::read_image_data_url,
             files::file_ops::write_text_file,
             files::file_ops::delete_entry_permanent,
             files::file_ops::create_symlink,

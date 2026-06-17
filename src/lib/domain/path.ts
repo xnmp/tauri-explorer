@@ -19,6 +19,21 @@ export function toForwardSlashes(path: string): string {
   return path.replace(/\\/g, "/");
 }
 
+/** Normalize all forward-slash separators to backslashes. */
+export function toBackslashes(path: string): string {
+  return path.replace(/\//g, "\\");
+}
+
+/**
+ * Coerce every separator in `path` to a single style. The caller supplies the
+ * target separator (typically the platform's native one) so this stays pure and
+ * platform-agnostic — a backslash is a legal character in a Unix filename, so
+ * the conversion must be opt-in via `sep`, never inferred.
+ */
+export function toNativeSeparators(path: string, sep: "/" | "\\"): string {
+  return sep === "\\" ? toBackslashes(toForwardSlashes(path)) : toForwardSlashes(path);
+}
+
 /** Strip a single trailing separator, but never reduce a bare root (`/`) to empty. */
 function stripTrailingSlash(path: string): string {
   return path.length > 1 && path.endsWith("/") ? path.replace(/\/+$/, "") : path;
@@ -93,36 +108,47 @@ export function parentDir(path: string): string {
 }
 
 /**
- * True when two paths refer to the same directory, tolerant of separator style
- * (`\` vs `/`), a trailing slash, and — for Windows-style paths (drive letter or
- * UNC) — drive-letter and casing differences (Windows file systems are
- * case-insensitive). This is what makes "paste into the same folder produces a
+ * Canonical key for a directory path, stable across the separator style (`\` vs
+ * `/`), a trailing slash, and — for Windows-style paths (drive letter or UNC) —
+ * drive-letter and casing differences (Windows file systems are
+ * case-insensitive). Use this anywhere a path is a dedup key, Map/Set member, or
+ * object key so the same directory never produces two entries. The result is a
+ * comparison key only; it is not meant for display (keep the native-separator
+ * path for that).
+ */
+export function directoryKey(path: string): string {
+  const norm = stripTrailingSlash(toForwardSlashes(path));
+  const isWindowsPath = /^[A-Za-z]:/.test(norm) || norm.startsWith("//");
+  return isWindowsPath ? norm.toLowerCase() : norm;
+}
+
+/**
+ * True when two paths refer to the same directory. Tolerant of separator style,
+ * trailing slash, and Windows drive-letter/casing differences (see
+ * `directoryKey`). This is what makes "paste into the same folder produces a
  * copy" work on Windows, where the clipboard source dir and the current dir can
  * differ only by separator or case and a raw `===` would wrongly see them as
  * different (triggering a conflict prompt instead of a silent " - Copy").
  */
 export function sameDirectory(a: string, b: string): boolean {
-  const norm = (p: string) => stripTrailingSlash(toForwardSlashes(p));
-  let na = norm(a);
-  let nb = norm(b);
-  const isWindowsPath = (p: string) => /^[A-Za-z]:/.test(p) || p.startsWith("//");
-  if (isWindowsPath(na) || isWindowsPath(nb)) {
-    na = na.toLowerCase();
-    nb = nb.toLowerCase();
-  }
-  return na === nb;
+  return directoryKey(a) === directoryKey(b);
 }
 
 /**
- * Join a directory path and a child name with a single separator.
- * Preserves a trailing separator of either kind already on `dir`.
+ * Join a directory path and a child name with a single separator. If `dir`
+ * already ends in a separator, that one is reused. Otherwise the separator
+ * matches the style `dir` already uses (backslash if it contains one and no
+ * forward slash) so a Windows path stays all-backslash instead of going mixed;
+ * forward slash is the default.
  *
  * `joinPath("/home/user", "file.txt")`  → `"/home/user/file.txt"`
  * `joinPath("/", "file.txt")`           → `"/file.txt"`
- * `joinPath("C:\\Users", "f.txt")`       → `"C:\\Users/f.txt"`
+ * `joinPath("C:\\Users", "f.txt")`       → `"C:\\Users\\f.txt"`
  */
 export function joinPath(dir: string, name: string): string {
-  return /[\\/]$/.test(dir) ? dir + name : `${dir}/${name}`;
+  if (/[\\/]$/.test(dir)) return dir + name;
+  const sep = dir.includes("\\") && !dir.includes("/") ? "\\" : "/";
+  return dir + sep + name;
 }
 
 /**

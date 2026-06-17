@@ -1,5 +1,6 @@
 import { listDrives, watchDirectory, unwatchDirectory, type Drive } from "$lib/api/files";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { directoryKey } from "$lib/domain/path";
 
 // Polling backstop. The fs-watcher subscription handles most eject/insert
 // events but we still poll occasionally in case a mount point uses a base
@@ -103,7 +104,7 @@ function createDrivesStore() {
     get removableRoots() {
       return drives
         .filter((d) => d.kind === "removable" || d.kind === "unknown")
-        .map((d) => d.path.replace(/[\\/]+$/, "").toLowerCase());
+        .map((d) => directoryKey(d.path));
     },
     /**
      * Set of currently-mounted drive roots, lowercased and normalised, used to
@@ -111,7 +112,7 @@ function createDrivesStore() {
      * the drive letter prefix (e.g. "e:"); elsewhere it's the mount path.
      */
     get mountedRoots() {
-      return new Set(drives.map((d) => d.path.replace(/[\\/]+$/, "").toLowerCase()));
+      return new Set(drives.map((d) => directoryKey(d.path)));
     },
     refresh,
     startPolling,

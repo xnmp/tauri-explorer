@@ -17,7 +17,8 @@
  */
 
 import { toastStore } from "./toast.svelte";
-import { basename } from "$lib/domain/path";
+import { basename, toNativeSeparators } from "$lib/domain/path";
+import { isWindows } from "$lib/domain/platform";
 import { clipboardHasImage, clipboardPasteImage } from "$lib/api/files";
 import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/domain/file";
 import type { ExplorerCoreState, SelectOptions, ViewMode } from "./types";
@@ -129,7 +130,13 @@ function createExplorerState(seed?: ExplorerSeed) {
   // navigation applying whichever result happens to land last.
   let navGeneration = 0;
 
-  async function navigateInternal(path: string): Promise<"ok" | "error" | "stale"> {
+  async function navigateInternal(rawPath: string): Promise<"ok" | "error" | "stale"> {
+    // Normalize separators to the platform-native style up front. The backend
+    // echoes the requested path back verbatim as `currentPath`, so this is the
+    // single chokepoint that keeps the address bar (and everything that records
+    // `currentPath`) consistent — never mixed `C:\Users\x/Pictures`. Gated to
+    // `/` on non-Windows, where a backslash is a legal filename character.
+    const path = toNativeSeparators(rawPath, isWindows ? "\\" : "/");
     const gen = ++navGeneration;
 
     // If we already have entries for this path (e.g. seeded from another tab),
@@ -207,10 +214,11 @@ function createExplorerState(seed?: ExplorerSeed) {
   async function navigateTo(path: string) {
     const success = await applyNavigation(path);
     if (success) {
-      // Track directory navigation in recent files and frecency
-      const name = basename(path);
-      recentFilesStore.add(path, name, "directory");
-      frecencyStore.recordAccess(path);
+      // Track the *resolved* path (separator-normalized by navigateInternal),
+      // not the raw request, so the same folder reached two ways dedupes.
+      const resolved = coreState.currentPath;
+      recentFilesStore.add(resolved, basename(resolved), "directory");
+      frecencyStore.recordAccess(resolved);
       await maybeAutoEnterSingleSubdir();
     }
   }

@@ -9,6 +9,9 @@ import {
   samePath,
   sameDirectory,
   toForwardSlashes,
+  toBackslashes,
+  toNativeSeparators,
+  directoryKey,
 } from "../../src/lib/domain/path";
 
 describe("normalizePathInput", () => {
@@ -157,6 +160,14 @@ describe("joinPath", () => {
     expect(joinPath("/home/", "file.txt")).toBe("/home/file.txt");
     expect(joinPath("C:\\Users\\", "file.txt")).toBe("C:\\Users\\file.txt");
   });
+
+  it("matches the separator style the dir already uses (no mixed slashes)", () => {
+    // A backslash-only dir stays all-backslash instead of going mixed.
+    expect(joinPath("C:\\Users", "file.txt")).toBe("C:\\Users\\file.txt");
+    // A path that already mixes (or is forward-slash) defaults to forward slash.
+    expect(joinPath("C:/Users", "file.txt")).toBe("C:/Users/file.txt");
+    expect(joinPath("C:\\Users/foo", "file.txt")).toBe("C:\\Users/foo/file.txt");
+  });
 });
 
 describe("isInsideDir", () => {
@@ -199,6 +210,49 @@ describe("samePath", () => {
   it("matches parentDir output against a native backslash dir (the Windows drop bug)", () => {
     // parentDir emits forward slashes; the DOM data-path is backslash.
     expect(samePath(parentDir("C:\\Users\\x\\file.txt"), "C:\\Users\\x")).toBe(true);
+  });
+});
+
+describe("toBackslashes", () => {
+  it("converts forward slashes", () => {
+    expect(toBackslashes("C:/Users/foo")).toBe("C:\\Users\\foo");
+    expect(toBackslashes("C:\\Users\\foo")).toBe("C:\\Users\\foo");
+  });
+});
+
+describe("toNativeSeparators", () => {
+  it("coerces mixed separators to a single style", () => {
+    expect(toNativeSeparators("C:\\Users/foo\\bar", "\\")).toBe("C:\\Users\\foo\\bar");
+    expect(toNativeSeparators("C:\\Users/foo\\bar", "/")).toBe("C:/Users/foo/bar");
+  });
+
+  it("is a no-op when already in the target style", () => {
+    expect(toNativeSeparators("/home/user", "/")).toBe("/home/user");
+    expect(toNativeSeparators("C:\\Users\\foo", "\\")).toBe("C:\\Users\\foo");
+  });
+});
+
+describe("directoryKey", () => {
+  it("collapses separator variants to one key (the Ctrl+P duplicate bug)", () => {
+    const a = directoryKey("C:\\Users\\chonw\\Pictures");
+    expect(directoryKey("C:\\Users\\chonw/Pictures")).toBe(a); // mixed
+    expect(directoryKey("C:/Users/chonw/Pictures")).toBe(a);   // forward
+    expect(directoryKey("C:\\Users\\chonw\\Pictures\\")).toBe(a); // trailing
+  });
+
+  it("case-folds Windows-style paths (case-insensitive filesystem)", () => {
+    expect(directoryKey("c:\\users\\x")).toBe(directoryKey("C:\\Users\\X"));
+    expect(directoryKey("\\\\Server\\Share\\Dir")).toBe(directoryKey("//server/share/dir"));
+  });
+
+  it("does NOT case-fold or backslash-convert Unix paths", () => {
+    // Unix is case-sensitive and backslash is a legal filename character.
+    expect(directoryKey("/home/User")).not.toBe(directoryKey("/home/user"));
+    expect(directoryKey("/home/a\\b")).toBe("/home/a/b");
+  });
+
+  it("distinguishes genuinely different directories", () => {
+    expect(directoryKey("C:\\Users\\x")).not.toBe(directoryKey("C:\\Users\\y"));
   });
 });
 

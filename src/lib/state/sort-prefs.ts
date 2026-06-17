@@ -4,6 +4,7 @@
  */
 
 import { loadPersisted, savePersisted } from "./persisted";
+import { directoryKey } from "$lib/domain/path";
 import type { SortField } from "$lib/domain/file";
 
 const SORT_STORAGE_KEY = "explorer-sort-prefs";
@@ -20,7 +21,7 @@ function loadSortPrefs(): Record<string, SortPref> {
 
 export function saveSortPref(path: string, pref: SortPref): void {
   const prefs = loadSortPrefs();
-  prefs[path] = pref;
+  prefs[directoryKey(path)] = pref;
   const keys = Object.keys(prefs);
   if (keys.length > MAX_SORT_ENTRIES) {
     for (const key of keys.slice(0, keys.length - MAX_SORT_ENTRIES)) {
@@ -31,5 +32,5 @@ export function saveSortPref(path: string, pref: SortPref): void {
 }
 
 export function getSortPref(path: string): SortPref | undefined {
-  return loadSortPrefs()[path];
+  return loadSortPrefs()[directoryKey(path)];
 }

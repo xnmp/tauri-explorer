@@ -17,7 +17,7 @@
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { parentDir, basename, expandTilde as expandTildePath } from "$lib/domain/path";
+  import { parentDir, basename, directoryKey, expandTilde as expandTildePath } from "$lib/domain/path";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import FileIcon from "./FileIcon.svelte";
   import Modal from "./Modal.svelte";
@@ -104,11 +104,12 @@
 
     // Recent files — scored with full fuzzy matching
     for (const entry of recentFilesStore.list) {
-      if (seen.has(entry.path)) continue;
-      seen.add(entry.path);
+      const key = directoryKey(entry.path);
+      if (seen.has(key)) continue;
+      seen.add(key);
       const fuzzy = fuzzyScorePath(lower, entry.path);
       if (fuzzy > 0) {
-        const frecency = scoreMap.get(entry.path) ?? 0;
+        const frecency = scoreMap.get(key) ?? 0;
         const nameBonus = filenameMatchScore(entry.name, lower);
         matched.push({
           name: entry.name,
@@ -122,12 +123,13 @@
 
     // Frecency entries (mostly directories the user has navigated to)
     for (const entry of frecencyStore.entries) {
-      if (seen.has(entry.path)) continue;
-      seen.add(entry.path);
+      const key = directoryKey(entry.path);
+      if (seen.has(key)) continue;
+      seen.add(key);
       const name = basename(entry.path);
       const fuzzy = fuzzyScorePath(lower, entry.path);
       if (fuzzy > 0) {
-        const frecency = scoreMap.get(entry.path) ?? 0;
+        const frecency = scoreMap.get(key) ?? 0;
         const nameBonus = filenameMatchScore(name, lower);
         matched.push({
           name,
@@ -148,7 +150,7 @@
     const scoreMap = frecencyStore.getScoreMap();
     const currentQuery = query.toLowerCase();
     const ranked = searchResults.map((r) => {
-      const frecency = scoreMap.get(r.path) ?? 0;
+      const frecency = scoreMap.get(directoryKey(r.path)) ?? 0;
       const nameBonus = filenameMatchScore(r.name, currentQuery);
       return { ...r, score: r.score + Math.round(frecency * FRECENCY_WEIGHT) + nameBonus };
     });
@@ -163,8 +165,8 @@
 
   /** Merge primary results with extras (deduplicated), sorted by score descending. */
   function mergeResultsByScore(primary: SearchResult[], extras: SearchResult[]): SearchResult[] {
-    const seen = new Set(primary.map((r) => r.path));
-    const unique = extras.filter((r) => !seen.has(r.path));
+    const seen = new Set(primary.map((r) => directoryKey(r.path)));
+    const unique = extras.filter((r) => !seen.has(directoryKey(r.path)));
     const merged = [...primary, ...unique];
     merged.sort((a, b) => effectiveScore(b) - effectiveScore(a));
     return merged;
@@ -514,7 +516,7 @@
                 {#if settingsStore.quickOpenDebug}
                   {@const qLower = query.toLowerCase()}
                   {@const nameScore = filenameMatchScore(result.name, qLower)}
-                  {@const frecency = frecencyStore.getScoreMap().get(result.path) ?? 0}
+                  {@const frecency = frecencyStore.getScoreMap().get(directoryKey(result.path)) ?? 0}
                   {@const frecencyPts = Math.round(frecency * FRECENCY_WEIGHT)}
                   {@const baseScore = Math.round(result.score - frecencyPts - nameScore)}
                   {@const dirMult = result.kind === "directory" ? 1.25 : 1}

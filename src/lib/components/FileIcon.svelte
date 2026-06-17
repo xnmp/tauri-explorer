@@ -61,9 +61,33 @@
   const langIcon = $derived<LangIcon | null>(
     entry.kind === "file" ? (LANG_ICONS[getExt(entry.name)] ?? null) : null
   );
+
+  // A symlink that resolves to a directory gets a dedicated "linked folder"
+  // icon: a folder with a link arrow, so it reads as a folder you can open
+  // while staying visibly distinct from a real folder.
+  const linkedFolder = $derived(entry.kind === "directory" && entry.is_symlink === true);
 </script>
 
-{#if useMaterial && nerdIcon && entry.kind !== "directory"}
+{#if linkedFolder}
+  <!-- Symlinked directory: folder with a link arrow (all themes) -->
+  {#if size === "small"}
+    <span class="icon-cat linked-folder">
+      <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
+        <path d="M2.5 7.5C2.5 6.94772 2.94772 6.5 3.5 6.5H14.5C15.0523 6.5 15.5 6.94772 15.5 7.5V12.5C15.5 13.6046 14.6046 14.5 13.5 14.5H4.5C3.39543 14.5 2.5 13.6046 2.5 12.5V7.5Z" fill="currentColor"/>
+        <path d="M2 5.5C2 4.67157 2.67157 4 3.5 4H6.17157C6.43679 4 6.69114 4.10536 6.87868 4.29289L8.12132 4.29289C8.30886 4.10536 8.56321 4 8.82843 4H13C13.8284 4 14.5 4.67157 14.5 5.5V6.5H2V5.5Z" fill="currentColor" opacity="0.6"/>
+        <path d="M7 12L11 8M11 8H8M11 8V11" stroke="var(--icon-link-arrow, #fff)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </span>
+  {:else}
+    <span class="icon-cat linked-folder">
+      <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
+        <path d="M2 14C2 11.79 3.79 10 6 10H14.34C15.4 10 16.42 10.42 17.17 11.17L20 14H42C44.21 14 46 15.79 46 18V37C46 39.21 44.21 41 42 41H6C3.79 41 2 39.21 2 37V14Z" fill="currentColor" opacity="0.85"/>
+        <path d="M2 22C2 20.34 3.34 19 5 19H43C44.66 19 46 20.34 46 22V39C46 40.66 44.66 42 43 42H5C3.34 42 2 40.66 2 39V22Z" fill="currentColor"/>
+        <path d="M18 33L30 21M30 21H21M30 21V30" stroke="var(--icon-link-arrow, #fff)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </span>
+  {/if}
+{:else if useMaterial && nerdIcon && entry.kind !== "directory"}
   <!--
     Material icon theme: Nerd Font glyphs (folders use the default SVG icons)
   -->
@@ -309,6 +333,8 @@
   .icon-media      { color: var(--icon-file-tint, var(--icon-media)); }
   .icon-executable { color: var(--icon-file-tint, var(--icon-executable)); }
   .icon-document   { color: var(--icon-file-tint, var(--icon-document)); }
+  /* Linked folder uses the folder colour; the arrow is drawn in --icon-link-arrow. */
+  .linked-folder   { color: var(--icon-folder, #ffb900); }
 
   .folder-large {
     filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.25));

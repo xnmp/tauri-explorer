@@ -95,7 +95,7 @@
     </div>
     <span class="name-text" data-drag-name><EntryName {entry} {explorer} variant="details" /></span>
     <GitStatusBadge entryName={entry.name} hideOnRename={isRenaming} />
-    {#if entry.is_symlink && !isRenaming}
+    {#if entry.is_symlink && !isRenaming && entry.kind !== "directory"}
       <div class="symlink-badge" title={entry.symlink_target ? `Link to ${entry.symlink_target}` : "Symbolic link"}>
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
           <path d="M7 3L3 7M3 3L3 7L7 7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>

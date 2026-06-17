@@ -320,7 +320,7 @@
           <circle cx="34" cy="24" r="2" fill="currentColor"/>
           <path d="M10 8L38 40" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
         </svg>
-        <span class="error-title">Removable drive gone</span>
+        <span class="error-title">Removable drive removed</span>
         <span class="error-message">This drive was removed or ejected. Reconnect it, or navigate elsewhere.</span>
         <button class="go-up-button" onclick={() => explorer.goBack()}>
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none">

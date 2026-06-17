@@ -119,7 +119,8 @@
 
   function navigateFromCaret(path: string) {
     closeCaretPicker();
-    explorer.navigateTo(path);
+    // Breadcrumb-area navigation: don't auto-descend single subfolders.
+    explorer.navigateTo(path, { autoEnterSingleSubdir: false });
   }
 
   // Filter input
@@ -277,7 +278,7 @@
       <!-- Breadcrumb view -->
       {#if isUnderHome}
         <!-- Home icon: navigates to user's home directory -->
-        <button class="crumb root" onclick={(e) => { e.stopPropagation(); explorer.navigateTo(homeDir!); }} aria-label="Home folder">
+        <button class="crumb root" onclick={(e) => { e.stopPropagation(); explorer.navigateTo(homeDir!, { autoEnterSingleSubdir: false }); }} aria-label="Home folder">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path
               d="M8 1.5L14.5 7V14C14.5 14.2761 14.2761 14.5 14 14.5H10V10C10 9.72386 9.77614 9.5 9.5 9.5H6.5C6.22386 9.5 6 9.72386 6 10V14.5H2C1.72386 14.5 1.5 14.2761 1.5 14V7L8 1.5Z"
@@ -289,7 +290,7 @@
         </button>
       {:else}
         <!-- Root folder icon -->
-        <button class="crumb root" onclick={(e) => { e.stopPropagation(); explorer.navigateTo(rootPath); }} aria-label="Root">
+        <button class="crumb root" onclick={(e) => { e.stopPropagation(); explorer.navigateTo(rootPath, { autoEnterSingleSubdir: false }); }} aria-label="Root">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M3 3.5C3 2.67 3.67 2 4.5 2H7L8.5 3.5H12.5C13.33 3.5 14 4.17 14 5V12C14 12.83 13.33 13.5 12.5 13.5H4.5C3.67 13.5 3 12.83 3 12V3.5Z" stroke="currentColor" stroke-width="1.2" fill="none"/>
           </svg>
@@ -321,7 +322,7 @@
             class:current={i === displayBreadcrumbs.length - 1}
             class:drop-target={dropTargetCrumb === segment.path}
             data-path={segment.path}
-            onclick={(e) => { e.stopPropagation(); explorer.navigateTo(segment.path!); }}
+            onclick={(e) => { e.stopPropagation(); explorer.navigateTo(segment.path!, { autoEnterSingleSubdir: false }); }}
             ondragover={(e) => handleCrumbDragOver(e, segment.path!)}
             ondragleave={handleCrumbDragLeave}
             ondrop={(e) => handleCrumbDrop(e, segment.path!)}

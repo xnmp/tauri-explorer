@@ -211,7 +211,20 @@ function createExplorerState(seed?: ExplorerSeed) {
     return true;
   }
 
-  async function navigateTo(path: string) {
+  /**
+   * Navigate to a directory.
+   *
+   * `autoEnterSingleSubdir` (default true) controls whether the "auto-enter
+   * single subfolder" setting applies to this navigation. Breadcrumb/ancestor
+   * navigation passes `false`: jumping to an ancestor only to immediately
+   * descend back through single-child folders would defeat the point of going
+   * up.
+   */
+  async function navigateTo(
+    path: string,
+    options: { autoEnterSingleSubdir?: boolean } = {}
+  ) {
+    const { autoEnterSingleSubdir = true } = options;
     const success = await applyNavigation(path);
     if (success) {
       // Track the *resolved* path (separator-normalized by navigateInternal),
@@ -219,7 +232,7 @@ function createExplorerState(seed?: ExplorerSeed) {
       const resolved = coreState.currentPath;
       recentFilesStore.add(resolved, basename(resolved), "directory");
       frecencyStore.recordAccess(resolved);
-      await maybeAutoEnterSingleSubdir();
+      if (autoEnterSingleSubdir) await maybeAutoEnterSingleSubdir();
     }
   }
 

@@ -300,7 +300,10 @@ function createExplorerState(seed?: ExplorerSeed) {
   function goUp() {
     const parentPath = navigation.getParentPath(breadcrumbs);
     if (parentPath) {
-      navigateTo(parentPath);
+      // Don't auto-descend single subfolders when going up — that would land
+      // straight back in the child we just came from. (Back/forward already
+      // bypass auto-enter: they use navigateInternal, not navigateTo.)
+      navigateTo(parentPath, { autoEnterSingleSubdir: false });
     }
   }
 

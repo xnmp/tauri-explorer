@@ -11,6 +11,7 @@
   import { getHomeDirectory } from "$lib/api/files";
   import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
   import { truncateBreadcrumbs } from "$lib/domain/breadcrumb-truncation";
+  import { isWslDistroRoot, isWslHome } from "$lib/domain/wsl";
   import BreadcrumbAutocomplete from "./BreadcrumbAutocomplete.svelte";
   import CaretPicker from "./CaretPicker.svelte";
   import NavigationHistoryMenu from "./NavigationHistoryMenu.svelte";
@@ -46,9 +47,28 @@
       crumbs[homeParts.length - 1]?.path === homeDir;
   });
 
-  const visibleBreadcrumbs = $derived(
-    isUnderHome ? explorer.breadcrumbs.slice(homeParts.length) : explorer.breadcrumbs
+  // The breadcrumb's leading icon. A WSL distro root (\\wsl.localhost\Distro)
+  // collapses into a Tux icon, and a user's home inside it (…\home\<user>)
+  // collapses into the home-with-Tux icon — mirroring how the normal home icon
+  // replaces the home path prefix. `slice` is how many leading crumbs the icon
+  // stands in for.
+  const wslHomeIndex = $derived(explorer.breadcrumbs.findIndex((c) => isWslHome(c.path)));
+  const wslDistroRoot = $derived(
+    explorer.breadcrumbs[0] && isWslDistroRoot(explorer.breadcrumbs[0].path)
+      ? explorer.breadcrumbs[0].path
+      : null
   );
+
+  type AnchorKind = "home" | "wsl-home" | "wsl-root" | "root";
+  const anchor = $derived.by<{ kind: AnchorKind; path: string; slice: number }>(() => {
+    if (wslHomeIndex >= 0)
+      return { kind: "wsl-home", path: explorer.breadcrumbs[wslHomeIndex].path, slice: wslHomeIndex + 1 };
+    if (wslDistroRoot) return { kind: "wsl-root", path: wslDistroRoot, slice: 1 };
+    if (isUnderHome && homeDir) return { kind: "home", path: homeDir, slice: homeParts.length };
+    return { kind: "root", path: rootPath, slice: 0 };
+  });
+
+  const visibleBreadcrumbs = $derived(explorer.breadcrumbs.slice(anchor.slice));
 
   // Measurement-based breadcrumb truncation using pretext for text width calculation
   let breadcrumbsEl: HTMLElement | undefined = $state();
@@ -88,7 +108,7 @@
    * real parent is hidden, so derive it from the crumb's own path — breadcrumb
    * paths are accumulated prefixes (Windows separators tolerated). */
   function resolveCaretParent(index: number): { path: string; name: string | null } {
-    const fallback = { path: isUnderHome && homeDir ? homeDir : rootPath, name: null };
+    const fallback = { path: anchor.path, name: null };
     const prev = displayBreadcrumbs[index - 1];
     if (!prev) return fallback;
     if (prev.path !== null) return { path: prev.path, name: prev.name };
@@ -275,10 +295,13 @@
         onCancel={cancelPathEdit}
       />
     {:else}
-      <!-- Breadcrumb view -->
-      {#if isUnderHome}
-        <!-- Home icon: navigates to user's home directory -->
-        <button class="crumb root" onclick={(e) => { e.stopPropagation(); explorer.navigateTo(homeDir!, { autoEnterSingleSubdir: false }); }} aria-label="Home folder">
+      <!-- Breadcrumb view: leading anchor icon (home / root / WSL Tux) -->
+      <button
+        class="crumb root"
+        onclick={(e) => { e.stopPropagation(); explorer.navigateTo(anchor.path, { autoEnterSingleSubdir: false }); }}
+        aria-label={anchor.kind === "wsl-home" ? "WSL home folder" : anchor.kind === "wsl-root" ? "WSL distribution root" : anchor.kind === "home" ? "Home folder" : "Root"}
+      >
+        {#if anchor.kind === "home"}
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path
               d="M8 1.5L14.5 7V14C14.5 14.2761 14.2761 14.5 14 14.5H10V10C10 9.72386 9.77614 9.5 9.5 9.5H6.5C6.22386 9.5 6 9.72386 6 10V14.5H2C1.72386 14.5 1.5 14.2761 1.5 14V7L8 1.5Z"
@@ -287,15 +310,29 @@
               stroke-linejoin="round"
             />
           </svg>
-        </button>
-      {:else}
-        <!-- Root folder icon -->
-        <button class="crumb root" onclick={(e) => { e.stopPropagation(); explorer.navigateTo(rootPath, { autoEnterSingleSubdir: false }); }} aria-label="Root">
+        {:else if anchor.kind === "wsl-root"}
+          <!-- Tux: the WSL distro mascot (static/tux.svg) -->
+          <img src="/tux.svg" alt="" class="anchor-tux" width="16" height="16" />
+        {:else if anchor.kind === "wsl-home"}
+          <!-- Home outline with Tux tucked inside -->
+          <span class="anchor-wsl-home">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path
+                d="M8 1.5L14.5 7V14C14.5 14.2761 14.2761 14.5 14 14.5H2C1.72386 14.5 1.5 14.2761 1.5 14V7L8 1.5Z"
+                stroke="currentColor"
+                stroke-width="1.1"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <img src="/tux.svg" alt="" class="anchor-wsl-home-tux" />
+          </span>
+        {:else}
+          <!-- Root folder icon -->
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M3 3.5C3 2.67 3.67 2 4.5 2H7L8.5 3.5H12.5C13.33 3.5 14 4.17 14 5V12C14 12.83 13.33 13.5 12.5 13.5H4.5C3.67 13.5 3 12.83 3 12V3.5Z" stroke="currentColor" stroke-width="1.2" fill="none"/>
           </svg>
-        </button>
-      {/if}
+        {/if}
+      </button>
 
       {#each displayBreadcrumbs as segment, i (segment.path ?? "ellipsis")}
         {#if segment.path === null}
@@ -509,6 +546,30 @@
   .crumb.root {
     padding: 3px 4px;
     color: var(--text-tertiary);
+  }
+
+  /* WSL distro root: Tux mascot (216×256, so `contain` keeps it un-squished). */
+  .anchor-tux {
+    display: block;
+    object-fit: contain;
+  }
+
+  /* WSL home: home outline with Tux tucked inside it. */
+  .anchor-wsl-home {
+    position: relative;
+    display: inline-flex;
+    width: 16px;
+    height: 16px;
+    color: var(--text-tertiary);
+  }
+  .anchor-wsl-home-tux {
+    position: absolute;
+    width: 9px;
+    height: 9px;
+    left: 50%;
+    bottom: 11%;
+    transform: translateX(-50%);
+    object-fit: contain;
   }
 
   .crumb.ellipsis {

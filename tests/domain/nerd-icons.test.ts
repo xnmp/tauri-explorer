@@ -33,4 +33,9 @@ describe("getNerdIcon", () => {
     expect(getNerdIcon("mystery.zzz9", "file")).toBe(DEFAULT_FILE_ICON);
     expect(getNerdIcon("", "file")).toBe(DEFAULT_FILE_ICON);
   });
+
+  it("has dedicated glyphs for Windows shortcuts and AutoHotkey scripts", () => {
+    expect(getNerdIcon("game.lnk", "file")).not.toBe(DEFAULT_FILE_ICON);
+    expect(getNerdIcon("remap.ahk", "file")).not.toBe(DEFAULT_FILE_ICON);
+  });
 });

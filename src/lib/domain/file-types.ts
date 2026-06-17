@@ -83,6 +83,8 @@ const FILE_TYPE_MAP: Record<string, string> = {
   ps1: "PowerShell Script",
   sh: "Shell Script",
   bash: "Bash Script",
+  ahk: "AutoHotkey Script",
+  lnk: "Shortcut",
 
   // System
   dll: "Dynamic Link Library",
@@ -154,7 +156,10 @@ const FILE_COLOR_MAP: Record<string, string> = {
 
   // Executables
   exe: "#0078d4", msi: "#0078d4", bat: "#4d4d4d", cmd: "#4d4d4d",
-  ps1: "#012456", sh: "#4eaa25", bash: "#4eaa25",
+  ps1: "#012456", sh: "#4eaa25", bash: "#4eaa25", ahk: "#5f9e54",
+
+  // Shortcut - Blue
+  lnk: "#4273ca",
 
   // System - Gray
   dll: "#6d6d6d", sys: "#6d6d6d", ini: "#6d6d6d", cfg: "#6d6d6d",
@@ -197,7 +202,7 @@ const ICON_CATEGORY_MAP: Record<string, IconCategory> = {
   go: "code", rs: "code", php: "code", rb: "code", swift: "code",
   kt: "code", html: "code", htm: "code", css: "code", scss: "code",
   sass: "code", less: "code", json: "code", xml: "code", yaml: "code",
-  yml: "code", sql: "code",
+  yml: "code", sql: "code", ahk: "code",
 
   // Media
   mp3: "media", wav: "media", flac: "media", ogg: "media",

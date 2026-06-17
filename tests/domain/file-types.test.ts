@@ -3,7 +3,15 @@
  * getExtension semantics (shared with nerd-icons).
  */
 import { describe, it, expect } from "vitest";
-import { formatDate, getExtension, isZipFile } from "$lib/domain/file-types";
+import {
+  formatDate,
+  getExtension,
+  isZipFile,
+  getFileType,
+  getFileIconColor,
+  getFileIconCategory,
+  isTextFile,
+} from "$lib/domain/file-types";
 import type { FileEntry } from "$lib/domain/file";
 
 const entry = (name: string, kind: "file" | "directory" = "file"): FileEntry => ({
@@ -63,5 +71,24 @@ describe("isZipFile", () => {
     expect(isZipFile(entry("photo.zip.bak"))).toBe(false);
     expect(isZipFile(entry("archive.tar.gz"))).toBe(false);
     expect(isZipFile(entry("archive.zip", "directory"))).toBe(false);
+  });
+});
+
+describe("AutoHotkey (.ahk) and shortcut (.lnk) file types", () => {
+  it("names the file types", () => {
+    expect(getFileType(entry("remap.ahk"))).toBe("AutoHotkey Script");
+    expect(getFileType(entry("game.lnk"))).toBe("Shortcut");
+  });
+
+  it("gives them distinct colors (not the default gray)", () => {
+    expect(getFileIconColor(entry("remap.ahk"))).toBe("#5f9e54");
+    expect(getFileIconColor(entry("game.lnk"))).toBe("#4273ca");
+  });
+
+  it("treats .ahk as previewable code, but .lnk as opaque binary", () => {
+    expect(getFileIconCategory(entry("remap.ahk"))).toBe("code");
+    expect(isTextFile(entry("remap.ahk"))).toBe(true);
+    expect(getFileIconCategory(entry("game.lnk"))).toBe("default");
+    expect(isTextFile(entry("game.lnk"))).toBe(false);
   });
 });

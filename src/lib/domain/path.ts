@@ -19,6 +19,15 @@ export function toForwardSlashes(path: string): string {
   return path.replace(/\\/g, "/");
 }
 
+/**
+ * True for a UNC path (`\\server\share\…` or `\\wsl.localhost\Distro\…`),
+ * tolerant of separator style. Windows has no Recycle Bin for these network/WSL
+ * locations, so deletes there are permanent rather than recoverable.
+ */
+export function isUncPath(path: string): boolean {
+  return path.startsWith("\\\\") || path.startsWith("//");
+}
+
 /** Normalize all forward-slash separators to backslashes. */
 export function toBackslashes(path: string): string {
   return path.replace(/\//g, "\\");

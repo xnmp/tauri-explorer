@@ -6,6 +6,7 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { toastStore } from "$lib/state/toast.svelte";
+  import { isUncPath } from "$lib/domain/path";
   import Modal from "./Modal.svelte";
 
   interface Props {
@@ -16,7 +17,9 @@
 
   function handleConfirm() {
     const entries = [...dialogStore.deletingEntries];
-    const isPermanent = dialogStore.isPermanentDelete;
+    // UNC/WSL paths can't go to the Recycle Bin — the delete is permanent
+    // regardless of the user's choice, so report it as such.
+    const isPermanent = dialogStore.isPermanentDelete || entries.some((e) => isUncPath(e.path));
     const isMultiple = entries.length > 1;
     // Close the dialog immediately — progress and completion are reported
     // through toast notifications so the UI doesn't appear stuck.
@@ -73,7 +76,8 @@
   {@const isMultiple = entries.length > 1}
   {@const singleEntry = entries[0]}
   {@const hasFolders = entries.some((e) => e.kind === "directory")}
-  {@const isPermanent = dialogStore.isPermanentDelete}
+  {@const forcedByLocation = !dialogStore.isPermanentDelete && entries.some((e) => isUncPath(e.path))}
+  {@const isPermanent = dialogStore.isPermanentDelete || forcedByLocation}
   <div class="dialog modal-card">
     <div class="dialog-icon">
       <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
@@ -94,6 +98,9 @@
           {#if hasFolders}
             <span class="info">Folders and all their contents will also be {isPermanent ? "deleted" : "moved"}.</span>
           {/if}
+          {#if forcedByLocation}
+            <span class="info">Items on WSL or network locations can't be sent to the Recycle Bin.</span>
+          {/if}
         </p>
         <div class="entry-list">
           {#each entries.slice(0, 5) as entry}
@@ -113,6 +120,9 @@
           {/if}
           {#if singleEntry.kind === "directory"}
             <span class="info">All files and folders inside will also be {isPermanent ? "deleted" : "moved"}.</span>
+          {/if}
+          {#if forcedByLocation}
+            <span class="info">Items on WSL or network locations can't be sent to the Recycle Bin.</span>
           {/if}
         </p>
       {/if}

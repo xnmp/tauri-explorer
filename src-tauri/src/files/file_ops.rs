@@ -79,7 +79,7 @@ fn unique_staging_path(dest_dir: &Path, name: &str) -> PathBuf {
 }
 
 /// Remove a file, directory tree, or symlink (the link itself, not its target).
-fn remove_entry_at(path: &Path) -> Result<(), AppError> {
+pub(crate) fn remove_entry_at(path: &Path) -> Result<(), AppError> {
     let meta = fs::symlink_metadata(path)?;
     if meta.is_dir() {
         fs::remove_dir_all(path)?;

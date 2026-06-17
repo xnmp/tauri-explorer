@@ -7,6 +7,7 @@
   import type { FileEntry } from "$lib/domain/file";
   import { getFileIconCategory, getFileExtensionLabel } from "$lib/domain/file-types";
   import { getNerdIcon } from "$lib/domain/nerd-icons";
+  import { isWslDistroRoot, isWslHome } from "$lib/domain/wsl";
   import { settingsStore } from "$lib/state/settings.svelte";
 
   interface Props {
@@ -61,9 +62,37 @@
   const langIcon = $derived<LangIcon | null>(
     entry.kind === "file" ? (LANG_ICONS[getExt(entry.name)] ?? null) : null
   );
+
+  // Special WSL folders get the Tux mascot in place of the generic folder icon,
+  // in every theme: the distro root is pure Tux; a user's home is the home
+  // outline with Tux tucked inside.
+  const wslIcon = $derived<"root" | "home" | null>(
+    entry.kind === "directory"
+      ? isWslHome(entry.path) ? "home" : isWslDistroRoot(entry.path) ? "root" : null
+      : null
+  );
+  const px = $derived(size === "small" ? 16 : 64);
 </script>
 
-{#if useMaterial && nerdIcon && entry.kind !== "directory"}
+{#if wslIcon === "root"}
+  <!-- WSL distro root: the Tux mascot replaces the folder icon -->
+  <img src="/tux.svg" alt="" class="wsl-tux" width={px} height={px} />
+{:else if wslIcon === "home"}
+  <!-- WSL home: home outline with Tux inside -->
+  <span class="wsl-home" style:width="{px}px" style:height="{px}px">
+    <svg class="wsl-home-frame" width={px} height={px} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M8 1.5L14.5 7V14C14.5 14.2761 14.2761 14.5 14 14.5H2C1.72386 14.5 1.5 14.2761 1.5 14V7L8 1.5Z"
+        stroke="currentColor"
+        stroke-width="1.1"
+        stroke-linejoin="round"
+        fill="currentColor"
+        fill-opacity="0.08"
+      />
+    </svg>
+    <img src="/tux.svg" alt="" class="wsl-home-tux" />
+  </span>
+{:else if useMaterial && nerdIcon && entry.kind !== "directory"}
   <!--
     Material icon theme: Nerd Font glyphs (folders use the default SVG icons)
   -->
@@ -312,6 +341,32 @@
 
   .folder-large {
     filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.25));
+  }
+
+  /* WSL distro root: Tux mascot (216×256, so `contain` keeps it un-squished). */
+  .wsl-tux {
+    object-fit: contain;
+    filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.25));
+  }
+
+  /* WSL home: home outline (tinted to folder colour) with Tux tucked inside. */
+  .wsl-home {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.25));
+  }
+  .wsl-home-frame {
+    color: var(--icon-folder, #e8a800);
+  }
+  .wsl-home-tux {
+    position: absolute;
+    /* Sit Tux in the lower half of the house, leaving the roof visible. */
+    width: 50%;
+    height: 50%;
+    bottom: 8%;
+    object-fit: contain;
   }
 
   .nf-small {

@@ -115,16 +115,12 @@
         }
       }
     } else {
-      // Fill at least the cell, expand to fit the name, capped so a huge name
-      // doesn't blanket the whole pane.
-      const cell =
-        el.closest<HTMLElement>(".name-cell") ?? el.closest<HTMLElement>(".list-item");
-      const minW = cell?.clientWidth ?? 0;
-      // Fill at least the cell, then grow to fit the name but only up to a
-      // modest cap — a very long name scrolls inside the box rather than
-      // blanketing the pane.
+      // Size to the name: snug for a short name, growing only up to a modest
+      // cap for a long one (then it scrolls). Not floored to the column width,
+      // so a short name doesn't blanket the whole row.
+      const MIN = 80;
       const MAX = 340;
-      const w = Math.max(minW, Math.min(MAX, Math.ceil(textW + chrome + 10)));
+      const w = Math.min(MAX, Math.max(MIN, Math.ceil(textW + chrome + 10)));
       el.style.width = `${w}px`;
     }
   }

@@ -45,6 +45,22 @@
     });
   });
 
+  // Commit the rename when the user points at anything outside the box (e.g.
+  // clicks another file). We can't rely on the input's native blur: on
+  // Windows/macOS the file items call preventDefault() on mousedown for pointer
+  // drag, which keeps focus on the input so blur never fires. A capture-phase
+  // pointerdown listener runs before those handlers and commits explicitly.
+  $effect(() => {
+    if (!isRenaming) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const el = rename.renameInputRef;
+      if (el && e.target instanceof Node && el.contains(e.target)) return;
+      rename.handleRenameBlur(entry.name);
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => window.removeEventListener("pointerdown", onPointerDown, true);
+  });
+
   // Shared off-DOM canvas for measuring text width in the input's own font.
   let measureCtx: CanvasRenderingContext2D | null = null;
   function measureTextWidth(text: string, font: string): number {
@@ -95,9 +111,12 @@
 
 {#if isRenaming}
   {#if variant === "tiles"}
-    <!-- Anchor reserves the tile's two-line name space while the box floats
-         above neighbours (centered, content-sized). -->
+    <!-- The name stays in flow (invisible) so the tile keeps EXACTLY its
+         pre-rename height — the rename box floats above it absolutely and
+         therefore never shifts neighbouring tiles, however many lines it grows
+         to. -->
     <div class="tile-rename-anchor">
+      <span class="name-tiles rename-placeholder" aria-hidden="true">{entry.name}</span>
       <!-- svelte-ignore a11y_autofocus -->
       <textarea
         class="rename-input tile-rename"
@@ -178,6 +197,10 @@
     position: relative;
     z-index: 5;
     flex: 0 0 auto;
+    /* Pull the box left by its own border (1px) + padding (6px) so the editable
+       text sits exactly where the displayed name text was — no sideways jump
+       when rename mode opens. */
+    margin-left: -7px;
     background: var(--background-solid);
     box-shadow: 0 0 0 1px var(--accent), 0 4px 12px rgba(0, 0, 0, 0.18);
   }
@@ -189,9 +212,14 @@
   .tile-rename-anchor {
     position: relative;
     width: 100%;
-    /* Reserve the two-line space the name occupied so the tile keeps its size
-       while the box floats above neighbours. */
-    min-height: calc(1.4em * 2);
+  }
+
+  /* Invisible copy of the name that holds the tile's natural height open while
+     the absolutely-positioned rename box floats over it — so renaming never
+     shifts neighbouring tiles, regardless of how many lines the box grows to. */
+  .rename-placeholder {
+    visibility: hidden;
+    pointer-events: none;
   }
 
   .rename-input.tile-rename {

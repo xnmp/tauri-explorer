@@ -280,6 +280,7 @@
   }
 
   .name-list {
+    display: block;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

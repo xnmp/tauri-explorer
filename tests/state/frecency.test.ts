@@ -84,3 +84,21 @@ describe("frecencyStore separator/case dedup", () => {
     expect(frecencyStore.entries).toHaveLength(0);
   });
 });
+
+describe("frecencyStore.recordFileAction", () => {
+  beforeEach(() => frecencyStore.clear());
+
+  it("records the file's containing FOLDER, not the file path", () => {
+    frecencyStore.recordFileAction("/home/user/Pictures/photo.jpg");
+    expect(frecencyStore.entries).toHaveLength(1);
+    expect(frecencyStore.entries[0].path).toBe("/home/user/Pictures");
+  });
+
+  it("coalesces actions on different files in the same folder into one entry", () => {
+    frecencyStore.recordFileAction("/home/user/Pictures/a.jpg");
+    frecencyStore.recordFileAction("/home/user/Pictures/b.png");
+    expect(frecencyStore.entries).toHaveLength(1);
+    expect(frecencyStore.entries[0].path).toBe("/home/user/Pictures");
+    expect(frecencyStore.entries[0].accesses).toHaveLength(2);
+  });
+});

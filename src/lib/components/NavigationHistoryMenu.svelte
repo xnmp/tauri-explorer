@@ -7,6 +7,7 @@
 <script lang="ts">
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { basename, parentDir } from "$lib/domain/path";
+  import { rectToFixed, getZoomFactor } from "$lib/domain/zoom";
 
   interface Props {
     explorer: ExplorerInstance;
@@ -28,8 +29,19 @@
     onClose();
   }
 
-  const left = $derived(anchorEl.getBoundingClientRect().left);
-  const top = $derived(anchorEl.getBoundingClientRect().bottom + 4);
+  // Anchor the dropdown directly below the back/forward button. The button rect
+  // comes from getBoundingClientRect, so convert it into the position:fixed CSS
+  // space (zoom- and engine-aware) and clamp to the viewport's right edge so a
+  // wide menu near the window edge stays on screen.
+  const MENU_MIN_WIDTH = 240;
+  const VIEWPORT_PAD = 8;
+  const left = $derived.by(() => {
+    const rect = anchorEl.getBoundingClientRect();
+    const x = rectToFixed(rect.left);
+    const vw = document.documentElement.clientWidth / getZoomFactor();
+    return Math.max(VIEWPORT_PAD, Math.min(x, vw - MENU_MIN_WIDTH - VIEWPORT_PAD));
+  });
+  const top = $derived(rectToFixed(anchorEl.getBoundingClientRect().bottom) + 4);
 </script>
 
 <svelte:window onkeydown={(e) => { if (e.key === "Escape") { e.preventDefault(); onClose(); } }} />

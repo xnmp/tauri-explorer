@@ -87,7 +87,12 @@ export const fileCommands: Command[] = [
           explorer?.navigateTo(target.path);
         } else {
           const { openFile } = await import("$lib/api/files");
-          await openFile(target.path);
+          const result = await openFile(target.path);
+          if (result.ok) {
+            // Opening a file marks its folder as worked-in for Recent ranking.
+            const { frecencyStore } = await import("$lib/state/frecency.svelte");
+            frecencyStore.recordFileAction(target.path);
+          }
         }
       }
     },

@@ -19,7 +19,7 @@
 import { toastStore } from "./toast.svelte";
 import { basename, toNativeSeparators } from "$lib/domain/path";
 import { isWindows } from "$lib/domain/platform";
-import { clipboardHasImage, clipboardPasteImage } from "$lib/api/files";
+import { clipboardHasImage, clipboardPasteImage, fetchDirectory } from "$lib/api/files";
 import { sortEntries, filterHidden, type FileEntry, type SortField } from "$lib/domain/file";
 import type { ExplorerCoreState, SelectOptions, ViewMode } from "./types";
 import * as selection from "./selection";
@@ -31,7 +31,6 @@ import { contextMenuStore } from "./context-menu.svelte";
 import { undoStore } from "./undo.svelte";
 import { settingsStore } from "./settings.svelte";
 import { manualHiddenStore } from "./manual-hidden.svelte";
-import { frecencyStore } from "./frecency.svelte";
 import { getSortPref, saveSortPref } from "./sort-prefs";
 import { pasteEntries, type PasteResult } from "./paste-operations";
 import { createDirectoryListing } from "./directory-listing";
@@ -225,46 +224,68 @@ function createExplorerState(seed?: ExplorerSeed) {
     options: { autoEnterSingleSubdir?: boolean } = {}
   ) {
     const { autoEnterSingleSubdir = true } = options;
-    const success = await applyNavigation(path);
+
+    // Resolve the "auto-enter single subfolder" descent BEFORE committing any
+    // navigation. Peeking at the directory listings without touching pane state
+    // means the intermediate single-child folders never render — the view jumps
+    // straight to the final destination in one step (no flashing). The single
+    // applyNavigation below pushes exactly one history entry, so Back still
+    // undoes the whole jump in one press.
+    let target = path;
+    let skipped = 0;
+    if (autoEnterSingleSubdir && settingsStore.autoEnterSingleSubdir) {
+      const descent = await resolveAutoEnterTarget(path);
+      target = descent.path;
+      skipped = descent.skipped;
+    }
+
+    const success = await applyNavigation(target);
     if (success) {
       // Track the *resolved* path (separator-normalized by navigateInternal),
       // not the raw request, so the same folder reached two ways dedupes.
       const resolved = coreState.currentPath;
       recentFilesStore.add(resolved, basename(resolved), "directory");
-      frecencyStore.recordAccess(resolved);
-      if (autoEnterSingleSubdir) await maybeAutoEnterSingleSubdir();
+      if (skipped > 0) {
+        // Let the user know the view jumped past one or more single-child folders.
+        const levels = skipped === 1 ? "subfolder" : `${skipped} subfolders`;
+        toastStore.show(`Entered ${basename(resolved)} (skipped ${levels})`, "info");
+      }
     }
   }
 
-  /** When the "auto-enter single subfolder" setting is on, and the directory we
-   *  just landed in contains exactly one *visible* entry that is itself a
-   *  subdirectory (visible = respects the user's hidden / manually-hidden
-   *  settings, via displayEntries), descend into it — recursively. The final
-   *  destination replaces the just-pushed history entry, so Back undoes the
-   *  whole jump in one press. Bounded to avoid pathological loops. */
-  async function maybeAutoEnterSingleSubdir() {
-    if (!settingsStore.autoEnterSingleSubdir) return;
-    let descended = 0;
+  /** Visible-entry filter matching `displayEntries` (hidden + manually-hidden
+   *  rules) for a peeked listing that isn't the current pane state. Used by the
+   *  auto-enter descent so its "single visible subfolder" test mirrors exactly
+   *  what the user would see. */
+  function visibleEntriesFor(entries: readonly FileEntry[], path: string): FileEntry[] {
+    let filtered = filterHidden(entries, settingsStore.showHidden);
+    const manualHiddenNames = manualHiddenStore.namesIn(path);
+    if (manualHiddenNames.size > 0 && !settingsStore.showManuallyHidden) {
+      filtered = filtered.filter((e) => !manualHiddenNames.has(e.name));
+    }
+    return filtered;
+  }
+
+  /** Walk down chains of single-child folders WITHOUT committing to pane state,
+   *  returning the final folder to navigate to and how many levels were skipped.
+   *  Each level is fetched read-only via fetchDirectory, so nothing renders
+   *  until the caller navigates to the resolved target. Bounded to guard against
+   *  pathological/symlink loops. */
+  async function resolveAutoEnterTarget(
+    startPath: string
+  ): Promise<{ path: string; skipped: number }> {
+    let current = startPath;
+    let skipped = 0;
     let guard = 0;
     while (guard++ < 64) {
-      const visible = displayEntries;
+      const result = await fetchDirectory(current);
+      if (!result.ok) break;
+      const visible = visibleEntriesFor(result.data.entries, current);
       if (visible.length !== 1 || visible[0].kind !== "directory") break;
-      const status = await navigateInternal(visible[0].path);
-      if (status !== "ok") break;
-      descended++;
-      recentFilesStore.add(coreState.currentPath, basename(coreState.currentPath), "directory");
-      frecencyStore.recordAccess(coreState.currentPath);
+      current = visible[0].path;
+      skipped++;
     }
-    if (descended > 0) {
-      // Point the current history slot at the final folder so Back/Forward
-      // treat the auto-descent as part of the original navigation.
-      const h = [...coreState.history];
-      h[coreState.historyIndex] = coreState.currentPath;
-      coreState.history = h;
-      // Let the user know the view jumped past one or more single-child folders.
-      const levels = descended === 1 ? "subfolder" : `${descended} subfolders`;
-      toastStore.show(`Entered ${basename(coreState.currentPath)} (skipped ${levels})`, "info");
-    }
+    return { path: current, skipped };
   }
 
   /** Initial load for restored/seeded panes: like navigateTo but does NOT

@@ -111,3 +111,55 @@ export function adjustForZoom(x: number, y: number): { x: number; y: number } {
   const zoom = getZoomFactor();
   return { x: x / zoom, y: y / zoom };
 }
+
+/**
+ * Coordinate calculator for `position: fixed` overlays under root CSS `zoom`.
+ *
+ * A fixed overlay lives inside the zoomed document root, so a `left: L` value
+ * renders at a screen offset of `L × zoom` on Chromium and `L × zoom²` on
+ * WebKitGTK/WKWebView (the empirically-observed "double scale"). To pin an
+ * overlay to a point on screen we therefore have to divide the target screen
+ * coordinate back down. How many times we divide depends on *which space the
+ * target coordinate is already in*:
+ *
+ *   - `fixedFromClient` — target comes from a mouse event (clientX/Y).
+ *   - `fixedFromRect`   — target comes from getBoundingClientRect() (anchoring
+ *                         an overlay to an element, e.g. a dropdown under a
+ *                         button).
+ *
+ * The two differ only on WebKitGTK, where clientX/Y are raw viewport pixels but
+ * getBoundingClientRect() returns pre-zoom CSS pixels — already one division
+ * ahead. Both are pure so the per-engine arithmetic can be unit-tested.
+ */
+export function fixedFromClient(
+  clientCoord: number,
+  zoom: number,
+  chromium: boolean,
+): number {
+  if (zoom === 1) return clientCoord;
+  return chromium ? clientCoord / zoom : clientCoord / (zoom * zoom);
+}
+
+export function fixedFromRect(
+  rectCoord: number,
+  zoom: number,
+  viewportCoords: boolean,
+  chromium: boolean,
+): number {
+  if (zoom === 1) return rectCoord;
+  // WKWebView (post-zoom rect, ×zoom² fixed) needs two divisions; Chromium
+  // (post-zoom rect, ×zoom fixed) and WebKitGTK (CSS rect, ×zoom² fixed) both
+  // net to one.
+  const divisions = viewportCoords && !chromium ? 2 : 1;
+  return rectCoord / zoom ** divisions;
+}
+
+/** Live wrapper of {@link fixedFromClient} using the current zoom/engine. */
+export function clientToFixed(clientCoord: number): number {
+  return fixedFromClient(clientCoord, getZoomFactor(), isChromiumEngine);
+}
+
+/** Live wrapper of {@link fixedFromRect} using the current zoom/engine. */
+export function rectToFixed(rectCoord: number): number {
+  return fixedFromRect(rectCoord, getZoomFactor(), usesViewportZoomCoords, isChromiumEngine);
+}

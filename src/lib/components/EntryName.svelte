@@ -45,8 +45,10 @@
     });
   });
 
-  /** Grow the floating tile rename box to fit its content instead of
-   *  scrolling inside a fixed two-line textarea. */
+  /** Grow the tile rename box vertically to fit its (wrapped) content so the
+   *  whole name is visible however long it is, without ever scrolling. The box
+   *  is full tile width and stays in-flow, so it can't overflow the pane edge
+   *  or oversize for short names. */
   function autoGrowTileRename(): void {
     const el = rename.renameInputRef;
     if (!(el instanceof HTMLTextAreaElement)) return;
@@ -57,8 +59,6 @@
 
 {#if isRenaming}
   {#if variant === "tiles"}
-    <!-- Anchor keeps the tile's two-line name space while the textarea
-         floats above neighboring tiles. -->
     <div class="tile-rename-anchor">
       <!-- svelte-ignore a11y_autofocus -->
       <textarea
@@ -133,21 +133,18 @@
   }
 
   .tile-rename-anchor {
-    position: relative;
     width: 100%;
-    /* Reserve the two-line space the name occupied so the tile keeps its
-       size while the input floats above neighbors. */
-    min-height: calc(1.4em * 2);
   }
 
   .rename-input.tile-rename {
-    position: absolute;
-    top: -2px;
-    left: 50%;
-    transform: translateX(-50%);
-    /* Comfortably wider than the tile; overflowing neighbors is fine. */
-    width: max(180px, calc(100% + 48px));
-    max-width: 300px;
+    /* In-flow, full tile width: never overflows the pane edge (so it can't be
+       clipped near the left/right of the view) and never oversizes for short
+       names. Long names wrap and the box grows in height (autoGrowTileRename)
+       so the whole name stays visible. */
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    margin: 0;
     text-align: center;
     resize: none;
     line-height: 1.4;
@@ -156,8 +153,6 @@
     font-size: 13px;
     /* Height is grown to fit content by autoGrowTileRename — never scroll. */
     overflow: hidden;
-    z-index: 10;
-    /* Opaque: the box floats over tile borders and neighboring names. */
     background: var(--background-solid);
     box-shadow: 0 0 0 1px var(--accent), 0 8px 24px rgba(0, 0, 0, 0.25);
   }

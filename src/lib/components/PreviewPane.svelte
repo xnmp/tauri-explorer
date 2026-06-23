@@ -5,12 +5,13 @@
 <script lang="ts">
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { readTextFile, fetchDirectory, gitDiff, listArchiveContents, readImageAsBlobUrl } from "$lib/api/files";
-  import { isImageFile, isTextFile, isPdfFile, isZipFile, getFileType, formatDate } from "$lib/domain/file-types";
+  import { isImageFile, isSvgFile, isTextFile, isPdfFile, isZipFile, getFileType, formatDate } from "$lib/domain/file-types";
   import { formatSize, isSystemHidden, type FileEntry } from "$lib/domain/file";
   import { isTauri } from "$lib/api/mock-invoke";
   import { highlightCode } from "$lib/domain/syntax-highlight";
   import { renderMarkdown } from "$lib/domain/markdown";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { frecencyStore } from "$lib/state/frecency.svelte";
   import { getFileIconColor } from "$lib/domain/file-types";
   import { scmStore } from "$lib/state/scm.svelte";
   import { parseUnifiedDiff, type ParsedDiff, type DiffLine } from "$lib/domain/diff";
@@ -337,6 +338,11 @@
     previewTruncatedLines = 0;
     previewLoading = true;
 
+    if (file.kind !== "directory") {
+      // Previewing a file marks its folder as actively worked-in for Recent ranking.
+      frecencyStore.recordFileAction(file.path);
+    }
+
     if (file.kind === "directory") {
       // Descend through any chain of single-child folders so the preview
       // shows useful content instead of one lonely folder, then report the
@@ -408,7 +414,7 @@
       return;
     }
 
-    if (isImageFile(file)) {
+    if (isImageFile(file) || isSvgFile(file)) {
       if (isTauri()) {
         try {
           const { convertFileSrc } = await import("@tauri-apps/api/core");

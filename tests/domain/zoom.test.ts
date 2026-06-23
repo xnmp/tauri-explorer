@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { detectViewportZoomCoords, detectChromiumEngine } from "../../src/lib/domain/zoom";
+import {
+  detectViewportZoomCoords,
+  detectChromiumEngine,
+  fixedFromClient,
+  fixedFromRect,
+} from "../../src/lib/domain/zoom";
 
 /**
  * The marquee-zoom bug on Windows was an ENGINE misclassification: WebView2
@@ -59,6 +64,48 @@ describe("detectViewportZoomCoords", () => {
 
     it("is false for macOS WKWebView (unlike detectViewportZoomCoords)", () => {
       expect(detectChromiumEngine(UA.wkWebView)).toBe(false);
+    });
+  });
+
+  /**
+   * Fixed-overlay coordinate calculators. Both convert a target screen
+   * coordinate into the value to assign a position:fixed overlay's left/top so
+   * it lands where intended under root CSS `zoom`.
+   */
+  describe("fixedFromClient (cursor-anchored overlays)", () => {
+    it("is a no-op at zoom 1", () => {
+      expect(fixedFromClient(100, 1, true)).toBe(100);
+      expect(fixedFromClient(100, 1, false)).toBe(100);
+    });
+
+    it("divides once on Chromium/WebView2", () => {
+      expect(fixedFromClient(100, 2, true)).toBe(50);
+    });
+
+    it("divides twice on WebKitGTK / WKWebView", () => {
+      expect(fixedFromClient(100, 2, false)).toBe(25);
+    });
+  });
+
+  describe("fixedFromRect (element-anchored overlays)", () => {
+    it("is a no-op at zoom 1", () => {
+      expect(fixedFromRect(100, 1, true, true)).toBe(100);
+      expect(fixedFromRect(100, 1, false, false)).toBe(100);
+    });
+
+    // Chromium: rect is post-zoom, fixed scales ×zoom → one division.
+    it("divides once on Chromium/WebView2", () => {
+      expect(fixedFromRect(100, 2, true, true)).toBe(50);
+    });
+
+    // WebKitGTK: rect is pre-zoom CSS, fixed scales ×zoom² → still one division.
+    it("divides once on WebKitGTK (CSS rect cancels one scale)", () => {
+      expect(fixedFromRect(100, 2, false, false)).toBe(50);
+    });
+
+    // WKWebView (mac): rect is post-zoom, fixed scales ×zoom² → two divisions.
+    it("divides twice on macOS WKWebView", () => {
+      expect(fixedFromRect(100, 2, true, false)).toBe(25);
     });
   });
 });

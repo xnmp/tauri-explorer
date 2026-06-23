@@ -389,15 +389,16 @@
   async function selectResult(result: SearchResult): Promise<void> {
     const explorer = windowTabsManager.getActiveExplorer();
 
-    // Record access for frecency ranking
-    frecencyStore.recordAccess(result.path);
-
     if (result.kind === "directory") {
+      // Jumping to a folder is navigation, not a file action — it no longer
+      // feeds frecency (the Recent list ranks folders by file activity).
       explorer?.navigateTo(result.path);
     } else {
       const openResult = await openFile(result.path);
       if (openResult.ok) {
         recentFilesStore.add(result.path, result.name, "file");
+        // Opening a file marks its folder as actively worked-in for Recent ranking.
+        frecencyStore.recordFileAction(result.path);
       } else {
         const resultDir = parentDir(result.path);
         explorer?.navigateTo(resultDir);

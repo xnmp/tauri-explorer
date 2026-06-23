@@ -11,7 +11,7 @@
  */
 
 import { checkPathsExist } from "$lib/api/files";
-import { directoryKey } from "$lib/domain/path";
+import { directoryKey, parentDir } from "$lib/domain/path";
 import { loadPersisted, savePersisted } from "./persisted";
 
 const STORAGE_KEY = "explorer-frecency";
@@ -68,6 +68,16 @@ function createFrecencyStore() {
     save();
   }
 
+  /**
+   * Record that a *file* was acted on (opened, previewed, set as wallpaper,
+   * moved, renamed, …). The frecency entry is the file's containing folder, so
+   * the Recent locations list ranks folders by where the user actually works
+   * with files — not by mere browse-navigation through them.
+   */
+  function recordFileAction(filePath: string): void {
+    recordAccess(parentDir(filePath));
+  }
+
   /** Get the frecency score for a path. Returns 0 if not tracked. */
   function getScore(path: string): number {
     const key = directoryKey(path);
@@ -118,6 +128,7 @@ function createFrecencyStore() {
   return {
     get entries() { return data; },
     recordAccess,
+    recordFileAction,
     getScore,
     getScoreMap,
     remove,

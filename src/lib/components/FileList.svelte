@@ -7,6 +7,7 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
+  import { frecencyStore } from "$lib/state/frecency.svelte";
   import { openFile, openImageWithSiblings } from "$lib/api/files";
   import { resolveActivation } from "$lib/api/activate";
   import { dragState } from "$lib/state/drag.svelte";
@@ -136,6 +137,8 @@
         : await openFile(target.path);
       if (result.ok) {
         recentFilesStore.add(target.path, target.name, "file");
+        // Opening a file marks its folder as actively worked-in for Recent ranking.
+        frecencyStore.recordFileAction(target.path);
       } else {
         console.error("Failed to open file:", result.error);
       }

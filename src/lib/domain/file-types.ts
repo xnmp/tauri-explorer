@@ -263,6 +263,17 @@ export function isImageFile(entry: FileEntry): boolean {
   return THUMBNAIL_EXTENSIONS.has(ext);
 }
 
+/**
+ * Check if a file is an SVG. SVGs are vector images the webview can render
+ * natively from their source, so they preview as images without going through
+ * the raster thumbnail backend (which can't decode them) — kept separate from
+ * {@link isImageFile} for that reason.
+ */
+export function isSvgFile(entry: FileEntry): boolean {
+  if (entry.kind === "directory") return false;
+  return getExtension(entry.name) === "svg";
+}
+
 /** Video extensions that support frame-extraction thumbnails (requires ffmpeg) */
 const VIDEO_THUMBNAIL_EXTENSIONS = new Set([
   "mp4", "mov", "mkv", "webm", "avi", "wmv", "flv", "m4v", "mpg", "mpeg",

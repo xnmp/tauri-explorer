@@ -243,6 +243,12 @@
     z-index: 10;
   }
 
+  /* While renaming, hide the selection accent underline — it otherwise shows as
+     a stray colored line beneath the floating rename box. */
+  .tiles-view :global(.tile-item.selected:has(.tile-rename)) {
+    border-bottom-color: transparent;
+  }
+
   /* Git status indicator — positioned top-right of tile */
   .tiles-view :global(.tile-item .git-indicator) {
     position: absolute;

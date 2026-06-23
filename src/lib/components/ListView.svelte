@@ -159,4 +159,11 @@
   }
 
   /* Name and rename styles are handled by EntryName component */
+
+  /* While renaming, let the content-width rename box extend past the item over
+     neighbouring columns instead of being clipped to its grid cell. */
+  .list-view :global(.list-item:has(.rename-input)) {
+    overflow: visible;
+    z-index: 2;
+  }
 </style>

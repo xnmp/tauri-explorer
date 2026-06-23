@@ -226,6 +226,16 @@
     overflow: hidden;
   }
 
+  /* While renaming, let the (content-width) rename box extend past the name
+     column over the neighbouring columns instead of being clipped to it. */
+  .file-item:has(:global(.rename-input)) {
+    z-index: 2;
+  }
+  .file-item:has(:global(.rename-input)) .name-cell,
+  .file-item:has(:global(.rename-input)) .name-text {
+    overflow: visible;
+  }
+
   .name-text {
     min-width: 0;
     overflow: hidden;

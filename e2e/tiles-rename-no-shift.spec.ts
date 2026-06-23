@@ -45,4 +45,27 @@ test.describe("Tiles rename does not shift other tiles", () => {
     const lowerTopAfter = (await tiles.nth(lowerIndex).boundingBox())!.y;
     expect(Math.abs(lowerTopAfter - lowerTopBefore)).toBeLessThanOrEqual(1);
   });
+
+  test("rename box at the pane's left edge is not cropped", async ({ page }) => {
+    await page.goto(HOME_URL);
+    await waitForEntries(page);
+    await switchViewMode(page, "tiles");
+
+    // The first tile sits at the pane's left edge; a centered long-name box
+    // would overflow off-screen without the inward nudge.
+    await page.locator(".tile-item").first().click();
+    await page.keyboard.press("F2");
+    const box = page.locator(".tile-rename");
+    await box.waitFor({ state: "visible", timeout: 2000 });
+    await box.fill("luca-micheli-r9RW20TrQ0Y-unsplash-a-long-enough-name.jpg");
+
+    const edges = await page.evaluate(() => {
+      const el = document.querySelector(".tile-rename")!;
+      const scroller = el.closest(".tiles-view")!;
+      const b = el.getBoundingClientRect();
+      const a = scroller.getBoundingClientRect();
+      return { boxLeft: b.left, areaLeft: a.left };
+    });
+    expect(edges.boxLeft).toBeGreaterThanOrEqual(edges.areaLeft - 1);
+  });
 });

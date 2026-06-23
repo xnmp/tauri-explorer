@@ -10,6 +10,7 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
+  import { rectDimToCSS } from "$lib/domain/zoom";
 
   interface Props {
     entry: FileEntry;
@@ -89,13 +90,30 @@
     const textW = measureTextWidth(el.value || " ", cs.font);
 
     if (variant === "tiles") {
+      // Keep the box only modestly wider than a tile: a long name wraps to a
+      // few lines rather than stretching into one very wide line.
       const MIN = 64;
-      const MAX = 320;
+      const MAX = 200;
       const w = Math.min(MAX, Math.max(MIN, Math.ceil(textW + chrome + 8)));
       el.style.width = `${w}px`;
       // Grow height only when the (capped-width) text has to wrap.
       el.style.height = "auto";
       el.style.height = `${(el as HTMLTextAreaElement).scrollHeight + 2}px`;
+      // Nudge the centered box back inside the visible tiles area so an edge
+      // tile's box isn't cropped by the pane boundary.
+      el.style.transform = "translateX(-50%)";
+      const scroller = el.closest<HTMLElement>(".tiles-view");
+      if (scroller) {
+        const PAD = 8;
+        const box = el.getBoundingClientRect();
+        const area = scroller.getBoundingClientRect();
+        let nudge = 0;
+        if (box.left < area.left + PAD) nudge = area.left + PAD - box.left;
+        else if (box.right > area.right - PAD) nudge = area.right - PAD - box.right;
+        if (nudge !== 0) {
+          el.style.transform = `translateX(calc(-50% + ${rectDimToCSS(nudge)}px))`;
+        }
+      }
     } else {
       // Fill at least the cell, expand to fit the name, capped so a huge name
       // doesn't blanket the whole pane.

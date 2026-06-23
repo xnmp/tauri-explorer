@@ -115,12 +115,12 @@
         }
       }
     } else {
-      // Size to the name: snug for a short name, growing only up to a modest
-      // cap for a long one (then it scrolls). Not floored to the column width,
-      // so a short name doesn't blanket the whole row.
-      const MIN = 80;
+      // Size to the name: snug for a short name (just text + padding + a little
+      // caret room), growing only up to a modest cap for a long one (then it
+      // scrolls). Not floored to the column width, so a short name hugs its text.
+      const MIN = 32;
       const MAX = 340;
-      const w = Math.min(MAX, Math.max(MIN, Math.ceil(textW + chrome + 10)));
+      const w = Math.min(MAX, Math.max(MIN, Math.ceil(textW + chrome + 6)));
       el.style.width = `${w}px`;
     }
   }

@@ -102,8 +102,11 @@
       const cell =
         el.closest<HTMLElement>(".name-cell") ?? el.closest<HTMLElement>(".list-item");
       const minW = cell?.clientWidth ?? 0;
-      const MAX = 560;
-      const w = Math.min(MAX, Math.max(minW, Math.ceil(textW + chrome + 10)));
+      // Fill at least the cell, then grow to fit the name but only up to a
+      // modest cap — a very long name scrolls inside the box rather than
+      // blanketing the pane.
+      const MAX = 340;
+      const w = Math.max(minW, Math.min(MAX, Math.ceil(textW + chrome + 10)));
       el.style.width = `${w}px`;
     }
   }

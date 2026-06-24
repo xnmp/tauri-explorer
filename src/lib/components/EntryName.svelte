@@ -118,9 +118,12 @@
       // Size to the name: snug for a short name (just text + padding + a little
       // caret room), growing only up to a modest cap for a long one (then it
       // scrolls). Not floored to the column width, so a short name hugs its text.
+      // width = text + symmetric padding/border only (+1px so the caret at the
+      // end isn't clipped). A larger buffer would all land on the right, since
+      // the text is left-aligned, making the box look lopsided.
       const MIN = 32;
       const MAX = 340;
-      const w = Math.min(MAX, Math.max(MIN, Math.ceil(textW + chrome + 6)));
+      const w = Math.min(MAX, Math.max(MIN, Math.ceil(textW) + chrome + 1));
       el.style.width = `${w}px`;
     }
   }

@@ -13,7 +13,10 @@
 import type { PaneId, WindowTab, WindowTabPane } from "./types";
 import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
 import { loadPersisted, savePersisted, removePersisted } from "./persisted";
-import { parentDir } from "$lib/domain/path";
+import { parentDir, directoryKey } from "$lib/domain/path";
+import { disambiguateTabTitles } from "$lib/domain/tab-title";
+import { settingsStore } from "./settings.svelte";
+import { gitRepoRoot } from "$lib/api/files";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 /** Tauri window label, or "main" outside Tauri (browser E2E, tests). */
@@ -110,6 +113,12 @@ function createWindowTabsManager() {
   let tabs = $state<WindowTab[]>([]);
   let activeTabId = $state<string | null>(null);
 
+  // Cache of folder → git repo root (string), or null when not in a repo.
+  // Populated lazily by ensureGitRoot (driven from the tab bar) only while the
+  // "git root in tab title" setting is on. Keyed by directoryKey(path).
+  let gitRoots = $state(new Map<string, string | null>());
+  const gitRootPending = new Set<string>();
+
   // Stack of recently closed tabs for Ctrl+Shift+T restoration (persisted)
   let closedTabStack: ClosedTabSnapshot[] = loadPersisted<ClosedTabSnapshot[]>(CLOSED_TABS_KEY, []);
 
@@ -166,12 +175,45 @@ function createWindowTabsManager() {
   /** Get the currently active tab */
   const activeTab = $derived(tabs.find((t) => t.id === activeTabId) ?? null);
 
-  /** Get tab title (shows active pane's folder name) - derived from explorer's current path */
+  /** The path whose basename titles a tab: the git repo root when the setting
+   *  is on and the folder is inside a repo, otherwise the folder itself. */
+  function tabIdentityPath(tab: WindowTab): string {
+    const cwd = getPanePath(tab.panes[tab.activePaneId]);
+    if (settingsStore.tabTitleGitRoot) {
+      const root = gitRoots.get(directoryKey(cwd));
+      if (root) return root;
+    }
+    return cwd;
+  }
+
+  /** Disambiguated title per tab (VS Code style): bare folder name, with just
+   *  enough parent path to tell same-named tabs apart. Reactive on tab paths,
+   *  the git-root cache, and the setting. */
+  const tabDisplayTitles = $derived.by(() =>
+    disambiguateTabTitles(tabs.map((t) => ({ id: t.id, path: tabIdentityPath(t) })))
+  );
+
+  /** Get tab title (active pane's folder, disambiguated; repo root if enabled). */
   function getTabTitle(tab: WindowTab): string {
     const pane = tab.panes[tab.activePaneId];
     const explorer = explorers.get(pane.explorerId);
     if (!explorer) return pane.title || "Explorer";
-    return extractFolderName(explorer.currentPath);
+    return tabDisplayTitles.get(tab.id) ?? extractFolderName(explorer.currentPath);
+  }
+
+  /** Fetch (and cache) the git repo root for a folder. No-op unless the
+   *  setting is on and we haven't already resolved/queued this folder. Called
+   *  from the tab bar so the async work has a component owner. */
+  async function ensureGitRoot(path: string): Promise<void> {
+    if (!settingsStore.tabTitleGitRoot || !path) return;
+    const key = directoryKey(path);
+    if (gitRoots.has(key) || gitRootPending.has(key)) return;
+    gitRootPending.add(key);
+    const result = await gitRepoRoot(path);
+    gitRootPending.delete(key);
+    const root = result.ok ? result.data : null;
+    // Reassign for reactivity so tabDisplayTitles recomputes.
+    gitRoots = new Map(gitRoots).set(key, root);
   }
 
   /** Get path for a pane from its explorer */
@@ -700,6 +742,7 @@ function createWindowTabsManager() {
     getTabTitle,
     getTabPath,
     getTabTooltip,
+    ensureGitRoot,
 
     // Explorer access
     getExplorer,

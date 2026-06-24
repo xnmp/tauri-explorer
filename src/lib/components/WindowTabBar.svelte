@@ -26,6 +26,17 @@
   const tabs = $derived(windowTabsManager.tabs);
   const activeTabId = $derived(windowTabsManager.activeTabId);
 
+  // When "git root in tab title" is on, resolve each tab's repo root (cached in
+  // the manager). Runs here because the async work needs a component owner; the
+  // manager's title derivation reacts to the cache it fills.
+  $effect(() => {
+    if (!settingsStore.tabTitleGitRoot) return;
+    for (const tab of windowTabsManager.tabs) {
+      const path = windowTabsManager.getTabPath(tab.id);
+      if (path) windowTabsManager.ensureGitRoot(path);
+    }
+  });
+
   let tabAreaRef = $state<HTMLElement | null>(null);
 
   function updateTabGap() {

@@ -102,6 +102,7 @@
     millerHideEmpty: ["Hide Empty Folders in Miller View", "Don't show folders that have no visible entries in miller columns"],
     yaziNavigation: ["Yazi-style Navigation", "Left/right arrows navigate up/into folders in details and list view"],
     autoEnterSingleSubdir: ["Auto-Enter Single Subfolder", "When a folder contains only one subfolder (and nothing else), descend into it automatically"],
+    tabTitleGitRoot: ["Git Repo Root in Tab Title", "When the folder is inside a git repository, show the repo's root folder name in the tab title"],
     showManuallyHidden: ["Show Manually Hidden Items", "Reveal items hidden via the right-click Hide action (shown dimmed)"],
     gitStatus: ["Git Status Indicators", "Show modified/untracked indicators for files in git repositories"],
     recentItems: ["Recent Items in Sidebar", "Number of recent locations to show (0 to hide)"],
@@ -125,7 +126,7 @@
   ];
   const navBarRows = [rows.navBack, rows.navForward, rows.navUp, rows.navRefresh];
   const behaviorRows = [
-    rows.showHidden, rows.millerHideEmpty, rows.yaziNavigation, rows.autoEnterSingleSubdir, rows.showManuallyHidden,
+    rows.showHidden, rows.millerHideEmpty, rows.yaziNavigation, rows.autoEnterSingleSubdir, rows.tabTitleGitRoot, rows.showManuallyHidden,
     rows.gitStatus, rows.recentItems, rows.quickOpenDebug, rows.confirmDelete,
     rows.backgroundOpacity, rows.backgroundImage, rows.wallpaperBlur, rows.terminalApp,
     rows.previewFontSize, rows.ffmpegPath,
@@ -486,6 +487,21 @@
                 type="checkbox"
                 checked={settingsStore.autoEnterSingleSubdir}
                 onchange={() => settingsStore.update({ autoEnterSingleSubdir: !settingsStore.autoEnterSingleSubdir })}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.tabTitleGitRoot)}>
+            <div class="setting-info">
+              <span class="setting-label">Git Repo Root in Tab Title</span>
+              <span class="setting-description">When the folder is inside a git repository, show the repo's root folder name in the tab title</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.tabTitleGitRoot}
+                onchange={() => settingsStore.update({ tabTitleGitRoot: !settingsStore.tabTitleGitRoot })}
               />
               <span class="toggle-slider"></span>
             </label>

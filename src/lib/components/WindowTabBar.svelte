@@ -26,6 +26,17 @@
   const tabs = $derived(windowTabsManager.tabs);
   const activeTabId = $derived(windowTabsManager.activeTabId);
 
+  // When "git root in tab title" is on, resolve each tab's repo root (cached in
+  // the manager). Runs here because the async work needs a component owner; the
+  // manager's title derivation reacts to the cache it fills.
+  $effect(() => {
+    if (!settingsStore.tabTitleGitRoot) return;
+    for (const tab of windowTabsManager.tabs) {
+      const path = windowTabsManager.getTabPath(tab.id);
+      if (path) windowTabsManager.ensureGitRoot(path);
+    }
+  });
+
   let tabAreaRef = $state<HTMLElement | null>(null);
 
   function updateTabGap() {
@@ -334,6 +345,7 @@
     bind:this={tabAreaRef}
   >
     {#each tabs as tab (tab.id)}
+      {@const display = windowTabsManager.getTabDisplay(tab)}
       <div
         class="tab"
         class:active={tab.id === activeTabId}
@@ -355,18 +367,48 @@
         ondragleave={handleTabDragLeave}
         ondrop={(e) => handleTabDrop(e, tab.id)}
       >
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 16 16"
-          fill="none"
-          class="tab-icon"
-        >
-          <path
-            d="M2 3.5C2 2.67 2.67 2 3.5 2H6.17L8 3.83H12.5C13.33 3.83 14 4.5 14 5.33V12.5C14 13.33 13.33 14 12.5 14H3.5C2.67 14 2 13.33 2 12.5V3.5Z"
-          />
-        </svg>
-        <span class="tab-title">{windowTabsManager.getTabTitle(tab)}</span>
+        {#if display.isGitRoot}
+          <!-- Git branch icon: this tab's folder lives inside a git repo. -->
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            class="tab-icon tab-icon-git"
+            aria-label="Git repository"
+          >
+            <circle cx="4" cy="3.5" r="1.6" stroke="currentColor" stroke-width="1.3" />
+            <circle cx="4" cy="12.5" r="1.6" stroke="currentColor" stroke-width="1.3" />
+            <circle cx="11.5" cy="3.5" r="1.6" stroke="currentColor" stroke-width="1.3" />
+            <path
+              d="M4 5.1V10.9M11.5 5.1V6.5C11.5 8.2 10 9 8 9H6"
+              stroke="currentColor"
+              stroke-width="1.3"
+              stroke-linecap="round"
+            />
+          </svg>
+        {:else}
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            class="tab-icon"
+          >
+            <path
+              d="M2 3.5C2 2.67 2.67 2 3.5 2H6.17L8 3.83H12.5C13.33 3.83 14 4.5 14 5.33V12.5C14 13.33 13.33 14 12.5 14H3.5C2.67 14 2 13.33 2 12.5V3.5Z"
+            />
+          </svg>
+        {/if}
+        <span class="tab-title">
+          {#if display.repo}
+            <!-- Repo name shrinks/ellipsizes first; the current folder stays
+                 visible as long as possible (full path is in the tooltip). -->
+            <span class="tab-repo">{display.repo}</span>
+            <span class="tab-sep" aria-hidden="true">›</span>
+          {/if}
+          <span class="tab-cwd">{display.name}</span>
+        </span>
         <button
           class="tab-close"
           onclick={(e) => handleTabClose(e, tab.id)}
@@ -605,11 +647,56 @@
   }
 
   .tab-title {
+    display: flex;
+    align-items: baseline;
+    gap: 3px;
     max-width: 150px;
+    min-width: 0;
     overflow: hidden;
-    text-overflow: ellipsis;
     white-space: nowrap;
     transition: color var(--transition-fast);
+  }
+
+  /* Repo name is context: dimmed, and it's the first thing to shrink/ellipsize
+     (high flex-shrink) so the current folder stays readable. */
+  .tab-repo {
+    flex: 0 1 auto;
+    flex-shrink: 999;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    opacity: 0.6;
+  }
+
+  .tab-sep {
+    flex: 0 0 auto;
+    opacity: 0.5;
+  }
+
+  /* Current folder: shrinks only after the repo has fully collapsed. */
+  .tab-cwd {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Git icon uses stroked shapes in the accent colour (override the folder
+     icon's fill rule, which would otherwise fill the branch glyph). */
+  .tab-icon-git {
+    color: var(--accent);
+    opacity: 0.85;
+  }
+
+  .tab-icon-git path,
+  .tab-icon-git circle {
+    fill: none;
+    stroke: currentColor;
+  }
+
+  .tab:hover .tab-icon-git,
+  .tab.active .tab-icon-git {
+    opacity: 1;
   }
 
   .tab-close {

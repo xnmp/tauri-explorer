@@ -89,6 +89,7 @@ export interface Settings {
   previewFontSize: number; // base font size (px) for text/code/markdown previews
   autoEnterSingleSubdir: boolean; // when entering a dir with exactly one visible subdir (and nothing else), descend into it recursively
   ffmpegPath: string; // explicit path to ffmpeg binary for video/audio thumbnails (empty = auto-detect)
+  tabTitleGitRoot: boolean; // when the folder is inside a git repo, show the repo root name in the tab title
 }
 
 const MIN_ZOOM = 50;
@@ -141,6 +142,7 @@ const DEFAULT_SETTINGS: Settings = {
   previewFontSize: 12,
   autoEnterSingleSubdir: false,
   ffmpegPath: "",
+  tabTitleGitRoot: false,
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -393,6 +395,9 @@ function createSettingsStore() {
     get ffmpegPath() {
       return settings.ffmpegPath;
     },
+    get tabTitleGitRoot() {
+      return settings.tabTitleGitRoot;
+    },
     toggleMillerColumns(): void {
       const on = settings.millerLayers > 0;
       update({ millerLayers: on ? 0 : settings.millerLayersPreferred });
@@ -506,6 +511,7 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
   { key: "quickOpenDebug", id: "view.toggleQuickOpenDebug", label: "Toggle Quick Open Debug Scores" },
   { key: "yaziNavigation", label: "Toggle Yazi Navigation" },
   { key: "autoEnterSingleSubdir", label: "Toggle Auto-Enter Single Subfolder" },
+  { key: "tabTitleGitRoot", label: "Toggle Git Repo Root in Tab Title" },
   { key: "integratedTitleBar", label: "Toggle Integrated Title Bar" },
   { key: "macOsVibrancy", label: "Toggle macOS Vibrancy" },
   { key: "vibrancyBlur", label: "Toggle Vibrancy Blur" },

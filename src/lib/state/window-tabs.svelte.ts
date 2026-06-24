@@ -13,7 +13,7 @@
 import type { PaneId, WindowTab, WindowTabPane } from "./types";
 import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
 import { loadPersisted, savePersisted, removePersisted } from "./persisted";
-import { parentDir, directoryKey } from "$lib/domain/path";
+import { parentDir, directoryKey, basename } from "$lib/domain/path";
 import { disambiguateTabTitles } from "$lib/domain/tab-title";
 import { settingsStore } from "./settings.svelte";
 import { gitRepoRoot } from "$lib/api/files";
@@ -175,30 +175,71 @@ function createWindowTabsManager() {
   /** Get the currently active tab */
   const activeTab = $derived(tabs.find((t) => t.id === activeTabId) ?? null);
 
-  /** The path whose basename titles a tab: the git repo root when the setting
-   *  is on and the folder is inside a repo, otherwise the folder itself. */
-  function tabIdentityPath(tab: WindowTab): string {
-    const cwd = getPanePath(tab.panes[tab.activePaneId]);
-    if (settingsStore.tabTitleGitRoot) {
-      const root = gitRoots.get(directoryKey(cwd));
-      if (root) return root;
-    }
-    return cwd;
+  /** How a tab labels itself.
+   *  - git mode (setting on + folder inside a repo): a git icon, the repo root
+   *    name, and the current folder (`repo` is null when the cwd *is* the root).
+   *  - normal mode: a folder icon and the (disambiguated) folder name. */
+  interface TabDisplay {
+    isGitRoot: boolean;
+    repo: string | null;
+    name: string;
   }
 
-  /** Disambiguated title per tab (VS Code style): bare folder name, with just
-   *  enough parent path to tell same-named tabs apart. Reactive on tab paths,
-   *  the git-root cache, and the setting. */
-  const tabDisplayTitles = $derived.by(() =>
-    disambiguateTabTitles(tabs.map((t) => ({ id: t.id, path: tabIdentityPath(t) })))
-  );
+  /** Per-tab display info. Normal-mode tabs are disambiguated against each other
+   *  (VS Code style); git-mode tabs carry repo + cwd, which is already distinct.
+   *  Reactive on tab paths, the git-root cache, and the setting. */
+  const tabDisplays = $derived.by((): Map<string, TabDisplay> => {
+    const useGit = settingsStore.tabTitleGitRoot;
+    const normal: { id: string; path: string }[] = [];
+    const gitMode = new Map<string, { repoRoot: string; cwd: string }>();
 
-  /** Get tab title (active pane's folder, disambiguated; repo root if enabled). */
+    for (const t of tabs) {
+      const cwd = getPanePath(t.panes[t.activePaneId]);
+      const root = useGit ? gitRoots.get(directoryKey(cwd)) : null;
+      if (root) gitMode.set(t.id, { repoRoot: root, cwd });
+      else normal.push({ id: t.id, path: cwd });
+    }
+
+    const disamb = disambiguateTabTitles(normal);
+    const out = new Map<string, TabDisplay>();
+    for (const t of tabs) {
+      const g = gitMode.get(t.id);
+      if (g) {
+        const atRoot = directoryKey(g.cwd) === directoryKey(g.repoRoot);
+        out.set(t.id, {
+          isGitRoot: true,
+          repo: atRoot ? null : basename(g.repoRoot),
+          name: atRoot ? basename(g.repoRoot) : basename(g.cwd),
+        });
+      } else {
+        out.set(t.id, {
+          isGitRoot: false,
+          repo: null,
+          name: disamb.get(t.id) ?? extractFolderName(getPanePath(t.panes[t.activePaneId])),
+        });
+      }
+    }
+    return out;
+  });
+
+  /** Structured display (icon + repo + name) for rendering a tab. */
+  function getTabDisplay(tab: WindowTab): TabDisplay {
+    return (
+      tabDisplays.get(tab.id) ?? {
+        isGitRoot: false,
+        repo: null,
+        name: extractFolderName(getPanePath(tab.panes[tab.activePaneId])),
+      }
+    );
+  }
+
+  /** Plain-text tab title (used for the drag ghost and width measurement). */
   function getTabTitle(tab: WindowTab): string {
     const pane = tab.panes[tab.activePaneId];
     const explorer = explorers.get(pane.explorerId);
     if (!explorer) return pane.title || "Explorer";
-    return tabDisplayTitles.get(tab.id) ?? extractFolderName(explorer.currentPath);
+    const d = getTabDisplay(tab);
+    return d.repo ? `${d.repo} › ${d.name}` : d.name;
   }
 
   /** Fetch (and cache) the git repo root for a folder. No-op unless the
@@ -740,6 +781,7 @@ function createWindowTabsManager() {
     prevTab,
     reorderTabs,
     getTabTitle,
+    getTabDisplay,
     getTabPath,
     getTabTooltip,
     ensureGitRoot,

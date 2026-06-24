@@ -19,6 +19,7 @@
   import { settingsStore } from "$lib/state/settings.svelte";
   import { parentDir, basename, directoryKey, toForwardSlashes, expandTilde as expandTildePath } from "$lib/domain/path";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+  import { usePointerIntent } from "$lib/composables/use-pointer-intent.svelte";
   import FileIcon from "./FileIcon.svelte";
   import Modal from "./Modal.svelte";
   import type { FileEntry } from "$lib/domain/file";
@@ -49,16 +50,12 @@
   let inputRef = $state<HTMLInputElement | null>(null);
   let resultsContainerRef = $state<HTMLElement | null>(null);
   let homeDir = $state<string | null>(null);
-  // Guard: hover may only change the selection after a REAL pointer move.
+  // Guard: hover may only change the selection after a DELIBERATE pointer move.
   // Rows react to mousemove (not mouseenter — that also fires when a row
-  // re-renders or scrolls under a stationary cursor), coordinates must have
-  // actually changed (WebKit/Chromium emit synthetic zero-delta mousemoves
-  // after relayout/scroll), and every results update revokes the
-  // authorization so movement from before a re-render can't steal selection.
-  let mouseMoved = $state(false);
-  let lastMousePos = $state<{ x: number; y: number } | null>(null);
-  let mouseTrackingReady = $state(false);
-  let mouseTrackingTimer: ReturnType<typeof setTimeout> | null = null;
+  // re-renders or scrolls under a stationary cursor), and the move must clear a
+  // small deadzone (ignore mouse drift), and every keyboard nav / results
+  // update re-anchors so movement from before can't steal the selection.
+  const pointer = usePointerIntent();
 
   // Fetch home directory for tilde expansion
   getHomeDirectory().then((r) => { if (r.ok) homeDir = r.data; });
@@ -250,7 +247,7 @@
       const ranked = rankWithFrecency(payload.results);
       const frecencyMatches = matchFrecencyAndRecent(query);
       results = mergeResultsByScore(ranked, frecencyMatches);
-      mouseMoved = false;
+      pointer.reset();
       totalScanned = payload.totalScanned;
 
       // Reset selection if needed
@@ -268,7 +265,7 @@
   // Debounced streaming search
   function handleInput(): void {
     if (searchTimer) clearTimeout(searchTimer);
-    mouseMoved = false;
+    pointer.reset();
 
     if (!query.trim()) {
       cancelActiveSearch();
@@ -329,7 +326,7 @@
         if (result.ok) {
           const ranked = rankWithFrecency(result.data);
           results = mergeResultsByScore(ranked, frecencyMatches);
-          mouseMoved = false;
+          pointer.reset();
         }
         loading = false;
       }
@@ -354,7 +351,7 @@
         event.preventDefault();
         if (displayResults.length > 0) {
           selectedIndex = (selectedIndex + 1) % displayResults.length;
-          mouseMoved = false;
+          pointer.reset();
           scrollToSelected();
         }
         break;
@@ -362,7 +359,7 @@
         event.preventDefault();
         if (displayResults.length > 0) {
           selectedIndex = (selectedIndex - 1 + displayResults.length) % displayResults.length;
-          mouseMoved = false;
+          pointer.reset();
           scrollToSelected();
         }
         break;
@@ -380,16 +377,11 @@
     }
   }
 
-  /** Hover-selection via real pointer movement only. Runs before the
-   *  dialog-level tracker (mousemove bubbles), so it does the same
-   *  coordinate-change bookkeeping itself. */
+  /** Hover-selection via deliberate pointer movement only. Runs before the
+   *  dialog-level tracker (mousemove bubbles), so it feeds the tracker itself. */
   function handleRowMouseMove(event: MouseEvent, index: number): void {
-    if (!mouseTrackingReady) return;
-    if (lastMousePos && (event.clientX !== lastMousePos.x || event.clientY !== lastMousePos.y)) {
-      mouseMoved = true;
-    }
-    lastMousePos = { x: event.clientX, y: event.clientY };
-    if (mouseMoved && selectedIndex !== index) {
+    pointer.track(event.clientX, event.clientY);
+    if (pointer.moved && selectedIndex !== index) {
       selectedIndex = index;
     }
   }
@@ -431,11 +423,7 @@
       query = "";
       results = [];
       selectedIndex = 0;
-      mouseMoved = false;
-      lastMousePos = null;
-      mouseTrackingReady = false;
-      if (mouseTrackingTimer) clearTimeout(mouseTrackingTimer);
-      mouseTrackingTimer = setTimeout(() => { mouseTrackingReady = true; }, 150);
+      pointer.arm();
       tick().then(() => inputRef?.focus());
       untrack(() => {
         recentFilesStore.pruneNonExistent();
@@ -451,10 +439,7 @@
         clearTimeout(searchTimer);
         searchTimer = null;
       }
-      if (mouseTrackingTimer) {
-        clearTimeout(mouseTrackingTimer);
-        mouseTrackingTimer = null;
-      }
+      pointer.disarm();
       // Cancel any active streaming search
       cancelActiveSearch();
       totalScanned = 0;
@@ -473,13 +458,7 @@
 >
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="quick-open-dialog"
-    onmousemove={(e) => {
-      if (!mouseTrackingReady) return;
-      if (lastMousePos && (e.clientX !== lastMousePos.x || e.clientY !== lastMousePos.y)) {
-        mouseMoved = true;
-      }
-      lastMousePos = { x: e.clientX, y: e.clientY };
-    }}>
+    onmousemove={(e) => pointer.track(e.clientX, e.clientY)}>
       <div class="search-container">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="search-icon">
           <circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.5"/>

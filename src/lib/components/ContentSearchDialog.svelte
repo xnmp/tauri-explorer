@@ -14,6 +14,7 @@
   import { highlightMatch, type FlattenedResult } from "$lib/domain/content-search-flatten";
   import { useContentSearch } from "$lib/composables/use-content-search.svelte";
   import VirtualList from "./VirtualList.svelte";
+  import { usePointerIntent } from "$lib/composables/use-pointer-intent.svelte";
   import Modal from "./Modal.svelte";
 
   interface Props {
@@ -35,14 +36,10 @@
   let inputRef = $state<HTMLInputElement | null>(null);
   let scrollToIndex = $state<((index: number) => void) | undefined>();
 
-  // Guard: suppress mouseenter on results until the user actually moves the mouse.
-  // Prevents selection from jumping as streamed rows shift under a stationary cursor.
-  // Track coordinates because macOS WebKit fires a synthetic mousemove (zero delta)
-  // when an element renders under a stationary cursor.
-  let mouseMoved = $state(false);
-  let lastMousePos = $state<{ x: number; y: number } | null>(null);
-  let mouseTrackingReady = $state(false);
-  let mouseTrackingTimer: ReturnType<typeof setTimeout> | null = null;
+  // Guard: suppress hover-selection until a DELIBERATE mouse move. Prevents the
+  // selection jumping as streamed rows shift under a stationary cursor, and
+  // ignores small drift from a corded mouse.
+  const pointer = usePointerIntent();
 
   const ITEM_HEIGHT = 30;
   const FILE_HEADER_HEIGHT = 54;
@@ -126,7 +123,7 @@
         event.preventDefault();
         if (rows.length > 0) {
           selectedIndex = (sel + 1) % rows.length;
-          mouseMoved = false;
+          pointer.reset();
           scrollToIndex?.(selectedIndex);
         }
         break;
@@ -134,7 +131,7 @@
         event.preventDefault();
         if (rows.length > 0) {
           selectedIndex = (sel - 1 + rows.length) % rows.length;
-          mouseMoved = false;
+          pointer.reset();
           scrollToIndex?.(selectedIndex);
         }
         break;
@@ -175,11 +172,7 @@
       queryDirty = false;
       selectedIndex = 0;
       search.reset();
-      mouseMoved = false;
-      lastMousePos = null;
-      mouseTrackingReady = false;
-      if (mouseTrackingTimer) clearTimeout(mouseTrackingTimer);
-      mouseTrackingTimer = setTimeout(() => { mouseTrackingReady = true; }, 150);
+      pointer.arm();
       tick().then(() => inputRef?.focus());
     }
   });
@@ -191,10 +184,7 @@
         clearTimeout(debounceTimer);
         debounceTimer = null;
       }
-      if (mouseTrackingTimer) {
-        clearTimeout(mouseTrackingTimer);
-        mouseTrackingTimer = null;
-      }
+      pointer.disarm();
       search.reset();
     }
   });
@@ -211,13 +201,7 @@
 >
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="content-search-dialog"
-    onmousemove={(e) => {
-      if (!mouseTrackingReady) return;
-      if (lastMousePos && (e.clientX !== lastMousePos.x || e.clientY !== lastMousePos.y)) {
-        mouseMoved = true;
-      }
-      lastMousePos = { x: e.clientX, y: e.clientY };
-    }}>
+    onmousemove={(e) => pointer.track(e.clientX, e.clientY)}>
       <div class="search-header">
         <div class="search-container">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="search-icon">
@@ -322,7 +306,7 @@
                   aria-selected={index === sel}
                   tabindex="-1"
                   onclick={() => selectResult(result)}
-                  onmouseenter={() => { if (mouseMoved) selectedIndex = index; }}
+                  onmouseenter={() => { if (pointer.moved) selectedIndex = index; }}
                 >
                   <div class="file-path">
                     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" class="file-icon">
@@ -343,7 +327,7 @@
                   aria-selected={index === sel}
                   tabindex="-1"
                   onclick={() => search.toggleExpanded(result.filePath)}
-                  onmouseenter={() => { if (mouseMoved) selectedIndex = index; }}
+                  onmouseenter={() => { if (pointer.moved) selectedIndex = index; }}
                 >
                   <span class="show-more-text">{result.hiddenCount} more matches...</span>
                 </div>
@@ -357,7 +341,7 @@
                   aria-selected={index === sel}
                   tabindex="-1"
                   onclick={() => selectResult(result)}
-                  onmouseenter={() => { if (mouseMoved) selectedIndex = index; }}
+                  onmouseenter={() => { if (pointer.moved) selectedIndex = index; }}
                 >
                   {#if result.isFirstInFile}
                     <div class="file-path">

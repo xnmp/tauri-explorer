@@ -17,7 +17,7 @@
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { parentDir, basename, directoryKey, expandTilde as expandTildePath } from "$lib/domain/path";
+  import { parentDir, basename, directoryKey, toForwardSlashes, expandTilde as expandTildePath } from "$lib/domain/path";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import FileIcon from "./FileIcon.svelte";
   import Modal from "./Modal.svelte";
@@ -187,6 +187,21 @@
   function getCwdPath(): string {
     const explorer = windowTabsManager.getActiveExplorer();
     return explorer?.currentPath ?? "/";
+  }
+
+  /** Path shown in a result row: relative to the current folder when the file
+   *  lives under it (just the filename for a direct child), otherwise the full
+   *  path. Keeps cwd results compact instead of repeating the whole prefix. */
+  function displayPath(fullPath: string): string {
+    const cwdKey = directoryKey(getCwdPath());
+    const fileKey = directoryKey(fullPath);
+    if (cwdKey && cwdKey !== "/" && fileKey.startsWith(cwdKey + "/")) {
+      // cwdKey only differs from the forward-slashed cwd by case folding, which
+      // preserves length, so slicing the forward-slash form by its length
+      // strips exactly the "cwd/" prefix while keeping the original casing.
+      return toForwardSlashes(fullPath).slice(cwdKey.length + 1);
+    }
+    return fullPath;
   }
 
   // Cancel active search and cleanup listener
@@ -512,7 +527,7 @@
                 </span>
                 <div class="result-content">
                   <span class="result-name">{result.name}</span>
-                  <span class="result-path">{result.relativePath}</span>
+                  <span class="result-path">{displayPath(result.path)}</span>
                 </div>
                 {#if settingsStore.quickOpenDebug}
                   {@const qLower = query.toLowerCase()}
@@ -567,7 +582,7 @@
                 </span>
                 <div class="result-content">
                   <span class="result-name">{result.name}</span>
-                  <span class="result-path">{result.relativePath}</span>
+                  <span class="result-path">{displayPath(result.path)}</span>
                 </div>
                 <span class="result-kind recent-badge">recent</span>
               </li>

@@ -24,7 +24,7 @@ function segments(path: string): string[] {
 /** Label shown for a single item given the parent segments needed to make it
  *  unique within its collision group (empty when the bare basename suffices). */
 function formatLabel(base: string, parents: string[]): string {
-  return parents.length > 0 ? `${base} — ${parents.join("/")}` : base;
+  return parents.length > 0 ? `${base} · ${parents.join("/")}` : base;
 }
 
 /**

@@ -536,12 +536,19 @@ fn read_image_data_url_impl(path: String, max_bytes: Option<u64>) -> Result<Stri
         Err(e) => return Err(AppError::from(e)),
     };
     if !metadata.is_file() {
-        return Err(AppError::InvalidPath(format!("Not a regular file: {}", path)));
+        return Err(AppError::InvalidPath(format!(
+            "Not a regular file: {}",
+            path
+        )));
     }
     if metadata.len() > limit {
         return Err(AppError::Io(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("Image too large for preview: {} bytes (limit: {})", metadata.len(), limit),
+            format!(
+                "Image too large for preview: {} bytes (limit: {})",
+                metadata.len(),
+                limit
+            ),
         )));
     }
 

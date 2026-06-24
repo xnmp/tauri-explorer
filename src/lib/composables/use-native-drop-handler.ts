@@ -12,7 +12,7 @@ import { dragState } from "$lib/state/drag.svelte";
 import { handleFileDrop } from "$lib/state/drop-operations";
 import { isCopyModifier as isCopyMod } from "$lib/domain/platform";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
-import { parentDir } from "$lib/domain/path";
+import { parentDir, isInsideDir, samePath } from "$lib/domain/path";
 
 export interface NativeDropDeps {
   getActiveExplorer: () => ExplorerInstance | undefined;
@@ -66,8 +66,8 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     // Drop onto a specific folder or tab
     if (target?.type === "folder" || target?.type === "tab") {
       for (const sourcePath of sourcePaths) {
-        if (sourcePath === target.path) continue;
-        if (target.path.startsWith(sourcePath + "/")) continue;
+        // Skip dropping onto self or into one's own descendant.
+        if (isInsideDir(target.path, sourcePath)) continue;
         await handleFileDrop(sourcePath, target.path, isCopy, dropOptions);
       }
       dragState.clear();
@@ -79,7 +79,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
 
     for (const path of sourcePaths) {
       const sourceDir = parentDir(path);
-      if (sourceDir === destDir) continue;
+      if (samePath(sourceDir, destDir)) continue;
       await handleFileDrop(path, destDir, isCopy, dropOptions);
     }
 
@@ -95,7 +95,7 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
         if (target?.type === "background") {
           const destDir = target.path || explorer.currentPath;
           const paths = dragData.paths ?? [dragData.path];
-          if (paths.every((p) => parentDir(p) === destDir)) {
+          if (paths.every((p) => samePath(parentDir(p), destDir))) {
             clearHighlights();
             return;
           }

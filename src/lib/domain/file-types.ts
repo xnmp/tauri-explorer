@@ -83,6 +83,8 @@ const FILE_TYPE_MAP: Record<string, string> = {
   ps1: "PowerShell Script",
   sh: "Shell Script",
   bash: "Bash Script",
+  ahk: "AutoHotkey Script",
+  lnk: "Shortcut",
 
   // System
   dll: "Dynamic Link Library",
@@ -154,7 +156,10 @@ const FILE_COLOR_MAP: Record<string, string> = {
 
   // Executables
   exe: "#0078d4", msi: "#0078d4", bat: "#4d4d4d", cmd: "#4d4d4d",
-  ps1: "#012456", sh: "#4eaa25", bash: "#4eaa25",
+  ps1: "#012456", sh: "#4eaa25", bash: "#4eaa25", ahk: "#5f9e54",
+
+  // Shortcut - Blue
+  lnk: "#4273ca",
 
   // System - Gray
   dll: "#6d6d6d", sys: "#6d6d6d", ini: "#6d6d6d", cfg: "#6d6d6d",
@@ -197,7 +202,7 @@ const ICON_CATEGORY_MAP: Record<string, IconCategory> = {
   go: "code", rs: "code", php: "code", rb: "code", swift: "code",
   kt: "code", html: "code", htm: "code", css: "code", scss: "code",
   sass: "code", less: "code", json: "code", xml: "code", yaml: "code",
-  yml: "code", sql: "code",
+  yml: "code", sql: "code", ahk: "code",
 
   // Media
   mp3: "media", wav: "media", flac: "media", ogg: "media",
@@ -246,11 +251,48 @@ export function getFileIconCategory(entry: FileEntry): IconCategory {
 /** Image extensions that support thumbnail generation */
 const THUMBNAIL_EXTENSIONS = new Set(["jpg", "jpeg", "png", "gif", "webp", "bmp", "icns", "avif"]);
 
+/** Check if an entry is a Windows `.lnk` shortcut file. */
+export function isShortcut(entry: FileEntry): boolean {
+  return entry.kind === "file" && entry.name.toLowerCase().endsWith(".lnk");
+}
+
 /** Check if a file is an image that supports thumbnails */
 export function isImageFile(entry: FileEntry): boolean {
   if (entry.kind === "directory") return false;
   const ext = getExtension(entry.name);
   return THUMBNAIL_EXTENSIONS.has(ext);
+}
+
+/**
+ * Check if a file is an SVG. SVGs are vector images the webview can render
+ * natively from their source, so they preview as images without going through
+ * the raster thumbnail backend (which can't decode them) — kept separate from
+ * {@link isImageFile} for that reason.
+ */
+export function isSvgFile(entry: FileEntry): boolean {
+  if (entry.kind === "directory") return false;
+  return getExtension(entry.name) === "svg";
+}
+
+/** Video extensions that support frame-extraction thumbnails (requires ffmpeg) */
+const VIDEO_THUMBNAIL_EXTENSIONS = new Set([
+  "mp4", "mov", "mkv", "webm", "avi", "wmv", "flv", "m4v", "mpg", "mpeg",
+]);
+
+/** Audio extensions that may carry embedded cover art (thumbnail via ffmpeg) */
+const AUDIO_THUMBNAIL_EXTENSIONS = new Set([
+  "m4a", "mp3", "flac", "ogg", "opus", "aac", "wma", "m4b", "aiff", "alac",
+]);
+
+/**
+ * Check if a file gets a media thumbnail via ffmpeg — a video frame, or the
+ * embedded cover art of an audio file (m4a, mp3, …). Both go through the same
+ * backend command (`get_video_thumbnail_data`).
+ */
+export function isVideoFile(entry: FileEntry): boolean {
+  if (entry.kind === "directory") return false;
+  const ext = getExtension(entry.name);
+  return VIDEO_THUMBNAIL_EXTENSIONS.has(ext) || AUDIO_THUMBNAIL_EXTENSIONS.has(ext);
 }
 
 /** Labels for well-known extensionless files */
@@ -326,6 +368,12 @@ export function isTextFile(entry: FileEntry): boolean {
 export function isPdfFile(entry: FileEntry): boolean {
   if (entry.kind === "directory") return false;
   return getExtension(entry.name) === "pdf";
+}
+
+/** Check if a file is a ZIP archive (previewable as a folder-style listing). */
+export function isZipFile(entry: FileEntry): boolean {
+  if (entry.kind === "directory") return false;
+  return getExtension(entry.name) === "zip";
 }
 
 /** Format modified date - Windows 11 style: M/D/YYYY h:mm AM/PM.

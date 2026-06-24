@@ -24,6 +24,9 @@ export type IconTheme = "default" | "material" | "minimal";
 
 export type ThumbnailSize = "small" | "medium" | "large" | "xlarge";
 
+/** Windows translucent system backdrop (Mica/Acrylic). "off" = opaque window. */
+export type WindowsBackdrop = "off" | "mica" | "acrylic";
+
 export interface ThumbnailSizeConfig {
   displaySize: number;
   genSize: number;
@@ -80,7 +83,12 @@ export interface Settings {
   integratedTitleBar: boolean; // macOS: render tabs in title bar with overlay traffic lights
   macOsVibrancy: boolean; // macOS: native window vibrancy (translucent frosted glass), requires restart
   vibrancyBlur: boolean; // macOS: enable native blur behind vibrancy (off = theme background, no blur)
+  windowsBackdrop: WindowsBackdrop; // Windows: translucent system backdrop (Mica/Acrylic), requires restart
+  windowsBackdropOpacity: number; // Windows: acrylic tint opacity 0-100 (lower = more see-through)
   yaziNavigation: boolean; // left/right arrows navigate up/into folders in details/list view
+  previewFontSize: number; // base font size (px) for text/code/markdown previews
+  autoEnterSingleSubdir: boolean; // when entering a dir with exactly one visible subdir (and nothing else), descend into it recursively
+  ffmpegPath: string; // explicit path to ffmpeg binary for video/audio thumbnails (empty = auto-detect)
 }
 
 const MIN_ZOOM = 50;
@@ -127,7 +135,12 @@ const DEFAULT_SETTINGS: Settings = {
   integratedTitleBar: false,
   macOsVibrancy: false,
   vibrancyBlur: true,
+  windowsBackdrop: "off",
+  windowsBackdropOpacity: 65,
   yaziNavigation: true,
+  previewFontSize: 12,
+  autoEnterSingleSubdir: false,
+  ffmpegPath: "",
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -356,8 +369,29 @@ function createSettingsStore() {
     get vibrancyBlur() {
       return settings.vibrancyBlur;
     },
+    get windowsBackdrop() {
+      return settings.windowsBackdrop;
+    },
+    setWindowsBackdrop(value: WindowsBackdrop): void {
+      update({ windowsBackdrop: value });
+    },
+    get windowsBackdropOpacity() {
+      return settings.windowsBackdropOpacity;
+    },
     get yaziNavigation() {
       return settings.yaziNavigation;
+    },
+    get previewFontSize() {
+      return settings.previewFontSize;
+    },
+    setPreviewFontSize(px: number): void {
+      update({ previewFontSize: Math.max(8, Math.min(28, Math.round(px))) });
+    },
+    get autoEnterSingleSubdir() {
+      return settings.autoEnterSingleSubdir;
+    },
+    get ffmpegPath() {
+      return settings.ffmpegPath;
     },
     toggleMillerColumns(): void {
       const on = settings.millerLayers > 0;
@@ -471,6 +505,7 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
   { key: "confirmDelete", id: "view.toggleConfirmDelete", label: "Toggle Confirm on Delete" },
   { key: "quickOpenDebug", id: "view.toggleQuickOpenDebug", label: "Toggle Quick Open Debug Scores" },
   { key: "yaziNavigation", label: "Toggle Yazi Navigation" },
+  { key: "autoEnterSingleSubdir", label: "Toggle Auto-Enter Single Subfolder" },
   { key: "integratedTitleBar", label: "Toggle Integrated Title Bar" },
   { key: "macOsVibrancy", label: "Toggle macOS Vibrancy" },
   { key: "vibrancyBlur", label: "Toggle Vibrancy Blur" },
@@ -483,6 +518,7 @@ export function generateToggleCommands(): Command[] {
     category: (meta.category ?? "view") as CommandCategory,
     shortcut: meta.shortcut,
     when: meta.when,
+    toggleState: () => Boolean(settingsStore.state[meta.key]),
     handler:
       meta.handler ??
       (() => {

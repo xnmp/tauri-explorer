@@ -9,12 +9,25 @@
 
 import { loadPersisted, savePersisted, writeConfigQueued } from "./persisted";
 import { readConfigFile } from "$lib/api/files";
+import { toForwardSlashes } from "$lib/domain/path";
 
 const STORAGE_KEY = "explorer-manual-hidden";
 const CONFIG_FILENAME = "manual-hidden.json";
 
 /** Map from folder path to a set of hidden entry names within that folder. */
 type HiddenMap = Record<string, string[]>;
+
+/**
+ * Canonical map key for a folder path. Callers pass folder paths from mixed
+ * sources — `parentDir()` (which emits forward slashes) when hiding, and the
+ * raw backend `currentPath` (native backslashes on Windows) when filtering.
+ * Without normalization the same folder produces two different keys on
+ * Windows, so a hidden entry is stored under one and never found under the
+ * other. Normalize separators so the key is stable across both.
+ */
+function folderKey(folderPath: string): string {
+  return toForwardSlashes(folderPath);
+}
 
 function createManualHiddenStore() {
   let raw = $state<HiddenMap>(loadPersisted(STORAGE_KEY, {}));
@@ -40,29 +53,31 @@ function createManualHiddenStore() {
   }
 
   function namesIn(folderPath: string): Set<string> {
-    return new Set(raw[folderPath] ?? []);
+    return new Set(raw[folderKey(folderPath)] ?? []);
   }
 
   function isHidden(folderPath: string, name: string): boolean {
-    return (raw[folderPath] ?? []).includes(name);
+    return (raw[folderKey(folderPath)] ?? []).includes(name);
   }
 
   function hide(folderPath: string, names: string[]): void {
     if (names.length === 0) return;
-    const existing = new Set(raw[folderPath] ?? []);
+    const key = folderKey(folderPath);
+    const existing = new Set(raw[key] ?? []);
     for (const n of names) existing.add(n);
-    raw = { ...raw, [folderPath]: [...existing].sort() };
+    raw = { ...raw, [key]: [...existing].sort() };
     save();
   }
 
   function unhide(folderPath: string, names: string[]): void {
-    const existing = raw[folderPath];
+    const key = folderKey(folderPath);
+    const existing = raw[key];
     if (!existing) return;
     const remove = new Set(names);
     const next = existing.filter((n) => !remove.has(n));
     const updated = { ...raw };
-    if (next.length === 0) delete updated[folderPath];
-    else updated[folderPath] = next;
+    if (next.length === 0) delete updated[key];
+    else updated[key] = next;
     raw = updated;
     save();
   }

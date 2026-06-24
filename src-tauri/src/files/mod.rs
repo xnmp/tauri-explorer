@@ -7,6 +7,7 @@ pub mod external_apps;
 pub mod file_ops;
 pub mod fs_watcher;
 pub mod git_status;
+pub mod shortcuts;
 
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
@@ -82,6 +83,13 @@ pub(crate) fn metadata_to_entry(path: &Path, sym_meta: &fs::Metadata) -> FileEnt
     let effective = resolved.as_ref().unwrap_or(sym_meta);
 
     let kind = if effective.is_dir() {
+        FileKind::Directory
+    } else if is_symlink && fs::read_dir(path).is_ok() {
+        // Windows can't follow WSL/Linux symlinks (LX_SYMLINK reparse tags) via
+        // stat, so `fs::metadata` above reports the link itself, not its target.
+        // Enumerating the path makes the provider resolve the link: if it lists,
+        // the target is a directory. (Cheap — only for symlinks that didn't
+        // already resolve to a dir; a non-dir read_dir fails fast.)
         FileKind::Directory
     } else {
         FileKind::File

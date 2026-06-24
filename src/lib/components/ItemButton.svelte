@@ -12,7 +12,7 @@
   import { isInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
-  import { isMac } from "$lib/domain/platform";
+  import { usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
 
   type ItemInteractions = ReturnType<typeof useItemInteractions>;
   type PointerDrag = ReturnType<typeof usePointerDrag>;
@@ -53,19 +53,19 @@
   class:empty-folder={entry.kind === "directory" && entry.is_empty === true}
   class:drop-target={interactions.isDropTarget(entry.path)}
   class:copy-drop={interactions.isCopyDrop(entry.path)}
-  draggable={!isMac}
+  draggable={usesHtml5Drag}
   onclick={(e) => onitemclick(entry, e)}
   ondblclick={() => { if (!isRenaming) onitemdblclick(entry); }}
   oncontextmenu={(e) => interactions.handleContextMenu(e, entry)}
-  ondragstart={!isMac ? (e) => interactions.handleDragStart(e, entry, explorer.isSelected(entry)) : undefined}
-  ondragend={!isMac ? interactions.handleDragEnd : undefined}
+  ondragstart={usesHtml5Drag ? (e) => interactions.handleDragStart(e, entry, explorer.isSelected(entry)) : undefined}
+  ondragend={usesHtml5Drag ? interactions.handleDragEnd : undefined}
   ondragover={(e) => interactions.handleDragOver(e, entry)}
   ondragleave={() => interactions.handleDragLeave(entry)}
   ondrop={(e) => interactions.handleDrop(e, entry)}
-  onmousedown={isMac ? (e) => { e.stopPropagation(); pointerDrag!.handlePointerDown(e, entry, explorer.isSelected(entry)); } : undefined}
+  onmousedown={usesPointerDrag ? (e) => { e.stopPropagation(); pointerDrag!.handlePointerDown(e, entry, explorer.isSelected(entry)); } : undefined}
 >
   {@render children()}
-  {#if entry.is_symlink && !isRenaming}
+  {#if entry.is_symlink && !isRenaming && entry.kind !== "directory"}
     <div class="symlink-badge" title={entry.symlink_target ? `Link to ${entry.symlink_target}` : "Symbolic link"}>
       <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
         <path d="M7 3L3 7M3 3L3 7L7 7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>

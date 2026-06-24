@@ -124,6 +124,7 @@ const EXT_ICONS: Record<string, NerdIcon> = {
   cmd:  { glyph: "\uE70F", color: "#C1F12E" },
   ps1:  { glyph: "\uE795", color: "#4273CA" },
   psm1: { glyph: "\uE795", color: "#4273CA" },
+  ahk:  { glyph: "\uF11C", color: "#5F9E54" }, // AutoHotkey: keyboard glyph for hotkey scripts
 
   // Data
   sql:    { glyph: "\uF1C0", color: "#DAD8D8" },
@@ -151,6 +152,7 @@ const EXT_ICONS: Record<string, NerdIcon> = {
   dll: { glyph: "\uF013", color: "#6D6D6D" },
   sys: { glyph: "\uF013", color: "#6D6D6D" },
   reg: { glyph: "\uF013", color: "#0078D4" },
+  lnk: { glyph: "\uF0C1", color: "#4273CA" }, // Windows shortcut: link/chain glyph
 };
 
 /** Special filename overrides (matched case-insensitively) */

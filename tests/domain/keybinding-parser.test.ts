@@ -530,6 +530,54 @@ describe("macOS shortcut behaviour", () => {
   });
 });
 
+describe("Windows / non-US keyboard layouts (shifted symbols via event.code)", () => {
+  function winEvent(opts: {
+    key: string;
+    code?: string;
+    ctrl?: boolean;
+    shift?: boolean;
+    alt?: boolean;
+    meta?: boolean;
+  }) {
+    return {
+      key: opts.key,
+      code: opts.code,
+      ctrlKey: opts.ctrl ?? false,
+      shiftKey: opts.shift ?? false,
+      altKey: opts.alt ?? false,
+      metaKey: opts.meta ?? false,
+    };
+  }
+
+  it("Ctrl+Shift+1 matches even though event.key is the shifted symbol '!'", () => {
+    // On many layouts Shift+1 yields "!"; recover "1" from event.code "Digit1".
+    const event = winEvent({ key: "!", code: "Digit1", ctrl: true, shift: true });
+    expect(matchesShortcutString(event as unknown as KeyboardEvent, "Ctrl+Shift+1")).toBe(true);
+  });
+
+  it("does not over-match a different digit via event.code", () => {
+    const event = winEvent({ key: "!", code: "Digit1", ctrl: true, shift: true });
+    expect(matchesShortcutString(event as unknown as KeyboardEvent, "Ctrl+Shift+2")).toBe(false);
+  });
+
+  it("logical event.key still matches when it agrees (no shifted symbol)", () => {
+    const event = winEvent({ key: "1", code: "Digit1", ctrl: true });
+    expect(matchesShortcutString(event as unknown as KeyboardEvent, "Ctrl+1")).toBe(true);
+  });
+
+  it("recording a shifted digit produces the digit, not the symbol", () => {
+    const event = winEvent({ key: "!", code: "Digit1", ctrl: true, shift: true });
+    expect(eventToShortcutString(event as unknown as KeyboardEvent)).toBe("Ctrl+Shift+1");
+  });
+
+  it("a pure Win/Meta binding matches when the Windows key is held", () => {
+    const parsed = parseShortcut("Win+P")!;
+    expect(parsed.meta).toBe(true);
+    const event = winEvent({ key: "p", code: "KeyP", meta: true });
+    expect(matchesShortcut(event as unknown as KeyboardEvent, parsed)).toBe(true);
+  });
+});
+
 describe("exact modifier matching (Ctrl vs Meta)", () => {
   it("Ctrl+Meta+P does NOT match a Ctrl+P binding", () => {
     const parsed = parseShortcut("Ctrl+P")!;

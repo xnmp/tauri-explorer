@@ -4,13 +4,14 @@
 -->
 <script lang="ts">
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { readTextFile, fetchDirectory, gitDiff } from "$lib/api/files";
-  import { isImageFile, isTextFile, isPdfFile, getFileType, formatDate } from "$lib/domain/file-types";
-  import { formatSize, type FileEntry } from "$lib/domain/file";
+  import { readTextFile, fetchDirectory, gitDiff, listArchiveContents, readImageAsBlobUrl } from "$lib/api/files";
+  import { isImageFile, isSvgFile, isTextFile, isPdfFile, isZipFile, getFileType, formatDate } from "$lib/domain/file-types";
+  import { formatSize, isSystemHidden, type FileEntry } from "$lib/domain/file";
   import { isTauri } from "$lib/api/mock-invoke";
   import { highlightCode } from "$lib/domain/syntax-highlight";
   import { renderMarkdown } from "$lib/domain/markdown";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { frecencyStore } from "$lib/state/frecency.svelte";
   import { getFileIconColor } from "$lib/domain/file-types";
   import { scmStore } from "$lib/state/scm.svelte";
   import { parseUnifiedDiff, type ParsedDiff, type DiffLine } from "$lib/domain/diff";
@@ -38,6 +39,118 @@
   let startWidth = 0;
 
   const paneWidth = $derived(settingsStore.previewPaneWidth || DEFAULT_WIDTH);
+
+  // --- Fullscreen preview (double-click to toggle, Esc to exit) ---
+  // The image fits the screen (object-fit: contain). Zoom with +/- or Ctrl+wheel;
+  // when zoomed, arrows pan. At base zoom, Left/Right step to the previous/next
+  // previewable sibling file. The window tab bar hides while fullscreen.
+  let fullscreen = $state(false);
+  const MIN_ZOOM = 1;
+  const MAX_ZOOM = 8;
+  let zoom = $state(1);
+  let panX = $state(0);
+  let panY = $state(0);
+
+  const imageTransform = $derived(
+    fullscreen && zoom !== 1
+      ? `translate(${panX}px, ${panY}px) scale(${zoom})`
+      : fullscreen
+        ? "scale(1)"
+        : "",
+  );
+
+  function resetZoom(): void {
+    zoom = 1;
+    panX = 0;
+    panY = 0;
+  }
+
+  function setZoom(next: number): void {
+    zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, next));
+    if (zoom === 1) {
+      panX = 0;
+      panY = 0;
+    }
+  }
+
+  function toggleFullscreen(): void {
+    fullscreen = !fullscreen;
+    resetZoom();
+  }
+
+  /** Step to the previous/next previewable (non-directory) sibling file. */
+  function navigateSibling(delta: number): void {
+    const explorer = windowTabsManager.getActiveExplorer();
+    if (!explorer || !selectedFile) return;
+    const files = explorer.displayEntries.filter((e) => e.kind !== "directory");
+    if (files.length === 0) return;
+    const idx = files.findIndex((e) => e.path === selectedFile!.path);
+    if (idx < 0) return;
+    const next = files[(idx + delta + files.length) % files.length];
+    explorer.selectEntry(next);
+    resetZoom();
+  }
+
+  function handleFullscreenWheel(event: WheelEvent): void {
+    if (!fullscreen || !event.ctrlKey) return;
+    event.preventDefault();
+    setZoom(zoom * (event.deltaY < 0 ? 1.15 : 1 / 1.15));
+  }
+
+  // While fullscreen: Esc exits; +/- and 0 zoom; arrows pan when zoomed,
+  // else step between sibling files. Capture phase + stopImmediatePropagation
+  // so this wins over the global keyboard handler in +page.svelte.
+  $effect(() => {
+    if (!fullscreen) return;
+    const PAN = 60;
+    const onKey = (event: KeyboardEvent) => {
+      const k = event.key;
+      const stop = () => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      };
+      if (k === "Escape") {
+        stop();
+        fullscreen = false;
+        resetZoom();
+      } else if (k === "+" || k === "=") {
+        stop();
+        setZoom(zoom * 1.25);
+      } else if (k === "-" || k === "_") {
+        stop();
+        setZoom(zoom / 1.25);
+      } else if (k === "0") {
+        stop();
+        resetZoom();
+      } else if (k === "ArrowLeft") {
+        stop();
+        if (zoom > 1) panX += PAN;
+        else navigateSibling(-1);
+      } else if (k === "ArrowRight") {
+        stop();
+        if (zoom > 1) panX -= PAN;
+        else navigateSibling(1);
+      } else if (k === "ArrowUp" && zoom > 1) {
+        stop();
+        panY += PAN;
+      } else if (k === "ArrowDown" && zoom > 1) {
+        stop();
+        panY -= PAN;
+      }
+    };
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true });
+  });
+
+  // Hide the window tab bar (and other chrome) while a preview is fullscreen,
+  // via a document attribute that global CSS keys off (the tab bar lives far up
+  // the tree, outside this component).
+  $effect(() => {
+    if (fullscreen) {
+      document.documentElement.setAttribute("data-preview-fullscreen", "");
+      return () => document.documentElement.removeAttribute("data-preview-fullscreen");
+    }
+  });
 
   function handleResizeStart(event: MouseEvent): void {
     event.preventDefault();
@@ -83,12 +196,27 @@
   let previewMarkdownHtml = $state<string | null>(null);
   let previewPdfUrl = $state<string | null>(null);
   let previewFolderChildrenRaw = $state<readonly FileEntry[]>([]);
+  // Set when a folder/ZIP preview descended through one or more single-child
+  // folders: the collapsed path (e.g. "a/b") and a short note describing it.
+  let previewCollapsedRoot = $state<string | null>(null);
+  let previewCollapsedNote = $state<string | null>(null);
   const previewFolderChildren = $derived(
     settingsStore.showHidden
       ? previewFolderChildrenRaw
-      : previewFolderChildrenRaw.filter((e) => !e.name.startsWith("."))
+      : previewFolderChildrenRaw.filter((e) => !e.name.startsWith(".") && !isSystemHidden(e.name))
   );
   let previewLoading = $state(false);
+  // Defer the spinner: a preview that resolves in under 150ms shouldn't flash
+  // a spinner. Show it only once loading has been pending long enough to read.
+  let showPreviewSpinner = $state(false);
+  $effect(() => {
+    if (!previewLoading) {
+      showPreviewSpinner = false;
+      return;
+    }
+    const timer = setTimeout(() => (showPreviewSpinner = true), 150);
+    return () => clearTimeout(timer);
+  });
   let previewError = $state<string | null>(null);
   let previewTruncatedLines = $state(0);
   let lastPreviewPath: string | null = null;
@@ -174,6 +302,8 @@
       previewMarkdownHtml = null;
       previewPdfUrl = null;
       previewFolderChildrenRaw = [];
+      previewCollapsedRoot = null;
+      previewCollapsedNote = null;
       previewError = null;
       previewLoading = false;
       return;
@@ -193,21 +323,73 @@
   }
 
   async function loadPreview(file: FileEntry): Promise<void> {
+    // Release any object-URL from a previous backend-fallback image so the
+    // bytes aren't pinned in memory across navigations.
+    if (previewImageUrl?.startsWith("blob:")) URL.revokeObjectURL(previewImageUrl);
     previewImageUrl = null;
     previewText = null;
     previewHighlightedHtml = null;
     previewMarkdownHtml = null;
     previewPdfUrl = null;
     previewFolderChildrenRaw = [];
+    previewCollapsedRoot = null;
+    previewCollapsedNote = null;
     previewError = null;
     previewTruncatedLines = 0;
     previewLoading = true;
 
+    if (file.kind !== "directory") {
+      // Previewing a file marks its folder as actively worked-in for Recent ranking.
+      frecencyStore.recordFileAction(file.path);
+    }
+
     if (file.kind === "directory") {
-      const result = await fetchDirectory(file.path);
+      // Descend through any chain of single-child folders so the preview
+      // shows useful content instead of one lonely folder, then report the
+      // collapsed path (e.g. "a/b") in the indicator. Capped to guard against
+      // symlink cycles.
+      const MAX_DESCENT = 40;
+      let dirPath = file.path;
+      const chain: string[] = [];
+      for (let depth = 0; depth < MAX_DESCENT; depth++) {
+        const result = await fetchDirectory(dirPath);
+        if (file.path !== lastPreviewPath) return;
+        if (!result.ok) {
+          previewError = result.error;
+          previewLoading = false;
+          return;
+        }
+        const entries = result.data.entries;
+        if (entries.length === 1 && entries[0].kind === "directory") {
+          chain.push(entries[0].name);
+          dirPath = entries[0].path;
+          continue;
+        }
+        previewFolderChildrenRaw = entries;
+        if (chain.length > 0) {
+          previewCollapsedRoot = chain.join("/");
+          previewCollapsedNote = chain.length === 1 ? "single subfolder" : "single-folder chain";
+        }
+        break;
+      }
+      previewLoading = false;
+      return;
+    }
+
+    // ZIP files preview their contents in the same folder-list format as a
+    // directory (one level deep, directories first). When the archive collapses
+    // to a single top-level folder (or chain of them), descend and show its name.
+    if (isZipFile(file)) {
+      const result = await listArchiveContents(file.path);
       if (file.path !== lastPreviewPath) return;
       if (result.ok) {
         previewFolderChildrenRaw = result.data.entries;
+        if (result.data.rootFolder) {
+          previewCollapsedRoot = result.data.rootFolder;
+          previewCollapsedNote = "single top-level folder";
+        }
+      } else {
+        previewError = result.error;
       }
       previewLoading = false;
       return;
@@ -232,7 +414,7 @@
       return;
     }
 
-    if (isImageFile(file)) {
+    if (isImageFile(file) || isSvgFile(file)) {
       if (isTauri()) {
         try {
           const { convertFileSrc } = await import("@tauri-apps/api/core");
@@ -242,8 +424,25 @@
           await decodeImage(url);
           if (file.path !== lastPreviewPath) return; // Stale after decode
           previewImageUrl = url;
-        } catch {
-          previewError = "Cannot preview image";
+        } catch (assetErr) {
+          // The asset: protocol can't stream some files — notably cloud-mounted
+          // images (Google Drive, OneDrive) whose placeholder paths it fails to
+          // read. Fall back to pulling the bytes through the backend, which
+          // forces the cloud client to hydrate the file first.
+          console.warn("asset:// image preview failed, falling back to backend read:", assetErr);
+          const fallback = await readImageAsBlobUrl(file.path);
+          if (file.path !== lastPreviewPath) return; // Stale after fetch
+          if (fallback.ok) {
+            try {
+              await decodeImage(fallback.data);
+              if (file.path !== lastPreviewPath) return; // Stale after decode
+              previewImageUrl = fallback.data;
+            } catch {
+              previewError = "Cannot preview image";
+            }
+          } else {
+            previewError = "Cannot preview image";
+          }
         }
       } else {
         previewError = "Image preview requires Tauri runtime";
@@ -290,9 +489,23 @@
   }
 </script>
 
-<div class="preview-pane" class:resizing style="width: {paneWidth}px">
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="preview-pane"
+  class:resizing
+  class:fullscreen
+  style="width: {paneWidth}px; --preview-font-size: {settingsStore.previewFontSize}px;"
+  ondblclick={toggleFullscreen}
+>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="resize-handle" onmousedown={handleResizeStart}></div>
+  {#if fullscreen}
+    <button class="fullscreen-exit" onclick={(e) => { e.stopPropagation(); fullscreen = false; }} title="Exit full screen (Esc)" aria-label="Exit full screen">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+        <path d="M3 3L13 13M13 3L3 13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+    </button>
+  {/if}
   {#if activeDiff}
     <div class="preview-header">
       <span class="preview-filename" title={activeDiff.path}>{activeDiff.path.split("/").pop()}</span>
@@ -344,19 +557,40 @@
 
     <div class="preview-content">
       {#if previewLoading}
-        <div class="preview-loading">
-          <div class="spinner"></div>
-        </div>
+        {#if showPreviewSpinner}
+          <div class="preview-loading">
+            <div class="spinner"></div>
+          </div>
+        {/if}
       {:else if previewPdfUrl}
         <div class="preview-pdf-container">
           <iframe src={previewPdfUrl} title={selectedFile.name} class="preview-pdf"></iframe>
         </div>
       {:else if previewImageUrl}
-        <div class="preview-image-container">
-          <img src={previewImageUrl} alt={selectedFile.name} class="preview-image" />
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div class="preview-image-container" onwheel={handleFullscreenWheel}>
+          <img
+            src={previewImageUrl}
+            alt={selectedFile.name}
+            class="preview-image"
+            class:zoomed={fullscreen && zoom > 1}
+            style:transform={imageTransform}
+          />
+          {#if fullscreen}
+            <div class="fs-zoom-indicator">{Math.round(zoom * 100)}%</div>
+          {/if}
         </div>
       {:else if previewFolderChildren.length > 0}
         <div class="preview-folder-list">
+          {#if previewCollapsedRoot}
+            <div class="collapsed-root-indicator" title="Showing the contents of the only folder inside">
+              <svg class="collapsed-root-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M2 4C2 3.45 2.45 3 3 3H6L7.5 4.5H13C13.55 4.5 14 4.95 14 5.5V12C14 12.55 13.55 13 13 13H3C2.45 13 2 12.55 2 12V4Z" fill="currentColor" fill-opacity="0.2" stroke="currentColor" stroke-width="1.1"/>
+              </svg>
+              <span class="collapsed-root-name">{previewCollapsedRoot}/</span>
+              <span class="collapsed-root-note">{previewCollapsedNote}</span>
+            </div>
+          {/if}
           {#each previewFolderChildren as child}
             <div class="folder-item" class:is-directory={child.kind === "directory"}>
               <span class="folder-item-icon" style:color={child.kind !== "directory" ? getFileIconColor(child) : undefined}>
@@ -420,6 +654,40 @@
 
   .preview-pane.resizing {
     user-select: none;
+  }
+
+  /* Fullscreen: cover the whole window (overrides the inline width). */
+  .preview-pane.fullscreen {
+    position: fixed;
+    inset: 0;
+    width: 100vw !important;
+    height: 100vh;
+    z-index: 1000;
+    background: var(--background-solid, var(--background-card-secondary));
+    border-left: none;
+  }
+
+  .fullscreen-exit {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 1001;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background: var(--subtle-fill-secondary);
+    border: 1px solid var(--control-stroke);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+
+  .fullscreen-exit:hover {
+    background: var(--subtle-fill-tertiary);
+    color: var(--text-primary);
   }
 
   .resize-handle {
@@ -489,6 +757,61 @@
     overflow: auto;
     display: flex;
     flex-direction: column;
+    min-height: 0;
+  }
+
+  /* Fullscreen: image fills the whole screen symmetrically — hide the header
+     and info bar (which created an asymmetric top margin) and drop the image
+     container padding and the image's rounded corners. */
+  .preview-pane.fullscreen .preview-header,
+  .preview-pane.fullscreen .preview-info {
+    display: none;
+  }
+  .preview-pane.fullscreen .preview-content {
+    overflow: hidden;
+  }
+  .preview-pane.fullscreen .preview-image-container {
+    /* Fill the whole fullscreen pane and centre the image both ways,
+       independent of the flex chain. */
+    position: absolute;
+    inset: 0;
+    min-height: 0;
+    overflow: hidden;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .preview-pane.fullscreen .preview-image {
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .preview-pane.fullscreen .preview-image {
+    transition: transform 80ms ease-out;
+    cursor: zoom-in;
+  }
+  .preview-pane.fullscreen .preview-image.zoomed {
+    cursor: grab;
+    transition: none;
+  }
+
+  /* Hide the window tab bar / title bar while a preview is fullscreen. */
+  :global(html[data-preview-fullscreen] .titlebar) {
+    display: none !important;
+  }
+
+  .fs-zoom-indicator {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 4px 12px;
+    border-radius: var(--radius-pill, 999px);
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
   }
 
   .preview-loading {
@@ -547,7 +870,7 @@
   .preview-text {
     padding: 16px;
     font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
-    font-size: 11px;
+    font-size: var(--preview-font-size, 11px);
     line-height: 1.6;
     color: var(--text-secondary);
     white-space: pre-wrap;
@@ -574,7 +897,7 @@
      descendants need :global. */
   .preview-markdown {
     padding: 16px;
-    font-size: 12px;
+    font-size: var(--preview-font-size, 12px);
     line-height: 1.65;
     color: var(--text-secondary);
     flex: 1;
@@ -820,6 +1143,39 @@
     flex: 1;
     overflow: auto;
     padding: 4px 0;
+  }
+
+  .collapsed-root-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 2px 8px 6px;
+    padding: 5px 8px;
+    background: var(--subtle-fill-secondary);
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .collapsed-root-icon {
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .collapsed-root-name {
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .collapsed-root-note {
+    margin-left: auto;
+    color: var(--text-tertiary);
+    font-size: 11px;
+    flex-shrink: 0;
   }
 
   .folder-item {

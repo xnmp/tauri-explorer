@@ -16,7 +16,7 @@
   import { useItemInteractions, isInClipboard as checkInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { isMac } from "$lib/domain/platform";
+  import { usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
 
   interface Props {
     entry: FileEntry;
@@ -37,7 +37,7 @@
     selectOnContextMenu: true,
   });
 
-  const pointerDrag = isMac ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
+  const pointerDrag = usesPointerDrag ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
 
   // Check if this entry is being renamed (used for click guards and badge visibility)
   const isRenaming = $derived(dialogStore.renamingEntry?.path === entry.path);
@@ -80,13 +80,13 @@
   onclick={handleClick}
   ondblclick={handleDoubleClick}
   oncontextmenu={(e) => interactions.handleContextMenu(e, entry)}
-  draggable={!isMac}
-  ondragstart={!isMac ? (e) => interactions.handleDragStart(e, entry, selected) : undefined}
-  ondragend={!isMac ? interactions.handleDragEnd : undefined}
+  draggable={usesHtml5Drag}
+  ondragstart={usesHtml5Drag ? (e) => interactions.handleDragStart(e, entry, selected) : undefined}
+  ondragend={usesHtml5Drag ? interactions.handleDragEnd : undefined}
   ondragover={(e) => interactions.handleDragOver(e, entry)}
   ondragleave={() => interactions.handleDragLeave(entry)}
   ondrop={(e) => interactions.handleDrop(e, entry)}
-  onmousedown={isMac ? (e) => { e.stopPropagation(); pointerDrag!.handlePointerDown(e, entry, selected); } : undefined}
+  onmousedown={usesPointerDrag ? (e) => { e.stopPropagation(); pointerDrag!.handlePointerDown(e, entry, selected); } : undefined}
 >
   <!-- Name column -->
   <div class="name-cell">
@@ -95,7 +95,7 @@
     </div>
     <span class="name-text" data-drag-name><EntryName {entry} {explorer} variant="details" /></span>
     <GitStatusBadge entryName={entry.name} hideOnRename={isRenaming} />
-    {#if entry.is_symlink && !isRenaming}
+    {#if entry.is_symlink && !isRenaming && entry.kind !== "directory"}
       <div class="symlink-badge" title={entry.symlink_target ? `Link to ${entry.symlink_target}` : "Symbolic link"}>
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
           <path d="M7 3L3 7M3 3L3 7L7 7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -224,6 +224,16 @@
     gap: 10px;
     min-width: 0;
     overflow: hidden;
+  }
+
+  /* While renaming, let the (content-width) rename box extend past the name
+     column over the neighbouring columns instead of being clipped to it. */
+  .file-item:has(:global(.rename-input)) {
+    z-index: 2;
+  }
+  .file-item:has(:global(.rename-input)) .name-cell,
+  .file-item:has(:global(.rename-input)) .name-text {
+    overflow: visible;
   }
 
   .name-text {

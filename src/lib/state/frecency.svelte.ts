@@ -11,6 +11,7 @@
  */
 
 import { checkPathsExist } from "$lib/api/files";
+import { directoryKey, parentDir } from "$lib/domain/path";
 import { loadPersisted, savePersisted } from "./persisted";
 
 const STORAGE_KEY = "explorer-frecency";
@@ -45,7 +46,8 @@ function createFrecencyStore() {
   /** Record an access to a path. */
   function recordAccess(path: string): void {
     const now = Date.now();
-    const existing = data.find((e) => e.path === path);
+    const key = directoryKey(path);
+    const existing = data.find((e) => directoryKey(e.path) === key);
 
     if (existing) {
       existing.accesses = [...existing.accesses.slice(-(MAX_ACCESSES_PER_ENTRY - 1)), now];
@@ -66,26 +68,42 @@ function createFrecencyStore() {
     save();
   }
 
+  /**
+   * Record that a *file* was acted on (opened, previewed, set as wallpaper,
+   * moved, renamed, …). The frecency entry is the file's containing folder, so
+   * the Recent locations list ranks folders by where the user actually works
+   * with files — not by mere browse-navigation through them.
+   */
+  function recordFileAction(filePath: string): void {
+    recordAccess(parentDir(filePath));
+  }
+
   /** Get the frecency score for a path. Returns 0 if not tracked. */
   function getScore(path: string): number {
-    const entry = data.find((e) => e.path === path);
+    const key = directoryKey(path);
+    const entry = data.find((e) => directoryKey(e.path) === key);
     if (!entry) return 0;
     return computeFrecencyScore(entry.accesses, Date.now());
   }
 
-  /** Get all scores as a Map for efficient batch lookups. */
+  /**
+   * Get all scores as a Map for efficient batch lookups. Keyed by
+   * `directoryKey(path)` — look up with `directoryKey(somePath)`, not the raw
+   * path, so separator/case variants resolve to the same entry.
+   */
   function getScoreMap(): Map<string, number> {
     const now = Date.now();
     const map = new Map<string, number>();
     for (const entry of data) {
-      map.set(entry.path, computeFrecencyScore(entry.accesses, now));
+      map.set(directoryKey(entry.path), computeFrecencyScore(entry.accesses, now));
     }
     return map;
   }
 
   /** Remove a path from tracking. */
   function remove(path: string): void {
-    data = data.filter((e) => e.path !== path);
+    const key = directoryKey(path);
+    data = data.filter((e) => directoryKey(e.path) !== key);
     save();
   }
 
@@ -110,6 +128,7 @@ function createFrecencyStore() {
   return {
     get entries() { return data; },
     recordAccess,
+    recordFileAction,
     getScore,
     getScoreMap,
     remove,

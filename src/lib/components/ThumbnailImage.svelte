@@ -9,7 +9,11 @@
   4. Full thumbnail cross-fades in over 150ms
 -->
 <script lang="ts" module>
-  import { getMicroThumbnail, getThumbnailData } from "$lib/api/files";
+  import {
+    getMicroThumbnail,
+    getThumbnailData,
+    getVideoThumbnailData,
+  } from "$lib/api/files";
 
   // Dual concurrency pools: micro is fast (small payload), full is heavier
   function createPool(max: number) {
@@ -44,17 +48,38 @@
 <script lang="ts">
   import { getThumbnailCache, setThumbnailCache } from "$lib/state/thumbnail-cache";
 
+  /**
+   * "image"  — progressive micro+full image thumbnail (default).
+   * "video"  — single ffmpeg frame-extraction thumbnail.
+   * Video is a single-shot fetch with no micro pre-warm; on error the parent
+   * renders its own fallback icon (we set `error` and emit nothing).
+   */
+  type ThumbnailKind = "image" | "video";
+
   interface Props {
     path: string;
+    /** What to generate: image (default) or video frame */
+    kind?: ThumbnailKind;
     /** Display size in px (CSS container dimensions) */
     size?: number;
     /** Backend generation size in px (defaults to size if not set) */
     genSize?: number;
     quality?: number;
     fallbackColor?: string;
+    /** Called when generation fails (e.g. no ffmpeg / no images) so the parent
+     *  can render its own icon instead of the broken-image fallback. */
+    onunavailable?: () => void;
   }
 
-  let { path, size = 128, genSize, quality, fallbackColor = "#0078d4" }: Props = $props();
+  let {
+    path,
+    kind = "image",
+    size = 128,
+    genSize,
+    quality,
+    fallbackColor = "#0078d4",
+    onunavailable,
+  }: Props = $props();
 
   const backendSize = $derived(genSize ?? size);
 
@@ -85,15 +110,63 @@
     return () => observer.disconnect();
   });
 
-  // Reload key: changes when path, size, or quality changes
-  const reloadKey = $derived(`${path}:${backendSize}:${quality}`);
+  // Reload key: changes when path, kind, size, or quality changes
+  const reloadKey = $derived(`${kind}:${path}:${backendSize}:${quality}`);
 
   // Load thumbnails when visible and reload key changes
   $effect(() => {
     if (visible && reloadKey) {
-      loadProgressiveThumbnail();
+      if (kind === "image") {
+        loadProgressiveThumbnail();
+      } else {
+        loadSingleThumbnail();
+      }
     }
   });
+
+  // Video thumbnails are single-shot (no micro pre-warm). On failure we notify
+  // the parent so it can fall back to its own file-type icon.
+  async function loadSingleThumbnail() {
+    const currentPath = path;
+    const currentKey = reloadKey;
+
+    const cached = getThumbnailCache(currentKey);
+    if (cached?.full) {
+      microUrl = null;
+      fullUrl = cached.full;
+      loading = false;
+      error = false;
+      return;
+    }
+
+    loading = true;
+    error = false;
+    microUrl = null;
+    fullUrl = null;
+    fullLoaded = false;
+
+    await fullPool.acquire();
+    try {
+      if (currentKey !== reloadKey) return;
+
+      const result = await getVideoThumbnailData(currentPath, backendSize, quality);
+      if (currentKey !== reloadKey) return;
+
+      if (result.ok) {
+        fullUrl = result.data;
+        setThumbnailCache(currentKey, { micro: null, full: fullUrl });
+      } else {
+        // Diagnostic: surfaces backend reasons (e.g. "ffmpeg not found",
+        // "no album art") in the dev console so missing thumbnails are explainable.
+        console.warn(`[thumbnail] ${kind} thumbnail unavailable for ${currentPath}: ${result.error}`);
+        error = true;
+        onunavailable?.();
+      }
+    } finally {
+      fullPool.release();
+      if (currentKey === reloadKey) loading = false;
+    }
+  }
 
   async function loadProgressiveThumbnail() {
     const currentPath = path;
@@ -271,4 +344,5 @@
   .thumbnail-full.loaded {
     opacity: 1;
   }
+
 </style>

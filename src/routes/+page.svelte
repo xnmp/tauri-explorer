@@ -7,6 +7,7 @@
   import { onMount } from "svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
@@ -17,6 +18,7 @@
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { saveFocusedWindowState } from "$lib/state/focused-window";
+  import { setFfmpegPath } from "$lib/api/files";
   import { useNativeDropHandler } from "$lib/composables/use-native-drop-handler";
   import { useFileWatchers } from "$lib/composables/use-file-watchers";
   import { useWindowLifecycle } from "$lib/composables/use-window-lifecycle";
@@ -90,6 +92,35 @@
       return;
     }
 
+    // Ctrl+F: open the directory filter. Handled explicitly *before* the
+    // input-field early-return so pressing it again while the filter input is
+    // focused is swallowed — this stops the WebView's native find bar — and is
+    // a no-op rather than a toggle. (Ctrl+Shift+F = Search in Files is excluded.)
+    if (
+      (event.key === "f" || event.key === "F") &&
+      isModifier &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !dialogStore.hasModalOpen
+    ) {
+      event.preventDefault();
+      const explorer = getActiveExplorer();
+      if (explorer && !explorer.showFilter) explorer.openFilter();
+      return;
+    }
+
+    // Escape exits the directory filter from anywhere. The filter input handles
+    // its own Escape (and stops propagation); this covers the case where focus
+    // is on the file list or elsewhere outside an input.
+    if (event.key === "Escape" && !isInputField) {
+      const explorer = getActiveExplorer();
+      if (explorer?.showFilter) {
+        event.preventDefault();
+        explorer.closeFilter();
+        return;
+      }
+    }
+
     // Skip shortcut handling (including hardcoded shortcuts below) if in an
     // input field or a modal dialog is open — e.g. Ctrl+J while typing in a
     // rename input must not open the jobs panel.
@@ -155,17 +186,28 @@
     document.documentElement.style.zoom = `${settingsStore.zoomLevel}%`;
   });
 
+  // Push the configured ffmpeg path to the backend on startup and whenever it
+  // changes, so video/audio thumbnails can find ffmpeg when it isn't on PATH.
+  $effect(() => {
+    void setFfmpegPath(settingsStore.ffmpegPath);
+  });
+
   // Apply background opacity reactively (for window transparency)
   $effect(() => {
     const opacity = settingsStore.backgroundOpacity / 100;
     document.documentElement.style.setProperty("--bg-opacity", String(opacity));
   });
 
-  // Apply vibrancy mode attribute (drives CSS transparency for native macOS vibrancy)
+  // Apply vibrancy mode attribute. It drives the translucent "floating island"
+  // CSS shared by macOS vibrancy and the Windows Mica/Acrylic backdrop — both
+  // need the app background to go transparent so the native effect shows through.
   $effect(() => {
-    if (settingsStore.macOsVibrancy) {
+    const windowsBackdrop = settingsStore.windowsBackdrop !== "off";
+    if (settingsStore.macOsVibrancy || windowsBackdrop) {
       document.documentElement.setAttribute("data-vibrancy", "");
-      if (!settingsStore.vibrancyBlur) {
+      // No-blur is a macOS-only fallback (solid theme background); Windows
+      // backdrops always blur, so never apply it there.
+      if (settingsStore.macOsVibrancy && !settingsStore.vibrancyBlur) {
         document.documentElement.setAttribute("data-vibrancy-no-blur", "");
       } else {
         document.documentElement.removeAttribute("data-vibrancy-no-blur");
@@ -174,6 +216,17 @@
       document.documentElement.removeAttribute("data-vibrancy");
       document.documentElement.removeAttribute("data-vibrancy-no-blur");
     }
+  });
+
+  // Windows Mica/Acrylic: apply the native backdrop with a theme-matched tint
+  // at runtime so changing material, opacity, or theme updates the live window
+  // (the tint controls how see-through Acrylic is). Re-runs when any of those
+  // reactive inputs change; theme is read so the tint follows the palette.
+  $effect(() => {
+    void settingsStore.windowsBackdrop;
+    void settingsStore.windowsBackdropOpacity;
+    void settingsStore.theme;
+    applyWindowsBackdrop();
   });
 
   // Lightweight file-picker mode (portal windows): ?picker=open|save.
@@ -593,6 +646,29 @@
     background: var(--vibrancy-tint, transparent);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
+  }
+
+  /* Windows Acrylic strength: a theme-coloured tint over the whole window
+     (behind every island), driven by the Backdrop Opacity slider. Higher
+     alpha = more opaque = less of the native Acrylic blur shows through. Must
+     follow the [data-vibrancy] body rule above to win the equal-specificity
+     tie. The native Acrylic tint colour is ignored on Windows 11, so this is
+     the only reliable strength control. */
+  :global([data-win-acrylic]) :global(body) {
+    background: var(--win-acrylic-tint, transparent);
+  }
+
+  /* Windows Mica/Acrylic: the macOS island tint (a white sheen over a lighter,
+     translucent card) washes the UI out compared to normal mode. Repaint the
+     islands with the theme's normal elevated card colour over a solid base —
+     opaque (so the bright Acrylic doesn't bleed through and wash it out) and
+     keeping the theme's card colour instead of going flat black. The frost
+     still shows through the chrome/gaps (titlebar, sidebar, padding). Must
+     follow the [data-vibrancy] var block to win the specificity tie. */
+  :global([data-win-backdrop]) {
+    --vibrancy-island-bg:
+      linear-gradient(var(--background-card), var(--background-card)),
+      var(--background-solid);
   }
 
   /* No-blur mode: use theme background instead of transparency */

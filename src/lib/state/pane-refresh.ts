@@ -33,10 +33,16 @@ export function entriesFingerprint(entries: FileEntry[]): string {
 export function createPaneRefresh(ctx: PaneRefreshContext) {
   const { coreState, dirListing } = ctx;
 
-  return async function refresh(options?: { silent?: boolean }): Promise<void> {
+  return async function refresh(options?: { silent?: boolean; force?: boolean }): Promise<void> {
     const silent = options?.silent ?? false;
+    const force = options?.force ?? false;
 
-    if (silent && ctx.inMutationCooldown()) {
+    // The mutation cooldown suppresses the *watcher's* follow-up refresh after
+    // our own mutation (avoids a redundant double-fetch). An explicit
+    // post-mutation refresh (force) must still run — otherwise an op whose
+    // result only shows up via a refresh (zip create, extract) wouldn't
+    // appear until a manual refresh.
+    if (silent && !force && ctx.inMutationCooldown()) {
       return;
     }
 

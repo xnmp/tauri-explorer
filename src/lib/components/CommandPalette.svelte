@@ -14,6 +14,7 @@
     type Command,
   } from "$lib/state/commands.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { usePointerIntent } from "$lib/composables/use-pointer-intent.svelte";
   import Modal from "./Modal.svelte";
 
   interface Props {
@@ -27,15 +28,11 @@
   let selectedIndex = $state(0);
   let inputRef = $state<HTMLInputElement | null>(null);
   let commandsContainerRef = $state<HTMLElement | null>(null);
-  // Suppress mouseenter on rows until the user actually moves the mouse —
+  // Suppress hover-selection until the user makes a DELIBERATE mouse move —
   // prevents selection from jumping to the row the cursor happened to be over
-  // when the palette opened (or after arrow navigation scrolled a new row under it).
-  // Track coordinates because macOS WebKit fires a synthetic mousemove (zero delta)
-  // when an element renders under a stationary cursor.
-  let mouseMoved = $state(false);
-  let lastMousePos = $state<{ x: number; y: number } | null>(null);
-  let mouseTrackingReady = $state(false);
-  let mouseTrackingTimer: ReturnType<typeof setTimeout> | null = null;
+  // when the palette opened (or after arrow nav scrolled a row under it), and
+  // ignores small drift from a corded mouse.
+  const pointer = usePointerIntent();
 
   interface ScoredCommand {
     cmd: Command;
@@ -129,7 +126,7 @@
         event.preventDefault();
         if (flatCommands.length > 0) {
           selectedIndex = (selectedIndex + 1) % flatCommands.length;
-          mouseMoved = false;
+          pointer.reset();
           scrollToSelected();
         }
         break;
@@ -137,7 +134,7 @@
         event.preventDefault();
         if (flatCommands.length > 0) {
           selectedIndex = (selectedIndex - 1 + flatCommands.length) % flatCommands.length;
-          mouseMoved = false;
+          pointer.reset();
           scrollToSelected();
         }
         break;
@@ -166,17 +163,15 @@
     selectedIndex = 0;
   }
 
-  // Focus input when dialog opens
+  // Focus input when dialog opens; tear down pointer tracking when it closes.
   $effect(() => {
     if (open && inputRef) {
       query = "";
       selectedIndex = 0;
-      mouseMoved = false;
-      lastMousePos = null;
-      mouseTrackingReady = false;
-      if (mouseTrackingTimer) clearTimeout(mouseTrackingTimer);
-      mouseTrackingTimer = setTimeout(() => { mouseTrackingReady = true; }, 150);
+      pointer.arm();
       tick().then(() => inputRef?.focus());
+    } else if (!open) {
+      pointer.disarm();
     }
   });
 </script>
@@ -192,13 +187,7 @@
 >
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="command-palette-dialog"
-    onmousemove={(e) => {
-      if (!mouseTrackingReady) return;
-      if (lastMousePos && (e.clientX !== lastMousePos.x || e.clientY !== lastMousePos.y)) {
-        mouseMoved = true;
-      }
-      lastMousePos = { x: e.clientX, y: e.clientY };
-    }}>
+    onmousemove={(e) => pointer.track(e.clientX, e.clientY)}>
       <div class="search-container">
         <span class="search-prefix">&gt;</span>
         <input
@@ -230,10 +219,14 @@
                 role="option"
                 aria-selected={isSelected}
                 onclick={() => executeSelected(cmd)}
-                onmouseenter={() => { if (mouseMoved) selectedIndex = index; }}
+                onmouseenter={() => { if (pointer.moved) selectedIndex = index; }}
               >
                 <span class="command-category">{getCategoryLabel(cmd.category)}</span>
                 <span class="command-label">{cmd.label}</span>
+                {#if cmd.toggleState}
+                  {@const on = cmd.toggleState()}
+                  <span class="toggle-badge" class:on aria-label={on ? "On" : "Off"}>{on ? "ON" : "OFF"}</span>
+                {/if}
                 {#if settingsStore.quickOpenDebug && scores}
                   <span class="debug-breakdown">
                     <span class="debug-row"><b>{scores.total}</b></span>
@@ -375,6 +368,30 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .toggle-badge {
+    flex-shrink: 0;
+    padding: 1px 7px;
+    border-radius: var(--radius-pill, 999px);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    background: var(--subtle-fill-tertiary);
+    color: var(--text-tertiary);
+    border: 1px solid var(--control-stroke);
+  }
+
+  .toggle-badge.on {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+
+  .command-item.selected .toggle-badge {
+    background: rgba(255, 255, 255, 0.2);
+    border-color: transparent;
+    color: var(--text-on-accent);
   }
 
   .command-shortcut {

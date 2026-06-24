@@ -10,13 +10,14 @@
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { settingsStore, type ThumbnailSize } from "$lib/state/settings.svelte";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
+  import { frecencyStore } from "$lib/state/frecency.svelte";
   import { openFile } from "$lib/api/files";
   import { setWallpaper, openTerminal } from "$lib/state/commands/system-actions";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { parentDir } from "$lib/domain/path";
   import { isImageFile } from "$lib/domain/file-types";
-  import { getZoomFactor } from "$lib/domain/zoom";
+  import { getZoomFactor, clientToFixed } from "$lib/domain/zoom";
   import type { ViewMode } from "$lib/state/types";
 
   interface Props {
@@ -31,6 +32,15 @@
       action(entries[0]);
     }
     contextMenuStore.close();
+  }
+
+  /** Mark the current folder as actively worked-in for Recent ranking. Called
+   *  by the right-click actions that operate on files (open, wallpaper, cut,
+   *  copy, delete, rename, …) — so the Recent list reflects folders where the
+   *  user actually acts on files, not ones merely browsed through. */
+  function recordActioned(): void {
+    const entries = explorer.getSelectedEntries();
+    if (entries.length > 0) frecencyStore.recordFileAction(entries[0].path);
   }
 
   const hasSelection = $derived(explorer.selectedPaths.size > 0);
@@ -62,6 +72,7 @@
 
   function handleManualHide(): void {
     const entries = explorer.getSelectedEntries();
+    if (entries.length > 0) recordActioned();
     for (const e of entries) {
       manualHiddenStore.hide(parentDir(e.path), [e.name]);
     }
@@ -70,6 +81,7 @@
 
   function handleManualUnhide(): void {
     const entries = explorer.getSelectedEntries();
+    if (entries.length > 0) recordActioned();
     for (const e of entries) {
       manualHiddenStore.unhide(parentDir(e.path), [e.name]);
     }
@@ -78,13 +90,19 @@
 
   function handleCut(): void {
     const selected = explorer.getSelectedEntries();
-    if (selected.length > 0) explorer.cutToClipboard(selected);
+    if (selected.length > 0) {
+      recordActioned();
+      explorer.cutToClipboard(selected);
+    }
     contextMenuStore.close();
   }
 
   function handleCopy(): void {
     const selected = explorer.getSelectedEntries();
-    if (selected.length > 0) explorer.copyToClipboard(selected);
+    if (selected.length > 0) {
+      recordActioned();
+      explorer.copyToClipboard(selected);
+    }
     contextMenuStore.close();
   }
 
@@ -94,12 +112,14 @@
   }
 
   function handleRename(): void {
+    recordActioned();
     withSelectedEntry((entry) => explorer.startRename(entry));
   }
 
   function handleDelete(): void {
     const entries = explorer.getSelectedEntries();
     if (entries.length > 0) {
+      recordActioned();
       explorer.startDelete(entries);
     }
     contextMenuStore.close();
@@ -132,12 +152,14 @@
 
   async function handleExtractHere(): Promise<void> {
     if (!selectedArchive) return;
+    recordActioned();
     await explorer.extractArchive(selectedArchive.path, true);
     contextMenuStore.close();
   }
 
   async function handleExtractToFolder(): Promise<void> {
     if (!selectedArchive) return;
+    recordActioned();
     await explorer.extractArchive(selectedArchive.path, false);
     contextMenuStore.close();
   }
@@ -145,6 +167,7 @@
   async function handleCompress(): Promise<void> {
     const selected = explorer.getSelectedEntries();
     if (selected.length === 0) return;
+    recordActioned();
     await explorer.compressToZip(selected.map((e) => e.path));
     contextMenuStore.close();
   }
@@ -152,6 +175,7 @@
   async function handleCreateSymlink(): Promise<void> {
     const entries = explorer.getSelectedEntries();
     if (entries.length !== 1) return;
+    recordActioned();
     await explorer.createSymlink(entries[0].path);
     contextMenuStore.close();
   }
@@ -171,12 +195,14 @@
 
   async function handleOpenDefault(): Promise<void> {
     if (!selectedFile) return;
+    recordActioned();
     await openFile(selectedFile.path);
     contextMenuStore.close();
   }
 
   async function handleSetAsWallpaper(): Promise<void> {
     if (!selectedImage) return;
+    recordActioned();
     await setWallpaper(selectedImage.path);
     contextMenuStore.close();
   }
@@ -258,8 +284,11 @@
       const menuW = menuEl.offsetWidth;
       const menuH = menuEl.offsetHeight;
       const pad = 12;
-      let x = rawX / zoom;
-      let y = rawY / zoom;
+      // rawX/rawY are the raw event.clientX/Y (the store no longer pre-divides).
+      // clientToFixed converts the cursor point into the position:fixed CSS space
+      // per webview engine (see zoom.ts).
+      let x = clientToFixed(rawX);
+      let y = clientToFixed(rawY);
       if (x + menuW > vw - pad) x = vw - menuW - pad;
       if (y + menuH > vh - pad) y = vh - menuH - pad;
       if (x < pad) x = pad;

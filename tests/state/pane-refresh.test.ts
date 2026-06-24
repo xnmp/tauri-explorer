@@ -157,6 +157,23 @@ describe("createPaneRefresh", () => {
     expect(toastShow).toHaveBeenCalled();
   });
 
+  it("forced silent refresh runs during the cooldown (post-mutation, no toast)", async () => {
+    // The zip-create / extract case: markLocalMutation has started the
+    // cooldown, but the explicit refresh that reveals the new entry must
+    // still run — and silently (no 'Refreshed' toast).
+    const state = coreState([entry("a")]);
+    const { refresh } = makeRefresh(
+      state,
+      fakeListing({ entries: [entry("a"), entry("new.zip")] }),
+      { inCooldown: true },
+    );
+
+    await refresh({ silent: true, force: true });
+
+    expect(state.entries.map((e) => e.name)).toContain("new.zip");
+    expect(toastShow).not.toHaveBeenCalled();
+  });
+
   it("discards the result when the pane navigated away mid-fetch", async () => {
     const state = coreState([entry("old")]);
     const { refresh } = makeRefresh(

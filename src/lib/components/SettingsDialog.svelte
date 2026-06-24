@@ -3,11 +3,13 @@
   Issue: tauri-explorer-npjh.1, tauri-explorer-oytv
 -->
 <script lang="ts">
-  import { settingsStore, type IconTheme, type ThumbnailSize } from "$lib/state/settings.svelte";
+  import { settingsStore, type IconTheme, type ThumbnailSize, type WindowsBackdrop } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
-  import { isMac } from "$lib/domain/platform";
+  import { isMac, isWindows } from "$lib/domain/platform";
+  import { listInstalledTerminals } from "$lib/api/files";
   import KeybindingsSettings from "./KeybindingsSettings.svelte";
   import Modal from "./Modal.svelte";
+  import { tick } from "svelte";
 
   interface Props {
     open: boolean;
@@ -16,15 +18,59 @@
 
   let { open, onClose }: Props = $props();
 
+  // Installed terminal emulators for the Terminal Application dropdown.
+  // Probed once when the dialog first opens.
+  let installedTerminals = $state<string[]>([]);
+  $effect(() => {
+    if (open && installedTerminals.length === 0) {
+      listInstalledTerminals().then((r) => {
+        if (r.ok) installedTerminals = r.data;
+      });
+    }
+  });
+  // Include any custom value the user already saved so it isn't lost from the list.
+  const terminalOptions = $derived.by(() => {
+    const opts = [...installedTerminals];
+    const current = settingsStore.terminalApp;
+    if (current && !opts.includes(current)) opts.unshift(current);
+    return opts;
+  });
+
   let searchQuery = $state("");
   let searchInputRef = $state<HTMLInputElement | null>(null);
 
-  const queryLower = $derived(searchQuery.toLowerCase());
+  // Focus the search field whenever the dialog opens so the user can filter
+  // settings by typing immediately. tick() waits for the Modal to mount the
+  // input before focusing.
+  $effect(() => {
+    if (open && searchInputRef) {
+      tick().then(() => searchInputRef?.focus());
+    }
+  });
 
-  /** Check if a setting row matches the search query */
+  const queryLower = $derived(searchQuery.toLowerCase().trim());
+
+  /** Fuzzy subsequence test: are all chars of `needle` found in order in `haystack`? */
+  function isSubsequence(needle: string, haystack: string): boolean {
+    let i = 0;
+    for (let j = 0; j < haystack.length && i < needle.length; j++) {
+      if (haystack[j] === needle[i]) i++;
+    }
+    return i === needle.length;
+  }
+
+  /** Check if a setting row matches the search query.
+   *  Multi-token + fuzzy: the query is split on whitespace and every token must
+   *  match (as a substring or an in-order subsequence) the row's combined
+   *  label+description text. This makes "font size", "fontsize" and "fnt" all
+   *  match the "Font Size" row. */
   function matchesSearch(...terms: string[]): boolean {
     if (!queryLower) return true;
-    return terms.some((t) => t.toLowerCase().includes(queryLower));
+    const haystack = terms.join(" ").toLowerCase();
+    return queryLower
+      .split(/\s+/)
+      .filter(Boolean)
+      .every((token) => haystack.includes(token) || isSubsequence(token, haystack));
   }
 
   /** Check if a section has any visible settings */
@@ -44,6 +90,8 @@
     integratedTitleBar: ["Integrated Title Bar", "Show tabs in the title bar alongside window controls (requires restart)"],
     vibrancy: ["Window Vibrancy", "Native macOS translucent frosted-glass effect (requires restart)"],
     nativeBlur: ["Native Blur", "Use macOS frosted glass blur (off = theme background, requires restart)"],
+    windowsBackdrop: ["Window Backdrop", "Windows translucent Mica/Acrylic frosted-glass effect (enabling from Off requires restart)"],
+    windowsBackdropOpacity: ["Backdrop Opacity", "How see-through the Acrylic backdrop is (lower = more transparent)"],
     addressBar: ["Show Address Bar", "Display the breadcrumb/path bar above the file list"],
     statusBar: ["Show Status Bar", "Display file info bar at the bottom (Alt+M U)"],
     navBack: ["Back", "Show the back navigation button"],
@@ -53,6 +101,7 @@
     showHidden: ["Show Hidden Files", "Show files and folders starting with a dot (Ctrl+H)"],
     millerHideEmpty: ["Hide Empty Folders in Miller View", "Don't show folders that have no visible entries in miller columns"],
     yaziNavigation: ["Yazi-style Navigation", "Left/right arrows navigate up/into folders in details and list view"],
+    autoEnterSingleSubdir: ["Auto-Enter Single Subfolder", "When a folder contains only one subfolder (and nothing else), descend into it automatically"],
     showManuallyHidden: ["Show Manually Hidden Items", "Reveal items hidden via the right-click Hide action (shown dimmed)"],
     gitStatus: ["Git Status Indicators", "Show modified/untracked indicators for files in git repositories"],
     recentItems: ["Recent Items in Sidebar", "Number of recent locations to show (0 to hide)"],
@@ -62,6 +111,8 @@
     backgroundImage: ["Background Image", "Custom wallpaper path (PNG, JPG, WEBP, SVG)"],
     wallpaperBlur: ["Wallpaper Blur", "Blur the background image"],
     terminalApp: ["Terminal Application", "Command to open terminal (empty = auto-detect)"],
+    previewFontSize: ["Preview Font Size", "Font size for text, code and markdown previews"],
+    ffmpegPath: ["FFmpeg Path", "Path to the ffmpeg binary for video/audio thumbnails (leave empty to auto-detect)", "video", "thumbnail"],
     geminiApiKey: ["Gemini API Key", "Required for Nano Banana image editing (right-click images)", "AI", "Nano Banana"],
     keyboardShortcuts: ["Keyboard Shortcuts", "keybindings", "hotkeys", "Click on a shortcut to change it"],
   };
@@ -69,13 +120,15 @@
   const appearanceRows = [
     rows.theme, rows.iconTheme, rows.thumbnailSize, rows.showSidebar, rows.windowControls,
     ...(isMac ? [rows.integratedTitleBar, rows.vibrancy, rows.nativeBlur] : []),
+    ...(isWindows ? [rows.windowsBackdrop, rows.windowsBackdropOpacity] : []),
     rows.addressBar, rows.statusBar,
   ];
   const navBarRows = [rows.navBack, rows.navForward, rows.navUp, rows.navRefresh];
   const behaviorRows = [
-    rows.showHidden, rows.millerHideEmpty, rows.yaziNavigation, rows.showManuallyHidden,
+    rows.showHidden, rows.millerHideEmpty, rows.yaziNavigation, rows.autoEnterSingleSubdir, rows.showManuallyHidden,
     rows.gitStatus, rows.recentItems, rows.quickOpenDebug, rows.confirmDelete,
     rows.backgroundOpacity, rows.backgroundImage, rows.wallpaperBlur, rows.terminalApp,
+    rows.previewFontSize, rows.ffmpegPath,
   ];
 
   // Escape clears the search filter before closing, so the Modal default
@@ -262,6 +315,42 @@
           {/if}
           {/if}
 
+          {#if isWindows}
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.windowsBackdrop)}>
+            <div class="setting-info">
+              <span class="setting-label">Window Backdrop</span>
+              <span class="setting-description">Translucent frosted-glass effect (enabling from Off requires restart)</span>
+            </div>
+            <select
+              class="theme-select"
+              value={settingsStore.windowsBackdrop}
+              onchange={(e) => settingsStore.setWindowsBackdrop(e.currentTarget.value as WindowsBackdrop)}
+            >
+              <option value="off">Off</option>
+              <option value="mica">Mica (wallpaper tint)</option>
+              <option value="acrylic">Acrylic (see-through)</option>
+            </select>
+          </div>
+
+          {#if settingsStore.windowsBackdrop === "acrylic"}
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.windowsBackdropOpacity)}>
+            <div class="setting-info">
+              <span class="setting-label">Backdrop Opacity</span>
+              <span class="setting-description">How see-through the Acrylic backdrop is ({settingsStore.windowsBackdropOpacity}%, lower = more transparent)</span>
+            </div>
+            <input
+              class="range-input"
+              type="range"
+              min="0"
+              max="100"
+              step="5"
+              value={settingsStore.windowsBackdropOpacity}
+              oninput={(e) => settingsStore.update({ windowsBackdropOpacity: Number(e.currentTarget.value) })}
+            />
+          </div>
+          {/if}
+          {/if}
+
           <div class="setting-row" class:hidden={!matchesSearch(...rows.addressBar)}>
             <div class="setting-info">
               <span class="setting-label">Show Address Bar</span>
@@ -382,6 +471,21 @@
                 type="checkbox"
                 checked={settingsStore.yaziNavigation}
                 onchange={() => settingsStore.update({ yaziNavigation: !settingsStore.yaziNavigation })}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.autoEnterSingleSubdir)}>
+            <div class="setting-info">
+              <span class="setting-label">Auto-Enter Single Subfolder</span>
+              <span class="setting-description">When a folder contains only one subfolder (and nothing else), descend into it automatically</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.autoEnterSingleSubdir}
+                onchange={() => settingsStore.update({ autoEnterSingleSubdir: !settingsStore.autoEnterSingleSubdir })}
               />
               <span class="toggle-slider"></span>
             </label>
@@ -518,14 +622,47 @@
           <div class="setting-row" class:hidden={!matchesSearch(...rows.terminalApp)}>
             <div class="setting-info">
               <span class="setting-label">Terminal Application</span>
-              <span class="setting-description">Command to open terminal (empty = auto-detect)</span>
+              <span class="setting-description">Choose an installed terminal (Auto-detect picks the first available)</span>
+            </div>
+            <select
+              class="theme-select"
+              value={settingsStore.terminalApp}
+              onchange={(e) => settingsStore.update({ terminalApp: e.currentTarget.value })}
+            >
+              <option value="">Auto-detect</option>
+              {#each terminalOptions as term}
+                <option value={term}>{term}</option>
+              {/each}
+            </select>
+          </div>
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.previewFontSize)}>
+            <div class="setting-info">
+              <span class="setting-label">Preview Font Size</span>
+              <span class="setting-description">Font size for text, code and markdown previews ({settingsStore.previewFontSize}px)</span>
+            </div>
+            <input
+              class="range-input"
+              type="range"
+              min="8"
+              max="24"
+              step="1"
+              value={settingsStore.previewFontSize}
+              oninput={(e) => settingsStore.setPreviewFontSize(Number(e.currentTarget.value))}
+            />
+          </div>
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.ffmpegPath)}>
+            <div class="setting-info">
+              <span class="setting-label">FFmpeg Path</span>
+              <span class="setting-description">Path to ffmpeg for video/audio thumbnails (empty = auto-detect)</span>
             </div>
             <input
               class="text-input"
               type="text"
-              value={settingsStore.terminalApp}
-              placeholder="ghostty"
-              onchange={(e) => settingsStore.update({ terminalApp: e.currentTarget.value })}
+              value={settingsStore.ffmpegPath}
+              placeholder="e.g. C:\\ffmpeg\\bin\\ffmpeg.exe"
+              onchange={(e) => settingsStore.update({ ffmpegPath: e.currentTarget.value })}
             />
           </div>
         </section>
@@ -651,9 +788,13 @@
     margin-bottom: 24px;
   }
 
-  /* Rows/sections filtered out by the settings search */
+  /* Rows/sections filtered out by the settings search.
+     !important so it beats the later `.setting-row { display: flex }` rule —
+     they have equal specificity, so without this the row's own rule (defined
+     after `.hidden` in source order) would win and filtered rows would still
+     show. */
   .hidden {
-    display: none;
+    display: none !important;
   }
 
   .settings-section:last-child {

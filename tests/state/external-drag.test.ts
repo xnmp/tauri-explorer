@@ -14,8 +14,10 @@ vi.mock("@crabnebula/tauri-plugin-drag", () => ({
 // import time. To test platform-specific behavior we mock the module and update
 // the exported value per test via `mockIsMac`.
 let mockIsMac = false;
+let mockIsWindows = false;
 vi.mock("$lib/domain/platform", () => ({
   get isMac() { return mockIsMac; },
+  get isWindows() { return mockIsWindows; },
   isCopyModifier: (e: { altKey: boolean; ctrlKey: boolean }) => mockIsMac ? e.altKey : e.ctrlKey,
 }));
 
@@ -56,6 +58,7 @@ describe("external drag-out", () => {
   beforeEach(() => {
     startDragMock.mockReset();
     mockIsMac = false;
+    mockIsWindows = false;
     (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
   });
 
@@ -127,6 +130,43 @@ describe("external drag-out", () => {
 
     expect(dt.getData("application/x-explorer-path")).toBe("/h/x.txt");
     expect(dt.effectAllowed).toBe("all");
+  });
+
+  it("uses pure HTML5 DnD on Windows: no native OLE drag, no dragstart preventDefault", () => {
+    // On Windows (WebView2 = Chromium) in-app DnD goes through plain HTML5 like
+    // the dev browser. Starting the OLE drag would turn the gesture into an
+    // OS-level drag that Tauri intercepts, suppressing the DOM drag events
+    // (which broke folder/tab/breadcrumb drops). So: no native drag, and no
+    // preventDefault on dragstart (that would cancel the HTML5 drag).
+    mockIsWindows = true;
+    const entry = makeEntry("C:\\Users\\chonw\\Downloads\\image.jpg", "image.jpg");
+    const interactions = useItemInteractions({
+      getExplorer: () => makeExplorer([entry]),
+      refreshPanes: undefined,
+    });
+    const dt = makeDataTransfer();
+    const preventDefault = vi.fn();
+    interactions.handleDragStart({ dataTransfer: dt, preventDefault } as unknown as DragEvent, entry, true);
+
+    expect(startDragMock).not.toHaveBeenCalled();
+    expect(preventDefault).not.toHaveBeenCalled();
+    // The HTML5 payload is still populated so in-app drop targets can read it.
+    expect(dt.getData("application/x-explorer-path")).toBe("C:\\Users\\chonw\\Downloads\\image.jpg");
+  });
+
+  it("still invokes native drag for UNC paths (the vendored plugin returns an error instead of panicking, so HTML5 fallback can run)", () => {
+    const entry = makeEntry("\\\\wsl.localhost\\Ubuntu-24.04\\home\\chong\\file.txt", "file.txt");
+    const interactions = useItemInteractions({
+      getExplorer: () => makeExplorer([entry]),
+      refreshPanes: undefined,
+    });
+
+    interactions.handleDragStart({ dataTransfer: makeDataTransfer() } as DragEvent, entry, true);
+
+    expect(startDragMock).toHaveBeenCalledTimes(1);
+    expect(startDragMock.mock.calls[0][0].item).toEqual([
+      "\\\\wsl.localhost\\Ubuntu-24.04\\home\\chong\\file.txt",
+    ]);
   });
 
   it("skips native drag outside Tauri (browser dev / E2E)", () => {

@@ -134,14 +134,17 @@ fn get_default_app(_file_path: &std::path::Path) -> Option<String> {
 }
 
 fn find_editor_in_path(binary: &str) -> bool {
+    use crate::process_ext::NoConsole;
     #[cfg(windows)]
     let cmd = std::process::Command::new("where.exe")
+        .no_console()
         .arg(binary)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();
     #[cfg(not(windows))]
     let cmd = std::process::Command::new("which")
+        .no_console()
         .arg(binary)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -306,81 +309,95 @@ fn open_image_with_siblings_blocking(path: String) -> Result<(), AppError> {
         return Err(AppError::NotFound(path));
     }
 
-    let parent = file_path
-        .parent()
-        .ok_or_else(|| AppError::Other("Cannot determine parent directory".into()))?;
-
-    // Collect all image files in the same directory, sorted by name
-    let mut images: Vec<PathBuf> = fs::read_dir(parent)
-        .map_err(AppError::from)?
-        .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .filter(|p| {
-            p.extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| IMAGE_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
-                .unwrap_or(false)
-        })
-        .collect();
-    images.sort();
-
-    if images.is_empty() {
-        // Fallback: just open the single file
+    // Windows: open with the default viewer via the shell. Photos' in-folder
+    // arrow-key navigation only works when launched from Explorer itself; a
+    // programmatic launch (whether ShellExecute or Shell.Application InvokeVerb)
+    // doesn't carry that context, and InvokeVerb added noticeable latency for no
+    // benefit — so we use the plain, fast default-handler open.
+    // (The sibling-list passing below is for Linux viewers like imv.)
+    #[cfg(windows)]
+    {
         return opener::open(&file_path).map_err(|e| AppError::Other(e.to_string()));
     }
 
-    // Put the selected image first, followed by the rest in order
-    let target_idx = images.iter().position(|p| p == &file_path).unwrap_or(0);
-    let mut ordered = Vec::with_capacity(images.len());
-    ordered.extend_from_slice(&images[target_idx..]);
-    ordered.extend_from_slice(&images[..target_idx]);
-
-    // Known image viewers that accept multiple file arguments for navigation
-    const MULTI_FILE_VIEWERS: &[&str] = &[
-        "imv",
-        "imv-wayland",
-        "imv-x11",
-        "feh",
-        "eog",
-        "eom",
-        "sxiv",
-        "nsxiv",
-        "qimgv",
-        "nomacs",
-        "gpicview",
-    ];
-
-    // Resolve the MIME type from the actual file's extension so the default
-    // viewer lookup matches the file being opened (not hardcoded image/png).
-    let mime = file_path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| image_mime_for_extension(&ext.to_lowercase()))
-        .unwrap_or("image/png");
-
-    // Try to detect the default image viewer via xdg-mime
-    if let Ok(output) = std::process::Command::new("xdg-mime")
-        .args(["query", "default", mime])
-        .output()
+    #[cfg(not(windows))]
     {
-        let desktop_file = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !desktop_file.is_empty() {
-            let app_name = desktop_file
-                .strip_suffix(".desktop")
-                .unwrap_or(&desktop_file);
-            if MULTI_FILE_VIEWERS.contains(&app_name) {
-                // Launch viewer with all sibling images
-                return std::process::Command::new(app_name)
-                    .args(&ordered)
-                    .spawn()
-                    .map(reap_in_background)
-                    .map_err(AppError::Io);
+        let parent = file_path
+            .parent()
+            .ok_or_else(|| AppError::Other("Cannot determine parent directory".into()))?;
+
+        // Collect all image files in the same directory, sorted by name
+        let mut images: Vec<PathBuf> = fs::read_dir(parent)
+            .map_err(AppError::from)?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|ext| IMAGE_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
+                    .unwrap_or(false)
+            })
+            .collect();
+        images.sort();
+
+        if images.is_empty() {
+            // Fallback: just open the single file
+            return opener::open(&file_path).map_err(|e| AppError::Other(e.to_string()));
+        }
+
+        // Put the selected image first, followed by the rest in order
+        let target_idx = images.iter().position(|p| p == &file_path).unwrap_or(0);
+        let mut ordered = Vec::with_capacity(images.len());
+        ordered.extend_from_slice(&images[target_idx..]);
+        ordered.extend_from_slice(&images[..target_idx]);
+
+        // Known image viewers that accept multiple file arguments for navigation
+        const MULTI_FILE_VIEWERS: &[&str] = &[
+            "imv",
+            "imv-wayland",
+            "imv-x11",
+            "feh",
+            "eog",
+            "eom",
+            "sxiv",
+            "nsxiv",
+            "qimgv",
+            "nomacs",
+            "gpicview",
+        ];
+
+        // Resolve the MIME type from the actual file's extension so the default
+        // viewer lookup matches the file being opened (not hardcoded image/png).
+        let mime = file_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| image_mime_for_extension(&ext.to_lowercase()))
+            .unwrap_or("image/png");
+
+        // Try to detect the default image viewer via xdg-mime
+        if let Ok(output) = std::process::Command::new("xdg-mime")
+            .args(["query", "default", mime])
+            .output()
+        {
+            let desktop_file = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !desktop_file.is_empty() {
+                let app_name = desktop_file
+                    .strip_suffix(".desktop")
+                    .unwrap_or(&desktop_file);
+                if MULTI_FILE_VIEWERS.contains(&app_name) {
+                    // Launch viewer with all sibling images
+                    return std::process::Command::new(app_name)
+                        .args(&ordered)
+                        .spawn()
+                        .map(reap_in_background)
+                        .map_err(AppError::Io);
+                }
             }
         }
-    }
 
-    // Fallback: open just the single file with default handler
-    opener::open(&file_path).map_err(|e| AppError::Other(e.to_string()))
+        // Fallback: open just the single file with default handler
+        opener::open(&file_path).map_err(|e| AppError::Other(e.to_string()))
+    }
 }
 
 /// Spawn a terminal emulator at the given directory, using the correct
@@ -398,11 +415,41 @@ fn try_spawn_terminal(term: &str, dir: &std::path::Path) -> bool {
 
     #[cfg(not(target_os = "macos"))]
     {
-        std::process::Command::new(term)
-            .current_dir(dir)
-            .spawn()
-            .map(reap_in_background)
-            .is_ok()
+        let mut cmd = std::process::Command::new(term);
+        cmd.current_dir(dir);
+
+        // Several terminals open the *new* window at their own default directory
+        // and ignore the spawned process cwd (notably wezterm and Windows
+        // Terminal). Pass an explicit working-directory argument for those.
+        let base = std::path::Path::new(term)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(term)
+            .to_lowercase();
+        let dir_str = dir.to_string_lossy();
+        match base.as_str() {
+            "wezterm" | "wezterm-gui" => {
+                cmd.args(["start", "--cwd"]).arg(dir);
+            }
+            "wt" | "windowsterminal" => {
+                cmd.arg("-d").arg(dir);
+            }
+            "alacritty" => {
+                cmd.arg("--working-directory").arg(dir);
+            }
+            "kitty" => {
+                cmd.arg("--directory").arg(dir);
+            }
+            "konsole" => {
+                cmd.arg("--workdir").arg(dir);
+            }
+            "gnome-terminal" | "xfce4-terminal" | "tilix" | "terminator" | "ghostty" => {
+                cmd.arg(format!("--working-directory={}", dir_str));
+            }
+            _ => {}
+        }
+
+        cmd.spawn().map(reap_in_background).is_ok()
     }
 }
 
@@ -483,6 +530,65 @@ fn open_in_terminal_blocking(path: String, terminal: Option<String>) -> Result<(
     }
 
     Ok(())
+}
+
+/// Known terminal emulator commands per platform, in preference order.
+/// Used both for auto-detect ordering and for the settings dropdown.
+#[cfg(target_os = "linux")]
+const KNOWN_TERMINALS: &[&str] = &[
+    "ghostty",
+    "kitty",
+    "alacritty",
+    "wezterm",
+    "gnome-terminal",
+    "konsole",
+    "xfce4-terminal",
+    "tilix",
+    "terminator",
+    "xterm",
+];
+#[cfg(target_os = "macos")]
+const KNOWN_TERMINALS: &[&str] = &[
+    "iTerm",
+    "Ghostty",
+    "Alacritty",
+    "kitty",
+    "WezTerm",
+    "Terminal",
+];
+#[cfg(target_os = "windows")]
+const KNOWN_TERMINALS: &[&str] = &["wt", "pwsh", "powershell", "alacritty", "wezterm", "cmd"];
+
+/// Return the subset of known terminal emulators that are actually installed
+/// on this machine, so the settings UI can present a dropdown instead of a
+/// free-text command field. On macOS the entries are app names (looked up via
+/// the Applications dirs); elsewhere they are PATH binaries.
+#[tauri::command]
+pub async fn list_installed_terminals() -> Result<Vec<String>, AppError> {
+    run_blocking(|| {
+        let mut found: Vec<String> = Vec::new();
+        for term in KNOWN_TERMINALS {
+            #[cfg(target_os = "macos")]
+            let installed = {
+                let app = format!("/Applications/{term}.app");
+                std::path::Path::new(&app).exists()
+                    || std::path::Path::new(&format!(
+                        "{}/Applications/{term}.app",
+                        std::env::var("HOME").unwrap_or_default()
+                    ))
+                    .exists()
+                    || *term == "Terminal" // always present on macOS
+            };
+            #[cfg(not(target_os = "macos"))]
+            let installed = find_editor_in_path(term);
+
+            if installed {
+                found.push((*term).to_string());
+            }
+        }
+        Ok(found)
+    })
+    .await
 }
 
 /// Map file extension to MIME type for cases where content-based detection

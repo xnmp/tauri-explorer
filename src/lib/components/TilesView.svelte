@@ -8,9 +8,9 @@
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { useProgressiveRender } from "$lib/composables/use-progressive-render.svelte";
-  import { getFileIconColor, isImageFile } from "$lib/domain/file-types";
+  import { getFileIconColor, isImageFile, isVideoFile } from "$lib/domain/file-types";
 
-  import { isMac } from "$lib/domain/platform";
+  import { usesPointerDrag } from "$lib/domain/platform";
   import { settingsStore, THUMBNAIL_SIZE_CONFIG } from "$lib/state/settings.svelte";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import EntryName from "./EntryName.svelte";
@@ -38,12 +38,27 @@
     selectOnContextMenu: true,
   });
 
-  const pointerDrag = isMac ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
+  const pointerDrag = usesPointerDrag ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
 
   const effectiveThumbnailSize = $derived(
     folderViewsStore.getThumbnailSize(explorer.currentPath, settingsStore.thumbnailSize)
   );
   const tileConfig = $derived(THUMBNAIL_SIZE_CONFIG[effectiveThumbnailSize]);
+
+  // Videos whose thumbnail generation failed (e.g. no ffmpeg) fall back to the
+  // plain icon. Keyed by path; reset on navigation.
+  let unavailableThumbs = $state(new Set<string>());
+  $effect(() => {
+    // Reset when the directory changes.
+    explorer.currentPath;
+    unavailableThumbs = new Set<string>();
+  });
+  function markUnavailable(path: string) {
+    if (unavailableThumbs.has(path)) return;
+    const next = new Set(unavailableThumbs);
+    next.add(path);
+    unavailableThumbs = next;
+  }
 
   // Progressive rendering to avoid UI freeze on large directories.
   // Only resets the render limit when entry count increases significantly
@@ -97,6 +112,8 @@
       <div class="tile-icon" style:color={iconColor} data-drag-icon>
         {#if isImageFile(entry)}
           <ThumbnailImage path={entry.path} size={tileConfig.displaySize} genSize={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} />
+        {:else if isVideoFile(entry) && !unavailableThumbs.has(entry.path)}
+          <ThumbnailImage kind="video" path={entry.path} size={tileConfig.displaySize} genSize={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} onunavailable={() => markUnavailable(entry.path)} />
         {:else}
           <FileIcon {entry} size="large" />
         {/if}
@@ -224,6 +241,12 @@
     contain: layout style;
     content-visibility: visible;
     z-index: 10;
+  }
+
+  /* While renaming, hide the selection accent underline — it otherwise shows as
+     a stray colored line beneath the floating rename box. */
+  .tiles-view :global(.tile-item.selected:has(.tile-rename)) {
+    border-bottom-color: transparent;
   }
 
   /* Git status indicator — positioned top-right of tile */

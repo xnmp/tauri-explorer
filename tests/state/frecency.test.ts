@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { computeFrecencyScore } from "$lib/state/frecency.svelte";
+import { computeFrecencyScore, frecencyStore } from "$lib/state/frecency.svelte";
 
 describe("computeFrecencyScore", () => {
   it("returns 0 for empty accesses", () => {
@@ -59,5 +59,46 @@ describe("computeFrecencyScore", () => {
     const score = computeFrecencyScore([future], now);
     // Math.max(0, ...) clamps negative to 0, so 1/(0+1) = 1.0
     expect(score).toBeCloseTo(1.0, 5);
+  });
+});
+
+describe("frecencyStore separator/case dedup", () => {
+  beforeEach(() => frecencyStore.clear());
+
+  it("treats slash/case variants of a Windows path as one entry (the Ctrl+P bug)", () => {
+    frecencyStore.recordAccess("C:\\Users\\chonw\\Pictures");
+    frecencyStore.recordAccess("C:\\Users\\chonw/Pictures"); // mixed slash
+    frecencyStore.recordAccess("c:/users/chonw/pictures");   // forward + lowercase
+    expect(frecencyStore.entries).toHaveLength(1);
+  });
+
+  it("looks up score by canonical key regardless of input separator/case", () => {
+    frecencyStore.recordAccess("C:\\Users\\chonw\\Pictures");
+    expect(frecencyStore.getScore("c:/users/chonw/pictures")).toBeGreaterThan(0);
+    expect(frecencyStore.getScoreMap().get("c:/users/chonw/pictures")).toBeGreaterThan(0);
+  });
+
+  it("removes an entry regardless of the separator style used", () => {
+    frecencyStore.recordAccess("C:\\Users\\chonw\\Pictures");
+    frecencyStore.remove("c:/users/chonw/pictures");
+    expect(frecencyStore.entries).toHaveLength(0);
+  });
+});
+
+describe("frecencyStore.recordFileAction", () => {
+  beforeEach(() => frecencyStore.clear());
+
+  it("records the file's containing FOLDER, not the file path", () => {
+    frecencyStore.recordFileAction("/home/user/Pictures/photo.jpg");
+    expect(frecencyStore.entries).toHaveLength(1);
+    expect(frecencyStore.entries[0].path).toBe("/home/user/Pictures");
+  });
+
+  it("coalesces actions on different files in the same folder into one entry", () => {
+    frecencyStore.recordFileAction("/home/user/Pictures/a.jpg");
+    frecencyStore.recordFileAction("/home/user/Pictures/b.png");
+    expect(frecencyStore.entries).toHaveLength(1);
+    expect(frecencyStore.entries[0].path).toBe("/home/user/Pictures");
+    expect(frecencyStore.entries[0].accesses).toHaveLength(2);
   });
 });

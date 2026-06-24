@@ -9,8 +9,28 @@ use crate::files;
 /// Stores the working directory from which the app was launched.
 pub struct LaunchCwd(pub String);
 
+/// True for UNC paths (`\\server\share`, `\\wsl.localhost\Distro\...`). Windows
+/// has no Recycle Bin for network/WSL locations: the `trash` crate's shell APIs
+/// fail on them, so these must be removed directly instead of trashed.
+fn is_unc_path(path: &str) -> bool {
+    path.starts_with("\\\\") || path.starts_with("//")
+}
+
+/// Trash a single path, falling back to a permanent delete on UNC locations
+/// where the Recycle Bin is unavailable.
+fn trash_or_remove(pathbuf: &std::path::Path) -> Result<(), AppError> {
+    if is_unc_path(&pathbuf.to_string_lossy()) {
+        return files::file_ops::remove_entry_at(pathbuf);
+    }
+    trash::delete(pathbuf).map_err(|e| {
+        log::error!("Failed to move to trash: {}", e);
+        AppError::Other(format!("Failed to move to trash: {}", e))
+    })
+}
+
 /// Move a file or directory to the system trash/recycle bin.
 /// Cross-platform: Windows Recycle Bin, macOS Trash, Linux Freedesktop Trash.
+/// UNC/WSL paths have no Recycle Bin, so they are removed permanently instead.
 #[tauri::command]
 pub async fn move_to_trash(path: String) -> Result<(), AppError> {
     files::run_blocking(move || {
@@ -21,10 +41,7 @@ pub async fn move_to_trash(path: String) -> Result<(), AppError> {
             return Err(AppError::NotFound(path));
         }
 
-        trash::delete(&pathbuf).map_err(|e| {
-            log::error!("Failed to move to trash: {}", e);
-            AppError::Other(format!("Failed to move to trash: {}", e))
-        })
+        trash_or_remove(&pathbuf)
     })
     .await
 }
@@ -43,7 +60,7 @@ pub async fn move_multiple_to_trash(paths: Vec<String>) -> Result<(), AppError> 
                 failures.push(format!("{} (not found)", path));
                 continue;
             }
-            if let Err(e) = trash::delete(&pathbuf) {
+            if let Err(e) = trash_or_remove(&pathbuf) {
                 log::error!("Failed to move {} to trash: {}", path, e);
                 failures.push(format!("{} ({})", path, e));
             }

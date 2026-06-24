@@ -1,5 +1,6 @@
 import { listDrives, watchDirectory, unwatchDirectory, type Drive } from "$lib/api/files";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { directoryKey } from "$lib/domain/path";
 
 // Polling backstop. The fs-watcher subscription handles most eject/insert
 // events but we still poll occasionally in case a mount point uses a base
@@ -90,6 +91,28 @@ function createDrivesStore() {
     },
     get removable() {
       return drives.filter((d) => d.kind === "removable" || d.kind === "unknown");
+    },
+    /** Cloud / remote mounts (Google Drive, WSL home) for the dedicated section. */
+    get cloud() {
+      return drives.filter((d) => d.kind === "cloud");
+    },
+    /**
+     * Normalised mount roots of currently-present removable drives (same
+     * normalisation as mountedRoots). Used to detect when a pane is sitting on
+     * a removable drive so it can show a "drive removed" state once it ejects.
+     */
+    get removableRoots() {
+      return drives
+        .filter((d) => d.kind === "removable" || d.kind === "unknown")
+        .map((d) => directoryKey(d.path));
+    },
+    /**
+     * Set of currently-mounted drive roots, lowercased and normalised, used to
+     * hide Recent locations that live on an ejected drive. On Windows a root is
+     * the drive letter prefix (e.g. "e:"); elsewhere it's the mount path.
+     */
+    get mountedRoots() {
+      return new Set(drives.map((d) => directoryKey(d.path)));
     },
     refresh,
     startPolling,

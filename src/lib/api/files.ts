@@ -258,6 +258,25 @@ export async function openFile(path: string): Promise<ApiResult<void>> {
   }
 }
 
+/** Resolved target of a Windows `.lnk` shortcut. */
+export interface ShortcutTarget {
+  target: string;
+  isDir: boolean;
+}
+
+/**
+ * Resolve a Windows `.lnk` shortcut to the file/folder it points at.
+ * Returns null when `path` isn't a (resolvable, existing) shortcut — callers
+ * should then act on the original path.
+ */
+export async function resolveShortcut(path: string): Promise<ShortcutTarget | null> {
+  try {
+    return (await invoke<ShortcutTarget | null>("resolve_shortcut", { path })) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Open a file at a specific line number using a known text editor.
  * Falls back to default open if no known editor is found.
@@ -316,6 +335,31 @@ export async function openInTerminal(path: string, terminal?: string): Promise<A
 }
 
 /**
+ * List terminal emulators that are actually installed on this machine, so the
+ * settings UI can offer a dropdown instead of a free-text command.
+ */
+export async function listInstalledTerminals(): Promise<ApiResult<string[]>> {
+  try {
+    const data = await invoke<string[]>("list_installed_terminals");
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+/**
+ * Set an explicit ffmpeg binary path for video/audio thumbnails (empty string
+ * clears it and reverts to auto-detection). Best-effort; ignores errors.
+ */
+export async function setFfmpegPath(path: string): Promise<void> {
+  try {
+    await invoke("set_ffmpeg_path", { path });
+  } catch {
+    // Not in Tauri runtime or command unavailable — ignore.
+  }
+}
+
+/**
  * Write text content to a new file.
  */
 export async function writeTextFile(path: string, content: string): Promise<ApiResult<FileEntry>> {
@@ -338,6 +382,33 @@ export async function readTextFile(path: string, maxBytes?: number): Promise<Api
   try {
     const content = await invoke<string>("read_text_file", { path, maxBytes: maxBytes ?? null });
     return { ok: true, data: content };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+/**
+ * Read an image file's bytes through the backend and return them as a blob URL.
+ *
+ * Fallback for previewing images the `asset:` protocol can't serve — chiefly
+ * cloud-mounted files (Google Drive, OneDrive) whose placeholder paths the
+ * asset server fails to stream. Reading via `fs` forces the cloud client to
+ * hydrate the file first.
+ *
+ * @param path - Full path to the image file
+ * @param maxBytes - Optional size cap (backend default 32 MB)
+ * @returns Result with an object-URL (blob:) or error
+ */
+export async function readImageAsBlobUrl(
+  path: string,
+  maxBytes?: number
+): Promise<ApiResult<string>> {
+  try {
+    const dataUri = await invoke<string>("read_image_data_url", {
+      path,
+      maxBytes: maxBytes ?? null,
+    });
+    return { ok: true, data: dataUriToBlobUrl(dataUri) };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
@@ -369,12 +440,18 @@ export async function getLaunchCwd(): Promise<ApiResult<string>> {
   }
 }
 
-export type DriveKind = "fixed" | "removable" | "network" | "unknown";
+export type DriveKind = "fixed" | "removable" | "network" | "cloud" | "unknown";
+
+export type CloudProvider = "googledrive" | "wsl";
 
 export interface Drive {
   name: string;
   path: string;
   kind: DriveKind;
+  /** Secondary/dimmed label (e.g. the drive letter "E:" when name is the volume label). */
+  detail?: string;
+  /** Set for cloud/remote drives — selects the sidebar icon. */
+  provider?: CloudProvider;
 }
 
 export async function listDrives(): Promise<ApiResult<Drive[]>> {
@@ -656,6 +733,28 @@ export async function getMicroThumbnail(
 ): Promise<ApiResult<string>> {
   try {
     const dataUri = await invoke<string>("get_micro_thumbnail", { path, prewarmSize, prewarmQuality });
+    return { ok: true, data: dataUriToBlobUrl(dataUri) };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+/**
+ * Get a video thumbnail (extracted frame) as a blob URL.
+ * Requires ffmpeg on PATH; returns an error otherwise so callers can fall back
+ * to the file-type icon.
+ *
+ * @param path - Full path to video file
+ * @param size - Optional generation size
+ * @param quality - Optional JPEG quality
+ */
+export async function getVideoThumbnailData(
+  path: string,
+  size?: number,
+  quality?: number
+): Promise<ApiResult<string>> {
+  try {
+    const dataUri = await invoke<string>("get_video_thumbnail_data", { path, size, quality });
     return { ok: true, data: dataUriToBlobUrl(dataUri) };
   } catch (err) {
     return { ok: false, error: extractError(err) };
@@ -975,6 +1074,29 @@ export async function extractArchive(
   try {
     const destPath = await invoke<string>("extract_archive", { archivePath, extractHere, jobId });
     return { ok: true, data: destPath };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+/** Preview listing of a ZIP archive. `rootFolder` is set when the archive's
+ *  sole top-level item is a directory we descended into — its name, for a
+ *  "contains one folder: X" indicator. */
+export interface ArchiveListing {
+  entries: FileEntry[];
+  rootFolder: string | null;
+}
+
+/**
+ * List the contents of a ZIP archive (one level deep), for the preview pane.
+ * Returns FileEntry rows with synthetic `archive.zip!/name` paths,
+ * directories first. If the only top-level item is a folder, descends into
+ * it and reports its name as `rootFolder`.
+ */
+export async function listArchiveContents(archivePath: string): Promise<ApiResult<ArchiveListing>> {
+  try {
+    const listing = await invoke<ArchiveListing>("list_archive_contents", { archivePath });
+    return { ok: true, data: listing };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }

@@ -7,6 +7,7 @@
  */
 
 import { checkPathsExist } from "$lib/api/files";
+import { directoryKey } from "$lib/domain/path";
 import { loadPersisted, savePersisted } from "./persisted";
 
 export interface RecentEntry {
@@ -27,8 +28,10 @@ function createRecentFilesState() {
   }
 
   function add(path: string, name: string, kind: "file" | "directory") {
-    // Remove existing entry for this path (will be re-added at top)
-    const filtered = entries.filter((e) => e.path !== path);
+    // Remove existing entry for this path (will be re-added at top). Compare by
+    // canonical key so separator/case variants of the same path don't duplicate.
+    const key = directoryKey(path);
+    const filtered = entries.filter((e) => directoryKey(e.path) !== key);
     entries = [
       { name, path, kind, timestamp: Date.now() },
       ...filtered,
@@ -37,7 +40,8 @@ function createRecentFilesState() {
   }
 
   function remove(path: string) {
-    entries = entries.filter((e) => e.path !== path);
+    const key = directoryKey(path);
+    entries = entries.filter((e) => directoryKey(e.path) !== key);
     save();
   }
 

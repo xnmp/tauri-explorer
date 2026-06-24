@@ -12,7 +12,7 @@ import { operationsManager } from "./operations.svelte";
 import { conflictResolver, type ConflictChoice } from "./conflict-resolver.svelte";
 import { undoStore } from "./undo.svelte";
 import { broadcastFileChange } from "./file-events";
-import { parentDir } from "$lib/domain/path";
+import { parentDir, sameDirectory } from "$lib/domain/path";
 import { toastStore } from "./toast.svelte";
 import { frecencyStore } from "./frecency.svelte";
 import { performFileTransfer } from "./file-transfer";
@@ -69,7 +69,7 @@ export async function pasteEntries(
 
     const source = sources[i];
     const sourceDir = parentDir(source.path);
-    const isSameDir = sourceDir === destPath;
+    const isSameDir = sameDirectory(sourceDir, destPath);
 
     // Copy to same dir: Rust auto-generates "name - Copy" suffix, no conflict dialog needed.
     // Cut to same dir: no-op (file is already there).

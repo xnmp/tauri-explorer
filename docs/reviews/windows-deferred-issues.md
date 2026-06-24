@@ -1,5 +1,12 @@
 # Deferred Windows Issues — 2026-06-11
 
+> **RESOLVED 2026-06-14** (branch `windows`). Issues 1–7 below are all fixed, plus a
+> marquee-under-zoom bug not in the original list (WebView2 is Chromium, which handles
+> CSS `zoom` coordinates like WKWebView, not WebKitGTK — see `domain/zoom.ts` and
+> `lessons_learnt.md`). The cfg-gated Windows clipboard/wallpaper backends compile only on
+> the Windows CI runner (`e2e-tauri.yml`), not under a Linux `cargo check`. This file is
+> kept for historical context.
+
 Windows-specific findings from the comprehensive review, deferred by decision on 2026-06-11.
 Everything else from the review is being fixed; these remain open. Windows is a CI target
 (`e2e-tauri.yml` runs `windows-latest`), so these should be scheduled before any Windows release.

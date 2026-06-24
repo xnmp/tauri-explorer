@@ -10,6 +10,7 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
+  import { rectDimToCSS } from "$lib/domain/zoom";
 
   interface Props {
     entry: FileEntry;
@@ -41,32 +42,108 @@
       if (focusedRenamePath === renamingPath) return;
       focusedRenamePath = renamingPath;
       rename.focusAndSelect(entry);
-      if (variant === "tiles") tick().then(autoGrowTileRename);
+      tick().then(autoSizeRename);
     });
   });
 
-  /** Grow the floating tile rename box to fit its content instead of
-   *  scrolling inside a fixed two-line textarea. */
-  function autoGrowTileRename(): void {
+  // Commit the rename when the user points at anything outside the box (e.g.
+  // clicks another file). We can't rely on the input's native blur: on
+  // Windows/macOS the file items call preventDefault() on mousedown for pointer
+  // drag, which keeps focus on the input so blur never fires. A capture-phase
+  // pointerdown listener runs before those handlers and commits explicitly.
+  $effect(() => {
+    if (!isRenaming) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const el = rename.renameInputRef;
+      if (el && e.target instanceof Node && el.contains(e.target)) return;
+      rename.handleRenameBlur(entry.name);
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => window.removeEventListener("pointerdown", onPointerDown, true);
+  });
+
+  // Shared off-DOM canvas for measuring text width in the input's own font.
+  let measureCtx: CanvasRenderingContext2D | null = null;
+  function measureTextWidth(text: string, font: string): number {
+    if (!measureCtx) measureCtx = document.createElement("canvas").getContext("2d");
+    if (!measureCtx) return text.length * 8; // crude fallback
+    measureCtx.font = font;
+    return measureCtx.measureText(text).width;
+  }
+
+  /**
+   * Size the rename box to its content so it's never shorter than the filename
+   * and never gratuitously wide.
+   *
+   * - Tiles: a centered floating box that grows in WIDTH to fit the name (up to
+   *   a cap), then wraps and grows in height beyond the cap.
+   * - Details/List: a single-line box that fills at least its cell and grows
+   *   wider to fit a long name (up to a cap), overflowing neighbouring columns.
+   */
+  function autoSizeRename(): void {
     const el = rename.renameInputRef;
-    if (!(el instanceof HTMLTextAreaElement)) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight + 2}px`;
+    if (!el) return;
+    const cs = getComputedStyle(el);
+    const chrome =
+      parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) +
+      parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth);
+    const textW = measureTextWidth(el.value || " ", cs.font);
+
+    if (variant === "tiles") {
+      // Keep the box only modestly wider than a tile: a long name wraps to a
+      // few lines rather than stretching into one very wide line.
+      const MIN = 64;
+      const MAX = 200;
+      const w = Math.min(MAX, Math.max(MIN, Math.ceil(textW + chrome + 8)));
+      el.style.width = `${w}px`;
+      // Grow height only when the (capped-width) text has to wrap.
+      el.style.height = "auto";
+      el.style.height = `${(el as HTMLTextAreaElement).scrollHeight + 2}px`;
+      // Nudge the centered box back inside the visible tiles area so an edge
+      // tile's box isn't cropped by the pane boundary.
+      el.style.transform = "translateX(-50%)";
+      const scroller = el.closest<HTMLElement>(".tiles-view");
+      if (scroller) {
+        const PAD = 8;
+        const box = el.getBoundingClientRect();
+        const area = scroller.getBoundingClientRect();
+        let nudge = 0;
+        if (box.left < area.left + PAD) nudge = area.left + PAD - box.left;
+        else if (box.right > area.right - PAD) nudge = area.right - PAD - box.right;
+        if (nudge !== 0) {
+          el.style.transform = `translateX(calc(-50% + ${rectDimToCSS(nudge)}px))`;
+        }
+      }
+    } else {
+      // Size to the name: snug for a short name (just text + padding + a little
+      // caret room), growing only up to a modest cap for a long one (then it
+      // scrolls). Not floored to the column width, so a short name hugs its text.
+      // width = text + symmetric padding/border only (+1px so the caret at the
+      // end isn't clipped). A larger buffer would all land on the right, since
+      // the text is left-aligned, making the box look lopsided.
+      const MIN = 32;
+      const MAX = 340;
+      const w = Math.min(MAX, Math.max(MIN, Math.ceil(textW) + chrome + 1));
+      el.style.width = `${w}px`;
+    }
   }
 </script>
 
 {#if isRenaming}
   {#if variant === "tiles"}
-    <!-- Anchor keeps the tile's two-line name space while the textarea
-         floats above neighboring tiles. -->
+    <!-- The name stays in flow (invisible) so the tile keeps EXACTLY its
+         pre-rename height — the rename box floats above it absolutely and
+         therefore never shifts neighbouring tiles, however many lines it grows
+         to. -->
     <div class="tile-rename-anchor">
+      <span class="name-tiles rename-placeholder" aria-hidden="true">{entry.name}</span>
       <!-- svelte-ignore a11y_autofocus -->
       <textarea
         class="rename-input tile-rename"
         class:error={!!rename.renameError}
         bind:value={rename.editedName}
         bind:this={rename.renameInputRef}
-        oninput={autoGrowTileRename}
+        oninput={autoSizeRename}
         onkeydown={(e) => rename.handleRenameKeydown(e, entry.name)}
         onblur={() => rename.handleRenameBlur(entry.name)}
         onclick={(e) => e.stopPropagation()}
@@ -80,10 +157,11 @@
     <!-- svelte-ignore a11y_autofocus -->
     <input
       type="text"
-      class="rename-input"
+      class="rename-input rename-row"
       class:error={!!rename.renameError}
       bind:value={rename.editedName}
       bind:this={rename.renameInputRef}
+      oninput={autoSizeRename}
       onkeydown={(e) => rename.handleRenameKeydown(e, entry.name)}
       onblur={() => rename.handleRenameBlur(entry.name)}
       onclick={(e) => e.stopPropagation()}
@@ -132,12 +210,36 @@
     box-shadow: 0 0 0 1px var(--system-critical);
   }
 
+  /* Details / List single-line box. Width is set to fit the name by
+     autoSizeRename; it overflows its cell to the right (ancestors lift their
+     overflow while renaming), so it must paint opaque and above siblings. */
+  .rename-input.rename-row {
+    position: relative;
+    z-index: 5;
+    flex: 0 0 auto;
+    /* Pull the box left by its own border (1px) + padding (6px) so the editable
+       text sits exactly where the displayed name text was — no sideways jump
+       when rename mode opens. */
+    margin-left: -7px;
+    background: var(--background-solid);
+    box-shadow: 0 0 0 1px var(--accent), 0 4px 12px rgba(0, 0, 0, 0.18);
+  }
+
+  .rename-input.rename-row:focus {
+    background: var(--background-solid);
+  }
+
   .tile-rename-anchor {
     position: relative;
     width: 100%;
-    /* Reserve the two-line space the name occupied so the tile keeps its
-       size while the input floats above neighbors. */
-    min-height: calc(1.4em * 2);
+  }
+
+  /* Invisible copy of the name that holds the tile's natural height open while
+     the absolutely-positioned rename box floats over it — so renaming never
+     shifts neighbouring tiles, regardless of how many lines the box grows to. */
+  .rename-placeholder {
+    visibility: hidden;
+    pointer-events: none;
   }
 
   .rename-input.tile-rename {
@@ -145,19 +247,19 @@
     top: -2px;
     left: 50%;
     transform: translateX(-50%);
-    /* Comfortably wider than the tile; overflowing neighbors is fine. */
-    width: max(180px, calc(100% + 48px));
-    max-width: 300px;
+    /* Width set to fit content by autoSizeRename; cap as a safety net. */
+    max-width: 320px;
+    margin: 0;
     text-align: center;
     resize: none;
     line-height: 1.4;
     word-break: break-word;
     overflow-wrap: break-word;
     font-size: 13px;
-    /* Height is grown to fit content by autoGrowTileRename — never scroll. */
+    /* Height is grown to fit content by autoSizeRename — never scroll. */
     overflow: hidden;
     z-index: 10;
-    /* Opaque: the box floats over tile borders and neighboring names. */
+    /* Opaque: the box floats over tile borders and neighbouring names. */
     background: var(--background-solid);
     box-shadow: 0 0 0 1px var(--accent), 0 8px 24px rgba(0, 0, 0, 0.25);
   }
@@ -177,6 +279,7 @@
   }
 
   .name-list {
+    display: block;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

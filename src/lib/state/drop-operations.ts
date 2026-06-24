@@ -6,7 +6,7 @@
  * Delegates transfer logic to performFileTransfer (file-transfer.ts).
  */
 
-import { parentDir } from "$lib/domain/path";
+import { parentDir, samePath } from "$lib/domain/path";
 import { dragState } from "./drag.svelte";
 import { performFileTransfer } from "./file-transfer";
 
@@ -79,7 +79,7 @@ export async function handleBackgroundDrop(
   options: DropOptions,
 ): Promise<void> {
   const sourceDir = parentDir(sourcePath);
-  if (sourceDir === currentPath) return;
+  if (samePath(sourceDir, currentPath)) return;
 
   await performFileTransfer(sourcePath, currentPath, false, {
     onRefresh: options.onRefresh,

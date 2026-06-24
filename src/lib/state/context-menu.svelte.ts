@@ -7,8 +7,6 @@
  * Only one context menu can be open at a time.
  */
 
-import { adjustForZoom } from "$lib/domain/zoom";
-
 export interface ContextMenuPosition {
   x: number;
   y: number;
@@ -38,7 +36,11 @@ function createContextMenuStore() {
 
     // Actions
     open(x: number, y: number, ownerToken: object | null = null): void {
-      position = adjustForZoom(x, y);
+      // Store the raw clientX/clientY. ContextMenu.svelte performs the single
+      // zoom division when it clamps to the viewport — applying adjustForZoom
+      // here too would divide by zoom twice and push the menu off to the
+      // upper-left when zoomed in.
+      position = { x, y };
       owner = ownerToken;
       isOpen = true;
     },

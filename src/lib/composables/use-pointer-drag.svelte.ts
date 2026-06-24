@@ -13,7 +13,7 @@
 import { onDestroy } from "svelte";
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
-import { parentDir, basename } from "$lib/domain/path";
+import { parentDir, basename, isInsideDir, samePath } from "$lib/domain/path";
 import { dragState } from "$lib/state/drag.svelte";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { handleFileDrop, handleBackgroundDrop } from "$lib/state/drop-operations";
@@ -29,6 +29,18 @@ export interface PointerDragDeps {
 }
 
 const THRESHOLD_PX = 5;
+
+/**
+ * A drop that would change nothing and should be ignored (no highlight, no
+ * operation, no conflict dialog): the source already lives directly in the
+ * target directory, or the target IS the dragged item itself / a descendant
+ * of it (can't move a folder into itself).
+ */
+function isNoOpDropPath(targetDir: string, source: string): boolean {
+  // samePath (not ===) because parentDir emits forward slashes while targetDir
+  // comes from a DOM data-path (native backslashes on Windows).
+  return samePath(parentDir(source), targetDir) || isInsideDir(targetDir, source);
+}
 
 export function usePointerDrag(deps: PointerDragDeps) {
   let dragActive = false;
@@ -97,8 +109,12 @@ export function usePointerDrag(deps: PointerDragDeps) {
     ghostEl!.style.left = `${event.clientX / zoom}px`;
     ghostEl!.style.top = `${event.clientY / zoom}px`;
     ghostEl!.style.transform = "translate(-50%, -50%)";
-    // Exit window → hand off to native drag for external/cross-window.
-    // With implicit mouse capture, clientX/Y extends beyond viewport bounds.
+    // Exit window → hand off to a native OS drag for cross-window / external
+    // drops (the in-app pointer-drag is single-window: mouse events don't reach
+    // another window). With implicit mouse capture, clientX/Y extends beyond
+    // viewport bounds so we can detect the exit. This is fine alongside the
+    // pointer-drag because no HTML5/OLE drag is running until this point — it
+    // only starts once the cursor has actually left the window.
     if (
       !nativeStarted && (
         event.clientX <= 0 ||
@@ -114,12 +130,17 @@ export function usePointerDrag(deps: PointerDragDeps) {
 
     if (!nativeStarted) {
       const target = resolveDropTargetAtPoint(event.clientX, event.clientY);
-      if (target?.type === "background") {
-        const destDir = target.path || deps.getExplorer().currentPath;
-        if (dragPaths.every((p) => parentDir(p) === destDir)) {
-          clearHighlights();
-          return;
-        }
+      const destDir =
+        target?.type === "folder" || target?.type === "tab"
+          ? target.path
+          : target?.type === "background"
+            ? target.path || deps.getExplorer().currentPath
+            : undefined;
+      // Don't highlight a destination where the drop would be a no-op (every
+      // dragged item is already there, or it's the dragged folder / a descendant).
+      if (destDir !== undefined && dragPaths.every((p) => isNoOpDropPath(destDir, p))) {
+        clearHighlights();
+        return;
       }
       highlightTargetAtPoint(event.clientX, event.clientY);
     }
@@ -160,15 +181,16 @@ export function usePointerDrag(deps: PointerDragDeps) {
       const targetPath = target.path;
       cleanup(true);
       for (const sourcePath of paths) {
-        if (sourcePath === targetPath) continue;
-        if (targetPath.startsWith(sourcePath + "/")) continue;
+        // Skip no-op drops (already in this folder, or onto self/descendant) so
+        // they don't trigger a spurious "already exists" conflict dialog.
+        if (isNoOpDropPath(targetPath, sourcePath)) continue;
         await handleFileDrop(sourcePath, targetPath, isCopy, { onRefresh: refreshPanes });
       }
       return;
     } else if (target?.type === "background") {
       const destPath = target.path || explorer.currentPath;
       const sourceDir = dragPaths[0] ? parentDir(dragPaths[0]) : undefined;
-      if (sourceDir !== destPath) {
+      if (sourceDir !== undefined && !samePath(sourceDir, destPath)) {
         const paths = [...dragPaths];
         cleanup(true);
         for (const sourcePath of paths) {

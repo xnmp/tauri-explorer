@@ -11,7 +11,7 @@
   import { useProgressiveRender } from "$lib/composables/use-progressive-render.svelte";
   import { getFileIconColor } from "$lib/domain/file-types";
 
-  import { isMac } from "$lib/domain/platform";
+  import { usesPointerDrag } from "$lib/domain/platform";
   import EntryName from "./EntryName.svelte";
   import FileIcon from "./FileIcon.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
@@ -37,7 +37,7 @@
     selectOnContextMenu: true,
   });
 
-  const pointerDrag = isMac ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
+  const pointerDrag = usesPointerDrag ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
 
   // Compute effective list column count (auto or fixed)
   const effectiveListColumns = $derived.by(() => {
@@ -77,7 +77,11 @@
     display: grid;
     grid-template-rows: repeat(var(--list-rows, 1), auto);
     grid-auto-flow: column;
-    grid-auto-columns: 1fr;
+    /* minmax(0, 1fr), not 1fr: a 1fr track's implicit min is min-content, so a
+       long unbreakable name (or the wider rename box) would expand its column
+       and shove the others sideways. A 0 min keeps every column an equal share
+       and lets the name truncate / the rename box overflow instead. */
+    grid-auto-columns: minmax(0, 1fr);
     gap: 4px;
     padding: 8px;
     overflow-y: auto;
@@ -159,4 +163,18 @@
   }
 
   /* Name and rename styles are handled by EntryName component */
+
+  /* Let the name fill (and truncate within) its share of the row; min-width:0
+     is what actually allows it to shrink below the text's intrinsic width. */
+  .list-view :global(.list-item > [data-drag-name]) {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* While renaming, let the content-width rename box extend past the item over
+     neighbouring columns instead of being clipped to its grid cell. */
+  .list-view :global(.list-item:has(.rename-input)) {
+    overflow: visible;
+    z-index: 2;
+  }
 </style>

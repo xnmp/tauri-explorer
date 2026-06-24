@@ -32,6 +32,7 @@ import { undoStore } from "./undo.svelte";
 import { frecencyStore } from "./frecency.svelte";
 import { toastStore } from "./toast.svelte";
 import { renameThumbnailCache } from "$lib/state/thumbnail-cache";
+import { basename, joinPath, isInsideDir, isUncPath } from "$lib/domain/path";
 
 export interface PaneMutationContext {
   coreState: ExplorerCoreState;
@@ -50,7 +51,7 @@ export function createPaneMutations(ctx: PaneMutationContext) {
   async function navigateAwayIfNeeded(deletedPaths: Set<string>): Promise<void> {
     const current = coreState.currentPath;
     const shouldNavigateAway = [...deletedPaths].some(
-      (dp) => current === dp || current.startsWith(dp + "/")
+      (dp) => isInsideDir(current, dp)
     );
     if (shouldNavigateAway) {
       const parentPath = ctx.getParentPath();
@@ -104,9 +105,14 @@ export function createPaneMutations(ctx: PaneMutationContext) {
   ): Promise<string | null> {
     const entries = entriesArg ?? dialogStore.deletingEntries;
     if (entries.length === 0) return "No entries selected for delete";
-    const isPermanent = isPermanentArg ?? dialogStore.isPermanentDelete;
+    const requestedPermanent = isPermanentArg ?? dialogStore.isPermanentDelete;
 
     const paths = entries.map((e) => e.path);
+    // UNC/WSL locations have no Recycle Bin — such deletes are always permanent
+    // (the backend removes them directly). Treat them as permanent here too, so
+    // we don't record a "restore from trash" undo that could never succeed.
+    const isPermanent = requestedPermanent || paths.some(isUncPath);
+
     let result: { ok: boolean; error?: string };
 
     ctx.markLocalMutation();
@@ -142,9 +148,9 @@ export function createPaneMutations(ctx: PaneMutationContext) {
   }
 
   async function createSymlinkForEntry(path: string): Promise<void> {
-    const name = path.split("/").filter(Boolean).pop() || path;
+    const name = basename(path);
     const linkName = `${name} - Link`;
-    const linkPath = `${coreState.currentPath}/${linkName}`;
+    const linkPath = joinPath(coreState.currentPath, linkName);
     const result = await apiCreateSymlink(path, linkPath);
     if (result.ok) {
       coreState.entries = [...coreState.entries, result.data];

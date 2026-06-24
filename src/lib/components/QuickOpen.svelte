@@ -17,8 +17,9 @@
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { parentDir, basename, expandTilde as expandTildePath } from "$lib/domain/path";
+  import { parentDir, basename, directoryKey, toForwardSlashes, expandTilde as expandTildePath } from "$lib/domain/path";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+  import { usePointerIntent } from "$lib/composables/use-pointer-intent.svelte";
   import FileIcon from "./FileIcon.svelte";
   import Modal from "./Modal.svelte";
   import type { FileEntry } from "$lib/domain/file";
@@ -49,16 +50,12 @@
   let inputRef = $state<HTMLInputElement | null>(null);
   let resultsContainerRef = $state<HTMLElement | null>(null);
   let homeDir = $state<string | null>(null);
-  // Guard: hover may only change the selection after a REAL pointer move.
+  // Guard: hover may only change the selection after a DELIBERATE pointer move.
   // Rows react to mousemove (not mouseenter — that also fires when a row
-  // re-renders or scrolls under a stationary cursor), coordinates must have
-  // actually changed (WebKit/Chromium emit synthetic zero-delta mousemoves
-  // after relayout/scroll), and every results update revokes the
-  // authorization so movement from before a re-render can't steal selection.
-  let mouseMoved = $state(false);
-  let lastMousePos = $state<{ x: number; y: number } | null>(null);
-  let mouseTrackingReady = $state(false);
-  let mouseTrackingTimer: ReturnType<typeof setTimeout> | null = null;
+  // re-renders or scrolls under a stationary cursor), and the move must clear a
+  // small deadzone (ignore mouse drift), and every keyboard nav / results
+  // update re-anchors so movement from before can't steal the selection.
+  const pointer = usePointerIntent();
 
   // Fetch home directory for tilde expansion
   getHomeDirectory().then((r) => { if (r.ok) homeDir = r.data; });
@@ -104,11 +101,12 @@
 
     // Recent files — scored with full fuzzy matching
     for (const entry of recentFilesStore.list) {
-      if (seen.has(entry.path)) continue;
-      seen.add(entry.path);
+      const key = directoryKey(entry.path);
+      if (seen.has(key)) continue;
+      seen.add(key);
       const fuzzy = fuzzyScorePath(lower, entry.path);
       if (fuzzy > 0) {
-        const frecency = scoreMap.get(entry.path) ?? 0;
+        const frecency = scoreMap.get(key) ?? 0;
         const nameBonus = filenameMatchScore(entry.name, lower);
         matched.push({
           name: entry.name,
@@ -122,12 +120,13 @@
 
     // Frecency entries (mostly directories the user has navigated to)
     for (const entry of frecencyStore.entries) {
-      if (seen.has(entry.path)) continue;
-      seen.add(entry.path);
+      const key = directoryKey(entry.path);
+      if (seen.has(key)) continue;
+      seen.add(key);
       const name = basename(entry.path);
       const fuzzy = fuzzyScorePath(lower, entry.path);
       if (fuzzy > 0) {
-        const frecency = scoreMap.get(entry.path) ?? 0;
+        const frecency = scoreMap.get(key) ?? 0;
         const nameBonus = filenameMatchScore(name, lower);
         matched.push({
           name,
@@ -148,7 +147,7 @@
     const scoreMap = frecencyStore.getScoreMap();
     const currentQuery = query.toLowerCase();
     const ranked = searchResults.map((r) => {
-      const frecency = scoreMap.get(r.path) ?? 0;
+      const frecency = scoreMap.get(directoryKey(r.path)) ?? 0;
       const nameBonus = filenameMatchScore(r.name, currentQuery);
       return { ...r, score: r.score + Math.round(frecency * FRECENCY_WEIGHT) + nameBonus };
     });
@@ -163,8 +162,8 @@
 
   /** Merge primary results with extras (deduplicated), sorted by score descending. */
   function mergeResultsByScore(primary: SearchResult[], extras: SearchResult[]): SearchResult[] {
-    const seen = new Set(primary.map((r) => r.path));
-    const unique = extras.filter((r) => !seen.has(r.path));
+    const seen = new Set(primary.map((r) => directoryKey(r.path)));
+    const unique = extras.filter((r) => !seen.has(directoryKey(r.path)));
     const merged = [...primary, ...unique];
     merged.sort((a, b) => effectiveScore(b) - effectiveScore(a));
     return merged;
@@ -185,6 +184,21 @@
   function getCwdPath(): string {
     const explorer = windowTabsManager.getActiveExplorer();
     return explorer?.currentPath ?? "/";
+  }
+
+  /** Path shown in a result row: relative to the current folder when the file
+   *  lives under it (just the filename for a direct child), otherwise the full
+   *  path. Keeps cwd results compact instead of repeating the whole prefix. */
+  function displayPath(fullPath: string): string {
+    const cwdKey = directoryKey(getCwdPath());
+    const fileKey = directoryKey(fullPath);
+    if (cwdKey && cwdKey !== "/" && fileKey.startsWith(cwdKey + "/")) {
+      // cwdKey only differs from the forward-slashed cwd by case folding, which
+      // preserves length, so slicing the forward-slash form by its length
+      // strips exactly the "cwd/" prefix while keeping the original casing.
+      return toForwardSlashes(fullPath).slice(cwdKey.length + 1);
+    }
+    return fullPath;
   }
 
   // Cancel active search and cleanup listener
@@ -233,7 +247,7 @@
       const ranked = rankWithFrecency(payload.results);
       const frecencyMatches = matchFrecencyAndRecent(query);
       results = mergeResultsByScore(ranked, frecencyMatches);
-      mouseMoved = false;
+      pointer.reset();
       totalScanned = payload.totalScanned;
 
       // Reset selection if needed
@@ -251,7 +265,7 @@
   // Debounced streaming search
   function handleInput(): void {
     if (searchTimer) clearTimeout(searchTimer);
-    mouseMoved = false;
+    pointer.reset();
 
     if (!query.trim()) {
       cancelActiveSearch();
@@ -312,7 +326,7 @@
         if (result.ok) {
           const ranked = rankWithFrecency(result.data);
           results = mergeResultsByScore(ranked, frecencyMatches);
-          mouseMoved = false;
+          pointer.reset();
         }
         loading = false;
       }
@@ -337,7 +351,7 @@
         event.preventDefault();
         if (displayResults.length > 0) {
           selectedIndex = (selectedIndex + 1) % displayResults.length;
-          mouseMoved = false;
+          pointer.reset();
           scrollToSelected();
         }
         break;
@@ -345,7 +359,7 @@
         event.preventDefault();
         if (displayResults.length > 0) {
           selectedIndex = (selectedIndex - 1 + displayResults.length) % displayResults.length;
-          mouseMoved = false;
+          pointer.reset();
           scrollToSelected();
         }
         break;
@@ -363,16 +377,11 @@
     }
   }
 
-  /** Hover-selection via real pointer movement only. Runs before the
-   *  dialog-level tracker (mousemove bubbles), so it does the same
-   *  coordinate-change bookkeeping itself. */
+  /** Hover-selection via deliberate pointer movement only. Runs before the
+   *  dialog-level tracker (mousemove bubbles), so it feeds the tracker itself. */
   function handleRowMouseMove(event: MouseEvent, index: number): void {
-    if (!mouseTrackingReady) return;
-    if (lastMousePos && (event.clientX !== lastMousePos.x || event.clientY !== lastMousePos.y)) {
-      mouseMoved = true;
-    }
-    lastMousePos = { x: event.clientX, y: event.clientY };
-    if (mouseMoved && selectedIndex !== index) {
+    pointer.track(event.clientX, event.clientY);
+    if (pointer.moved && selectedIndex !== index) {
       selectedIndex = index;
     }
   }
@@ -387,15 +396,16 @@
   async function selectResult(result: SearchResult): Promise<void> {
     const explorer = windowTabsManager.getActiveExplorer();
 
-    // Record access for frecency ranking
-    frecencyStore.recordAccess(result.path);
-
     if (result.kind === "directory") {
+      // Jumping to a folder is navigation, not a file action — it no longer
+      // feeds frecency (the Recent list ranks folders by file activity).
       explorer?.navigateTo(result.path);
     } else {
       const openResult = await openFile(result.path);
       if (openResult.ok) {
         recentFilesStore.add(result.path, result.name, "file");
+        // Opening a file marks its folder as actively worked-in for Recent ranking.
+        frecencyStore.recordFileAction(result.path);
       } else {
         const resultDir = parentDir(result.path);
         explorer?.navigateTo(resultDir);
@@ -413,11 +423,7 @@
       query = "";
       results = [];
       selectedIndex = 0;
-      mouseMoved = false;
-      lastMousePos = null;
-      mouseTrackingReady = false;
-      if (mouseTrackingTimer) clearTimeout(mouseTrackingTimer);
-      mouseTrackingTimer = setTimeout(() => { mouseTrackingReady = true; }, 150);
+      pointer.arm();
       tick().then(() => inputRef?.focus());
       untrack(() => {
         recentFilesStore.pruneNonExistent();
@@ -433,10 +439,7 @@
         clearTimeout(searchTimer);
         searchTimer = null;
       }
-      if (mouseTrackingTimer) {
-        clearTimeout(mouseTrackingTimer);
-        mouseTrackingTimer = null;
-      }
+      pointer.disarm();
       // Cancel any active streaming search
       cancelActiveSearch();
       totalScanned = 0;
@@ -455,13 +458,7 @@
 >
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="quick-open-dialog"
-    onmousemove={(e) => {
-      if (!mouseTrackingReady) return;
-      if (lastMousePos && (e.clientX !== lastMousePos.x || e.clientY !== lastMousePos.y)) {
-        mouseMoved = true;
-      }
-      lastMousePos = { x: e.clientX, y: e.clientY };
-    }}>
+    onmousemove={(e) => pointer.track(e.clientX, e.clientY)}>
       <div class="search-container">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="search-icon">
           <circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.5"/>
@@ -509,12 +506,12 @@
                 </span>
                 <div class="result-content">
                   <span class="result-name">{result.name}</span>
-                  <span class="result-path">{result.relativePath}</span>
+                  <span class="result-path">{displayPath(result.path)}</span>
                 </div>
                 {#if settingsStore.quickOpenDebug}
                   {@const qLower = query.toLowerCase()}
                   {@const nameScore = filenameMatchScore(result.name, qLower)}
-                  {@const frecency = frecencyStore.getScoreMap().get(result.path) ?? 0}
+                  {@const frecency = frecencyStore.getScoreMap().get(directoryKey(result.path)) ?? 0}
                   {@const frecencyPts = Math.round(frecency * FRECENCY_WEIGHT)}
                   {@const baseScore = Math.round(result.score - frecencyPts - nameScore)}
                   {@const dirMult = result.kind === "directory" ? 1.25 : 1}
@@ -564,7 +561,7 @@
                 </span>
                 <div class="result-content">
                   <span class="result-name">{result.name}</span>
-                  <span class="result-path">{result.relativePath}</span>
+                  <span class="result-path">{displayPath(result.path)}</span>
                 </div>
                 <span class="result-kind recent-badge">recent</span>
               </li>

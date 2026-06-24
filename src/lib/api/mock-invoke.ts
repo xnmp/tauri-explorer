@@ -47,6 +47,16 @@ const mockFiles: Record<string, FileEntry[]> = {
     file("notes.md", "/home/user/notes.md", 2048),
   ],
   "/home/user/Archive": [],
+  // Removable drive contents — lets the browser mock navigate onto a removable
+  // drive so the "removable drive removed" state can be exercised.
+  "/media/user/USB_DRIVE": [
+    dir("Backups", "/media/user/USB_DRIVE/Backups"),
+    file("photo.jpg", "/media/user/USB_DRIVE/photo.jpg", 1048576),
+    file("notes.txt", "/media/user/USB_DRIVE/notes.txt", 2048),
+  ],
+  "/media/user/USB_DRIVE/Backups": [
+    file("backup-2024.zip", "/media/user/USB_DRIVE/Backups/backup-2024.zip", 8388608),
+  ],
   "/home/user/Documents": [
     dir("project", "/home/user/Documents/project"),
     file("report.pdf", "/home/user/Documents/report.pdf", 102400),
@@ -55,9 +65,24 @@ const mockFiles: Record<string, FileEntry[]> = {
     file("notes.md", "/home/user/Documents/notes.md", 4096),
   ],
   "/home/user/Downloads": [
+    dir("wrapper", "/home/user/Downloads/wrapper", false),
     file("archive.zip", "/home/user/Downloads/archive.zip", 1048576),
+    file("bundle.zip", "/home/user/Downloads/bundle.zip", 2097152),
     file("installer.exe", "/home/user/Downloads/installer.exe", 5242880),
     file("image.png", "/home/user/Downloads/image.png", 524288),
+  ],
+  // A chain of single-child folders: wrapper → payload → inner → {real content}.
+  // Previewing "wrapper" descends through the chain and shows inner's contents.
+  "/home/user/Downloads/wrapper": [
+    dir("payload", "/home/user/Downloads/wrapper/payload", false),
+  ],
+  "/home/user/Downloads/wrapper/payload": [
+    dir("inner", "/home/user/Downloads/wrapper/payload/inner", false),
+  ],
+  "/home/user/Downloads/wrapper/payload/inner": [
+    dir("assets", "/home/user/Downloads/wrapper/payload/inner/assets"),
+    file("app.js", "/home/user/Downloads/wrapper/payload/inner/app.js", 1024),
+    file("style.css", "/home/user/Downloads/wrapper/payload/inner/style.css", 512),
   ],
   "/home/user/Pictures": [
     dir("vacation", "/home/user/Pictures/vacation"),
@@ -312,13 +337,29 @@ const mockFileContent: Record<string, string> = {
   ].join("\n"),
 };
 
+// Mutable so manual/E2E testing can simulate ejecting a removable drive: the
+// drives store re-polls `list_drives` every ~1.5s, so replacing this list makes
+// the change propagate. `window.__mockEjectDrive(path)` (set below) removes one.
+let mockDrives: { name: string; path: string; kind: string; detail?: string; provider?: string }[] = [
+  // Removable drive showing a volume label with the drive letter as dimmed detail.
+  { name: "USB Backup", path: "/media/user/USB_DRIVE", kind: "removable", detail: "E:" },
+  { name: "Memory Stick", path: "/media/user/Memory_Stick", kind: "removable", detail: "F:" },
+  // Cloud / remote section: Google Drive File Stream + a WSL home mount.
+  { name: "Google Drive", path: "/media/user/GoogleDrive", kind: "cloud", detail: "G:", provider: "googledrive" },
+  { name: "Ubuntu", path: "\\\\wsl$\\Ubuntu\\home", kind: "cloud", detail: "WSL", provider: "wsl" },
+];
+
+if (typeof window !== "undefined") {
+  // Test affordance (mock/browser only): drop a drive to mimic an eject.
+  (window as unknown as { __mockEjectDrive?: (path: string) => void }).__mockEjectDrive = (path: string) => {
+    mockDrives = mockDrives.filter((d) => d.path !== path);
+  };
+}
+
 const mockCommands: Record<string, CommandHandler> = {
   get_home_directory: () => "/home/user",
   get_launch_cwd: () => "/home/user",
-  list_drives: () => [
-    { name: "USB Drive", path: "/media/user/USB_DRIVE", kind: "removable" },
-    { name: "Memory Stick", path: "/media/user/Memory_Stick", kind: "removable" },
-  ],
+  list_drives: () => mockDrives,
 
   list_directory: (args) => {
     const raw = args.path as string;
@@ -441,16 +482,36 @@ const mockCommands: Record<string, CommandHandler> = {
   copy_entry: (args) => {
     const source = args.source as string;
     const destDir = args.destDir as string;
+    const overwrite = (args.overwrite as boolean) ?? false;
     const name = basename(source);
     const sourcePath = parentDir(source);
     const sourceEntries = mockFiles[sourcePath] || [];
     const sourceEntry = sourceEntries.find((e) => e.path === source);
     if (!sourceEntry) throw new Error("Source not found");
 
-    const newPath = `${destDir}/${name}`;
-    const newEntry: FileEntry = { ...sourceEntry, path: newPath };
     if (!mockFiles[destDir]) mockFiles[destDir] = [];
-    mockFiles[destDir].push(newEntry);
+    const dest = mockFiles[destDir];
+
+    // Mirror the Rust backend: when the target name already exists and we're not
+    // overwriting (e.g. pasting into the same folder), generate a "X - Copy"
+    // name instead of clobbering. Used by the same-folder paste-copy behavior.
+    let finalName = name;
+    if (dest.some((e) => e.name === name) && !overwrite) {
+      const isDir = sourceEntry.kind === "directory";
+      const dot = isDir ? -1 : name.lastIndexOf(".");
+      const base = dot > 0 ? name.slice(0, dot) : name;
+      const ext = dot > 0 ? name.slice(dot) : "";
+      finalName = `${base} - Copy${ext}`;
+      for (let n = 2; dest.some((e) => e.name === finalName); n++) {
+        finalName = `${base} - Copy (${n})${ext}`;
+      }
+    }
+
+    const newPath = `${destDir}/${finalName}`;
+    const newEntry: FileEntry = { ...sourceEntry, name: finalName, path: newPath };
+    const existingIdx = dest.findIndex((e) => e.name === finalName);
+    if (existingIdx >= 0) dest[existingIdx] = newEntry;
+    else dest.push(newEntry);
     return newEntry;
   },
 
@@ -656,6 +717,12 @@ const mockCommands: Record<string, CommandHandler> = {
     return "data:image/jpeg;base64,/9j//gAQTGF2YzYyLjExLjEwMAD/2wBDAAgUFBcUFxsbGxsbGyAeICEhISAgICAhISEkJCQqKiokJCQhISQkKCgqKi4vLisrKisvLzIyMjw8OTlGRkhWVmf/xABiAAEBAQAAAAAAAAAAAAAAAAAGAwUBAQAAAAAAAAAAAAAAAAAAAAQQAAIBAwQCAwEAAAAAAAAAAAECAxESACExIgRxYRNBUTIRAQACAwEBAAAAAAAAAAAAAAEhADFBAoED/8AAEQgAEAAQAwEiAAIRAAMRAP/aAAwDAQACEQMRAD8AjOYesy3q4rUW2Vq3o4en70YNEis21Ycq+M3WvdI7ecjm0En+PwA/VddsDTjrpGx+UO9RooLbb8mpp4GN4UJZKn6Zjfl//9k=";
   },
 
+  get_video_thumbnail_data: () => {
+    // Same realistic 128px thumbnail as images — stands in for an extracted
+    // video frame so the tiles view can be demoed in browser/E2E mode.
+    return mockInvoke<string>("get_thumbnail_data");
+  },
+
   clear_thumbnail_cache: () => 0,
 
   get_thumbnail_cache_stats: () => ({
@@ -817,6 +884,34 @@ const mockCommands: Record<string, CommandHandler> = {
 
   // ----- Archives -----
 
+  list_archive_contents: (args) => {
+    const archivePath = args.archivePath as string;
+    const name = basename(archivePath);
+    // Browser/e2e mode has no real zips — return stable fake listings.
+    // A "bundle*.zip" stands in for an archive with a single top-level
+    // folder (descended into, with the root-folder indicator); anything
+    // else has multiple top-level entries.
+    if (name.startsWith("bundle")) {
+      const root = name.replace(/\.zip$/i, "");
+      return {
+        entries: [
+          dir("src", `${archivePath}!/${root}/src`),
+          file("Cargo.toml", `${archivePath}!/${root}/Cargo.toml`, 320),
+          file("main.rs", `${archivePath}!/${root}/main.rs`, 640),
+        ],
+        rootFolder: root,
+      };
+    }
+    return {
+      entries: [
+        dir("src", `${archivePath}!/src`),
+        file("README.md", `${archivePath}!/README.md`, 512),
+        file("data.json", `${archivePath}!/data.json`, 2048),
+      ],
+      rootFolder: null,
+    };
+  },
+
   compress_to_zip: (args) => {
     const paths = args.paths as string[];
     if (!paths?.length) throw new Error("No paths to compress");
@@ -871,6 +966,8 @@ const mockCommands: Record<string, CommandHandler> = {
   open_file_with: () => {},
 
   open_in_terminal: () => {},
+  list_installed_terminals: () => ["ghostty", "kitty", "alacritty", "gnome-terminal", "xterm"],
+  set_ffmpeg_path: () => {},
 
   set_as_wallpaper: () => {},
 

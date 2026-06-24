@@ -3,7 +3,8 @@
  */
 
 import { WebviewWindow, type Color } from "@tauri-apps/api/webviewWindow";
-import { isMac } from "$lib/domain/platform";
+import { isMac, isWindows } from "$lib/domain/platform";
+import { windowsBackdropEffects } from "../window-backdrop";
 import { windowTabsManager, tabSeedKey, type TabSnapshot } from "../window-tabs.svelte";
 import { settingsStore } from "../settings.svelte";
 import { savePersisted } from "../persisted";
@@ -27,6 +28,9 @@ export async function openNewWindow(
   path: string,
   viewMode?: ViewMode,
   tabSnapshot?: TabSnapshot,
+  /** Physical-pixel top-left to place the new window at (e.g. a tab tear-off at
+   *  the cursor). Defaults to a small offset from the current window. */
+  at?: { x: number; y: number },
 ): Promise<void> {
   // Seed the child window with current directory entries for instant rendering
   const explorer = windowTabsManager.getActiveExplorer();
@@ -53,17 +57,31 @@ export async function openNewWindow(
   const win = getCurrentWindow();
   const pos = await win.outerPosition();
   const size = await win.outerSize();
+
+  // Mirror the main window's backdrop so new windows match (issue: Windows
+  // Mica/Acrylic). A translucent backdrop needs a transparent window and no
+  // opaque background color; the DWM system backdrop still rounds the corners.
+  const windowEffects = windowsBackdropEffects();
+  const winBackdrop = windowEffects !== undefined;
+
   new WebviewWindow(label, {
     url,
     title: "tauri-explorer",
     width: size.width,
     height: size.height,
-    x: pos.x + 30,
-    y: pos.y + 30,
-    backgroundColor: getPersistedBgColor(),
+    // Tear-off places the new window so its title bar sits under the cursor;
+    // otherwise offset slightly from the current window.
+    x: at ? Math.round(at.x - 120) : pos.x + 30,
+    y: at ? Math.round(at.y - 16) : pos.y + 30,
+    backgroundColor: winBackdrop ? undefined : getPersistedBgColor(),
     decorations: isMac,
-    transparent: !isMac,
-    shadow: isMac,
+    // Windows 11 only rounds corners (and draws the DWM shadow) on opaque
+    // windows OR ones with a system backdrop. So an opaque window OR a
+    // Mica/Acrylic backdrop keeps rounded corners; a plain transparent window
+    // (no backdrop) is what produced the sharp-corner bug.
+    transparent: winBackdrop ? true : !isMac && !isWindows,
+    shadow: isMac || isWindows,
+    windowEffects,
     dragDropEnabled: true,
     acceptFirstMouse: true,
     titleBarStyle: isMac && settingsStore.integratedTitleBar ? "overlay" : undefined,

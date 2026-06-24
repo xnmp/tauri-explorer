@@ -11,6 +11,7 @@ pub mod git;
 mod nano_banana;
 #[cfg(target_os = "linux")]
 mod portal;
+mod process_ext;
 /// Non-Linux stub so the command registry stays platform-independent.
 #[cfg(not(target_os = "linux"))]
 mod portal {
@@ -112,6 +113,7 @@ pub fn run(launch_dir: Option<String>) {
             files::file_ops::copy_entry,
             files::file_ops::move_entry,
             files::file_ops::read_text_file,
+            files::file_ops::read_image_data_url,
             files::file_ops::write_text_file,
             files::file_ops::delete_entry_permanent,
             files::file_ops::create_symlink,
@@ -126,6 +128,8 @@ pub fn run(launch_dir: Option<String>) {
             files::external_apps::open_file_with,
             files::external_apps::open_image_with_siblings,
             files::external_apps::open_in_terminal,
+            files::external_apps::list_installed_terminals,
+            files::shortcuts::resolve_shortcut,
             // Search
             search::fuzzy_search,
             search::start_streaming_search,
@@ -143,6 +147,8 @@ pub fn run(launch_dir: Option<String>) {
             thumbnails::get_thumbnail,
             thumbnails::get_thumbnail_data,
             thumbnails::get_micro_thumbnail,
+            thumbnails::get_video_thumbnail_data,
+            thumbnails::set_ffmpeg_path,
             thumbnails::clear_thumbnail_cache,
             thumbnails::get_thumbnail_cache_stats,
             // Archive operations
@@ -150,6 +156,7 @@ pub fn run(launch_dir: Option<String>) {
             archive::cancel_compress,
             archive::cancel_extract,
             archive::extract_archive,
+            archive::list_archive_contents,
             // Config file persistence
             config::read_config_file,
             config::write_config_file,
@@ -196,10 +203,10 @@ pub fn run(launch_dir: Option<String>) {
 
             // Create window programmatically so we can inject initialization_script.
             // This replaces the static window definition in tauri.conf.json.
-            // `mut` is only used by the macOS-only block below (title bar /
-            // vibrancy); allow the otherwise-unused mut on Linux/Windows so
-            // clippy -D warnings stays green there.
-            #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+            // `mut` is used by the macOS (title bar / vibrancy) and Windows
+            // (Mica/Acrylic backdrop) blocks below; allow the otherwise-unused
+            // mut on Linux so clippy -D warnings stays green there.
+            #[cfg_attr(target_os = "linux", allow(unused_mut))]
             let mut builder = tauri::WebviewWindowBuilder::new(
                 app,
                 "main",
@@ -248,6 +255,37 @@ pub fn run(launch_dir: Option<String>) {
                             color: None,
                         });
                     }
+                }
+            }
+
+            // Windows: apply a translucent Mica/Acrylic system backdrop when
+            // enabled. Like macOS vibrancy this is a startup decision (the
+            // transparent flag can't be toggled at runtime), so it requires a
+            // restart. The DWM system backdrop keeps the window's rounded
+            // corners; the frontend's [data-vibrancy] CSS makes the app
+            // background transparent so the effect shows through.
+            #[cfg(target_os = "windows")]
+            {
+                let backdrop = config::config_dir()
+                    .ok()
+                    .and_then(|dir| std::fs::read_to_string(dir.join("settings.json")).ok())
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                    .and_then(|v| v.get("windowsBackdrop")?.as_str().map(String::from));
+
+                use tauri::utils::WindowEffect;
+                let effect = match backdrop.as_deref() {
+                    Some("mica") => Some(WindowEffect::Mica),
+                    Some("acrylic") => Some(WindowEffect::Acrylic),
+                    _ => None,
+                };
+                if let Some(effect) = effect {
+                    use tauri::utils::config::WindowEffectsConfig;
+                    builder = builder.transparent(true).effects(WindowEffectsConfig {
+                        effects: vec![effect],
+                        state: None,
+                        radius: None,
+                        color: None,
+                    });
                 }
             }
 

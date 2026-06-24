@@ -12,7 +12,7 @@ import { conflictResolver } from "./conflict-resolver.svelte";
 import { undoStore } from "./undo.svelte";
 import { toastStore } from "./toast.svelte";
 import { broadcastFileChange } from "./file-events";
-import { parentDir, basename } from "$lib/domain/path";
+import { parentDir, basename, sameDirectory } from "$lib/domain/path";
 import { frecencyStore } from "./frecency.svelte";
 import type { FileEntry } from "$lib/domain/file";
 
@@ -68,7 +68,7 @@ export async function performFileTransfer(
 
   const fileName = basename(sourcePath);
   const sourceDir = parentDir(sourcePath);
-  const isSameParent = sourceDir === targetDir;
+  const isSameParent = sameDirectory(sourceDir, targetDir);
 
   // --- Central same-parent guard ---
   // MOVE into the entry's own parent is a no-op: skip instead of prompting a

@@ -1,6 +1,6 @@
 [package]
 name = "tauri-explorer"
-version = "0.4.0"
+version = "0.5.0"
 description = "A minimalistic, high-performance file explorer"
 authors = ["you"]
 edition = "2021"
@@ -72,4 +72,13 @@ tempfile = "3"
 # similarly. Our own crate stays at opt-level 0 for fast incremental rebuilds.
 [profile.dev.package."*"]
 opt-level = 3
+
+# Local patch of `drag` (see vendor/drag/). Avoids the unconditional
+# `unwrap()` on `get_file_data_object` returning None, which panicked the
+# whole process when an unsupported path (e.g. UNC / WSL `\\wsl.localhost\…`)
+# was dragged. JS-side guards block UNC paths from reaching the plugin, but
+# this is defense in depth so a future regression can't take the app down.
+# Tracks crabnebula-dev/drag-rs#72.
+[patch.crates-io]
+drag = { path = "vendor/drag" }
 

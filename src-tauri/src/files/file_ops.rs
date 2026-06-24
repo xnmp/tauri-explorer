@@ -79,7 +79,7 @@ fn unique_staging_path(dest_dir: &Path, name: &str) -> PathBuf {
 }
 
 /// Remove a file, directory tree, or symlink (the link itself, not its target).
-fn remove_entry_at(path: &Path) -> Result<(), AppError> {
+pub(crate) fn remove_entry_at(path: &Path) -> Result<(), AppError> {
     let meta = fs::symlink_metadata(path)?;
     if meta.is_dir() {
         fs::remove_dir_all(path)?;
@@ -410,13 +410,28 @@ fn perform_move(
     target: &Path,
     source_name: &str,
 ) -> Result<(), AppError> {
+    // Raw OS error for a cross-filesystem rename, as a fallback for platforms
+    // where std hasn't categorized the code into `ErrorKind::CrossesDevices`.
+    // Unix `EXDEV` = 18; Windows `ERROR_NOT_SAME_DEVICE` = 17. `raw_os_error()`
+    // returns the Win32 code on Windows, NOT the CRT errno, so the constant
+    // must be 17 there — comparing against `libc::EXDEV` would never match.
+    #[cfg(unix)]
+    const CROSS_DEVICE_ERRNO: i32 = libc::EXDEV;
+    #[cfg(windows)]
+    const CROSS_DEVICE_ERRNO: i32 = 17;
+    #[cfg(not(any(unix, windows)))]
+    const CROSS_DEVICE_ERRNO: i32 = -1;
+
     // Try a simple rename first (works if same filesystem)
     match fs::rename(source_path, target) {
         Ok(()) => Ok(()),
         Err(e) => {
-            // Only fall back to copy+delete for cross-filesystem moves (EXDEV).
+            // Only fall back to copy+delete for cross-filesystem moves.
             // Other errors (permission denied, etc.) should be returned immediately.
-            let is_cross_device = e.raw_os_error() == Some(libc::EXDEV);
+            // `CrossesDevices` (stable since Rust 1.85) is the portable signal;
+            // the raw-errno check is a belt-and-suspenders fallback.
+            let is_cross_device = e.kind() == std::io::ErrorKind::CrossesDevices
+                || e.raw_os_error() == Some(CROSS_DEVICE_ERRNO);
             if !is_cross_device {
                 log::warn!("Move failed (not cross-device): {}", e);
                 return Err(AppError::Io(e));
@@ -494,6 +509,78 @@ fn read_text_file_impl(path: String, max_bytes: Option<u64>) -> Result<String, A
             "File contains invalid UTF-8 (likely binary)",
         ))
     })
+}
+
+/// Read an image file and return it as a `data:` URI.
+///
+/// Fallback path for previewing images that the `asset:` protocol can't serve
+/// — most notably files on virtual/cloud filesystems (Google Drive, OneDrive)
+/// whose placeholder paths the asset server fails to stream. Reading the bytes
+/// through a normal `fs` read forces the cloud client to hydrate the file, then
+/// we hand the webview a self-contained data URI. Capped at `max_bytes` (default
+/// 32 MB) so we don't base64 an enormous file into memory.
+#[tauri::command]
+pub async fn read_image_data_url(path: String, max_bytes: Option<u64>) -> Result<String, AppError> {
+    run_blocking(move || read_image_data_url_impl(path, max_bytes)).await
+}
+
+fn read_image_data_url_impl(path: String, max_bytes: Option<u64>) -> Result<String, AppError> {
+    use base64::Engine as _;
+
+    let file_path = PathBuf::from(&path);
+    let limit = max_bytes.unwrap_or(32 * 1024 * 1024);
+
+    let metadata = match fs::metadata(&file_path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(AppError::NotFound(path)),
+        Err(e) => return Err(AppError::from(e)),
+    };
+    if !metadata.is_file() {
+        return Err(AppError::InvalidPath(format!(
+            "Not a regular file: {}",
+            path
+        )));
+    }
+    if metadata.len() > limit {
+        return Err(AppError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "Image too large for preview: {} bytes (limit: {})",
+                metadata.len(),
+                limit
+            ),
+        )));
+    }
+
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    fs::File::open(&file_path)?
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)?;
+
+    let mime = mime_for_extension(&file_path);
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(format!("data:{};base64,{}", mime, encoded))
+}
+
+/// Best-effort image MIME type from a file extension. Defaults to a generic
+/// image type so the browser sniffs the actual format.
+fn mime_for_extension(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
+        Some("svg") => "image/svg+xml",
+        Some("avif") => "image/avif",
+        Some("ico") => "image/x-icon",
+        _ => "application/octet-stream",
+    }
 }
 
 /// Write text content to a new file.

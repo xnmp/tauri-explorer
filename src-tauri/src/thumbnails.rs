@@ -32,6 +32,17 @@ const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bm
 #[cfg(not(feature = "avif"))]
 const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "bmp", "icns"];
 
+/// Supported video extensions for frame-extraction thumbnails (requires ffmpeg).
+const SUPPORTED_VIDEO_EXTENSIONS: &[&str] = &[
+    "mp4", "mov", "mkv", "webm", "avi", "wmv", "flv", "m4v", "mpg", "mpeg",
+];
+
+/// Audio extensions that can carry embedded cover art. We extract the attached
+/// picture (not a frame) via ffmpeg. m4a/mp3/flac/etc. commonly have album art.
+const SUPPORTED_AUDIO_EXTENSIONS: &[&str] = &[
+    "m4a", "mp3", "flac", "ogg", "opus", "aac", "wma", "m4b", "aiff", "alac",
+];
+
 /// Get the cache directory for thumbnails
 fn get_cache_dir() -> Option<PathBuf> {
     dirs::cache_dir().map(|p| p.join("tauri-explorer").join("thumbnails"))
@@ -63,6 +74,22 @@ pub fn is_supported_image(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .map(|e| SUPPORTED_EXTENSIONS.contains(&e.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+/// Check if a file is a supported audio type (thumbnail via embedded cover art)
+pub fn is_supported_audio(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| SUPPORTED_AUDIO_EXTENSIONS.contains(&e.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+/// Check if a file is a supported video type (thumbnail via ffmpeg frame extraction)
+pub fn is_supported_video(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| SUPPORTED_VIDEO_EXTENSIONS.contains(&e.to_lowercase().as_str()))
         .unwrap_or(false)
 }
 
@@ -528,6 +555,297 @@ fn get_micro_thumbnail_sync(
     })
 }
 
+// ─── Video frame thumbnails (ffmpeg) ────────────────────────────────────────
+
+/// Return true if `cmd` runs `-version` successfully (i.e. it's a real ffmpeg).
+fn ffmpeg_runs(cmd: &Path) -> bool {
+    use crate::process_ext::NoConsole;
+    use std::process::Command;
+    Command::new(cmd)
+        .arg("-version")
+        .no_console()
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Common absolute install locations to try when `ffmpeg` isn't on PATH — most
+/// relevant on Windows, where ffmpeg is usually unzipped into a folder rather
+/// than added to PATH (winget/scoop/choco/manual), and macOS Homebrew.
+fn ffmpeg_fallback_candidates() -> Vec<PathBuf> {
+    let mut v = Vec::new();
+    let env = |k: &str| std::env::var(k).ok();
+    #[cfg(target_os = "windows")]
+    {
+        for base in [env("LOCALAPPDATA"), env("ProgramFiles"), env("USERPROFILE")]
+            .into_iter()
+            .flatten()
+        {
+            v.push(PathBuf::from(&base).join(r"Microsoft\WinGet\Links\ffmpeg.exe"));
+            v.push(PathBuf::from(&base).join(r"ffmpeg\bin\ffmpeg.exe"));
+            v.push(PathBuf::from(&base).join(r"scoop\shims\ffmpeg.exe"));
+        }
+        v.push(PathBuf::from(r"C:\ffmpeg\bin\ffmpeg.exe"));
+        v.push(PathBuf::from(r"C:\ProgramData\chocolatey\bin\ffmpeg.exe"));
+
+        // winget installs into versioned package subdirs (e.g.
+        // %LOCALAPPDATA%\Microsoft\WinGet\Packages\Gyan.FFmpeg_…\ffmpeg-7.x-full_build\bin\ffmpeg.exe),
+        // so glob: for each package dir whose name contains "ffmpeg", look for
+        // <pkg>/<any>/bin/ffmpeg.exe.
+        if let Some(local) = env("LOCALAPPDATA") {
+            let packages = PathBuf::from(local).join(r"Microsoft\WinGet\Packages");
+            if let Ok(pkg_dirs) = std::fs::read_dir(&packages) {
+                for pkg in pkg_dirs.flatten() {
+                    if !pkg
+                        .file_name()
+                        .to_string_lossy()
+                        .to_lowercase()
+                        .contains("ffmpeg")
+                    {
+                        continue;
+                    }
+                    if let Ok(inner) = std::fs::read_dir(pkg.path()) {
+                        for sub in inner.flatten() {
+                            v.push(sub.path().join(r"bin\ffmpeg.exe"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = env; // unused on non-windows
+        for p in [
+            "/opt/homebrew/bin/ffmpeg",
+            "/usr/local/bin/ffmpeg",
+            "/usr/bin/ffmpeg",
+        ] {
+            v.push(PathBuf::from(p));
+        }
+    }
+    v
+}
+
+/// User-configured explicit ffmpeg path (from settings). Takes priority over
+/// auto-detection. Empty/unset = auto-detect only.
+fn ffmpeg_override() -> &'static Mutex<Option<String>> {
+    static OVERRIDE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    OVERRIDE.get_or_init(|| Mutex::new(None))
+}
+
+/// Cached resolution: `None` = not yet computed, `Some(opt)` = computed.
+/// Invalidated by `set_ffmpeg_path` so a newly-configured path takes effect.
+fn ffmpeg_resolved() -> &'static Mutex<Option<Option<PathBuf>>> {
+    static RESOLVED: OnceLock<Mutex<Option<Option<PathBuf>>>> = OnceLock::new();
+    RESOLVED.get_or_init(|| Mutex::new(None))
+}
+
+/// Set (or clear) the explicit ffmpeg path and invalidate the cached lookup so
+/// the next thumbnail request re-resolves. Called from the frontend when the
+/// "FFmpeg path" setting changes.
+fn set_ffmpeg_path_impl(path: Option<String>) {
+    *ffmpeg_override().lock().unwrap() = path.filter(|p| !p.trim().is_empty());
+    *ffmpeg_resolved().lock().unwrap() = None;
+}
+
+fn resolve_ffmpeg_path() -> Option<PathBuf> {
+    // 1. Explicit user-configured path wins.
+    if let Some(p) = ffmpeg_override().lock().unwrap().clone() {
+        let pb = PathBuf::from(&p);
+        if ffmpeg_runs(&pb) {
+            log::info!(
+                "[thumbnails] using configured ffmpeg path: {}",
+                pb.display()
+            );
+            return Some(pb);
+        }
+        log::warn!("[thumbnails] configured ffmpeg path does not run: {}", p);
+    }
+    // 2. PATH.
+    if ffmpeg_runs(Path::new("ffmpeg")) {
+        log::info!("[thumbnails] ffmpeg found on PATH");
+        return Some(PathBuf::from("ffmpeg"));
+    }
+    // 3. Common install locations.
+    let candidates = ffmpeg_fallback_candidates();
+    for c in &candidates {
+        if c.exists() && ffmpeg_runs(c) {
+            log::info!("[thumbnails] ffmpeg found at {}", c.display());
+            return Some(c.clone());
+        }
+    }
+    log::warn!(
+        "[thumbnails] ffmpeg NOT found on PATH or in {} fallback locations — set an explicit FFmpeg path in Settings, or add ffmpeg to PATH and restart. Video/audio thumbnails are unavailable.",
+        candidates.len()
+    );
+    None
+}
+
+/// Locate a working `ffmpeg` binary (configured path → PATH → install locations).
+/// Result is cached until `set_ffmpeg_path` invalidates it.
+fn ffmpeg_path() -> Option<PathBuf> {
+    let cell = ffmpeg_resolved();
+    let mut guard = cell.lock().unwrap();
+    if let Some(ref resolved) = *guard {
+        return resolved.clone();
+    }
+    let resolved = resolve_ffmpeg_path();
+    *guard = Some(resolved.clone());
+    resolved
+}
+
+/// Extract a thumbnail JPEG of `size`x`size` (aspect-preserved, fit inside the
+/// box) from a media file via ffmpeg. For video this grabs a frame ~1s in; for
+/// audio (`is_audio`) it extracts the embedded cover art (attached picture) and
+/// does not seek. Returns the JPEG bytes; errors if ffmpeg is missing or the
+/// file has no usable image (e.g. an audio file with no album art).
+fn extract_media_thumbnail(source: &Path, size: u32, is_audio: bool) -> Result<Vec<u8>, AppError> {
+    use crate::process_ext::NoConsole;
+    use std::process::Command;
+
+    let ffmpeg = ffmpeg_path().ok_or_else(|| {
+        AppError::Other("ffmpeg not found on PATH; cannot generate media thumbnail".into())
+    })?;
+
+    let vf =
+        format!("scale='min({size},iw)':'min({size},ih)':force_original_aspect_ratio=decrease");
+
+    let mut cmd = Command::new(ffmpeg);
+    if is_audio {
+        // Cover art is an attached-picture video stream; select it explicitly,
+        // drop audio, take one frame. No -ss (it's a static image).
+        cmd.arg("-i")
+            .arg(source)
+            .args(["-an", "-map", "0:v:0", "-frames:v", "1"]);
+    } else {
+        // Seek 1s in to skip black intro frames, then grab one frame.
+        cmd.args(["-ss", "1", "-i"])
+            .arg(source)
+            .args(["-frames:v", "1"]);
+    }
+    // Capture stderr so failures are diagnosable in the logs (ffmpeg is chatty,
+    // but the last line usually says exactly why it failed).
+    let output = cmd
+        .args(["-vf", &vf, "-f", "image2", "-vcodec", "mjpeg", "-"])
+        .no_console()
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| {
+            log::warn!(
+                "[thumbnails] failed to spawn ffmpeg for {}: {}",
+                source.display(),
+                e
+            );
+            AppError::Other(format!("Failed to run ffmpeg: {}", e))
+        })?;
+
+    if !output.status.success() || output.stdout.is_empty() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let reason = stderr.lines().last().unwrap_or("").trim();
+        log::warn!(
+            "[thumbnails] ffmpeg {} extraction failed for {} (exit {:?}, {} stdout bytes): {}",
+            if is_audio { "cover-art" } else { "frame" },
+            source.display(),
+            output.status.code(),
+            output.stdout.len(),
+            reason
+        );
+        return Err(AppError::Other(format!(
+            "ffmpeg failed to extract {} thumbnail from {}: {}",
+            if is_audio { "cover-art" } else { "frame" },
+            source.display(),
+            reason
+        )));
+    }
+
+    log::info!(
+        "[thumbnails] ffmpeg extracted {} bytes from {}",
+        output.stdout.len(),
+        source.display()
+    );
+    Ok(output.stdout)
+}
+
+fn get_video_thumbnail_data_sync(
+    path: String,
+    size: Option<u32>,
+    quality: Option<u8>,
+) -> Result<String, AppError> {
+    let source_path = PathBuf::from(&path);
+    let size = size.unwrap_or(THUMBNAIL_SIZE);
+    let quality = quality.unwrap_or(80);
+
+    log::info!("[thumbnails] media thumbnail requested: {}", path);
+
+    if !source_path.exists() {
+        log::warn!("[thumbnails] media path does not exist: {}", path);
+        return Err(AppError::NotFound(path.clone()));
+    }
+    let is_audio = is_supported_audio(&source_path);
+    if !is_supported_video(&source_path) && !is_audio {
+        log::warn!(
+            "[thumbnails] unsupported media format (not video/audio): {}",
+            path
+        );
+        return Err(AppError::InvalidPath(format!(
+            "Unsupported media format: {}",
+            path
+        )));
+    }
+
+    // Distinct cache namespace so video keys never collide with image keys.
+    let cache_key = generate_cache_key(&source_path, size)
+        .map(|k| format!("{}_video", k))
+        .ok_or_else(|| AppError::Other(format!("Failed to generate cache key for: {}", path)))?;
+
+    if let Some(uri) = lru_get(&cache_key) {
+        return Ok(uri);
+    }
+
+    with_inflight_lock(&cache_key.clone(), || {
+        if let Some(uri) = lru_get(&cache_key) {
+            return Ok(uri);
+        }
+        if let Some(cached_path) = get_cached_thumbnail(&cache_key) {
+            let data = fs::read(&cached_path)?;
+            let uri = to_data_uri(&data);
+            lru_put(cache_key.clone(), uri.clone());
+            return Ok(uri);
+        }
+
+        // ffmpeg already scales the frame; re-encode through the image crate so
+        // the output is a clean square-fit JPEG at the requested quality.
+        let frame = extract_media_thumbnail(&source_path, size, is_audio)?;
+        let img = ImageReader::new(Cursor::new(frame))
+            .with_guessed_format()?
+            .decode()
+            .map_err(|e| {
+                log::warn!(
+                    "[thumbnails] failed to decode ffmpeg output for {}: {}",
+                    source_path.display(),
+                    e
+                );
+                AppError::Other(format!("Failed to decode video frame: {}", e))
+            })?;
+        let thumbnail = img.thumbnail(size, size).to_rgb8();
+
+        let data = encode_jpeg(&thumbnail, quality)?;
+        save_to_cache(&cache_key, &data);
+
+        log::info!(
+            "[thumbnails] generated media thumbnail for {} ({} bytes)",
+            source_path.display(),
+            data.len()
+        );
+        let uri = to_data_uri(&data);
+        lru_put(cache_key.clone(), uri.clone());
+        Ok(uri)
+    })
+}
+
 // ─── Async Tauri commands ───────────────────────────────────────────────────
 
 /// Get or generate thumbnail for an image file.
@@ -565,6 +883,31 @@ pub async fn get_micro_thumbnail(
     })
     .await
     .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
+}
+
+/// Get a video thumbnail (extracted frame) as a base64 data URI.
+/// Requires ffmpeg on PATH; returns an error otherwise so the UI can fall back
+/// to the file-type icon.
+#[tauri::command]
+pub async fn get_video_thumbnail_data(
+    path: String,
+    size: Option<u32>,
+    quality: Option<u8>,
+) -> Result<String, AppError> {
+    tokio::task::spawn_blocking(move || get_video_thumbnail_data_sync(path, size, quality))
+        .await
+        .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
+}
+
+/// Configure an explicit ffmpeg binary path (from Settings). Pass an empty
+/// string to clear it and fall back to auto-detection.
+#[tauri::command]
+pub async fn set_ffmpeg_path(path: String) {
+    set_ffmpeg_path_impl(if path.trim().is_empty() {
+        None
+    } else {
+        Some(path)
+    });
 }
 
 /// Clear the thumbnail cache
@@ -677,6 +1020,28 @@ mod tests {
             pixel[0] > 200 && pixel[1] < 60 && pixel[2] < 60,
             "expected red center pixel, got {pixel:?}"
         );
+    }
+
+    #[test]
+    fn test_is_supported_video() {
+        assert!(is_supported_video(Path::new("clip.mp4")));
+        assert!(is_supported_video(Path::new("CLIP.MOV")));
+        assert!(is_supported_video(Path::new("movie.mkv")));
+        assert!(is_supported_video(Path::new("stream.webm")));
+        assert!(!is_supported_video(Path::new("photo.jpg")));
+        assert!(!is_supported_video(Path::new("notes.txt")));
+        // Audio files are NOT videos (they go through the cover-art path).
+        assert!(!is_supported_video(Path::new("song.m4a")));
+    }
+
+    #[test]
+    fn test_is_supported_audio() {
+        assert!(is_supported_audio(Path::new("song.m4a")));
+        assert!(is_supported_audio(Path::new("TRACK.MP3")));
+        assert!(is_supported_audio(Path::new("lossless.flac")));
+        assert!(is_supported_audio(Path::new("audiobook.m4b")));
+        assert!(!is_supported_audio(Path::new("clip.mp4")));
+        assert!(!is_supported_audio(Path::new("photo.jpg")));
     }
 
     #[test]

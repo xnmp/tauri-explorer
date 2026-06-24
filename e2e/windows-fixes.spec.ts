@@ -77,6 +77,6 @@ test.describe("Removable drive removed", () => {
     await page.evaluate(() => (window as unknown as { __mockEjectDrive: (p: string) => void }).__mockEjectDrive("/media/user/USB_DRIVE"));
 
     await expect(page.locator(".drive-gone-state")).toBeVisible({ timeout: 5000 });
-    await expect(page.locator(".drive-gone-state")).toContainText("Removable drive gone");
+    await expect(page.locator(".drive-gone-state")).toContainText("Removable drive removed");
   });
 });

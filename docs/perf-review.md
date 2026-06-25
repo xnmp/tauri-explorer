@@ -261,3 +261,71 @@ Then measure on a known fixture (small ~20-file dir, large ~5000-file dir, a git
 
 All of this is in the navigation/render path — the work that compounds into "feels
 instant." None of it is search.
+
+---
+
+## Progress log
+
+- **#1/#2 shipped** (`feat/streaming-ingest-batching`): buffered streamed batches off the
+  reactive graph. 5000-entry ingest ~68ms → ~2.8ms.
+- **#9 shipped**: theme applied from Rust `init_script` (pre-bundle) + JS module load. No flash.
+- **#10 shipped**: `directory-entries` listener registered once and reused across loads;
+  removes a per-navigation IPC round-trip.
+
+---
+
+## Cold-start deep-dive
+
+For small-directory workloads the directory-work fixes barely register — cold start
+dominates the felt experience. Findings in critical-path order.
+
+### Critical path (verified against current code)
+
+```
+Rust setup()              webview create        bundle parse           mount + first paint
+  init_watcher (sync)   →  build() (platform) →  516KB JS / 142KB CSS →  navigateTo (IPC)
+  + macOS/Win settings read                      parse + execute
+```
+
+The Rust side is already instrumented (`t_start`/`t_plugins`/`t_setup` in `lib.rs`, logged
+as `Startup: ...`). Read that on a real build before optimizing the backend half — it's the
+one hard number we have there.
+
+### The remaining lever: the 516 KB / 157 KB-gzip main chunk
+
+`PreviewPane`/highlight.js (197 KB) and `marked` are *already* code-split. But twelve
+overlay dialogs — none visible at startup — are statically imported into the cold-start
+chunk via `open={...}` props. They can be `{#if open}{#await import(...)}`-loaded.
+
+Measured unique payload (raw / gzip), ranked by value × safety:
+
+| Rank | Component | Unique raw | ~gzip saved | Safe to lazy-load? |
+|------|-----------|-----------|-------------|--------------------|
+| 1 | SettingsDialog (+ KeybindingsSettings) | ~56 KB | ~15–18 KB | Yes — effects all `open`-gated |
+| 2 | ContentSearchDialog (+ unique composable) | ~36 KB | ~10–12 KB | Yes — no hljs, no idle listeners |
+| 3 | QuickOpen (+ fuzzy-score) | ~36 KB | ~10–11 KB | Yes — singleton import (one-shot IPC defers cleanly) |
+| 4 | CommandPalette | ~16 KB | ~5 KB | Yes — zero unique deps, cleanest |
+| 5 | FilePicker | ~12 KB | ~3–4 KB | Yes — already dead code in normal windows |
+
+Ranks 6–11 (BulkRename, NanoBanana, Workspace, ThemePicker, OptionPicker, JobsPanel,
+ConflictDialog) each save only ~2–3 KB gzip (deps all shared) — a second-pass cleanup.
+
+**Top-5 combined: ~43–50 KB off a 157 KB gzip chunk — a ~27–32% reduction** in cold-start
+JS to parse+execute. Each is a small `{#if}`-gated dynamic import; risk is per-component
+(verify the overlay still opens), so land them as one branch with an e2e per dialog.
+
+### What is NOT worth touching
+
+- **Inter font** — `font-display: swap`, served from local `asset://` in Tauri (≈zero
+  latency). No paint block.
+- **NerdFont** — already lazy per `.nf-icon`.
+- **CSS (142 KB, all themes)** — parse is cheap; theme switching needs them present. Low value.
+- **Webview `build()`** — platform-fixed. Don't put sync work before it (`init_watcher` is
+  the only candidate — P2 in perf-window-load.md, ~10 ms, optional).
+
+### Recommended cold-start sequence
+
+1. Read the real `Startup:` log + add a frontend mount→first-paint `performance.mark`, so
+   the chunk-split win is measured, not assumed.
+2. Lazy-import the **top-5 dialogs** (one branch, e2e per dialog). ~30% less cold-start JS.
+3. Optional: background `init_watcher`; per-theme CSS split (low value).

@@ -7,6 +7,10 @@
     <title>Tauri + SvelteKit + Typescript App</title>
     <script>
       (function() {
+        // Earliest point JS runs in the webview (before the app bundle loads).
+        // Anchor cold-start timing here so milestones measured in +page.svelte
+        // reflect the full load, not just post-bundle work.
+        window.__BOOT_T0__ = performance.now();
         var bg = localStorage.getItem('explorer-bg');
         if (bg) document.documentElement.style.background = bg;
       })();

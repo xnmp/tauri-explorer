@@ -29,8 +29,8 @@ mod thumbnails;
 mod wallpaper;
 
 use system::{
-    get_launch_cwd, get_log_dir, move_multiple_to_trash, move_to_trash, restore_from_trash,
-    set_window_theme, LaunchCwd,
+    get_launch_cwd, get_log_dir, log_startup_timing, move_multiple_to_trash, move_to_trash,
+    restore_from_trash, set_window_theme, LaunchCwd,
 };
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
@@ -111,6 +111,7 @@ pub fn run(launch_dir: Option<String>) {
             // Launch info
             get_launch_cwd,
             get_log_dir,
+            log_startup_timing,
             // Trash operations
             move_to_trash,
             move_multiple_to_trash,

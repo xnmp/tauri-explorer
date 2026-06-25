@@ -325,7 +325,29 @@ JS to parse+execute. Each is a small `{#if}`-gated dynamic import; risk is per-c
 
 ### Recommended cold-start sequence
 
-1. Read the real `Startup:` log + add a frontend mount→first-paint `performance.mark`, so
-   the chunk-split win is measured, not assumed.
-2. Lazy-import the **top-5 dialogs** (one branch, e2e per dialog). ~30% less cold-start JS.
+1. ~~Read the real `Startup:` log + add a frontend mount→first-paint mark.~~ **Done** — see
+   "Measuring cold start" below.
+2. ~~Lazy-import the **top-5 dialogs**.~~ **Done** — main client chunk 516→450 KB raw,
+   ~157→138 KB gzip (−19 KB, ~12%).
 3. Optional: background `init_watcher`; per-theme CSS split (low value).
+
+### Measuring cold start
+
+Two log lines, written to the app log file (`~/Library/Logs/com.explorer.app/tauri-explorer.log`
+on macOS; platform log dir elsewhere — see `get_log_dir`). Durable in release builds, no
+devtools needed.
+
+- **`Startup:`** (Rust, `lib.rs`) — `pre-builder` (sync work before window create) +
+  `builder→setup` (webview creation, **platform-fixed**) + `total`. Historically
+  `builder→setup` is ~110–225 ms; `pre-builder` is microseconds.
+- **`Startup(webview):`** (frontend, `startup-timing.ts`) — milestones from boot `t0`
+  (anchored in `app.html`'s head script, before the bundle loads):
+  - `bundle-exec` — bundle parsed + executing (the JS download+parse cost the
+    dialog lazy-loading targets)
+  - `mount` — `onMount` fired
+  - `list-visible` — first directory listing rendered (`total`)
+
+Read them together: the Rust line is the backend half (≈fixed), the webview line is the
+half we can move. To get a before/after on the dialog split, compare `bundle-exec` across
+a revert. Note the timer anchors differ (Rust `Instant` at process start vs webview
+`t0` at first script run), so don't add the two totals — read each half on its own axis.

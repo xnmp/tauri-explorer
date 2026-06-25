@@ -148,13 +148,43 @@ function createExplorerState(seed?: ExplorerSeed) {
     filterQuery = "";
     showFilter = false;
 
+    // Accumulate streamed continuation batches off the reactive graph. Writing
+    // `coreState.entries = [...coreState.entries, ...batch]` per batch is O(n^2):
+    // each write copies the growing array AND re-runs the `displayEntries`
+    // filter+sort over everything so far (~50 full re-sorts for a 5000-entry
+    // dir). Instead we push into a private buffer and commit a snapshot on a
+    // throttle (preserving progressive fill-in) plus once at done. See
+    // docs/perf-review.md findings #1/#2. The buffer seeds from the wholesale
+    // `result.entries` assignment below, which always runs before the first
+    // streaming callback (the continuation between them is synchronous).
+    const FLUSH_INTERVAL_MS = 100;
+    let streamBuffer: FileEntry[] | null = null;
+    let pendingFlush: ReturnType<typeof setTimeout> | null = null;
+
+    const commitBuffer = () => {
+      pendingFlush = null;
+      if (gen !== navGeneration || streamBuffer === null) return;
+      coreState.entries = streamBuffer.slice();
+    };
+
     const result = await dirListing.load(path, {
       onEntries: (entries) => {
         if (gen !== navGeneration) return;
-        coreState.entries = [...coreState.entries, ...entries];
+        if (streamBuffer === null) streamBuffer = coreState.entries.slice();
+        for (const e of entries) streamBuffer.push(e);
+        if (pendingFlush === null) {
+          pendingFlush = setTimeout(commitBuffer, FLUSH_INTERVAL_MS);
+        }
       },
       onDone: () => {
         if (gen !== navGeneration) return;
+        if (pendingFlush !== null) {
+          clearTimeout(pendingFlush);
+          pendingFlush = null;
+        }
+        if (streamBuffer !== null) {
+          coreState.entries = streamBuffer.slice();
+        }
         coreState.loading = false;
       },
     });

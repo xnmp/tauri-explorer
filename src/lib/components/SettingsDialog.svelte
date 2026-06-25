@@ -107,6 +107,7 @@
     gitStatus: ["Git Status Indicators", "Show modified/untracked indicators for files in git repositories"],
     recentItems: ["Recent Items in Sidebar", "Number of recent locations to show (0 to hide)"],
     quickOpenDebug: ["QuickOpen Debug Scores", "Show score breakdown (name, frecency, dir bonus) in Ctrl+P results"],
+    warmWindow: ["Pre-warm New Windows (experimental)", "Keep a hidden window ready so opening a new window (Ctrl+N) is near-instant. Uses extra memory for one background window. Takes effect on next launch.", "performance", "speed"],
     confirmDelete: ["Confirm before deleting", "Show confirmation dialog when moving files to trash"],
     backgroundOpacity: ["Background Opacity", "Window background transparency"],
     backgroundImage: ["Background Image", "Custom wallpaper path (PNG, JPG, WEBP, SVG)"],
@@ -127,7 +128,7 @@
   const navBarRows = [rows.navBack, rows.navForward, rows.navUp, rows.navRefresh];
   const behaviorRows = [
     rows.showHidden, rows.millerHideEmpty, rows.yaziNavigation, rows.autoEnterSingleSubdir, rows.tabTitleGitRoot, rows.showManuallyHidden,
-    rows.gitStatus, rows.recentItems, rows.quickOpenDebug, rows.confirmDelete,
+    rows.gitStatus, rows.recentItems, rows.quickOpenDebug, rows.warmWindow, rows.confirmDelete,
     rows.backgroundOpacity, rows.backgroundImage, rows.wallpaperBlur, rows.terminalApp,
     rows.previewFontSize, rows.ffmpegPath,
   ];
@@ -502,6 +503,21 @@
                 type="checkbox"
                 checked={settingsStore.tabTitleGitRoot}
                 onchange={() => settingsStore.update({ tabTitleGitRoot: !settingsStore.tabTitleGitRoot })}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.warmWindow)}>
+            <div class="setting-info">
+              <span class="setting-label">Pre-warm New Windows (experimental)</span>
+              <span class="setting-description">Keep a hidden window ready so opening a new window (Ctrl+N) is near-instant. Uses extra memory for one background window. Takes effect on next launch.</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.warmWindow}
+                onchange={() => settingsStore.update({ warmWindow: !settingsStore.warmWindow })}
               />
               <span class="toggle-slider"></span>
             </label>

@@ -123,11 +123,10 @@ function createThemeState() {
   let currentThemeId = $state(initialTheme);
   let themes = $state<ThemeInfo[]>([]);
 
-  // Apply the saved theme synchronously at store creation, before any IPC.
-  // The theme id is already known from localStorage (initialTheme), and the
-  // built-in theme CSS is bundled, so `data-theme` can be set immediately.
-  // Without this the attribute isn't set until initTheme()'s listUserThemes
-  // IPC resolves, causing a visible flash of the default theme on every launch.
+  // Apply the saved theme synchronously at store creation. The primary flash
+  // fix lives in app.html's head script (runs before the bundle in every
+  // window); this is a redundant safety net for environments where that script
+  // didn't run as expected (dev/test/mock). Idempotent — sets the same value.
   // (Guarded for SSR/test environments where `document` is absent.)
   if (typeof document !== "undefined") {
     document.documentElement.setAttribute("data-theme", initialTheme);

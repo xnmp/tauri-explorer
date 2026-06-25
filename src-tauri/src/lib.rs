@@ -54,22 +54,11 @@ pub fn run(launch_dir: Option<String>) {
     // Inject launch data into the webview as a synchronous JS global,
     // so the frontend can read it immediately without IPC roundtrips.
     //
-    // Also apply the saved theme to <html data-theme> here, before the app
-    // bundle parses. This runs same-origin so it can read localStorage
-    // directly. Without it the theme isn't applied until the theme store's
-    // listUserThemes IPC resolves (well after first paint), causing a visible
-    // flash of the default theme on every launch. Mirrors the theme-resolution
-    // order in theme.svelte.ts: explorer-settings.theme, else legacy "theme"
-    // key, else "light". Wrapped in try/catch so a storage failure can never
-    // block the launch-data global or window creation.
+    // The saved theme is applied to <html data-theme> in app.html's head
+    // script (runs in every window before the bundle parses), not here — that
+    // covers child windows too, which don't receive this initialization_script.
     let init_script = format!(
-        "window.__LAUNCH_DATA__ = {{ cwd: {}, home: {} }};\n\
-         try {{\
-           var s = JSON.parse(localStorage.getItem('explorer-settings') || '{{}}');\
-           var t = s.theme;\
-           if (!t || t === 'light') {{ t = JSON.parse(localStorage.getItem('theme') || 'null') || t || 'light'; }}\
-           document.documentElement.setAttribute('data-theme', t);\
-         }} catch (e) {{}}",
+        "window.__LAUNCH_DATA__ = {{ cwd: {}, home: {} }};",
         serde_json::to_string(&launch_cwd).unwrap(),
         serde_json::to_string(&home_dir).unwrap(),
     );

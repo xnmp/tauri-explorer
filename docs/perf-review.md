@@ -271,6 +271,10 @@ instant." None of it is search.
 - **#9 shipped**: theme applied from Rust `init_script` (pre-bundle) + JS module load. No flash.
 - **#10 shipped**: `directory-entries` listener registered once and reused across loads;
   removes a per-navigation IPC round-trip.
+- **Cold-start timing instrumentation shipped**: durable `Startup(webview):` log line
+  (`startup-timing.ts` + `log_startup_timing` command). See "Measuring cold start".
+- **Dialog lazy-loading tried and reverted**: shrank the bundle, no measurable cold-start
+  win (see "Bundle splitting does NOT help cold start here").
 
 ---
 
@@ -291,28 +295,31 @@ The Rust side is already instrumented (`t_start`/`t_plugins`/`t_setup` in `lib.r
 as `Startup: ...`). Read that on a real build before optimizing the backend half — it's the
 one hard number we have there.
 
-### The remaining lever: the 516 KB / 157 KB-gzip main chunk
+### Bundle splitting does NOT help cold start here (measured — don't retry)
 
-`PreviewPane`/highlight.js (197 KB) and `marked` are *already* code-split. But twelve
-overlay dialogs — none visible at startup — are statically imported into the cold-start
-chunk via `open={...}` props. They can be `{#if open}{#await import(...)}`-loaded.
+The hypothesis was: twelve overlay dialogs (none visible at startup) are statically
+imported into the 516 KB / 157 KB-gzip main chunk, so lazy-loading them (`{#if open}
+{#await import(...)}`) would cut cold-start JS. The top-5 (SettingsDialog,
+ContentSearchDialog, QuickOpen, CommandPalette, FilePicker) were lazy-loaded and the main
+chunk did shrink: **516→450 KB raw, ~157→138 KB gzip (−19 KB)**.
 
-Measured unique payload (raw / gzip), ranked by value × safety:
+**But it produced no measurable cold-start improvement, so it was reverted.** Production
+release binary, `bundle-exec` (boot→bundle executing), 9 runs each, bimodal by WKWebView
+bytecode cache:
 
-| Rank | Component | Unique raw | ~gzip saved | Safe to lazy-load? |
-|------|-----------|-----------|-------------|--------------------|
-| 1 | SettingsDialog (+ KeybindingsSettings) | ~56 KB | ~15–18 KB | Yes — effects all `open`-gated |
-| 2 | ContentSearchDialog (+ unique composable) | ~36 KB | ~10–12 KB | Yes — no hljs, no idle listeners |
-| 3 | QuickOpen (+ fuzzy-score) | ~36 KB | ~10–11 KB | Yes — singleton import (one-shot IPC defers cleanly) |
-| 4 | CommandPalette | ~16 KB | ~5 KB | Yes — zero unique deps, cleanest |
-| 5 | FilePicker | ~12 KB | ~3–4 KB | Yes — already dead code in normal windows |
+| metric | before (static) | after (lazy) | delta |
+|--------|-----------------|--------------|-------|
+| bundle-exec, cold cluster | ~90–95 ms | ~85–92 ms | within noise |
+| bundle-exec, warm cluster | ~26 ms | ~23 ms | within noise |
+| list-visible, cold | ~146 ms | ~141 ms | within noise |
 
-Ranks 6–11 (BulkRename, NanoBanana, Workspace, ThemePicker, OptionPicker, JobsPanel,
-ConflictDialog) each save only ~2–3 KB gzip (deps all shared) — a second-pass cleanup.
-
-**Top-5 combined: ~43–50 KB off a 157 KB gzip chunk — a ~27–32% reduction** in cold-start
-JS to parse+execute. Each is a small `{#if}`-gated dynamic import; risk is per-component
-(verify the overlay still opens), so land them as one branch with an e2e per dialog.
+**Why bytes ≠ time here:** in the packaged app, JS is served from local `asset://` at
+≈zero latency (no download to save, unlike a web app), and parsing 138 vs 157 KB of
+minified JS is low-single-digit ms. The real `bundle-exec` cost is module *execution*
+(Svelte component init, store + reactive-graph wiring) — which lazy-loading dialogs doesn't
+touch, because those components weren't *executing* at startup, only *present* in the
+bundle. **Lesson: measure wall-clock before chasing a bundle-size number; they are not the
+same axis in a local-asset Tauri app.**
 
 ### What is NOT worth touching
 
@@ -327,9 +334,15 @@ JS to parse+execute. Each is a small `{#if}`-gated dynamic import; risk is per-c
 
 1. ~~Read the real `Startup:` log + add a frontend mount→first-paint mark.~~ **Done** — see
    "Measuring cold start" below.
-2. ~~Lazy-import the **top-5 dialogs**.~~ **Done** — main client chunk 516→450 KB raw,
-   ~157→138 KB gzip (−19 KB, ~12%).
+2. ~~Lazy-import the **top-5 dialogs**.~~ **Tried and reverted** — bundle shrank, cold start
+   didn't move (see above). Don't retry bundle-splitting for cold-start speed.
 3. Optional: background `init_watcher`; per-theme CSS split (low value).
+
+**Conclusion for small-directory workloads:** cold start is already responsive
+(`list-visible` ~141 ms cold / ~85 ms warm, both at/under the 100–150 ms bar). The dominant
+fixed cost is webview creation (`builder→setup` ~130–225 ms, platform-fixed). There is no
+cheap perceptible cold-start win left on the JS side — the instrumentation is the durable
+takeaway: measure the next "feels slow" report rather than guessing.
 
 ### Measuring cold start
 

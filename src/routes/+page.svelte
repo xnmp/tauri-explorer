@@ -10,6 +10,7 @@
   import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+  import { markStartup, reportFirstPaint } from "$lib/state/startup-timing";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { registerAllCommands } from "$lib/state/command-definitions";
   import { executeCommand, getCommand } from "$lib/state/commands.svelte";
@@ -41,6 +42,10 @@
   import StatusBar from "$lib/components/StatusBar.svelte";
   import AnimatedBackground from "$lib/components/AnimatedBackground.svelte";
   import MillerColumns from "$lib/components/MillerColumns.svelte";
+
+  // First milestone: the app bundle has parsed and begun executing. The gap
+  // from boot t0 to here is the JS download+parse cost the lazy-loading targets.
+  markStartup("bundle-exec");
 
   const millerAsLeftIsland = $derived(
     settingsStore.macOsVibrancy && !settingsStore.showSidebar && settingsStore.millerLayers > 0
@@ -270,7 +275,24 @@
     };
   })();
 
+  // Cold-start timing: fire once when the first directory listing is visible
+  // (active explorer has entries and is no longer loading). Reports a summary
+  // to the Rust log so it sits next to the backend `Startup:` line. Idempotent
+  // via reportFirstPaint's internal guard; the effect just stops reading once
+  // it has fired. See src/lib/state/startup-timing.ts.
+  let firstPaintReported = false;
+  $effect(() => {
+    if (firstPaintReported) return;
+    const explorer = windowTabsManager.getActiveExplorer();
+    if (explorer && !explorer.state.loading && explorer.displayEntries.length > 0) {
+      firstPaintReported = true;
+      reportFirstPaint();
+    }
+  });
+
   onMount(() => {
+    markStartup("mount");
+
     // Initialize theme from saved preference
     themeStore.initTheme();
 

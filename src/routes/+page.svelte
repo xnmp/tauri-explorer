@@ -24,17 +24,17 @@
   import { useWindowLifecycle } from "$lib/composables/use-window-lifecycle";
   import "$lib/themes/index.css";
   import TitleBar from "$lib/components/TitleBar.svelte";
-  import FilePicker, { type PickerInfo } from "$lib/components/FilePicker.svelte";
+  import { type PickerInfo } from "$lib/components/FilePicker.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import ScmPanel from "$lib/components/ScmPanel.svelte";
   import PaneContainer from "$lib/components/PaneContainer.svelte";
-  import QuickOpen from "$lib/components/QuickOpen.svelte";
-  import CommandPalette from "$lib/components/CommandPalette.svelte";
+  // QuickOpen, CommandPalette, ContentSearchDialog, SettingsDialog and FilePicker
+  // are lazy-loaded (see markup below): none are visible at startup, so keeping
+  // them out of the initial bundle cuts cold-start JS parse. They are dynamically
+  // imported the first time they open. PreviewPane follows the same pattern.
   import ThemePicker from "$lib/components/ThemePicker.svelte";
   import OptionPicker from "$lib/components/OptionPicker.svelte";
-  import SettingsDialog from "$lib/components/SettingsDialog.svelte";
   import ProgressDialog from "$lib/components/ProgressDialog.svelte";
-  import ContentSearchDialog from "$lib/components/ContentSearchDialog.svelte";
   import WorkspaceDialog from "$lib/components/WorkspaceDialog.svelte";
   import BulkRenameDialog from "$lib/components/BulkRenameDialog.svelte";
   import ConflictDialog from "$lib/components/ConflictDialog.svelte";
@@ -362,7 +362,9 @@
 <AnimatedBackground />
 
 {#if pickerInfo}
-  <FilePicker info={pickerInfo} />
+  {#await import("$lib/components/FilePicker.svelte") then { default: FilePicker }}
+    <FilePicker info={pickerInfo} />
+  {/await}
 {:else}
 <main class="explorer">
   <TitleBar />
@@ -392,12 +394,28 @@
   {/if}
 </main>
 
-<QuickOpen open={dialogStore.isQuickOpenOpen} onClose={() => dialogStore.closeQuickOpen()} />
-<CommandPalette open={dialogStore.isCommandPaletteOpen} onClose={() => dialogStore.closeCommandPalette()} />
+{#if dialogStore.isQuickOpenOpen}
+  {#await import("$lib/components/QuickOpen.svelte") then { default: QuickOpen }}
+    <QuickOpen open={true} onClose={() => dialogStore.closeQuickOpen()} />
+  {/await}
+{/if}
+{#if dialogStore.isCommandPaletteOpen}
+  {#await import("$lib/components/CommandPalette.svelte") then { default: CommandPalette }}
+    <CommandPalette open={true} onClose={() => dialogStore.closeCommandPalette()} />
+  {/await}
+{/if}
 <ThemePicker open={dialogStore.isThemePickerOpen} onClose={() => dialogStore.closeThemePicker()} />
 <OptionPicker />
-<ContentSearchDialog open={dialogStore.isContentSearchOpen} onClose={() => dialogStore.closeContentSearch()} />
-<SettingsDialog open={dialogStore.isSettingsOpen} onClose={() => dialogStore.closeSettings()} />
+{#if dialogStore.isContentSearchOpen}
+  {#await import("$lib/components/ContentSearchDialog.svelte") then { default: ContentSearchDialog }}
+    <ContentSearchDialog open={true} onClose={() => dialogStore.closeContentSearch()} />
+  {/await}
+{/if}
+{#if dialogStore.isSettingsOpen}
+  {#await import("$lib/components/SettingsDialog.svelte") then { default: SettingsDialog }}
+    <SettingsDialog open={true} onClose={() => dialogStore.closeSettings()} />
+  {/await}
+{/if}
 <WorkspaceDialog open={dialogStore.isWorkspaceOpen} onClose={() => dialogStore.closeWorkspace()} />
 <BulkRenameDialog
   open={dialogStore.isBulkRenameOpen}

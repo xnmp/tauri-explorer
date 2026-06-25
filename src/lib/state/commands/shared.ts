@@ -54,7 +54,10 @@ export async function openNewWindow(
   // they need label-keyed snapshot seeding the warm path doesn't do. If no warm
   // window is ready (or activation fails), fall through to a fresh window so
   // Ctrl+N can never be a no-op.
-  if (!tabSnapshot && settingsStore.warmWindow) {
+  // Warm-window pooling is macOS-only for now: its window-creation options are
+  // tuned for WKWebView and would produce a chromeless/sharp-cornered window on
+  // Windows (and a degraded one on Linux). See warm-window.ts.
+  if (isMac && !tabSnapshot && settingsStore.warmWindow) {
     const used = await consumeWarmWindow(path, viewMode, at, writeSeed);
     if (used) return;
   }

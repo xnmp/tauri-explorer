@@ -508,15 +508,19 @@
             </label>
           </div>
 
-          <div class="setting-row" class:hidden={!matchesSearch(...rows.warmWindow)}>
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.warmWindow)} class:row-disabled={!isMac}>
             <div class="setting-info">
               <span class="setting-label">Pre-warm New Windows (experimental)</span>
-              <span class="setting-description">Keep a hidden window ready so opening a new window (Ctrl+N) is near-instant. Uses extra memory for one background window. Takes effect on next launch.</span>
+              <span class="setting-description">
+                Keep a hidden window ready so opening a new window (Ctrl+N) is near-instant. Uses extra memory for one background window. Takes effect on next launch.
+                {#if !isMac}<em>(macOS only for now.)</em>{/if}
+              </span>
             </div>
             <label class="toggle">
               <input
                 type="checkbox"
-                checked={settingsStore.warmWindow}
+                disabled={!isMac}
+                checked={isMac && settingsStore.warmWindow}
                 onchange={() => settingsStore.update({ warmWindow: !settingsStore.warmWindow })}
               />
               <span class="toggle-slider"></span>
@@ -858,6 +862,11 @@
 
   .setting-row:last-child {
     border-bottom: none;
+  }
+
+  /* Row whose control is unavailable on this platform (e.g. macOS-only). */
+  .setting-row.row-disabled {
+    opacity: 0.5;
   }
 
   .setting-info {

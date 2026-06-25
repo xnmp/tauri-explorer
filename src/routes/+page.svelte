@@ -12,6 +12,7 @@
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { markStartup, reportFirstPaint } from "$lib/state/startup-timing";
   import { warmMode, runWarmWindow, spawnWarmWindow } from "$lib/state/warm-window";
+  import { isMac } from "$lib/domain/platform";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { registerAllCommands } from "$lib/state/command-definitions";
   import { executeCommand, getCommand } from "$lib/state/commands.svelte";
@@ -370,8 +371,9 @@
     // so the next Ctrl+N activates it instead of paying webview-create cost.
     // Only the primary (non-child, non-warm) window pools — a warm window must
     // never spawn another (that was the earlier runaway-spawn bug). Deferred so
-    // it never competes with this window's own first paint.
-    if (!isChildWindow && wmode === "off" && settingsStore.warmWindow) {
+    // it never competes with this window's own first paint. macOS-only for now
+    // (window options are WKWebView-tuned; see warm-window.ts).
+    if (isMac && !isChildWindow && wmode === "off" && settingsStore.warmWindow) {
       setTimeout(() => spawnWarmWindow(), 1500);
     }
 

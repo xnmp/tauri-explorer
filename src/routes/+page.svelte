@@ -11,6 +11,7 @@
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { markStartup, reportFirstPaint } from "$lib/state/startup-timing";
+  import { warmMode, runWarmWindow, spawnWarmWindow } from "$lib/state/warm-window";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { registerAllCommands } from "$lib/state/command-definitions";
   import { executeCommand, getCommand } from "$lib/state/commands.svelte";
@@ -302,6 +303,15 @@
       return;
     }
 
+    // EXPERIMENTAL warm window (?warm=1 parked, ?warm=measure self-firing): a
+    // hidden, fully-booted window for a future Ctrl+N. It runs the normal init
+    // below (stores/tabs/listeners live), then registers its activate-listener
+    // and signals readiness. It stays hidden until activated.
+    const wmode = warmMode();
+    if (wmode !== "off") {
+      void runWarmWindow(wmode === "measure");
+    }
+
     // Read launch data injected by Rust initialization_script (synchronous, no IPC).
     // Falls back to IPC for child windows or if injection is missing.
     const launchData = (window as any).__LAUNCH_DATA__ as
@@ -378,6 +388,15 @@
 
     // Register all commands for the command palette (deferred to next tick)
     queueMicrotask(() => registerAllCommands());
+
+    // EXPERIMENTAL: once this primary window is idle, pre-warm a hidden window
+    // so the next Ctrl+N activates it instead of paying webview-create cost.
+    // Only the primary (non-child, non-warm) window pools — a warm window must
+    // never spawn another (that was the earlier runaway-spawn bug). Deferred so
+    // it never competes with this window's own first paint.
+    if (!isChildWindow && wmode === "off" && settingsStore.warmWindow) {
+      setTimeout(() => spawnWarmWindow(), 1500);
+    }
 
     // Setup composables
     nativeDropHandler.setup();

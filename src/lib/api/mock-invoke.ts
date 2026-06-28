@@ -57,6 +57,14 @@ const mockFiles: Record<string, FileEntry[]> = {
   "/media/user/USB_DRIVE/Backups": [
     file("backup-2024.zip", "/media/user/USB_DRIVE/Backups/backup-2024.zip", 8388608),
   ],
+  // Google Drive File Stream mount — browsable so the breadcrumb's Google-mark
+  // anchor (which collapses the mount crumb) can be exercised.
+  "/media/user/GoogleDrive": [
+    dir("My Drive", "/media/user/GoogleDrive/My Drive"),
+  ],
+  "/media/user/GoogleDrive/My Drive": [
+    file("doc.gdoc", "/media/user/GoogleDrive/My Drive/doc.gdoc", 1024),
+  ],
   "/home/user/Documents": [
     dir("project", "/home/user/Documents/project"),
     file("report.pdf", "/home/user/Documents/report.pdf", 102400),

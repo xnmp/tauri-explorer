@@ -123,26 +123,29 @@ pub async fn get_home_directory() -> Result<String, AppError> {
 pub async fn create_directory(parent_path: String, name: String) -> Result<FileEntry, AppError> {
     validate_entry_name(&name)?;
 
-    let parent = PathBuf::from(&parent_path);
-    if !parent.exists() {
-        return Err(AppError::NotFound(format!(
-            "Parent directory does not exist: {}",
-            parent_path
-        )));
-    }
+    run_blocking(move || {
+        let parent = PathBuf::from(&parent_path);
+        if !parent.exists() {
+            return Err(AppError::NotFound(format!(
+                "Parent directory does not exist: {}",
+                parent_path
+            )));
+        }
 
-    let new_path = parent.join(&name);
-    if entry_exists(&new_path) {
-        return Err(AppError::AlreadyExists(
-            new_path.to_string_lossy().to_string(),
-        ));
-    }
+        let new_path = parent.join(&name);
+        if entry_exists(&new_path) {
+            return Err(AppError::AlreadyExists(
+                new_path.to_string_lossy().to_string(),
+            ));
+        }
 
-    fs::create_dir(&new_path)?;
-    log::info!("Created directory: {:?}", name);
+        fs::create_dir(&new_path)?;
+        log::info!("Created directory: {:?}", name);
 
-    let metadata = fs::symlink_metadata(&new_path)?;
-    Ok(metadata_to_entry(&new_path, &metadata))
+        let metadata = fs::symlink_metadata(&new_path)?;
+        Ok(metadata_to_entry(&new_path, &metadata))
+    })
+    .await
 }
 
 /// True when renaming only changes the filename's case and both paths refer
@@ -161,26 +164,29 @@ fn is_case_only_rename(source: &Path, target: &Path, new_name: &str) -> bool {
 pub async fn rename_entry(path: String, new_name: String) -> Result<FileEntry, AppError> {
     validate_entry_name(&new_name)?;
 
-    let source = PathBuf::from(&path);
-    if !entry_exists(&source) {
-        return Err(AppError::NotFound(path.clone()));
-    }
+    run_blocking(move || {
+        let source = PathBuf::from(&path);
+        if !entry_exists(&source) {
+            return Err(AppError::NotFound(path.clone()));
+        }
 
-    let parent = source.parent().ok_or_else(|| {
-        AppError::InvalidPath(format!("Cannot get parent directory of: {}", path))
-    })?;
+        let parent = source.parent().ok_or_else(|| {
+            AppError::InvalidPath(format!("Cannot get parent directory of: {}", path))
+        })?;
 
-    let target = parent.join(&new_name);
-    if entry_exists(&target) && !is_case_only_rename(&source, &target, &new_name) {
-        return Err(AppError::AlreadyExists(
-            target.to_string_lossy().to_string(),
-        ));
-    }
+        let target = parent.join(&new_name);
+        if entry_exists(&target) && !is_case_only_rename(&source, &target, &new_name) {
+            return Err(AppError::AlreadyExists(
+                target.to_string_lossy().to_string(),
+            ));
+        }
 
-    fs::rename(&source, &target)?;
+        fs::rename(&source, &target)?;
 
-    let metadata = fs::symlink_metadata(&target)?;
-    Ok(metadata_to_entry(&target, &metadata))
+        let metadata = fs::symlink_metadata(&target)?;
+        Ok(metadata_to_entry(&target, &metadata))
+    })
+    .await
 }
 
 /// Generate a unique copy name like "name - Copy.ext" or "name - Copy (2).ext".
@@ -586,15 +592,18 @@ fn mime_for_extension(path: &Path) -> &'static str {
 /// Write text content to a new file.
 #[tauri::command]
 pub async fn write_text_file(path: String, content: String) -> Result<FileEntry, AppError> {
-    let file_path = PathBuf::from(&path);
+    run_blocking(move || {
+        let file_path = PathBuf::from(&path);
 
-    if entry_exists(&file_path) {
-        return Err(AppError::AlreadyExists(path));
-    }
+        if entry_exists(&file_path) {
+            return Err(AppError::AlreadyExists(path));
+        }
 
-    fs::write(&file_path, content.as_bytes())?;
-    let metadata = fs::symlink_metadata(&file_path)?;
-    Ok(metadata_to_entry(&file_path, &metadata))
+        fs::write(&file_path, content.as_bytes())?;
+        let metadata = fs::symlink_metadata(&file_path)?;
+        Ok(metadata_to_entry(&file_path, &metadata))
+    })
+    .await
 }
 
 /// Delete a file or directory permanently (not to trash).
@@ -618,31 +627,34 @@ pub async fn delete_entry_permanent(path: String) -> Result<(), AppError> {
 /// Create a symbolic link.
 #[tauri::command]
 pub async fn create_symlink(target_path: String, link_path: String) -> Result<FileEntry, AppError> {
-    let target = PathBuf::from(&target_path);
-    let link = PathBuf::from(&link_path);
+    run_blocking(move || {
+        let target = PathBuf::from(&target_path);
+        let link = PathBuf::from(&link_path);
 
-    if !entry_exists(&target) {
-        return Err(AppError::NotFound(target_path));
-    }
-
-    if entry_exists(&link) {
-        return Err(AppError::AlreadyExists(link_path));
-    }
-
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(&target, &link)?;
-
-    #[cfg(windows)]
-    {
-        if target.is_dir() {
-            std::os::windows::fs::symlink_dir(&target, &link)?;
-        } else {
-            std::os::windows::fs::symlink_file(&target, &link)?;
+        if !entry_exists(&target) {
+            return Err(AppError::NotFound(target_path));
         }
-    }
 
-    let metadata = fs::symlink_metadata(&link)?;
-    Ok(metadata_to_entry(&link, &metadata))
+        if entry_exists(&link) {
+            return Err(AppError::AlreadyExists(link_path));
+        }
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &link)?;
+
+        #[cfg(windows)]
+        {
+            if target.is_dir() {
+                std::os::windows::fs::symlink_dir(&target, &link)?;
+            } else {
+                std::os::windows::fs::symlink_file(&target, &link)?;
+            }
+        }
+
+        let metadata = fs::symlink_metadata(&link)?;
+        Ok(metadata_to_entry(&link, &metadata))
+    })
+    .await
 }
 
 /// Estimate total file count and size for a list of paths.
@@ -672,7 +684,11 @@ pub async fn estimate_size(paths: Vec<String>) -> Result<SizeEstimate, AppError>
 /// Uses lstat so broken symlinks still count as existing entries.
 #[tauri::command]
 pub async fn check_paths_exist(paths: Vec<String>) -> Vec<bool> {
-    paths.iter().map(|p| entry_exists(Path::new(p))).collect()
+    // lstat per path can stall on slow mounts; keep it off the async executor.
+    let count = paths.len();
+    run_blocking(move || Ok(paths.iter().map(|p| entry_exists(Path::new(p))).collect()))
+        .await
+        .unwrap_or_else(|_| vec![false; count])
 }
 
 /// Walk a path accumulating file count and byte size. Never follows

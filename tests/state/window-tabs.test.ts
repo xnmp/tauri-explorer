@@ -78,7 +78,7 @@ describe("extractFolderName", () => {
 
 
 describe("refreshAllPanes", () => {
-  it("silently refreshes both panes of the active tab", async () => {
+  async function managerWithSpiedPanes() {
     const { createWindowTabsManager } = await import("$lib/state/window-tabs.svelte");
     const manager = createWindowTabsManager();
     manager.init("/home/user", true);
@@ -94,6 +94,13 @@ describe("refreshAllPanes", () => {
         return original(opts);
       };
     }
+    return { manager, calls };
+  }
+
+  it("silently refreshes both panes when dual pane is enabled", async () => {
+    const { manager, calls } = await managerWithSpiedPanes();
+    manager.setDualPane(true);
+    calls.length = 0; // ignore the catch-up refresh from enabling dual pane
 
     manager.refreshAllPanes();
 
@@ -101,6 +108,26 @@ describe("refreshAllPanes", () => {
       { pane: "left", silent: true },
       { pane: "right", silent: true },
     ]);
+  });
+
+  it("skips the hidden right pane in single-pane mode", async () => {
+    const { manager, calls } = await managerWithSpiedPanes();
+
+    manager.refreshAllPanes();
+
+    expect(calls).toEqual([{ pane: "left", silent: true }]);
+  });
+
+  it("catches the right pane up when dual pane is re-enabled", async () => {
+    const { manager, calls } = await managerWithSpiedPanes();
+    // Diverge the panes so enabling dual pane doesn't take the
+    // same-path-navigate branch.
+    await manager.getExplorer("right")!.navigateTo("/home/user/other");
+    calls.length = 0;
+
+    manager.setDualPane(true);
+
+    expect(calls).toContainEqual({ pane: "right", silent: true });
   });
 });
 

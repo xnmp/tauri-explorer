@@ -27,6 +27,7 @@ mod system;
 pub mod task_registry;
 mod thumbnails;
 mod wallpaper;
+mod warm_pool;
 
 use system::{
     get_launch_cwd, get_log_dir, log_startup_timing, move_multiple_to_trash, move_to_trash,
@@ -191,6 +192,11 @@ pub fn run(launch_dir: Option<String>) {
             portal::picker_respond,
             // Window appearance
             set_window_theme,
+            // Pre-warmed window pool
+            warm_pool::warm_pool_begin_spawn,
+            warm_pool::warm_pool_cancel_spawn,
+            warm_pool::warm_pool_register,
+            warm_pool::warm_pool_claim,
         ])
         .setup(move |app| {
             let t_setup = std::time::Instant::now();
@@ -306,13 +312,22 @@ pub fn run(launch_dir: Option<String>) {
         })
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
-        .run(|_app, event| {
+        .run(|app, event| {
             // Portal mode has no persistent window: closing a picker window
             // must not exit the service, or the D-Bus name would drop.
             if portal::is_portal_mode() {
-                if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                if let tauri::RunEvent::ExitRequested { api, .. } = &event {
                     api.prevent_exit();
                 }
+            }
+            if let tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::Destroyed,
+                ..
+            } = &event
+            {
+                warm_pool::forget_window(label);
+                warm_pool::close_warm_windows_if_last(app, label);
             }
         });
 }

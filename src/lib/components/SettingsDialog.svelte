@@ -107,7 +107,7 @@
     gitStatus: ["Git Status Indicators", "Show modified/untracked indicators for files in git repositories"],
     recentItems: ["Recent Items in Sidebar", "Number of recent locations to show (0 to hide)"],
     quickOpenDebug: ["QuickOpen Debug Scores", "Show score breakdown (name, frecency, dir bonus) in Ctrl+P results"],
-    warmWindow: ["Pre-warm New Windows (experimental)", "Keep a hidden window ready so opening a new window (Ctrl+N) is near-instant. Uses extra memory for one background window. Takes effect on next launch.", "performance", "speed"],
+    warmWindow: ["Pre-warm New Windows", "Keep a hidden window ready so opening a new window (Ctrl+N) is near-instant. Uses extra memory for one background window. The first new window after enabling still opens cold.", "performance", "speed"],
     confirmDelete: ["Confirm before deleting", "Show confirmation dialog when moving files to trash"],
     backgroundOpacity: ["Background Opacity", "Window background transparency"],
     backgroundImage: ["Background Image", "Custom wallpaper path (PNG, JPG, WEBP, SVG)"],
@@ -510,8 +510,8 @@
 
           <div class="setting-row" class:hidden={!matchesSearch(...rows.warmWindow)}>
             <div class="setting-info">
-              <span class="setting-label">Pre-warm New Windows (experimental)</span>
-              <span class="setting-description">Keep a hidden window ready so opening a new window (Ctrl+N) is near-instant. Uses extra memory for one background window. Takes effect on next launch.</span>
+              <span class="setting-label">Pre-warm New Windows</span>
+              <span class="setting-description">Keep a hidden window ready so opening a new window (Ctrl+N) is near-instant. Uses extra memory for one background window. The first new window after enabling still opens cold.</span>
             </div>
             <label class="toggle">
               <input

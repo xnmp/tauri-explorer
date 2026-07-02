@@ -368,6 +368,14 @@ const mockCommands: Record<string, CommandHandler> = {
   get_home_directory: () => "/home/user",
   get_launch_cwd: () => "/home/user",
   list_drives: () => mockDrives,
+  log_startup_timing: () => undefined,
+
+  // Pre-warmed window pool: no pool outside Tauri — spawn is always refused
+  // and claims always miss, so openNewWindow takes the fresh-window path.
+  warm_pool_begin_spawn: () => false,
+  warm_pool_cancel_spawn: () => undefined,
+  warm_pool_register: () => undefined,
+  warm_pool_claim: () => null,
 
   list_directory: (args) => {
     const raw = args.path as string;

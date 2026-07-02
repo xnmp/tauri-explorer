@@ -389,13 +389,18 @@
     // Register all commands for the command palette (deferred to next tick)
     queueMicrotask(() => registerAllCommands());
 
-    // EXPERIMENTAL: once this primary window is idle, pre-warm a hidden window
-    // so the next Ctrl+N activates it instead of paying webview-create cost.
-    // Only the primary (non-child, non-warm) window pools — a warm window must
-    // never spawn another (that was the earlier runaway-spawn bug). Deferred so
-    // it never competes with this window's own first paint.
-    if (!isChildWindow && wmode === "off" && settingsStore.warmWindow) {
-      setTimeout(() => spawnWarmWindow(), 1500);
+    // Once this window is idle, prime the global warm-window pool so the next
+    // Ctrl+N activates a pre-warmed window instead of paying webview-create
+    // cost. Every REAL window primes — the Rust registry caps the pool at one,
+    // so concurrent windows can't over-spawn. Warm windows themselves never
+    // prime (wmode !== "off"): a warm window spawning another was the earlier
+    // runaway-spawn bug. Deferred so it never competes with this window's own
+    // first paint; settings are read at fire time, after settingsStore.init()
+    // has resolved.
+    if (wmode === "off") {
+      setTimeout(() => {
+        if (settingsStore.warmWindow) void spawnWarmWindow();
+      }, 1500);
     }
 
     // Setup composables

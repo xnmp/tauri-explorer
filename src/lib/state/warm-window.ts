@@ -1,60 +1,66 @@
 /**
- * EXPERIMENTAL — pre-warmed window pooling (settings.warmWindow, default off).
+ * Pre-warmed window pooling (settings.warmWindow).
  *
- * Hypothesis: the dominant new-window cost is WKWebView/WebView2 creation
- * (~130–225 ms) plus a fresh JS bundle parse. If we create ONE hidden window
- * shortly after launch and let it fully boot while parked idle, Ctrl+N can just
- * navigate + show it — skipping both costs — then spawn a replacement.
+ * The dominant new-window cost is webview creation (~130–225 ms) plus a fresh
+ * JS bundle parse. We keep ONE hidden window fully booted and parked; Ctrl+N
+ * just navigates + shows it — skipping both costs — then spawns a replacement.
  *
- * READINESS HANDSHAKE (the fix for the earlier broken version): a warm window
- * is only usable once its activate-listener is registered. The warm page emits
- * `warm-ready` AFTER it has called listen(); the parent marks the label usable
- * only on receiving that. Marking it usable on mere `tauri://created` (window
- * exists, JS not booted) was the bug — activation events fired into the void,
- * the window never showed, and Ctrl+N appeared dead.
+ * POOL OWNERSHIP: the pool lives in Rust (warm_pool.rs), not JS module scope.
+ * Every window talks to the same registry, so a window that was itself opened
+ * via Ctrl+N can claim and replenish warm windows exactly like the original
+ * one. Claims are atomic — two windows racing Ctrl+N can't both activate the
+ * same warm window.
  *
- * KNOWN RISK being measured: on macOS WKWebView may defer expensive layout/
- * raster until a window is shown, so a hidden warm window might not have paid
- * the cost we hope to skip. The `Startup(warm-activate): show=Xms` log line
- * (emitted on every activation) is the number that decides keep-vs-kill.
+ * READINESS HANDSHAKE: a warm window is only claimable once its
+ * activate-listener is registered. The warm page calls warm_pool_register
+ * AFTER listen(); claiming on mere `tauri://created` (window exists, JS not
+ * booted) was an earlier bug — activation events fired into the void and
+ * Ctrl+N appeared dead.
  *
- * MEASURE MODE (`?warm=measure`): the warm window self-activates once it's ready
- * (no keypress), so activation latency can be captured headlessly.
+ * POSITION: computed at consume time from the CLAIMING window's live
+ * outerPosition/outerSize, mirroring the fresh-window path (+30/+30 cascade,
+ * tear-off under cursor, parent-sized). The warm window's park position is
+ * meaningless — an earlier bug left plain-Ctrl+N activations wherever the OS
+ * had parked the hidden window.
+ *
+ * KNOWN RISK being measured: a hidden webview may defer expensive layout/
+ * raster until shown (macOS WKWebView especially), so a warm window might not
+ * have paid the cost we hope to skip. The `Startup(warm-activate): show=Xms`
+ * log line (emitted on every activation) is the number that decides
+ * keep-vs-kill.
+ *
+ * MEASURE MODE (`?warm=measure`): the warm window self-activates once it's
+ * ready (no keypress), so activation latency can be captured headlessly.
  */
 
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { emit, emitTo, listen } from "@tauri-apps/api/event";
+import { emitTo, listen } from "@tauri-apps/api/event";
 import { invoke } from "$lib/api/files";
 import { windowTabsManager } from "./window-tabs.svelte";
+import { explorerWindowAppearance } from "./window-appearance";
 import type { ViewMode } from "./types";
 
 // Reuse the "explorer-" label prefix so warm windows inherit the same Tauri
 // capability/ACL scope as normal child windows (capabilities/default.json lists
 // "explorer-*"). A distinct "warm-*" prefix would be denied event:listen etc.
-// The "-warm-" infix lets us still identify them if needed.
+// The "-warm-" infix identifies them (warm_pool.rs matches on it too).
 const WARM_LABEL_PREFIX = "explorer-warm-";
 
-/** Warm window → parent: "my activate-listener is registered, I'm usable." */
-export const WARM_READY_EVENT = "warm-ready";
 /** Parent → warm window: "become a real window at this path." */
 export const WARM_ACTIVATE_EVENT = "warm-activate";
 
-export interface WarmReadyPayload {
-  label: string;
-}
 export interface WarmActivatePayload {
   path: string;
   viewMode?: ViewMode;
+  /** Physical-pixel geometry mirroring the fresh-window path; always set by
+   *  consumeWarmWindow, optional only for the measure-mode self-fire. */
   x?: number;
   y?: number;
-  /** Set when the parent fired this; used to dedupe self-fire vs real Ctrl+N. */
+  width?: number;
+  height?: number;
+  /** Set on the measure-mode self-fire; used to dedupe vs real Ctrl+N. */
   measure?: boolean;
 }
-
-/** Label of a warm window that has signalled ready, if any. */
-let readyLabel: string | null = null;
-let spawning = false;
-let readyListenerInstalled = false;
 
 /** "1" = normal parked warm window; "measure" = self-firing measurement run. */
 export function warmMode(): "off" | "park" | "measure" {
@@ -65,25 +71,22 @@ export function warmMode(): "off" | "park" | "measure" {
   return "off";
 }
 
-/** Install the parent-side listener for warm-ready exactly once. */
-async function ensureReadyListener(): Promise<void> {
-  if (readyListenerInstalled) return;
-  readyListenerInstalled = true;
-  await listen<WarmReadyPayload>(WARM_READY_EVENT, (event) => {
-    readyLabel = event.payload.label;
-    spawning = false;
-  });
-}
-
 /**
- * Create a hidden, parked warm window if none is pending/ready. The window
- * signals `warm-ready` once its listener is up; only then is it usable.
- * `measure` makes the warm window self-activate for headless latency capture.
+ * Create a hidden, parked warm window if the global pool wants one. The Rust
+ * registry hands out at most one spawn reservation, so any number of windows
+ * can call this concurrently (boot priming, post-consume replenish) without
+ * over-spawning. The window becomes claimable only after it registers itself.
  */
-export function spawnWarmWindow(measure = false): void {
-  if (readyLabel || spawning) return;
-  spawning = true;
-  void ensureReadyListener();
+export async function spawnWarmWindow(measure = false): Promise<void> {
+  let reserved = false;
+  try {
+    reserved = await invoke<boolean>("warm_pool_begin_spawn");
+  } catch {
+    return; // not running in Tauri (e.g. browser E2E) — no pool
+  }
+  if (!reserved) return;
+
+  const cancelReservation = () => void invoke("warm_pool_cancel_spawn").catch(() => {});
 
   const label = WARM_LABEL_PREFIX + Date.now();
   const baseUrl = window.location.origin + window.location.pathname;
@@ -95,34 +98,28 @@ export function spawnWarmWindow(measure = false): void {
     (window as { __LAUNCH_DATA__?: { home: string } }).__LAUNCH_DATA__?.home ||
     "/";
   const params = new URLSearchParams({ warm: measure ? "measure" : "1", path: parkPath });
-  const url = `${baseUrl}?${params.toString()}`;
 
   try {
     const win = new WebviewWindow(label, {
-      url,
-      title: "tauri-explorer",
+      url: `${baseUrl}?${params.toString()}`,
       width: 1200,
       height: 800,
       visible: false,
-      // Decorated like a normal window so that, once shown, it's a real titled
-      // window — not a chromeless surface that's easy to miss behind others.
-      decorations: typeof navigator !== "undefined" && navigator.platform.startsWith("Mac"),
       skipTaskbar: true,
+      ...explorerWindowAppearance(),
     });
-    win.once("tauri://error", () => {
-      readyLabel = null;
-      spawning = false;
-    });
-    // NOTE: readyLabel is set by the warm-ready handshake, NOT here.
+    win.once("tauri://error", cancelReservation);
   } catch {
-    spawning = false;
+    cancelReservation();
   }
 }
 
 /**
- * If a warm window has signalled ready, activate it for `path` and return true.
- * Otherwise return false so the caller spawns a normal window. On success,
- * spawns a replacement for the next time.
+ * Claim a ready warm window from the global pool, activate it for `path`, and
+ * return true. Returns false when none is ready (or activation fails) so the
+ * caller spawns a normal window — Ctrl+N can never be a no-op. On a miss the
+ * pool is primed so the NEXT new window is warm; on a hit a replacement is
+ * spawned.
  */
 export async function consumeWarmWindow(
   path: string,
@@ -130,22 +127,38 @@ export async function consumeWarmWindow(
   at: { x: number; y: number } | undefined,
   seed: () => void,
 ): Promise<boolean> {
-  const label = readyLabel;
-  if (!label) return false;
-  readyLabel = null; // claim it
+  let label: string | null = null;
+  try {
+    label = await invoke<string | null>("warm_pool_claim");
+  } catch {
+    return false; // not running in Tauri — fresh-window path handles it
+  }
+  if (!label) {
+    void spawnWarmWindow();
+    return false;
+  }
 
   seed(); // write dir-seed so the activated window renders instantly
+
+  // Geometry mirrors the fresh-window path, computed from THIS (claiming)
+  // window at consume time: tear-off places the title bar under the cursor,
+  // otherwise cascade +30/+30 from the current window, at its size.
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  const win = getCurrentWindow();
+  const [pos, size] = await Promise.all([win.outerPosition(), win.outerSize()]);
 
   const payload: WarmActivatePayload = {
     path,
     viewMode,
-    x: at ? Math.round(at.x - 120) : undefined,
-    y: at ? Math.round(at.y - 16) : undefined,
+    x: at ? Math.round(at.x - 120) : pos.x + 30,
+    y: at ? Math.round(at.y - 16) : pos.y + 30,
+    width: size.width,
+    height: size.height,
   };
 
   try {
     await emitTo(label, WARM_ACTIVATE_EVENT, payload);
-    spawnWarmWindow(); // replenish
+    void spawnWarmWindow(); // replenish
     return true;
   } catch {
     return false; // activation failed → caller falls back to a fresh window
@@ -154,8 +167,9 @@ export async function consumeWarmWindow(
 
 /**
  * Run inside a parked/measure warm window: register the activate-listener,
- * signal readiness to the parent, and — in measure mode — self-activate once so
- * we capture activation latency headlessly. Returns after wiring is set up.
+ * then report ready to the Rust pool — in that order, so a claim can never
+ * reach a window that isn't listening yet. In measure mode, self-activate once
+ * so activation latency is captured headlessly.
  */
 export async function runWarmWindow(measure: boolean): Promise<void> {
   const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -166,7 +180,7 @@ export async function runWarmWindow(measure: boolean): Promise<void> {
     if (activated) return; // one-shot
     activated = true;
     const tActivate = performance.now();
-    const { path, viewMode, x, y } = event.payload;
+    const { path, viewMode, x, y, width, height } = event.payload;
 
     const explorer = windowTabsManager.getActiveExplorer();
     if (explorer) {
@@ -175,11 +189,16 @@ export async function runWarmWindow(measure: boolean): Promise<void> {
     }
 
     try {
+      const { PhysicalPosition, PhysicalSize } = await import("@tauri-apps/api/dpi");
       if (typeof x === "number" && typeof y === "number") {
-        const { PhysicalPosition } = await import("@tauri-apps/api/dpi");
         await self.setPosition(new PhysicalPosition(x, y));
       }
+      if (typeof width === "number" && typeof height === "number") {
+        await self.setSize(new PhysicalSize(width, height));
+      }
       await self.show();
+      // Parked windows skip the taskbar; a revealed one is a real window.
+      await self.setSkipTaskbar(false);
       await self.unminimize();
       await self.setFocus();
       // Briefly assert always-on-top so the freshly-shown window comes to the
@@ -187,7 +206,8 @@ export async function runWarmWindow(measure: boolean): Promise<void> {
       await self.setAlwaysOnTop(true);
       setTimeout(() => void self.setAlwaysOnTop(false), 300);
     } catch {
-      // best effort
+      // best effort — some calls are unsupported per platform (e.g. Wayland
+      // ignores setPosition, macOS has no taskbar concept)
     }
 
     // Activation latency telemetry (event received → window shown), durable in
@@ -198,8 +218,8 @@ export async function runWarmWindow(measure: boolean): Promise<void> {
     }).catch(() => {});
   });
 
-  // Signal readiness to the parent (after the listener above is registered).
-  await emit(WARM_READY_EVENT, { label: self.label } satisfies WarmReadyPayload);
+  // Report ready to the global pool (after the listener above is registered).
+  await invoke("warm_pool_register", { label: self.label }).catch(() => {});
 
   // Measure mode (?warm=measure): self-fire one activation so activation latency
   // can be captured headlessly, with no keypress. Not used in the shipped path.

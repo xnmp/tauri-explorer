@@ -90,7 +90,7 @@ export interface Settings {
   autoEnterSingleSubdir: boolean; // when entering a dir with exactly one visible subdir (and nothing else), descend into it recursively
   ffmpegPath: string; // explicit path to ffmpeg binary for video/audio thumbnails (empty = auto-detect)
   tabTitleGitRoot: boolean; // when the folder is inside a git repo, show the repo root name in the tab title
-  warmWindow: boolean; // EXPERIMENTAL: keep a hidden pre-warmed window to make Ctrl+N feel instant
+  warmWindow: boolean; // keep a hidden pre-warmed window pooled so Ctrl+N is near-instant
 }
 
 const MIN_ZOOM = 50;
@@ -144,7 +144,7 @@ const DEFAULT_SETTINGS: Settings = {
   autoEnterSingleSubdir: false,
   ffmpegPath: "",
   tabTitleGitRoot: false,
-  warmWindow: false,
+  warmWindow: true,
 };
 
 const STORAGE_KEY = "explorer-settings";

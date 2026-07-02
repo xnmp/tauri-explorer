@@ -54,17 +54,22 @@ describe("Streaming ingest pipeline (5000-entry directory)", () => {
   // 5000 entries = 50 batches of 100, matching the backend stream batch size.
   const dir = testData.large.slice(0, 5000);
 
-  it("buffered ingest (new behaviour) stays under 15ms", () => {
-    const result = benchmark("ingest-buffered-5000", () => ingestBuffered(dir), 50);
-    console.log(formatResult(result));
-    assertPerformance(result, 15);
-  });
-
-  it("documents per-batch ingest (old O(n^2) behaviour)", () => {
-    // No hard budget: this records the original cost for comparison. The
-    // buffered variant above should be many times faster. Kept so a future
-    // accidental revert to per-batch re-sorting shows up as a glaring delta.
-    const result = benchmark("ingest-perBatch-5000", () => ingestPerBatch(dir), 20);
-    console.log(formatResult(result));
+  it("buffered ingest (new behaviour) is many times faster than per-batch", () => {
+    const buffered = benchmark("ingest-buffered-5000", () => ingestBuffered(dir), 50);
+    const perBatch = benchmark("ingest-perBatch-5000", () => ingestPerBatch(dir), 20);
+    console.log(formatResult(buffered));
+    console.log(formatResult(perBatch));
+    // The contract is the complexity gap, not an absolute number (which varies
+    // by machine and test-runner load): a revert to per-batch re-sorting
+    // collapses the ratio to ~1x. Observed ~7-25x; require 3x.
+    const bufferedMs = buffered.averageMs ?? buffered.duration;
+    const perBatchMs = perBatch.averageMs ?? perBatch.duration;
+    if (bufferedMs * 3 > perBatchMs) {
+      throw new Error(
+        `Buffered ingest lost its edge: ${bufferedMs.toFixed(1)}ms vs per-batch ${perBatchMs.toFixed(1)}ms (<3x)`,
+      );
+    }
+    // Loose absolute ceiling as a sanity backstop.
+    assertPerformance(buffered, 60);
   });
 });

@@ -137,10 +137,14 @@ fn get_git_status_sync(path: &str) -> Result<GitStatusResponse, AppError> {
     };
 
     // Get porcelain status. `-z` avoids quoting/octal-escaping of non-ASCII
-    // paths that the default line format applies.
+    // paths that the default line format applies. `-unormal` (not `-uall`)
+    // reports a fully-untracked directory as one entry instead of enumerating
+    // every file inside it — the aggregation below collapses children to the
+    // top-level name anyway, and enumerating large untracked trees
+    // (build output, node_modules) is by far the costliest part of status.
     let output = Command::new("git")
         .no_console()
-        .args(["status", "--porcelain", "-z", "-uall", "."])
+        .args(["status", "--porcelain", "-z", "-unormal", "."])
         .current_dir(dir)
         .output()
         .map_err(AppError::from)?;
@@ -289,6 +293,25 @@ mod tests {
         let resp = status_of(dir.path());
         assert!(
             matches!(resp.statuses.get("pkg"), Some(GitFileStatus::Modified)),
+            "statuses={:?}",
+            resp.statuses
+        );
+    }
+
+    #[test]
+    fn fully_untracked_directory_reports_untracked() {
+        let dir = init_repo();
+        write(dir.path(), "keep.txt", "v1\n");
+        git(dir.path(), &["add", "-A"]);
+        git(dir.path(), &["commit", "-m", "init"]);
+
+        // With -unormal git reports "?? fresh/" as a single entry; the badge
+        // for the directory must still resolve to Untracked.
+        write(dir.path(), "fresh/inner/a.txt", "x\n");
+
+        let resp = status_of(dir.path());
+        assert!(
+            matches!(resp.statuses.get("fresh"), Some(GitFileStatus::Untracked)),
             "statuses={:?}",
             resp.statuses
         );

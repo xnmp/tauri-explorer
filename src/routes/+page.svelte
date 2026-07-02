@@ -30,16 +30,12 @@
   import PaneContainer from "$lib/components/PaneContainer.svelte";
   import QuickOpen from "$lib/components/QuickOpen.svelte";
   import CommandPalette from "$lib/components/CommandPalette.svelte";
-  import ThemePicker from "$lib/components/ThemePicker.svelte";
   import OptionPicker from "$lib/components/OptionPicker.svelte";
-  import SettingsDialog from "$lib/components/SettingsDialog.svelte";
   import ProgressDialog from "$lib/components/ProgressDialog.svelte";
   import ContentSearchDialog from "$lib/components/ContentSearchDialog.svelte";
-  import WorkspaceDialog from "$lib/components/WorkspaceDialog.svelte";
-  import BulkRenameDialog from "$lib/components/BulkRenameDialog.svelte";
   import ConflictDialog from "$lib/components/ConflictDialog.svelte";
-  import NanoBananaDialog from "$lib/components/NanoBananaDialog.svelte";
   import JobsPanel from "$lib/components/JobsPanel.svelte";
+  import type { Component } from "svelte";
   import { gitStatusStore } from "$lib/state/git-status.svelte";
   import { initTabTransferListener } from "$lib/state/tab-transfer";
   import StatusBar from "$lib/components/StatusBar.svelte";
@@ -66,6 +62,33 @@
   }
 
   const refreshAllPanes = () => windowTabsManager.refreshAllPanes();
+
+  // Rarely-opened dialogs are code-split out of the startup bundle and loaded
+  // on first open. They stay mounted after loading so close transitions and
+  // internal state behave exactly as with a static import.
+  let ThemePicker = $state<Component<{ open: boolean; onClose: () => void }> | null>(null);
+  let SettingsDialog = $state<Component<{ open: boolean; onClose: () => void }> | null>(null);
+  let WorkspaceDialog = $state<Component<{ open: boolean; onClose: () => void }> | null>(null);
+  let BulkRenameDialog = $state<Component<any> | null>(null);
+  let NanoBananaDialog = $state<Component<any> | null>(null);
+
+  $effect(() => {
+    if (dialogStore.isThemePickerOpen && !ThemePicker) {
+      void import("$lib/components/ThemePicker.svelte").then((m) => (ThemePicker = m.default));
+    }
+    if (dialogStore.isSettingsOpen && !SettingsDialog) {
+      void import("$lib/components/SettingsDialog.svelte").then((m) => (SettingsDialog = m.default));
+    }
+    if (dialogStore.isWorkspaceOpen && !WorkspaceDialog) {
+      void import("$lib/components/WorkspaceDialog.svelte").then((m) => (WorkspaceDialog = m.default));
+    }
+    if (dialogStore.isBulkRenameOpen && !BulkRenameDialog) {
+      void import("$lib/components/BulkRenameDialog.svelte").then((m) => (BulkRenameDialog = m.default));
+    }
+    if (dialogStore.isNanoBananaOpen && !NanoBananaDialog) {
+      void import("$lib/components/NanoBananaDialog.svelte").then((m) => (NanoBananaDialog = m.default));
+    }
+  });
 
   // Initialize composables
   const nativeDropHandler = useNativeDropHandler({ getActiveExplorer, refreshAllPanes });
@@ -394,22 +417,32 @@
 
 <QuickOpen open={dialogStore.isQuickOpenOpen} onClose={() => dialogStore.closeQuickOpen()} />
 <CommandPalette open={dialogStore.isCommandPaletteOpen} onClose={() => dialogStore.closeCommandPalette()} />
-<ThemePicker open={dialogStore.isThemePickerOpen} onClose={() => dialogStore.closeThemePicker()} />
+{#if ThemePicker}
+  <ThemePicker open={dialogStore.isThemePickerOpen} onClose={() => dialogStore.closeThemePicker()} />
+{/if}
 <OptionPicker />
 <ContentSearchDialog open={dialogStore.isContentSearchOpen} onClose={() => dialogStore.closeContentSearch()} />
-<SettingsDialog open={dialogStore.isSettingsOpen} onClose={() => dialogStore.closeSettings()} />
-<WorkspaceDialog open={dialogStore.isWorkspaceOpen} onClose={() => dialogStore.closeWorkspace()} />
-<BulkRenameDialog
-  open={dialogStore.isBulkRenameOpen}
-  entries={dialogStore.bulkRenameEntries}
-  onClose={() => dialogStore.closeBulkRename()}
-  onComplete={() => refreshAllPanes()}
-/>
-<NanoBananaDialog
-  open={dialogStore.isNanoBananaOpen}
-  sourcePath={dialogStore.nanoBananaSourcePath}
-  onClose={() => dialogStore.closeNanoBanana()}
-/>
+{#if SettingsDialog}
+  <SettingsDialog open={dialogStore.isSettingsOpen} onClose={() => dialogStore.closeSettings()} />
+{/if}
+{#if WorkspaceDialog}
+  <WorkspaceDialog open={dialogStore.isWorkspaceOpen} onClose={() => dialogStore.closeWorkspace()} />
+{/if}
+{#if BulkRenameDialog}
+  <BulkRenameDialog
+    open={dialogStore.isBulkRenameOpen}
+    entries={dialogStore.bulkRenameEntries}
+    onClose={() => dialogStore.closeBulkRename()}
+    onComplete={() => refreshAllPanes()}
+  />
+{/if}
+{#if NanoBananaDialog}
+  <NanoBananaDialog
+    open={dialogStore.isNanoBananaOpen}
+    sourcePath={dialogStore.nanoBananaSourcePath}
+    onClose={() => dialogStore.closeNanoBanana()}
+  />
+{/if}
 <JobsPanel
   open={dialogStore.isJobsPanelOpen}
   onClose={() => dialogStore.closeJobsPanel()}

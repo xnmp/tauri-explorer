@@ -14,21 +14,46 @@
   // Resize state
   let isResizing = $state(false);
   let containerRef = $state<HTMLElement | null>(null);
+  // Container rect is stable for the duration of a drag; cache it so
+  // mousemove never forces a layout read.
+  let containerRect: DOMRect | null = null;
+  let pendingClientX: number | null = null;
+  let moveRafId = 0;
 
   function startResize(event: MouseEvent) {
     event.preventDefault();
     isResizing = true;
+    containerRect = containerRef?.getBoundingClientRect() ?? null;
   }
 
-  function handleResize(event: MouseEvent) {
-    if (!isResizing || !containerRef) return;
-    const rect = containerRef.getBoundingClientRect();
-    const ratio = (event.clientX - rect.left) / rect.width;
+  function applyPendingResize() {
+    if (pendingClientX === null || !containerRect) return;
+    const ratio = (pendingClientX - containerRect.left) / containerRect.width;
     windowTabsManager.setSplitRatio(ratio);
+    pendingClientX = null;
+  }
+
+  // rAF-coalesced: mousemove can fire far above frame rate on high-poll-rate
+  // mice; applying every event triggers a full pane re-layout each time.
+  function handleResize(event: MouseEvent) {
+    if (!isResizing) return;
+    pendingClientX = event.clientX;
+    if (moveRafId) return;
+    moveRafId = requestAnimationFrame(() => {
+      moveRafId = 0;
+      applyPendingResize();
+    });
   }
 
   function endResize() {
+    if (!isResizing) return;
+    if (moveRafId) {
+      cancelAnimationFrame(moveRafId);
+      moveRafId = 0;
+    }
+    applyPendingResize();
     isResizing = false;
+    containerRect = null;
   }
 </script>
 
@@ -46,7 +71,7 @@
   </div>
 
   {#if dualPaneEnabled}
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <!-- svelte-ignore a11y_no_static_element_interactions, a11y_no_noninteractive_element_interactions -->
     <div
       class="pane-divider"
       onmousedown={startResize}

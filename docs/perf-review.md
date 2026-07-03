@@ -283,6 +283,17 @@ instant." None of it is search.
 - **#3 shipped** (`perf/selection-rerender-decoupling`): selection is a `SvelteSet`
   mutated in place through `setSelection()` — `.has()` subscribes per key, so a click
   re-renders the two affected rows, not every visible row.
+- **#8 re-scoped + shipped** (`perf/tiles-virtualization`): the finding was partly
+  stale — tiles already have `content-visibility: auto` + `contain` (browser-level
+  virtualization of layout/paint) and rAF-chunked progressive mounting, and
+  ThumbnailImage already gates loads on an IntersectionObserver with bounded
+  concurrency pools. The real gap: `visible` latched true on first intersect, so a
+  fast scroll queued thumbnail work for every passed tile with no cancellation.
+  The observer now tracks leave/enter; queued work bails at pool-acquire time if the
+  tile scrolled away (retried on re-entry; terminal results recorded per reload-key so
+  scroll wiggle never refetches). DOM-windowing was deliberately NOT added — with
+  content-visibility already shipping, the win didn't justify rewriting the auto-fill
+  grid layout.
 - **#6 shipped** (`perf/defer-is-empty-scan`): the parallel scan no longer probes
   `is_empty` (one `read_dir` per subdir); it's backfilled per batch — first batch before
   return, later chunks in the streaming thread, `list_directory` (miller/pickers) still

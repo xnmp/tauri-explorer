@@ -241,8 +241,10 @@
   .tiles-view :global(.tile-icon > .icon-cat),
   .tiles-view :global(.tile-icon > .nf-icon-badge),
   /* FolderThumbnail's imageless fallback nests the same FileIcon one level
-     deeper — scale it identically to a bare icon. */
-  .tiles-view :global(.tile-icon > .folder-thumb > svg),
+     deeper — scale it identically to a bare icon. The preview-mode folder
+     glyph (.folder-layer) is already sized to the tile, so it must be
+     EXCLUDED here or it gets scaled twice and dwarfs the plain icon (#148). */
+  .tiles-view :global(.tile-icon > .folder-thumb > svg:not(.folder-layer)),
   .tiles-view :global(.tile-icon > .folder-thumb > .icon-cat),
   .tiles-view :global(.tile-icon > .folder-thumb > .nf-icon-badge) {
     transform: scale(var(--tile-icon-scale, 1));

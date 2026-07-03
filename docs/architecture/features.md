@@ -110,6 +110,16 @@
 | Markdown preview | `domain/markdown.ts` (marked + hljs, escaped raw HTML), `PreviewPane.svelte` (.preview-markdown) |
 | ZIP content preview | `archive.rs:list_archive_contents` (top-level entries as `FileEntry`s), `files.ts:listArchiveContents`, `file-types.ts:isZipFile`, `PreviewPane.svelte` (renders in the shared `.preview-folder-list` folder format) |
 
+### Embedded Terminal
+| Feature | Files to change |
+|---------|----------------|
+| PTY backend | `terminal.rs` (portable-pty; spawn/write/resize/kill commands, per-window registry, killed via `on_window_destroyed` in `lib.rs` run loop; output streamed as `terminal-output-{id}` events) |
+| Terminal panel | `TerminalPanel.svelte` (xterm.js + fit addon, lazy-imported on first open, stays mounted while hidden so the shell survives toggling), `state/terminal.svelte.ts` (visibility), `api/terminal.ts` |
+| Toggle (Ctrl+\`) | hardcoded in `+page.svelte:handleKeydown` *before* the input-field guard (so it closes from inside the terminal); palette entry `view.toggleTerminal` in `commands/view-commands.ts` |
+| Theming | `domain/terminal-theme.ts` (CSS vars → xterm theme object, re-applied on theme switch — xterm can't consume CSS vars) |
+| cwd sync | shell spawns at the active explorer's path; explicit header action writes `domain/terminal-command.ts:buildCdCommand` (POSIX quoting / cmd.exe `/d`) |
+| Panel height | `settingsStore.terminalPanelHeight` (drag handle in `TerminalPanel.svelte`) |
+
 ### Sidebar & Bookmarks
 | Feature | Files to change |
 |---------|----------------|

@@ -25,6 +25,7 @@ mod portal {
 mod search;
 mod system;
 pub mod task_registry;
+mod terminal;
 mod thumbnails;
 mod wallpaper;
 mod warm_pool;
@@ -200,6 +201,11 @@ pub fn run(launch_dir: Option<String>) {
             warm_pool::warm_pool_claim,
             warm_pool::warm_pool_discard,
             warm_pool::warm_pool_shutdown,
+            // Embedded terminal
+            terminal::terminal_spawn,
+            terminal::terminal_write,
+            terminal::terminal_resize,
+            terminal::terminal_kill,
         ])
         .setup(move |app| {
             let t_setup = std::time::Instant::now();
@@ -348,6 +354,7 @@ pub fn run(launch_dir: Option<String>) {
             } = &event
             {
                 warm_pool::on_window_destroyed(app, label);
+                terminal::on_window_destroyed(label);
             }
         });
 }

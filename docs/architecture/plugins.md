@@ -59,6 +59,7 @@ tracked and torn down.
 | Command palette / shortcut | `ctx.registerCommand(cmd)` | `state/commands.svelte.ts` (category `"plugins"`) |
 | Context-menu item | `ctx.registerContextMenuItem({ id, label, icon?, when(entries), handler })` | `state/context-menu-items.svelte.ts` → `ContextMenu.svelte` |
 | Settings section | `ctx.registerSettingsSection({ id, title, rows })` | `plugins/settings-registry.svelte.ts` → `SettingsDialog.svelte` |
+| Modal dialog | `ctx.registerDialog({ id, component })` + `ctx.openDialog(id, props)` / `ctx.closeDialog(id)` | `plugins/dialog-registry.svelte.ts` → `+page.svelte` |
 | Virtual filesystem | `ctx.registerFsProvider(scheme, { list(path) })` | `plugins/fs-providers.ts` → `api/files.ts` |
 | Background jobs | `ctx.jobs.add/complete/fail` | `state/jobs.svelte.ts` (job tagged `source: pluginId`) |
 | Toasts | `ctx.toast.show / error` | `state/toast.svelte.ts` |
@@ -93,6 +94,43 @@ A provider serves a URL scheme (`demo://`, and later `keep://`). Dispatch:
 `FileEntry` paths under a provider keep the scheme prefix, so navigating into
 `demo://subfolder` dispatches back to the same provider.
 
+## Modal dialogs (the `registerDialog` seam)
+
+A plugin contributes a modal by registering a Svelte component under a stable id
+and opening it on demand:
+
+- `ctx.registerDialog({ id, component })` — stores the component (disposed on
+  deactivate; the dialog is also force-closed if open).
+- `ctx.openDialog(id, props)` — pushes `{ id, component, props }` onto the
+  registry's `openDialogs` `$state`. Re-opening an id replaces its props.
+- `ctx.closeDialog(id)` — removes it (by **stable id**, never object identity —
+  `$state` arrays deep-proxy their elements, see `lessons_learnt.md`).
+
+`+page.svelte` renders the open set data-driven, injecting `open` and an
+`onClose` that closes by id:
+
+```svelte
+{#each dialogRegistry.openDialogs as d (d.id)}
+  {@const DialogComponent = d.component}
+  <DialogComponent open={true} {...d.props} onClose={() => dialogRegistry.close(d.id)} />
+{/each}
+```
+
+The dialog component is a normal Svelte component the plugin imports; it receives
+its props plus `onClose`. Capability handles (`ctx.jobs`, `ctx.toast`) and data
+(e.g. an API key read from `ctx.storage`) are passed in as props from `activate`,
+so the component never reaches into core state.
+
+## One-time storage migration
+
+When a shipped feature becomes a plugin, its old settings live in the core
+`settings.json`. Migrate on first `activate`: if plugin storage has no value yet
+and the legacy key is present in `settings.json` (read raw via `readConfigFile`),
+copy it into `ctx.storage` **before** registering the settings section (which
+seeds its reactive values from storage at register time). The nano-banana plugin
+does this for `geminiApiKey → plugin.nano-banana.json:apiKey`, so existing users
+keep their key.
+
 ## Adding a built-in plugin
 
 1. Create `src/lib/plugins/<id>/index.ts` exporting a `Plugin`
@@ -105,3 +143,10 @@ See `plugins/demo/index.ts` for a reference that exercises every seam (command,
 nav command, context-menu item, settings section, and a `demo://` fs provider).
 It ships `enabledByDefault: false` and is what `e2e/plugin-system.spec.ts`
 drives.
+
+`plugins/nano-banana/` is the real-world proof: an existing shipped feature
+(AI image editing) expressed entirely through contributions — a settings
+section, context-menu item, command, **modal dialog**, and completion-event
+listeners — with zero nano-banana-specific code left in core components. It
+ships `enabledByDefault: true` (a relocated feature, not a new opt-in) and does
+the legacy-key migration above. `e2e/nano-banana.spec.ts` drives it.

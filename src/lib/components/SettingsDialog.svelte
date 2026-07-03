@@ -121,7 +121,6 @@
     explorerFollowsTerminal: ["Explorer Follows Terminal", "Navigate the active pane when the terminal's shell changes directory (OSC 7)", "terminal", "cwd", "sync"],
     previewFontSize: ["Preview Font Size", "Font size for text, code and markdown previews"],
     ffmpegPath: ["FFmpeg Path", "Path to the ffmpeg binary for video/audio thumbnails (leave empty to auto-detect)", "video", "thumbnail"],
-    geminiApiKey: ["Gemini API Key", "Required for Nano Banana image editing (right-click images)", "AI", "Nano Banana"],
     keyboardShortcuts: ["Keyboard Shortcuts", "keybindings", "hotkeys", "Click on a shortcut to change it"],
   };
 
@@ -746,25 +745,6 @@
               />
               <span class="toggle-slider"></span>
             </label>
-          </div>
-        </section>
-
-        <!-- AI / Nano Banana Section -->
-        <section class="settings-section" class:hidden={!sectionVisible(rows.geminiApiKey)}>
-          <h3 class="section-title">AI / Nano Banana</h3>
-
-          <div class="setting-row" class:hidden={!matchesSearch(...rows.geminiApiKey)}>
-            <div class="setting-info">
-              <span class="setting-label">Gemini API Key</span>
-              <span class="setting-description">Required for Nano Banana image editing (right-click images)</span>
-            </div>
-            <input
-              class="text-input"
-              type="password"
-              value={settingsStore.geminiApiKey}
-              placeholder="Enter API key"
-              onchange={(e) => settingsStore.setGeminiApiKey(e.currentTarget.value)}
-            />
           </div>
         </section>
 

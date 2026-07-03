@@ -1,6 +1,5 @@
 <!--
   Jobs Panel - Background job status viewer (Ctrl+J)
-  Issue: feat/nano-banana
 -->
 <script lang="ts">
   import { jobsStore, type Job } from "$lib/state/jobs.svelte";

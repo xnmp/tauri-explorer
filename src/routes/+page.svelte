@@ -15,6 +15,7 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { registerAllCommands } from "$lib/state/command-definitions";
   import { pluginRegistry } from "$lib/plugins/registry.svelte";
+  import { dialogRegistry } from "$lib/plugins/dialog-registry.svelte";
   import { executeCommand, getCommand } from "$lib/state/commands.svelte";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
@@ -78,7 +79,6 @@
   let SettingsDialog = $state<Component<{ open: boolean; onClose: () => void }> | null>(null);
   let WorkspaceDialog = $state<Component<{ open: boolean; onClose: () => void }> | null>(null);
   let BulkRenameDialog = $state<Component<any> | null>(null);
-  let NanoBananaDialog = $state<Component<any> | null>(null);
 
   $effect(() => {
     if (dialogStore.isThemePickerOpen && !ThemePicker) {
@@ -93,16 +93,12 @@
     if (dialogStore.isBulkRenameOpen && !BulkRenameDialog) {
       void import("$lib/components/BulkRenameDialog.svelte").then((m) => (BulkRenameDialog = m.default));
     }
-    if (dialogStore.isNanoBananaOpen && !NanoBananaDialog) {
-      void import("$lib/components/NanoBananaDialog.svelte").then((m) => (NanoBananaDialog = m.default));
-    }
   });
 
   // Initialize composables
   const nativeDropHandler = useNativeDropHandler({ getActiveExplorer, refreshAllPanes });
   const fileWatchers = useFileWatchers({
     getAllExplorers: () => windowTabsManager.getAllExplorers(),
-    refreshAllPanes,
   });
   const windowLifecycle = useWindowLifecycle({
     getActiveExplorer,
@@ -504,13 +500,10 @@
     onComplete={() => refreshAllPanes()}
   />
 {/if}
-{#if NanoBananaDialog}
-  <NanoBananaDialog
-    open={dialogStore.isNanoBananaOpen}
-    sourcePath={dialogStore.nanoBananaSourcePath}
-    onClose={() => dialogStore.closeNanoBanana()}
-  />
-{/if}
+{#each dialogRegistry.openDialogs as d (d.id)}
+  {@const DialogComponent = d.component}
+  <DialogComponent open={true} {...d.props} onClose={() => dialogRegistry.close(d.id)} />
+{/each}
 <JobsPanel
   open={dialogStore.isJobsPanelOpen}
   onClose={() => dialogStore.closeJobsPanel()}

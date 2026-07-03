@@ -13,9 +13,10 @@
 import { createPluginContext, type Plugin } from "./api";
 import { settingsStore } from "$lib/state/settings.svelte";
 import { demoPlugin } from "./demo";
+import { nanoBananaPlugin } from "./nano-banana";
 
 /** Statically-imported built-in plugins (explicit imports — no dynamic load). */
-const BUILT_IN_PLUGINS: Plugin[] = [demoPlugin];
+const BUILT_IN_PLUGINS: Plugin[] = [demoPlugin, nanoBananaPlugin];
 
 export interface PluginInfo {
   id: string;

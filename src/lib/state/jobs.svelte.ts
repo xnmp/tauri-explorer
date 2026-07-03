@@ -1,9 +1,8 @@
 /**
  * Background jobs state management.
- * Issue: feat/nano-banana
  *
- * Tracks long-running background operations (e.g. Nano Banana image edits)
- * with status, elapsed time, and output info.
+ * Tracks long-running background operations (built-in flows or plugin jobs,
+ * e.g. AI image edits) with status, elapsed time, and output info.
  */
 
 export type JobStatus = "running" | "completed" | "error";
@@ -11,7 +10,7 @@ export type JobStatus = "running" | "completed" | "error";
 export interface Job {
   id: number;
   label: string;
-  /** Free-text detail line (e.g. the Nano Banana prompt). */
+  /** Free-text detail line (e.g. an edit prompt). */
   detail: string;
   /** Origin of the job: "app" for built-in flows, or a plugin id. */
   source: string;

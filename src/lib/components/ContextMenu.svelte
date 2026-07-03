@@ -366,13 +366,6 @@
             </svg>
             <span>Set as Desktop Background</span>
           </button>
-          <button class="menu-item" onclick={() => { dialogStore.openNanoBanana(selectedImage.path); contextMenuStore.close(); }} role="menuitem">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path d="M12 2L14 4L5 13H3V11L12 2Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
-              <path d="M10.5 3.5L12.5 5.5" stroke="currentColor" stroke-width="1.25"/>
-            </svg>
-            <span>Edit with Nano Banana</span>
-          </button>
         {/if}
         <div class="menu-divider"></div>
       {/if}

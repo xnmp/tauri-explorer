@@ -80,7 +80,6 @@ export interface Settings {
   showScmPanel: boolean; // show SCM panel (independent of sidebar)
   scmTreeView: boolean; // group SCM file rows by folder hierarchy
   quickOpenDebug: boolean; // show score breakdown in QuickOpen results
-  geminiApiKey: string; // Gemini API key for Nano Banana image editing
   integratedTitleBar: boolean; // macOS: render tabs in title bar with overlay traffic lights
   macOsVibrancy: boolean; // macOS: native window vibrancy (translucent frosted glass), requires restart
   vibrancyBlur: boolean; // macOS: enable native blur behind vibrancy (off = theme background, no blur)
@@ -138,7 +137,6 @@ const DEFAULT_SETTINGS: Settings = {
   showScmPanel: false,
   scmTreeView: false,
   quickOpenDebug: false,
-  geminiApiKey: "",
   integratedTitleBar: false,
   macOsVibrancy: false,
   vibrancyBlur: true,
@@ -368,12 +366,6 @@ function createSettingsStore() {
     },
     toggleQuickOpenDebug(): void {
       update({ quickOpenDebug: !settings.quickOpenDebug });
-    },
-    get geminiApiKey() {
-      return settings.geminiApiKey;
-    },
-    setGeminiApiKey(key: string): void {
-      update({ geminiApiKey: key });
     },
     get integratedTitleBar() {
       return settings.integratedTitleBar;

@@ -1,23 +1,26 @@
 <!--
-  Nano Banana prompt dialog - AI image editing
-  Issue: feat/nano-banana
+  Nano Banana prompt dialog - AI image editing.
+  Plugin-owned modal, rendered via the plugin dialog registry. Receives its
+  source path, API key and job/toast handles as props from the plugin's
+  `activate`, and a close callback injected by the renderer.
 -->
 <script lang="ts">
-  import { settingsStore } from "$lib/state/settings.svelte";
-  import Modal from "./Modal.svelte";
-  import { jobsStore } from "$lib/state/jobs.svelte";
-  import { toastStore } from "$lib/state/toast.svelte";
-  import { dialogStore } from "$lib/state/dialogs.svelte";
+  import Modal from "$lib/components/Modal.svelte";
+  import type { PluginJobs, PluginToast } from "$lib/plugins/api";
   import { startNanoBananaJob, checkPathsExist } from "$lib/api/files";
   import { parentDir, basename } from "$lib/domain/path";
 
   interface Props {
     open: boolean;
     sourcePath: string;
+    apiKey: string;
+    jobs: PluginJobs;
+    toast: PluginToast;
+    onOpenSettings: () => void;
     onClose: () => void;
   }
 
-  let { open, sourcePath, onClose }: Props = $props();
+  let { open, sourcePath, apiKey, jobs, toast, onOpenSettings, onClose }: Props = $props();
 
   type NanoBananaModel = "nanobanana-pro" | "flash-image";
   const MODEL_OPTIONS: { id: NanoBananaModel; label: string }[] = [
@@ -33,7 +36,7 @@
 
   const fileName = $derived(basename(sourcePath));
   const outputDir = $derived(parentDir(sourcePath));
-  const hasApiKey = $derived(!!settingsStore.geminiApiKey);
+  const hasApiKey = $derived(!!apiKey);
 
   /** Find next available output name: photo_edit.png, photo_edit_2.png, ... */
   async function findAvailableFilename(dir: string, name: string): Promise<string> {
@@ -79,16 +82,16 @@
       prompt.trim(),
       outputDir,
       outputFilename.trim(),
-      settingsStore.geminiApiKey,
+      apiKey,
       model,
     );
 
     if (result.ok) {
-      jobsStore.addJob(result.data, fileName, prompt.trim(), "nano-banana");
-      toastStore.show(`Nano Banana job started: ${fileName}`, "info");
+      jobs.add(result.data, fileName, prompt.trim());
+      toast.show(`Nano Banana job started: ${fileName}`, "info");
       onClose();
     } else {
-      toastStore.error(`Failed to start job: ${result.error}`);
+      toast.error(`Failed to start job: ${result.error}`);
       submitting = false;
     }
   }
@@ -137,7 +140,7 @@
               <path d="M8 2L1 14h14L8 2zM8 6v4M8 12h.01" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
             <span>Gemini API key not configured.</span>
-            <button class="link-btn" onclick={() => { onClose(); dialogStore.openSettings(); }}>
+            <button class="link-btn" onclick={() => { onClose(); onOpenSettings(); }}>
               Open Settings
             </button>
           </div>

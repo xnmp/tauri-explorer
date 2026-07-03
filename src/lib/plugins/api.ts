@@ -18,6 +18,7 @@ import { registerCommand, unregisterCommand } from "$lib/state/commands.svelte";
 import { contextMenuItems, type ContextMenuItem } from "$lib/state/context-menu-items.svelte";
 import { registerFsProvider, type FsProvider } from "./fs-providers";
 import { pluginSettingsSections } from "./settings-registry.svelte";
+import { dialogRegistry, type DialogDescriptor } from "./dialog-registry.svelte";
 import { jobsStore } from "$lib/state/jobs.svelte";
 import { toastStore, type ToastType } from "$lib/state/toast.svelte";
 import { readConfigFile } from "$lib/api/files";
@@ -80,6 +81,13 @@ export interface PluginContext {
   registerContextMenuItem(item: ContextMenuItem): void;
   registerSettingsSection(section: SettingsSectionDescriptor): void;
   registerFsProvider(scheme: string, provider: FsProvider): void;
+  /** Contribute a modal dialog component, addressable by its stable id. */
+  registerDialog(descriptor: DialogDescriptor): void;
+  /** Open a registered dialog, passing props to its component. `open` and an
+   *  `onClose` (which closes the dialog) are injected by the renderer. */
+  openDialog(id: string, props?: Record<string, unknown>): void;
+  /** Close an open dialog by id. */
+  closeDialog(id: string): void;
   jobs: PluginJobs;
   toast: PluginToast;
   events: PluginEvents;
@@ -143,6 +151,15 @@ export function createPluginContext(pluginId: string): {
     },
     registerFsProvider(scheme: string, provider: FsProvider): void {
       track(registerFsProvider(scheme, provider));
+    },
+    registerDialog(descriptor: DialogDescriptor): void {
+      track(dialogRegistry.register(descriptor));
+    },
+    openDialog(id: string, props?: Record<string, unknown>): void {
+      dialogRegistry.open(id, props ?? {});
+    },
+    closeDialog(id: string): void {
+      dialogRegistry.close(id);
     },
     jobs: {
       add: (id, label, detail) => jobsStore.addJob(id, label, detail, pluginId),

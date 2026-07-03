@@ -45,6 +45,7 @@ hex = "0.4"
 zip = { version = "2", default-features = false, features = ["deflate", "deflate64", "bzip2", "zstd", "lzma"] }
 tokio = { version = "1", features = ["rt", "time", "sync", "process"] }
 notify = "7"
+portable-pty = "0.9"
 git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2"] }
 libc = "0.2.183"
 log = "0.4"

@@ -8,6 +8,7 @@ import { themeStore } from "../theme.svelte";
 import { folderViewsStore } from "../folder-views.svelte";
 import { sidebarViewsStore } from "../sidebar-views.svelte";
 import { dialogStore } from "../dialogs.svelte";
+import { terminalPanelStore } from "../terminal.svelte";
 import { getActiveExplorer } from "./shared";
 
 /** View commands */
@@ -107,6 +108,15 @@ export const viewCommands: Command[] = [
       const current = themeStore.currentThemeId;
       themeStore.setTheme(current === "dark" ? "light" : "dark");
     },
+  },
+  {
+    id: "view.toggleTerminal",
+    label: "Toggle Terminal",
+    category: "view",
+    // Display only: Ctrl+` is hardcoded in +page.svelte's keydown handler so
+    // it works even while the terminal's own textarea has focus.
+    shortcut: "Ctrl+`",
+    handler: () => terminalPanelStore.toggle(),
   },
   {
     id: "view.zoomIn",

@@ -68,6 +68,7 @@ export interface Settings {
   listColumnMaxWidth: number; // max width per column in px (used when listViewColumns=0)
   viewMode: ViewMode; // default view mode for new panes
   previewPaneWidth: number; // width in px, 0 = default (280px)
+  terminalPanelHeight: number; // embedded terminal panel height in px
   theme: string; // active theme id, e.g. "dark", "golden-hour"
   thumbnailSize: ThumbnailSize; // tile thumbnail size tier
   showGitStatus: boolean; // show git indicators on files
@@ -122,6 +123,7 @@ const DEFAULT_SETTINGS: Settings = {
   listColumnMaxWidth: 250,
   viewMode: "details",
   previewPaneWidth: 0,
+  terminalPanelHeight: 240,
   theme: "light",
   thumbnailSize: "small",
   showGitStatus: false,
@@ -300,6 +302,9 @@ function createSettingsStore() {
     get previewPaneWidth() {
       return settings.previewPaneWidth;
     },
+    get terminalPanelHeight() {
+      return settings.terminalPanelHeight;
+    },
     get theme() {
       return settings.theme;
     },
@@ -412,6 +417,9 @@ function createSettingsStore() {
     },
     setPreviewPaneWidth(px: number): void {
       update({ previewPaneWidth: Math.max(0, Math.min(600, px)) });
+    },
+    setTerminalPanelHeight(px: number): void {
+      update({ terminalPanelHeight: Math.max(96, Math.min(800, Math.round(px))) });
     },
     setViewMode(mode: ViewMode): void {
       update({ viewMode: mode });

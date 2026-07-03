@@ -20,6 +20,7 @@
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { saveFocusedWindowState } from "$lib/state/focused-window";
+  import { terminalPanelStore } from "$lib/state/terminal.svelte";
   import { setFfmpegPath } from "$lib/api/files";
   import { useNativeDropHandler } from "$lib/composables/use-native-drop-handler";
   import { useFileWatchers } from "$lib/composables/use-file-watchers";
@@ -148,6 +149,15 @@
         explorer.closeFilter();
         return;
       }
+    }
+
+    // Ctrl+`: toggle the embedded terminal. Handled before the input-field
+    // early-return so it also closes the panel while the terminal (a
+    // <textarea> under the hood) has focus — mirroring VS Code.
+    if ((event.key === "`" || event.code === "Backquote") && isModifier && !dialogStore.hasModalOpen) {
+      event.preventDefault();
+      terminalPanelStore.toggle();
+      return;
     }
 
     // Skip shortcut handling (including hardcoded shortcuts below) if in an
@@ -456,6 +466,13 @@
       {/await}
     {/if}
   </div>
+  {#if terminalPanelStore.everOpened}
+    <!-- Lazy: xterm.js only loads on first open. Stays mounted afterwards so
+         hiding the panel keeps the shell session alive. -->
+    {#await import("$lib/components/TerminalPanel.svelte") then { default: TerminalPanel }}
+      <TerminalPanel />
+    {/await}
+  {/if}
   {#if settingsStore.showStatusBar}
     <StatusBar />
   {/if}

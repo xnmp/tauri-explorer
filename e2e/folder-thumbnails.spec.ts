@@ -98,6 +98,34 @@ test.describe("Folder preview thumbnails", () => {
     await expect(pictures.locator(".folder-thumb .photo").first()).toBeVisible({ timeout: 5000 });
   });
 
+  test("preview folder glyph is the same size as a plain folder icon", async ({ page }) => {
+    // Regression for #148: the preview-mode folder glyph (.folder-layer) was
+    // matched by the tile-icon scale rule and blown up ~2x, so folders WITH a
+    // preview rendered visibly larger than plain ones. Both must render the
+    // folder silhouette at the same on-screen size.
+    await page.goto("/?path=/home/user");
+    await waitForFileList(page);
+    await switchToTilesView(page);
+    await setThumbnailSize(page, "large");
+
+    // Pictures has images → composited folder glyph (svg.folder-layer).
+    const preview = tileFor(page, "Pictures").locator("svg.folder-layer").first();
+    await expect(preview).toBeVisible({ timeout: 5000 });
+    // Documents is imageless → plain FileIcon folder glyph inside the mount.
+    const plain = tileFor(page, "Documents").locator(".folder-thumb svg").first();
+    await expect(plain).toBeVisible({ timeout: 5000 });
+
+    const previewBox = await preview.boundingBox();
+    const plainBox = await plain.boundingBox();
+    expect(previewBox).not.toBeNull();
+    expect(plainBox).not.toBeNull();
+
+    // The rendered glyph boxes must match within a few px (identical viewBox &
+    // element size). Pre-fix the preview glyph was ~2x the plain one.
+    expect(Math.abs(previewBox!.height - plainBox!.height)).toBeLessThan(4);
+    expect(Math.abs(previewBox!.width - plainBox!.width)).toBeLessThan(4);
+  });
+
   test("small and medium tile sizes never render folder previews", async ({ page }) => {
     for (const size of ["small", "medium"] as const) {
       await setThumbnailSize(page, size);

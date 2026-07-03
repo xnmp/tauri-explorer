@@ -294,6 +294,13 @@ instant." None of it is search.
   scroll wiggle never refetches). DOM-windowing was deliberately NOT added — with
   content-visibility already shipping, the win didn't justify rewriting the auto-fill
   grid layout.
+- **#12 shipped** (`perf/state-spread-and-double-sort`): the `state` accessor exposes
+  the `$state` proxy directly (typed `Readonly`) instead of `$derived({ ...coreState })`
+  — the spread rebuilt the bag and re-ran every consumer on ANY property change.
+  `sortEntries` now skips the O(n·log n) sort after a linear already-sorted check
+  (backend pre-sorts by name; when its byte order disagrees with the collator the check
+  fails and the full sort still runs, so displayed order is always the collator's —
+  which is why the Rust-then-JS "double sort" itself stays).
 - **#11 re-scoped + shipped** (`perf/animated-background-idle-gating`): the
   "runs unconditionally" claim was stale — both renderers already pause on
   `visibilitychange`. What was real: starfield recomputed its O(N²) constellation

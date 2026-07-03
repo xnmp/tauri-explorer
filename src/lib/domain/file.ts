@@ -40,13 +40,19 @@ const nameCollator = new Intl.Collator();
 /**
  * Sort file entries with directories first, then by specified field.
  * Returns a new array without mutating the original.
+ *
+ * Input that is already in order (the backend pre-sorts scans by name, and
+ * collation usually agrees for ASCII names) skips the O(n·log n) sort after
+ * one linear verification pass. When the orders disagree (locale collation
+ * vs the backend's byte order), the check fails and the full sort runs — so
+ * the displayed order is always the collator's.
  */
 export function sortEntries(
   entries: readonly FileEntry[],
   by: SortField = "name",
   ascending = true
 ): FileEntry[] {
-  const sorted = [...entries].sort((a, b) => {
+  const compare = (a: FileEntry, b: FileEntry): number => {
     // Directories always first
     if (a.kind !== b.kind) {
       return a.kind === "directory" ? -1 : 1;
@@ -76,9 +82,18 @@ export function sortEntries(
     }
 
     return ascending ? comparison : -comparison;
-  });
+  };
 
-  return sorted;
+  let alreadySorted = true;
+  for (let i = 1; i < entries.length; i++) {
+    if (compare(entries[i - 1], entries[i]) > 0) {
+      alreadySorted = false;
+      break;
+    }
+  }
+  if (alreadySorted) return [...entries];
+
+  return [...entries].sort(compare);
 }
 
 /**

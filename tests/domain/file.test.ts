@@ -55,6 +55,22 @@ describe("sortEntries", () => {
     expect(sorted[0].kind).toBe("directory");
   });
 
+  it("returns a NEW array in the same order for already-sorted input", () => {
+    const sorted = sortEntries(mockEntries);
+    const again = sortEntries(sorted);
+    expect(again).toEqual(sorted); // order preserved
+    expect(again).not.toBe(sorted); // still a fresh array (mutation safety)
+  });
+
+  it("re-sorting already-sorted input is idempotent for every field and direction", () => {
+    for (const by of ["name", "size", "modified", "type"] as const) {
+      for (const ascending of [true, false]) {
+        const sorted = sortEntries(mockEntries, by, ascending);
+        expect(sortEntries(sorted, by, ascending)).toEqual(sorted);
+      }
+    }
+  });
+
   it("sorts files alphabetically by name (case-insensitive)", () => {
     const sorted = sortEntries(mockEntries);
     const fileNames = sorted.filter((e) => e.kind === "file").map((e) => e.name);

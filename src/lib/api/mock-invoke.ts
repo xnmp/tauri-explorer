@@ -4,6 +4,7 @@
  */
 
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
+import { selectPreviewImages } from "$lib/domain/folder-preview";
 import { parentDir, basename } from "$lib/domain/path";
 
 // Check if we're running in Tauri v2
@@ -97,6 +98,11 @@ const mockFiles: Record<string, FileEntry[]> = {
     file("photo1.jpg", "/home/user/Pictures/photo1.jpg", 2097152),
     file("photo2.jpg", "/home/user/Pictures/photo2.jpg", 1572864),
     file("screenshot.png", "/home/user/Pictures/screenshot.png", 262144),
+  ],
+  "/home/user/Pictures/vacation": [
+    file("beach.jpg", "/home/user/Pictures/vacation/beach.jpg", 3145728),
+    file("sunset.png", "/home/user/Pictures/vacation/sunset.png", 2621440),
+    file("itinerary.txt", "/home/user/Pictures/vacation/itinerary.txt", 1024),
   ],
   "/home/user/Music": [
     dir("playlist", "/home/user/Music/playlist"),
@@ -739,6 +745,22 @@ const mockCommands: Record<string, CommandHandler> = {
     // Same realistic 128px thumbnail as images — stands in for an extracted
     // video frame so the tiles view can be demoed in browser/E2E mode.
     return mockInvoke<string>("get_thumbnail_data");
+  },
+
+  get_folder_preview: (args) => {
+    // Runs the real domain selection over the mock listing, so browser E2E
+    // exercises the actual rules (image filter, hidden skip, sort, cap).
+    const path = args.path as string;
+    const entries = mockFiles[path];
+    if (!entries) throw new Error(`Not a directory: ${path}`);
+    const names = entries.filter((e) => e.kind === "file").map((e) => e.name);
+    const selected = new Set(selectPreviewImages(names));
+    const image_paths = entries.filter((e) => selected.has(e.name)).map((e) => e.path);
+    return {
+      folder_path: path,
+      image_paths,
+      fingerprint: `mock:${image_paths.join("|")}`,
+    };
   },
 
   clear_thumbnail_cache: () => 0,

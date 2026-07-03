@@ -17,6 +17,7 @@
   import FileIcon from "./FileIcon.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
   import ThumbnailImage from "./ThumbnailImage.svelte";
+  import FolderThumbnail from "./FolderThumbnail.svelte";
   import InlineNewFolder from "./InlineNewFolder.svelte";
   import ItemButton from "./ItemButton.svelte";
 
@@ -44,6 +45,12 @@
     folderViewsStore.getThumbnailSize(explorer.currentPath, settingsStore.thumbnailSize)
   );
   const tileConfig = $derived(THUMBNAIL_SIZE_CONFIG[effectiveThumbnailSize]);
+
+  // Folder previews only render at large/xlarge tile sizes (smaller tiles
+  // keep the plain folder icon, like Windows Explorer).
+  const showFolderThumbnails = $derived(
+    effectiveThumbnailSize === "large" || effectiveThumbnailSize === "xlarge"
+  );
 
   // Videos whose thumbnail generation failed (e.g. no ffmpeg) fall back to the
   // plain icon. Keyed by path; reset on navigation.
@@ -114,6 +121,10 @@
           <ThumbnailImage path={entry.path} size={tileConfig.displaySize} genSize={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} />
         {:else if isVideoFile(entry) && !unavailableThumbs.has(entry.path)}
           <ThumbnailImage kind="video" path={entry.path} size={tileConfig.displaySize} genSize={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} onunavailable={() => markUnavailable(entry.path)} />
+        {:else if entry.kind === "directory" && showFolderThumbnails}
+          <FolderThumbnail path={entry.path} modified={entry.modified} size={tileConfig.displaySize} genSize={tileConfig.genSize} quality={tileConfig.quality}>
+            <FileIcon {entry} size="large" />
+          </FolderThumbnail>
         {:else}
           <FileIcon {entry} size="large" />
         {/if}
@@ -228,7 +239,12 @@
      Only targets direct children (FileIcon output), not nested thumbnail SVGs. */
   .tiles-view :global(.tile-icon > svg),
   .tiles-view :global(.tile-icon > .icon-cat),
-  .tiles-view :global(.tile-icon > .nf-icon-badge) {
+  .tiles-view :global(.tile-icon > .nf-icon-badge),
+  /* FolderThumbnail's imageless fallback nests the same FileIcon one level
+     deeper — scale it identically to a bare icon. */
+  .tiles-view :global(.tile-icon > .folder-thumb > svg),
+  .tiles-view :global(.tile-icon > .folder-thumb > .icon-cat),
+  .tiles-view :global(.tile-icon > .folder-thumb > .nf-icon-badge) {
     transform: scale(var(--tile-icon-scale, 1));
   }
 

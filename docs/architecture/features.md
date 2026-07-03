@@ -105,6 +105,7 @@
 | Progressive loading | `ThumbnailImage.svelte` (micro → full), `files.ts:getMicroThumbnail/getThumbnailData` |
 | Cache management | Settings dialog, `thumbnails.rs:clear_thumbnail_cache/get_thumbnail_cache_stats` |
 | Supported formats | `thumbnails.rs:SUPPORTED_EXTENSIONS` + `file-types.ts:THUMBNAIL_EXTENSIONS` (AVIF is Linux-only, via image avif-native/dav1d) |
+| Folder previews (large/XL tiles) | `domain/folder-preview.ts` (selection spec), `thumbnails.rs:get_folder_preview` (bounded scan → image paths + fingerprint), `FolderThumbnail.svelte` (client-side composite over ThumbnailImage; per-folder fs watch while visible — the backend watcher is non-recursive, so this is what makes previews refresh on change), `TilesView.svelte` gate |
 | Zip / unzip with progress | `archive.rs` (chunked writes, zip-progress/unzip-progress events, cancel_compress/cancel_extract), `pane-mutations.ts:runArchiveJob` (shared compress/extract), `operations.svelte.ts` ("compress"/"extract" types). Progress panel auto-hides per-operation after a short linger. |
 | Markdown preview | `domain/markdown.ts` (marked + hljs, escaped raw HTML), `PreviewPane.svelte` (.preview-markdown) |
 | ZIP content preview | `archive.rs:list_archive_contents` (top-level entries as `FileEntry`s), `files.ts:listArchiveContents`, `file-types.ts:isZipFile`, `PreviewPane.svelte` (renders in the shared `.preview-folder-list` folder format) |

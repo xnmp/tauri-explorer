@@ -4,7 +4,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use super::{metadata_to_entry, run_blocking, FileEntry, SizeEstimate};
+use super::{metadata_to_entry_probed, run_blocking, FileEntry, SizeEstimate};
 use crate::error::AppError;
 use log;
 
@@ -143,7 +143,7 @@ pub async fn create_directory(parent_path: String, name: String) -> Result<FileE
         log::info!("Created directory: {:?}", name);
 
         let metadata = fs::symlink_metadata(&new_path)?;
-        Ok(metadata_to_entry(&new_path, &metadata))
+        Ok(metadata_to_entry_probed(&new_path, &metadata))
     })
     .await
 }
@@ -184,7 +184,7 @@ pub async fn rename_entry(path: String, new_name: String) -> Result<FileEntry, A
         fs::rename(&source, &target)?;
 
         let metadata = fs::symlink_metadata(&target)?;
-        Ok(metadata_to_entry(&target, &metadata))
+        Ok(metadata_to_entry_probed(&target, &metadata))
     })
     .await
 }
@@ -293,7 +293,7 @@ fn copy_entry_impl(
         overwrite.unwrap_or(false)
     );
     let metadata = fs::symlink_metadata(&target)?;
-    Ok(metadata_to_entry(&target, &metadata))
+    Ok(metadata_to_entry_probed(&target, &metadata))
 }
 
 /// Overwrite-copy transactionally: stage the copy under a temp name in the
@@ -326,7 +326,7 @@ fn copy_entry_overwriting(
 
     log::info!("Copied entry over existing target (overwrite=true)");
     let metadata = fs::symlink_metadata(target)?;
-    Ok(metadata_to_entry(target, &metadata))
+    Ok(metadata_to_entry_probed(target, &metadata))
 }
 
 /// Move a file or directory.
@@ -405,7 +405,7 @@ fn move_entry_impl(
     }
 
     let metadata = fs::symlink_metadata(&target)?;
-    Ok(metadata_to_entry(&target, &metadata))
+    Ok(metadata_to_entry_probed(&target, &metadata))
 }
 
 /// Move `source` to `target`: rename when possible, staged copy+delete for
@@ -601,7 +601,7 @@ pub async fn write_text_file(path: String, content: String) -> Result<FileEntry,
 
         fs::write(&file_path, content.as_bytes())?;
         let metadata = fs::symlink_metadata(&file_path)?;
-        Ok(metadata_to_entry(&file_path, &metadata))
+        Ok(metadata_to_entry_probed(&file_path, &metadata))
     })
     .await
 }
@@ -652,7 +652,7 @@ pub async fn create_symlink(target_path: String, link_path: String) -> Result<Fi
         }
 
         let metadata = fs::symlink_metadata(&link)?;
-        Ok(metadata_to_entry(&link, &metadata))
+        Ok(metadata_to_entry_probed(&link, &metadata))
     })
     .await
 }

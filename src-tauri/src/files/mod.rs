@@ -123,12 +123,6 @@ pub(crate) fn metadata_to_entry(path: &Path, sym_meta: &fs::Metadata) -> FileEnt
         None
     };
 
-    let is_empty = if effective.is_dir() {
-        Some(fs::read_dir(path).is_ok_and(|mut d| d.next().is_none()))
-    } else {
-        None
-    };
-
     FileEntry {
         name,
         path: path.to_string_lossy().to_string(),
@@ -137,8 +131,31 @@ pub(crate) fn metadata_to_entry(path: &Path, sym_meta: &fs::Metadata) -> FileEnt
         modified,
         is_symlink,
         symlink_target,
-        is_empty,
+        is_empty: None,
     }
+}
+
+/// Convert metadata to FileEntry including the `is_empty` probe. For
+/// single-entry call sites (create/rename/copy results) the extra `read_dir`
+/// is trivial; listing paths use [`metadata_to_entry`] + [`fill_is_empty`]
+/// per batch instead, so a 10k-directory scan doesn't pay 10k `read_dir`s
+/// before the first entry reaches the webview.
+pub(crate) fn metadata_to_entry_probed(path: &Path, sym_meta: &fs::Metadata) -> FileEntry {
+    let mut entry = metadata_to_entry(path, sym_meta);
+    fill_is_empty(std::slice::from_mut(&mut entry));
+    entry
+}
+
+/// Backfill `is_empty` for directory entries in parallel (one `read_dir` per
+/// subdirectory is the dominant per-entry cost of a listing).
+pub(crate) fn fill_is_empty(entries: &mut [FileEntry]) {
+    use rayon::prelude::*;
+    entries
+        .par_iter_mut()
+        .filter(|e| matches!(e.kind, FileKind::Directory) && e.is_empty.is_none())
+        .for_each(|e| {
+            e.is_empty = Some(fs::read_dir(&e.path).is_ok_and(|mut d| d.next().is_none()));
+        });
 }
 
 /// Estimate total file count and size for a list of paths.

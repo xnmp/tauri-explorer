@@ -294,6 +294,12 @@ instant." None of it is search.
   scroll wiggle never refetches). DOM-windowing was deliberately NOT added — with
   content-visibility already shipping, the win didn't justify rewriting the auto-fill
   grid layout.
+- **#11 re-scoped + shipped** (`perf/animated-background-idle-gating`): the
+  "runs unconditionally" claim was stale — both renderers already pause on
+  `visibilitychange`. What was real: starfield recomputed its O(N²) constellation
+  pass (~3.2k distance checks) every frame for stars that never move. Lines are now
+  precomputed once (`computeConstellations`, unit-tested). Particles' pass is inherent
+  (they move) and small (60 particles).
 - **#6 shipped** (`perf/defer-is-empty-scan`): the parallel scan no longer probes
   `is_empty` (one `read_dir` per subdir); it's backfilled per batch — first batch before
   return, later chunks in the streaming thread, `list_directory` (miller/pickers) still

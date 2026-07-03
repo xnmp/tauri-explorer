@@ -109,8 +109,9 @@ export const aiRenamePlugin: Plugin = {
         {
           id: COUNT_STORAGE_KEY,
           label: "Number of suggestions",
-          description: "How many names to propose (1-5).",
-          type: "text",
+          description: "How many names to propose.",
+          type: "select",
+          options: [1, 2, 3, 4, 5].map((n) => ({ value: String(n), label: String(n) })),
           default: String(DEFAULT_COUNT),
         },
       ],

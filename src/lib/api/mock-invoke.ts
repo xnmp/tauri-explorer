@@ -1030,6 +1030,17 @@ const mockCommands: Record<string, CommandHandler> = {
   },
 
   start_nano_banana_job: () => 1,
+
+  // Deterministic fake filename suggestions so browser E2E exercises the picker
+  // without a real model. Derives names from the original's extension.
+  ai_suggest_filenames: (args) => {
+    const originalName = (args.originalName as string) ?? "file";
+    const dot = originalName.lastIndexOf(".");
+    const ext = dot > 0 ? originalName.slice(dot) : "";
+    const count = Math.max(1, Math.min(5, (args.count as number) ?? 3));
+    const bases = ["meeting-notes", "2024-notes", "summary", "draft", "final"];
+    return bases.slice(0, count).map((b) => `${b}${ext}`);
+  },
 };
 
 // In-memory config file store for mock mode

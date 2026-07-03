@@ -40,7 +40,7 @@ const APP_ERROR_KINDS: ReadonlySet<string> = new Set<AppErrorKind>([
 ]);
 
 /** Extract error message from Tauri command error (structured or string) */
-function extractError(err: unknown): string {
+export function extractError(err: unknown): string {
   if (err instanceof Error) return err.message;
   if (err && typeof err === "object") {
     const message = (err as { message?: unknown }).message;

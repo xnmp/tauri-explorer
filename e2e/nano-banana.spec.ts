@@ -110,8 +110,10 @@ test.describe("Nano Banana plugin", () => {
     const search = page.locator(".settings-search");
     await search.fill("Gemini");
 
-    await expect(page.locator("text=Gemini API Key")).toBeVisible();
-    const apiKeyInput = settingsDialog.locator('input[type="password"]');
-    await expect(apiKeyInput).toBeVisible();
+    // Scope to the Nano Banana section — other plugins (e.g. AI Rename) also
+    // contribute a Gemini API Key row, so an unscoped match is ambiguous.
+    const section = settingsDialog.locator('.settings-section:has(h3:has-text("Nano Banana"))');
+    await expect(section.locator('.setting-label:has-text("Gemini API Key")')).toBeVisible();
+    await expect(section.locator('input[type="password"]')).toBeVisible();
   });
 });

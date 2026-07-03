@@ -105,8 +105,11 @@ function createExplorerState(seed?: ExplorerSeed) {
   const watch = createPaneWatch();
   const markLocalMutation = watch.markLocalMutation;
 
-  // Read-only state accessor for components that need the raw state bag
-  const state = $derived({ ...coreState });
+  // Read-only state accessor for components that need the raw state bag.
+  // Exposes the $state proxy itself (typed read-only) — a spread copy here
+  // would rebuild the object on ANY property change and re-run every
+  // consumer, destroying the proxy's per-property reactivity.
+  const state: Readonly<ExplorerCoreState> = coreState;
 
   // ===================
   // Derived State

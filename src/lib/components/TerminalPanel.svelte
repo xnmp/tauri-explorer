@@ -119,20 +119,11 @@
     term?.focus();
   }
 
-  /** Explicit "sync to current folder": cd the shell to the explorer's cwd. */
-  function cdToCurrentFolder(): void {
-    const path = windowTabsManager.getActiveExplorer()?.currentPath;
-    if (!path || terminalId === null) return;
-    terminalWrite(terminalId, buildCdCommand(path, isWindows));
-    term?.focus();
-  }
-
   /**
    * Inject a `cd` to `path`. Ctrl+U (0x15) clears any half-typed prompt input
-   * first. It's prepended here rather than in `buildCdCommand` because that
-   * pure helper is shared with the explicit folder button, where clobbering a
-   * user's in-progress line would be surprising; the automatic sync, by
-   * contrast, must win regardless of what's on the prompt.
+   * first — the automatic sync must win regardless of what's on the prompt.
+   * (Kept out of `buildCdCommand` itself so the pure helper stays a plain
+   * command builder.)
    */
   function writeCd(path: string): void {
     if (terminalId === null) return;
@@ -303,16 +294,6 @@
   <div class="terminal-header">
     <span class="terminal-title">Terminal</span>
     <div class="terminal-actions">
-      <button
-        class="action-btn"
-        title="Go to current folder"
-        aria-label="Go to current folder"
-        onclick={cdToCurrentFolder}
-      >
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-          <path d="M1.5 3.5A1.5 1.5 0 0 1 3 2h3.2c.4 0 .78.16 1.06.44L8.5 3.7h4A1.5 1.5 0 0 1 14 5.2V12a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 12V3.5h-.5Z"/>
-        </svg>
-      </button>
       <button
         class="action-btn"
         title="Hide terminal (Ctrl+`)"

@@ -71,12 +71,13 @@ test.describe("Terminal panel", () => {
     }
   });
 
-  test("close button hides the panel and the header shows sync-to-folder", async ({ page }) => {
+  test("close button hides the panel", async ({ page }) => {
     await page.keyboard.press("Control+`");
     const panel = page.locator(".terminal-panel");
     await expect(panel).toBeVisible();
 
-    await expect(panel.locator('[aria-label="Go to current folder"]')).toBeVisible();
+    // The header has no manual sync-to-folder button — cwd sync is automatic
+    // (issue #149), so the only action is Hide.
     await panel.locator('[aria-label="Hide terminal"]').click();
     await expect(panel).toBeHidden();
   });

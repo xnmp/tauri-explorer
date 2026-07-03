@@ -13,7 +13,6 @@
   import { frecencyStore } from "$lib/state/frecency.svelte";
   import { openFile } from "$lib/api/files";
   import { setWallpaper, openTerminal } from "$lib/state/commands/system-actions";
-  import { dialogStore } from "$lib/state/dialogs.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { parentDir } from "$lib/domain/path";
   import { isImageFile } from "$lib/domain/file-types";

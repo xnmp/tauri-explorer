@@ -58,12 +58,26 @@ test.describe("Terminal panel", () => {
     expect(solid).not.toBe("");
   });
 
-  test("close button hides the panel and the header shows sync-to-folder", async ({ page }) => {
+  test("cwd-sync toggles appear in Settings and default to ON", async ({ page }) => {
+    await page.keyboard.press("Control+,");
+    const dialog = page.locator(".settings-dialog");
+    await dialog.waitFor({ state: "visible", timeout: 2000 });
+
+    for (const label of ["Terminal Follows Explorer", "Explorer Follows Terminal"]) {
+      const row = dialog.locator(".setting-row", { hasText: label });
+      await expect(row).toBeVisible();
+      // Both default TRUE (bidirectional sync on out of the box).
+      await expect(row.locator('input[type="checkbox"]')).toBeChecked();
+    }
+  });
+
+  test("close button hides the panel", async ({ page }) => {
     await page.keyboard.press("Control+`");
     const panel = page.locator(".terminal-panel");
     await expect(panel).toBeVisible();
 
-    await expect(panel.locator('[aria-label="Go to current folder"]')).toBeVisible();
+    // The header has no manual sync-to-folder button — cwd sync is automatic
+    // (issue #149), so the only action is Hide.
     await panel.locator('[aria-label="Hide terminal"]').click();
     await expect(panel).toBeHidden();
   });

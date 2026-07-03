@@ -1,5 +1,8 @@
 import { browser, $, expect } from "@wdio/globals";
-import { domText } from "./helpers";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, basename } from "node:path";
+import { domText, navigateTo } from "./helpers";
 
 /**
  * Embedded terminal against the real binary (issue #139): a genuine PTY
@@ -83,4 +86,55 @@ describe("embedded terminal", () => {
     const text = await terminalText();
     expect(text).toContain("pwd");
   });
+
+  // ── cwd sync (issue #149) ───────────────────────────────────────────────────
+  // Busy detection + injected `cd` are Unix (tty foreground-pgrp) concepts; the
+  // cmd.exe `pwd`/OSC-7 story on Windows is different, so scope these to Unix.
+  const isUnix = process.platform !== "win32";
+  const shell = basename(process.env.SHELL ?? "");
+  const shellEmitsOsc7 = shell === "zsh" || shell === "fish";
+
+  (isUnix ? it : it.skip)(
+    "terminal follows explorer: navigating the pane cd's the shell",
+    async () => {
+      // Ensure the panel is open and focused.
+      if (!(await $(".terminal-panel").isDisplayed())) {
+        await browser.keys(["Control", "`"]);
+      }
+      await $(".terminal-panel .xterm").waitForDisplayed({ timeout: 5_000 });
+
+      const target = mkdtempSync(join(tmpdir(), "te-cwd-"));
+      await navigateTo(target);
+
+      const input = $(".terminal-panel textarea.xterm-helper-textarea");
+      await input.waitForExist();
+      await input.addValue("pwd\n");
+
+      await browser.waitUntil(async () => (await terminalText()).includes(target), {
+        timeout: 15_000,
+        timeoutMsg: `terminal never cd'd to the navigated dir ${target}`,
+      });
+    },
+  );
+
+  (isUnix && shellEmitsOsc7 ? it : it.skip)(
+    "explorer follows terminal: `cd` in the shell moves the pane",
+    async () => {
+      // Only zsh (via the ZDOTDIR shim) and fish emit OSC 7; bash in CI won't,
+      // so this is skipped there.
+      if (!(await $(".terminal-panel").isDisplayed())) {
+        await browser.keys(["Control", "`"]);
+      }
+      await $(".terminal-panel .xterm").waitForDisplayed({ timeout: 5_000 });
+
+      const input = $(".terminal-panel textarea.xterm-helper-textarea");
+      await input.waitForExist();
+      await input.addValue("cd /tmp\n");
+
+      await browser.waitUntil(
+        async () => (await $(".status-path").getAttribute("title")) === "/tmp",
+        { timeout: 15_000, timeoutMsg: "status bar path never followed the shell to /tmp" },
+      );
+    },
+  );
 });

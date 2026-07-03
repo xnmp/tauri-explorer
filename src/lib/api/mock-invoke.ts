@@ -770,6 +770,7 @@ const mockCommands: Record<string, CommandHandler> = {
   terminal_write: () => {},
   terminal_resize: () => {},
   terminal_kill: () => {},
+  terminal_status: () => ({ busy: false, cwd: null }),
 
   clear_thumbnail_cache: () => 0,
 

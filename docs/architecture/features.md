@@ -117,7 +117,12 @@
 | Terminal panel | `TerminalPanel.svelte` (xterm.js + fit addon, lazy-imported on first open, stays mounted while hidden so the shell survives toggling), `state/terminal.svelte.ts` (visibility), `api/terminal.ts` |
 | Toggle (Ctrl+\`) | hardcoded in `+page.svelte:handleKeydown` *before* the input-field guard (so it closes from inside the terminal); palette entry `view.toggleTerminal` in `commands/view-commands.ts` |
 | Theming | `domain/terminal-theme.ts` (CSS vars → xterm theme object, re-applied on theme switch — xterm can't consume CSS vars) |
-| cwd sync | shell spawns at the active explorer's path; explicit header action writes `domain/terminal-command.ts:buildCdCommand` (POSIX quoting / cmd.exe `/d`) |
+| cwd sync (base) | shell spawns at the active explorer's path; explicit header action writes `domain/terminal-command.ts:buildCdCommand` (POSIX quoting / cmd.exe `/d`) |
+| Terminal follows explorer (#149) | `settingsStore.terminalFollowsExplorer` (default on). `$effect` on active pane's `currentPath` → `terminal_status` → `domain/terminal-cwd-sync.ts:decideCdSync` (skip if already there / queue if busy / write). Injected `cd` is Ctrl+U (0x15) + `buildCdCommand`. `TerminalPanel.svelte` |
+| Busy detection (#149) | `terminal.rs:is_busy` — Unix compares `libc::tcgetpgrp(master fd)` with the shell pid (foreground pgrp != shell ⇒ busy); Windows optimistic (false). Exposed via `terminal_status` `{ busy, cwd }` |
+| Queued cd (#149) | while a command runs, latest target is stored as `pendingCd`, a one-off toast shows, and a 500ms `terminal_status` poll flushes it once idle. `TerminalPanel.svelte` |
+| Explorer follows terminal (#149) | `settingsStore.explorerFollowsTerminal` (default on). `terminal.rs:Osc7Scanner` parses OSC 7 (`ESC ] 7 ; file://host/path` BEL/ST, chunk-boundary safe, percent-decoded) in the reader thread → `terminal-cwd-{id}` event → active pane `navigateTo`. `lastShellCwd` is the loop guard for the other direction |
+| ZDOTDIR shim (#149) | `terminal.rs:zsh_shim_files`/`install_zsh_shim` — zsh gets a VS Code-style shim dir (`dirs::cache_dir()/tauri-explorer/zsh-shim/`) whose `.zshrc` sources the user's files then adds a `chpwd` hook emitting OSC 7. Best-effort (degrades silently). fish emits OSC 7 natively; bash skipped (PROMPT_COMMAND unreliable) |
 | Panel height | `settingsStore.terminalPanelHeight` (drag handle in `TerminalPanel.svelte`) |
 
 ### Sidebar & Bookmarks

@@ -32,8 +32,8 @@
     return `${minutes}m ${secs}s`;
   }
 
-  function truncatePrompt(prompt: string, maxLen: number = 60): string {
-    return prompt.length > maxLen ? prompt.slice(0, maxLen) + "..." : prompt;
+  function truncateDetail(detail: string, maxLen: number = 60): string {
+    return detail.length > maxLen ? detail.slice(0, maxLen) + "..." : detail;
   }
 
 </script>
@@ -92,7 +92,7 @@
                 </div>
                 <div class="job-details">
                   <div class="job-label">{job.label}</div>
-                  <div class="job-prompt">{truncatePrompt(job.prompt)}</div>
+                  <div class="job-prompt">{truncateDetail(job.detail)}</div>
                   {#if job.status === "error" && job.error}
                     <div class="job-error">{job.error}</div>
                   {/if}

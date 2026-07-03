@@ -19,12 +19,22 @@
   import { isImageFile } from "$lib/domain/file-types";
   import { getZoomFactor, clientToFixed } from "$lib/domain/zoom";
   import type { ViewMode } from "$lib/state/types";
+  import { contextMenuItems } from "$lib/state/context-menu-items.svelte";
 
   interface Props {
     explorer: ExplorerInstance;
   }
 
   let { explorer }: Props = $props();
+
+  // Plugin-contributed context-menu items whose `when` predicate passes for the
+  // current selection. Rendered in a divider-separated section below.
+  const pluginMenuItems = $derived(contextMenuItems.itemsFor(explorer.getSelectedEntries()));
+
+  function runPluginItem(item: (typeof pluginMenuItems)[number]): void {
+    void item.handler(explorer.getSelectedEntries());
+    contextMenuStore.close();
+  }
 
   function withSelectedEntry(action: (entry: FileEntry) => void): void {
     const entries = explorer.getSelectedEntries();
@@ -641,6 +651,24 @@
             {/if}
           </button>
         {/if}
+      {/each}
+    {/if}
+
+    {#if pluginMenuItems.length > 0}
+      <div class="menu-divider"></div>
+      {#each pluginMenuItems as item (item.id)}
+        <button class="menu-item" onclick={() => runPluginItem(item)} role="menuitem">
+          {#if item.icon}
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d={item.icon} stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+            </svg>
+          {:else}
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <circle cx="8" cy="8" r="5" stroke="currentColor" stroke-width="1.25"/>
+            </svg>
+          {/if}
+          <span>{item.label}</span>
+        </button>
       {/each}
     {/if}
   </div>

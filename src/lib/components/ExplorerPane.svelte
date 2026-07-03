@@ -19,6 +19,7 @@
   import { gitStatusStore } from "$lib/state/git-status.svelte";
   import { drivesStore } from "$lib/state/drives.svelte";
   import { directoryKey } from "$lib/domain/path";
+  import { isVirtualPath } from "$lib/domain/virtual-path";
 
   interface Props {
     paneId: PaneId;
@@ -56,7 +57,8 @@
   $effect(() => {
     const path = paneExplorer.currentPath;
     const enabled = settingsStore.showGitStatus;
-    if (enabled && path) {
+    // Virtual (`scheme://…`) paths aren't real repos — skip git status.
+    if (enabled && path && !isVirtualPath(path)) {
       untrack(() => gitStatusStore.fetchForDirectory(path));
     }
   });

@@ -94,6 +94,7 @@ export interface Settings {
   warmWindow: boolean; // keep a hidden pre-warmed window pooled so Ctrl+N is near-instant
   terminalFollowsExplorer: boolean; // auto-cd the embedded terminal when the active pane navigates (#149)
   explorerFollowsTerminal: boolean; // navigate the active pane when the terminal's shell changes cwd (OSC 7) (#149)
+  pluginsEnabled: Record<string, boolean>; // per-plugin enable state (id → enabled); absent id falls back to the plugin's default (#142)
 }
 
 const MIN_ZOOM = 50;
@@ -151,6 +152,7 @@ const DEFAULT_SETTINGS: Settings = {
   warmWindow: true,
   terminalFollowsExplorer: true,
   explorerFollowsTerminal: true,
+  pluginsEnabled: {},
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -423,6 +425,12 @@ function createSettingsStore() {
     },
     toggleExplorerFollowsTerminal(): void {
       update({ explorerFollowsTerminal: !settings.explorerFollowsTerminal });
+    },
+    get pluginsEnabled() {
+      return settings.pluginsEnabled;
+    },
+    setPluginEnabled(id: string, enabled: boolean): void {
+      update({ pluginsEnabled: { ...settings.pluginsEnabled, [id]: enabled } });
     },
     toggleMillerColumns(): void {
       const on = settings.millerLayers > 0;

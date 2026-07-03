@@ -7,6 +7,7 @@ import type { DirectoryListing, FileEntry } from "$lib/domain/file";
 import type { FolderPreview } from "$lib/domain/folder-preview";
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { isTauri, mockInvoke } from "./mock-invoke";
+import { providerFor } from "$lib/plugins/fs-providers";
 
 // Cached Tauri detection. Only the positive result is latched: an invoke
 // racing ahead of __TAURI_INTERNALS__ injection must not permanently stick
@@ -79,6 +80,16 @@ export type ApiResult<T> =
 export async function fetchDirectory(
   path: string
 ): Promise<ApiResult<DirectoryListing>> {
+  // Virtual (`scheme://…`) paths are served by a plugin provider, not the
+  // real-fs backend.
+  const provider = providerFor(path);
+  if (provider) {
+    try {
+      return { ok: true, data: await provider.list(path) };
+    } catch (err) {
+      return { ok: false, error: extractError(err) };
+    }
+  }
   try {
     const data = await invoke<DirectoryListing>("list_directory", { path });
     return { ok: true, data };
@@ -612,6 +623,17 @@ export interface DirectoryEntriesEvent {
 export async function startStreamingDirectory(
   path: string
 ): Promise<ApiResult<DirectoryListing>> {
+  // Virtual paths never stream: the provider returns the full listing inline
+  // (listing_id null), which the caller treats as a non-streaming result.
+  const provider = providerFor(path);
+  if (provider) {
+    try {
+      const data = await provider.list(path);
+      return { ok: true, data: { ...data, listing_id: null } };
+    } catch (err) {
+      return { ok: false, error: extractError(err) };
+    }
+  }
   try {
     const data = await invoke<DirectoryListing>("start_streaming_directory", { path });
     return { ok: true, data };

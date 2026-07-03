@@ -11,6 +11,9 @@
   import KeybindingsSettings from "./KeybindingsSettings.svelte";
   import Modal from "./Modal.svelte";
   import { tick } from "svelte";
+  import { pluginRegistry } from "$lib/plugins/registry.svelte";
+  import { pluginSettingsSections } from "$lib/plugins/settings-registry.svelte";
+  import type { SettingRowDescriptor } from "$lib/plugins/api";
 
   interface Props {
     open: boolean;
@@ -764,6 +767,71 @@
             />
           </div>
         </section>
+
+        <!-- Plugins Section -->
+        <section class="settings-section" class:hidden={!sectionVisible(["Plugins", "enable disable extensions"], ...pluginRegistry.plugins.map((p) => [p.name, p.description]))}>
+          <h3 class="section-title">Plugins</h3>
+          {#each pluginRegistry.plugins as plugin (plugin.id)}
+            <div class="setting-row" class:hidden={!matchesSearch("Plugins", plugin.name, plugin.description)}>
+              <div class="setting-info">
+                <span class="setting-label">{plugin.name}</span>
+                <span class="setting-description">{plugin.description}</span>
+              </div>
+              <label class="toggle">
+                <input
+                  type="checkbox"
+                  checked={plugin.enabled}
+                  onchange={(e) => pluginRegistry.setEnabled(plugin.id, e.currentTarget.checked)}
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          {/each}
+        </section>
+
+        <!-- Plugin-contributed settings sections (descriptor-driven) -->
+        {#each pluginSettingsSections.sections as section (section.pluginId + ":" + section.id)}
+          <section class="settings-section" class:hidden={!sectionVisible([section.title, ...section.rows.flatMap((r: SettingRowDescriptor) => [r.label, r.description ?? ""])])}>
+            <h3 class="section-title">{section.title}</h3>
+            {#each section.rows as row (row.id)}
+              <div class="setting-row" class:hidden={!matchesSearch(section.title, row.label, row.description ?? "")}>
+                <div class="setting-info">
+                  <span class="setting-label">{row.label}</span>
+                  {#if row.description}
+                    <span class="setting-description">{row.description}</span>
+                  {/if}
+                </div>
+                {#if row.type === "toggle"}
+                  <label class="toggle">
+                    <input
+                      type="checkbox"
+                      checked={!!section.valueOf(row)}
+                      onchange={(e) => section.setValue(row.id, e.currentTarget.checked)}
+                    />
+                    <span class="toggle-slider"></span>
+                  </label>
+                {:else if row.type === "select"}
+                  <select
+                    class="theme-select"
+                    value={String(section.valueOf(row) ?? "")}
+                    onchange={(e) => section.setValue(row.id, e.currentTarget.value)}
+                  >
+                    {#each row.options ?? [] as opt (opt.value)}
+                      <option value={opt.value}>{opt.label}</option>
+                    {/each}
+                  </select>
+                {:else}
+                  <input
+                    class="text-input"
+                    type={row.type === "password" ? "password" : "text"}
+                    value={String(section.valueOf(row) ?? "")}
+                    onchange={(e) => section.setValue(row.id, e.currentTarget.value)}
+                  />
+                {/if}
+              </div>
+            {/each}
+          </section>
+        {/each}
 
         <!-- Keyboard Shortcuts Section -->
         <section class="settings-section" class:hidden={!sectionVisible(rows.keyboardShortcuts)}>

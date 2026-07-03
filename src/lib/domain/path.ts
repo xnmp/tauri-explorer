@@ -8,6 +8,8 @@
  * uses, so callers can stay separator-agnostic.
  */
 
+import { isVirtualPath } from "./virtual-path";
+
 const BARE_DRIVE_LETTER = /^([A-Za-z]):$/;
 /** A Windows drive prefix capturing the letter and the remainder, e.g. `C:/Users`. */
 const DRIVE_PREFIX = /^([A-Za-z]):(.*)$/;
@@ -40,6 +42,10 @@ export function toBackslashes(path: string): string {
  * the conversion must be opt-in via `sep`, never inferred.
  */
 export function toNativeSeparators(path: string, sep: "/" | "\\"): string {
+  // Virtual (`scheme://…`) paths are plugin addresses, not OS paths — leave
+  // their separators untouched so `demo://a/b` never becomes `demo:\a\b` on
+  // Windows (which would break provider dispatch and breadcrumb parsing).
+  if (isVirtualPath(path)) return path;
   return sep === "\\" ? toBackslashes(toForwardSlashes(path)) : toForwardSlashes(path);
 }
 

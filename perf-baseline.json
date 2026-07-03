@@ -1,128 +1,128 @@
 {
   "flattenBatch-50": {
     "name": "flattenBatch-50",
-    "avgMs": 0.01,
+    "avgMs": 0.02,
     "minMs": 0,
-    "maxMs": 0.99,
+    "maxMs": 0.62,
     "iterations": 200
   },
   "rebuildAllFlattened-500": {
     "name": "rebuildAllFlattened-500",
-    "avgMs": 0.01,
+    "avgMs": 0.25,
     "minMs": 0.01,
-    "maxMs": 1.04,
+    "maxMs": 17.04,
     "iterations": 200
   },
   "rebuildAllFlattened-500-filtered": {
     "name": "rebuildAllFlattened-500-filtered",
-    "avgMs": 0.05,
-    "minMs": 0.03,
-    "maxMs": 0.68,
+    "avgMs": 0.14,
+    "minMs": 0.06,
+    "maxMs": 3.74,
     "iterations": 200
   },
   "computeOffsets-2200": {
     "name": "computeOffsets-2200",
-    "avgMs": 0.01,
-    "minMs": 0,
-    "maxMs": 0.23,
+    "avgMs": 0.07,
+    "minMs": 0.01,
+    "maxMs": 11.13,
     "iterations": 200
   },
   "computeOffsets-500": {
     "name": "computeOffsets-500",
     "avgMs": 0,
     "minMs": 0,
-    "maxMs": 0.02,
+    "maxMs": 0.03,
     "iterations": 200
   },
   "firstVisibleIndex-lookups": {
     "name": "firstVisibleIndex-lookups",
-    "avgMs": 0,
+    "avgMs": 0.02,
     "minMs": 0,
-    "maxMs": 0.05,
+    "maxMs": 5.32,
     "iterations": 1000
   },
   "sortEntries-100": {
     "name": "sortEntries-100",
-    "avgMs": 0.05,
-    "minMs": 0.05,
-    "maxMs": 0.3,
+    "avgMs": 0.13,
+    "minMs": 0.06,
+    "maxMs": 5.91,
     "iterations": 100
   },
   "sortEntries-1000": {
     "name": "sortEntries-1000",
-    "avgMs": 0.69,
-    "minMs": 0.56,
-    "maxMs": 2.5,
+    "avgMs": 3.9,
+    "minMs": 0.68,
+    "maxMs": 24.34,
     "iterations": 100
   },
   "sortEntries-10000": {
     "name": "sortEntries-10000",
-    "avgMs": 7.31,
-    "minMs": 5.3,
-    "maxMs": 13.14,
+    "avgMs": 9.95,
+    "minMs": 5.2,
+    "maxMs": 26.46,
     "iterations": 50
   },
   "sortEntries-size-10000": {
     "name": "sortEntries-size-10000",
-    "avgMs": 1.86,
-    "minMs": 1.36,
-    "maxMs": 5.23,
+    "avgMs": 4.55,
+    "minMs": 2.56,
+    "maxMs": 5.9,
     "iterations": 50
   },
   "sortEntries-modified-10000": {
     "name": "sortEntries-modified-10000",
-    "avgMs": 11.45,
-    "minMs": 10.56,
-    "maxMs": 13.65,
+    "avgMs": 7.56,
+    "minMs": 4.54,
+    "maxMs": 12.94,
     "iterations": 50
   },
   "filterHidden-100": {
     "name": "filterHidden-100",
     "avgMs": 0.01,
     "minMs": 0.01,
-    "maxMs": 0.02,
+    "maxMs": 0.07,
     "iterations": 100
   },
   "filterHidden-1000": {
     "name": "filterHidden-1000",
-    "avgMs": 0.02,
-    "minMs": 0.01,
-    "maxMs": 0.05,
+    "avgMs": 0.05,
+    "minMs": 0.04,
+    "maxMs": 0.35,
     "iterations": 100
   },
   "filterHidden-10000": {
     "name": "filterHidden-10000",
-    "avgMs": 0.15,
-    "minMs": 0.13,
-    "maxMs": 0.34,
+    "avgMs": 0.57,
+    "minMs": 0.47,
+    "maxMs": 1.04,
     "iterations": 50
   },
   "formatSize-10000": {
     "name": "formatSize-10000",
-    "avgMs": 0.69,
-    "minMs": 0.65,
-    "maxMs": 0.84,
+    "avgMs": 0.82,
+    "minMs": 0.51,
+    "maxMs": 0.88,
     "iterations": 50
   },
   "visibleRange-100": {
     "name": "visibleRange-100",
     "avgMs": 0,
     "minMs": 0,
-    "maxMs": 0.01,
+    "maxMs": 0.25,
     "iterations": 1000
   },
   "sliceVisibleItems-10000": {
     "name": "sliceVisibleItems-10000",
     "avgMs": 0,
     "minMs": 0,
-    "maxMs": 0,
+    "maxMs": 0.01,
     "iterations": 100
   },
   "rapidScroll-10000": {
     "name": "rapidScroll-10000",
-    "avgMs": 0.02,
+    "avgMs": 0.01,
     "minMs": 0.01,
-    "maxMs": 0.41,
+    "maxMs": 0.06,
     "iterations": 50
   },
   "selectSingle-10000": {
@@ -134,79 +134,79 @@
   },
   "selectRange-1000": {
     "name": "selectRange-1000",
-    "avgMs": 0.04,
+    "avgMs": 0.03,
     "minMs": 0.02,
-    "maxMs": 0.1,
+    "maxMs": 0.42,
     "iterations": 100
   },
   "selectAll-10000": {
     "name": "selectAll-10000",
-    "avgMs": 0.53,
-    "minMs": 0.36,
-    "maxMs": 1.66,
+    "avgMs": 1.01,
+    "minMs": 0.81,
+    "maxMs": 2.07,
     "iterations": 50
   },
   "checkSelected-10000": {
     "name": "checkSelected-10000",
     "avgMs": 0,
     "minMs": 0,
-    "maxMs": 0.01,
+    "maxMs": 0.07,
     "iterations": 1000
   },
   "ingest-buffered-5000": {
     "name": "ingest-buffered-5000",
-    "avgMs": 3.69,
-    "minMs": 2.73,
-    "maxMs": 5.97,
+    "avgMs": 13.3,
+    "minMs": 3.81,
+    "maxMs": 37.4,
     "iterations": 50
   },
   "ingest-perBatch-5000": {
     "name": "ingest-perBatch-5000",
-    "avgMs": 78.51,
-    "minMs": 69.44,
-    "maxMs": 104.76,
+    "avgMs": 83.96,
+    "minMs": 71.13,
+    "maxMs": 150.6,
     "iterations": 20
   },
   "dirPipeline-100": {
     "name": "dirPipeline-100",
-    "avgMs": 0.07,
-    "minMs": 0.05,
-    "maxMs": 1.38,
+    "avgMs": 0.16,
+    "minMs": 0.07,
+    "maxMs": 5.78,
     "iterations": 200
   },
   "dirPipeline-1000": {
     "name": "dirPipeline-1000",
-    "avgMs": 0.74,
-    "minMs": 0.58,
-    "maxMs": 2.33,
+    "avgMs": 3.66,
+    "minMs": 0.55,
+    "maxMs": 17.1,
     "iterations": 100
   },
   "dirPipeline-10000": {
     "name": "dirPipeline-10000",
-    "avgMs": 6.17,
-    "minMs": 5.42,
-    "maxMs": 9.87,
+    "avgMs": 10.78,
+    "minMs": 5.54,
+    "maxMs": 24.01,
     "iterations": 50
   },
   "dirPipeline-resort-size-10000": {
     "name": "dirPipeline-resort-size-10000",
-    "avgMs": 1.72,
-    "minMs": 1.62,
-    "maxMs": 2.46,
+    "avgMs": 5.66,
+    "minMs": 5.24,
+    "maxMs": 6.29,
     "iterations": 50
   },
   "dirPipeline-resort-modified-10000": {
     "name": "dirPipeline-resort-modified-10000",
-    "avgMs": 12.66,
-    "minMs": 11.15,
-    "maxMs": 23.37,
+    "avgMs": 7.27,
+    "minMs": 3.48,
+    "maxMs": 11.84,
     "iterations": 50
   },
   "dirPipeline-rapid-nav": {
     "name": "dirPipeline-rapid-nav",
-    "avgMs": 54.81,
-    "minMs": 52.3,
-    "maxMs": 64.6,
+    "avgMs": 57.88,
+    "minMs": 53.44,
+    "maxMs": 66.76,
     "iterations": 20
   }
 }

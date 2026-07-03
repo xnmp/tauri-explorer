@@ -36,6 +36,11 @@ function createClipboardStore() {
   let content = $state<ClipboardContent | null>(null);
   let unlisten: UnlistenFn | null = null;
 
+  // Per-row membership checks (isInClipboard) run for every visible row on
+  // every render — a Set makes them O(1) instead of scanning the entries
+  // array per row.
+  const pathSet = $derived(new Set(content?.entries.map((e) => e.path) ?? []));
+
   // Broadcast clipboard content to all windows
   async function broadcast(data: ClipboardContent | null): Promise<void> {
     try {
@@ -70,6 +75,10 @@ function createClipboardStore() {
     },
     get count() {
       return content?.entries.length ?? 0;
+    },
+    /** Paths of all clipboard entries, for O(1) membership checks. */
+    get pathSet() {
+      return pathSet;
     },
 
     /**

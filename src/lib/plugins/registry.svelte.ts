@@ -14,9 +14,10 @@ import { createPluginContext, type Plugin } from "./api";
 import { settingsStore } from "$lib/state/settings.svelte";
 import { demoPlugin } from "./demo";
 import { nanoBananaPlugin } from "./nano-banana";
+import { aiRenamePlugin } from "./ai-rename";
 
 /** Statically-imported built-in plugins (explicit imports — no dynamic load). */
-const BUILT_IN_PLUGINS: Plugin[] = [demoPlugin, nanoBananaPlugin];
+const BUILT_IN_PLUGINS: Plugin[] = [demoPlugin, nanoBananaPlugin, aiRenamePlugin];
 
 export interface PluginInfo {
   id: string;

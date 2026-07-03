@@ -11,7 +11,10 @@ export type JobStatus = "running" | "completed" | "error";
 export interface Job {
   id: number;
   label: string;
-  prompt: string;
+  /** Free-text detail line (e.g. the Nano Banana prompt). */
+  detail: string;
+  /** Origin of the job: "app" for built-in flows, or a plugin id. */
+  source: string;
   status: JobStatus;
   error?: string;
   startTime: number;
@@ -22,8 +25,8 @@ export interface Job {
 function createJobsStore() {
   let jobs = $state<Job[]>([]);
 
-  function addJob(id: number, label: string, prompt: string): void {
-    jobs = [...jobs, { id, label, prompt, status: "running", startTime: Date.now() }];
+  function addJob(id: number, label: string, detail: string, source: string = "app"): void {
+    jobs = [...jobs, { id, label, detail, source, status: "running", startTime: Date.now() }];
   }
 
   function completeJob(id: number, outputPath: string): void {

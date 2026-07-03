@@ -84,7 +84,7 @@
     );
 
     if (result.ok) {
-      jobsStore.addJob(result.data, fileName, prompt.trim());
+      jobsStore.addJob(result.data, fileName, prompt.trim(), "nano-banana");
       toastStore.show(`Nano Banana job started: ${fileName}`, "info");
       onClose();
     } else {

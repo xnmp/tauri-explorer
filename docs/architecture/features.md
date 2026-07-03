@@ -14,6 +14,17 @@
 | Breadcrumb caret picker | `NavigationBar.svelte` (subdirectory dropdown on chevron click) |
 | History management | `navigation.ts:pushToHistory` |
 
+### Plugins (#142)
+| Feature | Files to change |
+|---------|----------------|
+| Plugin API surface | `plugins/api.ts` (PluginContext, disposal tracking, storage) → [plugins.md](plugins.md) |
+| Built-in registry + lifecycle | `plugins/registry.svelte.ts` (enable/disable, `initPlugins`), `pluginsEnabled` in `settings.svelte.ts` |
+| Context-menu contributions | `state/context-menu-items.svelte.ts` registry, rendered in `ContextMenu.svelte` |
+| Settings contributions | `plugins/settings-registry.svelte.ts` + descriptor-driven rows in `SettingsDialog.svelte` (Plugins section) |
+| Virtual-fs providers | `plugins/fs-providers.ts` dispatch, routed in `api/files.ts`, `domain/virtual-path.ts` helpers |
+| Jobs (source-tagged) | `state/jobs.svelte.ts` (`detail`/`source`), `JobsPanel.svelte` |
+| Demo/reference plugin | `plugins/demo/index.ts` |
+
 ### Git Integration
 | Feature | Files to change |
 |---------|----------------|

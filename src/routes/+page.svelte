@@ -14,6 +14,7 @@
   import { warmMode, runWarmWindow, spawnWarmWindow } from "$lib/state/warm-window";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { registerAllCommands } from "$lib/state/command-definitions";
+  import { pluginRegistry } from "$lib/plugins/registry.svelte";
   import { executeCommand, getCommand } from "$lib/state/commands.svelte";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
@@ -352,8 +353,12 @@
       explorer?.setViewMode(urlViewMode);
     }
 
-    // Load settings and bookmarks from config files (async, non-blocking)
-    settingsStore.init().then(() => themeStore.syncFromSettings());
+    // Load settings and bookmarks from config files (async, non-blocking).
+    // Plugins activate after settings load so persisted enable state is known.
+    settingsStore.init().then(() => {
+      themeStore.syncFromSettings();
+      void pluginRegistry.initPlugins();
+    });
     bookmarksStore.init();
     folderViewsStore.init();
     manualHiddenStore.init();

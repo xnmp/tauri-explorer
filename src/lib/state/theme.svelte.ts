@@ -123,6 +123,15 @@ function createThemeState() {
   let currentThemeId = $state(initialTheme);
   let themes = $state<ThemeInfo[]>([]);
 
+  // Apply the saved theme synchronously at store creation. The primary flash
+  // fix lives in app.html's head script (runs before the bundle in every
+  // window); this is a redundant safety net for environments where that script
+  // didn't run as expected (dev/test/mock). Idempotent — sets the same value.
+  // (Guarded for SSR/test environments where `document` is absent.)
+  if (typeof document !== "undefined") {
+    document.documentElement.setAttribute("data-theme", initialTheme);
+  }
+
   const currentTheme = $derived(
     themes.find((t) => t.id === currentThemeId) || themes[0],
   );

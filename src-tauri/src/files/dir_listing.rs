@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 use tauri::{AppHandle, Emitter};
 
@@ -18,7 +18,7 @@ use crate::error::AppError;
 // ===================
 
 struct CachedListing {
-    entries: Vec<FileEntry>,
+    entries: Arc<Vec<FileEntry>>,
     cached_at: Instant,
 }
 
@@ -86,7 +86,7 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
                 );
                 return Ok(DirectoryListing {
                     path: path.clone(),
-                    entries: cached.entries.clone(),
+                    entries: Arc::clone(&cached.entries),
                     listing_id: None,
                 });
             }
@@ -104,7 +104,7 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
     }
 
     // jwalk + per-entry stat calls are blocking work; keep them off the async executor.
-    let entries = super::run_blocking(move || Ok(scan_directory_parallel(&dir_path))).await?;
+    let entries = Arc::new(super::run_blocking(move || Ok(scan_directory_parallel(&dir_path))).await?);
 
     let elapsed = t_start.elapsed();
     if elapsed.as_millis() > 100 {
@@ -140,7 +140,7 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
         cache.insert(
             path.clone(),
             CachedListing {
-                entries: entries.clone(),
+                entries: Arc::clone(&entries),
                 cached_at: Instant::now(),
             },
         );
@@ -246,7 +246,7 @@ pub async fn start_streaming_directory(
     if total_count <= batch_size {
         return Ok(DirectoryListing {
             path,
-            entries: all_entries,
+            entries: Arc::new(all_entries),
             listing_id: None,
         });
     }
@@ -277,7 +277,11 @@ pub async fn start_streaming_directory(
             );
 
             offset += chunk.len();
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            // Brief pacing so batched emits don't flood the IPC channel. The
+            // entries are already fully scanned, so every millisecond here is
+            // pure added latency — 1ms keeps a 10k-entry stream under ~100ms
+            // of pacing (was 5ms ≈ 500ms).
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
 
         LISTINGS.cleanup(listing_id);
@@ -285,7 +289,7 @@ pub async fn start_streaming_directory(
 
     Ok(DirectoryListing {
         path,
-        entries: first_batch,
+        entries: Arc::new(first_batch),
         listing_id: Some(listing_id),
     })
 }

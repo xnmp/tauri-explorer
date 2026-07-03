@@ -659,11 +659,14 @@ function createWindowTabsManager() {
     return getExplorer(activeTab.activePaneId);
   }
 
-  /** Silently refresh both panes of the active tab — for file operations
-   *  (drops, pastes, external changes) that may affect either pane. */
+  /** Silently refresh the visible panes of the active tab — for file
+   *  operations (drops, pastes, external changes) that may affect either
+   *  pane. The hidden right pane is skipped in single-pane mode (no wasted
+   *  IPC); toggleDualPane refreshes it when it becomes visible again. */
   function refreshAllPanes(): void {
-    for (const paneId of ["left", "right"] as const) {
-      getExplorer(paneId)?.refresh({ silent: true });
+    getExplorer("left")?.refresh({ silent: true });
+    if (activeTab?.dualPaneEnabled) {
+      getExplorer("right")?.refresh({ silent: true });
     }
   }
 
@@ -706,6 +709,9 @@ function createWindowTabsManager() {
         if (leftPath === rightPath) {
           const parentPath = parentDir(leftPath);
           rightExplorer.navigateTo(parentPath);
+        } else {
+          // The right pane received no refreshes while hidden — catch up.
+          rightExplorer.refresh({ silent: true });
         }
       }
     }

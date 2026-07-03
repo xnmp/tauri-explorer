@@ -53,10 +53,14 @@ pub enum FileKind {
 }
 
 /// Directory listing response.
+///
+/// `entries` is an `Arc` so cache hits in `dir_listing` share the cached
+/// allocation instead of deep-cloning thousands of `FileEntry`s per call
+/// (serde's `rc` feature serializes through the Arc transparently).
 #[derive(Debug, Serialize)]
 pub struct DirectoryListing {
     pub path: String,
-    pub entries: Vec<FileEntry>,
+    pub entries: std::sync::Arc<Vec<FileEntry>>,
     pub listing_id: Option<u64>,
 }
 

@@ -7,6 +7,26 @@
     <title>Tauri + SvelteKit + Typescript App</title>
     <script>
       (function() {
+        // Earliest point JS runs in the webview (before the app bundle loads).
+        // Anchor cold-start timing here so milestones measured in +page.svelte
+        // reflect the full load, not just post-bundle work.
+        window.__BOOT_T0__ = performance.now();
+
+        // Apply the saved theme before the bundle parses, so EVERY window
+        // (including child windows spawned via new WebviewWindow, which don't
+        // receive Rust's initialization_script) paints in the right theme with
+        // no flash. Resolution mirrors theme.svelte.ts: explorer-settings.theme,
+        // else legacy "theme" key, else "light". Wrapped so a storage failure
+        // can't block boot.
+        try {
+          var s = JSON.parse(localStorage.getItem('explorer-settings') || '{}');
+          var t = s.theme;
+          if (!t || t === 'light') {
+            t = JSON.parse(localStorage.getItem('theme') || 'null') || t || 'light';
+          }
+          document.documentElement.setAttribute('data-theme', t);
+        } catch (e) {}
+
         var bg = localStorage.getItem('explorer-bg');
         if (bg) document.documentElement.style.background = bg;
       })();

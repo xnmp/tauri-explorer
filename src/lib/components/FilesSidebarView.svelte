@@ -12,7 +12,7 @@
   import { frecencyStore } from "$lib/state/frecency.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { basename } from "$lib/domain/path";
+  import { basename, directoryKey } from "$lib/domain/path";
   import { loadPersisted, savePersisted } from "$lib/state/persisted";
   import { useSidebarDrag } from "$lib/composables/use-sidebar-drag.svelte";
   import { usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
@@ -239,13 +239,16 @@
   }
 
   const recentLocations = $derived.by(() => {
-    const bookmarkedPaths = new Set(bookmarksStore.list.map((b) => b.path));
-    const systemPaths = new Set(quickAccessFolders.map((f) => f.path));
+    // Normalise with directoryKey so a bookmarked/system folder is excluded
+    // regardless of trailing-slash or case differences (Windows) between how it
+    // was bookmarked and how it was recorded in frecency.
+    const bookmarkedPaths = new Set(bookmarksStore.list.map((b) => directoryKey(b.path)));
+    const systemPaths = new Set(quickAccessFolders.map((f) => directoryKey(f.path)));
     const scoreMap = frecencyStore.getScoreMap();
     const mounted = drivesStore.mountedRoots;
 
     return frecencyStore.entries
-      .filter((e) => e.path !== homeDir && e.path !== "/home" && e.path !== "/" && !bookmarkedPaths.has(e.path) && !systemPaths.has(e.path))
+      .filter((e) => e.path !== homeDir && e.path !== "/home" && e.path !== "/" && !bookmarkedPaths.has(directoryKey(e.path)) && !systemPaths.has(directoryKey(e.path)))
       .filter((e) => !ejectedDriveHidesPath(e.path, mounted))
       .map((e) => ({ path: e.path, name: basename(e.path), score: scoreMap.get(e.path) ?? 0 }))
       .sort((a, b) => b.score - a.score)

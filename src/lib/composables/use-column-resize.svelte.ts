@@ -55,15 +55,36 @@ export function useColumnResize(
     resizeStartWidth = columnWidths[column];
   }
 
-  function handleResize(event: MouseEvent): void {
-    if (!isResizing || !resizeColumn) return;
-    const delta = (event.clientX - resizeStartX) / getZoomFactor();
+  let pendingClientX: number | null = null;
+  let moveRafId = 0;
+
+  function applyPendingResize(): void {
+    if (pendingClientX === null || !resizeColumn) return;
+    const delta = (pendingClientX - resizeStartX) / getZoomFactor();
     const minWidth = resizeColumn === "name" ? MIN_NAME_WIDTH : MIN_COL_WIDTH;
     const newWidth = Math.max(minWidth, resizeStartWidth + delta);
     columnWidths = { ...columnWidths, [resizeColumn]: newWidth };
+    pendingClientX = null;
+  }
+
+  // rAF-coalesced: each width write re-renders the grid, so cap it at one
+  // update per frame instead of one per raw mousemove.
+  function handleResize(event: MouseEvent): void {
+    if (!isResizing || !resizeColumn) return;
+    pendingClientX = event.clientX;
+    if (moveRafId) return;
+    moveRafId = requestAnimationFrame(() => {
+      moveRafId = 0;
+      applyPendingResize();
+    });
   }
 
   function endResize(): void {
+    if (moveRafId) {
+      cancelAnimationFrame(moveRafId);
+      moveRafId = 0;
+    }
+    applyPendingResize();
     isResizing = false;
     resizeColumn = null;
   }

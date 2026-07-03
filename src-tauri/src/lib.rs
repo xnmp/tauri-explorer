@@ -27,10 +27,11 @@ mod system;
 pub mod task_registry;
 mod thumbnails;
 mod wallpaper;
+mod warm_pool;
 
 use system::{
-    get_launch_cwd, get_log_dir, move_multiple_to_trash, move_to_trash, restore_from_trash,
-    set_window_theme, LaunchCwd,
+    get_launch_cwd, get_log_dir, log_startup_timing, move_multiple_to_trash, move_to_trash,
+    restore_from_trash, set_window_theme, LaunchCwd,
 };
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
@@ -53,6 +54,10 @@ pub fn run(launch_dir: Option<String>) {
 
     // Inject launch data into the webview as a synchronous JS global,
     // so the frontend can read it immediately without IPC roundtrips.
+    //
+    // The saved theme is applied to <html data-theme> in app.html's head
+    // script (runs in every window before the bundle parses), not here — that
+    // covers child windows too, which don't receive this initialization_script.
     let init_script = format!(
         "window.__LAUNCH_DATA__ = {{ cwd: {}, home: {} }};",
         serde_json::to_string(&launch_cwd).unwrap(),
@@ -96,6 +101,7 @@ pub fn run(launch_dir: Option<String>) {
             // Launch info
             get_launch_cwd,
             get_log_dir,
+            log_startup_timing,
             // Trash operations
             move_to_trash,
             move_multiple_to_trash,
@@ -186,6 +192,13 @@ pub fn run(launch_dir: Option<String>) {
             portal::picker_respond,
             // Window appearance
             set_window_theme,
+            // Pre-warmed window pool
+            warm_pool::warm_pool_begin_spawn,
+            warm_pool::warm_pool_cancel_spawn,
+            warm_pool::warm_pool_register,
+            warm_pool::warm_pool_claim,
+            warm_pool::warm_pool_discard,
+            warm_pool::warm_pool_shutdown,
         ])
         .setup(move |app| {
             let t_setup = std::time::Instant::now();
@@ -291,6 +304,24 @@ pub fn run(launch_dir: Option<String>) {
 
             builder.build()?;
 
+            // WARM_MEASURE=1: also spawn a hidden measure-mode warm window
+            // (see runWarmWindow in warm-window.ts). It boots, self-fires one
+            // activation, and logs `Startup(warm-activate): show=Xms` — a
+            // keypress-free latency probe for platforms with no WebDriver
+            // (macOS CI): launch with the env var, wait, grep the app log.
+            if std::env::var("WARM_MEASURE").is_ok() {
+                tauri::WebviewWindowBuilder::new(
+                    app,
+                    "explorer-warm-measure",
+                    tauri::WebviewUrl::App("index.html".into()),
+                )
+                .initialization_script("window.__WARM_MEASURE__ = true;")
+                .visible(false)
+                .skip_taskbar(true)
+                .inner_size(1200.0, 800.0)
+                .build()?;
+            }
+
             log::info!(
                 "Startup: pre-builder={:?} builder→setup={:?} total={:?}",
                 t_plugins - t_start,
@@ -301,13 +332,21 @@ pub fn run(launch_dir: Option<String>) {
         })
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
-        .run(|_app, event| {
+        .run(|app, event| {
             // Portal mode has no persistent window: closing a picker window
             // must not exit the service, or the D-Bus name would drop.
             if portal::is_portal_mode() {
-                if let tauri::RunEvent::ExitRequested { api, .. } = event {
+                if let tauri::RunEvent::ExitRequested { api, .. } = &event {
                     api.prevent_exit();
                 }
+            }
+            if let tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::Destroyed,
+                ..
+            } = &event
+            {
+                warm_pool::on_window_destroyed(app, label);
             }
         });
 }

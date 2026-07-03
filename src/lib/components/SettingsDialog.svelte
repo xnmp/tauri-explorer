@@ -6,7 +6,8 @@
   import { settingsStore, type IconTheme, type ThumbnailSize, type WindowsBackdrop } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import { isMac, isWindows } from "$lib/domain/platform";
-  import { listInstalledTerminals } from "$lib/api/files";
+  import { invoke, listInstalledTerminals } from "$lib/api/files";
+  import { spawnWarmWindow } from "$lib/state/warm-window";
   import KeybindingsSettings from "./KeybindingsSettings.svelte";
   import Modal from "./Modal.svelte";
   import { tick } from "svelte";
@@ -107,6 +108,7 @@
     gitStatus: ["Git Status Indicators", "Show modified/untracked indicators for files in git repositories"],
     recentItems: ["Recent Items in Sidebar", "Number of recent locations to show (0 to hide)"],
     quickOpenDebug: ["QuickOpen Debug Scores", "Show score breakdown (name, frecency, dir bonus) in Ctrl+P results"],
+    warmWindow: ["Pre-warm New Windows", "Keep a hidden window ready so opening a new window (Ctrl+N) is near-instant. Uses extra memory for one background window. The first new window after enabling still opens cold.", "performance", "speed"],
     confirmDelete: ["Confirm before deleting", "Show confirmation dialog when moving files to trash"],
     backgroundOpacity: ["Background Opacity", "Window background transparency"],
     backgroundImage: ["Background Image", "Custom wallpaper path (PNG, JPG, WEBP, SVG)"],
@@ -127,7 +129,7 @@
   const navBarRows = [rows.navBack, rows.navForward, rows.navUp, rows.navRefresh];
   const behaviorRows = [
     rows.showHidden, rows.millerHideEmpty, rows.yaziNavigation, rows.autoEnterSingleSubdir, rows.tabTitleGitRoot, rows.showManuallyHidden,
-    rows.gitStatus, rows.recentItems, rows.quickOpenDebug, rows.confirmDelete,
+    rows.gitStatus, rows.recentItems, rows.quickOpenDebug, rows.warmWindow, rows.confirmDelete,
     rows.backgroundOpacity, rows.backgroundImage, rows.wallpaperBlur, rows.terminalApp,
     rows.previewFontSize, rows.ffmpegPath,
   ];
@@ -502,6 +504,29 @@
                 type="checkbox"
                 checked={settingsStore.tabTitleGitRoot}
                 onchange={() => settingsStore.update({ tabTitleGitRoot: !settingsStore.tabTitleGitRoot })}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.warmWindow)}>
+            <div class="setting-info">
+              <span class="setting-label">Pre-warm New Windows</span>
+              <span class="setting-description">Keep a hidden window ready so opening a new window (Ctrl+N) is near-instant. Uses extra memory for one background window. The first new window after enabling still opens cold.</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.warmWindow}
+                onchange={() => {
+                  const enabled = !settingsStore.warmWindow;
+                  settingsStore.update({ warmWindow: enabled });
+                  // Apply immediately: prime the pool on enable; close the
+                  // parked hidden window on disable (otherwise it lingers,
+                  // unclaimable, until the app exits).
+                  if (enabled) void spawnWarmWindow();
+                  else void invoke("warm_pool_shutdown").catch(() => {});
+                }}
               />
               <span class="toggle-slider"></span>
             </label>

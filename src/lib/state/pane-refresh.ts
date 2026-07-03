@@ -47,7 +47,8 @@ export function createPaneRefresh(ctx: PaneRefreshContext) {
     }
 
     const refreshPath = coreState.currentPath;
-    const oldFingerprint = entriesFingerprint(coreState.entries);
+    const oldEntries = coreState.entries;
+    const oldFingerprint = entriesFingerprint(oldEntries);
 
     // Fetch new data without touching UI state — avoids flash on no-change.
     let streamedEntries: FileEntry[] = [];
@@ -90,8 +91,11 @@ export function createPaneRefresh(ctx: PaneRefreshContext) {
     const newFingerprint = entriesFingerprint(allEntries);
     // Compare against both the pre-fetch snapshot and the current entries.
     // A local mutation may have updated entries while the fetch was in flight
-    // (inotify on Linux fires before the IPC response returns).
-    const currentFingerprint = entriesFingerprint(coreState.entries);
+    // (inotify on Linux fires before the IPC response returns). Entries are
+    // replaced wholesale, so an unchanged reference means an unchanged
+    // fingerprint — skip rebuilding it.
+    const currentFingerprint =
+      coreState.entries === oldEntries ? oldFingerprint : entriesFingerprint(coreState.entries);
     if (oldFingerprint === newFingerprint || currentFingerprint === newFingerprint) {
       if (!silent) {
         toastStore.show("Already up to date", "info", { duration: 1500 });

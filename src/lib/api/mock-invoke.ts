@@ -57,6 +57,14 @@ const mockFiles: Record<string, FileEntry[]> = {
   "/media/user/USB_DRIVE/Backups": [
     file("backup-2024.zip", "/media/user/USB_DRIVE/Backups/backup-2024.zip", 8388608),
   ],
+  // Google Drive File Stream mount — browsable so the breadcrumb's Google-mark
+  // anchor (which collapses the mount crumb) can be exercised.
+  "/media/user/GoogleDrive": [
+    dir("My Drive", "/media/user/GoogleDrive/My Drive"),
+  ],
+  "/media/user/GoogleDrive/My Drive": [
+    file("doc.gdoc", "/media/user/GoogleDrive/My Drive/doc.gdoc", 1024),
+  ],
   "/home/user/Documents": [
     dir("project", "/home/user/Documents/project"),
     file("report.pdf", "/home/user/Documents/report.pdf", 102400),
@@ -360,6 +368,16 @@ const mockCommands: Record<string, CommandHandler> = {
   get_home_directory: () => "/home/user",
   get_launch_cwd: () => "/home/user",
   list_drives: () => mockDrives,
+  log_startup_timing: () => undefined,
+
+  // Pre-warmed window pool: no pool outside Tauri — spawn is always refused
+  // and claims always miss, so openNewWindow takes the fresh-window path.
+  warm_pool_begin_spawn: () => false,
+  warm_pool_cancel_spawn: () => undefined,
+  warm_pool_register: () => undefined,
+  warm_pool_claim: () => null,
+  warm_pool_discard: () => undefined,
+  warm_pool_shutdown: () => undefined,
 
   list_directory: (args) => {
     const raw = args.path as string;

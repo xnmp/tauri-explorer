@@ -154,6 +154,7 @@ pub fn run(launch_dir: Option<String>) {
             thumbnails::get_thumbnail_data,
             thumbnails::get_micro_thumbnail,
             thumbnails::get_video_thumbnail_data,
+            thumbnails::get_folder_preview,
             thumbnails::set_ffmpeg_path,
             thumbnails::clear_thumbnail_cache,
             thumbnails::get_thumbnail_cache_stats,

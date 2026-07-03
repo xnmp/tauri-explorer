@@ -4,6 +4,7 @@
  */
 
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
+import type { FolderPreview } from "$lib/domain/folder-preview";
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { isTauri, mockInvoke } from "./mock-invoke";
 
@@ -756,6 +757,23 @@ export async function getVideoThumbnailData(
   try {
     const dataUri = await invoke<string>("get_video_thumbnail_data", { path, size, quality });
     return { ok: true, data: dataUriToBlobUrl(dataUri) };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+/**
+ * Get the folder-preview descriptor for a directory: up to a few
+ * representative image paths plus a change fingerprint (see
+ * $lib/domain/folder-preview for the selection spec). Empty `image_paths`
+ * means "no eligible images" — callers show the plain folder icon.
+ *
+ * @param path - Full path to folder
+ */
+export async function getFolderPreview(path: string): Promise<ApiResult<FolderPreview>> {
+  try {
+    const preview = await invoke<FolderPreview>("get_folder_preview", { path });
+    return { ok: true, data: preview };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }

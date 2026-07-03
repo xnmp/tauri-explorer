@@ -5072,6 +5072,7 @@ dependencies = [
  "nucleo-matcher",
  "num_cpus",
  "opener",
+ "rayon",
  "regex",
  "serde",
  "serde_json",

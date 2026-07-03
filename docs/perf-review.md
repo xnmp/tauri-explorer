@@ -278,6 +278,16 @@ instant." None of it is search.
   string comparison for ISO `modified` — sort-by-modified @10k: ~50–88ms → ~4–8ms.
   perf-baseline.json regenerated (and perf-check.ts now strips ANSI from bench names —
   the previous baseline silently keyed some entries with color codes).
+- **#7 shipped** (`perf/scroll-raf-batching`): VirtualList scroll writes coalesced to one
+  per frame via `domain/raf-coalesce.ts` (reusable, unit-tested; same pattern as marquee).
+- **#3 shipped** (`perf/selection-rerender-decoupling`): selection is a `SvelteSet`
+  mutated in place through `setSelection()` — `.has()` subscribes per key, so a click
+  re-renders the two affected rows, not every visible row.
+- **#6 shipped** (`perf/defer-is-empty-scan`): the parallel scan no longer probes
+  `is_empty` (one `read_dir` per subdir); it's backfilled per batch — first batch before
+  return, later chunks in the streaming thread, `list_directory` (miller/pickers) still
+  returns it resolved. Single-entry ops (create/rename/copy) use
+  `metadata_to_entry_probed`.
 
 ---
 

@@ -103,8 +103,18 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
         return Err(AppError::InvalidPath(format!("Not a directory: {}", path)));
     }
 
-    // jwalk + per-entry stat calls are blocking work; keep them off the async executor.
-    let entries = Arc::new(super::run_blocking(move || Ok(scan_directory_parallel(&dir_path))).await?);
+    // jwalk + per-entry stat calls are blocking work; keep them off the async
+    // executor. list_directory returns everything at once (miller columns,
+    // pickers, autocomplete), so is_empty is backfilled before returning —
+    // there is no earlier paint to protect here, unlike the streaming path.
+    let entries = Arc::new(
+        super::run_blocking(move || {
+            let mut entries = scan_directory_parallel(&dir_path);
+            super::fill_is_empty(&mut entries);
+            Ok(entries)
+        })
+        .await?,
+    );
 
     let elapsed = t_start.elapsed();
     if elapsed.as_millis() > 100 {
@@ -243,7 +253,17 @@ pub async fn start_streaming_directory(
         t_scan_end - t_scan_start,
     );
 
+    // The scan leaves is_empty unset (one read_dir per subdirectory is the
+    // dominant per-entry cost — a 10k-dir scan would pay 10k read_dirs before
+    // the webview saw anything). Backfill it per batch instead: only what's
+    // about to be delivered, everything else in the streaming thread below.
     if total_count <= batch_size {
+        let all_entries = super::run_blocking(move || {
+            let mut entries = all_entries;
+            super::fill_is_empty(&mut entries);
+            Ok(entries)
+        })
+        .await?;
         return Ok(DirectoryListing {
             path,
             entries: Arc::new(all_entries),
@@ -252,7 +272,13 @@ pub async fn start_streaming_directory(
     }
 
     let first_batch: Vec<FileEntry> = all_entries.drain(..batch_size).collect();
-    let remaining = all_entries;
+    let first_batch = super::run_blocking(move || {
+        let mut batch = first_batch;
+        super::fill_is_empty(&mut batch);
+        Ok(batch)
+    })
+    .await?;
+    let mut remaining = all_entries;
 
     let (listing_id, cancelled) = LISTINGS.start();
 
@@ -260,10 +286,13 @@ pub async fn start_streaming_directory(
     std::thread::spawn(move || {
         let mut offset = batch_size;
 
-        for chunk in remaining.chunks(batch_size) {
+        for chunk in remaining.chunks_mut(batch_size) {
             if cancelled.load(Ordering::Relaxed) {
                 break;
             }
+
+            // Already off the first-paint critical path — probe just before emit.
+            super::fill_is_empty(chunk);
 
             let _ = app.emit(
                 "directory-entries",
@@ -321,5 +350,42 @@ mod tests {
         assert_eq!(result.entries.len(), 2);
         assert!(matches!(result.entries[0].kind, FileKind::Directory));
         assert!(matches!(result.entries[1].kind, FileKind::File));
+    }
+
+    /// The parallel scan defers the per-subdirectory is_empty probe (it's the
+    /// dominant per-entry cost); fill_is_empty backfills it per batch. The
+    /// all-at-once list_directory contract still delivers it resolved.
+    #[test]
+    fn scan_defers_is_empty_and_fill_backfills_it() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join("empty")).unwrap();
+        fs::create_dir(dir.path().join("full")).unwrap();
+        File::create(dir.path().join("full/child.txt")).unwrap();
+        File::create(dir.path().join("plain.txt")).unwrap();
+
+        let mut entries = scan_directory_parallel(&dir.path().to_path_buf());
+        assert!(
+            entries.iter().all(|e| e.is_empty.is_none()),
+            "scan must not pay the is_empty probe"
+        );
+
+        super::super::fill_is_empty(&mut entries);
+        let by_name = |n: &str| entries.iter().find(|e| e.name == n).unwrap();
+        assert_eq!(by_name("empty").is_empty, Some(true));
+        assert_eq!(by_name("full").is_empty, Some(false));
+        assert_eq!(by_name("plain.txt").is_empty, None, "files are never probed");
+    }
+
+    #[test]
+    fn list_directory_returns_resolved_is_empty() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join("empty")).unwrap();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt
+            .block_on(list_directory(dir.path().to_string_lossy().to_string()))
+            .unwrap();
+
+        assert_eq!(result.entries[0].is_empty, Some(true));
     }
 }

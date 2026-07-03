@@ -376,6 +376,8 @@ const mockCommands: Record<string, CommandHandler> = {
   warm_pool_cancel_spawn: () => undefined,
   warm_pool_register: () => undefined,
   warm_pool_claim: () => null,
+  warm_pool_discard: () => undefined,
+  warm_pool_shutdown: () => undefined,
 
   list_directory: (args) => {
     const raw = args.path as string;

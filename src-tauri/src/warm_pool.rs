@@ -13,13 +13,21 @@
 //! reservation expires after `SPAWN_TIMEOUT` in case the spawning window died
 //! before `register`/`cancel` — otherwise a leaked reservation would pin the
 //! pool empty forever.
+//!
+//! LIFECYCLE: a warm window keeps its `explorer-warm-` label for its whole
+//! life, including after activation — Tauri labels are immutable. So "is this
+//! window a real, user-facing window?" cannot be answered by label alone: the
+//! registry tracks claimed labels in `activated`. A claimed window counts as
+//! real from the moment of the claim (destroying it on last-real-window-closed
+//! was the bug that killed the user's freshly Ctrl+N'd window and exited the
+//! app).
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager};
 
-/// Label prefix identifying parked warm windows (see warm-window.ts).
+/// Label prefix identifying warm-pool windows (see warm-window.ts).
 pub const WARM_LABEL_PREFIX: &str = "explorer-warm-";
 
 const TARGET_POOL_SIZE: usize = 1;
@@ -27,8 +35,11 @@ const SPAWN_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Default)]
 struct PoolState {
-    /// Labels of warm windows that completed the ready handshake.
+    /// Labels of parked warm windows that completed the ready handshake.
     ready: Vec<String>,
+    /// Labels claimed via `claim` — real user-facing windows despite the
+    /// warm label. Entries leave this set only when the window is destroyed.
+    activated: Vec<String>,
     /// Reservation timestamps for spawns that haven't registered yet.
     spawns_in_flight: Vec<Instant>,
 }
@@ -60,23 +71,43 @@ impl PoolState {
     }
 
     /// Pop ready labels until one passes `is_alive` (a pooled window may have
-    /// been destroyed since it registered); dead labels are discarded.
+    /// been destroyed since it registered); dead labels are discarded. The
+    /// claimed label is marked activated: it is a real window from this
+    /// moment, even though it is not visible for another few milliseconds.
     fn claim(&mut self, is_alive: impl Fn(&str) -> bool) -> Option<String> {
         while let Some(label) = self.ready.pop() {
             if is_alive(&label) {
+                self.activated.push(label.clone());
                 return Some(label);
             }
         }
         None
     }
 
-    fn remove(&mut self, label: &str) {
+    /// Whether `label` is a real, user-facing window: anything not warm, or a
+    /// warm window that has been claimed.
+    fn is_real(&self, label: &str) -> bool {
+        !label.starts_with(WARM_LABEL_PREFIX) || self.activated.iter().any(|l| l == label)
+    }
+
+    /// Drop `label` from all pool sets. Returns whether it counted as a real
+    /// window at the time it was destroyed.
+    fn forget(&mut self, label: &str) -> bool {
+        let was_real = self.is_real(label);
         self.ready.retain(|l| l != label);
+        self.activated.retain(|l| l != label);
+        was_real
+    }
+
+    /// Take every parked (ready) label out of the pool, e.g. to shut it down.
+    fn drain_ready(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.ready)
     }
 }
 
 static POOL: Mutex<PoolState> = Mutex::new(PoolState {
     ready: Vec::new(),
+    activated: Vec::new(),
     spawns_in_flight: Vec::new(),
 });
 
@@ -94,13 +125,31 @@ pub async fn warm_pool_cancel_spawn() {
 }
 
 /// Called by the warm window itself once its activate-listener is registered.
+///
+/// If no real window is left by the time the handshake completes (the spawner
+/// closed while this window was booting), the warm window is destroyed instead
+/// of registered: an unclaimable hidden window would keep the process alive
+/// forever with nothing on screen.
 #[tauri::command]
-pub async fn warm_pool_register(label: String) {
-    POOL.lock().unwrap().register(label);
+pub async fn warm_pool_register(app: AppHandle, label: String) {
+    {
+        let mut pool = POOL.lock().unwrap();
+        let any_real_left = app.webview_windows().keys().any(|l| pool.is_real(l));
+        if any_real_left {
+            pool.register(label);
+            return;
+        }
+        pool.release_spawn();
+    }
+    log::info!("Destroying warm window {label} (no real window left to serve)");
+    if let Some(window) = app.get_webview_window(&label) {
+        let _ = window.destroy();
+    }
 }
 
 /// Atomically claim a ready warm window, if any. The claimer owns the label
-/// exclusively; no other window can receive it.
+/// exclusively; no other window can receive it. The claimed window counts as
+/// a real window from here on.
 #[tauri::command]
 pub async fn warm_pool_claim(app: AppHandle) -> Option<String> {
     POOL.lock()
@@ -108,25 +157,48 @@ pub async fn warm_pool_claim(app: AppHandle) -> Option<String> {
         .claim(|label| app.get_webview_window(label).is_some())
 }
 
-/// Drop a destroyed window's label from the pool (called from the run loop).
-pub fn forget_window(label: &str) {
-    POOL.lock().unwrap().remove(label);
+/// Destroy a claimed warm window whose activation failed (the caller opens a
+/// fresh window instead). Without this the claimed-but-never-shown window
+/// would linger hidden while counting as real — keeping the app alive forever.
+#[tauri::command]
+pub async fn warm_pool_discard(app: AppHandle, label: String) {
+    POOL.lock().unwrap().forget(&label);
+    if let Some(window) = app.get_webview_window(&label) {
+        let _ = window.destroy();
+    }
 }
 
-/// A hidden warm window must never keep the app alive: once the last real
-/// (non-warm) window is gone, close all parked warm windows so the normal
-/// all-windows-closed exit fires. Called on every window Destroyed event.
-pub fn close_warm_windows_if_last(app: &AppHandle, destroyed_label: &str) {
-    if destroyed_label.starts_with(WARM_LABEL_PREFIX) {
-        return;
+/// Close all parked warm windows and empty the pool (settings.warmWindow was
+/// turned off). Activated windows are untouched — they are the user's.
+#[tauri::command]
+pub async fn warm_pool_shutdown(app: AppHandle) {
+    let parked = POOL.lock().unwrap().drain_ready();
+    for label in parked {
+        log::info!("Closing parked warm window {label} (pool disabled)");
+        if let Some(window) = app.get_webview_window(&label) {
+            let _ = window.destroy();
+        }
     }
+}
+
+/// Run-loop hook for every window Destroyed event. Drops the label from the
+/// pool, and — when the destroyed window was the last REAL one (non-warm or
+/// activated) — closes the remaining parked warm windows so the normal
+/// all-windows-closed exit fires instead of a hidden window pinning the app.
+pub fn on_window_destroyed(app: &AppHandle, destroyed_label: &str) {
     let windows = app.webview_windows();
-    let any_real_left = windows
-        .keys()
-        .any(|label| !label.starts_with(WARM_LABEL_PREFIX));
-    if any_real_left {
-        return;
-    }
+    {
+        let mut pool = POOL.lock().unwrap();
+        let was_real = pool.forget(destroyed_label);
+        if !was_real {
+            return;
+        }
+        let any_real_left = windows.keys().any(|label| pool.is_real(label));
+        if any_real_left {
+            return;
+        }
+    } // release the lock: destroy() below re-enters this hook synchronously
+
     for (label, window) in windows {
         log::info!("Closing parked warm window {label} (last real window closed)");
         let _ = window.destroy();
@@ -205,10 +277,62 @@ mod tests {
     }
 
     #[test]
-    fn remove_drops_only_matching_label() {
+    fn forget_drops_only_matching_label() {
         let mut s = state();
         s.register("explorer-warm-1".into());
-        s.remove("explorer-warm-1");
+        s.forget("explorer-warm-1");
+        assert_eq!(s.claim(|_| true), None);
+    }
+
+    // — activated-window lifecycle (the "Ctrl+N window destroyed when the
+    //   original closes" regression) —
+
+    #[test]
+    fn claimed_window_counts_as_real() {
+        let mut s = state();
+        s.register("explorer-warm-1".into());
+        assert!(!s.is_real("explorer-warm-1"), "parked warm is not real");
+        s.claim(|_| true);
+        assert!(s.is_real("explorer-warm-1"), "claimed warm IS real");
+        assert!(s.is_real("explorer-123"), "non-warm labels are always real");
+    }
+
+    #[test]
+    fn destroying_parked_warm_window_is_not_a_real_close() {
+        let mut s = state();
+        s.register("explorer-warm-1".into());
+        assert!(!s.forget("explorer-warm-1"));
+    }
+
+    #[test]
+    fn destroying_activated_warm_window_is_a_real_close() {
+        let mut s = state();
+        s.register("explorer-warm-1".into());
+        s.claim(|_| true);
+        assert!(s.forget("explorer-warm-1"));
+        assert!(
+            !s.is_real("explorer-warm-1"),
+            "forgotten label must lose real status"
+        );
+    }
+
+    #[test]
+    fn discarded_claim_loses_real_status() {
+        let mut s = state();
+        s.register("explorer-warm-1".into());
+        s.claim(|_| true);
+        s.forget("explorer-warm-1"); // discard path after failed activation
+        assert!(!s.is_real("explorer-warm-1"));
+    }
+
+    #[test]
+    fn drain_ready_leaves_activated_untouched() {
+        let mut s = state();
+        s.register("explorer-warm-1".into());
+        s.claim(|_| true);
+        s.register("explorer-warm-2".into());
+        assert_eq!(s.drain_ready(), vec!["explorer-warm-2".to_string()]);
+        assert!(s.is_real("explorer-warm-1"), "activated survives shutdown");
         assert_eq!(s.claim(|_| true), None);
     }
 }

@@ -21,33 +21,30 @@ export async function openNewWindow(
    *  the cursor). Defaults to a small offset from the current window. */
   at?: { x: number; y: number },
 ): Promise<void> {
-  // Seed the child window with current directory entries for instant rendering.
-  // Shared by the warm-window and fresh-window paths.
-  const writeSeed = () => {
-    const explorer = windowTabsManager.getActiveExplorer();
-    if (explorer && explorer.currentPath === path) {
-      savePersisted(`dir-seed:${path}`, {
-        currentPath: explorer.currentPath,
-        entries: explorer.displayEntries,
-        sortBy: explorer.sortBy,
-        sortAscending: explorer.sortAscending,
-        viewMode: viewMode ?? explorer.viewMode,
-        ts: Date.now(),
-      });
-    }
-  };
-
   // EXPERIMENTAL: activate a ready pre-warmed window instead of paying
   // webview-create cost. Tear-offs (tabSnapshot) always use a fresh window —
   // they need label-keyed snapshot seeding the warm path doesn't do. If no warm
   // window is ready (or activation fails), fall through to a fresh window so
   // Ctrl+N can never be a no-op.
   if (!tabSnapshot && settingsStore.warmWindow) {
-    const used = await consumeWarmWindow(path, viewMode, at, writeSeed);
+    const used = await consumeWarmWindow(path, viewMode, at);
     if (used) return;
   }
 
-  writeSeed();
+  // Seed the child window with current directory entries for instant
+  // rendering. Fresh windows only: seeds are consumed at boot by
+  // windowTabsManager.init, which a warm window ran long ago.
+  const explorer = windowTabsManager.getActiveExplorer();
+  if (explorer && explorer.currentPath === path) {
+    savePersisted(`dir-seed:${path}`, {
+      currentPath: explorer.currentPath,
+      entries: explorer.displayEntries,
+      sortBy: explorer.sortBy,
+      sortAscending: explorer.sortAscending,
+      viewMode: viewMode ?? explorer.viewMode,
+      ts: Date.now(),
+    });
+  }
 
   const label = "explorer-" + Date.now();
   if (tabSnapshot) {

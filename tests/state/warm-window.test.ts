@@ -5,10 +5,12 @@
  * Covers what makes Ctrl+N safe and correct:
  * - a pool miss returns false (caller falls back to a fresh window — Ctrl+N is
  *   never a no-op) and primes the pool for next time;
- * - a hit seeds, emits activate to the claimed label with geometry computed
- *   from the CLAIMING window (+30/+30 cascade / tear-off under cursor), and
+ * - a hit emits activate to the claimed label with geometry computed from the
+ *   CLAIMING window (+30/+30 cascade / tear-off under cursor), and
  *   replenishes;
  * - a claimed label is exclusive — a second consume misses;
+ * - a claimed window whose activation fails is DISCARDED (destroyed via
+ *   warm_pool_discard), not leaked as an invisible "real" window;
  * - spawning respects the pool's reservation (no window when refused).
  */
 
@@ -22,12 +24,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const evt = vi.hoisted(() => ({
   emitToCalls: [] as Array<{ label: string; event: string; payload: unknown }>,
+  emitToFails: false,
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async () => () => {}),
   emit: vi.fn(async () => {}),
   emitTo: vi.fn(async (label: string, event: string, payload: unknown) => {
+    if (evt.emitToFails) throw new Error("window gone");
     evt.emitToCalls.push({ label, event, payload });
   }),
 }));
@@ -56,6 +60,7 @@ const pool = vi.hoisted(() => ({
   ready: [] as string[],
   spawnAllowed: true,
   beginSpawnCalls: 0,
+  discarded: [] as string[],
 }));
 const invokeMock = vi.hoisted(() =>
   vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
@@ -67,6 +72,9 @@ const invokeMock = vi.hoisted(() =>
         return pool.spawnAllowed;
       case "warm_pool_register":
         pool.ready.push(args!.label as string);
+        return undefined;
+      case "warm_pool_discard":
+        pool.discarded.push(args!.label as string);
         return undefined;
       default:
         return undefined;
@@ -83,9 +91,17 @@ vi.mock("../../src/lib/state/window-tabs.svelte", () => ({
   windowTabsManager: { getActiveExplorer: () => ({ currentPath: "/home/user" }) },
 }));
 
-// Appearance pulls in settings/backdrop stores; irrelevant to pool behavior.
+// Appearance/settings/theme pull in persisted stores; irrelevant to pool
+// behavior (settings refresh runs inside the activation handler, which these
+// tests never fire).
 vi.mock("../../src/lib/state/window-appearance", () => ({
   explorerWindowAppearance: () => ({}),
+}));
+vi.mock("../../src/lib/state/settings.svelte", () => ({
+  settingsStore: { init: vi.fn(async () => {}) },
+}));
+vi.mock("../../src/lib/state/theme.svelte", () => ({
+  themeStore: { syncFromSettings: vi.fn() },
 }));
 
 import {
@@ -97,8 +113,10 @@ import {
 
 beforeEach(() => {
   evt.emitToCalls.length = 0;
+  evt.emitToFails = false;
   created.calls.length = 0;
   pool.ready.length = 0;
+  pool.discarded.length = 0;
   pool.spawnAllowed = true;
   pool.beginSpawnCalls = 0;
   invokeMock.mockClear();
@@ -106,10 +124,8 @@ beforeEach(() => {
 
 describe("warm-window consume contract", () => {
   it("returns false on a pool miss and primes the pool for next time", async () => {
-    const seed = vi.fn();
-    const used = await consumeWarmWindow("/some/path", undefined, undefined, seed);
+    const used = await consumeWarmWindow("/some/path", undefined, undefined);
     expect(used).toBe(false);
-    expect(seed).not.toHaveBeenCalled(); // no claim, no seed
     expect(evt.emitToCalls).toHaveLength(0);
     expect(pool.beginSpawnCalls).toBeGreaterThan(0); // miss → prime
   });
@@ -117,11 +133,9 @@ describe("warm-window consume contract", () => {
   it("activates a claimed window at the claiming window's +30/+30 cascade", async () => {
     pool.ready.push("explorer-warm-123");
 
-    const seed = vi.fn();
-    const used = await consumeWarmWindow("/target", "tiles", undefined, seed);
+    const used = await consumeWarmWindow("/target", "tiles", undefined);
 
     expect(used).toBe(true);
-    expect(seed).toHaveBeenCalledOnce();
     expect(evt.emitToCalls).toHaveLength(1);
     expect(evt.emitToCalls[0].label).toBe("explorer-warm-123");
     expect(evt.emitToCalls[0].event).toBe(WARM_ACTIVATE_EVENT);
@@ -139,7 +153,7 @@ describe("warm-window consume contract", () => {
 
   it("places a tear-off activation under the cursor", async () => {
     pool.ready.push("explorer-warm-7");
-    await consumeWarmWindow("/t", undefined, { x: 500, y: 300 }, vi.fn());
+    await consumeWarmWindow("/t", undefined, { x: 500, y: 300 });
     const payload = evt.emitToCalls[0].payload as WarmActivatePayload;
     expect(payload.x).toBe(380); // 500 - 120
     expect(payload.y).toBe(284); // 300 - 16
@@ -147,11 +161,23 @@ describe("warm-window consume contract", () => {
 
   it("claims are exclusive: second consume misses and falls back", async () => {
     pool.ready.push("explorer-warm-456");
-    const first = await consumeWarmWindow("/a", undefined, undefined, vi.fn());
-    const second = await consumeWarmWindow("/b", undefined, undefined, vi.fn());
+    const first = await consumeWarmWindow("/a", undefined, undefined);
+    const second = await consumeWarmWindow("/b", undefined, undefined);
     expect(first).toBe(true);
     expect(second).toBe(false);
     expect(evt.emitToCalls).toHaveLength(1);
+  });
+
+  it("discards the claimed window and falls back when activation fails", async () => {
+    pool.ready.push("explorer-warm-9");
+    evt.emitToFails = true;
+
+    const used = await consumeWarmWindow("/x", undefined, undefined);
+
+    expect(used).toBe(false); // caller opens a fresh window — never a no-op
+    // The claimed-but-unactivatable window must be destroyed, not leaked as
+    // an invisible window the registry counts as real.
+    await vi.waitFor(() => expect(pool.discarded).toEqual(["explorer-warm-9"]));
   });
 });
 

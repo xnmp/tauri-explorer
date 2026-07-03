@@ -9,7 +9,9 @@
  * Every window talks to the same registry, so a window that was itself opened
  * via Ctrl+N can claim and replenish warm windows exactly like the original
  * one. Claims are atomic — two windows racing Ctrl+N can't both activate the
- * same warm window.
+ * same warm window — and a claimed label counts as a REAL window in the
+ * registry from that moment (labels are immutable, so the registry, not the
+ * label, is what distinguishes an activated window from a parked one).
  *
  * READINESS HANDSHAKE: a warm window is only claimable once its
  * activate-listener is registered. The warm page calls warm_pool_register
@@ -29,8 +31,11 @@
  * log line (emitted on every activation) is the number that decides
  * keep-vs-kill.
  *
- * MEASURE MODE (`?warm=measure`): the warm window self-activates once it's
- * ready (no keypress), so activation latency can be captured headlessly.
+ * MEASURE MODE: launching the app with WARM_MEASURE=1 makes Rust spawn one
+ * hidden measure window (flagged via the `__WARM_MEASURE__` global). It
+ * self-activates once it's ready — no keypress — so activation latency can be
+ * captured headlessly from the log on platforms without a WebDriver (macOS).
+ * Measure windows never register with the pool: they are probes, not stock.
  */
 
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -38,6 +43,8 @@ import { emitTo, listen } from "@tauri-apps/api/event";
 import { invoke } from "$lib/api/files";
 import { windowTabsManager } from "./window-tabs.svelte";
 import { explorerWindowAppearance } from "./window-appearance";
+import { settingsStore } from "./settings.svelte";
+import { themeStore } from "./theme.svelte";
 import type { ViewMode } from "./types";
 
 // Reuse the "explorer-" label prefix so warm windows inherit the same Tauri
@@ -62,12 +69,13 @@ export interface WarmActivatePayload {
   measure?: boolean;
 }
 
-/** "1" = normal parked warm window; "measure" = self-firing measurement run. */
+/** "1" = normal parked warm window; "measure" = self-firing measurement run
+ *  (Rust-spawned via WARM_MEASURE=1, flagged with the __WARM_MEASURE__
+ *  global since its URL is fixed by WebviewUrl::App). */
 export function warmMode(): "off" | "park" | "measure" {
   if (typeof window === "undefined") return "off";
-  const v = new URLSearchParams(window.location.search).get("warm");
-  if (v === "measure") return "measure";
-  if (v === "1") return "park";
+  if ((window as { __WARM_MEASURE__?: boolean }).__WARM_MEASURE__) return "measure";
+  if (new URLSearchParams(window.location.search).get("warm") === "1") return "park";
   return "off";
 }
 
@@ -77,7 +85,7 @@ export function warmMode(): "off" | "park" | "measure" {
  * can call this concurrently (boot priming, post-consume replenish) without
  * over-spawning. The window becomes claimable only after it registers itself.
  */
-export async function spawnWarmWindow(measure = false): Promise<void> {
+export async function spawnWarmWindow(): Promise<void> {
   let reserved = false;
   try {
     reserved = await invoke<boolean>("warm_pool_begin_spawn");
@@ -97,7 +105,7 @@ export async function spawnWarmWindow(measure = false): Promise<void> {
     windowTabsManager.getActiveExplorer()?.currentPath ||
     (window as { __LAUNCH_DATA__?: { home: string } }).__LAUNCH_DATA__?.home ||
     "/";
-  const params = new URLSearchParams({ warm: measure ? "measure" : "1", path: parkPath });
+  const params = new URLSearchParams({ warm: "1", path: parkPath });
 
   try {
     const win = new WebviewWindow(label, {
@@ -120,12 +128,15 @@ export async function spawnWarmWindow(measure = false): Promise<void> {
  * caller spawns a normal window — Ctrl+N can never be a no-op. On a miss the
  * pool is primed so the NEXT new window is warm; on a hit a replacement is
  * spawned.
+ *
+ * (The claiming window does NOT seed directory entries: dir-seeds are only
+ * consumed at boot by windowTabsManager.init, and a warm window booted long
+ * ago — activation renders via a normal navigateTo instead.)
  */
 export async function consumeWarmWindow(
   path: string,
   viewMode: ViewMode | undefined,
   at: { x: number; y: number } | undefined,
-  seed: () => void,
 ): Promise<boolean> {
   let label: string | null = null;
   try {
@@ -137,8 +148,6 @@ export async function consumeWarmWindow(
     void spawnWarmWindow();
     return false;
   }
-
-  seed(); // write dir-seed so the activated window renders instantly
 
   // Geometry mirrors the fresh-window path, computed from THIS (claiming)
   // window at consume time: tear-off places the title bar under the cursor,
@@ -158,18 +167,23 @@ export async function consumeWarmWindow(
 
   try {
     await emitTo(label, WARM_ACTIVATE_EVENT, payload);
-    void spawnWarmWindow(); // replenish
-    return true;
   } catch {
-    return false; // activation failed → caller falls back to a fresh window
+    // The claim already marked this window as real in the registry; a window
+    // that can't be activated must be destroyed, not leaked as an invisible
+    // "real" window that keeps the app alive. Caller opens a fresh window.
+    void invoke("warm_pool_discard", { label }).catch(() => {});
+    return false;
   }
+  void spawnWarmWindow(); // replenish
+  return true;
 }
 
 /**
  * Run inside a parked/measure warm window: register the activate-listener,
  * then report ready to the Rust pool — in that order, so a claim can never
  * reach a window that isn't listening yet. In measure mode, self-activate once
- * so activation latency is captured headlessly.
+ * so activation latency is captured headlessly (and skip pool registration —
+ * a self-activated window must never be claimable).
  */
 export async function runWarmWindow(measure: boolean): Promise<void> {
   const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -182,12 +196,25 @@ export async function runWarmWindow(measure: boolean): Promise<void> {
     const tActivate = performance.now();
     const { path, viewMode, x, y, width, height } = event.payload;
 
+    // The window may have been parked for minutes: re-read settings and theme
+    // so the revealed window matches one created fresh right now (there is no
+    // cross-window settings sync; boot-time values are stale after any change).
+    try {
+      await settingsStore.init();
+      themeStore.syncFromSettings();
+    } catch {
+      // config unreadable — keep boot-time settings
+    }
+
     const explorer = windowTabsManager.getActiveExplorer();
     if (explorer) {
       if (viewMode) explorer.setViewMode(viewMode);
       void explorer.navigateTo(path);
     }
 
+    // Geometry first (positioning after show would visibly jump), but a
+    // geometry failure must never block the reveal below — the claim is
+    // consumed, so a window that fails to show makes Ctrl+N a silent no-op.
     try {
       const { PhysicalPosition, PhysicalSize } = await import("@tauri-apps/api/dpi");
       if (typeof x === "number" && typeof y === "number") {
@@ -196,18 +223,37 @@ export async function runWarmWindow(measure: boolean): Promise<void> {
       if (typeof width === "number" && typeof height === "number") {
         await self.setSize(new PhysicalSize(width, height));
       }
+    } catch {
+      // best effort — e.g. Wayland ignores setPosition
+    }
+
+    // The reveal — the one call that must happen.
+    try {
       await self.show();
-      // Parked windows skip the taskbar; a revealed one is a real window.
-      await self.setSkipTaskbar(false);
+    } catch {
+      // window destroyed mid-activation; nothing to salvage
+    }
+
+    // Post-reveal niceties, each individually best-effort per platform
+    // (e.g. macOS has no taskbar concept).
+    try {
+      await self.setSkipTaskbar(false); // parked windows skip the taskbar
+    } catch {
+      /* unsupported platform */
+    }
+    try {
       await self.unminimize();
       await self.setFocus();
+    } catch {
+      /* unsupported platform */
+    }
+    try {
       // Briefly assert always-on-top so the freshly-shown window comes to the
       // front, then release so it behaves like a normal window.
       await self.setAlwaysOnTop(true);
       setTimeout(() => void self.setAlwaysOnTop(false), 300);
     } catch {
-      // best effort — some calls are unsupported per platform (e.g. Wayland
-      // ignores setPosition, macOS has no taskbar concept)
+      /* unsupported platform */
     }
 
     // Activation latency telemetry (event received → window shown), durable in
@@ -218,12 +264,8 @@ export async function runWarmWindow(measure: boolean): Promise<void> {
     }).catch(() => {});
   });
 
-  // Report ready to the global pool (after the listener above is registered).
-  await invoke("warm_pool_register", { label: self.label }).catch(() => {});
-
-  // Measure mode (?warm=measure): self-fire one activation so activation latency
-  // can be captured headlessly, with no keypress. Not used in the shipped path.
   if (measure) {
+    // Measurement probe: self-fire one activation, never join the pool.
     const home = (window as { __LAUNCH_DATA__?: { home: string } }).__LAUNCH_DATA__?.home ?? "/";
     await emitTo(self.label, WARM_ACTIVATE_EVENT, {
       path: home,
@@ -231,5 +273,9 @@ export async function runWarmWindow(measure: boolean): Promise<void> {
       y: 100,
       measure: true,
     } satisfies WarmActivatePayload);
+    return;
   }
+
+  // Report ready to the global pool (after the listener above is registered).
+  await invoke("warm_pool_register", { label: self.label }).catch(() => {});
 }

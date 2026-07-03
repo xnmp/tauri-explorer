@@ -197,6 +197,8 @@ pub fn run(launch_dir: Option<String>) {
             warm_pool::warm_pool_cancel_spawn,
             warm_pool::warm_pool_register,
             warm_pool::warm_pool_claim,
+            warm_pool::warm_pool_discard,
+            warm_pool::warm_pool_shutdown,
         ])
         .setup(move |app| {
             let t_setup = std::time::Instant::now();
@@ -302,6 +304,24 @@ pub fn run(launch_dir: Option<String>) {
 
             builder.build()?;
 
+            // WARM_MEASURE=1: also spawn a hidden measure-mode warm window
+            // (see runWarmWindow in warm-window.ts). It boots, self-fires one
+            // activation, and logs `Startup(warm-activate): show=Xms` — a
+            // keypress-free latency probe for platforms with no WebDriver
+            // (macOS CI): launch with the env var, wait, grep the app log.
+            if std::env::var("WARM_MEASURE").is_ok() {
+                tauri::WebviewWindowBuilder::new(
+                    app,
+                    "explorer-warm-measure",
+                    tauri::WebviewUrl::App("index.html".into()),
+                )
+                .initialization_script("window.__WARM_MEASURE__ = true;")
+                .visible(false)
+                .skip_taskbar(true)
+                .inner_size(1200.0, 800.0)
+                .build()?;
+            }
+
             log::info!(
                 "Startup: pre-builder={:?} builder→setup={:?} total={:?}",
                 t_plugins - t_start,
@@ -326,8 +346,7 @@ pub fn run(launch_dir: Option<String>) {
                 ..
             } = &event
             {
-                warm_pool::forget_window(label);
-                warm_pool::close_warm_windows_if_last(app, label);
+                warm_pool::on_window_destroyed(app, label);
             }
         });
 }

@@ -6,7 +6,8 @@
   import { settingsStore, type IconTheme, type ThumbnailSize, type WindowsBackdrop } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import { isMac, isWindows } from "$lib/domain/platform";
-  import { listInstalledTerminals } from "$lib/api/files";
+  import { invoke, listInstalledTerminals } from "$lib/api/files";
+  import { spawnWarmWindow } from "$lib/state/warm-window";
   import KeybindingsSettings from "./KeybindingsSettings.svelte";
   import Modal from "./Modal.svelte";
   import { tick } from "svelte";
@@ -517,7 +518,15 @@
               <input
                 type="checkbox"
                 checked={settingsStore.warmWindow}
-                onchange={() => settingsStore.update({ warmWindow: !settingsStore.warmWindow })}
+                onchange={() => {
+                  const enabled = !settingsStore.warmWindow;
+                  settingsStore.update({ warmWindow: enabled });
+                  // Apply immediately: prime the pool on enable; close the
+                  // parked hidden window on disable (otherwise it lingers,
+                  // unclaimable, until the app exits).
+                  if (enabled) void spawnWarmWindow();
+                  else void invoke("warm_pool_shutdown").catch(() => {});
+                }}
               />
               <span class="toggle-slider"></span>
             </label>

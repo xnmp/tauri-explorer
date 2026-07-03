@@ -119,10 +119,11 @@
 
   // Photo geometry (fractions of the tile): a square front photo centred in
   // the pocket, with up to two photos fanned behind it. Sized to fill the
-  // folder interior — the flap lip (y32/48 ≈ 67%) is what makes them read as
-  // "inside"; sizes are kept close so the front photo frames the back pair.
-  const frontSize = $derived(Math.round(size * 0.54));
-  const backSize = $derived(Math.round(size * 0.48));
+  // folder interior — the slim flap lip (y36/48 = 75%) overlapping their
+  // bottom edge is what makes them read as "inside"; sizes are kept close so
+  // the front photo frames the back pair.
+  const frontSize = $derived(Math.round(size * 0.58));
+  const backSize = $derived(Math.round(size * 0.52));
 </script>
 
 <div class="folder-thumb" bind:this={containerEl} style="--size: {size}px">
@@ -151,10 +152,10 @@
     <svg class="folder-layer" viewBox="0 0 48 48" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
       <!-- Front flap (theme colour) covering the photos' lower edge so they read
            as tucked into the folder pocket. Matches FileIcon's front-panel
-           width and rounded bottom; low lip (y32) keeps most of the pocket
-           open so the photos can fill the folder interior. -->
-      <path d="M2 32H46V39C46 40.66 44.66 42 43 42H5C3.34 42 2 40.66 2 39V32Z" class="folder-front-fill"/>
-      <path d="M2 32H46V33.5H2V32Z" fill="#fff" fill-opacity="0.35"/>
+           width and rounded bottom; slim lip (y36) keeps nearly the whole
+           interior open so the photos can fill the folder. -->
+      <path d="M2 36H46V39C46 40.66 44.66 42 43 42H5C3.34 42 2 40.66 2 39V36Z" class="folder-front-fill"/>
+      <path d="M2 36H46V37.5H2V36Z" fill="#fff" fill-opacity="0.35"/>
     </svg>
   {/if}
 </div>
@@ -197,9 +198,9 @@
   .front-photo {
     /* Front photo filling the pocket: top edge just below the folder back's
        top (y14/48 ≈ 29%) so the folder silhouette stays readable, bottom edge
-       tucked behind the front flap (lip at y32/48 ≈ 67%). Narrow enough that
+       tucked behind the front flap (lip at y36/48 = 75%). Narrow enough that
        the fanned back pair stays visible on either side. */
-    top: 30%;
+    top: 28%;
     left: 50%;
     transform: translateX(-50%);
   }
@@ -207,17 +208,17 @@
   .back-photo {
     /* Fanned wider than the front photo so their rotated edges peek out at
        the sides; kept inside the pocket like the front photo. */
-    top: 31%;
+    top: 32%;
     opacity: 0.95;
   }
 
   .back-photo.left {
-    left: 7%;
+    left: 6%;
     transform: rotate(-6deg);
   }
 
   .back-photo.right {
-    right: 7%;
+    right: 6%;
     transform: rotate(6deg);
   }
 </style>

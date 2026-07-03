@@ -48,6 +48,12 @@
 
   const isManuallyHidden = $derived(manualHiddenStore.isHidden(explorer.currentPath, entry.name));
 
+  // Formatted column values, memoized per entry so re-renders triggered by
+  // unrelated state (selection, clipboard, drop-target) never re-format.
+  const dateText = $derived(formatDate(entry.modified));
+  const typeText = $derived(getFileType(entry));
+  const sizeText = $derived(entry.kind === "file" ? formatSize(entry.size) : "");
+
   function handleClick(event: MouseEvent) {
     if (isRenaming) {
       event.stopPropagation();
@@ -120,14 +126,14 @@
   <!-- Date modified column -->
   {#if settingsStore.columnVisibility.date}
   <div class="date-cell">
-    {formatDate(entry.modified)}
+    {dateText}
   </div>
   {/if}
 
   <!-- Type column -->
   {#if settingsStore.columnVisibility.type}
   <div class="type-cell">
-    {getFileType(entry)}
+    {typeText}
   </div>
   {/if}
 
@@ -135,7 +141,7 @@
   {#if settingsStore.columnVisibility.size}
   <div class="size-cell">
     {#if entry.kind === "file"}
-      {formatSize(entry.size)}
+      {sizeText}
     {:else}
       <span class="empty-cell">—</span>
     {/if}

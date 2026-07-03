@@ -271,6 +271,13 @@ instant." None of it is search.
 - **#9 shipped**: theme applied from Rust `init_script` (pre-bundle) + JS module load. No flash.
 - **#10 shipped**: `directory-entries` listener registered once and reused across loads;
   removes a per-navigation IPC round-trip.
+- **#4/#5 + sort comparators shipped** (`perf/row-render-and-sort-hot-paths`): cached
+  `Intl.DateTimeFormat` in `formatDate` (was a fresh formatter per call, per row);
+  FileItem column values `$derived`; clipboard membership via a derived path `Set`
+  (O(1) per row); `sortEntries` uses a shared `Intl.Collator` for name/type and plain
+  string comparison for ISO `modified` — sort-by-modified @10k: ~50–88ms → ~4–8ms.
+  perf-baseline.json regenerated (and perf-check.ts now strips ANSI from bench names —
+  the previous baseline silently keyed some entries with color codes).
 
 ---
 

@@ -206,6 +206,7 @@ pub fn run(launch_dir: Option<String>) {
             terminal::terminal_write,
             terminal::terminal_resize,
             terminal::terminal_kill,
+            terminal::terminal_status,
         ])
         .setup(move |app| {
             let t_setup = std::time::Instant::now();

@@ -92,6 +92,8 @@ export interface Settings {
   ffmpegPath: string; // explicit path to ffmpeg binary for video/audio thumbnails (empty = auto-detect)
   tabTitleGitRoot: boolean; // when the folder is inside a git repo, show the repo root name in the tab title
   warmWindow: boolean; // keep a hidden pre-warmed window pooled so Ctrl+N is near-instant
+  terminalFollowsExplorer: boolean; // auto-cd the embedded terminal when the active pane navigates (#149)
+  explorerFollowsTerminal: boolean; // navigate the active pane when the terminal's shell changes cwd (OSC 7) (#149)
 }
 
 const MIN_ZOOM = 50;
@@ -147,6 +149,8 @@ const DEFAULT_SETTINGS: Settings = {
   ffmpegPath: "",
   tabTitleGitRoot: false,
   warmWindow: true,
+  terminalFollowsExplorer: true,
+  explorerFollowsTerminal: true,
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -408,6 +412,18 @@ function createSettingsStore() {
     get warmWindow() {
       return settings.warmWindow;
     },
+    get terminalFollowsExplorer() {
+      return settings.terminalFollowsExplorer;
+    },
+    toggleTerminalFollowsExplorer(): void {
+      update({ terminalFollowsExplorer: !settings.terminalFollowsExplorer });
+    },
+    get explorerFollowsTerminal() {
+      return settings.explorerFollowsTerminal;
+    },
+    toggleExplorerFollowsTerminal(): void {
+      update({ explorerFollowsTerminal: !settings.explorerFollowsTerminal });
+    },
     toggleMillerColumns(): void {
       const on = settings.millerLayers > 0;
       update({ millerLayers: on ? 0 : settings.millerLayersPreferred });
@@ -528,6 +544,8 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
   { key: "integratedTitleBar", label: "Toggle Integrated Title Bar" },
   { key: "macOsVibrancy", label: "Toggle macOS Vibrancy" },
   { key: "vibrancyBlur", label: "Toggle Vibrancy Blur" },
+  { key: "terminalFollowsExplorer", label: "Toggle Terminal Follows Explorer" },
+  { key: "explorerFollowsTerminal", label: "Toggle Explorer Follows Terminal" },
 ];
 
 export function generateToggleCommands(): Command[] {

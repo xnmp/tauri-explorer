@@ -31,3 +31,16 @@ export async function terminalResize(id: number, cols: number, rows: number): Pr
 export async function terminalKill(id: number): Promise<void> {
   return invoke("terminal_kill", { id });
 }
+
+/** cwd-sync status for a terminal (issue #149). */
+export interface TerminalStatus {
+  /** A foreground command is running (injecting `cd` would clobber it). */
+  busy: boolean;
+  /** The shell's last OSC 7-reported cwd, or null if none seen yet. */
+  cwd: string | null;
+}
+
+/** Query whether the shell is busy and its last-known cwd. */
+export async function terminalStatus(id: number): Promise<TerminalStatus> {
+  return invoke<TerminalStatus>("terminal_status", { id });
+}

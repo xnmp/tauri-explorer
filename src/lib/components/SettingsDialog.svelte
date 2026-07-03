@@ -114,6 +114,8 @@
     backgroundImage: ["Background Image", "Custom wallpaper path (PNG, JPG, WEBP, SVG)"],
     wallpaperBlur: ["Wallpaper Blur", "Blur the background image"],
     terminalApp: ["Terminal Application", "Command to open terminal (empty = auto-detect)"],
+    terminalFollowsExplorer: ["Terminal Follows Explorer", "Auto-cd the embedded terminal when the active pane navigates (queued if a command is running)", "terminal", "cwd", "sync"],
+    explorerFollowsTerminal: ["Explorer Follows Terminal", "Navigate the active pane when the terminal's shell changes directory (OSC 7)", "terminal", "cwd", "sync"],
     previewFontSize: ["Preview Font Size", "Font size for text, code and markdown previews"],
     ffmpegPath: ["FFmpeg Path", "Path to the ffmpeg binary for video/audio thumbnails (leave empty to auto-detect)", "video", "thumbnail"],
     geminiApiKey: ["Gemini API Key", "Required for Nano Banana image editing (right-click images)", "AI", "Nano Banana"],
@@ -133,6 +135,7 @@
     rows.backgroundOpacity, rows.backgroundImage, rows.wallpaperBlur, rows.terminalApp,
     rows.previewFontSize, rows.ffmpegPath,
   ];
+  const terminalRows = [rows.terminalFollowsExplorer, rows.explorerFollowsTerminal];
 
   // Escape clears the search filter before closing, so the Modal default
   // (close on Escape) is disabled and Escape is handled here instead.
@@ -705,6 +708,41 @@
               placeholder="e.g. C:\\ffmpeg\\bin\\ffmpeg.exe"
               onchange={(e) => settingsStore.update({ ffmpegPath: e.currentTarget.value })}
             />
+          </div>
+        </section>
+
+        <!-- Terminal Section -->
+        <section class="settings-section" class:hidden={!sectionVisible(...terminalRows)}>
+          <h3 class="section-title">Terminal</h3>
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.terminalFollowsExplorer)}>
+            <div class="setting-info">
+              <span class="setting-label">Terminal Follows Explorer</span>
+              <span class="setting-description">Auto-cd the embedded terminal when the active pane navigates (queued if a command is running)</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.terminalFollowsExplorer}
+                onchange={() => settingsStore.toggleTerminalFollowsExplorer()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.explorerFollowsTerminal)}>
+            <div class="setting-info">
+              <span class="setting-label">Explorer Follows Terminal</span>
+              <span class="setting-description">Navigate the active pane when the terminal's shell changes directory (OSC 7)</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.explorerFollowsTerminal}
+                onchange={() => settingsStore.toggleExplorerFollowsTerminal()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
           </div>
         </section>
 

@@ -21,13 +21,15 @@
   import "@xterm/xterm/css/xterm.css";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
-  import { terminalSpawn, terminalWrite, terminalResize, terminalKill } from "$lib/api/terminal";
+  import { terminalSpawn, terminalWrite, terminalResize, terminalKill, terminalStatus } from "$lib/api/terminal";
   import { buildTerminalTheme } from "$lib/domain/terminal-theme";
   import { buildCdCommand } from "$lib/domain/terminal-command";
+  import { decideCdSync } from "$lib/domain/terminal-cwd-sync";
   import { isWindows } from "$lib/domain/platform";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { terminalPanelStore } from "$lib/state/terminal.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+  import { toastStore } from "$lib/state/toast.svelte";
 
   let panelEl: HTMLDivElement | undefined = $state();
   let termEl: HTMLDivElement | undefined = $state();
@@ -38,6 +40,19 @@
   let exited = $state(false);
   let unlistenOutput: UnlistenFn | undefined;
   let unlistenExit: UnlistenFn | undefined;
+  let unlistenCwd: UnlistenFn | undefined;
+
+  // ── cwd sync (issue #149) ──────────────────────────────────────────────────
+  // The shell's last-known cwd (from OSC 7). Tracked always so the loop guard
+  // works even when explorer-follows-terminal is off. Not $state: only read
+  // inside async callbacks, never in the template.
+  let lastShellCwd: string | null = null;
+  // A cd deferred because the shell was busy; latest target wins.
+  let pendingCd: string | null = null;
+  let queuePoll: ReturnType<typeof setInterval> | null = null;
+  // Whether the "will follow when it finishes" toast is already showing for
+  // the current queue episode (so we don't spam it on every navigation).
+  let queueToastShown = false;
 
   const visible = $derived(terminalPanelStore.visible);
 
@@ -71,6 +86,18 @@
       unlistenExit = await listen<number | null>(`terminal-exit-${id}`, () => {
         terminalId = null;
         exited = true;
+        stopQueuePoll();
+      });
+      // Explorer follows terminal: the shell reports its cwd via OSC 7.
+      unlistenCwd = await listen<string>(`terminal-cwd-${id}`, (event) => {
+        const path = event.payload;
+        // Always track it — this is the loop guard for the other direction.
+        lastShellCwd = path;
+        if (!settingsStore.explorerFollowsTerminal) return;
+        const explorer = windowTabsManager.getActiveExplorer();
+        if (explorer && explorer.currentPath !== path) {
+          explorer.navigateTo(path);
+        }
       });
     } catch (err) {
       term.writeln(`\r\nFailed to start shell: ${err}`);
@@ -83,6 +110,10 @@
   async function restartShell(): Promise<void> {
     unlistenOutput?.();
     unlistenExit?.();
+    unlistenCwd?.();
+    stopQueuePoll();
+    pendingCd = null;
+    lastShellCwd = null;
     term?.clear();
     await spawnShell();
     term?.focus();
@@ -94,6 +125,72 @@
     if (!path || terminalId === null) return;
     terminalWrite(terminalId, buildCdCommand(path, isWindows));
     term?.focus();
+  }
+
+  /**
+   * Inject a `cd` to `path`. Ctrl+U (0x15) clears any half-typed prompt input
+   * first. It's prepended here rather than in `buildCdCommand` because that
+   * pure helper is shared with the explicit folder button, where clobbering a
+   * user's in-progress line would be surprising; the automatic sync, by
+   * contrast, must win regardless of what's on the prompt.
+   */
+  function writeCd(path: string): void {
+    if (terminalId === null) return;
+    terminalWrite(terminalId, "\x15" + buildCdCommand(path, isWindows));
+  }
+
+  /** Terminal follows explorer: reconcile the shell's cwd with `path`. */
+  async function syncTerminalToPath(path: string): Promise<void> {
+    if (terminalId === null) return;
+    const status = await terminalStatus(terminalId);
+    lastShellCwd = status.cwd ?? lastShellCwd;
+    switch (decideCdSync(path, status.cwd, status.busy)) {
+      case "skip":
+        return;
+      case "write":
+        writeCd(path);
+        return;
+      case "queue":
+        queueCd(path);
+        return;
+    }
+  }
+
+  /** Defer a cd until the running command finishes (latest target wins). */
+  function queueCd(path: string): void {
+    pendingCd = path;
+    if (!queueToastShown) {
+      toastStore.show("Terminal is running a command — will follow when it finishes", "info");
+      queueToastShown = true;
+    }
+    startQueuePoll();
+  }
+
+  function startQueuePoll(): void {
+    if (queuePoll !== null) return;
+    queuePoll = setInterval(async () => {
+      if (terminalId === null || pendingCd === null) {
+        stopQueuePoll();
+        return;
+      }
+      const status = await terminalStatus(terminalId);
+      lastShellCwd = status.cwd ?? lastShellCwd;
+      if (status.busy) return;
+      const target = pendingCd;
+      pendingCd = null;
+      stopQueuePoll();
+      queueToastShown = false;
+      // Re-check against the shell's cwd: it may have cd'd itself meanwhile.
+      if (decideCdSync(target, status.cwd, false) === "write") writeCd(target);
+    }, 500);
+  }
+
+  function stopQueuePoll(): void {
+    if (queuePoll !== null) {
+      clearInterval(queuePoll);
+      queuePoll = null;
+    }
+    queueToastShown = false;
   }
 
   onMount(() => {
@@ -135,6 +232,8 @@
       if (rafId !== null) cancelAnimationFrame(rafId);
       unlistenOutput?.();
       unlistenExit?.();
+      unlistenCwd?.();
+      stopQueuePoll();
       if (terminalId !== null) terminalKill(terminalId);
       term?.dispose();
     };
@@ -146,6 +245,18 @@
     settingsStore.theme; // dependency: theme id
     if (!term || !panelEl) return;
     term.options.theme = buildTerminalTheme(resolveThemeColor);
+  });
+
+  // Terminal follows explorer: when the active pane navigates, cd the shell.
+  // Runs even while the panel is hidden (the shell is alive), but only after
+  // the panel has been opened at least once (terminalId is live). The
+  // decideCdSync skip guard makes the reverse-direction navigateTo a no-op,
+  // so the two directions don't ping-pong.
+  $effect(() => {
+    const path = windowTabsManager.getActiveExplorer()?.currentPath;
+    if (!settingsStore.terminalFollowsExplorer) return;
+    if (!path || terminalId === null || !terminalPanelStore.everOpened) return;
+    void syncTerminalToPath(path);
   });
 
   // Refit + refocus when the panel is re-shown (it keeps running while hidden;

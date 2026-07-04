@@ -11,6 +11,8 @@
   import type { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { isInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
+  import { settingsStore } from "$lib/state/settings.svelte";
+  import { emptyFolderResolver } from "$lib/state/empty-folders.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
 
@@ -40,6 +42,16 @@
   }: Props = $props();
 
   const isRenaming = $derived(dialogStore.renamingEntry?.path === entry.path);
+
+  // Emptiness is resolved lazily now that listings no longer carry it (#129).
+  // Re-request when hidden-file visibility changes so the resolver reprobes.
+  $effect(() => {
+    settingsStore.showHidden;
+    emptyFolderResolver.request(entry);
+  });
+  const isEmptyFolder = $derived(
+    entry.kind === "directory" && emptyFolderResolver.isEmpty(entry.path) === true,
+  );
 </script>
 
 <button
@@ -50,7 +62,7 @@
   class:cut={isClipboardCut(entry)}
   class:in-clipboard={isInClipboard(entry)}
   class:hidden-entry={entry.name.startsWith(".") || manualHiddenStore.isHidden(explorer.currentPath, entry.name)}
-  class:empty-folder={entry.kind === "directory" && entry.is_empty === true}
+  class:empty-folder={isEmptyFolder}
   class:drop-target={interactions.isDropTarget(entry.path)}
   class:copy-drop={interactions.isCopyDrop(entry.path)}
   draggable={usesHtml5Drag}

@@ -5,6 +5,8 @@
  * are unit-tested independently of the PTY and Svelte wiring.
  */
 
+import { isVirtualPath } from "./virtual-path";
+
 export type CdSyncAction = "write" | "queue" | "skip";
 
 /**
@@ -23,6 +25,9 @@ export function decideCdSync(
   lastShellCwd: string | null,
   busy: boolean
 ): CdSyncAction {
+  // Virtual (`scheme://…`) locations don't exist in the real filesystem —
+  // injecting `cd 'demo://'` into the shell would just error (#152).
+  if (isVirtualPath(target)) return "skip";
   if (lastShellCwd !== null && target === lastShellCwd) return "skip";
   if (busy) return "queue";
   return "write";

@@ -93,6 +93,8 @@ describe("nano-banana plugin: contributions", () => {
     expect(when([dirEntry])).toBe(false);
     expect(when([])).toBe(false);
     expect(when([imageEntry, imageEntry])).toBe(false); // multi-select
+    // Virtual entries are plugin views, not real files (#152).
+    expect(when([{ ...imageEntry, path: "demo://photo.png" }])).toBe(false);
   });
 });
 

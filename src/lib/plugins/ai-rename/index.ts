@@ -26,6 +26,7 @@ import { buildContentHint, canSendContentHint, CONTENT_HINT_MAX_CHARS } from "$l
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
 import type { FileEntry } from "$lib/domain/file";
+import { isVirtualPath } from "$lib/domain/virtual-path";
 import AiRenameDialog from "./AiRenameDialog.svelte";
 
 const PLUGIN_ID = "ai-rename";
@@ -38,6 +39,9 @@ const DEFAULT_COUNT = 3;
 function selectedFile(entries: FileEntry[]): FileEntry | null {
   if (entries.length !== 1) return null;
   const entry = entries[0];
+  // Virtual entries are plugin views, not real files — reading/renaming
+  // them would hit the OS backend with a scheme:// path (#152).
+  if (isVirtualPath(entry.path)) return null;
   return entry.kind === "file" ? entry : null;
 }
 

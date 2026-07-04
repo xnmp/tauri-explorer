@@ -21,6 +21,7 @@
 import type { Plugin, PluginContext } from "../api";
 import { isImageFile } from "$lib/domain/file-types";
 import { basename } from "$lib/domain/path";
+import { isVirtualPath } from "$lib/domain/virtual-path";
 import { readConfigFile } from "$lib/api/files";
 import { writeConfigQueued } from "$lib/state/persisted";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
@@ -36,6 +37,8 @@ const API_KEY_STORAGE_KEY = "apiKey";
 function selectedImage(entries: FileEntry[]): FileEntry | null {
   if (entries.length !== 1) return null;
   const entry = entries[0];
+  // Virtual entries are plugin views, not real files (#152).
+  if (isVirtualPath(entry.path)) return null;
   return entry.kind === "file" && isImageFile(entry) ? entry : null;
 }
 

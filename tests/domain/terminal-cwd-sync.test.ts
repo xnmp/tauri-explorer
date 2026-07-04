@@ -27,3 +27,11 @@ describe("decideCdSync", () => {
     expect(decideCdSync("", null, false)).toBe("write");
   });
 });
+
+describe("decideCdSync virtual paths (#152)", () => {
+  it("never syncs a virtual location into the real shell", () => {
+    expect(decideCdSync("demo://", null, false)).toBe("skip");
+    expect(decideCdSync("demo://notes/a.txt", null, true)).toBe("skip");
+    expect(decideCdSync("keep://x", "/home/user", false)).toBe("skip");
+  });
+});

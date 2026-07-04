@@ -176,24 +176,18 @@ mod tests {
     fn panic_hook_writes_report_file() {
         let dir = tempfile::tempdir().unwrap();
         let crashes = dir.path().join("crashes");
-        // Run the hook body directly via a caught panic in a thread with the
-        // hook installed process-wide would race other tests; instead call
-        // write_crash_report through a real catch_unwind panic info is not
-        // constructible — so assert the file layout via install + panic in a
-        // scoped thread.
+        // The hook is process-global, so other tests that panic concurrently
+        // (e.g. assertion failures elsewhere in the suite) may also write
+        // files here. Assert only that OUR panic produced a report — never
+        // an exact file count.
         install_panic_hook(crashes.clone());
         let _ = std::thread::spawn(|| panic!("test crash")).join();
-        let count = std::fs::read_dir(&crashes)
-            .map(|entries| entries.count())
-            .unwrap_or(0);
-        assert_eq!(count, 1);
-        let entry = std::fs::read_dir(&crashes)
+        let ours = std::fs::read_dir(&crashes)
             .unwrap()
-            .next()
-            .unwrap()
-            .unwrap();
-        let contents = std::fs::read_to_string(entry.path()).unwrap();
-        assert!(contents.contains("panic: test crash"));
+            .flatten()
+            .filter_map(|e| std::fs::read_to_string(e.path()).ok())
+            .find(|c| c.contains("panic: test crash"));
+        let contents = ours.expect("no crash report written for the test panic");
         assert!(contents.contains("location:"));
     }
 }

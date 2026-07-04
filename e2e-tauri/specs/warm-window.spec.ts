@@ -43,12 +43,17 @@ describe("warm-window pool", () => {
     await $(".file-list").waitForExist({ timeout: 15_000 });
 
     // Priming is deferred ~1.5s after mount, then the warm window boots.
+    // A window HANDLE appears before __TAURI_INTERNALS__ is injected into
+    // its webview, so poll until the warm label is actually readable —
+    // a single-shot label query right after handle-count races boot.
+    let byLabel = new Map<string, string>();
     await browser.waitUntil(
-      async () => (await browser.getWindowHandles()).length >= 2,
+      async () => {
+        byLabel = await labelledHandles();
+        return [...byLabel.keys()].some((l) => l.startsWith("explorer-warm-"));
+      },
       { timeout: 20_000, timeoutMsg: "warm window never spawned" },
     );
-
-    const byLabel = await labelledHandles();
     mainHandle = byLabel.get("main")!;
     expect(mainHandle).toBeDefined();
     const warm = [...byLabel.keys()].find((l) => l.startsWith("explorer-warm-"));

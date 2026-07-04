@@ -16,6 +16,10 @@ import { resolve } from "path";
 
 const BASELINE_PATH = resolve(import.meta.dirname ?? ".", "../perf-baseline.json");
 const REGRESSION_THRESHOLD = 1.5; // 50% regression tolerance
+// Sub-millisecond benchmarks jitter by multiples on shared CI runners
+// (0.01ms -> 0.05ms reads as +400%). A regression must also be an absolute
+// slowdown a user could conceivably notice.
+const MIN_DELTA_MS = 0.5;
 
 interface BenchmarkEntry {
   name: string;
@@ -106,7 +110,7 @@ function compareResults(current: BenchmarkEntry[], baseline: Baseline): boolean 
     const change = base.avgMs > 0 ? (entry.avgMs / base.avgMs - 1) * 100 : 0;
     const changeStr = `${change >= 0 ? "+" : ""}${change.toFixed(1)}%`;
     const ratio = base.avgMs > 0 ? entry.avgMs / base.avgMs : 1;
-    const isRegression = ratio > REGRESSION_THRESHOLD;
+    const isRegression = ratio > REGRESSION_THRESHOLD && entry.avgMs - base.avgMs > MIN_DELTA_MS;
     const status = isRegression ? "REGRESSION" : "OK";
 
     if (isRegression) hasRegression = true;

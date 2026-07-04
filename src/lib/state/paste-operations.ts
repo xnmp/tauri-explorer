@@ -7,7 +7,7 @@
  * batch undo, and aggregate toast/broadcast.
  */
 
-import { estimateSize } from "$lib/api/files";
+import { estimateSize, cancelCopy, type ZipProgressEvent } from "$lib/api/files";
 import { operationsManager } from "./operations.svelte";
 import { conflictResolver, type ConflictChoice } from "./conflict-resolver.svelte";
 import { undoStore } from "./undo.svelte";
@@ -60,11 +60,44 @@ export async function pasteEntries(
   let bytesProcessed = 0;
   let cancelledByUser = false;
 
+  // Byte-level progress for the file currently transferring. The backend emits
+  // `copy-progress` for the active copy keyed by `currentJobId`; we blend its
+  // intra-file fraction with the file index so one huge file no longer sits at
+  // 0% until it finishes. A dialog Cancel is relayed to the backend so a copy
+  // can be aborted mid-file, not just between files.
+  let currentIndex = 0;
+  let currentJobId = 0;
+  let unlistenCopyProgress: (() => void) | null = null;
+  try {
+    const { listen } = await import("@tauri-apps/api/event");
+    unlistenCopyProgress = await listen<ZipProgressEvent>("copy-progress", (event) => {
+      const p = event.payload;
+      if (p.jobId !== currentJobId) return;
+      if (operationsManager.isOperationCancelled(op.id)) {
+        void cancelCopy(currentJobId);
+        return;
+      }
+      const intra = p.bytesTotal > 0 ? p.bytesDone / p.bytesTotal : 0;
+      const fraction = (currentIndex + intra) / sources.length;
+      operationsManager.updateProgress(
+        op.id,
+        fraction * 100,
+        totalBytes > 0 ? Math.round(totalBytes * fraction) : undefined,
+        totalBytes > 0 ? totalBytes : undefined,
+      );
+    });
+  } catch {
+    // Not running in Tauri (mock/browser) — copies complete without events.
+  }
+
   // Detect conflicts: which source names already exist in destination
   const existingNames = new Set(existingEntries.map((e) => e.name));
   let globalChoice: ConflictChoice | null = null;
 
   for (let i = 0; i < sources.length; i++) {
+    currentIndex = i;
+    // Fresh job id per source so stale events from a prior file are ignored.
+    currentJobId = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
     if (operationsManager.isOperationCancelled(op.id)) break;
 
     const source = sources[i];
@@ -115,6 +148,7 @@ export async function pasteEntries(
         suppressUndo: true,
         suppressBroadcast: true,
         suppressRefresh: true,
+        jobId: currentJobId,
       });
 
       if (result.ok && result.entry) {
@@ -137,6 +171,11 @@ export async function pasteEntries(
             parentDir: destPath,
           });
         }
+      } else if (!result.ok && /cancelled/i.test(result.error ?? "")) {
+        // Mid-file cancel relayed to the backend: stop the batch cleanly
+        // rather than reporting it as a failure.
+        cancelledByUser = true;
+        break;
       } else if (!result.ok && result.error && result.error !== "skipped") {
         errors.push(`${source.name}: ${result.error}`);
       }
@@ -155,6 +194,8 @@ export async function pasteEntries(
       operationsManager.updateProgress(op.id, ((i + 1) / sources.length) * 100);
     }
   }
+
+  unlistenCopyProgress?.();
 
   // Push undo action(s) — batch if multiple files
   if (undoActions.length === 1) {

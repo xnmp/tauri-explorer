@@ -30,6 +30,9 @@ export interface FileTransferOptions {
   suppressRefresh?: boolean;
   /** Broadcast undo action and toast to other windows (for cross-window DnD). */
   broadcastToOtherWindows?: boolean;
+  /** Client-generated id keying `copy-progress` events and copy cancellation.
+   *  Only meaningful for copies; ignored for moves. */
+  jobId?: number;
 }
 
 export interface FileTransferResult {
@@ -64,6 +67,7 @@ export async function performFileTransfer(
     suppressBroadcast = false,
     suppressRefresh = false,
     broadcastToOtherWindows = false,
+    jobId,
   } = options;
 
   const fileName = basename(sourcePath);
@@ -125,7 +129,7 @@ export async function performFileTransfer(
 
   // --- Execute move or copy ---
   const result: ApiResult<FileEntry> = isCopy
-    ? await copyEntry(sourcePath, targetDir, overwrite)
+    ? await copyEntry(sourcePath, targetDir, overwrite, jobId)
     : await moveEntry(sourcePath, targetDir, overwrite);
 
   if (!result.ok) {

@@ -9,9 +9,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
-use tauri::Emitter;
+use std::sync::atomic::AtomicBool;
 use zip::write::FileOptions;
 
 /// Cancellable compression jobs, keyed by client-generated job id so the
@@ -20,85 +18,10 @@ static COMPRESS_TASKS: TaskRegistry = TaskRegistry::new();
 /// Cancellable extraction jobs (same scheme, separate namespace).
 static EXTRACT_TASKS: TaskRegistry = TaskRegistry::new();
 
-/// Emitted on the `zip-progress` / `unzip-progress` events.
-#[derive(serde::Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct ArchiveProgress {
-    job_id: u64,
-    bytes_done: u64,
-    bytes_total: u64,
-    current_file: String,
-}
-
-const PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(100);
-
-/// Byte-level progress + cancellation, threaded through the zip walk.
-/// `event` is the Tauri event name to emit ("zip-progress" for compress,
-/// "unzip-progress" for extract); `cancel_msg` is the error on cancellation.
-struct ZipTracker<'a> {
-    app: Option<&'a tauri::AppHandle>,
-    event: &'static str,
-    cancel_msg: &'static str,
-    job_id: u64,
-    bytes_done: u64,
-    bytes_total: u64,
-    cancelled: Option<&'a AtomicBool>,
-    last_emit: Instant,
-}
-
-impl<'a> ZipTracker<'a> {
-    fn new(
-        app: Option<&'a tauri::AppHandle>,
-        event: &'static str,
-        cancel_msg: &'static str,
-        job_id: u64,
-        bytes_total: u64,
-        cancelled: Option<&'a AtomicBool>,
-    ) -> Self {
-        Self {
-            app,
-            event,
-            cancel_msg,
-            job_id,
-            bytes_done: 0,
-            bytes_total,
-            cancelled,
-            // Backdated so the very first chunk emits immediately.
-            last_emit: Instant::now() - PROGRESS_EMIT_INTERVAL,
-        }
-    }
-
-    fn check_cancelled(&self) -> Result<(), AppError> {
-        if self
-            .cancelled
-            .is_some_and(|flag| flag.load(Ordering::Relaxed))
-        {
-            return Err(AppError::Other(self.cancel_msg.into()));
-        }
-        Ok(())
-    }
-
-    /// Record `n` more bytes processed; throttled progress emit.
-    fn advance(&mut self, n: u64, current_file: &Path) -> Result<(), AppError> {
-        self.bytes_done += n;
-        self.check_cancelled()?;
-        if let Some(app) = self.app {
-            if self.last_emit.elapsed() >= PROGRESS_EMIT_INTERVAL {
-                self.last_emit = Instant::now();
-                let _ = app.emit(
-                    self.event,
-                    ArchiveProgress {
-                        job_id: self.job_id,
-                        bytes_done: self.bytes_done,
-                        bytes_total: self.bytes_total,
-                        current_file: current_file.to_string_lossy().to_string(),
-                    },
-                );
-            }
-        }
-        Ok(())
-    }
-}
+/// Byte-level progress + cancellation, threaded through the zip walk. Emits
+/// `zip-progress` (compress) or `unzip-progress` (extract) events with the
+/// job id, running byte count, and current file.
+use crate::progress::ProgressTracker as ZipTracker;
 
 /// Compress files/directories into a ZIP archive.
 ///
@@ -694,6 +617,7 @@ fn list_archive_contents_sync(archive_path: &str) -> Result<ArchiveListing, AppE
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::Ordering;
     use tempfile::tempdir;
 
     #[test]

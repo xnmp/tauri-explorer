@@ -943,6 +943,8 @@ const mockCommands: Record<string, CommandHandler> = {
 
   cancel_directory_listing: () => {},
 
+  cancel_copy: () => {},
+
   // Browser mode has no Tauri event system to stream results through, so the
   // mock searches the virtual filesystem synchronously and returns the
   // complete result set inline (the real backend returns a numeric search id

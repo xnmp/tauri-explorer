@@ -26,8 +26,7 @@ vi.mock("$lib/state/bookmarks.svelte", () => ({
 }));
 
 vi.mock("$lib/state/drop-operations", () => ({
-  handleFileDrop: vi.fn().mockResolvedValue(undefined),
-  handleBackgroundDrop: vi.fn().mockResolvedValue(undefined),
+  handleFileDropMany: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("$lib/composables/use-external-drag.svelte", () => ({
@@ -43,7 +42,7 @@ vi.mock("$lib/composables/use-native-drop-target.svelte", () => ({
 import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
 import { dragState } from "$lib/state/drag.svelte";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
-import { handleFileDrop, handleBackgroundDrop } from "$lib/state/drop-operations";
+import { handleFileDropMany } from "$lib/state/drop-operations";
 import { startExternalDrag } from "$lib/composables/use-external-drag.svelte";
 import { resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights } from "$lib/composables/use-native-drop-target.svelte";
 
@@ -111,8 +110,7 @@ describe("usePointerDrag", () => {
 
     vi.mocked(dragState.start).mockClear();
     vi.mocked(dragState.clear).mockClear();
-    vi.mocked(handleFileDrop).mockClear();
-    vi.mocked(handleBackgroundDrop).mockClear();
+    vi.mocked(handleFileDropMany).mockClear();
     vi.mocked(startExternalDrag).mockClear();
     vi.mocked(resolveDropTargetAtPoint).mockReturnValue(null);
     vi.mocked(highlightTargetAtPoint).mockClear();
@@ -219,8 +217,8 @@ describe("usePointerDrag", () => {
     fireWindowEvent("mousemove", { clientX: 110, clientY: 100 });
     await fireWindowEvent("mouseup", { clientX: 200, clientY: 200, altKey: false });
 
-    expect(handleFileDrop).toHaveBeenCalledWith(
-      "/home/user/file.txt",
+    expect(handleFileDropMany).toHaveBeenCalledWith(
+      ["/home/user/file.txt"],
       "/home/user/Documents",
       false,
       expect.objectContaining({ onRefresh: expect.any(Function) })
@@ -239,7 +237,8 @@ describe("usePointerDrag", () => {
     fireWindowEvent("mousemove", { clientX: 110, clientY: 100 });
     await fireWindowEvent("mouseup", { clientX: 200, clientY: 200, altKey: false });
 
-    expect(handleFileDrop).not.toHaveBeenCalled();
+    const requested = vi.mocked(handleFileDropMany).mock.calls.flatMap((c) => c[0]);
+    expect(requested).toEqual([]); // nothing was asked to transfer
   });
 
   it("does nothing when dropping a folder onto itself", async () => {
@@ -253,7 +252,8 @@ describe("usePointerDrag", () => {
     fireWindowEvent("mousemove", { clientX: 110, clientY: 100 });
     await fireWindowEvent("mouseup", { clientX: 200, clientY: 200, altKey: false });
 
-    expect(handleFileDrop).not.toHaveBeenCalled();
+    const requested = vi.mocked(handleFileDropMany).mock.calls.flatMap((c) => c[0]);
+    expect(requested).toEqual([]); // nothing was asked to transfer
   });
 
   it("no-op detection survives mixed separators (Windows: parentDir is '/', data-path is '\\')", async () => {
@@ -270,7 +270,8 @@ describe("usePointerDrag", () => {
     fireWindowEvent("mousemove", { clientX: 110, clientY: 100 });
     await fireWindowEvent("mouseup", { clientX: 200, clientY: 200, altKey: false });
 
-    expect(handleFileDrop).not.toHaveBeenCalled();
+    const requested = vi.mocked(handleFileDropMany).mock.calls.flatMap((c) => c[0]);
+    expect(requested).toEqual([]); // nothing was asked to transfer
   });
 
   it("option+mouseup triggers copy (altKey=true)", async () => {
@@ -284,8 +285,8 @@ describe("usePointerDrag", () => {
     fireWindowEvent("mousemove", { clientX: 110, clientY: 100 });
     await fireWindowEvent("mouseup", { clientX: 200, clientY: 200, altKey: true });
 
-    expect(handleFileDrop).toHaveBeenCalledWith(
-      "/home/user/file.txt",
+    expect(handleFileDropMany).toHaveBeenCalledWith(
+      ["/home/user/file.txt"],
       "/home/user/Docs",
       true,
       expect.any(Object)
@@ -327,7 +328,8 @@ describe("usePointerDrag", () => {
     drag.handlePointerDown(makeMouseEvent({ clientX: 100, clientY: 100 }), entry, false);
     await fireWindowEvent("mouseup", { clientX: 101, clientY: 101 });
 
-    expect(handleFileDrop).not.toHaveBeenCalled();
+    const requested = vi.mocked(handleFileDropMany).mock.calls.flatMap((c) => c[0]);
+    expect(requested).toEqual([]); // nothing was asked to transfer
     expect(dragState.clear).not.toHaveBeenCalled();
   });
 

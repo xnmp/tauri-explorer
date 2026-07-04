@@ -102,6 +102,7 @@ export const gitGraphCommands: Command[] = [
     id: "git.showGraph",
     label: "Git: Show Commit Graph",
     category: "general",
+    when: () => settingsStore.enableGitGraph,
     handler: async () => {
       const path = getActiveExplorer()?.state.currentPath;
       if (!path) return;

@@ -78,6 +78,8 @@ export interface Settings {
   millerHideEmpty: boolean; // hide folders containing no visible entries from miller columns
   showManuallyHidden: boolean; // reveal manually-hidden entries (dimmed)
   showScmPanel: boolean; // show SCM panel (independent of sidebar)
+  enableTerminal: boolean; // feature flag: integrated terminal panel (Ctrl+`)
+  enableGitGraph: boolean; // feature flag: git commit graph tab
   scmTreeView: boolean; // group SCM file rows by folder hierarchy
   quickOpenDebug: boolean; // show score breakdown in QuickOpen results
   integratedTitleBar: boolean; // macOS: render tabs in title bar with overlay traffic lights
@@ -135,6 +137,8 @@ const DEFAULT_SETTINGS: Settings = {
   millerHideEmpty: false,
   showManuallyHidden: false,
   showScmPanel: false,
+  enableTerminal: true,
+  enableGitGraph: true,
   scmTreeView: false,
   quickOpenDebug: false,
   integratedTitleBar: false,
@@ -347,6 +351,18 @@ function createSettingsStore() {
     },
     toggleShowManuallyHidden(): void {
       update({ showManuallyHidden: !settings.showManuallyHidden });
+    },
+    get enableTerminal() {
+      return settings.enableTerminal;
+    },
+    toggleEnableTerminal(): void {
+      update({ enableTerminal: !settings.enableTerminal });
+    },
+    get enableGitGraph() {
+      return settings.enableGitGraph;
+    },
+    toggleEnableGitGraph(): void {
+      update({ enableGitGraph: !settings.enableGitGraph });
     },
     get showScmPanel() {
       return settings.showScmPanel;

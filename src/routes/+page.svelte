@@ -152,6 +152,7 @@
     // early-return so it also closes the panel while the terminal (a
     // <textarea> under the hood) has focus — mirroring VS Code.
     if ((event.key === "`" || event.code === "Backquote") && isModifier && !dialogStore.hasModalOpen) {
+      if (!settingsStore.enableTerminal) return; // feature flag (#175)
       event.preventDefault();
       terminalPanelStore.toggle();
       return;
@@ -467,7 +468,7 @@
       {/await}
     {/if}
   </div>
-  {#if terminalPanelStore.everOpened}
+  {#if terminalPanelStore.everOpened && settingsStore.enableTerminal}
     <!-- Lazy: xterm.js only loads on first open. Stays mounted afterwards so
          hiding the panel keeps the shell session alive. -->
     {#await import("$lib/components/TerminalPanel.svelte") then { default: TerminalPanel }}

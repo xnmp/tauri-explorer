@@ -1,5 +1,9 @@
 # Tauri Explorer
 
+[![CI](https://github.com/xnmp/tauri-explorer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/xnmp/tauri-explorer/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/xnmp/tauri-explorer)](https://github.com/xnmp/tauri-explorer/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **A file manager with Ctrl+P, Ctrl+Shift+F, and a command palette.**
 
 If you've ever opened VSCode just to navigate files faster than your file manager lets you, this is for you. Tauri Explorer brings the editor workflow to your filesystem: fuzzy file open with frecency ranking, ripgrep-backed content search, a command palette for every action, fully rebindable keybindings, and a UI you can strip down to nothing.

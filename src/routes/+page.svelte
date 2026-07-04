@@ -31,6 +31,7 @@
   import "$lib/themes/index.css";
   import TitleBar from "$lib/components/TitleBar.svelte";
   import CrashNotice from "$lib/components/CrashNotice.svelte";
+  import UpdateNotice from "$lib/components/UpdateNotice.svelte";
   import FilePicker, { type PickerInfo } from "$lib/components/FilePicker.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import ScmPanel from "$lib/components/ScmPanel.svelte";
@@ -484,6 +485,7 @@
 </main>
 
 <CrashNotice />
+<UpdateNotice />
 <QuickOpen open={dialogStore.isQuickOpenOpen} onClose={() => dialogStore.closeQuickOpen()} />
 <CommandPalette open={dialogStore.isCommandPaletteOpen} onClose={() => dialogStore.closeCommandPalette()} />
 {#if ThemePicker}

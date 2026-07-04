@@ -19,6 +19,7 @@ mod nano_banana;
 mod portal;
 mod process_ext;
 mod progress;
+mod update_check;
 /// Non-Linux stub so the command registry stays platform-independent.
 #[cfg(not(target_os = "linux"))]
 mod portal {
@@ -112,6 +113,7 @@ pub fn run(launch_dir: Option<String>) {
             crash_report::take_crash_report,
             crash_report::log_frontend_error,
             crash_report::open_external_url,
+            update_check::check_for_update,
             log_startup_timing,
             // Trash operations
             move_to_trash,

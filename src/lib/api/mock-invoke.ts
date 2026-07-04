@@ -704,6 +704,13 @@ const mockCommands: Record<string, CommandHandler> = {
   log_frontend_error: () => undefined,
   open_external_url: () => undefined,
 
+  // Update check (#185): a newer release is simulated when the e2e test
+  // sets localStorage.mockUpdateAvailable before load.
+  check_for_update: () =>
+    localStorage.getItem("mockUpdateAvailable") === "1"
+      ? { version: "9.9.9", url: "https://github.com/xnmp/tauri-explorer/releases/tag/v9.9.9" }
+      : null,
+
   // Pre-warmed window pool: no pool outside Tauri — spawn is always refused
   // and claims always miss, so openNewWindow takes the fresh-window path.
   warm_pool_begin_spawn: () => false,

@@ -134,3 +134,39 @@ test.describe("File picker mode", () => {
     ).toBeVisible();
   });
 });
+
+test.describe("Picker quick open (#190)", () => {
+  test("Ctrl+P fuzzy-finds a file and picking it responds immediately", async ({ page }) => {
+    await page.goto("/?picker=open&token=qo1&multiple=0&directory=0&folder=%2Fhome%2Fuser");
+    await expect(page.locator(".picker")).toBeVisible();
+
+    await page.keyboard.press("Control+p");
+    const overlay = page.locator('[data-testid="picker-quick-open"]');
+    await expect(overlay).toBeVisible();
+
+    await page.locator("input:focus").fill("notes");
+    const hit = overlay.locator(".pqo-result", { hasText: "notes.md" }).first();
+    await expect(hit).toBeVisible();
+    await page.keyboard.press("Enter");
+
+    const response = await readResponse(page);
+    expect(response.cancelled).toBe(false);
+    expect(response.paths[0]).toMatch(/notes\.md$/);
+  });
+
+  test("quick open in save mode prefills the name instead of responding", async ({ page }) => {
+    await page.goto(
+      "/?picker=save&token=qo2&multiple=0&directory=0&folder=%2Fhome%2Fuser&name=untitled.txt",
+    );
+    await expect(page.locator(".picker")).toBeVisible();
+    await page.keyboard.press("Control+p");
+    const overlay = page.locator('[data-testid="picker-quick-open"]');
+    await expect(overlay).toBeVisible();
+    await overlay.locator("input").fill("notes");
+    await overlay.locator(".pqo-result", { hasText: "notes.md" }).first().click();
+
+    // No response yet — the picked name lands in the save-name input.
+    await expect(overlay).not.toBeVisible();
+    await expect(page.locator(".name-input")).toHaveValue("notes.md");
+  });
+});

@@ -102,7 +102,7 @@
 | Shortcut cheatsheet + first-run hint (#186) | `ShortcutCheatsheet.svelte` (live effective bindings grouped by category, Ctrl+/ or `help.shortcuts` palette command), `FirstRunHint.svelte` (one-time banner, suppressed by default in mock env via `firstRunHintDismissed`) |
 | Workspaces | `workspaces.svelte.ts`, `WorkspaceDialog.svelte` |
 | Tab tear-off / cross-window move | `tab-transfer.ts` (localStorage marker + BroadcastChannel claim), `PaneTabBar.svelte` (drag handlers), `windowTabsManager.exportTab/adoptTab/removeTransferredTab`, label-keyed `tab-seed` in `openNewWindow` |
-| System file picker (portal) | `portal.rs` (D-Bus FileChooser backend), `FilePicker.svelte` (?picker= mode), `packaging/` (.portal + .service) |
+| System file picker (portal) | `portal.rs` (D-Bus FileChooser backend), `FilePicker.svelte` (?picker= mode; Ctrl+P fuzzy quick-open via `PickerQuickOpen.svelte` #190 — picks confirm in open mode, prefill in save mode, navigate for dirs), `packaging/` (.portal + .service) |
 
 ### Clipboard
 | Feature | Files to change |

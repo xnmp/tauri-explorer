@@ -22,23 +22,37 @@ test.describe("Git graph tab", () => {
     // The graph view replaces the explorer pane content.
     const view = page.locator('[data-testid="git-graph-view"]');
     await expect(view).toBeVisible();
-    await expect(view).toContainText("12 commits");
+    await expect(view).toContainText("17 commits");
 
     // Commit rows render with the mocked history (newest first: the merge).
     const rows = view.locator(".commit-row");
-    await expect(rows).toHaveCount(12);
-    await expect(rows.first()).toContainText("Merge branch 'feature'");
+    // 17 history rows (incl. the woven stash) + the synthetic uncommitted row.
+    await expect(rows).toHaveCount(18);
+    await expect(rows.first()).toContainText("Uncommitted Changes");
+    // The stash's base is the tip, so it weaves in directly above it.
+    await expect(rows.nth(1)).toContainText("WIP on main");
+    await expect(rows.nth(2)).toContainText("Merge hotfix into main");
     await expect(rows.last()).toContainText("Initial commit");
 
     // Refs decoration: HEAD + main on the tip, tag on v1.0's commit.
-    await expect(rows.first().locator(".ref-head")).toHaveText("HEAD");
-    await expect(rows.first().locator(".ref-branch")).toHaveText("main");
+    // Combined chip: local main groups its in-sync remote as a nested
+    // sub-chip; the checked-out branch chip is highlighted.
+    const tipRow = rows.nth(2);
+    await expect(tipRow.locator(".ref-branch.ref-active")).toContainText("main");
+    await expect(tipRow.locator(".ref-branch .ref-remote-sub")).toHaveText("origin");
     await expect(view.locator(".ref-tag").first()).toHaveText("v1.0");
+    // Stash renders as a woven row with its selector chip.
+    await expect(view.locator(".ref-stash")).toHaveText("stash@{0}");
 
     // Graph cells draw lane dots and edges (the merge row has 2 outgoing edges).
-    await expect(rows.first().locator("svg circle")).toHaveCount(1);
-    const mergeEdges = await rows.first().locator("svg path").count();
-    expect(mergeEdges).toBeGreaterThanOrEqual(2);
+    // Continuous rendering: one SVG underlay with per-branch paths (plus a
+    // halo under each), not per-row segments.
+    const underlay = view.locator(".graph-underlay");
+    await expect(underlay).toHaveCount(1);
+    const pathCount = await underlay.locator("path").count();
+    expect(pathCount).toBeGreaterThanOrEqual(8);
+    const circleCount = await underlay.locator("circle").count();
+    expect(circleCount).toBeGreaterThanOrEqual(18);
 
     // The tab strip shows the graph tab; closing it returns to the explorer.
     const graphTab = page.locator(".tab").filter({ hasText: "Graph: project" });
@@ -77,17 +91,17 @@ test("clicking a commit opens the detail panel with its changed files", async ({
   await openGraphViaPalette(page);
 
   const view = page.locator('[data-testid="git-graph-view"]');
-  await view.locator(".commit-row").first().click(); // the merge commit
+  await view.locator(".commit-row").nth(2).click(); // the tip merge commit
 
   const detail = page.locator('[data-testid="git-graph-detail"]');
   await expect(detail).toBeVisible();
-  await expect(detail).toContainText("Merge branch 'feature'");
+  await expect(detail).toContainText("Merge hotfix into main");
   await expect(detail).toContainText("merge of 2 parents");
-  await expect(detail.locator(".detail-files li")).toHaveCount(2);
-  await expect(detail).toContainText("src/feature-x.ts");
+  await expect(detail.locator(".detail-files li")).toHaveCount(1);
+  await expect(detail).toContainText("src/file-16.ts");
 
   // Clicking the same row again collapses the panel.
-  await view.locator(".commit-row").first().click();
+  await view.locator(".commit-row").nth(2).click();
   await expect(detail).toHaveCount(0);
 });
 
@@ -98,7 +112,7 @@ test.describe("Git graph commit context actions", () => {
     await openGraphViaPalette(page);
 
     const view = page.locator('[data-testid="git-graph-view"]');
-    await view.locator(".commit-row").first().click({ button: "right" });
+    await view.locator(".commit-row").nth(2).click({ button: "right" });
 
     const menu = page.locator('[data-testid="git-graph-menu"]');
     await expect(menu).toBeVisible();
@@ -128,7 +142,7 @@ test.describe("Git graph commit context actions", () => {
     await openGraphViaPalette(page);
 
     const view = page.locator('[data-testid="git-graph-view"]');
-    const tip = view.locator(".commit-row").first();
+    const tip = view.locator(".commit-row").nth(2);
     await tip.click({ button: "right" });
 
     await page.locator('[data-testid="git-graph-menu"]').getByText("Create Branch…").click();
@@ -139,7 +153,7 @@ test.describe("Git graph commit context actions", () => {
 
     // The new local-branch chip decorates the tip commit after the reload.
     await expect(
-      view.locator(".commit-row").first().locator(".ref-branch", { hasText: "hotfix/login" }),
+      view.locator(".commit-row").nth(2).locator(".ref-branch", { hasText: "hotfix/login" }),
     ).toBeVisible();
   });
 
@@ -150,7 +164,7 @@ test.describe("Git graph commit context actions", () => {
 
     const view = page.locator('[data-testid="git-graph-view"]');
     // HEAD starts on the tip (merge) commit.
-    await expect(view.locator(".commit-row").first().locator(".ref-head")).toHaveText("HEAD");
+    await expect(view.locator(".commit-row").nth(2)).toHaveClass(/is-head/);
 
     // Checkout the `feature` branch (on commit #10).
     const featureRow = view.locator(".commit-row").filter({ hasText: "Add tests for feature X" });
@@ -158,8 +172,8 @@ test.describe("Git graph commit context actions", () => {
     await page.locator('[data-testid="git-graph-menu"]').getByText("Checkout feature").click();
 
     // HEAD chip now decorates the feature commit, not the old tip.
-    await expect(featureRow.locator(".ref-head")).toHaveText("HEAD");
-    await expect(view.locator(".commit-row").first().locator(".ref-head")).toHaveCount(0);
+    await expect(featureRow).toHaveClass(/is-head/);
+    await expect(view.locator(".commit-row").nth(2)).not.toHaveClass(/is-head/);
   });
 
   test("copy commit hash writes the full OID to the clipboard", async ({ page, context }) => {
@@ -169,12 +183,12 @@ test.describe("Git graph commit context actions", () => {
     await openGraphViaPalette(page);
 
     const view = page.locator('[data-testid="git-graph-view"]');
-    await view.locator(".commit-row").first().click({ button: "right" });
+    await view.locator(".commit-row").nth(2).click({ button: "right" });
     await page.locator('[data-testid="git-graph-menu"]').getByText("Copy Commit Hash").click();
 
     const clip = await page.evaluate(() => navigator.clipboard.readText());
     expect(clip).toHaveLength(40);
-    // The tip commit's deterministic OID starts with "000c" (commit #12 = 0xc).
-    expect(clip.startsWith("000c")).toBe(true);
+    // The tip commit's deterministic OID starts with "0010" (commit #16 = 0x10).
+    expect(clip.startsWith("0010")).toBe(true);
   });
 });

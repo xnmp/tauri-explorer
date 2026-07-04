@@ -1,12 +1,19 @@
 /**
- * Commit-graph lane assignment (#58).
+ * Commit-graph layout (#58, #179).
  * Pure functions — no framework or IPC deps.
  *
- * Given commits in topological order (newest first, as `git_log` returns
- * them), assign each commit a lane (column) and produce the edge segments
- * connecting each row to the next. The renderer draws one SVG cell per row:
- * a dot at `lane`, plus `edges` as line segments from this row's baseline
- * to the next row's baseline.
+ * Behavioral reference: the VSCode Git Graph extension's vertex/branch model
+ * (reimplemented from its documented behavior — its license does not permit
+ * porting code). The key ideas:
+ *
+ * - A BRANCH is an uninterrupted first-parent chain, laid out top-to-bottom
+ *   as one continuous polyline spanning many rows. Rendering one SVG path
+ *   per branch is what keeps lines visually continuous.
+ * - Colors belong to branches, not lanes. A color is reusable once the
+ *   branch that held it has ended above the row where the next branch starts.
+ * - Merge edges snap to a point already reserved for the same parent where
+ *   possible instead of claiming fresh lanes, which keeps busy graphs tight.
+ * - Lanes are claimed greedily left-to-right per row, first come first served.
  */
 
 export interface GraphCommitLike {
@@ -14,110 +21,251 @@ export interface GraphCommitLike {
   parents: string[];
 }
 
-/** An edge segment leaving a row downward: from `from` lane at this row to
- *  `to` lane at the next row. */
-export interface GraphEdge {
-  from: number;
-  to: number;
+/** A point on the layout grid: `lane` = column, `row` = commit index. */
+export interface GraphPoint {
+  lane: number;
+  row: number;
 }
 
-export interface GraphRow {
-  /** Lane (column) of this row's commit dot. */
+/** One continuous branch line: an ordered run of grid points. */
+export interface BranchLine {
+  colorIndex: number;
+  points: GraphPoint[];
+}
+
+export interface GraphVertex {
+  /** Column of the commit dot. */
   lane: number;
-  /** Segments connecting this row to the next (includes pass-throughs). */
-  edges: GraphEdge[];
+  /** Color index of the branch the commit sits on. */
+  colorIndex: number;
 }
 
 export interface GraphLayout {
-  rows: GraphRow[];
-  /** Highest lane index used + 1 — the number of columns to reserve. */
+  vertices: GraphVertex[];
+  branches: BranchLine[];
   laneCount: number;
 }
 
-/** First free (null) slot, or the end of the array. */
-function freeLane(lanes: (string | null)[]): number {
-  const i = lanes.indexOf(null);
-  if (i !== -1) return i;
-  lanes.push(null);
-  return lanes.length - 1;
+interface VertexState {
+  parents: number[]; // indices into commits (-1 when parent not in page)
+  nextParent: number; // next parent edge to route
+  onBranch: number | null; // colorIndex of the branch this vertex sits on
+  lane: number | null;
+  nextFreeLane: number; // greedy per-row lane cursor
+  /** lane → reservation key "parentRow:branchId" on this row. */
+  reserved: Map<number, string>;
+}
+
+export function assignLayout(commits: readonly GraphCommitLike[]): GraphLayout {
+  const index = new Map<string, number>();
+  commits.forEach((c, i) => index.set(c.oid, i));
+
+  const vertices: VertexState[] = commits.map((c) => ({
+    parents: c.parents.map((p) => index.get(p) ?? -1),
+    nextParent: 0,
+    onBranch: null,
+    lane: null,
+    nextFreeLane: 0,
+    reserved: new Map(),
+  }));
+
+  const branches: BranchLine[] = [];
+  /** colorEnds[i] = row where the branch last using color slot i ended. */
+  const colorEnds: number[] = [];
+  let laneCount = 1;
+  let branchIds = 0;
+
+  function availableColor(startRow: number): number {
+    for (let i = 0; i < colorEnds.length; i++) {
+      if (startRow > colorEnds[i]) return i;
+    }
+    colorEnds.push(0);
+    return colorEnds.length - 1;
+  }
+
+  /** Reserved-or-fresh lane on `row` for the given reservation key. */
+  function claimPoint(row: number, key: string | null): number {
+    const v = vertices[row];
+    if (key !== null) {
+      for (const [lane, k] of v.reserved) {
+        if (k === key) return lane;
+      }
+    }
+    while (v.reserved.has(v.nextFreeLane)) v.nextFreeLane++;
+    const lane = v.nextFreeLane;
+    laneCount = Math.max(laneCount, lane + 1);
+    return lane;
+  }
+
+  function reserve(row: number, lane: number, key: string): void {
+    vertices[row].reserved.set(lane, key);
+    laneCount = Math.max(laneCount, lane + 1);
+  }
+
+  /** Ensure the vertex at `row` has its dot placed on some lane. */
+  function placeDot(row: number): number {
+    const v = vertices[row];
+    if (v.lane === null) {
+      v.lane = claimPoint(row, null);
+      reserve(row, v.lane, `dot:${row}`);
+    }
+    return v.lane;
+  }
+
+  /** Route the next unprocessed parent edge of the vertex at `startRow`. */
+  function determinePath(startRow: number): void {
+    const start = vertices[startRow];
+    const parentIdx = start.nextParent;
+    const parentRow = start.parents[parentIdx] ?? -1;
+    const isFirstParent = parentIdx === 0;
+    start.nextParent++;
+
+    const startLane = placeDot(startRow);
+
+    // Parent outside the loaded page: nothing to draw yet.
+    if (parentRow === -1) {
+      if (start.onBranch === null) {
+        start.onBranch = availableColor(startRow);
+        colorEnds[start.onBranch] = startRow;
+      }
+      return;
+    }
+
+    const parent = vertices[parentRow];
+
+    // Merge edge (or descent into an already-drawn branch): route down to the
+    // parent's existing dot, snapping to points already reserved for it.
+    if (!isFirstParent || parent.onBranch !== null) {
+      const willJoin = parent.onBranch !== null;
+      const colorIndex = willJoin ? parent.onBranch! : availableColor(startRow);
+      const id = `edge:${branchIds++}:${parentRow}`;
+      const line: BranchLine = { colorIndex, points: [{ lane: startLane, row: startRow }] };
+      for (let row = startRow + 1; row <= parentRow; row++) {
+        let lane: number;
+        if (row === parentRow) {
+          lane = placeDot(row);
+        } else {
+          lane = claimPoint(row, id);
+          reserve(row, lane, id);
+        }
+        line.points.push({ lane, row });
+      }
+      if (!willJoin) {
+        parent.onBranch = colorIndex;
+        colorEnds[colorIndex] = parentRow;
+      }
+      branches.push(line);
+      return;
+    }
+
+    // Fresh descent: this vertex starts a first-parent chain (a branch).
+    const colorIndex = start.onBranch ?? availableColor(startRow);
+    start.onBranch = colorIndex;
+    const id = `chain:${branchIds++}`;
+    const line: BranchLine = { colorIndex, points: [{ lane: startLane, row: startRow }] };
+
+    let targetRow = parentRow;
+    for (let row = startRow + 1; row < commits.length; row++) {
+      const v = vertices[row];
+      const isTarget = row === targetRow;
+      let lane: number;
+      if (isTarget) {
+        lane = placeDot(row);
+      } else {
+        lane = claimPoint(row, id);
+        reserve(row, lane, id);
+      }
+      line.points.push({ lane, row });
+
+      if (!isTarget) continue;
+      if (v.onBranch !== null) break; // joined an existing line — terminate
+
+      // The parent joins this chain; continue through ITS first parent.
+      v.onBranch = colorIndex;
+      v.nextParent = Math.max(v.nextParent, 1);
+      const next = v.parents[0] ?? -1;
+      if (next === -1) break;
+      targetRow = next;
+    }
+
+    colorEnds[colorIndex] = line.points[line.points.length - 1].row;
+    branches.push(line);
+  }
+
+  // Drive: every vertex with an unrouted parent edge, or not yet on a branch.
+  let i = 0;
+  while (i < commits.length) {
+    const v = vertices[i];
+    if (v.nextParent < v.parents.length) {
+      determinePath(i);
+    } else if (v.onBranch === null) {
+      // Parentless (root/orphan/out-of-page) commit: place and color it.
+      placeDot(i);
+      v.onBranch = availableColor(i);
+      colorEnds[v.onBranch] = i;
+    } else {
+      i++;
+    }
+  }
+
+  return {
+    vertices: vertices.map((v) => ({
+      lane: v.lane ?? 0,
+      colorIndex: v.onBranch ?? 0,
+    })),
+    branches,
+    laneCount,
+  };
 }
 
 /**
- * Assign lanes top-to-bottom. Each lane tracks the OID it is "waiting for";
- * a commit lands in the lane waiting for it (or a fresh lane for a new tip).
- * Its first parent keeps the lane; extra parents (merges) fork to the lane
- * already waiting for them or to a new lane. Lanes waiting for an OID that
- * another lane also expects collapse into the leftmost lane (branch join).
+ * SVG path for one branch line. Reference geometry: lane changes are cubic
+ * beziers whose control points are PURE VERTICAL offsets (d = 0.8 × row
+ * height) from each endpoint — vertical tangents at both ends, so stacked
+ * curves join seamlessly. Consecutive collinear verticals merge into one
+ * line command, keeping paths minimal and unbroken.
  */
-export function assignLanes(commits: readonly GraphCommitLike[]): GraphLayout {
-  const lanes: (string | null)[] = [];
-  const rows: GraphRow[] = [];
-  let laneCount = 0;
+export function branchPath(line: BranchLine, laneWidth: number, rowHeight: number): string {
+  if (line.points.length === 0) return "";
+  const x = (lane: number) => lane * laneWidth + laneWidth / 2;
+  const y = (row: number) => row * rowHeight + rowHeight / 2;
+  const d = rowHeight * 0.8;
 
-  for (const commit of commits) {
-    // The lane expecting this commit, else a fresh one (new branch tip).
-    let lane = lanes.indexOf(commit.oid);
-    if (lane === -1) lane = freeLane(lanes);
-
-    // Any OTHER lanes waiting for this same commit join into `lane` here.
-    const joins: number[] = [];
-    for (let i = 0; i < lanes.length; i++) {
-      if (i !== lane && lanes[i] === commit.oid) {
-        joins.push(i);
-        lanes[i] = null;
-      }
+  let path = `M ${x(line.points[0].lane)} ${y(line.points[0].row).toFixed(1)}`;
+  let i = 1;
+  while (i < line.points.length) {
+    const prev = line.points[i - 1];
+    let j = i;
+    // Merge a run of same-lane points into one vertical line command.
+    while (j < line.points.length && line.points[j].lane === prev.lane) j++;
+    if (j > i) {
+      path += ` L ${x(prev.lane)} ${y(line.points[j - 1].row).toFixed(1)}`;
+      i = j;
+      continue;
     }
-
-    const edges: GraphEdge[] = [];
-    for (const j of joins) edges.push({ from: j, to: lane });
-
-    const [first, ...rest] = commit.parents;
-    if (first !== undefined) {
-      // If another lane already waits for our first parent, the two lines
-      // join — collapse into the LEFTMOST lane (conventional rendering).
-      const existing = lanes.findIndex((o, i) => i !== lane && o === first);
-      if (existing !== -1 && existing < lane) {
-        lanes[lane] = null;
-        edges.push({ from: lane, to: existing });
-      } else if (existing !== -1) {
-        lanes[existing] = null;
-        lanes[lane] = first;
-        edges.push({ from: lane, to: lane });
-        edges.push({ from: existing, to: lane });
-      } else {
-        lanes[lane] = first;
-        edges.push({ from: lane, to: lane });
-      }
-    } else {
-      lanes[lane] = null; // root commit — line ends here
-    }
-
-    for (const parent of rest) {
-      const existing = lanes.indexOf(parent);
-      if (existing !== -1) {
-        edges.push({ from: lane, to: existing });
-      } else {
-        const nl = freeLane(lanes);
-        lanes[nl] = parent;
-        edges.push({ from: lane, to: nl });
-      }
-    }
-
-    // Pass-throughs: every other occupied lane continues straight down.
-    for (let i = 0; i < lanes.length; i++) {
-      if (lanes[i] !== null && i !== lane && !edges.some((e) => e.from === i || e.to === i)) {
-        edges.push({ from: i, to: i });
-      }
-    }
-
-    laneCount = Math.max(laneCount, lane + 1, lanes.length);
-    rows.push({ lane, edges });
+    const b = line.points[i];
+    const x1 = x(prev.lane);
+    const y1 = y(prev.row);
+    const x2 = x(b.lane);
+    const y2 = y(b.row);
+    path += ` C ${x1} ${(y1 + d).toFixed(1)} ${x2} ${(y2 - d).toFixed(1)} ${x2} ${y2.toFixed(1)}`;
+    i++;
   }
-
-  return { rows, laneCount };
+  return path;
 }
 
-/** Deterministic per-lane colour index (renderer maps to a palette). */
-export function laneColorIndex(lane: number, paletteSize: number): number {
-  return lane % Math.max(1, paletteSize);
-}
+/** Reference-default 12-color palette (configurable data, not code). */
+export const GRAPH_PALETTE = [
+  "#0085d9",
+  "#d9008f",
+  "#00d90a",
+  "#d98500",
+  "#a300d9",
+  "#ff0000",
+  "#00d9cc",
+  "#e138e8",
+  "#85d900",
+  "#dc5b23",
+  "#6f24d6",
+  "#ffcc00",
+] as const;

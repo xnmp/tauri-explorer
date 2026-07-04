@@ -76,7 +76,11 @@
   <div class="pane left-pane">
     <PaneTabBar paneId="left" />
     {#if leftTab?.kind === "git-graph"}
-      <GitGraphView repoPath={leftTab.repoPath} />
+      <!-- Keyed so switching between graphs of different repos recreates the
+           view — no selected-commit/state bleed or in-flight races (#167). -->
+      {#key leftTab.repoPath}
+        <GitGraphView repoPath={leftTab.repoPath} />
+      {/key}
     {:else}
       <ExplorerPane paneId="left" />
     {/if}
@@ -97,7 +101,9 @@
     <div class="pane right-pane">
       <PaneTabBar paneId="right" />
       {#if rightTab?.kind === "git-graph"}
-        <GitGraphView repoPath={rightTab.repoPath} />
+        {#key rightTab.repoPath}
+          <GitGraphView repoPath={rightTab.repoPath} />
+        {/key}
       {:else}
         <ExplorerPane paneId="right" />
       {/if}

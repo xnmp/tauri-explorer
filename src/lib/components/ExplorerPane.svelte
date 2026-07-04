@@ -137,14 +137,22 @@
   /** Compute how many indices to jump for an arrow key in the current view.
    *  Returns 0 if the arrow key doesn't apply to this view mode.
    *
-   *  Layout summary:
+   *  Layout summary (List and Tiles are both row-major since #128 — items fill
+   *  left→right then top→down — so they navigate identically):
    *  - details: single column, up/down only
-   *  - list:    grid-auto-flow: column (items fill top→bottom, then next column)
-   *             up/down = ±1, left/right = ±rows_per_column
-   *  - tiles:   grid row-first (items fill left→right, then next row)
-   *             left/right = ±1, up/down = ±columns_per_row
+   *  - list/tiles: left/right = ±1, up/down = ±columns_per_row
+   *
+   *  The view exposes its live column count via a `data-columns` attribute on
+   *  the `.list-view` / `.tiles-view` container (the grid itself is now split
+   *  across per-row elements, so there is no single grid to measure).
    */
-  function getArrowStep(key: string, viewMode: string, totalItems: number): number {
+  function gridColumns(viewMode: string): number {
+    const gridEl = paneRef?.querySelector<HTMLElement>(`.${viewMode}-view`);
+    const cols = gridEl ? parseInt(gridEl.dataset.columns ?? "") : NaN;
+    return Number.isFinite(cols) && cols > 0 ? cols : 1;
+  }
+
+  function getArrowStep(key: string, viewMode: string, _totalItems: number): number {
     const isVertical = key === "ArrowUp" || key === "ArrowDown";
     const isHorizontal = key === "ArrowLeft" || key === "ArrowRight";
 
@@ -152,21 +160,10 @@
       return isVertical ? 1 : 0;
     }
 
-    if (viewMode === "list") {
-      if (isVertical) return 1;
-      // Horizontal: jump by rows-per-column
-      const gridEl = paneRef?.querySelector<HTMLElement>(".list-view");
-      const cols = gridEl ? parseInt(getComputedStyle(gridEl).getPropertyValue("--list-columns")) || 1 : 1;
-      return Math.ceil(totalItems / cols);
-    }
-
-    if (viewMode === "tiles") {
+    if (viewMode === "list" || viewMode === "tiles") {
+      // Row-major: horizontal moves one item, vertical moves a whole row.
       if (isHorizontal) return 1;
-      // Vertical: jump by columns-per-row (read from rendered grid)
-      const gridEl = paneRef?.querySelector<HTMLElement>(".tiles-view");
-      if (!gridEl) return 1;
-      const cols = getComputedStyle(gridEl).gridTemplateColumns.split(" ").length;
-      return cols;
+      return gridColumns(viewMode);
     }
 
     return isVertical ? 1 : 0;
@@ -176,9 +173,7 @@
     if (!settingsStore.yaziNavigation) return false;
     if (paneExplorer.viewMode === "details") return true;
     if (paneExplorer.viewMode === "list") {
-      const gridEl = paneRef?.querySelector<HTMLElement>(".list-view");
-      const cols = gridEl ? parseInt(getComputedStyle(gridEl).getPropertyValue("--list-columns")) || 1 : 1;
-      return cols === 1;
+      return gridColumns("list") === 1;
     }
     return false;
   }

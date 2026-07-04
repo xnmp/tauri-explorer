@@ -208,7 +208,7 @@ fn write_clipboard_file_paths(paths: &[String]) -> bool {
 
 /// Read raw image data (PNG) from the OS clipboard.
 /// Returns the raw bytes or None if no image is available.
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn read_clipboard_image() -> Option<Vec<u8>> {
     let output = if is_wayland() {
         Command::new("wl-paste")
@@ -242,7 +242,7 @@ pub async fn clipboard_has_image() -> bool {
         .unwrap_or(false)
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn clipboard_has_image_sync() -> bool {
     let output = if is_wayland() {
         Command::new("wl-paste")
@@ -263,6 +263,63 @@ fn clipboard_has_image_sync() -> bool {
         }
         _ => false,
     }
+}
+
+// ===========================================================================
+// macOS backend: wl-paste/xclip don't exist there (#162). AppleScript's
+// «class PNGf» coercion reads the general pasteboard as PNG (AppKit
+// transcodes TIFF screenshots), returned as a hex dump we decode.
+// ===========================================================================
+
+/// Parse osascript's «data PNGf<hex>» output into PNG bytes.
+/// Compiled on all platforms so the parser stays unit-tested off-mac.
+#[allow(dead_code)]
+fn parse_applescript_png(text: &str) -> Option<Vec<u8>> {
+    let tag = "\u{ab}data PNGf"; // «data PNGf
+    let start = text.find(tag)? + tag.len();
+    let end = text[start..].find('\u{bb}')? + start; // »
+    let hex: String = text[start..end]
+        .chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .collect();
+    if hex.len() < 16 || hex.len() % 2 != 0 {
+        return None;
+    }
+    let bytes: Option<Vec<u8>> = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
+        .collect();
+    let bytes = bytes?;
+    if bytes.len() < 8 || &bytes[..4] != b"\x89PNG" {
+        return None;
+    }
+    Some(bytes)
+}
+
+#[cfg(target_os = "macos")]
+fn read_clipboard_image() -> Option<Vec<u8>> {
+    let output = Command::new("osascript")
+        .args(["-e", "get the clipboard as \u{ab}class PNGf\u{bb}"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_applescript_png(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(target_os = "macos")]
+fn clipboard_has_image_sync() -> bool {
+    Command::new("osascript")
+        .args(["-e", "clipboard info"])
+        .output()
+        .map(|o| {
+            o.status.success() && {
+                let info = String::from_utf8_lossy(&o.stdout);
+                info.contains("PNGf") || info.contains("TIFF") || info.contains("picture")
+            }
+        })
+        .unwrap_or(false)
 }
 
 // ===========================================================================
@@ -427,6 +484,24 @@ pub async fn clipboard_write_files(paths: Vec<String>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn applescript_png_parses_hex_dump() {
+        // 8-byte PNG magic + IHDR fragment, as osascript renders it.
+        let text = "\u{ab}data PNGf89504E470D0A1A0A0000000D\u{bb}\n";
+        let bytes = parse_applescript_png(text).expect("should parse");
+        assert_eq!(&bytes[..4], b"\x89PNG");
+        assert_eq!(bytes.len(), 12);
+    }
+
+    #[test]
+    fn applescript_png_rejects_garbage() {
+        assert!(parse_applescript_png("no data here").is_none());
+        // valid wrapper but not PNG magic
+        assert!(parse_applescript_png("\u{ab}data PNGfDEADBEEFDEADBEEFDEADBEEF\u{bb}").is_none());
+        // odd-length hex
+        assert!(parse_applescript_png("\u{ab}data PNGf89504E470D0A1A0A00000\u{bb}").is_none());
+    }
 
     #[test]
     fn parse_uri_list() {

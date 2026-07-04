@@ -31,6 +31,8 @@ export interface CommitInfo {
   author_time: number;
   /** First line of the commit message. */
   summary: string;
+  /** Stash selector (e.g. stash@{0}) when this row is a woven stash entry. */
+  stash?: string;
 }
 
 /** One page of history plus decoration + cursor metadata. */

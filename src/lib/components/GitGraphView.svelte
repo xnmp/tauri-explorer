@@ -22,17 +22,17 @@
     type CommitFile,
     type ResetMode,
   } from "$lib/api/git-log";
-  import { assignLanes, type GraphLayout } from "$lib/domain/git-graph";
+  import { assignLayout, branchPath, GRAPH_PALETTE, type GraphLayout, type BranchLine } from "$lib/domain/git-graph";
   import { notifyLocalGitChange } from "$lib/state/git-refresh";
   import { toastStore } from "$lib/state/toast.svelte";
-  import VirtualList from "./VirtualList.svelte";
+  import { gitSummary } from "$lib/api/files";
 
   const { repoPath }: { repoPath: string } = $props();
 
   const ROW_HEIGHT = 28;
   const LANE_WIDTH = 14;
-  const PAGE_SIZE = 200;
-  const LANE_COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#a78bfa", "#14b8a6"];
+  const PAGE_SIZE = 300;
+  const UNCOMMITTED = "*";
 
   let commits = $state<CommitInfo[]>([]);
   let refs = $state<Record<string, RefInfo[]>>({});
@@ -41,6 +41,9 @@
   let error = $state<string | null>(null);
   let selected = $state<CommitInfo | null>(null);
   let selectedFiles = $state<CommitFile[]>([]);
+  /** Working-tree change count → synthetic top row (reference behavior). */
+  let workingChanges = $state(0);
+  let headOid = $state<string | null>(null);
 
   async function selectCommit(commit: CommitInfo): Promise<void> {
     if (selected?.oid === commit.oid) {
@@ -56,8 +59,35 @@
     }
   }
 
-  const layout: GraphLayout = $derived(assignLanes(commits));
+  /** Rows fed to layout/render: a synthetic uncommitted-changes row on top
+   *  (when the working tree is dirty and HEAD is loaded), then the page. */
+  const displayCommits: CommitInfo[] = $derived(
+    workingChanges > 0 && headOid
+      ? [
+          {
+            oid: UNCOMMITTED,
+            short_oid: UNCOMMITTED,
+            parents: [headOid],
+            author_name: "*",
+            author_email: "",
+            author_time: Math.floor(Date.now() / 1000),
+            summary: `Uncommitted Changes (${workingChanges})`,
+          },
+          ...commits,
+        ]
+      : commits,
+  );
+  const layout: GraphLayout = $derived(assignLayout(displayCommits));
   const graphWidth = $derived(Math.max(2, layout.laneCount) * LANE_WIDTH);
+  const graphHeight = $derived(displayCommits.length * ROW_HEIGHT);
+
+  /** The branch line leaving the synthetic row (drawn gray + dashed up to
+   *  the first real commit it reaches). */
+  const uncommittedBranch = $derived(
+    displayCommits[0]?.oid === UNCOMMITTED
+      ? layout.branches.find((b) => b.points[0]?.row === 0)
+      : undefined,
+  );
 
   async function loadPage(skip: number): Promise<void> {
     loading = true;
@@ -67,6 +97,18 @@
       commits = skip === 0 ? page.commits : [...commits, ...page.commits];
       refs = skip === 0 ? page.refs : { ...refs, ...page.refs };
       hasMore = page.has_more;
+      if (skip === 0) {
+        headOid =
+          Object.entries(page.refs).find(([, rs]) => rs.some((r) => r.kind === "Head"))?.[0] ??
+          null;
+        const summary = await gitSummary(repoPath);
+        workingChanges = summary.ok
+          ? summary.data.staged.length +
+            summary.data.changes.length +
+            summary.data.untracked.length +
+            summary.data.merge.length
+          : 0;
+      }
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     } finally {
@@ -92,17 +134,63 @@
     });
   }
 
-  function laneColor(lane: number): string {
-    return LANE_COLORS[lane % LANE_COLORS.length];
+  function colorOf(index: number): string {
+    return GRAPH_PALETTE[index % GRAPH_PALETTE.length];
   }
 
-  /** Cubic segment from this row's baseline to the next row's. */
-  function edgePath(from: number, to: number): string {
-    const x1 = from * LANE_WIDTH + LANE_WIDTH / 2;
-    const x2 = to * LANE_WIDTH + LANE_WIDTH / 2;
-    const y1 = ROW_HEIGHT / 2;
-    const y2 = ROW_HEIGHT * 1.5;
-    return `M ${x1} ${y1} C ${x1} ${ROW_HEIGHT}, ${x2} ${ROW_HEIGHT}, ${x2} ${y2}`;
+  /** Split the uncommitted branch at HEAD: [0, headRowInLine] renders gray
+   *  dashed; the remainder renders in its branch color. */
+  function splitUncommitted(line: BranchLine): { dirty: BranchLine; rest: BranchLine } {
+    const headRow = displayCommits.findIndex((c) => c.oid === headOid);
+    const split = Math.max(
+      1,
+      line.points.findIndex((p) => p.row === headRow),
+    );
+    return {
+      dirty: { colorIndex: line.colorIndex, points: line.points.slice(0, split + 1) },
+      rest: { colorIndex: line.colorIndex, points: line.points.slice(split) },
+    };
+  }
+
+  /** Near-bottom incremental loading for the plain scroller. */
+  function handleScroll(event: Event): void {
+    const el = event.target as HTMLElement;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - ROW_HEIGHT * 20) {
+      if (!loading && hasMore) void loadPage(commits.length);
+    }
+  }
+
+  /** Combined ref chips (reference behavior): each local branch groups the
+   *  remotes tracking it as nested sub-chips; the checked-out branch first;
+   *  unmatched remotes and tags stay separate. */
+  interface Chips {
+    isHead: boolean;
+    heads: { name: string; remotes: string[]; active: boolean }[];
+    remotes: string[];
+    tags: string[];
+  }
+  function chipsFor(oid: string): Chips {
+    const decorations = refs[oid] ?? [];
+    const isHead = decorations.some((r) => r.kind === "Head");
+    const locals = decorations.filter((r) => r.kind === "LocalBranch").map((r) => r.name);
+    const remoteNames = decorations.filter((r) => r.kind === "RemoteBranch").map((r) => r.name);
+    const usedRemotes = new Set<string>();
+    const heads = locals.map((name) => {
+      const remotes = remoteNames
+        .filter((rn) => rn.slice(rn.indexOf("/") + 1) === name)
+        .map((rn) => {
+          usedRemotes.add(rn);
+          return rn.slice(0, rn.indexOf("/"));
+        });
+      return { name, remotes, active: isHead };
+    });
+    heads.sort((a, b) => Number(b.active) - Number(a.active));
+    return {
+      isHead,
+      heads,
+      remotes: remoteNames.filter((rn) => !usedRemotes.has(rn)),
+      tags: decorations.filter((r) => r.kind === "Tag").map((r) => r.name),
+    };
   }
 
   function refClass(kind: RefInfo["kind"]): string {
@@ -246,50 +334,105 @@
   {:else if commits.length === 0}
     <div class="graph-status">No commits.</div>
   {:else}
-    <VirtualList
-      class="graph-scroller"
-      items={rows}
-      itemHeight={ROW_HEIGHT}
-      getKey={(row) => row.commit.oid}
-      onnearend={loadMore}
-    >
-      {#snippet children(row)}
-        {@const graphRow = layout.rows[row.index]}
-        {@const decorations = refs[row.commit.oid] ?? []}
-        <div
-          class="commit-row"
-          class:selected={selected?.oid === row.commit.oid}
-          class:is-head={(refs[row.commit.oid] ?? []).some((r) => r.kind === "Head")}
-          data-oid={row.commit.short_oid}
-          role="button"
-          tabindex="0"
-          onclick={() => void selectCommit(row.commit)}
-          onkeydown={(e) => { if (e.key === "Enter") void selectCommit(row.commit); }}
-          oncontextmenu={(e) => openMenu(e, row.commit)}
+    <div class="graph-scroller" onscroll={handleScroll}>
+      <div class="graph-body" style:height="{graphHeight}px">
+        <svg
+          class="graph-underlay"
+          width={graphWidth}
+          height={graphHeight}
+          aria-hidden="true"
         >
-          <svg class="graph-cell" width={graphWidth} height={ROW_HEIGHT} aria-hidden="true">
-            {#if graphRow}
-              {#each graphRow.edges as edge (edge.from + "-" + edge.to)}
-                <path d={edgePath(edge.from, edge.to)} stroke={laneColor(edge.to)} stroke-width="2" fill="none" />
-              {/each}
-              <circle
-                cx={graphRow.lane * LANE_WIDTH + LANE_WIDTH / 2}
-                cy={ROW_HEIGHT / 2}
-                r="4"
-                fill={laneColor(graphRow.lane)}
+          {#each layout.branches as line, li (li)}
+            {#if line === uncommittedBranch}
+              {@const parts = splitUncommitted(line)}
+              <path class="branch-halo" d={branchPath(parts.dirty, LANE_WIDTH, ROW_HEIGHT)} />
+              <path
+                d={branchPath(parts.dirty, LANE_WIDTH, ROW_HEIGHT)}
+                stroke="#808080"
+                stroke-dasharray="4 3"
+                stroke-width="2"
+                fill="none"
+              />
+              {#if parts.rest.points.length > 1}
+                <path class="branch-halo" d={branchPath(parts.rest, LANE_WIDTH, ROW_HEIGHT)} />
+                <path
+                  d={branchPath(parts.rest, LANE_WIDTH, ROW_HEIGHT)}
+                  stroke={colorOf(line.colorIndex)}
+                  stroke-width="2"
+                  fill="none"
+                />
+              {/if}
+            {:else}
+              <path class="branch-halo" d={branchPath(line, LANE_WIDTH, ROW_HEIGHT)} />
+              <path
+                d={branchPath(line, LANE_WIDTH, ROW_HEIGHT)}
+                stroke={colorOf(line.colorIndex)}
+                stroke-width="2"
+                fill="none"
               />
             {/if}
-          </svg>
-          <span class="oid">{row.commit.short_oid}</span>
-          {#each decorations as ref (ref.kind + ref.name)}
-            <span class="ref {refClass(ref.kind)}">{ref.name}</span>
           {/each}
-          <span class="summary" title={row.commit.summary}>{row.commit.summary}</span>
-          <span class="author">{row.commit.author_name}</span>
-          <span class="date">{formatDate(row.commit.author_time)}</span>
-        </div>
-      {/snippet}
-    </VirtualList>
+          {#each layout.vertices as vertex, vi (vi)}
+            {@const cx = vertex.lane * LANE_WIDTH + LANE_WIDTH / 2}
+            {@const cy = vi * ROW_HEIGHT + ROW_HEIGHT / 2}
+            {#if displayCommits[vi]?.oid === UNCOMMITTED}
+              <!-- Open circle at the uncommitted-changes row (reference default). -->
+              <circle {cx} {cy} r="4" fill="var(--background-card)" stroke="#808080" stroke-width="2" />
+            {:else if displayCommits[vi]?.stash}
+              <!-- Stash: ring marker. -->
+              <circle {cx} {cy} r="4.5" fill="none" stroke={colorOf(vertex.colorIndex)} stroke-width="2" />
+              <circle {cx} {cy} r="2" fill={colorOf(vertex.colorIndex)} />
+            {:else}
+              <circle {cx} {cy} r="4" fill={colorOf(vertex.colorIndex)} />
+            {/if}
+          {/each}
+        </svg>
+
+        {#each displayCommits as commit, index (commit.oid)}
+          {@const chips = chipsFor(commit.oid)}
+          {@const synthetic = commit.oid === UNCOMMITTED}
+          <div
+            class="commit-row"
+            class:selected={selected?.oid === commit.oid}
+            class:is-head={chips.isHead}
+            class:uncommitted={synthetic}
+            style:padding-left="{graphWidth + 20}px"
+            data-oid={commit.short_oid}
+            role="button"
+            tabindex="0"
+            onclick={() => { if (!synthetic) void selectCommit(commit); }}
+            onkeydown={(e) => { if (e.key === "Enter" && !synthetic) void selectCommit(commit); }}
+            oncontextmenu={(e) => { if (!synthetic) openMenu(e, commit); else e.preventDefault(); }}
+          >
+            {#if synthetic}
+              <span class="summary uncommitted-label">{commit.summary}</span>
+            {:else}
+              <span class="oid">{commit.short_oid}</span>
+              {#if commit.stash}
+                <span class="ref ref-stash">{commit.stash}</span>
+              {/if}
+              {#each chips.heads as head (head.name)}
+                <span class="ref ref-branch" class:ref-active={head.active}>
+                  {head.name}
+                  {#each head.remotes as remote (remote)}
+                    <span class="ref-remote-sub" title="{remote}/{head.name} is at this commit">{remote}</span>
+                  {/each}
+                </span>
+              {/each}
+              {#each chips.remotes as remote (remote)}
+                <span class="ref ref-remote">{remote}</span>
+              {/each}
+              {#each chips.tags as tag (tag)}
+                <span class="ref ref-tag">{tag}</span>
+              {/each}
+              <span class="summary" title={commit.summary}>{commit.summary}</span>
+              <span class="author">{commit.author_name}</span>
+              <span class="date">{formatDate(commit.author_time)}</span>
+            {/if}
+          </div>
+        {/each}
+      </div>
+    </div>
   {/if}
 
   {#if selected}
@@ -559,9 +702,54 @@
     color: var(--text-tertiary);
   }
 
-  .graph-cell {
-    flex-shrink: 0;
-    overflow: visible;
+  .graph-scroller {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+  }
+
+  .graph-body {
+    position: relative;
+  }
+
+  .graph-underlay {
+    position: absolute;
+    top: 0;
+    left: 10px;
+    pointer-events: none;
+  }
+
+  /* Subtle halo under each line so crossings stay legible (reference uses a
+     shadow path beneath every line). */
+  .branch-halo {
+    stroke: var(--background-card);
+    stroke-width: 4px;
+    fill: none;
+  }
+
+  .uncommitted-label {
+    color: var(--text-tertiary);
+    font-style: italic;
+  }
+
+  .ref-active {
+    outline: 1px solid var(--accent);
+  }
+
+  .ref-remote-sub {
+    margin-left: 4px;
+    padding: 0 4px;
+    border-radius: 6px;
+    background: color-mix(in srgb, #3b82f6 18%, transparent);
+    color: #3b82f6;
+    font-size: 9px;
+  }
+
+  .ref-stash {
+    background: color-mix(in srgb, #64748b 18%, transparent);
+    color: #64748b;
+    border-color: color-mix(in srgb, #64748b 40%, transparent);
+    font-family: var(--font-mono, monospace);
   }
 
   .oid {

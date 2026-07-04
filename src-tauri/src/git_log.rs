@@ -66,6 +66,10 @@ pub struct CommitInfo {
     pub author_time: i64,
     /// First line of the commit message.
     pub summary: String,
+    /// Stash selector (e.g. `stash@{0}`) when this row is a stash entry
+    /// woven into the history (#179). Absent for ordinary commits.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stash: Option<String>,
 }
 
 /// A decorating ref pointing at a commit.
@@ -197,9 +201,48 @@ fn collect_decorations(
     Ok(map)
 }
 
+/// Insert stash entries into the page, each right before its base commit
+/// (mirroring how the reference UI splices stashes into the history).
+/// Stashes whose base isn't in this page are skipped — they attach on the
+/// page that contains their base.
+fn weave_stashes(
+    commits: &mut Vec<CommitInfo>,
+    stashes: Vec<(usize, String, git2::Oid)>,
+    repo: &Repository,
+) {
+    for (idx, message, oid) in stashes {
+        let Ok(commit) = repo.find_commit(oid) else {
+            continue;
+        };
+        let Some(base) = commit.parent_id(0).ok().map(|b| b.to_string()) else {
+            continue;
+        };
+        let Some(pos) = commits.iter().position(|c| c.oid == base) else {
+            continue;
+        };
+        let author = commit.author();
+        commits.insert(
+            pos,
+            CommitInfo {
+                oid: oid.to_string(),
+                short_oid: short_oid(oid),
+                // Only the base parent: the stash's index/untracked internals
+                // must not appear as graph edges.
+                parents: vec![base],
+                author_name: author.name().unwrap_or("").to_string(),
+                author_email: author.email().unwrap_or("").to_string(),
+                author_time: author.when().seconds(),
+                summary: message,
+                stash: Some(format!("stash@{{{idx}}}")),
+            },
+        );
+    }
+}
+
 fn build_log(
     repo: &Repository,
     opts: &GitLogOptions,
+    stashes: Vec<(usize, String, git2::Oid)>,
     cancelled: &AtomicBool,
 ) -> Result<GitLogPage, AppError> {
     let limit = opts.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
@@ -266,10 +309,12 @@ fn build_log(
             author_email: author.email().unwrap_or("").to_string(),
             author_time: author.when().seconds(),
             summary: commit.summary().unwrap_or("").to_string(),
+            stash: None,
         });
     }
 
     let next_cursor = commits.last().map(|c| c.oid.clone());
+    weave_stashes(&mut commits, stashes, repo);
     let refs = collect_decorations(repo)?;
 
     Ok(GitLogPage {
@@ -358,8 +403,14 @@ pub async fn git_log(
 ) -> Result<GitLogPage, AppError> {
     let opts = options.unwrap_or_default();
     run_blocking(move |cancelled| {
-        let repo = open_repo(Path::new(&repo_path))?;
-        build_log(&repo, &opts, &cancelled)
+        let mut repo = open_repo(Path::new(&repo_path))?;
+        // stash_foreach needs &mut; collect first, weave during page build.
+        let mut stashes: Vec<(usize, String, git2::Oid)> = Vec::new();
+        let _ = repo.stash_foreach(|idx, message, oid| {
+            stashes.push((idx, message.to_string(), *oid));
+            true
+        });
+        build_log(&repo, &opts, stashes, &cancelled)
     })
     .await
 }
@@ -437,6 +488,37 @@ mod tests {
         Arc::new(AtomicBool::new(false))
     }
 
+    #[test]
+    fn stashes_weave_in_before_their_base_commit() {
+        let (dir, mut repo) = init_repo();
+        std::fs::write(dir.path().join("a.txt"), "one").unwrap();
+        let c1 = commit(&repo, "first", &[]);
+        std::fs::write(dir.path().join("a.txt"), "two").unwrap();
+        let _c2 = commit(&repo, "second", &[c1]);
+
+        // Dirty the tree and stash it (base = HEAD = second).
+        std::fs::write(dir.path().join("a.txt"), "dirty").unwrap();
+        let sig = git2::Signature::now("Test User", "test@example.com").unwrap();
+        repo.stash_save(&sig, "wip stuff", None).unwrap();
+
+        let mut stashes: Vec<(usize, String, Oid)> = Vec::new();
+        repo.stash_foreach(|idx, message, oid| {
+            stashes.push((idx, message.to_string(), *oid));
+            true
+        })
+        .unwrap();
+        assert_eq!(stashes.len(), 1);
+
+        let page = build_log(&repo, &GitLogOptions::default(), stashes, &no_cancel()).unwrap();
+        // stash row sits immediately before its base (second), single parent.
+        let stash_pos = page.commits.iter().position(|c| c.stash.is_some()).unwrap();
+        let stash_row = &page.commits[stash_pos];
+        assert_eq!(stash_row.stash.as_deref(), Some("stash@{0}"));
+        assert_eq!(stash_row.parents.len(), 1);
+        assert_eq!(page.commits[stash_pos + 1].summary, "second");
+        assert_eq!(stash_row.parents[0], page.commits[stash_pos + 1].oid);
+    }
+
     fn init_repo() -> (TempDir, Repository) {
         let dir = TempDir::new().unwrap();
         let repo = Repository::init(dir.path()).unwrap();
@@ -494,7 +576,7 @@ mod tests {
     #[test]
     fn linear_history_is_newest_first() {
         let (_dir, repo, oids) = linear_repo();
-        let page = build_log(&repo, &GitLogOptions::default(), &no_cancel()).unwrap();
+        let page = build_log(&repo, &GitLogOptions::default(), Vec::new(), &no_cancel()).unwrap();
         assert_eq!(page.commits.len(), 3);
         // Topological + time: newest (c3) first.
         assert_eq!(page.commits[0].oid, oids[2].to_string());
@@ -510,7 +592,7 @@ mod tests {
     #[test]
     fn short_oid_is_seven_chars_and_prefixes_full() {
         let (_dir, repo, _oids) = linear_repo();
-        let page = build_log(&repo, &GitLogOptions::default(), &no_cancel()).unwrap();
+        let page = build_log(&repo, &GitLogOptions::default(), Vec::new(), &no_cancel()).unwrap();
         for c in &page.commits {
             assert_eq!(c.short_oid.len(), 7);
             assert!(c.oid.starts_with(&c.short_oid));
@@ -546,7 +628,7 @@ mod tests {
         // merge feature into main
         let merge = commit(&repo, "merge feature", &[main_c, feat]);
 
-        let page = build_log(&repo, &GitLogOptions::default(), &no_cancel()).unwrap();
+        let page = build_log(&repo, &GitLogOptions::default(), Vec::new(), &no_cancel()).unwrap();
         let merge_info = page
             .commits
             .iter()
@@ -569,7 +651,7 @@ mod tests {
         repo.tag("v1.0", &mid, &sig, "release 1.0", false).unwrap();
         let _ = dir;
 
-        let page = build_log(&repo, &GitLogOptions::default(), &no_cancel()).unwrap();
+        let page = build_log(&repo, &GitLogOptions::default(), Vec::new(), &no_cancel()).unwrap();
 
         // HEAD + branch on the tip.
         let tip_refs = page.refs.get(&tip.to_string()).expect("tip decorated");
@@ -603,6 +685,7 @@ mod tests {
                 skip: 0,
                 limit: Some(4),
             },
+            Vec::new(),
             &no_cancel(),
         )
         .unwrap();
@@ -620,6 +703,7 @@ mod tests {
                 skip: 4,
                 limit: Some(4),
             },
+            Vec::new(),
             &no_cancel(),
         )
         .unwrap();
@@ -633,6 +717,7 @@ mod tests {
                 skip: 8,
                 limit: Some(4),
             },
+            Vec::new(),
             &no_cancel(),
         )
         .unwrap();
@@ -640,7 +725,7 @@ mod tests {
         assert!(!page3.has_more);
 
         // No overlaps, no gaps: concatenation equals the full ordered walk.
-        let full = build_log(&repo, &GitLogOptions::default(), &no_cancel()).unwrap();
+        let full = build_log(&repo, &GitLogOptions::default(), Vec::new(), &no_cancel()).unwrap();
         let paged: Vec<String> = page1
             .commits
             .iter()
@@ -661,6 +746,7 @@ mod tests {
                 skip: 100,
                 limit: Some(10),
             },
+            Vec::new(),
             &no_cancel(),
         )
         .unwrap();
@@ -680,7 +766,7 @@ mod tests {
     fn empty_repo_yields_no_commits() {
         let (dir, repo) = init_repo();
         let _ = dir;
-        let page = build_log(&repo, &GitLogOptions::default(), &no_cancel()).unwrap();
+        let page = build_log(&repo, &GitLogOptions::default(), Vec::new(), &no_cancel()).unwrap();
         assert!(page.commits.is_empty());
         assert!(!page.has_more);
     }

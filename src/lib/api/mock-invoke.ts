@@ -502,7 +502,11 @@ function fullOid(n: number): string {
 // merged into main at #12, and tags on #1 and #5. Parents reference lower
 // numbers, so the array is a valid topological linearization.
 const GRAPH_BASE_TIME = Math.floor(Date.UTC(2024, 5, 1, 9, 0, 0) / 1000);
-const MOCK_GRAPH_SPEC: Array<{ n: number; parents: number[]; summary: string }> = [
+const MOCK_GRAPH_SPEC: Array<{ n: number; parents: number[]; summary: string; stash?: string }> = [
+  { n: 16, parents: [15, 13], summary: "Merge hotfix into main" },
+  { n: 15, parents: [12, 14], summary: "Merge experiment" },
+  { n: 14, parents: [9], summary: "Try alternative parser" },
+  { n: 13, parents: [7], summary: "Hotfix: crash on empty input" },
   { n: 12, parents: [11, 10], summary: "Merge branch 'feature'" },
   { n: 11, parents: [8], summary: "Update README with usage" },
   { n: 10, parents: [9], summary: "Add tests for feature X" },
@@ -515,6 +519,8 @@ const MOCK_GRAPH_SPEC: Array<{ n: number; parents: number[]; summary: string }> 
   { n: 3, parents: [2], summary: "Add core module" },
   { n: 2, parents: [1], summary: "Project scaffolding" },
   { n: 1, parents: [], summary: "Initial commit" },
+  // Stash entry woven in by git_log right before its base (16).
+  { n: 99, parents: [16], summary: "WIP on main: experimenting", stash: "stash@{0}" },
 ];
 
 let mockCommitGraphCache: MockCommit[] | null = null;
@@ -529,7 +535,15 @@ function mockCommitGraph(): MockCommit[] {
     // Older commits (higher index) get earlier timestamps.
     author_time: GRAPH_BASE_TIME - i * 3600,
     summary: c.summary,
+    ...(c.stash ? { stash: c.stash } : {}),
   }));
+  // The stash entry sits right before its base commit, like the backend weave.
+  const stashIdx = mockCommitGraphCache.findIndex((c) => (c as { stash?: string }).stash);
+  if (stashIdx > 0) {
+    const [stashRow] = mockCommitGraphCache.splice(stashIdx, 1);
+    const basePos = mockCommitGraphCache.findIndex((c) => c.oid === stashRow.parents[0]);
+    mockCommitGraphCache.splice(Math.max(0, basePos), 0, stashRow);
+  }
   return mockCommitGraphCache;
 }
 
@@ -538,11 +552,16 @@ const MOCK_GRAPH_REFS: Record<
   string,
   Array<{ name: string; kind: "LocalBranch" | "RemoteBranch" | "Tag" | "Head" }>
 > = {
-  [fullOid(12)]: [
+  [fullOid(16)]: [
     { name: "HEAD", kind: "Head" },
     { name: "main", kind: "LocalBranch" },
+    { name: "origin/main", kind: "RemoteBranch" },
   ],
-  [fullOid(11)]: [{ name: "origin/main", kind: "RemoteBranch" }],
+  [fullOid(13)]: [
+    { name: "hotfix", kind: "LocalBranch" },
+    { name: "origin/hotfix", kind: "RemoteBranch" },
+  ],
+  [fullOid(14)]: [{ name: "experiment", kind: "LocalBranch" }],
   [fullOid(10)]: [{ name: "feature", kind: "LocalBranch" }],
   [fullOid(5)]: [{ name: "v1.0", kind: "Tag" }],
   [fullOid(1)]: [{ name: "v0.9", kind: "Tag" }],

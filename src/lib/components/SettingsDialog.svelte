@@ -118,6 +118,8 @@
     wallpaperBlur: ["Wallpaper Blur", "Blur the background image"],
     terminalApp: ["Terminal Application", "Command to open terminal (empty = auto-detect)"],
     terminalFollowsExplorer: ["Terminal Follows Explorer", "Auto-cd the embedded terminal when the active pane navigates (queued if a command is running)", "terminal", "cwd", "sync"],
+    enableTerminal: ["Integrated Terminal", "Feature flag: the embedded terminal panel and its Ctrl+` shortcut", "experimental", "feature flag"],
+    enableGitGraph: ["Git Commit Graph", "Feature flag: the git graph tab and its palette command", "experimental", "feature flag", "git graph"],
     explorerFollowsTerminal: ["Explorer Follows Terminal", "Navigate the active pane when the terminal's shell changes directory (OSC 7)", "terminal", "cwd", "sync"],
     previewFontSize: ["Preview Font Size", "Font size for text, code and markdown previews"],
     ffmpegPath: ["FFmpeg Path", "Path to the ffmpeg binary for video/audio thumbnails (leave empty to auto-detect)", "video", "thumbnail"],
@@ -742,6 +744,41 @@
                 type="checkbox"
                 checked={settingsStore.explorerFollowsTerminal}
                 onchange={() => settingsStore.toggleExplorerFollowsTerminal()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </section>
+
+        <!-- Experimental Section (#175): feature flags for recently shipped surfaces -->
+        <section class="settings-section" class:hidden={!sectionVisible(["Experimental", "feature flags"], rows.enableTerminal, rows.enableGitGraph)}>
+          <h3 class="section-title">Experimental</h3>
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.enableTerminal)}>
+            <div class="setting-info">
+              <span class="setting-label">Integrated Terminal</span>
+              <span class="setting-description">Enable the embedded terminal panel (Ctrl+`)</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.enableTerminal}
+                onchange={() => settingsStore.toggleEnableTerminal()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.enableGitGraph)}>
+            <div class="setting-info">
+              <span class="setting-label">Git Commit Graph</span>
+              <span class="setting-description">Enable the git graph tab (command palette: Git: Show Commit Graph)</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.enableGitGraph}
+                onchange={() => settingsStore.toggleEnableGitGraph()}
               />
               <span class="toggle-slider"></span>
             </label>

@@ -10,6 +10,7 @@ mod content_search;
 pub mod error;
 mod files;
 pub mod git;
+pub mod git_log;
 mod nano_banana;
 #[cfg(target_os = "linux")]
 mod portal;
@@ -186,6 +187,8 @@ pub fn run(launch_dir: Option<String>) {
             git::git_commit,
             git::git_watch_repo,
             git::git_unwatch_repo,
+            git_log::git_log,
+            git_log::git_refs,
             // Drives / volumes
             files::drives::list_drives,
             // Wallpaper

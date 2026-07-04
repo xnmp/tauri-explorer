@@ -330,6 +330,73 @@ const mockWrittenFiles: Record<string, string> = {};
 /** In-memory OS clipboard file list, round-tripped by the clipboard_* mocks. */
 let mockClipboardFiles: string[] = [];
 
+// ----- Deterministic commit graph for git_log / git_refs mocks (#57) -----
+
+interface MockCommit {
+  oid: string;
+  short_oid: string;
+  parents: string[];
+  author_name: string;
+  author_email: string;
+  author_time: number;
+  summary: string;
+}
+
+/** Deterministic 40-char hex OID from a small commit number. */
+function fullOid(n: number): string {
+  return n.toString(16).padStart(4, "0").repeat(10);
+}
+
+// Newest-first, topologically ordered. 12 commits, a feature branch (#9,#10)
+// merged into main at #12, and tags on #1 and #5. Parents reference lower
+// numbers, so the array is a valid topological linearization.
+const GRAPH_BASE_TIME = Math.floor(Date.UTC(2024, 5, 1, 9, 0, 0) / 1000);
+const MOCK_GRAPH_SPEC: Array<{ n: number; parents: number[]; summary: string }> = [
+  { n: 12, parents: [11, 10], summary: "Merge branch 'feature'" },
+  { n: 11, parents: [8], summary: "Update README with usage" },
+  { n: 10, parents: [9], summary: "Add tests for feature X" },
+  { n: 9, parents: [8], summary: "Implement feature X" },
+  { n: 8, parents: [7], summary: "Refactor config loader" },
+  { n: 7, parents: [6], summary: "Fix bug in argument parser" },
+  { n: 6, parents: [5], summary: "Add structured logging" },
+  { n: 5, parents: [4], summary: "Bump version to 1.0" },
+  { n: 4, parents: [3], summary: "Wire up CLI entry point" },
+  { n: 3, parents: [2], summary: "Add core module" },
+  { n: 2, parents: [1], summary: "Project scaffolding" },
+  { n: 1, parents: [], summary: "Initial commit" },
+];
+
+let mockCommitGraphCache: MockCommit[] | null = null;
+function mockCommitGraph(): MockCommit[] {
+  if (mockCommitGraphCache) return mockCommitGraphCache;
+  mockCommitGraphCache = MOCK_GRAPH_SPEC.map((c, i) => ({
+    oid: fullOid(c.n),
+    short_oid: fullOid(c.n).slice(0, 7),
+    parents: c.parents.map(fullOid),
+    author_name: c.n % 3 === 0 ? "Bob Dev" : "Alice Coder",
+    author_email: c.n % 3 === 0 ? "bob@example.com" : "alice@example.com",
+    // Older commits (higher index) get earlier timestamps.
+    author_time: GRAPH_BASE_TIME - i * 3600,
+    summary: c.summary,
+  }));
+  return mockCommitGraphCache;
+}
+
+/** OID → decorating refs, matching git_refs targets. */
+const MOCK_GRAPH_REFS: Record<
+  string,
+  Array<{ name: string; kind: "LocalBranch" | "RemoteBranch" | "Tag" | "Head" }>
+> = {
+  [fullOid(12)]: [
+    { name: "HEAD", kind: "Head" },
+    { name: "main", kind: "LocalBranch" },
+  ],
+  [fullOid(11)]: [{ name: "origin/main", kind: "RemoteBranch" }],
+  [fullOid(10)]: [{ name: "feature", kind: "LocalBranch" }],
+  [fullOid(5)]: [{ name: "v1.0", kind: "Tag" }],
+  [fullOid(1)]: [{ name: "v0.9", kind: "Tag" }],
+};
+
 /** Static fake file contents, served by read_text_file and searched by
  *  start_content_search (written files take precedence over these). */
 const mockFileContent: Record<string, string> = {
@@ -923,6 +990,57 @@ const mockCommands: Record<string, CommandHandler> = {
   },
   git_watch_repo: () => null,
   git_unwatch_repo: () => null,
+
+  // ----- Git history / commit graph (#57) -----
+
+  git_log: (args: Record<string, unknown>) => {
+    const repoPath = (args.repoPath as string) ?? "";
+    if (!repoPath.startsWith("/home/user/Documents/project")) {
+      return { commits: [], refs: {}, has_more: false, next_cursor: null };
+    }
+    const options = (args.options as { skip?: number; limit?: number } | null) ?? {};
+    const skip = Math.max(0, options.skip ?? 0);
+    const limit = Math.max(1, options.limit ?? 500);
+
+    const all = mockCommitGraph();
+    const page = all.slice(skip, skip + limit);
+    const hasMore = skip + limit < all.length;
+    return {
+      commits: page,
+      refs: MOCK_GRAPH_REFS,
+      has_more: hasMore,
+      next_cursor: page.length ? page[page.length - 1].oid : null,
+    };
+  },
+
+  git_refs: (args: Record<string, unknown>) => {
+    const repoPath = (args.repoPath as string) ?? "";
+    if (!repoPath.startsWith("/home/user/Documents/project")) {
+      return {
+        local_branches: [],
+        remote_branches: [],
+        tags: [],
+        head: null,
+        head_branch: null,
+        detached: false,
+      };
+    }
+    const tip = fullOid(12);
+    return {
+      local_branches: [
+        { name: "main", target: tip },
+        { name: "feature", target: fullOid(10) },
+      ],
+      remote_branches: [{ name: "origin/main", target: fullOid(11) }],
+      tags: [
+        { name: "v1.0", target: fullOid(5) },
+        { name: "v0.9", target: fullOid(1) },
+      ],
+      head: tip,
+      head_branch: "main",
+      detached: false,
+    };
+  },
 
   // ----- Symlinks -----
 

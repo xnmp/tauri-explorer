@@ -50,6 +50,11 @@
   // A cd deferred because the shell was busy; latest target wins.
   let pendingCd: string | null = null;
   let queuePoll: ReturnType<typeof setInterval> | null = null;
+  // Re-entrancy guard: terminalStatus is async and can outlive the 500ms tick.
+  // Without this, a slow IPC round-trip lets two callbacks overlap, and the
+  // second can observe `pendingCd` already nulled by the first — ending in a
+  // `writeCd(null)` that types `cd 'null'` into the shell (#154).
+  let pollInFlight = false;
   // Whether the "will follow when it finishes" toast is already showing for
   // the current queue episode (so we don't spam it on every navigation).
   let queueToastShown = false;
@@ -125,7 +130,9 @@
    * clear byte is shell-family-specific (see buildCdSyncSequence).
    */
   function writeCd(path: string): void {
-    if (terminalId === null) return;
+    // Defensive: never inject `cd 'null'` if a caller ever passes a nullish
+    // target (see the queue-poll re-entrancy guard, #154).
+    if (terminalId === null || path == null) return;
     terminalWrite(terminalId, buildCdSyncSequence(path, isWindows));
   }
 
@@ -159,19 +166,34 @@
   function startQueuePoll(): void {
     if (queuePoll !== null) return;
     queuePoll = setInterval(async () => {
-      if (terminalId === null || pendingCd === null) {
+      // Skip this tick if the previous callback's IPC hasn't resolved yet.
+      if (pollInFlight) return;
+      pollInFlight = true;
+      try {
+        if (terminalId === null || pendingCd === null) {
+          stopQueuePoll();
+          return;
+        }
+        const status = await terminalStatus(terminalId);
+        lastShellCwd = status.cwd ?? lastShellCwd;
+        if (status.busy) return;
+        const target = pendingCd;
+        pendingCd = null;
         stopQueuePoll();
-        return;
+        queueToastShown = false;
+        // Re-check against the shell's cwd: it may have cd'd itself meanwhile.
+        if (target !== null && decideCdSync(target, status.cwd, false) === "write") {
+          writeCd(target);
+        }
+      } catch (err) {
+        // terminalStatus rejected — e.g. the terminal died before its exit
+        // event landed. Stop polling instead of spinning on the rejection
+        // (an unhandled promise every 500ms otherwise).
+        console.error("[terminal] cd queue poll failed; stopping poll:", err);
+        stopQueuePoll();
+      } finally {
+        pollInFlight = false;
       }
-      const status = await terminalStatus(terminalId);
-      lastShellCwd = status.cwd ?? lastShellCwd;
-      if (status.busy) return;
-      const target = pendingCd;
-      pendingCd = null;
-      stopQueuePoll();
-      queueToastShown = false;
-      // Re-check against the shell's cwd: it may have cd'd itself meanwhile.
-      if (decideCdSync(target, status.cwd, false) === "write") writeCd(target);
     }, 500);
   }
 
@@ -246,7 +268,11 @@
     const path = windowTabsManager.getActiveExplorer()?.currentPath;
     if (!settingsStore.terminalFollowsExplorer) return;
     if (!path || terminalId === null || !terminalPanelStore.everOpened) return;
-    void syncTerminalToPath(path);
+    void syncTerminalToPath(path).catch((err) => {
+      // terminalStatus may reject if the shell died between checks; a rejected
+      // sync must not surface as an unhandled promise rejection (#154).
+      console.error("[terminal] sync-to-path failed:", err);
+    });
   });
 
   // Refit + refocus when the panel is re-shown (it keeps running while hidden;

@@ -44,6 +44,11 @@ function createJobsStore() {
     jobs = jobs.filter((j) => j.status === "running");
   }
 
+  /** Remove a job outright by id (e.g. orphan teardown on plugin dispose). */
+  function removeJob(id: number): void {
+    jobs = jobs.filter((j) => j.id !== id);
+  }
+
   return {
     get jobs() {
       return jobs;
@@ -58,6 +63,7 @@ function createJobsStore() {
     completeJob,
     failJob,
     clearCompleted,
+    removeJob,
   };
 }
 

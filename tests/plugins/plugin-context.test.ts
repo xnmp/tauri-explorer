@@ -8,6 +8,7 @@ import { createPluginContext, type PluginContext } from "$lib/plugins/api";
 import { getAllCommands, getCommand } from "$lib/state/commands.svelte";
 import { contextMenuItems } from "$lib/state/context-menu-items.svelte";
 import { providerFor } from "$lib/plugins/fs-providers";
+import { jobsStore } from "$lib/state/jobs.svelte";
 import type { FileEntry } from "$lib/domain/file";
 
 const fileEntry: FileEntry = {
@@ -71,5 +72,24 @@ describe("plugin lifecycle", () => {
     expect(contextMenuItems.itemsFor([]).some((i) => i.id === "test.plugin.selonly")).toBe(false);
     expect(contextMenuItems.itemsFor([fileEntry]).some((i) => i.id === "test.plugin.selonly")).toBe(true);
     dispose();
+  });
+
+  it("removes still-running plugin jobs on dispose, keeping finished ones (#154)", () => {
+    const { ctx, dispose } = createPluginContext("jobplugin");
+    ctx.jobs.add(90001, "Running", "still in flight");
+    ctx.jobs.add(90002, "Finished", "done");
+    ctx.jobs.complete(90002, "/out/done.png");
+
+    expect(jobsStore.jobs.some((j) => j.id === 90001 && j.status === "running")).toBe(true);
+
+    dispose();
+
+    // The orphaned running job is torn down; the completed one survives as
+    // history for the user to see/clear.
+    expect(jobsStore.jobs.some((j) => j.id === 90001)).toBe(false);
+    expect(jobsStore.jobs.some((j) => j.id === 90002)).toBe(true);
+
+    // Cleanup the leftover completed job so it doesn't leak into other tests.
+    jobsStore.clearCompleted();
   });
 });

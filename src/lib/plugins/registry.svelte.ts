@@ -26,29 +26,52 @@ export interface PluginInfo {
   enabled: boolean;
 }
 
-function createPluginRegistry() {
+function createPluginRegistry(plugins: Plugin[] = BUILT_IN_PLUGINS) {
   const active = new Map<string, { plugin: Plugin; dispose: () => void }>();
+  // In-flight activations, so a disable arriving mid-activate can't be lost
+  // (deactivate would find nothing in `active` and no-op, leaving a
+  // "disabled" plugin fully registered once the await resolves).
+  const activating = new Map<string, Promise<void>>();
 
   function isEnabled(plugin: Plugin): boolean {
     const map = settingsStore.pluginsEnabled ?? {};
     return map[plugin.id] ?? plugin.enabledByDefault ?? true;
   }
 
-  async function activate(plugin: Plugin): Promise<void> {
-    if (active.has(plugin.id)) return;
-    const { ctx, dispose } = createPluginContext(plugin.id);
-    try {
-      await plugin.activate(ctx);
-      active.set(plugin.id, { plugin, dispose });
-    } catch (err) {
-      dispose();
-      console.error(`[plugins] failed to activate "${plugin.id}":`, err);
-    }
+  function activate(plugin: Plugin): Promise<void> {
+    if (active.has(plugin.id)) return Promise.resolve();
+    const inFlight = activating.get(plugin.id);
+    if (inFlight) return inFlight;
+
+    const run = (async () => {
+      const { ctx, dispose } = createPluginContext(plugin.id);
+      try {
+        await plugin.activate(ctx);
+        if (!isEnabled(plugin)) {
+          // Disabled while activating — tear down what just registered.
+          try {
+            plugin.deactivate?.();
+          } catch (err) {
+            console.error(`[plugins] deactivate hook for "${plugin.id}" threw:`, err);
+          }
+          dispose();
+          return;
+        }
+        active.set(plugin.id, { plugin, dispose });
+      } catch (err) {
+        dispose();
+        console.error(`[plugins] failed to activate "${plugin.id}":`, err);
+      } finally {
+        activating.delete(plugin.id);
+      }
+    })();
+    activating.set(plugin.id, run);
+    return run;
   }
 
   function deactivate(id: string): void {
     const entry = active.get(id);
-    if (!entry) return;
+    if (!entry) return; // not active (an in-flight activate re-checks isEnabled)
     try {
       entry.plugin.deactivate?.();
     } catch (err) {
@@ -61,7 +84,7 @@ function createPluginRegistry() {
   return {
     /** Activate all currently-enabled built-in plugins. Call once at startup. */
     async initPlugins(): Promise<void> {
-      for (const plugin of BUILT_IN_PLUGINS) {
+      for (const plugin of plugins) {
         if (isEnabled(plugin)) await activate(plugin);
       }
     },
@@ -69,7 +92,7 @@ function createPluginRegistry() {
     /** Persist the new enabled state and activate/deactivate immediately. */
     async setEnabled(id: string, enabled: boolean): Promise<void> {
       settingsStore.setPluginEnabled(id, enabled);
-      const plugin = BUILT_IN_PLUGINS.find((p) => p.id === id);
+      const plugin = plugins.find((p) => p.id === id);
       if (!plugin) return;
       if (enabled) await activate(plugin);
       else deactivate(id);
@@ -82,7 +105,7 @@ function createPluginRegistry() {
 
     /** Reactive list for the settings UI (enabled state tracks settings). */
     get plugins(): PluginInfo[] {
-      return BUILT_IN_PLUGINS.map((p) => ({
+      return plugins.map((p) => ({
         id: p.id,
         name: p.name,
         description: p.description,
@@ -91,5 +114,8 @@ function createPluginRegistry() {
     },
   };
 }
+
+/** Factory export for tests (injectable plugin list). */
+export { createPluginRegistry };
 
 export const pluginRegistry = createPluginRegistry();

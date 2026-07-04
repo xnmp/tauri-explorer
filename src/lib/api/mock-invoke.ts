@@ -79,6 +79,8 @@ const mockFiles: Record<string, FileEntry[]> = {
     file("bundle.zip", "/home/user/Downloads/bundle.zip", 2097152),
     file("installer.exe", "/home/user/Downloads/installer.exe", 5242880),
     file("image.png", "/home/user/Downloads/image.png", 524288),
+    // Hidden by default (#160); visible only with show-hidden on.
+    file("desktop.ini", "/home/user/Downloads/desktop.ini", 128),
   ],
   // A chain of single-child folders: wrapper → payload → inner → {real content}.
   // Previewing "wrapper" descends through the chain and shows inner's contents.

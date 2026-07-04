@@ -115,6 +115,8 @@ const SYSTEM_HIDDEN_NAMES: ReadonlySet<string> = new Set([
   "msocache",
   "recovery",
   "found.000",
+  "desktop.ini", // Windows folder-customization metadata (#160)
+  "thumbs.db", // Windows thumbnail cache
 ]);
 
 /** True if `name` is an OS/system folder hidden by default (separate from dotfiles). */

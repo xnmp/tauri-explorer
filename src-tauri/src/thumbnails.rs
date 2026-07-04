@@ -647,13 +647,14 @@ fn ffmpeg_resolved() -> &'static Mutex<Option<Option<PathBuf>>> {
 /// the next thumbnail request re-resolves. Called from the frontend when the
 /// "FFmpeg path" setting changes.
 fn set_ffmpeg_path_impl(path: Option<String>) {
-    *ffmpeg_override().lock().unwrap() = path.filter(|p| !p.trim().is_empty());
-    *ffmpeg_resolved().lock().unwrap() = None;
+    *ffmpeg_override().lock().unwrap_or_else(|e| e.into_inner()) =
+        path.filter(|p| !p.trim().is_empty());
+    *ffmpeg_resolved().lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 fn resolve_ffmpeg_path() -> Option<PathBuf> {
     // 1. Explicit user-configured path wins.
-    if let Some(p) = ffmpeg_override().lock().unwrap().clone() {
+    if let Some(p) = ffmpeg_override().lock().unwrap_or_else(|e| e.into_inner()).clone() {
         let pb = PathBuf::from(&p);
         if ffmpeg_runs(&pb) {
             log::info!(
@@ -688,7 +689,7 @@ fn resolve_ffmpeg_path() -> Option<PathBuf> {
 /// Result is cached until `set_ffmpeg_path` invalidates it.
 fn ffmpeg_path() -> Option<PathBuf> {
     let cell = ffmpeg_resolved();
-    let mut guard = cell.lock().unwrap();
+    let mut guard = cell.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(ref resolved) = *guard {
         return resolved.clone();
     }

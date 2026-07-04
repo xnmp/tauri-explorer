@@ -63,11 +63,7 @@ pub async fn start_nano_banana_job(
         )));
     }
 
-    if api_key.is_empty() {
-        return Err(AppError::Other(
-            "Gemini API key is not configured".to_string(),
-        ));
-    }
+    let api_key = crate::gemini::resolve_api_key(&api_key)?;
 
     let job_id = NEXT_JOB_ID.fetch_add(1, Ordering::Relaxed);
 

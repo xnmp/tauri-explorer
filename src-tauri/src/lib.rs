@@ -7,8 +7,10 @@ mod archive;
 mod clipboard;
 mod config;
 mod content_search;
+mod crash_report;
 pub mod error;
 mod files;
+mod gemini;
 pub mod git;
 pub mod git_actions;
 pub mod git_log;
@@ -17,6 +19,7 @@ mod nano_banana;
 mod portal;
 mod process_ext;
 mod progress;
+mod update_check;
 /// Non-Linux stub so the command registry stays platform-independent.
 #[cfg(not(target_os = "linux"))]
 mod portal {
@@ -107,6 +110,10 @@ pub fn run(launch_dir: Option<String>) {
             // Launch info
             get_launch_cwd,
             get_log_dir,
+            crash_report::take_crash_report,
+            crash_report::log_frontend_error,
+            crash_report::open_external_url,
+            update_check::check_for_update,
             log_startup_timing,
             // Trash operations
             move_to_trash,
@@ -230,6 +237,12 @@ pub fn run(launch_dir: Option<String>) {
         ])
         .setup(move |app| {
             let t_setup = std::time::Instant::now();
+
+            // Persist panics locally so the next launch can offer a
+            // pre-filled GitHub issue (#184). Local files only — no telemetry.
+            if let Ok(log_dir) = tauri::Manager::path(app).app_log_dir() {
+                crash_report::install_panic_hook(log_dir.join("crashes"));
+            }
 
             // Initialize filesystem watcher for auto-refresh
             files::fs_watcher::init_watcher(app.handle());

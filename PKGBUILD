@@ -1,4 +1,4 @@
-# Maintainer: Your Name <email>
+# Maintainer: xnmp <chonw89@gmail.com>
 pkgname=tauri-explorer
 # Single source of truth: derive the version from package.json so the
 # package never drifts from the app (it sat at 0.2.7 while the app was

@@ -15,6 +15,14 @@ export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+// Outside Tauri (browser E2E) the first-run hint (#186) would sit over every
+// test's UI — suppress it by default; tests opt back in with mockFirstRun.
+if (typeof window !== "undefined" && !isTauri() && typeof localStorage !== "undefined") {
+  if (localStorage.getItem("mockFirstRun") !== "1") {
+    localStorage.setItem("firstRunHintDismissed", "1");
+  }
+}
+
 // Deterministic, varied timestamps: each created entry gets a distinct
 // modified time (1h apart from a fixed base) so sort-by-modified is testable.
 const TIMESTAMP_BASE = Date.UTC(2024, 0, 1, 12, 0, 0);
@@ -689,6 +697,27 @@ const mockCommands: Record<string, CommandHandler> = {
   get_launch_cwd: () => "/home/user",
   list_drives: () => mockDrives,
   log_startup_timing: () => undefined,
+
+  // Crash reporting (#184): a crash is simulated when the e2e test sets
+  // localStorage.mockCrashReport before load; consumed on first read.
+  take_crash_report: () => {
+    if (localStorage.getItem("mockCrashReport") !== "1") return null;
+    localStorage.removeItem("mockCrashReport");
+    return {
+      fileName: "crash-1700000000.txt",
+      contents:
+        "tauri-explorer 1.0.0 crash report\nos: linux (x86_64)\ntime: 1700000000 (unix)\npanic: mock panic for testing\nlocation: src/lib.rs:1:1\n\nbacktrace:\n<omitted>\n",
+    };
+  },
+  log_frontend_error: () => undefined,
+  open_external_url: () => undefined,
+
+  // Update check (#185): a newer release is simulated when the e2e test
+  // sets localStorage.mockUpdateAvailable before load.
+  check_for_update: () =>
+    localStorage.getItem("mockUpdateAvailable") === "1"
+      ? { version: "9.9.9", url: "https://github.com/xnmp/tauri-explorer/releases/tag/v9.9.9" }
+      : null,
 
   // Pre-warmed window pool: no pool outside Tauri — spawn is always refused
   // and claims always miss, so openNewWindow takes the fresh-window path.

@@ -79,6 +79,15 @@ fn write_atomic(path: &Path, data: &str) -> std::io::Result<()> {
         let _ = fs::remove_file(&tmp);
         return Err(e);
     }
+    // Config files can hold secrets (plugin API keys) — owner-only on Unix.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600)) {
+            let _ = fs::remove_file(&tmp);
+            return Err(e);
+        }
+    }
     fs::rename(&tmp, path).inspect_err(|_| {
         let _ = fs::remove_file(&tmp);
     })

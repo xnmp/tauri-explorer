@@ -115,13 +115,17 @@ static POOL: Mutex<PoolState> = Mutex::new(PoolState {
 /// already at target size — the caller must not create a warm window then.
 #[tauri::command]
 pub async fn warm_pool_begin_spawn() -> bool {
-    POOL.lock().unwrap_or_else(|e| e.into_inner()).try_reserve_spawn(Instant::now())
+    POOL.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .try_reserve_spawn(Instant::now())
 }
 
 /// Release a reservation after a failed spawn (webview creation error).
 #[tauri::command]
 pub async fn warm_pool_cancel_spawn() {
-    POOL.lock().unwrap_or_else(|e| e.into_inner()).release_spawn();
+    POOL.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .release_spawn();
 }
 
 /// Called by the warm window itself once its activate-listener is registered.
@@ -162,7 +166,9 @@ pub async fn warm_pool_claim(app: AppHandle) -> Option<String> {
 /// would linger hidden while counting as real — keeping the app alive forever.
 #[tauri::command]
 pub async fn warm_pool_discard(app: AppHandle, label: String) {
-    POOL.lock().unwrap_or_else(|e| e.into_inner()).forget(&label);
+    POOL.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .forget(&label);
     if let Some(window) = app.get_webview_window(&label) {
         let _ = window.destroy();
     }

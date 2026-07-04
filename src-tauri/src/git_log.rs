@@ -27,7 +27,7 @@
 //! Every command runs under `spawn_blocking` and is cancellable through the
 //! shared `TaskRegistry`, mirroring `git.rs`.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -202,7 +202,7 @@ fn build_log(
     opts: &GitLogOptions,
     cancelled: &AtomicBool,
 ) -> Result<GitLogPage, AppError> {
-    let limit = opts.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT).max(1);
+    let limit = opts.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
 
     let mut walk = repo.revwalk().map_err(to_app_err)?;
     // Topological keeps parents-after-children; time breaks ties by commit date
@@ -393,10 +393,7 @@ pub async fn git_commit_files(repo_path: String, oid: String) -> Result<Vec<Comm
             .find_commit(Oid::from_str(&oid).map_err(|e| AppError::Other(e.to_string()))?)
             .map_err(|e| AppError::Other(format!("commit not found: {e}")))?;
         let tree = commit.tree().map_err(|e| AppError::Other(e.to_string()))?;
-        let parent_tree = commit
-            .parent(0)
-            .ok()
-            .and_then(|p| p.tree().ok());
+        let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
         let diff = repo
             .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)
             .map_err(|e| AppError::Other(e.to_string()))?;
@@ -418,7 +415,10 @@ pub async fn git_commit_files(repo_path: String, oid: String) -> Result<Vec<Comm
                 .or_else(|| delta.old_file().path())
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
-            files.push(CommitFile { path, status: status.to_string() });
+            files.push(CommitFile {
+                path,
+                status: status.to_string(),
+            });
         }
         Ok(files)
     })
@@ -463,12 +463,16 @@ mod tests {
     fn commit(repo: &Repository, msg: &str, parents: &[Oid]) -> Oid {
         let sig = git2::Signature::now("Test User", "test@example.com").unwrap();
         let mut index = repo.index().unwrap();
-        index.add_all(["*"], git2::IndexAddOption::DEFAULT, None).unwrap();
+        index
+            .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
+            .unwrap();
         index.write().unwrap();
         let tree_oid = index.write_tree().unwrap();
         let tree = repo.find_tree(tree_oid).unwrap();
-        let parent_commits: Vec<git2::Commit> =
-            parents.iter().map(|p| repo.find_commit(*p).unwrap()).collect();
+        let parent_commits: Vec<git2::Commit> = parents
+            .iter()
+            .map(|p| repo.find_commit(*p).unwrap())
+            .collect();
         let parent_refs: Vec<&git2::Commit> = parent_commits.iter().collect();
         repo.commit(Some("HEAD"), &sig, &sig, msg, &tree, &parent_refs)
             .unwrap()
@@ -595,18 +599,27 @@ mod tests {
         // Page 1: skip 0, limit 4.
         let page1 = build_log(
             &repo,
-            &GitLogOptions { skip: 0, limit: Some(4) },
+            &GitLogOptions {
+                skip: 0,
+                limit: Some(4),
+            },
             &no_cancel(),
         )
         .unwrap();
         assert_eq!(page1.commits.len(), 4);
         assert!(page1.has_more);
-        assert_eq!(page1.next_cursor.as_deref(), Some(page1.commits[3].oid.as_str()));
+        assert_eq!(
+            page1.next_cursor.as_deref(),
+            Some(page1.commits[3].oid.as_str())
+        );
 
         // Page 2: skip 4, limit 4.
         let page2 = build_log(
             &repo,
-            &GitLogOptions { skip: 4, limit: Some(4) },
+            &GitLogOptions {
+                skip: 4,
+                limit: Some(4),
+            },
             &no_cancel(),
         )
         .unwrap();
@@ -616,7 +629,10 @@ mod tests {
         // Page 3: skip 8, limit 4 → only 2 remain, no more pages.
         let page3 = build_log(
             &repo,
-            &GitLogOptions { skip: 8, limit: Some(4) },
+            &GitLogOptions {
+                skip: 8,
+                limit: Some(4),
+            },
             &no_cancel(),
         )
         .unwrap();
@@ -641,7 +657,10 @@ mod tests {
         let (_dir, repo, _oids) = linear_repo();
         let page = build_log(
             &repo,
-            &GitLogOptions { skip: 100, limit: Some(10) },
+            &GitLogOptions {
+                skip: 100,
+                limit: Some(10),
+            },
             &no_cancel(),
         )
         .unwrap();

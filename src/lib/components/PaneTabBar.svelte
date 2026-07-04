@@ -331,6 +331,12 @@
         ondragleave={handleTabDragLeave}
         ondrop={(e) => handleTabDrop(e, tab.id)}
       >
+        {#if tab.id === activeTabId}
+          <!-- Chrome-style fillets: concave corners where the active tab
+               meets the pane below it (#157). -->
+          <span class="tab-fillet left" aria-hidden="true"></span>
+          <span class="tab-fillet right" aria-hidden="true"></span>
+        {/if}
         {#if display.isGitRoot}
           <!-- Git branch icon: this tab's folder lives inside a git repo. -->
           <svg
@@ -582,6 +588,40 @@
     transform: translateY(-1px);
     z-index: 2;
     opacity: 1;
+    /* Fillets render outside the tab box; text clipping is handled by
+       .tab-title's own overflow. */
+    overflow: visible;
+  }
+
+  /* Chrome-style fillets (#157): 8px concave quarter-circles that curve the
+     active tab into the pane surface below it. Each is a square hanging off
+     the tab's bottom corner, filled with the tab's surface colour except for
+     a transparent circle anchored at the square's top outer corner. */
+  .tab-fillet {
+    --fillet: 8px;
+    position: absolute;
+    bottom: -1px; /* .tab.active is lifted 1px (translateY) — reach the strip's baseline */
+    width: var(--fillet);
+    height: var(--fillet);
+    pointer-events: none;
+  }
+
+  .tab-fillet.left {
+    left: calc(-1 * var(--fillet));
+    background: radial-gradient(
+      circle var(--fillet) at 0 0,
+      transparent calc(var(--fillet) - 0.5px),
+      var(--background-card) var(--fillet)
+    );
+  }
+
+  .tab-fillet.right {
+    right: calc(-1 * var(--fillet));
+    background: radial-gradient(
+      circle var(--fillet) at 100% 0,
+      transparent calc(var(--fillet) - 0.5px),
+      var(--background-card) var(--fillet)
+    );
   }
 
   .tab.active::before {
@@ -742,6 +782,22 @@
 
   :global([data-vibrancy]) .tab-area::after {
     display: none;
+  }
+
+  :global([data-vibrancy]) .tab-fillet.left {
+    background: radial-gradient(
+      circle var(--fillet) at 0 0,
+      transparent calc(var(--fillet) - 0.5px),
+      var(--vibrancy-island-bg) var(--fillet)
+    );
+  }
+
+  :global([data-vibrancy]) .tab-fillet.right {
+    background: radial-gradient(
+      circle var(--fillet) at 100% 0,
+      transparent calc(var(--fillet) - 0.5px),
+      var(--vibrancy-island-bg) var(--fillet)
+    );
   }
 
   :global([data-vibrancy]) .tab.active {

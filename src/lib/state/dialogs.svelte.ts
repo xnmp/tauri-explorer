@@ -41,6 +41,7 @@ function createDialogStore() {
   let bulkRenameItems = $state<FileEntry[]>([]);
   let jobsPanelOpen = $state(false);
   let themePickerOpen = $state(false);
+  let shortcutsOpen = $state(false);
   let pickerConfig = $state<PickerConfig | null>(null);
 
   function closeIfActive(dialogType: DialogType): void {
@@ -87,6 +88,9 @@ function createDialogStore() {
     },
     get isThemePickerOpen() {
       return themePickerOpen;
+    },
+    get isShortcutsOpen() {
+      return shortcutsOpen;
     },
     get isSettingsOpen() {
       return settingsOpen;
@@ -159,6 +163,14 @@ function createDialogStore() {
 
     openSettings(): void {
       settingsOpen = true;
+    },
+
+    openShortcuts(): void {
+      shortcutsOpen = true;
+    },
+
+    closeShortcuts(): void {
+      shortcutsOpen = false;
     },
 
     closeSettings(): void {

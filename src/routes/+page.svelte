@@ -32,6 +32,8 @@
   import TitleBar from "$lib/components/TitleBar.svelte";
   import CrashNotice from "$lib/components/CrashNotice.svelte";
   import UpdateNotice from "$lib/components/UpdateNotice.svelte";
+  import ShortcutCheatsheet from "$lib/components/ShortcutCheatsheet.svelte";
+  import FirstRunHint from "$lib/components/FirstRunHint.svelte";
   import FilePicker, { type PickerInfo } from "$lib/components/FilePicker.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import ScmPanel from "$lib/components/ScmPanel.svelte";
@@ -486,6 +488,8 @@
 
 <CrashNotice />
 <UpdateNotice />
+<FirstRunHint />
+<ShortcutCheatsheet open={dialogStore.isShortcutsOpen} onClose={() => dialogStore.closeShortcuts()} />
 <QuickOpen open={dialogStore.isQuickOpenOpen} onClose={() => dialogStore.closeQuickOpen()} />
 <CommandPalette open={dialogStore.isCommandPaletteOpen} onClose={() => dialogStore.closeCommandPalette()} />
 {#if ThemePicker}

@@ -208,6 +208,15 @@ export const terminalCommands: Command[] = [
 /** General dialog commands */
 export const generalDialogCommands: Command[] = [
   {
+    id: "help.shortcuts",
+    label: "Keyboard Shortcuts",
+    category: "general",
+    shortcut: "Ctrl+/",
+    handler: () => {
+      dialogStore.openShortcuts();
+    },
+  },
+  {
     id: "general.openQuickOpen",
     label: "Quick Open",
     category: "general",

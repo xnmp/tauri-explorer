@@ -26,7 +26,11 @@ const DEFAULT_OPTIONS: Required<MarqueeOptions> = {
     "content",
     "details-view",
     "tiles-view",
+    "list-view",
+    "tile-row",
+    "list-row",
     "virtual-viewport",
+    "virtual-item",
     "virtual-spacer-top",
     "virtual-spacer-bottom",
   ],
@@ -137,6 +141,7 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     dragStart = null;
     dragCurrent = null;
     cachedItemRects = null;
+    cachedItemIndices = null;
     cachedScroll = null;
 
     // Record end time so click handlers can ignore the immediate click
@@ -171,6 +176,11 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
    */
   // Cached item rects for the current marquee drag session
   let cachedItemRects: DOMRect[] | null = null;
+  // Global entry index for each cached rect. Under virtualization the DOM only
+  // holds the visible items, so their NodeList position is NOT the entry index;
+  // we read it from data-index (set by ItemButton) instead. Falls back to the
+  // NodeList position when the attribute is absent (non-virtualized callers).
+  let cachedItemIndices: number[] | null = null;
   let cachedScroll: { left: number; top: number } | null = null;
 
   function getSelectedIndicesFromDOM(container: HTMLElement, itemSelector: string, scroller?: HTMLElement | null): number[] {
@@ -181,10 +191,13 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
 
     // Cache item positions on first call per drag session (items don't move during marquee)
     if (!cachedItemRects) {
-      const items = container.querySelectorAll(itemSelector);
+      const items = container.querySelectorAll<HTMLElement>(itemSelector);
       cachedItemRects = new Array(items.length);
+      cachedItemIndices = new Array(items.length);
       for (let i = 0; i < items.length; i++) {
         cachedItemRects[i] = items[i].getBoundingClientRect();
+        const attr = items[i].dataset.index;
+        cachedItemIndices[i] = attr !== undefined ? Number(attr) : i;
       }
       cachedScroll = { left: scrollEl.scrollLeft, top: scrollEl.scrollTop };
     }
@@ -208,7 +221,7 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
       const rTop = rect.top + offsetDy;
       const rBottom = rect.bottom + offsetDy;
       if (rRight > mLeft && rLeft < mRight && rBottom > mTop && rTop < mBottom) {
-        indices.push(i);
+        indices.push(cachedItemIndices![i]);
       }
     }
 

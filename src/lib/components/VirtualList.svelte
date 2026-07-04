@@ -23,6 +23,14 @@
     children: Snippet<[T, number]>;
     getKey?: (item: T, index: number) => string | number;
     scrollToIndex?: (index: number) => void;
+    /** Extra class(es) for the scroll viewport (e.g. "list-view" so marquee /
+     *  keyboard-nav DOM lookups and view-scoped CSS keep resolving). */
+    class?: string;
+    /** Overflow for each item wrapper. Grids (List/Tiles) need "visible" so an
+     *  inline-rename box can float past its row; the default clips (Details). */
+    itemOverflow?: "hidden" | "visible";
+    /** Padding applied to the scroll viewport (grids inset their content here). */
+    viewportPadding?: string;
   }
 
   let {
@@ -33,6 +41,9 @@
     children,
     getKey = (_item: T, index: number) => index,
     scrollToIndex = $bindable(),
+    class: className = "",
+    itemOverflow = "hidden",
+    viewportPadding,
   }: Props = $props();
 
   let viewportRef = $state<HTMLElement | null>(null);
@@ -115,10 +126,11 @@
 </script>
 
 <div
-  class="virtual-viewport"
+  class="virtual-viewport {className}"
   bind:this={viewportRef}
   bind:clientHeight={viewportHeight}
   onscroll={handleScroll}
+  style:padding={viewportPadding}
   {role}
 >
   <div class="virtual-spacer-top" style:height="{paddingTop}px" aria-hidden="true"></div>
@@ -127,6 +139,7 @@
     <div
       class="virtual-item"
       style:height="{layout ? heightAt(index) : itemHeight}px"
+      style:overflow={itemOverflow}
       role={role ? "presentation" : undefined}
     >
       {@render children(item, index)}

@@ -23,6 +23,9 @@
     interactions: ItemInteractions;
     pointerDrag: PointerDrag | null;
     class?: string;
+    /** Global index in displayEntries — exposed as data-index so marquee
+     *  selection maps a rendered (virtualized) tile/row back to its entry. */
+    index?: number;
     onitemclick: (entry: FileEntry, event: MouseEvent) => void;
     onitemdblclick: (entry: FileEntry) => void;
     children: Snippet;
@@ -34,6 +37,7 @@
     interactions,
     pointerDrag,
     class: className = "",
+    index,
     onitemclick,
     onitemdblclick,
     children,
@@ -45,6 +49,7 @@
 <button
   class="{className} entry-item"
   data-path={entry.path}
+  data-index={index}
   class:directory={entry.kind === "directory"}
   class:selected={explorer.isSelected(entry)}
   class:cut={isClipboardCut(entry)}

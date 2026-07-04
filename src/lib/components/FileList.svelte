@@ -51,8 +51,9 @@
   // Content container ref
   let contentRef = $state<HTMLElement | null>(null);
 
-  // VirtualList scroll method, bound from DetailsView
-  let detailsScrollToIndex = $state<((index: number) => void) | undefined>();
+  // Scroll-to-entry-index method, bound from whichever view is active
+  // (Details/List/Tiles all virtualize and own their scroll container).
+  let viewScrollToIndex = $state<((index: number) => void) | undefined>();
 
   // Track content width for ListView auto columns
   let contentWidth = $state(0);
@@ -92,26 +93,16 @@
     const index = entries.indexOf(entry);
     if (index < 0) return;
 
-    if (explorer.viewMode === "details" && detailsScrollToIndex) {
-      // Delegate to VirtualList which owns its scroll container
-      detailsScrollToIndex(index);
-      // Wait for re-render, then focus the item
-      tick().then(() => {
-        requestAnimationFrame(() => {
-          const el = contentRef?.querySelector<HTMLElement>(".selected");
-          el?.focus({ preventScroll: true });
-        });
-      });
-    } else {
-      // List/Tiles: wait for selection state to flush to DOM, then scroll
-      tick().then(() => {
+    // All three views virtualize and own their scroll container, so a jump
+    // target (type-ahead can land anywhere) may not be rendered yet. Ask the
+    // view to scroll the row/item into view, then focus it once it mounts.
+    viewScrollToIndex?.(index);
+    tick().then(() => {
+      requestAnimationFrame(() => {
         const el = contentRef?.querySelector<HTMLElement>(".selected");
-        if (el) {
-          el.scrollIntoView({ block: "nearest" });
-          el.focus({ preventScroll: true });
-        }
+        el?.focus({ preventScroll: true });
       });
-    }
+    });
   }
 
   // ===================
@@ -217,10 +208,11 @@
 
     let indices: number[];
     if (explorer.viewMode === "tiles") {
-      // The inner view element is the actual scroller (.content never overflows)
-      indices = marquee.getSelectedIndicesFromDOM(contentRef, ".tile-item", contentRef.querySelector<HTMLElement>(".tiles-view"));
+      // The VirtualList viewport is the actual scroller; item indices come from
+      // data-index (only visible tiles are in the DOM under virtualization).
+      indices = marquee.getSelectedIndicesFromDOM(contentRef, ".tile-item", contentRef.querySelector<HTMLElement>(".virtual-viewport"));
     } else if (explorer.viewMode === "list") {
-      indices = marquee.getSelectedIndicesFromDOM(contentRef, ".list-item", contentRef.querySelector<HTMLElement>(".list-view"));
+      indices = marquee.getSelectedIndicesFromDOM(contentRef, ".list-item", contentRef.querySelector<HTMLElement>(".virtual-viewport"));
     } else {
       const scrollTop = contentRef.querySelector('.virtual-viewport')?.scrollTop ?? 0;
       indices = marquee.getSelectedIndices(scrollTop, explorer.displayEntries.length, marqueeHeaderHeight());
@@ -371,7 +363,7 @@
         {explorer}
         onitemclick={handleClick}
         onitemdblclick={handleDoubleClick}
-        bind:scrollToIndex={detailsScrollToIndex}
+        bind:scrollToIndex={viewScrollToIndex}
       />
     {:else if explorer.viewMode === "list"}
       <ListView
@@ -379,12 +371,15 @@
         {contentWidth}
         onitemclick={handleClick}
         onitemdblclick={handleDoubleClick}
+        bind:scrollToIndex={viewScrollToIndex}
       />
     {:else}
       <TilesView
         {explorer}
+        {contentWidth}
         onitemclick={handleClick}
         onitemdblclick={handleDoubleClick}
+        bind:scrollToIndex={viewScrollToIndex}
       />
     {/if}
 

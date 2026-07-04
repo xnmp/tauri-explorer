@@ -1,13 +1,19 @@
 <!--
-  TilesView - Grid view with thumbnails and progressive rendering.
-  Issue: tauri-explorer-9djf.5
+  TilesView - Grid view with thumbnails.
+
+  DOM-virtualized by ROW (#128): entries are chunked row-major into rows of
+  `tileColumns` (derived from container width, matching CSS auto-fill), and each
+  row is one fixed-height VirtualList item, so only the visible rows — and their
+  thumbnail IntersectionObservers — live in the DOM. Tiles reserve a fixed
+  two-line name height so every row is the same height.
+  Issue: tauri-explorer-9djf.5, #128
 -->
 <script lang="ts">
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { useProgressiveRender } from "$lib/composables/use-progressive-render.svelte";
+  import { autoFillColumns, chunkIntoRows } from "$lib/domain/virtual-layout";
   import { getFileIconColor, isImageFile, isVideoFile } from "$lib/domain/file-types";
 
   import { usesPointerDrag } from "$lib/domain/platform";
@@ -19,17 +25,25 @@
   import ThumbnailImage from "./ThumbnailImage.svelte";
   import InlineNewFolder from "./InlineNewFolder.svelte";
   import ItemButton from "./ItemButton.svelte";
+  import VirtualList from "./VirtualList.svelte";
 
   import type { FileEntry } from "$lib/domain/file";
 
   interface Props {
     explorer: ExplorerInstance;
+    contentWidth: number;
     onitemclick: (entry: FileEntry, event: MouseEvent) => void;
     onitemdblclick: (entry: FileEntry) => void;
+    /** Scroll the given displayEntries index into view (bound by FileList). */
+    scrollToIndex?: (index: number) => void;
   }
 
-  let { explorer, onitemclick, onitemdblclick }: Props = $props();
+  let { explorer, contentWidth, onitemclick, onitemdblclick, scrollToIndex = $bindable() }: Props = $props();
 
+  // Reserved fixed name height: two lines at line-height 1.4 * 13px font.
+  const NAME_HEIGHT = 37;
+  // Viewport horizontal padding (8px each side) reserved out of the grid width.
+  const VIEWPORT_PAD_X = 16;
 
   // Shared item interactions (DnD, context menu with select-on-right-click)
   const interactions = useItemInteractions({
@@ -44,6 +58,26 @@
     folderViewsStore.getThumbnailSize(explorer.currentPath, settingsStore.thumbnailSize)
   );
   const tileConfig = $derived(THUMBNAIL_SIZE_CONFIG[effectiveThumbnailSize]);
+  const isSmall = $derived(effectiveThumbnailSize === "small");
+  const tileGap = $derived(isSmall ? 2 : 6);
+  // padding-top + padding-bottom of a tile (var(--tile-padding))
+  const tilePadV = $derived(isSmall ? 12 : 22);
+  // Fixed row height: tile paddings + icon + icon→name gap (4) + reserved name
+  // + selection border (2) + the inter-row grid gap.
+  const tileRowHeight = $derived(tilePadV + tileConfig.displaySize + 4 + NAME_HEIGHT + 2 + tileGap);
+
+  // Column count matching CSS repeat(auto-fill, minmax(gridMinWidth, 1fr)).
+  const tileColumns = $derived(
+    autoFillColumns(contentWidth - VIEWPORT_PAD_X, tileConfig.gridMinWidth, tileGap)
+  );
+
+  const rows = $derived(chunkIntoRows(explorer.displayEntries, tileColumns));
+
+  // Map an entry index to its row and forward to VirtualList's row scroller.
+  let rowScrollToIndex = $state<((row: number) => void) | undefined>();
+  scrollToIndex = (index: number) => {
+    rowScrollToIndex?.(Math.floor(index / tileColumns));
+  };
 
   // Videos whose thumbnail generation failed (e.g. no ffmpeg) fall back to the
   // plain icon. Keyed by path; reset on navigation.
@@ -59,81 +93,64 @@
     next.add(path);
     unavailableThumbs = next;
   }
-
-  // Progressive rendering to avoid UI freeze on large directories.
-  // Only resets the render limit when entry count increases significantly
-  // (e.g. navigating to a new directory), not on small changes like deletions.
-  const TILE_CHUNK = 60;
-  const progressive = useProgressiveRender(() => explorer.displayEntries.length, TILE_CHUNK);
-
-  const visibleTileEntries = $derived(
-    explorer.displayEntries.slice(0, progressive.limit)
-  );
-
-  // Scroll performance logging (dev only)
-  let scrollFrameTimes: number[] = [];
-  let scrollRafId: number | null = null;
-  let lastScrollTime = 0;
-
-  function handleScroll(): void {
-    if (!import.meta.env.DEV) return;
-    const now = performance.now();
-    if (lastScrollTime > 0) {
-      scrollFrameTimes.push(now - lastScrollTime);
-    }
-    lastScrollTime = now;
-
-    if (scrollRafId) cancelAnimationFrame(scrollRafId);
-    scrollRafId = requestAnimationFrame(() => {
-      // After scroll settles, log metrics
-      scrollRafId = requestAnimationFrame(() => {
-        if (scrollFrameTimes.length > 2) {
-          const avg = scrollFrameTimes.reduce((a, b) => a + b, 0) / scrollFrameTimes.length;
-          const max = Math.max(...scrollFrameTimes);
-          const jank = scrollFrameTimes.filter((t) => t > 33).length; // frames > 30fps
-          console.debug(
-            `[tiles-scroll] ${scrollFrameTimes.length} frames, avg=${avg.toFixed(1)}ms, max=${max.toFixed(1)}ms, jank=${jank} (>${(jank / scrollFrameTimes.length * 100).toFixed(0)}%), entries=${visibleTileEntries.length}`
-          );
-        }
-        scrollFrameTimes = [];
-        lastScrollTime = 0;
-      });
-    });
-  }
 </script>
 
-<div class="tiles-view file-rows" onscroll={handleScroll} style:--tile-icon-size="{tileConfig.displaySize}px" style:--tile-min-col="{tileConfig.gridMinWidth}px" style:--tile-icon-scale={tileConfig.displaySize / 64} style:--tile-gap="{effectiveThumbnailSize === 'small' ? 2 : 6}px" style:--tile-padding="{effectiveThumbnailSize === 'small' ? '6px 4px 6px' : '12px 8px 10px'}">
+<div
+  class="tiles-view"
+  data-columns={tileColumns}
+  style:--tile-icon-size="{tileConfig.displaySize}px"
+  style:--tile-min-col="{tileConfig.gridMinWidth}px"
+  style:--tile-icon-scale={tileConfig.displaySize / 64}
+  style:--tile-gap="{tileGap}px"
+  style:--tile-padding={isSmall ? "6px 4px 6px" : "12px 8px 10px"}
+  style:--tile-name-height="{NAME_HEIGHT}px"
+>
   {#if explorer.isCreatingFolder}
     <InlineNewFolder {explorer} variant="tiles" />
   {/if}
-  {#each visibleTileEntries as entry (entry.path)}
-    {@const iconColor = getFileIconColor(entry)}
-    <ItemButton class="tile-item" {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
-      <div class="tile-icon" style:color={iconColor} data-drag-icon>
-        {#if isImageFile(entry)}
-          <ThumbnailImage path={entry.path} size={tileConfig.displaySize} genSize={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} />
-        {:else if isVideoFile(entry) && !unavailableThumbs.has(entry.path)}
-          <ThumbnailImage kind="video" path={entry.path} size={tileConfig.displaySize} genSize={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} onunavailable={() => markUnavailable(entry.path)} />
-        {:else}
-          <FileIcon {entry} size="large" />
-        {/if}
+  <VirtualList
+    class="tiles-scroller file-rows"
+    items={rows}
+    itemHeight={tileRowHeight}
+    itemOverflow="visible"
+    viewportPadding="8px"
+    getKey={(row) => row.startIndex}
+    bind:scrollToIndex={rowScrollToIndex}
+  >
+    {#snippet children(row)}
+      <div class="tile-row" style="grid-template-columns: repeat({tileColumns}, minmax(0, 1fr)); gap: var(--tile-gap);">
+        {#each row.items as entry, col (entry.path)}
+          {@const iconColor = getFileIconColor(entry)}
+          <ItemButton class="tile-item" index={row.startIndex + col} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
+            <div class="tile-icon" style:color={iconColor} data-drag-icon>
+              {#if isImageFile(entry)}
+                <ThumbnailImage path={entry.path} size={tileConfig.displaySize} genSize={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} />
+              {:else if isVideoFile(entry) && !unavailableThumbs.has(entry.path)}
+                <ThumbnailImage kind="video" path={entry.path} size={tileConfig.displaySize} genSize={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} onunavailable={() => markUnavailable(entry.path)} />
+              {:else}
+                <FileIcon {entry} size="large" />
+              {/if}
+            </div>
+            <span data-drag-name><EntryName {entry} {explorer} variant="tiles" /></span>
+            <GitStatusBadge entryName={entry.name} />
+          </ItemButton>
+        {/each}
       </div>
-      <span data-drag-name><EntryName {entry} {explorer} variant="tiles" /></span>
-      <GitStatusBadge entryName={entry.name} />
-    </ItemButton>
-  {/each}
+    {/snippet}
+  </VirtualList>
 </div>
 
 <style>
   .tiles-view {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(var(--tile-min-col, 108px), 1fr));
-    grid-auto-rows: min-content;
-    align-content: start;
-    gap: var(--tile-gap, 6px);
-    padding: 8px;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
     flex: 1;
+    min-height: 0;
+  }
+
+  .tiles-view :global(.tile-row) {
+    display: grid;
+    align-content: start;
   }
 
   .tiles-view :global(.tile-item) {
@@ -151,11 +168,19 @@
     font-family: inherit;
     font-size: 13px;
     color: var(--text-primary);
-    height: fit-content;
     min-width: 0;
-    contain: layout style paint;
-    content-visibility: auto;
+    contain: layout style;
     position: relative;
+  }
+
+  /* Reserve a fixed two-line name area so every tile — and therefore every
+     virtualized row — is exactly `tileRowHeight` tall. */
+  .tiles-view :global(.tile-item [data-drag-name]) {
+    width: 100%;
+    min-height: var(--tile-name-height, 37px);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
   }
 
   .tiles-view :global(.tile-item:focus) {
@@ -235,11 +260,10 @@
   /* Name and rename styles are handled by EntryName component */
 
   /* While renaming, the floating rename box must overflow the tile:
-     contain:paint and content-visibility:auto both clip, so lift them on
-     the renaming tile only, and raise it above its siblings. */
+     contain:paint clips, so lift it on the renaming tile only, and raise it
+     above its siblings. */
   .tiles-view :global(.tile-item:has(.tile-rename)) {
     contain: layout style;
-    content-visibility: visible;
     z-index: 10;
   }
 

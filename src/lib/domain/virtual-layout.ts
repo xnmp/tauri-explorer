@@ -4,6 +4,53 @@
  * variable-height mode (and benchmarked in tests/perf).
  */
 
+/** A row of items in a virtualized grid (List/Tiles views). */
+export interface VirtualRow<T> {
+  /** The (up to `columns`) items on this row, in sequence order. */
+  items: T[];
+  /** Global index of `items[0]` in the flat entry list. */
+  startIndex: number;
+}
+
+/**
+ * Row-major chunking: split a flat, already-sorted item list into rows of at
+ * most `columns` items, filling left→right then top→down. This is what lets
+ * List and Tiles views virtualize by row while keeping the DOM in sequence
+ * order (so the on-screen reading order stays name-sorted).
+ *
+ * `columns` is clamped to at least 1 and floored, so 0, NaN, negative, or
+ * fractional inputs degrade to a single column instead of looping forever.
+ */
+export function chunkIntoRows<T>(items: readonly T[], columns: number): VirtualRow<T>[] {
+  const cols = Math.max(1, Math.floor(columns) || 1);
+  const rows: VirtualRow<T>[] = [];
+  for (let i = 0; i < items.length; i += cols) {
+    rows.push({ items: items.slice(i, i + cols), startIndex: i });
+  }
+  return rows;
+}
+
+/** Number of rows a flat list of `total` items occupies at `columns` per row. */
+export function rowCount(total: number, columns: number): number {
+  const cols = Math.max(1, Math.floor(columns) || 1);
+  return Math.ceil(Math.max(0, total) / cols);
+}
+
+/**
+ * How many columns CSS `repeat(auto-fill, minmax(minColWidth, 1fr))` would
+ * produce for a given content width and gap. We replicate the browser's math
+ * explicitly because a virtualized grid renders each row as its own fixed
+ * column-count grid rather than one big auto-fill grid.
+ *
+ * n columns fit when: n*minColWidth + (n-1)*gap <= availableWidth
+ * → n <= (availableWidth + gap) / (minColWidth + gap)
+ */
+export function autoFillColumns(availableWidth: number, minColWidth: number, gap: number): number {
+  if (availableWidth <= 0 || minColWidth <= 0) return 1;
+  const cols = Math.floor((availableWidth + gap) / (minColWidth + Math.max(0, gap)));
+  return Math.max(1, cols);
+}
+
 export interface VirtualLayout {
   /** offsets[i] = y position of item i (prefix sums of heights). */
   offsets: number[];

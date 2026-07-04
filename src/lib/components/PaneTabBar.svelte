@@ -550,6 +550,13 @@
     opacity: 1;
   }
 
+  /* The active tab is fused to the pane — hover must not lift or restyle it. */
+  .tab.active:hover {
+    background: var(--background-card);
+    color: var(--text-primary);
+    transform: none;
+  }
+
   .tab:hover::after,
   .tab.active::after,
   .tab:last-of-type::after {
@@ -581,11 +588,11 @@
     color: var(--text-primary);
     font-weight: var(--font-weight-semibold);
     border-top: 2px solid var(--accent);
-    box-shadow:
-      0 -1px 4px rgba(0, 0, 0, 0.08),
-      0 -3px 10px rgba(0, 0, 0, 0.05),
-      inset 0 1px 0 rgba(255, 255, 255, 0.5);
-    transform: translateY(-1px);
+    /* No lift and no drop shadow: the tab's base must FUSE with the pane
+       surface below it (Chrome-style) — any translateY or shadow reads as
+       a seam at the junction. */
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+    transform: none;
     z-index: 2;
     opacity: 1;
     /* Fillets render outside the tab box; text clipping is handled by
@@ -593,17 +600,21 @@
     overflow: visible;
   }
 
-  /* Chrome-style fillets (#157): 8px concave quarter-circles that curve the
-     active tab into the pane surface below it. Each is a square hanging off
-     the tab's bottom corner, filled with the tab's surface colour except for
-     a transparent circle anchored at the square's top outer corner. */
+  /* Chrome-style fillets (#157): concave quarter-circles that flare the
+     active tab's base into the pane surface below it. Each is a square
+     hanging off the tab's bottom corner, filled with the tab's surface
+     colour except for a transparent circle anchored at the square's top
+     outer corner — so the tab's vertical edge bends smoothly outward and
+     meets the pane tangentially instead of at 90°. z-index above the
+     strip's baseline ::after so the line terminates AT the curve. */
   .tab-fillet {
-    --fillet: 8px;
+    --fillet: 10px;
     position: absolute;
-    bottom: -1px; /* .tab.active is lifted 1px (translateY) — reach the strip's baseline */
+    bottom: 0;
     width: var(--fillet);
     height: var(--fillet);
     pointer-events: none;
+    z-index: 3;
   }
 
   .tab-fillet.left {

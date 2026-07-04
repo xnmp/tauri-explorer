@@ -115,13 +115,13 @@ static POOL: Mutex<PoolState> = Mutex::new(PoolState {
 /// already at target size — the caller must not create a warm window then.
 #[tauri::command]
 pub async fn warm_pool_begin_spawn() -> bool {
-    POOL.lock().unwrap().try_reserve_spawn(Instant::now())
+    POOL.lock().unwrap_or_else(|e| e.into_inner()).try_reserve_spawn(Instant::now())
 }
 
 /// Release a reservation after a failed spawn (webview creation error).
 #[tauri::command]
 pub async fn warm_pool_cancel_spawn() {
-    POOL.lock().unwrap().release_spawn();
+    POOL.lock().unwrap_or_else(|e| e.into_inner()).release_spawn();
 }
 
 /// Called by the warm window itself once its activate-listener is registered.
@@ -133,7 +133,7 @@ pub async fn warm_pool_cancel_spawn() {
 #[tauri::command]
 pub async fn warm_pool_register(app: AppHandle, label: String) {
     {
-        let mut pool = POOL.lock().unwrap();
+        let mut pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
         let any_real_left = app.webview_windows().keys().any(|l| pool.is_real(l));
         if any_real_left {
             pool.register(label);
@@ -153,7 +153,7 @@ pub async fn warm_pool_register(app: AppHandle, label: String) {
 #[tauri::command]
 pub async fn warm_pool_claim(app: AppHandle) -> Option<String> {
     POOL.lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .claim(|label| app.get_webview_window(label).is_some())
 }
 
@@ -162,7 +162,7 @@ pub async fn warm_pool_claim(app: AppHandle) -> Option<String> {
 /// would linger hidden while counting as real — keeping the app alive forever.
 #[tauri::command]
 pub async fn warm_pool_discard(app: AppHandle, label: String) {
-    POOL.lock().unwrap().forget(&label);
+    POOL.lock().unwrap_or_else(|e| e.into_inner()).forget(&label);
     if let Some(window) = app.get_webview_window(&label) {
         let _ = window.destroy();
     }
@@ -172,7 +172,7 @@ pub async fn warm_pool_discard(app: AppHandle, label: String) {
 /// turned off). Activated windows are untouched — they are the user's.
 #[tauri::command]
 pub async fn warm_pool_shutdown(app: AppHandle) {
-    let parked = POOL.lock().unwrap().drain_ready();
+    let parked = POOL.lock().unwrap_or_else(|e| e.into_inner()).drain_ready();
     for label in parked {
         log::info!("Closing parked warm window {label} (pool disabled)");
         if let Some(window) = app.get_webview_window(&label) {
@@ -188,7 +188,7 @@ pub async fn warm_pool_shutdown(app: AppHandle) {
 pub fn on_window_destroyed(app: &AppHandle, destroyed_label: &str) {
     let windows = app.webview_windows();
     {
-        let mut pool = POOL.lock().unwrap();
+        let mut pool = POOL.lock().unwrap_or_else(|e| e.into_inner());
         let was_real = pool.forget(destroyed_label);
         if !was_real {
             return;

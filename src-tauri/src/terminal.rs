@@ -378,7 +378,10 @@ fn spawn_shell(
         .map_err(|e| AppError::Other(format!("pty writer failed: {e}")))?;
 
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    terminals().lock().unwrap().insert(
+    terminals()
+        .lock()
+        .map_err(|e| AppError::Other(format!("terminals registry lock poisoned: {e}")))?
+        .insert(
         id,
         TerminalHandle {
             writer,
@@ -404,7 +407,11 @@ fn spawn_shell(
                         // Observe OSC 7 cwd reports before forwarding output;
                         // output itself is passed through unchanged.
                         for cwd in scanner.push(&text) {
-                            if let Some(h) = terminals().lock().unwrap().get_mut(&id) {
+                            // Reader thread (returns ()): recover the registry
+                            // rather than panic if another holder poisoned it.
+                            if let Some(h) =
+                                terminals().lock().unwrap_or_else(|e| e.into_inner()).get_mut(&id)
+                            {
                                 h.shell_cwd = Some(cwd.clone());
                             }
                             on_cwd(cwd);
@@ -415,7 +422,7 @@ fn spawn_shell(
             }
         }
         let code = child.wait().ok().map(|status| status.exit_code());
-        terminals().lock().unwrap().remove(&id);
+        terminals().lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
         on_exit(code);
     });
 
@@ -425,7 +432,8 @@ fn spawn_shell(
 /// Kill every terminal owned by `label`. Reader threads observe EOF and
 /// remove the registry entries themselves.
 pub fn on_window_destroyed(label: &str) {
-    let mut map = terminals().lock().unwrap();
+    // Returns (): recover the registry rather than panic on a poisoned lock.
+    let mut map = terminals().lock().unwrap_or_else(|e| e.into_inner());
     for handle in map.values_mut().filter(|h| h.window_label == label) {
         let _ = handle.killer.kill();
     }
@@ -485,7 +493,9 @@ pub async fn terminal_spawn(
 #[tauri::command]
 pub async fn terminal_write(id: u64, data: String) -> Result<(), AppError> {
     tokio::task::spawn_blocking(move || {
-        let mut map = terminals().lock().unwrap();
+        let mut map = terminals()
+            .lock()
+            .map_err(|e| AppError::Other(format!("terminals registry lock poisoned: {e}")))?;
         let handle = map
             .get_mut(&id)
             .ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;
@@ -502,7 +512,9 @@ pub async fn terminal_write(id: u64, data: String) -> Result<(), AppError> {
 #[tauri::command]
 pub async fn terminal_resize(id: u64, cols: u16, rows: u16) -> Result<(), AppError> {
     tokio::task::spawn_blocking(move || {
-        let map = terminals().lock().unwrap();
+        let map = terminals()
+            .lock()
+            .map_err(|e| AppError::Other(format!("terminals registry lock poisoned: {e}")))?;
         let handle = map
             .get(&id)
             .ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;
@@ -525,7 +537,9 @@ pub async fn terminal_resize(id: u64, cols: u16, rows: u16) -> Result<(), AppErr
 #[tauri::command]
 pub async fn terminal_kill(id: u64) -> Result<(), AppError> {
     tokio::task::spawn_blocking(move || {
-        let mut map = terminals().lock().unwrap();
+        let mut map = terminals()
+            .lock()
+            .map_err(|e| AppError::Other(format!("terminals registry lock poisoned: {e}")))?;
         let handle = map
             .get_mut(&id)
             .ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;
@@ -544,7 +558,9 @@ pub async fn terminal_kill(id: u64) -> Result<(), AppError> {
 #[tauri::command]
 pub async fn terminal_status(id: u64) -> Result<TerminalStatus, AppError> {
     tokio::task::spawn_blocking(move || {
-        let map = terminals().lock().unwrap();
+        let map = terminals()
+            .lock()
+            .map_err(|e| AppError::Other(format!("terminals registry lock poisoned: {e}")))?;
         let handle = map
             .get(&id)
             .ok_or_else(|| AppError::NotFound(format!("terminal {id}")))?;
@@ -624,7 +640,7 @@ mod tests {
         .expect("spawn failed");
 
         {
-            let mut map = terminals().lock().unwrap();
+            let mut map = terminals().lock().unwrap_or_else(|e| e.into_inner());
             let handle = map.get_mut(&id).expect("terminal registered");
             handle.writer.write_all(b"pwd && exit\n").unwrap();
         }
@@ -650,7 +666,7 @@ mod tests {
         );
         assert!(exited.is_some(), "exit code should be reported");
         assert!(
-            !terminals().lock().unwrap().contains_key(&id),
+            !terminals().lock().unwrap_or_else(|e| e.into_inner()).contains_key(&id),
             "registry entry should be removed after exit"
         );
     }
@@ -832,7 +848,7 @@ mod tests {
         .expect("spawn failed");
 
         let busy_now = || {
-            let map = terminals().lock().unwrap();
+            let map = terminals().lock().unwrap_or_else(|e| e.into_inner());
             is_busy(map.get(&id).expect("registered"))
         };
 
@@ -845,7 +861,7 @@ mod tests {
 
         // Start a foreground command.
         {
-            let mut map = terminals().lock().unwrap();
+            let mut map = terminals().lock().unwrap_or_else(|e| e.into_inner());
             map.get_mut(&id).unwrap().writer.write_all(b"sleep 2\n").unwrap();
         }
 
@@ -866,7 +882,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
         }
 
-        terminals().lock().unwrap().get_mut(&id).map(|h| h.killer.kill());
+        terminals().lock().unwrap_or_else(|e| e.into_inner()).get_mut(&id).map(|h| h.killer.kill());
     }
 
     /// If `zsh` is installed, spawning through `spawn_shell` should produce an
@@ -920,7 +936,7 @@ mod tests {
         while let Ok(chunk) = rx.try_recv() {
             output.push_str(&chunk);
         }
-        terminals().lock().unwrap().get_mut(&id).map(|h| h.killer.kill());
+        terminals().lock().unwrap_or_else(|e| e.into_inner()).get_mut(&id).map(|h| h.killer.kill());
 
         assert!(
             got_cwd.is_ok(),

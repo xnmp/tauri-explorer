@@ -690,6 +690,20 @@ const mockCommands: Record<string, CommandHandler> = {
   list_drives: () => mockDrives,
   log_startup_timing: () => undefined,
 
+  // Crash reporting (#184): a crash is simulated when the e2e test sets
+  // localStorage.mockCrashReport before load; consumed on first read.
+  take_crash_report: () => {
+    if (localStorage.getItem("mockCrashReport") !== "1") return null;
+    localStorage.removeItem("mockCrashReport");
+    return {
+      fileName: "crash-1700000000.txt",
+      contents:
+        "tauri-explorer 1.0.0 crash report\nos: linux (x86_64)\ntime: 1700000000 (unix)\npanic: mock panic for testing\nlocation: src/lib.rs:1:1\n\nbacktrace:\n<omitted>\n",
+    };
+  },
+  log_frontend_error: () => undefined,
+  open_external_url: () => undefined,
+
   // Pre-warmed window pool: no pool outside Tauri — spawn is always refused
   // and claims always miss, so openNewWindow takes the fresh-window path.
   warm_pool_begin_spawn: () => false,

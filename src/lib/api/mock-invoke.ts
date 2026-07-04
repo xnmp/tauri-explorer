@@ -5,6 +5,8 @@
 
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
 import { parentDir, basename } from "$lib/domain/path";
+import { emitWatcherGitChange } from "$lib/state/git-refresh";
+import type { GitFileEntry, GitStatusCode, GitStatusSummary } from "$lib/api/files";
 
 // Check if we're running in Tauri v2
 // Note: Tauri v2 uses __TAURI_INTERNALS__, not __TAURI__ (v1)
@@ -299,6 +301,155 @@ type CommandHandler = (args: Record<string, unknown>) => unknown;
 /** Tracks paths added to .gitignore via the mocked git_add_to_gitignore so
  *  the SCM panel can hide newly-ignored entries on next git_status. */
 const mockGitignored = new Set<string>();
+
+// ----- Stateful in-memory git repo (mirrors src-tauri/src/git.rs contract) -----
+//
+// The SCM E2E tests assert real outcomes (a staged row leaves Changes, commit
+// empties the staged section, an external edit shows up on refresh). To make
+// those observable, the mock keeps a mutable working-tree/index model and
+// moves entries between sections the same way the git2-backed backend would.
+const MOCK_REPO_ROOT = "/home/user/Documents/project";
+
+interface MockGitState {
+  branch: string;
+  detached: boolean;
+  staged: GitFileEntry[];
+  changes: GitFileEntry[];
+  untracked: GitFileEntry[];
+  merge: GitFileEntry[];
+}
+
+interface MockGitCommit {
+  message: string;
+  amend: boolean;
+  files: string[];
+  commit_id: string;
+}
+
+const mockGitCommits: MockGitCommit[] = [];
+
+function seedGitState(): MockGitState {
+  return {
+    branch: "main",
+    detached: false,
+    staged: [{ path: "src/App.tsx", old_path: null, status: "Modified" }],
+    changes: [
+      { path: "src/index.css", old_path: null, status: "Modified" },
+      { path: "README.md", old_path: null, status: "Modified" },
+    ],
+    untracked: [
+      { path: "src/router.tsx", old_path: null, status: "Untracked" },
+      { path: ".env.example", old_path: null, status: "Untracked" },
+      { path: "assets/logo.png", old_path: null, status: "Untracked" },
+    ],
+    merge: [{ path: "src/constants.ts", old_path: null, status: "Conflict" }],
+  };
+}
+
+let mockGit: MockGitState = seedGitState();
+
+function removeFrom(list: GitFileEntry[], path: string): GitFileEntry | undefined {
+  const idx = list.findIndex((e) => e.path === path);
+  if (idx < 0) return undefined;
+  return list.splice(idx, 1)[0];
+}
+
+function upsert(list: GitFileEntry[], entry: GitFileEntry): void {
+  if (!list.some((e) => e.path === entry.path)) list.push(entry);
+}
+
+/** Stage one path: untracked→staged(Added), changes/merge→staged(Modified). */
+function mockStagePath(path: string): void {
+  const fromUntracked = removeFrom(mockGit.untracked, path);
+  if (fromUntracked) {
+    upsert(mockGit.staged, { path, old_path: null, status: "Added" });
+    return;
+  }
+  const fromMerge = removeFrom(mockGit.merge, path);
+  const fromChanges = removeFrom(mockGit.changes, path);
+  if (fromChanges || fromMerge) {
+    upsert(mockGit.staged, { path, old_path: null, status: "Modified" });
+  }
+}
+
+/** Unstage one path: Added→untracked, otherwise→changes. */
+function mockUnstagePath(path: string): void {
+  const staged = removeFrom(mockGit.staged, path);
+  if (!staged) return;
+  if (staged.status === "Added") {
+    upsert(mockGit.untracked, { path, old_path: null, status: "Untracked" });
+  } else {
+    upsert(mockGit.changes, { path, old_path: null, status: "Modified" });
+  }
+}
+
+/** Discard mirrors git.rs: refuses a path with staged changes unless forced;
+ *  otherwise reverts (changes) or removes (untracked). */
+function mockDiscardPath(path: string, force: boolean): void {
+  if (!force && mockGit.staged.some((e) => e.path === path)) {
+    throw new Error(
+      `refusing to discard '${path}' with staged changes; pass force=true to override`,
+    );
+  }
+  removeFrom(mockGit.changes, path);
+  removeFrom(mockGit.untracked, path);
+  removeFrom(mockGit.merge, path);
+}
+
+function mockGitSummary(): GitStatusSummary {
+  return {
+    is_repo: true,
+    repo_root: MOCK_REPO_ROOT,
+    branch: mockGit.branch,
+    detached: mockGit.detached,
+    staged: mockGit.staged.map((e) => ({ ...e })),
+    changes: mockGit.changes.map((e) => ({ ...e })),
+    untracked: mockGit.untracked
+      .filter((e) => !mockGitignored.has(e.path))
+      .map((e) => ({ ...e })),
+    merge: mockGit.merge.map((e) => ({ ...e })),
+  };
+}
+
+if (typeof window !== "undefined") {
+  const w = window as unknown as {
+    __mockGitReset?: () => void;
+    __mockGitCommits?: MockGitCommit[];
+    __mockGitExternalModify?: (path: string) => void;
+    __mockGitSetClean?: () => void;
+    __mockGitState?: () => MockGitState;
+  };
+  // Reset the repo to its seed state (mock/browser only).
+  w.__mockGitReset = () => {
+    mockGit = seedGitState();
+    mockGitCommits.length = 0;
+    mockGitignored.clear();
+  };
+  // Recorded commits, so tests can assert the message that was committed.
+  w.__mockGitCommits = mockGitCommits;
+  // Simulate an edit made outside the app (e.g. another process): add a
+  // modified file to the working tree and fire the watcher change so the
+  // SCM store re-fetches, exactly as the real filesystem watcher would.
+  w.__mockGitExternalModify = (path: string) => {
+    if (
+      !mockGit.changes.some((e) => e.path === path) &&
+      !mockGit.staged.some((e) => e.path === path)
+    ) {
+      mockGit.changes.push({ path, old_path: null, status: "Modified" as GitStatusCode });
+    }
+    emitWatcherGitChange(MOCK_REPO_ROOT);
+  };
+  // Simulate the working tree becoming clean (all sections empty) as it would
+  // after committing/discarding everything, then fire the watcher change.
+  w.__mockGitSetClean = () => {
+    mockGit.staged = [];
+    mockGit.changes = [];
+    mockGit.untracked = [];
+    mockGit.merge = [];
+    emitWatcherGitChange(MOCK_REPO_ROOT);
+  };
+  w.__mockGitState = () => mockGit;
+}
 
 /** Contents of files created via the mocked write_text_file. */
 const mockWrittenFiles: Record<string, string> = {};
@@ -789,7 +940,7 @@ const mockCommands: Record<string, CommandHandler> = {
 
   git_status: (args: Record<string, unknown>) => {
     const repoPath = args.repoPath as string;
-    if (!repoPath?.startsWith("/home/user/Documents/project")) {
+    if (!repoPath?.startsWith(MOCK_REPO_ROOT)) {
       return {
         is_repo: false,
         repo_root: null,
@@ -801,35 +952,57 @@ const mockCommands: Record<string, CommandHandler> = {
         merge: [],
       };
     }
-    return {
-      is_repo: true,
-      repo_root: "/home/user/Documents/project",
-      branch: "main",
-      detached: false,
-      staged: [
-        { path: "src/App.tsx", old_path: null, status: "Modified" },
-      ],
-      changes: [
-        { path: "src/index.css", old_path: null, status: "Modified" },
-        { path: "README.md", old_path: null, status: "Modified" },
-      ],
-      untracked: [
-        { path: "src/router.tsx", old_path: null, status: "Untracked" },
-        { path: ".env.example", old_path: null, status: "Untracked" },
-        { path: "assets/logo.png", old_path: null, status: "Untracked" },
-      ].filter((e) => !mockGitignored.has(e.path)),
-      merge: [
-        { path: "src/constants.ts", old_path: null, status: "Conflict" },
-      ],
-    };
+    return mockGitSummary();
   },
 
-  git_stage: () => null,
-  git_unstage: () => null,
-  git_discard: () => null,
+  git_stage: (args: Record<string, unknown>) => {
+    const paths = (args.paths as string[]) ?? [];
+    for (const p of paths) mockStagePath(p);
+    return null;
+  },
+  git_unstage: (args: Record<string, unknown>) => {
+    const paths = (args.paths as string[]) ?? [];
+    for (const p of paths) mockUnstagePath(p);
+    return null;
+  },
+  git_discard: (args: Record<string, unknown>) => {
+    const paths = (args.paths as string[]) ?? [];
+    const options = (args.options as { force?: boolean } | null) ?? null;
+    const force = options?.force ?? false;
+    for (const p of paths) mockDiscardPath(p, force);
+    return null;
+  },
   git_commit: (args: Record<string, unknown>) => {
     const msg = (args.message as string) ?? "";
-    return { commit_id: "deadbeef".padEnd(40, "0"), summary: msg.split("\n")[0] };
+    const options = (args.options as { amend?: boolean } | null) ?? null;
+    const amend = options?.amend ?? false;
+    if (msg.trim().length === 0 && !amend) {
+      throw new Error("commit message cannot be empty");
+    }
+    const committed = [
+      ...mockGit.staged.map((e) => e.path),
+      ...mockGit.merge.map((e) => e.path),
+    ];
+    if (committed.length === 0 && !amend) {
+      throw new Error("nothing to commit");
+    }
+    // Staged + resolved-merge entries become part of the commit; the working
+    // tree (changes/untracked) is left untouched, mirroring the real backend.
+    mockGit.staged = [];
+    mockGit.merge = [];
+    const effectiveMessage =
+      msg.trim().length === 0 && amend
+        ? mockGitCommits[mockGitCommits.length - 1]?.message ?? ""
+        : msg;
+    const commit_id = (mockGitCommits.length + 1).toString(16).padStart(40, "0");
+    if (amend && mockGitCommits.length > 0) {
+      const prev = mockGitCommits[mockGitCommits.length - 1];
+      prev.message = effectiveMessage;
+      prev.files = Array.from(new Set([...prev.files, ...committed]));
+    } else {
+      mockGitCommits.push({ message: effectiveMessage, amend, files: committed, commit_id });
+    }
+    return { commit_id, summary: effectiveMessage.split("\n")[0] };
   },
   git_diff: (args: Record<string, unknown>) => {
     const p = args.path as string;

@@ -1198,7 +1198,7 @@ export async function listUserThemes(): Promise<ApiResult<[string, string][]>> {
 /**
  * Git file status types.
  */
-export type GitFileStatus = "Modified" | "Added" | "Deleted" | "Renamed" | "Untracked" | "Ignored" | "Conflict";
+export type GitFileStatus = "Modified" | "Added" | "Deleted" | "Renamed" | "Copied" | "Untracked" | "Ignored" | "Conflicted" | "TypeChange";
 
 export interface GitStatusResponse {
   is_git_repo: boolean;
@@ -1227,7 +1227,7 @@ export type GitStatusCode =
   | "Copied"
   | "Untracked"
   | "Ignored"
-  | "Conflict"
+  | "Conflicted"
   | "TypeChange";
 
 export interface GitFileEntry {

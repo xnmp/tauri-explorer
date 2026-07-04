@@ -20,20 +20,24 @@ pub enum GitFileStatus {
     Added,
     Deleted,
     Renamed,
+    Copied,
     Untracked,
     Ignored,
-    Conflict,
+    Conflicted,
+    TypeChange,
 }
 
 /// Precedence when aggregating multiple children into a directory status:
-/// Conflict > Modified/Added/Deleted/Renamed > Untracked > Ignored.
+/// Conflicted > Modified/Added/Deleted/Renamed/Copied/TypeChange > Untracked > Ignored.
 fn status_rank(status: &GitFileStatus) -> u8 {
     match status {
-        GitFileStatus::Conflict => 4,
+        GitFileStatus::Conflicted => 4,
         GitFileStatus::Modified
         | GitFileStatus::Added
         | GitFileStatus::Deleted
-        | GitFileStatus::Renamed => 3,
+        | GitFileStatus::Renamed
+        | GitFileStatus::Copied
+        | GitFileStatus::TypeChange => 3,
         GitFileStatus::Untracked => 2,
         GitFileStatus::Ignored => 1,
     }
@@ -53,7 +57,7 @@ fn parse_xy(xy: &[u8]) -> Option<GitFileStatus> {
     match xy {
         b"??" => Some(GitFileStatus::Untracked),
         b"!!" => Some(GitFileStatus::Ignored),
-        b"DD" | b"AU" | b"UD" | b"UA" | b"DU" | b"AA" | b"UU" => Some(GitFileStatus::Conflict),
+        b"DD" | b"AU" | b"UD" | b"UA" | b"DU" | b"AA" | b"UU" => Some(GitFileStatus::Conflicted),
         _ => {
             let index = xy[0];
             let worktree = xy[1];
@@ -62,8 +66,12 @@ fn parse_xy(xy: &[u8]) -> Option<GitFileStatus> {
                 Some(GitFileStatus::Deleted)
             } else if index == b'R' {
                 Some(GitFileStatus::Renamed)
+            } else if index == b'C' {
+                Some(GitFileStatus::Copied)
             } else if index == b'A' {
                 Some(GitFileStatus::Added)
+            } else if worktree == b'T' || index == b'T' {
+                Some(GitFileStatus::TypeChange)
             } else if worktree == b'M' || index == b'M' {
                 Some(GitFileStatus::Modified)
             } else {

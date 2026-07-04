@@ -16,10 +16,18 @@ const enableGitTitles = (page: import("@playwright/test").Page) =>
     localStorage.setItem(k, JSON.stringify(s));
   });
 
+/** Tabs are per-pane (#140) and the strip only renders with 2+ tabs (or in
+ *  dual-pane mode) — open a second tab so the strip is visible. */
+const showTabStrip = async (page: import("@playwright/test").Page) => {
+  await page.keyboard.press("Control+t");
+  await expect(page.locator(".tab")).toHaveCount(2);
+};
+
 test.describe("Git repo root in tab title", () => {
   test("shows the plain folder name when the setting is off (default)", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents/project/src");
     await waitForEntries(page);
+    await showTabStrip(page);
     await expect(page.locator(".tab-title").first()).toHaveText("src");
     await expect(page.locator(".tab-icon-git")).toHaveCount(0);
   });
@@ -28,6 +36,7 @@ test.describe("Git repo root in tab title", () => {
     await enableGitTitles(page);
     await page.goto("/?path=/home/user/Documents/project/src");
     await waitForEntries(page);
+    await showTabStrip(page);
     // Repo root is resolved async after first paint; the title then updates.
     await expect(page.locator(".tab-repo").first()).toHaveText("project");
     await expect(page.locator(".tab-cwd").first()).toHaveText("src");
@@ -38,6 +47,7 @@ test.describe("Git repo root in tab title", () => {
     await enableGitTitles(page);
     await page.goto("/?path=/home/user/Documents/project");
     await waitForEntries(page);
+    await showTabStrip(page);
     await expect(page.locator(".tab-icon-git").first()).toBeVisible();
     await expect(page.locator(".tab-cwd").first()).toHaveText("project");
     await expect(page.locator(".tab-repo")).toHaveCount(0);

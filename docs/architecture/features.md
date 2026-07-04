@@ -88,16 +88,16 @@
 ### Tabs & Windows
 | Feature | Files to change |
 |---------|----------------|
-| Window tabs | `window-tabs.svelte.ts`, `WindowTabBar.svelte`, `TitleBar.svelte` |
+| Per-pane tabs | `window-tabs.svelte.ts`, `PaneTabBar.svelte`, `PaneContainer.svelte` |
 | New tab (Ctrl+T) | `windowTabsManager.createTab()` |
 | Close tab (Ctrl+W) | `windowTabsManager.closeActiveTab()` |
 | Restore closed tab | `windowTabsManager.restoreClosedTab()` (persisted stack) |
-| Tab reorder | `WindowTabBar.svelte` (drag), `windowTabsManager.reorderTabs()` |
+| Tab reorder / move across panes | `PaneTabBar.svelte` (drag), `windowTabsManager.reorderTabs(paneId, …)` / `moveTabToPane()` |
 | New window (Ctrl+N) | `command-definitions.ts:openNewWindow()` — creates `WebviewWindow` with URL params |
 | Dual pane (Ctrl+\\) | `windowTabsManager.toggleDualPane()`, `PaneContainer.svelte` |
 | Split ratio resize | `PaneContainer.svelte` mouse handlers, `windowTabsManager.setSplitRatio()` |
 | Workspaces | `workspaces.svelte.ts`, `WorkspaceDialog.svelte` |
-| Tab tear-off / cross-window move | `tab-transfer.ts` (localStorage marker + BroadcastChannel claim), `WindowTabBar.svelte` (drag handlers), `windowTabsManager.exportTab/adoptTab/removeTransferredTab`, label-keyed `tab-seed` in `openNewWindow` |
+| Tab tear-off / cross-window move | `tab-transfer.ts` (localStorage marker + BroadcastChannel claim), `PaneTabBar.svelte` (drag handlers), `windowTabsManager.exportTab/adoptTab/removeTransferredTab`, label-keyed `tab-seed` in `openNewWindow` |
 | System file picker (portal) | `portal.rs` (D-Bus FileChooser backend), `FilePicker.svelte` (?picker= mode), `packaging/` (.portal + .service) |
 
 ### Clipboard

@@ -81,6 +81,8 @@ describe("ai-rename plugin: contributions", () => {
     expect(when([dirEntry])).toBe(false);
     expect(when([])).toBe(false);
     expect(when([textEntry, imageEntry])).toBe(false);
+    // Virtual entries are plugin views, not real files (#152).
+    expect(when([{ ...textEntry, path: "demo://notes.txt" }])).toBe(false);
   });
 });
 

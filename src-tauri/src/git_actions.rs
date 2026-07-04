@@ -275,6 +275,10 @@ mod tests {
         let p = dir.path();
         git(p, &["init", "-b", "main"]);
         git(p, &["config", "commit.gpgsign", "false"]);
+        // run_git (production) inherits identity from config; CI runners have
+        // no global identity, so set it repo-locally for the cherry-pick.
+        git(p, &["config", "user.name", "Test"]);
+        git(p, &["config", "user.email", "t@x"]);
         write(p, "a.txt", "base\n");
         git(p, &["add", "."]);
         git(p, &["commit", "-m", "base"]);

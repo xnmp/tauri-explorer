@@ -362,10 +362,10 @@ describe("closed-tab restore (Ctrl+Shift+T)", () => {
     const manager = freshManager();
     manager.setDualPane(true);
     manager.createTabIn("right", "/srv/gone");
-    const closing = manager.panes.right.tabs.find((t) => t.path === "/srv/gone")!;
+    const closing = manager.panes.right.tabs.find((t) => manager.getTabPath(t.id) === "/srv/gone")!;
 
     manager.closeTab(closing.id);
-    expect(manager.panes.right.tabs.some((t) => t.path === "/srv/gone")).toBe(false);
+    expect(manager.panes.right.tabs.some((t) => manager.getTabPath(t.id) === "/srv/gone")).toBe(false);
 
     const result = manager.restoreClosedTab();
     expect(result).toMatchObject({ restored: true });
@@ -376,7 +376,7 @@ describe("closed-tab restore (Ctrl+Shift+T)", () => {
     const manager = freshManager();
     manager.setDualPane(true);
     manager.createTabIn("right", "/srv/gone");
-    const closing = manager.panes.right.tabs.find((t) => t.path === "/srv/gone")!;
+    const closing = manager.panes.right.tabs.find((t) => manager.getTabPath(t.id) === "/srv/gone")!;
     manager.closeTab(closing.id);
     manager.setDualPane(false);
 
@@ -421,9 +421,50 @@ describe("persistence round-trip", () => {
       activeTabId: "t1",
     });
 
-    expect(manager.panes.left.tabs.map((t) => t.path)).toEqual(["/home/a"]);
-    expect(manager.panes.right.tabs.map((t) => t.path)).toEqual(["/srv/a"]);
+    expect(manager.panes.left.tabs.map((t) => manager.getTabPath(t.id))).toEqual(["/home/a"]);
+    expect(manager.panes.right.tabs.map((t) => manager.getTabPath(t.id))).toEqual(["/srv/a"]);
     expect(manager.dualPaneEnabled).toBe(true);
     expect(manager.splitRatio).toBe(0.6);
+  });
+});
+
+describe("tagged-union tab kinds (#56)", () => {
+  it("openGitGraphTab creates a git-graph tab and reuses it per repo", () => {
+    const manager = freshManager();
+    const tab = manager.openGitGraphTab("/home/user/project");
+
+    expect(tab.kind).toBe("git-graph");
+    expect(manager.activeTabId).toBe(tab.id);
+    expect(manager.getTabPath(tab.id)).toBe("/home/user/project");
+    expect(manager.getTabTitle(tab)).toBe("Graph: project");
+
+    // Same repo → reuse, no duplicate.
+    const again = manager.openGitGraphTab("/home/user/project");
+    expect(again.id).toBe(tab.id);
+    expect(manager.tabs.filter((t) => t.kind === "git-graph")).toHaveLength(1);
+  });
+
+  it("a git-graph tab has no explorer and survives a persistence round-trip", () => {
+    const manager = freshManager();
+    manager.openGitGraphTab("/home/user/project");
+    expect(manager.getActiveExplorer()).toBeUndefined();
+
+    const state = manager.captureState();
+    const restored = createWindowTabsManager();
+    restored.restoreFromState(state);
+
+    const graphTab = restored.panes.left.tabs.find((t) => t.kind === "git-graph")!;
+    expect(graphTab).toBeDefined();
+    expect(restored.getTabPath(graphTab.id)).toBe("/home/user/project");
+    // Old persisted tabs without a kind stay explorers (defaulting migration).
+    expect(restored.panes.left.tabs[0].kind).toBe("explorer");
+  });
+
+  it("closing a git-graph tab works and snapshots its repo path", () => {
+    const manager = freshManager();
+    const tab = manager.openGitGraphTab("/home/user/project");
+    manager.closeTab(tab.id);
+    expect(manager.tabs.some((t) => t.id === tab.id)).toBe(false);
+    expect(manager.canRestoreTab).toBe(true);
   });
 });

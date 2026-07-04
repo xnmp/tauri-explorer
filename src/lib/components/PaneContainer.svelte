@@ -7,6 +7,12 @@
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import ExplorerPane from "./ExplorerPane.svelte";
   import PaneTabBar from "./PaneTabBar.svelte";
+  import GitGraphView from "./GitGraphView.svelte";
+
+  // Per-kind pane content dispatch (#56): a pane renders its active tab,
+  // which is an explorer today or a git graph (#51) later.
+  const leftTab = $derived(windowTabsManager.paneActiveTab("left"));
+  const rightTab = $derived(windowTabsManager.paneActiveTab("right"));
 
   // Window-level layout state
   const dualPaneEnabled = $derived(windowTabsManager.dualPaneEnabled);
@@ -69,7 +75,11 @@
 >
   <div class="pane left-pane">
     <PaneTabBar paneId="left" />
-    <ExplorerPane paneId="left" />
+    {#if leftTab?.kind === "git-graph"}
+      <GitGraphView repoPath={leftTab.repoPath} />
+    {:else}
+      <ExplorerPane paneId="left" />
+    {/if}
   </div>
 
   {#if dualPaneEnabled}
@@ -86,7 +96,11 @@
 
     <div class="pane right-pane">
       <PaneTabBar paneId="right" />
-      <ExplorerPane paneId="right" />
+      {#if rightTab?.kind === "git-graph"}
+        <GitGraphView repoPath={rightTab.repoPath} />
+      {:else}
+        <ExplorerPane paneId="right" />
+      {/if}
     </div>
   {/if}
 

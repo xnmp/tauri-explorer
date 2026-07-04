@@ -8,7 +8,7 @@
  * like another window docked to the side, with its own independent tabs.
  */
 
-import type { PaneId, PaneTab, PaneTabs } from "./types";
+import type { PaneId, PaneTab, ExplorerTab, PaneTabs } from "./types";
 import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
 import { loadPersisted, savePersisted, removePersisted } from "./persisted";
 import { parentDir, directoryKey, basename } from "$lib/domain/path";
@@ -40,6 +40,8 @@ const CLOSED_TABS_KEY = "explorer-closed-tabs";
 export interface PersistedPaneTab {
   id: string;
   path: string;
+  /** Tab kind discriminator (#56). Absent in older saves — treated as "explorer". */
+  kind?: "explorer" | "git-graph";
 }
 
 export interface PersistedPaneTabs {
@@ -271,7 +273,7 @@ function createWindowTabsManager() {
   /** Capture the current tab state as a serializable snapshot */
   function captureState(): PersistedTabState {
     const capturePane = (paneId: PaneId): PersistedPaneTabs => ({
-      tabs: panes[paneId].tabs.map((t) => ({ id: t.id, path: getTabLivePath(t) })),
+      tabs: panes[paneId].tabs.map((t) => ({ id: t.id, path: getTabLivePath(t), kind: t.kind })),
       activeTabId: panes[paneId].activeTabId,
     });
     return {
@@ -317,7 +319,7 @@ function createWindowTabsManager() {
     const normal: { id: string; path: string }[] = [];
     const gitMode = new Map<string, { repoRoot: string; cwd: string }>();
 
-    const tabs = allTabs();
+    const tabs = allTabs().filter((t) => t.kind === "explorer");
     for (const t of tabs) {
       const cwd = getTabLivePath(t);
       const root = useGit ? gitRoots.get(directoryKey(cwd)) : null;
@@ -349,6 +351,9 @@ function createWindowTabsManager() {
 
   /** Structured display (icon + repo + name) for rendering a tab. */
   function getTabDisplay(tab: PaneTab): TabDisplay {
+    if (tab.kind !== "explorer") {
+      return { isGitRoot: tab.kind === "git-graph", repo: null, name: tab.title };
+    }
     return (
       tabDisplays.get(tab.id) ?? {
         isGitRoot: false,
@@ -360,6 +365,7 @@ function createWindowTabsManager() {
 
   /** Plain-text tab title (used for the drag ghost and width measurement). */
   function getTabTitle(tab: PaneTab): string {
+    if (tab.kind !== "explorer") return tab.title;
     const explorer = explorers.get(tab.explorerId);
     if (!explorer) return tab.title || "Explorer";
     const d = getTabDisplay(tab);
@@ -381,8 +387,10 @@ function createWindowTabsManager() {
     gitRoots = new Map(gitRoots).set(key, root);
   }
 
-  /** Live path for a tab from its explorer */
+  /** Live path for a tab: the explorer's current path, or the repo path
+   *  for non-explorer kinds. */
   function getTabLivePath(tab: PaneTab): string {
+    if (tab.kind !== "explorer") return tab.repoPath;
     const explorer = explorers.get(tab.explorerId);
     // || not ??: an explorer that hasn't completed its first navigation
     // reports "" — fall back to the tab's creation path, never persist "".
@@ -435,10 +443,11 @@ function createWindowTabsManager() {
   }
 
   /** Create a tab object with a new explorer */
-  function createTabObject(path: string, sourceExplorer?: ExplorerInstance, externalSeed?: any, track = true): PaneTab {
+  function createTabObject(path: string, sourceExplorer?: ExplorerInstance, externalSeed?: any, track = true): ExplorerTab {
     const { explorerId } = createAndRegisterExplorer(path, sourceExplorer, externalSeed, track);
     return {
       id: generateId("tab"),
+      kind: "explorer",
       explorerId,
       path,
       title: extractFolderName(path),
@@ -453,7 +462,8 @@ function createWindowTabsManager() {
 
     // Inherit path and entries from the pane's active explorer so the new
     // tab renders instantly instead of flashing a loading state.
-    const sourceExplorer = paneActiveTab ? explorers.get(paneActiveTab.explorerId) : undefined;
+    const sourceExplorer =
+      paneActiveTab?.kind === "explorer" ? explorers.get(paneActiveTab.explorerId) : undefined;
     const path = initialPath ?? (paneActiveTab ? getTabLivePath(paneActiveTab) : defaultPath);
 
     const tab = createTabObject(path, sourceExplorer, externalSeed);
@@ -474,6 +484,32 @@ function createWindowTabsManager() {
   /** Create a new tab in the active pane. */
   function createTab(initialPath?: string, externalSeed?: any): PaneTab {
     return createTabIn(activePaneId, initialPath, externalSeed);
+  }
+
+  /** Open a git-graph tab for `repoPath` in the active pane (#51/#56).
+   *  Reuses an existing graph tab for the same repo instead of duplicating. */
+  function openGitGraphTab(repoPath: string): PaneTab {
+    const pane = panes[activePaneId];
+    const existing = pane.tabs.find(
+      (t) => t.kind === "git-graph" && t.repoPath === repoPath,
+    );
+    if (existing) {
+      setActiveTab(existing.id);
+      return existing;
+    }
+    const tab: PaneTab = {
+      id: generateId("tab"),
+      kind: "git-graph",
+      repoPath,
+      title: `Graph: ${extractFolderName(repoPath)}`,
+    };
+    const activeIndex = pane.tabs.findIndex((t) => t.id === pane.activeTabId);
+    const insertIndex = activeIndex >= 0 ? activeIndex + 1 : pane.tabs.length;
+    const newTabs = [...pane.tabs];
+    newTabs.splice(insertIndex, 0, tab);
+    panes = { ...panes, [activePaneId]: { tabs: newTabs, activeTabId: tab.id } };
+    saveState();
+    return tab;
   }
 
   /** Serialize a live tab for cross-window transfer / tear-off. */
@@ -514,7 +550,15 @@ function createWindowTabsManager() {
 
     const restorePane = (paneId: PaneId): PaneTabs => {
       const persisted = normalized.panes[paneId];
-      const tabs = persisted.tabs.map((pt) => {
+      const tabs = persisted.tabs.map((pt): PaneTab => {
+        if (pt.kind === "git-graph") {
+          return {
+            id: pt.id,
+            kind: "git-graph",
+            repoPath: pt.path,
+            title: `Graph: ${extractFolderName(pt.path)}`,
+          };
+        }
         const isActiveTarget =
           paneId === normalized.activePaneId && pt.id === persisted.activeTabId && !!overridePath;
         const { explorerId } = createAndRegisterExplorer(
@@ -525,6 +569,7 @@ function createWindowTabsManager() {
         );
         return {
           id: pt.id,
+          kind: "explorer",
           explorerId,
           path: isActiveTarget ? overridePath! : pt.path,
           title: extractFolderName(pt.path),
@@ -635,6 +680,7 @@ function createWindowTabsManager() {
   }
 
   function destroyTabExplorer(tab: PaneTab): void {
+    if (tab.kind !== "explorer") return;
     const explorer = explorers.get(tab.explorerId);
     explorer?.destroy();
     explorers.delete(tab.explorerId);
@@ -750,7 +796,7 @@ function createWindowTabsManager() {
   function getExplorer(paneId: PaneId): ExplorerInstance | undefined {
     const pane = panes[paneId];
     const tab = pane.tabs.find((t) => t.id === pane.activeTabId);
-    return tab ? explorers.get(tab.explorerId) : undefined;
+    return tab && tab.kind === "explorer" ? explorers.get(tab.explorerId) : undefined;
   }
 
   /** Iterate all known explorer instances across every pane and tab.
@@ -887,6 +933,11 @@ function createWindowTabsManager() {
     get activeTab() {
       return activeTab;
     },
+    /** The active tab of a specific pane (for per-kind content dispatch). */
+    paneActiveTab(paneId: PaneId): PaneTab | null {
+      const pane = panes[paneId];
+      return pane.tabs.find((t) => t.id === pane.activeTabId) ?? null;
+    },
     /** Total tab count across both panes. */
     get totalTabCount() {
       return panes.left.tabs.length + panes.right.tabs.length;
@@ -907,6 +958,7 @@ function createWindowTabsManager() {
     init,
     createTab,
     createTabIn,
+    openGitGraphTab,
     closeTab,
     closeActiveTab,
     exportTab,

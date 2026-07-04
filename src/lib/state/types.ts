@@ -50,13 +50,27 @@ export interface ExplorerCoreState {
 export type PaneId = "left" | "right";
 
 /**
- * A single tab within a pane's tab strip. Each pane owns its own list of
- * tabs; a tab references its explorer instance by ID.
+ * A single tab within a pane's tab strip, as a tagged union (#56) so panes
+ * can host non-explorer content later (git graph, settings, diff-only, …).
+ * Today only the explorer kind exists; `GitGraphTab` is the first planned
+ * non-explorer kind (#51) and renders a placeholder until #58 lands.
  */
-export interface PaneTab {
+export type PaneTab = ExplorerTab | GitGraphTab;
+
+/** A filesystem explorer view — references its explorer instance by ID. */
+export interface ExplorerTab {
   id: string;
+  kind: "explorer";
   explorerId: string;
   path: string;
+  title: string;
+}
+
+/** A git history graph for a repository (#51). */
+export interface GitGraphTab {
+  id: string;
+  kind: "git-graph";
+  repoPath: string;
   title: string;
 }
 

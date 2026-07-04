@@ -6,8 +6,25 @@
   the list nears its end.
 -->
 <script lang="ts">
-  import { gitLog, gitCommitFiles, type CommitInfo, type RefInfo, type CommitFile } from "$lib/api/git-log";
+  import {
+    gitLog,
+    gitCommitFiles,
+    gitCheckout,
+    gitCreateBranch,
+    gitCreateTag,
+    gitCherryPick,
+    gitRevert,
+    gitMerge,
+    gitRebase,
+    gitReset,
+    type CommitInfo,
+    type RefInfo,
+    type CommitFile,
+    type ResetMode,
+  } from "$lib/api/git-log";
   import { assignLanes, type GraphLayout } from "$lib/domain/git-graph";
+  import { notifyLocalGitChange } from "$lib/state/git-refresh";
+  import { toastStore } from "$lib/state/toast.svelte";
   import VirtualList from "./VirtualList.svelte";
 
   const { repoPath }: { repoPath: string } = $props();
@@ -102,7 +119,113 @@
     index: number;
   }
   const rows: Row[] = $derived(commits.map((commit, index) => ({ commit, index })));
+
+  // ----- Commit context menu (VSCode "Git Graph"-parity actions) -----
+
+  interface Menu {
+    x: number;
+    y: number;
+    commit: CommitInfo;
+    /** Branch to attach on Checkout, or null → detached checkout of the OID. */
+    checkoutBranch: string | null;
+  }
+  let menu = $state<Menu | null>(null);
+  // Inline name prompt for Create Branch / Create Tag.
+  let prompt = $state<{ kind: "branch" | "tag"; oid: string; value: string } | null>(null);
+
+  function localBranchAt(oid: string): string | null {
+    const ref = (refs[oid] ?? []).find((r) => r.kind === "LocalBranch");
+    return ref ? ref.name : null;
+  }
+
+  function openMenu(event: MouseEvent, commit: CommitInfo): void {
+    event.preventDefault();
+    prompt = null;
+    menu = {
+      x: event.clientX,
+      y: event.clientY,
+      commit,
+      checkoutBranch: localBranchAt(commit.oid),
+    };
+  }
+
+  function closeMenu(): void {
+    menu = null;
+    prompt = null;
+  }
+
+  /** Run a mutating action, then reload the graph and refresh the SCM panel
+   *  (always — a conflicting op still mutates the repo). */
+  async function runAction(label: string, fn: () => Promise<void>): Promise<void> {
+    closeMenu();
+    try {
+      await fn();
+      toastStore.success(`${label} done`);
+    } catch (err) {
+      toastStore.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      await loadPage(0);
+      notifyLocalGitChange(repoPath);
+    }
+  }
+
+  function checkout(m: Menu): void {
+    void runAction("Checkout", () =>
+      gitCheckout(repoPath, m.checkoutBranch ?? m.commit.oid),
+    );
+  }
+  function cherryPick(oid: string): void {
+    void runAction("Cherry-pick", () => gitCherryPick(repoPath, oid));
+  }
+  function revert(oid: string): void {
+    void runAction("Revert", () => gitRevert(repoPath, oid));
+  }
+  function merge(m: Menu): void {
+    void runAction("Merge", () => gitMerge(repoPath, m.checkoutBranch ?? m.commit.oid));
+  }
+  function rebase(oid: string): void {
+    void runAction("Rebase", () => gitRebase(repoPath, oid));
+  }
+  function reset(oid: string, mode: ResetMode): void {
+    void runAction(`Reset (${mode})`, () => gitReset(repoPath, oid, mode));
+  }
+
+  function startPrompt(kind: "branch" | "tag", oid: string): void {
+    prompt = { kind, oid, value: "" };
+    menu = null;
+  }
+  function confirmPrompt(): void {
+    if (!prompt) return;
+    const { kind, oid, value } = prompt;
+    const name = value.trim();
+    if (name.length === 0) {
+      prompt = null;
+      return;
+    }
+    prompt = null;
+    if (kind === "branch") {
+      void runAction("Create branch", () => gitCreateBranch(repoPath, name, oid, false));
+    } else {
+      void runAction("Create tag", () => gitCreateTag(repoPath, name, oid));
+    }
+  }
+
+  async function copyToClipboard(text: string, what: string): Promise<void> {
+    closeMenu();
+    try {
+      await navigator.clipboard.writeText(text);
+      toastStore.clipboard(`Copied ${what}`, false);
+    } catch {
+      toastStore.error(`Could not copy ${what}`);
+    }
+  }
+
+  function onWindowKeydown(event: KeyboardEvent): void {
+    if (event.key === "Escape" && (menu || prompt)) closeMenu();
+  }
 </script>
+
+<svelte:window onkeydown={onWindowKeydown} />
 
 <div class="git-graph-view" data-testid="git-graph-view">
   <header class="graph-header">
@@ -136,11 +259,13 @@
         <div
           class="commit-row"
           class:selected={selected?.oid === row.commit.oid}
+          class:is-head={(refs[row.commit.oid] ?? []).some((r) => r.kind === "Head")}
           data-oid={row.commit.short_oid}
           role="button"
           tabindex="0"
           onclick={() => void selectCommit(row.commit)}
           onkeydown={(e) => { if (e.key === "Enter") void selectCommit(row.commit); }}
+          oncontextmenu={(e) => openMenu(e, row.commit)}
         >
           <svg class="graph-cell" width={graphWidth} height={ROW_HEIGHT} aria-hidden="true">
             {#if graphRow}
@@ -186,6 +311,100 @@
         {/each}
       </ul>
     </aside>
+  {/if}
+
+  {#if menu}
+    <!-- Backdrop closes the menu on any outside interaction. -->
+    <button
+      class="menu-backdrop"
+      aria-label="Close menu"
+      onclick={closeMenu}
+      oncontextmenu={(e) => { e.preventDefault(); closeMenu(); }}
+    ></button>
+    {@const m = menu}
+    <div
+      class="commit-menu"
+      data-testid="git-graph-menu"
+      role="menu"
+      tabindex="-1"
+      style="left: {m.x}px; top: {m.y}px;"
+    >
+      <button class="menu-item" role="menuitem" onclick={() => startPrompt("branch", m.commit.oid)}>
+        Create Branch…
+      </button>
+      <button class="menu-item" role="menuitem" onclick={() => startPrompt("tag", m.commit.oid)}>
+        Create Tag…
+      </button>
+      <div class="menu-sep"></div>
+      <button class="menu-item" role="menuitem" onclick={() => checkout(m)}>
+        Checkout{m.checkoutBranch ? ` ${m.checkoutBranch}` : " (detached)"}
+      </button>
+      <button class="menu-item" role="menuitem" onclick={() => cherryPick(m.commit.oid)}>
+        Cherry-pick
+      </button>
+      <button class="menu-item" role="menuitem" onclick={() => revert(m.commit.oid)}>
+        Revert
+      </button>
+      <div class="menu-sep"></div>
+      <button class="menu-item" role="menuitem" onclick={() => merge(m)}>
+        Merge into current branch
+      </button>
+      <button class="menu-item" role="menuitem" onclick={() => rebase(m.commit.oid)}>
+        Rebase current branch on this Commit
+      </button>
+      <div class="menu-item has-submenu" role="menuitem" tabindex="-1">
+        <span>Reset current branch to this Commit</span>
+        <span class="submenu-arrow">▸</span>
+        <div class="submenu" role="menu">
+          <button class="menu-item" role="menuitem" onclick={() => reset(m.commit.oid, "soft")}>
+            Soft — keep changes & index
+          </button>
+          <button class="menu-item" role="menuitem" onclick={() => reset(m.commit.oid, "mixed")}>
+            Mixed — keep changes, reset index
+          </button>
+          <button class="menu-item" role="menuitem" onclick={() => reset(m.commit.oid, "hard")}>
+            Hard — discard all changes
+          </button>
+        </div>
+      </div>
+      <div class="menu-sep"></div>
+      <button class="menu-item" role="menuitem" onclick={() => copyToClipboard(m.commit.oid, "commit hash")}>
+        Copy Commit Hash
+      </button>
+      <button class="menu-item" role="menuitem" onclick={() => copyToClipboard(m.commit.summary, "commit subject")}>
+        Copy Commit Subject
+      </button>
+    </div>
+  {/if}
+
+  {#if prompt}
+    <button
+      class="menu-backdrop"
+      aria-label="Cancel"
+      onclick={() => (prompt = null)}
+      oncontextmenu={(e) => { e.preventDefault(); prompt = null; }}
+    ></button>
+    <div class="name-prompt" data-testid="git-graph-prompt" role="dialog" aria-label={prompt.kind === "branch" ? "Create branch" : "Create tag"}>
+      <label class="prompt-label" for="git-graph-name-input">
+        {prompt.kind === "branch" ? "New branch name" : "New tag name"}
+      </label>
+      <!-- svelte-ignore a11y_autofocus -->
+      <input
+        id="git-graph-name-input"
+        class="prompt-input"
+        type="text"
+        autofocus
+        bind:value={prompt.value}
+        onkeydown={(e) => { if (e.key === "Enter") confirmPrompt(); }}
+        placeholder={prompt.kind === "branch" ? "feature/my-branch" : "v1.2.3"}
+      />
+      <div class="prompt-actions">
+        <button class="prompt-btn" onclick={() => (prompt = null)}>Cancel</button>
+        <button class="prompt-btn primary" onclick={confirmPrompt}>
+          {prompt.kind === "branch" ? "Create branch" : "Create tag"}
+        </button>
+      </div>
+    </div>
   {/if}
 </div>
 
@@ -255,6 +474,14 @@
 
   .commit-row.selected {
     background: color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+
+  /* Subtle tint marking the row the current HEAD points at, à la Git Graph. */
+  .commit-row.is-head {
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
+  }
+  .commit-row.is-head.selected {
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
   }
 
   .commit-detail {
@@ -341,6 +568,8 @@
     font-family: var(--font-mono, monospace);
     color: var(--text-tertiary);
     flex-shrink: 0;
+    width: 52px;
+    font-variant-numeric: tabular-nums;
   }
 
   .ref {
@@ -387,12 +616,165 @@
   .author {
     margin-left: auto;
     flex-shrink: 0;
+    width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
     color: var(--text-tertiary);
   }
 
   .date {
     flex-shrink: 0;
+    width: 84px;
+    text-align: right;
     color: var(--text-tertiary);
     font-variant-numeric: tabular-nums;
+  }
+
+  /* ----- Commit context menu ----- */
+
+  .menu-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: transparent;
+    border: none;
+    padding: 0;
+    cursor: default;
+  }
+
+  .commit-menu {
+    position: fixed;
+    z-index: 41;
+    min-width: 232px;
+    padding: 4px;
+    background: var(--background-card, #1e1e1e);
+    border: 1px solid var(--divider);
+    border-radius: 8px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+    font-size: 12px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 5px 10px;
+    background: none;
+    border: none;
+    border-radius: 5px;
+    color: var(--text-primary);
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .menu-item:hover {
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+  }
+
+  .menu-sep {
+    height: 1px;
+    margin: 4px 6px;
+    background: var(--divider);
+  }
+
+  .has-submenu {
+    position: relative;
+    justify-content: space-between;
+    cursor: default;
+  }
+
+  .submenu-arrow {
+    color: var(--text-tertiary);
+    font-size: 10px;
+  }
+
+  .submenu {
+    position: absolute;
+    left: 100%;
+    top: -4px;
+    min-width: 220px;
+    padding: 4px;
+    background: var(--background-card, #1e1e1e);
+    border: 1px solid var(--divider);
+    border-radius: 8px;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+    display: none;
+    flex-direction: column;
+  }
+
+  .has-submenu:hover .submenu,
+  .has-submenu:focus-within .submenu {
+    display: flex;
+  }
+
+  /* ----- Name prompt popover (create branch / tag) ----- */
+
+  .name-prompt {
+    position: fixed;
+    z-index: 42;
+    left: 50%;
+    top: 30%;
+    transform: translateX(-50%);
+    width: 320px;
+    max-width: calc(100vw - 32px);
+    padding: 14px 16px;
+    background: var(--background-card, #1e1e1e);
+    border: 1px solid var(--divider);
+    border-radius: 10px;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.4);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .prompt-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .prompt-input {
+    width: 100%;
+    padding: 6px 8px;
+    background: var(--background-input, var(--background-card));
+    border: 1px solid var(--divider);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: var(--font-mono, monospace);
+  }
+
+  .prompt-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .prompt-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 2px;
+  }
+
+  .prompt-btn {
+    padding: 5px 12px;
+    background: var(--subtle-fill-secondary, transparent);
+    border: 1px solid var(--divider);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  .prompt-btn.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
   }
 </style>

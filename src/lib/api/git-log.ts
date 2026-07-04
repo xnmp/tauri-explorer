@@ -95,3 +95,57 @@ export interface CommitFile {
 export async function gitCommitFiles(repoPath: string, oid: string): Promise<CommitFile[]> {
   return invoke<CommitFile[]>("git_commit_files", { repoPath, oid });
 }
+
+// ----- Mutating actions: VSCode "Git Graph"-parity commit context menu -----
+//
+// Each shells out to the git CLI in the backend and resolves to void on
+// success, or rejects with the git stderr message on failure (including
+// conflicts). Callers reload the graph + refresh the SCM panel afterwards.
+
+/** `git reset` mode. */
+export type ResetMode = "soft" | "mixed" | "hard";
+
+/** Checkout a branch (attached HEAD) or a commit OID (detached HEAD). */
+export async function gitCheckout(repoPath: string, target: string): Promise<void> {
+  await invoke("git_checkout", { repoPath, target });
+}
+
+/** Create branch `name` at `oid`; optionally check it out. */
+export async function gitCreateBranch(
+  repoPath: string,
+  name: string,
+  oid: string,
+  checkout: boolean,
+): Promise<void> {
+  await invoke("git_create_branch", { repoPath, name, oid, checkout });
+}
+
+/** Create a lightweight tag `name` at `oid`. */
+export async function gitCreateTag(repoPath: string, name: string, oid: string): Promise<void> {
+  await invoke("git_create_tag", { repoPath, name, oid });
+}
+
+/** Cherry-pick `oid` onto the current branch. */
+export async function gitCherryPick(repoPath: string, oid: string): Promise<void> {
+  await invoke("git_cherry_pick", { repoPath, oid });
+}
+
+/** Revert `oid` on the current branch. */
+export async function gitRevert(repoPath: string, oid: string): Promise<void> {
+  await invoke("git_revert", { repoPath, oid });
+}
+
+/** Merge `target` (branch or OID) into the current branch. */
+export async function gitMerge(repoPath: string, target: string): Promise<void> {
+  await invoke("git_merge", { repoPath, target });
+}
+
+/** Rebase the current branch onto `oid`. */
+export async function gitRebase(repoPath: string, oid: string): Promise<void> {
+  await invoke("git_rebase", { repoPath, oid });
+}
+
+/** Reset the current branch to `oid` with the given mode. */
+export async function gitReset(repoPath: string, oid: string, mode: ResetMode): Promise<void> {
+  await invoke("git_reset", { repoPath, oid, mode });
+}

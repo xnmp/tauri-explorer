@@ -10,11 +10,13 @@ mod content_search;
 pub mod error;
 mod files;
 pub mod git;
+pub mod git_actions;
 pub mod git_log;
 mod nano_banana;
 #[cfg(target_os = "linux")]
 mod portal;
 mod process_ext;
+mod progress;
 /// Non-Linux stub so the command registry stays platform-independent.
 #[cfg(not(target_os = "linux"))]
 mod portal {
@@ -121,6 +123,7 @@ pub fn run(launch_dir: Option<String>) {
             files::file_ops::create_directory,
             files::file_ops::rename_entry,
             files::file_ops::copy_entry,
+            files::file_ops::cancel_copy,
             files::file_ops::move_entry,
             files::file_ops::read_text_file,
             files::file_ops::read_image_data_url,
@@ -190,6 +193,14 @@ pub fn run(launch_dir: Option<String>) {
             git_log::git_log,
             git_log::git_refs,
             git_log::git_commit_files,
+            git_actions::git_checkout,
+            git_actions::git_create_branch,
+            git_actions::git_create_tag,
+            git_actions::git_cherry_pick,
+            git_actions::git_revert,
+            git_actions::git_merge,
+            git_actions::git_rebase,
+            git_actions::git_reset,
             // Drives / volumes
             files::drives::list_drives,
             // Wallpaper

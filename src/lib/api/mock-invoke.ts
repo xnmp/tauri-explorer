@@ -548,6 +548,70 @@ const MOCK_GRAPH_REFS: Record<
   [fullOid(1)]: [{ name: "v0.9", kind: "Tag" }],
 };
 
+type MockRefKind = "LocalBranch" | "RemoteBranch" | "Tag" | "Head";
+
+/** OID the HEAD ref currently decorates (mock working state). */
+function mockHeadOid(): string {
+  for (const [oid, list] of Object.entries(MOCK_GRAPH_REFS)) {
+    if (list.some((r) => r.kind === "Head")) return oid;
+  }
+  return fullOid(12);
+}
+
+/** Resolve a checkout/merge target (branch/tag name or full OID) to an OID. */
+function mockResolveTarget(target: string): string | null {
+  // A 40-hex OID that exists in the graph.
+  if (mockCommitGraph().some((c) => c.oid === target)) return target;
+  for (const [oid, list] of Object.entries(MOCK_GRAPH_REFS)) {
+    if (list.some((r) => r.name === target && r.kind !== "Head")) return oid;
+  }
+  return null;
+}
+
+/** Move a named ref of a given kind to `oid` (removing its old location). */
+function mockMoveRef(name: string, kind: MockRefKind, oid: string): void {
+  for (const key of Object.keys(MOCK_GRAPH_REFS)) {
+    MOCK_GRAPH_REFS[key] = MOCK_GRAPH_REFS[key].filter(
+      (r) => !(r.name === name && r.kind === kind),
+    );
+    if (MOCK_GRAPH_REFS[key].length === 0) delete MOCK_GRAPH_REFS[key];
+  }
+  (MOCK_GRAPH_REFS[oid] ??= []).push({ name, kind });
+}
+
+/** Add a ref at `oid` (no move — used by create branch/tag). */
+function mockAddRef(name: string, kind: MockRefKind, oid: string): void {
+  (MOCK_GRAPH_REFS[oid] ??= []).push({ name, kind });
+}
+
+/** Point HEAD (and, when checking out a branch, follow it) at `oid`. */
+function mockMoveHead(oid: string): void {
+  mockMoveRef("HEAD", "Head", oid);
+}
+
+/** Append a synthetic commit onto the current HEAD and advance main + HEAD to
+ *  it. Used by cherry-pick/revert/merge/rebase mocks so E2E sees history move. */
+function mockAppendCommit(summary: string): string {
+  const graph = mockCommitGraph();
+  const head = mockHeadOid();
+  const n = 200 + graph.length; // avoid colliding with the 1..12 base OIDs
+  const oid = fullOid(n);
+  graph.unshift({
+    oid,
+    short_oid: oid.slice(0, 7),
+    parents: [head],
+    author_name: "Alice Coder",
+    author_email: "alice@example.com",
+    author_time: GRAPH_BASE_TIME + graph.length * 3600,
+    summary,
+  });
+  // Advance whatever local branch HEAD was on (default: main), then HEAD.
+  const headBranch = (MOCK_GRAPH_REFS[head] ?? []).find((r) => r.kind === "LocalBranch");
+  mockMoveRef(headBranch?.name ?? "main", "LocalBranch", oid);
+  mockMoveHead(oid);
+  return oid;
+}
+
 /** Static fake file contents, served by read_text_file and searched by
  *  start_content_search (written files take precedence over these). */
 const mockFileContent: Record<string, string> = {
@@ -878,6 +942,8 @@ const mockCommands: Record<string, CommandHandler> = {
   cancel_search: () => {},
 
   cancel_directory_listing: () => {},
+
+  cancel_copy: () => {},
 
   // Browser mode has no Tauri event system to stream results through, so the
   // mock searches the virtual filesystem synchronously and returns the
@@ -1226,6 +1292,67 @@ const mockCommands: Record<string, CommandHandler> = {
       head_branch: "main",
       detached: false,
     };
+  },
+
+  // ----- Git graph mutating actions (VSCode Git Graph parity) -----
+
+  git_checkout: (args: Record<string, unknown>) => {
+    const target = (args.target as string) ?? "";
+    const oid = mockResolveTarget(target);
+    if (!oid) throw new Error(`pathspec '${target}' did not match any file(s) known to git`);
+    mockMoveHead(oid);
+    return null;
+  },
+  git_create_branch: (args: Record<string, unknown>) => {
+    const name = ((args.name as string) ?? "").trim();
+    const oid = (args.oid as string) ?? "";
+    const checkout = Boolean(args.checkout);
+    if (name.length === 0) throw new Error("branch name must not be empty");
+    mockAddRef(name, "LocalBranch", oid);
+    if (checkout) mockMoveHead(oid);
+    return null;
+  },
+  git_create_tag: (args: Record<string, unknown>) => {
+    const name = ((args.name as string) ?? "").trim();
+    const oid = (args.oid as string) ?? "";
+    if (name.length === 0) throw new Error("tag name must not be empty");
+    mockAddRef(name, "Tag", oid);
+    return null;
+  },
+  git_cherry_pick: (args: Record<string, unknown>) => {
+    const oid = (args.oid as string) ?? "";
+    const src = mockCommitGraph().find((c) => c.oid === oid);
+    mockAppendCommit(src ? src.summary : "Cherry-picked commit");
+    return null;
+  },
+  git_revert: (args: Record<string, unknown>) => {
+    const oid = (args.oid as string) ?? "";
+    const src = mockCommitGraph().find((c) => c.oid === oid);
+    mockAppendCommit(`Revert "${src ? src.summary : oid.slice(0, 7)}"`);
+    return null;
+  },
+  git_merge: (args: Record<string, unknown>) => {
+    const target = (args.target as string) ?? "";
+    mockAppendCommit(`Merge ${target} into current branch`);
+    return null;
+  },
+  git_rebase: (args: Record<string, unknown>) => {
+    const oid = (args.oid as string) ?? "";
+    mockAppendCommit(`Rebased onto ${oid.slice(0, 7)}`);
+    return null;
+  },
+  git_reset: (args: Record<string, unknown>) => {
+    const oid = (args.oid as string) ?? "";
+    const mode = (args.mode as string) ?? "mixed";
+    if (!["soft", "mixed", "hard"].includes(mode)) {
+      throw new Error(`invalid reset mode: ${mode}`);
+    }
+    // Move the branch HEAD is on (default main) and HEAD to the target commit.
+    const head = mockHeadOid();
+    const headBranch = (MOCK_GRAPH_REFS[head] ?? []).find((r) => r.kind === "LocalBranch");
+    mockMoveRef(headBranch?.name ?? "main", "LocalBranch", oid);
+    mockMoveHead(oid);
+    return null;
   },
 
   // ----- Symlinks -----

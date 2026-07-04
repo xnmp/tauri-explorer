@@ -12,6 +12,13 @@ const transfer = vi.hoisted(() => vi.fn());
 const undo = vi.hoisted(() => ({ push: vi.fn() }));
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 const estimate = vi.hoisted(() => vi.fn());
+const cancelCopy = vi.hoisted(() => vi.fn());
+// Capture the `copy-progress` listener the paste loop registers, so tests can
+// drive backend byte-progress events synchronously.
+const copyProgress = vi.hoisted(() => ({
+  cb: null as null | ((e: { payload: unknown }) => void),
+  unlisten: vi.fn(),
+}));
 
 vi.mock("$lib/state/file-transfer", () => ({ performFileTransfer: transfer }));
 vi.mock("$lib/state/undo.svelte", () => ({ undoStore: undo }));
@@ -24,6 +31,13 @@ vi.mock("$lib/state/conflict-resolver.svelte", () => ({
 vi.mock("$lib/api/files", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   estimateSize: estimate,
+  cancelCopy,
+}));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(async (name: string, cb: (e: { payload: unknown }) => void) => {
+    if (name === "copy-progress") copyProgress.cb = cb;
+    return copyProgress.unlisten;
+  }),
 }));
 
 import { pasteEntries, type PasteSource } from "$lib/state/paste-operations";
@@ -47,6 +61,7 @@ const context = () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  copyProgress.cb = null;
   // Settle any operations left over from a previous test.
   for (const op of [...operationsManager.operations]) {
     operationsManager.clearOperation(op.id);
@@ -138,6 +153,54 @@ describe("large paste progress", () => {
     expect(op.status).toBe("error");
     expect(op.error).toContain("permission denied");
     expect(undo.push).not.toHaveBeenCalled();
+  });
+
+  it("refines progress from copy-progress byte events for a single large file", async () => {
+    estimate.mockResolvedValue({ ok: true, data: { totalBytes: 1024 } });
+    let seenMidFile = 0;
+    transfer.mockImplementation(
+      async (_p: string, _d: string, _c: boolean, opts: { jobId: number }) => {
+        // Backend reports the copy is half done for THIS file's job.
+        copyProgress.cb?.({
+          payload: { jobId: opts.jobId, bytesDone: 512, bytesTotal: 1024, currentFile: "/src/a" },
+        });
+        seenMidFile = operationsManager.operations[0].progress;
+        return { ok: true, entry: { path: "/dest/a", name: "a" } };
+      },
+    );
+
+    // Single source: intra-file 50% must surface as ~50% overall, not 0%.
+    const error = await pasteEntries(
+      [{ name: "a", path: "/src/a", size: 1024 }],
+      false,
+      context(),
+    );
+
+    expect(error).toBeNull();
+    expect(seenMidFile).toBeCloseTo(50, 0);
+    expect(copyProgress.unlisten).toHaveBeenCalled();
+  });
+
+  it("relays a mid-file cancel to the backend via cancelCopy", async () => {
+    let capturedJobId = 0;
+    transfer.mockImplementation(
+      async (_p: string, _d: string, _c: boolean, opts: { jobId: number }) => {
+        capturedJobId = opts.jobId;
+        // User cancels the dialog while this file is copying.
+        operationsManager.cancelOperation(operationsManager.operations[0].id);
+        // A subsequent byte event should be relayed as a backend cancel.
+        copyProgress.cb?.({
+          payload: { jobId: opts.jobId, bytesDone: 1, bytesTotal: 1024, currentFile: "/src/a" },
+        });
+        return { ok: false, error: "Copy cancelled" };
+      },
+    );
+
+    await pasteEntries([{ name: "a", path: "/src/a", size: 1024 }], false, context());
+
+    expect(cancelCopy).toHaveBeenCalledWith(capturedJobId);
+    // A cancelled copy is not reported as a failure toast.
+    expect(toast.error).not.toHaveBeenCalled();
   });
 
   it("estimate failure still runs the batch with file-level progress", async () => {

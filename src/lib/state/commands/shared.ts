@@ -20,7 +20,7 @@ export async function openNewWindow(
   /** Physical-pixel top-left to place the new window at (e.g. a tab tear-off at
    *  the cursor). Defaults to a small offset from the current window. */
   at?: { x: number; y: number },
-): Promise<void> {
+): Promise<WebviewWindow | null> {
   // EXPERIMENTAL: activate a ready pre-warmed window instead of paying
   // webview-create cost. Tear-offs (tabSnapshot) always use a fresh window —
   // they need label-keyed snapshot seeding the warm path doesn't do. If no warm
@@ -28,7 +28,7 @@ export async function openNewWindow(
   // Ctrl+N can never be a no-op.
   if (!tabSnapshot && settingsStore.warmWindow) {
     const used = await consumeWarmWindow(path, viewMode, at);
-    if (used) return;
+    if (used) return null;
   }
 
   // Seed the child window with current directory entries for instant
@@ -59,7 +59,7 @@ export async function openNewWindow(
   const pos = await win.outerPosition();
   const size = await win.outerSize();
 
-  new WebviewWindow(label, {
+  return new WebviewWindow(label, {
     url,
     width: size.width,
     height: size.height,

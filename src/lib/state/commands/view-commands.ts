@@ -117,6 +117,7 @@ export const viewCommands: Command[] = [
     // it works even while the terminal's own textarea has focus.
     shortcut: "Ctrl+`",
     handler: () => terminalPanelStore.toggle(),
+    when: () => settingsStore.enableTerminal,
   },
   {
     id: "view.zoomIn",

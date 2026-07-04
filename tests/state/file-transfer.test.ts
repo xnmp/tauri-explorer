@@ -90,7 +90,7 @@ describe("performFileTransfer", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(copyEntryMock).toHaveBeenCalledWith("/src/file.txt", "/dest", false);
+    expect(copyEntryMock).toHaveBeenCalledWith("/src/file.txt", "/dest", false, undefined);
     expect(moveEntryMock).not.toHaveBeenCalled();
   });
 
@@ -289,7 +289,7 @@ describe("performFileTransfer", () => {
 
     expect(result.ok).toBe(true);
     expect(conflictPromptMock).not.toHaveBeenCalled();
-    expect(copyEntryMock).toHaveBeenCalledWith("/dest/file.txt", "/dest", false);
+    expect(copyEntryMock).toHaveBeenCalledWith("/dest/file.txt", "/dest", false, undefined);
   });
 
   it("shows toast on success", async () => {

@@ -23,7 +23,7 @@
   import { onMount } from "svelte";
   import { terminalSpawn, terminalWrite, terminalResize, terminalKill, terminalStatus } from "$lib/api/terminal";
   import { buildTerminalTheme } from "$lib/domain/terminal-theme";
-  import { buildCdCommand } from "$lib/domain/terminal-command";
+  import { buildCdSyncSequence } from "$lib/domain/terminal-command";
   import { decideCdSync } from "$lib/domain/terminal-cwd-sync";
   import { isWindows } from "$lib/domain/platform";
   import { settingsStore } from "$lib/state/settings.svelte";
@@ -120,14 +120,13 @@
   }
 
   /**
-   * Inject a `cd` to `path`. Ctrl+U (0x15) clears any half-typed prompt input
-   * first — the automatic sync must win regardless of what's on the prompt.
-   * (Kept out of `buildCdCommand` itself so the pure helper stays a plain
-   * command builder.)
+   * Inject a `cd` to `path`, clearing any half-typed prompt input first —
+   * the automatic sync must win regardless of what's on the prompt. The
+   * clear byte is shell-family-specific (see buildCdSyncSequence).
    */
   function writeCd(path: string): void {
     if (terminalId === null) return;
-    terminalWrite(terminalId, "\x15" + buildCdCommand(path, isWindows));
+    terminalWrite(terminalId, buildCdSyncSequence(path, isWindows));
   }
 
   /** Terminal follows explorer: reconcile the shell's cwd with `path`. */

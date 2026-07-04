@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { buildCdCommand, shellSingleQuote } from "$lib/domain/terminal-command";
+import { buildCdCommand, buildCdSyncSequence, shellSingleQuote } from "$lib/domain/terminal-command";
 
 describe("shellSingleQuote", () => {
   it("wraps plain paths", () => {
@@ -41,5 +41,16 @@ describe("buildCdCommand", () => {
     expect(buildCdCommand("/tmp/$(rm -rf ~)/`x`", false)).toBe(
       "cd '/tmp/$(rm -rf ~)/`x`'\r"
     );
+  });
+});
+
+describe("buildCdSyncSequence", () => {
+  it("prefixes Ctrl+U (readline kill-line) on POSIX", () => {
+    expect(buildCdSyncSequence("/home/user", false)).toBe("\x15cd '/home/user'\r");
+  });
+
+  it("prefixes ESC (console clear-line) on Windows — cmd/PowerShell don't grok Ctrl+U (#150)", () => {
+    expect(buildCdSyncSequence("D:\\Media", true)).toBe('\x1bcd /d "D:\\Media"\r');
+    expect(buildCdSyncSequence("D:\\Media", true)).not.toContain("\x15");
   });
 });

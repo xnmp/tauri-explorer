@@ -15,6 +15,7 @@ mod nano_banana;
 #[cfg(target_os = "linux")]
 mod portal;
 mod process_ext;
+mod progress;
 /// Non-Linux stub so the command registry stays platform-independent.
 #[cfg(not(target_os = "linux"))]
 mod portal {
@@ -121,6 +122,7 @@ pub fn run(launch_dir: Option<String>) {
             files::file_ops::create_directory,
             files::file_ops::rename_entry,
             files::file_ops::copy_entry,
+            files::file_ops::cancel_copy,
             files::file_ops::move_entry,
             files::file_ops::read_text_file,
             files::file_ops::read_image_data_url,

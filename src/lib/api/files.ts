@@ -250,15 +250,27 @@ export async function restoreFromTrash(paths: string[]): Promise<ApiResult<void>
 export async function copyEntry(
   source: string,
   destDir: string,
-  overwrite = false
+  overwrite = false,
+  jobId?: number,
 ): Promise<ApiResult<FileEntry>> {
   const guard = virtualPathGuard(source, destDir);
   if (guard) return guard;
   try {
-    const data = await invoke<FileEntry>("copy_entry", { source, destDir, overwrite });
+    const data = await invoke<FileEntry>("copy_entry", { source, destDir, overwrite, jobId });
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: extractError(err) };
+  }
+}
+
+/** Cancel a running copy job. The pending copyEntry call fails with
+ *  "Copy cancelled" and any partial copy is removed. Best-effort — the job
+ *  may already have finished. */
+export async function cancelCopy(jobId: number): Promise<void> {
+  try {
+    await invoke("cancel_copy", { jobId });
+  } catch {
+    // Cancellation is best-effort; the job may already have finished.
   }
 }
 

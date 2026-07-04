@@ -1,12 +1,22 @@
 //! File CRUD operations: create, rename, copy, move, delete, symlink, estimate, read/write text.
 
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use super::{metadata_to_entry_probed, run_blocking, FileEntry, SizeEstimate};
 use crate::error::AppError;
+use crate::progress::ProgressTracker;
+use crate::task_registry::TaskRegistry;
 use log;
+
+/// Cancellable copy jobs, keyed by client-generated job id so the frontend can
+/// cancel a large copy mid-file while the `copy_entry` invoke is still pending.
+static COPY_TASKS: TaskRegistry = TaskRegistry::new();
+
+/// Chunk size for streaming file copies. 1 MiB balances syscall overhead
+/// against how promptly a cancellation is observed mid-file.
+const COPY_BUF_SIZE: usize = 1024 * 1024;
 
 /// Check whether a path exists without following symlinks, so broken
 /// symlinks are still treated as existing entries.
@@ -94,20 +104,96 @@ pub(crate) fn remove_entry_at(path: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Copy a file or a directory tree from `source` to `target`.
-/// `target` must not exist yet.
-fn copy_recursively(source: &Path, target: &Path) -> Result<(), AppError> {
-    if source.is_dir() {
+/// Copy a file or a directory tree from `source` to `target`, streaming file
+/// contents in chunks so a large copy reports byte progress and can be
+/// cancelled mid-file via `tracker`. `target` must not exist yet.
+///
+/// Symlinks are recreated (not followed), matching [`estimate_path_size`]: this
+/// keeps progress totals consistent and — crucially — prevents a symlink cycle
+/// inside the tree from causing unbounded recursion.
+fn copy_recursively(
+    source: &Path,
+    target: &Path,
+    tracker: &mut ProgressTracker,
+) -> Result<(), AppError> {
+    let meta = fs::symlink_metadata(source)?;
+    let file_type = meta.file_type();
+
+    if file_type.is_symlink() {
+        tracker.check_cancelled()?;
+        let link_target = fs::read_link(source)?;
+        recreate_symlink(&link_target, target, source)?;
+        // Count the link itself, exactly as estimate_path_size does.
+        tracker.advance(meta.len(), source)?;
+    } else if file_type.is_dir() {
         fs::create_dir_all(target)?;
-        let mut options = fs_extra::dir::CopyOptions::new();
-        options.content_only = true;
-        options.overwrite = false;
-        fs_extra::dir::copy(source, target, &options)
-            .map_err(|e| AppError::Other(e.to_string()))?;
+        for entry in fs::read_dir(source)? {
+            let entry = entry?;
+            tracker.check_cancelled()?;
+            copy_recursively(&entry.path(), &target.join(entry.file_name()), tracker)?;
+        }
+        // Mirror the source directory's permissions onto the copy.
+        if let Ok(perms) = fs::metadata(source).map(|m| m.permissions()) {
+            let _ = fs::set_permissions(target, perms);
+        }
     } else {
-        fs::copy(source, target)?;
+        copy_file_streamed(source, target, &meta, tracker)?;
     }
     Ok(())
+}
+
+/// Copy a single regular file in `COPY_BUF_SIZE` chunks, advancing `tracker`
+/// (progress emit + cancel check) after each chunk. Preserves permissions.
+fn copy_file_streamed(
+    source: &Path,
+    target: &Path,
+    source_meta: &fs::Metadata,
+    tracker: &mut ProgressTracker,
+) -> Result<(), AppError> {
+    let mut reader = fs::File::open(source)?;
+    let mut writer = fs::File::create(target)?;
+    let mut buf = vec![0u8; COPY_BUF_SIZE];
+    loop {
+        tracker.check_cancelled()?;
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        writer.write_all(&buf[..n])?;
+        tracker.advance(n as u64, source)?;
+    }
+    writer.flush()?;
+    // Preserve permission bits (e.g. +x), matching fs::copy semantics.
+    let _ = fs::set_permissions(target, source_meta.permissions());
+    Ok(())
+}
+
+/// Recreate a symlink at `link_path` pointing at `link_target`. `original` is
+/// the source link, consulted on Windows to choose the dir/file variant.
+fn recreate_symlink(link_target: &Path, link_path: &Path, original: &Path) -> Result<(), AppError> {
+    #[cfg(unix)]
+    {
+        let _ = original;
+        std::os::unix::fs::symlink(link_target, link_path)?;
+    }
+    #[cfg(windows)]
+    {
+        // Choose the symlink kind from what the original resolves to; broken
+        // links (metadata fails) fall back to a file symlink.
+        let is_dir = fs::metadata(original).map(|m| m.is_dir()).unwrap_or(false);
+        if is_dir {
+            std::os::windows::fs::symlink_dir(link_target, link_path)?;
+        } else {
+            std::os::windows::fs::symlink_file(link_target, link_path)?;
+        }
+    }
+    Ok(())
+}
+
+/// A tracker that emits nothing and can't be cancelled — for internal copies
+/// (cross-device move, overwrite staging) that have no UI job attached.
+fn detached_tracker<'a>() -> ProgressTracker<'a> {
+    ProgressTracker::new(None, "copy-progress", "Copy cancelled", 0, 0, None)
 }
 
 /// Get the user's home directory.
@@ -232,20 +318,36 @@ fn generate_copy_name(dest_dir: &Path, source_name: &str, is_directory: bool) ->
 }
 
 /// Copy a file or directory.
+///
 /// If overwrite is true and target exists, replaces the existing entry.
+/// When `job_id` is supplied, the copy streams its bytes and emits
+/// `copy-progress` events keyed by that id, and can be cancelled mid-file via
+/// `cancel_copy` — so a multi-gigabyte single-file copy shows real progress and
+/// stays interruptible instead of freezing the operation dialog at 0%.
 #[tauri::command]
 pub async fn copy_entry(
+    app: tauri::AppHandle,
     source: String,
     dest_dir: String,
     overwrite: Option<bool>,
+    job_id: Option<u64>,
 ) -> Result<FileEntry, AppError> {
-    run_blocking(move || copy_entry_impl(source, dest_dir, overwrite)).await
+    run_blocking(move || copy_entry_impl(Some(&app), source, dest_dir, overwrite, job_id)).await
+}
+
+/// Cancel a running copy job. The pending `copy_entry` call fails with
+/// "Copy cancelled" and any partially-written copy is cleaned up.
+#[tauri::command]
+pub async fn cancel_copy(job_id: u64) {
+    COPY_TASKS.cancel(job_id);
 }
 
 fn copy_entry_impl(
+    app: Option<&tauri::AppHandle>,
     source: String,
     dest_dir: String,
     overwrite: Option<bool>,
+    job_id: Option<u64>,
 ) -> Result<FileEntry, AppError> {
     let source_path = PathBuf::from(&source);
     let dest_dir_path = PathBuf::from(&dest_dir);
@@ -269,23 +371,79 @@ fn copy_entry_impl(
 
     reject_dir_into_itself(&source_path, &dest_dir_path)?;
 
-    let mut target = dest_dir_path.join(&source_name);
+    // Register cancellation + size the copy for progress only when a job id is
+    // attached; a plain internal copy pays neither the walk nor event overhead.
+    let cancelled = job_id.map(|id| COPY_TASKS.start_with_id(id));
+    let total_bytes = if cancelled.is_some() {
+        let mut fc = 0;
+        let mut tb = 0;
+        estimate_path_size(&source_path, &mut fc, &mut tb);
+        tb
+    } else {
+        0
+    };
+    let mut tracker = ProgressTracker::new(
+        // Suppress events when there's no job so a plain copy stays silent.
+        if job_id.is_some() { app } else { None },
+        "copy-progress",
+        "Copy cancelled",
+        job_id.unwrap_or(0),
+        total_bytes,
+        cancelled.as_deref(),
+    );
+
+    let result = copy_entry_inner(
+        &source_path,
+        &dest_dir_path,
+        &source_name,
+        overwrite,
+        &source,
+        &mut tracker,
+    );
+
+    if let Some(id) = job_id {
+        COPY_TASKS.cleanup(id);
+    }
+    result
+}
+
+fn copy_entry_inner(
+    source_path: &Path,
+    dest_dir_path: &Path,
+    source_name: &str,
+    overwrite: Option<bool>,
+    source: &str,
+    tracker: &mut ProgressTracker,
+) -> Result<FileEntry, AppError> {
+    let mut target = dest_dir_path.join(source_name);
 
     if entry_exists(&target) {
         if overwrite.unwrap_or(false) {
-            if is_same_entry(&source_path, &target) {
+            if is_same_entry(source_path, &target) {
                 return Err(AppError::InvalidPath(format!(
                     "Source and destination are the same: {}",
                     source
                 )));
             }
-            return copy_entry_overwriting(&source_path, &dest_dir_path, &target, &source_name);
+            return copy_entry_overwriting(
+                source_path,
+                dest_dir_path,
+                &target,
+                source_name,
+                tracker,
+            );
         } else {
-            target = generate_copy_name(&dest_dir_path, &source_name, source_path.is_dir());
+            target = generate_copy_name(dest_dir_path, source_name, source_path.is_dir());
         }
     }
 
-    copy_recursively(&source_path, &target)?;
+    // On failure or mid-file cancellation, don't leave a half-written copy
+    // behind. `target` didn't exist before this call (existence was checked
+    // above), so anything present now was created by us.
+    if let Err(e) = copy_recursively(source_path, &target, tracker) {
+        let _ = remove_entry_at(&target);
+        return Err(e);
+    }
 
     log::info!(
         "Copied entry (is_dir={}) overwrite={}",
@@ -305,9 +463,10 @@ fn copy_entry_overwriting(
     dest_dir: &Path,
     target: &Path,
     source_name: &str,
+    tracker: &mut ProgressTracker,
 ) -> Result<FileEntry, AppError> {
     let staging = unique_staging_path(dest_dir, source_name);
-    if let Err(e) = copy_recursively(source, &staging) {
+    if let Err(e) = copy_recursively(source, &staging, tracker) {
         let _ = remove_entry_at(&staging);
         return Err(e);
     }
@@ -446,7 +605,7 @@ fn perform_move(
             // Stage the copy in the destination dir, swap it into place once
             // complete, and only then delete the source.
             let staging = unique_staging_path(dest_dir_path, source_name);
-            if let Err(e) = copy_recursively(source_path, &staging) {
+            if let Err(e) = copy_recursively(source_path, &staging, &mut detached_tracker()) {
                 let _ = remove_entry_at(&staging);
                 return Err(e);
             }
@@ -843,11 +1002,13 @@ mod tests {
         let dest_dir = dir.path().join("dest");
         fs::create_dir(&dest_dir).unwrap();
 
-        let result = block_on(copy_entry(
+        let result = copy_entry_impl(
+            None,
             source_dir.to_string_lossy().to_string(),
             dest_dir.to_string_lossy().to_string(),
             None,
-        ));
+            None,
+        );
 
         assert!(result.is_ok(), "copy_entry failed: {:?}", result.err());
         let entry = result.unwrap();
@@ -873,11 +1034,13 @@ mod tests {
         fs::create_dir(&source_dir).unwrap();
         fs::write(source_dir.join("file1.txt"), "hello").unwrap();
 
-        let result = block_on(copy_entry(
+        let result = copy_entry_impl(
+            None,
             source_dir.to_string_lossy().to_string(),
             dir.path().to_string_lossy().to_string(),
             None,
-        ));
+            None,
+        );
 
         assert!(
             result.is_ok(),
@@ -899,11 +1062,13 @@ mod tests {
         fs::write(&file_path, "do not destroy").unwrap();
 
         // Copy into the file's own parent with overwrite=true: target == source.
-        let result = block_on(copy_entry(
+        let result = copy_entry_impl(
+            None,
             file_path.to_string_lossy().to_string(),
             dir.path().to_string_lossy().to_string(),
             Some(true),
-        ));
+            None,
+        );
 
         assert!(result.is_err(), "expected same-path copy to error");
         assert_eq!(fs::read_to_string(&file_path).unwrap(), "do not destroy");
@@ -932,11 +1097,13 @@ mod tests {
         let inner = source_dir.join("inner");
         fs::create_dir_all(&inner).unwrap();
 
-        let result = block_on(copy_entry(
+        let result = copy_entry_impl(
+            None,
             source_dir.to_string_lossy().to_string(),
             inner.to_string_lossy().to_string(),
             None,
-        ));
+            None,
+        );
 
         assert!(matches!(result, Err(AppError::InvalidPath(_))));
         assert!(source_dir.exists());
@@ -952,11 +1119,13 @@ mod tests {
         fs::write(src_dir.join("a.txt"), "new content").unwrap();
         fs::write(dst_dir.join("a.txt"), "old content").unwrap();
 
-        let result = block_on(copy_entry(
+        let result = copy_entry_impl(
+            None,
             src_dir.join("a.txt").to_string_lossy().to_string(),
             dst_dir.to_string_lossy().to_string(),
             Some(true),
-        ));
+            None,
+        );
 
         assert!(result.is_ok(), "overwrite copy failed: {:?}", result.err());
         assert_eq!(
@@ -1080,5 +1249,230 @@ mod tests {
             None,
         ));
         assert!(matches!(result, Err(AppError::InvalidPath(_))));
+    }
+
+    // ---- Large / streaming copy hardening (issue #174) ----
+
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// Streaming copy of a multi-chunk file reproduces content byte-for-byte.
+    #[test]
+    fn test_copy_streams_multichunk_file_exactly() {
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("big.bin");
+        // ~8 MiB + a tail, so several 1 MiB chunks plus a partial one.
+        let mut data = vec![0u8; 8 * 1024 * 1024 + 7];
+        for (i, b) in data.iter_mut().enumerate() {
+            *b = (i % 251) as u8;
+        }
+        fs::write(&src, &data).unwrap();
+
+        let mut tracker = detached_tracker();
+        let dst = dir.path().join("copy.bin");
+        copy_recursively(&src, &dst, &mut tracker).unwrap();
+
+        assert_eq!(fs::metadata(&dst).unwrap().len(), data.len() as u64);
+        assert_eq!(fs::read(&dst).unwrap(), data);
+    }
+
+    /// A cancellation flag set before the copy starts aborts it mid-file
+    /// (proves the streaming loop checks the flag, not just between files).
+    #[test]
+    fn test_copy_cancel_aborts_mid_file() {
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("big.bin");
+        fs::write(&src, vec![1u8; 4 * 1024 * 1024]).unwrap();
+
+        let flag = AtomicBool::new(true); // already cancelled
+        let mut tracker =
+            ProgressTracker::new(None, "copy-progress", "Copy cancelled", 0, 0, Some(&flag));
+        let dst = dir.path().join("copy.bin");
+        let err = copy_recursively(&src, &dst, &mut tracker).expect_err("cancelled copy must fail");
+        assert!(err.to_string().contains("cancelled"), "got: {}", err);
+    }
+
+    /// A cancelled/failed copy must not leave a partially-written target.
+    #[test]
+    fn test_copy_cancel_cleans_up_partial_target() {
+        let dir = tempdir().unwrap();
+        let src_dir = dir.path().join("src");
+        fs::create_dir(&src_dir).unwrap();
+        fs::write(src_dir.join("a.bin"), vec![0u8; 2 * 1024 * 1024]).unwrap();
+        let dest_dir = dir.path().join("dest");
+        fs::create_dir(&dest_dir).unwrap();
+
+        let flag = AtomicBool::new(true);
+        let mut tracker =
+            ProgressTracker::new(None, "copy-progress", "Copy cancelled", 0, 0, Some(&flag));
+        let err = copy_entry_inner(
+            &src_dir,
+            &dest_dir,
+            "src",
+            None,
+            &src_dir.to_string_lossy(),
+            &mut tracker,
+        )
+        .expect_err("cancelled copy must fail");
+        assert!(err.to_string().contains("cancelled"));
+        assert!(
+            !dest_dir.join("src").exists(),
+            "partial copy should have been cleaned up"
+        );
+    }
+
+    /// cancel_copy through the registry aborts a copy_entry_impl job.
+    #[test]
+    fn test_cancel_copy_registry_aborts_job() {
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("big.bin");
+        fs::write(&src, vec![2u8; 6 * 1024 * 1024]).unwrap();
+        let dest_dir = dir.path().join("dest");
+        fs::create_dir(&dest_dir).unwrap();
+
+        // Pre-register + cancel the job id, then bypass the impl's own
+        // start_with_id (which would reset the flag) by driving copy_recursively
+        // with the registry's flag directly — same pattern archive tests use.
+        let job_id = 424_242;
+        let flag = COPY_TASKS.start_with_id(job_id);
+        flag.store(true, Ordering::Relaxed);
+        let mut tracker = ProgressTracker::new(
+            None,
+            "copy-progress",
+            "Copy cancelled",
+            job_id,
+            0,
+            Some(&flag),
+        );
+        let err = copy_recursively(&src, &dest_dir.join("big.bin"), &mut tracker)
+            .expect_err("cancelled copy must fail");
+        assert!(err.to_string().contains("cancelled"));
+        COPY_TASKS.cleanup(job_id);
+    }
+
+    /// A moderately large directory tree copies completely without recursing
+    /// unboundedly or losing entries.
+    #[test]
+    fn test_copy_tree_many_files() {
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("src");
+        // 1,500 files across 15 subdirs — enough to exercise the recursive walk
+        // while staying fast on CI.
+        for d in 0..15 {
+            let sub = src.join(format!("dir{d:02}"));
+            fs::create_dir_all(&sub).unwrap();
+            for f in 0..100 {
+                fs::write(sub.join(format!("f{f:03}.txt")), b"x").unwrap();
+            }
+        }
+        let dest = dir.path().join("dest");
+        fs::create_dir(&dest).unwrap();
+
+        copy_entry_impl(
+            None,
+            src.to_string_lossy().to_string(),
+            dest.to_string_lossy().to_string(),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let copied = dest.join("src");
+        let mut fc = 0u64;
+        let mut tb = 0u64;
+        estimate_path_size(&copied, &mut fc, &mut tb);
+        assert_eq!(fc, 1500, "all files should be copied");
+    }
+
+    /// A symlink cycle inside a copied tree must not cause unbounded recursion:
+    /// the link is recreated as a link rather than followed.
+    #[cfg(unix)]
+    #[test]
+    fn test_copy_tree_recreates_symlink_without_following_cycle() {
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("src");
+        fs::create_dir(&src).unwrap();
+        fs::write(src.join("real.txt"), "real").unwrap();
+        // Cycle: src/loop -> src
+        std::os::unix::fs::symlink(&src, src.join("loop")).unwrap();
+
+        let dest = dir.path().join("dest");
+        fs::create_dir(&dest).unwrap();
+        copy_entry_impl(
+            None,
+            src.to_string_lossy().to_string(),
+            dest.to_string_lossy().to_string(),
+            None,
+            None,
+        )
+        .expect("copy with symlink cycle must terminate");
+
+        let copied = dest.join("src");
+        assert!(copied.join("real.txt").exists());
+        let link_meta = fs::symlink_metadata(copied.join("loop")).unwrap();
+        assert!(
+            link_meta.file_type().is_symlink(),
+            "symlink should be recreated, not followed"
+        );
+    }
+
+    /// Heavy: 1 GiB single-file copy streams without buffering the whole file.
+    /// Run manually: `cargo test copy_large_sparse -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "allocates ~1 GiB of IO; run on demand"]
+    fn test_copy_large_sparse_file() {
+        use std::io::{Seek, SeekFrom};
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("huge.bin");
+        let size: u64 = 1024 * 1024 * 1024;
+        {
+            let mut f = fs::File::create(&src).unwrap();
+            f.seek(SeekFrom::Start(size - 1)).unwrap();
+            f.write_all(&[0u8]).unwrap();
+        }
+        let dest_dir = dir.path().join("dest");
+        fs::create_dir(&dest_dir).unwrap();
+
+        let start = std::time::Instant::now();
+        copy_entry_impl(
+            None,
+            src.to_string_lossy().to_string(),
+            dest_dir.to_string_lossy().to_string(),
+            None,
+            None,
+        )
+        .unwrap();
+        eprintln!("1 GiB copy took {:?}", start.elapsed());
+        assert_eq!(fs::metadata(dest_dir.join("huge.bin")).unwrap().len(), size);
+    }
+
+    /// Heavy: 20k-file tree copy. Run manually with `--ignored --nocapture`.
+    #[test]
+    #[ignore = "creates 20k files; run on demand"]
+    fn test_copy_tree_20k_files() {
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("src");
+        for d in 0..40 {
+            let sub = src.join(format!("dir{d:02}"));
+            fs::create_dir_all(&sub).unwrap();
+            for f in 0..500 {
+                fs::write(sub.join(format!("f{f:03}.txt")), b"x").unwrap();
+            }
+        }
+        let dest = dir.path().join("dest");
+        fs::create_dir(&dest).unwrap();
+        let start = std::time::Instant::now();
+        copy_entry_impl(
+            None,
+            src.to_string_lossy().to_string(),
+            dest.to_string_lossy().to_string(),
+            None,
+            None,
+        )
+        .unwrap();
+        eprintln!("20k-file tree copy took {:?}", start.elapsed());
+        let mut fc = 0u64;
+        let mut tb = 0u64;
+        estimate_path_size(&dest.join("src"), &mut fc, &mut tb);
+        assert_eq!(fc, 20_000);
     }
 }

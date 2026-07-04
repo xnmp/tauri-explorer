@@ -25,11 +25,7 @@ pub async fn ai_suggest_destination(
     count: u8,
     api_key: String,
 ) -> Result<Vec<String>, AppError> {
-    if api_key.is_empty() {
-        return Err(AppError::Other(
-            "Gemini API key is not configured".to_string(),
-        ));
-    }
+    let api_key = crate::gemini::resolve_api_key(&api_key)?;
     if candidates.is_empty() {
         return Err(AppError::Other(
             "No candidate folders to choose from".to_string(),

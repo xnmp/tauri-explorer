@@ -1065,6 +1065,12 @@ const mockCommands: Record<string, CommandHandler> = {
 
   // Deterministic fake filename suggestions so browser E2E exercises the picker
   // without a real model. Derives names from the original's extension.
+  ai_suggest_destination: (args) => {
+    const candidates = (args.candidates as string[]) ?? [];
+    const count = Math.max(1, Math.min(5, (args.count as number) ?? 3));
+    // Deterministic mock: the first N candidates, so E2E can assert exact rows.
+    return candidates.slice(0, count);
+  },
   ai_suggest_filenames: (args) => {
     const originalName = (args.originalName as string) ?? "file";
     const dot = originalName.lastIndexOf(".");

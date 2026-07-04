@@ -10,6 +10,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // dialog components; stub them so the node-env test doesn't compile Svelte.
 vi.mock("$lib/plugins/nano-banana/NanoBananaDialog.svelte", () => ({ default: {} }));
 vi.mock("$lib/plugins/ai-rename/AiRenameDialog.svelte", () => ({ default: {} }));
+vi.mock("$lib/plugins/ai-organize/AiOrganizeDialog.svelte", () => ({ default: {} }));
 
 import { createPluginRegistry } from "$lib/plugins/registry.svelte";
 import type { Plugin, PluginContext } from "$lib/plugins/api";

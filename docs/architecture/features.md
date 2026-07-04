@@ -96,7 +96,7 @@
 | New window (Ctrl+N) | `command-definitions.ts:openNewWindow()` — creates `WebviewWindow` with URL params |
 | Dual pane (Ctrl+\\) | `windowTabsManager.toggleDualPane()`, `PaneContainer.svelte` |
 | Split ratio resize | `PaneContainer.svelte` mouse handlers, `windowTabsManager.setSplitRatio()` |
-| Git commit graph (#51/#57/#58) | `git_log.rs` (git_log/git_refs/git_commit_files via libgit2), `api/git-log.ts`, `domain/git-graph.ts` (lane assignment), `GitGraphView.svelte` (virtualized rows + detail panel), opened via the `git.showGraph` palette command into a per-pane git-graph tab (#56) |
+| Git commit graph (#51/#57/#58/#179) | `git_log.rs` (git_log/git_refs/git_commit_files via libgit2; weaves stashes in as pseudo-commits), `api/git-log.ts`, `domain/git-graph.ts` (`assignLayout` vertex/branch model: continuous first-parent-chain polylines, branch-owned colors with reuse, merge-edge snapping — behavioral parity with VSCode Git Graph, reimplemented not ported), `GitGraphView.svelte` (one SVG path per branch in a shared underlay so lines never break at row boundaries; synthetic “Uncommitted Changes” row, stash ring markers, combined local+remote ref chips), opened via the `git.showGraph` palette command into a per-pane git-graph tab (#56) |
 | Workspaces | `workspaces.svelte.ts`, `WorkspaceDialog.svelte` |
 | Tab tear-off / cross-window move | `tab-transfer.ts` (localStorage marker + BroadcastChannel claim), `PaneTabBar.svelte` (drag handlers), `windowTabsManager.exportTab/adoptTab/removeTransferredTab`, label-keyed `tab-seed` in `openNewWindow` |
 | System file picker (portal) | `portal.rs` (D-Bus FileChooser backend), `FilePicker.svelte` (?picker= mode), `packaging/` (.portal + .service) |

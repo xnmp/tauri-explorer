@@ -27,8 +27,16 @@ function file(name: string, path: string, size: number): FileEntry {
   return { name, path, kind: "file", size, modified: nextTimestamp() };
 }
 
+// Ground-truth emptiness for mock directories that have no children keyed in
+// `mockFiles` (e.g. a seeded-empty folder). Listings deliberately omit is_empty
+// to mirror the backend (#129); the frontend resolves it via is_directory_empty,
+// which consults this map for such folders.
+const mockDirEmpty: Record<string, boolean> = {};
+
 function dir(name: string, path: string, is_empty?: boolean): FileEntry {
-  return { name, path, kind: "directory", size: 0, modified: nextTimestamp(), is_empty };
+  if (is_empty !== undefined) mockDirEmpty[path] = is_empty;
+  // is_empty is intentionally absent from the listing contract (#129).
+  return { name, path, kind: "directory", size: 0, modified: nextTimestamp() };
 }
 
 // Mock file system structure
@@ -403,9 +411,13 @@ const mockCommands: Record<string, CommandHandler> = {
   is_directory_empty: (args) => {
     const path = args.path as string;
     const includeHidden = (args.includeHidden ?? args.include_hidden) as boolean;
-    if (!(path in mockFiles)) return false;
-    const entries = getDirectoryEntries(path);
-    return entries.every((e) => !includeHidden && e.name.startsWith("."));
+    // Prefer computing from known children; fall back to the seeded ground truth
+    // for folders that have no children keyed in mockFiles.
+    if (path in mockFiles) {
+      const entries = getDirectoryEntries(path);
+      return entries.every((e) => !includeHidden && e.name.startsWith("."));
+    }
+    return mockDirEmpty[path] ?? false;
   },
 
   check_paths_exist: (args) => {

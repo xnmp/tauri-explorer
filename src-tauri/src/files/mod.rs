@@ -135,11 +135,12 @@ pub(crate) fn metadata_to_entry(path: &Path, sym_meta: &fs::Metadata) -> FileEnt
     }
 }
 
-/// Convert metadata to FileEntry including the `is_empty` probe. For
-/// single-entry call sites (create/rename/copy results) the extra `read_dir`
-/// is trivial; listing paths use [`metadata_to_entry`] + [`fill_is_empty`]
-/// per batch instead, so a 10k-directory scan doesn't pay 10k `read_dir`s
-/// before the first entry reaches the webview.
+/// Convert metadata to FileEntry including the `is_empty` probe. Used only by
+/// single-entry call sites (create/rename/copy results) where the extra
+/// `read_dir` is trivial and the caller wants the flag resolved immediately.
+/// Directory *listings* deliberately skip this — they leave `is_empty` as `None`
+/// and let the frontend resolve emptiness lazily via `is_directory_empty` (#129),
+/// so a 10k-directory scan doesn't pay 10k `read_dir`s up front.
 pub(crate) fn metadata_to_entry_probed(path: &Path, sym_meta: &fs::Metadata) -> FileEntry {
     let mut entry = metadata_to_entry(path, sym_meta);
     fill_is_empty(std::slice::from_mut(&mut entry));
@@ -147,7 +148,8 @@ pub(crate) fn metadata_to_entry_probed(path: &Path, sym_meta: &fs::Metadata) -> 
 }
 
 /// Backfill `is_empty` for directory entries in parallel (one `read_dir` per
-/// subdirectory is the dominant per-entry cost of a listing).
+/// subdirectory). Only [`metadata_to_entry_probed`] uses this now; listings
+/// resolve emptiness lazily on the frontend instead (#129).
 pub(crate) fn fill_is_empty(entries: &mut [FileEntry]) {
     use rayon::prelude::*;
     entries

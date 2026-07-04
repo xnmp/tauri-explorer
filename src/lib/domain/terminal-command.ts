@@ -23,3 +23,16 @@ export function buildCdCommand(path: string, isWindows: boolean): string {
   }
   return `cd ${shellSingleQuote(path)}\r`;
 }
+
+/**
+ * The full PTY write for an automatic cd sync: a clear-line control byte
+ * (so the injected cd wins over any half-typed prompt input) followed by
+ * the cd command. The clear byte is shell-family-specific: Ctrl+U (0x15)
+ * is readline/zsh kill-line, but cmd.exe/PowerShell don't interpret it —
+ * they'd receive a stray NAK that corrupts the command line (#150). Both
+ * Windows shells clear console line input on ESC (0x1b).
+ */
+export function buildCdSyncSequence(path: string, isWindows: boolean): string {
+  const clearLine = isWindows ? "\x1b" : "\x15";
+  return clearLine + buildCdCommand(path, isWindows);
+}

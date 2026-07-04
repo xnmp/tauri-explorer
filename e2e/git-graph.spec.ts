@@ -90,3 +90,91 @@ test("clicking a commit opens the detail panel with its changed files", async ({
   await view.locator(".commit-row").first().click();
   await expect(detail).toHaveCount(0);
 });
+
+test.describe("Git graph commit context actions", () => {
+  test("right-click opens the commit menu with the expected actions", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+
+    const view = page.locator('[data-testid="git-graph-view"]');
+    await view.locator(".commit-row").first().click({ button: "right" });
+
+    const menu = page.locator('[data-testid="git-graph-menu"]');
+    await expect(menu).toBeVisible();
+    for (const label of [
+      "Create Branch",
+      "Create Tag",
+      "Checkout",
+      "Cherry-pick",
+      "Revert",
+      "Merge into current branch",
+      "Rebase current branch on this Commit",
+      "Reset current branch to this Commit",
+      "Copy Commit Hash",
+      "Copy Commit Subject",
+    ]) {
+      await expect(menu).toContainText(label);
+    }
+
+    // Escape dismisses the menu.
+    await page.keyboard.press("Escape");
+    await expect(menu).toHaveCount(0);
+  });
+
+  test("create branch adds a branch ref chip at that commit", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+
+    const view = page.locator('[data-testid="git-graph-view"]');
+    const tip = view.locator(".commit-row").first();
+    await tip.click({ button: "right" });
+
+    await page.locator('[data-testid="git-graph-menu"]').getByText("Create Branch…").click();
+    const prompt = page.locator('[data-testid="git-graph-prompt"]');
+    await expect(prompt).toBeVisible();
+    await prompt.locator("input").fill("hotfix/login");
+    await prompt.getByText("Create branch", { exact: true }).click();
+
+    // The new local-branch chip decorates the tip commit after the reload.
+    await expect(
+      view.locator(".commit-row").first().locator(".ref-branch", { hasText: "hotfix/login" }),
+    ).toBeVisible();
+  });
+
+  test("checkout moves the HEAD chip to the target commit", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+
+    const view = page.locator('[data-testid="git-graph-view"]');
+    // HEAD starts on the tip (merge) commit.
+    await expect(view.locator(".commit-row").first().locator(".ref-head")).toHaveText("HEAD");
+
+    // Checkout the `feature` branch (on commit #10).
+    const featureRow = view.locator(".commit-row").filter({ hasText: "Add tests for feature X" });
+    await featureRow.click({ button: "right" });
+    await page.locator('[data-testid="git-graph-menu"]').getByText("Checkout feature").click();
+
+    // HEAD chip now decorates the feature commit, not the old tip.
+    await expect(featureRow.locator(".ref-head")).toHaveText("HEAD");
+    await expect(view.locator(".commit-row").first().locator(".ref-head")).toHaveCount(0);
+  });
+
+  test("copy commit hash writes the full OID to the clipboard", async ({ page, context }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+
+    const view = page.locator('[data-testid="git-graph-view"]');
+    await view.locator(".commit-row").first().click({ button: "right" });
+    await page.locator('[data-testid="git-graph-menu"]').getByText("Copy Commit Hash").click();
+
+    const clip = await page.evaluate(() => navigator.clipboard.readText());
+    expect(clip).toHaveLength(40);
+    // The tip commit's deterministic OID starts with "000c" (commit #12 = 0xc).
+    expect(clip.startsWith("000c")).toBe(true);
+  });
+});

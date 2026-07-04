@@ -1,0 +1,69 @@
+# Changelog
+
+All notable changes to Tauri Explorer.
+
+## v1.0.0 — 2026-07-05
+
+First stable release.
+
+### Added
+- **Crash reporting (local only)** — panics are saved to `<log dir>/crashes/`; the next launch offers a pre-filled GitHub issue. Nothing is ever sent automatically.
+- **Update checker** — once a day, a small notice appears when a newer release exists (notification only, no auto-download).
+- **Keyboard shortcut cheatsheet** — `Ctrl+/` (or "Keyboard Shortcuts" in the palette) shows every live binding, including your custom rebinds.
+- First-run hint pointing at `Ctrl+P` / `Ctrl+Shift+P`.
+- MIT `LICENSE` file, README badges, CHANGELOG.
+
+### Security
+- Config files (which can hold plugin API keys) are written with owner-only permissions on Unix.
+- AI plugins accept the `GEMINI_API_KEY` environment variable so the key never has to be stored on disk.
+
+### Known limitations
+- Binaries are not code-signed yet: macOS Gatekeeper and Windows SmartScreen will warn on first launch.
+- Updates are manual (download from Releases); a built-in updater is planned.
+
+## v0.9.0 — 2026-07-04
+
+- Git graph parity polish: continuous branch curves, stash tracking, combined local+remote ref chips with up-to-date indicator, uncommitted-changes row, complex-merge rendering (#179).
+- More prominent Chrome-style tab fillets (#157).
+
+## v0.8.0 — 2026-07-04
+
+- Git graph context actions: checkout, merge, rebase, create branch/tag, cherry-pick, revert, reset, copy hash (#173).
+- Chrome-style live window detach when dragging tabs out (#176).
+- Feature flags for terminal and git graph (#175).
+- Streaming, cancellable large copy operations; large zip/unzip hardening (#174).
+- Tab fillets curve into the pane like Chrome (#157).
+
+## v0.7.0 — 2026-07-04
+
+- Per-pane tabs with drag-and-drop between panes and windows (#140).
+- Git commit graph view (#51/#56/#57/#58).
+- Integrated terminal panel (#150).
+- Virtualized List and Tiles views for large directories (#128).
+- Git panel improvements (#156), adversarial-testing fixes (#167).
+
+## v0.6.0 — 2026-06-25
+
+- Command palette polish, quick open frecency, workspace management.
+- Nano Banana and AI rename/organize extracted into plugins (#144/#145).
+
+## v0.5.0 — 2026-06-24
+
+- Plugin system, content search improvements, theme system expansion.
+
+## v0.4.0 — 2026-06-13
+
+- Windows support hardening (paths, clipboard, cross-device moves).
+- Linux desktop portal (system file picker) backend.
+
+## v0.3.0 — 2026-04-20
+
+- Dual-pane mode, Miller columns, preview pane.
+
+## v0.2.7 — 2026-03-11
+
+- Details/List/Tiles views, fuzzy quick open, ripgrep content search.
+
+## v0.1.0 — 2026-03-11
+
+- Initial release: Tauri v2 + Svelte 5 file explorer with command palette.

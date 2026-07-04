@@ -1388,6 +1388,7 @@ A broad batch of Windows-branch fixes and features. Key takeaways:
 - **SVGs had no preview because they're neither raster-thumbnail images nor text.** `isImageFile` is gated on `THUMBNAIL_EXTENSIONS` (backend turbojpeg can't decode SVG) and `isTextFile` excludes the `image` icon category. Added `isSvgFile` and let the preview's image branch render it via `convertFileSrc` (webview renders SVG natively) — without adding `svg` to the raster thumbnail set. The asset scope is path-based so SVGs under allowed paths load; CSP `img-src` already permits `asset:`.
 - **Frecency (the Recent locations list) recorded mere navigation, not real work.** Every `navigateTo` called `frecencyStore.recordAccess(folder)`, so browsing through folders ranked them. Changed to record only when a *file* is acted on — opened (FileList/QuickOpen/Open command), previewed (PreviewPane), or right-click-actioned (cut/copy/rename/delete/extract/compress/symlink/wallpaper/hide) — via `recordFileAction(filePath)` which keys on the file's containing folder. Plain navigation (including QuickOpen→folder) no longer feeds it.
 
+<<<<<<< HEAD
 ---
 
 ## 2026-07-03 perf/warm-window-pool: adversarial re-verification of the warm-window pool
@@ -1407,3 +1408,16 @@ A broad batch of Windows-branch fixes and features. Key takeaways:
 
 - **Svelte 5 `$state` arrays deep-proxy their elements — a disposer can't remove "the object I pushed" by reference.** The contribution registries (context-menu items, plugin settings sections) stored plugins' objects in a `$state<[]>` array; the disposer returned by `register(item)` did `items = items.filter(i => i !== item)`. In vitest this passed, but in the browser the plugin toggle-off left the context-menu item behind while the command (a plain `Map`, no proxy) was correctly removed — the smoking gun. Cause: reading the `$state` array yields **proxy-wrapped** elements that never `===` the raw object captured in the disposer closure. Fix: remove by a stable id field (`items.filter(i => i.id !== item.id)`; sections by `(pluginId, id)`). Lesson: never key `$state`-array removal on object identity — use an id. Also: a node-env unit test won't reproduce this; the browser e2e (toggle plugin off, assert the menu item is gone) is what caught it.
 - **Virtual `scheme://` paths need a carve-out at every real-path chokepoint.** Plugin fs providers serve `demo://…`; routing them meant `api/files.ts` dispatching to `providerFor(path).list(path)` *before* the real-fs invoke, plus skipping the pane watcher, git-status trigger, and `toNativeSeparators` (which would turn `demo://a/b` into `demo:\a\b` on Windows) for virtual paths. The scheme is required to be ≥2 chars so it never collides with a Windows drive letter (`C://` is not virtual). Breadcrumb parsing gets a virtual branch mirroring the existing UNC special case.
+=======
+## fix/git-panel-issues (#156): stage-from-diff was lost because the diff moved surfaces
+
+`ScmDiffView.svelte` (with Stage/Unstage/Discard header actions) ended up
+orphaned — nothing imports it; the live diff actually renders in
+`PreviewPane.svelte`, which had no actions. When a feature's surface is
+relocated, grep for imports of the old component before assuming its
+capabilities moved with it. The diff actions now live in PreviewPane's
+git-diff header and follow the file across the index boundary after
+stage/unstage. Mock git handlers are stateful (in-memory model mirroring
+git.rs) so E2E can assert real outcomes (rows moving sections, commits
+clearing staged, amend folding).
+>>>>>>> fix/git-panel-issues

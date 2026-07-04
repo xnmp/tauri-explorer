@@ -303,6 +303,9 @@ const mockGitignored = new Set<string>();
 /** Contents of files created via the mocked write_text_file. */
 const mockWrittenFiles: Record<string, string> = {};
 
+/** In-memory OS clipboard file list, round-tripped by the clipboard_* mocks. */
+let mockClipboardFiles: string[] = [];
+
 /** Static fake file contents, served by read_text_file and searched by
  *  start_content_search (written files take precedence over these). */
 const mockFileContent: Record<string, string> = {
@@ -952,12 +955,18 @@ const mockCommands: Record<string, CommandHandler> = {
   set_window_theme: () => {},
 
   // ----- Clipboard file operations (os-clipboard.ts) -----
+  // In-memory clipboard so write → has → read round-trips in browser/E2E mode,
+  // mirroring the real OS clipboard contract (write paths, then read them back).
 
-  clipboard_has_files: () => false,
+  clipboard_has_files: () => mockClipboardFiles.length > 0,
 
-  clipboard_read_files: () => [] as string[],
+  clipboard_read_files: () => [...mockClipboardFiles],
 
-  clipboard_write_files: () => true,
+  clipboard_write_files: (args) => {
+    const paths = (args.paths as string[]) ?? [];
+    mockClipboardFiles = [...paths];
+    return true;
+  },
 
   clipboard_has_image: () => false,
 
@@ -975,9 +984,18 @@ const mockCommands: Record<string, CommandHandler> = {
 
   get_log_dir: () => "/tmp/tauri-explorer/logs",
 
+  // Mirrors the real backend: writes a PNG into `directory` and returns its
+  // full path. Adds the entry to the mock fs so the pasted image shows up in
+  // the directory listing. A deterministic filename keeps E2E assertions stable.
   clipboard_paste_image: (args: Record<string, unknown>) => {
     const directory = args.directory as string;
-    return `${directory}/clipboard-image.png`;
+    const filename = "clipboard-image.png";
+    const path = `${directory}/${filename}`;
+    const entries = mockFiles[directory] || (mockFiles[directory] = []);
+    if (!entries.some((e) => e.path === path)) {
+      entries.push(file(filename, path, 4096));
+    }
+    return path;
   },
 
   start_nano_banana_job: () => 1,

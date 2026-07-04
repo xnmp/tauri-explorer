@@ -468,3 +468,36 @@ describe("tagged-union tab kinds (#56)", () => {
     expect(manager.canRestoreTab).toBe(true);
   });
 });
+
+describe("adversarial review regressions (#167)", () => {
+  it("Ctrl+Shift+T restores a closed git-graph tab as a git-graph tab", () => {
+    const manager = freshManager();
+    const graph = manager.openGitGraphTab("/home/user/project");
+    manager.closeTab(graph.id);
+
+    const result = manager.restoreClosedTab();
+
+    expect(result).toMatchObject({ restored: true });
+    const restored = manager.panes.left.tabs.find((t) => t.kind === "git-graph");
+    expect(restored).toBeDefined();
+    expect(manager.getTabPath(restored!.id)).toBe("/home/user/project");
+    expect(manager.getTabTitle(restored!)).toBe("Graph: project");
+  });
+
+  it("normalizePersistedState rejects v2 states missing tabs arrays", () => {
+    expect(
+      normalizePersistedState({ version: 2, panes: { left: {}, right: {} }, activePaneId: "left", dualPaneEnabled: false, splitRatio: 0.5 }),
+    ).toBeNull();
+    expect(countPersistedTabs({ version: 2, panes: { left: {}, right: {} } })).toBe(0);
+  });
+
+  it("init survives a corrupt v2 saved state (falls back to a fresh tab)", () => {
+    localStorage.setItem(
+      "explorer-tabs",
+      JSON.stringify({ version: 2, panes: { left: {}, right: {} }, activePaneId: "left", dualPaneEnabled: false, splitRatio: 0.5 }),
+    );
+    const manager = createWindowTabsManager();
+    expect(() => manager.init("/home/user")).not.toThrow();
+    expect(manager.panes.left.tabs.length).toBe(1);
+  });
+});

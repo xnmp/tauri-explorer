@@ -120,7 +120,13 @@ export function normalizePersistedState(state: unknown): PersistedTabState | nul
   if (!state) return null;
   if (isLegacyState(state)) return migrateLegacyState(state);
   const s = state as PersistedTabState;
-  if (s.version === 2 && s.panes?.left && s.panes?.right) return s;
+  if (
+    s.version === 2 &&
+    Array.isArray(s.panes?.left?.tabs) &&
+    Array.isArray(s.panes?.right?.tabs)
+  ) {
+    return s;
+  }
   return null;
 }
 
@@ -169,6 +175,8 @@ export function extractFolderName(path: string): string {
 interface ClosedTabSnapshot {
   path: string;
   paneId: PaneId;
+  /** Tab kind (#56); absent in old snapshots — treated as "explorer". */
+  kind?: "explorer" | "git-graph";
   closedAt: number; // insertion index within its pane's strip
   fromClosedWindow: boolean; // true if this was the last tab when window closed
 }
@@ -641,6 +649,7 @@ function createWindowTabsManager() {
     const snapshot: ClosedTabSnapshot = {
       path: getTabLivePath(tab),
       paneId,
+      kind: tab.kind,
       closedAt: tabIndex,
       fromClosedWindow,
     };
@@ -754,7 +763,24 @@ function createWindowTabsManager() {
     // otherwise into the left pane.
     const targetPane: PaneId =
       snapshot.paneId === "right" && !dualPaneEnabled ? "left" : snapshot.paneId;
-    adoptTab({ path: snapshot.path }, Math.min(snapshot.closedAt, panes[targetPane].tabs.length), targetPane);
+    const at = Math.min(snapshot.closedAt, panes[targetPane].tabs.length);
+    if (snapshot.kind === "git-graph") {
+      // A graph tab restores as a graph tab (#167) — no explorer to create.
+      const tab: PaneTab = {
+        id: generateId("tab"),
+        kind: "git-graph",
+        repoPath: snapshot.path,
+        title: `Graph: ${extractFolderName(snapshot.path)}`,
+      };
+      const pane = panes[targetPane];
+      const newTabs = [...pane.tabs];
+      newTabs.splice(at, 0, tab);
+      panes = { ...panes, [targetPane]: { tabs: newTabs, activeTabId: tab.id } };
+      activePaneId = targetPane;
+      saveState();
+    } else {
+      adoptTab({ path: snapshot.path }, at, targetPane);
+    }
     return { restored: true };
   }
 

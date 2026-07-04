@@ -15,6 +15,7 @@ import { paneCommands, crossPaneCommands } from "./commands/pane-commands";
 import {
   windowCommands,
   tabCommands,
+  gitGraphCommands,
   bookmarkCommands,
   recentCommands,
   workspaceCommands,
@@ -36,6 +37,7 @@ export function registerAllCommands(): void {
     ...recentCommands,
     ...windowCommands,
     ...tabCommands,
+    ...gitGraphCommands,
     ...terminalCommands,
     ...workspaceCommands,
     ...generalDialogCommands,

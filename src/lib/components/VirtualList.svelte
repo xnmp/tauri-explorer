@@ -32,6 +32,9 @@
     itemOverflow?: "hidden" | "visible";
     /** Padding applied to the scroll viewport (grids inset their content here). */
     viewportPadding?: string;
+    /** Called when the rendered window nears the end of `items` — incremental
+     *  loaders (git graph paging) append more items in response. */
+    onnearend?: () => void;
   }
 
   let {
@@ -45,6 +48,7 @@
     class: className = "",
     itemOverflow = "hidden",
     viewportPadding,
+    onnearend,
   }: Props = $props();
 
   let viewportRef = $state<HTMLElement | null>(null);
@@ -124,6 +128,15 @@
       key: getKey(item, startIndex + offset)
     }))
   );
+
+  // Near-end notification for incremental loaders. An $effect (not $derived):
+  // this is a genuine callback side effect driven by the scroll window.
+  const NEAR_END_ROWS = 20;
+  $effect(() => {
+    if (onnearend && items.length > 0 && endIndex >= items.length - NEAR_END_ROWS) {
+      onnearend();
+    }
+  });
 
   const paddingTop = $derived(
     layout ? (layout.offsets[startIndex] ?? 0) : startIndex * itemHeight

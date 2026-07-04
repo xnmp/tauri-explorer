@@ -84,3 +84,14 @@ export async function gitLog(
 export async function gitRefs(repoPath: string): Promise<GitRefs> {
   return invoke<GitRefs>("git_refs", { repoPath });
 }
+
+export interface CommitFile {
+  path: string;
+  /** Porcelain-style letter: A, M, D, R, C, T. */
+  status: string;
+}
+
+/** Files changed by a commit vs its first parent (detail panel, #58). */
+export async function gitCommitFiles(repoPath: string, oid: string): Promise<CommitFile[]> {
+  return invoke<CommitFile[]>("git_commit_files", { repoPath, oid });
+}

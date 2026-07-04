@@ -8,7 +8,8 @@ import { settingsStore } from "../settings.svelte";
 import { bookmarksStore } from "../bookmarks.svelte";
 import { recentFilesStore } from "../recent-files.svelte";
 import { dialogStore } from "../dialogs.svelte";
-import { openInTerminal } from "$lib/api/files";
+import { openInTerminal, gitRepoRoot } from "$lib/api/files";
+import { toastStore } from "../toast.svelte";
 import { readFocusedWindowState } from "../focused-window";
 import { getActiveExplorer, openNewWindow } from "./shared";
 
@@ -92,6 +93,25 @@ export const tabCommands: Command[] = [
     shortcut: "Ctrl+PageUp",
     handler: () => windowTabsManager.prevTab(),
     when: () => windowTabsManager.tabs.length > 1,
+  },
+];
+
+/** Git graph command (#51): open the repo's commit graph as a tab. */
+export const gitGraphCommands: Command[] = [
+  {
+    id: "git.showGraph",
+    label: "Git: Show Commit Graph",
+    category: "general",
+    handler: async () => {
+      const path = getActiveExplorer()?.state.currentPath;
+      if (!path) return;
+      const root = await gitRepoRoot(path);
+      if (root.ok && root.data) {
+        windowTabsManager.openGitGraphTab(root.data);
+      } else {
+        toastStore.show("Not inside a git repository", "info");
+      }
+    },
   },
 ];
 

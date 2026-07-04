@@ -378,7 +378,7 @@
             <path fill="#EA4335" d="M24 10.75c3.23 0 6.13 1.11 8.41 3.29l6.31-6.31C34.91 4.18 29.93 2 24 2 15.4 2 7.96 6.93 4.34 14.12l7.35 5.7c1.73-5.2 6.58-9.07 12.31-9.07z"/>
           </svg>
         {:else if anchor.kind === "removable"}
-          <!-- Lucide "usb" icon with the drive letter superimposed. -->
+          <!-- Lucide "usb" icon followed by the drive letter (#159). -->
           <span class="anchor-usb">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <circle cx="10" cy="7" r="1" />
@@ -637,32 +637,22 @@
     object-fit: contain;
   }
 
-  /* Removable drive: USB-stick outline (green, matching the sidebar) with the
-     drive letter centred inside it. */
+  /* Removable drive: USB-stick outline (green, matching the sidebar) followed
+     by the drive letter — icon and letter sit side by side (#159). */
   .anchor-usb {
-    position: relative;
     display: inline-flex;
-    width: 16px;
-    height: 16px;
+    align-items: center;
+    gap: 3px;
     color: #10b981;
   }
+  .anchor-usb svg {
+    flex-shrink: 0;
+  }
   .anchor-usb-letter {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 8px;
+    font-size: 10px;
     font-weight: 700;
     line-height: 1;
     color: var(--text-secondary);
-    /* Lift the letter off the trident strokes with a halo in the surface colour
-       (stacked shadows build up enough opacity to fully knock out the lines). */
-    text-shadow:
-      0 0 2px var(--background-solid),
-      0 0 2px var(--background-solid),
-      0 0 1.5px var(--background-solid),
-      0 0 1.5px var(--background-solid);
   }
 
   .crumb.ellipsis {

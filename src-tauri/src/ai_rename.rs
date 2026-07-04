@@ -26,11 +26,7 @@ pub async fn ai_suggest_filenames(
     count: u8,
     api_key: String,
 ) -> Result<Vec<String>, AppError> {
-    if api_key.is_empty() {
-        return Err(AppError::Other(
-            "Gemini API key is not configured".to_string(),
-        ));
-    }
+    let api_key = crate::gemini::resolve_api_key(&api_key)?;
 
     let count = count.clamp(1, 5) as usize;
     let prompt = build_prompt(&original_name, content_hint.as_deref(), count);

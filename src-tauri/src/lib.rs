@@ -9,6 +9,7 @@ mod config;
 mod content_search;
 pub mod error;
 mod files;
+mod gemini;
 pub mod git;
 pub mod git_actions;
 pub mod git_log;

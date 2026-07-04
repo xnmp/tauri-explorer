@@ -868,7 +868,7 @@ const mockCommands: Record<string, CommandHandler> = {
         { path: "assets/logo.png", old_path: null, status: "Untracked" },
       ].filter((e) => !mockGitignored.has(e.path)),
       merge: [
-        { path: "src/constants.ts", old_path: null, status: "Conflict" },
+        { path: "src/constants.ts", old_path: null, status: "Conflicted" },
       ],
     };
   },

@@ -55,7 +55,7 @@
   .git-untracked { color: #22c55e; }
   .git-added { color: #22c55e; }
   .git-deleted { color: #ef4444; }
-  .git-conflict { color: #ef4444; font-weight: 800; }
+  .git-conflicted { color: #ef4444; font-weight: 800; }
   .git-renamed { color: #60a5fa; }
   .git-copied { color: #60a5fa; }
   .git-ignored { color: #6b7280; }

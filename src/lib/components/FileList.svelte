@@ -11,7 +11,7 @@
   import { openFile, openImageWithSiblings } from "$lib/api/files";
   import { resolveActivation } from "$lib/api/activate";
   import { dragState } from "$lib/state/drag.svelte";
-  import { getDropSourcePaths, handleBackgroundDrop } from "$lib/state/drop-operations";
+  import { getDropSourcePaths, handleFileDropMany } from "$lib/state/drop-operations";
   import { useMarqueeSelection } from "$lib/composables/use-marquee-selection.svelte";
   import { useTypeAhead } from "$lib/composables/use-type-ahead.svelte";
   import { isImageFile } from "$lib/domain/file-types";
@@ -283,14 +283,13 @@
     dragState.clear();
 
     const existingNames = new Set(explorer.displayEntries.map((e) => e.name));
-    for (const sourcePath of validPaths) {
-      await handleBackgroundDrop(sourcePath, currentPath, existingNames, {
-        onRefresh: () => windowTabsManager.refreshAllPanes(),
-      });
-      // Each transferred file now exists in the target dir — later files in
-      // this batch sharing its basename must trigger the conflict dialog.
-      existingNames.add(basename(sourcePath));
-    }
+    // Multi-item background drops are one undoable batch (#163); the helper
+    // extends existingNames as items land so later same-named files in the
+    // batch still trigger the conflict dialog.
+    await handleFileDropMany(validPaths, currentPath, false, {
+      onRefresh: () => windowTabsManager.refreshAllPanes(),
+      existingNames,
+    });
   }
 </script>
 

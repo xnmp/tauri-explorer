@@ -9,7 +9,7 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { getHomeDirectory } from "$lib/api/files";
-  import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
+  import { getDropSourcePaths, handleFileDropMany } from "$lib/state/drop-operations";
   import { truncateBreadcrumbs } from "$lib/domain/breadcrumb-truncation";
   import { isWslDistroRoot, isWslHome } from "$lib/domain/wsl";
   import { directoryKey } from "$lib/domain/path";
@@ -242,14 +242,12 @@
     dropTargetCrumb = null;
     if (!event.dataTransfer) return;
 
-    const sourcePaths = getDropSourcePaths(event.dataTransfer);
-    for (const sourcePath of sourcePaths) {
-      if (sourcePath === targetPath) continue;
-      if (targetPath.startsWith(sourcePath + "/")) continue;
-      await handleFileDrop(sourcePath, targetPath, false, {
-        onRefresh: () => windowTabsManager.refreshAllPanes(),
-      });
-    }
+    const sourcePaths = getDropSourcePaths(event.dataTransfer).filter(
+      (sourcePath) => sourcePath !== targetPath && !targetPath.startsWith(sourcePath + "/"),
+    );
+    await handleFileDropMany(sourcePaths, targetPath, false, {
+      onRefresh: () => windowTabsManager.refreshAllPanes(),
+    });
   }
 
 </script>

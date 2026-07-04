@@ -9,7 +9,7 @@
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { getDropSourcePaths } from "$lib/state/drop-operations";
-  import { handleFileDrop } from "$lib/state/drop-operations";
+  import { handleFileDropMany } from "$lib/state/drop-operations";
   import { dragState } from "$lib/state/drag.svelte";
   import {
     tabDragState,
@@ -287,13 +287,15 @@
         explorer.refresh({ silent: true });
       }
     };
-    for (const sourcePath of sourcePaths) {
-      if (parentDir(sourcePath) === targetPath) continue;
-      if (sourcePath === targetPath) continue;
-      if (targetPath.startsWith(sourcePath + "/")) continue;
-      // Await sequentially so multi-file drops can't stack conflict dialogs
-      await handleFileDrop(sourcePath, targetPath, isCopy, { onRefresh });
-    }
+    const valid = sourcePaths.filter(
+      (sourcePath) =>
+        parentDir(sourcePath) !== targetPath &&
+        sourcePath !== targetPath &&
+        !targetPath.startsWith(sourcePath + "/"),
+    );
+    // The helper transfers sequentially (no stacked conflict dialogs) and
+    // records one undoable batch (#163).
+    await handleFileDropMany(valid, targetPath, isCopy, { onRefresh });
   }
 </script>
 

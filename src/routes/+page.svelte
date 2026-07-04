@@ -5,6 +5,7 @@
 <script lang="ts">
   import "@fontsource-variable/inter";
   import { onMount } from "svelte";
+  import { installGlobalErrorHandlers } from "$lib/api/crash";
   import { themeStore } from "$lib/state/theme.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
@@ -29,6 +30,7 @@
   import { useWindowLifecycle } from "$lib/composables/use-window-lifecycle";
   import "$lib/themes/index.css";
   import TitleBar from "$lib/components/TitleBar.svelte";
+  import CrashNotice from "$lib/components/CrashNotice.svelte";
   import FilePicker, { type PickerInfo } from "$lib/components/FilePicker.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
   import ScmPanel from "$lib/components/ScmPanel.svelte";
@@ -301,6 +303,7 @@
 
   onMount(() => {
     markStartup("mount");
+    installGlobalErrorHandlers();
 
     // Initialize theme from saved preference
     themeStore.initTheme();
@@ -480,6 +483,7 @@
   {/if}
 </main>
 
+<CrashNotice />
 <QuickOpen open={dialogStore.isQuickOpenOpen} onClose={() => dialogStore.closeQuickOpen()} />
 <CommandPalette open={dialogStore.isCommandPaletteOpen} onClose={() => dialogStore.closeCommandPalette()} />
 {#if ThemePicker}

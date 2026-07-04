@@ -54,7 +54,7 @@ function parseBenchmarkOutput(output: string): BenchmarkEntry[] {
 
 function runBenchmarks(): BenchmarkEntry[] {
   console.log("Running benchmarks...\n");
-  const output = execSync("npx vitest run tests/perf/ 2>&1", {
+  const output = execSync("npx vitest run -c vitest.perf.config.ts tests/perf/ 2>&1", {
     encoding: "utf-8",
     timeout: 60000,
   });

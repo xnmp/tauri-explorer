@@ -6,8 +6,9 @@
 <script lang="ts">
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import ExplorerPane from "./ExplorerPane.svelte";
+  import PaneTabBar from "./PaneTabBar.svelte";
 
-  // Get layout state from active window tab
+  // Window-level layout state
   const dualPaneEnabled = $derived(windowTabsManager.dualPaneEnabled);
   const splitRatio = $derived(windowTabsManager.splitRatio);
 
@@ -67,6 +68,7 @@
   style={dualPaneEnabled ? `--split-ratio: ${splitRatio}` : ""}
 >
   <div class="pane left-pane">
+    <PaneTabBar paneId="left" />
     <ExplorerPane paneId="left" />
   </div>
 
@@ -83,6 +85,7 @@
     </div>
 
     <div class="pane right-pane">
+      <PaneTabBar paneId="right" />
       <ExplorerPane paneId="right" />
     </div>
   {/if}
@@ -185,22 +188,24 @@
     right: var(--vibrancy-island-radius);
     height: 1px;
     background: var(--vibrancy-island-stroke);
+    /* Tabs live inside the panes now, so the top highlight line is
+       continuous (0% gap unless something re-introduces the vars). */
     mask-image: linear-gradient(
       to right,
       white 0%,
-      white var(--tab-gap-left, 30%),
-      transparent var(--tab-gap-left, 30%),
-      transparent var(--tab-gap-right, 60%),
-      white var(--tab-gap-right, 60%),
+      white var(--tab-gap-left, 0%),
+      transparent var(--tab-gap-left, 0%),
+      transparent var(--tab-gap-right, 0%),
+      white var(--tab-gap-right, 0%),
       white 100%
     );
     -webkit-mask-image: linear-gradient(
       to right,
       white 0%,
-      white var(--tab-gap-left, 30%),
-      transparent var(--tab-gap-left, 30%),
-      transparent var(--tab-gap-right, 60%),
-      white var(--tab-gap-right, 60%),
+      white var(--tab-gap-left, 0%),
+      transparent var(--tab-gap-left, 0%),
+      transparent var(--tab-gap-right, 0%),
+      white var(--tab-gap-right, 0%),
       white 100%
     );
     pointer-events: none;

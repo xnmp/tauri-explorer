@@ -62,13 +62,7 @@ function makeDrag(sourceWindow: string): TabDragData {
   return {
     sourceWindow,
     tabId: "tab-123",
-    snapshot: {
-      leftPath: "/home/user/Documents",
-      rightPath: "/home/user",
-      activePaneId: "left",
-      dualPaneEnabled: false,
-      splitRatio: 0.5,
-    },
+    snapshot: { path: "/home/user/Documents" },
   };
 }
 

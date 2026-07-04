@@ -1,21 +1,19 @@
 <!--
-  Custom title bar — hosts the tab strip, a drag region, and window controls.
-  Renders whenever there are tabs to display or window controls are enabled,
-  so users on compositors with their own window chrome (e.g. Hyprland) can
-  hide it entirely by disabling showWindowControls and opening a single tab.
+  Custom title bar — a drag region and window controls. Tabs live in each
+  pane's own strip (PaneTabBar), so the bar renders only when window
+  controls or the integrated title bar are enabled; users on compositors
+  with their own window chrome (e.g. Hyprland) can hide it entirely by
+  disabling showWindowControls.
 -->
 <script lang="ts">
   import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
-  import WindowTabBar from "./WindowTabBar.svelte";
-  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { isMac } from "$lib/domain/platform";
   import * as titlebar from "$lib/domain/titlebar";
   const showTitleBar = $derived(
     titlebar.showTitleBar(
       settingsStore.integratedTitleBar,
-      windowTabsManager.tabs.length,
       settingsStore.showWindowControls,
     ),
   );
@@ -72,7 +70,6 @@
 {#if showTitleBar}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="titlebar" class:integrated={isMac && settingsStore.integratedTitleBar} onmousedown={handleDragStart}>
-    <WindowTabBar />
     <div class="spacer"></div>
 
     {#if settingsStore.showWindowControls}

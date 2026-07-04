@@ -35,16 +35,16 @@ pub async fn ai_suggest_filenames(
     let count = count.clamp(1, 5) as usize;
     let prompt = build_prompt(&original_name, content_hint.as_deref(), count);
 
-    let raw = match tokio::time::timeout(SUGGEST_TIMEOUT, run_gemini_suggest(&prompt, &api_key)).await
-    {
-        Ok(result) => result?,
-        Err(_) => {
-            return Err(AppError::Other(format!(
-                "AI rename timed out after {} seconds",
-                SUGGEST_TIMEOUT.as_secs()
-            )))
-        }
-    };
+    let raw =
+        match tokio::time::timeout(SUGGEST_TIMEOUT, run_gemini_suggest(&prompt, &api_key)).await {
+            Ok(result) => result?,
+            Err(_) => {
+                return Err(AppError::Other(format!(
+                    "AI rename timed out after {} seconds",
+                    SUGGEST_TIMEOUT.as_secs()
+                )))
+            }
+        };
 
     let suggestions = clean_suggestions(&raw, &original_name, count);
     if suggestions.is_empty() {

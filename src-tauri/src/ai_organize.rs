@@ -39,16 +39,15 @@ pub async fn ai_suggest_destination(
     let count = count.clamp(1, 5) as usize;
     let prompt = build_prompt(&file_name, content_hint.as_deref(), &candidates, count);
 
-    let raw =
-        match tokio::time::timeout(SUGGEST_TIMEOUT, run_gemini(&prompt, &api_key)).await {
-            Ok(result) => result?,
-            Err(_) => {
-                return Err(AppError::Other(format!(
-                    "AI destination suggestion timed out after {} seconds",
-                    SUGGEST_TIMEOUT.as_secs()
-                )))
-            }
-        };
+    let raw = match tokio::time::timeout(SUGGEST_TIMEOUT, run_gemini(&prompt, &api_key)).await {
+        Ok(result) => result?,
+        Err(_) => {
+            return Err(AppError::Other(format!(
+                "AI destination suggestion timed out after {} seconds",
+                SUGGEST_TIMEOUT.as_secs()
+            )))
+        }
+    };
 
     let suggestions = clean_destinations(&raw, &candidates, count);
     if suggestions.is_empty() {
@@ -185,7 +184,10 @@ mod tests {
     fn strips_markers_fences_and_quotes() {
         let candidates = cands(&["/a/b", "/c/d"]);
         let raw = "```\n1. \"/a/b\"\n- `/c/d`\n```";
-        assert_eq!(clean_destinations(raw, &candidates, 5), vec!["/a/b", "/c/d"]);
+        assert_eq!(
+            clean_destinations(raw, &candidates, 5),
+            vec!["/a/b", "/c/d"]
+        );
     }
 
     #[test]

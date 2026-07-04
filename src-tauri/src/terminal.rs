@@ -66,7 +66,9 @@ struct Osc7Scanner {
 
 impl Osc7Scanner {
     fn new() -> Self {
-        Self { carry: String::new() }
+        Self {
+            carry: String::new(),
+        }
     }
 
     /// Feed a decoded text chunk; returns any complete cwd paths found.
@@ -306,7 +308,9 @@ fn zsh_shim_files() -> [(&'static str, String); 4] {
 /// failure degrades gracefully to spawning without cwd reporting.
 #[cfg(unix)]
 fn install_zsh_shim(cmd: &mut CommandBuilder) {
-    let Some(cache) = dirs::cache_dir() else { return };
+    let Some(cache) = dirs::cache_dir() else {
+        return;
+    };
     let shim = cache.join("tauri-explorer").join("zsh-shim");
     // Recreate fresh each spawn so a stale/edited shim can't linger.
     let _ = std::fs::remove_dir_all(&shim);
@@ -409,16 +413,16 @@ fn spawn_shell(
         .lock()
         .map_err(|e| AppError::Other(format!("terminals registry lock poisoned: {e}")))?
         .insert(
-        id,
-        TerminalHandle {
-            writer,
-            master: pair.master,
-            killer,
-            window_label,
-            pid,
-            shell_cwd: None,
-        },
-    );
+            id,
+            TerminalHandle {
+                writer,
+                master: pair.master,
+                killer,
+                window_label,
+                pid,
+                shell_cwd: None,
+            },
+        );
 
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
@@ -436,8 +440,10 @@ fn spawn_shell(
                         for cwd in scanner.push(&text) {
                             // Reader thread (returns ()): recover the registry
                             // rather than panic if another holder poisoned it.
-                            if let Some(h) =
-                                terminals().lock().unwrap_or_else(|e| e.into_inner()).get_mut(&id)
+                            if let Some(h) = terminals()
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .get_mut(&id)
                             {
                                 h.shell_cwd = Some(cwd.clone());
                             }
@@ -449,7 +455,10 @@ fn spawn_shell(
             }
         }
         let code = child.wait().ok().map(|status| status.exit_code());
-        terminals().lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+        terminals()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&id);
         on_exit(code);
     });
 
@@ -681,7 +690,10 @@ mod tests {
             if let Ok(chunk) = rx.recv_timeout(Duration::from_millis(100)) {
                 output.push_str(&chunk);
             }
-            assert!(std::time::Instant::now() < deadline, "shell never exited; output: {output}");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "shell never exited; output: {output}"
+            );
         };
         while let Ok(chunk) = rx.try_recv() {
             output.push_str(&chunk);
@@ -693,7 +705,10 @@ mod tests {
         );
         assert!(exited.is_some(), "exit code should be reported");
         assert!(
-            !terminals().lock().unwrap_or_else(|e| e.into_inner()).contains_key(&id),
+            !terminals()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains_key(&id),
             "registry entry should be removed after exit"
         );
     }
@@ -885,14 +900,29 @@ mod tests {
 
         for (name, body) in &files {
             // Each shim sources the user's equivalent and restores the shim dir.
-            assert!(body.contains(&format!("$USER_ZDOTDIR/{name}")), "{name} sources user file");
-            assert!(body.contains("_TE_SHIM_ZDOTDIR"), "{name} restores shim dir");
+            assert!(
+                body.contains(&format!("$USER_ZDOTDIR/{name}")),
+                "{name} sources user file"
+            );
+            assert!(
+                body.contains("_TE_SHIM_ZDOTDIR"),
+                "{name} restores shim dir"
+            );
         }
 
         let zshrc = &files[2].1;
-        assert!(zshrc.contains("_tauri_explorer_osc7"), "zshrc adds the OSC 7 hook");
-        assert!(zshrc.contains("add-zsh-hook chpwd"), "zshrc registers a chpwd hook");
-        assert!(zshrc.contains("file://"), "zshrc emits an OSC 7 file:// sequence");
+        assert!(
+            zshrc.contains("_tauri_explorer_osc7"),
+            "zshrc adds the OSC 7 hook"
+        );
+        assert!(
+            zshrc.contains("add-zsh-hook chpwd"),
+            "zshrc registers a chpwd hook"
+        );
+        assert!(
+            zshrc.contains("file://"),
+            "zshrc emits an OSC 7 file:// sequence"
+        );
     }
 
     // ─── busy detection ──────────────────────────────────────────────────────
@@ -904,9 +934,17 @@ mod tests {
     #[cfg(unix)]
     fn busy_detection_tracks_foreground_command() {
         let (exit_tx, _exit_rx) = mpsc::channel::<Option<u32>>();
-        let id = spawn_shell("busy-test".into(), None, 80, 24, |_| {}, move |c| {
-            let _ = exit_tx.send(c);
-        }, |_| {})
+        let id = spawn_shell(
+            "busy-test".into(),
+            None,
+            80,
+            24,
+            |_| {},
+            move |c| {
+                let _ = exit_tx.send(c);
+            },
+            |_| {},
+        )
         .expect("spawn failed");
 
         let busy_now = || {
@@ -917,14 +955,21 @@ mod tests {
         // Let the shell reach its prompt.
         let idle_deadline = std::time::Instant::now() + Duration::from_secs(5);
         while busy_now() {
-            assert!(std::time::Instant::now() < idle_deadline, "shell never became idle");
+            assert!(
+                std::time::Instant::now() < idle_deadline,
+                "shell never became idle"
+            );
             std::thread::sleep(Duration::from_millis(50));
         }
 
         // Start a foreground command.
         {
             let mut map = terminals().lock().unwrap_or_else(|e| e.into_inner());
-            map.get_mut(&id).unwrap().writer.write_all(b"sleep 2\n").unwrap();
+            map.get_mut(&id)
+                .unwrap()
+                .writer
+                .write_all(b"sleep 2\n")
+                .unwrap();
         }
 
         // Poll until busy is observed.
@@ -933,18 +978,28 @@ mod tests {
             if busy_now() {
                 break;
             }
-            assert!(std::time::Instant::now() < busy_deadline, "sleep never registered as busy");
+            assert!(
+                std::time::Instant::now() < busy_deadline,
+                "sleep never registered as busy"
+            );
             std::thread::sleep(Duration::from_millis(20));
         }
 
         // …and idle again after it finishes.
         let done_deadline = std::time::Instant::now() + Duration::from_secs(6);
         while busy_now() {
-            assert!(std::time::Instant::now() < done_deadline, "shell stayed busy after sleep");
+            assert!(
+                std::time::Instant::now() < done_deadline,
+                "shell stayed busy after sleep"
+            );
             std::thread::sleep(Duration::from_millis(50));
         }
 
-        terminals().lock().unwrap_or_else(|e| e.into_inner()).get_mut(&id).map(|h| h.killer.kill());
+        terminals()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(&id)
+            .map(|h| h.killer.kill());
     }
 
     /// If `zsh` is installed, spawning through `spawn_shell` should produce an
@@ -998,7 +1053,11 @@ mod tests {
         while let Ok(chunk) = rx.try_recv() {
             output.push_str(&chunk);
         }
-        terminals().lock().unwrap_or_else(|e| e.into_inner()).get_mut(&id).map(|h| h.killer.kill());
+        terminals()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(&id)
+            .map(|h| h.killer.kill());
 
         assert!(
             got_cwd.is_ok(),

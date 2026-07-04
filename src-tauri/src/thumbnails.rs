@@ -654,7 +654,11 @@ fn set_ffmpeg_path_impl(path: Option<String>) {
 
 fn resolve_ffmpeg_path() -> Option<PathBuf> {
     // 1. Explicit user-configured path wins.
-    if let Some(p) = ffmpeg_override().lock().unwrap_or_else(|e| e.into_inner()).clone() {
+    if let Some(p) = ffmpeg_override()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+    {
         let pb = PathBuf::from(&p);
         if ffmpeg_runs(&pb) {
             log::info!(
@@ -1088,16 +1092,27 @@ mod tests {
     #[test]
     fn folder_preview_selects_sorted_capped_images() {
         let dir = tempdir().unwrap();
-        for name in ["zebra.png", "beta.jpg", "alpha.webp", "delta.gif", "notes.txt"] {
+        for name in [
+            "zebra.png",
+            "beta.jpg",
+            "alpha.webp",
+            "delta.gif",
+            "notes.txt",
+        ] {
             touch(dir.path(), name);
         }
 
-        let preview =
-            get_folder_preview_sync(dir.path().to_string_lossy().to_string()).unwrap();
+        let preview = get_folder_preview_sync(dir.path().to_string_lossy().to_string()).unwrap();
         let names: Vec<_> = preview
             .image_paths
             .iter()
-            .map(|p| Path::new(p).file_name().unwrap().to_string_lossy().to_string())
+            .map(|p| {
+                Path::new(p)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            })
             .collect();
         // Byte-sorted, capped at FOLDER_PREVIEW_MAX_IMAGES, non-images excluded.
         assert_eq!(names, vec!["alpha.webp", "beta.jpg", "delta.gif"]);
@@ -1110,8 +1125,7 @@ mod tests {
             touch(dir.path(), name);
         }
 
-        let preview =
-            get_folder_preview_sync(dir.path().to_string_lossy().to_string()).unwrap();
+        let preview = get_folder_preview_sync(dir.path().to_string_lossy().to_string()).unwrap();
         assert_eq!(preview.image_paths.len(), 1);
         assert!(preview.image_paths[0].ends_with("visible.png"));
     }
@@ -1121,8 +1135,7 @@ mod tests {
         let dir = tempdir().unwrap();
         touch(dir.path(), "notes.txt");
 
-        let preview =
-            get_folder_preview_sync(dir.path().to_string_lossy().to_string()).unwrap();
+        let preview = get_folder_preview_sync(dir.path().to_string_lossy().to_string()).unwrap();
         assert!(preview.image_paths.is_empty());
         assert!(!preview.fingerprint.is_empty());
 
@@ -1135,19 +1148,16 @@ mod tests {
     fn folder_preview_fingerprint_changes_when_image_set_changes() {
         let dir = tempdir().unwrap();
         touch(dir.path(), "a.png");
-        let before =
-            get_folder_preview_sync(dir.path().to_string_lossy().to_string()).unwrap();
+        let before = get_folder_preview_sync(dir.path().to_string_lossy().to_string()).unwrap();
 
         touch(dir.path(), "b.png");
-        let after =
-            get_folder_preview_sync(dir.path().to_string_lossy().to_string()).unwrap();
+        let after = get_folder_preview_sync(dir.path().to_string_lossy().to_string()).unwrap();
 
         assert_ne!(before.fingerprint, after.fingerprint);
         assert_eq!(after.image_paths.len(), 2);
 
         // Unchanged folder ⇒ stable fingerprint (the short-circuit contract).
-        let again =
-            get_folder_preview_sync(dir.path().to_string_lossy().to_string()).unwrap();
+        let again = get_folder_preview_sync(dir.path().to_string_lossy().to_string()).unwrap();
         assert_eq!(after.fingerprint, again.fingerprint);
     }
 

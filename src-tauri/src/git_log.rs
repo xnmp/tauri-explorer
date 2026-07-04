@@ -27,7 +27,7 @@
 //! Every command runs under `spawn_blocking` and is cancellable through the
 //! shared `TaskRegistry`, mirroring `git.rs`.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -202,7 +202,7 @@ fn build_log(
     opts: &GitLogOptions,
     cancelled: &AtomicBool,
 ) -> Result<GitLogPage, AppError> {
-    let limit = opts.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT).max(1);
+    let limit = opts.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
 
     let mut walk = repo.revwalk().map_err(to_app_err)?;
     // Topological keeps parents-after-children; time breaks ties by commit date

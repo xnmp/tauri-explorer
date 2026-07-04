@@ -282,7 +282,7 @@ fn parse_applescript_png(text: &str) -> Option<Vec<u8>> {
         .chars()
         .filter(|c| c.is_ascii_hexdigit())
         .collect();
-    if hex.len() < 16 || hex.len() % 2 != 0 {
+    if hex.len() < 16 || !hex.len().is_multiple_of(2) {
         return None;
     }
     let bytes: Option<Vec<u8>> = (0..hex.len())

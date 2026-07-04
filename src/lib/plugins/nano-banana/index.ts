@@ -22,6 +22,7 @@ import type { Plugin, PluginContext } from "../api";
 import { isImageFile } from "$lib/domain/file-types";
 import { basename } from "$lib/domain/path";
 import { readConfigFile } from "$lib/api/files";
+import { writeConfigQueued } from "$lib/state/persisted";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
 import type { FileEntry } from "$lib/domain/file";
@@ -45,7 +46,10 @@ function selectedImage(entries: FileEntry[]): FileEntry | null {
  */
 async function migrateLegacyApiKey(ctx: PluginContext): Promise<void> {
   const stored = await ctx.storage.get();
-  if (stored[API_KEY_STORAGE_KEY]) return; // already migrated / set
+  // Presence check, not truthiness: an empty string means the user cleared
+  // the key on purpose — re-importing the legacy value would resurrect it
+  // on every activate.
+  if (API_KEY_STORAGE_KEY in stored) return; // already migrated / set / cleared
 
   const result = await readConfigFile("settings.json");
   if (!result.ok || !result.data) return;
@@ -54,6 +58,10 @@ async function migrateLegacyApiKey(ctx: PluginContext): Promise<void> {
     const legacy = parsed.geminiApiKey;
     if (typeof legacy === "string" && legacy.length > 0) {
       await ctx.storage.set({ ...stored, [API_KEY_STORAGE_KEY]: legacy });
+      // Remove the migrated secret from settings.json so it can't linger
+      // (or be re-imported by a future migration run).
+      delete parsed.geminiApiKey;
+      await writeConfigQueued("settings.json", JSON.stringify(parsed, null, 2));
     }
   } catch {
     // Corrupt settings file — nothing to migrate.

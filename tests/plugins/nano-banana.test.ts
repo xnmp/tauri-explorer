@@ -19,7 +19,7 @@ import type { DialogDescriptor } from "$lib/plugins/dialog-registry.svelte";
 import { getCommand } from "$lib/state/commands.svelte";
 import { contextMenuItems } from "$lib/state/context-menu-items.svelte";
 import { dialogRegistry } from "$lib/plugins/dialog-registry.svelte";
-import { writeConfigFile } from "$lib/api/files";
+import { writeConfigFile, readConfigFile } from "$lib/api/files";
 import type { FileEntry } from "$lib/domain/file";
 
 const DIALOG_ID = "nano-banana.edit";
@@ -122,6 +122,35 @@ describe("nano-banana plugin: legacy API key migration", () => {
     await nanoBananaPlugin.activate(f.ctx);
 
     expect(f.getStore().apiKey).toBeUndefined();
+  });
+
+  it("does not resurrect the legacy key after the user cleared theirs (#153)", async () => {
+    await writeConfigFile("settings.json", JSON.stringify({ geminiApiKey: "legacy-key-123" }));
+    // User explicitly cleared the key in Settings: stored as "".
+    const f = makeFakeCtx({ apiKey: "" });
+
+    await nanoBananaPlugin.activate(f.ctx);
+
+    expect(f.getStore().apiKey).toBe("");
+  });
+
+  it("removes the migrated secret from settings.json (#153)", async () => {
+    await writeConfigFile(
+      "settings.json",
+      JSON.stringify({ theme: "dark", geminiApiKey: "legacy-key-123" }),
+    );
+    const f = makeFakeCtx();
+
+    await nanoBananaPlugin.activate(f.ctx);
+    // The queued settings.json rewrite is async; give it a tick to flush.
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(f.getStore().apiKey).toBe("legacy-key-123");
+    const after = await readConfigFile("settings.json");
+    expect(after.ok).toBe(true);
+    const parsed = JSON.parse((after as { ok: true; data: string }).data);
+    expect(parsed.geminiApiKey).toBeUndefined();
+    expect(parsed.theme).toBe("dark"); // other settings untouched
   });
 });
 

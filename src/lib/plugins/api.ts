@@ -138,6 +138,18 @@ export function createPluginContext(pluginId: string): {
   const track = (fn: () => void) => disposers.push(fn);
   const storage = createPluginStorage(pluginId);
 
+  // Jobs the plugin added through ctx.jobs, so still-running ones can be torn
+  // down on deactivate rather than orphaning rows in the shared store (#154).
+  const jobIds = new Set<number>();
+  track(() => {
+    for (const id of jobIds) {
+      if (jobsStore.jobs.some((j) => j.id === id && j.status === "running")) {
+        jobsStore.removeJob(id);
+      }
+    }
+    jobIds.clear();
+  });
+
   const ctx: PluginContext = {
     registerCommand(cmd: Command): void {
       registerCommand(cmd);
@@ -162,7 +174,10 @@ export function createPluginContext(pluginId: string): {
       dialogRegistry.close(id);
     },
     jobs: {
-      add: (id, label, detail) => jobsStore.addJob(id, label, detail, pluginId),
+      add: (id, label, detail) => {
+        jobIds.add(id);
+        jobsStore.addJob(id, label, detail, pluginId);
+      },
       complete: (id, outputPath) => jobsStore.completeJob(id, outputPath),
       fail: (id, error) => jobsStore.failJob(id, error),
     },

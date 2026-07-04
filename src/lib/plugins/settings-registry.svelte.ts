@@ -40,9 +40,25 @@ function createSection(
   let values = $state<Record<string, unknown>>({ ...defaults });
 
   // Seed from persisted storage (async). Defaults show until it resolves.
-  void storage.get().then((stored) => {
-    values = { ...defaults, ...stored };
-  });
+  // Seed race (#154): a user can edit a row before this load resolves. Those
+  // edits must win over the stale persisted blob, so we record keys touched
+  // while loading and re-apply them ON TOP of the loaded values. Without this,
+  // the load would silently clobber the user's in-flight edit.
+  let loading = true;
+  const editedWhileLoading = new Set<string>();
+  void storage
+    .get()
+    .then((stored) => {
+      const preserved: Record<string, unknown> = {};
+      for (const key of editedWhileLoading) preserved[key] = values[key];
+      values = { ...defaults, ...stored, ...preserved };
+    })
+    .catch(() => {
+      // Load failed — keep the defaults + any edits already applied to `values`.
+    })
+    .finally(() => {
+      loading = false;
+    });
 
   return {
     pluginId,
@@ -57,6 +73,7 @@ function createSection(
       return v !== undefined ? v : row.default;
     },
     setValue(rowId: string, value: unknown): void {
+      if (loading) editedWhileLoading.add(rowId);
       values = { ...values, [rowId]: value };
       void storage.set(values);
     },

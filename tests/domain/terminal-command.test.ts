@@ -42,6 +42,23 @@ describe("buildCdCommand", () => {
       "cd '/tmp/$(rm -rf ~)/`x`'\r"
     );
   });
+
+  // Characterization test (#154): documents the known cmd.exe `%VAR%`
+  // limitation. There is no reliable interactive-cmd escape for `%` inside
+  // double quotes, so the percent passes through verbatim. This is correct for
+  // the common cases (cmd leaves a percent literal unless it names a *defined*
+  // env var). If a robust escaping technique is ever adopted, this expectation
+  // is the thing that must change — see buildCdCommand's doc comment.
+  it("passes cmd.exe paths with percent signs through unescaped (documented #154 limitation)", () => {
+    expect(buildCdCommand("C:\\builds\\100%done", true)).toBe(
+      'cd /d "C:\\builds\\100%done"\r'
+    );
+    // A path that superficially looks like a variable reference is likewise
+    // left verbatim — no doubling, no caret (both would corrupt the path).
+    expect(buildCdCommand("C:\\logs\\%DATE%\\out", true)).toBe(
+      'cd /d "C:\\logs\\%DATE%\\out"\r'
+    );
+  });
 });
 
 describe("buildCdSyncSequence", () => {

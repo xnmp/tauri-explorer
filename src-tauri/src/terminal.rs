@@ -86,22 +86,34 @@ impl Osc7Scanner {
             };
             let after = start + OSC7_PREFIX.len();
             match find_osc_terminator(&buf[after..]) {
-                Some((rel_end, term_len)) => {
-                    let payload = &buf[after..after + rel_end];
+                OscTerm::Terminated { end, len } => {
+                    let payload = &buf[after..after + end];
                     if let Some(path) = parse_osc7_payload(payload) {
                         out.push(path);
                     }
-                    buf = buf.split_off(after + rel_end + term_len);
+                    buf = buf.split_off(after + end + len);
                     // continue scanning the remainder
                 }
-                None => {
-                    // Unterminated sequence: carry from its start, bounded.
+                OscTerm::Restart { at } => {
+                    // A fresh `ESC ]` (new OSC introducer) arrived before this
+                    // sequence terminated. Treat it as an implicit terminator:
+                    // discard the abandoned fragment and resume scanning at the
+                    // new introducer, so a later complete OSC 7 still wins.
+                    buf = buf.split_off(after + at);
+                    // continue scanning from the new introducer
+                }
+                OscTerm::Incomplete => {
+                    // Unterminated sequence: carry from its start, bounded
+                    // per-sequence so one runaway OSC 7 can't grow memory.
                     let tail = &buf[start..];
-                    self.carry = if tail.len() > OSC7_MAX_CARRY {
-                        String::new()
+                    if tail.len() > OSC7_MAX_CARRY {
+                        log::warn!(
+                            "OSC 7: dropping unterminated sequence exceeding {OSC7_MAX_CARRY}-byte carry cap"
+                        );
+                        self.carry = String::new();
                     } else {
-                        tail.to_string()
-                    };
+                        self.carry = tail.to_string();
+                    }
                     return out;
                 }
             }
@@ -120,21 +132,36 @@ fn partial_prefix_len(buf: &str) -> usize {
     0
 }
 
-/// Find the OSC string terminator in `rest`: BEL (`\x07`, len 1) or ST
-/// (`ESC \`, len 2). Returns `(byte_index, terminator_len)`. `None` if no
-/// complete terminator is present yet (including a trailing lone ESC that may
-/// become an ST). BEL/ESC are ASCII, so byte indices land on char boundaries.
-fn find_osc_terminator(rest: &str) -> Option<(usize, usize)> {
+/// Outcome of scanning an OSC 7 payload region for its end.
+enum OscTerm {
+    /// A real string terminator (BEL or ST) ends the payload at byte `end`,
+    /// occupying `len` bytes (1 for BEL, 2 for ST).
+    Terminated { end: usize, len: usize },
+    /// A fresh OSC introducer (`ESC ]`) began at byte `at` before any
+    /// terminator — the current sequence is abandoned; resume scanning there.
+    Restart { at: usize },
+    /// No terminator (or restart) present yet; carry for the next chunk.
+    Incomplete,
+}
+
+/// Find where the OSC 7 payload in `rest` ends: a BEL (`\x07`, len 1) or ST
+/// (`ESC \`, len 2) terminator, or a fresh OSC introducer (`ESC ]`) that
+/// implicitly abandons this sequence. `Incomplete` if none is present yet
+/// (including a trailing lone ESC that may become an ST next chunk). BEL/ESC
+/// are ASCII, so byte indices land on char boundaries.
+fn find_osc_terminator(rest: &str) -> OscTerm {
     let bytes = rest.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
-            0x07 => return Some((i, 1)),
+            0x07 => return OscTerm::Terminated { end: i, len: 1 },
             0x1b => {
                 return match bytes.get(i + 1) {
-                    Some(b'\\') => Some((i, 2)),
+                    Some(b'\\') => OscTerm::Terminated { end: i, len: 2 },
+                    // A new OSC starts here (`ESC ]`): implicit terminator.
+                    Some(b']') => OscTerm::Restart { at: i },
                     // Lone trailing ESC — could still become ST next chunk.
-                    None => None,
+                    None => OscTerm::Incomplete,
                     // ESC followed by anything else isn't a valid ST; skip it.
                     Some(_) => {
                         i += 1;
@@ -146,7 +173,7 @@ fn find_osc_terminator(rest: &str) -> Option<(usize, usize)> {
         }
         i += 1;
     }
-    None
+    OscTerm::Incomplete
 }
 
 /// Parse an OSC 7 payload (`file://<host><path>`) into a decoded path. The host
@@ -810,6 +837,41 @@ mod tests {
         assert_eq!(s.push("\x1b]7;file://host/partial"), Vec::<String>::new());
         assert!(!s.carry.is_empty());
         assert_eq!(s.push("/more\x07"), vec!["/partial/more"]);
+    }
+
+    #[test]
+    fn osc7_fresh_introducer_implicitly_terminates_previous_in_one_chunk() {
+        let mut s = Osc7Scanner::new();
+        // An unterminated OSC 7 followed immediately by a complete one: the
+        // fresh `ESC ]` implicitly ends the first (discarding it), so only the
+        // second sequence's cwd is parsed — it must win.
+        let chunk = format!("\x1b]7;file://host/first{}", osc7("/second", "\x07"));
+        assert_eq!(s.push(&chunk), vec!["/second"]);
+        assert!(s.carry.is_empty());
+    }
+
+    #[test]
+    fn osc7_fresh_introducer_across_chunks_discards_stale_and_parses_new() {
+        let mut s = Osc7Scanner::new();
+        // First chunk opens an OSC 7 that never terminates (carried over).
+        assert_eq!(s.push("\x1b]7;file://host/stale"), Vec::<String>::new());
+        assert!(!s.carry.is_empty());
+        // A brand-new OSC 7 arrives next chunk; the stale carried fragment must
+        // be discarded and the new one parsed.
+        assert_eq!(s.push(&osc7("/fresh", "\x07")), vec!["/fresh"]);
+        assert!(s.carry.is_empty());
+    }
+
+    #[test]
+    fn osc7_oversized_sequence_followed_by_fresh_one_recovers() {
+        let mut s = Osc7Scanner::new();
+        // A very long unterminated OSC 7 followed by a complete one in the same
+        // chunk: the fresh introducer implicitly terminates the oversized one,
+        // so `/after` is parsed and nothing is carried.
+        let big = "y".repeat(OSC7_MAX_CARRY + 10);
+        let chunk = format!("\x1b]7;file://host/{big}{}", osc7("/after", "\x07"));
+        assert_eq!(s.push(&chunk), vec!["/after"]);
+        assert!(s.carry.is_empty());
     }
 
     // ─── zsh shim contents ───────────────────────────────────────────────────

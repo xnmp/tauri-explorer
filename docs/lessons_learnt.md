@@ -1387,3 +1387,15 @@ A broad batch of Windows-branch fixes and features. Key takeaways:
 - **`position:fixed` overlays anchored to an *element rect* need a different zoom division than ones anchored to a *cursor*.** The right-click history menu placed itself at raw `getBoundingClientRect().left/bottom`, so it drifted when zoomed (same family of bug as the context menu, which uses `clientX/Y`). Factored both into `zoom.ts`: `clientToFixed` (cursor space) and `rectToFixed` (rect space). They differ only on WebKitGTK, where `clientX/Y` are raw viewport px but `getBoundingClientRect()` is pre-zoom CSS px — already one division ahead — so rect anchoring needs one fewer `/zoom`. Pure inner fns (`fixedFromClient`/`fixedFromRect`) are unit-tested per engine. Lesson: don't reuse the cursor-space zoom transform for element-anchored overlays.
 - **SVGs had no preview because they're neither raster-thumbnail images nor text.** `isImageFile` is gated on `THUMBNAIL_EXTENSIONS` (backend turbojpeg can't decode SVG) and `isTextFile` excludes the `image` icon category. Added `isSvgFile` and let the preview's image branch render it via `convertFileSrc` (webview renders SVG natively) — without adding `svg` to the raster thumbnail set. The asset scope is path-based so SVGs under allowed paths load; CSP `img-src` already permits `asset:`.
 - **Frecency (the Recent locations list) recorded mere navigation, not real work.** Every `navigateTo` called `frecencyStore.recordAccess(folder)`, so browsing through folders ranked them. Changed to record only when a *file* is acted on — opened (FileList/QuickOpen/Open command), previewed (PreviewPane), or right-click-actioned (cut/copy/rename/delete/extract/compress/symlink/wallpaper/hide) — via `recordFileAction(filePath)` which keys on the file's containing folder. Plain navigation (including QuickOpen→folder) no longer feeds it.
+
+## fix/git-panel-issues (#156): stage-from-diff was lost because the diff moved surfaces
+
+`ScmDiffView.svelte` (with Stage/Unstage/Discard header actions) ended up
+orphaned — nothing imports it; the live diff actually renders in
+`PreviewPane.svelte`, which had no actions. When a feature's surface is
+relocated, grep for imports of the old component before assuming its
+capabilities moved with it. The diff actions now live in PreviewPane's
+git-diff header and follow the file across the index boundary after
+stage/unstage. Mock git handlers are stateful (in-memory model mirroring
+git.rs) so E2E can assert real outcomes (rows moving sections, commits
+clearing staged, amend folding).

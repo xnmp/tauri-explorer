@@ -15,9 +15,10 @@ import { settingsStore } from "$lib/state/settings.svelte";
 import { demoPlugin } from "./demo";
 import { nanoBananaPlugin } from "./nano-banana";
 import { aiRenamePlugin } from "./ai-rename";
+import { aiOrganizePlugin } from "./ai-organize";
 
 /** Statically-imported built-in plugins (explicit imports — no dynamic load). */
-const BUILT_IN_PLUGINS: Plugin[] = [demoPlugin, nanoBananaPlugin, aiRenamePlugin];
+const BUILT_IN_PLUGINS: Plugin[] = [demoPlugin, nanoBananaPlugin, aiRenamePlugin, aiOrganizePlugin];
 
 export interface PluginInfo {
   id: string;

@@ -1,6 +1,7 @@
 //! Tauri Explorer app entry point.
 //! Issue: tauri-explorer-nv2y, tauri-explorer-hgt6, tauri-explorer-im3m, tauri-explorer-bo8l, tauri-explorer-yclf
 
+mod ai_organize;
 mod ai_rename;
 mod archive;
 mod clipboard;
@@ -193,6 +194,7 @@ pub fn run(launch_dir: Option<String>) {
             nano_banana::start_nano_banana_job,
             // AI rename suggestions
             ai_rename::ai_suggest_filenames,
+            ai_organize::ai_suggest_destination,
             // File-picker portal (xdg-desktop-portal FileChooser backend)
             portal::picker_respond,
             // Window appearance

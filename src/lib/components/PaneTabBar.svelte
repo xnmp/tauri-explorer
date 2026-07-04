@@ -722,7 +722,7 @@
      meets the pane tangentially instead of at 90°. z-index above the
      strip's baseline ::after so the line terminates AT the curve. */
   .tab-fillet {
-    --fillet: 10px;
+    --fillet: 14px;
     position: absolute;
     bottom: 0;
     width: var(--fillet);

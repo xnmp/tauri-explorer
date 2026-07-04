@@ -4,6 +4,7 @@
  */
 
 import { watchDirectory, unwatchDirectory } from "$lib/api/files";
+import { isVirtualPath } from "$lib/domain/virtual-path";
 
 /** How long after a local mutation watcher-triggered refreshes are ignored. */
 export const MUTATION_COOLDOWN_MS = 1000;
@@ -26,8 +27,17 @@ export function createPaneWatch() {
       return Date.now() - lastMutationTime < MUTATION_COOLDOWN_MS;
     },
 
-    /** Watch `newPath`, releasing the previous watch (no-op if unchanged). */
+    /** Watch `newPath`, releasing the previous watch (no-op if unchanged).
+     *  Virtual (`scheme://…`) paths aren't real directories — release any
+     *  existing watch and skip watching them. */
     update(newPath: string): void {
+      if (isVirtualPath(newPath)) {
+        if (watchedPath) {
+          unwatchDirectory(watchedPath);
+          watchedPath = null;
+        }
+        return;
+      }
       if (watchedPath === newPath) return;
       if (watchedPath) unwatchDirectory(watchedPath);
       watchDirectory(newPath);

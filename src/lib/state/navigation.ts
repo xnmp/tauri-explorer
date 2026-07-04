@@ -3,6 +3,8 @@
  * Manages browser-style forward/back navigation history.
  */
 
+import { virtualBreadcrumbs, isVirtualRoot } from "$lib/domain/virtual-path";
+
 export interface HistoryState {
   history: string[];
   historyIndex: number;
@@ -83,6 +85,11 @@ export function parseBreadcrumbs(
 ): { name: string; path: string }[] {
   if (!path) return [];
 
+  // Virtual (`scheme://…`) paths get scheme-root + one crumb per segment,
+  // mirroring the UNC special case below.
+  const virtual = virtualBreadcrumbs(path);
+  if (virtual) return virtual;
+
   const unc = path.match(UNC_PATH);
   if (unc) {
     const [, server, share, tail] = unc;
@@ -135,6 +142,7 @@ export function getParentPath(
     const { path } = breadcrumbs[0];
     if (DRIVE_ROOT.test(path)) return null;
     if (UNC_SHARE_ROOT.test(path)) return null;
+    if (isVirtualRoot(path)) return null;
     return "/";
   }
   return null;

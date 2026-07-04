@@ -13,6 +13,7 @@
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
+  import { emptyFolderResolver } from "$lib/state/empty-folders.svelte";
   import { useItemInteractions, isInClipboard as checkInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
@@ -48,6 +49,23 @@
 
   const isManuallyHidden = $derived(manualHiddenStore.isHidden(explorer.currentPath, entry.name));
 
+  // Emptiness is resolved lazily now that listings no longer carry it (#129).
+  // Re-request when hidden-file visibility changes so the resolver reprobes
+  // under the new rule. The dimmed style may settle a frame late — acceptable.
+  $effect(() => {
+    settingsStore.showHidden;
+    emptyFolderResolver.request(entry);
+  });
+  const isEmptyFolder = $derived(
+    entry.kind === "directory" && emptyFolderResolver.isEmpty(entry.path) === true,
+  );
+
+  // Formatted column values, memoized per entry so re-renders triggered by
+  // unrelated state (selection, clipboard, drop-target) never re-format.
+  const dateText = $derived(formatDate(entry.modified));
+  const typeText = $derived(getFileType(entry));
+  const sizeText = $derived(entry.kind === "file" ? formatSize(entry.size) : "");
+
   function handleClick(event: MouseEvent) {
     if (isRenaming) {
       event.stopPropagation();
@@ -71,7 +89,7 @@
   data-path={entry.path}
   class:directory={entry.kind === "directory"}
   class:hidden-entry={entry.name.startsWith(".") || isManuallyHidden}
-  class:empty-folder={entry.kind === "directory" && entry.is_empty === true}
+  class:empty-folder={isEmptyFolder}
   class:cut={isCut}
   class:in-clipboard={entryInClipboard}
   class:selected
@@ -120,14 +138,14 @@
   <!-- Date modified column -->
   {#if settingsStore.columnVisibility.date}
   <div class="date-cell">
-    {formatDate(entry.modified)}
+    {dateText}
   </div>
   {/if}
 
   <!-- Type column -->
   {#if settingsStore.columnVisibility.type}
   <div class="type-cell">
-    {getFileType(entry)}
+    {typeText}
   </div>
   {/if}
 
@@ -135,7 +153,7 @@
   {#if settingsStore.columnVisibility.size}
   <div class="size-cell">
     {#if entry.kind === "file"}
-      {formatSize(entry.size)}
+      {sizeText}
     {:else}
       <span class="empty-cell">—</span>
     {/if}

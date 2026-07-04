@@ -6,10 +6,14 @@
   import { settingsStore, type IconTheme, type ThumbnailSize, type WindowsBackdrop } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import { isMac, isWindows } from "$lib/domain/platform";
-  import { listInstalledTerminals } from "$lib/api/files";
+  import { invoke, listInstalledTerminals } from "$lib/api/files";
+  import { spawnWarmWindow } from "$lib/state/warm-window";
   import KeybindingsSettings from "./KeybindingsSettings.svelte";
   import Modal from "./Modal.svelte";
   import { tick } from "svelte";
+  import { pluginRegistry } from "$lib/plugins/registry.svelte";
+  import { pluginSettingsSections } from "$lib/plugins/settings-registry.svelte";
+  import type { SettingRowDescriptor } from "$lib/plugins/api";
 
   interface Props {
     open: boolean;
@@ -107,14 +111,16 @@
     gitStatus: ["Git Status Indicators", "Show modified/untracked indicators for files in git repositories"],
     recentItems: ["Recent Items in Sidebar", "Number of recent locations to show (0 to hide)"],
     quickOpenDebug: ["QuickOpen Debug Scores", "Show score breakdown (name, frecency, dir bonus) in Ctrl+P results"],
+    warmWindow: ["Pre-warm New Windows", "Keep a hidden window ready so opening a new window (Ctrl+N) is near-instant. Uses extra memory for one background window. The first new window after enabling still opens cold.", "performance", "speed"],
     confirmDelete: ["Confirm before deleting", "Show confirmation dialog when moving files to trash"],
     backgroundOpacity: ["Background Opacity", "Window background transparency"],
     backgroundImage: ["Background Image", "Custom wallpaper path (PNG, JPG, WEBP, SVG)"],
     wallpaperBlur: ["Wallpaper Blur", "Blur the background image"],
     terminalApp: ["Terminal Application", "Command to open terminal (empty = auto-detect)"],
+    terminalFollowsExplorer: ["Terminal Follows Explorer", "Auto-cd the embedded terminal when the active pane navigates (queued if a command is running)", "terminal", "cwd", "sync"],
+    explorerFollowsTerminal: ["Explorer Follows Terminal", "Navigate the active pane when the terminal's shell changes directory (OSC 7)", "terminal", "cwd", "sync"],
     previewFontSize: ["Preview Font Size", "Font size for text, code and markdown previews"],
     ffmpegPath: ["FFmpeg Path", "Path to the ffmpeg binary for video/audio thumbnails (leave empty to auto-detect)", "video", "thumbnail"],
-    geminiApiKey: ["Gemini API Key", "Required for Nano Banana image editing (right-click images)", "AI", "Nano Banana"],
     keyboardShortcuts: ["Keyboard Shortcuts", "keybindings", "hotkeys", "Click on a shortcut to change it"],
   };
 
@@ -127,10 +133,11 @@
   const navBarRows = [rows.navBack, rows.navForward, rows.navUp, rows.navRefresh];
   const behaviorRows = [
     rows.showHidden, rows.millerHideEmpty, rows.yaziNavigation, rows.autoEnterSingleSubdir, rows.tabTitleGitRoot, rows.showManuallyHidden,
-    rows.gitStatus, rows.recentItems, rows.quickOpenDebug, rows.confirmDelete,
+    rows.gitStatus, rows.recentItems, rows.quickOpenDebug, rows.warmWindow, rows.confirmDelete,
     rows.backgroundOpacity, rows.backgroundImage, rows.wallpaperBlur, rows.terminalApp,
     rows.previewFontSize, rows.ffmpegPath,
   ];
+  const terminalRows = [rows.terminalFollowsExplorer, rows.explorerFollowsTerminal];
 
   // Escape clears the search filter before closing, so the Modal default
   // (close on Escape) is disabled and Escape is handled here instead.
@@ -507,6 +514,29 @@
             </label>
           </div>
 
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.warmWindow)}>
+            <div class="setting-info">
+              <span class="setting-label">Pre-warm New Windows</span>
+              <span class="setting-description">Keep a hidden window ready so opening a new window (Ctrl+N) is near-instant. Uses extra memory for one background window. The first new window after enabling still opens cold.</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.warmWindow}
+                onchange={() => {
+                  const enabled = !settingsStore.warmWindow;
+                  settingsStore.update({ warmWindow: enabled });
+                  // Apply immediately: prime the pool on enable; close the
+                  // parked hidden window on disable (otherwise it lingers,
+                  // unclaimable, until the app exits).
+                  if (enabled) void spawnWarmWindow();
+                  else void invoke("warm_pool_shutdown").catch(() => {});
+                }}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
           <div class="setting-row" class:hidden={!matchesSearch(...rows.showManuallyHidden)}>
             <div class="setting-info">
               <span class="setting-label">Show Manually Hidden Items</span>
@@ -683,24 +713,105 @@
           </div>
         </section>
 
-        <!-- AI / Nano Banana Section -->
-        <section class="settings-section" class:hidden={!sectionVisible(rows.geminiApiKey)}>
-          <h3 class="section-title">AI / Nano Banana</h3>
+        <!-- Terminal Section -->
+        <section class="settings-section" class:hidden={!sectionVisible(...terminalRows)}>
+          <h3 class="section-title">Terminal</h3>
 
-          <div class="setting-row" class:hidden={!matchesSearch(...rows.geminiApiKey)}>
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.terminalFollowsExplorer)}>
             <div class="setting-info">
-              <span class="setting-label">Gemini API Key</span>
-              <span class="setting-description">Required for Nano Banana image editing (right-click images)</span>
+              <span class="setting-label">Terminal Follows Explorer</span>
+              <span class="setting-description">Auto-cd the embedded terminal when the active pane navigates (queued if a command is running)</span>
             </div>
-            <input
-              class="text-input"
-              type="password"
-              value={settingsStore.geminiApiKey}
-              placeholder="Enter API key"
-              onchange={(e) => settingsStore.setGeminiApiKey(e.currentTarget.value)}
-            />
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.terminalFollowsExplorer}
+                onchange={() => settingsStore.toggleTerminalFollowsExplorer()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.explorerFollowsTerminal)}>
+            <div class="setting-info">
+              <span class="setting-label">Explorer Follows Terminal</span>
+              <span class="setting-description">Navigate the active pane when the terminal's shell changes directory (OSC 7)</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.explorerFollowsTerminal}
+                onchange={() => settingsStore.toggleExplorerFollowsTerminal()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
           </div>
         </section>
+
+        <!-- Plugins Section -->
+        <section class="settings-section" class:hidden={!sectionVisible(["Plugins", "enable disable extensions"], ...pluginRegistry.plugins.map((p) => [p.name, p.description]))}>
+          <h3 class="section-title">Plugins</h3>
+          {#each pluginRegistry.plugins as plugin (plugin.id)}
+            <div class="setting-row" class:hidden={!matchesSearch("Plugins", plugin.name, plugin.description)}>
+              <div class="setting-info">
+                <span class="setting-label">{plugin.name}</span>
+                <span class="setting-description">{plugin.description}</span>
+              </div>
+              <label class="toggle">
+                <input
+                  type="checkbox"
+                  checked={plugin.enabled}
+                  onchange={(e) => pluginRegistry.setEnabled(plugin.id, e.currentTarget.checked)}
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          {/each}
+        </section>
+
+        <!-- Plugin-contributed settings sections (descriptor-driven) -->
+        {#each pluginSettingsSections.sections as section (section.pluginId + ":" + section.id)}
+          <section class="settings-section" class:hidden={!sectionVisible([section.title, ...section.rows.flatMap((r: SettingRowDescriptor) => [r.label, r.description ?? ""])])}>
+            <h3 class="section-title">{section.title}</h3>
+            {#each section.rows as row (row.id)}
+              <div class="setting-row" class:hidden={!matchesSearch(section.title, row.label, row.description ?? "")}>
+                <div class="setting-info">
+                  <span class="setting-label">{row.label}</span>
+                  {#if row.description}
+                    <span class="setting-description">{row.description}</span>
+                  {/if}
+                </div>
+                {#if row.type === "toggle"}
+                  <label class="toggle">
+                    <input
+                      type="checkbox"
+                      checked={!!section.valueOf(row)}
+                      onchange={(e) => section.setValue(row.id, e.currentTarget.checked)}
+                    />
+                    <span class="toggle-slider"></span>
+                  </label>
+                {:else if row.type === "select"}
+                  <select
+                    class="theme-select"
+                    value={String(section.valueOf(row) ?? "")}
+                    onchange={(e) => section.setValue(row.id, e.currentTarget.value)}
+                  >
+                    {#each row.options ?? [] as opt (opt.value)}
+                      <option value={opt.value}>{opt.label}</option>
+                    {/each}
+                  </select>
+                {:else}
+                  <input
+                    class="text-input"
+                    type={row.type === "password" ? "password" : "text"}
+                    value={String(section.valueOf(row) ?? "")}
+                    onchange={(e) => section.setValue(row.id, e.currentTarget.value)}
+                  />
+                {/if}
+              </div>
+            {/each}
+          </section>
+        {/each}
 
         <!-- Keyboard Shortcuts Section -->
         <section class="settings-section" class:hidden={!sectionVisible(rows.keyboardShortcuts)}>

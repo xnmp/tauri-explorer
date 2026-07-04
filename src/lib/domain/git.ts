@@ -8,7 +8,7 @@ export function gitStatusLetter(status: string): string {
     case "Copied": return "C";
     case "Untracked": return "U";
     case "Ignored": return "I";
-    case "Conflict": return "!";
+    case "Conflicted": return "!";
     case "TypeChange": return "T";
     default: return "?";
   }

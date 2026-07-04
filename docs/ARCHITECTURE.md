@@ -25,17 +25,20 @@
 │                                                         │
 │  ┌─────────────────────────────────────────────────┐    │
 │  │  +page.svelte (root)                            │    │
-│  │  ├── TitleBar / WindowTabBar                    │    │
+│  │  ├── TitleBar (drag region + window controls)  │    │
 │  │  ├── SharedToolbar (search, theme, win controls)│    │
 │  │  ├── Sidebar (activity bar + files / SCM views) │    │
 │  │  ├── PaneContainer                              │    │
-│  │  │   ├── ExplorerPane (left)                    │    │
-│  │  │   │   ├── NavigationBar (breadcrumbs)        │    │
-│  │  │   │   └── FileList (dispatcher)              │    │
-│  │  │   │       ├── DetailsView → VirtualList      │    │
-│  │  │   │       ├── ListView (CSS grid)            │    │
-│  │  │   │       └── TilesView (CSS auto-fill)      │    │
-│  │  │   └── ExplorerPane (right, if dual pane)     │    │
+│  │  │   ├── left pane                              │    │
+│  │  │   │   ├── PaneTabBar (per-pane tab strip)    │    │
+│  │  │   │   └── ExplorerPane                       │    │
+│  │  │   │       ├── NavigationBar (breadcrumbs)    │    │
+│  │  │   │       └── FileList (dispatcher)          │    │
+│  │  │   │           ├── DetailsView → VirtualList  │    │
+│  │  │   │           ├── ListView (CSS grid)        │    │
+│  │  │   │           └── TilesView (CSS auto-fill)  │    │
+│  │  │   └── right pane (if dual pane): PaneTabBar  │    │
+│  │  │       + ExplorerPane                         │    │
 │  │  ├── PreviewPane (optional)                     │    │
 │  │  ├── StatusBar                                  │    │
 │  │  └── Overlay Dialogs                            │    │
@@ -72,6 +75,7 @@
 | `src/lib/domain/` | Pure functions and types (no framework deps) → [frontend.md](architecture/frontend.md) |
 | `src/lib/api/` | Frontend ↔ Rust bridge + mock for e2e → [frontend.md](architecture/frontend.md) |
 | `src/lib/composables/` | Reusable behavior (marquee, column resize, DnD) → [components.md](architecture/components.md) |
+| `src/lib/plugins/` | Build-time-bundled plugin system (contribution registries, fs providers) → [plugins.md](architecture/plugins.md) |
 | `src/lib/themes/` | Bundled CSS themes → [cross-cutting.md](architecture/cross-cutting.md) |
 | `src-tauri/src/` | Rust backend modules → [backend.md](architecture/backend.md) |
 | `tests/` | Vitest unit tests |
@@ -89,6 +93,7 @@
 | [components.md](architecture/components.md) | Full component table + composables |
 | [features.md](architecture/features.md) | Feature → file mapping, data flow patterns |
 | [cross-cutting.md](architecture/cross-cutting.md) | Persistence, cross-window comms, theming, keyboard, DnD, testing |
+| [plugins.md](architecture/plugins.md) | Plugin loading model (CSP rationale), PluginContext surface, adding a built-in plugin |
 | [reference-deps.md](reference-deps.md) | API reference for key Rust dependencies (jwalk, grep-searcher, fs_extra, image, tauri-plugin-log) |
 
 ---

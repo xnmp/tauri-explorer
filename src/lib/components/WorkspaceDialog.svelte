@@ -5,7 +5,7 @@
 <script lang="ts">
   import { workspacesStore } from "$lib/state/workspaces.svelte";
   import Modal from "./Modal.svelte";
-  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+  import { windowTabsManager, countPersistedTabs } from "$lib/state/window-tabs.svelte";
 
   interface Props {
     open: boolean;
@@ -137,7 +137,7 @@
                     {:else}
                       <span class="workspace-name">{workspace.name}</span>
                       <span class="workspace-meta">
-                        {workspace.state.tabs.length} tab{workspace.state.tabs.length !== 1 ? "s" : ""}
+                        {countPersistedTabs(workspace.state)} tab{countPersistedTabs(workspace.state) !== 1 ? "s" : ""}
                         · {formatDate(workspace.updatedAt)}
                       </span>
                     {/if}

@@ -10,14 +10,19 @@
   import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+  import { markStartup, reportFirstPaint } from "$lib/state/startup-timing";
+  import { warmMode, runWarmWindow, spawnWarmWindow } from "$lib/state/warm-window";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { registerAllCommands } from "$lib/state/command-definitions";
+  import { pluginRegistry } from "$lib/plugins/registry.svelte";
+  import { dialogRegistry } from "$lib/plugins/dialog-registry.svelte";
   import { executeCommand, getCommand } from "$lib/state/commands.svelte";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { saveFocusedWindowState } from "$lib/state/focused-window";
+  import { terminalPanelStore } from "$lib/state/terminal.svelte";
   import { setFfmpegPath } from "$lib/api/files";
   import { useNativeDropHandler } from "$lib/composables/use-native-drop-handler";
   import { useFileWatchers } from "$lib/composables/use-file-watchers";
@@ -30,21 +35,21 @@
   import PaneContainer from "$lib/components/PaneContainer.svelte";
   import QuickOpen from "$lib/components/QuickOpen.svelte";
   import CommandPalette from "$lib/components/CommandPalette.svelte";
-  import ThemePicker from "$lib/components/ThemePicker.svelte";
   import OptionPicker from "$lib/components/OptionPicker.svelte";
-  import SettingsDialog from "$lib/components/SettingsDialog.svelte";
   import ProgressDialog from "$lib/components/ProgressDialog.svelte";
   import ContentSearchDialog from "$lib/components/ContentSearchDialog.svelte";
-  import WorkspaceDialog from "$lib/components/WorkspaceDialog.svelte";
-  import BulkRenameDialog from "$lib/components/BulkRenameDialog.svelte";
   import ConflictDialog from "$lib/components/ConflictDialog.svelte";
-  import NanoBananaDialog from "$lib/components/NanoBananaDialog.svelte";
   import JobsPanel from "$lib/components/JobsPanel.svelte";
+  import type { Component } from "svelte";
   import { gitStatusStore } from "$lib/state/git-status.svelte";
   import { initTabTransferListener } from "$lib/state/tab-transfer";
   import StatusBar from "$lib/components/StatusBar.svelte";
   import AnimatedBackground from "$lib/components/AnimatedBackground.svelte";
   import MillerColumns from "$lib/components/MillerColumns.svelte";
+
+  // First milestone: the app bundle has parsed and begun executing. The gap
+  // from boot t0 to here is the JS download+parse cost the lazy-loading targets.
+  markStartup("bundle-exec");
 
   const millerAsLeftIsland = $derived(
     settingsStore.macOsVibrancy && !settingsStore.showSidebar && settingsStore.millerLayers > 0
@@ -67,11 +72,33 @@
 
   const refreshAllPanes = () => windowTabsManager.refreshAllPanes();
 
+  // Rarely-opened dialogs are code-split out of the startup bundle and loaded
+  // on first open. They stay mounted after loading so close transitions and
+  // internal state behave exactly as with a static import.
+  let ThemePicker = $state<Component<{ open: boolean; onClose: () => void }> | null>(null);
+  let SettingsDialog = $state<Component<{ open: boolean; onClose: () => void }> | null>(null);
+  let WorkspaceDialog = $state<Component<{ open: boolean; onClose: () => void }> | null>(null);
+  let BulkRenameDialog = $state<Component<any> | null>(null);
+
+  $effect(() => {
+    if (dialogStore.isThemePickerOpen && !ThemePicker) {
+      void import("$lib/components/ThemePicker.svelte").then((m) => (ThemePicker = m.default));
+    }
+    if (dialogStore.isSettingsOpen && !SettingsDialog) {
+      void import("$lib/components/SettingsDialog.svelte").then((m) => (SettingsDialog = m.default));
+    }
+    if (dialogStore.isWorkspaceOpen && !WorkspaceDialog) {
+      void import("$lib/components/WorkspaceDialog.svelte").then((m) => (WorkspaceDialog = m.default));
+    }
+    if (dialogStore.isBulkRenameOpen && !BulkRenameDialog) {
+      void import("$lib/components/BulkRenameDialog.svelte").then((m) => (BulkRenameDialog = m.default));
+    }
+  });
+
   // Initialize composables
   const nativeDropHandler = useNativeDropHandler({ getActiveExplorer, refreshAllPanes });
   const fileWatchers = useFileWatchers({
     getAllExplorers: () => windowTabsManager.getAllExplorers(),
-    refreshAllPanes,
   });
   const windowLifecycle = useWindowLifecycle({
     getActiveExplorer,
@@ -119,6 +146,15 @@
         explorer.closeFilter();
         return;
       }
+    }
+
+    // Ctrl+`: toggle the embedded terminal. Handled before the input-field
+    // early-return so it also closes the panel while the terminal (a
+    // <textarea> under the hood) has focus — mirroring VS Code.
+    if ((event.key === "`" || event.code === "Backquote") && isModifier && !dialogStore.hasModalOpen) {
+      event.preventDefault();
+      terminalPanelStore.toggle();
+      return;
     }
 
     // Skip shortcut handling (including hardcoded shortcuts below) if in an
@@ -247,7 +283,24 @@
     };
   })();
 
+  // Cold-start timing: fire once when the first directory listing is visible
+  // (active explorer has entries and is no longer loading). Reports a summary
+  // to the Rust log so it sits next to the backend `Startup:` line. Idempotent
+  // via reportFirstPaint's internal guard; the effect just stops reading once
+  // it has fired. See src/lib/state/startup-timing.ts.
+  let firstPaintReported = false;
+  $effect(() => {
+    if (firstPaintReported) return;
+    const explorer = windowTabsManager.getActiveExplorer();
+    if (explorer && !explorer.state.loading && explorer.displayEntries.length > 0) {
+      firstPaintReported = true;
+      reportFirstPaint();
+    }
+  });
+
   onMount(() => {
+    markStartup("mount");
+
     // Initialize theme from saved preference
     themeStore.initTheme();
 
@@ -255,6 +308,15 @@
     if (pickerInfo) {
       settingsStore.init().then(() => themeStore.syncFromSettings());
       return;
+    }
+
+    // EXPERIMENTAL warm window (?warm=1 parked, ?warm=measure self-firing): a
+    // hidden, fully-booted window for a future Ctrl+N. It runs the normal init
+    // below (stores/tabs/listeners live), then registers its activate-listener
+    // and signals readiness. It stays hidden until activated.
+    const wmode = warmMode();
+    if (wmode !== "off") {
+      void runWarmWindow(wmode === "measure");
     }
 
     // Read launch data injected by Rust initialization_script (synchronous, no IPC).
@@ -287,8 +349,12 @@
       explorer?.setViewMode(urlViewMode);
     }
 
-    // Load settings and bookmarks from config files (async, non-blocking)
-    settingsStore.init().then(() => themeStore.syncFromSettings());
+    // Load settings and bookmarks from config files (async, non-blocking).
+    // Plugins activate after settings load so persisted enable state is known.
+    settingsStore.init().then(() => {
+      themeStore.syncFromSettings();
+      void pluginRegistry.initPlugins();
+    });
     bookmarksStore.init();
     folderViewsStore.init();
     manualHiddenStore.init();
@@ -333,6 +399,20 @@
 
     // Register all commands for the command palette (deferred to next tick)
     queueMicrotask(() => registerAllCommands());
+
+    // Once this window is idle, prime the global warm-window pool so the next
+    // Ctrl+N activates a pre-warmed window instead of paying webview-create
+    // cost. Every REAL window primes — the Rust registry caps the pool at one,
+    // so concurrent windows can't over-spawn. Warm windows themselves never
+    // prime (wmode !== "off"): a warm window spawning another was the earlier
+    // runaway-spawn bug. Deferred so it never competes with this window's own
+    // first paint; settings are read at fire time, after settingsStore.init()
+    // has resolved.
+    if (wmode === "off") {
+      setTimeout(() => {
+        if (settingsStore.warmWindow) void spawnWarmWindow();
+      }, 1500);
+    }
 
     // Setup composables
     nativeDropHandler.setup();
@@ -387,6 +467,13 @@
       {/await}
     {/if}
   </div>
+  {#if terminalPanelStore.everOpened}
+    <!-- Lazy: xterm.js only loads on first open. Stays mounted afterwards so
+         hiding the panel keeps the shell session alive. -->
+    {#await import("$lib/components/TerminalPanel.svelte") then { default: TerminalPanel }}
+      <TerminalPanel />
+    {/await}
+  {/if}
   {#if settingsStore.showStatusBar}
     <StatusBar />
   {/if}
@@ -394,22 +481,29 @@
 
 <QuickOpen open={dialogStore.isQuickOpenOpen} onClose={() => dialogStore.closeQuickOpen()} />
 <CommandPalette open={dialogStore.isCommandPaletteOpen} onClose={() => dialogStore.closeCommandPalette()} />
-<ThemePicker open={dialogStore.isThemePickerOpen} onClose={() => dialogStore.closeThemePicker()} />
+{#if ThemePicker}
+  <ThemePicker open={dialogStore.isThemePickerOpen} onClose={() => dialogStore.closeThemePicker()} />
+{/if}
 <OptionPicker />
 <ContentSearchDialog open={dialogStore.isContentSearchOpen} onClose={() => dialogStore.closeContentSearch()} />
-<SettingsDialog open={dialogStore.isSettingsOpen} onClose={() => dialogStore.closeSettings()} />
-<WorkspaceDialog open={dialogStore.isWorkspaceOpen} onClose={() => dialogStore.closeWorkspace()} />
-<BulkRenameDialog
-  open={dialogStore.isBulkRenameOpen}
-  entries={dialogStore.bulkRenameEntries}
-  onClose={() => dialogStore.closeBulkRename()}
-  onComplete={() => refreshAllPanes()}
-/>
-<NanoBananaDialog
-  open={dialogStore.isNanoBananaOpen}
-  sourcePath={dialogStore.nanoBananaSourcePath}
-  onClose={() => dialogStore.closeNanoBanana()}
-/>
+{#if SettingsDialog}
+  <SettingsDialog open={dialogStore.isSettingsOpen} onClose={() => dialogStore.closeSettings()} />
+{/if}
+{#if WorkspaceDialog}
+  <WorkspaceDialog open={dialogStore.isWorkspaceOpen} onClose={() => dialogStore.closeWorkspace()} />
+{/if}
+{#if BulkRenameDialog}
+  <BulkRenameDialog
+    open={dialogStore.isBulkRenameOpen}
+    entries={dialogStore.bulkRenameEntries}
+    onClose={() => dialogStore.closeBulkRename()}
+    onComplete={() => refreshAllPanes()}
+  />
+{/if}
+{#each dialogRegistry.openDialogs as d (d.id)}
+  {@const DialogComponent = d.component}
+  <DialogComponent open={true} {...d.props} onClose={() => dialogRegistry.close(d.id)} />
+{/each}
 <JobsPanel
   open={dialogStore.isJobsPanelOpen}
   onClose={() => dialogStore.closeJobsPanel()}

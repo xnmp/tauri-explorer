@@ -11,6 +11,8 @@
   import type { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { isInClipboard, isClipboardCut } from "$lib/composables/use-item-interactions.svelte";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
+  import { settingsStore } from "$lib/state/settings.svelte";
+  import { emptyFolderResolver } from "$lib/state/empty-folders.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
 
@@ -23,6 +25,9 @@
     interactions: ItemInteractions;
     pointerDrag: PointerDrag | null;
     class?: string;
+    /** Global index in displayEntries — exposed as data-index so marquee
+     *  selection maps a rendered (virtualized) tile/row back to its entry. */
+    index?: number;
     onitemclick: (entry: FileEntry, event: MouseEvent) => void;
     onitemdblclick: (entry: FileEntry) => void;
     children: Snippet;
@@ -34,23 +39,35 @@
     interactions,
     pointerDrag,
     class: className = "",
+    index,
     onitemclick,
     onitemdblclick,
     children,
   }: Props = $props();
 
   const isRenaming = $derived(dialogStore.renamingEntry?.path === entry.path);
+
+  // Emptiness is resolved lazily now that listings no longer carry it (#129).
+  // Re-request when hidden-file visibility changes so the resolver reprobes.
+  $effect(() => {
+    settingsStore.showHidden;
+    emptyFolderResolver.request(entry);
+  });
+  const isEmptyFolder = $derived(
+    entry.kind === "directory" && emptyFolderResolver.isEmpty(entry.path) === true,
+  );
 </script>
 
 <button
   class="{className} entry-item"
   data-path={entry.path}
+  data-index={index}
   class:directory={entry.kind === "directory"}
   class:selected={explorer.isSelected(entry)}
   class:cut={isClipboardCut(entry)}
   class:in-clipboard={isInClipboard(entry)}
   class:hidden-entry={entry.name.startsWith(".") || manualHiddenStore.isHidden(explorer.currentPath, entry.name)}
-  class:empty-folder={entry.kind === "directory" && entry.is_empty === true}
+  class:empty-folder={isEmptyFolder}
   class:drop-target={interactions.isDropTarget(entry.path)}
   class:copy-drop={interactions.isCopyDrop(entry.path)}
   draggable={usesHtml5Drag}

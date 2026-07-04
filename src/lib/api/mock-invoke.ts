@@ -4,7 +4,10 @@
  */
 
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
+import { selectPreviewImages } from "$lib/domain/folder-preview";
 import { parentDir, basename } from "$lib/domain/path";
+import { emitWatcherGitChange } from "$lib/state/git-refresh";
+import type { GitFileEntry, GitStatusCode, GitStatusSummary } from "$lib/api/files";
 
 // Check if we're running in Tauri v2
 // Note: Tauri v2 uses __TAURI_INTERNALS__, not __TAURI__ (v1)
@@ -26,8 +29,16 @@ function file(name: string, path: string, size: number): FileEntry {
   return { name, path, kind: "file", size, modified: nextTimestamp() };
 }
 
+// Ground-truth emptiness for mock directories that have no children keyed in
+// `mockFiles` (e.g. a seeded-empty folder). Listings deliberately omit is_empty
+// to mirror the backend (#129); the frontend resolves it via is_directory_empty,
+// which consults this map for such folders.
+const mockDirEmpty: Record<string, boolean> = {};
+
 function dir(name: string, path: string, is_empty?: boolean): FileEntry {
-  return { name, path, kind: "directory", size: 0, modified: nextTimestamp(), is_empty };
+  if (is_empty !== undefined) mockDirEmpty[path] = is_empty;
+  // is_empty is intentionally absent from the listing contract (#129).
+  return { name, path, kind: "directory", size: 0, modified: nextTimestamp() };
 }
 
 // Mock file system structure
@@ -57,6 +68,14 @@ const mockFiles: Record<string, FileEntry[]> = {
   "/media/user/USB_DRIVE/Backups": [
     file("backup-2024.zip", "/media/user/USB_DRIVE/Backups/backup-2024.zip", 8388608),
   ],
+  // Google Drive File Stream mount — browsable so the breadcrumb's Google-mark
+  // anchor (which collapses the mount crumb) can be exercised.
+  "/media/user/GoogleDrive": [
+    dir("My Drive", "/media/user/GoogleDrive/My Drive"),
+  ],
+  "/media/user/GoogleDrive/My Drive": [
+    file("doc.gdoc", "/media/user/GoogleDrive/My Drive/doc.gdoc", 1024),
+  ],
   "/home/user/Documents": [
     dir("project", "/home/user/Documents/project"),
     file("report.pdf", "/home/user/Documents/report.pdf", 102400),
@@ -70,6 +89,8 @@ const mockFiles: Record<string, FileEntry[]> = {
     file("bundle.zip", "/home/user/Downloads/bundle.zip", 2097152),
     file("installer.exe", "/home/user/Downloads/installer.exe", 5242880),
     file("image.png", "/home/user/Downloads/image.png", 524288),
+    // Hidden by default (#160); visible only with show-hidden on.
+    file("desktop.ini", "/home/user/Downloads/desktop.ini", 128),
   ],
   // A chain of single-child folders: wrapper → payload → inner → {real content}.
   // Previewing "wrapper" descends through the chain and shows inner's contents.
@@ -89,6 +110,11 @@ const mockFiles: Record<string, FileEntry[]> = {
     file("photo1.jpg", "/home/user/Pictures/photo1.jpg", 2097152),
     file("photo2.jpg", "/home/user/Pictures/photo2.jpg", 1572864),
     file("screenshot.png", "/home/user/Pictures/screenshot.png", 262144),
+  ],
+  "/home/user/Pictures/vacation": [
+    file("beach.jpg", "/home/user/Pictures/vacation/beach.jpg", 3145728),
+    file("sunset.png", "/home/user/Pictures/vacation/sunset.png", 2621440),
+    file("itinerary.txt", "/home/user/Pictures/vacation/itinerary.txt", 1024),
   ],
   "/home/user/Music": [
     dir("playlist", "/home/user/Music/playlist"),
@@ -300,8 +326,227 @@ type CommandHandler = (args: Record<string, unknown>) => unknown;
  *  the SCM panel can hide newly-ignored entries on next git_status. */
 const mockGitignored = new Set<string>();
 
+// ----- Stateful in-memory git repo (mirrors src-tauri/src/git.rs contract) -----
+//
+// The SCM E2E tests assert real outcomes (a staged row leaves Changes, commit
+// empties the staged section, an external edit shows up on refresh). To make
+// those observable, the mock keeps a mutable working-tree/index model and
+// moves entries between sections the same way the git2-backed backend would.
+const MOCK_REPO_ROOT = "/home/user/Documents/project";
+
+interface MockGitState {
+  branch: string;
+  detached: boolean;
+  staged: GitFileEntry[];
+  changes: GitFileEntry[];
+  untracked: GitFileEntry[];
+  merge: GitFileEntry[];
+}
+
+interface MockGitCommit {
+  message: string;
+  amend: boolean;
+  files: string[];
+  commit_id: string;
+}
+
+const mockGitCommits: MockGitCommit[] = [];
+
+function seedGitState(): MockGitState {
+  return {
+    branch: "main",
+    detached: false,
+    staged: [{ path: "src/App.tsx", old_path: null, status: "Modified" }],
+    changes: [
+      { path: "src/index.css", old_path: null, status: "Modified" },
+      { path: "README.md", old_path: null, status: "Modified" },
+    ],
+    untracked: [
+      { path: "src/router.tsx", old_path: null, status: "Untracked" },
+      { path: ".env.example", old_path: null, status: "Untracked" },
+      { path: "assets/logo.png", old_path: null, status: "Untracked" },
+    ],
+    merge: [{ path: "src/constants.ts", old_path: null, status: "Conflicted" }],
+  };
+}
+
+let mockGit: MockGitState = seedGitState();
+
+function removeFrom(list: GitFileEntry[], path: string): GitFileEntry | undefined {
+  const idx = list.findIndex((e) => e.path === path);
+  if (idx < 0) return undefined;
+  return list.splice(idx, 1)[0];
+}
+
+function upsert(list: GitFileEntry[], entry: GitFileEntry): void {
+  if (!list.some((e) => e.path === entry.path)) list.push(entry);
+}
+
+/** Stage one path: untracked→staged(Added), changes/merge→staged(Modified). */
+function mockStagePath(path: string): void {
+  const fromUntracked = removeFrom(mockGit.untracked, path);
+  if (fromUntracked) {
+    upsert(mockGit.staged, { path, old_path: null, status: "Added" });
+    return;
+  }
+  const fromMerge = removeFrom(mockGit.merge, path);
+  const fromChanges = removeFrom(mockGit.changes, path);
+  if (fromChanges || fromMerge) {
+    upsert(mockGit.staged, { path, old_path: null, status: "Modified" });
+  }
+}
+
+/** Unstage one path: Added→untracked, otherwise→changes. */
+function mockUnstagePath(path: string): void {
+  const staged = removeFrom(mockGit.staged, path);
+  if (!staged) return;
+  if (staged.status === "Added") {
+    upsert(mockGit.untracked, { path, old_path: null, status: "Untracked" });
+  } else {
+    upsert(mockGit.changes, { path, old_path: null, status: "Modified" });
+  }
+}
+
+/** Discard mirrors git.rs: refuses a path with staged changes unless forced;
+ *  otherwise reverts (changes) or removes (untracked). */
+function mockDiscardPath(path: string, force: boolean): void {
+  if (!force && mockGit.staged.some((e) => e.path === path)) {
+    throw new Error(
+      `refusing to discard '${path}' with staged changes; pass force=true to override`,
+    );
+  }
+  removeFrom(mockGit.changes, path);
+  removeFrom(mockGit.untracked, path);
+  removeFrom(mockGit.merge, path);
+}
+
+function mockGitSummary(): GitStatusSummary {
+  return {
+    is_repo: true,
+    repo_root: MOCK_REPO_ROOT,
+    branch: mockGit.branch,
+    detached: mockGit.detached,
+    staged: mockGit.staged.map((e) => ({ ...e })),
+    changes: mockGit.changes.map((e) => ({ ...e })),
+    untracked: mockGit.untracked
+      .filter((e) => !mockGitignored.has(e.path))
+      .map((e) => ({ ...e })),
+    merge: mockGit.merge.map((e) => ({ ...e })),
+  };
+}
+
+if (typeof window !== "undefined") {
+  const w = window as unknown as {
+    __mockGitReset?: () => void;
+    __mockGitCommits?: MockGitCommit[];
+    __mockGitExternalModify?: (path: string) => void;
+    __mockGitSetClean?: () => void;
+    __mockGitState?: () => MockGitState;
+  };
+  // Reset the repo to its seed state (mock/browser only).
+  w.__mockGitReset = () => {
+    mockGit = seedGitState();
+    mockGitCommits.length = 0;
+    mockGitignored.clear();
+  };
+  // Recorded commits, so tests can assert the message that was committed.
+  w.__mockGitCommits = mockGitCommits;
+  // Simulate an edit made outside the app (e.g. another process): add a
+  // modified file to the working tree and fire the watcher change so the
+  // SCM store re-fetches, exactly as the real filesystem watcher would.
+  w.__mockGitExternalModify = (path: string) => {
+    if (
+      !mockGit.changes.some((e) => e.path === path) &&
+      !mockGit.staged.some((e) => e.path === path)
+    ) {
+      mockGit.changes.push({ path, old_path: null, status: "Modified" as GitStatusCode });
+    }
+    emitWatcherGitChange(MOCK_REPO_ROOT);
+  };
+  // Simulate the working tree becoming clean (all sections empty) as it would
+  // after committing/discarding everything, then fire the watcher change.
+  w.__mockGitSetClean = () => {
+    mockGit.staged = [];
+    mockGit.changes = [];
+    mockGit.untracked = [];
+    mockGit.merge = [];
+    emitWatcherGitChange(MOCK_REPO_ROOT);
+  };
+  w.__mockGitState = () => mockGit;
+}
+
 /** Contents of files created via the mocked write_text_file. */
 const mockWrittenFiles: Record<string, string> = {};
+
+/** In-memory OS clipboard file list, round-tripped by the clipboard_* mocks. */
+let mockClipboardFiles: string[] = [];
+
+// ----- Deterministic commit graph for git_log / git_refs mocks (#57) -----
+
+interface MockCommit {
+  oid: string;
+  short_oid: string;
+  parents: string[];
+  author_name: string;
+  author_email: string;
+  author_time: number;
+  summary: string;
+}
+
+/** Deterministic 40-char hex OID from a small commit number. */
+function fullOid(n: number): string {
+  return n.toString(16).padStart(4, "0").repeat(10);
+}
+
+// Newest-first, topologically ordered. 12 commits, a feature branch (#9,#10)
+// merged into main at #12, and tags on #1 and #5. Parents reference lower
+// numbers, so the array is a valid topological linearization.
+const GRAPH_BASE_TIME = Math.floor(Date.UTC(2024, 5, 1, 9, 0, 0) / 1000);
+const MOCK_GRAPH_SPEC: Array<{ n: number; parents: number[]; summary: string }> = [
+  { n: 12, parents: [11, 10], summary: "Merge branch 'feature'" },
+  { n: 11, parents: [8], summary: "Update README with usage" },
+  { n: 10, parents: [9], summary: "Add tests for feature X" },
+  { n: 9, parents: [8], summary: "Implement feature X" },
+  { n: 8, parents: [7], summary: "Refactor config loader" },
+  { n: 7, parents: [6], summary: "Fix bug in argument parser" },
+  { n: 6, parents: [5], summary: "Add structured logging" },
+  { n: 5, parents: [4], summary: "Bump version to 1.0" },
+  { n: 4, parents: [3], summary: "Wire up CLI entry point" },
+  { n: 3, parents: [2], summary: "Add core module" },
+  { n: 2, parents: [1], summary: "Project scaffolding" },
+  { n: 1, parents: [], summary: "Initial commit" },
+];
+
+let mockCommitGraphCache: MockCommit[] | null = null;
+function mockCommitGraph(): MockCommit[] {
+  if (mockCommitGraphCache) return mockCommitGraphCache;
+  mockCommitGraphCache = MOCK_GRAPH_SPEC.map((c, i) => ({
+    oid: fullOid(c.n),
+    short_oid: fullOid(c.n).slice(0, 7),
+    parents: c.parents.map(fullOid),
+    author_name: c.n % 3 === 0 ? "Bob Dev" : "Alice Coder",
+    author_email: c.n % 3 === 0 ? "bob@example.com" : "alice@example.com",
+    // Older commits (higher index) get earlier timestamps.
+    author_time: GRAPH_BASE_TIME - i * 3600,
+    summary: c.summary,
+  }));
+  return mockCommitGraphCache;
+}
+
+/** OID → decorating refs, matching git_refs targets. */
+const MOCK_GRAPH_REFS: Record<
+  string,
+  Array<{ name: string; kind: "LocalBranch" | "RemoteBranch" | "Tag" | "Head" }>
+> = {
+  [fullOid(12)]: [
+    { name: "HEAD", kind: "Head" },
+    { name: "main", kind: "LocalBranch" },
+  ],
+  [fullOid(11)]: [{ name: "origin/main", kind: "RemoteBranch" }],
+  [fullOid(10)]: [{ name: "feature", kind: "LocalBranch" }],
+  [fullOid(5)]: [{ name: "v1.0", kind: "Tag" }],
+  [fullOid(1)]: [{ name: "v0.9", kind: "Tag" }],
+};
 
 /** Static fake file contents, served by read_text_file and searched by
  *  start_content_search (written files take precedence over these). */
@@ -360,6 +605,16 @@ const mockCommands: Record<string, CommandHandler> = {
   get_home_directory: () => "/home/user",
   get_launch_cwd: () => "/home/user",
   list_drives: () => mockDrives,
+  log_startup_timing: () => undefined,
+
+  // Pre-warmed window pool: no pool outside Tauri — spawn is always refused
+  // and claims always miss, so openNewWindow takes the fresh-window path.
+  warm_pool_begin_spawn: () => false,
+  warm_pool_cancel_spawn: () => undefined,
+  warm_pool_register: () => undefined,
+  warm_pool_claim: () => null,
+  warm_pool_discard: () => undefined,
+  warm_pool_shutdown: () => undefined,
 
   list_directory: (args) => {
     const raw = args.path as string;
@@ -374,9 +629,13 @@ const mockCommands: Record<string, CommandHandler> = {
   is_directory_empty: (args) => {
     const path = args.path as string;
     const includeHidden = (args.includeHidden ?? args.include_hidden) as boolean;
-    if (!(path in mockFiles)) return false;
-    const entries = getDirectoryEntries(path);
-    return entries.every((e) => !includeHidden && e.name.startsWith("."));
+    // Prefer computing from known children; fall back to the seeded ground truth
+    // for folders that have no children keyed in mockFiles.
+    if (path in mockFiles) {
+      const entries = getDirectoryEntries(path);
+      return entries.every((e) => !includeHidden && e.name.startsWith("."));
+    }
+    return mockDirEmpty[path] ?? false;
   },
 
   check_paths_exist: (args) => {
@@ -723,6 +982,31 @@ const mockCommands: Record<string, CommandHandler> = {
     return mockInvoke<string>("get_thumbnail_data");
   },
 
+  get_folder_preview: (args) => {
+    // Runs the real domain selection over the mock listing, so browser E2E
+    // exercises the actual rules (image filter, hidden skip, sort, cap).
+    const path = args.path as string;
+    const entries = mockFiles[path];
+    if (!entries) throw new Error(`Not a directory: ${path}`);
+    const names = entries.filter((e) => e.kind === "file").map((e) => e.name);
+    const selected = new Set(selectPreviewImages(names));
+    const image_paths = entries.filter((e) => selected.has(e.name)).map((e) => e.path);
+    return {
+      folder_path: path,
+      image_paths,
+      fingerprint: `mock:${image_paths.join("|")}`,
+    };
+  },
+
+  // Embedded terminal: a PTY can't be faked meaningfully in the browser —
+  // spawn "succeeds" (so the panel renders and e2e can exercise the toggle)
+  // but never emits output. Real terminal behavior is covered by e2e-tauri.
+  terminal_spawn: () => 1,
+  terminal_write: () => {},
+  terminal_resize: () => {},
+  terminal_kill: () => {},
+  terminal_status: () => ({ busy: false, cwd: null }),
+
   clear_thumbnail_cache: () => 0,
 
   get_thumbnail_cache_stats: () => ({
@@ -789,7 +1073,7 @@ const mockCommands: Record<string, CommandHandler> = {
 
   git_status: (args: Record<string, unknown>) => {
     const repoPath = args.repoPath as string;
-    if (!repoPath?.startsWith("/home/user/Documents/project")) {
+    if (!repoPath?.startsWith(MOCK_REPO_ROOT)) {
       return {
         is_repo: false,
         repo_root: null,
@@ -801,35 +1085,70 @@ const mockCommands: Record<string, CommandHandler> = {
         merge: [],
       };
     }
-    return {
-      is_repo: true,
-      repo_root: "/home/user/Documents/project",
-      branch: "main",
-      detached: false,
-      staged: [
-        { path: "src/App.tsx", old_path: null, status: "Modified" },
-      ],
-      changes: [
-        { path: "src/index.css", old_path: null, status: "Modified" },
-        { path: "README.md", old_path: null, status: "Modified" },
-      ],
-      untracked: [
-        { path: "src/router.tsx", old_path: null, status: "Untracked" },
-        { path: ".env.example", old_path: null, status: "Untracked" },
-        { path: "assets/logo.png", old_path: null, status: "Untracked" },
-      ].filter((e) => !mockGitignored.has(e.path)),
-      merge: [
-        { path: "src/constants.ts", old_path: null, status: "Conflict" },
-      ],
-    };
+    return mockGitSummary();
   },
 
-  git_stage: () => null,
-  git_unstage: () => null,
-  git_discard: () => null,
+  git_commit_files: (args) => {
+    const oid = args.oid as string;
+    // Deterministic per-commit file list keyed off the mock graph's OIDs.
+    const n = parseInt(oid.slice(0, 4), 16);
+    if (Number.isNaN(n)) return [];
+    if (n === 12) {
+      return [
+        { path: "src/feature-x.ts", status: "A" },
+        { path: "src/index.ts", status: "M" },
+      ];
+    }
+    return [{ path: `src/file-${n}.ts`, status: n % 2 === 0 ? "M" : "A" }];
+  },
+  git_stage: (args: Record<string, unknown>) => {
+    const paths = (args.paths as string[]) ?? [];
+    for (const p of paths) mockStagePath(p);
+    return null;
+  },
+  git_unstage: (args: Record<string, unknown>) => {
+    const paths = (args.paths as string[]) ?? [];
+    for (const p of paths) mockUnstagePath(p);
+    return null;
+  },
+  git_discard: (args: Record<string, unknown>) => {
+    const paths = (args.paths as string[]) ?? [];
+    const options = (args.options as { force?: boolean } | null) ?? null;
+    const force = options?.force ?? false;
+    for (const p of paths) mockDiscardPath(p, force);
+    return null;
+  },
   git_commit: (args: Record<string, unknown>) => {
     const msg = (args.message as string) ?? "";
-    return { commit_id: "deadbeef".padEnd(40, "0"), summary: msg.split("\n")[0] };
+    const options = (args.options as { amend?: boolean } | null) ?? null;
+    const amend = options?.amend ?? false;
+    if (msg.trim().length === 0 && !amend) {
+      throw new Error("commit message cannot be empty");
+    }
+    const committed = [
+      ...mockGit.staged.map((e) => e.path),
+      ...mockGit.merge.map((e) => e.path),
+    ];
+    if (committed.length === 0 && !amend) {
+      throw new Error("nothing to commit");
+    }
+    // Staged + resolved-merge entries become part of the commit; the working
+    // tree (changes/untracked) is left untouched, mirroring the real backend.
+    mockGit.staged = [];
+    mockGit.merge = [];
+    const effectiveMessage =
+      msg.trim().length === 0 && amend
+        ? mockGitCommits[mockGitCommits.length - 1]?.message ?? ""
+        : msg;
+    const commit_id = (mockGitCommits.length + 1).toString(16).padStart(40, "0");
+    if (amend && mockGitCommits.length > 0) {
+      const prev = mockGitCommits[mockGitCommits.length - 1];
+      prev.message = effectiveMessage;
+      prev.files = Array.from(new Set([...prev.files, ...committed]));
+    } else {
+      mockGitCommits.push({ message: effectiveMessage, amend, files: committed, commit_id });
+    }
+    return { commit_id, summary: effectiveMessage.split("\n")[0] };
   },
   git_diff: (args: Record<string, unknown>) => {
     const p = args.path as string;
@@ -857,6 +1176,57 @@ const mockCommands: Record<string, CommandHandler> = {
   },
   git_watch_repo: () => null,
   git_unwatch_repo: () => null,
+
+  // ----- Git history / commit graph (#57) -----
+
+  git_log: (args: Record<string, unknown>) => {
+    const repoPath = (args.repoPath as string) ?? "";
+    if (!repoPath.startsWith("/home/user/Documents/project")) {
+      return { commits: [], refs: {}, has_more: false, next_cursor: null };
+    }
+    const options = (args.options as { skip?: number; limit?: number } | null) ?? {};
+    const skip = Math.max(0, options.skip ?? 0);
+    const limit = Math.max(1, options.limit ?? 500);
+
+    const all = mockCommitGraph();
+    const page = all.slice(skip, skip + limit);
+    const hasMore = skip + limit < all.length;
+    return {
+      commits: page,
+      refs: MOCK_GRAPH_REFS,
+      has_more: hasMore,
+      next_cursor: page.length ? page[page.length - 1].oid : null,
+    };
+  },
+
+  git_refs: (args: Record<string, unknown>) => {
+    const repoPath = (args.repoPath as string) ?? "";
+    if (!repoPath.startsWith("/home/user/Documents/project")) {
+      return {
+        local_branches: [],
+        remote_branches: [],
+        tags: [],
+        head: null,
+        head_branch: null,
+        detached: false,
+      };
+    }
+    const tip = fullOid(12);
+    return {
+      local_branches: [
+        { name: "main", target: tip },
+        { name: "feature", target: fullOid(10) },
+      ],
+      remote_branches: [{ name: "origin/main", target: fullOid(11) }],
+      tags: [
+        { name: "v1.0", target: fullOid(5) },
+        { name: "v0.9", target: fullOid(1) },
+      ],
+      head: tip,
+      head_branch: "main",
+      detached: false,
+    };
+  },
 
   // ----- Symlinks -----
 
@@ -952,12 +1322,18 @@ const mockCommands: Record<string, CommandHandler> = {
   set_window_theme: () => {},
 
   // ----- Clipboard file operations (os-clipboard.ts) -----
+  // In-memory clipboard so write → has → read round-trips in browser/E2E mode,
+  // mirroring the real OS clipboard contract (write paths, then read them back).
 
-  clipboard_has_files: () => false,
+  clipboard_has_files: () => mockClipboardFiles.length > 0,
 
-  clipboard_read_files: () => [] as string[],
+  clipboard_read_files: () => [...mockClipboardFiles],
 
-  clipboard_write_files: () => true,
+  clipboard_write_files: (args) => {
+    const paths = (args.paths as string[]) ?? [];
+    mockClipboardFiles = [...paths];
+    return true;
+  },
 
   clipboard_has_image: () => false,
 
@@ -975,12 +1351,38 @@ const mockCommands: Record<string, CommandHandler> = {
 
   get_log_dir: () => "/tmp/tauri-explorer/logs",
 
+  // Mirrors the real backend: writes a PNG into `directory` and returns its
+  // full path. Adds the entry to the mock fs so the pasted image shows up in
+  // the directory listing. A deterministic filename keeps E2E assertions stable.
   clipboard_paste_image: (args: Record<string, unknown>) => {
     const directory = args.directory as string;
-    return `${directory}/clipboard-image.png`;
+    const filename = "clipboard-image.png";
+    const path = `${directory}/${filename}`;
+    const entries = mockFiles[directory] || (mockFiles[directory] = []);
+    if (!entries.some((e) => e.path === path)) {
+      entries.push(file(filename, path, 4096));
+    }
+    return path;
   },
 
   start_nano_banana_job: () => 1,
+
+  // Deterministic fake filename suggestions so browser E2E exercises the picker
+  // without a real model. Derives names from the original's extension.
+  ai_suggest_destination: (args) => {
+    const candidates = (args.candidates as string[]) ?? [];
+    const count = Math.max(1, Math.min(5, (args.count as number) ?? 3));
+    // Deterministic mock: the first N candidates, so E2E can assert exact rows.
+    return candidates.slice(0, count);
+  },
+  ai_suggest_filenames: (args) => {
+    const originalName = (args.originalName as string) ?? "file";
+    const dot = originalName.lastIndexOf(".");
+    const ext = dot > 0 ? originalName.slice(dot) : "";
+    const count = Math.max(1, Math.min(5, (args.count as number) ?? 3));
+    const bases = ["meeting-notes", "2024-notes", "summary", "draft", "final"];
+    return bases.slice(0, count).map((b) => `${b}${ext}`);
+  },
 };
 
 // In-memory config file store for mock mode

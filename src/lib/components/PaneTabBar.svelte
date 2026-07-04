@@ -1,15 +1,15 @@
 <!--
-  WindowTabBar component - VSCode-style tabs at window level
-  Issue: tauri-explorer-ldfx
+  PaneTabBar component - VSCode-style tab strip owned by a single pane.
+  Issues: tauri-explorer-ldfx (window tabs), #140 (per-pane tabs)
 
-  Each tab contains the full dual-pane layout state.
-  Tab title shows active pane's folder name.
+  Each pane renders its own strip; a tab is a single explorer view.
+  Dragging a tab onto the other pane's strip moves it across panes.
 -->
 <script lang="ts">
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { getDropSourcePaths } from "$lib/state/drop-operations";
-  import { handleFileDrop } from "$lib/state/drop-operations";
+  import { handleFileDropMany } from "$lib/state/drop-operations";
   import { dragState } from "$lib/state/drag.svelte";
   import {
     tabDragState,
@@ -20,87 +20,41 @@
   import { openNewWindow } from "$lib/state/commands/shared";
   import { parentDir } from "$lib/domain/path";
   import { isCopyModifier } from "$lib/domain/platform";
-  import { showTabArea as showTabAreaRule } from "$lib/domain/titlebar";
-  import { tick } from "svelte";
+  import { showPaneTabBar } from "$lib/domain/titlebar";
+  import type { PaneId } from "$lib/state/types";
 
-  const tabs = $derived(windowTabsManager.tabs);
-  const activeTabId = $derived(windowTabsManager.activeTabId);
+  const { paneId }: { paneId: PaneId } = $props();
+
+  const tabs = $derived(windowTabsManager.panes[paneId].tabs);
+  const activeTabId = $derived(windowTabsManager.panes[paneId].activeTabId);
 
   // When "git root in tab title" is on, resolve each tab's repo root (cached in
   // the manager). Runs here because the async work needs a component owner; the
   // manager's title derivation reacts to the cache it fills.
   $effect(() => {
     if (!settingsStore.tabTitleGitRoot) return;
-    for (const tab of windowTabsManager.tabs) {
+    for (const tab of tabs) {
       const path = windowTabsManager.getTabPath(tab.id);
       if (path) windowTabsManager.ensureGitRoot(path);
     }
   });
 
-  let tabAreaRef = $state<HTMLElement | null>(null);
-
-  function updateTabGap() {
-    if (!tabAreaRef || !settingsStore.macOsVibrancy) return;
-    const activeEl = tabAreaRef.querySelector(
-      ".tab.active",
-    ) as HTMLElement | null;
-    const container = document.querySelector(
-      ".pane-container",
-    ) as HTMLElement | null;
-    if (!activeEl || !container) return;
-    const containerRect = container.getBoundingClientRect();
-    const tabRect = activeEl.getBoundingClientRect();
-    const radius =
-      parseFloat(getComputedStyle(container).borderTopLeftRadius) || 14;
-    const lineWidth = containerRect.width - radius * 2;
-    const left = Math.max(0, tabRect.left - containerRect.left - radius - 3);
-    const right = Math.min(
-      lineWidth,
-      tabRect.right - containerRect.left - radius,
-    );
-    container.style.setProperty(
-      "--tab-gap-left",
-      `${(left / lineWidth) * 100}%`,
-    );
-    container.style.setProperty(
-      "--tab-gap-right",
-      `${(right / lineWidth) * 100}%`,
-    );
-  }
-
-  $effect(() => {
-    activeTabId;
-    tabs.length;
-    settingsStore.showSidebar;
-    settingsStore.millerLayers;
-    settingsStore.showPreviewPane;
-    tick().then(updateTabGap);
-  });
-
-  $effect(() => {
-    if (!tabAreaRef) return;
-    const container = document.querySelector(".pane-container");
-    const observer = new ResizeObserver(updateTabGap);
-    observer.observe(tabAreaRef);
-    if (container) observer.observe(container);
-    return () => observer.disconnect();
-  });
-
   const showTabArea = $derived(
-    showTabAreaRule(
-      settingsStore.integratedTitleBar,
-      tabs.length,
-      settingsStore.showWindowControls,
-    ),
+    showPaneTabBar(tabs.length, windowTabsManager.dualPaneEnabled),
   );
 
-  // Track tab IDs that existed on first render to skip entrance animation
-  let knownTabIds = new Set(windowTabsManager.tabs.map((t) => t.id));
+  // Track tab IDs that existed on first render to skip entrance animation.
+  // Initialized lazily on the first render pass so it sees the pane's
+  // then-current tabs without touching reactive state at setup time.
+  let knownTabIds: Set<string> | null = null;
 
   // Track tabs being closed (for exit animation)
   let closingTabId = $state<string | null>(null);
 
   function isNewTab(tabId: string): boolean {
+    if (!knownTabIds) {
+      knownTabIds = new Set(windowTabsManager.panes[paneId].tabs.map((t) => t.id));
+    }
     if (knownTabIds.has(tabId)) return false;
     knownTabIds.add(tabId);
     return true;
@@ -132,7 +86,7 @@
   }
 
   function handleNewTab(): void {
-    windowTabsManager.createTab();
+    windowTabsManager.createTabIn(paneId);
   }
 
   function handleTabKeydown(event: KeyboardEvent, tabId: string): void {
@@ -146,9 +100,9 @@
   // Tauri webview, force a "no-drop" cursor, and hide the drag image outside the
   // window. Pointer events with implicit mouse capture keep firing (with screen
   // coordinates) even over other windows / the desktop, so we render our own
-  // ghost, reorder within the window, hand the tab off to whichever window the
-  // cursor is over, or tear off a new window AT the cursor. File drops ONTO a
-  // tab still use the HTML5/native path further below.
+  // ghost, reorder within the strip, move across panes, hand the tab off to
+  // whichever window the cursor is over, or tear off a new window AT the
+  // cursor. File drops ONTO a tab still use the HTML5/native path further below.
   let dropTargetTabId = $state<string | null>(null);
   let fileDropTargetTabId = $state<string | null>(null);
   let draggingTabId = $state<string | null>(null);
@@ -190,8 +144,10 @@
     return el?.getAttribute("data-tab-id") ?? null;
   }
 
-  function pointInTabArea(x: number, y: number): boolean {
-    return !!(document.elementFromPoint(x, y) as HTMLElement | null)?.closest?.(".tab-area");
+  /** Which pane's tab strip (if any) is under the point. */
+  function paneAreaAtPoint(x: number, y: number): PaneId | null {
+    const area = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest?.(".tab-area");
+    return (area?.getAttribute("data-pane-id") as PaneId | null) ?? null;
   }
 
   function onTabMouseMove(event: MouseEvent): void {
@@ -233,13 +189,21 @@
     tabDragState.clear();
     if (!pending || pending.sourceWindow !== windowTabsManager.windowLabel) return;
 
-    // 1) Released over THIS window's tab strip → reorder.
-    if (pointInTabArea(event.clientX, event.clientY)) {
+    // 1) Released over a tab strip in THIS window → reorder (same pane) or
+    //    move across panes (the other pane's strip).
+    const targetPaneId = paneAreaAtPoint(event.clientX, event.clientY);
+    if (targetPaneId) {
       const overId = tabAtPoint(event.clientX, event.clientY);
-      if (overId && overId !== ptr.tabId) {
-        const from = tabs.findIndex((t) => t.id === ptr.tabId);
-        const to = tabs.findIndex((t) => t.id === overId);
-        if (from >= 0 && to >= 0) windowTabsManager.reorderTabs(from, to);
+      if (targetPaneId === paneId) {
+        if (overId && overId !== ptr.tabId) {
+          const from = tabs.findIndex((t) => t.id === ptr.tabId);
+          const to = tabs.findIndex((t) => t.id === overId);
+          if (from >= 0 && to >= 0) windowTabsManager.reorderTabs(paneId, from, to);
+        }
+      } else {
+        const targetTabs = windowTabsManager.panes[targetPaneId].tabs;
+        const at = overId ? targetTabs.findIndex((t) => t.id === overId) : undefined;
+        windowTabsManager.moveTabToPane(ptr.tabId, targetPaneId, at === -1 ? undefined : at);
       }
       return;
     }
@@ -255,15 +219,13 @@
     } else if (targetLabel === null) {
       // Onto the desktop → tear off a new window AT the cursor.
       const { snapshot } = pending;
-      const activePath =
-        snapshot.activePaneId === "right" ? snapshot.rightPath : snapshot.leftPath;
-      await openNewWindow(activePath, undefined, snapshot, {
+      await openNewWindow(snapshot.path, undefined, snapshot, {
         x: event.screenX * dpr,
         y: event.screenY * dpr,
       });
       windowTabsManager.removeTransferredTab(pending.tabId);
     }
-    // Released over our own window (but not the tab strip) → no-op.
+    // Released over our own window (but not a tab strip) → no-op.
   }
 
   function onTabDragKey(event: KeyboardEvent): void {
@@ -325,13 +287,15 @@
         explorer.refresh({ silent: true });
       }
     };
-    for (const sourcePath of sourcePaths) {
-      if (parentDir(sourcePath) === targetPath) continue;
-      if (sourcePath === targetPath) continue;
-      if (targetPath.startsWith(sourcePath + "/")) continue;
-      // Await sequentially so multi-file drops can't stack conflict dialogs
-      await handleFileDrop(sourcePath, targetPath, isCopy, { onRefresh });
-    }
+    const valid = sourcePaths.filter(
+      (sourcePath) =>
+        parentDir(sourcePath) !== targetPath &&
+        sourcePath !== targetPath &&
+        !targetPath.startsWith(sourcePath + "/"),
+    );
+    // The helper transfers sequentially (no stacked conflict dialogs) and
+    // records one undoable batch (#163).
+    await handleFileDropMany(valid, targetPath, isCopy, { onRefresh });
   }
 </script>
 
@@ -342,7 +306,7 @@
   <div
     class="tab-area"
     role="tablist"
-    bind:this={tabAreaRef}
+    data-pane-id={paneId}
   >
     {#each tabs as tab (tab.id)}
       {@const display = windowTabsManager.getTabDisplay(tab)}
@@ -367,6 +331,12 @@
         ondragleave={handleTabDragLeave}
         ondrop={(e) => handleTabDrop(e, tab.id)}
       >
+        {#if tab.id === activeTabId}
+          <!-- Chrome-style fillets: concave corners where the active tab
+               meets the pane below it (#157). -->
+          <span class="tab-fillet left" aria-hidden="true"></span>
+          <span class="tab-fillet right" aria-hidden="true"></span>
+        {/if}
         {#if display.isGitRoot}
           <!-- Git branch icon: this tab's folder lives inside a git repo. -->
           <svg
@@ -449,13 +419,15 @@
   .tab-area {
     display: flex;
     align-items: flex-end;
-    height: 100%;
+    height: 34px;
+    flex-shrink: 0;
     padding-left: 12px;
     gap: 1px;
     overflow-x: auto;
     scrollbar-width: none;
     -ms-overflow-style: none;
     position: relative;
+    background: color-mix(in srgb, var(--background-card) calc(var(--titlebar-opacity, 1) * 100%), transparent);
   }
 
   .tab-area::-webkit-scrollbar {
@@ -616,6 +588,40 @@
     transform: translateY(-1px);
     z-index: 2;
     opacity: 1;
+    /* Fillets render outside the tab box; text clipping is handled by
+       .tab-title's own overflow. */
+    overflow: visible;
+  }
+
+  /* Chrome-style fillets (#157): 8px concave quarter-circles that curve the
+     active tab into the pane surface below it. Each is a square hanging off
+     the tab's bottom corner, filled with the tab's surface colour except for
+     a transparent circle anchored at the square's top outer corner. */
+  .tab-fillet {
+    --fillet: 8px;
+    position: absolute;
+    bottom: -1px; /* .tab.active is lifted 1px (translateY) — reach the strip's baseline */
+    width: var(--fillet);
+    height: var(--fillet);
+    pointer-events: none;
+  }
+
+  .tab-fillet.left {
+    left: calc(-1 * var(--fillet));
+    background: radial-gradient(
+      circle var(--fillet) at 0 0,
+      transparent calc(var(--fillet) - 0.5px),
+      var(--background-card) var(--fillet)
+    );
+  }
+
+  .tab-fillet.right {
+    right: calc(-1 * var(--fillet));
+    background: radial-gradient(
+      circle var(--fillet) at 100% 0,
+      transparent calc(var(--fillet) - 0.5px),
+      var(--background-card) var(--fillet)
+    );
   }
 
   .tab.active::before {
@@ -770,8 +776,28 @@
       opacity var(--transition-normal);
   }
 
+  :global([data-vibrancy]) .tab-area {
+    background: transparent;
+  }
+
   :global([data-vibrancy]) .tab-area::after {
     display: none;
+  }
+
+  :global([data-vibrancy]) .tab-fillet.left {
+    background: radial-gradient(
+      circle var(--fillet) at 0 0,
+      transparent calc(var(--fillet) - 0.5px),
+      var(--vibrancy-island-bg) var(--fillet)
+    );
+  }
+
+  :global([data-vibrancy]) .tab-fillet.right {
+    background: radial-gradient(
+      circle var(--fillet) at 100% 0,
+      transparent calc(var(--fillet) - 0.5px),
+      var(--vibrancy-island-bg) var(--fillet)
+    );
   }
 
   :global([data-vibrancy]) .tab.active {

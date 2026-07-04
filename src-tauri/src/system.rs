@@ -86,6 +86,15 @@ pub async fn get_launch_cwd(state: tauri::State<'_, LaunchCwd>) -> Result<String
     Ok(state.0.clone())
 }
 
+/// Record the frontend cold-start timing summary in the app log. Written next
+/// to the Rust `Startup:` line so the backend (setup→build) and webview
+/// (boot→first directory visible) halves of cold start can be read together
+/// from the log file — durable in release builds without devtools.
+#[tauri::command]
+pub async fn log_startup_timing(summary: String) {
+    log::info!("{}", summary);
+}
+
 /// Set the window theme (light/dark) to sync NSAppearance with the app theme.
 #[tauri::command]
 pub async fn set_window_theme(window: tauri::Window, theme: String) {

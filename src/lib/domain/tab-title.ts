@@ -45,29 +45,35 @@ export function disambiguateTabTitles(items: TabTitleItem[]): Map<string, string
   }
 
   for (const [base, group] of groups) {
-    if (group.length === 1) {
-      result.set(group[0].id, base);
+    // Disambiguate by *distinct* path: items sharing the exact same path (e.g.
+    // two tabs on the same cwd) can't be told apart and shouldn't try — they
+    // collapse to one and share the bare basename when no other path collides.
+    const distinctPaths = [...new Set(group.map((it) => it.path))];
+    if (distinctPaths.length === 1) {
+      for (const item of group) result.set(item.id, base);
       continue;
     }
 
-    const segArrays = group.map((it) => segments(it.path));
+    const segArrays = distinctPaths.map(segments);
     const maxLen = Math.max(...segArrays.map((a) => a.length));
 
     // Smallest tail length k (≥2, includes the basename) that makes every
-    // colliding item's tail unique. If the paths are identical it never
-    // separates — clamp to the full path and let them share a label.
+    // distinct path's tail unique.
     let k = 2;
     for (; k < maxLen; k++) {
       const tails = segArrays.map((a) => a.slice(-k).join("/"));
-      if (new Set(tails).size === group.length) break;
+      if (new Set(tails).size === distinctPaths.length) break;
     }
 
-    group.forEach((item, i) => {
+    const labelByPath = new Map<string, string>();
+    distinctPaths.forEach((path, i) => {
       const segs = segArrays[i];
       // Parent segments inside the distinguishing tail, excluding the basename.
       const parents = segs.slice(Math.max(0, segs.length - k), segs.length - 1);
-      result.set(item.id, formatLabel(base, parents));
+      labelByPath.set(path, formatLabel(base, parents));
     });
+
+    for (const item of group) result.set(item.id, labelByPath.get(item.path)!);
   }
 
   return result;

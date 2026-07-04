@@ -43,8 +43,6 @@ pub enum GitStatusCode {
     Copied,
     Untracked,
     Ignored,
-    /// The TS `GitStatusCode` union expects "Conflict".
-    #[serde(rename = "Conflict")]
     Conflicted,
     TypeChange,
 }

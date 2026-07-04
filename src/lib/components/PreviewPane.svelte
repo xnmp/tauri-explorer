@@ -4,7 +4,8 @@
 -->
 <script lang="ts">
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { readTextFile, fetchDirectory, gitDiff, listArchiveContents, readImageAsBlobUrl } from "$lib/api/files";
+  import { readTextFile, fetchDirectory, gitDiff, listArchiveContents, readImageAsBlobUrl, openFile } from "$lib/api/files";
+  import { toastStore } from "$lib/state/toast.svelte";
   import { isImageFile, isSvgFile, isTextFile, isPdfFile, isZipFile, getFileType, formatDate } from "$lib/domain/file-types";
   import { formatSize, isSystemHidden, type FileEntry } from "$lib/domain/file";
   import { isTauri } from "$lib/api/mock-invoke";
@@ -243,6 +244,44 @@
     }
     return activeDiff?.staged ? "staged" : "unstaged";
   });
+
+  // Diff header actions — restore the stage / unstage / discard / open-file
+  // affordances directly on the diff so a file can be staged from its diff
+  // (VSCode parity). Operates on the currently-open diff target.
+  async function stageFromDiff(): Promise<void> {
+    if (!activeDiff) return;
+    const path = activeDiff.path;
+    await scmStore.stage([path]);
+    // Follow the file to its staged diff so the view doesn't leave the user
+    // staring at an empty "unstaged" diff after the change moved to the index.
+    if (scmStore.summary.staged.some((e) => e.path === path)) {
+      scmStore.openDiff(path, true);
+    }
+  }
+  async function unstageFromDiff(): Promise<void> {
+    if (!activeDiff) return;
+    const path = activeDiff.path;
+    await scmStore.unstage([path]);
+    // Follow the file back to its worktree diff if it still has changes there.
+    const stillChanged =
+      scmStore.summary.changes.some((e) => e.path === path) ||
+      scmStore.summary.untracked.some((e) => e.path === path);
+    if (stillChanged) scmStore.openDiff(path, false);
+  }
+  async function discardFromDiff(): Promise<void> {
+    if (!activeDiff) return;
+    const r = await scmStore.discard([activeDiff.path]);
+    if (!r.ok) {
+      toastStore.error(`Discard failed: ${r.error}`);
+      return;
+    }
+    scmStore.closeDiff();
+  }
+  async function openDiffFileInEditor(): Promise<void> {
+    if (!activeDiff || !scmStore.repoRoot) return;
+    const abs = `${scmStore.repoRoot.replace(/\/$/, "")}/${activeDiff.path}`;
+    await openFile(abs);
+  }
 
   $effect(() => {
     if (!activeDiff || !scmStore.repoRoot) {
@@ -512,6 +551,18 @@
       <span class="preview-type-badge" class:diff-staged={activeDiff.staged} class:diff-unstaged={!activeDiff.staged}>
         {diffSubtitle || "git diff"}
       </span>
+    </div>
+    <div class="diff-actions">
+      <button type="button" class="diff-action-btn" onclick={openDiffFileInEditor}>Open File</button>
+      {#if activeDiff.staged}
+        <button type="button" class="diff-action-btn" onclick={unstageFromDiff}>Unstage</button>
+      {:else}
+        <button type="button" class="diff-action-btn" onclick={stageFromDiff}>Stage</button>
+        {#if !diffParsed?.added}
+          <button type="button" class="diff-action-btn danger" onclick={discardFromDiff}>Discard</button>
+        {/if}
+      {/if}
+      <button type="button" class="diff-action-btn" title="Close diff (Esc)" onclick={() => scmStore.closeDiff()}>Close</button>
     </div>
     <div class="preview-content">
       {#if diffLoading}
@@ -1216,6 +1267,36 @@
   .preview-type-badge.diff-unstaged {
     background: color-mix(in srgb, var(--accent) 15%, transparent);
     color: var(--accent);
+  }
+
+  .diff-actions {
+    display: flex;
+    gap: 6px;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--divider);
+    flex-wrap: wrap;
+  }
+
+  .diff-action-btn {
+    padding: 3px 10px;
+    background: transparent;
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+  }
+
+  .diff-action-btn:hover {
+    background: var(--subtle-fill-secondary);
+    color: var(--text-primary);
+  }
+
+  .diff-action-btn.danger:hover {
+    color: var(--system-critical, #dc2626);
+    border-color: var(--system-critical, #dc2626);
   }
 
   .diff-lines {

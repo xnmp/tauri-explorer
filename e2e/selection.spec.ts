@@ -124,13 +124,20 @@ for (const viewMode of VIEW_MODES) {
         expect(box, "file list must have a bounding box").not.toBeNull();
         if (!box) return;
 
-        const lastItem = files.last();
-        const lastBox = await lastItem.boundingBox();
-        expect(lastBox, "last entry must have a bounding box").not.toBeNull();
-        if (!lastBox) return;
+        // Start the drag on empty background BELOW every item. The last DOM
+        // item is not the visually lowest in list view (its CSS grid flows
+        // column-first), so "below the last item" can land ON an entry and
+        // turn the marquee into a file drag (#130) — compute the true max
+        // bottom across all entries instead.
+        let maxBottom = 0;
+        for (const item of await files.all()) {
+          const b = await item.boundingBox();
+          if (b) maxBottom = Math.max(maxBottom, b.y + b.height);
+        }
+        expect(maxBottom, "entries must have bounding boxes").toBeGreaterThan(0);
 
         const startX = box.x + 50;
-        const startY = lastBox.y + lastBox.height + 10;
+        const startY = maxBottom + 10;
 
         await page.mouse.move(startX, startY);
         await page.mouse.down();

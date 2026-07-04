@@ -111,7 +111,7 @@ export function useItemInteractions(deps: ItemInteractionsDeps) {
 // --- Clipboard helpers ---
 
 export function isInClipboard(entry: FileEntry): boolean {
-  return clipboardStore.content?.entries.some((e) => e.path === entry.path) ?? false;
+  return clipboardStore.pathSet.has(entry.path);
 }
 
 export function isClipboardCut(entry: FileEntry): boolean {

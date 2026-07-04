@@ -53,3 +53,12 @@ export async function subscribeGitChanges(fn: Subscriber): Promise<() => void> {
 export function notifyLocalGitChange(repoRoot: string | null): void {
   dispatch({ repoRoot, source: "local" });
 }
+
+/**
+ * Announce a change originating outside this app (as the filesystem watcher
+ * would). Real builds get these from the Tauri `git-status-changed` event; the
+ * mock backend (E2E) drives this directly to simulate external edits.
+ */
+export function emitWatcherGitChange(repoRoot: string | null): void {
+  dispatch({ repoRoot, source: "watcher" });
+}

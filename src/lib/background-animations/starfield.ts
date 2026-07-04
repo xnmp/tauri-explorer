@@ -18,6 +18,41 @@ const STAR_COUNT = 80;
 const CONSTELLATION_DISTANCE = 100;
 const CONSTELLATION_CHANCE = 0.3; // Only some nearby stars form constellations
 
+/** A precomputed constellation line between two stars (indices + alpha). */
+export interface ConstellationLine {
+  a: number;
+  b: number;
+  alpha: number;
+}
+
+/**
+ * Star positions never change after init, so the O(N²) nearest-neighbour +
+ * seeded-selection pass is computed ONCE here instead of on every animation
+ * frame (~3.2k distance checks/frame for 80 stars, all yielding identical
+ * results). Exported for unit testing.
+ */
+export function computeConstellations(
+  stars: ReadonlyArray<{ x: number; y: number }>,
+  maxDistance = CONSTELLATION_DISTANCE,
+  chance = CONSTELLATION_CHANCE,
+): ConstellationLine[] {
+  const lines: ConstellationLine[] = [];
+  for (let i = 0; i < stars.length; i++) {
+    for (let j = i + 1; j < stars.length; j++) {
+      const dx = stars[i].x - stars[j].x;
+      const dy = stars[i].y - stars[j].y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist >= maxDistance) continue;
+      // Seeded random based on indices for a stable constellation pattern
+      const seed = (i * 7 + j * 13) % 100;
+      if (seed / 100 < chance) {
+        lines.push({ a: i, b: j, alpha: (1 - dist / maxDistance) * 0.08 });
+      }
+    }
+  }
+  return lines;
+}
+
 export const starfieldRenderer: AnimationRenderer = (canvas, colors) => {
   const ctx = canvas.getContext("2d")!;
   let animId = 0;
@@ -43,6 +78,8 @@ export const starfieldRenderer: AnimationRenderer = (canvas, colors) => {
     twinkleOffset: Math.random() * Math.PI * 2,
   }));
 
+  const constellations = computeConstellations(stars);
+
   function draw() {
     if (!running) return;
     time++;
@@ -50,26 +87,15 @@ export const starfieldRenderer: AnimationRenderer = (canvas, colors) => {
     const h = canvas.offsetHeight;
     ctx.clearRect(0, 0, w, h);
 
-    // Draw constellation lines (faint connections between nearby stars)
-    for (let i = 0; i < stars.length; i++) {
-      for (let j = i + 1; j < stars.length; j++) {
-        const dx = stars[i].x - stars[j].x;
-        const dy = stars[i].y - stars[j].y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < CONSTELLATION_DISTANCE) {
-          // Use seeded random based on indices for stable constellation pattern
-          const seed = (i * 7 + j * 13) % 100;
-          if (seed / 100 < CONSTELLATION_CHANCE) {
-            const alpha = (1 - dist / CONSTELLATION_DISTANCE) * 0.08;
-            ctx.strokeStyle = `${colors.accent}${Math.round(alpha * 255).toString(16).padStart(2, "0")}`;
-            ctx.lineWidth = 0.4;
-            ctx.beginPath();
-            ctx.moveTo(stars[i].x, stars[i].y);
-            ctx.lineTo(stars[j].x, stars[j].y);
-            ctx.stroke();
-          }
-        }
-      }
+    // Draw constellation lines (faint connections between nearby stars,
+    // precomputed — stars never move, only twinkle)
+    ctx.lineWidth = 0.4;
+    for (const line of constellations) {
+      ctx.strokeStyle = `${colors.accent}${Math.round(line.alpha * 255).toString(16).padStart(2, "0")}`;
+      ctx.beginPath();
+      ctx.moveTo(stars[line.a].x, stars[line.a].y);
+      ctx.lineTo(stars[line.b].x, stars[line.b].y);
+      ctx.stroke();
     }
 
     // Draw stars with twinkling

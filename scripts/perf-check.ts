@@ -33,7 +33,11 @@ function parseBenchmarkOutput(output: string): BenchmarkEntry[] {
   const regex = /^(.+?):\s+avg=([\d.]+)ms,\s+min=([\d.]+)ms,\s+max=([\d.]+)ms\s+\((\d+)\s+iterations\)/;
 
   for (const line of output.split("\n")) {
-    const trimmed = line.trim();
+    // Vitest colorizes stdout when it detects a TTY-ish environment; ANSI
+    // escapes glued to the benchmark name would otherwise become part of the
+    // baseline key and silently never match on comparison runs.
+    // eslint-disable-next-line no-control-regex
+    const trimmed = line.replace(/\[[0-9;]*m/g, "").trim();
     const match = trimmed.match(regex);
     if (match) {
       entries.push({
@@ -50,7 +54,7 @@ function parseBenchmarkOutput(output: string): BenchmarkEntry[] {
 
 function runBenchmarks(): BenchmarkEntry[] {
   console.log("Running benchmarks...\n");
-  const output = execSync("npx vitest run tests/perf/ 2>&1", {
+  const output = execSync("npx vitest run -c vitest.perf.config.ts tests/perf/ 2>&1", {
     encoding: "utf-8",
     timeout: 60000,
   });

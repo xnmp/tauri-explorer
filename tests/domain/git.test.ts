@@ -31,7 +31,7 @@ describe("gitStatusLetter", () => {
   });
 
   it("returns ! for Conflict", () => {
-    expect(gitStatusLetter("Conflict")).toBe("!");
+    expect(gitStatusLetter("Conflicted")).toBe("!");
   });
 
   it("returns T for TypeChange", () => {

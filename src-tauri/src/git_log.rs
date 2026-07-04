@@ -374,6 +374,57 @@ pub async fn git_refs(repo_path: String) -> Result<GitRefs, AppError> {
     .await
 }
 
+/// One changed file in a commit (vs its first parent, or the empty tree for
+/// a root commit).
+#[derive(Debug, Clone, Serialize)]
+pub struct CommitFile {
+    pub path: String,
+    /// Porcelain-style letter: A, M, D, R, C, T.
+    pub status: String,
+}
+
+/// Files changed by `oid` relative to its first parent (root commits diff
+/// against the empty tree). Powers the graph's commit-detail panel (#58).
+#[tauri::command]
+pub async fn git_commit_files(repo_path: String, oid: String) -> Result<Vec<CommitFile>, AppError> {
+    run_blocking(move |_cancel| {
+        let repo = open_repo(Path::new(&repo_path))?;
+        let commit = repo
+            .find_commit(Oid::from_str(&oid).map_err(|e| AppError::Other(e.to_string()))?)
+            .map_err(|e| AppError::Other(format!("commit not found: {e}")))?;
+        let tree = commit.tree().map_err(|e| AppError::Other(e.to_string()))?;
+        let parent_tree = commit
+            .parent(0)
+            .ok()
+            .and_then(|p| p.tree().ok());
+        let diff = repo
+            .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)
+            .map_err(|e| AppError::Other(e.to_string()))?;
+
+        let mut files = Vec::new();
+        for delta in diff.deltas() {
+            let status = match delta.status() {
+                git2::Delta::Added => "A",
+                git2::Delta::Deleted => "D",
+                git2::Delta::Modified => "M",
+                git2::Delta::Renamed => "R",
+                git2::Delta::Copied => "C",
+                git2::Delta::Typechange => "T",
+                _ => "M",
+            };
+            let path = delta
+                .new_file()
+                .path()
+                .or_else(|| delta.old_file().path())
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            files.push(CommitFile { path, status: status.to_string() });
+        }
+        Ok(files)
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

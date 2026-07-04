@@ -189,6 +189,7 @@ pub fn run(launch_dir: Option<String>) {
             git::git_unwatch_repo,
             git_log::git_log,
             git_log::git_refs,
+            git_log::git_commit_files,
             // Drives / volumes
             files::drives::list_drives,
             // Wallpaper

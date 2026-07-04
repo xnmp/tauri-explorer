@@ -1088,6 +1088,19 @@ const mockCommands: Record<string, CommandHandler> = {
     return mockGitSummary();
   },
 
+  git_commit_files: (args) => {
+    const oid = args.oid as string;
+    // Deterministic per-commit file list keyed off the mock graph's OIDs.
+    const n = parseInt(oid.slice(0, 4), 16);
+    if (Number.isNaN(n)) return [];
+    if (n === 12) {
+      return [
+        { path: "src/feature-x.ts", status: "A" },
+        { path: "src/index.ts", status: "M" },
+      ];
+    }
+    return [{ path: `src/file-${n}.ts`, status: n % 2 === 0 ? "M" : "A" }];
+  },
   git_stage: (args: Record<string, unknown>) => {
     const paths = (args.paths as string[]) ?? [];
     for (const p of paths) mockStagePath(p);

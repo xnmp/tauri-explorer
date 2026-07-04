@@ -145,6 +145,17 @@ describe("filterHidden", () => {
     ] as unknown as typeof mockEntries;
     expect(filterHidden(sysEntries, true)).toHaveLength(1);
   });
+
+  it("hides desktop.ini and Thumbs.db by default, reveals with showHidden (#160)", () => {
+    const sysEntries = [
+      { name: "desktop.ini", path: "/desktop.ini", kind: "file", size: 10, modified: "" },
+      { name: "Desktop.INI", path: "/Desktop.INI", kind: "file", size: 10, modified: "" },
+      { name: "Thumbs.db", path: "/Thumbs.db", kind: "file", size: 10, modified: "" },
+      { name: "notes.txt", path: "/notes.txt", kind: "file", size: 10, modified: "" },
+    ] as unknown as typeof mockEntries;
+    expect(filterHidden(sysEntries, false).map((e) => e.name)).toEqual(["notes.txt"]);
+    expect(filterHidden(sysEntries, true)).toHaveLength(4);
+  });
 });
 
 describe("formatSize", () => {

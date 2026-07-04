@@ -4,12 +4,13 @@
   variable-height lists (offsets become prefix sums, lookup a binary search).
 -->
 <script lang="ts" generics="T">
-  import type { Snippet } from "svelte";
+  import { onDestroy, type Snippet } from "svelte";
   import {
     computeOffsets,
     firstVisibleIndex,
     lastVisibleIndexExclusive,
   } from "$lib/domain/virtual-layout";
+  import { createRafCoalescer } from "$lib/domain/raf-coalesce";
 
   interface Props {
     items: T[];
@@ -23,6 +24,17 @@
     children: Snippet<[T, number]>;
     getKey?: (item: T, index: number) => string | number;
     scrollToIndex?: (index: number) => void;
+    /** Extra class(es) for the scroll viewport (e.g. "list-view" so marquee /
+     *  keyboard-nav DOM lookups and view-scoped CSS keep resolving). */
+    class?: string;
+    /** Overflow for each item wrapper. Grids (List/Tiles) need "visible" so an
+     *  inline-rename box can float past its row; the default clips (Details). */
+    itemOverflow?: "hidden" | "visible";
+    /** Padding applied to the scroll viewport (grids inset their content here). */
+    viewportPadding?: string;
+    /** Called when the rendered window nears the end of `items` — incremental
+     *  loaders (git graph paging) append more items in response. */
+    onnearend?: () => void;
   }
 
   let {
@@ -33,6 +45,10 @@
     children,
     getKey = (_item: T, index: number) => index,
     scrollToIndex = $bindable(),
+    class: className = "",
+    itemOverflow = "hidden",
+    viewportPadding,
+    onnearend,
   }: Props = $props();
 
   let viewportRef = $state<HTMLElement | null>(null);
@@ -42,9 +58,20 @@
   // Buffer: render extra items above/below for smooth scrolling
   const BUFFER = 3;
 
+  // Scroll events outpace the display (multiple per frame on fast wheel /
+  // high-Hz mice); writing $state per event re-runs the visible-range
+  // derivation for frames that are never painted. Coalesce to one write per
+  // animation frame, keeping the latest position (same pattern as the
+  // marquee's move batching).
+  const scrollCoalescer = createRafCoalescer<number>((top) => {
+    scrollTop = top;
+  });
+
   function handleScroll(event: Event) {
-    scrollTop = (event.target as HTMLElement).scrollTop;
+    scrollCoalescer.push((event.target as HTMLElement).scrollTop);
   }
+
+  onDestroy(() => scrollCoalescer.cancel());
 
   // Variable-height layout: prefix-sum offsets, recomputed only when the
   // items array changes (memoized by $derived), never on scroll.
@@ -102,6 +129,15 @@
     }))
   );
 
+  // Near-end notification for incremental loaders. An $effect (not $derived):
+  // this is a genuine callback side effect driven by the scroll window.
+  const NEAR_END_ROWS = 20;
+  $effect(() => {
+    if (onnearend && items.length > 0 && endIndex >= items.length - NEAR_END_ROWS) {
+      onnearend();
+    }
+  });
+
   const paddingTop = $derived(
     layout ? (layout.offsets[startIndex] ?? 0) : startIndex * itemHeight
   );
@@ -115,10 +151,11 @@
 </script>
 
 <div
-  class="virtual-viewport"
+  class="virtual-viewport {className}"
   bind:this={viewportRef}
   bind:clientHeight={viewportHeight}
   onscroll={handleScroll}
+  style:padding={viewportPadding}
   {role}
 >
   <div class="virtual-spacer-top" style:height="{paddingTop}px" aria-hidden="true"></div>
@@ -127,6 +164,7 @@
     <div
       class="virtual-item"
       style:height="{layout ? heightAt(index) : itemHeight}px"
+      style:overflow={itemOverflow}
       role={role ? "presentation" : undefined}
     >
       {@render children(item, index)}

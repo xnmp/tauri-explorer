@@ -44,9 +44,19 @@ pub fn start_drag<F: Fn(DragResult, CursorPosition) + Send + 'static>(
                 .unwrap()
                 .push(window.connect_drag_data_get(move |_, _, data, _, _| {
                     log::debug!("Preparing URIs for drag data");
+                    // Percent-encode via glib: a hand-built `format!("file://…")`
+                    // URI is invalid for paths containing spaces/#/non-ASCII,
+                    // and one bad URI can break parsing of the whole uri-list
+                    // on the receiving side (multi-item drags in particular).
                     let uris: Vec<String> = paths
                         .iter()
-                        .map(|path| format!("file://{}", path.display()))
+                        .filter_map(|path| match gtk::glib::filename_to_uri(path, None) {
+                            Ok(uri) => Some(uri.to_string()),
+                            Err(e) => {
+                                log::warn!("skipping undraggable path {:?}: {e}", path);
+                                None
+                            }
+                        })
                         .collect();
                     let uris: Vec<&str> = uris.iter().map(|s| s.as_str()).collect();
                     log::debug!("Setting URIs: {:?}", uris);

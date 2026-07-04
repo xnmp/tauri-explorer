@@ -16,7 +16,7 @@ import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { parentDir, basename, isInsideDir, samePath } from "$lib/domain/path";
 import { dragState } from "$lib/state/drag.svelte";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
-import { handleFileDrop, handleBackgroundDrop } from "$lib/state/drop-operations";
+import { handleFileDropMany } from "$lib/state/drop-operations";
 import { startExternalDrag } from "./use-external-drag.svelte";
 import { resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights } from "./use-native-drop-target.svelte";
 import { getZoomFactor } from "$lib/domain/zoom";
@@ -180,12 +180,11 @@ export function usePointerDrag(deps: PointerDragDeps) {
       const paths = [...dragPaths];
       const targetPath = target.path;
       cleanup(true);
-      for (const sourcePath of paths) {
-        // Skip no-op drops (already in this folder, or onto self/descendant) so
-        // they don't trigger a spurious "already exists" conflict dialog.
-        if (isNoOpDropPath(targetPath, sourcePath)) continue;
-        await handleFileDrop(sourcePath, targetPath, isCopy, { onRefresh: refreshPanes });
-      }
+      // Skip no-op drops (already in this folder, or onto self/descendant) so
+      // they don't trigger a spurious "already exists" conflict dialog. A
+      // multi-item drop is one undoable batch (#163).
+      const valid = paths.filter((sourcePath) => !isNoOpDropPath(targetPath, sourcePath));
+      await handleFileDropMany(valid, targetPath, isCopy, { onRefresh: refreshPanes });
       return;
     } else if (target?.type === "background") {
       const destPath = target.path || explorer.currentPath;
@@ -193,12 +192,12 @@ export function usePointerDrag(deps: PointerDragDeps) {
       if (sourceDir !== undefined && !samePath(sourceDir, destPath)) {
         const paths = [...dragPaths];
         cleanup(true);
-        for (const sourcePath of paths) {
-          // No existingNames: performFileTransfer must fetch the target dir
-          // for its conflict check (an empty Set would be treated as
-          // authoritative and bypass the conflict dialog entirely).
-          await handleBackgroundDrop(sourcePath, destPath, undefined as unknown as Set<string>, { onRefresh: refreshPanes });
-        }
+        // No existingNames: performFileTransfer must fetch the target dir
+        // for its conflict check (an empty Set would be treated as
+        // authoritative and bypass the conflict dialog entirely). Background
+        // drops are move-only; a multi-item drop is one undoable batch (#163).
+        const movable = paths.filter((sourcePath) => !samePath(parentDir(sourcePath), destPath));
+        await handleFileDropMany(movable, destPath, false, { onRefresh: refreshPanes });
         return;
       }
     }

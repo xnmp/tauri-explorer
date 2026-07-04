@@ -24,7 +24,7 @@ Every piece of chrome is toggleable. Turn on what you need.
 
 ![Dark theme](screenshots/readme/dark-theme.png)
 
-**Tabs and dual pane.** `Ctrl+T` / `Ctrl+W` for tabs. `Ctrl+\` for side-by-side dual pane with a draggable split. Restore closed tabs. New windows inherit context from the last focused one. Workspaces to save and restore layouts.
+**Tabs and dual pane.** `Ctrl+T` / `Ctrl+W` for tabs. `Ctrl+\` opens a second pane that works like a window docked alongside — each pane has its own tab strip, and tabs drag between panes, between windows, or tear off into new ones. Restore closed tabs. Workspaces to save and restore layouts.
 
 ![Dual pane](screenshots/readme/dual-pane.png)
 

@@ -14,6 +14,17 @@
 | Breadcrumb caret picker | `NavigationBar.svelte` (subdirectory dropdown on chevron click) |
 | History management | `navigation.ts:pushToHistory` |
 
+### Plugins (#142)
+| Feature | Files to change |
+|---------|----------------|
+| Plugin API surface | `plugins/api.ts` (PluginContext, disposal tracking, storage) → [plugins.md](plugins.md) |
+| Built-in registry + lifecycle | `plugins/registry.svelte.ts` (enable/disable, `initPlugins`), `pluginsEnabled` in `settings.svelte.ts` |
+| Context-menu contributions | `state/context-menu-items.svelte.ts` registry, rendered in `ContextMenu.svelte` |
+| Settings contributions | `plugins/settings-registry.svelte.ts` + descriptor-driven rows in `SettingsDialog.svelte` (Plugins section) |
+| Virtual-fs providers | `plugins/fs-providers.ts` dispatch, routed in `api/files.ts`, `domain/virtual-path.ts` helpers |
+| Jobs (source-tagged) | `state/jobs.svelte.ts` (`detail`/`source`), `JobsPanel.svelte` |
+| Demo/reference plugin | `plugins/demo/index.ts` |
+
 ### Git Integration
 | Feature | Files to change |
 |---------|----------------|
@@ -77,16 +88,17 @@
 ### Tabs & Windows
 | Feature | Files to change |
 |---------|----------------|
-| Window tabs | `window-tabs.svelte.ts`, `WindowTabBar.svelte`, `TitleBar.svelte` |
+| Per-pane tabs | `window-tabs.svelte.ts`, `PaneTabBar.svelte`, `PaneContainer.svelte` |
 | New tab (Ctrl+T) | `windowTabsManager.createTab()` |
 | Close tab (Ctrl+W) | `windowTabsManager.closeActiveTab()` |
 | Restore closed tab | `windowTabsManager.restoreClosedTab()` (persisted stack) |
-| Tab reorder | `WindowTabBar.svelte` (drag), `windowTabsManager.reorderTabs()` |
+| Tab reorder / move across panes | `PaneTabBar.svelte` (drag), `windowTabsManager.reorderTabs(paneId, …)` / `moveTabToPane()` |
 | New window (Ctrl+N) | `command-definitions.ts:openNewWindow()` — creates `WebviewWindow` with URL params |
 | Dual pane (Ctrl+\\) | `windowTabsManager.toggleDualPane()`, `PaneContainer.svelte` |
 | Split ratio resize | `PaneContainer.svelte` mouse handlers, `windowTabsManager.setSplitRatio()` |
+| Git commit graph (#51/#57/#58) | `git_log.rs` (git_log/git_refs/git_commit_files via libgit2), `api/git-log.ts`, `domain/git-graph.ts` (lane assignment), `GitGraphView.svelte` (virtualized rows + detail panel), opened via the `git.showGraph` palette command into a per-pane git-graph tab (#56) |
 | Workspaces | `workspaces.svelte.ts`, `WorkspaceDialog.svelte` |
-| Tab tear-off / cross-window move | `tab-transfer.ts` (localStorage marker + BroadcastChannel claim), `WindowTabBar.svelte` (drag handlers), `windowTabsManager.exportTab/adoptTab/removeTransferredTab`, label-keyed `tab-seed` in `openNewWindow` |
+| Tab tear-off / cross-window move | `tab-transfer.ts` (localStorage marker + BroadcastChannel claim), `PaneTabBar.svelte` (drag handlers), `windowTabsManager.exportTab/adoptTab/removeTransferredTab`, label-keyed `tab-seed` in `openNewWindow` |
 | System file picker (portal) | `portal.rs` (D-Bus FileChooser backend), `FilePicker.svelte` (?picker= mode), `packaging/` (.portal + .service) |
 
 ### Clipboard
@@ -105,9 +117,25 @@
 | Progressive loading | `ThumbnailImage.svelte` (micro → full), `files.ts:getMicroThumbnail/getThumbnailData` |
 | Cache management | Settings dialog, `thumbnails.rs:clear_thumbnail_cache/get_thumbnail_cache_stats` |
 | Supported formats | `thumbnails.rs:SUPPORTED_EXTENSIONS` + `file-types.ts:THUMBNAIL_EXTENSIONS` (AVIF is Linux-only, via image avif-native/dav1d) |
+| Folder previews (large/XL tiles) | `domain/folder-preview.ts` (selection spec), `thumbnails.rs:get_folder_preview` (bounded scan → image paths + fingerprint), `FolderThumbnail.svelte` (client-side composite over ThumbnailImage; per-folder fs watch while visible — the backend watcher is non-recursive, so this is what makes previews refresh on change), `TilesView.svelte` gate |
 | Zip / unzip with progress | `archive.rs` (chunked writes, zip-progress/unzip-progress events, cancel_compress/cancel_extract), `pane-mutations.ts:runArchiveJob` (shared compress/extract), `operations.svelte.ts` ("compress"/"extract" types). Progress panel auto-hides per-operation after a short linger. |
 | Markdown preview | `domain/markdown.ts` (marked + hljs, escaped raw HTML), `PreviewPane.svelte` (.preview-markdown) |
 | ZIP content preview | `archive.rs:list_archive_contents` (top-level entries as `FileEntry`s), `files.ts:listArchiveContents`, `file-types.ts:isZipFile`, `PreviewPane.svelte` (renders in the shared `.preview-folder-list` folder format) |
+
+### Embedded Terminal
+| Feature | Files to change |
+|---------|----------------|
+| PTY backend | `terminal.rs` (portable-pty; spawn/write/resize/kill commands, per-window registry, killed via `on_window_destroyed` in `lib.rs` run loop; output streamed as `terminal-output-{id}` events) |
+| Terminal panel | `TerminalPanel.svelte` (xterm.js + fit addon, lazy-imported on first open, stays mounted while hidden so the shell survives toggling), `state/terminal.svelte.ts` (visibility), `api/terminal.ts` |
+| Toggle (Ctrl+\`) | hardcoded in `+page.svelte:handleKeydown` *before* the input-field guard (so it closes from inside the terminal); palette entry `view.toggleTerminal` in `commands/view-commands.ts` |
+| Theming | `domain/terminal-theme.ts` (CSS vars → xterm theme object, re-applied on theme switch — xterm can't consume CSS vars) |
+| cwd sync (base) | shell spawns at the active explorer's path; explicit header action writes `domain/terminal-command.ts:buildCdCommand` (POSIX quoting / cmd.exe `/d`) |
+| Terminal follows explorer (#149) | `settingsStore.terminalFollowsExplorer` (default on). `$effect` on active pane's `currentPath` → `terminal_status` → `domain/terminal-cwd-sync.ts:decideCdSync` (skip if already there / queue if busy / write). Injected `cd` is Ctrl+U (0x15) + `buildCdCommand`. `TerminalPanel.svelte` |
+| Busy detection (#149) | `terminal.rs:is_busy` — Unix compares `libc::tcgetpgrp(master fd)` with the shell pid (foreground pgrp != shell ⇒ busy); Windows optimistic (false). Exposed via `terminal_status` `{ busy, cwd }` |
+| Queued cd (#149) | while a command runs, latest target is stored as `pendingCd`, a one-off toast shows, and a 500ms `terminal_status` poll flushes it once idle. `TerminalPanel.svelte` |
+| Explorer follows terminal (#149) | `settingsStore.explorerFollowsTerminal` (default on). `terminal.rs:Osc7Scanner` parses OSC 7 (`ESC ] 7 ; file://host/path` BEL/ST, chunk-boundary safe, percent-decoded) in the reader thread → `terminal-cwd-{id}` event → active pane `navigateTo`. `lastShellCwd` is the loop guard for the other direction |
+| ZDOTDIR shim (#149) | `terminal.rs:zsh_shim_files`/`install_zsh_shim` — zsh gets a VS Code-style shim dir (`dirs::cache_dir()/tauri-explorer/zsh-shim/`) whose `.zshrc` sources the user's files then adds a `chpwd` hook emitting OSC 7. Best-effort (degrades silently). fish emits OSC 7 natively; bash skipped (PROMPT_COMMAND unreliable) |
+| Panel height | `settingsStore.terminalPanelHeight` (drag handle in `TerminalPanel.svelte`) |
 
 ### Sidebar & Bookmarks
 | Feature | Files to change |

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 use tauri::{AppHandle, Emitter};
 
@@ -18,7 +18,7 @@ use crate::error::AppError;
 // ===================
 
 struct CachedListing {
-    entries: Vec<FileEntry>,
+    entries: Arc<Vec<FileEntry>>,
     cached_at: Instant,
 }
 
@@ -86,7 +86,7 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
                 );
                 return Ok(DirectoryListing {
                     path: path.clone(),
-                    entries: cached.entries.clone(),
+                    entries: Arc::clone(&cached.entries),
                     listing_id: None,
                 });
             }
@@ -103,8 +103,14 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
         return Err(AppError::InvalidPath(format!("Not a directory: {}", path)));
     }
 
-    // jwalk + per-entry stat calls are blocking work; keep them off the async executor.
-    let entries = super::run_blocking(move || Ok(scan_directory_parallel(&dir_path))).await?;
+    // jwalk + per-entry stat calls are blocking work; keep them off the async
+    // executor. `is_empty` is left unresolved (`None`) here: probing it costs one
+    // `read_dir` per subdirectory (~2-3x the listing syscalls in folder-heavy
+    // directories) purely to dim empty-folder icons. The frontend resolves
+    // emptiness lazily for visible directories via `is_directory_empty` (#129);
+    // Miller columns already do their own on-demand probing.
+    let entries =
+        Arc::new(super::run_blocking(move || Ok(scan_directory_parallel(&dir_path))).await?);
 
     let elapsed = t_start.elapsed();
     if elapsed.as_millis() > 100 {
@@ -140,7 +146,7 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
         cache.insert(
             path.clone(),
             CachedListing {
-                entries: entries.clone(),
+                entries: Arc::clone(&entries),
                 cached_at: Instant::now(),
             },
         );
@@ -243,10 +249,14 @@ pub async fn start_streaming_directory(
         t_scan_end - t_scan_start,
     );
 
+    // The scan leaves is_empty unset (`None`): probing it costs one read_dir per
+    // subdirectory, so a 10k-dir scan would pay 10k read_dirs. The frontend
+    // resolves emptiness lazily for visible directories via `is_directory_empty`
+    // (#129), so neither the first batch nor the streamed chunks probe it here.
     if total_count <= batch_size {
         return Ok(DirectoryListing {
             path,
-            entries: all_entries,
+            entries: Arc::new(all_entries),
             listing_id: None,
         });
     }
@@ -277,7 +287,11 @@ pub async fn start_streaming_directory(
             );
 
             offset += chunk.len();
-            std::thread::sleep(std::time::Duration::from_millis(5));
+            // Brief pacing so batched emits don't flood the IPC channel. The
+            // entries are already fully scanned, so every millisecond here is
+            // pure added latency — 1ms keeps a 10k-entry stream under ~100ms
+            // of pacing (was 5ms ≈ 500ms).
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
 
         LISTINGS.cleanup(listing_id);
@@ -285,7 +299,7 @@ pub async fn start_streaming_directory(
 
     Ok(DirectoryListing {
         path,
-        entries: first_batch,
+        entries: Arc::new(first_batch),
         listing_id: Some(listing_id),
     })
 }
@@ -317,5 +331,64 @@ mod tests {
         assert_eq!(result.entries.len(), 2);
         assert!(matches!(result.entries[0].kind, FileKind::Directory));
         assert!(matches!(result.entries[1].kind, FileKind::File));
+    }
+
+    /// The parallel scan never pays the per-subdirectory is_empty probe (its
+    /// dominant per-entry cost). Emptiness is resolved lazily by the frontend
+    /// via `is_directory_empty`, so scans leave `is_empty` as `None` (#129).
+    #[test]
+    fn scan_does_not_probe_is_empty() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join("empty")).unwrap();
+        fs::create_dir(dir.path().join("full")).unwrap();
+        File::create(dir.path().join("full/child.txt")).unwrap();
+        File::create(dir.path().join("plain.txt")).unwrap();
+
+        let entries = scan_directory_parallel(&dir.path().to_path_buf());
+        assert!(
+            entries.iter().all(|e| e.is_empty.is_none()),
+            "scan must not pay the is_empty probe"
+        );
+    }
+
+    /// list_directory no longer resolves is_empty eagerly (#129): every entry's
+    /// is_empty is left `None` and the frontend fills it on demand.
+    #[test]
+    fn list_directory_leaves_is_empty_unresolved() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join("empty")).unwrap();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt
+            .block_on(list_directory(dir.path().to_string_lossy().to_string()))
+            .unwrap();
+
+        assert!(result.entries.iter().all(|e| e.is_empty.is_none()));
+    }
+
+    /// The dedicated command the frontend uses for lazy resolution still
+    /// distinguishes empty from non-empty directories.
+    #[test]
+    fn is_directory_empty_command_resolves_emptiness() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join("empty")).unwrap();
+        fs::create_dir(dir.path().join("full")).unwrap();
+        File::create(dir.path().join("full/child.txt")).unwrap();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let empty = rt
+            .block_on(is_directory_empty(
+                dir.path().join("empty").to_string_lossy().to_string(),
+                false,
+            ))
+            .unwrap();
+        let full = rt
+            .block_on(is_directory_empty(
+                dir.path().join("full").to_string_lossy().to_string(),
+                false,
+            ))
+            .unwrap();
+        assert!(empty);
+        assert!(!full);
     }
 }

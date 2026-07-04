@@ -376,16 +376,21 @@ export function isZipFile(entry: FileEntry): boolean {
   return getExtension(entry.name) === "zip";
 }
 
+// toLocaleString(options) constructs a fresh Intl.DateTimeFormat on every
+// call (~100µs of ICU setup) — ruinous when formatting a date per visible row.
+// A single cached formatter makes .format() a few microseconds.
+const dateFormatter = new Intl.DateTimeFormat(undefined, {
+  month: "numeric",
+  day: "numeric",
+  year: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
 /** Format modified date - Windows 11 style: M/D/YYYY h:mm AM/PM.
  *  Returns "" for unparseable input instead of "Invalid Date". */
 export function formatDate(isoString: string): string {
   const date = new Date(isoString);
   if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleString(undefined, {
-    month: "numeric",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  return dateFormatter.format(date);
 }

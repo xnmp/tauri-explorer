@@ -6,29 +6,61 @@
 <script lang="ts">
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import ExplorerPane from "./ExplorerPane.svelte";
+  import PaneTabBar from "./PaneTabBar.svelte";
+  import GitGraphView from "./GitGraphView.svelte";
 
-  // Get layout state from active window tab
+  // Per-kind pane content dispatch (#56): a pane renders its active tab,
+  // which is an explorer today or a git graph (#51) later.
+  const leftTab = $derived(windowTabsManager.paneActiveTab("left"));
+  const rightTab = $derived(windowTabsManager.paneActiveTab("right"));
+
+  // Window-level layout state
   const dualPaneEnabled = $derived(windowTabsManager.dualPaneEnabled);
   const splitRatio = $derived(windowTabsManager.splitRatio);
 
   // Resize state
   let isResizing = $state(false);
   let containerRef = $state<HTMLElement | null>(null);
+  // Container rect is stable for the duration of a drag; cache it so
+  // mousemove never forces a layout read.
+  let containerRect: DOMRect | null = null;
+  let pendingClientX: number | null = null;
+  let moveRafId = 0;
 
   function startResize(event: MouseEvent) {
     event.preventDefault();
     isResizing = true;
+    containerRect = containerRef?.getBoundingClientRect() ?? null;
   }
 
-  function handleResize(event: MouseEvent) {
-    if (!isResizing || !containerRef) return;
-    const rect = containerRef.getBoundingClientRect();
-    const ratio = (event.clientX - rect.left) / rect.width;
+  function applyPendingResize() {
+    if (pendingClientX === null || !containerRect) return;
+    const ratio = (pendingClientX - containerRect.left) / containerRect.width;
     windowTabsManager.setSplitRatio(ratio);
+    pendingClientX = null;
+  }
+
+  // rAF-coalesced: mousemove can fire far above frame rate on high-poll-rate
+  // mice; applying every event triggers a full pane re-layout each time.
+  function handleResize(event: MouseEvent) {
+    if (!isResizing) return;
+    pendingClientX = event.clientX;
+    if (moveRafId) return;
+    moveRafId = requestAnimationFrame(() => {
+      moveRafId = 0;
+      applyPendingResize();
+    });
   }
 
   function endResize() {
+    if (!isResizing) return;
+    if (moveRafId) {
+      cancelAnimationFrame(moveRafId);
+      moveRafId = 0;
+    }
+    applyPendingResize();
     isResizing = false;
+    containerRect = null;
   }
 </script>
 
@@ -42,11 +74,20 @@
   style={dualPaneEnabled ? `--split-ratio: ${splitRatio}` : ""}
 >
   <div class="pane left-pane">
-    <ExplorerPane paneId="left" />
+    <PaneTabBar paneId="left" />
+    {#if leftTab?.kind === "git-graph"}
+      <!-- Keyed so switching between graphs of different repos recreates the
+           view — no selected-commit/state bleed or in-flight races (#167). -->
+      {#key leftTab.repoPath}
+        <GitGraphView repoPath={leftTab.repoPath} />
+      {/key}
+    {:else}
+      <ExplorerPane paneId="left" />
+    {/if}
   </div>
 
   {#if dualPaneEnabled}
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <!-- svelte-ignore a11y_no_static_element_interactions, a11y_no_noninteractive_element_interactions -->
     <div
       class="pane-divider"
       onmousedown={startResize}
@@ -58,7 +99,14 @@
     </div>
 
     <div class="pane right-pane">
-      <ExplorerPane paneId="right" />
+      <PaneTabBar paneId="right" />
+      {#if rightTab?.kind === "git-graph"}
+        {#key rightTab.repoPath}
+          <GitGraphView repoPath={rightTab.repoPath} />
+        {/key}
+      {:else}
+        <ExplorerPane paneId="right" />
+      {/if}
     </div>
   {/if}
 
@@ -160,22 +208,24 @@
     right: var(--vibrancy-island-radius);
     height: 1px;
     background: var(--vibrancy-island-stroke);
+    /* Tabs live inside the panes now, so the top highlight line is
+       continuous (0% gap unless something re-introduces the vars). */
     mask-image: linear-gradient(
       to right,
       white 0%,
-      white var(--tab-gap-left, 30%),
-      transparent var(--tab-gap-left, 30%),
-      transparent var(--tab-gap-right, 60%),
-      white var(--tab-gap-right, 60%),
+      white var(--tab-gap-left, 0%),
+      transparent var(--tab-gap-left, 0%),
+      transparent var(--tab-gap-right, 0%),
+      white var(--tab-gap-right, 0%),
       white 100%
     );
     -webkit-mask-image: linear-gradient(
       to right,
       white 0%,
-      white var(--tab-gap-left, 30%),
-      transparent var(--tab-gap-left, 30%),
-      transparent var(--tab-gap-right, 60%),
-      white var(--tab-gap-right, 60%),
+      white var(--tab-gap-left, 0%),
+      transparent var(--tab-gap-left, 0%),
+      transparent var(--tab-gap-right, 0%),
+      white var(--tab-gap-right, 0%),
       white 100%
     );
     pointer-events: none;

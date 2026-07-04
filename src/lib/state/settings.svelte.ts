@@ -68,6 +68,7 @@ export interface Settings {
   listColumnMaxWidth: number; // max width per column in px (used when listViewColumns=0)
   viewMode: ViewMode; // default view mode for new panes
   previewPaneWidth: number; // width in px, 0 = default (280px)
+  terminalPanelHeight: number; // embedded terminal panel height in px
   theme: string; // active theme id, e.g. "dark", "golden-hour"
   thumbnailSize: ThumbnailSize; // tile thumbnail size tier
   showGitStatus: boolean; // show git indicators on files
@@ -79,7 +80,6 @@ export interface Settings {
   showScmPanel: boolean; // show SCM panel (independent of sidebar)
   scmTreeView: boolean; // group SCM file rows by folder hierarchy
   quickOpenDebug: boolean; // show score breakdown in QuickOpen results
-  geminiApiKey: string; // Gemini API key for Nano Banana image editing
   integratedTitleBar: boolean; // macOS: render tabs in title bar with overlay traffic lights
   macOsVibrancy: boolean; // macOS: native window vibrancy (translucent frosted glass), requires restart
   vibrancyBlur: boolean; // macOS: enable native blur behind vibrancy (off = theme background, no blur)
@@ -90,6 +90,10 @@ export interface Settings {
   autoEnterSingleSubdir: boolean; // when entering a dir with exactly one visible subdir (and nothing else), descend into it recursively
   ffmpegPath: string; // explicit path to ffmpeg binary for video/audio thumbnails (empty = auto-detect)
   tabTitleGitRoot: boolean; // when the folder is inside a git repo, show the repo root name in the tab title
+  warmWindow: boolean; // keep a hidden pre-warmed window pooled so Ctrl+N is near-instant
+  terminalFollowsExplorer: boolean; // auto-cd the embedded terminal when the active pane navigates (#149)
+  explorerFollowsTerminal: boolean; // navigate the active pane when the terminal's shell changes cwd (OSC 7) (#149)
+  pluginsEnabled: Record<string, boolean>; // per-plugin enable state (id → enabled); absent id falls back to the plugin's default (#142)
 }
 
 const MIN_ZOOM = 50;
@@ -121,6 +125,7 @@ const DEFAULT_SETTINGS: Settings = {
   listColumnMaxWidth: 250,
   viewMode: "details",
   previewPaneWidth: 0,
+  terminalPanelHeight: 240,
   theme: "light",
   thumbnailSize: "small",
   showGitStatus: false,
@@ -132,7 +137,6 @@ const DEFAULT_SETTINGS: Settings = {
   showScmPanel: false,
   scmTreeView: false,
   quickOpenDebug: false,
-  geminiApiKey: "",
   integratedTitleBar: false,
   macOsVibrancy: false,
   vibrancyBlur: true,
@@ -143,6 +147,10 @@ const DEFAULT_SETTINGS: Settings = {
   autoEnterSingleSubdir: false,
   ffmpegPath: "",
   tabTitleGitRoot: false,
+  warmWindow: true,
+  terminalFollowsExplorer: true,
+  explorerFollowsTerminal: true,
+  pluginsEnabled: {},
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -298,6 +306,9 @@ function createSettingsStore() {
     get previewPaneWidth() {
       return settings.previewPaneWidth;
     },
+    get terminalPanelHeight() {
+      return settings.terminalPanelHeight;
+    },
     get theme() {
       return settings.theme;
     },
@@ -356,12 +367,6 @@ function createSettingsStore() {
     toggleQuickOpenDebug(): void {
       update({ quickOpenDebug: !settings.quickOpenDebug });
     },
-    get geminiApiKey() {
-      return settings.geminiApiKey;
-    },
-    setGeminiApiKey(key: string): void {
-      update({ geminiApiKey: key });
-    },
     get integratedTitleBar() {
       return settings.integratedTitleBar;
     },
@@ -398,6 +403,27 @@ function createSettingsStore() {
     get tabTitleGitRoot() {
       return settings.tabTitleGitRoot;
     },
+    get warmWindow() {
+      return settings.warmWindow;
+    },
+    get terminalFollowsExplorer() {
+      return settings.terminalFollowsExplorer;
+    },
+    toggleTerminalFollowsExplorer(): void {
+      update({ terminalFollowsExplorer: !settings.terminalFollowsExplorer });
+    },
+    get explorerFollowsTerminal() {
+      return settings.explorerFollowsTerminal;
+    },
+    toggleExplorerFollowsTerminal(): void {
+      update({ explorerFollowsTerminal: !settings.explorerFollowsTerminal });
+    },
+    get pluginsEnabled() {
+      return settings.pluginsEnabled;
+    },
+    setPluginEnabled(id: string, enabled: boolean): void {
+      update({ pluginsEnabled: { ...settings.pluginsEnabled, [id]: enabled } });
+    },
     toggleMillerColumns(): void {
       const on = settings.millerLayers > 0;
       update({ millerLayers: on ? 0 : settings.millerLayersPreferred });
@@ -407,6 +433,9 @@ function createSettingsStore() {
     },
     setPreviewPaneWidth(px: number): void {
       update({ previewPaneWidth: Math.max(0, Math.min(600, px)) });
+    },
+    setTerminalPanelHeight(px: number): void {
+      update({ terminalPanelHeight: Math.max(96, Math.min(800, Math.round(px))) });
     },
     setViewMode(mode: ViewMode): void {
       update({ viewMode: mode });
@@ -515,6 +544,8 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
   { key: "integratedTitleBar", label: "Toggle Integrated Title Bar" },
   { key: "macOsVibrancy", label: "Toggle macOS Vibrancy" },
   { key: "vibrancyBlur", label: "Toggle Vibrancy Blur" },
+  { key: "terminalFollowsExplorer", label: "Toggle Terminal Follows Explorer" },
+  { key: "explorerFollowsTerminal", label: "Toggle Explorer Follows Terminal" },
 ];
 
 export function generateToggleCommands(): Command[] {

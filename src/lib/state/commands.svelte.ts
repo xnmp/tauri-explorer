@@ -37,6 +37,7 @@ export type CommandCategory =
   | "view"
   | "selection"
   | "bookmarks"
+  | "plugins"
   | "general";
 
 const categoryLabels: Record<CommandCategory, string> = {
@@ -46,6 +47,7 @@ const categoryLabels: Record<CommandCategory, string> = {
   view: "View",
   selection: "Selection",
   bookmarks: "Bookmarks",
+  plugins: "Plugins",
   general: "General",
 };
 

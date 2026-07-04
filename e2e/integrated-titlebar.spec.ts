@@ -6,7 +6,7 @@ import { test, expect } from "@playwright/test";
 import { HOME_URL, waitForEntries } from "./helpers";
 
 test.describe("Integrated title bar", () => {
-  test("tab bar is always visible when integratedTitleBar is enabled", async ({ page }) => {
+  test("title bar row is always visible when integratedTitleBar is enabled", async ({ page }) => {
     // Pre-set the setting via localStorage before navigation
     await page.goto(HOME_URL);
     await page.evaluate(() => {
@@ -18,9 +18,9 @@ test.describe("Integrated title bar", () => {
     await page.reload();
     await waitForEntries(page);
 
-    // With integratedTitleBar enabled, tab-area should be visible even with one tab
-    const tabArea = page.locator(".tab-area");
-    await expect(tabArea).toBeVisible();
+    // Tabs are per-pane (#140), so the integrated title bar is a standalone
+    // drag-region row — it must render even with a single tab.
+    await expect(page.locator(".titlebar")).toBeVisible();
   });
 
   test("tab bar is hidden with single tab when integratedTitleBar is disabled", async ({ page }) => {

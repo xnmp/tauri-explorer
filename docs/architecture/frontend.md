@@ -64,12 +64,12 @@ badges (`git-status.svelte.ts`) refresh on every change; the SCM summary
 (`scm.svelte.ts`) refreshes on watcher events and announces its own mutations
 through the same channel after re-fetching.
 
-#### `window-tabs.svelte.ts` — Window-Level Tabs
+#### `window-tabs.svelte.ts` — Per-Pane Tabs (#140)
 - **Singleton:** `windowTabsManager`
-- **State:** `tabs[]`, `activeTabId`
-- **Explorer registry:** `Map<string, ExplorerInstance>` keyed by `explorerId`
-- **Key methods:** `createTab`, `closeTab`, `restoreClosedTab`, `getExplorer`, `getActiveExplorer`, `toggleDualPane`, `setSplitRatio`
-- **Persistence:** `PersistedTabState` saved to localStorage on every tab change + every 30s
+- **State:** `panes.left` / `panes.right` (each `{ tabs[], activeTabId }`), window-level `activePaneId`, `dualPaneEnabled`, `splitRatio`
+- **Explorer registry:** `Map<string, ExplorerInstance>` keyed by `explorerId` (one explorer per tab)
+- **Key methods:** `createTab`/`createTabIn`, `closeTab`, `restoreClosedTab`, `moveTabToPane`, `getExplorer(paneId)`, `getActiveExplorer`, `toggleDualPane`, `setSplitRatio`
+- **Persistence:** `PersistedTabState` v2 saved to localStorage on every tab change; the pre-inversion v1 shape (tabs owning left/right pane pairs) is migrated on load (`normalizePersistedState`), including old workspaces and closed-tab snapshots
 
 #### `settings.svelte.ts` — App Settings
 - **Singleton:** `settingsStore`

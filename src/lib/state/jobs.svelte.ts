@@ -1,9 +1,8 @@
 /**
  * Background jobs state management.
- * Issue: feat/nano-banana
  *
- * Tracks long-running background operations (e.g. Nano Banana image edits)
- * with status, elapsed time, and output info.
+ * Tracks long-running background operations (built-in flows or plugin jobs,
+ * e.g. AI image edits) with status, elapsed time, and output info.
  */
 
 export type JobStatus = "running" | "completed" | "error";
@@ -11,7 +10,10 @@ export type JobStatus = "running" | "completed" | "error";
 export interface Job {
   id: number;
   label: string;
-  prompt: string;
+  /** Free-text detail line (e.g. an edit prompt). */
+  detail: string;
+  /** Origin of the job: "app" for built-in flows, or a plugin id. */
+  source: string;
   status: JobStatus;
   error?: string;
   startTime: number;
@@ -22,8 +24,8 @@ export interface Job {
 function createJobsStore() {
   let jobs = $state<Job[]>([]);
 
-  function addJob(id: number, label: string, prompt: string): void {
-    jobs = [...jobs, { id, label, prompt, status: "running", startTime: Date.now() }];
+  function addJob(id: number, label: string, detail: string, source: string = "app"): void {
+    jobs = [...jobs, { id, label, detail, source, status: "running", startTime: Date.now() }];
   }
 
   function completeJob(id: number, outputPath: string): void {
@@ -42,6 +44,11 @@ function createJobsStore() {
     jobs = jobs.filter((j) => j.status === "running");
   }
 
+  /** Remove a job outright by id (e.g. orphan teardown on plugin dispose). */
+  function removeJob(id: number): void {
+    jobs = jobs.filter((j) => j.id !== id);
+  }
+
   return {
     get jobs() {
       return jobs;
@@ -56,6 +63,7 @@ function createJobsStore() {
     completeJob,
     failJob,
     clearCompleted,
+    removeJob,
   };
 }
 

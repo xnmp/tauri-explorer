@@ -95,7 +95,7 @@
       case "Copied": return "C";
       case "Untracked": return "U";
       case "Ignored": return "I";
-      case "Conflict": return "!";
+      case "Conflicted": return "!";
       case "TypeChange": return "T";
     }
   }
@@ -108,7 +108,7 @@
       case "Deleted": return "s-deleted";
       case "Renamed":
       case "Copied": return "s-renamed";
-      case "Conflict": return "s-conflict";
+      case "Conflicted": return "s-conflict";
       case "Ignored": return "s-ignored";
       case "TypeChange": return "s-type";
     }

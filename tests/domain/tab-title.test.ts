@@ -57,4 +57,25 @@ describe("disambiguateTabTitles", () => {
     expect(r.get("a")).toBe("repo");
     expect(r.get("b")).toBe("repo");
   });
+
+  it("does not disambiguate two tabs on the same deep cwd", () => {
+    const r = disambiguateTabTitles([
+      { id: "a", path: "/home/user/project" },
+      { id: "b", path: "/home/user/project" },
+    ]);
+    expect(r.get("a")).toBe("project");
+    expect(r.get("b")).toBe("project");
+  });
+
+  it("disambiguates distinct paths while keeping duplicates collapsed", () => {
+    const r = disambiguateTabTitles([
+      { id: "a", path: "/work/featureA/components" },
+      { id: "b", path: "/work/featureA/components" },
+      { id: "c", path: "/work/featureB/components" },
+    ]);
+    // a and b are the same folder — same bare-ish label, no parent vs each other.
+    expect(r.get("a")).toBe("components · featureA");
+    expect(r.get("b")).toBe("components · featureA");
+    expect(r.get("c")).toBe("components · featureB");
+  });
 });

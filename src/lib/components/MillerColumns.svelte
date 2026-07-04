@@ -17,7 +17,7 @@
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { useDropTarget } from "$lib/composables/use-drop-target.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
-  import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
+  import { getDropSourcePaths, handleFileDropMany } from "$lib/state/drop-operations";
   import { isCopyModifier, usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { parentDir } from "$lib/domain/path";
@@ -278,13 +278,12 @@
     const isCopy = isCopyModifier(event);
 
     dragState.clear();
-    for (const sourcePath of sourcePaths) {
-      if (sourcePath === columnPath) continue;
-      if (columnPath.startsWith(sourcePath + "/")) continue;
-      await handleFileDrop(sourcePath, columnPath, isCopy, {
-        onRefresh: () => windowTabsManager.refreshAllPanes(),
-      });
-    }
+    const valid = sourcePaths.filter(
+      (sourcePath) => sourcePath !== columnPath && !columnPath.startsWith(sourcePath + "/"),
+    );
+    await handleFileDropMany(valid, columnPath, isCopy, {
+      onRefresh: () => windowTabsManager.refreshAllPanes(),
+    });
   }
 
   // Resizable width

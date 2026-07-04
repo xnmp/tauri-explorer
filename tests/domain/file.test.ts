@@ -55,6 +55,22 @@ describe("sortEntries", () => {
     expect(sorted[0].kind).toBe("directory");
   });
 
+  it("returns a NEW array in the same order for already-sorted input", () => {
+    const sorted = sortEntries(mockEntries);
+    const again = sortEntries(sorted);
+    expect(again).toEqual(sorted); // order preserved
+    expect(again).not.toBe(sorted); // still a fresh array (mutation safety)
+  });
+
+  it("re-sorting already-sorted input is idempotent for every field and direction", () => {
+    for (const by of ["name", "size", "modified", "type"] as const) {
+      for (const ascending of [true, false]) {
+        const sorted = sortEntries(mockEntries, by, ascending);
+        expect(sortEntries(sorted, by, ascending)).toEqual(sorted);
+      }
+    }
+  });
+
   it("sorts files alphabetically by name (case-insensitive)", () => {
     const sorted = sortEntries(mockEntries);
     const fileNames = sorted.filter((e) => e.kind === "file").map((e) => e.name);
@@ -128,6 +144,17 @@ describe("filterHidden", () => {
       { name: "$Recycle.Bin", path: "/$Recycle.Bin", kind: "directory", size: 0, modified: "" },
     ] as unknown as typeof mockEntries;
     expect(filterHidden(sysEntries, true)).toHaveLength(1);
+  });
+
+  it("hides desktop.ini and Thumbs.db by default, reveals with showHidden (#160)", () => {
+    const sysEntries = [
+      { name: "desktop.ini", path: "/desktop.ini", kind: "file", size: 10, modified: "" },
+      { name: "Desktop.INI", path: "/Desktop.INI", kind: "file", size: 10, modified: "" },
+      { name: "Thumbs.db", path: "/Thumbs.db", kind: "file", size: 10, modified: "" },
+      { name: "notes.txt", path: "/notes.txt", kind: "file", size: 10, modified: "" },
+    ] as unknown as typeof mockEntries;
+    expect(filterHidden(sysEntries, false).map((e) => e.name)).toEqual(["notes.txt"]);
+    expect(filterHidden(sysEntries, true)).toHaveLength(4);
   });
 });
 

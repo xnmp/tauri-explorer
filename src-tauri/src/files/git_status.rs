@@ -20,20 +20,24 @@ pub enum GitFileStatus {
     Added,
     Deleted,
     Renamed,
+    Copied,
     Untracked,
     Ignored,
-    Conflict,
+    Conflicted,
+    TypeChange,
 }
 
 /// Precedence when aggregating multiple children into a directory status:
-/// Conflict > Modified/Added/Deleted/Renamed > Untracked > Ignored.
+/// Conflicted > Modified/Added/Deleted/Renamed/Copied/TypeChange > Untracked > Ignored.
 fn status_rank(status: &GitFileStatus) -> u8 {
     match status {
-        GitFileStatus::Conflict => 4,
+        GitFileStatus::Conflicted => 4,
         GitFileStatus::Modified
         | GitFileStatus::Added
         | GitFileStatus::Deleted
-        | GitFileStatus::Renamed => 3,
+        | GitFileStatus::Renamed
+        | GitFileStatus::Copied
+        | GitFileStatus::TypeChange => 3,
         GitFileStatus::Untracked => 2,
         GitFileStatus::Ignored => 1,
     }
@@ -53,7 +57,7 @@ fn parse_xy(xy: &[u8]) -> Option<GitFileStatus> {
     match xy {
         b"??" => Some(GitFileStatus::Untracked),
         b"!!" => Some(GitFileStatus::Ignored),
-        b"DD" | b"AU" | b"UD" | b"UA" | b"DU" | b"AA" | b"UU" => Some(GitFileStatus::Conflict),
+        b"DD" | b"AU" | b"UD" | b"UA" | b"DU" | b"AA" | b"UU" => Some(GitFileStatus::Conflicted),
         _ => {
             let index = xy[0];
             let worktree = xy[1];
@@ -62,8 +66,12 @@ fn parse_xy(xy: &[u8]) -> Option<GitFileStatus> {
                 Some(GitFileStatus::Deleted)
             } else if index == b'R' {
                 Some(GitFileStatus::Renamed)
+            } else if index == b'C' {
+                Some(GitFileStatus::Copied)
             } else if index == b'A' {
                 Some(GitFileStatus::Added)
+            } else if worktree == b'T' || index == b'T' {
+                Some(GitFileStatus::TypeChange)
             } else if worktree == b'M' || index == b'M' {
                 Some(GitFileStatus::Modified)
             } else {
@@ -137,10 +145,14 @@ fn get_git_status_sync(path: &str) -> Result<GitStatusResponse, AppError> {
     };
 
     // Get porcelain status. `-z` avoids quoting/octal-escaping of non-ASCII
-    // paths that the default line format applies.
+    // paths that the default line format applies. `-unormal` (not `-uall`)
+    // reports a fully-untracked directory as one entry instead of enumerating
+    // every file inside it — the aggregation below collapses children to the
+    // top-level name anyway, and enumerating large untracked trees
+    // (build output, node_modules) is by far the costliest part of status.
     let output = Command::new("git")
         .no_console()
-        .args(["status", "--porcelain", "-z", "-uall", "."])
+        .args(["status", "--porcelain", "-z", "-unormal", "."])
         .current_dir(dir)
         .output()
         .map_err(AppError::from)?;
@@ -289,6 +301,25 @@ mod tests {
         let resp = status_of(dir.path());
         assert!(
             matches!(resp.statuses.get("pkg"), Some(GitFileStatus::Modified)),
+            "statuses={:?}",
+            resp.statuses
+        );
+    }
+
+    #[test]
+    fn fully_untracked_directory_reports_untracked() {
+        let dir = init_repo();
+        write(dir.path(), "keep.txt", "v1\n");
+        git(dir.path(), &["add", "-A"]);
+        git(dir.path(), &["commit", "-m", "init"]);
+
+        // With -unormal git reports "?? fresh/" as a single entry; the badge
+        // for the directory must still resolve to Untracked.
+        write(dir.path(), "fresh/inner/a.txt", "x\n");
+
+        let resp = status_of(dir.path());
+        assert!(
+            matches!(resp.statuses.get("fresh"), Some(GitFileStatus::Untracked)),
             "statuses={:?}",
             resp.statuses
         );

@@ -139,8 +139,10 @@ test.describe("Thumbnail Size Setting", () => {
     // Set to Large
     await setThumbnailSize(page, "large");
 
-    // Find a thumbnail container (image files get ThumbnailImage, not FileIcon)
-    const thumbnailContainer = page.locator(".tile-icon .thumbnail-container").first();
+    // Target an image file's tile explicitly — folder tiles also embed
+    // (smaller) thumbnail containers in their previews at this size.
+    const photoTile = page.locator(".tiles-view .entry-item").filter({ hasText: "photo1.jpg" });
+    const thumbnailContainer = photoTile.locator(".thumbnail-container").first();
     await expect(thumbnailContainer).toBeVisible({ timeout: 5000 });
 
     // Thumbnail container display size matches tile icon size (96px for large)
@@ -158,7 +160,8 @@ test.describe("Thumbnail Size Setting", () => {
     // Set to Extra Large
     await setThumbnailSize(page, "xlarge");
 
-    const thumbnailContainer = page.locator(".tile-icon .thumbnail-container").first();
+    const photoTile = page.locator(".tiles-view .entry-item").filter({ hasText: "photo1.jpg" });
+    const thumbnailContainer = photoTile.locator(".thumbnail-container").first();
     await expect(thumbnailContainer).toBeVisible({ timeout: 5000 });
 
     // Display size matches tile icon (128px for xlarge)

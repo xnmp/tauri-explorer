@@ -53,10 +53,14 @@ pub enum FileKind {
 }
 
 /// Directory listing response.
+///
+/// `entries` is an `Arc` so cache hits in `dir_listing` share the cached
+/// allocation instead of deep-cloning thousands of `FileEntry`s per call
+/// (serde's `rc` feature serializes through the Arc transparently).
 #[derive(Debug, Serialize)]
 pub struct DirectoryListing {
     pub path: String,
-    pub entries: Vec<FileEntry>,
+    pub entries: std::sync::Arc<Vec<FileEntry>>,
     pub listing_id: Option<u64>,
 }
 
@@ -119,12 +123,6 @@ pub(crate) fn metadata_to_entry(path: &Path, sym_meta: &fs::Metadata) -> FileEnt
         None
     };
 
-    let is_empty = if effective.is_dir() {
-        Some(fs::read_dir(path).is_ok_and(|mut d| d.next().is_none()))
-    } else {
-        None
-    };
-
     FileEntry {
         name,
         path: path.to_string_lossy().to_string(),
@@ -133,8 +131,33 @@ pub(crate) fn metadata_to_entry(path: &Path, sym_meta: &fs::Metadata) -> FileEnt
         modified,
         is_symlink,
         symlink_target,
-        is_empty,
+        is_empty: None,
     }
+}
+
+/// Convert metadata to FileEntry including the `is_empty` probe. Used only by
+/// single-entry call sites (create/rename/copy results) where the extra
+/// `read_dir` is trivial and the caller wants the flag resolved immediately.
+/// Directory *listings* deliberately skip this — they leave `is_empty` as `None`
+/// and let the frontend resolve emptiness lazily via `is_directory_empty` (#129),
+/// so a 10k-directory scan doesn't pay 10k `read_dir`s up front.
+pub(crate) fn metadata_to_entry_probed(path: &Path, sym_meta: &fs::Metadata) -> FileEntry {
+    let mut entry = metadata_to_entry(path, sym_meta);
+    fill_is_empty(std::slice::from_mut(&mut entry));
+    entry
+}
+
+/// Backfill `is_empty` for directory entries in parallel (one `read_dir` per
+/// subdirectory). Only [`metadata_to_entry_probed`] uses this now; listings
+/// resolve emptiness lazily on the frontend instead (#129).
+pub(crate) fn fill_is_empty(entries: &mut [FileEntry]) {
+    use rayon::prelude::*;
+    entries
+        .par_iter_mut()
+        .filter(|e| matches!(e.kind, FileKind::Directory) && e.is_empty.is_none())
+        .for_each(|e| {
+            e.is_empty = Some(fs::read_dir(&e.path).is_ok_and(|mut d| d.next().is_none()));
+        });
 }
 
 /// Estimate total file count and size for a list of paths.

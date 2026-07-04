@@ -92,16 +92,17 @@
   let visible = $state(false);
   let containerEl: HTMLDivElement | undefined = $state();
 
-  // Use IntersectionObserver to only load when visible
+  // Track viewport membership BOTH ways (no disconnect-on-first-intersect):
+  // a fast scroll through a large folder intersects every tile once, and a
+  // latched `visible` would queue thumbnail work for all of them. Leaving the
+  // viewport lets queued work bail (see the acquire guards below); re-entering
+  // re-triggers the load effect.
   $effect(() => {
     if (!containerEl) return;
 
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) {
-          visible = true;
-          observer.disconnect();
-        }
+        visible = entry.isIntersecting;
       },
       { rootMargin: "200px" }
     );
@@ -113,14 +114,18 @@
   // Reload key: changes when path, kind, size, or quality changes
   const reloadKey = $derived(`${kind}:${path}:${backendSize}:${quality}`);
 
-  // Load thumbnails when visible and reload key changes
+  // Load-state bookkeeping so visibility toggles don't duplicate work:
+  // a key is loaded (terminal: success or error), in flight, or neither.
+  let loadedKey: string | null = null;
+  let inflightKey: string | null = null;
+
+  // Load thumbnails when visible, unless this key is already loaded/loading
   $effect(() => {
-    if (visible && reloadKey) {
-      if (kind === "image") {
-        loadProgressiveThumbnail();
-      } else {
-        loadSingleThumbnail();
-      }
+    if (!visible || reloadKey === loadedKey || reloadKey === inflightKey) return;
+    if (kind === "image") {
+      loadProgressiveThumbnail();
+    } else {
+      loadSingleThumbnail();
     }
   });
 
@@ -129,41 +134,50 @@
   async function loadSingleThumbnail() {
     const currentPath = path;
     const currentKey = reloadKey;
+    inflightKey = currentKey;
 
-    const cached = getThumbnailCache(currentKey);
-    if (cached?.full) {
-      microUrl = null;
-      fullUrl = cached.full;
-      loading = false;
-      error = false;
-      return;
-    }
-
-    loading = true;
-    error = false;
-    microUrl = null;
-    fullUrl = null;
-    fullLoaded = false;
-
-    await fullPool.acquire();
     try {
-      if (currentKey !== reloadKey) return;
+      const cached = getThumbnailCache(currentKey);
+      if (cached?.full) {
+        microUrl = null;
+        fullUrl = cached.full;
+        loading = false;
+        error = false;
+        loadedKey = currentKey;
+        return;
+      }
 
-      const result = await getVideoThumbnailData(currentPath, backendSize, quality);
-      if (currentKey !== reloadKey) return;
+      loading = true;
+      error = false;
+      microUrl = null;
+      fullUrl = null;
+      fullLoaded = false;
 
-      if (result.ok) {
-        fullUrl = result.data;
-        setThumbnailCache(currentKey, { micro: null, full: fullUrl });
-      } else {
-        // Diagnostic: surfaces backend reasons (e.g. "ffmpeg not found",
-        // "no album art") in the dev console so missing thumbnails are explainable.
-        console.warn(`[thumbnail] ${kind} thumbnail unavailable for ${currentPath}: ${result.error}`);
-        error = true;
-        onunavailable?.();
+      await fullPool.acquire();
+      try {
+        // Scrolled out of view (or props changed) while queued — skip the
+        // fetch; the load effect retries if the tile comes back into view.
+        if (currentKey !== reloadKey || !visible) return;
+
+        const result = await getVideoThumbnailData(currentPath, backendSize, quality);
+        if (currentKey !== reloadKey) return;
+
+        if (result.ok) {
+          fullUrl = result.data;
+          setThumbnailCache(currentKey, { micro: null, full: fullUrl });
+        } else {
+          // Diagnostic: surfaces backend reasons (e.g. "ffmpeg not found",
+          // "no album art") in the dev console so missing thumbnails are explainable.
+          console.warn(`[thumbnail] ${kind} thumbnail unavailable for ${currentPath}: ${result.error}`);
+          error = true;
+          onunavailable?.();
+        }
+        loadedKey = currentKey; // terminal either way — don't retry on scroll wiggle
+      } finally {
+        fullPool.release();
       }
     } finally {
-      fullPool.release();
+      if (inflightKey === currentKey) inflightKey = null;
       if (currentKey === reloadKey) loading = false;
     }
   }
@@ -173,60 +187,69 @@
     // Stale-response guard compares the FULL reload key (path + size + quality):
     // comparing only path lets a slow old-size response win over a newer size.
     const currentKey = reloadKey;
+    inflightKey = currentKey;
 
-    // Check frontend cache (survives renames without backend re-generation)
-    const cached = getThumbnailCache(currentKey);
-    if (cached?.full) {
-      microUrl = cached.micro;
-      fullUrl = cached.full;
-      loading = false;
+    try {
+      // Check frontend cache (survives renames without backend re-generation)
+      const cached = getThumbnailCache(currentKey);
+      if (cached?.full) {
+        microUrl = cached.micro;
+        fullUrl = cached.full;
+        loading = false;
+        error = false;
+        loadedKey = currentKey;
+        return;
+      }
+
+      loading = true;
       error = false;
-      return;
-    }
+      microUrl = null;
+      fullUrl = null;
+      fullLoaded = false;
 
-    loading = true;
-    error = false;
-    microUrl = null;
-    fullUrl = null;
-    fullLoaded = false;
+      // Stage 1: micro thumbnail (fast, pixelated preview)
+      await microPool.acquire();
+      try {
+        // Scrolled out of view (or props changed) while queued — skip the
+        // fetch; the load effect retries if the tile comes back into view.
+        if (currentKey !== reloadKey || !visible) return;
 
-    // Stage 1: micro thumbnail (fast, pixelated preview)
-    await microPool.acquire();
-    try {
-      if (currentKey !== reloadKey) return;
+        const microResult = await getMicroThumbnail(currentPath, backendSize, quality);
+        if (currentKey !== reloadKey) return;
 
-      const microResult = await getMicroThumbnail(currentPath, backendSize, quality);
-      if (currentKey !== reloadKey) return;
+        if (microResult.ok) {
+          microUrl = microResult.data;
+        }
+      } finally {
+        microPool.release();
+      }
 
-      if (microResult.ok) {
-        microUrl = microResult.data;
+      // Stage 2: full thumbnail (should be a cache hit from micro's pre-warm)
+      await fullPool.acquire();
+      try {
+        if (currentKey !== reloadKey || (!visible && !microUrl)) return;
+
+        const fullResult = await getThumbnailData(currentPath, backendSize, quality);
+        if (currentKey !== reloadKey) return;
+
+        if (fullResult.ok) {
+          fullUrl = fullResult.data;
+        } else if (!microUrl) {
+          error = true;
+        }
+      } finally {
+        fullPool.release();
+      }
+
+      if (currentKey === reloadKey && (fullUrl || microUrl || error)) {
+        loadedKey = currentKey; // terminal — error included, no scroll-wiggle retries
+        if (fullUrl || microUrl) {
+          setThumbnailCache(currentKey, { micro: microUrl, full: fullUrl });
+        }
       }
     } finally {
-      microPool.release();
-    }
-
-    // Stage 2: full thumbnail (should be a cache hit from micro's pre-warm)
-    await fullPool.acquire();
-    try {
-      if (currentKey !== reloadKey) return;
-
-      const fullResult = await getThumbnailData(currentPath, backendSize, quality);
-      if (currentKey !== reloadKey) return;
-
-      if (fullResult.ok) {
-        fullUrl = fullResult.data;
-      } else if (!microUrl) {
-        error = true;
-      }
-    } finally {
-      fullPool.release();
-    }
-
-    if (currentKey === reloadKey) {
-      loading = false;
-      if (fullUrl || microUrl) {
-        setThumbnailCache(currentKey, { micro: microUrl, full: fullUrl });
-      }
+      if (inflightKey === currentKey) inflightKey = null;
+      if (currentKey === reloadKey) loading = false;
     }
   }
 </script>

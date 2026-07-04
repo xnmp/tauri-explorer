@@ -9,7 +9,7 @@ import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { useExternalDrop } from "$lib/composables/use-external-drop.svelte";
 import { resolveDropTarget, highlightTarget, clearHighlights } from "$lib/composables/use-native-drop-target.svelte";
 import { dragState } from "$lib/state/drag.svelte";
-import { handleFileDrop } from "$lib/state/drop-operations";
+import { handleFileDropMany } from "$lib/state/drop-operations";
 import { isCopyModifier as isCopyMod } from "$lib/domain/platform";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { parentDir, isInsideDir, samePath } from "$lib/domain/path";
@@ -65,11 +65,10 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
 
     // Drop onto a specific folder or tab
     if (target?.type === "folder" || target?.type === "tab") {
-      for (const sourcePath of sourcePaths) {
-        // Skip dropping onto self or into one's own descendant.
-        if (isInsideDir(target.path, sourcePath)) continue;
-        await handleFileDrop(sourcePath, target.path, isCopy, dropOptions);
-      }
+      // Skip dropping onto self or into one's own descendant; multi-item
+      // drops are a single undoable batch (#163).
+      const valid = sourcePaths.filter((sourcePath) => !isInsideDir(target.path, sourcePath));
+      await handleFileDropMany(valid, target.path, isCopy, dropOptions);
       dragState.clear();
       return;
     }
@@ -77,11 +76,8 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     // Background drop — move/copy to the target pane's directory
     const destDir = target?.path || explorer.currentPath;
 
-    for (const path of sourcePaths) {
-      const sourceDir = parentDir(path);
-      if (samePath(sourceDir, destDir)) continue;
-      await handleFileDrop(path, destDir, isCopy, dropOptions);
-    }
+    const movable = sourcePaths.filter((path) => !samePath(parentDir(path), destDir));
+    await handleFileDropMany(movable, destDir, isCopy, dropOptions);
 
     dragState.clear();
   }

@@ -1,6 +1,12 @@
 <!--
-  ListView - Compact multi-column list view with CSS grid column-flow.
-  Issue: tauri-explorer-9djf.5
+  ListView - Compact multi-column list view.
+
+  DOM-virtualized by ROW (#128): entries are chunked row-major into rows of
+  `effectiveListColumns`, and each row is one fixed-height VirtualList item, so
+  only the visible rows live in the DOM. This changed the fill order from the
+  old column-flow (down-then-across) to row-major (across-then-down); the DOM
+  stays in sequence order so the list remains name-sorted.
+  Issue: tauri-explorer-9djf.5, #128
 -->
 <script lang="ts">
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
@@ -8,7 +14,7 @@
   import { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
   import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { useProgressiveRender } from "$lib/composables/use-progressive-render.svelte";
+  import { chunkIntoRows } from "$lib/domain/virtual-layout";
   import { getFileIconColor } from "$lib/domain/file-types";
 
   import { usesPointerDrag } from "$lib/domain/platform";
@@ -17,6 +23,7 @@
   import GitStatusBadge from "./GitStatusBadge.svelte";
   import InlineNewFolder from "./InlineNewFolder.svelte";
   import ItemButton from "./ItemButton.svelte";
+  import VirtualList from "./VirtualList.svelte";
 
   import type { FileEntry } from "$lib/domain/file";
 
@@ -25,10 +32,16 @@
     contentWidth: number;
     onitemclick: (entry: FileEntry, event: MouseEvent) => void;
     onitemdblclick: (entry: FileEntry) => void;
+    /** Scroll the given displayEntries index into view (bound by FileList). */
+    scrollToIndex?: (index: number) => void;
   }
 
-  let { explorer, contentWidth, onitemclick, onitemdblclick }: Props = $props();
+  let { explorer, contentWidth, onitemclick, onitemdblclick, scrollToIndex = $bindable() }: Props = $props();
 
+  // Fixed row height: a single-line list item (16px icon / one text line +
+  // 4px vertical padding + border) plus the 4px inter-row gap. List names are
+  // `white-space: nowrap`, so every row is exactly this tall.
+  const LIST_ROW_HEIGHT = 30;
 
   // Shared item interactions (DnD, context menu with select-on-right-click)
   const interactions = useItemInteractions({
@@ -46,47 +59,61 @@
     return Math.max(1, Math.min(6, Math.floor(contentWidth / settingsStore.listColumnMaxWidth)));
   });
 
-  const totalItems = $derived(explorer.displayEntries.length + (explorer.isCreatingFolder ? 1 : 0));
-  const listRows = $derived(Math.ceil(totalItems / effectiveListColumns));
+  const rows = $derived(chunkIntoRows(explorer.displayEntries, effectiveListColumns));
 
-  // Progressive rendering to avoid UI freeze on large directories
-  // (same rAF chunking as TilesView; list rows are cheaper, so bigger chunks).
-  const LIST_CHUNK = 150;
-  const progressive = useProgressiveRender(() => explorer.displayEntries.length, LIST_CHUNK);
-
-  const visibleListEntries = $derived(explorer.displayEntries.slice(0, progressive.limit));
+  // Map an entry index to its row and forward to VirtualList's row scroller.
+  let rowScrollToIndex = $state<((row: number) => void) | undefined>();
+  scrollToIndex = (index: number) => {
+    rowScrollToIndex?.(Math.floor(index / effectiveListColumns));
+  };
 </script>
 
-<div class="list-view file-rows" style="--list-columns: {effectiveListColumns}; --list-rows: {listRows};">
+<div class="list-view" data-columns={effectiveListColumns}>
   {#if explorer.isCreatingFolder}
     <InlineNewFolder {explorer} variant="list" />
   {/if}
-  {#each visibleListEntries as entry (entry.path)}
-    <ItemButton class="list-item" {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
-      <span class="list-icon" data-drag-icon style:color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined}>
-        <FileIcon {entry} size="small" />
-      </span>
-      <span data-drag-name><EntryName {entry} {explorer} variant="list" /></span>
-      <GitStatusBadge entryName={entry.name} />
-    </ItemButton>
-  {/each}
+  <VirtualList
+    class="list-scroller file-rows"
+    items={rows}
+    itemHeight={LIST_ROW_HEIGHT}
+    itemOverflow="visible"
+    viewportPadding="6px 8px"
+    getKey={(row) => row.startIndex}
+    bind:scrollToIndex={rowScrollToIndex}
+  >
+    {#snippet children(row)}
+      <div class="list-row" style="grid-template-columns: repeat({effectiveListColumns}, minmax(0, 1fr));">
+        {#each row.items as entry, col (entry.path)}
+          <ItemButton class="list-item" index={row.startIndex + col} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
+            <span class="list-icon" data-drag-icon style:color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined}>
+              <FileIcon {entry} size="small" />
+            </span>
+            <span data-drag-name><EntryName {entry} {explorer} variant="list" /></span>
+            <GitStatusBadge entryName={entry.name} />
+          </ItemButton>
+        {/each}
+      </div>
+    {/snippet}
+  </VirtualList>
 </div>
 
 <style>
   .list-view {
-    display: grid;
-    grid-template-rows: repeat(var(--list-rows, 1), auto);
-    grid-auto-flow: column;
-    /* minmax(0, 1fr), not 1fr: a 1fr track's implicit min is min-content, so a
-       long unbreakable name (or the wider rename box) would expand its column
-       and shove the others sideways. A 0 min keeps every column an equal share
-       and lets the name truncate / the rename box overflow instead. */
-    grid-auto-columns: minmax(0, 1fr);
-    gap: 4px;
-    padding: 8px;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
     flex: 1;
-    align-content: start;
+    min-height: 0;
+  }
+
+  /* Each virtualized row is an equal-width grid. minmax(0, 1fr), not 1fr: a
+     1fr track's implicit min is min-content, so a long unbreakable name (or the
+     wider rename box) would expand its column and shove the others sideways. A
+     0 min keeps every column an equal share and lets the name truncate / the
+     rename box overflow instead. */
+  .list-view :global(.list-row) {
+    display: grid;
+    gap: 4px;
+    align-items: start;
   }
 
   .list-view :global(.list-item) {
@@ -172,7 +199,8 @@
   }
 
   /* While renaming, let the content-width rename box extend past the item over
-     neighbouring columns instead of being clipped to its grid cell. */
+     neighbouring columns instead of being clipped to its grid cell. The parent
+     grid cell and virtual row must also allow the overflow. */
   .list-view :global(.list-item:has(.rename-input)) {
     overflow: visible;
     z-index: 2;

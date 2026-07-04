@@ -13,18 +13,27 @@
   import { frecencyStore } from "$lib/state/frecency.svelte";
   import { openFile } from "$lib/api/files";
   import { setWallpaper, openTerminal } from "$lib/state/commands/system-actions";
-  import { dialogStore } from "$lib/state/dialogs.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { parentDir } from "$lib/domain/path";
   import { isImageFile } from "$lib/domain/file-types";
   import { getZoomFactor, clientToFixed } from "$lib/domain/zoom";
   import type { ViewMode } from "$lib/state/types";
+  import { contextMenuItems } from "$lib/state/context-menu-items.svelte";
 
   interface Props {
     explorer: ExplorerInstance;
   }
 
   let { explorer }: Props = $props();
+
+  // Plugin-contributed context-menu items whose `when` predicate passes for the
+  // current selection. Rendered in a divider-separated section below.
+  const pluginMenuItems = $derived(contextMenuItems.itemsFor(explorer.getSelectedEntries()));
+
+  function runPluginItem(item: (typeof pluginMenuItems)[number]): void {
+    void item.handler(explorer.getSelectedEntries());
+    contextMenuStore.close();
+  }
 
   function withSelectedEntry(action: (entry: FileEntry) => void): void {
     const entries = explorer.getSelectedEntries();
@@ -356,13 +365,6 @@
             </svg>
             <span>Set as Desktop Background</span>
           </button>
-          <button class="menu-item" onclick={() => { dialogStore.openNanoBanana(selectedImage.path); contextMenuStore.close(); }} role="menuitem">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path d="M12 2L14 4L5 13H3V11L12 2Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
-              <path d="M10.5 3.5L12.5 5.5" stroke="currentColor" stroke-width="1.25"/>
-            </svg>
-            <span>Edit with Nano Banana</span>
-          </button>
         {/if}
         <div class="menu-divider"></div>
       {/if}
@@ -641,6 +643,24 @@
             {/if}
           </button>
         {/if}
+      {/each}
+    {/if}
+
+    {#if pluginMenuItems.length > 0}
+      <div class="menu-divider"></div>
+      {#each pluginMenuItems as item (item.id)}
+        <button class="menu-item" onclick={() => runPluginItem(item)} role="menuitem">
+          {#if item.icon}
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d={item.icon} stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+            </svg>
+          {:else}
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <circle cx="8" cy="8" r="5" stroke="currentColor" stroke-width="1.25"/>
+            </svg>
+          {/if}
+          <span>{item.label}</span>
+        </button>
       {/each}
     {/if}
   </div>

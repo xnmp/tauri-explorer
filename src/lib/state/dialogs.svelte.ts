@@ -39,8 +39,6 @@ function createDialogStore() {
   let workspaceOpen = $state(false);
   let bulkRenameOpen = $state(false);
   let bulkRenameItems = $state<FileEntry[]>([]);
-  let nanoBananaOpen = $state(false);
-  let nanoBananaSourcePath = $state("");
   let jobsPanelOpen = $state(false);
   let themePickerOpen = $state(false);
   let pickerConfig = $state<PickerConfig | null>(null);
@@ -105,12 +103,6 @@ function createDialogStore() {
     get bulkRenameEntries() {
       return bulkRenameItems;
     },
-    get isNanoBananaOpen() {
-      return nanoBananaOpen;
-    },
-    get nanoBananaSourcePath() {
-      return nanoBananaSourcePath;
-    },
     get isJobsPanelOpen() {
       return jobsPanelOpen;
     },
@@ -145,7 +137,7 @@ function createDialogStore() {
 
     /** True when any modal dialog is open (file ops or overlays). */
     get hasModalOpen(): boolean {
-      return activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || nanoBananaOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null;
+      return activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null;
     },
 
     // Overlay dialog actions
@@ -199,16 +191,6 @@ function createDialogStore() {
       bulkRenameItems = [];
     },
 
-    openNanoBanana(sourcePath: string): void {
-      nanoBananaSourcePath = sourcePath;
-      nanoBananaOpen = true;
-    },
-
-    closeNanoBanana(): void {
-      nanoBananaOpen = false;
-      nanoBananaSourcePath = "";
-    },
-
     openJobsPanel(): void {
       jobsPanelOpen = true;
     },
@@ -244,8 +226,6 @@ function createDialogStore() {
       workspaceOpen = false;
       bulkRenameOpen = false;
       bulkRenameItems = [];
-      nanoBananaOpen = false;
-      nanoBananaSourcePath = "";
       jobsPanelOpen = false;
       themePickerOpen = false;
       pickerConfig = null;

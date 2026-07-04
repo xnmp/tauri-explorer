@@ -647,13 +647,14 @@ fn ffmpeg_resolved() -> &'static Mutex<Option<Option<PathBuf>>> {
 /// the next thumbnail request re-resolves. Called from the frontend when the
 /// "FFmpeg path" setting changes.
 fn set_ffmpeg_path_impl(path: Option<String>) {
-    *ffmpeg_override().lock().unwrap() = path.filter(|p| !p.trim().is_empty());
-    *ffmpeg_resolved().lock().unwrap() = None;
+    *ffmpeg_override().lock().unwrap_or_else(|e| e.into_inner()) =
+        path.filter(|p| !p.trim().is_empty());
+    *ffmpeg_resolved().lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 fn resolve_ffmpeg_path() -> Option<PathBuf> {
     // 1. Explicit user-configured path wins.
-    if let Some(p) = ffmpeg_override().lock().unwrap().clone() {
+    if let Some(p) = ffmpeg_override().lock().unwrap_or_else(|e| e.into_inner()).clone() {
         let pb = PathBuf::from(&p);
         if ffmpeg_runs(&pb) {
             log::info!(
@@ -688,7 +689,7 @@ fn resolve_ffmpeg_path() -> Option<PathBuf> {
 /// Result is cached until `set_ffmpeg_path` invalidates it.
 fn ffmpeg_path() -> Option<PathBuf> {
     let cell = ffmpeg_resolved();
-    let mut guard = cell.lock().unwrap();
+    let mut guard = cell.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(ref resolved) = *guard {
         return resolved.clone();
     }
@@ -846,6 +847,82 @@ fn get_video_thumbnail_data_sync(
     })
 }
 
+// ─── Folder previews (issue #146) ───────────────────────────────────────────
+//
+// A folder preview names up to FOLDER_PREVIEW_MAX_IMAGES representative images
+// directly inside a folder (non-recursive) so the frontend can composite them
+// into the folder tile at large/XL sizes. It deliberately returns *paths*, not
+// pixels — the per-image thumbnail pipeline above supplies the bitmaps, so
+// previews share its cache and invalidation. Selection rules mirror
+// src/lib/domain/folder-preview.ts (the canonical, unit-tested spec).
+
+pub const FOLDER_PREVIEW_MAX_IMAGES: usize = 3;
+/// Bound on directory entries examined so huge folders can't stall the scan.
+const FOLDER_PREVIEW_SCAN_CAP: usize = 4096;
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FolderPreview {
+    pub folder_path: String,
+    pub image_paths: Vec<String>,
+    /// Changes whenever the folder's mtime or chosen image set (paths + their
+    /// mtimes) changes; equal fingerprints mean an identical rendered preview.
+    pub fingerprint: String,
+}
+
+fn is_hidden_preview_name(name: &str) -> bool {
+    name.starts_with('.') || name.starts_with("~$")
+}
+
+fn hash_mtime(hasher: &mut Sha256, path: &Path) {
+    if let Ok(d) = fs::metadata(path)
+        .and_then(|md| md.modified())
+        .map(|m| m.duration_since(std::time::UNIX_EPOCH).unwrap_or_default())
+    {
+        hasher.update(d.as_secs().to_le_bytes());
+        hasher.update(d.subsec_nanos().to_le_bytes());
+    }
+}
+
+fn get_folder_preview_sync(path: String) -> Result<FolderPreview, AppError> {
+    let dir = PathBuf::from(&path);
+    if !dir.is_dir() {
+        return Err(AppError::InvalidPath(format!("Not a directory: {}", path)));
+    }
+
+    let mut images: Vec<PathBuf> = fs::read_dir(&dir)
+        .map_err(AppError::Io)?
+        .flatten()
+        .take(FOLDER_PREVIEW_SCAN_CAP)
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| !is_hidden_preview_name(n))
+                && is_supported_image(p)
+                && p.is_file()
+        })
+        .collect();
+    images.sort(); // byte order — matches the frontend spec's Array#sort
+    images.truncate(FOLDER_PREVIEW_MAX_IMAGES);
+
+    let mut hasher = Sha256::new();
+    hasher.update(dir.to_string_lossy().as_bytes());
+    hash_mtime(&mut hasher, &dir);
+    for img in &images {
+        hasher.update(img.to_string_lossy().as_bytes());
+        hash_mtime(&mut hasher, img);
+    }
+
+    Ok(FolderPreview {
+        folder_path: path,
+        image_paths: images
+            .into_iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect(),
+        fingerprint: hex::encode(&hasher.finalize()[..8]),
+    })
+}
+
 // ─── Async Tauri commands ───────────────────────────────────────────────────
 
 /// Get or generate thumbnail for an image file.
@@ -908,6 +985,16 @@ pub async fn set_ffmpeg_path(path: String) {
     } else {
         Some(path)
     });
+}
+
+/// Pick up to FOLDER_PREVIEW_MAX_IMAGES representative images for a folder
+/// tile, plus a change fingerprint. Empty `image_paths` (not an error) means
+/// the folder has no eligible images and the UI shows the plain folder icon.
+#[tauri::command]
+pub async fn get_folder_preview(path: String) -> Result<FolderPreview, AppError> {
+    tokio::task::spawn_blocking(move || get_folder_preview_sync(path))
+        .await
+        .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
 }
 
 /// Clear the thumbnail cache
@@ -993,6 +1080,76 @@ mod tests {
     use super::*;
     use std::fs::File;
     use tempfile::tempdir;
+
+    fn touch(dir: &Path, name: &str) {
+        File::create(dir.join(name)).unwrap();
+    }
+
+    #[test]
+    fn folder_preview_selects_sorted_capped_images() {
+        let dir = tempdir().unwrap();
+        for name in ["zebra.png", "beta.jpg", "alpha.webp", "delta.gif", "notes.txt"] {
+            touch(dir.path(), name);
+        }
+
+        let preview =
+            get_folder_preview_sync(dir.path().to_string_lossy().to_string()).unwrap();
+        let names: Vec<_> = preview
+            .image_paths
+            .iter()
+            .map(|p| Path::new(p).file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+        // Byte-sorted, capped at FOLDER_PREVIEW_MAX_IMAGES, non-images excluded.
+        assert_eq!(names, vec!["alpha.webp", "beta.jpg", "delta.gif"]);
+    }
+
+    #[test]
+    fn folder_preview_skips_hidden_and_temp_files() {
+        let dir = tempdir().unwrap();
+        for name in [".hidden.png", "~$office.jpg", "visible.png"] {
+            touch(dir.path(), name);
+        }
+
+        let preview =
+            get_folder_preview_sync(dir.path().to_string_lossy().to_string()).unwrap();
+        assert_eq!(preview.image_paths.len(), 1);
+        assert!(preview.image_paths[0].ends_with("visible.png"));
+    }
+
+    #[test]
+    fn folder_preview_empty_for_imageless_folder_but_errors_for_files() {
+        let dir = tempdir().unwrap();
+        touch(dir.path(), "notes.txt");
+
+        let preview =
+            get_folder_preview_sync(dir.path().to_string_lossy().to_string()).unwrap();
+        assert!(preview.image_paths.is_empty());
+        assert!(!preview.fingerprint.is_empty());
+
+        // A file path (not a directory) is a caller error, not an empty preview.
+        let file_path = dir.path().join("notes.txt");
+        assert!(get_folder_preview_sync(file_path.to_string_lossy().to_string()).is_err());
+    }
+
+    #[test]
+    fn folder_preview_fingerprint_changes_when_image_set_changes() {
+        let dir = tempdir().unwrap();
+        touch(dir.path(), "a.png");
+        let before =
+            get_folder_preview_sync(dir.path().to_string_lossy().to_string()).unwrap();
+
+        touch(dir.path(), "b.png");
+        let after =
+            get_folder_preview_sync(dir.path().to_string_lossy().to_string()).unwrap();
+
+        assert_ne!(before.fingerprint, after.fingerprint);
+        assert_eq!(after.image_paths.len(), 2);
+
+        // Unchanged folder ⇒ stable fingerprint (the short-circuit contract).
+        let again =
+            get_folder_preview_sync(dir.path().to_string_lossy().to_string()).unwrap();
+        assert_eq!(after.fingerprint, again.fingerprint);
+    }
 
     #[test]
     fn test_is_supported_image() {

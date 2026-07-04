@@ -18,6 +18,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Tauri-binary E2E smoke (Linux/Windows only) | `bun run test:e2e:tauri` (needs `cargo install tauri-driver` and a built binary) |
 | Performance tests | `bun run test:perf` |
 | Rust build only | `cd src-tauri && cargo build` |
+| Runnable release binary | `bun run build && cd src-tauri && cargo build --release --features tauri/custom-protocol` — a bare `cargo build --release` yields a DEV-mode binary that dials localhost:1420 (Tauri gates prod on the `custom-protocol` feature, which only the Tauri CLI passes) |
 | Rust tests only | `cd src-tauri && cargo test` |
 
 ### WSL ↔ Windows: always `git push` after committing
@@ -87,6 +88,10 @@ Convention: branch names map to issues by title. Branch `feat/my-feature` matche
 ### Screenshot Requirements
 
 When creating issues, include a `## Screenshots` section in the issue body with markdown checkboxes (e.g., `- [ ] sidebar`). Screenshots must be saved to `screenshots/<branch>/`. The merge hook verifies they exist. Use 'None required' only for pure backend/refactor changes with no user-visible effect. Behavioral fixes still need a screenshot showing the corrected behavior.
+
+## Subagent Worktrees
+
+Agent-tool worktrees are created from the repo's **default branch (main)**, not `dev`. Any delegated agent that writes code MUST start with `git merge origin/dev --no-ff -m "merge dev"` (or branch from `origin/dev` directly) before working, and the coordinator must verify `git merge-base <agent-branch> dev` is recent before merging. Agents must not run `bun run dev`/Playwright servers on port 1420 (worktree-served apps don't boot; the port belongs to the main session).
 
 ## Branching & Workflow
 

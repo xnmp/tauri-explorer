@@ -4,8 +4,11 @@
  */
 
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
+import type { FolderPreview } from "$lib/domain/folder-preview";
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { isTauri, mockInvoke } from "./mock-invoke";
+import { providerFor } from "$lib/plugins/fs-providers";
+import { isVirtualPath, virtualScheme } from "$lib/domain/virtual-path";
 
 // Cached Tauri detection. Only the positive result is latched: an invoke
 // racing ahead of __TAURI_INTERNALS__ injection must not permanently stick
@@ -38,7 +41,7 @@ const APP_ERROR_KINDS: ReadonlySet<string> = new Set<AppErrorKind>([
 ]);
 
 /** Extract error message from Tauri command error (structured or string) */
-function extractError(err: unknown): string {
+export function extractError(err: unknown): string {
   if (err instanceof Error) return err.message;
   if (err && typeof err === "object") {
     const message = (err as { message?: unknown }).message;
@@ -78,6 +81,16 @@ export type ApiResult<T> =
 export async function fetchDirectory(
   path: string
 ): Promise<ApiResult<DirectoryListing>> {
+  // Virtual (`scheme://…`) paths are served by a plugin provider, not the
+  // real-fs backend.
+  const provider = providerFor(path);
+  if (provider) {
+    try {
+      return { ok: true, data: await provider.list(path) };
+    } catch (err) {
+      return { ok: false, error: extractError(err) };
+    }
+  }
   try {
     const data = await invoke<DirectoryListing>("list_directory", { path });
     return { ok: true, data };
@@ -113,6 +126,8 @@ export async function createDirectory(
   parentPath: string,
   name: string
 ): Promise<ApiResult<FileEntry>> {
+  const guard = virtualPathGuard(parentPath);
+  if (guard) return guard;
   try {
     const data = await invoke<FileEntry>("create_directory", {
       parentPath,
@@ -122,6 +137,22 @@ export async function createDirectory(
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
+}
+
+
+/**
+ * Reject real-fs operations on virtual (`scheme://…`) paths with a graceful
+ * error instead of letting them reach the OS backend (#152). Virtual entries
+ * are read-only plugin views; only listing (fetchDirectory / streaming) is
+ * provider-routed today.
+ */
+function virtualPathGuard(...paths: (string | undefined)[]): { ok: false; error: string } | null {
+  const virtual = paths.find((p) => p && isVirtualPath(p));
+  if (!virtual) return null;
+  return {
+    ok: false,
+    error: `${virtualScheme(virtual)}:// is a read-only virtual location`,
+  };
 }
 
 /**
@@ -135,6 +166,8 @@ export async function renameEntry(
   path: string,
   newName: string
 ): Promise<ApiResult<FileEntry>> {
+  const guard = virtualPathGuard(path);
+  if (guard) return guard;
   try {
     const data = await invoke<FileEntry>("rename_entry", { path, newName });
     return { ok: true, data };
@@ -155,6 +188,8 @@ export async function renameEntry(
  * @returns Result indicating success or error message
  */
 export async function deleteEntry(path: string): Promise<ApiResult<void>> {
+  const guard = virtualPathGuard(path);
+  if (guard) return guard;
   try {
     await invoke("move_to_trash", { path });
     return { ok: true, data: undefined };
@@ -180,6 +215,8 @@ export async function deleteMultipleEntries(paths: string[]): Promise<ApiResult<
 
 /** Permanently delete a file or directory (bypasses trash). */
 export async function deleteEntryPermanent(path: string): Promise<ApiResult<void>> {
+  const guard = virtualPathGuard(path);
+  if (guard) return guard;
   try {
     await invoke("delete_entry_permanent", { path });
     return { ok: true, data: undefined };
@@ -215,6 +252,8 @@ export async function copyEntry(
   destDir: string,
   overwrite = false
 ): Promise<ApiResult<FileEntry>> {
+  const guard = virtualPathGuard(source, destDir);
+  if (guard) return guard;
   try {
     const data = await invoke<FileEntry>("copy_entry", { source, destDir, overwrite });
     return { ok: true, data };
@@ -235,6 +274,8 @@ export async function moveEntry(
   destDir: string,
   overwrite = false
 ): Promise<ApiResult<FileEntry>> {
+  const guard = virtualPathGuard(source, destDir);
+  if (guard) return guard;
   try {
     const data = await invoke<FileEntry>("move_entry", { source, destDir, overwrite });
     return { ok: true, data };
@@ -250,6 +291,8 @@ export async function moveEntry(
  * @returns Result indicating success or error message
  */
 export async function openFile(path: string): Promise<ApiResult<void>> {
+  const guard = virtualPathGuard(path);
+  if (guard) return guard;
   try {
     await invoke("open_file", { path });
     return { ok: true, data: undefined };
@@ -282,6 +325,8 @@ export async function resolveShortcut(path: string): Promise<ShortcutTarget | nu
  * Falls back to default open if no known editor is found.
  */
 export async function openFileAtLine(path: string, line: number): Promise<ApiResult<void>> {
+  const guard = virtualPathGuard(path);
+  if (guard) return guard;
   try {
     await invoke("open_file_at_line", { path, line });
     return { ok: true, data: undefined };
@@ -298,6 +343,8 @@ export async function openFileAtLine(path: string, line: number): Promise<ApiRes
  * @returns Result indicating success or error message
  */
 export async function openFileWith(path: string, app: string): Promise<ApiResult<void>> {
+  const guard = virtualPathGuard(path);
+  if (guard) return guard;
   try {
     await invoke("open_file_with", { path, app });
     return { ok: true, data: undefined };
@@ -311,6 +358,8 @@ export async function openFileWith(path: string, app: string): Promise<ApiResult
  * enabling arrow-key navigation in viewers like imv, feh, etc.
  */
 export async function openImageWithSiblings(path: string): Promise<ApiResult<void>> {
+  const guard = virtualPathGuard(path);
+  if (guard) return guard;
   try {
     await invoke("open_image_with_siblings", { path });
     return { ok: true, data: undefined };
@@ -379,6 +428,8 @@ export async function writeTextFile(path: string, content: string): Promise<ApiR
  * @returns Result with file content or error message
  */
 export async function readTextFile(path: string, maxBytes?: number): Promise<ApiResult<string>> {
+  const guard = virtualPathGuard(path);
+  if (guard) return guard;
   try {
     const content = await invoke<string>("read_text_file", { path, maxBytes: maxBytes ?? null });
     return { ok: true, data: content };
@@ -611,6 +662,17 @@ export interface DirectoryEntriesEvent {
 export async function startStreamingDirectory(
   path: string
 ): Promise<ApiResult<DirectoryListing>> {
+  // Virtual paths never stream: the provider returns the full listing inline
+  // (listing_id null), which the caller treats as a non-streaming result.
+  const provider = providerFor(path);
+  if (provider) {
+    try {
+      const data = await provider.list(path);
+      return { ok: true, data: { ...data, listing_id: null } };
+    } catch (err) {
+      return { ok: false, error: extractError(err) };
+    }
+  }
   try {
     const data = await invoke<DirectoryListing>("start_streaming_directory", { path });
     return { ok: true, data };
@@ -711,6 +773,8 @@ export async function getThumbnailData(
   size?: number,
   quality?: number
 ): Promise<ApiResult<string>> {
+  const guard = virtualPathGuard(path);
+  if (guard) return guard;
   try {
     const dataUri = await invoke<string>("get_thumbnail_data", { path, size, quality });
     return { ok: true, data: dataUriToBlobUrl(dataUri) };
@@ -731,6 +795,8 @@ export async function getMicroThumbnail(
   prewarmSize?: number,
   prewarmQuality?: number
 ): Promise<ApiResult<string>> {
+  const guard = virtualPathGuard(path);
+  if (guard) return guard;
   try {
     const dataUri = await invoke<string>("get_micro_thumbnail", { path, prewarmSize, prewarmQuality });
     return { ok: true, data: dataUriToBlobUrl(dataUri) };
@@ -756,6 +822,23 @@ export async function getVideoThumbnailData(
   try {
     const dataUri = await invoke<string>("get_video_thumbnail_data", { path, size, quality });
     return { ok: true, data: dataUriToBlobUrl(dataUri) };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+/**
+ * Get the folder-preview descriptor for a directory: up to a few
+ * representative image paths plus a change fingerprint (see
+ * $lib/domain/folder-preview for the selection spec). Empty `image_paths`
+ * means "no eligible images" — callers show the plain folder icon.
+ *
+ * @param path - Full path to folder
+ */
+export async function getFolderPreview(path: string): Promise<ApiResult<FolderPreview>> {
+  try {
+    const preview = await invoke<FolderPreview>("get_folder_preview", { path });
+    return { ok: true, data: preview };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
@@ -911,6 +994,8 @@ export async function createSymlink(
   targetPath: string,
   linkPath: string
 ): Promise<ApiResult<FileEntry>> {
+  const guard = virtualPathGuard(targetPath, linkPath);
+  if (guard) return guard;
   try {
     const data = await invoke<FileEntry>("create_symlink", { targetPath, linkPath });
     return { ok: true, data };
@@ -1025,6 +1110,8 @@ export interface ZipProgressEvent {
  * @returns Result with path to created ZIP file or error
  */
 export async function compressToZip(paths: string[], jobId?: number): Promise<ApiResult<string>> {
+  const guard = virtualPathGuard(...paths);
+  if (guard) return guard;
   try {
     const zipPath = await invoke<string>("compress_to_zip", { paths, jobId });
     return { ok: true, data: zipPath };
@@ -1071,6 +1158,8 @@ export async function extractArchive(
   extractHere: boolean = false,
   jobId?: number,
 ): Promise<ApiResult<string>> {
+  const guard = virtualPathGuard(archivePath);
+  if (guard) return guard;
   try {
     const destPath = await invoke<string>("extract_archive", { archivePath, extractHere, jobId });
     return { ok: true, data: destPath };
@@ -1158,7 +1247,7 @@ export async function listUserThemes(): Promise<ApiResult<[string, string][]>> {
 /**
  * Git file status types.
  */
-export type GitFileStatus = "Modified" | "Added" | "Deleted" | "Renamed" | "Untracked" | "Ignored" | "Conflict";
+export type GitFileStatus = "Modified" | "Added" | "Deleted" | "Renamed" | "Copied" | "Untracked" | "Ignored" | "Conflicted" | "TypeChange";
 
 export interface GitStatusResponse {
   is_git_repo: boolean;
@@ -1187,7 +1276,7 @@ export type GitStatusCode =
   | "Copied"
   | "Untracked"
   | "Ignored"
-  | "Conflict"
+  | "Conflicted"
   | "TypeChange";
 
 export interface GitFileEntry {

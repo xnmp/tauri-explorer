@@ -9,9 +9,11 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { getHomeDirectory } from "$lib/api/files";
-  import { getDropSourcePaths, handleFileDrop } from "$lib/state/drop-operations";
+  import { getDropSourcePaths, handleFileDropMany } from "$lib/state/drop-operations";
   import { truncateBreadcrumbs } from "$lib/domain/breadcrumb-truncation";
   import { isWslDistroRoot, isWslHome } from "$lib/domain/wsl";
+  import { directoryKey } from "$lib/domain/path";
+  import { drivesStore } from "$lib/state/drives.svelte";
   import BreadcrumbAutocomplete from "./BreadcrumbAutocomplete.svelte";
   import CaretPicker from "./CaretPicker.svelte";
   import NavigationHistoryMenu from "./NavigationHistoryMenu.svelte";
@@ -59,11 +61,52 @@
       : null
   );
 
-  type AnchorKind = "home" | "wsl-home" | "wsl-root" | "root";
+  // The breadcrumb crumb (if any) that exactly maps to a known removable or
+  // Google Drive mount, so that mount collapses into a dedicated anchor icon
+  // (USB-with-letter / Google mark) instead of a bare folder + drive-letter
+  // crumb. On Windows the mount is the drive-letter root (index 0); on
+  // Linux/macOS it's a deeper crumb (e.g. /media/<user>/GoogleDrive). Null when
+  // no crumb is a recognised drive (or the drives list isn't populated, e.g.
+  // sidebar hidden) — the anchor then falls back to home/root as before.
+  const driveAnchor = $derived.by(() => {
+    const crumbs = explorer.breadcrumbs;
+    for (let i = 0; i < crumbs.length; i++) {
+      const key = directoryKey(crumbs[i].path);
+      const drive = drivesStore.list.find((d) => directoryKey(d.path) === key);
+      if (!drive) continue;
+      if (drive.provider === "googledrive") {
+        // Google Drive File Stream always nests personal files under a top-level
+        // "My Drive" folder, so fold that crumb into the Google anchor too — the
+        // path reads "<G> › subfolder" instead of "<G> › My Drive › subfolder".
+        const end = crumbs[i + 1]?.name === "My Drive" ? i + 1 : i;
+        return { kind: "googledrive" as const, index: i, end, drive };
+      }
+      if (drive.kind === "removable" || drive.kind === "unknown")
+        return { kind: "removable" as const, index: i, end: i, drive };
+    }
+    return null;
+  });
+  // The bare drive letter (e.g. "E") shown inside the USB anchor icon. Taken
+  // from the drive-letter root path (Windows) or, failing that, the drive's
+  // dimmed detail label (e.g. "E:"). Empty when the mount has no letter.
+  const driveAnchorLetter = $derived.by(() => {
+    if (!driveAnchor) return "";
+    const fromPath = explorer.breadcrumbs[driveAnchor.index]?.path.match(/^([a-zA-Z]):/)?.[1];
+    const fromDetail = driveAnchor.drive.detail?.match(/^([a-zA-Z]):?$/)?.[1];
+    return (fromPath ?? fromDetail ?? "").toUpperCase();
+  });
+
+  type AnchorKind = "home" | "wsl-home" | "wsl-root" | "googledrive" | "removable" | "root";
   const anchor = $derived.by<{ kind: AnchorKind; path: string; slice: number }>(() => {
     if (wslHomeIndex >= 0)
       return { kind: "wsl-home", path: explorer.breadcrumbs[wslHomeIndex].path, slice: wslHomeIndex + 1 };
     if (wslDistroRoot) return { kind: "wsl-root", path: wslDistroRoot, slice: 1 };
+    // Drive-mount anchors absorb the crumbs up to and including the mount so the
+    // path reads "<drive icon> › subfolder" rather than "<folder> › E › subfolder".
+    if (driveAnchor) {
+      const { path } = explorer.breadcrumbs[driveAnchor.end];
+      return { kind: driveAnchor.kind, path, slice: driveAnchor.end + 1 };
+    }
     if (isUnderHome && homeDir) return { kind: "home", path: homeDir, slice: homeParts.length };
     return { kind: "root", path: rootPath, slice: 0 };
   });
@@ -199,14 +242,12 @@
     dropTargetCrumb = null;
     if (!event.dataTransfer) return;
 
-    const sourcePaths = getDropSourcePaths(event.dataTransfer);
-    for (const sourcePath of sourcePaths) {
-      if (sourcePath === targetPath) continue;
-      if (targetPath.startsWith(sourcePath + "/")) continue;
-      await handleFileDrop(sourcePath, targetPath, false, {
-        onRefresh: () => windowTabsManager.refreshAllPanes(),
-      });
-    }
+    const sourcePaths = getDropSourcePaths(event.dataTransfer).filter(
+      (sourcePath) => sourcePath !== targetPath && !targetPath.startsWith(sourcePath + "/"),
+    );
+    await handleFileDropMany(sourcePaths, targetPath, false, {
+      onRefresh: () => windowTabsManager.refreshAllPanes(),
+    });
   }
 
 </script>
@@ -299,7 +340,7 @@
       <button
         class="crumb root"
         onclick={(e) => { e.stopPropagation(); explorer.navigateTo(anchor.path, { autoEnterSingleSubdir: false }); }}
-        aria-label={anchor.kind === "wsl-home" ? "WSL home folder" : anchor.kind === "wsl-root" ? "WSL distribution root" : anchor.kind === "home" ? "Home folder" : "Root"}
+        aria-label={anchor.kind === "wsl-home" ? "WSL home folder" : anchor.kind === "wsl-root" ? "WSL distribution root" : anchor.kind === "home" ? "Home folder" : anchor.kind === "googledrive" ? "Google Drive" : anchor.kind === "removable" ? `Removable drive ${driveAnchorLetter}` : "Root"}
       >
         {#if anchor.kind === "home"}
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -325,6 +366,28 @@
               />
             </svg>
             <img src="/tux.svg" alt="" class="anchor-wsl-home-tux" />
+          </span>
+        {:else if anchor.kind === "googledrive"}
+          <!-- Google "G" multi-colour mark (matches the sidebar Cloud icon). -->
+          <svg width="15" height="15" viewBox="0 0 48 48" aria-hidden="true">
+            <path fill="#4285F4" d="M45.12 24.5c0-1.56-.14-3.06-.4-4.5H24v8.51h11.84c-.51 2.75-2.06 5.08-4.39 6.64v5.52h7.11c4.16-3.83 6.56-9.47 6.56-16.17z"/>
+            <path fill="#34A853" d="M24 46c5.94 0 10.92-1.97 14.56-5.33l-7.11-5.52c-1.97 1.32-4.49 2.1-7.45 2.1-5.73 0-10.58-3.87-12.31-9.07H4.34v5.7C7.96 41.07 15.4 46 24 46z"/>
+            <path fill="#FBBC05" d="M11.69 28.18c-.44-1.32-.69-2.73-.69-4.18s.25-2.86.69-4.18v-5.7H4.34A21.99 21.99 0 0 0 2 24c0 3.55.85 6.91 2.34 9.88l7.35-5.7z"/>
+            <path fill="#EA4335" d="M24 10.75c3.23 0 6.13 1.11 8.41 3.29l6.31-6.31C34.91 4.18 29.93 2 24 2 15.4 2 7.96 6.93 4.34 14.12l7.35 5.7c1.73-5.2 6.58-9.07 12.31-9.07z"/>
+          </svg>
+        {:else if anchor.kind === "removable"}
+          <!-- Lucide "usb" icon followed by the drive letter (#159). -->
+          <span class="anchor-usb">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="10" cy="7" r="1" />
+              <circle cx="4" cy="20" r="1" />
+              <path d="M4.7 19.3 19 5" />
+              <path d="m21 3-3 1 2 2Z" />
+              <path d="M9.26 7.68 5 12l2 5" />
+              <path d="m10 14 5 2 3.5-3.5" />
+              <path d="m18 12 1-1 1 1-1 1Z" />
+            </svg>
+            <span class="anchor-usb-letter">{driveAnchorLetter}</span>
           </span>
         {:else}
           <!-- Root folder icon -->
@@ -570,6 +633,24 @@
     bottom: 11%;
     transform: translateX(-50%);
     object-fit: contain;
+  }
+
+  /* Removable drive: USB-stick outline (green, matching the sidebar) followed
+     by the drive letter — icon and letter sit side by side (#159). */
+  .anchor-usb {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    color: #10b981;
+  }
+  .anchor-usb svg {
+    flex-shrink: 0;
+  }
+  .anchor-usb-letter {
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--text-secondary);
   }
 
   .crumb.ellipsis {

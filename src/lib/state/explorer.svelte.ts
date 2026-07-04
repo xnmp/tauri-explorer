@@ -16,6 +16,7 @@
  * - Undo (undo.svelte.ts) - global undo stack
  */
 
+import { SvelteSet } from "svelte/reactivity";
 import { toastStore } from "./toast.svelte";
 import { basename, toNativeSeparators } from "$lib/domain/path";
 import { isWindows } from "$lib/domain/platform";
@@ -66,10 +67,25 @@ function createExplorerState(seed?: ExplorerSeed) {
     sortAscending: seed?.sortAscending ?? true,
     viewMode: seed?.viewMode ?? settingsStore.viewMode,
 
-    // Selection
-    selectedPaths: new Set(),
+    // Selection. A SvelteSet, always mutated in place via setSelection() —
+    // .has(path) then subscribes per-key, so a selection change re-renders
+    // only the rows whose membership actually changed, not every visible row.
+    selectedPaths: new SvelteSet<string>(),
     selectionAnchorIndex: null,
   });
+
+  /** Replace the selection contents, mutating the reactive Set in place.
+   *  Only added/removed keys fire; untouched rows never re-render. */
+  function setSelection(next: Iterable<string>): void {
+    const cur = coreState.selectedPaths;
+    const nextSet = next instanceof Set ? (next as ReadonlySet<string>) : new Set(next);
+    for (const path of [...cur]) {
+      if (!nextSet.has(path)) cur.delete(path);
+    }
+    for (const path of nextSet) {
+      if (!cur.has(path)) cur.add(path);
+    }
+  }
 
   // Inline folder creation state
   let isCreatingFolder = $state(false);
@@ -89,8 +105,11 @@ function createExplorerState(seed?: ExplorerSeed) {
   const watch = createPaneWatch();
   const markLocalMutation = watch.markLocalMutation;
 
-  // Read-only state accessor for components that need the raw state bag
-  const state = $derived({ ...coreState });
+  // Read-only state accessor for components that need the raw state bag.
+  // Exposes the $state proxy itself (typed read-only) — a spread copy here
+  // would rebuild the object on ANY property change and re-run every
+  // consumer, destroying the proxy's per-property reactivity.
+  const state: Readonly<ExplorerCoreState> = coreState;
 
   // ===================
   // Derived State
@@ -148,13 +167,43 @@ function createExplorerState(seed?: ExplorerSeed) {
     filterQuery = "";
     showFilter = false;
 
+    // Accumulate streamed continuation batches off the reactive graph. Writing
+    // `coreState.entries = [...coreState.entries, ...batch]` per batch is O(n^2):
+    // each write copies the growing array AND re-runs the `displayEntries`
+    // filter+sort over everything so far (~50 full re-sorts for a 5000-entry
+    // dir). Instead we push into a private buffer and commit a snapshot on a
+    // throttle (preserving progressive fill-in) plus once at done. See
+    // docs/perf-review.md findings #1/#2. The buffer seeds from the wholesale
+    // `result.entries` assignment below, which always runs before the first
+    // streaming callback (the continuation between them is synchronous).
+    const FLUSH_INTERVAL_MS = 100;
+    let streamBuffer: FileEntry[] | null = null;
+    let pendingFlush: ReturnType<typeof setTimeout> | null = null;
+
+    const commitBuffer = () => {
+      pendingFlush = null;
+      if (gen !== navGeneration || streamBuffer === null) return;
+      coreState.entries = streamBuffer.slice();
+    };
+
     const result = await dirListing.load(path, {
       onEntries: (entries) => {
         if (gen !== navGeneration) return;
-        coreState.entries = [...coreState.entries, ...entries];
+        if (streamBuffer === null) streamBuffer = coreState.entries.slice();
+        for (const e of entries) streamBuffer.push(e);
+        if (pendingFlush === null) {
+          pendingFlush = setTimeout(commitBuffer, FLUSH_INTERVAL_MS);
+        }
       },
       onDone: () => {
         if (gen !== navGeneration) return;
+        if (pendingFlush !== null) {
+          clearTimeout(pendingFlush);
+          pendingFlush = null;
+        }
+        if (streamBuffer !== null) {
+          coreState.entries = streamBuffer.slice();
+        }
         coreState.loading = false;
       },
     });
@@ -175,11 +224,11 @@ function createExplorerState(seed?: ExplorerSeed) {
 
       // Auto-select first item when navigating to a new directory
       // Issue: tauri-explorer-130a
-      coreState.selectedPaths = new Set();
       if (displayEntries.length > 0) {
-        coreState.selectedPaths = new Set([displayEntries[0].path]);
+        setSelection([displayEntries[0].path]);
         coreState.selectionAnchorIndex = 0;
       } else {
+        setSelection([]);
         coreState.selectionAnchorIndex = null;
       }
 
@@ -410,12 +459,12 @@ function createExplorerState(seed?: ExplorerSeed) {
       coreState.selectionAnchorIndex,
       options
     );
-    coreState.selectedPaths = result.selectedPaths;
+    setSelection(result.selectedPaths);
     coreState.selectionAnchorIndex = result.anchorIndex;
   }
 
   function clearSelection() {
-    coreState.selectedPaths = new Set();
+    setSelection([]);
     coreState.selectionAnchorIndex = null;
   }
 
@@ -441,11 +490,11 @@ function createExplorerState(seed?: ExplorerSeed) {
     );
     // selection.selectByIndices returns the same reference when nothing changed
     if (nextSet === coreState.selectedPaths) return;
-    coreState.selectedPaths = nextSet;
+    setSelection(nextSet);
   }
 
   function selectAll() {
-    coreState.selectedPaths = new Set(displayEntries.map((e) => e.path));
+    setSelection(displayEntries.map((e) => e.path));
     coreState.selectionAnchorIndex = 0;
   }
 
@@ -482,7 +531,7 @@ function createExplorerState(seed?: ExplorerSeed) {
 
   function openContextMenu(x: number, y: number, entry?: FileEntry) {
     if (entry && !coreState.selectedPaths.has(entry.path)) {
-      coreState.selectedPaths = new Set([entry.path]);
+      setSelection([entry.path]);
       coreState.selectionAnchorIndex = displayEntries.findIndex((e) => e.path === entry.path);
     }
     contextMenuExternalEntry = entry && coreState.selectionAnchorIndex === -1 ? entry : null;
@@ -540,14 +589,14 @@ function createExplorerState(seed?: ExplorerSeed) {
         // Remember pasted paths so onRefresh can re-select after navigation
         if (entries.length > 0) {
           pastedPaths = new Set(entries.map((e) => e.path));
-          coreState.selectedPaths = pastedPaths;
+          setSelection(pastedPaths);
         }
       },
       onRefresh: async () => {
         await navigateInternal(coreState.currentPath);
         // Re-select pasted entries after refresh resets selection
         if (pastedPaths) {
-          coreState.selectedPaths = pastedPaths;
+          setSelection(pastedPaths);
           pastedPaths = null;
         }
       },
@@ -722,10 +771,10 @@ function createExplorerState(seed?: ExplorerSeed) {
       // Auto-select the first matching entry as the user types
       const first = displayEntries[0];
       if (first) {
-        coreState.selectedPaths = new Set([first.path]);
+        setSelection([first.path]);
         coreState.selectionAnchorIndex = 0;
       } else {
-        coreState.selectedPaths = new Set();
+        setSelection([]);
         coreState.selectionAnchorIndex = null;
       }
     },

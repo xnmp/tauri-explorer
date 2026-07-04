@@ -50,26 +50,32 @@ export interface ExplorerCoreState {
 export type PaneId = "left" | "right";
 
 /**
- * Window-level tab that contains the full dual-pane layout state.
- * Each tab independently tracks both panes, active pane, and layout settings.
+ * A single tab within a pane's tab strip, as a tagged union (#56) so panes
+ * can host non-explorer content later (git graph, settings, diff-only, …).
+ * Today only the explorer kind exists; `GitGraphTab` is the first planned
+ * non-explorer kind (#51) and renders a placeholder until #58 lands.
  */
-export interface WindowTab {
-  id: string;
-  panes: {
-    left: WindowTabPane;
-    right: WindowTabPane;
-  };
-  activePaneId: PaneId;
-  dualPaneEnabled: boolean; // Per-tab: one tab can be single-pane, another dual-pane
-  splitRatio: number; // Per-tab: each tab remembers its divider position
-}
+export type PaneTab = ExplorerTab | GitGraphTab;
 
-/**
- * Pane state within a window tab.
- * References an explorer instance by ID for state management.
- */
-export interface WindowTabPane {
+/** A filesystem explorer view — references its explorer instance by ID. */
+export interface ExplorerTab {
+  id: string;
+  kind: "explorer";
   explorerId: string;
   path: string;
   title: string;
+}
+
+/** A git history graph for a repository (#51). */
+export interface GitGraphTab {
+  id: string;
+  kind: "git-graph";
+  repoPath: string;
+  title: string;
+}
+
+/** A pane's tab strip: its tabs and which one is active. */
+export interface PaneTabs {
+  tabs: PaneTab[];
+  activeTabId: string | null;
 }

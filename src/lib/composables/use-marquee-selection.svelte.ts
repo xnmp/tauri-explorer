@@ -43,7 +43,11 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
 
   let isDragging = $state(false);
   let dragEndTime = 0;
-  const DRAG_END_GRACE_MS = 50;
+  // The browser dispatches a `click` after the marquee's final mouseup; its
+  // delay is engine-dependent (WebKit can exceed any small time window), so
+  // suppression is consume-once with a generous expiry, not a fixed grace.
+  const DRAG_END_GRACE_MS = 500;
+  let suppressNextClick = false;
   let dragStart = $state<{ x: number; y: number } | null>(null);
   let dragCurrent = $state<{ x: number; y: number } | null>(null);
   let ctrlKeyHeld = $state(false);
@@ -111,7 +115,7 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     // Safety net: if mouse button was released but we missed the mouseup
     // (e.g. overlay stopPropagation, native drag hijack, window blur, OS pointer cancel)
     if (event.buttons === 0) {
-      end();
+      end({ commit: false });
       return false;
     }
 
@@ -128,12 +132,20 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     return true;
   }
 
-  function end(): void {
+  function end(options?: { commit?: boolean }): void {
     if (!isDragging) return;
 
+    // A real mouseup COMMITS the last RAF-throttled move: when mouseup beats
+    // the next animation frame — reliably so on headless WebKit — the final
+    // marquee rect would otherwise be stale and the selection computed empty.
+    // An abandoned drag (missed mouseup: blur, pointer cancel, overlay
+    // swallow) DISCARDS it instead — applying a phantom update after the
+    // interaction died would mutate selection out from under the user.
     if (moveRafId !== null) {
       cancelAnimationFrame(moveRafId);
-      moveRafId = null;
+      if (options?.commit ?? true) {
+        flushPendingMove();
+      }
     }
     pendingMove = null;
 
@@ -144,8 +156,11 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     cachedItemIndices = null;
     cachedScroll = null;
 
-    // Record end time so click handlers can ignore the immediate click
+    // The click that follows this mouseup must not clear the selection the
+    // marquee just made — mark it consumed-once (with expiry, in case no
+    // click ever arrives, e.g. release outside the window).
     dragEndTime = performance.now();
+    suppressNextClick = true;
   }
 
   /**
@@ -234,6 +249,12 @@ export function useMarqueeSelection(options: MarqueeOptions = {}) {
     },
     get dragJustEnded() {
       return performance.now() - dragEndTime < DRAG_END_GRACE_MS;
+    },
+    /** True exactly once for the click that follows a marquee drag. */
+    consumeDragEndClick(): boolean {
+      const suppress = suppressNextClick && performance.now() - dragEndTime < DRAG_END_GRACE_MS;
+      suppressNextClick = false;
+      return suppress;
     },
     get ctrlKeyHeld() {
       return ctrlKeyHeld;

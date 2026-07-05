@@ -141,7 +141,11 @@
   // ===================
 
   function handleBackgroundClick(event: MouseEvent): void {
-    if (marquee.isBackgroundClick(event.target as HTMLElement) && !marquee.isDragging && !marquee.dragJustEnded) {
+    if (
+      marquee.isBackgroundClick(event.target as HTMLElement) &&
+      !marquee.isDragging &&
+      !marquee.consumeDragEndClick()
+    ) {
       explorer.clearSelection();
     }
   }
@@ -289,9 +293,9 @@
 <svelte:window
   onmousemove={(e) => { handleMarqueeMove(e); }}
   onmouseup={() => { handleMarqueeEnd(); }}
-  onblur={() => { if (marquee.isDragging) marquee.end(); }}
-  onpointercancel={() => { if (marquee.isDragging) marquee.end(); }}
-  ondragstart={() => { if (marquee.isDragging) marquee.end(); }}
+  onblur={() => { if (marquee.isDragging) marquee.end({ commit: false }); }}
+  onpointercancel={() => { if (marquee.isDragging) marquee.end({ commit: false }); }}
+  ondragstart={() => { if (marquee.isDragging) marquee.end({ commit: false }); }}
 />
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->

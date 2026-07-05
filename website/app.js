@@ -2009,10 +2009,6 @@ document.addEventListener("click", (e) => {
   if (!e.target.closest(".theme-wrap")) setThemeMenu(false);
 });
 
-/* first-run hint (dismiss persists, like the app) */
-if (localStorage.getItem("hintDismissed") !== "1") $("hint").hidden = false;
-$("hint-dismiss").onclick = () => { localStorage.setItem("hintDismissed", "1"); $("hint").hidden = true; };
-
 /* boot: land on README, preview open — the pitch reads itself */
 renderTabs();
 applyChrome();

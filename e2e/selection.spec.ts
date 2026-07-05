@@ -141,7 +141,9 @@ for (const viewMode of VIEW_MODES) {
 
         await page.mouse.move(startX, startY);
         await page.mouse.down();
-        await page.mouse.move(startX + 200, box.y + 10);
+        // steps>1: a single-jump move is an unrealistic pointer stream and
+        // WebKit's pointer-event synthesis drops the marquee update for it.
+        await page.mouse.move(startX + 200, box.y + 10, { steps: 5 });
         await page.mouse.up();
 
         await page.waitForTimeout(100);

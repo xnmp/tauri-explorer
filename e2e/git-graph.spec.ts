@@ -6,10 +6,18 @@
 import { test, expect } from "@playwright/test";
 import { waitForEntries } from "./helpers";
 
-async function openGraphViaPalette(page: import("@playwright/test").Page) {
+async function openGraphViaPalette(page: import("@playwright/test").Page, expectGraph = true) {
   await page.keyboard.press("Control+Shift+p");
   await page.locator("input:focus").fill("Show Commit Graph");
   await page.keyboard.press("Enter");
+  // The synthetic "Uncommitted Changes" row arrives with the async git
+  // summary and shifts every row index when it lands (a real race on slower
+  // engines) — anchor on it before any nth() addressing.
+  if (expectGraph) {
+    await expect(
+      page.locator('[data-testid="git-graph-view"] .commit-row').first(),
+    ).toContainText("Uncommitted Changes");
+  }
 }
 
 test.describe("Git graph tab", () => {
@@ -78,7 +86,7 @@ test.describe("Git graph tab", () => {
     await page.goto("/?path=/home/user/Downloads");
     await waitForEntries(page);
 
-    await openGraphViaPalette(page);
+    await openGraphViaPalette(page, false);
 
     await expect(page.locator(".toast").first()).toContainText("Not inside a git repository");
     await expect(page.locator('[data-testid="git-graph-view"]')).toHaveCount(0);
@@ -176,7 +184,8 @@ test.describe("Git graph commit context actions", () => {
     await expect(view.locator(".commit-row").nth(2)).not.toHaveClass(/is-head/);
   });
 
-  test("copy commit hash writes the full OID to the clipboard", async ({ page, context }) => {
+  test("copy commit hash writes the full OID to the clipboard", async ({ page, context, browserName }) => {
+    test.skip(browserName === "webkit", "WebKit does not support Playwright clipboard permissions");
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
     await page.goto("/?path=/home/user/Documents/project");
     await waitForEntries(page);

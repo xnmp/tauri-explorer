@@ -14,6 +14,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Single unit test file | `bunx vitest run tests/path/to/file.test.ts` |
 | E2E tests (default view) | `bun run test:e2e` |
 | E2E tests (all view modes) | `ALL_VIEW_MODES=1 npx playwright test` |
+| E2E tests (WebKit ≈ WKWebView proxy) | `WEBKIT=1 npx playwright test --project=webkit` (on Arch: prepend `PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true`; Ubuntu-only libs live in the webkit bundle's `sys/lib`) |
 | Single E2E test | `npx playwright test e2e/specific.spec.ts` |
 | Tauri-binary E2E smoke (Linux/Windows only) | `bun run test:e2e:tauri` (needs `cargo install tauri-driver` and a built binary) |
 | Performance tests | `bun run test:perf` |

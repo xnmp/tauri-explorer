@@ -2,6 +2,28 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.1.0 — 2026-07-05
+
+### Added
+- **AI rename autocomplete** — start a rename and the AI Rename plugin suggests a better filename right under the box; press Tab (or click the hint) to accept. Same privacy rules as the picker: nothing is sent without your Gemini key, content hint for text files only, and a settings toggle to turn it off.
+- **Image preview: click to go front-and-center** — click the image in the preview pane for the fullscreen view (Left/Right step through siblings, +/− and Ctrl+wheel zoom, Esc or another click reverts).
+- **Git graph, VSCode-parity pass** — commit details now expand inline below the clicked row (the graph stretches around them); clicking a changed file shows its diff right there; the synthetic *Uncommitted Changes* row is clickable too (staged files badged). Default shortcut **Ctrl+Alt+G**.
+- **Theme from Image plugin** — right-click an image (or "Create Theme from Wallpaper") → median-cut palette → a generated theme in your themes folder, applied immediately.
+- **VSCode-style Source Control panel** — compact rows, right-edge colored status letters, inline dimmed paths, pill count badges, primary Commit button.
+- Command palette matching is token-based and word-order-agnostic ("git graph" and "graph git" both work), and a "Set Current View Mode as Default" command replaces the old implicit behavior.
+
+### Fixed
+- Context menus opened away from the cursor while zoomed (both the file menu's keep-on-screen clamp and the git-graph menu); now regression-guarded by a dedicated zoom E2E suite.
+- Changing one pane's view mode no longer silently rewrites the global default.
+- Terminal output no longer races listener registration on startup.
+- Filesystem-watcher creation failure (e.g. inotify exhaustion) degrades to no live refresh instead of crashing the app at startup.
+- Removed the one-time "Everything here is a keystroke away" panel.
+
+### Security (pre-launch audit, all tiers implemented)
+- Image decoding is hard-capped (16384px / 256MB / 200MB file) at every decode site — a crafted image header can no longer OOM the app.
+- The Nano Banana integration no longer runs gemini with `--yolo`: tool auto-approval is restricted to `edit_image`, and filenames are staged under neutral names so they can never inject into the model command.
+- Asset-protocol scope now denies credential directories (`.ssh`, `.gnupg`, `.aws`, …) on every platform; CSP tightened (`object-src 'none'`, `base-uri 'self'`); update-check URLs pinned to github.com; crash reports written `0o600`.
+
 ## v1.0.1 — 2026-07-05
 
 ### Fixed

@@ -27,9 +27,11 @@ describe("embedded terminal", () => {
     await browser.keys(["Control", "`"]);
     await $(".terminal-panel .xterm").waitForDisplayed({ timeout: 10_000 });
 
-    // A prompt (any output at all) must arrive from the PTY.
+    // A prompt (any output at all) must arrive from the PTY. Generous
+    // budget: PTY spawn + shell rc files regularly exceed 15s on loaded
+    // shared CI runners (this flaked on ~4 of 5 runs at 15s).
     await browser.waitUntil(async () => (await terminalText()).trim().length > 0, {
-      timeout: 15_000,
+      timeout: 45_000,
       timeoutMsg: "no shell output ever arrived in the terminal",
     });
   });
@@ -40,18 +42,33 @@ describe("embedded terminal", () => {
     const input = $(".terminal-panel textarea.xterm-helper-textarea");
     await input.waitForExist();
 
-    const marker = `e2e-terminal-${Date.now()}`;
-    await input.addValue(`echo ${marker}\n`);
+    // Never type into a shell that hasn't prompted yet — keystrokes sent
+    // during init are swallowed on Windows (conpty) and the test then
+    // waits forever for output of a command that never ran.
+    await browser.waitUntil(async () => (await terminalText()).trim().length > 0, {
+      timeout: 45_000,
+      timeoutMsg: "shell never became ready for input",
+    });
 
-    await browser.waitUntil(
-      async () => {
-        const text = await terminalText();
-        // The marker must appear at least twice: command echo + output —
-        // proving execution, not just local echo.
-        return text.split(marker).length >= 3;
-      },
-      { timeout: 15_000, timeoutMsg: "echoed command output never appeared" },
-    );
+    const marker = `e2e-terminal-${Date.now()}`;
+    const markerEchoed = async () => {
+      const text = await terminalText();
+      // The marker must appear at least twice: command echo + output —
+      // proving execution, not just local echo.
+      return text.split(marker).length >= 3;
+    };
+
+    await input.addValue(`echo ${marker}\n`);
+    try {
+      await browser.waitUntil(markerEchoed, { timeout: 20_000 });
+    } catch {
+      // First keystrokes can still be lost right at prompt time — one retry.
+      await input.addValue(`echo ${marker}\n`);
+      await browser.waitUntil(markerEchoed, {
+        timeout: 20_000,
+        timeoutMsg: "echoed command output never appeared (after retry)",
+      });
+    }
   });
 
   it("shell starts in the explorer's current directory", async () => {

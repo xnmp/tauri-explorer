@@ -110,6 +110,7 @@ pub fn run(launch_dir: Option<String>) {
             // Launch info
             get_launch_cwd,
             get_log_dir,
+            system::get_app_info,
             crash_report::take_crash_report,
             crash_report::log_frontend_error,
             crash_report::open_external_url,

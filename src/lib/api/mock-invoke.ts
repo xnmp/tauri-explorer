@@ -51,6 +51,10 @@ function dir(name: string, path: string, is_empty?: boolean): FileEntry {
 
 // Mock file system structure
 const mockFiles: Record<string, FileEntry[]> = {
+  // Matches get_log_dir so "Open Logs Folder" (#197) is navigable in e2e.
+  "/tmp": [dir("tauri-explorer", "/tmp/tauri-explorer")],
+  "/tmp/tauri-explorer": [dir("logs", "/tmp/tauri-explorer/logs")],
+  "/tmp/tauri-explorer/logs": [file("tauri-explorer.log", "/tmp/tauri-explorer/logs/tauri-explorer.log", 2048)],
   "/home": [
     dir("user", "/home/user"),
   ],
@@ -710,7 +714,10 @@ const mockCommands: Record<string, CommandHandler> = {
     };
   },
   log_frontend_error: () => undefined,
-  open_external_url: () => undefined,
+  open_external_url: (args) => {
+    localStorage.setItem("mock-opened-url", args.url as string);
+    return undefined;
+  },
 
   // Update check (#185): a newer release is simulated when the e2e test
   // sets localStorage.mockUpdateAvailable before load.
@@ -1525,6 +1532,7 @@ const mockCommands: Record<string, CommandHandler> = {
   // ----- Misc -----
 
   get_log_dir: () => "/tmp/tauri-explorer/logs",
+  get_app_info: () => ({ version: "0.0.0-mock", os: "linux", arch: "x86_64" }),
 
   // Mirrors the real backend: writes a PNG into `directory` and returns its
   // full path. Adds the entry to the mock fs so the pasted image shows up in

@@ -12,6 +12,8 @@ import { openInTerminal, gitRepoRoot } from "$lib/api/files";
 import { toastStore } from "../toast.svelte";
 import { readFocusedWindowState } from "../focused-window";
 import { getActiveExplorer, openNewWindow } from "./shared";
+import { getAppInfo, bugReportUrl, openExternalUrl } from "$lib/api/crash";
+import { invoke } from "$lib/api/files";
 
 /** Window commands */
 export const windowCommands: Command[] = [
@@ -207,6 +209,24 @@ export const terminalCommands: Command[] = [
 
 /** General dialog commands */
 export const generalDialogCommands: Command[] = [
+  {
+    id: "help.reportBug",
+    label: "Report a Bug",
+    category: "general",
+    handler: async () => {
+      const info = await getAppInfo();
+      await openExternalUrl(bugReportUrl(info));
+    },
+  },
+  {
+    id: "help.openLogs",
+    label: "Open Logs Folder",
+    category: "general",
+    handler: async () => {
+      const dir = await invoke<string>("get_log_dir");
+      await getActiveExplorer()?.navigateTo(dir);
+    },
+  },
   {
     id: "help.shortcuts",
     label: "Keyboard Shortcuts",

@@ -132,9 +132,13 @@ through the same channel after re-fetching.
 
 `src/lib/api/` bridges frontend ↔ Rust backend.
 
-- **`files.ts`** — Wraps every Rust command in async function returning `ApiResult<T>`. Auto-detects Tauri vs browser environment.
+- **`common.ts`** — Shared primitives: the mock-aware `invoke` seam (auto-detects Tauri vs browser), error extraction, `ApiResult<T>`. Every api module routes through this one invoke, which is what lets `mock-invoke.ts` intercept everything in browser E2E.
+- **`files.ts`** — Core directory listing/streaming, file CRUD, open/trash, drives, clipboard, wallpaper, picker, watcher. Also the façade: re-exports the concern modules below so importers can keep using `$lib/api/files`.
+- **`search.ts` / `thumbnails.ts` / `archive.ts` / `config.ts` / `git.ts` / `warm-pool.ts`** — Concern-focused wrappers split out of files.ts (audit A5); `git-log.ts` (commit history) predates the split.
 - **`mock-invoke.ts`** — Browser E2E mock with in-memory file system
 - **`os-clipboard.ts`** — Thin wrappers around clipboard Tauri commands
+
+Every Rust command is wrapped in an async function returning `ApiResult<T>`; components never import `invoke` from `@tauri-apps/api` directly.
 
 ## Component Tree
 

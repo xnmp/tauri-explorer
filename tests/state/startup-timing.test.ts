@@ -12,7 +12,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const invokeMock = vi.hoisted(() =>
   vi.fn(async (_cmd: string, _args?: Record<string, unknown>): Promise<unknown> => undefined),
 );
-vi.mock(import("../../src/lib/api/files"), async (importOriginal) => {
+vi.mock(import("../../src/lib/api/common"), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, invoke: invokeMock as unknown as typeof actual.invoke };
 });

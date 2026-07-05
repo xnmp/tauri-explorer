@@ -6,7 +6,8 @@
   import { settingsStore, type IconTheme, type ThumbnailSize, type WindowsBackdrop } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import { isMac, isWindows } from "$lib/domain/platform";
-  import { invoke, listInstalledTerminals } from "$lib/api/files";
+  import { listInstalledTerminals } from "$lib/api/files";
+  import { warmPoolShutdown } from "$lib/api/warm-pool";
   import { spawnWarmWindow } from "$lib/state/warm-window";
   import KeybindingsSettings from "./KeybindingsSettings.svelte";
   import Modal from "./Modal.svelte";
@@ -532,7 +533,7 @@
                   // parked hidden window on disable (otherwise it lingers,
                   // unclaimable, until the app exits).
                   if (enabled) void spawnWarmWindow();
-                  else void invoke("warm_pool_shutdown").catch(() => {});
+                  else void warmPoolShutdown().catch(() => {});
                 }}
               />
               <span class="toggle-slider"></span>

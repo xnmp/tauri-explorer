@@ -40,7 +40,14 @@
 
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { emitTo, listen } from "@tauri-apps/api/event";
-import { invoke } from "$lib/api/files";
+import { logStartupTiming } from "$lib/api/files";
+import {
+  warmPoolBeginSpawn,
+  warmPoolCancelSpawn,
+  warmPoolClaim,
+  warmPoolDiscard,
+  warmPoolRegister,
+} from "$lib/api/warm-pool";
 import { windowTabsManager } from "./window-tabs.svelte";
 import { explorerWindowAppearance } from "./window-appearance";
 import { settingsStore } from "./settings.svelte";
@@ -88,13 +95,13 @@ export function warmMode(): "off" | "park" | "measure" {
 export async function spawnWarmWindow(): Promise<void> {
   let reserved = false;
   try {
-    reserved = await invoke<boolean>("warm_pool_begin_spawn");
+    reserved = await warmPoolBeginSpawn();
   } catch {
     return; // not running in Tauri (e.g. browser E2E) — no pool
   }
   if (!reserved) return;
 
-  const cancelReservation = () => void invoke("warm_pool_cancel_spawn").catch(() => {});
+  const cancelReservation = () => void warmPoolCancelSpawn().catch(() => {});
 
   const label = WARM_LABEL_PREFIX + Date.now();
   const baseUrl = window.location.origin + window.location.pathname;
@@ -140,7 +147,7 @@ export async function consumeWarmWindow(
 ): Promise<boolean> {
   let label: string | null = null;
   try {
-    label = await invoke<string | null>("warm_pool_claim");
+    label = await warmPoolClaim();
   } catch {
     return false; // not running in Tauri — fresh-window path handles it
   }
@@ -171,7 +178,7 @@ export async function consumeWarmWindow(
     // The claim already marked this window as real in the registry; a window
     // that can't be activated must be destroyed, not leaked as an invisible
     // "real" window that keeps the app alive. Caller opens a fresh window.
-    void invoke("warm_pool_discard", { label }).catch(() => {});
+    void warmPoolDiscard(label).catch(() => {});
     return false;
   }
   void spawnWarmWindow(); // replenish
@@ -259,9 +266,7 @@ export async function runWarmWindow(measure: boolean): Promise<void> {
     // Activation latency telemetry (event received → window shown), durable in
     // the app log next to the Rust `Startup:` line.
     const dt = performance.now() - tActivate;
-    void invoke("log_startup_timing", {
-      summary: `Startup(warm-activate): show=${dt.toFixed(1)}ms`,
-    }).catch(() => {});
+    void logStartupTiming(`Startup(warm-activate): show=${dt.toFixed(1)}ms`).catch(() => {});
   });
 
   if (measure) {
@@ -277,5 +282,5 @@ export async function runWarmWindow(measure: boolean): Promise<void> {
   }
 
   // Report ready to the global pool (after the listener above is registered).
-  await invoke("warm_pool_register", { label: self.label }).catch(() => {});
+  await warmPoolRegister(self.label).catch(() => {});
 }

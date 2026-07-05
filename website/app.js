@@ -24,23 +24,41 @@ const THEMES = [
   { id: "solarized", label: "Solarized Light" },
 ];
 
-function applyTheme(theme) {
+/* The inline <head> script sets data-theme before first paint; from here on
+   a theme is only persisted once the user actually picks one. */
+function applyTheme(theme, opts = {}) {
   document.documentElement.setAttribute("data-theme", theme);
   localStorage.setItem("theme", theme);
+  renderThemeMenu();
+  if (opts.announce) {
+    const t = THEMES.find((x) => x.id === theme);
+    toast(`Theme: <strong>${t ? t.label : theme}</strong> — in the app, themes are plain CSS files. Ship your own.`, { ms: 3200 });
+  }
 }
 /** Ctrl+T cycles the palette-selectable themes, like flipping through the app's. */
 function toggleTheme() {
   const current = document.documentElement.getAttribute("data-theme");
   const idx = THEMES.findIndex((t) => t.id === current);
-  applyTheme(THEMES[(idx + 1) % THEMES.length].id);
+  applyTheme(THEMES[(idx + 1) % THEMES.length].id, { announce: true });
 }
-applyTheme(
-  localStorage.getItem("theme") ||
-  (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
-);
 
 function shot(src, caption) {
-  return `<figure style="margin:0"><img src="img/${src}" alt="${caption}" loading="lazy" /><figcaption>${caption}</figcaption></figure>`;
+  return `<figure style="margin:0"><img src="img/${src}" alt="${caption}" loading="lazy" decoding="async" /><figcaption>${caption}</figcaption></figure>`;
+}
+
+/* Image entries for the screenshots/ folder — rendered as tiles with live
+   thumbnails, the same trick the app does natively (Rust-built, disk-cached). */
+function shotFile(file, size, caption) {
+  return {
+    name: file, kind: "img", size, thumb: `img/${file}`,
+    content: `
+<h1>${file}</h1>
+<p class="lede">${caption}</p>
+<figure style="margin:0"><img src="img/${file}" alt="${caption}" decoding="async" /></figure>
+<p class="note">This folder is the thumbnail demo: the app generates thumbnails
+in the Rust backend into an on-disk cache, so image-heavy folders scroll at
+60fps. Here your browser does the honors.</p>`,
+  };
 }
 
 /* ── The filesystem ─────────────────────────────────────── */
@@ -124,6 +142,7 @@ subdirectories recursed. Click a match to jump to the file.</p>
 <p>It's the actual <code>ripgrep</code> engine in the Rust backend, not a JS
 reimplementation — a warm search over a large project lands in tens of
 milliseconds.</p>
+${shot("content-search.png", "Ctrl+Shift+F in the app: streaming matches, grouped by file, filterable.")}
 `,
         },
         {
@@ -135,8 +154,9 @@ milliseconds.</p>
 terminal, show the git graph, report a bug — everything is a palette
 command with frecency-ranked search, and every command's shortcut is
 rebindable in Settings.</p>
-<p>This site has one too: <kbd>Ctrl+Shift+P</kbd> → try <em>"Toggle Dark/Light
-Theme"</em>. The real one has ~80 commands.</p>
+<p>This site has one too: <kbd>Ctrl+Shift+P</kbd> → try <em>"Toggle Zen Mode"</em>
+or <em>"Theme: Aurora"</em>. The real one has ~80 commands.</p>
+${shot("command-palette.png", "The app's palette: category tags, rebindable shortcuts, frecency ranking.")}
 `,
         },
         {
@@ -175,6 +195,7 @@ ${shot("scm-panel.png", "The source-control panel: stage, unstage, commit.")}
 <p>A real PTY (xterm.js front, Rust portable-pty back) that opens in the
 directory you're looking at. Close the panel, the shell session stays
 alive. It's behind a feature flag if you'd rather not have it at all.</p>
+${shot("terminal.png", "The terminal panel, themed with the app, opened at the folder you're viewing.")}
 `,
         },
         {
@@ -190,7 +211,8 @@ or a palette command (<kbd>Ctrl+Shift+P</kbd> → "Toggle Dark/Light Theme" —
 works on this page too).</p>
 ${shot("dark-theme.png", "Dark theme.")}
 <p>And if you like your chrome minimal: the sidebar, status bar, address
-bar and even the title bar each toggle off independently.</p>
+bar and even the title bar each toggle off independently. Try it right
+here — <kbd>Ctrl+Shift+P</kbd> → <em>"Toggle Zen Mode"</em>.</p>
 ${shot("minimal.png", "The same app with everything stripped off.")}
 `,
         },
@@ -216,6 +238,8 @@ Chrome asks where a download goes, the dialog that opens can be <em>this</em> �
 with <kbd>Ctrl+P</kbd> fuzzy search inside the picker. One line in
 <code>portals.conf</code>:</p>
 <pre><code>org.freedesktop.impl.portal.FileChooser=tauri-explorer</code></pre>
+${shot("file-picker.png", "The dialog your browser opens can be this: Miller columns, keyboard-first.")}
+${shot("picker-quickopen.png", "Ctrl+P fuzzy search — inside the system file picker.")}
 <p class="note">Windows and macOS don't allow replacing the system dialog —
 this one is a Linux superpower.</p>
 `,
@@ -231,6 +255,27 @@ never written to disk).</p>
 ${shot("ai-rename.png", "AI rename: pick from suggestions derived from the file's contents.")}
 `,
         },
+      ],
+    },
+    {
+      name: "screenshots", kind: "dir", view: "tiles", badge: "thumbnails",
+      children: [
+        shotFile("details-view.png", "32 KB", "Details view — git status column, breadcrumb bar."),
+        shotFile("tiles-view.png", "34 KB", "Tiles view with folder previews."),
+        shotFile("quick-open.png", "22 KB", "Quick open, ranked by fuzzy score × recency."),
+        shotFile("command-palette.png", "21 KB", "The command palette — every action, one keystroke away."),
+        shotFile("content-search.png", "18 KB", "ripgrep content search, streaming results."),
+        shotFile("git-graph.png", "39 KB", "The commit graph on a criss-cross merge history."),
+        shotFile("scm-panel.png", "11 KB", "Source-control panel: stage, unstage, commit."),
+        shotFile("dual-pane.png", "16 KB", "Dual-pane mode — two tab strips, one keystroke apart."),
+        shotFile("terminal.png", "90 KB", "The integrated terminal, themed to match."),
+        shotFile("dark-theme.png", "50 KB", "Dark theme."),
+        shotFile("minimal.png", "38 KB", "Every bar toggled off — just files."),
+        shotFile("cheatsheet.png", "35 KB", "The live shortcut cheatsheet."),
+        shotFile("context-menu.png", "28 KB", "Context menu with git actions."),
+        shotFile("ai-rename.png", "32 KB", "AI rename suggestions (optional plugin)."),
+        shotFile("file-picker.png", "13 KB", "As the Linux system file picker."),
+        shotFile("picker-quickopen.png", "25 KB", "Ctrl+P — inside the system file picker."),
       ],
     },
     {
@@ -340,10 +385,12 @@ const SVG = {
   branch: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="7" cy="6" r="2.2"/><circle cx="7" cy="18" r="2.2"/><circle cx="17" cy="8" r="2.2"/><path d="M7 8.2v7.6M17 10.2c0 4-10 3-10 5.6"/></svg>',
   down: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 4v12m0 0 5-5m-5 5-5-5M5 20h14"/></svg>',
   app: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M3 9h18M8 4v5"/></svg>',
+  img: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m5 19 5.5-5.5 3 3L17 13l4 4"/></svg>',
 };
 
 function iconFor(node) {
   if (node.kind === "dir") return SVG.folder;
+  if (node.kind === "img") return SVG.img;
   if (node.name === "README.md") return SVG.readme;
   if (node.name.startsWith("git")) return SVG.branch;
   return SVG.file;
@@ -400,18 +447,31 @@ function render() {
     sb.appendChild(a);
   }
 
-  // file list
+  // file list — details rows, or tiles with live thumbnails
   const fl = $("filelist");
-  fl.innerHTML = `<div class="list-head"><span>NAME</span><span class="kind">KIND</span><span>SIZE</span></div>`;
   const children = here.children || [];
+  const tiles = here.view === "tiles";
+  fl.classList.toggle("tiles", tiles);
+  fl.innerHTML = tiles ? "" : `<div class="list-head"><span>NAME</span><span class="kind">KIND</span><span>SIZE</span></div>`;
   for (const child of children) {
+    if (tiles) {
+      const tile = document.createElement("button");
+      tile.className = "tile" + (selectedName === child.name ? " selected" : "");
+      tile.dataset.name = child.name;
+      tile.innerHTML = `
+        <img class="thumb" src="${child.thumb}" alt="${child.name}" loading="lazy" decoding="async" />
+        <span class="tname">${child.name}</span>`;
+      tile.onclick = () => openEntry(child);
+      fl.appendChild(tile);
+      continue;
+    }
     const row = document.createElement("button");
     row.className = "row" + (selectedName === child.name ? " selected" : "");
     row.dataset.name = child.name;
     const badge = child.badge ? `<span class="try">${child.badge}</span>` : "";
     row.innerHTML = `
       <span class="name"><span class="ico">${iconFor(child)}</span><span class="fname">${child.name}</span>${badge}</span>
-      <span class="meta kind">${child.kind === "dir" ? "Folder" : "Markdown"}</span>
+      <span class="meta kind">${child.kind === "dir" ? "Folder" : child.kind === "img" ? "PNG image" : "Markdown"}</span>
       <span class="meta">${child.kind === "dir" ? `${(child.children || []).length} items` : child.size || ""}</span>`;
     row.onclick = () => openEntry(child);
     fl.appendChild(row);
@@ -420,8 +480,9 @@ function render() {
     fl.insertAdjacentHTML("beforeend", `<div class="empty-dir">Empty folder</div>`);
   }
 
-  $("status-left").textContent =
-    `${children.length} items · you are inside the pitch — every file opens`;
+  $("status-left").textContent = tiles
+    ? `${children.length} items · live thumbnails — the app bakes these in Rust, cached on disk`
+    : `${children.length} items · you are inside the pitch — every file opens`;
 }
 
 function openEntry(node) {
@@ -430,7 +491,7 @@ function openEntry(node) {
     return;
   }
   selectedName = node.name;
-  document.querySelectorAll(".row").forEach((r) =>
+  document.querySelectorAll(".row, .tile").forEach((r) =>
     r.classList.toggle("selected", r.dataset.name === node.name));
   $("preview").hidden = false;
   $("preview-name").textContent = [...cwd, node.name].join("/");
@@ -443,6 +504,8 @@ function navigate(pathArr) {
   cwd = pathArr;
   selectedName = null;
   render();
+  if (pathArr[0] === "screenshots")
+    toastOnce("thumbs", "Every tile here is a live thumbnail — the app generates these natively, in Rust, cached on disk.");
 }
 
 /* ── Overlays ───────────────────────────────────────────── */
@@ -502,6 +565,12 @@ const COMMANDS = [
     run: () => applyTheme(t.id),
   })),
   { cat: "VIEW", label: "Show All Features", run: () => { navigate(["features"]); } },
+  { cat: "VIEW", label: "Open Screenshots (Thumbnail Demo)", run: () => { navigate(["screenshots"]); } },
+  { cat: "VIEW", label: "Toggle Sidebar", run: () => toggleBar("sidebar", "Sidebar") },
+  { cat: "VIEW", label: "Toggle Status Bar", run: () => toggleBar("statusbar", "Status bar") },
+  { cat: "VIEW", label: "Toggle Address Bar", run: () => toggleBar("toolbar", "Address bar") },
+  { cat: "VIEW", label: "Toggle Title Bar", run: () => toggleBar("titlebar", "Title bar") },
+  { cat: "VIEW", label: "Toggle Zen Mode (Hide All Bars)", run: zenMode },
   { cat: "GO", label: "View Source on GitHub", run: () => window.open(REPO, "_blank") },
   { cat: "GO", label: "View Changelog", run: () => window.open(`${REPO}/blob/main/CHANGELOG.md`, "_blank") },
   { cat: "GO", label: "Report a Bug", run: () => window.open(`${REPO}/issues/new`, "_blank") },
@@ -549,6 +618,103 @@ function listNav(overlayObj, renderFn, getIndex, setIndex, event) {
 }
 
 
+/* ── Toasts: transient guidance, like the app's notifications ── */
+
+function toast(html, opts = {}) {
+  const host = $("toasts");
+  const t = document.createElement("div");
+  t.className = "toast";
+  const msg = document.createElement("span");
+  msg.innerHTML = html;
+  t.appendChild(msg);
+  const dismiss = () => {
+    if (!t.parentNode) return;
+    t.classList.add("bye");
+    setTimeout(() => t.remove(), 200);
+  };
+  if (opts.action) {
+    const b = document.createElement("button");
+    b.className = "toast-act";
+    b.textContent = opts.action.label;
+    b.onclick = () => { dismiss(); opts.action.run(); };
+    t.appendChild(b);
+  }
+  host.appendChild(t);
+  while (host.children.length > 3) host.firstChild.remove();
+  setTimeout(dismiss, opts.ms || 4600);
+}
+
+/** A toast that fires once ever (per browser), for the guided nudges. */
+function toastOnce(key, html, opts) {
+  if (localStorage.getItem("toast." + key)) return;
+  localStorage.setItem("toast." + key, "1");
+  toast(html, opts);
+}
+
+/* ── Chrome toggles: every bar hides, like the real app ──── */
+
+const BARS = [
+  { id: "titlebar", label: "Title bar" },
+  { id: "toolbar", label: "Address bar" },
+  { id: "sidebar", label: "Sidebar" },
+  { id: "statusbar", label: "Status bar" },
+];
+let hiddenBars = new Set();
+try { hiddenBars = new Set(JSON.parse(localStorage.getItem("hiddenBars") || "[]")); } catch { /* corrupt state: start visible */ }
+
+function applyChrome() {
+  for (const b of BARS) $("window").toggleAttribute(`data-hide-${b.id}`, hiddenBars.has(b.id));
+  localStorage.setItem("hiddenBars", JSON.stringify([...hiddenBars]));
+}
+
+function toggleBar(id, label) {
+  const hiding = !hiddenBars.has(id);
+  if (hiding) hiddenBars.add(id); else hiddenBars.delete(id);
+  applyChrome();
+  if (hiding) {
+    toast(`${label} hidden — in the app, every bar toggles like this and the choice sticks per window.`,
+      { action: { label: "Undo", run: () => toggleBar(id, label) } });
+  } else {
+    toast(`${label} back.`, { ms: 1800 });
+  }
+}
+
+function zenMode() {
+  const allHidden = BARS.every((b) => hiddenBars.has(b.id));
+  hiddenBars = allHidden ? new Set() : new Set(BARS.map((b) => b.id));
+  applyChrome();
+  if (allHidden) {
+    toast("Welcome back. The real app strips down the same way — and remembers.", { ms: 3600 });
+  } else {
+    toast(`Zen mode: just files. <kbd>Esc</kbd> brings the chrome back — <kbd>Ctrl+Shift+P</kbd> still works.`,
+      { ms: 8000, action: { label: "Undo", run: zenMode } });
+  }
+}
+
+/* ── Theme menu (toolbar button — the site-only extra) ───── */
+
+function renderThemeMenu() {
+  const menu = document.getElementById("theme-menu");
+  if (!menu) return;
+  const current = document.documentElement.getAttribute("data-theme");
+  menu.innerHTML = "";
+  for (const t of THEMES) {
+    const b = document.createElement("button");
+    b.className = "theme-item" + (t.id === current ? " active" : "");
+    b.setAttribute("role", "menuitem");
+    b.innerHTML = `<span class="swatch" data-swatch="${t.id}"></span>${t.label}` +
+      (t.id === current ? `<span class="check">✓</span>` : "");
+    b.onclick = () => { setThemeMenu(false); applyTheme(t.id, { announce: true }); };
+    menu.appendChild(b);
+  }
+}
+
+function setThemeMenu(open) {
+  $("theme-menu").hidden = !open;
+  $("theme-btn").classList.toggle("open", open);
+  if (open) renderThemeMenu();
+}
+
 /* ── Tabs (decorative but honest: one is this site) ─────── */
 
 function renderTabs() {
@@ -578,7 +744,10 @@ document.addEventListener("keydown", (e) => {
   if (mod && e.key === "/") { e.preventDefault(); closeAll(); ks.open(); return; }
   if (mod && !e.shiftKey && e.key.toLowerCase() === "t") { e.preventDefault(); toggleTheme(); return; }
   if (e.key === "Escape") {
+    if (!$("theme-menu").hidden) { setThemeMenu(false); return; }
     if (qo.isOpen || cp.isOpen || ks.isOpen) { closeAll(); return; }
+    // full zen: Esc is the panic button — chrome first, preview second
+    if (BARS.every((b) => hiddenBars.has(b.id))) { zenMode(); return; }
     if (!$("preview").hidden) { $("preview").hidden = true; selectedName = null; render(); }
     return;
   }
@@ -587,12 +756,13 @@ document.addEventListener("keydown", (e) => {
 
   // list navigation when nothing is open
   if (e.key === "Backspace" && cwd.length) { e.preventDefault(); navigate(cwd.slice(0, -1)); return; }
-  if (["ArrowDown", "ArrowUp", "Enter"].includes(e.key)) {
-    const rows = [...document.querySelectorAll(".row")];
+  if (["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Enter"].includes(e.key)) {
+    const rows = [...document.querySelectorAll(".row, .tile")];
     if (!rows.length) return;
     const idx = rows.findIndex((r) => r.dataset.name === selectedName);
     if (e.key === "Enter" && idx >= 0) { rows[idx].click(); e.preventDefault(); return; }
-    const next = e.key === "ArrowDown" ? Math.min(idx + 1, rows.length - 1) : Math.max(idx - 1, 0);
+    const fwd = e.key === "ArrowDown" || e.key === "ArrowRight";
+    const next = fwd ? Math.min(idx + 1, rows.length - 1) : Math.max(idx - 1, 0);
     const target = rows[next < 0 ? 0 : next];
     selectedName = target.dataset.name;
     rows.forEach((r) => r.classList.toggle("selected", r === target));
@@ -610,11 +780,39 @@ $("preview-close").onclick = () => { $("preview").hidden = true; selectedName = 
 $("nav-up").onclick = () => cwd.length && navigate(cwd.slice(0, -1));
 $("nav-back").onclick = () => { const prev = history.pop(); if (prev) { cwd = prev; selectedName = null; render(); } };
 
+/* theme menu: button toggles, clicking anywhere else closes */
+$("theme-btn").onclick = () => setThemeMenu($("theme-menu").hidden);
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".theme-wrap")) setThemeMenu(false);
+});
+
 /* first-run hint (dismiss persists, like the app) */
 if (localStorage.getItem("hintDismissed") !== "1") $("hint").hidden = false;
 $("hint-dismiss").onclick = () => { localStorage.setItem("hintDismissed", "1"); $("hint").hidden = true; };
 
 /* boot: land on README, preview open — the pitch reads itself */
 renderTabs();
+applyChrome();
+renderThemeMenu();
 render();
 openEntry(FS.children[0]);
+
+/* guided nudges, staggered so they read as a tour (each fires once ever) */
+setTimeout(() => toastOnce("tour-zen",
+  `Try <kbd>Ctrl+Shift+P</kbd> → <em>"Toggle Zen Mode"</em> — every bar on this page really hides.`,
+  { ms: 8000 }), 9000);
+setTimeout(() => toastOnce("tour-theme",
+  "The palette icon in the toolbar restyles this whole page — the app themes the same way.",
+  { ms: 8000 }), 24000);
+
+/* prefetch every screenshot once the browser is idle — after that,
+   opening any feature file or the gallery feels local */
+(window.requestIdleCallback || ((f) => setTimeout(f, 1200)))(() => {
+  const srcs = new Set();
+  (function collect(node) {
+    if (node.thumb) srcs.add(node.thumb);
+    for (const m of (node.content || "").matchAll(/img\/[\w.-]+/g)) srcs.add(m[0]);
+    (node.children || []).forEach(collect);
+  })(FS);
+  for (const src of srcs) { const im = new Image(); im.decoding = "async"; im.src = src; }
+});

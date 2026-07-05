@@ -2,7 +2,7 @@
 
 > High-level map of the codebase. Drill into subdocs for details.
 >
-> `website/` is the standalone showcase site (static HTML/CSS/JS, deployed to Vercel) — an interactive replica of the app UI where the marketing copy lives as a browsable fake filesystem. No build step; edit and redeploy with `vercel deploy --prod` from `website/`. Site themes mirror the app palettes (light/dark/aurora/hacker/solarized) — palette commands + Ctrl+T cycle.
+> `website/` is the standalone showcase site (static HTML/CSS/JS, deployed to Vercel) — an interactive replica of the app UI where the marketing copy lives as a browsable fake filesystem, filling the browser viewport like a maximized window. No build step; edit and redeploy with `vercel deploy --prod` from `website/`. Site themes mirror the app palettes (light/dark/aurora/hacker/solarized) — toolbar theme menu, palette commands, or Ctrl+T. The site demos the app's customization live: palette commands toggle every bar (sidebar/status/address/title + Zen Mode, persisted), a `screenshots/` folder renders as tiles with real thumbnails, and toasts/tooltips guide exploration. Perf: hero-image preload, idle-time prefetch of all screenshots, and cache headers in `website/vercel.json`.
 
 ## Stack
 

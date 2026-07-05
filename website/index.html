@@ -8,9 +8,21 @@
   <meta property="og:title" content="Tauri Explorer — a file manager with Ctrl+P" />
   <meta property="og:description" content="The editor workflow for your filesystem. This website is the app — press Ctrl+P to try it." />
   <meta property="og:type" content="website" />
-  <meta property="og:image" content="img/details-view.png" />
+  <meta property="og:url" content="https://tauri-explorer.vercel.app/" />
+  <meta property="og:image" content="https://tauri-explorer.vercel.app/img/details-view.png" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🗂️</text></svg>" />
+  <!-- Theme before first paint, so a saved dark theme never flashes light. -->
+  <script>
+    try {
+      var t = localStorage.getItem("theme") ||
+        (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {}
+  </script>
   <link rel="stylesheet" href="style.css" />
+  <!-- The README preview opens on boot with this image — fetch it first. -->
+  <link rel="preload" as="image" href="img/details-view.png" fetchpriority="high" />
+  <script src="app.js" defer></script>
 </head>
 <body>
   <noscript>
@@ -29,14 +41,26 @@
       <div class="win-controls" aria-hidden="true"><span>–</span><span>□</span><span>×</span></div>
     </header>
 
-    <!-- Toolbar: nav + breadcrumb + the one visible CTA -->
+    <!-- Toolbar: nav + breadcrumb + theme + the one visible CTA -->
     <div class="toolbar">
       <div class="nav-btns">
-        <button id="nav-back" title="Back (you can really navigate)">‹</button>
-        <button id="nav-up" title="Up">↑</button>
+        <button id="nav-back" aria-label="Back" data-tip="Back — the history is real">‹</button>
+        <button id="nav-up" aria-label="Up a directory" data-tip="Up a directory (Backspace)">↑</button>
       </div>
       <div class="breadcrumb" id="breadcrumb"></div>
-      <a class="gh-link" href="https://github.com/xnmp/tauri-explorer" title="Source on GitHub">GitHub ↗</a>
+      <div class="theme-wrap">
+        <button id="theme-btn" aria-label="Change theme" aria-haspopup="menu" data-tip="Change theme (Ctrl+T)" data-tip-pos="left">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <path d="M12 21.5a9.5 9.5 0 1 1 9.5-9.5c0 2.6-2.1 4.2-4.2 4.2h-2a1.9 1.9 0 0 0-1.4 3.2c.3.35.5.8.5 1.2 0 .77-.63 .9-2.4 .9z"/>
+            <circle cx="8" cy="8.2" r="1.15" fill="currentColor" stroke="none"/>
+            <circle cx="13.2" cy="6.4" r="1.15" fill="currentColor" stroke="none"/>
+            <circle cx="17" cy="10" r="1.15" fill="currentColor" stroke="none"/>
+            <circle cx="6.4" cy="13.2" r="1.15" fill="currentColor" stroke="none"/>
+          </svg>
+        </button>
+        <div class="theme-menu" id="theme-menu" role="menu" aria-label="Themes" hidden></div>
+      </div>
+      <a class="gh-link" href="https://github.com/xnmp/tauri-explorer" aria-label="Source on GitHub" data-tip="Read the source" data-tip-pos="left">GitHub ↗</a>
     </div>
 
     <div class="body">
@@ -45,7 +69,7 @@
       <section class="preview" id="preview" aria-label="Preview" hidden>
         <div class="preview-head">
           <span id="preview-name"></span>
-          <button id="preview-close" title="Close preview">×</button>
+          <button id="preview-close" aria-label="Close preview" data-tip="Close preview (Esc)" data-tip-pos="left">×</button>
         </div>
         <div class="preview-body" id="preview-body"></div>
       </section>
@@ -98,6 +122,7 @@
     <button id="hint-dismiss">Got it</button>
   </div>
 
-  <script src="app.js"></script>
+  <!-- Toast stack: transient guidance, like the app's notifications -->
+  <div class="toasts" id="toasts" aria-live="polite"></div>
 </body>
 </html>

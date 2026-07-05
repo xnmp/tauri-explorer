@@ -2,6 +2,16 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.0.1 — 2026-07-05
+
+### Fixed
+- **macOS: app crashed instantly at launch** — Windows-only glob patterns in the asset-protocol scope broke scope parsing on macOS (caught by the new macOS launch-smoke CI). Scopes are now per-platform. If you tried v1.0.0 on a Mac, this is the release that actually opens.
+- Marquee selection lost when releasing the mouse before the next animation frame (surfaced by the new WebKit test suite; timing-dependent on all platforms).
+
+### Added
+- Fuzzy quick-open (Ctrl+P) inside the system file-picker window (Linux portal mode).
+- CI: full e2e suite under WebKit (macOS webview proxy), macOS launch smoke, real-binary Windows/Linux specs for clipboard round-trip and theme switching.
+
 ## v1.0.0 — 2026-07-05
 
 First stable release.

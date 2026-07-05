@@ -288,3 +288,32 @@ describe("sameDirectory", () => {
     expect(sameDirectory("C:/Users/foo", "C:/Users/bar")).toBe(false);
   });
 });
+
+describe("hostile filenames (#198)", () => {
+  const hostile = [
+    "single'quote.txt",
+    'double"quote.txt',
+    "emoji-🍌🚀.txt",
+    "url-hostile-#%&+=@!.txt",
+    "with spaces  double.txt",
+    "newline\nname.txt",
+  ];
+
+  it("basename returns adversarial names verbatim", () => {
+    for (const name of hostile) {
+      expect(basename(`/home/user/${name}`)).toBe(name);
+    }
+  });
+
+  it("parentDir is unaffected by adversarial leaf names", () => {
+    for (const name of hostile) {
+      expect(parentDir(`/home/user/${name}`)).toBe("/home/user");
+    }
+  });
+
+  it("a # or % in the leaf never truncates the path (URL-decode bugs)", () => {
+    expect(basename("/data/100%.txt")).toBe("100%.txt");
+    expect(basename("/data/issue#42.txt")).toBe("issue#42.txt");
+    expect(parentDir("/data/issue#42.txt")).toBe("/data");
+  });
+});

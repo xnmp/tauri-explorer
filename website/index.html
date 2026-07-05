@@ -75,10 +75,25 @@
       </section>
     </div>
 
+    <!-- Integrated terminal: a tiny real shell over this fake filesystem -->
+    <div class="terminal" id="terminal" hidden>
+      <div class="term-head">
+        <span>TERMINAL <span class="term-sub">— try: help · ls · cd features · cat README.md · git graph</span></span>
+        <button id="term-close" aria-label="Close terminal" data-tip="Close (Ctrl+`)" data-tip-pos="left">×</button>
+      </div>
+      <div class="term-scroll" id="term-scroll">
+        <div id="term-out"></div>
+        <div class="term-line">
+          <span class="term-prompt" id="term-prompt">~/tauri-explorer ❯</span>
+          <input id="term-input" autocomplete="off" spellcheck="false" autocapitalize="off" aria-label="Terminal input" />
+        </div>
+      </div>
+    </div>
+
     <footer class="statusbar">
       <span id="status-left">…</span>
       <span class="status-hints">
-        <kbd>Ctrl+P</kbd> find a feature · <kbd>Ctrl+Shift+P</kbd> commands · <kbd>Ctrl+/</kbd> keys
+        <kbd>Ctrl+P</kbd> find a feature · <kbd>Ctrl+Shift+P</kbd> commands · <kbd>Ctrl+`</kbd> terminal
       </span>
       <span id="status-right">v1.0.1 · MIT</span>
     </footer>
@@ -100,6 +115,25 @@
     </div>
   </div>
 
+  <!-- Content search: the site greps itself -->
+  <div class="overlay" id="cs-overlay" hidden>
+    <div class="modal cs">
+      <input id="cs-input" type="text" placeholder="Search inside this site's files (the real one is ripgrep)…" autocomplete="off" spellcheck="false" />
+      <ul id="cs-results"></ul>
+    </div>
+  </div>
+
+  <!-- Commit graph: this repo's actual history -->
+  <div class="overlay" id="gg-overlay" hidden>
+    <div class="modal gg">
+      <div class="gg-head">
+        <h2>Commit graph <span class="ks-sub">— this repo's actual history · right-click a commit</span></h2>
+        <button id="gg-close" aria-label="Close graph">×</button>
+      </div>
+      <div class="gg-body" id="gg-body"></div>
+    </div>
+  </div>
+
   <!-- Shortcut cheatsheet -->
   <div class="overlay" id="ks-overlay" hidden>
     <div class="modal ks">
@@ -107,6 +141,8 @@
       <ul class="ks-list">
         <li><span>Fuzzy quick-open</span><kbd>Ctrl+P</kbd></li>
         <li><span>Command palette</span><kbd>Ctrl+Shift+P</kbd></li>
+        <li><span>Search inside files</span><kbd>Ctrl+Shift+F</kbd></li>
+        <li><span>Integrated terminal</span><kbd>Ctrl+`</kbd></li>
         <li><span>This cheatsheet</span><kbd>Ctrl+/</kbd></li>
         <li><span>Cycle themes</span><kbd>Ctrl+T</kbd></li>
         <li><span>Navigate list</span><kbd>↑ ↓ Enter</kbd></li>
@@ -115,6 +151,9 @@
       </ul>
     </div>
   </div>
+
+  <!-- Context menu (files + graph commits) -->
+  <div class="ctx" id="ctx" hidden></div>
 
   <!-- First-run hint, exactly like the app's -->
   <div class="hint" id="hint" hidden>

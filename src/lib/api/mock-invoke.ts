@@ -1122,6 +1122,7 @@ const mockCommands: Record<string, CommandHandler> = {
   // Embedded terminal: a PTY can't be faked meaningfully in the browser —
   // spawn "succeeds" (so the panel renders and e2e can exercise the toggle)
   // but never emits output. Real terminal behavior is covered by e2e-tauri.
+  terminal_reserve_id: () => 1,
   terminal_spawn: () => 1,
   terminal_write: () => {},
   terminal_resize: () => {},

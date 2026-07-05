@@ -230,6 +230,7 @@ pub fn run(launch_dir: Option<String>) {
             warm_pool::warm_pool_discard,
             warm_pool::warm_pool_shutdown,
             // Embedded terminal
+            terminal::terminal_reserve_id,
             terminal::terminal_spawn,
             terminal::terminal_write,
             terminal::terminal_resize,

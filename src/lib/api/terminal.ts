@@ -8,13 +8,23 @@
 
 import { invoke } from "./files";
 
-/** Spawn the user's shell in a PTY at `cwd`; resolves to the terminal id. */
+/** Reserve a terminal id so listeners can register BEFORE the PTY spawns. */
+export async function terminalReserveId(): Promise<number> {
+  return invoke<number>("terminal_reserve_id");
+}
+
+/**
+ * Spawn the user's shell in a PTY at `cwd` under a RESERVED id.
+ * Register the `terminal-output-{id}` listener before calling this — a fast
+ * shell emits its prompt immediately, and un-listened events are lost (#201).
+ */
 export async function terminalSpawn(
+  id: number,
   cwd: string | undefined,
   cols: number,
   rows: number
 ): Promise<number> {
-  return invoke<number>("terminal_spawn", { cwd, cols, rows });
+  return invoke<number>("terminal_spawn", { id, cwd, cols, rows });
 }
 
 /** Write user input (keystrokes) to the terminal. */

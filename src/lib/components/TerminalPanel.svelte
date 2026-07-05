@@ -21,7 +21,7 @@
   import "@xterm/xterm/css/xterm.css";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { onMount } from "svelte";
-  import { terminalSpawn, terminalWrite, terminalResize, terminalKill, terminalStatus } from "$lib/api/terminal";
+  import { terminalSpawn, terminalReserveId, terminalWrite, terminalResize, terminalKill, terminalStatus } from "$lib/api/terminal";
   import { buildTerminalTheme } from "$lib/domain/terminal-theme";
   import { buildCdSyncSequence } from "$lib/domain/terminal-command";
   import { decideCdSync } from "$lib/domain/terminal-cwd-sync";
@@ -82,8 +82,10 @@
     exited = false;
     try {
       const cwd = windowTabsManager.getActiveExplorer()?.currentPath;
-      const id = await terminalSpawn(cwd, term.cols, term.rows);
-      terminalId = id;
+      // Listeners BEFORE spawn: the shell's first output (the prompt) is
+      // emitted the instant the PTY starts, and events without a listener
+      // are dropped — the terminal would open blank (#201).
+      const id = await terminalReserveId();
 
       unlistenOutput = await listen<string>(`terminal-output-${id}`, (event) => {
         term?.write(event.payload);
@@ -104,6 +106,9 @@
           explorer.navigateTo(path);
         }
       });
+
+      await terminalSpawn(id, cwd, term.cols, term.rows);
+      terminalId = id;
     } catch (err) {
       term.writeln(`\r\nFailed to start shell: ${err}`);
       exited = true;

@@ -4,6 +4,9 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## 2026-07-05 fix/terminal-output-race: reserve event ids before spawning emitters
+- **Anything that emits namespaced events (`foo-{id}`) must let the client register listeners BEFORE the emitter starts.** terminal_spawn returned the id only after the PTY was live, so the shell's first output (the prompt) raced listener registration and was dropped — terminal opened blank. Same class as the content-search listener-before-invoke race. Fix shape: a `*_reserve_id` command, listeners on the reserved id, then spawn with that id. The CI smoke "flake" was this real bug.
+
 ## 2026-07-05 fix/terminal-smoke-flake: PTY tests need readiness gates, not tighter timeouts
 - **Never type into a PTY that hasn't prompted.** Keystrokes sent during shell init are silently swallowed (conpty on Windows especially); the test then waits on output of a command that never ran. Gate typing on first PTY output, keep one retry for a keystroke lost right at prompt time, and budget 45s for PTY spawn + rc files on loaded shared runners — 15s flaked on ~4 of 5 CI runs.
 

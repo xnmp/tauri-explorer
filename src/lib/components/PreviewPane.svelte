@@ -9,7 +9,7 @@
   import { isImageFile, isSvgFile, isTextFile, isPdfFile, isZipFile, getFileType, formatDate } from "$lib/domain/file-types";
   import { formatSize, isSystemHidden, type FileEntry } from "$lib/domain/file";
   import { isTauri } from "$lib/api/mock-invoke";
-  import { highlightCode } from "$lib/domain/syntax-highlight";
+  import { highlightCode, highlightDiffLine } from "$lib/domain/syntax-highlight";
   import { renderMarkdown } from "$lib/domain/markdown";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
@@ -585,7 +585,12 @@
               <span class="diff-gutter old">{line.oldLine ?? ""}</span>
               <span class="diff-gutter new">{line.newLine ?? ""}</span>
               <span class="diff-sigil">{line.kind === "add" ? "+" : line.kind === "remove" ? "−" : line.kind === "hunk" ? "@" : " "}</span>
-              <span class="diff-content">{line.text}</span>
+              {#if line.kind === "hunk" || line.kind === "meta" || line.kind === "header"}
+                <span class="diff-content">{line.text}</span>
+              {:else}
+                <!-- highlightDiffLine output is hljs-generated/escaped HTML — safe sink (#227). -->
+                <span class="diff-content">{@html highlightDiffLine(line.text, activeDiff.path)}</span>
+              {/if}
             </div>
           {/each}
         </div>

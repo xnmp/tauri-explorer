@@ -35,8 +35,7 @@
   import ShortcutCheatsheet from "$lib/components/ShortcutCheatsheet.svelte";
     import FilePicker, { type PickerInfo } from "$lib/components/FilePicker.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
-  import ScmPanel from "$lib/components/ScmPanel.svelte";
-  import PaneContainer from "$lib/components/PaneContainer.svelte";
+    import PaneContainer from "$lib/components/PaneContainer.svelte";
   import QuickOpen from "$lib/components/QuickOpen.svelte";
   import CommandPalette from "$lib/components/CommandPalette.svelte";
   import OptionPicker from "$lib/components/OptionPicker.svelte";
@@ -455,9 +454,6 @@
   <div class="main-content" class:no-sidebar={!settingsStore.showSidebar}>
     {#if settingsStore.showSidebar}
       <Sidebar />
-    {/if}
-    {#if settingsStore.showGitStatus && settingsStore.showScmPanel}
-      <ScmPanel />
     {/if}
     {#if millerAsLeftIsland && leftExplorer}
       <div class="miller-island">

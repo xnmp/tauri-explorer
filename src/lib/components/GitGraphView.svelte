@@ -26,6 +26,7 @@
   import { assignLayout, branchPath, groupRefChips, GRAPH_PALETTE, type GraphLayout, type BranchLine, type RefChips } from "$lib/domain/git-graph";
   import { clientToFixed } from "$lib/domain/zoom";
   import { parseUnifiedDiff, type ParsedDiff } from "$lib/domain/diff";
+  import { highlightDiffLine } from "$lib/domain/syntax-highlight";
   import { gitStatusLetter } from "$lib/domain/git";
   import { notifyLocalGitChange } from "$lib/state/git-refresh";
   import { toastStore } from "$lib/state/toast.svelte";
@@ -285,6 +286,25 @@
     return ref ? ref.name : null;
   }
 
+  let menuEl = $state<HTMLElement | null>(null);
+
+  // Keep the menu on screen (VSCode behavior): after it renders, pull it back
+  // inside the viewport. Bounds converted with clientToFixed so the clamp
+  // lives in the same fixed-CSS space as the cursor coords (see #221 lesson).
+  $effect(() => {
+    const m = menu;
+    const el = menuEl;
+    if (!m || !el) return;
+    const pad = 8;
+    const vw = clientToFixed(window.innerWidth);
+    const vh = clientToFixed(window.innerHeight);
+    let x = m.x;
+    let y = m.y;
+    if (x + el.offsetWidth > vw - pad) x = Math.max(pad, vw - el.offsetWidth - pad);
+    if (y + el.offsetHeight > vh - pad) y = Math.max(pad, vh - el.offsetHeight - pad);
+    if (x !== m.x || y !== m.y) menu = { ...m, x, y };
+  });
+
   function openMenu(event: MouseEvent, commit: CommitInfo): void {
     event.preventDefault();
     prompt = null;
@@ -469,7 +489,6 @@
             {#if synthetic}
               <span class="summary uncommitted-label">{commit.summary}</span>
             {:else}
-              <span class="oid">{commit.short_oid}</span>
               {#if commit.stash}
                 <span class="ref ref-stash">{commit.stash}</span>
               {/if}
@@ -490,30 +509,37 @@
               <span class="summary" title={commit.summary}>{commit.summary}</span>
               <span class="author">{commit.author_name}</span>
               <span class="date">{formatDate(commit.author_time)}</span>
+              <span class="oid">{commit.short_oid}</span>
             {/if}
           </div>
           {#if selected?.oid === commit.oid}
             <!-- Inline details (VSCode Git Graph parity, #221): expands
                  directly below the clicked row; the graph SVG stretches by
                  detailsHeight so lower rows stay aligned. -->
+            <!-- Left gutter matches the rows so the block clears the graph
+                 lanes (they keep flowing to its left, as in VSCode). -->
             <div
               class="commit-detail-inline"
               data-testid="git-graph-detail"
               bind:clientHeight={detailsHeight}
+              style:margin-left="{graphWidth + 12}px"
             >
-              <div class="detail-head">
+              <button class="detail-close" onclick={closeDetails} aria-label="Close details">✕</button>
+              <div class="detail-columns">
                 {#if !synthetic}
-                  <span class="oid">{commit.short_oid}</span>
+                  <div class="detail-meta-col">
+                    <div class="meta-line"><span class="meta-label">Commit:</span> <span class="meta-mono">{commit.oid}</span></div>
+                    <div class="meta-line"><span class="meta-label">Parents:</span> <span class="meta-mono">{commit.parents.map((p) => p.slice(0, 8)).join(", ") || "—"}</span>{#if commit.parents.length > 1} <span class="meta-note">(merge of {commit.parents.length} parents)</span>{/if}</div>
+                    <div class="meta-line"><span class="meta-label">Author:</span> {commit.author_name} &lt;{commit.author_email}&gt;</div>
+                    <div class="meta-line"><span class="meta-label">Date:</span> {formatDate(commit.author_time)}</div>
+                    <p class="detail-message">{commit.summary}</p>
+                  </div>
+                {:else}
+                  <div class="detail-meta-col">
+                    <p class="detail-message">{commit.summary}</p>
+                  </div>
                 {/if}
-                <span class="detail-summary">{commit.summary}</span>
-                <button class="detail-close" onclick={closeDetails} aria-label="Close details">✕</button>
-              </div>
-              {#if !synthetic}
-                <div class="detail-meta">
-                  {commit.author_name} &lt;{commit.author_email}&gt; · {formatDate(commit.author_time)}
-                  {#if commit.parents.length > 1}· merge of {commit.parents.length} parents{/if}
-                </div>
-              {/if}
+                <div class="detail-files-col">
               <ul class="detail-files">
                 {#each selectedFiles as file (file.path + (file.staged ? ":s" : ""))}
                   <li>
@@ -542,7 +568,12 @@
                                   <span class="diff-gutter">{line.oldLine ?? ""}</span>
                                   <span class="diff-gutter">{line.newLine ?? ""}</span>
                                   <span class="diff-sigil">{line.kind === "add" ? "+" : line.kind === "remove" ? "−" : line.kind === "hunk" ? "@" : " "}</span>
-                                  <span class="diff-content">{line.text}</span>
+                                  {#if line.kind === "hunk"}
+                                    <span class="diff-content">{line.text}</span>
+                                  {:else}
+                                    <!-- highlightDiffLine output is hljs-generated/escaped HTML — safe sink. -->
+                                    <span class="diff-content">{@html highlightDiffLine(line.text, file.path)}</span>
+                                  {/if}
                                 </div>
                               {/if}
                             {/each}
@@ -557,6 +588,8 @@
                   <li class="file-empty">No file changes (or still loading…)</li>
                 {/each}
               </ul>
+                </div>
+              </div>
             </div>
           {/if}
         {/each}
@@ -578,6 +611,7 @@
       data-testid="git-graph-menu"
       role="menu"
       tabindex="-1"
+      bind:this={menuEl}
       style="left: {m.x}px; top: {m.y}px;"
     >
       <button class="menu-item" role="menuitem" onclick={() => startPrompt("branch", m.commit.oid)}>
@@ -735,31 +769,70 @@
     background: color-mix(in srgb, var(--accent) 14%, transparent);
   }
 
-  /* Inline details block, expanded directly below the selected row (#221). */
+  /* Inline details block, expanded directly below the selected row (#221).
+     Margin-left (set inline) clears the graph lanes; opaque card so lanes
+     never show through (#227, VSCode layout). */
   .commit-detail-inline {
-    border-top: 1px solid var(--divider);
-    border-bottom: 1px solid var(--divider);
+    position: relative;
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-sm);
+    margin-right: 12px;
+    margin-bottom: 6px;
     padding: 10px 14px;
     font-size: 12px;
-    background: var(--background-card);
+    background: var(--background-solid);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
   }
 
-  .detail-head {
+  .detail-columns {
     display: flex;
-    align-items: center;
-    gap: 8px;
+    gap: 18px;
+    align-items: flex-start;
   }
 
-  .detail-summary {
-    font-weight: 600;
+  /* Left column: commit metadata + message (VSCode layout). */
+  .detail-meta-col {
+    flex: 0 0 300px;
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    max-width: 40%;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .meta-label {
+    font-weight: 700;
+  }
+
+  .meta-line {
+    color: var(--text-secondary);
+    word-break: break-all;
+  }
+
+  .meta-mono {
+    font-family: var(--font-mono, monospace);
+  }
+
+  .meta-note {
+    color: var(--text-tertiary);
+  }
+
+  .detail-message {
+    margin: 8px 0 0;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .detail-files-col {
+    flex: 1;
+    min-width: 0;
   }
 
   .detail-close {
-    margin-left: auto;
+    position: absolute;
+    top: 8px;
+    right: 10px;
     background: none;
     border: none;
     color: var(--text-tertiary);
@@ -767,12 +840,7 @@
     font-size: 11px;
   }
 
-  .detail-meta {
-    color: var(--text-tertiary);
-    margin: 4px 0 8px;
-  }
-
-  .detail-files {
+    .detail-files {
     list-style: none;
     margin: 0;
     padding: 0;
@@ -944,7 +1012,7 @@
     font-family: var(--font-mono, monospace);
     color: var(--text-tertiary);
     flex-shrink: 0;
-    width: 52px;
+    margin-left: 8px;
     font-variant-numeric: tabular-nums;
   }
 
@@ -983,6 +1051,7 @@
   }
 
   .summary {
+    flex: 1;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;

@@ -39,10 +39,11 @@ async function viewportRect(page: Page, selector: string) {
 const TOLERANCE = 40; // px — menus may nudge to stay on-screen
 
 test.describe("Overlay positioning under zoom", () => {
-  // The viewport-space math asserted here is Chromium's (see viewportRect);
-  // WebKitGTK reports rects in pre-zoom CSS px and is covered by unit tests
-  // on fixedFromClient/fixedFromRect instead.
-  test.skip(({ browserName }) => browserName !== "chromium", "Chromium-only coordinate space");
+  // Chromium and WebKit (WKWebView model) both report getBoundingClientRect
+  // in post-zoom viewport px, so the same measurement works for both engines
+  // (#227 — the real app runs WebKit on Linux/macOS, so Chromium-only
+  // coverage missed engine-specific drift). WebKitGTK's pre-zoom-rect quirk
+  // is covered by unit tests on fixedFromClient/fixedFromRect.
 
   test("file context menu opens at the cursor while zoomed", async ({ page }) => {
     await page.goto(HOME_URL);

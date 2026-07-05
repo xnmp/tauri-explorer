@@ -13,6 +13,7 @@
   import FileList from "./FileList.svelte";
   import MillerColumns from "./MillerColumns.svelte";
   import ContextMenu from "./ContextMenu.svelte";
+import ScmPanel from "./ScmPanel.svelte";
   import DeleteDialog from "./DeleteDialog.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
@@ -283,6 +284,11 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     <div class="pane-content">
       {#if settingsStore.millerLayers > 0 && !(settingsStore.macOsVibrancy && !settingsStore.showSidebar)}
         <MillerColumns explorer={paneExplorer} />
+      {/if}
+      <!-- SCM panel sits between the Miller columns and the file list (#227);
+           left pane only — it is a singleton view, like VSCode's. -->
+      {#if paneId === "left" && settingsStore.showGitStatus && settingsStore.showScmPanel}
+        <ScmPanel />
       {/if}
       <FileList explorer={paneExplorer} />
     </div>

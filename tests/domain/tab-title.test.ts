@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { disambiguateTabTitles } from "../../src/lib/domain/tab-title";
+import { disambiguateTabTitles, gitTabDisplay } from "../../src/lib/domain/tab-title";
 
 describe("disambiguateTabTitles", () => {
   it("uses the bare folder name when basenames are unique", () => {
@@ -77,5 +77,30 @@ describe("disambiguateTabTitles", () => {
     expect(r.get("a")).toBe("components · featureA");
     expect(r.get("b")).toBe("components · featureA");
     expect(r.get("c")).toBe("components · featureB");
+  });
+});
+
+describe("gitTabDisplay", () => {
+  it("shows just the repo name (no repo prefix) when the cwd is the repo root", () => {
+    const d = gitTabDisplay("/home/user/my-repo", "/home/user/my-repo");
+    expect(d).toEqual({ isGitRoot: true, repo: null, name: "my-repo" });
+  });
+
+  it("shows repo root + current folder when the cwd is inside the repo", () => {
+    const d = gitTabDisplay("/home/user/my-repo/src/lib", "/home/user/my-repo");
+    expect(d).toEqual({ isGitRoot: true, repo: "my-repo", name: "lib" });
+  });
+
+  it("treats separator/case differences as the same directory (Windows)", () => {
+    const d = gitTabDisplay("C:\\Proj\\App", "c:/proj/app");
+    // Same directory → at-root display; the name is the repo root's basename.
+    expect(d).toEqual({ isGitRoot: true, repo: null, name: "app" });
+  });
+
+  it("honors an injected directory-key function", () => {
+    // A key fn that collapses everything makes cwd == root → at-root display.
+    const d = gitTabDisplay("/a/b/c", "/x/y", () => "same");
+    expect(d.repo).toBeNull();
+    expect(d.name).toBe("y");
   });
 });

@@ -10,6 +10,7 @@
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { useInlineRename } from "$lib/composables/use-inline-rename.svelte";
+  import { renameSuggestionStore } from "$lib/state/rename-suggestion.svelte";
   import { rectDimToCSS } from "$lib/domain/zoom";
 
   interface Props {
@@ -23,6 +24,43 @@
   const rename = useInlineRename(() => explorer);
 
   const isRenaming = $derived(dialogStore.renamingEntry?.path === entry.path);
+
+  // AI autocomplete hint (#215): shown once the provider (ai-rename plugin)
+  // returns a suggestion, hidden as soon as the input already holds it.
+  let suggestionRef = $state<HTMLElement | null>(null);
+  const suggestedName = $derived(
+    isRenaming ? renameSuggestionStore.suggestionFor(entry.path) : null,
+  );
+  const showSuggestion = $derived(
+    suggestedName !== null && suggestedName !== rename.editedName && !rename.submittingRename,
+  );
+
+  function acceptSuggestionFromHint(): void {
+    rename.acceptSuggestion(entry);
+    tick().then(autoSizeRename);
+  }
+
+  /** Tiles only: the rename textarea floats with a dynamic height, so the
+   *  hint's vertical position must be computed, not styled. */
+  function positionTileSuggestion(): void {
+    if (variant !== "tiles") return;
+    const el = rename.renameInputRef;
+    if (!el || !suggestionRef) return;
+    suggestionRef.style.top = `${el.offsetTop + el.offsetHeight + 4}px`;
+  }
+
+  $effect(() => {
+    if (showSuggestion && variant === "tiles") {
+      tick().then(positionTileSuggestion);
+    }
+  });
+
+  function onRenameKeydown(e: KeyboardEvent): void {
+    if (rename.handleRenameKeydown(e, entry.name, entry)) {
+      // Tab filled in the suggestion — the box must grow to fit it.
+      tick().then(autoSizeRename);
+    }
+  }
 
   // Focus and select the rename input when rename mode starts.
   // Keyed on the rename session (the renaming entry's path), NOT on `entry`
@@ -56,6 +94,9 @@
     const onPointerDown = (e: PointerEvent) => {
       const el = rename.renameInputRef;
       if (el && e.target instanceof Node && el.contains(e.target)) return;
+      // Clicking the autocomplete hint accepts the suggestion — it must not
+      // count as "outside" and commit the rename first.
+      if (suggestionRef && e.target instanceof Node && suggestionRef.contains(e.target)) return;
       rename.handleRenameBlur(entry.name);
     };
     window.addEventListener("pointerdown", onPointerDown, true);
@@ -114,6 +155,7 @@
           el.style.transform = `translateX(calc(-50% + ${rectDimToCSS(nudge)}px))`;
         }
       }
+      positionTileSuggestion();
     } else {
       // Size to the name: snug for a short name (just text + padding + a little
       // caret room), growing only up to a modest cap for a long one (then it
@@ -144,7 +186,7 @@
         bind:value={rename.editedName}
         bind:this={rename.renameInputRef}
         oninput={autoSizeRename}
-        onkeydown={(e) => rename.handleRenameKeydown(e, entry.name)}
+        onkeydown={onRenameKeydown}
         onblur={() => rename.handleRenameBlur(entry.name)}
         onclick={(e) => e.stopPropagation()}
         ondblclick={(e) => e.stopPropagation()}
@@ -152,23 +194,57 @@
         rows="1"
         autofocus
       ></textarea>
+      {#if showSuggestion}
+        <button
+          type="button"
+          class="rename-suggestion tiles"
+          bind:this={suggestionRef}
+          onpointerdown={(e) => e.preventDefault()}
+          onmousedown={(e) => e.preventDefault()}
+          onclick={(e) => { e.stopPropagation(); acceptSuggestionFromHint(); }}
+          ondblclick={(e) => e.stopPropagation()}
+          title="Press Tab to accept"
+        >
+          <span class="suggestion-spark" aria-hidden="true">✦</span>
+          <span class="suggestion-name">{suggestedName}</span>
+          <kbd>Tab</kbd>
+        </button>
+      {/if}
     </div>
   {:else}
-    <!-- svelte-ignore a11y_autofocus -->
-    <input
-      type="text"
-      class="rename-input rename-row"
-      class:error={!!rename.renameError}
-      bind:value={rename.editedName}
-      bind:this={rename.renameInputRef}
-      oninput={autoSizeRename}
-      onkeydown={(e) => rename.handleRenameKeydown(e, entry.name)}
-      onblur={() => rename.handleRenameBlur(entry.name)}
-      onclick={(e) => e.stopPropagation()}
-      ondblclick={(e) => e.stopPropagation()}
-      disabled={rename.submittingRename}
-      autofocus
-    />
+    <span class="rename-wrap">
+      <!-- svelte-ignore a11y_autofocus -->
+      <input
+        type="text"
+        class="rename-input rename-row"
+        class:error={!!rename.renameError}
+        bind:value={rename.editedName}
+        bind:this={rename.renameInputRef}
+        oninput={autoSizeRename}
+        onkeydown={onRenameKeydown}
+        onblur={() => rename.handleRenameBlur(entry.name)}
+        onclick={(e) => e.stopPropagation()}
+        ondblclick={(e) => e.stopPropagation()}
+        disabled={rename.submittingRename}
+        autofocus
+      />
+      {#if showSuggestion}
+        <button
+          type="button"
+          class="rename-suggestion"
+          bind:this={suggestionRef}
+          onpointerdown={(e) => e.preventDefault()}
+          onmousedown={(e) => e.preventDefault()}
+          onclick={(e) => { e.stopPropagation(); acceptSuggestionFromHint(); }}
+          ondblclick={(e) => e.stopPropagation()}
+          title="Press Tab to accept"
+        >
+          <span class="suggestion-spark" aria-hidden="true">✦</span>
+          <span class="suggestion-name">{suggestedName}</span>
+          <kbd>Tab</kbd>
+        </button>
+      {/if}
+    </span>
   {/if}
 {:else}
   <span
@@ -266,6 +342,70 @@
 
   .rename-input.tile-rename:focus {
     background: var(--background-solid);
+  }
+
+  /* Wrapper so the autocomplete hint can anchor below the details/list input.
+     Layout-neutral: the input keeps its own explicit width + negative margin. */
+  .rename-wrap {
+    position: relative;
+    display: inline-flex;
+    flex: 0 0 auto;
+    min-width: 0;
+  }
+
+  /* AI autocomplete hint (#215) — floats below the rename box. */
+  .rename-suggestion {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: -7px;
+    z-index: 6;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 340px;
+    padding: 3px 8px;
+    background: var(--background-solid);
+    color: var(--text-primary);
+    border: 1px solid var(--control-stroke);
+    border-radius: var(--radius-sm);
+    font: inherit;
+    font-size: 12px;
+    white-space: nowrap;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  }
+
+  .rename-suggestion:hover {
+    border-color: var(--accent);
+  }
+
+  .rename-suggestion .suggestion-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .suggestion-spark {
+    color: var(--accent);
+    flex: none;
+  }
+
+  .rename-suggestion kbd {
+    flex: none;
+    padding: 0 4px;
+    border: 1px solid var(--control-stroke);
+    border-radius: 3px;
+    font-size: 10px;
+    color: var(--text-secondary, inherit);
+    background: var(--control-fill);
+  }
+
+  /* Tiles: anchor to the floating textarea's box; top is set by
+     positionTileSuggestion() since the textarea's height is dynamic. */
+  .rename-suggestion.tiles {
+    left: 50%;
+    top: 0; /* placeholder — recomputed in JS */
+    transform: translateX(-50%);
+    z-index: 10;
   }
 
   /* Name display — variant-specific styles */

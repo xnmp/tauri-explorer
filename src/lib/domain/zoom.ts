@@ -134,24 +134,29 @@ export function adjustForZoom(x: number, y: number): { x: number; y: number } {
 export function fixedFromClient(
   clientCoord: number,
   zoom: number,
-  chromium: boolean,
+  _chromium: boolean,
 ): number {
   if (zoom === 1) return clientCoord;
-  return chromium ? clientCoord / zoom : clientCoord / (zoom * zoom);
+  // Standardized CSS zoom (Interop 2024; Chromium ≥128, WebKitGTK ≥2.44,
+  // Safari ≥17.4): a fixed element at `left: L` renders at L×zoom viewport px
+  // on EVERY engine, and clientX/Y are raw viewport px — so one division,
+  // engine-independent. Measured live on Chromium and the WebKitGTK-based
+  // Playwright WebKit (fixed left:100 → rect 130 at zoom 1.3 on both); the
+  // old "÷zoom² on WebKit" model predates the standardization and put menus
+  // at cursor/zoom (#227).
+  return clientCoord / zoom;
 }
 
 export function fixedFromRect(
   rectCoord: number,
   zoom: number,
-  viewportCoords: boolean,
-  chromium: boolean,
+  _viewportCoords: boolean,
+  _chromium: boolean,
 ): number {
   if (zoom === 1) return rectCoord;
-  // WKWebView (post-zoom rect, ×zoom² fixed) needs two divisions; Chromium
-  // (post-zoom rect, ×zoom fixed) and WebKitGTK (CSS rect, ×zoom² fixed) both
-  // net to one.
-  const divisions = viewportCoords && !chromium ? 2 : 1;
-  return rectCoord / zoom ** divisions;
+  // getBoundingClientRect is post-zoom viewport px under standardized CSS
+  // zoom — same single division as fixedFromClient.
+  return rectCoord / zoom;
 }
 
 /** Live wrapper of {@link fixedFromClient} using the current zoom/engine. */

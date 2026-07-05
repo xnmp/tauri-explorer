@@ -24,6 +24,37 @@ const THUMBNAIL_SIZE: u32 = 128;
 /// Micro thumbnail size for progressive loading preview
 const MICRO_SIZE: u32 = 16;
 
+// ─── Decode-safety limits (security audit S1) ───────────────────────────────
+// A crafted image header (e.g. an IHDR claiming 65500×65500) would otherwise
+// make the decoder allocate a multi-GB buffer *before* the thumbnail resize.
+
+/// Maximum width/height a decoded image may claim.
+pub(crate) const MAX_IMAGE_DIM: u32 = 16_384;
+/// Maximum total allocation a single decode may perform.
+pub(crate) const MAX_IMAGE_ALLOC_BYTES: u64 = 256 * 1024 * 1024;
+/// Maximum source file size accepted for decoding.
+pub(crate) const MAX_IMAGE_FILE_BYTES: u64 = 200 * 1024 * 1024;
+
+pub(crate) fn decode_limits() -> image::Limits {
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_IMAGE_DIM);
+    limits.max_image_height = Some(MAX_IMAGE_DIM);
+    limits.max_alloc = Some(MAX_IMAGE_ALLOC_BYTES);
+    limits
+}
+
+/// Reject oversized source files before reading them into memory.
+pub(crate) fn check_image_file_size(path: &Path) -> Result<(), AppError> {
+    let len = fs::metadata(path)?.len();
+    if len > MAX_IMAGE_FILE_BYTES {
+        return Err(AppError::Other(format!(
+            "Image file too large to decode safely ({} bytes, limit {} bytes)",
+            len, MAX_IMAGE_FILE_BYTES
+        )));
+    }
+    Ok(())
+}
+
 /// Supported image extensions for thumbnail generation.
 /// AVIF decodes via image's avif-native (dav1d), gated behind the optional
 /// `avif` cargo feature (see Cargo.toml). Enabled by the Arch PKGBUILD.
@@ -293,6 +324,7 @@ fn is_jpeg(path: &Path) -> bool {
 }
 
 fn decode_jpeg_scaled(path: &Path, target_size: u32) -> Result<image::DynamicImage, AppError> {
+    check_image_file_size(path)?;
     let jpeg_data = fs::read(path)?;
     let mut decompressor = turbojpeg::Decompressor::new()
         .map_err(|e| AppError::Other(format!("turbojpeg init failed: {}", e)))?;
@@ -302,6 +334,12 @@ fn decode_jpeg_scaled(path: &Path, target_size: u32) -> Result<image::DynamicIma
         .map_err(|e| AppError::Other(format!("turbojpeg header read failed: {}", e)))?;
 
     let max_dim = header.width.max(header.height) as u32;
+    if max_dim > MAX_IMAGE_DIM {
+        return Err(AppError::Other(format!(
+            "Image dimensions too large to decode safely ({}x{}, limit {})",
+            header.width, header.height, MAX_IMAGE_DIM
+        )));
+    }
     let scale = if max_dim / 8 >= target_size {
         turbojpeg::ScalingFactor::ONE_EIGHTH
     } else if max_dim / 4 >= target_size {
@@ -372,6 +410,7 @@ fn decode_icns(path: &Path) -> Result<image::DynamicImage, AppError> {
 }
 
 fn decode_image(path: &Path, target_size: u32) -> Result<image::DynamicImage, AppError> {
+    check_image_file_size(path)?;
     if is_jpeg(path) {
         match decode_jpeg_scaled(path, target_size) {
             Ok(img) => return Ok(img),
@@ -385,8 +424,9 @@ fn decode_image(path: &Path, target_size: u32) -> Result<image::DynamicImage, Ap
     if is_icns(path) {
         return decode_icns(path);
     }
-    ImageReader::open(path)?
-        .with_guessed_format()?
+    let mut reader = ImageReader::open(path)?.with_guessed_format()?;
+    reader.limits(decode_limits());
+    reader
         .decode()
         .map_err(|e| AppError::Other(format!("Failed to decode image: {}", e)))
 }
@@ -824,17 +864,16 @@ fn get_video_thumbnail_data_sync(
         // ffmpeg already scales the frame; re-encode through the image crate so
         // the output is a clean square-fit JPEG at the requested quality.
         let frame = extract_media_thumbnail(&source_path, size, is_audio)?;
-        let img = ImageReader::new(Cursor::new(frame))
-            .with_guessed_format()?
-            .decode()
-            .map_err(|e| {
-                log::warn!(
-                    "[thumbnails] failed to decode ffmpeg output for {}: {}",
-                    source_path.display(),
-                    e
-                );
-                AppError::Other(format!("Failed to decode video frame: {}", e))
-            })?;
+        let mut reader = ImageReader::new(Cursor::new(frame)).with_guessed_format()?;
+        reader.limits(decode_limits());
+        let img = reader.decode().map_err(|e| {
+            log::warn!(
+                "[thumbnails] failed to decode ffmpeg output for {}: {}",
+                source_path.display(),
+                e
+            );
+            AppError::Other(format!("Failed to decode video frame: {}", e))
+        })?;
         let thumbnail = img.thumbnail(size, size).to_rgb8();
 
         let data = encode_jpeg(&thumbnail, quality)?;
@@ -1087,6 +1126,71 @@ mod tests {
 
     fn touch(dir: &Path, name: &str) {
         File::create(dir.join(name)).unwrap();
+    }
+
+    #[test]
+    fn oversized_image_file_rejected_before_decode() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("huge.png");
+        // Sparse file: reports a huge length without touching the disk.
+        let file = File::create(&path).unwrap();
+        file.set_len(MAX_IMAGE_FILE_BYTES + 1).unwrap();
+        drop(file);
+
+        assert!(check_image_file_size(&path).is_err());
+        assert!(decode_image(&path, 128).is_err());
+    }
+
+    #[test]
+    fn normal_image_file_passes_size_gate() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("small.png");
+        std::fs::write(&path, b"not really a png").unwrap();
+        assert!(check_image_file_size(&path).is_ok());
+    }
+
+    #[test]
+    fn decode_limits_reject_huge_claimed_dimensions() {
+        // A PNG whose IHDR claims 65500x65500 must fail fast instead of
+        // allocating a multi-GB buffer. Build the header by hand (signature +
+        // IHDR chunk with a valid CRC) — no pixel data is needed because the
+        // dimension check happens before decoding scanlines.
+        fn crc32(data: &[u8]) -> u32 {
+            let mut table = [0u32; 256];
+            for (i, entry) in table.iter_mut().enumerate() {
+                let mut c = i as u32;
+                for _ in 0..8 {
+                    c = if c & 1 != 0 {
+                        0xEDB88320 ^ (c >> 1)
+                    } else {
+                        c >> 1
+                    };
+                }
+                *entry = c;
+            }
+            !data.iter().fold(0xFFFF_FFFFu32, |c, &b| {
+                table[((c ^ b as u32) & 0xFF) as usize] ^ (c >> 8)
+            })
+        }
+
+        let dim: u32 = 65_500;
+        let mut ihdr = Vec::new();
+        ihdr.extend_from_slice(b"IHDR");
+        ihdr.extend_from_slice(&dim.to_be_bytes());
+        ihdr.extend_from_slice(&dim.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 2, 0, 0, 0]); // 8-bit RGB
+        let mut png = Vec::new();
+        png.extend_from_slice(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        png.extend_from_slice(&13u32.to_be_bytes());
+        png.extend_from_slice(&ihdr);
+        png.extend_from_slice(&crc32(&ihdr).to_be_bytes());
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("bomb.png");
+        std::fs::write(&path, &png).unwrap();
+
+        let err = decode_image(&path, 128);
+        assert!(err.is_err(), "decode of 65500x65500 header must fail");
     }
 
     #[test]

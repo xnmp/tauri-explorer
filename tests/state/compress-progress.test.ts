@@ -67,6 +67,7 @@ function makeMutations() {
   const coreState = { currentPath: "/home/user" } as ExplorerCoreState;
   return createPaneMutations({
     coreState,
+    setSelection: vi.fn(),
     displayEntries: () => [],
     markLocalMutation: vi.fn(),
     getParentPath: () => "/home",

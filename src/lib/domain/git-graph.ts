@@ -225,10 +225,26 @@ export function assignLayout(commits: readonly GraphCommitLike[]): GraphLayout {
  * curves join seamlessly. Consecutive collinear verticals merge into one
  * line command, keeping paths minimal and unbroken.
  */
-export function branchPath(line: BranchLine, laneWidth: number, rowHeight: number): string {
+/** Vertical inset applied to rows below an inline expansion (e.g. the
+ *  commit-details block opened under a row) so the graph stretches with the
+ *  shifted rows instead of drifting out of alignment. */
+export interface RowExpand {
+  /** Rows strictly after this index are pushed down. */
+  afterRow: number;
+  /** Extra pixels inserted below `afterRow`. */
+  extra: number;
+}
+
+export function branchPath(
+  line: BranchLine,
+  laneWidth: number,
+  rowHeight: number,
+  expand?: RowExpand,
+): string {
   if (line.points.length === 0) return "";
   const x = (lane: number) => lane * laneWidth + laneWidth / 2;
-  const y = (row: number) => row * rowHeight + rowHeight / 2;
+  const y = (row: number) =>
+    row * rowHeight + rowHeight / 2 + (expand && row > expand.afterRow ? expand.extra : 0);
   const d = rowHeight * 0.8;
 
   let path = `M ${x(line.points[0].lane)} ${y(line.points[0].row).toFixed(1)}`;
@@ -269,3 +285,45 @@ export const GRAPH_PALETTE = [
   "#6f24d6",
   "#ffcc00",
 ] as const;
+
+// ─── Ref decoration chips ────────────────────────────────────────────────────
+
+/** Structural subset of a ref decoration; matches `RefInfo` from the API
+ *  layer without importing it (domain stays dependency-free). */
+export interface RefDecorationLike {
+  kind: string;
+  name: string;
+}
+
+export interface RefChips {
+  isHead: boolean;
+  heads: { name: string; remotes: string[]; active: boolean }[];
+  remotes: string[];
+  tags: string[];
+}
+
+/** Combined ref chips (reference behavior): each local branch groups the
+ *  remotes tracking it as nested sub-chips; the checked-out branch first;
+ *  unmatched remotes and tags stay separate. */
+export function groupRefChips(decorations: readonly RefDecorationLike[]): RefChips {
+  const isHead = decorations.some((r) => r.kind === "Head");
+  const locals = decorations.filter((r) => r.kind === "LocalBranch").map((r) => r.name);
+  const remoteNames = decorations.filter((r) => r.kind === "RemoteBranch").map((r) => r.name);
+  const usedRemotes = new Set<string>();
+  const heads = locals.map((name) => {
+    const remotes = remoteNames
+      .filter((rn) => rn.slice(rn.indexOf("/") + 1) === name)
+      .map((rn) => {
+        usedRemotes.add(rn);
+        return rn.slice(0, rn.indexOf("/"));
+      });
+    return { name, remotes, active: isHead };
+  });
+  heads.sort((a, b) => Number(b.active) - Number(a.active));
+  return {
+    isHead,
+    heads,
+    remotes: remoteNames.filter((rn) => !usedRemotes.has(rn)),
+    tags: decorations.filter((r) => r.kind === "Tag").map((r) => r.name),
+  };
+}

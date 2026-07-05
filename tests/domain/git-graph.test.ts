@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { assignLayout, branchPath, GRAPH_PALETTE } from "$lib/domain/git-graph";
+import { assignLayout, branchPath, groupRefChips, GRAPH_PALETTE } from "$lib/domain/git-graph";
 import type { GraphCommitLike } from "$lib/domain/git-graph";
 
 const c = (oid: string, ...parents: string[]): GraphCommitLike => ({ oid, parents });
@@ -134,5 +134,53 @@ describe("branchPath", () => {
 
   it("palette has 12 entries", () => {
     expect(GRAPH_PALETTE).toHaveLength(12);
+  });
+});
+
+describe("groupRefChips", () => {
+  const d = (kind: string, name: string) => ({ kind, name });
+
+  it("groups tracking remotes under their local branch", () => {
+    const chips = groupRefChips([
+      d("LocalBranch", "main"),
+      d("RemoteBranch", "origin/main"),
+      d("RemoteBranch", "upstream/main"),
+      d("RemoteBranch", "origin/feature"),
+      d("Tag", "v1.0.0"),
+    ]);
+    expect(chips.heads).toEqual([
+      { name: "main", remotes: ["origin", "upstream"], active: false },
+    ]);
+    expect(chips.remotes).toEqual(["origin/feature"]);
+    expect(chips.tags).toEqual(["v1.0.0"]);
+    expect(chips.isHead).toBe(false);
+  });
+
+  it("marks branches active and sorts the checked-out branch first", () => {
+    const chips = groupRefChips([
+      d("Head", "HEAD"),
+      d("LocalBranch", "dev"),
+    ]);
+    expect(chips.isHead).toBe(true);
+    expect(chips.heads[0]).toEqual({ name: "dev", remotes: [], active: true });
+  });
+
+  it("handles empty and remote-only decorations", () => {
+    expect(groupRefChips([])).toEqual({ isHead: false, heads: [], remotes: [], tags: [] });
+    const chips = groupRefChips([d("RemoteBranch", "origin/gh-pages")]);
+    expect(chips.heads).toEqual([]);
+    expect(chips.remotes).toEqual(["origin/gh-pages"]);
+  });
+});
+
+describe("branchPath row expansion", () => {
+  it("pushes rows below the expansion down by the extra height", () => {
+    const line = { colorIndex: 0, points: [{ lane: 0, row: 0 }, { lane: 0, row: 1 }, { lane: 0, row: 2 }] };
+    // No expansion: rows at y = 14, 42, 70 (rowHeight 28).
+    expect(branchPath(line, 14, 28)).toBe("M 7 14.0 L 7 70.0");
+    // Expansion of 100px after row 0: rows 1 and 2 shift down by 100.
+    expect(branchPath(line, 14, 28, { afterRow: 0, extra: 100 })).toBe("M 7 14.0 L 7 170.0");
+    // Expansion after the last row changes nothing.
+    expect(branchPath(line, 14, 28, { afterRow: 2, extra: 100 })).toBe("M 7 14.0 L 7 70.0");
   });
 });

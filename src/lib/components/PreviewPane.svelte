@@ -9,7 +9,7 @@
   import { isImageFile, isSvgFile, isTextFile, isPdfFile, isZipFile, getFileType, formatDate } from "$lib/domain/file-types";
   import { formatSize, isSystemHidden, type FileEntry } from "$lib/domain/file";
   import { isTauri } from "$lib/api/mock-invoke";
-  import { highlightCode } from "$lib/domain/syntax-highlight";
+  import { highlightCode, highlightDiffLine } from "$lib/domain/syntax-highlight";
   import { renderMarkdown } from "$lib/domain/markdown";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
@@ -454,6 +454,27 @@
     }
 
     if (isImageFile(file) || isSvgFile(file)) {
+      // Pull the bytes through the backend. Used when the asset: protocol
+      // can't stream a file — notably cloud-mounted images (Google Drive,
+      // OneDrive) whose placeholder paths it fails to read (the read forces
+      // the cloud client to hydrate the file) — and as the only path in
+      // browser/E2E mode, where the mock serves a data URI.
+      const loadViaBackend = async () => {
+        const fallback = await readImageAsBlobUrl(file.path);
+        if (file.path !== lastPreviewPath) return; // Stale after fetch
+        if (fallback.ok) {
+          try {
+            await decodeImage(fallback.data);
+            if (file.path !== lastPreviewPath) return; // Stale after decode
+            previewImageUrl = fallback.data;
+          } catch {
+            previewError = "Cannot preview image";
+          }
+        } else {
+          previewError = "Cannot preview image";
+        }
+      };
+
       if (isTauri()) {
         try {
           const { convertFileSrc } = await import("@tauri-apps/api/core");
@@ -464,27 +485,11 @@
           if (file.path !== lastPreviewPath) return; // Stale after decode
           previewImageUrl = url;
         } catch (assetErr) {
-          // The asset: protocol can't stream some files — notably cloud-mounted
-          // images (Google Drive, OneDrive) whose placeholder paths it fails to
-          // read. Fall back to pulling the bytes through the backend, which
-          // forces the cloud client to hydrate the file first.
           console.warn("asset:// image preview failed, falling back to backend read:", assetErr);
-          const fallback = await readImageAsBlobUrl(file.path);
-          if (file.path !== lastPreviewPath) return; // Stale after fetch
-          if (fallback.ok) {
-            try {
-              await decodeImage(fallback.data);
-              if (file.path !== lastPreviewPath) return; // Stale after decode
-              previewImageUrl = fallback.data;
-            } catch {
-              previewError = "Cannot preview image";
-            }
-          } else {
-            previewError = "Cannot preview image";
-          }
+          await loadViaBackend();
         }
       } else {
-        previewError = "Image preview requires Tauri runtime";
+        await loadViaBackend();
       }
     } else if (isTextFile(file)) {
       const result = await readTextFile(file.path, 524288); // 512KB limit for preview
@@ -580,7 +585,12 @@
               <span class="diff-gutter old">{line.oldLine ?? ""}</span>
               <span class="diff-gutter new">{line.newLine ?? ""}</span>
               <span class="diff-sigil">{line.kind === "add" ? "+" : line.kind === "remove" ? "−" : line.kind === "hunk" ? "@" : " "}</span>
-              <span class="diff-content">{line.text}</span>
+              {#if line.kind === "hunk" || line.kind === "meta" || line.kind === "header"}
+                <span class="diff-content">{line.text}</span>
+              {:else}
+                <!-- highlightDiffLine output is hljs-generated/escaped HTML — safe sink (#227). -->
+                <span class="diff-content">{@html highlightDiffLine(line.text, activeDiff.path)}</span>
+              {/if}
             </div>
           {/each}
         </div>
@@ -618,8 +628,16 @@
           <iframe src={previewPdfUrl} title={selectedFile.name} class="preview-pdf"></iframe>
         </div>
       {:else if previewImageUrl}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="preview-image-container" onwheel={handleFullscreenWheel}>
+        <!-- Click brings the image front and center (fullscreen); clicking
+             again reverts (#219). stopPropagation so the pane's dblclick
+             toggle can't double-fire on the same gesture. -->
+        <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+        <div
+          class="preview-image-container"
+          onwheel={handleFullscreenWheel}
+          onclick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
+          ondblclick={(e) => e.stopPropagation()}
+        >
           <img
             src={previewImageUrl}
             alt={selectedFile.name}
@@ -903,11 +921,17 @@
     justify-content: center;
     flex: 1;
     padding: 20px;
+    /* Click toggles front-and-center (#219). */
+    cursor: zoom-in;
     background:
       repeating-conic-gradient(
         rgba(255, 255, 255, 0.03) 0% 25%,
         transparent 0% 50%
       ) 50% / 12px 12px;
+  }
+
+  .preview-pane.fullscreen .preview-image-container {
+    cursor: zoom-out;
   }
 
   .preview-image {

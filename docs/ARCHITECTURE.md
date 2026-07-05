@@ -1,6 +1,8 @@
 # Tauri Explorer — Architecture Map
 
 > High-level map of the codebase. Drill into subdocs for details.
+>
+> `website/` is the standalone showcase site (static HTML/CSS/JS, deployed to Vercel) — an interactive replica of the app UI where the marketing copy lives as a browsable fake filesystem, filling the browser viewport like a maximized window. No build step; edit and redeploy with `vercel deploy --prod` from `website/`. Site themes mirror the app palettes (light/dark/aurora/hacker/solarized) — toolbar theme menu, palette commands, or Ctrl+T. The site demos the app's features live, not as pictures: palette commands toggle every bar (sidebar/status/address/title + Zen Mode, persisted), a `screenshots/` folder renders as tiles with real thumbnails, an integrated terminal (Ctrl+\`) runs ls/cd/cat over the fake FS with explorer cwd-sync, the "Graph: this repo" tab opens an SVG commit graph of this repo's actual history, Ctrl+Shift+F greps the site's own copy, tabs are real (per-tab cwd), F2 renames inline, Ctrl+\ splits into dual panes with F5/F6 copy/move across (session-only FS mutations), plus type-ahead, sortable columns, right-click context menus, and toasts/tooltips guiding exploration. Perf: hero-image preload, idle-time prefetch of all screenshots, and cache headers in `website/vercel.json`.
 
 ## Stack
 

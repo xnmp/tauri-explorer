@@ -9,7 +9,11 @@
  *
  * Pure and synchronous so the caller can feed it whatever "identity path" it
  * likes (the folder itself, or a git repo root) and unit-test the result.
+ *
+ * Issue: refactor/audit-tier4-splits (#212)
  */
+
+import { directoryKey, basename } from "./path";
 
 export interface TabTitleItem {
   id: string;
@@ -77,4 +81,32 @@ export function disambiguateTabTitles(items: TabTitleItem[]): Map<string, string
   }
 
   return result;
+}
+
+/** How a git-mode tab labels itself. */
+export interface GitTabDisplay {
+  isGitRoot: boolean;
+  repo: string | null;
+  name: string;
+}
+
+/**
+ * Display for a tab whose folder lives inside a git repository: the repo root
+ * name plus the current folder. When the cwd *is* the repo root, `repo` is
+ * null and the name is just the root's basename.
+ *
+ * `directoryKeyFn` is injectable for testing; it defaults to the shared
+ * separator/case-normalizing `directoryKey`.
+ */
+export function gitTabDisplay(
+  cwd: string,
+  repoRoot: string,
+  directoryKeyFn: (path: string) => string = directoryKey,
+): GitTabDisplay {
+  const atRoot = directoryKeyFn(cwd) === directoryKeyFn(repoRoot);
+  return {
+    isGitRoot: true,
+    repo: atRoot ? null : basename(repoRoot),
+    name: atRoot ? basename(repoRoot) : basename(cwd),
+  };
 }

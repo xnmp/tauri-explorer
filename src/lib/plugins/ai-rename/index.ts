@@ -22,9 +22,19 @@
 
 import type { Plugin, PluginContext } from "../api";
 import { readTextFile } from "$lib/api/files";
-import { buildContentHint, canSendContentHint, CONTENT_HINT_MAX_CHARS } from "$lib/domain/ai-rename";
+import { suggestFilenames } from "$lib/api/ai-rename";
+import {
+  buildContentHint,
+  canSendContentHint,
+  sanitizeChosenName,
+  CONTENT_HINT_MAX_CHARS,
+} from "$lib/domain/ai-rename";
 import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
+import {
+  renameSuggestionStore,
+  type RenameSuggestionProvider,
+} from "$lib/state/rename-suggestion.svelte";
 import type { FileEntry } from "$lib/domain/file";
 import { isVirtualPath } from "$lib/domain/virtual-path";
 import AiRenameDialog from "./AiRenameDialog.svelte";
@@ -33,6 +43,7 @@ const PLUGIN_ID = "ai-rename";
 const DIALOG_ID = "ai-rename.suggest";
 const API_KEY_STORAGE_KEY = "apiKey";
 const COUNT_STORAGE_KEY = "count";
+const INLINE_STORAGE_KEY = "inlineAutocomplete";
 const DEFAULT_COUNT = 3;
 
 /** A single selected file (not a directory), or null. Shared by menu + command. */
@@ -73,14 +84,43 @@ async function gatherContentHint(entry: FileEntry): Promise<string | undefined> 
   return buildContentHint(entry, result.data);
 }
 
+/** Whether the inline rename autocomplete is enabled (default true). */
+async function inlineAutocompleteEnabled(ctx: PluginContext): Promise<boolean> {
+  const stored = await ctx.storage.get();
+  const raw = stored[INLINE_STORAGE_KEY];
+  if (typeof raw === "boolean") return raw;
+  if (typeof raw === "string") return raw !== "false";
+  return true;
+}
+
+// Module-scoped so deactivate() can unregister exactly what activate()
+// registered.
+let inlineProvider: RenameSuggestionProvider | null = null;
+
 export const aiRenamePlugin: Plugin = {
   id: PLUGIN_ID,
   name: "AI Rename",
   description:
-    "AI-suggested filenames — right-click a file and pick a better name. Sends the filename (and, for text files, a short content preview) to Gemini only when you invoke the action.",
+    "AI-suggested filenames — right-click a file and pick a better name, or press Tab in the rename box to accept the inline suggestion. Sends the filename (and, for text files, a short content preview) to Gemini only when you invoke the action.",
   enabledByDefault: true,
 
   async activate(ctx) {
+    // Inline autocomplete provider (#215): queried when a rename box opens —
+    // that user action is the moment the (text-only) content hint is read,
+    // same privacy path as the explicit picker. Returns null (no suggestion,
+    // no network call) without an API key or with the toggle off.
+    inlineProvider = async (entry: FileEntry): Promise<string | null> => {
+      if (entry.kind !== "file" || isVirtualPath(entry.path)) return null;
+      if (!(await inlineAutocompleteEnabled(ctx))) return null;
+      const apiKey = await currentApiKey(ctx);
+      if (!apiKey) return null;
+      const contentHint = await gatherContentHint(entry);
+      const result = await suggestFilenames(entry.name, contentHint, 1, apiKey);
+      if (!result.ok || result.data.length === 0) return null;
+      const name = sanitizeChosenName(result.data[0], entry.name);
+      return name === entry.name ? null : name;
+    };
+    renameSuggestionStore.setProvider(inlineProvider);
     // Open the picker for a given file: read the key/count/content hint (the
     // content read is the explicit-action moment), then hand off to the dialog.
     const openPicker = async (entry: FileEntry): Promise<void> => {
@@ -118,6 +158,14 @@ export const aiRenamePlugin: Plugin = {
           options: [1, 2, 3, 4, 5].map((n) => ({ value: String(n), label: String(n) })),
           default: String(DEFAULT_COUNT),
         },
+        {
+          id: INLINE_STORAGE_KEY,
+          label: "Inline rename autocomplete",
+          description:
+            "Suggest a name in the rename box (press Tab to accept). Queries the model each time a rename starts.",
+          type: "toggle",
+          default: true,
+        },
       ],
     });
 
@@ -149,5 +197,14 @@ export const aiRenamePlugin: Plugin = {
         else ctx.toast.show("Select a single file first", "info");
       },
     });
+  },
+
+  deactivate() {
+    // The provider isn't a ctx contribution, so it isn't in the disposal
+    // ledger — unregister it explicitly.
+    if (inlineProvider) {
+      renameSuggestionStore.clearProvider(inlineProvider);
+      inlineProvider = null;
+    }
   },
 };

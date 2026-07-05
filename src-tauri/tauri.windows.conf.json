@@ -2,13 +2,24 @@
   "app": {
     "security": {
       "assetProtocol": {
-        "scope": [
-          "$HOME/**/*",
-          "*:/**/*",
-          "*:\\**\\*",
-          "//**/*",
-          "\\\\**\\*"
-        ]
+        "scope": {
+          "allow": [
+            "$HOME/**/*",
+            "*:/**/*",
+            "*:\\**\\*",
+            "//**/*",
+            "\\\\**\\*"
+          ],
+          "deny": [
+            "$HOME/.ssh/**",
+            "$HOME/.aws/**",
+            "$HOME/.azure/**",
+            "$HOME/.kube/**",
+            "$HOME/AppData/Roaming/gnupg/**",
+            "$HOME/.docker/config.json",
+            "$HOME/_netrc"
+          ]
+        }
       }
     }
   }

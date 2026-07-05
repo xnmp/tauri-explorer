@@ -15,6 +15,7 @@
   } from "$lib/state/commands.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { usePointerIntent } from "$lib/composables/use-pointer-intent.svelte";
+  import { commandFrecencyPoints, scoreCommand } from "$lib/domain/fuzzy-score";
   import Modal from "./Modal.svelte";
 
   interface Props {
@@ -58,9 +59,18 @@
     const lowerQuery = query.toLowerCase();
     return available
       .map((cmd) => {
+        // Scoring math lives in domain/fuzzy-score.ts (scoreCommand).
         const frecency = getCommandFrecencyScore(cmd.id);
-        const frecencyPts = Math.min(30, Math.round(frecency * 10));
-        const total = fuzzyScore(cmd, lowerQuery);
+        const frecencyPts = commandFrecencyPoints(frecency);
+        const total = scoreCommand(
+          {
+            label: cmd.label.toLowerCase(),
+            category: getCategoryLabel(cmd.category).toLowerCase(),
+            shortcut: (getCommandShortcut(cmd.id) || "").toLowerCase(),
+          },
+          lowerQuery,
+          frecency,
+        );
         const fuzzyPts = total - frecencyPts;
         return { cmd, total, fuzzy: fuzzyPts, frecency: frecencyPts };
       })
@@ -69,52 +79,6 @@
   });
 
   const filteredCommands = $derived(filteredScored.map((s) => s.cmd));
-
-  // Fuzzy scoring for command search
-  function fuzzyScore(cmd: Command, query: string): number {
-    const label = cmd.label.toLowerCase();
-    const category = getCategoryLabel(cmd.category).toLowerCase();
-    const shortcut = (getCommandShortcut(cmd.id) || "").toLowerCase();
-
-    let score = 0;
-
-    // Exact match in label
-    if (label.includes(query)) {
-      score += 100;
-      // Bonus for starting with query
-      if (label.startsWith(query)) score += 50;
-    }
-
-    // Match in category
-    if (category.includes(query)) {
-      score += 30;
-    }
-
-    // Match in shortcut
-    if (shortcut.includes(query)) {
-      score += 40;
-    }
-
-    // Character-by-character fuzzy match in label
-    let queryIdx = 0;
-    for (let i = 0; i < label.length && queryIdx < query.length; i++) {
-      if (label[i] === query[queryIdx]) {
-        queryIdx++;
-        score += 5;
-      }
-    }
-
-    // Only return score if all query chars were found
-    if (queryIdx < query.length) {
-      return 0;
-    }
-
-    // Frecency boost (capped so it doesn't dominate text relevance)
-    const frecency = getCommandFrecencyScore(cmd.id);
-    score += Math.min(30, Math.round(frecency * 10));
-
-    return score;
-  }
 
   // Flat list for keyboard navigation
   const flatCommands = $derived(filteredCommands);

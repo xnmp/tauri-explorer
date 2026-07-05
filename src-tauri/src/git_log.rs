@@ -31,26 +31,14 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use git2::{Oid, Repository, RepositoryOpenFlags, Sort};
+use git2::{Oid, Repository, Sort};
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
+use crate::git_common::{open_repo, to_app_err};
 use crate::task_registry::TaskRegistry;
 
 static GIT_LOG_TASKS: TaskRegistry = TaskRegistry::new();
-
-fn to_app_err(e: git2::Error) -> AppError {
-    AppError::Other(format!("git: {}", e.message()))
-}
-
-fn open_repo(path: &Path) -> Result<Repository, AppError> {
-    Repository::open_ext(
-        path,
-        RepositoryOpenFlags::empty(),
-        std::iter::empty::<&Path>(),
-    )
-    .map_err(to_app_err)
-}
 
 /// One entry in the commit log. `oid` is the full 40-char SHA; `short_oid` is
 /// the abbreviated form for display. `parents` are full OIDs (0 = root,
@@ -476,6 +464,53 @@ pub async fn git_commit_files(repo_path: String, oid: String) -> Result<Vec<Comm
     .await
 }
 
+/// Unified diff of a single file in `oid` relative to its first parent (root
+/// commits diff against the empty tree). Powers the commit-detail panel's
+/// per-file diff (#221) — VSCode Git Graph behavioral parity.
+fn commit_file_diff(repo: &Repository, oid: &str, file_path: &str) -> Result<String, AppError> {
+    let commit = repo
+        .find_commit(Oid::from_str(oid).map_err(|e| AppError::Other(e.to_string()))?)
+        .map_err(|e| AppError::Other(format!("commit not found: {e}")))?;
+    let tree = commit.tree().map_err(|e| AppError::Other(e.to_string()))?;
+    let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
+    let mut opts = git2::DiffOptions::new();
+    opts.pathspec(file_path);
+    // Rename detection needs the whole diff; a pathspec-limited diff shows a
+    // rename as delete+add. Acceptable: the detail panel labels renames from
+    // git_commit_files, this view just shows content changes.
+    let diff = repo
+        .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut opts))
+        .map_err(|e| AppError::Other(e.to_string()))?;
+
+    let mut out = String::new();
+    diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
+        let prefix = match line.origin_value() {
+            git2::DiffLineType::Addition => "+",
+            git2::DiffLineType::Deletion => "-",
+            git2::DiffLineType::Context => " ",
+            _ => "",
+        };
+        out.push_str(prefix);
+        out.push_str(&String::from_utf8_lossy(line.content()));
+        true
+    })
+    .map_err(to_app_err)?;
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn git_commit_file_diff(
+    repo_path: String,
+    oid: String,
+    file_path: String,
+) -> Result<String, AppError> {
+    run_blocking(move |_cancel| {
+        let repo = open_repo(Path::new(&repo_path))?;
+        commit_file_diff(&repo, &oid, &file_path)
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -486,6 +521,31 @@ mod tests {
 
     fn no_cancel() -> Arc<AtomicBool> {
         Arc::new(AtomicBool::new(false))
+    }
+
+    #[test]
+    fn commit_file_diff_shows_changes_against_first_parent() {
+        let (dir, repo) = init_repo();
+        fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        let c1 = commit(&repo, "first", &[]);
+        fs::write(dir.path().join("a.txt"), "two\n").unwrap();
+        fs::write(dir.path().join("b.txt"), "other\n").unwrap();
+        let c2 = commit(&repo, "second", &[c1]);
+
+        let diff = commit_file_diff(&repo, &c2.to_string(), "a.txt").unwrap();
+        assert!(diff.contains("-one"), "missing removal: {diff}");
+        assert!(diff.contains("+two"), "missing addition: {diff}");
+        // Pathspec-limited: the sibling file must not leak in.
+        assert!(!diff.contains("b.txt"), "unrelated file leaked: {diff}");
+
+        // Root commit diffs against the empty tree.
+        let root_diff = commit_file_diff(&repo, &c1.to_string(), "a.txt").unwrap();
+        assert!(root_diff.contains("+one"), "root diff wrong: {root_diff}");
+
+        // Unknown oid errors, unknown path yields an empty diff.
+        assert!(commit_file_diff(&repo, "0000", "a.txt").is_err());
+        let none = commit_file_diff(&repo, &c2.to_string(), "missing.txt").unwrap();
+        assert!(none.trim().is_empty());
     }
 
     #[test]

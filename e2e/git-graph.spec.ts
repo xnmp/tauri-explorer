@@ -113,6 +113,77 @@ test("clicking a commit opens the detail panel with its changed files", async ({
   await expect(detail).toHaveCount(0);
 });
 
+test("details expand inline below the clicked row (#221)", async ({ page }) => {
+  await page.goto("/?path=/home/user/Documents/project");
+  await waitForEntries(page);
+  await openGraphViaPalette(page);
+
+  const view = page.locator('[data-testid="git-graph-view"]');
+  const row = view.locator(".commit-row").nth(2);
+  await row.click();
+
+  const detail = page.locator('[data-testid="git-graph-detail"]');
+  await expect(detail).toBeVisible();
+  // Inline: the details sit directly below the clicked row, above the next one.
+  const rowBox = (await row.boundingBox())!;
+  const detailBox = (await detail.boundingBox())!;
+  const nextRowBox = (await view.locator(".commit-row").nth(3).boundingBox())!;
+  expect(detailBox.y).toBeGreaterThanOrEqual(rowBox.y + rowBox.height - 1);
+  expect(nextRowBox.y).toBeGreaterThanOrEqual(detailBox.y + detailBox.height - 1);
+});
+
+test("clicking a changed file shows its diff below the file row (#221)", async ({ page }) => {
+  await page.goto("/?path=/home/user/Documents/project");
+  await waitForEntries(page);
+  await openGraphViaPalette(page);
+
+  const view = page.locator('[data-testid="git-graph-view"]');
+  await view.locator(".commit-row").nth(2).click();
+
+  const detail = page.locator('[data-testid="git-graph-detail"]');
+  await detail.locator(".detail-file").first().click();
+
+  const diff = page.locator('[data-testid="git-graph-file-diff"]');
+  await expect(diff).toBeVisible();
+  await expect(diff).toContainText("new line");
+  await expect(diff.locator(".diff-line.add")).toHaveCount(1);
+  await expect(diff.locator(".diff-line.remove")).toHaveCount(1);
+
+  // Clicking the file again collapses the diff.
+  await detail.locator(".detail-file").first().click();
+  await expect(diff).toHaveCount(0);
+});
+
+test("uncommitted-changes row expands its working-tree files and diffs (#221)", async ({ page }) => {
+  await page.goto("/?path=/home/user/Documents/project");
+  await waitForEntries(page);
+  await openGraphViaPalette(page);
+
+  const view = page.locator('[data-testid="git-graph-view"]');
+  const uncommitted = view.locator(".commit-row.uncommitted");
+  await expect(uncommitted).toBeVisible();
+  await uncommitted.click();
+
+  const detail = page.locator('[data-testid="git-graph-detail"]');
+  await expect(detail).toBeVisible();
+  await expect(detail).toContainText("src/index.css");
+  // Staged files are marked.
+  await expect(detail.locator(".file-staged-badge")).toHaveCount(1);
+
+  // A working-tree file's diff renders inline.
+  await detail.locator(".detail-file", { hasText: "src/index.css" }).click();
+  const diff = page.locator('[data-testid="git-graph-file-diff"]');
+  await expect(diff).toBeVisible();
+  await expect(diff.locator(".diff-line.add").first()).toBeVisible();
+});
+
+test("Ctrl+Alt+G opens the commit graph (#221)", async ({ page }) => {
+  await page.goto("/?path=/home/user/Documents/project");
+  await waitForEntries(page);
+  await page.keyboard.press("Control+Alt+g");
+  await expect(page.locator('[data-testid="git-graph-view"]')).toBeVisible({ timeout: 3000 });
+});
+
 test.describe("Git graph commit context actions", () => {
   test("right-click opens the commit menu with the expected actions", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents/project");

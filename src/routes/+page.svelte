@@ -33,11 +33,9 @@
   import CrashNotice from "$lib/components/CrashNotice.svelte";
   import UpdateNotice from "$lib/components/UpdateNotice.svelte";
   import ShortcutCheatsheet from "$lib/components/ShortcutCheatsheet.svelte";
-  import FirstRunHint from "$lib/components/FirstRunHint.svelte";
-  import FilePicker, { type PickerInfo } from "$lib/components/FilePicker.svelte";
+    import FilePicker, { type PickerInfo } from "$lib/components/FilePicker.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
-  import ScmPanel from "$lib/components/ScmPanel.svelte";
-  import PaneContainer from "$lib/components/PaneContainer.svelte";
+    import PaneContainer from "$lib/components/PaneContainer.svelte";
   import QuickOpen from "$lib/components/QuickOpen.svelte";
   import CommandPalette from "$lib/components/CommandPalette.svelte";
   import OptionPicker from "$lib/components/OptionPicker.svelte";
@@ -457,9 +455,6 @@
     {#if settingsStore.showSidebar}
       <Sidebar />
     {/if}
-    {#if settingsStore.showGitStatus && settingsStore.showScmPanel}
-      <ScmPanel />
-    {/if}
     {#if millerAsLeftIsland && leftExplorer}
       <div class="miller-island">
         <MillerColumns explorer={leftExplorer} />
@@ -488,7 +483,6 @@
 
 <CrashNotice />
 <UpdateNotice />
-<FirstRunHint />
 <ShortcutCheatsheet open={dialogStore.isShortcutsOpen} onClose={() => dialogStore.closeShortcuts()} />
 <QuickOpen open={dialogStore.isQuickOpenOpen} onClose={() => dialogStore.closeQuickOpen()} />
 <CommandPalette open={dialogStore.isCommandPaletteOpen} onClose={() => dialogStore.closeCommandPalette()} />

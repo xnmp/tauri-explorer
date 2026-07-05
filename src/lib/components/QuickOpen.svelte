@@ -4,7 +4,7 @@
 -->
 <script lang="ts">
   import { tick, untrack } from "svelte";
-  import { fuzzyScorePath } from "$lib/domain/fuzzy-score";
+  import { filenameMatchScore, fuzzyScorePath } from "$lib/domain/fuzzy-score";
   import {
     startStreamingSearch,
     cancelSearch,
@@ -77,19 +77,6 @@
   const FRECENCY_WEIGHT = 50;
   // Directories get a score boost since they're more commonly navigated to
   const DIRECTORY_BONUS = 1.25;
-
-  /**
-   * Score how well a query matches a filename vs just appearing in the path.
-   * Filename matches are weighted much higher so that e.g. searching "pictures"
-   * returns ~/Pictures above ~/Pictures/Wallpaper.
-   */
-  function filenameMatchScore(name: string, queryLower: string): number {
-    const nameLower = name.toLowerCase();
-    if (nameLower === queryLower) return 200;      // exact match
-    if (nameLower.startsWith(queryLower)) return 150; // prefix match
-    if (nameLower.includes(queryLower)) return 100;   // substring match
-    return 0; // filename doesn't match
-  }
 
   /** Match recent files and frecency entries against a search term.
    *  These are always included in results (merged/deduplicated with backend results). */

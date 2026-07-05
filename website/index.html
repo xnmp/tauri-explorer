@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tauri Explorer — a file manager with Ctrl+P</title>
+  <meta name="description" content="A keyboard-first file manager: fuzzy quick-open, ripgrep content search, a command palette for every action. This site is a working copy of it — press Ctrl+P." />
+  <meta property="og:title" content="Tauri Explorer — a file manager with Ctrl+P" />
+  <meta property="og:description" content="The editor workflow for your filesystem. This website is the app — press Ctrl+P to try it." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://tauri-explorer.vercel.app/" />
+  <meta property="og:image" content="https://tauri-explorer.vercel.app/img/details-view.png" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🗂️</text></svg>" />
+  <!-- Theme before first paint, so a saved dark theme never flashes light. -->
+  <script>
+    try {
+      var t = localStorage.getItem("theme") ||
+        (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="style.css" />
+  <!-- The README preview opens on boot with this image — fetch it first. -->
+  <link rel="preload" as="image" href="img/details-view.png" fetchpriority="high" />
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <noscript>
+    <div style="padding:2rem;font-family:monospace">
+      Tauri Explorer — a file manager with Ctrl+P, Ctrl+Shift+F, and a command palette.
+      This site is an interactive copy of the app and needs JavaScript.
+      The short version lives at <a href="https://github.com/xnmp/tauri-explorer">github.com/xnmp/tauri-explorer</a>.
+    </div>
+  </noscript>
+
+  <div class="window" id="window">
+    <!-- Title bar: tab strip with the fillets, traffic dots, window controls -->
+    <header class="titlebar">
+      <div class="traffic"><span></span><span></span><span></span></div>
+      <div class="tabstrip" id="tabstrip"></div>
+      <div class="win-controls" aria-hidden="true"><span>–</span><span>□</span><span>×</span></div>
+    </header>
+
+    <!-- Toolbar: nav + breadcrumb + theme + the one visible CTA -->
+    <div class="toolbar">
+      <div class="nav-btns">
+        <button id="nav-back" aria-label="Back" data-tip="Back — the history is real">‹</button>
+        <button id="nav-up" aria-label="Up a directory" data-tip="Up a directory (Backspace)">↑</button>
+      </div>
+      <div class="breadcrumb" id="breadcrumb" data-tip="Click to type a path (Ctrl+L)"></div>
+      <div class="view-switch" role="group" aria-label="View mode" id="view-switch">
+        <button data-view="details" aria-label="Details view" data-tip="Details view">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="4" cy="6" r="0.5"/><circle cx="4" cy="12" r="0.5"/><circle cx="4" cy="18" r="0.5"/></svg>
+        </button>
+        <button data-view="list" aria-label="List view" data-tip="List view">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 5h7M4 10h7M4 15h7M13 5h7M13 10h7M13 15h7"/></svg>
+        </button>
+        <button data-view="tiles" aria-label="Tiles view" data-tip="Tiles view">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>
+        </button>
+        <button data-view="columns" aria-label="Columns view" data-tip="Columns (Miller) view">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/></svg>
+        </button>
+      </div>
+      <div class="theme-wrap">
+        <button id="theme-btn" aria-label="Change theme" aria-haspopup="menu" data-tip="Change theme (Ctrl+T)" data-tip-pos="left">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+            <path d="M12 21.5a9.5 9.5 0 1 1 9.5-9.5c0 2.6-2.1 4.2-4.2 4.2h-2a1.9 1.9 0 0 0-1.4 3.2c.3.35.5.8.5 1.2 0 .77-.63 .9-2.4 .9z"/>
+            <circle cx="8" cy="8.2" r="1.15" fill="currentColor" stroke="none"/>
+            <circle cx="13.2" cy="6.4" r="1.15" fill="currentColor" stroke="none"/>
+            <circle cx="17" cy="10" r="1.15" fill="currentColor" stroke="none"/>
+            <circle cx="6.4" cy="13.2" r="1.15" fill="currentColor" stroke="none"/>
+          </svg>
+        </button>
+        <div class="theme-menu" id="theme-menu" role="menu" aria-label="Themes" hidden></div>
+      </div>
+      <a class="gh-link" href="https://github.com/xnmp/tauri-explorer" aria-label="Source on GitHub" data-tip="Read the source" data-tip-pos="left">GitHub ↗</a>
+    </div>
+
+    <div class="body">
+      <aside class="sidebar" id="sidebar" aria-label="Folders"></aside>
+      <div class="rsz" id="rsz-sidebar" aria-hidden="true" data-tip="Drag to resize"></div>
+      <main class="filelist" id="filelist" aria-label="Files"></main>
+      <main class="filelist" id="filelist2" aria-label="Files (second pane)" hidden></main>
+      <div class="rsz" id="rsz-preview" aria-hidden="true" data-tip="Drag to resize" hidden></div>
+      <section class="preview" id="preview" aria-label="Preview" hidden>
+        <div class="preview-head">
+          <span id="preview-name"></span>
+          <button id="preview-close" aria-label="Close preview" data-tip="Close preview (Esc)" data-tip-pos="left">×</button>
+        </div>
+        <div class="preview-body" id="preview-body"></div>
+      </section>
+    </div>
+
+    <!-- Integrated terminal: a tiny real shell over this fake filesystem -->
+    <div class="terminal" id="terminal" hidden>
+      <div class="rsz-h" id="rsz-term" aria-hidden="true"></div>
+      <div class="term-head">
+        <span>TERMINAL <span class="term-sub">— try: help · ls · cd features · cat README.md · git graph</span></span>
+        <button id="term-close" aria-label="Close terminal" data-tip="Close (Ctrl+`)" data-tip-pos="left">×</button>
+      </div>
+      <div class="term-scroll" id="term-scroll">
+        <div id="term-out"></div>
+        <div class="term-line">
+          <span class="term-prompt" id="term-prompt">~/tauri-explorer ❯</span>
+          <input id="term-input" autocomplete="off" spellcheck="false" autocapitalize="off" aria-label="Terminal input" />
+        </div>
+      </div>
+    </div>
+
+    <footer class="statusbar">
+      <span id="status-left">…</span>
+      <span class="status-hints">
+        <kbd>Ctrl+P</kbd> find a feature · <kbd>Ctrl+Shift+P</kbd> commands · <kbd>Ctrl+`</kbd> terminal
+      </span>
+      <span id="status-right">v1.0.1 · MIT</span>
+    </footer>
+  </div>
+
+  <!-- Quick open -->
+  <div class="overlay" id="qo-overlay" hidden>
+    <div class="modal qo">
+      <input id="qo-input" type="text" placeholder="Fuzzy-find anything on this site…" autocomplete="off" spellcheck="false" />
+      <ul id="qo-results"></ul>
+    </div>
+  </div>
+
+  <!-- Command palette -->
+  <div class="overlay" id="cp-overlay" hidden>
+    <div class="modal cp">
+      <input id="cp-input" type="text" placeholder="Type a command…" autocomplete="off" spellcheck="false" />
+      <ul id="cp-results"></ul>
+    </div>
+  </div>
+
+  <!-- Content search: the site greps itself -->
+  <div class="overlay" id="cs-overlay" hidden>
+    <div class="modal cs">
+      <input id="cs-input" type="text" placeholder="Search inside this site's files (the real one is ripgrep)…" autocomplete="off" spellcheck="false" />
+      <ul id="cs-results"></ul>
+    </div>
+  </div>
+
+  <!-- Commit graph: this repo's actual history, and it's live -->
+  <div class="overlay" id="gg-overlay" hidden>
+    <div class="modal gg">
+      <div class="gg-head">
+        <h2>Commit graph <span class="ks-sub">— this repo's actual history · click a commit · everything works</span></h2>
+        <span class="gg-btns">
+          <button id="gg-reset" data-tip="Undo your demo commits/refs" data-tip-pos="left">reset</button>
+          <button id="gg-close" aria-label="Close graph">×</button>
+        </span>
+      </div>
+      <div class="gg-body" id="gg-body">
+        <div class="gg-list" id="gg-list"></div>
+        <div class="gg-detail" id="gg-detail" hidden></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI rename: the Gemini plugin, demo'd without the network -->
+  <div class="overlay" id="ai-overlay" hidden>
+    <div class="modal ai">
+      <h2>AI Rename <span class="ks-sub">— optional plugin, your own key, off by default. This demo fakes the call.</span></h2>
+      <div class="ai-body" id="ai-body"></div>
+    </div>
+  </div>
+
+  <!-- Shortcut cheatsheet -->
+  <div class="overlay" id="ks-overlay" hidden>
+    <div class="modal ks">
+      <h2>This site's shortcuts <span class="ks-sub">(the app has ~60 more — all rebindable)</span></h2>
+      <ul class="ks-list">
+        <li><span>Fuzzy quick-open</span><kbd>Ctrl+P</kbd></li>
+        <li><span>Command palette</span><kbd>Ctrl+Shift+P</kbd></li>
+        <li><span>Search inside files</span><kbd>Ctrl+Shift+F</kbd></li>
+        <li><span>Edit the path</span><kbd>Ctrl+L</kbd></li>
+        <li><span>Integrated terminal</span><kbd>Ctrl+`</kbd></li>
+        <li><span>Dual pane</span><kbd>Ctrl+\</kbd></li>
+        <li><span>Copy / move across panes</span><kbd>F5</kbd> <kbd>F6</kbd></li>
+        <li><span>Rename selected</span><kbd>F2</kbd></li>
+        <li><span>This cheatsheet</span><kbd>Ctrl+/</kbd></li>
+        <li><span>Cycle themes</span><kbd>Ctrl+T</kbd></li>
+        <li><span>Navigate list</span><kbd>↑ ↓ Enter</kbd></li>
+        <li><span>Up a directory</span><kbd>Backspace</kbd></li>
+        <li><span>Close anything</span><kbd>Esc</kbd></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Context menu (files + graph commits) -->
+  <div class="ctx" id="ctx" hidden></div>
+
+  <!-- First-run hint, exactly like the app's -->
+  <div class="hint" id="hint" hidden>
+    <span>This page <em>is</em> the file manager. <kbd>Ctrl+P</kbd> finds features, <kbd>Ctrl+Shift+P</kbd> runs commands — or just click around.</span>
+    <button id="hint-dismiss">Got it</button>
+  </div>
+
+  <!-- Lightbox: preview images maximize on click -->
+  <div class="lightbox" id="lightbox" hidden role="dialog" aria-label="Image preview">
+    <img id="lightbox-img" alt="" />
+    <div class="lightbox-cap" id="lightbox-cap"></div>
+  </div>
+
+  <!-- Toast stack: transient guidance, like the app's notifications -->
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+</body>
+</html>

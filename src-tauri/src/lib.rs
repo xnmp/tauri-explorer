@@ -13,8 +13,10 @@ mod files;
 mod gemini;
 pub mod git;
 pub mod git_actions;
+mod git_common;
 pub mod git_log;
 mod nano_banana;
+mod palette;
 #[cfg(target_os = "linux")]
 mod portal;
 mod process_ext;
@@ -114,6 +116,8 @@ pub fn run(launch_dir: Option<String>) {
             crash_report::take_crash_report,
             crash_report::log_frontend_error,
             crash_report::open_external_url,
+            palette::extract_palette,
+            config::write_theme_file,
             update_check::check_for_update,
             log_startup_timing,
             // Trash operations
@@ -201,6 +205,7 @@ pub fn run(launch_dir: Option<String>) {
             git_log::git_log,
             git_log::git_refs,
             git_log::git_commit_files,
+            git_log::git_commit_file_diff,
             git_actions::git_checkout,
             git_actions::git_create_branch,
             git_actions::git_create_tag,
@@ -230,6 +235,7 @@ pub fn run(launch_dir: Option<String>) {
             warm_pool::warm_pool_discard,
             warm_pool::warm_pool_shutdown,
             // Embedded terminal
+            terminal::terminal_reserve_id,
             terminal::terminal_spawn,
             terminal::terminal_write,
             terminal::terminal_resize,

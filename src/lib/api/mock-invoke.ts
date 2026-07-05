@@ -15,14 +15,6 @@ export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-// Outside Tauri (browser E2E) the first-run hint (#186) would sit over every
-// test's UI — suppress it by default; tests opt back in with mockFirstRun.
-if (typeof window !== "undefined" && !isTauri() && typeof localStorage !== "undefined") {
-  if (localStorage.getItem("mockFirstRun") !== "1") {
-    localStorage.setItem("firstRunHintDismissed", "1");
-  }
-}
-
 // Deterministic, varied timestamps: each created entry gets a distinct
 // modified time (1h apart from a fixed base) so sort-by-modified is testable.
 const TIMESTAMP_BASE = Date.UTC(2024, 0, 1, 12, 0, 0);
@@ -1097,6 +1089,12 @@ const mockCommands: Record<string, CommandHandler> = {
     return "data:image/jpeg;base64,/9j//gAQTGF2YzYyLjExLjEwMAD/2wBDAAgUFBcUFxsbGxsbGyAeICEhISAgICAhISEkJCQqKiokJCQhISQkKCgqKi4vLisrKisvLzIyMjw8OTlGRkhWVmf/xABiAAEBAQAAAAAAAAAAAAAAAAAGAwUBAQAAAAAAAAAAAAAAAAAAAAQQAAIBAwQCAwEAAAAAAAAAAAECAxESACExIgRxYRNBUTIRAQACAwEBAAAAAAAAAAAAAAEhADFBAoED/8AAEQgAEAAQAwEiAAIRAAMRAP/aAAwDAQACEQMRAD8AjOYesy3q4rUW2Vq3o4en70YNEis21Ycq+M3WvdI7ecjm0En+PwA/VddsDTjrpGx+UO9RooLbb8mpp4GN4UJZKn6Zjfl//9k=";
   },
 
+  read_image_data_url: () => {
+    // Full-size preview in browser/E2E mode: reuse the realistic thumbnail
+    // JPEG so the preview pane (and its fullscreen mode) can be exercised.
+    return mockInvoke<string>("get_thumbnail_data");
+  },
+
   get_video_thumbnail_data: () => {
     // Same realistic 128px thumbnail as images — stands in for an extracted
     // video frame so the tiles view can be demoed in browser/E2E mode.
@@ -1122,6 +1120,7 @@ const mockCommands: Record<string, CommandHandler> = {
   // Embedded terminal: a PTY can't be faked meaningfully in the browser —
   // spawn "succeeds" (so the panel renders and e2e can exercise the toggle)
   // but never emits output. Real terminal behavior is covered by e2e-tauri.
+  terminal_reserve_id: () => 1,
   terminal_spawn: () => 1,
   terminal_write: () => {},
   terminal_resize: () => {},
@@ -1150,7 +1149,6 @@ const mockCommands: Record<string, CommandHandler> = {
 
   get_config_dir: () => "/home/user/.config/tauri-explorer",
 
-  list_user_themes: () => [] as [string, string][],
 
   get_git_status: (args: Record<string, unknown>) => {
     const path = args.path as string;
@@ -1221,6 +1219,20 @@ const mockCommands: Record<string, CommandHandler> = {
       ];
     }
     return [{ path: `src/file-${n}.ts`, status: n % 2 === 0 ? "M" : "A" }];
+  },
+  git_commit_file_diff: (args) => {
+    // Deterministic tiny patch so E2E can assert the inline diff (#221).
+    const filePath = args.filePath as string;
+    return [
+      `diff --git a/${filePath} b/${filePath}`,
+      `--- a/${filePath}`,
+      `+++ b/${filePath}`,
+      "@@ -1,3 +1,3 @@",
+      " unchanged line",
+      "-old line",
+      "+new line",
+      "",
+    ].join("\n");
   },
   git_stage: (args: Record<string, unknown>) => {
     const paths = (args.paths as string[]) ?? [];
@@ -1532,6 +1544,18 @@ const mockCommands: Record<string, CommandHandler> = {
   // ----- Misc -----
 
   get_log_dir: () => "/tmp/tauri-explorer/logs",
+  // Theme from Image (#203): deterministic palette; theme CSS goes into the
+  // in-memory config store and is injected by the mocked list_user_themes.
+  extract_palette: () => ["#1a2233", "#5de5d5", "#31425c", "#d98500", "#88a0c8", "#223044"],
+  write_theme_file: (args) => {
+    mockConfigFiles[`themes/${args.filename as string}`] = args.data as string;
+    return undefined;
+  },
+  list_user_themes: () =>
+    Object.entries(mockConfigFiles)
+      .filter(([k]) => k.startsWith("themes/"))
+      .map(([k, v]) => [k.slice("themes/".length), v]),
+
   get_app_info: () => ({ version: "0.0.0-mock", os: "linux", arch: "x86_64" }),
 
   // Mirrors the real backend: writes a PNG into `directory` and returns its

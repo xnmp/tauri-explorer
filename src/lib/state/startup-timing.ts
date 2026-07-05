@@ -14,7 +14,7 @@
  * navigations or HMR can't skew it.
  */
 
-import { invoke } from "$lib/api/files";
+import { logStartupTiming } from "$lib/api/files";
 
 type Mark = { name: string; t: number };
 
@@ -54,5 +54,5 @@ export function reportFirstPaint(): void {
 
   // Fire-and-forget; never let timing telemetry affect the app. The command is
   // absent in mock/browser mode (invoke rejects) — swallow that quietly.
-  void invoke("log_startup_timing", { summary: line }).catch(() => {});
+  void logStartupTiming(line).catch(() => {});
 }

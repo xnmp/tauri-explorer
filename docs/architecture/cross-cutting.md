@@ -37,6 +37,19 @@
 
 ---
 
+## Refresh Policy (who owns which decision)
+
+Directory-refresh behavior is layered across three modules; each owns exactly
+one decision (change the owning layer, don't add a fourth gate):
+
+| Layer | Owns | Module |
+|-------|------|--------|
+| Scheduling | **When** a refresh runs: per-directory debounce + rate limit, dedupe across sources | `state/refresh-manager.ts` |
+| Watcher gating | **Whether** a watcher-triggered (silent) refresh may run: local-mutation cooldown suppresses the watcher's echo of the pane's own mutation | `state/pane-watch.ts` |
+| Application | **How** a refresh is applied: fetch without touching UI state, drop on unchanged fingerprint (no flash) or if the pane navigated away | `state/pane-refresh.ts` |
+
+---
+
 ## Theming System
 
 ### Bundled Themes (`src/lib/themes/`)

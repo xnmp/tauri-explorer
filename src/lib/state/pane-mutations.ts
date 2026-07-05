@@ -36,6 +36,9 @@ import { basename, joinPath, isInsideDir, isUncPath } from "$lib/domain/path";
 
 export interface PaneMutationContext {
   coreState: ExplorerCoreState;
+  /** Replace the selection via the store's in-place SvelteSet mutation —
+   *  never reassign `coreState.selectedPaths` (kills granular reactivity). */
+  setSelection: (next: Iterable<string>) => void;
   displayEntries: () => FileEntry[];
   markLocalMutation: () => void;
   /** Parent of the current directory, or null at the root. */
@@ -67,7 +70,7 @@ export function createPaneMutations(ctx: PaneMutationContext) {
 
     if (result.ok) {
       coreState.entries = [...coreState.entries, result.data];
-      coreState.selectedPaths = new Set([result.data.path]);
+      ctx.setSelection([result.data.path]);
       const idx = ctx.displayEntries().findIndex((e) => e.path === result.data.path);
       coreState.selectionAnchorIndex = idx >= 0 ? idx : null;
       ctx.markLocalMutation();
@@ -135,7 +138,7 @@ export function createPaneMutations(ctx: PaneMutationContext) {
       }
       const deletedPaths = new Set(paths);
       coreState.entries = coreState.entries.filter((e) => !deletedPaths.has(e.path));
-      coreState.selectedPaths = new Set(
+      ctx.setSelection(
         [...coreState.selectedPaths].filter((p) => !deletedPaths.has(p))
       );
       ctx.markLocalMutation();

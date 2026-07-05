@@ -83,8 +83,22 @@ pub fn init_watcher(app: &AppHandle) {
                 pending.insert(dir, Instant::now());
             }
         }
-    })
-    .expect("Failed to create filesystem watcher");
+    });
+
+    // Watcher creation can fail at startup (e.g. inotify instance exhaustion).
+    // Degrade to no live refresh instead of panicking the whole app —
+    // watch_directory then returns "not initialized" errors, which the
+    // frontend already tolerates.
+    let watcher = match watcher {
+        Ok(w) => w,
+        Err(e) => {
+            log::error!(
+                "Failed to create filesystem watcher (live refresh disabled): {}",
+                e
+            );
+            return;
+        }
+    };
 
     let fs_watcher = FsWatcher {
         watcher,

@@ -59,7 +59,15 @@ fn write_crash_report(crash_dir: &Path, info: &std::panic::PanicHookInfo) -> std
 
     std::fs::create_dir_all(crash_dir)?;
     let file = crash_dir.join(format!("{}{}{}", CRASH_PREFIX, epoch_secs, CRASH_SUFFIX));
-    std::fs::write(file, report)
+    std::fs::write(&file, report)?;
+    // Backtraces can carry absolute paths — keep reports owner-readable only,
+    // matching config.rs.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize)]

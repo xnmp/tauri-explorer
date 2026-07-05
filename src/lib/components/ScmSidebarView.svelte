@@ -322,6 +322,9 @@
           onclick={() => doCommit()}
           title={commitButtonTooltip}
         >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true" class="commit-btn-icon">
+            <path d="M13.5 4.5L6 12L2.5 8.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
           {commitButtonLabel}
         </button>
       </div>
@@ -448,9 +451,6 @@
             role="listitem"
             title={row.path}
           >
-            <span class="status-letter {statusClass(row.status)}" aria-label={row.status}>
-              {statusLetter(row.status)}
-            </span>
             <span class="file-name">{parts.name}</span>
             {#if parts.dir}
               <span class="file-dir">{parts.dir}</span>
@@ -497,6 +497,9 @@
                   onclick={(e) => { e.stopPropagation(); scmStore.stage([row.path]); }}
                 >+</button>
               {/if}
+            </span>
+            <span class="status-letter {statusClass(row.status)}" aria-label={row.status}>
+              {statusLetter(row.status)}
             </span>
           </li>
         {/each}
@@ -569,9 +572,6 @@
         {#each { length: depth } as _, i}
           <span class="depth-guide" style="left: {i * 12 + 10}px"></span>
         {/each}
-        <span class="status-letter {statusClass(row.status)}" aria-label={row.status}>
-          {statusLetter(row.status)}
-        </span>
         <span class="file-name">{fileName}</span>
         <span class="row-actions">
           {#if kind === "staged"}
@@ -592,6 +592,9 @@
             <button type="button" class="row-btn" title="Stage" aria-label="Stage {row.path}"
               onclick={(e) => { e.stopPropagation(); scmStore.stage([row.path]); }}>+</button>
           {/if}
+        </span>
+        <span class="status-letter {statusClass(row.status)}" aria-label={row.status}>
+          {statusLetter(row.status)}
         </span>
       </li>
     {/each}
@@ -650,7 +653,7 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
-    padding: 10px 12px 12px;
+    padding: 8px;
     border-bottom: 1px solid var(--divider);
   }
 
@@ -703,11 +706,11 @@
   }
 
   .row.tree-folder {
-    grid-template-columns: 12px 1fr minmax(0, auto);
     gap: 4px;
     cursor: pointer;
     color: var(--text-secondary);
     font-size: 12px;
+    height: 22px;
     min-height: 22px;
     position: relative;
   }
@@ -721,13 +724,14 @@
   }
 
   .folder-name {
+    flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .row.tree-file {
-    grid-template-columns: 18px minmax(0, 1fr) minmax(0, auto);
     position: relative;
   }
 
@@ -744,14 +748,18 @@
     width: 100%;
     min-height: 52px;
     padding: 8px 10px;
-    background: var(--background-card);
+    background: var(--control-fill);
     border: 1px solid var(--divider);
-    border-radius: var(--radius-sm);
+    border-radius: 4px;
     color: var(--text-primary);
     font-family: inherit;
     font-size: 13px;
     resize: vertical;
     transition: border-color var(--transition-fast);
+  }
+
+  .commit-message::placeholder {
+    color: var(--text-tertiary);
   }
 
   .commit-message:focus {
@@ -767,8 +775,7 @@
 
   .commit-row {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-direction: column;
     gap: 8px;
   }
 
@@ -787,16 +794,26 @@
   }
 
   .commit-btn {
-    padding: 6px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    height: 26px;
+    padding: 0 14px;
     background: var(--accent);
-    color: white;
+    color: var(--text-on-accent);
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: 4px;
     font-family: inherit;
     font-size: 12px;
-    font-weight: var(--font-weight-medium);
+    font-weight: 500;
     cursor: pointer;
     transition: opacity var(--transition-fast), background var(--transition-fast);
+  }
+
+  .commit-btn-icon {
+    flex-shrink: 0;
   }
 
   .commit-btn:hover:not(:disabled) {
@@ -817,14 +834,15 @@
   .section-header {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
+    gap: 4px;
+    height: 22px;
+    padding: 0 8px;
     background: transparent;
     border: none;
     font-family: inherit;
-    font-size: var(--font-size-caption);
-    font-weight: var(--font-weight-semibold);
-    color: var(--text-tertiary);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: var(--letter-spacing-wide);
     cursor: pointer;
@@ -838,6 +856,7 @@
   }
 
   .chevron {
+    flex-shrink: 0;
     color: var(--text-tertiary);
     transition: transform var(--transition-fast);
   }
@@ -853,9 +872,9 @@
   .count-badge {
     background: var(--subtle-fill-secondary);
     color: var(--text-secondary);
-    font-size: 10px;
-    padding: 1px 7px;
-    border-radius: var(--radius-pill);
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 10px;
     font-weight: var(--font-weight-medium);
     letter-spacing: 0;
     text-transform: none;
@@ -870,16 +889,16 @@
   }
 
   .row {
-    display: grid;
-    grid-template-columns: 18px minmax(0, 1fr) minmax(0, auto);
+    display: flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 8px;
+    padding: 0 8px;
     border-radius: var(--radius-sm);
     cursor: pointer;
     transition: background var(--transition-fast);
     font-size: 13px;
-    min-height: 26px;
+    height: 22px;
+    min-height: 22px;
     position: relative;
   }
 
@@ -902,33 +921,40 @@
   }
 
   .status-letter {
+    flex-shrink: 0;
+    width: 14px;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-weight: var(--font-weight-bold);
     font-size: 11px;
     text-align: center;
     line-height: 1;
+    margin-left: auto;
   }
 
-  /* Status letter colors: themeable via --scm-* vars with sensible defaults. */
-  .s-modified { color: var(--scm-modified, #0ea5e9); }
-  .s-added { color: var(--scm-added, #22c55e); }
-  .s-deleted { color: var(--scm-deleted, #ef4444); }
-  .s-renamed { color: var(--scm-renamed, #a855f7); }
-  .s-conflict { color: var(--scm-conflict, #f97316); }
+  /* Status letter colors: themeable via --scm-* vars, mixed with the theme's
+     text color so they stay legible on both dark and light backgrounds. */
+  .s-modified { color: var(--scm-modified, color-mix(in srgb, #d7ba7d 75%, var(--text-primary) 25%)); }
+  .s-added { color: var(--scm-added, color-mix(in srgb, #73c991 75%, var(--text-primary) 25%)); }
+  .s-deleted { color: var(--scm-deleted, color-mix(in srgb, #f14c4c 75%, var(--text-primary) 25%)); }
+  .s-renamed { color: var(--scm-renamed, color-mix(in srgb, #6cb6ff 75%, var(--text-primary) 25%)); }
+  .s-conflict { color: var(--scm-conflict, color-mix(in srgb, #e4676b 75%, var(--text-primary) 25%)); }
   .s-ignored { color: var(--text-tertiary); }
-  .s-type { color: var(--scm-typechange, #eab308); }
+  .s-type { color: var(--scm-typechange, color-mix(in srgb, #eab308 75%, var(--text-primary) 25%)); }
 
   .file-name {
+    flex: 1;
+    min-width: 0;
     color: var(--text-primary);
+    font-size: 13px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .file-dir {
-    grid-column: 3;
+    flex-shrink: 1;
     color: var(--text-tertiary);
-    font-size: 11px;
+    font-size: 90%;
     margin-left: 6px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -942,13 +968,17 @@
     display: none;
     gap: 2px;
     position: absolute;
-    right: 0;
+    right: 16px;
     top: 0;
     bottom: 0;
     align-items: center;
-    padding: 0 6px 0 16px;
+    padding: 0 4px 0 16px;
     border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-    background: linear-gradient(to right, transparent 0%, var(--background-solid) 30%);
+    background: linear-gradient(to right, transparent 0%, var(--subtle-fill-secondary) 30%);
+  }
+
+  .folder-actions {
+    right: 0;
   }
 
   .row:hover .row-actions,
@@ -964,13 +994,14 @@
   }
 
   .row-btn {
-    width: 20px;
-    height: 20px;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
     padding: 0;
     border: none;
     background: transparent;
     color: var(--text-secondary);
-    font-size: 14px;
+    font-size: 13px;
     border-radius: 4px;
     cursor: pointer;
     display: flex;
@@ -978,11 +1009,10 @@
     justify-content: center;
     font-family: inherit;
     line-height: 1;
-    transition: background var(--transition-fast), color var(--transition-fast);
+    transition: color var(--transition-fast);
   }
 
   .row-btn:hover {
-    background: var(--subtle-fill-tertiary);
     color: var(--text-primary);
   }
 

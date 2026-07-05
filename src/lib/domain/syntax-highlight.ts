@@ -127,3 +127,20 @@ export function highlightLanguage(code: string, lang: string | undefined): strin
   }
   return escapeHtml(code);
 }
+
+/**
+ * Highlight a single diff content line for `filename` (#227).
+ *
+ * Per-line highlighting: each line is tokenized independently, so grammar
+ * state never leaks across add/remove/context boundaries — the same tradeoff
+ * VSCode's inline diff decorations make. Unknown extensions fall back to
+ * escaped plaintext; auto-detection is deliberately skipped (far too noisy
+ * on single lines).
+ */
+export function highlightDiffLine(text: string, filename: string): string {
+  const ext = filename.split(".").pop()?.toLowerCase() ?? "";
+  if (ext && hljs.getLanguage(ext)) {
+    return hljs.highlight(text, { language: ext, ignoreIllegals: true }).value;
+  }
+  return escapeHtml(text);
+}

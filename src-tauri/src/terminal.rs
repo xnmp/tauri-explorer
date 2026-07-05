@@ -353,7 +353,9 @@ fn is_busy(handle: &TerminalHandle) -> bool {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // three of these are the event callbacks
 fn spawn_shell(
+    id: u64,
     window_label: String,
     cwd: Option<String>,
     cols: u16,
@@ -408,7 +410,6 @@ fn spawn_shell(
         .take_writer()
         .map_err(|e| AppError::Other(format!("pty writer failed: {e}")))?;
 
-    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     terminals()
         .lock()
         .map_err(|e| AppError::Other(format!("terminals registry lock poisoned: {e}")))?
@@ -477,49 +478,55 @@ pub fn on_window_destroyed(label: &str) {
 
 // ─── Async Tauri commands ───────────────────────────────────────────────────
 
-/// Spawn the user's shell in a PTY at `cwd`. Returns the terminal id used in
-/// the `terminal-output-{id}` / `terminal-exit-{id}` event names.
+/// Reserve a terminal id BEFORE spawning, so the frontend can register its
+/// output/exit/cwd listeners first. Without this, a fast shell emits its
+/// prompt into the listener-registration gap and the terminal opens blank
+/// (#201 — reproduced repeatedly by the Linux CI smoke suite).
+#[tauri::command]
+pub async fn terminal_reserve_id() -> u64 {
+    NEXT_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Spawn the user's shell in a PTY at `cwd`, emitting on the
+/// `terminal-output-{id}` / `terminal-exit-{id}` / `terminal-cwd-{id}`
+/// events for the RESERVED id (see `terminal_reserve_id`).
 #[tauri::command]
 pub async fn terminal_spawn(
     app: AppHandle,
     window: tauri::Window,
+    id: u64,
     cwd: Option<String>,
     cols: u16,
     rows: u16,
 ) -> Result<u64, AppError> {
     let label = window.label().to_string();
+    {
+        let map = terminals()
+            .lock()
+            .map_err(|e| AppError::Other(format!("terminals registry lock poisoned: {e}")))?;
+        if map.contains_key(&id) {
+            return Err(AppError::Other(format!("terminal {id} already exists")));
+        }
+    }
     tokio::task::spawn_blocking(move || {
         let out_app = app.clone();
-        // The id isn't known until spawn returns, so route through a cell the
-        // closures read; spawn_shell only invokes them after registration.
-        let id_cell = std::sync::Arc::new(OnceLock::new());
-        let out_id = id_cell.clone();
-        let exit_id = id_cell.clone();
-        let cwd_id = id_cell.clone();
         let cwd_app = app.clone();
-        let id = spawn_shell(
+        spawn_shell(
+            id,
             label,
             cwd,
             cols.max(2),
             rows.max(2),
             move |chunk| {
-                if let Some(id) = out_id.get() {
-                    let _ = out_app.emit(&format!("terminal-output-{id}"), chunk);
-                }
+                let _ = out_app.emit(&format!("terminal-output-{id}"), chunk);
             },
             move |code| {
-                if let Some(id) = exit_id.get() {
-                    let _ = app.emit(&format!("terminal-exit-{id}"), code);
-                }
+                let _ = app.emit(&format!("terminal-exit-{id}"), code);
             },
             move |path| {
-                if let Some(id) = cwd_id.get() {
-                    let _ = cwd_app.emit(&format!("terminal-cwd-{id}"), path);
-                }
+                let _ = cwd_app.emit(&format!("terminal-cwd-{id}"), path);
             },
-        )?;
-        let _ = id_cell.set(id);
-        Ok(id)
+        )
     })
     .await
     .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
@@ -660,7 +667,9 @@ mod tests {
         let (tx, rx) = mpsc::channel::<String>();
         let (exit_tx, exit_rx) = mpsc::channel::<Option<u32>>();
 
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
         let id = spawn_shell(
+            id,
             "test-window".into(),
             Some(canonical.to_string_lossy().into_owned()),
             80,
@@ -720,6 +729,7 @@ mod tests {
         let (exit_tx_b, exit_rx_b) = mpsc::channel::<Option<u32>>();
 
         let _a = spawn_shell(
+            NEXT_ID.fetch_add(1, Ordering::Relaxed),
             "win-a".into(),
             None,
             80,
@@ -732,6 +742,7 @@ mod tests {
         )
         .unwrap();
         let b = spawn_shell(
+            NEXT_ID.fetch_add(1, Ordering::Relaxed),
             "win-b".into(),
             None,
             80,
@@ -935,6 +946,7 @@ mod tests {
     fn busy_detection_tracks_foreground_command() {
         let (exit_tx, _exit_rx) = mpsc::channel::<Option<u32>>();
         let id = spawn_shell(
+            NEXT_ID.fetch_add(1, Ordering::Relaxed),
             "busy-test".into(),
             None,
             80,
@@ -1027,6 +1039,7 @@ mod tests {
         let (tx, rx) = mpsc::channel::<String>();
         let (cwd_tx, cwd_rx) = mpsc::channel::<String>();
         let id = spawn_shell(
+            NEXT_ID.fetch_add(1, Ordering::Relaxed),
             "zsh-osc7".into(),
             Some(canonical.to_string_lossy().into_owned()),
             80,

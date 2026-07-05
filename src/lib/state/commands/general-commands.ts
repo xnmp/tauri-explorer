@@ -13,7 +13,7 @@ import { toastStore } from "../toast.svelte";
 import { readFocusedWindowState } from "../focused-window";
 import { getActiveExplorer, openNewWindow } from "./shared";
 import { getAppInfo, bugReportUrl, openExternalUrl } from "$lib/api/crash";
-import { invoke } from "$lib/api/files";
+import { getLogDir } from "$lib/api/files";
 
 /** Window commands */
 export const windowCommands: Command[] = [
@@ -104,6 +104,7 @@ export const gitGraphCommands: Command[] = [
     id: "git.showGraph",
     label: "Git: Show Commit Graph",
     category: "general",
+    shortcut: "Ctrl+Alt+G",
     when: () => settingsStore.enableGitGraph,
     handler: async () => {
       const path = getActiveExplorer()?.state.currentPath;
@@ -223,7 +224,7 @@ export const generalDialogCommands: Command[] = [
     label: "Open Logs Folder",
     category: "general",
     handler: async () => {
-      const dir = await invoke<string>("get_log_dir");
+      const dir = await getLogDir();
       await getActiveExplorer()?.navigateTo(dir);
     },
   },

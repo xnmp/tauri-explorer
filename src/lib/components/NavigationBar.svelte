@@ -12,7 +12,7 @@
   import { getDropSourcePaths, handleFileDropMany } from "$lib/state/drop-operations";
   import { truncateBreadcrumbs } from "$lib/domain/breadcrumb-truncation";
   import { isWslDistroRoot, isWslHome } from "$lib/domain/wsl";
-  import { directoryKey } from "$lib/domain/path";
+  import { directoryKey, isDriveRoot } from "$lib/domain/path";
   import { drivesStore } from "$lib/state/drives.svelte";
   import BreadcrumbAutocomplete from "./BreadcrumbAutocomplete.svelte";
   import CaretPicker from "./CaretPicker.svelte";
@@ -159,7 +159,7 @@
     const sepIdx = Math.max(own.lastIndexOf("/"), own.lastIndexOf("\\"));
     if (sepIdx <= 0) return fallback;
     const parent = own.substring(0, sepIdx);
-    return { path: /^[A-Za-z]:$/.test(parent) ? `${parent}\\` : parent, name: null };
+    return { path: isDriveRoot(parent) ? `${parent}\\` : parent, name: null };
   }
 
   // Caret picker state

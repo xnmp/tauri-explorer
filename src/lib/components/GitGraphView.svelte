@@ -9,6 +9,7 @@
   import {
     gitLog,
     gitCommitFiles,
+    gitCommitFileDiff,
     gitCheckout,
     gitCreateBranch,
     gitCreateTag,
@@ -23,9 +24,12 @@
     type ResetMode,
   } from "$lib/api/git-log";
   import { assignLayout, branchPath, groupRefChips, GRAPH_PALETTE, type GraphLayout, type BranchLine, type RefChips } from "$lib/domain/git-graph";
+  import { clientToFixed } from "$lib/domain/zoom";
+  import { parseUnifiedDiff, type ParsedDiff } from "$lib/domain/diff";
+  import { gitStatusLetter } from "$lib/domain/git";
   import { notifyLocalGitChange } from "$lib/state/git-refresh";
   import { toastStore } from "$lib/state/toast.svelte";
-  import { gitSummary } from "$lib/api/files";
+  import { gitDiff, gitSummary } from "$lib/api/files";
 
   const { repoPath }: { repoPath: string } = $props();
 
@@ -40,22 +44,93 @@
   let loading = $state(false);
   let error = $state<string | null>(null);
   let selected = $state<CommitInfo | null>(null);
-  let selectedFiles = $state<CommitFile[]>([]);
+  /** File rows in the expanded details. `staged` is set only for the
+   *  synthetic uncommitted row, where it picks the right working-tree diff. */
+  interface DetailFile extends CommitFile {
+    staged?: boolean;
+  }
+  let selectedFiles = $state<DetailFile[]>([]);
   /** Working-tree change count → synthetic top row (reference behavior). */
   let workingChanges = $state(0);
   let headOid = $state<string | null>(null);
 
+  // Inline per-file diff (#221, VSCode Git Graph parity): one open at a time.
+  let openDiffPath = $state<string | null>(null);
+  let openDiff = $state<ParsedDiff | null>(null);
+  let diffLoading = $state(false);
+  // Measured height of the inline details block; stretches the graph SVG so
+  // rows below the expansion stay aligned with their vertices.
+  let detailsHeight = $state(0);
+
+  function closeDetails(): void {
+    selected = null;
+    selectedFiles = [];
+    openDiffPath = null;
+    openDiff = null;
+    detailsHeight = 0;
+  }
+
   async function selectCommit(commit: CommitInfo): Promise<void> {
     if (selected?.oid === commit.oid) {
-      selected = null;
+      closeDetails();
       return;
     }
+    closeDetails();
     selected = commit;
-    selectedFiles = [];
     try {
-      selectedFiles = await gitCommitFiles(repoPath, commit.oid);
+      if (commit.oid === UNCOMMITTED) {
+        // Working-tree changes: flatten the SCM summary buckets, remembering
+        // which side of the index each file sits on for the diff below.
+        const res = await gitSummary(repoPath);
+        if (!res.ok) throw new Error(res.error);
+        const buckets: Array<[{ path: string; status: string }[], boolean]> = [
+          [res.data.staged, true],
+          [res.data.changes, false],
+          [res.data.merge, false],
+          [res.data.untracked, false],
+        ];
+        selectedFiles = buckets.flatMap(([files, staged]) =>
+          files.map((f) => ({ path: f.path, status: gitStatusLetter(f.status), staged })),
+        );
+      } else {
+        selectedFiles = await gitCommitFiles(repoPath, commit.oid);
+      }
     } catch {
       selectedFiles = [];
+    }
+  }
+
+  /** Expand/collapse one file's diff below its row. */
+  async function toggleFileDiff(file: DetailFile): Promise<void> {
+    if (openDiffPath === file.path) {
+      openDiffPath = null;
+      openDiff = null;
+      return;
+    }
+    const forCommit = selected;
+    if (!forCommit) return;
+    openDiffPath = file.path;
+    openDiff = null;
+    diffLoading = true;
+    try {
+      const text =
+        forCommit.oid === UNCOMMITTED
+          ? await gitDiff(repoPath, file.path, { staged: !!file.staged }).then((r) => {
+              if (!r.ok) throw new Error(r.error);
+              return r.data;
+            })
+          : await gitCommitFileDiff(repoPath, forCommit.oid, file.path);
+      // Ignore a late response if the user moved on.
+      if (openDiffPath === file.path && selected?.oid === forCommit.oid) {
+        openDiff = parseUnifiedDiff(text);
+      }
+    } catch (err) {
+      if (openDiffPath === file.path) {
+        toastStore.error(err instanceof Error ? err.message : String(err));
+        openDiffPath = null;
+      }
+    } finally {
+      diffLoading = false;
     }
   }
 
@@ -79,7 +154,19 @@
   );
   const layout: GraphLayout = $derived(assignLayout(displayCommits));
   const graphWidth = $derived(Math.max(2, layout.laneCount) * LANE_WIDTH);
-  const graphHeight = $derived(displayCommits.length * ROW_HEIGHT);
+  /** Row index of the expanded (selected) commit, or -1. */
+  const expandedIndex = $derived(
+    selected ? displayCommits.findIndex((c) => c.oid === selected!.oid) : -1,
+  );
+  /** SVG stretch below the inline details block (see domain RowExpand). */
+  const rowExpand = $derived(
+    expandedIndex >= 0 && detailsHeight > 0
+      ? { afterRow: expandedIndex, extra: detailsHeight }
+      : undefined,
+  );
+  const graphHeight = $derived(
+    displayCommits.length * ROW_HEIGHT + (rowExpand?.extra ?? 0),
+  );
 
   /** The branch line leaving the synthetic row (drawn gray + dashed up to
    *  the first real commit it reaches). */
@@ -201,9 +288,12 @@
   function openMenu(event: MouseEvent, commit: CommitInfo): void {
     event.preventDefault();
     prompt = null;
+    // clientToFixed: the menu is position:fixed, so cursor coordinates must be
+    // converted into fixed-CSS space or the menu drifts under CSS zoom (same
+    // transform ContextMenu uses — see domain/zoom.ts).
     menu = {
-      x: event.clientX,
-      y: event.clientY,
+      x: clientToFixed(event.clientX),
+      y: clientToFixed(event.clientY),
       commit,
       checkoutBranch: localBranchAt(commit.oid),
     };
@@ -317,27 +407,27 @@
           {#each layout.branches as line, li (li)}
             {#if line === uncommittedBranch}
               {@const parts = splitUncommitted(line)}
-              <path class="branch-halo" d={branchPath(parts.dirty, LANE_WIDTH, ROW_HEIGHT)} />
+              <path class="branch-halo" d={branchPath(parts.dirty, LANE_WIDTH, ROW_HEIGHT, rowExpand)} />
               <path
-                d={branchPath(parts.dirty, LANE_WIDTH, ROW_HEIGHT)}
+                d={branchPath(parts.dirty, LANE_WIDTH, ROW_HEIGHT, rowExpand)}
                 stroke="#808080"
                 stroke-dasharray="4 3"
                 stroke-width="2"
                 fill="none"
               />
               {#if parts.rest.points.length > 1}
-                <path class="branch-halo" d={branchPath(parts.rest, LANE_WIDTH, ROW_HEIGHT)} />
+                <path class="branch-halo" d={branchPath(parts.rest, LANE_WIDTH, ROW_HEIGHT, rowExpand)} />
                 <path
-                  d={branchPath(parts.rest, LANE_WIDTH, ROW_HEIGHT)}
+                  d={branchPath(parts.rest, LANE_WIDTH, ROW_HEIGHT, rowExpand)}
                   stroke={colorOf(line.colorIndex)}
                   stroke-width="2"
                   fill="none"
                 />
               {/if}
             {:else}
-              <path class="branch-halo" d={branchPath(line, LANE_WIDTH, ROW_HEIGHT)} />
+              <path class="branch-halo" d={branchPath(line, LANE_WIDTH, ROW_HEIGHT, rowExpand)} />
               <path
-                d={branchPath(line, LANE_WIDTH, ROW_HEIGHT)}
+                d={branchPath(line, LANE_WIDTH, ROW_HEIGHT, rowExpand)}
                 stroke={colorOf(line.colorIndex)}
                 stroke-width="2"
                 fill="none"
@@ -346,7 +436,7 @@
           {/each}
           {#each layout.vertices as vertex, vi (vi)}
             {@const cx = vertex.lane * LANE_WIDTH + LANE_WIDTH / 2}
-            {@const cy = vi * ROW_HEIGHT + ROW_HEIGHT / 2}
+            {@const cy = vi * ROW_HEIGHT + ROW_HEIGHT / 2 + (rowExpand && vi > rowExpand.afterRow ? rowExpand.extra : 0)}
             {#if displayCommits[vi]?.oid === UNCOMMITTED}
               <!-- Open circle at the uncommitted-changes row (reference default). -->
               <circle {cx} {cy} r="4" fill="var(--background-card)" stroke="#808080" stroke-width="2" />
@@ -372,8 +462,8 @@
             data-oid={commit.short_oid}
             role="button"
             tabindex="0"
-            onclick={() => { if (!synthetic) void selectCommit(commit); }}
-            onkeydown={(e) => { if (e.key === "Enter" && !synthetic) void selectCommit(commit); }}
+            onclick={() => void selectCommit(commit)}
+            onkeydown={(e) => { if (e.key === "Enter") void selectCommit(commit); }}
             oncontextmenu={(e) => { if (!synthetic) openMenu(e, commit); else e.preventDefault(); }}
           >
             {#if synthetic}
@@ -402,30 +492,76 @@
               <span class="date">{formatDate(commit.author_time)}</span>
             {/if}
           </div>
+          {#if selected?.oid === commit.oid}
+            <!-- Inline details (VSCode Git Graph parity, #221): expands
+                 directly below the clicked row; the graph SVG stretches by
+                 detailsHeight so lower rows stay aligned. -->
+            <div
+              class="commit-detail-inline"
+              data-testid="git-graph-detail"
+              bind:clientHeight={detailsHeight}
+            >
+              <div class="detail-head">
+                {#if !synthetic}
+                  <span class="oid">{commit.short_oid}</span>
+                {/if}
+                <span class="detail-summary">{commit.summary}</span>
+                <button class="detail-close" onclick={closeDetails} aria-label="Close details">✕</button>
+              </div>
+              {#if !synthetic}
+                <div class="detail-meta">
+                  {commit.author_name} &lt;{commit.author_email}&gt; · {formatDate(commit.author_time)}
+                  {#if commit.parents.length > 1}· merge of {commit.parents.length} parents{/if}
+                </div>
+              {/if}
+              <ul class="detail-files">
+                {#each selectedFiles as file (file.path + (file.staged ? ":s" : ""))}
+                  <li>
+                    <button
+                      type="button"
+                      class="detail-file"
+                      class:open={openDiffPath === file.path}
+                      onclick={() => void toggleFileDiff(file)}
+                      title="Show diff"
+                    >
+                      <span class="file-status s-{file.status}">{file.status}</span>
+                      <span class="file-path">{file.path}</span>
+                      {#if file.staged}<span class="file-staged-badge">staged</span>{/if}
+                    </button>
+                    {#if openDiffPath === file.path}
+                      <div class="file-diff" data-testid="git-graph-file-diff">
+                        {#if diffLoading}
+                          <div class="diff-note">Loading diff…</div>
+                        {:else if openDiff?.binary}
+                          <div class="diff-note">Binary file changed</div>
+                        {:else if openDiff && openDiff.lines.length > 0}
+                          <div class="diff-lines">
+                            {#each openDiff.lines as line (line.index)}
+                              {#if line.kind !== "header" && line.kind !== "meta"}
+                                <div class="diff-line {line.kind}">
+                                  <span class="diff-gutter">{line.oldLine ?? ""}</span>
+                                  <span class="diff-gutter">{line.newLine ?? ""}</span>
+                                  <span class="diff-sigil">{line.kind === "add" ? "+" : line.kind === "remove" ? "−" : line.kind === "hunk" ? "@" : " "}</span>
+                                  <span class="diff-content">{line.text}</span>
+                                </div>
+                              {/if}
+                            {/each}
+                          </div>
+                        {:else}
+                          <div class="diff-note">No changes to display</div>
+                        {/if}
+                      </div>
+                    {/if}
+                  </li>
+                {:else}
+                  <li class="file-empty">No file changes (or still loading…)</li>
+                {/each}
+              </ul>
+            </div>
+          {/if}
         {/each}
       </div>
     </div>
-  {/if}
-
-  {#if selected}
-    <aside class="commit-detail" data-testid="git-graph-detail">
-      <div class="detail-head">
-        <span class="oid">{selected.short_oid}</span>
-        <span class="detail-summary">{selected.summary}</span>
-        <button class="detail-close" onclick={() => (selected = null)} aria-label="Close details">✕</button>
-      </div>
-      <div class="detail-meta">
-        {selected.author_name} &lt;{selected.author_email}&gt; · {formatDate(selected.author_time)}
-        {#if selected.parents.length > 1}· merge of {selected.parents.length} parents{/if}
-      </div>
-      <ul class="detail-files">
-        {#each selectedFiles as file (file.path)}
-          <li><span class="file-status s-{file.status}">{file.status}</span><span class="file-path">{file.path}</span></li>
-        {:else}
-          <li class="file-empty">No file changes (or still loading…)</li>
-        {/each}
-      </ul>
-    </aside>
   {/if}
 
   {#if menu}
@@ -599,11 +735,10 @@
     background: color-mix(in srgb, var(--accent) 14%, transparent);
   }
 
-  .commit-detail {
-    flex-shrink: 0;
-    max-height: 40%;
-    overflow-y: auto;
+  /* Inline details block, expanded directly below the selected row (#221). */
+  .commit-detail-inline {
     border-top: 1px solid var(--divider);
+    border-bottom: 1px solid var(--divider);
     padding: 10px 14px;
     font-size: 12px;
     background: var(--background-card);
@@ -648,8 +783,89 @@
 
   .detail-files li {
     display: flex;
+    flex-direction: column;
+  }
+
+  .detail-file {
+    display: flex;
     gap: 8px;
     align-items: baseline;
+    width: 100%;
+    padding: 2px 4px;
+    margin: 0 -4px;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    font: inherit;
+    text-align: left;
+    color: inherit;
+    cursor: pointer;
+  }
+
+  .detail-file:hover,
+  .detail-file.open {
+    background: var(--subtle-fill-secondary);
+  }
+
+  .file-staged-badge {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--text-tertiary);
+    border: 1px solid var(--divider);
+    border-radius: 3px;
+    padding: 0 4px;
+  }
+
+  /* Per-file inline diff. */
+  .file-diff {
+    margin: 2px 0 6px 22px;
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-sm);
+    max-height: 320px;
+    overflow: auto;
+    background: var(--background-solid);
+  }
+
+  .diff-note {
+    padding: 6px 10px;
+    color: var(--text-tertiary);
+  }
+
+  .diff-lines {
+    font-family: var(--font-mono, monospace);
+    font-size: 11px;
+    line-height: 1.5;
+  }
+
+  .diff-line {
+    display: flex;
+    white-space: pre;
+  }
+
+  .diff-line.add { background: color-mix(in srgb, #22c55e 12%, transparent); }
+  .diff-line.remove { background: color-mix(in srgb, #ef4444 12%, transparent); }
+  .diff-line.hunk { background: var(--subtle-fill-secondary); color: var(--text-tertiary); }
+
+  .diff-gutter {
+    flex: none;
+    width: 34px;
+    padding-right: 6px;
+    text-align: right;
+    color: var(--text-tertiary);
+    user-select: none;
+  }
+
+  .diff-sigil {
+    flex: none;
+    width: 14px;
+    text-align: center;
+    color: var(--text-tertiary);
+    user-select: none;
+  }
+
+  .diff-content {
+    flex: 1;
+    min-width: 0;
   }
 
   .file-status {

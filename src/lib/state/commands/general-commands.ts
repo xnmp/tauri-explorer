@@ -104,6 +104,7 @@ export const gitGraphCommands: Command[] = [
     id: "git.showGraph",
     label: "Git: Show Commit Graph",
     category: "general",
+    shortcut: "Ctrl+Alt+G",
     when: () => settingsStore.enableGitGraph,
     handler: async () => {
       const path = getActiveExplorer()?.state.currentPath;

@@ -1220,6 +1220,20 @@ const mockCommands: Record<string, CommandHandler> = {
     }
     return [{ path: `src/file-${n}.ts`, status: n % 2 === 0 ? "M" : "A" }];
   },
+  git_commit_file_diff: (args) => {
+    // Deterministic tiny patch so E2E can assert the inline diff (#221).
+    const filePath = args.filePath as string;
+    return [
+      `diff --git a/${filePath} b/${filePath}`,
+      `--- a/${filePath}`,
+      `+++ b/${filePath}`,
+      "@@ -1,3 +1,3 @@",
+      " unchanged line",
+      "-old line",
+      "+new line",
+      "",
+    ].join("\n");
+  },
   git_stage: (args: Record<string, unknown>) => {
     const paths = (args.paths as string[]) ?? [];
     for (const p of paths) mockStagePath(p);

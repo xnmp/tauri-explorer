@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tauri Explorer — a file manager with Ctrl+P</title>
+  <meta name="description" content="A keyboard-first file manager: fuzzy quick-open, ripgrep content search, a command palette for every action. This site is a working copy of it — press Ctrl+P." />
+  <meta property="og:title" content="Tauri Explorer — a file manager with Ctrl+P" />
+  <meta property="og:description" content="The editor workflow for your filesystem. This website is the app — press Ctrl+P to try it." />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="img/details-view.png" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🗂️</text></svg>" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <noscript>
+    <div style="padding:2rem;font-family:monospace">
+      Tauri Explorer — a file manager with Ctrl+P, Ctrl+Shift+F, and a command palette.
+      This site is an interactive copy of the app and needs JavaScript.
+      The short version lives at <a href="https://github.com/xnmp/tauri-explorer">github.com/xnmp/tauri-explorer</a>.
+    </div>
+  </noscript>
+
+  <div class="window" id="window">
+    <!-- Title bar: tab strip with the fillets, traffic dots, window controls -->
+    <header class="titlebar">
+      <div class="traffic"><span></span><span></span><span></span></div>
+      <div class="tabstrip" id="tabstrip"></div>
+      <div class="win-controls" aria-hidden="true"><span>–</span><span>□</span><span>×</span></div>
+    </header>
+
+    <!-- Toolbar: nav + breadcrumb + the one visible CTA -->
+    <div class="toolbar">
+      <div class="nav-btns">
+        <button id="nav-back" title="Back (you can really navigate)">‹</button>
+        <button id="nav-up" title="Up">↑</button>
+      </div>
+      <div class="breadcrumb" id="breadcrumb"></div>
+      <a class="gh-link" href="https://github.com/xnmp/tauri-explorer" title="Source on GitHub">GitHub ↗</a>
+    </div>
+
+    <div class="body">
+      <aside class="sidebar" id="sidebar" aria-label="Folders"></aside>
+      <main class="filelist" id="filelist" aria-label="Files"></main>
+      <section class="preview" id="preview" aria-label="Preview" hidden>
+        <div class="preview-head">
+          <span id="preview-name"></span>
+          <button id="preview-close" title="Close preview">×</button>
+        </div>
+        <div class="preview-body" id="preview-body"></div>
+      </section>
+    </div>
+
+    <footer class="statusbar">
+      <span id="status-left">…</span>
+      <span class="status-hints">
+        <kbd>Ctrl+P</kbd> find a feature · <kbd>Ctrl+Shift+P</kbd> commands · <kbd>Ctrl+/</kbd> keys
+      </span>
+      <span id="status-right">v1.0.1 · MIT</span>
+    </footer>
+  </div>
+
+  <!-- Quick open -->
+  <div class="overlay" id="qo-overlay" hidden>
+    <div class="modal qo">
+      <input id="qo-input" type="text" placeholder="Fuzzy-find anything on this site…" autocomplete="off" spellcheck="false" />
+      <ul id="qo-results"></ul>
+    </div>
+  </div>
+
+  <!-- Command palette -->
+  <div class="overlay" id="cp-overlay" hidden>
+    <div class="modal cp">
+      <input id="cp-input" type="text" placeholder="Type a command…" autocomplete="off" spellcheck="false" />
+      <ul id="cp-results"></ul>
+    </div>
+  </div>
+
+  <!-- Shortcut cheatsheet -->
+  <div class="overlay" id="ks-overlay" hidden>
+    <div class="modal ks">
+      <h2>This site's shortcuts <span class="ks-sub">(the app has ~60 more — all rebindable)</span></h2>
+      <ul class="ks-list">
+        <li><span>Fuzzy quick-open</span><kbd>Ctrl+P</kbd></li>
+        <li><span>Command palette</span><kbd>Ctrl+Shift+P</kbd></li>
+        <li><span>This cheatsheet</span><kbd>Ctrl+/</kbd></li>
+        <li><span>Toggle dark/light</span><kbd>Ctrl+T</kbd></li>
+        <li><span>Navigate list</span><kbd>↑ ↓ Enter</kbd></li>
+        <li><span>Up a directory</span><kbd>Backspace</kbd></li>
+        <li><span>Close anything</span><kbd>Esc</kbd></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- First-run hint, exactly like the app's -->
+  <div class="hint" id="hint" hidden>
+    <span>This page <em>is</em> the file manager. <kbd>Ctrl+P</kbd> finds features, <kbd>Ctrl+Shift+P</kbd> runs commands — or just click around.</span>
+    <button id="hint-dismiss">Got it</button>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -291,4 +291,12 @@
     color: var(--accent);
     font-size: 12px;
   }
+
+  /* While renaming, the AI autocomplete hint (#215) floats below the
+     fixed-height virtual row — let just that row overflow. !important because
+     VirtualList sets overflow via an inline style. */
+  .details-view :global(.virtual-item:has(.rename-input)) {
+    overflow: visible !important;
+    z-index: 2;
+  }
 </style>

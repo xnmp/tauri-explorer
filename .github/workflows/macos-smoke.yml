@@ -1,0 +1,88 @@
+# macOS launch smoke (#192): the only automated macOS signal we can get
+# without a WKWebView WebDriver. Builds the app with embedded assets and
+# asserts it boots: the process survives and the startup log line appears.
+name: macOS Smoke
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  launch-smoke:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: macos-smoke-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build frontend
+        run: bun run build
+
+      - name: Build app (embedded assets)
+        # custom-protocol is what makes the binary serve the bundled dist
+        # instead of dialing the dev server on localhost:1420.
+        run: cargo build --features tauri/custom-protocol
+        working-directory: src-tauri
+
+      - name: Launch and assert boot
+        run: |
+          RUST_LOG=info ./src-tauri/target/debug/tauri-explorer > app.log 2>&1 &
+          APP_PID=$!
+
+          # Give WKWebView time to initialize on a cold runner.
+          for i in $(seq 1 30); do
+            if ! kill -0 "$APP_PID" 2>/dev/null; then
+              echo "FAIL: app process died during startup"
+              cat app.log
+              exit 1
+            fi
+            if grep -q "Startup:" app.log; then
+              echo "OK: startup log line appeared"
+              break
+            fi
+            sleep 1
+          done
+
+          if ! grep -q "Startup:" app.log; then
+            echo "FAIL: startup log line never appeared within 30s"
+            cat app.log
+            exit 1
+          fi
+
+          # Still alive after settling — no post-setup crash.
+          sleep 5
+          if ! kill -0 "$APP_PID" 2>/dev/null; then
+            echo "FAIL: app process died shortly after startup"
+            cat app.log
+            exit 1
+          fi
+
+          kill "$APP_PID"
+          echo "macOS launch smoke passed"
+          cat app.log
+
+      - name: Upload app log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-smoke-app-log
+          path: app.log
+          if-no-files-found: ignore

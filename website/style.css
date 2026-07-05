@@ -18,6 +18,53 @@
   --sans: -apple-system, "Segoe UI", "Inter", Roboto, "Noto Sans", sans-serif;
 }
 
+/* Themes mirror the app's built-in palettes (src/lib/themes/). */
+
+[data-theme="aurora"] {
+  --bg: #0a0e14;
+  --bg-card: #11161e;
+  --bg-secondary: #161d27;
+  --bg-hover: #1d2633;
+  --bg-selected: #103a3a;
+  --border: #223041;
+  --text: #e2e8f0;
+  --text-dim: #94a3b8;
+  --accent: #5de5d5;
+  --accent-text: #0d1117;
+  --titlebar: #0d1117;
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.6);
+}
+
+[data-theme="hacker"] {
+  --bg: #050505;
+  --bg-card: #0a0a0a;
+  --bg-secondary: #0f120f;
+  --bg-hover: #12210f;
+  --bg-selected: #003311;
+  --border: #103a18;
+  --text: #00ff41;
+  --text-dim: #00aa2a;
+  --accent: #00ff41;
+  --accent-text: #0a0a0a;
+  --titlebar: #070907;
+  --shadow: 0 18px 50px rgba(0, 255, 65, 0.08);
+}
+
+[data-theme="solarized"] {
+  --bg: #eee8d5;
+  --bg-card: #fdf6e3;
+  --bg-secondary: #f2ecd9;
+  --bg-hover: #e8e1cc;
+  --bg-selected: #d6e4e4;
+  --border: #ddd6c1;
+  --text: #586e75;
+  --text-dim: #93a1a1;
+  --accent: #268bd2;
+  --accent-text: #fdf6e3;
+  --titlebar: #f0e9d6;
+  --shadow: 0 18px 50px rgba(88, 110, 117, 0.18);
+}
+
 [data-theme="dark"] {
   --bg: #14161b;
   --bg-card: #1d2026;
@@ -34,6 +81,12 @@
 }
 
 * { box-sizing: border-box; }
+
+.window, .titlebar, .toolbar, .sidebar, .filelist, .preview, .statusbar,
+.modal, .row, .side-item, .tab, .breadcrumb, body {
+  transition: background 220ms ease, background-color 220ms ease,
+    color 220ms ease, border-color 220ms ease;
+}
 
 html, body {
   margin: 0;

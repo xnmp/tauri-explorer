@@ -16,6 +16,29 @@ const DL = {
   mac: `${REL}/tauri-explorer_${VERSION}_aarch64.dmg`,
 };
 
+const THEMES = [
+  { id: "light", label: "Daylight" },
+  { id: "dark", label: "Midnight" },
+  { id: "aurora", label: "Aurora" },
+  { id: "hacker", label: "Hacker" },
+  { id: "solarized", label: "Solarized Light" },
+];
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  localStorage.setItem("theme", theme);
+}
+/** Ctrl+T cycles the palette-selectable themes, like flipping through the app's. */
+function toggleTheme() {
+  const current = document.documentElement.getAttribute("data-theme");
+  const idx = THEMES.findIndex((t) => t.id === current);
+  applyTheme(THEMES[(idx + 1) % THEMES.length].id);
+}
+applyTheme(
+  localStorage.getItem("theme") ||
+  (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+);
+
 function shot(src, caption) {
   return `<figure style="margin:0"><img src="img/${src}" alt="${caption}" loading="lazy" /><figcaption>${caption}</figcaption></figure>`;
 }
@@ -472,7 +495,12 @@ const COMMANDS = [
   { cat: "GET", label: "Download for Linux (AppImage)", run: () => window.open(DL.linux, "_blank") },
   { cat: "GET", label: "Download for Windows (MSI)", run: () => window.open(DL.win, "_blank") },
   { cat: "GET", label: "Download for macOS (dmg)", run: () => window.open(DL.mac, "_blank") },
-  { cat: "VIEW", label: "Toggle Dark/Light Theme", run: toggleTheme },
+  { cat: "VIEW", label: "Cycle Theme", run: toggleTheme },
+  ...THEMES.map((t) => ({
+    cat: "THEME",
+    label: `Theme: ${t.label}`,
+    run: () => applyTheme(t.id),
+  })),
   { cat: "VIEW", label: "Show All Features", run: () => { navigate(["features"]); } },
   { cat: "GO", label: "View Source on GitHub", run: () => window.open(REPO, "_blank") },
   { cat: "GO", label: "View Changelog", run: () => window.open(`${REPO}/blob/main/CHANGELOG.md`, "_blank") },
@@ -520,19 +548,6 @@ function listNav(overlayObj, renderFn, getIndex, setIndex, event) {
   }
 }
 
-/* ── Theme ──────────────────────────────────────────────── */
-
-function applyTheme(theme) {
-  document.documentElement.setAttribute("data-theme", theme);
-  localStorage.setItem("theme", theme);
-}
-function toggleTheme() {
-  applyTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark");
-}
-applyTheme(
-  localStorage.getItem("theme") ||
-  (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
-);
 
 /* ── Tabs (decorative but honest: one is this site) ─────── */
 

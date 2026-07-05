@@ -172,9 +172,10 @@ ${shot("command-palette.png", "The app's palette: category tags, rebindable shor
   <li>Drag tabs between windows and panes</li>
   <li><kbd>Ctrl+\\</kbd> splits into dual panes, <kbd>F5</kbd>/<kbd>F6</kbd> copy/move across</li>
 </ul>
-<p><strong>The tabs up top are real:</strong> hit <em>+</em> in this window's title
-bar — each tab keeps its own folder. (Right-click a file → <em>Open in New
-Tab</em> works too.)</p>
+<p><strong>All of it works here:</strong> hit <em>+</em> in this window's title bar —
+each tab keeps its own folder. <kbd>Ctrl+\\</kbd> splits this window into two
+panes; select a file and <kbd>F5</kbd> copies it across, <kbd>F6</kbd> moves it.
+<kbd>F2</kbd> renames.</p>
 ${shot("dual-pane.png", "Dual-pane mode: two independent tab strips, one keystroke apart.")}
 `,
         },
@@ -337,6 +338,9 @@ on Linux, Windows and macOS in CI.</p>
 let cwd = [];               // array of dir names from root
 let selectedName = null;
 let history = [];
+let pane2 = null;           // { cwd, sel } while the window is split
+let focusedPane = 0;        // 0 = main pane, 1 = pane2
+let editingName = null;     // entry being renamed inline, if any
 const $ = (id) => document.getElementById(id);
 
 function nodeAt(pathArr) {
@@ -357,7 +361,13 @@ function flatten(node = FS, prefix = []) {
   }
   return out;
 }
-const ALL_FILES = flatten();
+let ALL_FILES = flatten();
+
+/** After any FS mutation (rename, copy, move): refresh the search indices. */
+function reindexFS() {
+  ALL_FILES = flatten();
+  TEXTS = null;
+}
 
 /* ── Fuzzy matching (subsequence + bonus scoring) ───────── */
 
@@ -435,7 +445,8 @@ function render() {
     const b = document.createElement("button");
     b.className = "side-item" + (active ? " active" : "");
     b.innerHTML = `<span class="ico">${ico}</span>${label}`;
-    b.onclick = () => navigate(target);
+    // the sidebar drives whichever pane has focus, like the app
+    b.onclick = () => (focusedPane === 1 && pane2 ? navigate2(target) : navigate(target));
     sb.appendChild(b);
   };
   sideEntry("tauri-explorer", SVG.app, [], cwd.length === 0);
@@ -458,54 +469,68 @@ function render() {
   }
 
   // file list — details rows, or tiles with live thumbnails
-  const fl = $("filelist");
+  const info = buildList($("filelist"), here, selectedName, 0);
+
+  $("status-left").textContent = info.tiles
+    ? `${info.count} items · live thumbnails — the app bakes these in Rust, cached on disk`
+    : `${info.count} items · you are inside the pitch — every file opens`;
+}
+
+/** Shared by both panes: renders one directory into a .filelist container. */
+function buildList(fl, here, selName, paneIdx) {
   const children = sortChildren(here.children || []);
   const tiles = here.view === "tiles";
   fl.classList.toggle("tiles", tiles);
   const arrow = (k) => (sortKey === k ? `<span class="sort-arrow">${sortAsc ? "▲" : "▼"}</span>` : "");
   fl.innerHTML = tiles ? "" : `<div class="list-head"><span data-sort="name">NAME${arrow("name")}</span><span class="kind" data-sort="kind">KIND${arrow("kind")}</span><span data-sort="size">SIZE${arrow("size")}</span></div>`;
   fl.querySelectorAll("[data-sort]").forEach((h) => (h.onclick = () => setSort(h.dataset.sort)));
+  const open = (child) => (paneIdx === 1 ? openEntry2(child) : openEntry(child));
   for (const child of children) {
+    const editing = editingName === child.name && paneIdx === focusedPane;
     if (tiles) {
-      const tile = document.createElement("button");
-      tile.className = "tile" + (selectedName === child.name ? " selected" : "");
+      const tile = document.createElement(editing ? "div" : "button");
+      tile.className = "tile" + (selName === child.name ? " selected" : "");
       tile.dataset.name = child.name;
       tile.innerHTML = `
         <img class="thumb" src="${child.thumb}" alt="${child.name}" loading="lazy" decoding="async" />
         <span class="tname">${child.name}</span>`;
-      tile.onclick = () => openEntry(child);
-      tile.oncontextmenu = (e) => fileCtx(e, child);
+      if (editing) mountRename(tile, ".tname", child, paneIdx);
+      else {
+        tile.onclick = () => open(child);
+        tile.oncontextmenu = (e) => fileCtx(e, child, paneIdx);
+      }
       fl.appendChild(tile);
       continue;
     }
-    const row = document.createElement("button");
-    row.className = "row" + (selectedName === child.name ? " selected" : "");
+    const row = document.createElement(editing ? "div" : "button");
+    row.className = "row" + (selName === child.name ? " selected" : "");
     row.dataset.name = child.name;
     const badge = child.badge ? `<span class="try">${child.badge}</span>` : "";
     row.innerHTML = `
       <span class="name"><span class="ico">${iconFor(child)}</span><span class="fname">${child.name}</span>${badge}</span>
       <span class="meta kind">${child.kind === "dir" ? "Folder" : child.kind === "img" ? "PNG image" : "Markdown"}</span>
       <span class="meta">${child.kind === "dir" ? `${(child.children || []).length} items` : child.size || ""}</span>`;
-    row.onclick = () => openEntry(child);
-    row.oncontextmenu = (e) => fileCtx(e, child);
+    if (editing) mountRename(row, ".fname", child, paneIdx);
+    else {
+      row.onclick = () => open(child);
+      row.oncontextmenu = (e) => fileCtx(e, child, paneIdx);
+    }
     fl.appendChild(row);
   }
   if (children.length === 0) {
     fl.insertAdjacentHTML("beforeend", `<div class="empty-dir">Empty folder</div>`);
   }
-
-  $("status-left").textContent = tiles
-    ? `${children.length} items · live thumbnails — the app bakes these in Rust, cached on disk`
-    : `${children.length} items · you are inside the pitch — every file opens`;
+  return { count: children.length, tiles };
 }
 
 function openEntry(node) {
+  focusPane(0);
   if (node.kind === "dir") {
     navigate([...cwd, node.name]);
     return;
   }
   selectedName = node.name;
-  document.querySelectorAll(".row, .tile").forEach((r) =>
+  $("filelist").querySelectorAll(".row, .tile").forEach((r) =>
     r.classList.toggle("selected", r.dataset.name === node.name));
   $("preview").hidden = false;
   $("preview-name").textContent = [...cwd, node.name].join("/");
@@ -589,6 +614,8 @@ const COMMANDS = [
   { cat: "VIEW", label: "Show Commit Graph", run: () => { gg.open(); renderGraph(); } },
   { cat: "GO", label: "Search in Files (Ctrl+Shift+F)", run: () => { cs.open(); csIndex = 0; } },
   { cat: "VIEW", label: "New Tab", run: () => newTab() },
+  { cat: "VIEW", label: "Toggle Dual Pane (Ctrl+\\)", run: toggleDualPane },
+  { cat: "EDIT", label: "Rename Selected (F2)", run: () => startRename(focusedPane) },
   { cat: "VIEW", label: "Sort by Name", run: () => setSort("name") },
   { cat: "VIEW", label: "Sort by Kind", run: () => setSort("kind") },
   { cat: "VIEW", label: "Sort by Size", run: () => setSort("size") },
@@ -892,8 +919,11 @@ function runTerm(line) {
     case "sudo":
       say("you're already root of this fake filesystem.", "t-dim");
       break;
-    case "rm": case "mv": case "cp": case "mkdir": case "touch":
-      say(`${cmd}: read-only demo — the real app does this for real (F5/F6 copy/move, F2 rename, conflict dialogs included).`, "t-dim");
+    case "rm": case "mkdir": case "touch":
+      say(`${cmd}: not here — but try <span class="t-cmd">Ctrl+\\</span> for dual pane, then F5/F6 to copy/move across, or F2 to rename.`, "t-dim");
+      break;
+    case "mv": case "cp":
+      say(`${cmd}: use the panes — <span class="t-cmd">Ctrl+\\</span> splits the window, F5 copies the selected file across, F6 moves it.`, "t-dim");
       break;
     case "vim": case "nano": case "emacs":
       say("$EDITOR not found here. In the app, Space previews and Enter opens with your system default.", "t-dim");
@@ -915,6 +945,7 @@ function syncTab() {
 }
 
 function switchTab(i) {
+  editingName = null;
   activeTab = i;
   cwd = TABS[i].cwd;
   selectedName = TABS[i].sel;
@@ -1117,16 +1148,183 @@ function ctxMenu(e, items) {
   el.style.top = Math.min(e.clientY, innerHeight - el.offsetHeight - pad) + "px";
 }
 
-function fileCtx(e, node) {
+function fileCtx(e, node, paneIdx = 0) {
   e.preventDefault();
-  const path = [...cwd, node.name];
+  const base = paneIdx === 1 && pane2 ? pane2.cwd : cwd;
+  const path = [...base, node.name];
   ctxMenu(e, [
-    { label: "Open", run: () => openEntry(node) },
-    { label: "Open in New Tab", run: () => newTab(node.kind === "dir" ? { cwd: path, sel: null } : { cwd: [...cwd], sel: node.name }) },
+    { label: "Open", run: () => (paneIdx === 1 ? openEntry2(node) : openEntry(node)) },
+    { label: "Open in New Tab", run: () => newTab(node.kind === "dir" ? { cwd: path, sel: null } : { cwd: [...base], sel: node.name }) },
+    { label: "Rename (F2)", run: () => { if (paneIdx === 1 && pane2) pane2.sel = node.name; else selectedName = node.name; startRename(paneIdx); } },
     { sep: true },
-    { label: "Copy Path", run: () => { if (navigator.clipboard) navigator.clipboard.writeText("~/tauri-explorer/" + path.join("/")); toast("Path copied — the app's menu also does rename, zip, open-with…", { ms: 3200 }); } },
+    { label: "Copy Path", run: () => { if (navigator.clipboard) navigator.clipboard.writeText("~/tauri-explorer/" + path.join("/")); toast("Path copied — the app's menu also does zip, checksums, open-with…", { ms: 3200 }); } },
     { label: "Get the Real App ↗", run: () => window.open(`${REPO}/releases/latest`, "_blank") },
   ]);
+}
+
+/* ── F2 rename: inline, session-only ────────────────────── */
+
+function mountRename(rowEl, sel, node, paneIdx) {
+  const nameEl = rowEl.querySelector(sel);
+  const input = document.createElement("input");
+  input.className = "rename-input";
+  input.value = node.name;
+  input.setAttribute("aria-label", "New name");
+  input.onkeydown = (ev) => {
+    if (ev.key === "Enter") commitRename(node, input.value, paneIdx);
+    else if (ev.key === "Escape") cancelRename();
+  };
+  input.onblur = () => { if (editingName === node.name) cancelRename(); };
+  nameEl.replaceWith(input);
+  queueMicrotask(() => { input.focus(); input.select(); });
+}
+
+function startRename(paneIdx) {
+  const base = paneIdx === 1 && pane2 ? pane2.cwd : cwd;
+  const sel = paneIdx === 1 && pane2 ? pane2.sel : selectedName;
+  if (!sel) { toast("Select a file first, then <kbd>F2</kbd>."); return; }
+  const node = findNode([...base, sel]);
+  if (!node) return;
+  if (node.kind === "dir") {
+    toast("Folder names hold this demo together — the app renames anything, including bulk regex rename.", { ms: 4000 });
+    return;
+  }
+  focusedPane = paneIdx;
+  editingName = node.name;
+  renderPanes();
+}
+
+function cancelRename() {
+  editingName = null;
+  renderPanes();
+}
+
+function commitRename(node, newName, paneIdx) {
+  newName = newName.trim();
+  editingName = null;
+  if (!newName || newName === node.name) { renderPanes(); return; }
+  const base = paneIdx === 1 && pane2 ? pane2.cwd : cwd;
+  const parent = findNode(base) || FS;
+  if ((parent.children || []).some((c) => c !== node && c.name === newName)) {
+    toast(`"${esc(newName)}" already exists here — the app would offer its conflict dialog.`, { ms: 3600 });
+    renderPanes();
+    return;
+  }
+  node.name = newName;
+  if (paneIdx === 1 && pane2) pane2.sel = newName;
+  else { selectedName = newName; syncTab(); }
+  reindexFS();
+  renderPanes();
+  if (!$("preview").hidden && $("preview-name").textContent.split("/").length === base.length + 1)
+    $("preview-name").textContent = [...base, newName].join("/");
+  toast("Renamed — session-only here. The app renames on disk, plus bulk regex rename over selections.", { ms: 4200 });
+}
+
+/* ── Dual pane (Ctrl+\): independent cwd, F5/F6 across ──── */
+
+function renderPanes() {
+  render();
+  if (pane2) render2();
+}
+
+function render2() {
+  buildList($("filelist2"), nodeAt(pane2.cwd), pane2.sel, 1);
+  markFocus();
+}
+
+function markFocus() {
+  document.querySelector(".body").classList.toggle("dual", !!pane2);
+  $("filelist").classList.toggle("pane-focused", !!pane2 && focusedPane === 0);
+  $("filelist2").classList.toggle("pane-focused", !!pane2 && focusedPane === 1);
+}
+
+function focusPane(i) {
+  if (focusedPane === i || (i === 1 && !pane2)) return;
+  focusedPane = i;
+  markFocus();
+}
+
+function toggleDualPane() {
+  if (pane2) {
+    pane2 = null;
+    focusedPane = 0;
+    $("filelist2").hidden = true;
+    toast("Back to one pane.", { ms: 1800 });
+  } else {
+    pane2 = { cwd: [...cwd], sel: null };
+    $("filelist2").hidden = false;
+    render2();
+    toast(`Dual pane — click a pane to focus it. <kbd>F5</kbd> copies the selected file across, <kbd>F6</kbd> moves it.`, { ms: 7000 });
+  }
+  markFocus();
+}
+
+function navigate2(pathArr) {
+  pane2.cwd = pathArr;
+  pane2.sel = null;
+  render2();
+}
+
+function openEntry2(node) {
+  focusPane(1);
+  if (node.kind === "dir") {
+    navigate2([...pane2.cwd, node.name]);
+    return;
+  }
+  pane2.sel = node.name;
+  $("filelist2").querySelectorAll(".row, .tile").forEach((r) =>
+    r.classList.toggle("selected", r.dataset.name === node.name));
+  $("preview").hidden = false;
+  $("preview-name").textContent = [...pane2.cwd, node.name].join("/");
+  $("preview-body").innerHTML = node.content;
+  $("preview-body").scrollTop = 0;
+}
+
+/** F5 copies / F6 moves the focused pane's selection into the other pane. */
+function transferAcross(move) {
+  const srcCwd = focusedPane === 1 ? pane2.cwd : cwd;
+  const dstCwd = focusedPane === 1 ? cwd : pane2.cwd;
+  const selName = focusedPane === 1 ? pane2.sel : selectedName;
+  const node = findNode([...srcCwd, selName]);
+  const dst = findNode(dstCwd);
+  if (!node || !dst || dst.kind !== "dir") return;
+  if (srcCwd.join("/") === dstCwd.join("/")) {
+    toast("Both panes show the same folder — navigate one somewhere else first.");
+    return;
+  }
+  if (node.kind === "dir" && (dstCwd.join("/") + "/").startsWith([...srcCwd, node.name].join("/") + "/")) {
+    toast("Can't move a folder into itself — the app blocks this too.");
+    return;
+  }
+  let name = node.name;
+  if ((dst.children || []).some((c) => c.name === name)) {
+    if (move) {
+      toast(`"${esc(name)}" already exists there — the app would show its conflict dialog (overwrite / rename / skip).`, { ms: 4200 });
+      return;
+    }
+    const dot = name.lastIndexOf(".");
+    name = dot > 0 ? name.slice(0, dot) + " copy" + name.slice(dot) : name + " copy";
+  }
+  let placed;
+  if (move) {
+    const parent = findNode(srcCwd) || FS;
+    parent.children.splice(parent.children.indexOf(node), 1);
+    if (focusedPane === 1) pane2.sel = null;
+    else { selectedName = null; syncTab(); }
+    placed = node;
+  } else {
+    // deep-clone dirs so the copy doesn't share children with the original
+    placed = node.kind === "dir" ? JSON.parse(JSON.stringify(node)) : { ...node };
+  }
+  placed.name = name;
+  dst.children = dst.children || [];
+  dst.children.push(placed);
+  reindexFS();
+  renderPanes();
+  toast(move
+    ? `Moved to <code>~/tauri-explorer/${esc(dstCwd.join("/") || "")}</code> — <kbd>F6</kbd>, like the app. (Session-only.)`
+    : `Copied across — <kbd>F5</kbd>, like the app. (Session-only; the real one does disks, with progress and conflict dialogs.)`,
+    { ms: 4200 });
 }
 
 /* ── Sort + type-ahead ──────────────────────────────────── */
@@ -1135,7 +1333,7 @@ let sortKey = null, sortAsc = true;
 function setSort(key) {
   if (sortKey === key) sortAsc = !sortAsc;
   else { sortKey = key; sortAsc = true; }
-  render();
+  renderPanes();
 }
 function sortChildren(list) {
   if (!sortKey) return list;
@@ -1157,11 +1355,14 @@ let typeBuf = "", typeTimer = 0;
 document.addEventListener("keydown", (e) => {
   const mod = e.ctrlKey || e.metaKey;
   const inTerminal = e.target && e.target.id === "term-input";
+  // the rename input owns its keys entirely (its own handler commits/cancels)
+  if (e.target && e.target.classList && e.target.classList.contains("rename-input")) return;
   if (mod && e.shiftKey && e.key.toLowerCase() === "p") { e.preventDefault(); closeAll(); cp.open(); cpIndex = 0; return; }
   if (mod && e.shiftKey && e.key.toLowerCase() === "f") { e.preventDefault(); closeAll(); cs.open(); csIndex = 0; return; }
   if (mod && !e.shiftKey && e.key.toLowerCase() === "p") { e.preventDefault(); closeAll(); qo.open(); qoIndex = 0; return; }
   if (mod && e.key === "/") { e.preventDefault(); closeAll(); ks.open(); return; }
   if (mod && e.key === "`") { e.preventDefault(); toggleTerminal(); return; }
+  if (mod && e.key === "\\") { e.preventDefault(); toggleDualPane(); return; }
   if (mod && !e.shiftKey && e.key.toLowerCase() === "t") { e.preventDefault(); toggleTheme(); return; }
   if (e.key === "Escape") {
     if (inTerminal) { e.target.blur(); return; }
@@ -1178,17 +1379,35 @@ document.addEventListener("keydown", (e) => {
   if (cs.isOpen) { listNav(cs, csRender, () => csIndex, (v) => (csIndex = v), e); return; }
   if (ks.isOpen || gg.isOpen || inTerminal) return;
 
-  // list navigation when nothing is open
-  if (e.key === "Backspace" && cwd.length) { e.preventDefault(); navigate(cwd.slice(0, -1)); return; }
+  if (e.key === "F2") { e.preventDefault(); startRename(focusedPane); return; }
+  if ((e.key === "F5" || e.key === "F6") && pane2) {
+    const sel = focusedPane === 1 ? pane2.sel : selectedName;
+    if (!sel) return; // nothing selected: leave F5 to the browser
+    e.preventDefault();
+    transferAcross(e.key === "F6");
+    return;
+  }
+
+  // list navigation, scoped to the focused pane
+  const inPane2 = focusedPane === 1 && pane2;
+  const container = inPane2 ? $("filelist2") : $("filelist");
+  const getSel = () => (inPane2 ? pane2.sel : selectedName);
+  const setSel = (name) => { if (inPane2) pane2.sel = name; else selectedName = name; };
+  if (e.key === "Backspace") {
+    e.preventDefault();
+    if (inPane2 && pane2.cwd.length) navigate2(pane2.cwd.slice(0, -1));
+    else if (!inPane2 && cwd.length) navigate(cwd.slice(0, -1));
+    return;
+  }
   if (["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Enter"].includes(e.key)) {
-    const rows = [...document.querySelectorAll(".row, .tile")];
+    const rows = [...container.querySelectorAll(".row, .tile")];
     if (!rows.length) return;
-    const idx = rows.findIndex((r) => r.dataset.name === selectedName);
+    const idx = rows.findIndex((r) => r.dataset.name === getSel());
     if (e.key === "Enter" && idx >= 0) { rows[idx].click(); e.preventDefault(); return; }
     const fwd = e.key === "ArrowDown" || e.key === "ArrowRight";
     const next = fwd ? Math.min(idx + 1, rows.length - 1) : Math.max(idx - 1, 0);
     const target = rows[next < 0 ? 0 : next];
-    selectedName = target.dataset.name;
+    setSel(target.dataset.name);
     rows.forEach((r) => r.classList.toggle("selected", r === target));
     target.scrollIntoView({ block: "nearest" });
     e.preventDefault();
@@ -1200,10 +1419,10 @@ document.addEventListener("keydown", (e) => {
     clearTimeout(typeTimer);
     typeBuf += e.key.toLowerCase();
     typeTimer = setTimeout(() => (typeBuf = ""), 900);
-    const rows = [...document.querySelectorAll(".row, .tile")];
+    const rows = [...container.querySelectorAll(".row, .tile")];
     const hit = rows.find((r) => r.dataset.name.toLowerCase().startsWith(typeBuf));
     if (hit) {
-      selectedName = hit.dataset.name;
+      setSel(hit.dataset.name);
       rows.forEach((r) => r.classList.toggle("selected", r === hit));
       hit.scrollIntoView({ block: "nearest" });
     }
@@ -1254,6 +1473,10 @@ $("term-input").addEventListener("keydown", (e) => {
 
 /* context menu closes on any click elsewhere */
 document.addEventListener("click", () => { $("ctx").hidden = true; });
+
+/* dual pane: focus follows the mouse press */
+$("filelist").addEventListener("mousedown", () => focusPane(0));
+$("filelist2").addEventListener("mousedown", () => focusPane(1));
 
 /* theme menu: button toggles, clicking anywhere else closes */
 $("theme-btn").onclick = () => setThemeMenu($("theme-menu").hidden);

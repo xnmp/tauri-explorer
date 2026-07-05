@@ -42,6 +42,36 @@ export function crashIssueUrl(report: CrashReport): string {
   return `${REPO_ISSUES_URL}?title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
 }
 
+export interface AppInfo {
+  version: string;
+  os: string;
+  arch: string;
+}
+
+export function getAppInfo(): Promise<AppInfo> {
+  return invoke<AppInfo>("get_app_info");
+}
+
+/** Pre-filled GitHub issue URL for a user-initiated bug report (#197). */
+export function bugReportUrl(info: AppInfo): string {
+  const body = [
+    "## What happened?",
+    "",
+    "<!-- What did you do, what did you expect, what happened instead? -->",
+    "",
+    "## Steps to reproduce",
+    "",
+    "1. ",
+    "",
+    "---",
+    `- Tauri Explorer: v${info.version}`,
+    `- OS: ${info.os} (${info.arch})`,
+    "- Logs: Command Palette → \"Open Logs Folder\" (attach the latest file if relevant)",
+    "",
+  ].join("\n");
+  return `${REPO_ISSUES_URL}?title=${encodeURIComponent("Bug: ")}&body=${encodeURIComponent(body)}`;
+}
+
 /** Open an https URL in the system browser. */
 export function openExternalUrl(url: string): Promise<void> {
   return invoke<void>("open_external_url", { url });

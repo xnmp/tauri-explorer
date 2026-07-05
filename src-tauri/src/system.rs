@@ -106,6 +106,23 @@ pub async fn set_window_theme(window: tauri::Window, theme: String) {
     let _ = window.set_theme(t);
 }
 
+#[derive(serde::Serialize)]
+pub struct AppInfo {
+    pub version: String,
+    pub os: String,
+    pub arch: String,
+}
+
+/// Version/platform info for the bug-report template and about surfaces.
+#[tauri::command]
+pub async fn get_app_info() -> AppInfo {
+    AppInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        os: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
+    }
+}
+
 /// Get the log directory path so the frontend can display it in settings.
 #[tauri::command]
 pub async fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {

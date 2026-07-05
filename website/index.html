@@ -191,6 +191,12 @@
   <!-- Context menu (files + graph commits) -->
   <div class="ctx" id="ctx" hidden></div>
 
+  <!-- First-run hint, exactly like the app's -->
+  <div class="hint" id="hint" hidden>
+    <span>This page <em>is</em> the file manager. <kbd>Ctrl+P</kbd> finds features, <kbd>Ctrl+Shift+P</kbd> runs commands — or just click around.</span>
+    <button id="hint-dismiss">Got it</button>
+  </div>
+
   <!-- Lightbox: preview images maximize on click -->
   <div class="lightbox" id="lightbox" hidden role="dialog" aria-label="Image preview">
     <img id="lightbox-img" alt="" />

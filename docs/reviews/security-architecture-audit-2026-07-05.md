@@ -48,6 +48,8 @@ about not over-claiming publicly.
 
 ### Tier 1 — cheap fixes for real bugs; do before launch
 
+> **Status: all Tier 1 findings fixed in #208 (fix/security-hardening-tier1).**
+
 | ID | Sev | Finding | Location | Fix |
 |----|-----|---------|----------|-----|
 | S1 | HIGH | **Image-decode memory bomb (DoS).** No `image::Limits` at any of 4 decode sites; a crafted image (e.g. IHDR claiming 65500×65500) allocates a multi-GB buffer *before* the 64px resize. Trigger: browse a folder containing one malicious image → thumbnail/palette OOMs the app. | `thumbnails.rs:296,388,827`, `palette.rs:81-87` | Set `image::Limits` (max dims ~16384, max_alloc ~256MB) before `.decode()`; add `fs::metadata().len()` cap (~200MB) before read. |

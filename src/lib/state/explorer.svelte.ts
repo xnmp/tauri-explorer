@@ -411,6 +411,7 @@ function createExplorerState(seed?: ExplorerSeed) {
 
   const mutations = createPaneMutations({
     coreState,
+    setSelection,
     displayEntries: () => displayEntries,
     markLocalMutation,
     getParentPath: () => navigation.getParentPath(breadcrumbs),

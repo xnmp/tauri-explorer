@@ -165,6 +165,24 @@ nav command, context-menu item, settings section, and a `demo://` fs provider).
 It ships `enabledByDefault: false` and is what `e2e/plugin-system.spec.ts`
 drives.
 
+## Rename autocomplete (the provider seam, #215)
+
+`state/rename-suggestion.svelte.ts` holds a single pluggable
+`RenameSuggestionProvider`. When the inline rename box opens
+(`use-inline-rename` → `focusAndSelect`), the store asks the provider for one
+suggested filename; `EntryName.svelte` shows it as a hint chip below the box
+and **Tab** (or clicking the chip) fills it in. Core is model-agnostic — with
+no provider registered (plugin off, no API key) nothing is fetched and Tab
+keeps its default behavior.
+
+The ai-rename plugin registers the provider in `activate` and unregisters it
+in `deactivate` (it is not a `ctx` contribution, so it is not in the disposal
+ledger). The provider reuses the picker's privacy path: content hint only for
+text files, read at the moment the rename box opens (an explicit user action),
+sent only when an API key is configured and the "Inline rename autocomplete"
+toggle is on. Suggestions are sanitized through `sanitizeChosenName` before
+they are offered.
+
 `plugins/nano-banana/` is the real-world proof: an existing shipped feature
 (AI image editing) expressed entirely through contributions — a settings
 section, context-menu item, command, **modal dialog**, and completion-event

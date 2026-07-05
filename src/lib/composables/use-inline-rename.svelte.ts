@@ -9,6 +9,7 @@ import { tick } from "svelte";
 import type { FileEntry } from "$lib/domain/file";
 import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { dialogStore } from "$lib/state/dialogs.svelte";
+import { renameSuggestionStore } from "$lib/state/rename-suggestion.svelte";
 import { findNextWordBoundary, findPrevWordBoundary } from "$lib/domain/word-boundary";
 
 export interface InlineRenameState {
@@ -26,6 +27,9 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
   function focusAndSelect(entry: FileEntry) {
     editedName = entry.name;
     renameError = null;
+    // Ask the (optional) AI provider for a Tab-autocomplete suggestion.
+    // Best-effort and non-blocking; no-op when no provider is registered.
+    renameSuggestionStore.fetch(entry);
     tick().then(() => {
       renameInputRef?.focus();
       if (entry.kind === "file") {
@@ -57,15 +61,43 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
     const result = await getExplorer().rename(trimmed);
     submittingRename = false;
     if (result) renameError = result;
+    else renameSuggestionStore.clear();
   }
 
   function cancelRename() {
     editedName = "";
     renameError = null;
+    renameSuggestionStore.clear();
     dialogStore.cancelRename();
   }
 
-  function handleRenameKeydown(event: KeyboardEvent, currentName: string) {
+  /** Fill the input with the AI suggestion (Tab / hint click). Returns the
+   *  accepted name, or null when there is no suggestion for this entry. */
+  function acceptSuggestion(entry: FileEntry): string | null {
+    const suggested = renameSuggestionStore.suggestionFor(entry.path);
+    if (!suggested || suggested === editedName) return null;
+    editedName = suggested;
+    tick().then(() => {
+      renameInputRef?.focus();
+      const end = suggested.length;
+      renameInputRef?.setSelectionRange(end, end);
+    });
+    return suggested;
+  }
+
+  /** Handle a rename-box keydown. Returns true when the key filled in the
+   *  autocomplete suggestion (caller may want to resize the box). */
+  function handleRenameKeydown(event: KeyboardEvent, currentName: string, entry?: FileEntry): boolean {
+    if (event.key === "Tab" && !event.shiftKey && entry) {
+      const accepted = acceptSuggestion(entry);
+      if (accepted !== null) {
+        // Keep focus in the box: Tab autocompletes instead of blurring.
+        event.preventDefault();
+        event.stopPropagation();
+        return true;
+      }
+      return false;
+    }
     if (event.key === "Enter") {
       event.preventDefault();
       event.stopPropagation();
@@ -77,7 +109,7 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
     } else if ((event.ctrlKey || event.metaKey) && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
       event.preventDefault();
       const input = renameInputRef;
-      if (!input) return;
+      if (!input) return false;
       const text = input.value;
       const movingRight = event.key === "ArrowRight";
       const caretPos = movingRight
@@ -94,6 +126,7 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
         input.setSelectionRange(newPos, newPos);
       }
     }
+    return false;
   }
 
   function handleRenameBlur(currentName: string) {
@@ -114,6 +147,7 @@ export function useInlineRename(getExplorer: () => ExplorerInstance) {
     focusAndSelect,
     confirmRename,
     cancelRename,
+    acceptSuggestion,
     handleRenameKeydown,
     handleRenameBlur,
   };

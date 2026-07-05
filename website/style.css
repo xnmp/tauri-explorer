@@ -97,27 +97,24 @@ body {
   font-family: var(--sans);
   font-size: 14px;
   color: var(--text);
-  background:
-    radial-gradient(1200px 600px at 20% -10%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 60%),
-    var(--bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: clamp(0px, 3vmin, 34px);
+  background: var(--bg);
 }
 
-/* ── The window ─────────────────────────────────────────── */
+/* ── The window: maximized, edge to edge — like a real app ── */
 .window {
-  width: min(1180px, 100%);
-  height: min(780px, 100%);
+  width: 100%;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: var(--shadow);
   overflow: hidden;
 }
+
+/* Every bar hides, exactly like the real app's chrome toggles. */
+.window[data-hide-titlebar] .titlebar,
+.window[data-hide-toolbar] .toolbar,
+.window[data-hide-sidebar] .sidebar,
+.window[data-hide-statusbar] .statusbar { display: none; }
 
 /* ── Title bar with tab fillets ─────────────────────────── */
 .titlebar {
@@ -232,6 +229,54 @@ body {
 }
 .gh-link:hover { background: var(--bg-hover); color: var(--text); }
 
+/* ── Theme button + picker menu ─────────────────────────── */
+.theme-wrap { position: relative; display: flex; }
+#theme-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px;
+  border: none; border-radius: 6px;
+  background: transparent; color: var(--text-dim);
+  cursor: pointer;
+}
+#theme-btn:hover, #theme-btn.open { background: var(--bg-hover); color: var(--text); }
+
+.theme-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 190px;
+  padding: 5px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  z-index: 40;
+  animation: pop 130ms cubic-bezier(0, 0, 0.2, 1);
+}
+.theme-menu[hidden] { display: none; }
+.theme-item {
+  display: flex; align-items: center; gap: 9px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none; border-radius: 6px;
+  background: none; color: var(--text);
+  font-size: 13px; text-align: left; cursor: pointer;
+}
+.theme-item:hover { background: var(--bg-hover); }
+.theme-item.active { color: var(--accent); font-weight: 600; }
+.theme-item .check { margin-left: auto; }
+.swatch {
+  width: 14px; height: 14px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.swatch[data-swatch="light"] { background: #f3f4f6; }
+.swatch[data-swatch="dark"] { background: #1d2026; }
+.swatch[data-swatch="aurora"] { background: linear-gradient(135deg, #11161e 55%, #5de5d5); }
+.swatch[data-swatch="hacker"] { background: linear-gradient(135deg, #0a0a0a 55%, #00ff41); }
+.swatch[data-swatch="solarized"] { background: linear-gradient(135deg, #fdf6e3 55%, #268bd2); }
+
 /* ── Body: sidebar / list / preview ─────────────────────── */
 .body { flex: 1; display: flex; min-height: 0; }
 
@@ -302,6 +347,45 @@ body {
 .row .meta { color: var(--text-dim); font-size: 12px; }
 
 .empty-dir { padding: 40px 20px; text-align: center; color: var(--text-dim); }
+
+/* ── Tiles view: the screenshots folder, live thumbnails ── */
+.filelist.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 10px;
+  align-content: start;
+  padding: 14px 16px 24px;
+}
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
+}
+.tile:hover { background: var(--bg-hover); }
+.tile.selected { background: var(--bg-selected); }
+.tile .thumb {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  object-position: top;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+.tile .tname {
+  font-size: 11.5px;
+  font-family: var(--mono);
+  color: var(--text);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* ── Preview pane ───────────────────────────────────────── */
 .preview {
@@ -495,6 +579,77 @@ body {
 }
 .ks-list li:last-child { border-bottom: none; }
 
+/* ── Toasts: transient guidance, bottom-right like the app ── */
+.toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 42px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  z-index: 70;
+  pointer-events: none;
+}
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  font-size: 13px;
+  line-height: 1.45;
+  pointer-events: auto;
+  animation: toast-in 160ms cubic-bezier(0, 0, 0.2, 1);
+}
+.toast.bye {
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+.toast-act {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 6px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
+
+/* ── Tooltips: CSS-only, on the chrome controls ─────────── */
+[data-tip] { position: relative; }
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: var(--text);
+  color: var(--bg-card);
+  font-size: 11.5px;
+  font-family: var(--sans);
+  font-weight: 400;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 120ms ease 350ms, visibility 0s linear 350ms;
+  pointer-events: none;
+  z-index: 45;
+}
+[data-tip]:hover::after,
+[data-tip]:focus-visible::after { opacity: 1; visibility: visible; }
+[data-tip][data-tip-pos="left"]::after { left: auto; right: 0; transform: none; }
+
 /* ── First-run hint ─────────────────────────────────────── */
 .hint {
   position: fixed;
@@ -520,10 +675,8 @@ body {
   cursor: pointer;
 }
 
-/* ── Small screens: the window fills, preview overlays ──── */
+/* ── Small screens: preview overlays the list ───────────── */
 @media (max-width: 860px) {
-  body { padding: 0; }
-  .window { border-radius: 0; height: 100dvh; border: none; }
   .sidebar { display: none; }
   .preview {
     position: absolute; inset: 0; top: 44px;
@@ -538,5 +691,5 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .modal { animation: none; }
+  .modal, .toast, .theme-menu { animation: none; }
 }

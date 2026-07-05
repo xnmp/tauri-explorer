@@ -1861,6 +1861,7 @@ document.addEventListener("keydown", (e) => {
       else t.blur();
       return;
     }
+    if (!$("lightbox").hidden) { closeLightbox(); return; }
     if (!$("ctx").hidden) { $("ctx").hidden = true; return; }
     if (!$("theme-menu").hidden) { setThemeMenu(false); return; }
     if (qo.isOpen || cp.isOpen || ks.isOpen || cs.isOpen || gg.isOpen || ai.isOpen) { closeAll(); return; }
@@ -1979,6 +1980,24 @@ $("term-input").addEventListener("keydown", (e) => {
 
 /* context menu closes on any click elsewhere */
 document.addEventListener("click", () => { $("ctx").hidden = true; });
+
+/* lightbox: click a preview image to maximize it, click again to close */
+function openLightbox(src, caption) {
+  $("lightbox-img").src = src;
+  $("lightbox-img").alt = caption || "";
+  $("lightbox-cap").textContent = caption || "";
+  $("lightbox").hidden = false;
+  toastOnce("lightbox", "In the app, <kbd>Space</kbd> quick-previews any image, video or document the same way.");
+}
+function closeLightbox() {
+  $("lightbox").hidden = true;
+}
+$("preview-body").addEventListener("click", (e) => {
+  const img = e.target.closest("img");
+  if (!img) return;
+  openLightbox(img.src, img.alt);
+});
+$("lightbox").addEventListener("click", closeLightbox);
 
 /* dual pane: focus follows the mouse press */
 $("filelist").addEventListener("mousedown", () => focusPane(0));

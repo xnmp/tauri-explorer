@@ -16,6 +16,7 @@ pub mod git_actions;
 pub mod git_log;
 mod nano_banana;
 #[cfg(target_os = "linux")]
+mod palette;
 mod portal;
 mod process_ext;
 mod progress;
@@ -114,6 +115,8 @@ pub fn run(launch_dir: Option<String>) {
             crash_report::take_crash_report,
             crash_report::log_frontend_error,
             crash_report::open_external_url,
+            palette::extract_palette,
+            config::write_theme_file,
             update_check::check_for_update,
             log_startup_timing,
             // Trash operations

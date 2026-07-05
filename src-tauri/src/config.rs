@@ -110,6 +110,30 @@ pub async fn read_config_file(filename: String) -> Result<String, AppError> {
     .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
 }
 
+/// Write a user theme CSS file into `<config>/themes/` atomically (#203).
+/// Same single-component filename validation as config files, plus a .css
+/// extension requirement — theme generation must not become a file-write
+/// primitive.
+#[tauri::command]
+pub async fn write_theme_file(filename: String, data: String) -> Result<(), AppError> {
+    validate_filename(&filename)?;
+    if !filename.ends_with(".css") {
+        return Err(AppError::InvalidPath(format!(
+            "Theme file must end in .css: {filename}"
+        )));
+    }
+    let dir = config_dir()?.join("themes");
+    tokio::task::spawn_blocking(move || {
+        let _guard = write_lock().blocking_lock();
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| AppError::Other(format!("Failed to create themes dir: {e}")))?;
+        write_atomic(&dir.join(&filename), &data)
+            .map_err(|e| AppError::Other(format!("Failed to write theme '{filename}': {e}")))
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
+}
+
 /// Write a JSON config file. Creates or overwrites the file atomically.
 #[tauri::command]
 pub async fn write_config_file(filename: String, data: String) -> Result<(), AppError> {

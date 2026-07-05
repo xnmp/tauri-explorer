@@ -1151,7 +1151,6 @@ const mockCommands: Record<string, CommandHandler> = {
 
   get_config_dir: () => "/home/user/.config/tauri-explorer",
 
-  list_user_themes: () => [] as [string, string][],
 
   get_git_status: (args: Record<string, unknown>) => {
     const path = args.path as string;
@@ -1533,6 +1532,18 @@ const mockCommands: Record<string, CommandHandler> = {
   // ----- Misc -----
 
   get_log_dir: () => "/tmp/tauri-explorer/logs",
+  // Theme from Image (#203): deterministic palette; theme CSS goes into the
+  // in-memory config store and is injected by the mocked list_user_themes.
+  extract_palette: () => ["#1a2233", "#5de5d5", "#31425c", "#d98500", "#88a0c8", "#223044"],
+  write_theme_file: (args) => {
+    mockConfigFiles[`themes/${args.filename as string}`] = args.data as string;
+    return undefined;
+  },
+  list_user_themes: () =>
+    Object.entries(mockConfigFiles)
+      .filter(([k]) => k.startsWith("themes/"))
+      .map(([k, v]) => [k.slice("themes/".length), v]),
+
   get_app_info: () => ({ version: "0.0.0-mock", os: "linux", arch: "x86_64" }),
 
   // Mirrors the real backend: writes a PNG into `directory` and returns its

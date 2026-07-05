@@ -269,3 +269,45 @@ export const GRAPH_PALETTE = [
   "#6f24d6",
   "#ffcc00",
 ] as const;
+
+// ─── Ref decoration chips ────────────────────────────────────────────────────
+
+/** Structural subset of a ref decoration; matches `RefInfo` from the API
+ *  layer without importing it (domain stays dependency-free). */
+export interface RefDecorationLike {
+  kind: string;
+  name: string;
+}
+
+export interface RefChips {
+  isHead: boolean;
+  heads: { name: string; remotes: string[]; active: boolean }[];
+  remotes: string[];
+  tags: string[];
+}
+
+/** Combined ref chips (reference behavior): each local branch groups the
+ *  remotes tracking it as nested sub-chips; the checked-out branch first;
+ *  unmatched remotes and tags stay separate. */
+export function groupRefChips(decorations: readonly RefDecorationLike[]): RefChips {
+  const isHead = decorations.some((r) => r.kind === "Head");
+  const locals = decorations.filter((r) => r.kind === "LocalBranch").map((r) => r.name);
+  const remoteNames = decorations.filter((r) => r.kind === "RemoteBranch").map((r) => r.name);
+  const usedRemotes = new Set<string>();
+  const heads = locals.map((name) => {
+    const remotes = remoteNames
+      .filter((rn) => rn.slice(rn.indexOf("/") + 1) === name)
+      .map((rn) => {
+        usedRemotes.add(rn);
+        return rn.slice(0, rn.indexOf("/"));
+      });
+    return { name, remotes, active: isHead };
+  });
+  heads.sort((a, b) => Number(b.active) - Number(a.active));
+  return {
+    isHead,
+    heads,
+    remotes: remoteNames.filter((rn) => !usedRemotes.has(rn)),
+    tags: decorations.filter((r) => r.kind === "Tag").map((r) => r.name),
+  };
+}

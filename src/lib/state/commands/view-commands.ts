@@ -32,6 +32,15 @@ export const viewCommands: Command[] = [
     handler: () => getActiveExplorer()?.setViewMode("tiles"),
   },
   {
+    id: "view.setDefaultViewMode",
+    label: "Set Current View Mode as Default",
+    category: "view",
+    handler: () => {
+      const mode = getActiveExplorer()?.state.viewMode;
+      if (mode) settingsStore.setViewMode(mode);
+    },
+  },
+  {
     id: "view.toggleMillerColumns",
     label: "Toggle Miller Columns",
     category: "view",

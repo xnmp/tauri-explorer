@@ -31,26 +31,14 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use git2::{Oid, Repository, RepositoryOpenFlags, Sort};
+use git2::{Oid, Repository, Sort};
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
+use crate::git_common::{open_repo, to_app_err};
 use crate::task_registry::TaskRegistry;
 
 static GIT_LOG_TASKS: TaskRegistry = TaskRegistry::new();
-
-fn to_app_err(e: git2::Error) -> AppError {
-    AppError::Other(format!("git: {}", e.message()))
-}
-
-fn open_repo(path: &Path) -> Result<Repository, AppError> {
-    Repository::open_ext(
-        path,
-        RepositoryOpenFlags::empty(),
-        std::iter::empty::<&Path>(),
-    )
-    .map_err(to_app_err)
-}
 
 /// One entry in the commit log. `oid` is the full 40-char SHA; `short_oid` is
 /// the abbreviated form for display. `parents` are full OIDs (0 = root,

@@ -22,7 +22,7 @@
     type CommitFile,
     type ResetMode,
   } from "$lib/api/git-log";
-  import { assignLayout, branchPath, GRAPH_PALETTE, type GraphLayout, type BranchLine } from "$lib/domain/git-graph";
+  import { assignLayout, branchPath, groupRefChips, GRAPH_PALETTE, type GraphLayout, type BranchLine, type RefChips } from "$lib/domain/git-graph";
   import { notifyLocalGitChange } from "$lib/state/git-refresh";
   import { toastStore } from "$lib/state/toast.svelte";
   import { gitSummary } from "$lib/api/files";
@@ -160,37 +160,9 @@
     }
   }
 
-  /** Combined ref chips (reference behavior): each local branch groups the
-   *  remotes tracking it as nested sub-chips; the checked-out branch first;
-   *  unmatched remotes and tags stay separate. */
-  interface Chips {
-    isHead: boolean;
-    heads: { name: string; remotes: string[]; active: boolean }[];
-    remotes: string[];
-    tags: string[];
-  }
-  function chipsFor(oid: string): Chips {
-    const decorations = refs[oid] ?? [];
-    const isHead = decorations.some((r) => r.kind === "Head");
-    const locals = decorations.filter((r) => r.kind === "LocalBranch").map((r) => r.name);
-    const remoteNames = decorations.filter((r) => r.kind === "RemoteBranch").map((r) => r.name);
-    const usedRemotes = new Set<string>();
-    const heads = locals.map((name) => {
-      const remotes = remoteNames
-        .filter((rn) => rn.slice(rn.indexOf("/") + 1) === name)
-        .map((rn) => {
-          usedRemotes.add(rn);
-          return rn.slice(0, rn.indexOf("/"));
-        });
-      return { name, remotes, active: isHead };
-    });
-    heads.sort((a, b) => Number(b.active) - Number(a.active));
-    return {
-      isHead,
-      heads,
-      remotes: remoteNames.filter((rn) => !usedRemotes.has(rn)),
-      tags: decorations.filter((r) => r.kind === "Tag").map((r) => r.name),
-    };
+  /** Combined ref chips — grouping math lives in domain/git-graph.ts. */
+  function chipsFor(oid: string): RefChips {
+    return groupRefChips(refs[oid] ?? []);
   }
 
   function refClass(kind: RefInfo["kind"]): string {

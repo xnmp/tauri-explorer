@@ -19,6 +19,7 @@
   import { gitStatusStore } from "$lib/state/git-status.svelte";
   import { drivesStore } from "$lib/state/drives.svelte";
   import { directoryKey } from "$lib/domain/path";
+import { nextRemovableRoot } from "$lib/domain/drives";
   import { isVirtualPath } from "$lib/domain/virtual-path";
 
   interface Props {
@@ -87,41 +88,21 @@
   // Track which removable drive (if any) the current path lives on, and flag
   // the pane when that drive is unplugged/ejected so it can show a clear
   // "removable drive removed" state instead of a generic listing error.
-  let removableRoot = $state<string | null>(null);
-  // Both the pane path and the drive roots are reduced to the same canonical
-  // key (forward slashes, no trailing separator, case-folded for Windows), so a
-  // single forward-slash containment check covers every separator/case variant.
-  const normalizeRoot = (p: string) => directoryKey(p);
-  const isUnder = (path: string, root: string) =>
-    path === root || path.startsWith(root + "/");
-
+  // The remembering logic is a pure fold (domain/drives.ts); this single
+  // effect runs the fold and pushes the outcome into the pane store.
+  // `removableRoot` is deliberately a plain variable, not $state: it is only
+  // read here, and reactivity would re-trigger the effect on its own write.
+  let removableRoot: string | null = null;
   $effect(() => {
-    const pathNorm = normalizeRoot(paneExplorer.currentPath);
-    const roots = drivesStore.removableRoots; // reactive: present removable drives
-    if (!pathNorm) {
-      removableRoot = null;
-      return;
-    }
-    // Longest present removable root the path sits under → remember it.
-    const present = roots
-      .filter((root) => isUnder(pathNorm, root))
-      .sort((a, b) => b.length - a.length)[0];
-    if (present) {
-      removableRoot = present;
-    } else if (removableRoot && !isUnder(pathNorm, removableRoot)) {
-      // No longer under the remembered drive (user navigated elsewhere) — reset.
-      removableRoot = null;
-    }
-  });
-
-  $effect(() => {
-    const root = removableRoot;
-    if (!root) {
-      paneExplorer.setDriveGone(false);
-      return;
-    }
+    removableRoot = nextRemovableRoot(
+      removableRoot,
+      directoryKey(paneExplorer.currentPath),
+      drivesStore.removableRoots,
+    );
     // The drive is "gone" once its root is absent from the mounted set.
-    paneExplorer.setDriveGone(!drivesStore.mountedRoots.has(root));
+    paneExplorer.setDriveGone(
+      removableRoot !== null && !drivesStore.mountedRoots.has(removableRoot),
+    );
   });
 
 

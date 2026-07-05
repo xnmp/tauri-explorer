@@ -13,6 +13,7 @@ mod files;
 mod gemini;
 pub mod git;
 pub mod git_actions;
+mod git_common;
 pub mod git_log;
 mod nano_banana;
 mod palette;

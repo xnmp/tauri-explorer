@@ -443,9 +443,11 @@ function createExplorerState(seed?: ExplorerSeed) {
     });
   }
 
+  // Per-pane only — the global default (settingsStore.viewMode, used to seed
+  // new panes) changes solely via the explicit "Set Current View Mode as
+  // Default" command, never as a side effect of switching one pane's view.
   function setViewMode(mode: ViewMode) {
     coreState.viewMode = mode;
-    settingsStore.setViewMode(mode);
   }
 
   // ===================

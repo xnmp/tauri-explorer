@@ -1449,3 +1449,26 @@ clearing staged, amend folding).
   bypass the contract. Grep for `selectedPaths =` when touching selection code.
 - Leftover merge-conflict markers (`<<<<<<<`/`=======`) were sitting in this very file
   on dev — a reminder that docs merges skip CI and deserve a glance after conflicts.
+
+---
+
+## 2026-07-05 fix/git-graph-polish (#221): zoom clamps and inline graph details
+
+- **Every `position:fixed` overlay needs BOTH its anchor point AND its clamp
+  bounds converted into fixed-CSS space.** The context menu converted the
+  cursor via `clientToFixed` but clamped against `clientWidth / zoom` — on
+  Chromium `clientWidth` is already CSS px, so the bound was double-divided
+  and the "keep on screen" clamp fired spuriously. Use
+  `clientToFixed(window.innerWidth)` so the same engine-aware division rules
+  apply to both. Regression-guarded by `e2e/zoom-positioning.spec.ts`, which
+  drives the real Ctrl+= zoom command and asserts overlays land at the cursor.
+- **Chromium coordinate spaces under root CSS zoom (measured, zoom 1.3):**
+  `clientX` = viewport px; `getBoundingClientRect` = viewport px (a fixed
+  `left:100px` element reports 130); `clientWidth`/`offsetWidth` = CSS px;
+  `window.innerWidth` = viewport px. A "menu drifted" e2e failure can also be
+  the legitimate edge clamp — click near the top of the screen when asserting
+  cursor-anchored positions.
+- **Expanding content inline below a graph row means the SVG must stretch
+  with it.** `branchPath` takes a `RowExpand {afterRow, extra}` — rows after
+  the expansion shift down by the measured details height (bound via
+  `clientHeight`), so polylines and vertices stay aligned with their rows.

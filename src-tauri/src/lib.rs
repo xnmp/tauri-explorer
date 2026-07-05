@@ -205,6 +205,7 @@ pub fn run(launch_dir: Option<String>) {
             git_log::git_log,
             git_log::git_refs,
             git_log::git_commit_files,
+            git_log::git_commit_file_diff,
             git_actions::git_checkout,
             git_actions::git_create_branch,
             git_actions::git_create_tag,

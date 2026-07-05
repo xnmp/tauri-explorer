@@ -172,3 +172,15 @@ describe("groupRefChips", () => {
     expect(chips.remotes).toEqual(["origin/gh-pages"]);
   });
 });
+
+describe("branchPath row expansion", () => {
+  it("pushes rows below the expansion down by the extra height", () => {
+    const line = { colorIndex: 0, points: [{ lane: 0, row: 0 }, { lane: 0, row: 1 }, { lane: 0, row: 2 }] };
+    // No expansion: rows at y = 14, 42, 70 (rowHeight 28).
+    expect(branchPath(line, 14, 28)).toBe("M 7 14.0 L 7 70.0");
+    // Expansion of 100px after row 0: rows 1 and 2 shift down by 100.
+    expect(branchPath(line, 14, 28, { afterRow: 0, extra: 100 })).toBe("M 7 14.0 L 7 170.0");
+    // Expansion after the last row changes nothing.
+    expect(branchPath(line, 14, 28, { afterRow: 2, extra: 100 })).toBe("M 7 14.0 L 7 70.0");
+  });
+});

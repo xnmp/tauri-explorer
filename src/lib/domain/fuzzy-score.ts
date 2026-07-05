@@ -163,11 +163,24 @@ export function commandFrecencyPoints(frecencyScore: number): number {
   return Math.min(30, Math.round(frecencyScore * 10));
 }
 
+/** Greedy subsequence check; returns the number of matched chars (=== query
+ *  length when the whole query is a subsequence of text). */
+function subsequenceLength(query: string, text: string): number {
+  let qi = 0;
+  for (let i = 0; i < text.length && qi < query.length; i++) {
+    if (text[i] === query[qi]) qi++;
+  }
+  return qi;
+}
+
 /**
- * Score a palette command against a lowercased query: substring/prefix hits
- * on label, category and shortcut, plus a per-char subsequence bonus.
- * Returns 0 unless every query char appears in the label in order — category
- * and shortcut hits only ever *boost* a label match, never create one.
+ * Score a palette command against a lowercased query.
+ *
+ * Matching is token-based (VSCode-style): every whitespace-separated token
+ * must be a subsequence of the label, or a substring of the category or
+ * shortcut — so "git graph", "graph git" and "git" (as a category) all match
+ * "Git: Show Commit Graph" regardless of word order. Whole-query substring
+ * and prefix hits on the label rank highest.
  */
 export function scoreCommand(
   fields: CommandMatchFields,
@@ -175,6 +188,8 @@ export function scoreCommand(
   frecencyScore: number,
 ): number {
   const { label, category, shortcut } = fields;
+  const tokens = queryLower.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return 0;
 
   let score = 0;
 
@@ -195,18 +210,19 @@ export function scoreCommand(
     score += 40;
   }
 
-  // Character-by-character fuzzy match in label
-  let queryIdx = 0;
-  for (let i = 0; i < label.length && queryIdx < queryLower.length; i++) {
-    if (label[i] === queryLower[queryIdx]) {
-      queryIdx++;
-      score += 5;
+  // Every token must land somewhere; label subsequence hits earn per-char
+  // points so tighter label matches rank above category-only ones.
+  for (const token of tokens) {
+    const matched = subsequenceLength(token, label);
+    if (matched === token.length) {
+      score += 5 * token.length;
+    } else if (category.includes(token)) {
+      score += 10;
+    } else if (shortcut.includes(token)) {
+      score += 10;
+    } else {
+      return 0;
     }
-  }
-
-  // Only return score if all query chars were found
-  if (queryIdx < queryLower.length) {
-    return 0;
   }
 
   return score + commandFrecencyPoints(frecencyScore);

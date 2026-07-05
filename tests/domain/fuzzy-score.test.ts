@@ -140,10 +140,20 @@ describe("scoreCommand", () => {
     shortcut,
   });
 
-  it("requires the query to be a subsequence of the label", () => {
-    // Category/shortcut hits alone never create a match.
-    expect(scoreCommand(fields("open folder", "git", "ctrl+g"), "git", 0)).toBe(0);
+  it("matches token-wise: every term must land in label, category or shortcut", () => {
+    // A category hit now satisfies a token (VSCode-style) …
+    expect(scoreCommand(fields("open folder", "git", "ctrl+g"), "git", 0)).toBeGreaterThan(0);
+    // … but a token matching nothing kills the command.
+    expect(scoreCommand(fields("open folder", "git", ""), "git zebra", 0)).toBe(0);
     expect(scoreCommand(fields("toggle git panel"), "git", 0)).toBeGreaterThan(0);
+  });
+
+  it("is word-order agnostic: 'git graph' and 'graph git' both match", () => {
+    const f = fields("git: show commit graph", "general", "ctrl+alt+g");
+    expect(scoreCommand(f, "git graph", 0)).toBeGreaterThan(0);
+    expect(scoreCommand(f, "graph git", 0)).toBeGreaterThan(0);
+    expect(scoreCommand(f, "show graph", 0)).toBeGreaterThan(0);
+    expect(scoreCommand(f, "graphite", 0)).toBe(0);
   });
 
   it("ranks label prefix above bare substring above scattered subsequence", () => {

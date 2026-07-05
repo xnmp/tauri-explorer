@@ -242,9 +242,12 @@
   // needed, avoiding WebKitGTK zoom inconsistencies.
   const submenuFlip = $derived.by(() => {
     if (!menuEl) return { flipLeft: false, flipUp: false };
-    const zoom = getZoomFactor();
-    const vw = document.documentElement.clientWidth / zoom;
-    const vh = document.documentElement.clientHeight / zoom;
+    // clientToFixed puts the viewport size into the same fixed-CSS space as
+    // the clamped coordinates, per engine (Chromium's clientWidth is already
+    // CSS px — dividing it by zoom again was the recurring "menu drifts
+    // under zoom" bug, see e2e/zoom-positioning.spec.ts).
+    const vw = clientToFixed(window.innerWidth);
+    const vh = clientToFixed(window.innerHeight);
     const menuW = menuEl.offsetWidth;
     const menuH = menuEl.offsetHeight;
     const submenuW = 140; // generous estimate for submenu width
@@ -281,15 +284,12 @@
     requestAnimationFrame(() => {
       if (!menuEl) return;
       // With CSS zoom, position:fixed coordinates are in CSS pixels but the
-      // visible viewport shrinks. clientWidth/Height return physical pixels,
-      // so divide by zoom to get the usable CSS-pixel viewport.
+      // visible viewport shrinks. clientToFixed converts the viewport size
+      // into that same fixed-CSS space per engine (one division on Chromium,
+      // two on WebKitGTK/WKWebView — mirroring the cursor conversion below).
       // offsetWidth/Height are CSS pixels (unaffected by zoom).
-      // rawX/rawY (event.clientX/Y) need the same zoom division as the
-      // viewport so the ratio is consistent regardless of whether the
-      // engine reports them as physical or CSS pixels.
-      const zoom = getZoomFactor();
-      const vw = document.documentElement.clientWidth / zoom;
-      const vh = document.documentElement.clientHeight / zoom;
+      const vw = clientToFixed(window.innerWidth);
+      const vh = clientToFixed(window.innerHeight);
       const menuW = menuEl.offsetWidth;
       const menuH = menuEl.offsetHeight;
       const pad = 12;

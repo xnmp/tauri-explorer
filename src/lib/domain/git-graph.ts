@@ -225,10 +225,26 @@ export function assignLayout(commits: readonly GraphCommitLike[]): GraphLayout {
  * curves join seamlessly. Consecutive collinear verticals merge into one
  * line command, keeping paths minimal and unbroken.
  */
-export function branchPath(line: BranchLine, laneWidth: number, rowHeight: number): string {
+/** Vertical inset applied to rows below an inline expansion (e.g. the
+ *  commit-details block opened under a row) so the graph stretches with the
+ *  shifted rows instead of drifting out of alignment. */
+export interface RowExpand {
+  /** Rows strictly after this index are pushed down. */
+  afterRow: number;
+  /** Extra pixels inserted below `afterRow`. */
+  extra: number;
+}
+
+export function branchPath(
+  line: BranchLine,
+  laneWidth: number,
+  rowHeight: number,
+  expand?: RowExpand,
+): string {
   if (line.points.length === 0) return "";
   const x = (lane: number) => lane * laneWidth + laneWidth / 2;
-  const y = (row: number) => row * rowHeight + rowHeight / 2;
+  const y = (row: number) =>
+    row * rowHeight + rowHeight / 2 + (expand && row > expand.afterRow ? expand.extra : 0);
   const d = rowHeight * 0.8;
 
   let path = `M ${x(line.points[0].lane)} ${y(line.points[0].row).toFixed(1)}`;

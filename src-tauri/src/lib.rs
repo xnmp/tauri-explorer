@@ -15,8 +15,8 @@ pub mod git;
 pub mod git_actions;
 pub mod git_log;
 mod nano_banana;
-#[cfg(target_os = "linux")]
 mod palette;
+#[cfg(target_os = "linux")]
 mod portal;
 mod process_ext;
 mod progress;

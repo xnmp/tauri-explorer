@@ -1,0 +1,14 @@
+{
+  "app": {
+    "security": {
+      "assetProtocol": {
+        "scope": [
+          "$HOME/**/*",
+          "/Volumes/**/*",
+          "/tmp/**/*",
+          "/private/tmp/**/*"
+        ]
+      }
+    }
+  }
+}

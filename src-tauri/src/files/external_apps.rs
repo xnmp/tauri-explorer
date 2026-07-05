@@ -164,6 +164,10 @@ fn spawn_editor(
     file_path: &std::path::Path,
     line: u32,
 ) -> Result<(), std::io::Error> {
+    // A relative filename starting with `-` would be parsed as a flag by the
+    // editor. Absolutize so the path argument can never look like an option
+    // (std::path::absolute keeps symlinks intact and avoids \\?\ on Windows).
+    let file_path = std::path::absolute(file_path)?;
     match editor.format {
         LineFormat::GotoColon => std::process::Command::new(editor.binary)
             .arg("--goto")
@@ -176,6 +180,7 @@ fn spawn_editor(
             .map(reap_in_background),
         LineFormat::PlusLine => std::process::Command::new(editor.binary)
             .arg(format!("+{}", line))
+            .arg("--")
             .arg(file_path)
             .spawn()
             .map(reap_in_background),

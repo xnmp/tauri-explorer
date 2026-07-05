@@ -51,6 +51,12 @@ fn is_newer(latest: &str, current: &str) -> bool {
     false
 }
 
+/// True only for URLs on github.com itself (the release page we may open in
+/// the user's browser).
+fn is_github_url(url: &str) -> bool {
+    url.starts_with("https://github.com/")
+}
+
 /// Return the latest release if it is newer than the running version.
 #[tauri::command]
 pub async fn check_for_update() -> Result<Option<UpdateInfo>, AppError> {
@@ -65,6 +71,14 @@ pub async fn check_for_update() -> Result<Option<UpdateInfo>, AppError> {
             .map_err(|e| AppError::Other(format!("Update check parse failed: {}", e)))?;
 
         let latest = release.tag_name.trim_start_matches('v').to_string();
+        // The URL is opened in the user's browser; never trust the API
+        // response to point anywhere but GitHub itself.
+        if !is_github_url(&release.html_url) {
+            return Err(AppError::Other(format!(
+                "Update check returned a non-GitHub release URL: {}",
+                release.html_url
+            )));
+        }
         if is_newer(&latest, env!("CARGO_PKG_VERSION")) {
             Ok(Some(UpdateInfo {
                 version: latest,
@@ -101,5 +115,13 @@ mod tests {
     fn malformed_segments_compare_as_zero() {
         assert!(!is_newer("abc", "0.0.1"));
         assert!(is_newer("1.0.0-rc1", "0.9.9"));
+    }
+
+    #[test]
+    fn release_url_pinned_to_github() {
+        assert!(is_github_url("https://github.com/xnmp/tauri-explorer/releases/tag/v1.0.1"));
+        assert!(!is_github_url("https://evil.example/phish"));
+        assert!(!is_github_url("http://github.com/xnmp/tauri-explorer"));
+        assert!(!is_github_url("https://github.com.evil.example/x"));
     }
 }

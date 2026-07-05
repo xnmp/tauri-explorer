@@ -6,39 +6,17 @@
 
 **A file manager with Ctrl+P, Ctrl+Shift+F, and a command palette.**
 
-If you've ever opened VSCode just to navigate files faster than your file manager lets you, this is for you. Tauri Explorer brings the editor workflow to your filesystem: fuzzy file open with frecency ranking, ripgrep-backed content search, a command palette for every action, fully rebindable keybindings, and a UI you can strip down to nothing.
+If you've ever opened your editor just to move files faster than your file manager lets you, this is for you. Fuzzy quick-open with frecency ranking, ripgrep content search, a palette for every action, rebindable keys, tabs and dual panes, a git commit graph, and a UI you can strip down to nothing. Tauri v2 (Rust) + Svelte 5, native on Linux, Windows, and macOS. No telemetry.
 
-![Minimal mode — just the file pane and address bar](screenshots/readme/minimal.png)
-
-Built with Tauri v2 (Rust backend) and Svelte 5. Runs native on Linux, macOS, and Windows. The Rust backend handles directory listing, search, and thumbnails, so large directories don't choke the UI.
-
-Every piece of chrome is toggleable. Turn on what you need.
+**→ [Try it in your browser](https://tauri-explorer.vercel.app)** — the showcase site is a working copy of the app. Press `Ctrl+P`.
 
 ![Details view with sidebar](screenshots/readme/details-view.png)
 
-## Features
+## Install
 
-**The shortcuts you already know.** `Ctrl+P` for fuzzy file open with frecency ranking — the same workflow as VSCode, but over your entire filesystem. `Ctrl+Shift+F` for ripgrep-backed content search across any directory. `Ctrl+Shift+P` for a command palette that surfaces every action in the app. Every shortcut is rebindable, including chord sequences (e.g. `g then h` to go home).
+Grab the [latest release](https://github.com/xnmp/tauri-explorer/releases/latest) — AppImage/deb/rpm, MSI, or dmg. Arch users: a `PKGBUILD` ships in the repo. On Linux it can even [replace your system file picker](https://tauri-explorer.vercel.app) (xdg-desktop-portal FileChooser backend).
 
-![Quick open fuzzy search](screenshots/readme/quick-open.png)
-
-**Keyboard-first throughout.** `F2` to rename, `Delete` to trash, arrow keys and type-ahead to jump to entries, marquee selection with the mouse when you want it. Every operation has a shortcut, and you can rebind any of them.
-
-**Minimal by default, customizable everywhere.** Hide the sidebar, toolbar, status bar, and breadcrumbs until you're looking at nothing but files. 8 built-in themes plus drop-in custom CSS (`~/.config/tauri-explorer/themes/`). Adjustable background opacity and wallpaper. Per-directory column visibility and sort preferences. Sidebar bookmarks with drag-to-add and reorder.
-
-![Dark theme](screenshots/readme/dark-theme.png)
-
-**Tabs and dual pane.** `Ctrl+T` / `Ctrl+W` for tabs. `Ctrl+\` opens a second pane that works like a window docked alongside — each pane has its own tab strip, and tabs drag between panes, between windows, or tear off into new ones. Restore closed tabs. Workspaces to save and restore layouts.
-
-![Dual pane](screenshots/readme/dual-pane.png)
-
-**Three view modes.** Details view with resizable, toggleable columns and virtual scrolling for directories with 10k+ files. List view with auto-column grid. Tiles view with progressive thumbnail loading. All three support the same selection, rename, and drag-drop operations.
-
-![Tiles view](screenshots/readme/tiles-view.png)
-
-**Full file operations.** Copy, move, rename, bulk rename, delete, compress/extract ZIP, create symlinks, undo/redo. Conflict resolution dialogs for overwrites. Progress tracking for large operations. Paste images directly from clipboard.
-
-**Navigation that stays out of the way.** Editable breadcrumb bar with path autocomplete. Chevron pickers to browse subdirectories without navigating into them. Back/forward/up history.
+Binaries aren't code-signed yet; macOS and Windows will warn on first launch.
 
 ## Building
 
@@ -48,19 +26,10 @@ Requires [Rust](https://rustup.rs/), [Bun](https://bun.sh/), and [Tauri v2 prere
 bun install
 bun run start     # dev server
 bun run build     # production build
-```
-
-## Testing
-
-```bash
-bun run test      # unit tests (vitest)
-bun run test:e2e  # e2e tests (playwright)
+bun run test      # unit tests
+bun run test:e2e  # browser e2e
 ```
 
 ## Status
 
-Under active development. If you hit a bug, open an issue.
-
-## License
-
-See [LICENSE](LICENSE).
+v1.0 released. If you hit a bug: Command Palette → "Report a Bug" (or [open an issue](https://github.com/xnmp/tauri-explorer/issues/new)).

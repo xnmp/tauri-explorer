@@ -61,6 +61,12 @@ about not over-claiming publicly.
 
 ### Tier 2 — honesty / robustness before public scrutiny
 
+> **Status: S2, S7, A2 addressed in #209 (fix/tier2-hardening).** S2: source/output
+> staged under neutral names + `--allowed-tools edit_image` replaces `--yolo` (verified
+> against a live gemini run; nanobanana ≥1.0.10 also rejects `--output`, which the old
+> invocation passed). S7: asset scope converted to allow/deny with credential-dir
+> denies. A2: plugins.md reframed (feature modules, not a capability boundary).
+
 - **S2 (HIGH) — Nano Banana feeds attacker-influenceable strings to `gemini --yolo`.**
   `nano_banana.rs:120-144`. No OS shell is invoked and `GEMINI_API_KEY` is handled
   correctly (env, not argv, not logged). But `--yolo` auto-approves every tool call the

@@ -119,7 +119,9 @@ mod tests {
 
     #[test]
     fn release_url_pinned_to_github() {
-        assert!(is_github_url("https://github.com/xnmp/tauri-explorer/releases/tag/v1.0.1"));
+        assert!(is_github_url(
+            "https://github.com/xnmp/tauri-explorer/releases/tag/v1.0.1"
+        ));
         assert!(!is_github_url("https://evil.example/phish"));
         assert!(!is_github_url("http://github.com/xnmp/tauri-explorer"));
         assert!(!is_github_url("https://github.com.evil.example/x"));

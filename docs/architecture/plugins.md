@@ -1,9 +1,28 @@
 # Plugin System (#142)
 
-The plugin system is a **frontend modularity + capability-routing layer**. It
-lets self-contained features (a virtual filesystem, an AI action, an extra
-settings panel) register their contributions through one typed surface and be
-toggled on/off at runtime, without editing the core UI.
+The plugin system is a **feature-module layer with a UI toggle**: it lets
+self-contained features (a virtual filesystem, an AI action, an extra settings
+panel) register their contributions through one typed surface and be toggled
+on/off at runtime, without editing the core UI.
+
+## What this is NOT (honesty section — audit A2)
+
+It is **not a capability or security boundary**. Do not describe it as one:
+
+- Plugins are first-party code, compiled into the app bundle. They can — and
+  the shipped ones do — import `invoke`, `$lib/state/*`, and `$lib/api/*`
+  directly. `PluginContext` exists for *disposal bookkeeping* (everything
+  registered through it is torn down on toggle-off), not for containment.
+- The backend has **no plugin concept**: commands used by plugins
+  (`nano_banana.rs`, `palette.rs`, …) are ordinary compiled-in Tauri commands,
+  invokable regardless of a plugin's enable state.
+- A hypothetical third-party plugin would therefore have unrestricted access.
+  Third-party plugins are **not supported** (and runtime loading is blocked by
+  CSP anyway — see below). If they ever land on the roadmap, the minimum bar
+  is: make `PluginContext` the only allowed import surface (ESLint
+  `no-restricted-imports` on `plugins/**`), grow `ctx.fs`/`ctx.nav`/`ctx.modal`
+  to cover the real capability surface, and gate commands per-plugin-id in
+  Rust.
 
 Backend commands stay compiled-in Rust (as `nano_banana.rs` is today) — plugins
 route capabilities on the frontend; sidecar processes remain the pattern for
@@ -50,9 +69,11 @@ providers, and event listeners.
 
 ## PluginContext surface
 
-A plugin declares `activate(ctx)` and optional `deactivate()`. Plugins **never
-call `invoke` directly** — everything routes through the context so it is
-tracked and torn down.
+A plugin declares `activate(ctx)` and optional `deactivate()`. Register
+**UI contributions** through the context so they are tracked and torn down on
+toggle-off. For everything else (data fetching, mutations) plugins call the
+same typed `$lib/api/*` wrappers as core code — the context is a disposal
+ledger, not a sandbox (see "What this is NOT" above).
 
 | Capability | Method | Backed by |
 |-----------|--------|-----------|

@@ -1,26 +1,58 @@
 //! Nano Banana image editing via Gemini CLI.
-//! Issue: feat/nano-banana
+//! Issue: feat/nano-banana, fix/tier2-hardening (audit S2)
 //!
-//! Spawns `gemini --yolo "/edit <source> '<prompt>'"` as a subprocess,
-//! returns a job ID immediately, and emits completion/error events.
+//! Spawns `gemini "/edit <staged-source> '<prompt>' --output <staged-output>"`
+//! as a subprocess, returns a job ID immediately, and emits completion/error
+//! events.
+//!
+//! The slash-command string is re-parsed by gemini, so nothing
+//! attacker-influenceable may appear in it: the source image is first copied
+//! into a job-scoped work dir under a neutral name, gemini writes to a neutral
+//! output name there, and only then is the result moved to the user's
+//! requested destination. Tool auto-approval is restricted to `edit_image`
+//! (no `--yolo`).
 
 use crate::error::AppError;
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter};
 
 static NEXT_JOB_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Generous upper bound for a single edit job; gemini can be slow but should
-/// never run forever (it's spawned detached with --yolo).
+/// never run forever.
 const JOB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 /// Single-quote a string for embedding in the gemini slash-command string.
-/// Same escaping for paths and prompt: a filename like `x'; rm -rf ~'.png`
-/// must not be able to inject arguments into an auto-approving agent.
+/// A prompt like `x'; rm -rf ~'` must stay a single token when gemini
+/// re-parses the command.
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// A bare filename that cannot escape its directory.
+fn is_valid_output_filename(name: &str) -> bool {
+    !name.is_empty() && !name.contains(['/', '\\']) && name != "." && name != ".."
+}
+
+/// A file extension safe to embed in the slash-command: ascii-alphanumeric
+/// only, non-empty, lowercase. Falls back to `png`.
+fn sanitized_ext(name: &Path) -> String {
+    let ext: String = name
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(8)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if ext.is_empty() {
+        "png".to_string()
+    } else {
+        ext
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -63,12 +95,23 @@ pub async fn start_nano_banana_job(
         )));
     }
 
+    // The output filename must stay inside output_dir — reject separators
+    // and traversal outright rather than trusting the caller.
+    if !is_valid_output_filename(&output_filename) {
+        return Err(AppError::InvalidPath(format!(
+            "Invalid output filename: {}",
+            output_filename
+        )));
+    }
+
     let api_key = crate::gemini::resolve_api_key(&api_key)?;
 
     let job_id = NEXT_JOB_ID.fetch_add(1, Ordering::Relaxed);
 
     tokio::spawn(async move {
+        let work_dir = std::env::temp_dir().join(format!("tauri-explorer-nanobanana-{}", job_id));
         let job = run_gemini_edit(
+            &work_dir,
             &source_path,
             &prompt,
             &output_dir,
@@ -83,6 +126,7 @@ pub async fn start_nano_banana_job(
                 JOB_TIMEOUT.as_secs() / 60
             ))),
         };
+        let _ = std::fs::remove_dir_all(&work_dir);
         match result {
             Ok(output_path) => {
                 let _ = app.emit(
@@ -109,6 +153,7 @@ pub async fn start_nano_banana_job(
 }
 
 async fn run_gemini_edit(
+    work_dir: &Path,
     source_path: &str,
     prompt: &str,
     output_dir: &str,
@@ -116,28 +161,42 @@ async fn run_gemini_edit(
     api_key: &str,
     model: &str,
 ) -> Result<String, AppError> {
-    let output_path = PathBuf::from(output_dir).join(output_filename);
+    let final_output_path = PathBuf::from(output_dir).join(output_filename);
+
+    // Stage the source under a neutral name: the slash-command string is
+    // re-parsed by gemini, so the (attacker-influenceable) original filename
+    // must never appear in it.
+    std::fs::create_dir_all(work_dir)
+        .map_err(|e| AppError::Other(format!("Failed to create work dir: {}", e)))?;
+    let staged_source = work_dir.join(format!("source.{}", sanitized_ext(Path::new(source_path))));
+    std::fs::copy(source_path, &staged_source)
+        .map_err(|e| AppError::Other(format!("Failed to stage source image: {}", e)))?;
+
+    // No --output flag: nanobanana ≥1.0.10 rejects it as an invalid option
+    // (the whole /edit errors out) and always writes to ./nanobanana-output/.
     let edit_command = format!(
-        "/edit {} {} --output {}",
-        shell_quote(source_path),
+        "/edit {} {}",
+        shell_quote(&staged_source.to_string_lossy()),
         shell_quote(prompt),
-        shell_quote(&output_path.to_string_lossy())
     );
 
     log::info!(
-        "Starting Nano Banana (model={}): gemini --yolo \"{}\"",
+        "Starting Nano Banana (model={}): gemini --allowed-tools edit_image \"{}\"",
         model,
         edit_command,
     );
 
     // Snapshot the launch time so the fallback scan below can't pick up a
-    // stale file that existed in nanobanana-output/ before this job ran.
+    // stale file that existed before this job ran.
     let started_at = std::time::SystemTime::now();
 
+    // Only the image-edit tool may run unattended — never `--yolo`, which
+    // would auto-approve *any* tool call a prompt-injected model makes.
     let result = tokio::process::Command::new("gemini")
-        .arg("--yolo")
+        .arg("--allowed-tools")
+        .arg("edit_image")
         .arg(&edit_command)
-        .current_dir(output_dir)
+        .current_dir(work_dir)
         .env("GEMINI_API_KEY", api_key)
         .env("NANOBANANA_MODEL", model)
         .kill_on_drop(true)
@@ -165,24 +224,29 @@ async fn run_gemini_edit(
         )));
     }
 
-    // Check if the output file was created
-    if output_path.exists() {
-        return Ok(output_path.to_string_lossy().to_string());
-    }
+    // The tool writes to <work_dir>/nanobanana-output/<derived name>; take
+    // the newest file created after this job started.
+    let nb_output_dir = work_dir.join("nanobanana-output");
+    let produced = if nb_output_dir.exists() {
+        find_newest_file(&nb_output_dir, started_at)?
+    } else {
+        None
+    };
+    let produced = produced.ok_or_else(|| {
+        AppError::Other(format!(
+            "gemini produced no output file in {}",
+            nb_output_dir.to_string_lossy()
+        ))
+    })?;
 
-    // Fallback: scan nanobanana-output/ in case the CLI ignores --output.
-    // Only accept files created/modified after this job started.
-    let nb_output_dir = PathBuf::from(output_dir).join("nanobanana-output");
-    if nb_output_dir.exists() {
-        if let Some(path) = find_newest_file(&nb_output_dir, started_at)? {
-            return Ok(path.to_string_lossy().to_string());
-        }
-    }
+    // Move the result to the user's requested destination (copy+remove:
+    // the work dir usually lives on a different filesystem, where a plain
+    // rename fails with EXDEV).
+    std::fs::copy(&produced, &final_output_path)
+        .map_err(|e| AppError::Other(format!("Failed to move output into place: {}", e)))?;
+    let _ = std::fs::remove_file(&produced);
 
-    Err(AppError::Other(format!(
-        "Output file not found: {}",
-        output_path.to_string_lossy()
-    )))
+    Ok(final_output_path.to_string_lossy().to_string())
 }
 
 /// Find the newest file in `dir` that was modified after `newer_than`.
@@ -221,4 +285,91 @@ fn find_newest_file(
     }
 
     Ok(newest.map(|(path, _)| path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Naive re-parse of a single-quoted shell token stream, mirroring how
+    /// gemini tokenizes the slash-command. Returns the recovered tokens.
+    fn untokenize(s: &str) -> Vec<String> {
+        let mut tokens = Vec::new();
+        let mut cur = String::new();
+        let mut chars = s.chars().peekable();
+        let mut in_quote = false;
+        let mut in_token = false;
+        while let Some(c) = chars.next() {
+            match c {
+                '\'' => {
+                    in_quote = !in_quote;
+                    in_token = true;
+                }
+                '\\' if !in_quote => {
+                    if let Some(&next) = chars.peek() {
+                        cur.push(next);
+                        chars.next();
+                        in_token = true;
+                    }
+                }
+                ' ' if !in_quote => {
+                    if in_token || !cur.is_empty() {
+                        tokens.push(std::mem::take(&mut cur));
+                        in_token = false;
+                    }
+                }
+                _ => {
+                    cur.push(c);
+                    in_token = true;
+                }
+            }
+        }
+        if in_token || !cur.is_empty() {
+            tokens.push(cur);
+        }
+        tokens
+    }
+
+    #[test]
+    fn shell_quote_round_trips_hostile_strings() {
+        let hostile = [
+            "simple",
+            "with space",
+            "x'; rm -rf ~'.png",
+            "'--yolo",
+            "--output /etc/passwd",
+            "a'b'c",
+            "''",
+            "back\\slash",
+            "new\nline",
+        ];
+        for s in hostile {
+            let quoted = shell_quote(s);
+            let tokens = untokenize(&quoted);
+            assert_eq!(tokens, vec![s.to_string()], "quoting broke for {s:?}");
+        }
+    }
+
+    #[test]
+    fn hostile_filename_never_reaches_the_command_string() {
+        // The command embeds only staged names (source.<ext>/output.<ext>);
+        // the extension is the sole survivor of the original filename and is
+        // reduced to ascii-alphanumeric.
+        assert_eq!(sanitized_ext(Path::new("evil' --yolo x.p'ng")), "png");
+        assert_eq!(sanitized_ext(Path::new("photo.JPEG")), "jpeg");
+        assert_eq!(sanitized_ext(Path::new("noext")), "png");
+        assert_eq!(sanitized_ext(Path::new("dots...")), "png");
+        assert_eq!(sanitized_ext(Path::new("x.-'-")), "png");
+    }
+
+    #[test]
+    fn output_filename_cannot_traverse() {
+        assert!(is_valid_output_filename("edited.png"));
+        assert!(!is_valid_output_filename(""));
+        assert!(!is_valid_output_filename("../escape.png"));
+        assert!(!is_valid_output_filename("a/b.png"));
+        assert!(!is_valid_output_filename("a\\b.png"));
+        assert!(!is_valid_output_filename("."));
+        assert!(!is_valid_output_filename(".."));
+    }
 }

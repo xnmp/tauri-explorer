@@ -2,13 +2,25 @@
   "app": {
     "security": {
       "assetProtocol": {
-        "scope": [
-          "$HOME/**/*",
-          "/run/media/**/*",
-          "/media/**/*",
-          "/mnt/**/*",
-          "/tmp/**/*"
-        ]
+        "scope": {
+          "allow": [
+            "$HOME/**/*",
+            "/run/media/**/*",
+            "/media/**/*",
+            "/mnt/**/*",
+            "/tmp/**/*"
+          ],
+          "deny": [
+            "$HOME/.ssh/**",
+            "$HOME/.gnupg/**",
+            "$HOME/.aws/**",
+            "$HOME/.azure/**",
+            "$HOME/.kube/**",
+            "$HOME/.config/gcloud/**",
+            "$HOME/.netrc",
+            "$HOME/.docker/config.json"
+          ]
+        }
       }
     }
   }

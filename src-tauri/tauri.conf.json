@@ -16,10 +16,22 @@
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' asset: http://asset.localhost blob: data:; media-src 'self' asset: http://asset.localhost; frame-src 'self' asset: http://asset.localhost; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; form-action 'none'",
       "assetProtocol": {
         "enable": true,
-        "scope": [
-          "$HOME/**/*",
-          "/tmp/**/*"
-        ]
+        "scope": {
+          "allow": [
+            "$HOME/**/*",
+            "/tmp/**/*"
+          ],
+          "deny": [
+            "$HOME/.ssh/**",
+            "$HOME/.gnupg/**",
+            "$HOME/.aws/**",
+            "$HOME/.azure/**",
+            "$HOME/.kube/**",
+            "$HOME/.config/gcloud/**",
+            "$HOME/.netrc",
+            "$HOME/.docker/config.json"
+          ]
+        }
       }
     }
   },

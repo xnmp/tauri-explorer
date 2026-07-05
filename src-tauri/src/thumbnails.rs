@@ -866,16 +866,14 @@ fn get_video_thumbnail_data_sync(
         let frame = extract_media_thumbnail(&source_path, size, is_audio)?;
         let mut reader = ImageReader::new(Cursor::new(frame)).with_guessed_format()?;
         reader.limits(decode_limits());
-        let img = reader
-            .decode()
-            .map_err(|e| {
-                log::warn!(
-                    "[thumbnails] failed to decode ffmpeg output for {}: {}",
-                    source_path.display(),
-                    e
-                );
-                AppError::Other(format!("Failed to decode video frame: {}", e))
-            })?;
+        let img = reader.decode().map_err(|e| {
+            log::warn!(
+                "[thumbnails] failed to decode ffmpeg output for {}: {}",
+                source_path.display(),
+                e
+            );
+            AppError::Other(format!("Failed to decode video frame: {}", e))
+        })?;
         let thumbnail = img.thumbnail(size, size).to_rgb8();
 
         let data = encode_jpeg(&thumbnail, quality)?;
@@ -1162,7 +1160,11 @@ mod tests {
             for (i, entry) in table.iter_mut().enumerate() {
                 let mut c = i as u32;
                 for _ in 0..8 {
-                    c = if c & 1 != 0 { 0xEDB88320 ^ (c >> 1) } else { c >> 1 };
+                    c = if c & 1 != 0 {
+                        0xEDB88320 ^ (c >> 1)
+                    } else {
+                        c >> 1
+                    };
                 }
                 *entry = c;
             }

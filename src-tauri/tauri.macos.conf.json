@@ -2,12 +2,24 @@
   "app": {
     "security": {
       "assetProtocol": {
-        "scope": [
-          "$HOME/**/*",
-          "/Volumes/**/*",
-          "/tmp/**/*",
-          "/private/tmp/**/*"
-        ]
+        "scope": {
+          "allow": [
+            "$HOME/**/*",
+            "/Volumes/**/*",
+            "/tmp/**/*",
+            "/private/tmp/**/*"
+          ],
+          "deny": [
+            "$HOME/.ssh/**",
+            "$HOME/.gnupg/**",
+            "$HOME/.aws/**",
+            "$HOME/.azure/**",
+            "$HOME/.kube/**",
+            "$HOME/.config/gcloud/**",
+            "$HOME/.netrc",
+            "$HOME/.docker/config.json"
+          ]
+        }
       }
     }
   }

@@ -112,7 +112,7 @@ through the same channel after re-fetching.
 | `directory-listing.ts` | Streaming directory listing management |
 | `drop-operations.ts` | Drop handler logic: conflict resolution, move/copy execution |
 | `sort-prefs.ts` | Per-directory sort preference persistence |
-| `command-definitions.ts` | All ~50 commands with handlers, categories, shortcuts, `when` guards |
+| `command-definitions.ts` | Aggregates and registers every palette command (80+, defined in `commands/*.ts`) with handlers, categories, shortcuts, `when` guards |
 
 ## Domain Layer
 

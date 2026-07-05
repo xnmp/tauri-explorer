@@ -14,8 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use git2::{
-    DiffFormat, DiffLineType, DiffOptions, ObjectType, Repository, RepositoryOpenFlags, Signature,
-    Status, StatusOptions,
+    DiffFormat, DiffLineType, DiffOptions, ObjectType, Repository, Signature, Status, StatusOptions,
 };
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
@@ -25,13 +24,10 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 use crate::error::AppError;
+use crate::git_common::{open_repo, to_app_err};
 use crate::task_registry::TaskRegistry;
 
 static GIT_TASKS: TaskRegistry = TaskRegistry::new();
-
-fn to_app_err(e: git2::Error) -> AppError {
-    AppError::Other(format!("git: {}", e.message()))
-}
 
 /// Single-letter status code matching git porcelain conventions.
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -90,15 +86,6 @@ pub struct GitCommitOptions {
 pub struct GitCommitResult {
     pub commit_id: String,
     pub summary: String,
-}
-
-fn open_repo(path: &Path) -> Result<Repository, AppError> {
-    Repository::open_ext(
-        path,
-        RepositoryOpenFlags::empty(),
-        std::iter::empty::<&Path>(),
-    )
-    .map_err(to_app_err)
 }
 
 fn status_code(flags: Status) -> Option<GitStatusCode> {

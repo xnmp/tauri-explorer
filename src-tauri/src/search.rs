@@ -261,7 +261,7 @@ fn fuzzy_search_sync(
 /// Returns a search ID that can be used to cancel the search.
 /// `boost_prefix` is an optional path prefix; results under it get a score bonus.
 #[tauri::command]
-pub fn start_streaming_search(
+pub async fn start_streaming_search(
     app: AppHandle,
     query: String,
     root: String,
@@ -270,11 +270,18 @@ pub fn start_streaming_search(
 ) -> Result<u64, AppError> {
     let root_path = PathBuf::from(&root);
 
-    if !root_path.exists() {
+    // Stat off the calling thread — a dead network mount can hang here.
+    let (exists, is_dir) = {
+        let p = root_path.clone();
+        tokio::task::spawn_blocking(move || (p.exists(), p.is_dir()))
+            .await
+            .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
+    };
+    if !exists {
         return Err(AppError::NotFound(root));
     }
 
-    if !root_path.is_dir() {
+    if !is_dir {
         return Err(AppError::InvalidPath(format!("Not a directory: {}", root)));
     }
 
@@ -495,7 +502,7 @@ fn process_batch(
 
 /// Cancel an active streaming search.
 #[tauri::command]
-pub fn cancel_search(search_id: u64) -> Result<(), AppError> {
+pub async fn cancel_search(search_id: u64) -> Result<(), AppError> {
     SEARCHES.cancel(search_id);
     Ok(())
 }

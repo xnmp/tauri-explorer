@@ -2,7 +2,13 @@
  * Tests for the fuzzy scoring algorithm.
  */
 import { describe, it, expect } from "vitest";
-import { fuzzyScore, fuzzyScorePath } from "$lib/domain/fuzzy-score";
+import {
+  commandFrecencyPoints,
+  filenameMatchScore,
+  fuzzyScore,
+  fuzzyScorePath,
+  scoreCommand,
+} from "$lib/domain/fuzzy-score";
 
 describe("fuzzyScore", () => {
   it("returns 0 for non-subsequence", () => {
@@ -111,5 +117,48 @@ describe("fuzzyScore optimal alignment (consecutive vs non-consecutive)", () => 
     // only considered the consecutive path once a run had started, so
     // both candidates scored identically.
     expect(fuzzyScore("ab", "Aab")).toBeGreaterThan(fuzzyScore("ab", "xab"));
+  });
+});
+
+describe("filenameMatchScore", () => {
+  it("ranks exact > prefix > substring > none", () => {
+    expect(filenameMatchScore("Pictures", "pictures")).toBe(200);
+    expect(filenameMatchScore("Pictures2024", "pictures")).toBe(150);
+    expect(filenameMatchScore("MyPictures", "pictures")).toBe(100);
+    expect(filenameMatchScore("Documents", "pictures")).toBe(0);
+  });
+
+  it("handles empty query as a universal prefix, not a crash", () => {
+    expect(filenameMatchScore("anything", "")).toBe(150);
+  });
+});
+
+describe("scoreCommand", () => {
+  const fields = (label: string, category = "", shortcut = "") => ({
+    label,
+    category,
+    shortcut,
+  });
+
+  it("requires the query to be a subsequence of the label", () => {
+    // Category/shortcut hits alone never create a match.
+    expect(scoreCommand(fields("open folder", "git", "ctrl+g"), "git", 0)).toBe(0);
+    expect(scoreCommand(fields("toggle git panel"), "git", 0)).toBeGreaterThan(0);
+  });
+
+  it("ranks label prefix above bare substring above scattered subsequence", () => {
+    const prefix = scoreCommand(fields("git commit"), "git", 0);
+    const substring = scoreCommand(fields("open git panel"), "git", 0);
+    const scattered = scoreCommand(fields("grep in tree"), "git", 0);
+    expect(prefix).toBeGreaterThan(substring);
+    expect(substring).toBeGreaterThan(scattered);
+    expect(scattered).toBeGreaterThan(0);
+  });
+
+  it("caps the frecency contribution", () => {
+    expect(commandFrecencyPoints(1000)).toBe(30);
+    const cold = scoreCommand(fields("git commit"), "git", 0);
+    const hot = scoreCommand(fields("git commit"), "git", 1000);
+    expect(hot - cold).toBe(30);
   });
 });

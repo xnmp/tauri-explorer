@@ -81,7 +81,7 @@ const invokeMock = vi.hoisted(() =>
     }
   }),
 );
-vi.mock(import("$lib/api/files"), async (orig) => {
+vi.mock(import("$lib/api/common"), async (orig) => {
   const actual = await orig();
   return { ...actual, invoke: invokeMock as unknown as typeof actual.invoke };
 });

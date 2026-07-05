@@ -116,6 +116,16 @@ about not over-claiming publicly.
 
 ### Tier 4 — steady maintainability debt (non-urgent, compounding)
 
+> **Status:** A7, A8, A10 + most low items fixed in #211 (view-mode dual-write removed
+> with an explicit "Set Current View Mode as Default" command; `git_common.rs`;
+> removable-drive fold lifted to `domain/drives.ts`; fs_watcher no longer panics on
+> watcher-creation failure; search commands async; GitGraphView ref-grouping →
+> `domain/git-graph.ts`; NavigationBar reuses `isDriveRoot`; frontend.md count fixed).
+> A4/A5/A6/A9 addressed in #212. `zoom.ts` DOM read: accepted as documented intentional
+> impurity — the pure cores (`fixedFromClient`/`fixedFromRect`) are already extracted and
+> unit-tested; relocating the one impure accessor would churn many callers for no
+> structural gain.
+
 - **A4 (MED)** `window-tabs.svelte.ts` (1036 lines) bundles ≥6 responsibilities; extract
   tab-display/git-root formatting and the closed-tab stack.
 - **A5 (MED)** `files.ts` (1438 lines) mixes 11 concerns; split into

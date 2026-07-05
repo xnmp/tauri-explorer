@@ -1,76 +1,21 @@
 /**
  * API client for file operations.
  * Issue: tauri-explorer-nv2y - Migrated from Python FastAPI to Rust Tauri commands
+ *
+ * Concern-focused modules split out of this file live alongside it and are
+ * re-exported at the bottom, so existing importers of `$lib/api/files` keep
+ * working unchanged (Issue: refactor/audit-tier4-splits (#212)).
  */
 
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
-import type { FolderPreview } from "$lib/domain/folder-preview";
-import { invoke as tauriInvoke } from "@tauri-apps/api/core";
-import { isTauri, mockInvoke } from "./mock-invoke";
+import {
+  invoke,
+  extractError,
+  virtualPathGuard,
+  dataUriToBlobUrl,
+  type ApiResult,
+} from "./common";
 import { providerFor } from "$lib/plugins/fs-providers";
-import { isVirtualPath, virtualScheme } from "$lib/domain/virtual-path";
-
-// Cached Tauri detection. Only the positive result is latched: an invoke
-// racing ahead of __TAURI_INTERNALS__ injection must not permanently stick
-// the real app on the mock, so we re-detect until Tauri is found.
-let cachedIsTauri = false;
-
-/**
- * Mock-aware invoke: dispatches to the real Tauri IPC when available,
- * otherwise to the in-memory mock (browser E2E). All API modules should use
- * this instead of importing `invoke` from @tauri-apps/api directly.
- */
-export async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  if (!cachedIsTauri && isTauri()) {
-    cachedIsTauri = true;
-  }
-  const invoker = cachedIsTauri ? tauriInvoke<T> : mockInvoke<T>;
-  return args !== undefined ? invoker(cmd, args) : invoker(cmd);
-}
-
-/** Structured error from Tauri backend */
-export type AppErrorKind = "not_found" | "permission_denied" | "already_exists" | "invalid_path" | "io" | "other";
-
-export interface AppError {
-  kind: AppErrorKind;
-  message: string;
-}
-
-const APP_ERROR_KINDS: ReadonlySet<string> = new Set<AppErrorKind>([
-  "not_found", "permission_denied", "already_exists", "invalid_path", "io", "other",
-]);
-
-/** Extract error message from Tauri command error (structured or string) */
-export function extractError(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (err && typeof err === "object") {
-    const message = (err as { message?: unknown }).message;
-    if (typeof message === "string") return message;
-    // Plain object without a usable message — serialize rather than "[object Object]"
-    try {
-      return JSON.stringify(err);
-    } catch {
-      return String(err);
-    }
-  }
-  return String(err);
-}
-
-/** Extract structured error kind from Tauri command error.
- *  Returns null unless the kind is a known AppErrorKind. */
-export function extractErrorKind(err: unknown): AppErrorKind | null {
-  if (err && typeof err === "object" && "kind" in err) {
-    const kind = (err as { kind: unknown }).kind;
-    if (typeof kind === "string" && APP_ERROR_KINDS.has(kind)) {
-      return kind as AppErrorKind;
-    }
-  }
-  return null;
-}
-
-export type ApiResult<T> =
-  | { ok: true; data: T }
-  | { ok: false; error: string };
 
 /**
  * Fetch directory listing from Tauri backend.
@@ -137,22 +82,6 @@ export async function createDirectory(
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
-}
-
-
-/**
- * Reject real-fs operations on virtual (`scheme://…`) paths with a graceful
- * error instead of letting them reach the OS backend (#152). Virtual entries
- * are read-only plugin views; only listing (fetchDirectory / streaming) is
- * provider-routed today.
- */
-function virtualPathGuard(...paths: (string | undefined)[]): { ok: false; error: string } | null {
-  const virtual = paths.find((p) => p && isVirtualPath(p));
-  if (!virtual) return null;
-  return {
-    ok: false,
-    error: `${virtualScheme(virtual)}:// is a read-only virtual location`,
-  };
 }
 
 /**
@@ -503,6 +432,19 @@ export async function getLaunchCwd(): Promise<ApiResult<string>> {
   }
 }
 
+/** Directory holding the app's rolling log files (for "open log folder"). */
+export async function getLogDir(): Promise<string> {
+  return invoke<string>("get_log_dir");
+}
+
+/**
+ * Report a webview startup-timing summary to the app log (fire-and-forget
+ * telemetry). Absent in mock/browser mode, where the promise rejects.
+ */
+export async function logStartupTiming(summary: string): Promise<void> {
+  return invoke<void>("log_startup_timing", { summary });
+}
+
 export type DriveKind = "fixed" | "removable" | "network" | "cloud" | "unknown";
 
 export type CloudProvider = "googledrive" | "wsl";
@@ -521,46 +463,6 @@ export async function listDrives(): Promise<ApiResult<Drive[]>> {
   try {
     const drives = await invoke<Drive[]>("list_drives");
     return { ok: true, data: drives };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/**
- * Search result from fuzzy file search.
- */
-export interface SearchResult {
-  name: string;
-  path: string;
-  relativePath: string;
-  score: number;
-  kind: "file" | "directory";
-}
-
-interface SearchResponse {
-  results: SearchResult[];
-}
-
-/**
- * Fuzzy search for files recursively in a directory.
- *
- * @param query - Search query
- * @param root - Root directory to search in
- * @param limit - Maximum number of results
- * @returns Result with matching files or error message
- */
-export async function fuzzySearch(
-  query: string,
-  root: string,
-  limit: number = 20
-): Promise<ApiResult<SearchResult[]>> {
-  try {
-    const response = await invoke<SearchResponse>("fuzzy_search", {
-      query,
-      root,
-      limit,
-    });
-    return { ok: true, data: response.results };
   } catch (err) {
     return { ok: false, error: extractError(err) };
   }
@@ -596,59 +498,6 @@ export async function checkPathsExist(paths: string[]): Promise<boolean[]> {
     return await invoke<boolean[]>("check_paths_exist", { paths });
   } catch {
     return paths.map(() => true); // assume exists on error
-  }
-}
-
-/**
- * Event payload for streaming search results.
- */
-export interface SearchResultsEvent {
-  searchId: number;
-  results: SearchResult[];
-  done: boolean;
-  totalScanned: number;
-}
-
-/**
- * Start a streaming fuzzy search that emits results incrementally.
- * Listen for 'search-results' events to receive results.
- *
- * @param query - Search query
- * @param root - Root directory to search in
- * @param limit - Maximum number of results
- * @returns Result with search ID or error message
- */
-export async function startStreamingSearch(
-  query: string,
-  root: string,
-  limit: number = 20,
-  boostPrefix?: string,
-): Promise<ApiResult<number>> {
-  try {
-    const searchId = await invoke<number>("start_streaming_search", {
-      query,
-      root,
-      limit,
-      boostPrefix: boostPrefix ?? null,
-    });
-    return { ok: true, data: searchId };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/**
- * Cancel an active streaming search.
- *
- * @param searchId - ID of the search to cancel
- * @returns Result indicating success or error message
- */
-export async function cancelSearch(searchId: number): Promise<ApiResult<void>> {
-  try {
-    await invoke("cancel_search", { searchId });
-    return { ok: true, data: undefined };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -733,260 +582,6 @@ export async function unwatchDirectory(path: string): Promise<void> {
     await invoke("unwatch_directory", { path });
   } catch {
     // Non-critical
-  }
-}
-
-// ===================
-// Thumbnail Generation
-// Issue: tauri-explorer-im3m
-// ===================
-
-/**
- * Get the path to a cached thumbnail for an image file.
- * Generates the thumbnail if not already cached.
- *
- * @param path - Full path to image file
- * @param size - Optional thumbnail size (default 128)
- * @returns Result with cached thumbnail path or error
- */
-export async function getThumbnail(
-  path: string,
-  size?: number
-): Promise<ApiResult<string>> {
-  try {
-    const thumbnailPath = await invoke<string>("get_thumbnail", { path, size });
-    return { ok: true, data: thumbnailPath };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-function dataUriToBlobUrl(dataUri: string): string {
-  const comma = dataUri.indexOf(",");
-  if (comma === -1) return dataUri;
-  const meta = dataUri.slice(0, comma);
-  const mimeMatch = meta.match(/data:([^;]+)/);
-  const mime = mimeMatch ? mimeMatch[1] : "image/jpeg";
-  const raw = atob(dataUri.slice(comma + 1));
-  const bytes = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
-  return URL.createObjectURL(new Blob([bytes], { type: mime }));
-}
-
-/**
- * Get thumbnail as blob URL.
- *
- * @param path - Full path to image file
- * @param size - Optional thumbnail size (default 128)
- * @returns Result with blob URL or error
- */
-export async function getThumbnailData(
-  path: string,
-  size?: number,
-  quality?: number
-): Promise<ApiResult<string>> {
-  const guard = virtualPathGuard(path);
-  if (guard) return guard;
-  try {
-    const dataUri = await invoke<string>("get_thumbnail_data", { path, size, quality });
-    return { ok: true, data: dataUriToBlobUrl(dataUri) };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/**
- * Get micro thumbnail (16x16) as blob URL for progressive loading.
- * Also pre-warms the full thumbnail cache as a side effect.
- *
- * @param path - Full path to image file
- * @returns Result with blob URL or error
- */
-export async function getMicroThumbnail(
-  path: string,
-  prewarmSize?: number,
-  prewarmQuality?: number
-): Promise<ApiResult<string>> {
-  const guard = virtualPathGuard(path);
-  if (guard) return guard;
-  try {
-    const dataUri = await invoke<string>("get_micro_thumbnail", { path, prewarmSize, prewarmQuality });
-    return { ok: true, data: dataUriToBlobUrl(dataUri) };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/**
- * Get a video thumbnail (extracted frame) as a blob URL.
- * Requires ffmpeg on PATH; returns an error otherwise so callers can fall back
- * to the file-type icon.
- *
- * @param path - Full path to video file
- * @param size - Optional generation size
- * @param quality - Optional JPEG quality
- */
-export async function getVideoThumbnailData(
-  path: string,
-  size?: number,
-  quality?: number
-): Promise<ApiResult<string>> {
-  try {
-    const dataUri = await invoke<string>("get_video_thumbnail_data", { path, size, quality });
-    return { ok: true, data: dataUriToBlobUrl(dataUri) };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/**
- * Get the folder-preview descriptor for a directory: up to a few
- * representative image paths plus a change fingerprint (see
- * $lib/domain/folder-preview for the selection spec). Empty `image_paths`
- * means "no eligible images" — callers show the plain folder icon.
- *
- * @param path - Full path to folder
- */
-export async function getFolderPreview(path: string): Promise<ApiResult<FolderPreview>> {
-  try {
-    const preview = await invoke<FolderPreview>("get_folder_preview", { path });
-    return { ok: true, data: preview };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/**
- * Thumbnail cache statistics.
- */
-export interface ThumbnailCacheStats {
-  count: number;
-  totalSize: number;
-  path: string;
-}
-
-/**
- * Clear the thumbnail cache.
- *
- * @returns Result with bytes cleared or error
- */
-export async function clearThumbnailCache(): Promise<ApiResult<number>> {
-  try {
-    const bytesCleared = await invoke<number>("clear_thumbnail_cache");
-    return { ok: true, data: bytesCleared };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/**
- * Get thumbnail cache statistics.
- *
- * @returns Result with cache stats or error
- */
-export async function getThumbnailCacheStats(): Promise<ApiResult<ThumbnailCacheStats>> {
-  try {
-    const stats = await invoke<ThumbnailCacheStats>("get_thumbnail_cache_stats");
-    return { ok: true, data: stats };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-// ===================
-// Content Search (ripgrep)
-// Issue: tauri-explorer-3a1q
-// ===================
-
-/**
- * A single match within a file.
- */
-export interface ContentMatch {
-  lineNumber: number;
-  column: number;
-  lineContent: string;
-  matchStart: number;
-  matchEnd: number;
-}
-
-/**
- * Search result for a single file containing matches.
- */
-export interface ContentSearchResult {
-  path: string;
-  relativePath: string;
-  matches: ContentMatch[];
-}
-
-/**
- * Event payload for streaming content search results.
- */
-export interface ContentSearchEvent {
-  searchId: number;
-  results: ContentSearchResult[];
-  done: boolean;
-  filesSearched: number;
-  totalMatches: number;
-}
-
-/**
- * Result of starting a content search. With the real backend, results stream
- * via 'content-search-results' events and `searchId` identifies the stream.
- * Outside Tauri (browser/mock mode) the event system is unavailable, so the
- * mock returns the complete result set inline (`searchId` null) — same
- * fallback shape as the streaming directory listing.
- */
-export interface ContentSearchStart {
-  searchId: number | null;
-  inline: ContentSearchEvent | null;
-}
-
-/**
- * Start a streaming content search using ripgrep.
- * Listen for 'content-search-results' events to receive results.
- *
- * @param query - Search query (text or regex pattern)
- * @param root - Root directory to search in
- * @param caseSensitive - Whether search is case-sensitive
- * @param regexMode - Whether to treat query as regex pattern
- * @param maxResults - Maximum number of results
- * @returns Result with stream id or inline results, or an error message
- */
-export async function startContentSearch(
-  query: string,
-  root: string,
-  caseSensitive: boolean = false,
-  regexMode: boolean = false,
-  maxResults: number = 500
-): Promise<ApiResult<ContentSearchStart>> {
-  try {
-    const raw = await invoke<number | ContentSearchEvent>("start_content_search", {
-      query,
-      root,
-      caseSensitive,
-      regexMode,
-      maxResults,
-    });
-    return typeof raw === "number"
-      ? { ok: true, data: { searchId: raw, inline: null } }
-      : { ok: true, data: { searchId: null, inline: raw } };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/**
- * Cancel an active content search.
- *
- * @param searchId - ID of the search to cancel
- * @returns Result indicating success or error message
- */
-export async function cancelContentSearch(searchId: number): Promise<ApiResult<void>> {
-  try {
-    await invoke("cancel_content_search", { searchId });
-    return { ok: true, data: undefined };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
   }
 }
 
@@ -1100,38 +695,6 @@ export async function startNanoBananaJob(
   }
 }
 
-// ===================
-// Archive Operations
-// Issue: tauri-explorer-0xr, tauri-explorer-kez
-// ===================
-
-/** Payload of `zip-progress` events emitted while a compression job runs. */
-export interface ZipProgressEvent {
-  jobId: number;
-  bytesDone: number;
-  bytesTotal: number;
-  currentFile: string;
-}
-
-/**
- * Compress files/directories into a ZIP archive.
- *
- * @param paths - List of file/directory paths to compress
- * @param jobId - Client-generated id keying `zip-progress` events and
- *                cancellation via cancelCompress
- * @returns Result with path to created ZIP file or error
- */
-export async function compressToZip(paths: string[], jobId?: number): Promise<ApiResult<string>> {
-  const guard = virtualPathGuard(...paths);
-  if (guard) return guard;
-  try {
-    const zipPath = await invoke<string>("compress_to_zip", { paths, jobId });
-    return { ok: true, data: zipPath };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
 /** File-picker portal window → backend: deliver the user's choice.
  *  `paths` are absolute filesystem paths; `cancelled` aborts the request. */
 export async function pickerRespond(
@@ -1146,289 +709,6 @@ export async function pickerRespond(
   }
 }
 
-/** Cancel a running compression job. The pending compressToZip call fails
- *  with "Compression cancelled" and the partial archive is removed. */
-export async function cancelCompress(jobId: number): Promise<void> {
-  try {
-    await invoke("cancel_compress", { jobId });
-  } catch {
-    // Cancellation is best-effort; the job may already have finished.
-  }
-}
-
-/**
- * Extract a ZIP archive.
- *
- * @param archivePath - Path to the archive file
- * @param extractHere - If true, extract to archive's directory; if false, extract to new folder
- * @param jobId - Client-generated id keying `unzip-progress` events and
- *                cancellation via cancelExtract
- * @returns Result with extraction destination path or error
- */
-export async function extractArchive(
-  archivePath: string,
-  extractHere: boolean = false,
-  jobId?: number,
-): Promise<ApiResult<string>> {
-  const guard = virtualPathGuard(archivePath);
-  if (guard) return guard;
-  try {
-    const destPath = await invoke<string>("extract_archive", { archivePath, extractHere, jobId });
-    return { ok: true, data: destPath };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/** Preview listing of a ZIP archive. `rootFolder` is set when the archive's
- *  sole top-level item is a directory we descended into — its name, for a
- *  "contains one folder: X" indicator. */
-export interface ArchiveListing {
-  entries: FileEntry[];
-  rootFolder: string | null;
-}
-
-/**
- * List the contents of a ZIP archive (one level deep), for the preview pane.
- * Returns FileEntry rows with synthetic `archive.zip!/name` paths,
- * directories first. If the only top-level item is a folder, descends into
- * it and reports its name as `rootFolder`.
- */
-export async function listArchiveContents(archivePath: string): Promise<ApiResult<ArchiveListing>> {
-  try {
-    const listing = await invoke<ArchiveListing>("list_archive_contents", { archivePath });
-    return { ok: true, data: listing };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/** Cancel a running extraction job. The pending extractArchive call fails
- *  with "Extraction cancelled" and the partial output is removed. */
-export async function cancelExtract(jobId: number): Promise<void> {
-  try {
-    await invoke("cancel_extract", { jobId });
-  } catch {
-    // Cancellation is best-effort; the job may already have finished.
-  }
-}
-
-// ===================
-// Config File Persistence
-// Issue: tauri-ti0l
-// ===================
-
-/**
- * Read a JSON config file from the app config directory.
- * Returns empty string if file doesn't exist.
- */
-export async function readConfigFile(filename: string): Promise<ApiResult<string>> {
-  try {
-    const data = await invoke<string>("read_config_file", { filename });
-    return { ok: true, data };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/**
- * Write a JSON config file to the app config directory.
- */
-export async function writeConfigFile(filename: string, data: string): Promise<ApiResult<void>> {
-  try {
-    await invoke("write_config_file", { filename, data });
-    return { ok: true, data: undefined };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/**
- * List user theme CSS files from ~/.config/tauri-explorer/themes/.
- * Returns array of [filename, cssContent] pairs.
- */
-export async function listUserThemes(): Promise<ApiResult<[string, string][]>> {
-  try {
-    const data = await invoke<[string, string][]>("list_user_themes");
-    return { ok: true, data };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/**
- * Git file status types.
- */
-export type GitFileStatus = "Modified" | "Added" | "Deleted" | "Renamed" | "Copied" | "Untracked" | "Ignored" | "Conflicted" | "TypeChange";
-
-export interface GitStatusResponse {
-  is_git_repo: boolean;
-  statuses: Record<string, GitFileStatus>;
-}
-
-/**
- * Get git status for files in a directory.
- */
-export async function getGitStatus(path: string): Promise<ApiResult<GitStatusResponse>> {
-  try {
-    const data = await invoke<GitStatusResponse>("get_git_status", { path });
-    return { ok: true, data };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-// ----- SCM git backend (#53) ----- //
-
-export type GitStatusCode =
-  | "Modified"
-  | "Added"
-  | "Deleted"
-  | "Renamed"
-  | "Copied"
-  | "Untracked"
-  | "Ignored"
-  | "Conflicted"
-  | "TypeChange";
-
-export interface GitFileEntry {
-  path: string;
-  old_path: string | null;
-  status: GitStatusCode;
-}
-
-export interface GitStatusSummary {
-  is_repo: boolean;
-  repo_root: string | null;
-  branch: string | null;
-  detached: boolean;
-  staged: GitFileEntry[];
-  changes: GitFileEntry[];
-  untracked: GitFileEntry[];
-  merge: GitFileEntry[];
-}
-
-export interface GitCommitResult {
-  commit_id: string;
-  summary: string;
-}
-
-export async function gitInit(path: string): Promise<ApiResult<string>> {
-  try {
-    const data = await invoke<string>("git_init", { path });
-    return { ok: true, data };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-export async function gitRepoRoot(path: string): Promise<ApiResult<string | null>> {
-  try {
-    const data = await invoke<string | null>("git_repo_root", { path });
-    return { ok: true, data };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/** Append a path to the repo's `.gitignore`, creating the file if needed.
- *  Idempotent — duplicate entries are skipped. */
-export async function gitAddToGitignore(
-  repoRoot: string,
-  entry: string,
-): Promise<ApiResult<string>> {
-  try {
-    const data = await invoke<string>("git_add_to_gitignore", { repoRoot, entry });
-    return { ok: true, data };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-export async function gitSummary(repoPath: string): Promise<ApiResult<GitStatusSummary>> {
-  try {
-    const data = await invoke<GitStatusSummary>("git_status", { repoPath });
-    return { ok: true, data };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-export async function gitStage(repoPath: string, paths: string[]): Promise<ApiResult<void>> {
-  try {
-    await invoke<void>("git_stage", { repoPath, paths });
-    return { ok: true, data: undefined };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-export async function gitUnstage(repoPath: string, paths: string[]): Promise<ApiResult<void>> {
-  try {
-    await invoke<void>("git_unstage", { repoPath, paths });
-    return { ok: true, data: undefined };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-export async function gitDiscard(
-  repoPath: string,
-  paths: string[],
-  options?: { force?: boolean },
-): Promise<ApiResult<void>> {
-  try {
-    await invoke<void>("git_discard", { repoPath, paths, options: options ?? null });
-    return { ok: true, data: undefined };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-export async function gitDiff(
-  repoPath: string,
-  path: string,
-  options?: { staged?: boolean },
-): Promise<ApiResult<string>> {
-  try {
-    const data = await invoke<string>("git_diff", { repoPath, path, options: options ?? null });
-    return { ok: true, data };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-export async function gitCommit(
-  repoPath: string,
-  message: string,
-  options?: { amend?: boolean },
-): Promise<ApiResult<GitCommitResult>> {
-  try {
-    const data = await invoke<GitCommitResult>("git_commit", { repoPath, message, options: options ?? null });
-    return { ok: true, data };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-export async function gitWatchRepo(repoPath: string): Promise<ApiResult<void>> {
-  try {
-    await invoke<void>("git_watch_repo", { repoPath });
-    return { ok: true, data: undefined };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-export async function gitUnwatchRepo(repoPath: string): Promise<ApiResult<void>> {
-  try {
-    await invoke<void>("git_unwatch_repo", { repoPath });
-    return { ok: true, data: undefined };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
 export async function setWindowTheme(theme: "light" | "dark"): Promise<void> {
   try {
     await invoke<void>("set_window_theme", { theme });
@@ -1436,3 +716,27 @@ export async function setWindowTheme(theme: "light" | "dark"): Promise<void> {
     // Non-critical — only affects vibrancy appearance
   }
 }
+
+// ===================
+// Concern-focused re-exports (façade)
+// Issue: refactor/audit-tier4-splits (#212)
+//
+// Split out of this file into cohesive modules; re-exported here so existing
+// importers of `$lib/api/files` continue to resolve every symbol unchanged.
+// ===================
+
+export {
+  invoke,
+  extractError,
+  extractErrorKind,
+  type AppError,
+  type AppErrorKind,
+  type ApiResult,
+} from "./common";
+
+export * from "./search";
+export * from "./thumbnails";
+export * from "./archive";
+export * from "./config";
+export * from "./git";
+export * from "./warm-pool";

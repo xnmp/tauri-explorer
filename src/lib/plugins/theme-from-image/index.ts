@@ -12,21 +12,22 @@ import { isImageFile } from "$lib/domain/file-types";
 import { isVirtualPath } from "$lib/domain/virtual-path";
 import { basename } from "$lib/domain/path";
 import { buildTheme, themeIdFromName } from "$lib/domain/theme-from-palette";
-import { invoke } from "$lib/api/files";
+import { extractPalette } from "$lib/api/thumbnails";
+import { writeThemeFile } from "$lib/api/config";
 import { themeStore } from "$lib/state/theme.svelte";
 import { settingsStore } from "$lib/state/settings.svelte";
 
 async function createThemeFrom(ctx: PluginContext, imagePath: string): Promise<void> {
   const name = basename(imagePath);
   try {
-    const colors = await invoke<string[]>("extract_palette", { path: imagePath, count: 6 });
+    const colors = await extractPalette(imagePath, 6);
     const id = themeIdFromName(name);
     const theme = buildTheme(colors, id, name.replace(/\.[^.]+$/, ""));
     if (!theme) {
       ctx.toast.error("Could not derive a palette from this image");
       return;
     }
-    await invoke("write_theme_file", { filename: `${id}.css`, data: theme.css });
+    await writeThemeFile(`${id}.css`, theme.css);
     // Re-inject user theme styles and rediscover, then switch to it.
     await themeStore.initTheme();
     themeStore.setTheme(id);

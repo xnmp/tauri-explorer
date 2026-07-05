@@ -130,3 +130,84 @@ export function fuzzyScorePath(query: string, filePath: string): number {
   // Filename matches are 1.5x more valuable than path matches
   return Math.max(nameScore * 1.5, pathScore);
 }
+
+// ─── Result / command ranking (audit A6) ────────────────────────────────────
+// All ranking math shared by QuickOpen and the command palette lives here.
+// Two scorers coexist deliberately: file paths use the fzy-style DP above
+// (subsequence quality matters for paths), while commands use weighted
+// field matching (label/category/shortcut substrings) — but both are pure
+// and unit-tested in one place.
+
+/**
+ * Score how well a query matches a filename vs just appearing in the path.
+ * Filename matches are weighted much higher so that e.g. searching "pictures"
+ * returns ~/Pictures above ~/Pictures/Wallpaper.
+ */
+export function filenameMatchScore(name: string, queryLower: string): number {
+  const nameLower = name.toLowerCase();
+  if (nameLower === queryLower) return 200; // exact match
+  if (nameLower.startsWith(queryLower)) return 150; // prefix match
+  if (nameLower.includes(queryLower)) return 100; // substring match
+  return 0; // filename doesn't match
+}
+
+/** Fields of a palette command relevant to matching (already lowercased). */
+export interface CommandMatchFields {
+  label: string;
+  category: string;
+  shortcut: string;
+}
+
+/** Cap frecency's contribution so it never dominates text relevance. */
+export function commandFrecencyPoints(frecencyScore: number): number {
+  return Math.min(30, Math.round(frecencyScore * 10));
+}
+
+/**
+ * Score a palette command against a lowercased query: substring/prefix hits
+ * on label, category and shortcut, plus a per-char subsequence bonus.
+ * Returns 0 unless every query char appears in the label in order — category
+ * and shortcut hits only ever *boost* a label match, never create one.
+ */
+export function scoreCommand(
+  fields: CommandMatchFields,
+  queryLower: string,
+  frecencyScore: number,
+): number {
+  const { label, category, shortcut } = fields;
+
+  let score = 0;
+
+  // Exact match in label
+  if (label.includes(queryLower)) {
+    score += 100;
+    // Bonus for starting with query
+    if (label.startsWith(queryLower)) score += 50;
+  }
+
+  // Match in category
+  if (category.includes(queryLower)) {
+    score += 30;
+  }
+
+  // Match in shortcut
+  if (shortcut.includes(queryLower)) {
+    score += 40;
+  }
+
+  // Character-by-character fuzzy match in label
+  let queryIdx = 0;
+  for (let i = 0; i < label.length && queryIdx < queryLower.length; i++) {
+    if (label[i] === queryLower[queryIdx]) {
+      queryIdx++;
+      score += 5;
+    }
+  }
+
+  // Only return score if all query chars were found
+  if (queryIdx < queryLower.length) {
+    return 0;
+  }
+
+  return score + commandFrecencyPoints(frecencyScore);
+}

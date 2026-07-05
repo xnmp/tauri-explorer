@@ -11,11 +11,49 @@
 import type { PaneId, PaneTab, ExplorerTab, PaneTabs } from "./types";
 import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
 import { loadPersisted, savePersisted, removePersisted } from "./persisted";
-import { parentDir, directoryKey, basename } from "$lib/domain/path";
-import { disambiguateTabTitles } from "$lib/domain/tab-title";
+import { parentDir, directoryKey } from "$lib/domain/path";
+import { disambiguateTabTitles, gitTabDisplay, type GitTabDisplay } from "$lib/domain/tab-title";
 import { settingsStore } from "./settings.svelte";
 import { gitRepoRoot } from "$lib/api/files";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import {
+  type PersistedPaneTab,
+  type PersistedPaneTabs,
+  type PersistedTabState,
+  type LegacyPersistedTabState,
+  isLegacyState,
+  migrateLegacyState,
+  normalizePersistedState,
+  countPersistedTabs,
+  type TabSnapshot,
+  normalizeSnapshot,
+  tabSeedKey,
+  type ClosedTabSnapshot,
+  normalizeClosedSnapshot,
+  type RestoreResult,
+} from "./window-tabs-persistence";
+import { createClosedTabsStore } from "./closed-tabs";
+
+// Re-export persistence & migration helpers so existing importers of this
+// module keep working after the extraction (refactor/audit-tier4-splits #212).
+export {
+  isLegacyState,
+  migrateLegacyState,
+  normalizePersistedState,
+  countPersistedTabs,
+  normalizeSnapshot,
+  tabSeedKey,
+  normalizeClosedSnapshot,
+};
+export type {
+  PersistedPaneTab,
+  PersistedPaneTabs,
+  PersistedTabState,
+  LegacyPersistedTabState,
+  TabSnapshot,
+  ClosedTabSnapshot,
+  RestoreResult,
+};
 
 /** Tauri window label, or "main" outside Tauri (browser E2E, tests). */
 function detectWindowLabel(): string {
@@ -34,131 +72,6 @@ const WINDOW_LABEL = detectWindowLabel();
 // main window's layout. The main window keeps the legacy un-suffixed key
 // for backward compatibility with existing saved state.
 const STORAGE_KEY = WINDOW_LABEL === "main" ? "explorer-tabs" : `explorer-tabs:${WINDOW_LABEL}`;
-const CLOSED_TABS_KEY = "explorer-closed-tabs";
-
-/** Serializable per-pane tab state for persistence (v2 shape). */
-export interface PersistedPaneTab {
-  id: string;
-  path: string;
-  /** Tab kind discriminator (#56). Absent in older saves — treated as "explorer". */
-  kind?: "explorer" | "git-graph";
-}
-
-export interface PersistedPaneTabs {
-  tabs: PersistedPaneTab[];
-  activeTabId: string | null;
-}
-
-export interface PersistedTabState {
-  version: 2;
-  panes: {
-    left: PersistedPaneTabs;
-    right: PersistedPaneTabs;
-  };
-  activePaneId: PaneId;
-  dualPaneEnabled: boolean;
-  splitRatio: number;
-}
-
-/** Pre-inversion (v1) shape: window-level tabs each holding a left/right
- *  pane pair. Still read from localStorage and old saved workspaces. */
-interface LegacyPersistedTab {
-  id: string;
-  panes: { left: { path: string }; right: { path: string } };
-  activePaneId: PaneId;
-  dualPaneEnabled: boolean;
-  splitRatio: number;
-}
-interface LegacyPersistedTabState {
-  tabs: LegacyPersistedTab[];
-  activeTabId: string | null;
-}
-
-function isLegacyState(state: unknown): state is LegacyPersistedTabState {
-  const s = state as LegacyPersistedTabState & { version?: number };
-  return !!s && s.version === undefined && Array.isArray(s.tabs);
-}
-
-/** Map a v1 saved state onto per-pane tab lists: every tab's left pane
- *  becomes a left tab; right panes of dual-pane tabs become right tabs. */
-export function migrateLegacyState(legacy: LegacyPersistedTabState): PersistedTabState {
-  const tabs = Array.isArray(legacy.tabs) ? legacy.tabs : [];
-  const leftTabs: PersistedPaneTab[] = tabs.map((t) => ({
-    id: t.id,
-    path: t.panes?.left?.path || "/home",
-  }));
-  const rightTabs: PersistedPaneTab[] = tabs
-    .filter((t) => t.dualPaneEnabled && t.panes?.right?.path)
-    .map((t) => ({ id: `${t.id}-right`, path: t.panes.right.path }));
-
-  const active = tabs.find((t) => t.id === legacy.activeTabId) ?? tabs[0];
-  const dualPaneEnabled = !!active?.dualPaneEnabled && rightTabs.length > 0;
-  const activeRightId = active?.dualPaneEnabled
-    ? `${active.id}-right`
-    : (rightTabs[0]?.id ?? null);
-
-  return {
-    version: 2,
-    panes: {
-      left: {
-        tabs: leftTabs,
-        activeTabId: legacy.activeTabId ?? leftTabs[0]?.id ?? null,
-      },
-      right: {
-        tabs: rightTabs,
-        activeTabId: rightTabs.some((t) => t.id === activeRightId) ? activeRightId : (rightTabs[0]?.id ?? null),
-      },
-    },
-    activePaneId: dualPaneEnabled && active?.activePaneId === "right" ? "right" : "left",
-    dualPaneEnabled,
-    splitRatio: typeof active?.splitRatio === "number" ? active.splitRatio : 0.5,
-  };
-}
-
-/** Accept either persisted shape, migrating v1 on the fly. */
-export function normalizePersistedState(state: unknown): PersistedTabState | null {
-  if (!state) return null;
-  if (isLegacyState(state)) return migrateLegacyState(state);
-  const s = state as PersistedTabState;
-  if (
-    s.version === 2 &&
-    Array.isArray(s.panes?.left?.tabs) &&
-    Array.isArray(s.panes?.right?.tabs)
-  ) {
-    return s;
-  }
-  return null;
-}
-
-/** Total tab count in a persisted state of either shape (workspace list UI). */
-export function countPersistedTabs(state: unknown): number {
-  const s = normalizePersistedState(state);
-  if (!s) return 0;
-  return s.panes.left.tabs.length + s.panes.right.tabs.length;
-}
-
-/** Serializable snapshot of a live tab, used for cross-window tab moves
- *  and tear-off into a new window. A tab is a single pane's view now, so
- *  the payload is just its path. */
-export interface TabSnapshot {
-  path: string;
-}
-
-/** Tolerate v1 snapshots ({leftPath, rightPath, activePaneId, ...}) that may
- *  linger in localStorage seeds written by a pre-inversion build. */
-function normalizeSnapshot(raw: unknown): TabSnapshot | null {
-  const s = raw as { path?: string; leftPath?: string; rightPath?: string; activePaneId?: PaneId };
-  if (typeof s?.path === "string") return { path: s.path };
-  if (typeof s?.leftPath === "string") {
-    return { path: s.activePaneId === "right" && s.rightPath ? s.rightPath : s.leftPath };
-  }
-  return null;
-}
-
-/** localStorage key a freshly spawned tear-off window reads its tab from. */
-export function tabSeedKey(windowLabel: string): string {
-  return `tab-seed:${windowLabel}`;
-}
 
 /** Generate unique IDs for tabs and explorers */
 export function generateId(prefix: string): string {
@@ -169,46 +82,6 @@ export function generateId(prefix: string): string {
 export function extractFolderName(path: string): string {
   const parts = path.split(/[/\\]/).filter(Boolean);
   return parts.length > 0 ? parts[parts.length - 1] : path || "Explorer";
-}
-
-/** Snapshot of a closed tab for restoration via Ctrl+Shift+T */
-interface ClosedTabSnapshot {
-  path: string;
-  paneId: PaneId;
-  /** Tab kind (#56); absent in old snapshots — treated as "explorer". */
-  kind?: "explorer" | "git-graph";
-  closedAt: number; // insertion index within its pane's strip
-  fromClosedWindow: boolean; // true if this was the last tab when window closed
-}
-
-/** Tolerate v1 closed-tab snapshots persisted by a pre-inversion build. */
-function normalizeClosedSnapshot(raw: unknown): ClosedTabSnapshot | null {
-  const s = raw as ClosedTabSnapshot & { leftPath?: string; rightPath?: string; activePaneId?: PaneId };
-  if (typeof s?.path === "string") return s;
-  if (typeof s?.leftPath === "string") {
-    return {
-      path: s.activePaneId === "right" && s.rightPath ? s.rightPath : s.leftPath,
-      paneId: "left",
-      closedAt: s.closedAt ?? 0,
-      fromClosedWindow: !!s.fromClosedWindow,
-    };
-  }
-  return null;
-}
-
-const MAX_CLOSED_TABS = 20;
-
-/** Result of restoring a closed tab */
-export interface RestoreResult {
-  restored: true;
-  /** If the closed tab was from a closed window, the path to open in a new window */
-  openInNewWindow?: string;
-}
-
-function loadClosedTabs(): ClosedTabSnapshot[] {
-  return loadPersisted<unknown[]>(CLOSED_TABS_KEY, [])
-    .map(normalizeClosedSnapshot)
-    .filter((s): s is ClosedTabSnapshot => s !== null);
 }
 
 function emptyPane(): PaneTabs {
@@ -232,22 +105,12 @@ function createWindowTabsManager() {
   const gitRootPending = new Set<string>();
 
   // Stack of recently closed tabs for Ctrl+Shift+T restoration (persisted)
-  let closedTabStack: ClosedTabSnapshot[] = loadClosedTabs();
-
-  /** Persist the closed tab stack to localStorage */
-  function saveClosedTabs(): void {
-    savePersisted(CLOSED_TABS_KEY, closedTabStack);
-  }
-
-  /** Reload the closed tab stack from localStorage (picks up cross-window changes) */
-  function refreshClosedTabs(): void {
-    closedTabStack = loadClosedTabs();
-  }
+  const closedTabs = createClosedTabsStore();
 
   // Pick up snapshots written by other windows when this window regains
   // focus (instead of re-reading localStorage from the canRestoreTab getter).
   if (typeof window !== "undefined") {
-    window.addEventListener("focus", refreshClosedTabs);
+    window.addEventListener("focus", () => closedTabs.refresh());
   }
 
   /** Destroy all registered explorers (unwatch dirs, drop listeners) and clear the registry. */
@@ -312,11 +175,7 @@ function createWindowTabsManager() {
    *  - git mode (setting on + folder inside a repo): a git icon, the repo root
    *    name, and the current folder (`repo` is null when the cwd *is* the root).
    *  - normal mode: a folder icon and the (disambiguated) folder name. */
-  interface TabDisplay {
-    isGitRoot: boolean;
-    repo: string | null;
-    name: string;
-  }
+  type TabDisplay = GitTabDisplay;
 
   /** Per-tab display info across both panes. Normal-mode tabs are
    *  disambiguated against each other (VS Code style); git-mode tabs carry
@@ -340,12 +199,7 @@ function createWindowTabsManager() {
     for (const t of tabs) {
       const g = gitMode.get(t.id);
       if (g) {
-        const atRoot = directoryKey(g.cwd) === directoryKey(g.repoRoot);
-        out.set(t.id, {
-          isGitRoot: true,
-          repo: atRoot ? null : basename(g.repoRoot),
-          name: atRoot ? basename(g.repoRoot) : basename(g.cwd),
-        });
+        out.set(t.id, gitTabDisplay(g.cwd, g.repoRoot));
       } else {
         out.set(t.id, {
           isGitRoot: false,
@@ -657,7 +511,7 @@ function createWindowTabsManager() {
     // Closing the last tab snapshots then attempts window.close(), which can
     // fail silently — repeated Ctrl+W would stack identical snapshots.
     if (fromClosedWindow) {
-      const top = closedTabStack[closedTabStack.length - 1];
+      const top = closedTabs.peek();
       if (
         top &&
         top.fromClosedWindow &&
@@ -669,11 +523,7 @@ function createWindowTabsManager() {
       }
     }
 
-    closedTabStack.push(snapshot);
-    if (closedTabStack.length > MAX_CLOSED_TABS) {
-      closedTabStack.shift();
-    }
-    saveClosedTabs();
+    closedTabs.push(snapshot);
   }
 
   /** Close a tab by ID. Closes the window if it's the last tab overall. */
@@ -749,10 +599,9 @@ function createWindowTabsManager() {
   /** Restore the most recently closed tab. Returns false if nothing to restore. */
   function restoreClosedTab(): false | RestoreResult {
     // Re-read from localStorage to pick up snapshots from other windows
-    refreshClosedTabs();
-    const snapshot = closedTabStack.pop();
+    closedTabs.refresh();
+    const snapshot = closedTabs.pop();
     if (!snapshot) return false;
-    saveClosedTabs();
 
     // If the tab was from a closed window, signal to open a new window instead
     if (snapshot.fromClosedWindow) {
@@ -998,7 +847,7 @@ function createWindowTabsManager() {
     get canRestoreTab() {
       // No side effects in the getter: the stack is refreshed on window
       // focus and explicitly before restore (restoreClosedTab).
-      return closedTabStack.length > 0;
+      return closedTabs.size > 0;
     },
     setActiveTab,
     nextTab,

@@ -1,6 +1,22 @@
 /**
  * Deduplicates, debounces, and rate-limits directory refresh requests.
  *
+ * ## Refresh policy ownership (audit A9)
+ *
+ * Refresh behavior is layered across three modules, each owning ONE decision.
+ * When changing refresh behavior, change the layer that owns the decision —
+ * do not add a fourth gate:
+ *
+ * 1. **This module — WHEN a refresh runs.** Global, per-directory: collapses
+ *    duplicate requests from all sources into one per debounce window and
+ *    rate-limits storms.
+ * 2. **`pane-watch.ts` — WHETHER a watcher-triggered refresh may run.**
+ *    Per-pane: the local-mutation cooldown suppresses the watcher's echo of
+ *    a mutation the pane already applied to its own entries.
+ * 3. **`pane-refresh.ts` — HOW a refresh is applied.** Per-pane: fetches
+ *    without touching UI state and drops the result when the entry
+ *    fingerprint is unchanged (no flash) or the pane navigated away.
+ *
  * A single file operation can trigger 2-3 refresh cycles through different
  * paths (onRefresh callback, broadcastFileChange, filesystem watcher).
  * This module collapses them into one refresh per directory per debounce window,

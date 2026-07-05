@@ -78,12 +78,12 @@ describe("detectViewportZoomCoords", () => {
       expect(fixedFromClient(100, 1, false)).toBe(100);
     });
 
-    it("divides once on Chromium/WebView2", () => {
+    // Standardized CSS zoom (Interop 2024): fixed left L renders at L×zoom
+    // viewport px on every engine — measured live on Chromium AND the
+    // WebKitGTK-based Playwright WebKit (#227). One division, engine-agnostic.
+    it("divides once on every engine", () => {
       expect(fixedFromClient(100, 2, true)).toBe(50);
-    });
-
-    it("divides twice on WebKitGTK / WKWebView", () => {
-      expect(fixedFromClient(100, 2, false)).toBe(25);
+      expect(fixedFromClient(100, 2, false)).toBe(50);
     });
   });
 
@@ -93,19 +93,12 @@ describe("detectViewportZoomCoords", () => {
       expect(fixedFromRect(100, 1, false, false)).toBe(100);
     });
 
-    // Chromium: rect is post-zoom, fixed scales ×zoom → one division.
-    it("divides once on Chromium/WebView2", () => {
+    // Standardized CSS zoom: rects are post-zoom viewport px everywhere —
+    // one division regardless of engine flags (#227).
+    it("divides once on every engine", () => {
       expect(fixedFromRect(100, 2, true, true)).toBe(50);
-    });
-
-    // WebKitGTK: rect is pre-zoom CSS, fixed scales ×zoom² → still one division.
-    it("divides once on WebKitGTK (CSS rect cancels one scale)", () => {
       expect(fixedFromRect(100, 2, false, false)).toBe(50);
-    });
-
-    // WKWebView (mac): rect is post-zoom, fixed scales ×zoom² → two divisions.
-    it("divides twice on macOS WKWebView", () => {
-      expect(fixedFromRect(100, 2, true, false)).toBe(25);
+      expect(fixedFromRect(100, 2, true, false)).toBe(50);
     });
   });
 });

@@ -22,6 +22,15 @@ const THEMES = [
   { id: "aurora", label: "Aurora" },
   { id: "hacker", label: "Hacker" },
   { id: "solarized", label: "Solarized Light" },
+  // site-only extras — the classics people already live in
+  { id: "ayu-mirage", label: "Ayu Mirage" },
+  { id: "monokai", label: "Monokai" },
+  { id: "dracula", label: "Dracula" },
+  { id: "nord", label: "Nord" },
+  { id: "gruvbox", label: "Gruvbox Dark" },
+  { id: "one-dark", label: "One Dark" },
+  { id: "tokyo-night", label: "Tokyo Night" },
+  { id: "catppuccin", label: "Catppuccin Mocha" },
 ];
 
 /* The inline <head> script sets data-theme before first paint; from here on
@@ -189,9 +198,11 @@ and <em>Show Commit Graph</em> opens a full commit graph — continuous curved
 branch lines, stashes, tags, local+remote combined refs, and right-click
 checkout / merge / rebase / cherry-pick / branch-here. Behavioral parity
 with the VSCode Git Graph extension, reimplemented in Svelte + libgit2.</p>
-<p><strong>See it live:</strong> the <em>Graph: this repo</em> tab in this window's
-title bar opens this repository's actual commit history — right-click a
-commit.</p>
+<p><strong>See it live:</strong> the <em>Graph: this repo</em> tab up top opens this
+repository's actual history. Click a commit for its detail card — checkout,
+branch, tag, cherry-pick and revert really mutate the demo graph. Then open
+<em>Source Control</em> (sidebar, branch icon): rename or copy a file here,
+stage it, commit it — your commit lands on the graph.</p>
 ${shot("git-graph.png", "The commit graph on a criss-cross merge history, stash ring included.")}
 ${shot("scm-panel.png", "The source-control panel: stage, unstage, commit.")}
 `,
@@ -213,13 +224,17 @@ ${shot("terminal.png", "The terminal panel, themed with the app, opened at the f
           name: "views-and-themes.md", kind: "file", size: "3 KB",
           content: `
 <h1>Views & themes</h1>
-<p>Details, list, and tiles views — all three virtualized, so directories
-with tens of thousands of entries scroll at 60fps. Thumbnails are generated
+<p>Details, list, and tiles views — all virtualized, so directories with
+tens of thousands of entries scroll at 60fps. Thumbnails are generated
 in Rust with an on-disk cache.</p>
+<p><strong>Switch views right here:</strong> the four buttons in this toolbar —
+Details, List, Tiles, and Miller Columns. And everything resizes: drag the
+edges of the sidebar, this preview pane, the terminal, the columns.</p>
 ${shot("tiles-view.png", "Tiles view with folder previews.")}
-<p>Theming is plain CSS files — ship your own. Dark mode follows the system
-or a palette command (<kbd>Ctrl+Shift+P</kbd> → "Toggle Dark/Light Theme" —
-works on this page too).</p>
+<p>Theming is plain CSS files — ship your own. Dark mode follows the system,
+and this page's theme menu carries 13 palettes: the app's five plus Ayu
+Mirage, Monokai, Dracula, Nord, Gruvbox, One Dark, Tokyo Night and
+Catppuccin.</p>
 ${shot("dark-theme.png", "Dark theme.")}
 <p>And if you like your chrome minimal: the sidebar, status bar, address
 bar and even the title bar each toggle off independently. Try it right
@@ -263,6 +278,9 @@ this one is a Linux superpower.</p>
 organizing, and image editing via Gemini — each an <em>optional plugin</em> you
 enable per-feature with your own API key (or <code>GEMINI_API_KEY</code> env var,
 never written to disk).</p>
+<p><strong>Try the demo:</strong> right-click any file → <em>AI Rename</em>. The
+suggestions really do come from the file's contents (no network — the real
+plugin makes the Gemini call with your key).</p>
 ${shot("ai-rename.png", "AI rename: pick from suggestions derived from the file's contents.")}
 `,
         },
@@ -417,8 +435,6 @@ function iconFor(node) {
 }
 
 function render() {
-  const here = nodeAt(cwd);
-
   // breadcrumb
   const bc = $("breadcrumb");
   bc.innerHTML = "";
@@ -438,61 +454,109 @@ function render() {
     bc.appendChild(mk(part, cwd.slice(0, i + 1), i === cwd.length - 1));
   });
 
-  // sidebar
+  // sidebar: activity tabs (Files / Source Control) + panel content
   const sb = $("sidebar");
-  sb.innerHTML = `<div class="side-head">EXPLORE</div>`;
-  const sideEntry = (label, ico, target, active) => {
-    const b = document.createElement("button");
-    b.className = "side-item" + (active ? " active" : "");
-    b.innerHTML = `<span class="ico">${ico}</span>${label}`;
-    // the sidebar drives whichever pane has focus, like the app
-    b.onclick = () => (focusedPane === 1 && pane2 ? navigate2(target) : navigate(target));
-    sb.appendChild(b);
-  };
-  sideEntry("tauri-explorer", SVG.app, [], cwd.length === 0);
-  for (const child of FS.children.filter((c) => c.kind === "dir")) {
-    sideEntry(child.name, SVG.folder, [child.name], cwd[0] === child.name);
-  }
-  const dl = document.createElement("div");
-  dl.className = "side-head";
-  dl.textContent = "GET IT";
-  sb.appendChild(dl);
-  const links = [
-    ["Linux (AppImage)", DL.linux], ["Windows (.msi)", DL.win], ["macOS (.dmg)", DL.mac],
-  ];
-  for (const [label, href] of links) {
-    const a = document.createElement("button");
-    a.className = "side-item";
-    a.innerHTML = `<span class="ico">${SVG.down}</span>${label}`;
-    a.onclick = () => window.open(href, "_blank");
-    sb.appendChild(a);
+  sb.innerHTML = "";
+  const tabsEl = document.createElement("div");
+  tabsEl.className = "side-tabs";
+  tabsEl.innerHTML = `
+    <button id="side-files" class="${sideMode === "files" ? "active" : ""}" aria-label="Files" data-tip="Files">${SVG.folder}</button>
+    <button id="side-git" class="${sideMode === "git" ? "active" : ""}" aria-label="Source control" data-tip="Source control — it works">${SVG.branch}${scmChanges.length ? `<span class="scm-badge">${scmChanges.length}</span>` : ""}</button>`;
+  tabsEl.querySelector("#side-files").onclick = () => { sideMode = "files"; render(); };
+  tabsEl.querySelector("#side-git").onclick = () => { sideMode = "git"; render(); };
+  sb.appendChild(tabsEl);
+
+  if (sideMode === "git") {
+    renderSCM(sb);
+  } else {
+    sb.insertAdjacentHTML("beforeend", `<div class="side-head">EXPLORE</div>`);
+    const sideEntry = (label, ico, target, active) => {
+      const b = document.createElement("button");
+      b.className = "side-item" + (active ? " active" : "");
+      b.innerHTML = `<span class="ico">${ico}</span>${label}`;
+      // the sidebar drives whichever pane has focus, like the app
+      b.onclick = () => (focusedPane === 1 && pane2 ? navigate2(target) : navigate(target));
+      sb.appendChild(b);
+    };
+    sideEntry("tauri-explorer", SVG.app, [], cwd.length === 0);
+    for (const child of FS.children.filter((c) => c.kind === "dir")) {
+      sideEntry(child.name, SVG.folder, [child.name], cwd[0] === child.name);
+    }
+    const dl = document.createElement("div");
+    dl.className = "side-head";
+    dl.textContent = "GET IT";
+    sb.appendChild(dl);
+    const links = [
+      ["Linux (AppImage)", DL.linux], ["Windows (.msi)", DL.win], ["macOS (.dmg)", DL.mac],
+    ];
+    for (const [label, href] of links) {
+      const a = document.createElement("button");
+      a.className = "side-item";
+      a.innerHTML = `<span class="ico">${SVG.down}</span>${label}`;
+      a.onclick = () => window.open(href, "_blank");
+      sb.appendChild(a);
+    }
   }
 
-  // file list — details rows, or tiles with live thumbnails
-  const info = buildList($("filelist"), here, selectedName, 0);
+  // view-mode switcher reflects the focused pane's folder
+  const vmode = viewFor(focusedPane === 1 && pane2 ? pane2.cwd : cwd, focusedPane === 1 && pane2 ? 1 : 0);
+  document.querySelectorAll("#view-switch button").forEach((b) =>
+    b.classList.toggle("active", b.dataset.view === vmode));
+
+  // file list — details rows, list, tiles or miller columns
+  const info = buildList($("filelist"), cwd, selectedName, 0);
 
   $("status-left").textContent = info.tiles
     ? `${info.count} items · live thumbnails — the app bakes these in Rust, cached on disk`
     : `${info.count} items · you are inside the pitch — every file opens`;
 }
 
+/* ── View modes: Details / List / Tiles / Columns, per folder ── */
+
+const VIEW_MODES = ["details", "list", "tiles", "columns"];
+// per-pane view mode, sticky across navigation (null = auto: folders can
+// suggest one, like screenshots/ defaulting to tiles)
+let viewMode = [null, null];
+try {
+  const saved = localStorage.getItem("viewMode0");
+  if (VIEW_MODES.includes(saved)) viewMode[0] = saved;
+} catch { /* default */ }
+
+function viewFor(pathArr, paneIdx = 0) {
+  const mode = viewMode[paneIdx] || nodeAt(pathArr).view || "details";
+  return VIEW_MODES.includes(mode) ? mode : "details";
+}
+
+function setView(mode) {
+  viewMode[focusedPane] = mode;
+  if (focusedPane === 0) localStorage.setItem("viewMode0", mode);
+  renderPanes();
+  toastOnce("views", "Details, list, tiles, columns — in the app every view is virtualized: 60fps at tens of thousands of files.");
+}
+
 /** Shared by both panes: renders one directory into a .filelist container. */
-function buildList(fl, here, selName, paneIdx) {
+function buildList(fl, pathArr, selName, paneIdx) {
+  const here = nodeAt(pathArr);
+  const mode = viewFor(pathArr, paneIdx);
+  fl.classList.toggle("tiles", mode === "tiles");
+  fl.classList.toggle("list", mode === "list");
+  fl.classList.toggle("columns", mode === "columns");
+  if (mode === "columns") return buildMiller(fl, pathArr, selName, paneIdx);
   const children = sortChildren(here.children || []);
-  const tiles = here.view === "tiles";
-  fl.classList.toggle("tiles", tiles);
   const arrow = (k) => (sortKey === k ? `<span class="sort-arrow">${sortAsc ? "▲" : "▼"}</span>` : "");
-  fl.innerHTML = tiles ? "" : `<div class="list-head"><span data-sort="name">NAME${arrow("name")}</span><span class="kind" data-sort="kind">KIND${arrow("kind")}</span><span data-sort="size">SIZE${arrow("size")}</span></div>`;
+  fl.innerHTML = mode === "details" ? `<div class="list-head"><span data-sort="name">NAME${arrow("name")}</span><span class="kind" data-sort="kind">KIND${arrow("kind")}</span><span data-sort="size">SIZE${arrow("size")}</span></div>` : "";
   fl.querySelectorAll("[data-sort]").forEach((h) => (h.onclick = () => setSort(h.dataset.sort)));
   const open = (child) => (paneIdx === 1 ? openEntry2(child) : openEntry(child));
   for (const child of children) {
     const editing = editingName === child.name && paneIdx === focusedPane;
-    if (tiles) {
+    if (mode === "tiles") {
       const tile = document.createElement(editing ? "div" : "button");
       tile.className = "tile" + (selName === child.name ? " selected" : "");
       tile.dataset.name = child.name;
       tile.innerHTML = `
-        <img class="thumb" src="${child.thumb}" alt="${child.name}" loading="lazy" decoding="async" />
+        ${child.thumb
+          ? `<img class="thumb" src="${child.thumb}" alt="${child.name}" loading="lazy" decoding="async" />`
+          : `<span class="ticon">${iconFor(child)}</span>`}
         <span class="tname">${child.name}</span>`;
       if (editing) mountRename(tile, ".tname", child, paneIdx);
       else {
@@ -500,6 +564,19 @@ function buildList(fl, here, selName, paneIdx) {
         tile.oncontextmenu = (e) => fileCtx(e, child, paneIdx);
       }
       fl.appendChild(tile);
+      continue;
+    }
+    if (mode === "list") {
+      const lrow = document.createElement(editing ? "div" : "button");
+      lrow.className = "lrow" + (selName === child.name ? " selected" : "");
+      lrow.dataset.name = child.name;
+      lrow.innerHTML = `<span class="ico">${iconFor(child)}</span><span class="fname">${child.name}</span>`;
+      if (editing) mountRename(lrow, ".fname", child, paneIdx);
+      else {
+        lrow.onclick = () => open(child);
+        lrow.oncontextmenu = (e) => fileCtx(e, child, paneIdx);
+      }
+      fl.appendChild(lrow);
       continue;
     }
     const row = document.createElement(editing ? "div" : "button");
@@ -520,7 +597,49 @@ function buildList(fl, here, selName, paneIdx) {
   if (children.length === 0) {
     fl.insertAdjacentHTML("beforeend", `<div class="empty-dir">Empty folder</div>`);
   }
-  return { count: children.length, tiles };
+  return { count: children.length, tiles: mode === "tiles" };
+}
+
+/** Miller columns: one column per path depth, like the app's picker. */
+function buildMiller(fl, pathArr, selName, paneIdx) {
+  fl.innerHTML = "";
+  const navTo = (p) => (paneIdx === 1 ? navigate2(p) : navigate(p));
+  for (let d = 0; d <= pathArr.length; d++) {
+    const colPath = pathArr.slice(0, d);
+    const node = nodeAt(colPath);
+    const col = document.createElement("div");
+    col.className = "mcol";
+    for (const child of sortChildren(node.children || [])) {
+      const onPath = pathArr[d] === child.name;
+      const deepest = d === pathArr.length;
+      const b = document.createElement("button");
+      b.className = "mrow" + (onPath ? " on-path" : "") + (deepest && selName === child.name ? " selected" : "");
+      if (deepest) b.dataset.name = child.name;
+      b.innerHTML = `<span class="ico">${iconFor(child)}</span><span class="fname">${child.name}</span>${child.kind === "dir" ? '<span class="chev">›</span>' : ""}`;
+      b.onclick = () => {
+        if (child.kind === "dir") navTo([...colPath, child.name]);
+        else {
+          navTo(colPath);
+          (paneIdx === 1 ? openEntry2 : openEntry)(child);
+        }
+      };
+      b.oncontextmenu = (e) => fileCtx(e, child, paneIdx, colPath);
+      col.appendChild(b);
+    }
+    if (!(node.children || []).length) col.insertAdjacentHTML("beforeend", `<div class="empty-dir">Empty</div>`);
+    fl.appendChild(col);
+    const h = document.createElement("div");
+    h.className = "rsz";
+    dragResize(h, { min: 160, max: 420, get: () => panelSizes.miller || 230, set: (v) => { panelSizes.miller = v; applySizes(); } });
+    fl.appendChild(h);
+  }
+  return { count: (nodeAt(pathArr).children || []).length, tiles: false };
+}
+
+/** Preview + its resize handle show/hide together. */
+function setPreview(show) {
+  $("preview").hidden = !show;
+  $("rsz-preview").hidden = !show;
 }
 
 function openEntry(node) {
@@ -530,9 +649,9 @@ function openEntry(node) {
     return;
   }
   selectedName = node.name;
-  $("filelist").querySelectorAll(".row, .tile").forEach((r) =>
+  $("filelist").querySelectorAll("[data-name]").forEach((r) =>
     r.classList.toggle("selected", r.dataset.name === node.name));
-  $("preview").hidden = false;
+  setPreview(true);
   $("preview-name").textContent = [...cwd, node.name].join("/");
   $("preview-body").innerHTML = node.content;
   $("preview-body").scrollTop = 0;
@@ -565,7 +684,7 @@ const cp = overlay("cp-overlay");
 const ks = overlay("ks-overlay");
 const cs = overlay("cs-overlay");
 const gg = overlay("gg-overlay");
-const closeAll = () => { qo.close(); cp.close(); ks.close(); cs.close(); gg.close(); $("ctx").hidden = true; };
+const closeAll = () => { qo.close(); cp.close(); ks.close(); cs.close(); gg.close(); ai.close(); $("ctx").hidden = true; };
 
 /* quick open */
 let qoIndex = 0;
@@ -611,11 +730,24 @@ const COMMANDS = [
   { cat: "VIEW", label: "Show All Features", run: () => { navigate(["features"]); } },
   { cat: "VIEW", label: "Open Screenshots (Thumbnail Demo)", run: () => { navigate(["screenshots"]); } },
   { cat: "VIEW", label: "Toggle Terminal", run: () => toggleTerminal() },
-  { cat: "VIEW", label: "Show Commit Graph", run: () => { gg.open(); renderGraph(); } },
+  { cat: "VIEW", label: "Show Commit Graph", run: openGraph },
+  { cat: "VIEW", label: "Show Source Control", run: () => { sideMode = "git"; if (hiddenBars.has("sidebar")) toggleBar("sidebar", "Sidebar"); render(); } },
   { cat: "GO", label: "Search in Files (Ctrl+Shift+F)", run: () => { cs.open(); csIndex = 0; } },
+  { cat: "GO", label: "Go to Path (Ctrl+L)", run: editPath },
   { cat: "VIEW", label: "New Tab", run: () => newTab() },
   { cat: "VIEW", label: "Toggle Dual Pane (Ctrl+\\)", run: toggleDualPane },
+  { cat: "VIEW", label: "View: Details", run: () => setView("details") },
+  { cat: "VIEW", label: "View: List", run: () => setView("list") },
+  { cat: "VIEW", label: "View: Tiles", run: () => setView("tiles") },
+  { cat: "VIEW", label: "View: Columns (Miller)", run: () => setView("columns") },
   { cat: "EDIT", label: "Rename Selected (F2)", run: () => startRename(focusedPane) },
+  { cat: "EDIT", label: "AI Rename Selected (Plugin Demo)", run: () => {
+    const base = focusedPane === 1 && pane2 ? pane2.cwd : cwd;
+    const sel = focusedPane === 1 && pane2 ? pane2.sel : selectedName;
+    const node = sel && findNode([...base, sel]);
+    if (!node || node.kind === "dir") { toast("Select a file first — then the plugin suggests names from its contents."); return; }
+    aiRename(node, focusedPane);
+  } },
   { cat: "VIEW", label: "Sort by Name", run: () => setSort("name") },
   { cat: "VIEW", label: "Sort by Kind", run: () => setSort("kind") },
   { cat: "VIEW", label: "Sort by Size", run: () => setSort("size") },
@@ -702,6 +834,75 @@ function toastOnce(key, html, opts) {
   if (localStorage.getItem("toast." + key)) return;
   localStorage.setItem("toast." + key, "1");
   toast(html, opts);
+}
+
+/* ── Source control: your session's changes, committable ── */
+
+let sideMode = "files";
+let scmMsg = "";
+let scmChanges = [{ type: "M", path: "README.md", staged: false }];
+
+function recordChange(type, path) {
+  scmChanges.push({ type, path, staged: false });
+  render();
+  toastOnce("scm", "That change landed in <strong>Source Control</strong> — the branch icon in the sidebar. Stage it, commit it, see the graph.");
+}
+
+function canCommit() {
+  return scmMsg.trim() && scmChanges.some((c) => c.staged);
+}
+
+function doCommit() {
+  if (!canCommit()) return;
+  const n = scmChanges.filter((c) => c.staged).length;
+  scmChanges = scmChanges.filter((c) => !c.staged);
+  const m = scmMsg.trim();
+  scmMsg = "";
+  newCommit(m);
+  render();
+  toast(`Committed ${n} change${n > 1 ? "s" : ""} — it's on the graph, dev is ahead of origin/dev.`,
+    { ms: 7000, action: { label: "Show Graph", run: openGraph } });
+}
+
+function renderSCM(sb) {
+  sb.insertAdjacentHTML("beforeend", `<div class="side-head">SOURCE CONTROL</div>`);
+  const msg = document.createElement("textarea");
+  msg.className = "scm-msg";
+  msg.placeholder = "Commit message (Ctrl+Enter commits)";
+  msg.value = scmMsg;
+  msg.setAttribute("aria-label", "Commit message");
+  sb.appendChild(msg);
+  const commitBtn = document.createElement("button");
+  commitBtn.className = "scm-commit";
+  const stagedN = scmChanges.filter((c) => c.staged).length;
+  commitBtn.textContent = `✓ Commit${stagedN ? ` (${stagedN} staged)` : ""}`;
+  commitBtn.disabled = !canCommit();
+  commitBtn.onclick = doCommit;
+  sb.appendChild(commitBtn);
+  msg.oninput = () => { scmMsg = msg.value; commitBtn.disabled = !canCommit(); };
+  msg.onkeydown = (e) => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") doCommit(); };
+  const group = (label, staged) => {
+    const items = scmChanges.filter((c) => c.staged === staged);
+    if (!items.length && staged) return;
+    sb.insertAdjacentHTML("beforeend", `<div class="side-head">${label} (${items.length})</div>`);
+    for (const c of items) {
+      const d = document.createElement("div");
+      d.className = "scm-item";
+      d.innerHTML = `<span class="scm-type ${c.type}">${c.type}</span><span class="scm-path" title="${esc(c.path)}">${esc(c.path)}</span>`;
+      const b = document.createElement("button");
+      b.textContent = staged ? "−" : "+";
+      b.setAttribute("aria-label", staged ? "Unstage" : "Stage");
+      b.onclick = () => { c.staged = !staged; render(); };
+      d.appendChild(b);
+      sb.appendChild(d);
+    }
+  };
+  group("STAGED CHANGES", true);
+  group("CHANGES", false);
+  if (!scmChanges.length) {
+    sb.insertAdjacentHTML("beforeend",
+      `<div class="scm-empty">Working tree clean. Rename (<kbd>F2</kbd>), copy (<kbd>F5</kbd>) or move (<kbd>F6</kbd>) something — it shows up here, and commits onto the graph.</div>`);
+  }
 }
 
 /* ── Chrome toggles: every bar hides, like the real app ──── */
@@ -907,10 +1108,25 @@ function runTerm(line) {
     }
     case "git": {
       const sub = rest[0];
-      if (sub === "graph") { say("opening the commit graph…", "t-dim"); closeAll(); gg.open(); renderGraph(); }
-      else if (sub === "log") GG_COMMITS.slice(0, 12).forEach((c) => say(`<span class="t-acc">${c.h}</span> ${esc(c.m)}`));
-      else if (sub === "status") say("On branch dev — working tree clean. This site ships from it.", "t-dim");
-      else say("try: git log · git graph · git status", "t-dim");
+      if (sub === "graph") { say("opening the commit graph…", "t-dim"); openGraph(); }
+      else if (sub === "log") { if (!GG.length) resetGraph(); GG.slice(0, 12).forEach((c) => say(`<span class="t-acc">${c.h}</span> ${esc(c.m)}`)); }
+      else if (sub === "status") {
+        const staged = scmChanges.filter((c) => c.staged).length;
+        const unstaged = scmChanges.length - staged;
+        say(scmChanges.length
+          ? `On branch dev — ${staged} staged, ${unstaged} not staged. Commit from the Source Control panel (sidebar → branch icon).`
+          : "On branch dev — working tree clean. This site ships from it.", "t-dim");
+      }
+      else if (sub === "commit") {
+        const mMatch = line.match(/-m\s+"([^"]+)"/) || line.match(/-m\s+(\S+)/);
+        if (!mMatch) { say(`usage: git commit -m "message"`, "t-dim"); break; }
+        newCommit(mMatch[1]);
+        scmChanges = [];
+        render();
+        say(`[dev ${GG[0].h}] ${esc(mMatch[1])}`, "t-acc");
+        say(`committed — see <span class="t-cmd">git graph</span>`, "t-dim");
+      }
+      else say("try: git log · git graph · git status · git commit -m \"msg\"", "t-dim");
       break;
     }
     case "exit":
@@ -952,7 +1168,7 @@ function switchTab(i) {
   render();
   const node = selectedName && findNode([...cwd, selectedName]);
   if (node) openEntry(node);
-  else { $("preview").hidden = true; }
+  else setPreview(false);
   renderTabs();
   updatePrompt();
 }
@@ -977,6 +1193,11 @@ function renderTabs() {
     const b = document.createElement("button");
     b.className = "tab" + (i === activeTab ? " active" : "");
     b.innerHTML = `<span class="ico">${t.cwd.length ? SVG.folder : SVG.app}</span>${t.cwd.length ? t.cwd[t.cwd.length - 1] : "tauri-explorer"}`;
+    if (i === activeTab) {
+      b.insertAdjacentHTML("beforeend",
+        `<svg class="fillet fillet-l" viewBox="0 0 12 12" aria-hidden="true"><path d="M12 0 A12 12 0 0 1 0 12 L12 12 Z"/></svg>` +
+        `<svg class="fillet fillet-r" viewBox="0 0 12 12" aria-hidden="true"><path d="M0 0 A12 12 0 0 0 12 12 L0 12 Z"/></svg>`);
+    }
     if (TABS.length > 1) {
       const x = document.createElement("span");
       x.className = "tab-x";
@@ -999,7 +1220,7 @@ function renderTabs() {
   graph.className = "tab";
   graph.title = "This repo's actual commit graph";
   graph.innerHTML = `<span class="ico">${SVG.branch}</span>Graph: this repo`;
-  graph.onclick = () => { closeAll(); gg.open(); renderGraph(); };
+  graph.onclick = openGraph;
   strip.appendChild(graph);
 }
 
@@ -1026,47 +1247,194 @@ const GG_COMMITS = [
   { h: "0a3ce39", m: "merge: hostile filename coverage (#198)", lane: 0, p: [] },
 ];
 
-function renderGraph() {
-  const body = $("gg-body");
+/* The working copy of the graph — actions mutate it; reset restores. */
+let GG = [];
+let ggSel = null;
+let ggFresh = null;     // hash of a just-created commit → slide-in animation
+let ggAnimated = false; // lane draw-in plays on first open only
+
+function resetGraph() {
+  GG = GG_COMMITS.map((c) => ({ ...c, refs: [...(c.refs || [])] }));
+  ggSel = null;
+}
+
+function fakeHash() {
+  return Math.random().toString(16).slice(2, 9).padEnd(7, "0");
+}
+
+/** A new commit on top of dev — from the SCM panel, cherry-pick, or revert. */
+function newCommit(msg) {
+  if (!GG.length) resetGraph();
+  for (const c of GG) c.refs = (c.refs || []).filter((r) => r !== "dev" && r !== "HEAD");
+  GG.unshift({ h: fakeHash(), m: msg, lane: 0, refs: ["HEAD", "dev"], p: [GG[0].h], you: true });
+  ggFresh = GG[0].h;
+  if (gg.isOpen) renderGraph();
+}
+
+function openGraph() {
+  closeAll();
+  gg.open();
+  renderGraph({ animate: !ggAnimated });
+  ggAnimated = true;
+}
+
+/** Everything reachable from commit i by following parents. */
+function ggAncestry(i) {
+  const idx = Object.fromEntries(GG.map((c, k) => [c.h, k]));
+  const seen = new Set([i]);
+  const stack = [i];
+  while (stack.length) {
+    for (const ph of GG[stack.pop()].p) {
+      const pi = idx[ph];
+      if (pi !== undefined && !seen.has(pi)) { seen.add(pi); stack.push(pi); }
+    }
+  }
+  return seen;
+}
+
+function renderGraph(opts = {}) {
+  if (!GG.length) resetGraph();
+  const list = $("gg-list");
+  list.classList.toggle("animate", !!opts.animate);
   const rowH = 30;
-  const idx = Object.fromEntries(GG_COMMITS.map((c, i) => [c.h, i]));
+  const idx = Object.fromEntries(GG.map((c, i) => [c.h, i]));
   const x = (lane) => 8 + lane * 16;
   const y = (i) => i * rowH + rowH / 2;
   let edges = "", nodes = "";
-  GG_COMMITS.forEach((c, i) => {
+  GG.forEach((c, i) => {
     for (const ph of c.p) {
       const pi = idx[ph];
       if (pi === undefined) continue;
-      const pc = GG_COMMITS[pi];
+      const pc = GG[pi];
       const x1 = x(c.lane), y1 = y(i), x2 = x(pc.lane), y2 = y(pi);
       const cls = `gg-e${Math.max(c.lane, pc.lane)}`;
       edges += x1 === x2
-        ? `<line class="${cls}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`
-        : `<path class="${cls}" d="M ${x1} ${y1} C ${x1} ${(y1 + y2) / 2} ${x2} ${(y1 + y2) / 2} ${x2} ${y2}" fill="none"/>`;
+        ? `<line class="${cls}" data-c="${i}" data-p="${pi}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`
+        : `<path class="${cls}" data-c="${i}" data-p="${pi}" d="M ${x1} ${y1} C ${x1} ${(y1 + y2) / 2} ${x2} ${(y1 + y2) / 2} ${x2} ${y2}" fill="none"/>`;
     }
-    nodes += `<circle class="gg-n${c.lane}" cx="${x(c.lane)}" cy="${y(i)}" r="4.5"/>`;
+    nodes += `<circle class="gg-n${c.lane}" data-c="${i}" cx="${x(c.lane)}" cy="${y(i)}" r="4.5"/>`;
   });
-  body.innerHTML =
-    `<svg class="gg-svg" width="44" height="${GG_COMMITS.length * rowH}" aria-hidden="true">${edges}${nodes}</svg>` +
-    GG_COMMITS.map((c, i) => `
-      <div class="gg-row" data-i="${i}">
-        ${(c.refs || []).map((r) => `<span class="gg-ref${/^v\d/.test(r) ? " tag" : ""}">${r}</span>`).join("")}
+  const refChip = (r) =>
+    `<span class="gg-ref${r === "HEAD" ? " head" : /^v\d/.test(r) ? " tag" : ""}">${esc(r)}</span>`;
+  list.innerHTML =
+    `<svg class="gg-svg" width="44" height="${GG.length * rowH}" aria-hidden="true">${edges}${nodes}</svg>` +
+    GG.map((c, i) => `
+      <div class="gg-row${ggSel === i ? " sel" : ""}${ggFresh === c.h ? " fresh" : ""}" data-i="${i}"
+           style="${opts.animate ? `animation-delay:${Math.min(i * 22, 480)}ms` : ""}">
+        ${(c.refs || []).map(refChip).join("")}
         <span class="msg">${esc(c.m)}</span>
         <span class="hash">${c.h}</span>
       </div>`).join("");
-  body.querySelectorAll(".gg-row").forEach((row) => {
-    const c = GG_COMMITS[+row.dataset.i];
-    row.oncontextmenu = (e) => graphCtx(e, c);
-    row.onclick = (e) => graphCtx(e, c);
+  ggFresh = null;
+  const clearDim = () =>
+    list.querySelectorAll(".gg-dim").forEach((el) => el.classList.remove("gg-dim"));
+  list.querySelectorAll(".gg-row").forEach((row) => {
+    const i = +row.dataset.i;
+    row.onclick = () => { ggSel = ggSel === i ? null : i; renderGraph(); };
+    row.oncontextmenu = (e) => graphCtx(e, i);
+    row.onmouseenter = () => {
+      const set = ggAncestry(i);
+      list.querySelectorAll(".gg-row").forEach((r) =>
+        r.classList.toggle("gg-dim", !set.has(+r.dataset.i)));
+      list.querySelectorAll("[data-c]").forEach((el) => {
+        const child = +el.dataset.c;
+        const par = el.dataset.p !== undefined ? +el.dataset.p : child;
+        el.classList.toggle("gg-dim", !(set.has(child) && set.has(par)));
+      });
+    };
   });
+  list.onmouseleave = clearDim;
+  renderGraphDetail();
 }
 
-function graphCtx(e, c) {
+/** Plausible files-changed list, derived from the commit message. */
+function ggFiles(c) {
+  const m = c.m.toLowerCase();
+  const seed = c.h.split("").reduce((a, ch) => a + ch.charCodeAt(0), 0);
+  const files = c.you ? ["(your session changes)"]
+    : m.includes("showcase") || m.includes("site") ? ["website/app.js", "website/style.css", "website/index.html"]
+    : m.includes("terminal") ? ["src/lib/components/Terminal.svelte", "src-tauri/src/pty.rs"]
+    : m.includes("audit") || m.includes("security") || m.includes("harden") ? ["src-tauri/src/files/mod.rs", "src-tauri/src/config.rs", "src/lib/api/files.ts"]
+    : m.includes("theme") ? ["src/lib/themes/aurora.css", "src/lib/state/settings.svelte.ts"]
+    : ["src/lib/state/explorer.svelte.ts", "docs/ARCHITECTURE.md"];
+  return files.map((n, i) => ({ n, a: (seed * (i + 3)) % 90 + 4, d: (seed * (i + 7)) % 40 + 1 }));
+}
+
+function renderGraphDetail() {
+  const d = $("gg-detail");
+  if (ggSel === null || !GG[ggSel]) { d.hidden = true; return; }
+  const c = GG[ggSel];
+  d.hidden = false;
+  const date = new Date(Date.now() - ggSel * 26 * 3600 * 1000);
+  d.innerHTML = `
+    <div class="hash-line"><span>${c.h}</span><button id="gg-copy">copy</button></div>
+    <div class="dmsg">${esc(c.m)}</div>
+    <div class="dmeta">${c.you ? "you · just now" : "chong · " + date.toLocaleDateString(undefined, { month: "short", day: "numeric" })} · ${(c.p || []).length > 1 ? "merge commit" : "commit"}</div>
+    <ul class="gg-files">${ggFiles(c).map((f) =>
+      `<li><span>${esc(f.n)}</span><span><span class="plus">+${f.a}</span> <span class="minus">−${f.d}</span></span></li>`).join("")}</ul>
+    <div class="gg-actions">
+      <button data-act="checkout">Checkout</button>
+      <button data-act="branch">Branch…</button>
+      <button data-act="tag">Tag…</button>
+      <button data-act="pick">Cherry-pick</button>
+      <button data-act="revert">Revert</button>
+      <button data-act="gh">GitHub ↗</button>
+    </div>
+    <div id="gg-nameslot"></div>
+    <p class="ai-note">These really mutate this demo graph — in the app they're libgit2 operations on your repo. <em>reset</em> up top undoes your experiments.</p>`;
+  $("gg-copy").onclick = () => { if (navigator.clipboard) navigator.clipboard.writeText(c.h); toast("Hash copied."); };
+  d.querySelectorAll("[data-act]").forEach((b) => (b.onclick = () => ggAction(b.dataset.act, ggSel)));
+}
+
+function ggAction(act, i) {
+  const c = GG[i];
+  if (act === "gh") { window.open(`${REPO}/commit/${c.h}`, "_blank"); return; }
+  if (act === "checkout") {
+    for (const k of GG) k.refs = (k.refs || []).filter((r) => r !== "HEAD");
+    c.refs.unshift("HEAD");
+    renderGraph();
+    toast(`HEAD is now at <code>${c.h}</code> — detached, like real git. In the app this is a libgit2 checkout.`, { ms: 4600 });
+    return;
+  }
+  if (act === "pick") {
+    ggSel = 0;
+    newCommit(c.m.replace(/\s*\(#\d+\)/, "") + " (cherry-picked)");
+    toast("Cherry-picked onto dev — new commit up top.", { ms: 3200 });
+    return;
+  }
+  if (act === "revert") {
+    ggSel = 0;
+    newCommit(`Revert "${c.m.slice(0, 42)}${c.m.length > 42 ? "…" : ""}"`);
+    toast("Revert commit created.", { ms: 3000 });
+    return;
+  }
+  // branch / tag: ask for a name inline
+  const slot = $("gg-nameslot");
+  slot.innerHTML = `<div class="gg-nameinput"><input placeholder="${act === "tag" ? "v1.0.2" : "feat/your-idea"}" aria-label="Name" /><button>OK</button></div>`;
+  const input = slot.querySelector("input");
+  const ok = () => {
+    const name = input.value.trim() || input.placeholder;
+    c.refs.push(name);
+    renderGraph();
+    toast(`${act === "tag" ? "Tag" : "Branch"} <code>${esc(name)}</code> created here — the app writes the real ref.`, { ms: 3600 });
+  };
+  slot.querySelector("button").onclick = ok;
+  input.onkeydown = (ev) => {
+    if (ev.key === "Enter") ok();
+    else if (ev.key === "Escape") slot.innerHTML = "";
+  };
+  input.focus();
+}
+
+function graphCtx(e, i) {
   e.preventDefault();
+  const c = GG[i];
   ctxMenu(e, [
-    { label: `Checkout ${c.h}`, run: () => toast(`In the real app this checks out <code>${c.h}</code> — right from the graph, libgit2 underneath.`, { ms: 4200 }) },
-    { label: "Cherry-pick this commit", run: () => toast("Cherry-pick, revert, tag — all context actions on the app's graph.", { ms: 3600 }) },
-    { label: "Rebase current onto here", run: () => toast("The app's graph does merge / rebase / branch-here with real refs.", { ms: 3600 }) },
+    { label: `Checkout ${c.h}`, run: () => ggAction("checkout", i) },
+    { label: "Branch here…", run: () => { ggSel = i; renderGraph(); ggAction("branch", i); } },
+    { label: "Tag here…", run: () => { ggSel = i; renderGraph(); ggAction("tag", i); } },
+    { label: "Cherry-pick onto dev", run: () => ggAction("pick", i) },
+    { label: "Revert this commit", run: () => ggAction("revert", i) },
     { sep: true },
     { label: "Copy hash", run: () => { if (navigator.clipboard) navigator.clipboard.writeText(c.h); toast("Hash copied."); } },
     { label: "View on GitHub ↗", run: () => window.open(`${REPO}/commit/${c.h}`, "_blank") },
@@ -1148,18 +1516,56 @@ function ctxMenu(e, items) {
   el.style.top = Math.min(e.clientY, innerHeight - el.offsetHeight - pad) + "px";
 }
 
-function fileCtx(e, node, paneIdx = 0) {
+function fileCtx(e, node, paneIdx = 0, baseOverride) {
   e.preventDefault();
-  const base = paneIdx === 1 && pane2 ? pane2.cwd : cwd;
+  const base = baseOverride || (paneIdx === 1 && pane2 ? pane2.cwd : cwd);
   const path = [...base, node.name];
   ctxMenu(e, [
     { label: "Open", run: () => (paneIdx === 1 ? openEntry2(node) : openEntry(node)) },
     { label: "Open in New Tab", run: () => newTab(node.kind === "dir" ? { cwd: path, sel: null } : { cwd: [...base], sel: node.name }) },
     { label: "Rename (F2)", run: () => { if (paneIdx === 1 && pane2) pane2.sel = node.name; else selectedName = node.name; startRename(paneIdx); } },
+    ...(node.kind === "dir" ? [] : [{ label: "AI Rename (plugin demo)", run: () => aiRename(node, paneIdx) }]),
     { sep: true },
     { label: "Copy Path", run: () => { if (navigator.clipboard) navigator.clipboard.writeText("~/tauri-explorer/" + path.join("/")); toast("Path copied — the app's menu also does zip, checksums, open-with…", { ms: 3200 }); } },
     { label: "Get the Real App ↗", run: () => window.open(`${REPO}/releases/latest`, "_blank") },
   ]);
+}
+
+/* ── AI rename: the Gemini plugin, demo'd without a network call ── */
+
+const ai = overlay("ai-overlay");
+
+function aiSuggestions(node) {
+  const ext = (node.name.match(/\.\w+$/) || [""])[0];
+  const base = node.name.slice(0, node.name.length - ext.length);
+  const slug = (s, n = 4) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").split("-").filter(Boolean).slice(0, n).join("-");
+  const lines = plainText(node).split("\n").map((l) => l.trim()).filter(Boolean);
+  const out = [];
+  if (lines[0]) out.push(slug(lines[0]) + ext);
+  if (lines[1]) out.push(slug(lines[1], 3) + ext);
+  out.push(slug(base, 3) + "-overview" + ext);
+  return [...new Set(out)].filter((n) => n && n !== node.name && n !== ext).slice(0, 3);
+}
+
+function aiRename(node, paneIdx) {
+  closeAll();
+  ai.open();
+  const body = $("ai-body");
+  const fileLine = `<div class="ai-file">${iconFor(node)}<span>${esc(node.name)}</span></div>`;
+  body.innerHTML = `${fileLine}
+    <div class="ai-wait">Reading contents, asking <code>gemini-2.5-flash</code><span class="ai-dots"></span></div>`;
+  setTimeout(() => {
+    if (!ai.isOpen) return;
+    const sugs = aiSuggestions(node);
+    body.innerHTML = `${fileLine}
+      <div class="ai-sug">${sugs.map((s) => `<button data-name="${esc(s)}">${SVG.file}<span>${esc(s)}</span></button>`).join("")}</div>
+      <p class="ai-note">Suggestions derive from the file's contents. In the app this is a real Gemini call —
+      your own key, stored locally, plugin off by default. Pick one and it renames for real (here: session-only).</p>`;
+    body.querySelectorAll("[data-name]").forEach((b) => (b.onclick = () => {
+      closeAll();
+      commitRename(node, b.dataset.name, paneIdx);
+    }));
+  }, 1100);
 }
 
 /* ── F2 rename: inline, session-only ────────────────────── */
@@ -1210,6 +1616,7 @@ function commitRename(node, newName, paneIdx) {
     renderPanes();
     return;
   }
+  const oldName = node.name;
   node.name = newName;
   if (paneIdx === 1 && pane2) pane2.sel = newName;
   else { selectedName = newName; syncTab(); }
@@ -1217,6 +1624,7 @@ function commitRename(node, newName, paneIdx) {
   renderPanes();
   if (!$("preview").hidden && $("preview-name").textContent.split("/").length === base.length + 1)
     $("preview-name").textContent = [...base, newName].join("/");
+  recordChange("R", `${oldName} → ${newName}`);
   toast("Renamed — session-only here. The app renames on disk, plus bulk regex rename over selections.", { ms: 4200 });
 }
 
@@ -1228,7 +1636,7 @@ function renderPanes() {
 }
 
 function render2() {
-  buildList($("filelist2"), nodeAt(pane2.cwd), pane2.sel, 1);
+  buildList($("filelist2"), pane2.cwd, pane2.sel, 1);
   markFocus();
 }
 
@@ -1272,9 +1680,9 @@ function openEntry2(node) {
     return;
   }
   pane2.sel = node.name;
-  $("filelist2").querySelectorAll(".row, .tile").forEach((r) =>
+  $("filelist2").querySelectorAll("[data-name]").forEach((r) =>
     r.classList.toggle("selected", r.dataset.name === node.name));
-  $("preview").hidden = false;
+  setPreview(true);
   $("preview-name").textContent = [...pane2.cwd, node.name].join("/");
   $("preview-body").innerHTML = node.content;
   $("preview-body").scrollTop = 0;
@@ -1321,6 +1729,9 @@ function transferAcross(move) {
   dst.children.push(placed);
   reindexFS();
   renderPanes();
+  recordChange(move ? "R" : "A", move
+    ? `${[...srcCwd, node.name].join("/")} → ${[...dstCwd, name].join("/")}`
+    : [...dstCwd, name].join("/"));
   toast(move
     ? `Moved to <code>~/tauri-explorer/${esc(dstCwd.join("/") || "")}</code> — <kbd>F6</kbd>, like the app. (Session-only.)`
     : `Copied across — <kbd>F5</kbd>, like the app. (Session-only; the real one does disks, with progress and conflict dialogs.)`,
@@ -1350,34 +1761,118 @@ function sortChildren(list) {
 
 let typeBuf = "", typeTimer = 0;
 
+/* ── Resizable panels: sidebar, preview, terminal, columns ── */
+
+let panelSizes = {};
+try { panelSizes = JSON.parse(localStorage.getItem("panelSizes") || "{}"); } catch { /* defaults */ }
+
+function applySizes() {
+  const r = document.documentElement.style;
+  if (panelSizes.sidebar) r.setProperty("--sidebar-w", panelSizes.sidebar + "px");
+  if (panelSizes.preview) r.setProperty("--preview-w", panelSizes.preview + "px");
+  if (panelSizes.term) r.setProperty("--term-h", panelSizes.term + "px");
+  if (panelSizes.miller) r.setProperty("--miller-w", panelSizes.miller + "px");
+}
+
+function dragResize(handle, opts) {
+  handle.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    const start = opts.vertical ? e.clientY : e.clientX;
+    const startVal = opts.get();
+    handle.classList.add("dragging");
+    document.body.classList.add(opts.vertical ? "resizing-v" : "resizing");
+    const move = (ev) => {
+      const delta = ((opts.vertical ? ev.clientY : ev.clientX) - start) * (opts.invert ? -1 : 1);
+      opts.set(Math.min(opts.max, Math.max(opts.min, startVal + delta)));
+    };
+    const up = () => {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+      handle.classList.remove("dragging");
+      document.body.classList.remove("resizing", "resizing-v");
+      localStorage.setItem("panelSizes", JSON.stringify(panelSizes));
+      toastOnce("resize", "Everything drags — sidebar, preview, terminal, columns. This page remembers; so does the app.");
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  });
+}
+
+/* ── Editable path bar (click the breadcrumb, or Ctrl+L) ── */
+
+function editPath() {
+  const bc = $("breadcrumb");
+  if (bc.querySelector(".path-input")) return;
+  const base = focusedPane === 1 && pane2 ? pane2.cwd : cwd;
+  bc.classList.add("editing");
+  bc.innerHTML = "";
+  const input = document.createElement("input");
+  input.className = "path-input";
+  input.value = "~/tauri-explorer" + (base.length ? "/" + base.join("/") : "");
+  input.setAttribute("aria-label", "Path");
+  const done = () => { bc.classList.remove("editing"); render(); };
+  input.onkeydown = (ev) => {
+    if (ev.key === "Enter") {
+      const raw = input.value.trim().replace(/^~\/?(tauri-explorer)?\/?/, "").replace(/^\//, "");
+      const target = raw ? raw.split("/").filter(Boolean) : [];
+      const node = findNode(target);
+      if (!node) {
+        toast(`No such path: <code>${esc(input.value)}</code> — <kbd>Ctrl+P</kbd> fuzzy-finds anything.`, { ms: 3800 });
+        done();
+        return;
+      }
+      const nav = focusedPane === 1 && pane2 ? navigate2 : navigate;
+      if (node.kind === "dir") nav(target);
+      else { nav(target.slice(0, -1)); (focusedPane === 1 && pane2 ? openEntry2 : openEntry)(node); }
+      done();
+      toastOnce("pathbar", "The address bar takes typed paths too — click it or <kbd>Ctrl+L</kbd>, like a browser.");
+    } else if (ev.key === "Escape") {
+      done();
+    }
+  };
+  input.onblur = () => { if (bc.classList.contains("editing")) done(); };
+  bc.appendChild(input);
+  input.focus();
+  input.select();
+}
+
 /* ── Global keys ────────────────────────────────────────── */
 
 document.addEventListener("keydown", (e) => {
   const mod = e.ctrlKey || e.metaKey;
-  const inTerminal = e.target && e.target.id === "term-input";
+  const t = e.target;
   // the rename input owns its keys entirely (its own handler commits/cancels)
-  if (e.target && e.target.classList && e.target.classList.contains("rename-input")) return;
+  if (t && t.classList && t.classList.contains("rename-input")) return;
+  // free-form inputs (terminal, commit message, path bar, graph name) keep
+  // their own keys; the overlay search inputs still get listNav below
+  const inFreeInput = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA") &&
+    !t.closest("#qo-overlay, #cp-overlay, #cs-overlay");
   if (mod && e.shiftKey && e.key.toLowerCase() === "p") { e.preventDefault(); closeAll(); cp.open(); cpIndex = 0; return; }
   if (mod && e.shiftKey && e.key.toLowerCase() === "f") { e.preventDefault(); closeAll(); cs.open(); csIndex = 0; return; }
   if (mod && !e.shiftKey && e.key.toLowerCase() === "p") { e.preventDefault(); closeAll(); qo.open(); qoIndex = 0; return; }
   if (mod && e.key === "/") { e.preventDefault(); closeAll(); ks.open(); return; }
   if (mod && e.key === "`") { e.preventDefault(); toggleTerminal(); return; }
   if (mod && e.key === "\\") { e.preventDefault(); toggleDualPane(); return; }
+  if (mod && !e.shiftKey && e.key.toLowerCase() === "l") { e.preventDefault(); closeAll(); editPath(); return; }
   if (mod && !e.shiftKey && e.key.toLowerCase() === "t") { e.preventDefault(); toggleTheme(); return; }
   if (e.key === "Escape") {
-    if (inTerminal) { e.target.blur(); return; }
+    if (inFreeInput) {
+      if (t.closest(".gg-nameinput")) $("gg-nameslot").innerHTML = "";
+      else t.blur();
+      return;
+    }
     if (!$("ctx").hidden) { $("ctx").hidden = true; return; }
     if (!$("theme-menu").hidden) { setThemeMenu(false); return; }
-    if (qo.isOpen || cp.isOpen || ks.isOpen || cs.isOpen || gg.isOpen) { closeAll(); return; }
+    if (qo.isOpen || cp.isOpen || ks.isOpen || cs.isOpen || gg.isOpen || ai.isOpen) { closeAll(); return; }
     // full zen: Esc is the panic button — chrome first, preview second
     if (BARS.every((b) => hiddenBars.has(b.id))) { zenMode(); return; }
-    if (!$("preview").hidden) { $("preview").hidden = true; selectedName = null; render(); syncTab(); }
+    if (!$("preview").hidden) { setPreview(false); selectedName = null; render(); syncTab(); }
     return;
   }
   if (qo.isOpen) { listNav(qo, qoRender, () => qoIndex, (v) => (qoIndex = v), e); return; }
   if (cp.isOpen) { listNav(cp, cpRender, () => cpIndex, (v) => (cpIndex = v), e); return; }
   if (cs.isOpen) { listNav(cs, csRender, () => csIndex, (v) => (csIndex = v), e); return; }
-  if (ks.isOpen || gg.isOpen || inTerminal) return;
+  if (ks.isOpen || gg.isOpen || ai.isOpen || inFreeInput) return;
 
   if (e.key === "F2") { e.preventDefault(); startRename(focusedPane); return; }
   if ((e.key === "F5" || e.key === "F6") && pane2) {
@@ -1400,7 +1895,7 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Enter"].includes(e.key)) {
-    const rows = [...container.querySelectorAll(".row, .tile")];
+    const rows = [...container.querySelectorAll("[data-name]")];
     if (!rows.length) return;
     const idx = rows.findIndex((r) => r.dataset.name === getSel());
     if (e.key === "Enter" && idx >= 0) { rows[idx].click(); e.preventDefault(); return; }
@@ -1419,7 +1914,7 @@ document.addEventListener("keydown", (e) => {
     clearTimeout(typeTimer);
     typeBuf += e.key.toLowerCase();
     typeTimer = setTimeout(() => (typeBuf = ""), 900);
-    const rows = [...container.querySelectorAll(".row, .tile")];
+    const rows = [...container.querySelectorAll("[data-name]")];
     const hit = rows.find((r) => r.dataset.name.toLowerCase().startsWith(typeBuf));
     if (hit) {
       setSel(hit.dataset.name);
@@ -1435,10 +1930,21 @@ $("cs-input").addEventListener("input", () => { csIndex = 0; csRender(); });
 document.querySelectorAll(".overlay").forEach((ov) =>
   ov.addEventListener("click", (e) => { if (e.target === ov) closeAll(); }));
 
-$("preview-close").onclick = () => { $("preview").hidden = true; selectedName = null; render(); syncTab(); };
+$("preview-close").onclick = () => { setPreview(false); selectedName = null; render(); syncTab(); };
 $("nav-up").onclick = () => cwd.length && navigate(cwd.slice(0, -1));
 $("nav-back").onclick = () => { const prev = history.pop(); if (prev) { cwd = prev; selectedName = null; render(); syncTab(); updatePrompt(); } };
 $("gg-close").onclick = () => gg.close();
+$("gg-reset").onclick = () => { resetGraph(); renderGraph(); toast("Graph restored to this repo's real history."); };
+
+/* view switcher + editable path bar */
+document.querySelectorAll("#view-switch button").forEach((b) => (b.onclick = () => setView(b.dataset.view)));
+$("breadcrumb").addEventListener("click", (e) => { if (!e.target.closest(".crumb")) editPath(); });
+
+/* resize handles: sidebar, preview, terminal (miller handles mount per render) */
+dragResize($("rsz-sidebar"), { min: 150, max: 380, get: () => panelSizes.sidebar || 208, set: (v) => { panelSizes.sidebar = v; applySizes(); } });
+dragResize($("rsz-preview"), { min: 280, max: 900, invert: true, get: () => panelSizes.preview || $("preview").offsetWidth || 480, set: (v) => { panelSizes.preview = v; applySizes(); } });
+dragResize($("rsz-term"), { min: 110, max: 520, vertical: true, invert: true, get: () => panelSizes.term || 220, set: (v) => { panelSizes.term = v; applySizes(); } });
+applySizes();
 
 /* terminal wiring */
 $("term-close").onclick = () => toggleTerminal(false);
@@ -1500,8 +2006,11 @@ setTimeout(() => toastOnce("tour-zen",
   `Try <kbd>Ctrl+Shift+P</kbd> → <em>"Toggle Zen Mode"</em> — every bar on this page really hides.`,
   { ms: 8000 }), 9000);
 setTimeout(() => toastOnce("tour-theme",
-  "The palette icon in the toolbar restyles this whole page — the app themes the same way.",
+  "The palette icon in the toolbar restyles this whole page — 13 themes, Ayu Mirage to Catppuccin.",
   { ms: 8000 }), 24000);
+setTimeout(() => toastOnce("tour-graph",
+  `The <em>Graph: this repo</em> tab is this repository's real history — click a commit, then try <em>Cherry-pick</em>.`,
+  { ms: 9000 }), 40000);
 
 /* prefetch every screenshot once the browser is idle — after that,
    opening any feature file or the gallery feels local */

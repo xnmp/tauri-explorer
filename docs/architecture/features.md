@@ -125,6 +125,7 @@
 | Folder previews (large/XL tiles) | `domain/folder-preview.ts` (selection spec), `thumbnails.rs:get_folder_preview` (bounded scan → image paths + fingerprint), `FolderThumbnail.svelte` (client-side composite over ThumbnailImage; per-folder fs watch while visible — the backend watcher is non-recursive, so this is what makes previews refresh on change), `TilesView.svelte` gate |
 | Zip / unzip with progress | `archive.rs` (chunked writes, zip-progress/unzip-progress events, cancel_compress/cancel_extract), `pane-mutations.ts:runArchiveJob` (shared compress/extract), `operations.svelte.ts` ("compress"/"extract" types). Progress panel auto-hides per-operation after a short linger. |
 | Markdown preview | `domain/markdown.ts` (marked + hljs, escaped raw HTML), `PreviewPane.svelte` (.preview-markdown) |
+| Image fullscreen preview | `PreviewPane.svelte` — click the image (or double-click the pane) toggles front-and-center; Left/Right step siblings at base zoom, +/-/Ctrl+wheel zoom, arrows pan when zoomed, Esc/click reverts (#219). Browser/E2E mode loads images via `read_image_data_url` (mocked), same path as the cloud-file fallback |
 | ZIP content preview | `archive.rs:list_archive_contents` (top-level entries as `FileEntry`s), `files.ts:listArchiveContents`, `file-types.ts:isZipFile`, `PreviewPane.svelte` (renders in the shared `.preview-folder-list` folder format) |
 
 ### Embedded Terminal

@@ -51,6 +51,10 @@ async function waitForFileList(page: Page): Promise<void> {
   await page.locator(".entry-item").first().waitFor({ timeout: 10000 });
 }
 
+// Budgets are calibrated against Chromium; other engines (the WebKit proxy
+// job) run correctness suites only.
+test.skip(({ browserName }) => browserName !== "chromium", "perf budgets are chromium-calibrated");
+
 test.describe("Performance Tests", () => {
   test.describe("App Startup", () => {
     test("cold start time under 3 seconds", async ({ page }) => {

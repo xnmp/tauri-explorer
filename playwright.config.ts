@@ -17,6 +17,17 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
     },
+    // WebKit ≈ WKWebView: the closest automated proxy for the macOS webview
+    // (no WKWebView WebDriver exists). Opt-in: WEBKIT=1 locally, or
+    // --project=webkit (the CI webkit job does this).
+    ...(process.env.WEBKIT
+      ? [
+          {
+            name: "webkit",
+            use: { ...devices["Desktop Safari"] },
+          },
+        ]
+      : []),
   ],
   webServer: {
     command: "bun run dev",

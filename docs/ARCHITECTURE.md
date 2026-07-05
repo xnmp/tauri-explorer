@@ -11,7 +11,7 @@
 | Backend | Rust |
 | Package manager | `bun` |
 | Build | Vite 6, `@sveltejs/adapter-static` |
-| Tests | Vitest (unit), Playwright (e2e) |
+| Tests | Vitest (unit), Playwright (e2e: Chromium + WebKit proxy for the macOS webview — `WEBKIT=1 npx playwright test --project=webkit`), WebdriverIO real-binary smoke (Linux/Windows: boot, file ops, content search, terminal, warm windows, context-menu clipboard round-trip, theme switching, hostile-filename round-trip), macOS launch smoke (`.github/workflows/macos-smoke.yml`: boots the built app, asserts startup) |
 
 **Dev commands:** `bun run start` (dev server), `npx vitest run` (unit tests), `npx playwright test` (e2e)
 

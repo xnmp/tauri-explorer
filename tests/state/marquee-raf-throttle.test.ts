@@ -168,7 +168,7 @@ describe("marquee rAF batching", () => {
     expect(flushC).toHaveBeenCalledOnce();
   });
 
-  it("does not call onFlush if end() cancels the pending rAF", () => {
+  it("end() commits the pending rAF move so a fast release never loses the final rect", () => {
     const marquee = useMarqueeSelection();
     marquee.start(makeBackgroundStart(), makeRect());
 
@@ -179,6 +179,21 @@ describe("marquee rAF batching", () => {
 
     marquee.end();
 
+    // Committed synchronously — no rAF left behind, flush ran exactly once.
+    expect(harness.pendingCount()).toBe(0);
+    expect(flush).toHaveBeenCalledOnce();
+  });
+
+  it("end({ commit: false }) discards the pending move on abandoned drags", () => {
+    const marquee = useMarqueeSelection();
+    marquee.start(makeBackgroundStart(), makeRect());
+
+    const flush = vi.fn();
+    marquee.move(makeMouseEvent(100, 100), makeRect(), undefined, flush);
+
+    marquee.end({ commit: false });
+
+    // Abandoned (missed mouseup): a phantom update must not fire.
     expect(harness.pendingCount()).toBe(0);
     expect(flush).not.toHaveBeenCalled();
   });

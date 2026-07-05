@@ -41,6 +41,37 @@ jobs:
           path: playwright-report/
           if-no-files-found: ignore
 
+  # WebKit ≈ WKWebView — the closest automated proxy for the macOS webview
+  # (no WKWebView WebDriver exists). Catches Safari-family CSS/JS breakage.
+  webkit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright WebKit
+        run: npx playwright install --with-deps webkit
+
+      - name: E2E tests (WebKit)
+        env:
+          WEBKIT: "1"
+        run: npx playwright test --project=webkit
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-webkit
+          path: playwright-report/
+          if-no-files-found: ignore
+
   rust:
     runs-on: ubuntu-latest
     timeout-minutes: 30

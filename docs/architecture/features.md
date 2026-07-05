@@ -100,9 +100,10 @@
 | Crash reporting (#184) | `crash_report.rs` (panic hook → `<log dir>/crashes/`, take_crash_report consumes newest once, log_frontend_error, open_external_url), `api/crash.ts` (global onerror/unhandledrejection forwarding, pre-filled GitHub issue URL), `CrashNotice.svelte` banner in `+page.svelte`. Local files only — no telemetry |
 | Update checker (#185) | `update_check.rs` (GitHub releases API via ureq, dotted-version compare), `api/update.ts` (once-a-day throttle in localStorage), `UpdateNotice.svelte` banner. Notification only — no auto-download |
 | Shortcut cheatsheet + first-run hint (#186) | `ShortcutCheatsheet.svelte` (live effective bindings grouped by category, Ctrl+/ or `help.shortcuts` palette command), `FirstRunHint.svelte` (one-time banner, suppressed by default in mock env via `firstRunHintDismissed`) |
+| Bug report + logs commands (#197) | `help.reportBug` palette command (pre-filled GitHub issue with version/OS via `bugReportUrl` in `api/crash.ts` + `get_app_info` in `system.rs`), `help.openLogs` navigates to the app log dir |
 | Workspaces | `workspaces.svelte.ts`, `WorkspaceDialog.svelte` |
 | Tab tear-off / cross-window move | `tab-transfer.ts` (localStorage marker + BroadcastChannel claim), `PaneTabBar.svelte` (drag handlers), `windowTabsManager.exportTab/adoptTab/removeTransferredTab`, label-keyed `tab-seed` in `openNewWindow` |
-| System file picker (portal) | `portal.rs` (D-Bus FileChooser backend), `FilePicker.svelte` (?picker= mode), `packaging/` (.portal + .service) |
+| System file picker (portal) | `portal.rs` (D-Bus FileChooser backend), `FilePicker.svelte` (?picker= mode; Ctrl+P fuzzy quick-open via `PickerQuickOpen.svelte` #190 — picks confirm in open mode, prefill in save mode, navigate for dirs), `packaging/` (.portal + .service) |
 
 ### Clipboard
 | Feature | Files to change |

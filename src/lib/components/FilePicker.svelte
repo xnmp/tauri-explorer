@@ -11,6 +11,9 @@
   import { fetchDirectory, getHomeDirectory, pickerRespond } from "$lib/api/files";
   import type { FileEntry } from "$lib/domain/file";
   import FileIcon from "./FileIcon.svelte";
+  import PickerQuickOpen from "./PickerQuickOpen.svelte";
+  import { parentDir } from "$lib/domain/path";
+  import type { SearchResult } from "$lib/api/files";
 
   export interface PickerInfo {
     mode: "open" | "save";
@@ -37,6 +40,9 @@
   let saveName = $state(info.name);
   let addressInput = $state("");
   let columnsRef = $state<HTMLElement | null>(null);
+  let quickOpenOpen = $state(false);
+  /** Root the quick-open searches under: the picker's starting folder. */
+  let searchRoot = $state("/");
 
   const currentDir = $derived(chain[chain.length - 1] ?? "/");
 
@@ -155,7 +161,13 @@
   }
 
   function handleKeydown(event: KeyboardEvent): void {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "p") {
+      event.preventDefault();
+      quickOpenOpen = true;
+      return;
+    }
     if (event.key === "Escape") {
+      if (quickOpenOpen) return; // the overlay's Modal handles its own Escape
       event.preventDefault();
       void cancel();
     } else if (event.key === "Enter" && !(event.target as HTMLElement)?.closest(".address-input")) {
@@ -164,6 +176,20 @@
         void confirm();
       }
     }
+  }
+
+  /** Quick-open pick: files confirm (open) or prefill (save); dirs navigate. */
+  async function handleQuickOpenPick(result: SearchResult): Promise<void> {
+    if (result.kind === "directory") {
+      await setChain(ancestors(result.path));
+      return;
+    }
+    if (info.mode === "save") {
+      await setChain(ancestors(parentDir(result.path)));
+      saveName = result.name;
+      return;
+    }
+    await respond([result.path]);
   }
 
   async function startWindowDrag(event: MouseEvent): Promise<void> {
@@ -187,6 +213,7 @@
         const home = await getHomeDirectory();
         base = home.ok ? home.data : "/";
       }
+      searchRoot = base;
       await setChain(ancestors(base));
     })();
   });
@@ -268,6 +295,14 @@
     </div>
   </footer>
 </div>
+
+<PickerQuickOpen
+  open={quickOpenOpen}
+  onClose={() => (quickOpenOpen = false)}
+  root={searchRoot}
+  directoriesOnly={info.directory}
+  onPick={handleQuickOpenPick}
+/>
 
 <style>
   .picker {

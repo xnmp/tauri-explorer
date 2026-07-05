@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## 2026-07-05 fix/terminal-smoke-flake: PTY tests need readiness gates, not tighter timeouts
+- **Never type into a PTY that hasn't prompted.** Keystrokes sent during shell init are silently swallowed (conpty on Windows especially); the test then waits on output of a command that never ran. Gate typing on first PTY output, keep one retry for a keystroke lost right at prompt time, and budget 45s for PTY spawn + rc files on loaded shared runners — 15s flaked on ~4 of 5 CI runs.
+
+## 2026-07-05 fix/macos-boot-glob: platform-foreign glob patterns crash Tauri at boot
+- **Asset-protocol scope globs are parsed eagerly at startup, and backslash patterns are fatal on POSIX.** The base `tauri.conf.json` carried Windows drive/UNC scope patterns (`*:\**\*`, `\\**\*`); on macOS `\` is not a path separator, so `**` is not "a single path component" and the app dies at boot with `GlobPattern(PatternError)`. Linux never crashed only because `tauri.linux.conf.json` already overrode the scope. Keep the base scope platform-neutral (`$HOME`, `/tmp`) and put platform patterns in `tauri.<platform>.conf.json` (arrays REPLACE on merge — each platform file must carry its full list).
+- Found by the macOS launch-smoke CI job (#192) on its very first run — the app had never been booted on macOS before.
+
 ## fix/sidebar-ux-polish (#101): Sidebar toggle, activity bar removal, X button styling
 
 **Key takeaways:**

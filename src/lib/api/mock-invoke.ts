@@ -15,14 +15,6 @@ export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-// Outside Tauri (browser E2E) the first-run hint (#186) would sit over every
-// test's UI — suppress it by default; tests opt back in with mockFirstRun.
-if (typeof window !== "undefined" && !isTauri() && typeof localStorage !== "undefined") {
-  if (localStorage.getItem("mockFirstRun") !== "1") {
-    localStorage.setItem("firstRunHintDismissed", "1");
-  }
-}
-
 // Deterministic, varied timestamps: each created entry gets a distinct
 // modified time (1h apart from a fixed base) so sort-by-modified is testable.
 const TIMESTAMP_BASE = Date.UTC(2024, 0, 1, 12, 0, 0);

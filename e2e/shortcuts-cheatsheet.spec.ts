@@ -36,32 +36,8 @@ test.describe("shortcut cheatsheet", () => {
 });
 
 test.describe("first-run hint", () => {
-  test("shows once and opens the cheatsheet", async ({ page }) => {
-    await page.addInitScript(() => localStorage.setItem("mockFirstRun", "1"));
+  test("removed: never appears, even on a fresh profile (#220)", async ({ page }) => {
     await page.goto("/");
-
-    const hint = page.locator('[data-testid="first-run-hint"]');
-    await expect(hint).toBeVisible();
-    await expect(hint).toContainText("Ctrl+Shift+P");
-
-    await hint.getByRole("button", { name: "View shortcuts" }).click();
-    await expect(hint).not.toBeVisible();
-    await expect(page.locator('[data-testid="shortcut-cheatsheet"]')).toBeVisible();
-  });
-
-  test("stays dismissed after reload", async ({ page }) => {
-    await page.addInitScript(() => localStorage.setItem("mockFirstRun", "1"));
-    await page.goto("/");
-    const hint = page.locator('[data-testid="first-run-hint"]');
-    await expect(hint).toBeVisible();
-    await hint.getByRole("button", { name: "Got it" }).click();
-
-    await page.reload();
-    await expect(page.locator('[data-testid="first-run-hint"]')).not.toBeVisible();
-  });
-
-  test("suppressed by default in the test environment", async ({ page }) => {
-    await page.goto("/");
-    await expect(page.locator('[data-testid="first-run-hint"]')).not.toBeVisible();
+    await expect(page.locator('[data-testid="first-run-hint"]')).toHaveCount(0);
   });
 });

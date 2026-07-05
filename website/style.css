@@ -1330,11 +1330,11 @@ body.resizing-v { user-select: none; cursor: row-resize; }
   cursor: pointer;
 }
 
-/* ── Small screens: preview overlays the list ───────────── */
+/* ── Small screens: preview overlays the list completely ── */
 @media (max-width: 860px) {
   .sidebar, .view-switch, .rsz { display: none; }
   .preview {
-    position: absolute; inset: 0; top: 44px;
+    position: absolute; inset: 0;
     width: auto; z-index: 20;
     border-left: none;
   }

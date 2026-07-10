@@ -703,7 +703,7 @@
 
   /* The active tab is fused to the pane — hover must not lift or restyle it. */
   .tab.active:hover {
-    background: var(--background-card);
+    background: linear-gradient(var(--background-card), var(--background-card)), var(--background-solid);
     color: var(--text-primary);
     transform: none;
   }
@@ -735,14 +735,23 @@
   }
 
   .tab.active {
-    background: var(--background-card);
+    /* --background-card is translucent in every theme; painted straight over
+       the titlebar's own card layer it composites into a DIFFERENT color
+       than the pane below (and reads as see-through, #243). Layering it
+       over --background-solid reproduces the pane's effective surface
+       opaquely, so the tab both fuses with the pane and stands apart from
+       inactive tabs. */
+    background: linear-gradient(var(--background-card), var(--background-card)), var(--background-solid);
     color: var(--text-primary);
     font-weight: var(--font-weight-semibold);
     border-top: 2px solid var(--accent);
     /* No lift and no drop shadow: the tab's base must FUSE with the pane
        surface below it (Chrome-style) — any translateY or shadow reads as
-       a seam at the junction. */
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+       a seam at the junction. Hairline side strokes separate it from
+       neighbouring inactive tabs on low-contrast themes (#243). */
+    box-shadow:
+      inset 1px 0 0 var(--surface-stroke),
+      inset -1px 0 0 var(--surface-stroke);
     transform: none;
     z-index: 2;
     opacity: 1;
@@ -768,22 +777,37 @@
     z-index: 3;
   }
 
+  /* Two stacked radial layers per fillet: translucent card over solid — the
+     same opaque composite as the active tab — while the concave circle stays
+     transparent in BOTH layers so the titlebar shows through (#243). */
   .tab-fillet.left {
     left: calc(-1 * var(--fillet));
-    background: radial-gradient(
-      circle var(--fillet) at 0 0,
-      transparent calc(var(--fillet) - 0.5px),
-      var(--background-card) var(--fillet)
-    );
+    background:
+      radial-gradient(
+        circle var(--fillet) at 0 0,
+        transparent calc(var(--fillet) - 0.5px),
+        var(--background-card) var(--fillet)
+      ),
+      radial-gradient(
+        circle var(--fillet) at 0 0,
+        transparent calc(var(--fillet) - 0.5px),
+        var(--background-solid) var(--fillet)
+      );
   }
 
   .tab-fillet.right {
     right: calc(-1 * var(--fillet));
-    background: radial-gradient(
-      circle var(--fillet) at 100% 0,
-      transparent calc(var(--fillet) - 0.5px),
-      var(--background-card) var(--fillet)
-    );
+    background:
+      radial-gradient(
+        circle var(--fillet) at 100% 0,
+        transparent calc(var(--fillet) - 0.5px),
+        var(--background-card) var(--fillet)
+      ),
+      radial-gradient(
+        circle var(--fillet) at 100% 0,
+        transparent calc(var(--fillet) - 0.5px),
+        var(--background-solid) var(--fillet)
+      );
   }
 
   .tab.active::before {

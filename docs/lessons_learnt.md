@@ -1585,3 +1585,13 @@ clearing staged, amend folding).
   on WebKit (WEBKIT=1) against the legacy code. Run `WEBKIT=1 npx playwright
   test e2e/zoom-positioning.spec.ts --project=webkit` when touching
   domain/zoom.ts.
+
+## 2026-07-10 fix/drag-hover-folder-blink (#242): drop-target highlight blinked during hover
+
+- **dragenter/dragleave pair per ELEMENT, not per subtree.** Moving the
+  cursor onto a child of a folder row fires dragleave on the row while the
+  drag is still over the folder; the next dragover re-highlights it — a
+  blink on every small move. Fix in `useDropTarget.handleDragLeave`: ignore
+  leaves whose `relatedTarget` is inside the row, falling back to a
+  coordinate-in-rect check when relatedTarget is null (WebKit). A (0,0)
+  null-relatedTarget leave still clears (window exit).

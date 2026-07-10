@@ -77,7 +77,7 @@
   ondragstart={usesHtml5Drag ? (e) => interactions.handleDragStart(e, entry, explorer.isSelected(entry)) : undefined}
   ondragend={usesHtml5Drag ? interactions.handleDragEnd : undefined}
   ondragover={(e) => interactions.handleDragOver(e, entry)}
-  ondragleave={() => interactions.handleDragLeave(entry)}
+  ondragleave={(e) => interactions.handleDragLeave(e, entry)}
   ondrop={(e) => interactions.handleDrop(e, entry)}
   onmousedown={usesPointerDrag ? (e) => { e.stopPropagation(); pointerDrag!.handlePointerDown(e, entry, explorer.isSelected(entry)); } : undefined}
 >

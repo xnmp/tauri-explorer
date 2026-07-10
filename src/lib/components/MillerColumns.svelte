@@ -362,7 +362,7 @@
                 ondragend={usesHtml5Drag ? handleDragEnd : undefined}
                 onmousedown={usesPointerDrag ? (e) => pointerDrag!.handlePointerDown(e, entry, false) : undefined}
                 ondragover={(e) => dropTarget.handleDragOver(e, entry)}
-                ondragleave={() => dropTarget.handleDragLeave(entry)}
+                ondragleave={(e) => dropTarget.handleDragLeave(e, entry)}
                 ondrop={(e) => dropTarget.handleDrop(e, entry)}
               >
                 <span class="col-icon" data-drag-icon>

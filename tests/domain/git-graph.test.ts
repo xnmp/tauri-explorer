@@ -84,6 +84,32 @@ describe("assignLayout", () => {
     }
   });
 
+  it("keeps a long edge in its lane and crosses only at the destination row", () => {
+    // m is an octopus merge. The edge m→f spans rows 1-3; the edge m→q ends
+    // at row 2, freeing lane 1 below it. The m→f edge must NOT drift left
+    // into the freed lane — it stays parallel in its own lane and crosses to
+    // f's lane in the final row only.
+    const layout = assignLayout([
+      c("m", "p", "q", "f"),
+      c("a"),
+      c("q"),
+      c("b"),
+      c("f"),
+      c("p"),
+    ]);
+    const edgeToF = layout.branches.find(
+      (b) => b.points[0]?.row === 0 && b.points[b.points.length - 1]?.row === 4,
+    );
+    expect(edgeToF).toBeDefined();
+    const mid = edgeToF!.points.slice(1, -1); // rows 1..3
+    // All intermediate points share one lane — no staircase drift.
+    expect(new Set(mid.map((p) => p.lane)).size).toBe(1);
+    // The lane change happens in the single final segment, onto f's dot.
+    expect(edgeToF!.points[edgeToF!.points.length - 1].lane).toBe(layout.vertices[4].lane);
+    expect(mid[0].lane).not.toBe(layout.vertices[4].lane);
+    expectContinuous(layout);
+  });
+
   it("tolerates parents outside the loaded page and empty input", () => {
     expect(assignLayout([])).toEqual({ vertices: [], branches: [], laneCount: 1 });
     const layout = assignLayout([c("tip", "not-loaded")]);

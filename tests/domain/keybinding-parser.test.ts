@@ -633,3 +633,30 @@ describe("literal '+' key and malformed definitions", () => {
     expect(parseShortcut("Ctrl+++A")).toBeNull();
   });
 });
+
+describe("matchesShortcut with metaHeld overlay (#244, WebKitGTK Super)", () => {
+  const cmdAltP: ParsedShortcut = { key: "p", ctrl: false, shift: false, alt: true, meta: true };
+
+  it("matches a Cmd+Alt binding when metaKey is false but Super is tracked held", () => {
+    // WebKitGTK delivers Super+Alt+P as metaKey=false, altKey=true.
+    const event = createKeyboardEvent({ key: "p", altKey: true });
+    expect(matchesShortcut(event as unknown as KeyboardEvent, cmdAltP)).toBe(false);
+    expect(matchesShortcut(event as unknown as KeyboardEvent, cmdAltP, { metaHeld: true })).toBe(true);
+  });
+
+  it("held Super keeps meta-exclusivity: plain and Ctrl bindings must not fire", () => {
+    const plainP: ParsedShortcut = { key: "p", ctrl: false, shift: false, alt: false, meta: false };
+    const ctrlP: ParsedShortcut = { key: "p", ctrl: true, shift: false, alt: false, meta: false };
+    const event = createKeyboardEvent({ key: "p" });
+    expect(matchesShortcut(event as unknown as KeyboardEvent, plainP, { metaHeld: true })).toBe(false);
+    // Ctrl bindings fire on exactly one of Ctrl/Cmd — Super-held counts as Cmd.
+    expect(matchesShortcut(event as unknown as KeyboardEvent, ctrlP, { metaHeld: true })).toBe(true);
+    const ctrlAndSuper = createKeyboardEvent({ key: "p", ctrlKey: true });
+    expect(matchesShortcut(ctrlAndSuper as unknown as KeyboardEvent, ctrlP, { metaHeld: true })).toBe(false);
+  });
+
+  it("real metaKey still matches without the overlay", () => {
+    const event = createKeyboardEvent({ key: "p", altKey: true, metaKey: true });
+    expect(matchesShortcut(event as unknown as KeyboardEvent, cmdAltP)).toBe(true);
+  });
+});

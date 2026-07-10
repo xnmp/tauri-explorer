@@ -110,17 +110,74 @@ test.describe("Terminal panel", () => {
     const readBg = () => panel.evaluate((el) => getComputedStyle(el).backgroundColor);
     const initialBg = await readBg();
 
-    // Switch theme via the settings store (same code path as the theme picker).
-    await page.evaluate(() => {
-      document.documentElement.setAttribute("data-theme", "dark");
-    });
-    await expect.poll(readBg).not.toBe(initialBg);
+    // Commit a different theme through the real picker path — the panel's
+    // background is painted imperatively by the re-theme effect (#261), so a
+    // bare data-theme attribute write is not the code path users hit.
+    await page.locator(".file-list").first().click();
+    await page.keyboard.press("Control+Shift+p");
+    await page.locator("input:focus").fill("Switch Theme");
+    await page.keyboard.press("Enter");
+    await page.locator(".theme-picker-dialog").waitFor();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
 
-    // The terminal panel's background is the theme's solid background.
-    const solid = await panel.evaluate((el) =>
-      getComputedStyle(el).getPropertyValue("--background-solid").trim()
-    );
-    expect(solid).not.toBe("");
+    await expect.poll(readBg).not.toBe(initialBg);
+  });
+
+  test("xterm colors follow a theme switch committed in the picker (#261)", async ({ page }) => {
+    await page.keyboard.press("Control+`");
+    await expect(page.locator(".terminal-panel")).toBeVisible();
+
+    // xterm's DOM renderer emits its theme as a generated stylesheet — the
+    // .xterm-rows color IS the painted terminal foreground.
+    const rowsColor = () =>
+      page.evaluate(
+        () =>
+          [...document.querySelectorAll("style")]
+            .find((s) => s.textContent?.includes(".xterm-rows {"))
+            ?.textContent?.match(/color: (#\w+)/)?.[1] ?? "",
+      );
+    const before = await rowsColor();
+    expect(before).not.toBe("");
+
+    // Commit a different theme through the real picker path.
+    await page.locator(".file-list").first().click();
+    await page.keyboard.press("Control+Shift+p");
+    await page.locator("input:focus").fill("Switch Theme");
+    await page.keyboard.press("Enter");
+    await page.locator(".theme-picker-dialog").waitFor();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+
+    await expect.poll(rowsColor).not.toBe(before);
+  });
+
+  test("a theme switched while the terminal is hidden applies when it reopens (#261)", async ({ page }) => {
+    await page.keyboard.press("Control+`");
+    await expect(page.locator(".terminal-panel")).toBeVisible();
+    const rowsColor = () =>
+      page.evaluate(
+        () =>
+          [...document.querySelectorAll("style")]
+            .find((s) => s.textContent?.includes(".xterm-rows {"))
+            ?.textContent?.match(/color: (#\w+)/)?.[1] ?? "",
+      );
+    const before = await rowsColor();
+
+    // Hide the panel, then switch theme while it's display:none.
+    await page.keyboard.press("Control+`");
+    await expect(page.locator(".terminal-panel")).toBeHidden();
+    await page.keyboard.press("Control+Shift+p");
+    await page.locator("input:focus").fill("Switch Theme");
+    await page.keyboard.press("Enter");
+    await page.locator(".theme-picker-dialog").waitFor();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+
+    // Reopen — the terminal must repaint with the committed theme's colors.
+    await page.keyboard.press("Control+`");
+    await expect(page.locator(".terminal-panel")).toBeVisible();
+    await expect.poll(rowsColor).not.toBe(before);
   });
 
   test("cwd-sync toggles appear in Settings and default to ON", async ({ page }) => {

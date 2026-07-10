@@ -281,7 +281,20 @@
   $effect(() => {
     themeStore.appliedThemeId; // dependency: painted theme id
     if (!term || !panelEl) return;
-    term.options.theme = buildTerminalTheme(resolveThemeColor);
+    const built = buildTerminalTheme(resolveThemeColor);
+    term.options.theme = built;
+    // WebKitGTK (2.46+, Wayland) fails to repaint the terminal's large
+    // background regions when their colors change via CSS-var recompute or
+    // xterm's generated stylesheet — the region freezes on the old theme
+    // while text keeps updating (#261, same family as wry#1524). INLINE
+    // style writes DO invalidate the paint, so push the resolved background
+    // onto every background-owning element, and force a full text repaint.
+    panelEl.style.backgroundColor = built.background;
+    for (const sel of [".xterm-viewport", ".xterm-scrollable-element", ".xterm-screen"]) {
+      const el = panelEl.querySelector<HTMLElement>(sel);
+      if (el) el.style.backgroundColor = built.background;
+    }
+    term.refresh(0, term.rows - 1);
   });
 
   // Terminal follows explorer: when the active pane navigates, cd the shell.

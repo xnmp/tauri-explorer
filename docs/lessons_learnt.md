@@ -1678,3 +1678,27 @@ clearing staged, amend folding).
   bridge, and the user's single repro made the mangling obvious. When a bug
   needs physical input, land targeted logging and ask for one repro instead
   of guessing at fixes.
+
+## Round: #255–#266 (2026-07-11)
+
+### WebKitGTK stale paint: computed styles right, pixels wrong (#261)
+- On WebKitGTK 2.46+/Wayland, large regions (the terminal panel) can freeze on an old theme's colors while `getComputedStyle` reports the NEW values — the style system is fine, paint invalidation is not. `WEBKIT_DISABLE_COMPOSITING_MODE=1` (set in lib.rs) was REMOVED upstream in 2.46, so the wry#1524 ghosting family is back despite the env var.
+- **Inline style writes DO invalidate paint** where var()-recompute and xterm's regenerated theme stylesheet don't. The fix: push resolved colors inline onto every background-owning element + `term.refresh()`.
+- The xterm WebGL renderer is NOT a fix here: its canvas doesn't composite at all under this driver (region becomes a hole to the window backdrop).
+- Debug technique that cracked it: paint probes (`el.style.backgroundColor = "red"`) + a dev-only file-polling eval channel (fetch `/debug-cmd.json` from `static/`, run code, report via `log_frontend_error`). Beats blind hyprctl keystrokes. CAUTION: HMR leaves the OLD poll interval running — a schema change made stale code call `setTheme(undefined)` and corrupted `data-theme`; restart the binary after editing the channel.
+- The app pre-warms a hidden window: file-driven debug channels get answered TWICE (label `main` + `explorer-warm-*`). Tag responses with the webview label.
+
+### Terminal key ownership v2 (#260)
+- The #249 "shell keeps all single-Ctrl combos" rule made Ctrl+P/Ctrl+J unusable from the terminal. VS Code's model works better: a Ctrl combo the app has BOUND skips the shell, except a shell-critical whitelist (Ctrl+C/D/V/X/Z/A). Needs a side-effect-free `matchesAnyBinding` — `findMatchingCommand` mutates chord state, so calling it from a gate double-fires chords.
+- Shortcuts hardcoded in +page.svelte (Ctrl+J/,/\) are invisible to the registry — any registry-driven gate needs an explicit hardcoded-shortcut predicate or they silently die in gated contexts.
+
+### Virtualized views: inline editors must ride INSIDE the list (#257)
+- After DOM-virtualization (#128), anything rendered above the VirtualList (the inline new-folder editor) reads as its own band above the pane. Prepend a sentinel item to the items array and render the editor in the row/cell snippet; offset real-entry indices by the sentinel while it's present.
+
+### Git graph perf (#255/#256)
+- `{#key}`-remounted views re-run their IPC on every tab switch; a module-level LRU snapshot (paint from cache, refresh in background) makes switches instant without lifecycle changes.
+- Windowing rows over an absolute-positioned canvas: slice SVG branch polylines to the window but KEEP straddling segment endpoints — a straight lane encoded as two distant points must still cross the viewport (`sliceBranchLine`).
+- `bind:clientHeight` excludes borders; absolute row math needs `bind:offsetHeight` or rows overlap the measured block by the border width.
+
+### Terminal cwd sync vs fast tab switches (#266)
+- Every `await` in a cd-sync pipeline is a tab-switch race: re-validate the target against the ACTIVE explorer after each round-trip, and consume the OSC 7 echoes of self-injected cds so they never drive explorer-follows-terminal navigation onto the wrong tab.

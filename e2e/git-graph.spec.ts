@@ -183,6 +183,38 @@ test("Ctrl+Alt+G opens the commit graph (#221)", async ({ page }) => {
   await expect(page.locator('[data-testid="git-graph-view"]')).toBeVisible({ timeout: 3000 });
 });
 
+test.describe("Git graph snapshot cache (#255)", () => {
+  test("switching back to a git-graph tab paints instantly from cache", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+
+    // Watch for any appearance of the loading placeholder from now on.
+    await page.evaluate(() => {
+      (window as unknown as { __loadingFlashes: number }).__loadingFlashes = 0;
+      new MutationObserver(() => {
+        if (document.querySelector(".graph-status")) {
+          (window as unknown as { __loadingFlashes: number }).__loadingFlashes++;
+        }
+      }).observe(document.body, { subtree: true, childList: true });
+    });
+
+    // Switch to the explorer tab and back to the graph tab.
+    await page.keyboard.press("Control+Tab");
+    await expect(page.locator(".file-list .content")).toBeVisible();
+    await page.keyboard.press("Control+Tab");
+
+    // The graph must be there immediately — rows painted from the snapshot,
+    // never the "Loading history…" placeholder.
+    const view = page.locator('[data-testid="git-graph-view"]');
+    await expect(view.locator(".commit-row").first()).toContainText("Uncommitted Changes");
+    const flashes = await page.evaluate(
+      () => (window as unknown as { __loadingFlashes: number }).__loadingFlashes,
+    );
+    expect(flashes).toBe(0);
+  });
+});
+
 test.describe("Git graph commit context actions", () => {
   test("right-click opens the commit menu with the expected actions", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents/project");

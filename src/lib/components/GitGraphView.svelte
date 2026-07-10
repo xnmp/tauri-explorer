@@ -5,6 +5,37 @@
   refs decoration chips, summary, author and date. Pages in more commits as
   the list nears its end.
 -->
+<script lang="ts" module>
+  import type { CommitInfo as CachedCommitInfo, RefInfo as CachedRefInfo } from "$lib/api/git-log";
+
+  /**
+   * Per-repo snapshot of the loaded graph, kept across tab switches (#255):
+   * PaneContainer recreates GitGraphView on every activation, and without
+   * this the view re-runs gitLog+gitSummary IPC and re-renders from scratch —
+   * a visible lag. A remount paints synchronously from the snapshot, then
+   * refreshes in the background.
+   */
+  interface GraphSnapshot {
+    commits: CachedCommitInfo[];
+    refs: Record<string, CachedRefInfo[]>;
+    hasMore: boolean;
+    headOid: string | null;
+    workingChanges: number;
+  }
+
+  const graphCache = new Map<string, GraphSnapshot>();
+  const GRAPH_CACHE_MAX = 8;
+
+  function cacheSnapshot(repoPath: string, snapshot: GraphSnapshot): void {
+    graphCache.delete(repoPath); // re-insert to refresh LRU position
+    graphCache.set(repoPath, snapshot);
+    if (graphCache.size > GRAPH_CACHE_MAX) {
+      const oldest = graphCache.keys().next().value;
+      if (oldest !== undefined) graphCache.delete(oldest);
+    }
+  }
+</script>
+
 <script lang="ts">
   import {
     gitLog,
@@ -31,6 +62,7 @@
   import { notifyLocalGitChange } from "$lib/state/git-refresh";
   import { toastStore } from "$lib/state/toast.svelte";
   import { gitDiff, gitSummary } from "$lib/api/files";
+  import { untrack } from "svelte";
 
   const { repoPath }: { repoPath: string } = $props();
 
@@ -54,6 +86,21 @@
   /** Working-tree change count → synthetic top row (reference behavior). */
   let workingChanges = $state(0);
   let headOid = $state<string | null>(null);
+
+  // Paint the last-known graph immediately on remount (#255); the load
+  // effect below still refreshes from git in the background.
+  {
+    // untrack: the view is {#key}ed on repoPath, so the initial value is the
+    // right one for this instance's lifetime.
+    const cached = graphCache.get(untrack(() => repoPath));
+    if (cached) {
+      commits = cached.commits;
+      refs = cached.refs;
+      hasMore = cached.hasMore;
+      headOid = cached.headOid;
+      workingChanges = cached.workingChanges;
+    }
+  }
 
   // Inline per-file diff (#221, VSCode Git Graph parity): one open at a time.
   let openDiffPath = $state<string | null>(null);
@@ -197,6 +244,15 @@
             summary.data.merge.length
           : 0;
       }
+      // Snapshot page 0 for instant remount paint (#255) — deliberately not
+      // the full paged history, which can grow unbounded.
+      cacheSnapshot(repoPath, {
+        commits: commits.slice(0, PAGE_SIZE),
+        refs,
+        hasMore: hasMore || commits.length > PAGE_SIZE,
+        headOid,
+        workingChanges,
+      });
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     } finally {

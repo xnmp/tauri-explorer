@@ -105,6 +105,21 @@ test.describe("SCM panel UI", () => {
     await expect(selected).toHaveCount(1);
   });
 
+  test("clicking a file opens its diff with syntax-highlighted code (#246)", async ({ page }) => {
+    await openScmOnRepo(page);
+
+    // Clicking a row opens the diff in the preview pane.
+    await page.locator('[data-section="staged"] .row', { hasText: "App.tsx" }).click();
+
+    const lines = page.locator(".diff-lines");
+    await expect(lines).toBeVisible();
+    // The mock diff contains real code; changed lines must be tokenized
+    // (hljs spans), and the shared palette class must be active on the root
+    // so the tokens actually get colors (themes/syntax.css).
+    await expect(lines.locator('.diff-content [class*="hljs-"]').first()).toBeVisible();
+    await expect(page.locator("html")).toHaveClass(/hljs-(light|dark)/);
+  });
+
   test("tree view shows folder nodes with depth guide lines (#97)", async ({ page }) => {
     await openScmOnRepo(page);
 

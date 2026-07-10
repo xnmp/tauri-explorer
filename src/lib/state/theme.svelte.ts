@@ -144,6 +144,12 @@ function createThemeState() {
 
   function applyTheme(themeId: string) {
     document.documentElement.setAttribute("data-theme", themeId);
+    // Keep the shared hljs token palette (themes/syntax.css) in sync with the
+    // theme's color-scheme. getComputedStyle here forces a synchronous style
+    // recalc, so the class flips in the same frame as the theme (#246).
+    const scheme = getComputedStyle(document.documentElement).colorScheme;
+    document.documentElement.classList.toggle("hljs-light", scheme === "light");
+    document.documentElement.classList.toggle("hljs-dark", scheme !== "light");
     requestAnimationFrame(() => {
       const raw = getComputedStyle(document.body).backgroundColor || "";
       if (raw) localStorage.setItem("explorer-bg", raw);

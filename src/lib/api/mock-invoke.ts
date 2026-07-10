@@ -1294,16 +1294,17 @@ const mockCommands: Record<string, CommandHandler> = {
         "",
       ].join("\n");
     }
+    // Real code lines so diff syntax highlighting is exercised (#246).
     return [
       `diff --git a/${p} b/${p}`,
       "index 1111111..2222222 100644",
       `--- a/${p}`,
       `+++ b/${p}`,
-      "@@ -1,3 +1,3 @@",
-      " unchanged line",
-      "-removed line",
-      "+added line",
-      " more context",
+      "@@ -1,4 +1,4 @@",
+      ' import { useState } from "react";',
+      "-export function App() { return null; }",
+      "+export function App() { return <div>hello</div>; }",
+      ' const VERSION = "1.0";',
       "",
     ].join("\n");
   },

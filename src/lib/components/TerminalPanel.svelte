@@ -26,6 +26,8 @@
   import { buildCdSyncSequence } from "$lib/domain/terminal-command";
   import { decideCdSync } from "$lib/domain/terminal-cwd-sync";
   import { isWindows } from "$lib/domain/platform";
+  import { isShellReservedKey } from "$lib/domain/terminal-keys";
+  import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { terminalPanelStore } from "$lib/state/terminal.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
@@ -220,6 +222,17 @@
     });
     fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
+
+    // App shortcuts win over the shell for Alt/Meta/Ctrl+Shift combos and
+    // chord suffixes (#249): returning false makes xterm ignore the key, and
+    // the event still bubbles to the window handler in +page.svelte, which
+    // runs the matching command. Shell-reserved keys (typing, single-Ctrl
+    // readline combos) never reach the app handler.
+    term.attachCustomKeyEventHandler((event) => {
+      if (event.type !== "keydown") return true;
+      return isShellReservedKey(event) && !keybindingsStore.isChordActive;
+    });
+
     term.open(termEl!);
     fitAddon.fit();
 

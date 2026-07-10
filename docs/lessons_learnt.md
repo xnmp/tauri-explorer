@@ -1595,3 +1595,27 @@ clearing staged, amend folding).
   leaves whose `relatedTarget` is inside the row, falling back to a
   coordinate-in-rect check when relatedTarget is null (WebKit). A (0,0)
   null-relatedTarget leave still clears (window exit).
+
+## 2026-07-10 fix/terminal-shortcut-precedence (#249): app shortcuts died while terminal focused
+
+- **xterm focuses a hidden `<textarea>`, so a blanket `isInputField`
+  early-return in the global keydown handler swallows every app shortcut
+  while the terminal is focused.** The fix splits key ownership like
+  terminal emulators / VS Code do: the shell keeps plain typing and
+  single-Ctrl combos (readline binds nearly every Ctrl+<key>), the app gets
+  Alt/Meta combos, Ctrl+Shift combos, and pending chord suffixes. The rule
+  lives in `domain/terminal-keys.ts` (`isShellReservedKey`) and is applied
+  in BOTH places: `+page.svelte` (let terminal-focused events through the
+  input-field gate) and `TerminalPanel.svelte`
+  (`attachCustomKeyEventHandler` returns false so xterm ignores app combos
+  while the event still bubbles to the window handler).
+- **E2E toggle tests failed with a stale dev server, not a real bug.** After
+  several branch switches, the long-running `bun run dev` (HMR churn) made
+  previously-green terminal-panel specs fail deterministically. Restarting
+  the dev server fixed all of them. If an e2e failure appears on code the
+  suite just passed, restart the 1420 server before debugging.
+- **agent-browser can't drive chords with a timeout.** Chord shortcuts
+  (Alt+M T) have a 1.5s suffix window (`CHORD_TIMEOUT_MS`); separate
+  agent-browser CLI invocations are >1.5s apart, so the chord always
+  expires — it looks like the feature is broken when it isn't. Assert chord
+  behavior in Playwright, not via the CLI.

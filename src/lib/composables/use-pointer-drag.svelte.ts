@@ -307,7 +307,7 @@ export function createDragGhost(
     position: fixed;
     pointer-events: none;
     z-index: 2147483647;
-    opacity: 0.85;
+    opacity: 0.6;
     display: flex;
     flex-direction: column;
     align-items: center;

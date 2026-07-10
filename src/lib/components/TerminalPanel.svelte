@@ -23,7 +23,7 @@
   import { onMount } from "svelte";
   import { terminalSpawn, terminalReserveId, terminalWrite, terminalResize, terminalKill, terminalStatus } from "$lib/api/terminal";
   import { buildTerminalTheme } from "$lib/domain/terminal-theme";
-  import { buildCdSyncSequence } from "$lib/domain/terminal-command";
+  import { buildCdSyncSequence, buildPathsInsertion } from "$lib/domain/terminal-command";
   import { decideCdSync } from "$lib/domain/terminal-cwd-sync";
   import { isWindows } from "$lib/domain/platform";
   import { isShellReservedKey, isHardcodedAppShortcut } from "$lib/domain/terminal-keys";
@@ -117,6 +117,10 @@
 
       await terminalSpawn(id, cwd, term.cols, term.rows);
       terminalId = id;
+      // Path insertions requested while the shell was still spawning (#265).
+      for (const data of pendingInsertions.splice(0)) {
+        terminalWrite(id, data);
+      }
     } catch (err) {
       term.writeln(`\r\nFailed to start shell: ${err}`);
       exited = true;
@@ -142,6 +146,18 @@
    * the automatic sync must win regardless of what's on the prompt. The
    * clear byte is shell-family-specific (see buildCdSyncSequence).
    */
+  // Insertions typed before the PTY finished spawning; flushed by spawnShell.
+  const pendingInsertions: string[] = [];
+
+  /** Type paths into the prompt (space-delimited, shell-quoted, no Enter)
+   *  and focus the terminal — drop-onto-terminal and Alt+T (#265). */
+  function insertPaths(paths: string[]): void {
+    const data = buildPathsInsertion(paths, isWindows);
+    if (terminalId !== null) terminalWrite(terminalId, data);
+    else pendingInsertions.push(data);
+    term?.focus();
+  }
+
   // Targets of cds we injected whose OSC 7 echo hasn't arrived yet (#266).
   // Bounded: entries are consumed by the echo; a shell without OSC 7 support
   // never fires the cwd listener at all, so the set can't grow unobserved.
@@ -285,7 +301,10 @@
 
     spawnShell().then(() => term?.focus());
 
+    const unregisterSink = terminalPanelStore.registerPathsSink(insertPaths);
+
     return () => {
+      unregisterSink();
       resizeObserver.disconnect();
       if (rafId !== null) cancelAnimationFrame(rafId);
       unlistenOutput?.();
@@ -414,6 +433,12 @@
 
   .terminal-panel.hidden {
     display: none;
+  }
+
+  /* Drop target (#265): dropping files types their paths into the prompt. */
+  .terminal-panel:global(.drop-target) {
+    box-shadow: inset 0 0 0 1px var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, var(--background-solid));
   }
 
   .resize-handle {

@@ -14,6 +14,7 @@ export type DropTargetResult =
   | { type: "tab"; tabId: string; path: string }
   | { type: "background"; path?: string }
   | { type: "sidebar" }
+  | { type: "terminal" }
   | null;
 
 let highlightedElement: HTMLElement | null = null;
@@ -33,6 +34,10 @@ export function adjustForPointerZoom(pos: { x: number; y: number }): { x: number
 
 function resolveFromElement(el: Element | null): DropTargetResult {
   if (!el) return null;
+
+  // Embedded terminal: dropping types the paths into the shell prompt (#265).
+  const terminal = (el as HTMLElement).closest?.(".terminal-panel");
+  if (terminal) return { type: "terminal" };
 
   const folderEntry = (el as HTMLElement).closest?.(".entry-item.directory[data-path]");
   if (folderEntry) {
@@ -122,7 +127,8 @@ function highlightAtCoords(cx: number, cy: number): void {
   const tabEl = (el as HTMLElement).closest?.(".tab[data-tab-id]") as HTMLElement | null;
   const crumbEl = (el as HTMLElement).closest?.(".crumb[data-path]") as HTMLElement | null;
   const sidebarEl = (el as HTMLElement).closest?.(".quick-access") as HTMLElement | null;
-  const targetEl = folderEntry || millerEntry || tabEl || crumbEl || millerCol || (!sidebarEl ? (el as HTMLElement).closest?.(".content") as HTMLElement | null : null);
+  const terminalEl = (el as HTMLElement).closest?.(".terminal-panel") as HTMLElement | null;
+  const targetEl = terminalEl || folderEntry || millerEntry || tabEl || crumbEl || millerCol || (!sidebarEl ? (el as HTMLElement).closest?.(".content") as HTMLElement | null : null);
 
   if (sidebarEl) {
     if (highlightedElement) {

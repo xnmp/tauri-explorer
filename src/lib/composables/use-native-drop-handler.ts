@@ -12,6 +12,7 @@ import { dragState } from "$lib/state/drag.svelte";
 import { handleFileDropMany } from "$lib/state/drop-operations";
 import { isCopyModifier as isCopyMod } from "$lib/domain/platform";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
+import { terminalPanelStore } from "$lib/state/terminal.svelte";
 import { parentDir, isInsideDir, samePath, splitFlattenedUriList } from "$lib/domain/path";
 
 export interface NativeDropDeps {
@@ -48,6 +49,14 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
     // Internal drags always move; only external drops respect the copy modifier
     // (keyboard focus is lost during native drag, making copyModifierHeld unreliable)
     const isCopy = !isInternalDrag && copyModifierHeld;
+
+    // Terminal drop: type the paths into the shell prompt (#265).
+    if (target?.type === "terminal") {
+      const sourcePaths = isInternalDrag ? internalPaths! : paths;
+      terminalPanelStore.insertPaths(sourcePaths);
+      dragState.clear();
+      return;
+    }
 
     // Sidebar bookmark drop
     if (target?.type === "sidebar") {

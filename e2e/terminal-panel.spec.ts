@@ -180,6 +180,19 @@ test.describe("Terminal panel", () => {
     await expect.poll(rowsColor).not.toBe(before);
   });
 
+  test("Alt+T opens the terminal and focuses it to receive the selected paths (#265)", async ({ page }) => {
+    await expect(page.locator(".terminal-panel")).toHaveCount(0);
+    await page.getByText("Documents", { exact: true }).first().click();
+
+    await page.keyboard.press("Alt+t");
+
+    // The panel opens (cold open queues the insertion until the shell
+    // spawns) and the terminal takes focus so the user can keep typing.
+    const panel = page.locator(".terminal-panel");
+    await expect(panel).toBeVisible();
+    await expect(panel.locator("textarea.xterm-helper-textarea")).toBeFocused();
+  });
+
   test("cwd-sync toggles appear in Settings and default to ON", async ({ page }) => {
     await page.keyboard.press("Control+,");
     const dialog = page.locator(".settings-dialog");

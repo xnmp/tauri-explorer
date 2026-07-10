@@ -587,29 +587,14 @@
     scrollbar-width: none;
     -ms-overflow-style: none;
     position: relative;
-    background: color-mix(in srgb, var(--background-card) calc(var(--titlebar-opacity, 1) * 100%), transparent);
+    /* No background of its own: the titlebar owns the strip surface. Painting
+       a second (semi-transparent) layer here made the tabbed section a
+       different shade from the tabless remainder of the bar (#238). */
+    background: transparent;
   }
 
   .tab-area::-webkit-scrollbar {
     display: none;
-  }
-
-  /* Elegant bottom border accent line */
-  .tab-area::after {
-    content: "";
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 1px;
-    background: linear-gradient(
-      90deg,
-      transparent,
-      var(--surface-stroke) 10%,
-      var(--surface-stroke) 90%,
-      transparent
-    );
-    pointer-events: none;
   }
 
   @keyframes tabSlideIn {
@@ -642,12 +627,14 @@
     gap: 8px;
     height: 30px;
     padding: 0 10px 0 12px;
-    background: var(--background);
+    /* Subtle-but-visible fill: --background was undefined outside the tahoe
+       theme, leaving unfocused tabs transparent and indistinct (#238). */
+    background: var(--control-fill-tertiary);
     border-radius: var(--radius-sm) var(--radius-sm) 0 0;
     font-size: 12px;
     font-weight: var(--font-weight-medium);
     letter-spacing: -0.01em;
-    color: var(--text-tertiary);
+    color: var(--text-secondary);
     cursor: pointer;
     transition: all var(--transition-normal);
     flex-shrink: 0;
@@ -655,7 +642,7 @@
     position: relative;
     border: none;
     border-top: 2px solid var(--surface-stroke, rgba(0, 0, 0, 0.1));
-    opacity: 0.8;
+    opacity: 1;
     transform-origin: bottom center;
     overflow: hidden;
   }
@@ -710,9 +697,8 @@
   }
 
   .tab:hover {
-    color: var(--text-secondary);
+    color: var(--text-primary);
     border-color: var(--surface-stroke);
-    opacity: 1;
   }
 
   /* The active tab is fused to the pane — hover must not lift or restyle it. */
@@ -740,7 +726,7 @@
   .tab.file-drop-target,
   .tab:global(.drop-target) {
     border-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 15%, var(--background));
+    background: color-mix(in srgb, var(--accent) 15%, var(--background-card));
     box-shadow:
       0 0 0 1px var(--accent),
       0 0 8px color-mix(in srgb, var(--accent) 40%, transparent);

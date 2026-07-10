@@ -1540,3 +1540,16 @@ clearing staged, amend folding).
   hover highlight is an inset rounded pill (`::before` with `inset: 4px 2px
   3px`) that stays clear of the strip base entirely, so it composes with any
   neighbor state.
+
+## 2026-07-10 fix/tab-strip-blend (#238): tab strip shade differed from the tabless bar
+
+- **Never stack a second semi-transparent surface layer inside a bar that
+  already paints one.** `.tab-area` painted the same `color-mix` background
+  as its parent `.titlebar`, doubling the layer (and covering the titlebar's
+  depth gradient) so the tabbed section rendered a different shade than the
+  tabless remainder. Child strips should be `background: transparent` — the
+  bar owns the surface.
+- **`var(--foo)` with no fallback silently paints nothing when the token is
+  theme-specific.** Unfocused tabs used `--background`, defined only by the
+  tahoe theme — everywhere else tabs were transparent and indistinct. Same
+  bug class as #240; grep `src/lib/themes/` for a token before using it.

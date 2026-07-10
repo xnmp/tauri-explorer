@@ -243,6 +243,26 @@ function createKeybindingsStore() {
   }
 
   /**
+   * Side-effect-free variant of findMatchingCommand: does this event match
+   * any bound shortcut or chord prefix? Used by the terminal gates (#260) to
+   * decide key ownership WITHOUT entering chord-waiting mode or running
+   * availability guards.
+   */
+  function matchesAnyBinding(event: KeyboardEvent): boolean {
+    const matchOpts = superKeyHeld && !event.metaKey ? { metaHeld: true } : undefined;
+    for (const commandId of Object.keys(defaultShortcuts)) {
+      const chord = getChordForCommand(commandId);
+      if (chord) {
+        if (matchesShortcut(event, chord.prefix, matchOpts)) return true;
+        continue;
+      }
+      const shortcut = getShortcut(commandId);
+      if (shortcut && matchesShortcutString(event, shortcut, matchOpts)) return true;
+    }
+    return false;
+  }
+
+  /**
    * Check for shortcut conflicts.
    * Returns command IDs that would conflict with the given shortcut.
    */
@@ -295,6 +315,7 @@ function createKeybindingsStore() {
     hasCustomShortcut,
     getAllBindings,
     findMatchingCommand,
+    matchesAnyBinding,
     findConflicts,
     cancelChord,
     _clearForTesting,

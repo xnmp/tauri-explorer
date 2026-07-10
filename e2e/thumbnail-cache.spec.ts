@@ -70,4 +70,43 @@ test.describe("Thumbnail cache", () => {
     await expect(page.locator(".thumbnail-container img")).toHaveCount(imgCount);
     await expect(page.locator(".thumbnail-placeholder")).toHaveCount(0);
   });
+
+  test("cache-hit tiles paint the full image without a pixelated fade (#259)", async ({ page }) => {
+    await openPicturesTiles(page);
+    await expect
+      .poll(() => page.locator(".thumbnail-full.loaded").count())
+      .toBeGreaterThan(0);
+
+    // Any full-res layer inserted WITHOUT the .loaded class would sit at
+    // opacity 0 and cross-fade in, exposing the pixelated micro underneath.
+    await page.evaluate(() => {
+      (window as unknown as { __fadeIns: number }).__fadeIns = 0;
+      new MutationObserver((muts) => {
+        for (const m of muts) {
+          for (const n of m.addedNodes) {
+            const el = n as Element;
+            if (el.nodeType !== 1) continue;
+            const fulls = [
+              ...(el.matches?.(".thumbnail-full") ? [el] : []),
+              ...(el.querySelectorAll?.(".thumbnail-full") ?? []),
+            ];
+            for (const img of fulls) {
+              if (!img.classList.contains("loaded")) {
+                (window as unknown as { __fadeIns: number }).__fadeIns++;
+              }
+            }
+          }
+        }
+      }).observe(document.body, { subtree: true, childList: true });
+    });
+
+    // Duplicating the tab remounts every tile; all thumbnails are cache hits.
+    await page.keyboard.press("Control+t");
+    await expect
+      .poll(() => page.locator(".thumbnail-full").count())
+      .toBeGreaterThan(0);
+
+    const fadeIns = await page.evaluate(() => (window as unknown as { __fadeIns: number }).__fadeIns);
+    expect(fadeIns).toBe(0);
+  });
 });

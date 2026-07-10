@@ -54,9 +54,10 @@ export type PaneId = string;
 
 /**
  * A window-level tab, as a tagged union (#56) so tabs can host
- * non-explorer content (git graph, settings, diff-only, …).
+ * non-explorer content. The git graph is no longer a tab kind — it renders
+ * per-pane (#272) — but the discriminant stays for future kinds.
  */
-export type WindowTab = ExplorerTab | GitGraphTab;
+export type WindowTab = ExplorerTab;
 
 /** @deprecated alias kept from the per-pane-tabs era (#140). */
 export type PaneTab = WindowTab;
@@ -67,6 +68,9 @@ export type PaneTab = WindowTab;
 export interface TabPane {
   explorerId: string;
   path: string;
+  /** When set, the pane shows the commit graph for this repo root instead
+   *  of the file listing (#272). Toggled by `git.showGraph`. */
+  gitGraph?: string;
 }
 
 /** A filesystem explorer tab owning a pane layout tree (#228). Leaf ids of
@@ -81,10 +85,3 @@ export interface ExplorerTab {
   name?: string;
 }
 
-/** A git history graph for a repository (#51). */
-export interface GitGraphTab {
-  id: string;
-  kind: "git-graph";
-  repoPath: string;
-  title: string;
-}

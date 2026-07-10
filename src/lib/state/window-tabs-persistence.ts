@@ -18,9 +18,10 @@ import type { PaneNode, SplitDirection } from "$lib/domain/pane-layout";
 
 // ── v3 (current) ─────────────────────────────────────────────────────────
 
-/** A pane layout tree with each leaf carrying its directory path. */
+/** A pane layout tree with each leaf carrying its directory path.
+ *  `gitGraph` marks a pane showing the commit graph for that repo (#272). */
 export type PersistedNode =
-  | { type: "leaf"; id: string; path: string }
+  | { type: "leaf"; id: string; path: string; gitGraph?: string }
   | {
       type: "split";
       id: string;
@@ -30,16 +31,28 @@ export type PersistedNode =
       second: PersistedNode;
     };
 
-export type PersistedWindowTab =
-  | {
-      id: string;
-      kind: "explorer";
-      layout: PersistedNode;
-      activePaneId: string;
-      /** Custom title (multi-pane tabs can be renamed). */
-      name?: string;
-    }
-  | { id: string; kind: "git-graph"; path: string };
+export type PersistedWindowTab = {
+  id: string;
+  kind: "explorer";
+  layout: PersistedNode;
+  activePaneId: string;
+  /** Custom title (multi-pane tabs can be renamed). */
+  name?: string;
+};
+
+/** Pre-#272 shape: the git graph used to be its own tab kind. Accepted on
+ *  input and migrated to a single-pane explorer tab with `gitGraph` set. */
+type PersistedGitGraphTab = { id: string; kind: "git-graph"; path: string };
+
+/** git-graph tab (pre-#272) → single-pane explorer tab showing the graph. */
+function migrateGitGraphTab(t: PersistedGitGraphTab): PersistedWindowTab {
+  return {
+    id: t.id,
+    kind: "explorer",
+    layout: { type: "leaf", id: `${t.id}-pane`, path: t.path, gitGraph: t.path },
+    activePaneId: `${t.id}-pane`,
+  };
+}
 
 export interface PersistedTabState {
   version: 3;
@@ -81,12 +94,20 @@ function isPersistedNode(node: unknown): node is PersistedNode {
   return false;
 }
 
-function isPersistedWindowTab(tab: unknown): tab is PersistedWindowTab {
-  const t = tab as PersistedWindowTab;
+type PersistedTabInput = PersistedWindowTab | PersistedGitGraphTab;
+
+function isPersistedTabInput(tab: unknown): tab is PersistedTabInput {
+  const t = tab as PersistedTabInput;
   if (!t || typeof t.id !== "string") return false;
   if (t.kind === "git-graph") return typeof t.path === "string";
   if (t.kind === "explorer") return isPersistedNode(t.layout) && typeof t.activePaneId === "string";
   return false;
+}
+
+/** Validate any persisted tab shape and migrate pre-#272 git-graph tabs. */
+function normalizePersistedTab(tab: unknown): PersistedWindowTab | null {
+  if (!isPersistedTabInput(tab)) return null;
+  return tab.kind === "git-graph" ? migrateGitGraphTab(tab) : tab;
 }
 
 // ── v2 (per-pane strips, #140) ───────────────────────────────────────────
@@ -216,7 +237,7 @@ export function migrateV2State(v2: PersistedTabStateV2): PersistedTabState {
   for (const strip of [left, right]) {
     for (const t of strip.tabs) {
       if (t.kind === "git-graph") {
-        tabs.push({ id: t.id, kind: "git-graph", path: t.path });
+        tabs.push(migrateGitGraphTab({ id: t.id, kind: "git-graph", path: t.path }));
         continue;
       }
       if (merge && t.id === activeLeft.id) {
@@ -250,7 +271,7 @@ export function normalizePersistedState(state: unknown): PersistedTabState | nul
   if (isV2State(state)) return migrateV2State(state);
   const s = state as PersistedTabState;
   if (s.version === 3 && Array.isArray(s.tabs)) {
-    const tabs = s.tabs.filter(isPersistedWindowTab);
+    const tabs = s.tabs.map(normalizePersistedTab).filter((t): t is PersistedWindowTab => !!t);
     return {
       version: 3,
       tabs,
@@ -298,7 +319,8 @@ export function normalizeSnapshot(raw: unknown): TabSnapshot | null {
     activePaneId?: "left" | "right";
   };
   if (typeof s?.path === "string") {
-    return isPersistedWindowTab(s.tab) ? { path: s.path, tab: s.tab } : { path: s.path };
+    const tab = normalizePersistedTab(s.tab);
+    return tab ? { path: s.path, tab } : { path: s.path };
   }
   if (typeof s?.leftPath === "string") {
     return { path: s.activePaneId === "right" && s.rightPath ? s.rightPath : s.leftPath };
@@ -337,7 +359,7 @@ export function normalizeClosedSnapshot(raw: unknown): ClosedTabSnapshot | null 
     return {
       path: s.path,
       kind: s.kind,
-      tab: isPersistedWindowTab(s.tab) ? s.tab : undefined,
+      tab: normalizePersistedTab(s.tab) ?? undefined,
       closedAt: s.closedAt ?? 0,
       fromClosedWindow: !!s.fromClosedWindow,
       ...(typeof s.closedTs === "number" ? { closedTs: s.closedTs } : {}),

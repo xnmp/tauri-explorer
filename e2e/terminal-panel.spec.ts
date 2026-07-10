@@ -69,6 +69,39 @@ test.describe("Terminal panel", () => {
     await expect(panel).toBeAttached();
   });
 
+  test("app-bound Ctrl shortcuts fire while the terminal is focused (#260)", async ({ page }) => {
+    await page.keyboard.press("Control+`");
+    const panel = page.locator(".terminal-panel");
+    await expect(panel).toBeVisible();
+    await panel.locator("textarea.xterm-helper-textarea").focus();
+
+    // Ctrl+P (quick open, an app binding) must win over readline history.
+    await page.keyboard.press("Control+p");
+    await expect(page.locator(".quick-open-dialog input.search-input")).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    // Ctrl+J (hardcoded jobs panel) must fire too.
+    await panel.locator("textarea.xterm-helper-textarea").focus();
+    await page.keyboard.press("Control+j");
+    await expect(page.getByRole("heading", { name: "Background Jobs" })).toBeVisible();
+    await page.keyboard.press("Escape");
+  });
+
+  test("shell-critical Ctrl combos stay with the shell while focused (#260)", async ({ page }) => {
+    // Select a file so an app-side Ctrl+C would visibly mark it copied.
+    await page.getByText("Documents", { exact: true }).first().click();
+
+    await page.keyboard.press("Control+`");
+    const panel = page.locator(".terminal-panel");
+    await expect(panel).toBeVisible();
+    await panel.locator("textarea.xterm-helper-textarea").focus();
+
+    // Ctrl+C is whitelisted for the shell (SIGINT) — the app's copy command
+    // must NOT run, so no entry gets the in-clipboard marker.
+    await page.keyboard.press("Control+c");
+    await expect(page.locator(".in-clipboard")).toHaveCount(0);
+  });
+
   test("panel background follows the app theme", async ({ page }) => {
     await page.keyboard.press("Control+`");
     const panel = page.locator(".terminal-panel");

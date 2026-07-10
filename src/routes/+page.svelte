@@ -6,7 +6,7 @@
   import "@fontsource-variable/inter";
   import { onMount } from "svelte";
   import { installGlobalErrorHandlers } from "$lib/api/crash";
-  import { isShellReservedKey } from "$lib/domain/terminal-keys";
+  import { isShellReservedKey, isHardcodedAppShortcut } from "$lib/domain/terminal-keys";
   import { themeStore } from "$lib/state/theme.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
@@ -176,11 +176,13 @@
       return;
     }
 
-    // While the terminal is focused the shell owns typing and single-Ctrl
-    // combos (readline, Ctrl+C interrupt…); only app-shortcut-shaped combos
-    // and pending chord suffixes fall through to command matching (#249).
-    if (isTerminalFocus && isShellReservedKey(event) && !keybindingsStore.isChordActive) {
-      return;
+    // While the terminal is focused the shell owns typing, shell-critical
+    // Ctrl combos (Ctrl+C interrupt…) and UNBOUND Ctrl combos (readline);
+    // combos the app has bound — plus Alt/Meta/Ctrl+Shift combos and pending
+    // chord suffixes — fall through to command matching (#249, #260).
+    if (isTerminalFocus && !keybindingsStore.isChordActive) {
+      const appBound = keybindingsStore.matchesAnyBinding(event) || isHardcodedAppShortcut(event);
+      if (isShellReservedKey(event, { appBound })) return;
     }
 
     // Ctrl+J: Open jobs panel (hardcoded)

@@ -575,18 +575,8 @@
     border-radius: var(--radius-lg);
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
     overflow: hidden;
-    animation: slideDown 150ms cubic-bezier(0, 0, 0, 1);
-  }
-
-  @keyframes slideDown {
-    from {
-      opacity: 0;
-      transform: translateY(-20px) scale(0.98);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0) scale(1);
-    }
+    /* No entrance animation: palette-style surfaces must be legible the frame
+       they open (VSCode behavior) — a fade/slide reads as input lag (#234). */
   }
 
   .search-container {

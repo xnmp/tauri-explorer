@@ -98,17 +98,28 @@
     if (wslHomeIndex >= 0)
       return { kind: "wsl-home", path: explorer.breadcrumbs[wslHomeIndex].path, slice: wslHomeIndex + 1 };
     if (wslDistroRoot) return { kind: "wsl-root", path: wslDistroRoot, slice: 1 };
-    // Drive-mount anchors absorb the crumbs up to and including the mount so the
-    // path reads "<drive icon> › subfolder" rather than "<folder> › E › subfolder".
+    // Drive-mount anchors absorb the crumbs up to the mount. Google Drive also
+    // absorbs the mount itself ("<G> › subfolder"); a removable drive keeps the
+    // mount as a regular crumb so the path reads "<usb icon> › E › subfolder"
+    // with the letter styled like any other segment (#252).
     if (driveAnchor) {
-      const { path } = explorer.breadcrumbs[driveAnchor.end];
-      return { kind: driveAnchor.kind, path, slice: driveAnchor.end + 1 };
+      const path = explorer.breadcrumbs[driveAnchor.end].path;
+      const slice = driveAnchor.kind === "removable" ? driveAnchor.index : driveAnchor.end + 1;
+      return { kind: driveAnchor.kind, path, slice };
     }
     if (isUnderHome && homeDir) return { kind: "home", path: homeDir, slice: homeParts.length };
     return { kind: "root", path: rootPath, slice: 0 };
   });
 
-  const visibleBreadcrumbs = $derived(explorer.breadcrumbs.slice(anchor.slice));
+  const visibleBreadcrumbs = $derived.by(() => {
+    const crumbs = explorer.breadcrumbs.slice(anchor.slice);
+    // The removable mount stays a regular crumb (#252); relabel it to the bare
+    // drive letter ("E" not "E:") so it reads like any other path segment.
+    if (anchor.kind === "removable" && driveAnchorLetter && crumbs.length > 0) {
+      return [{ ...crumbs[0], name: driveAnchorLetter }, ...crumbs.slice(1)];
+    }
+    return crumbs;
+  });
 
   // Measurement-based breadcrumb truncation using pretext for text width calculation
   let breadcrumbsEl: HTMLElement | undefined = $state();
@@ -373,7 +384,7 @@
             <path fill="#EA4335" d="M24 10.75c3.23 0 6.13 1.11 8.41 3.29l6.31-6.31C34.91 4.18 29.93 2 24 2 15.4 2 7.96 6.93 4.34 14.12l7.35 5.7c1.73-5.2 6.58-9.07 12.31-9.07z"/>
           </svg>
         {:else if anchor.kind === "removable"}
-          <!-- Lucide "usb" icon followed by the drive letter (#159). -->
+          <!-- Lucide "usb" icon; the drive letter follows as a normal crumb (#252). -->
           <span class="anchor-usb">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <circle cx="10" cy="7" r="1" />
@@ -384,7 +395,6 @@
               <path d="m10 14 5 2 3.5-3.5" />
               <path d="m18 12 1-1 1 1-1 1Z" />
             </svg>
-            <span class="anchor-usb-letter">{driveAnchorLetter}</span>
           </span>
         {:else}
           <!-- Root folder icon -->
@@ -632,22 +642,15 @@
     object-fit: contain;
   }
 
-  /* Removable drive: USB-stick outline (green, matching the sidebar) followed
-     by the drive letter — icon and letter sit side by side (#159). */
+  /* Removable drive: USB-stick outline (green, matching the sidebar). The
+     drive letter renders as a regular breadcrumb after it (#252). */
   .anchor-usb {
     display: inline-flex;
     align-items: center;
-    gap: 3px;
     color: #10b981;
   }
   .anchor-usb svg {
     flex-shrink: 0;
-  }
-  .anchor-usb-letter {
-    font-size: 10px;
-    font-weight: 700;
-    line-height: 1;
-    color: var(--text-secondary);
   }
 
   .crumb.ellipsis {

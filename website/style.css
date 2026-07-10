@@ -642,7 +642,7 @@ body.resizing-v { user-select: none; cursor: row-resize; }
 .list-head {
   position: sticky; top: 0; z-index: 1;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 130px 90px;
+  grid-template-columns: minmax(0, 1fr) minmax(64px, 110px) minmax(52px, 80px);
   gap: 10px;
   padding: 8px 16px;
   background: var(--bg-card);
@@ -652,7 +652,7 @@ body.resizing-v { user-select: none; cursor: row-resize; }
 }
 .row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 130px 90px;
+  grid-template-columns: minmax(0, 1fr) minmax(64px, 110px) minmax(52px, 80px);
   gap: 10px;
   width: 100%;
   padding: 7px 16px;
@@ -665,8 +665,11 @@ body.resizing-v { user-select: none; cursor: row-resize; }
 .row .name {
   display: flex; align-items: center; gap: 9px;
   min-width: 0; white-space: nowrap;
+  overflow: hidden;
 }
-.row .fname { overflow: hidden; text-overflow: ellipsis; }
+.row .fname { overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: min(9ch, 100%); }
+/* The pill yields before the filename does when the column is tight. */
+.row .try { overflow: hidden; text-overflow: ellipsis; flex-shrink: 999; min-width: 0; }
 .row .ico, .side-item .ico, .tab .ico { flex-shrink: 0; display: inline-flex; color: var(--text-dim); }
 .row.selected .ico, .side-item.active .ico { color: var(--accent); }
 .row .meta { color: var(--text-dim); font-size: 12px; }

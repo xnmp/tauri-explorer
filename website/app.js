@@ -21,6 +21,18 @@ const DL = {
 };
 const DL_ASSET = { linux: /\.AppImage$/, deb: /\.deb$/, rpm: /\.rpm$/, win: /\.msi$/, mac: /\.dmg$/, exe: /-setup\.exe$/ };
 
+/* Downloads via a synthetic anchor click, not window.open — popup blockers
+   eat window.open even from click handlers in stricter browsers, which made
+   the sidebar/palette download entries look dead (#254). */
+function download(url) {
+  const a = document.createElement("a");
+  a.href = url;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
 function resolveDownloads() {
   fetch("https://api.github.com/repos/xnmp/tauri-explorer/releases/latest")
     .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
@@ -511,7 +523,7 @@ function render() {
       const a = document.createElement("button");
       a.className = "side-item";
       a.innerHTML = `<span class="ico">${SVG.down}</span>${label}`;
-      a.onclick = () => window.open(DL[key], "_blank");
+      a.onclick = () => download(DL[key]);
       sb.appendChild(a);
     }
   }
@@ -736,9 +748,9 @@ function qoRender() {
 
 /* palette */
 const COMMANDS = [
-  { cat: "GET", label: "Download for Linux (AppImage)", run: () => window.open(DL.linux, "_blank") },
-  { cat: "GET", label: "Download for Windows (MSI)", run: () => window.open(DL.win, "_blank") },
-  { cat: "GET", label: "Download for macOS (dmg)", run: () => window.open(DL.mac, "_blank") },
+  { cat: "GET", label: "Download for Linux (AppImage)", run: () => download(DL.linux) },
+  { cat: "GET", label: "Download for Windows (MSI)", run: () => download(DL.win) },
+  { cat: "GET", label: "Download for macOS (dmg)", run: () => download(DL.mac) },
   { cat: "VIEW", label: "Cycle Theme", run: toggleTheme },
   ...THEMES.map((t) => ({
     cat: "THEME",

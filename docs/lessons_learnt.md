@@ -1638,3 +1638,25 @@ clearing staged, amend folding).
   persisted setting.** themeStore now exposes `appliedThemeId` (updated by
   applyTheme, i.e. also during picker live-previews); TerminalPanel re-themes
   from it, so xterm follows previews and can never drift from the DOM.
+
+## 2026-07-10 fix/pane-split-hotkeys (#244): Super/Cmd bindings never fired on Linux
+
+- **WebKitGTK never maps the Super/Mod4 modifier into `event.metaKey`** (it
+  only translates GDK_META_MASK), so any `Cmd+…` default was dead on the real
+  Linux app while every Chromium-based e2e passed. Verified live:
+  `hyprctl dispatch sendshortcut "SUPER ALT, semicolon, class:tauri-explorer"`
+  delivered `meta=false alt=true`, and every `getModifierState` variant
+  (Super/Meta/Hyper/OS/Mod4) was false. The Super KEY itself does arrive
+  (`key="Super"`, WebKit code `OSLeft`), so `keybindings.svelte.ts` tracks its
+  held state from window keydown/keyup (blur resets) and overlays it as the
+  meta modifier via `matchesShortcut(…, { metaHeld })`.
+- **Driving held-modifier shortcuts into a real window:** `sendshortcut`
+  can't hold a modifier (it's press+release) and `wtype`'s virtual keyboard
+  delivers garbage `event.code` and drops mod state. What works:
+  `hyprctl dispatch sendkeystate "SUPER, Super_L, down, <win>"` → sendshortcut
+  the combo → `sendkeystate … up`. That reproduces a physical hold exactly.
+- **Fast real-app debug loop:** run the dev binary (`src-tauri/target/debug/…`,
+  dials the 1420 dev server) and persist webview facts with the existing
+  `log_frontend_error` command — HMR applies frontend edits to the live
+  window, no rebuild needed. Screenshot with `grim -g "<x>,<y> <w>x<h>"`
+  using geometry from `hyprctl clients`.

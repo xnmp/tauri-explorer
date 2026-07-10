@@ -45,12 +45,13 @@ export const paneCommands: Command[] = [
     when: activeTabIsExplorer,
   },
   // Directional splits on a right-hand home-row cluster (#229):
-  // L=left, ;=down, '=right, P=up.
+  // L=left, ;=down, '=right, P=up. Default modifier is Cmd/Super+Alt (#239);
+  // rebindable in Settings → Keybindings like every other shortcut.
   {
     id: "pane.splitLeft",
     label: "Split Pane Left",
     category: "view",
-    shortcut: "Ctrl+Alt+L",
+    shortcut: "Cmd+Alt+L",
     handler: () => windowTabsManager.splitPane("left"),
     when: activeTabIsExplorer,
   },
@@ -58,7 +59,7 @@ export const paneCommands: Command[] = [
     id: "pane.splitRight",
     label: "Split Pane Right",
     category: "view",
-    shortcut: "Ctrl+Alt+'",
+    shortcut: "Cmd+Alt+'",
     handler: () => windowTabsManager.splitPane("right"),
     when: activeTabIsExplorer,
   },
@@ -66,7 +67,7 @@ export const paneCommands: Command[] = [
     id: "pane.splitUp",
     label: "Split Pane Up",
     category: "view",
-    shortcut: "Ctrl+Alt+P",
+    shortcut: "Cmd+Alt+P",
     handler: () => windowTabsManager.splitPane("up"),
     when: activeTabIsExplorer,
   },
@@ -74,7 +75,7 @@ export const paneCommands: Command[] = [
     id: "pane.splitDown",
     label: "Split Pane Down",
     category: "view",
-    shortcut: "Ctrl+Alt+;",
+    shortcut: "Cmd+Alt+;",
     handler: () => windowTabsManager.splitPane("down"),
     when: activeTabIsExplorer,
   },

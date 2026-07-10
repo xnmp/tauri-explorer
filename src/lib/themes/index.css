@@ -8,6 +8,7 @@
  * Themes are auto-discovered from CSS at runtime.
  */
 
+@import "./syntax.css";
 @import "./light.css";
 @import "./dark.css";
 @import "./solarized-light.css";

@@ -49,6 +49,10 @@ New folder/
 .perles/
 docs/explorer3 - Copy.jpg
 docs/handover.md
+docs/HANDOVER.md
+new_todo.md
+.claude/settings.local.json
+.rtk_tmp
 docs/potential_hooks.md
 .archive
 .playwright-mcp/

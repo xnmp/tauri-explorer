@@ -134,6 +134,10 @@
     if (cached?.full) {
       microUrl = cached.micro;
       fullUrl = cached.full;
+      // Cache hits skip the micro→full cross-fade: the full image is already
+      // in memory, and waiting for onload + 150ms fade shows the pixelated
+      // micro layer on every remount (#259).
+      fullLoaded = true;
       loadedKey = initialKey;
     }
   }
@@ -160,6 +164,7 @@
       if (cached?.full) {
         microUrl = null;
         fullUrl = cached.full;
+        fullLoaded = true; // cache hit — no cross-fade (#259)
         loading = false;
         error = false;
         loadedKey = currentKey;
@@ -214,6 +219,7 @@
       if (cached?.full) {
         microUrl = cached.micro;
         fullUrl = cached.full;
+        fullLoaded = true; // cache hit — no cross-fade (#259)
         loading = false;
         error = false;
         loadedKey = currentKey;

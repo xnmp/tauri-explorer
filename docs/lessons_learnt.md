@@ -1568,3 +1568,20 @@ clearing staged, amend folding).
   a `setTimeout`/rAF before concluding a handler "didn't fire".
 - **Guard `setPointerCapture` with try/catch** — it throws for released or
   synthetic pointerIds, killing the whole handler.
+
+## 2026-07-10 fix/marquee-zoom-offset (#241): marquee drifted at zoom AGAIN
+
+- **When a coordinate model gets standardized, migrate EVERY converter, not
+  just the one that reproduced.** #227 moved fixedFromClient/fixedFromRect to
+  the standardized CSS-zoom model (client and rect coords are post-zoom
+  viewport px on every engine, incl. WebKitGTK ≥2.44), but left
+  clientToCSSRelative/rectDimToCSS/cssToRect on the legacy "WebKitGTK
+  reports pre-zoom rects" split — so the marquee re-broke on the real Linux
+  webview while every Chromium test stayed green.
+- **A zoom-coordinate regression is only covered if a test runs the engine
+  that diverges.** The marquee e2e never zoomed, and the zoom e2e never
+  marqueed; both ran Chromium. Added a marquee-under-zoom spec asserting the
+  band's viewport geometry AND the selection outcome, and verified it fails
+  on WebKit (WEBKIT=1) against the legacy code. Run `WEBKIT=1 npx playwright
+  test e2e/zoom-positioning.spec.ts --project=webkit` when touching
+  domain/zoom.ts.

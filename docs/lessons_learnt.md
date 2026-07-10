@@ -1660,3 +1660,21 @@ clearing staged, amend folding).
   `log_frontend_error` command — HMR applies frontend edits to the live
   window, no rebuild needed. Screenshot with `grim -g "<x>,<y> <w>x<h>"`
   using geometry from `hyprctl clients`.
+
+## 2026-07-10 fix/multi-file-dnd (#253): multi-file drag arrived as one concatenated path
+
+- **WebKitGTK flattens a JS-set `text/uri-list` when an in-app HTML5 drag
+  drops back onto the webview:** the CRLF separators are stripped, wry strips
+  `file://` from the first entry only, and the frontend receives ONE string —
+  `/a/x.pngfile:///a/y.jpgfile:///a/z.png`. Internal-drag detection then
+  fails (no drag-state path matches the blob), the drop is treated as
+  external, and `move_entry` correctly reports "Path not found" for the
+  garbage path. Single-file drags need no separator, hence "single works,
+  multi doesn't". Fix: `splitFlattenedUriList` in `domain/path.ts`, applied
+  to wry-delivered paths in `use-native-drop-handler` before any routing.
+- **The diagnosis came from one logged repro, not simulation:** a real GTK
+  drag can't be synthesized without a pointer, so the drop handler logged
+  wry's paths vs the drag state via the existing `log_frontend_error`
+  bridge, and the user's single repro made the mangling obvious. When a bug
+  needs physical input, land targeted logging and ask for one repro instead
+  of guessing at fixes.

@@ -225,3 +225,25 @@ export function isInsideDir(child: string, parent: string): boolean {
 export function samePath(a: string, b: string): boolean {
   return stripTrailingSlash(toForwardSlashes(a)) === stripTrailingSlash(toForwardSlashes(b));
 }
+
+/**
+ * Split a drop "path" that is actually a flattened multi-file uri-list.
+ *
+ * When an in-app HTML5 drag (which sets `text/uri-list` from JS) is dropped
+ * back onto the webview, WebKitGTK strips the CRLF separators before handing
+ * the list to GTK, so wry parses ONE giant string:
+ * `/a/first.pngfile:///a/second.jpgfile:///a/third.png` — the leading
+ * `file://` is stripped from the first entry only and the rest stay embedded
+ * (#253). Recover the individual paths by splitting on the embedded scheme.
+ * wry already percent-decoded the whole string, so segments are plain paths.
+ *
+ * Single paths and properly-separated externals contain no embedded scheme
+ * and pass through unchanged.
+ */
+export function splitFlattenedUriList(path: string): string[] {
+  if (!path.includes("file://")) return [path];
+  return path
+    .split("file://")
+    .map((seg) => seg.trim())
+    .filter((seg) => seg.length > 0);
+}

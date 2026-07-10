@@ -30,7 +30,6 @@ test.describe("Git graph tab", () => {
     // The graph view replaces the explorer pane content.
     const view = page.locator('[data-testid="git-graph-view"]');
     await expect(view).toBeVisible();
-    await expect(view).toContainText("17 commits");
 
     // Commit rows render with the mocked history (newest first: the merge).
     const rows = view.locator(".commit-row");

@@ -398,17 +398,6 @@
 <svelte:window onkeydown={onWindowKeydown} />
 
 <div class="git-graph-view" data-testid="git-graph-view">
-  <header class="graph-header">
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <circle cx="4" cy="3.5" r="1.6" stroke="currentColor" stroke-width="1.3" />
-      <circle cx="4" cy="12.5" r="1.6" stroke="currentColor" stroke-width="1.3" />
-      <circle cx="11.5" cy="3.5" r="1.6" stroke="currentColor" stroke-width="1.3" />
-      <path d="M4 5.1V10.9M11.5 5.1V6.5C11.5 8.2 10 9 8 9H6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
-    </svg>
-    <span class="repo-path" title={repoPath}>{repoPath}</span>
-    <span class="count">{commits.length}{hasMore ? "+" : ""} commits</span>
-  </header>
-
   {#if error}
     <div class="graph-status error">{error}</div>
   {:else if commits.length === 0 && loading}
@@ -701,29 +690,6 @@
     min-height: 0;
     background: var(--background-card);
     color: var(--text-primary);
-  }
-
-  .graph-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 14px;
-    border-bottom: 1px solid var(--divider);
-    color: var(--text-secondary);
-    font-size: 12px;
-    flex-shrink: 0;
-  }
-
-  .repo-path {
-    font-family: var(--font-mono, monospace);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .count {
-    margin-left: auto;
-    color: var(--text-tertiary);
   }
 
   .graph-status {

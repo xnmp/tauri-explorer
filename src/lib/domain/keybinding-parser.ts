@@ -7,6 +7,7 @@
  */
 
 import { normalizeKeyForShortcut } from "./keyboard";
+import { isMac } from "./platform";
 
 /** Parsed representation of a single keyboard shortcut step */
 export interface ParsedShortcut {
@@ -273,7 +274,7 @@ function formatParsedShortcut(parsed: ParsedShortcut): string {
   if (parsed.ctrl) parts.push("Ctrl");
   if (parsed.shift) parts.push("Shift");
   if (parsed.alt) parts.push("Alt");
-  if (parsed.meta) parts.push("Meta");
+  if (parsed.meta) parts.push(isMac ? "Cmd" : "Super");
 
   // Format the key for display
   let displayKey = parsed.key;

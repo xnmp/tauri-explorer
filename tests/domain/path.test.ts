@@ -12,6 +12,7 @@ import {
   toBackslashes,
   toNativeSeparators,
   directoryKey,
+  splitFlattenedUriList,
 } from "../../src/lib/domain/path";
 
 describe("normalizePathInput", () => {
@@ -315,5 +316,33 @@ describe("hostile filenames (#198)", () => {
     expect(basename("/data/100%.txt")).toBe("100%.txt");
     expect(basename("/data/issue#42.txt")).toBe("issue#42.txt");
     expect(parentDir("/data/issue#42.txt")).toBe("/data");
+  });
+});
+
+describe("splitFlattenedUriList (#253)", () => {
+  it("passes a normal single path through unchanged", () => {
+    expect(splitFlattenedUriList("/home/u/file.png")).toEqual(["/home/u/file.png"]);
+  });
+
+  it("splits a WebKitGTK-flattened multi-file uri-list", () => {
+    // wry strips file:// from the first entry only; separators are gone.
+    const blob =
+      "/home/u/a.pngfile:///home/u/b with space.jpgfile:///home/u/c.png";
+    expect(splitFlattenedUriList(blob)).toEqual([
+      "/home/u/a.png",
+      "/home/u/b with space.jpg",
+      "/home/u/c.png",
+    ]);
+  });
+
+  it("handles a blob that still carries a leading scheme", () => {
+    expect(splitFlattenedUriList("file:///home/u/a.pngfile:///home/u/b.png")).toEqual([
+      "/home/u/a.png",
+      "/home/u/b.png",
+    ]);
+  });
+
+  it("returns empty input as-is", () => {
+    expect(splitFlattenedUriList("")).toEqual([""]);
   });
 });

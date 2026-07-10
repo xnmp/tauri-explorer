@@ -1531,3 +1531,12 @@ clearing staged, amend folding).
   first frame: entrance animations removed for palette-style surfaces
   (`animation: none` on `.top-aligned` overlays). Measured keypress→legible:
   ~150ms → ~27ms.
+
+## 2026-07-10 fix/tab-hover-fillet (#235): hover highlight fought the active tab's fillet
+
+- **When the active tab flares into the pane with fillets, neighbors can't
+  paint full-height hover rectangles** — the rectangle's square base shows
+  through the fillet's transparent notch. Chrome's answer (now ours): the
+  hover highlight is an inset rounded pill (`::before` with `inset: 4px 2px
+  3px`) that stays clear of the strip base entirely, so it composes with any
+  neighbor state.

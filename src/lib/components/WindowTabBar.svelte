@@ -698,15 +698,20 @@
     transition: opacity var(--transition-fast);
   }
 
-  .tab:hover::before {
+  /* Chrome-style hover: an inset rounded pill instead of a full-height
+     rectangle, so the highlight never butts into the active tab's fillet
+     flare at the strip base (#235). Repurposes the ::before overlay as the
+     pill; the active tab keeps its gradient ::before untouched. */
+  .tab:hover:not(.active)::before {
     opacity: 1;
+    inset: 4px 2px 3px 2px;
+    border-radius: var(--radius-sm);
+    background: var(--control-fill-secondary);
   }
 
   .tab:hover {
-    background: var(--control-fill-secondary);
     color: var(--text-secondary);
     border-color: var(--surface-stroke);
-    transform: translateY(-1px);
     opacity: 1;
   }
 

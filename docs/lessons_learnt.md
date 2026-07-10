@@ -1510,3 +1510,13 @@ clearing staged, amend folding).
   `--control-stroke`, `--accent`) and avoid hardcoded fallbacks that mask a
   missing token — grep for the var name across `src/lib/themes/` before
   introducing one.
+
+## 2026-07-10 fix/address-bar-flash (#233): raw path flashes before the home icon
+
+- **Per-component async fetches of app-wide constants cause first-paint
+  flashes on every mount.** Each NavigationBar fetched the home directory in
+  its own `onMount`, so every new tab/pane first rendered the raw
+  `/home/user/...` crumbs and only collapsed to the house icon when the IPC
+  round-trip landed. App-wide constants belong in a shared cached store
+  (`src/lib/state/home.svelte.ts`) read synchronously via `$derived` —
+  fetch once, every later mount renders its final form on the first frame.

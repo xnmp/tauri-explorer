@@ -5,7 +5,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { getHomeDirectory } from "$lib/api/files";
+  import { homeDirectory } from "$lib/state/home.svelte";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { dragState } from "$lib/state/drag.svelte";
   import { drivesStore } from "$lib/state/drives.svelte";
@@ -24,17 +24,13 @@
     windowTabsManager.getActiveExplorer()?.navigateTo(path);
   };
 
-  let homeDir = $state("/home");
+  const homeDir = $derived(homeDirectory.value ?? "/home");
   let isDragOver = $state(false);
 
   let quickAccessEl: HTMLDivElement | undefined;
   let dragPollInterval: ReturnType<typeof setInterval> | null = null;
 
   onMount(() => {
-    getHomeDirectory().then((result) => {
-      if (result.ok) homeDir = result.data;
-    });
-
     drivesStore.startPolling();
 
     if (quickAccessEl) {

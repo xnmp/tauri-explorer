@@ -225,3 +225,45 @@ describe("branchPath row expansion", () => {
     );
   });
 });
+
+describe("sliceBranchLine (#256, render windowing)", () => {
+  const line = (rows: Array<[number, number]>) => ({
+    colorIndex: 3,
+    points: rows.map(([lane, row]) => ({ lane, row })),
+  });
+
+  it("returns null when the line lies entirely outside the window", async () => {
+    const { sliceBranchLine } = await import("$lib/domain/git-graph");
+    expect(sliceBranchLine(line([[0, 0], [0, 5]]), 10, 20)).toBeNull();
+    expect(sliceBranchLine(line([[0, 30], [0, 40]]), 10, 20)).toBeNull();
+    expect(sliceBranchLine(line([]), 0, 10)).toBeNull();
+  });
+
+  it("returns the line unchanged when fully inside the window", async () => {
+    const { sliceBranchLine } = await import("$lib/domain/git-graph");
+    const l = line([[0, 12], [1, 13], [1, 18]]);
+    expect(sliceBranchLine(l, 10, 20)).toBe(l);
+  });
+
+  it("trims points outside the window but keeps the straddling endpoints", async () => {
+    const { sliceBranchLine } = await import("$lib/domain/git-graph");
+    const l = line([[0, 0], [0, 5], [1, 15], [1, 25], [1, 40]]);
+    const sliced = sliceBranchLine(l, 10, 20)!;
+    expect(sliced.points).toEqual([
+      { lane: 0, row: 5 },
+      { lane: 1, row: 15 },
+      { lane: 1, row: 25 },
+    ]);
+    expect(sliced.colorIndex).toBe(3);
+  });
+
+  it("keeps a long straight segment that crosses the whole window", async () => {
+    const { sliceBranchLine } = await import("$lib/domain/git-graph");
+    const l = line([[2, 0], [2, 100]]);
+    const sliced = sliceBranchLine(l, 40, 60)!;
+    expect(sliced.points).toEqual([
+      { lane: 2, row: 0 },
+      { lane: 2, row: 100 },
+    ]);
+  });
+});

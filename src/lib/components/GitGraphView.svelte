@@ -54,7 +54,7 @@
     type CommitFile,
     type ResetMode,
   } from "$lib/api/git-log";
-  import { assignLayout, branchPath, groupRefChips, GRAPH_PALETTE, type GraphLayout, type BranchLine, type RefChips } from "$lib/domain/git-graph";
+  import { assignLayout, branchPath, groupRefChips, sliceBranchLine, GRAPH_PALETTE, type GraphLayout, type BranchLine, type RefChips } from "$lib/domain/git-graph";
   import { clientToFixed } from "$lib/domain/zoom";
   import { parseUnifiedDiff, type ParsedDiff } from "$lib/domain/diff";
   import { highlightDiffLine } from "$lib/domain/syntax-highlight";
@@ -209,11 +209,56 @@
   /** SVG stretch below the inline details block (see domain RowExpand). */
   const rowExpand = $derived(
     expandedIndex >= 0 && detailsHeight > 0
-      ? { afterRow: expandedIndex, extra: detailsHeight }
+      ? // +6: the block's bottom gap (its margin-bottom is outside offsetHeight).
+        { afterRow: expandedIndex, extra: detailsHeight + 6 }
       : undefined,
   );
   const graphHeight = $derived(
     displayCommits.length * ROW_HEIGHT + (rowExpand?.extra ?? 0),
+  );
+
+  // ── Render windowing (#256) ────────────────────────────────────────────────
+  // Only the rows (and SVG geometry) inside the scroll viewport ± overscan
+  // are in the DOM; rows are absolutely positioned at their grid offset so
+  // scrolling needs no reflow of siblings.
+  const OVERSCAN = 12;
+  let scrollTop = $state(0);
+  let viewportHeight = $state(0);
+
+  /** Row index at a given scroll offset, accounting for the inline expansion. */
+  function rowAtY(y: number): number {
+    if (rowExpand) {
+      const expandTop = (rowExpand.afterRow + 1) * ROW_HEIGHT;
+      if (y >= expandTop) y = Math.max(expandTop, y - rowExpand.extra);
+    }
+    return Math.floor(y / ROW_HEIGHT);
+  }
+
+  /** Pixel offset of a row, accounting for the inline expansion above it. */
+  function rowY(index: number): number {
+    return index * ROW_HEIGHT + (rowExpand && index > rowExpand.afterRow ? rowExpand.extra : 0);
+  }
+
+  const startRow = $derived(Math.max(0, rowAtY(scrollTop) - OVERSCAN));
+  const endRow = $derived(
+    Math.min(displayCommits.length - 1, rowAtY(scrollTop + viewportHeight) + OVERSCAN),
+  );
+  const visibleRows = $derived(
+    displayCommits.slice(startRow, endRow + 1).map((commit, i) => ({ commit, index: startRow + i })),
+  );
+  /** Branch lines clipped to the window (full line kept for the dashed
+   *  uncommitted branch — it's split at HEAD by object identity below). */
+  const visibleBranches = $derived(
+    layout.branches
+      .map((line) =>
+        line === uncommittedBranch ? line : sliceBranchLine(line, startRow - 2, endRow + 2),
+      )
+      .filter((line): line is BranchLine => line !== null),
+  );
+  const visibleVertices = $derived(
+    layout.vertices
+      .slice(startRow, endRow + 1)
+      .map((vertex, i) => ({ vertex, vi: startRow + i })),
   );
 
   /** The branch line leaving the synthetic row (drawn gray + dashed up to
@@ -266,16 +311,16 @@
     void loadPage(0);
   });
 
-  function loadMore(): void {
-    if (!loading && hasMore) void loadPage(commits.length);
-  }
+  // One shared formatter: constructing Intl state per row per render is a
+  // measurable cost at hundreds of rows (#256).
+  const dateFormatter = new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
 
   function formatDate(unixSeconds: number): string {
-    return new Date(unixSeconds * 1000).toLocaleDateString(undefined, {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
+    return dateFormatter.format(new Date(unixSeconds * 1000));
   }
 
   function colorOf(index: number): string {
@@ -296,9 +341,10 @@
     };
   }
 
-  /** Near-bottom incremental loading for the plain scroller. */
+  /** Window tracking + near-bottom incremental loading. */
   function handleScroll(event: Event): void {
     const el = event.target as HTMLElement;
+    scrollTop = el.scrollTop;
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - ROW_HEIGHT * 20) {
       if (!loading && hasMore) void loadPage(commits.length);
     }
@@ -308,21 +354,6 @@
   function chipsFor(oid: string): RefChips {
     return groupRefChips(refs[oid] ?? []);
   }
-
-  function refClass(kind: RefInfo["kind"]): string {
-    switch (kind) {
-      case "Head": return "ref-head";
-      case "LocalBranch": return "ref-branch";
-      case "RemoteBranch": return "ref-remote";
-      case "Tag": return "ref-tag";
-    }
-  }
-
-  interface Row {
-    commit: CommitInfo;
-    index: number;
-  }
-  const rows: Row[] = $derived(commits.map((commit, index) => ({ commit, index })));
 
   // ----- Commit context menu (VSCode "Git Graph"-parity actions) -----
 
@@ -479,7 +510,7 @@
   {:else if commits.length === 0}
     <div class="graph-status">No commits.</div>
   {:else}
-    <div class="graph-scroller" onscroll={handleScroll}>
+    <div class="graph-scroller" onscroll={handleScroll} bind:clientHeight={viewportHeight}>
       <div class="graph-body" style:height="{graphHeight}px">
         <svg
           class="graph-underlay"
@@ -487,7 +518,7 @@
           height={graphHeight}
           aria-hidden="true"
         >
-          {#each layout.branches as line, li (li)}
+          {#each visibleBranches as line, li (li)}
             {#if line === uncommittedBranch}
               {@const parts = splitUncommitted(line)}
               <path class="branch-halo" d={branchPath(parts.dirty, LANE_WIDTH, ROW_HEIGHT, rowExpand)} />
@@ -517,7 +548,7 @@
               />
             {/if}
           {/each}
-          {#each layout.vertices as vertex, vi (vi)}
+          {#each visibleVertices as { vertex, vi } (vi)}
             {@const cx = vertex.lane * LANE_WIDTH + LANE_WIDTH / 2}
             {@const cy = vi * ROW_HEIGHT + ROW_HEIGHT / 2 + (rowExpand && vi > rowExpand.afterRow ? rowExpand.extra : 0)}
             {#if displayCommits[vi]?.oid === UNCOMMITTED}
@@ -533,7 +564,7 @@
           {/each}
         </svg>
 
-        {#each displayCommits as commit, index (commit.oid)}
+        {#each visibleRows as { commit, index } (commit.oid)}
           {@const chips = chipsFor(commit.oid)}
           {@const synthetic = commit.oid === UNCOMMITTED}
           <div
@@ -542,6 +573,7 @@
             class:is-head={chips.isHead}
             class:uncommitted={synthetic}
             style:padding-left="{graphWidth + 20}px"
+            style:top="{rowY(index)}px"
             data-oid={commit.short_oid}
             role="button"
             tabindex="0"
@@ -584,8 +616,9 @@
             <div
               class="commit-detail-inline"
               data-testid="git-graph-detail"
-              bind:clientHeight={detailsHeight}
+              bind:offsetHeight={detailsHeight}
               style:margin-left="{graphWidth + 12}px"
+              style:top="{rowY(index) + ROW_HEIGHT}px"
             >
               <button class="detail-close" onclick={closeDetails} aria-label="Close details">✕</button>
               <div class="detail-columns">
@@ -780,6 +813,11 @@
   }
 
   .commit-row {
+    /* Windowed rendering (#256): rows sit at their absolute grid offset so
+       the visible slice needs no sibling flow. */
+    position: absolute;
+    left: 0;
+    right: 0;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -813,7 +851,9 @@
      Margin-left (set inline) clears the graph lanes; opaque card so lanes
      never show through (#227, VSCode layout). */
   .commit-detail-inline {
-    position: relative;
+    position: absolute;
+    left: 0;
+    right: 0;
     border: 1px solid var(--divider);
     border-radius: var(--radius-sm);
     margin-right: 12px;

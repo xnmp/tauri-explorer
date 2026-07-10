@@ -36,6 +36,34 @@ export interface BranchLine {
   points: GraphPoint[];
 }
 
+/**
+ * Restrict a branch line to the points needed to draw rows [startRow, endRow]
+ * (#256, render windowing). Keeps the straddling segment endpoints — a long
+ * straight lane encoded as two distant points must still cross the window —
+ * and returns null when the line doesn't intersect the window at all.
+ * Assumes `points` rows are non-decreasing (assignLayout emits top-down).
+ */
+export function sliceBranchLine(
+  line: BranchLine,
+  startRow: number,
+  endRow: number,
+): BranchLine | null {
+  const pts = line.points;
+  if (pts.length === 0) return null;
+  if (pts[0].row > endRow || pts[pts.length - 1].row < startRow) return null;
+  if (pts.length < 2) return line;
+
+  // Last point at-or-above the window start…
+  let first = 0;
+  while (first + 1 < pts.length && pts[first + 1].row <= startRow) first++;
+  // …through the first point at-or-below the window end.
+  let last = pts.length - 1;
+  while (last - 1 > first && pts[last - 1].row >= endRow) last--;
+
+  if (first === 0 && last === pts.length - 1) return line;
+  return { colorIndex: line.colorIndex, points: pts.slice(first, last + 1) };
+}
+
 export interface GraphVertex {
   /** Column of the commit dot. */
   lane: number;

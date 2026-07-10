@@ -1,6 +1,6 @@
 <!--
-  Custom title bar — a drag region and window controls. Tabs live in each
-  pane's own strip (PaneTabBar), so the bar renders only when window
+  Custom title bar — a drag region and window controls. Tabs live in the
+  window's strip (WindowTabBar), so the bar renders only when window
   controls or the integrated title bar are enabled; users on compositors
   with their own window chrome (e.g. Hyprland) can hide it entirely by
   disabling showWindowControls.

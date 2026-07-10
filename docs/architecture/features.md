@@ -88,14 +88,16 @@
 ### Tabs & Windows
 | Feature | Files to change |
 |---------|----------------|
-| Per-pane tabs | `window-tabs.svelte.ts`, `PaneTabBar.svelte`, `PaneContainer.svelte` |
+| Window tabs + pane layout trees (#228) | `window-tabs.svelte.ts`, `domain/pane-layout.ts`, `WindowTabBar.svelte`, `PaneContainer.svelte`, `PaneLayoutView.svelte` |
+| Pane splits (ghostty-style, #228) | `pane-commands.ts` (`pane.splitLeft/Right/Up/Down` Ctrl+Alt+Shift+Arrows, `pane.new` Ctrl+Shift+Enter dwindle via `settings.defaultPaneLayout`, `pane.close` Ctrl+Shift+W), `windowTabsManager.splitPane/newPane/closePane` |
+| Tab rename → workspace (#228) | `WindowTabBar.svelte` (double-click, multi-pane tabs only), `windowTabsManager.renameTab` (saves to `workspacesStore`), `workspace-commands.ts` (dynamic "Workspaces: Open <name>" palette entries) |
 | New tab (Ctrl+T) | `windowTabsManager.createTab()` |
 | Close tab (Ctrl+W) | `windowTabsManager.closeActiveTab()` |
 | Restore closed tab | `windowTabsManager.restoreClosedTab()` (persisted stack) |
-| Tab reorder / move across panes | `PaneTabBar.svelte` (drag), `windowTabsManager.reorderTabs(paneId, …)` / `moveTabToPane()` |
+| Tab reorder | `WindowTabBar.svelte` (drag), `windowTabsManager.reorderTabs(from, to)` |
 | New window (Ctrl+N) | `command-definitions.ts:openNewWindow()` — creates `WebviewWindow` with URL params |
 | Dual pane (Ctrl+\\) | `windowTabsManager.toggleDualPane()`, `PaneContainer.svelte` |
-| Split ratio resize | `PaneContainer.svelte` mouse handlers, `windowTabsManager.setSplitRatio()` |
+| Split ratio resize | `PaneLayoutView.svelte` divider handlers, `windowTabsManager.setSplitRatio(splitId, ratio)` |
 | SCM panel styling (#222) | `ScmSidebarView.svelte` — VSCode-style: 22px rows, right-edge colored status letters, inline dimmed dir path, pill count badges, filled message box + full-width primary Commit button |
 | Git commit graph (#51/#57/#58/#179) | `git_log.rs` (git_log/git_refs/git_commit_files via libgit2; weaves stashes in as pseudo-commits), `api/git-log.ts`, `domain/git-graph.ts` (`assignLayout` vertex/branch model: continuous first-parent-chain polylines, branch-owned colors with reuse, merge-edge snapping — behavioral parity with VSCode Git Graph, reimplemented not ported), `GitGraphView.svelte` (one SVG path per branch in a shared underlay so lines never break at row boundaries; synthetic “Uncommitted Changes” row, stash ring markers, combined local+remote ref chips), opened via the `git.showGraph` palette command into a per-pane git-graph tab (#56). Inline details (#221): clicking a row (incl. the synthetic Uncommitted Changes row) expands meta + files below it — the SVG stretches via `RowExpand`; clicking a file shows its diff (`git_commit_file_diff` for commits, `git_diff` for the working tree). Default shortcut Ctrl+Alt+G |
 | Crash reporting (#184) | `crash_report.rs` (panic hook → `<log dir>/crashes/`, take_crash_report consumes newest once, log_frontend_error, open_external_url), `api/crash.ts` (global onerror/unhandledrejection forwarding, pre-filled GitHub issue URL), `CrashNotice.svelte` banner in `+page.svelte`. Local files only — no telemetry |
@@ -104,7 +106,7 @@
 | Bug report + logs commands (#197) | `help.reportBug` palette command (pre-filled GitHub issue with version/OS via `bugReportUrl` in `api/crash.ts` + `get_app_info` in `system.rs`), `help.openLogs` navigates to the app log dir |
 | Theme from Image plugin (#203) | `palette.rs` (extract_palette: median-cut dominant colors), `config.rs` write_theme_file (themes/ subdir, .css-only), `domain/theme-from-palette.ts` (buildTheme: full variable set, light/dark by dominant luminance, most-saturated accent with legibility adjust), `plugins/theme-from-image/` (context item on images + Create Theme from Wallpaper palette command using settings.backgroundImage) |
 | Workspaces | `workspaces.svelte.ts`, `WorkspaceDialog.svelte` |
-| Tab tear-off / cross-window move | `tab-transfer.ts` (localStorage marker + BroadcastChannel claim), `PaneTabBar.svelte` (drag handlers), `windowTabsManager.exportTab/adoptTab/removeTransferredTab`, label-keyed `tab-seed` in `openNewWindow` |
+| Tab tear-off / cross-window move | `tab-transfer.ts` (localStorage marker + BroadcastChannel claim), `WindowTabBar.svelte` (drag handlers), `windowTabsManager.exportTab/adoptTab/removeTransferredTab`, label-keyed `tab-seed` in `openNewWindow` |
 | System file picker (portal) | `portal.rs` (D-Bus FileChooser backend), `FilePicker.svelte` (?picker= mode; Ctrl+P fuzzy quick-open via `PickerQuickOpen.svelte` #190 — picks confirm in open mode, prefill in save mode, navigate for dirs), `packaging/` (.portal + .service) |
 
 ### Clipboard

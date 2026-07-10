@@ -64,12 +64,13 @@ badges (`git-status.svelte.ts`) refresh on every change; the SCM summary
 (`scm.svelte.ts`) refreshes on watcher events and announces its own mutations
 through the same channel after re-fetching.
 
-#### `window-tabs.svelte.ts` — Per-Pane Tabs (#140)
+#### `window-tabs.svelte.ts` — Window Tabs with Pane Layout Trees (#228)
 - **Singleton:** `windowTabsManager`
-- **State:** `panes.left` / `panes.right` (each `{ tabs[], activeTabId }`), window-level `activePaneId`, `dualPaneEnabled`, `splitRatio`
-- **Explorer registry:** `Map<string, ExplorerInstance>` keyed by `explorerId` (one explorer per tab)
-- **Key methods:** `createTab`/`createTabIn`, `closeTab`, `restoreClosedTab`, `moveTabToPane`, `getExplorer(paneId)`, `getActiveExplorer`, `toggleDualPane`, `setSplitRatio`
-- **Persistence:** `PersistedTabState` v2 saved to localStorage on every tab change; the pre-inversion v1 shape (tabs owning left/right pane pairs) is migrated on load (`normalizePersistedState`), including old workspaces and closed-tab snapshots
+- **State:** window-level `tabs[]` + `activeTabId`; each explorer tab owns a binary split tree (`layout`, from `domain/pane-layout.ts`), a `panes` map (leaf id → explorer id), an `activePaneId`, and an optional custom `name`
+- **Explorer registry:** `Map<string, ExplorerInstance>` keyed by `explorerId` (one explorer per pane)
+- **Key methods:** `createTab`, `closeTab`, `restoreClosedTab`, `splitPane(up|down|left|right)`, `newPane` (dwindle by default, `settings.defaultPaneLayout`), `closePane`, `renameTab` (multi-pane tabs only; also saves the layout as a workspace), `getExplorer(paneId)`, `getActiveExplorer`, `toggleDualPane`, `setSplitRatio(splitId, ratio)`
+- **Titles:** single-pane tabs use the disambiguated folder name (git-aware); multi-pane tabs join every pane's folder name (`src | docs`) unless renamed
+- **Persistence:** `PersistedTabState` v3 saved to localStorage on every tab change; v1 (tabs owning left/right pane pairs) and v2 (per-pane tab strips, #140) shapes are migrated on load (`normalizePersistedState`), including old workspaces and closed-tab snapshots
 
 #### `settings.svelte.ts` — App Settings
 - **Singleton:** `settingsStore`

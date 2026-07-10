@@ -1,95 +1,112 @@
 /**
- * Per-pane tab strips (#140): each pane owns an independent tab strip.
- * Covers: strips render per pane in dual-pane mode, tabs open/switch
- * independently per pane, and closing the right pane's last tab collapses
- * back to single-pane.
+ * Window tabs with pane layout trees (#228): the window owns one tab
+ * strip; each tab owns a splittable pane layout. Covers: single shared
+ * strip, multi-pane tab titles joining folder names, directional splits
+ * beyond two panes, rename-to-workspace, and reopening a workspace from
+ * the command palette.
  */
 
 import { test, expect, type Page } from "@playwright/test";
+
+const panes = (page: Page) => page.locator(".explorer-pane");
 
 async function openDualPane(page: Page): Promise<void> {
   await page.goto("/?path=/home/user");
   await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
   await page.keyboard.press("Control+\\");
-  await expect(page.locator(".pane-container.dual-pane")).toBeVisible();
+  await expect(panes(page)).toHaveCount(2);
+  // The second pane opens at the parent directory (/home) by design.
   await expect(
-    page.locator(".right-pane .entry-item").filter({ hasText: "user" }).first()
+    panes(page).nth(1).locator(".entry-item").filter({ hasText: "user" }).first()
   ).toBeVisible();
 }
 
-test.describe("Per-pane tabs", () => {
-  test("each pane shows its own tab strip in dual-pane mode", async ({ page }) => {
+test.describe("Window tabs with panes", () => {
+  test("the window has ONE tab strip; splitting adds panes, not tabs", async ({ page }) => {
     await openDualPane(page);
 
-    await expect(page.locator(".left-pane .tab-area")).toBeVisible();
-    await expect(page.locator(".right-pane .tab-area")).toBeVisible();
-    await expect(page.locator(".left-pane .tab")).toHaveCount(1);
-    await expect(page.locator(".right-pane .tab")).toHaveCount(1);
+    await expect(page.locator(".tab-area")).toHaveCount(1);
+    await expect(page.locator(".tab")).toHaveCount(1);
   });
 
-  test("a new tab in one pane leaves the other pane's strip untouched", async ({ page }) => {
+  test("a multi-pane tab's title joins both folder names", async ({ page }) => {
     await openDualPane(page);
 
-    // The right pane's + button adds a tab to the right strip only.
-    await page.locator(".right-pane .new-tab-btn").click();
-    await expect(page.locator(".right-pane .tab")).toHaveCount(2);
-    await expect(page.locator(".left-pane .tab")).toHaveCount(1);
-
-    // And the left pane's + button adds to the left strip only.
-    await page.locator(".left-pane .new-tab-btn").click();
-    await expect(page.locator(".left-pane .tab")).toHaveCount(2);
-    await expect(page.locator(".right-pane .tab")).toHaveCount(2);
+    // Left pane at /home/user, right pane at /home → "user | home".
+    await expect(page.locator(".tab .tab-cwd")).toHaveText("user | home");
   });
 
-  test("switching tabs in one pane keeps the other pane's directory", async ({ page }) => {
+  test("directional split creates a third pane (Ctrl+Alt+Shift+Down)", async ({ page }) => {
     await openDualPane(page);
 
-    // Navigate left into Documents, then open a second left tab and navigate
-    // it into Pictures — switching back must restore Documents, while the
-    // right pane stays at /home throughout.
-    await page
-      .locator(".left-pane .entry-item")
-      .filter({ hasText: "Documents" })
-      .first()
-      .dblclick();
-    await expect(
-      page.locator(".left-pane .entry-item").filter({ hasText: "report.pdf" })
-    ).toBeVisible();
+    await page.keyboard.press("Control+Alt+Shift+ArrowDown");
 
-    await page.locator(".left-pane .new-tab-btn").click();
-    await expect(page.locator(".left-pane .tab")).toHaveCount(2);
-    // The new tab inherits Documents; go up to /home/user then into Pictures.
-    await page.keyboard.press("Control+Alt+ArrowUp");
-    await page
-      .locator(".left-pane .entry-item")
-      .filter({ hasText: "Pictures" })
-      .first()
-      .dblclick();
-    await expect(
-      page.locator(".left-pane .entry-item").filter({ hasText: "photo1.jpg" })
-    ).toBeVisible();
-
-    // Switch back to the first left tab → Documents contents again.
-    await page.locator(".left-pane .tab").first().click();
-    await expect(
-      page.locator(".left-pane .entry-item").filter({ hasText: "report.pdf" })
-    ).toBeVisible();
-
-    // Right pane never moved.
-    await expect(
-      page.locator(".right-pane .entry-item").filter({ hasText: "user" }).first()
-    ).toBeVisible();
+    await expect(panes(page)).toHaveCount(3);
+    // The new pane duplicated the focused pane's directory and is browsable.
+    await expect(panes(page).nth(2).locator(".entry-item").first()).toBeVisible();
   });
 
-  test("closing the right pane's last tab collapses to single pane", async ({ page }) => {
+  test("generic New Pane command adds a pane (dwindle layout)", async ({ page }) => {
+    await page.goto("/?path=/home/user");
+    await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
+
+    await page.keyboard.press("Control+Shift+Enter");
+    await expect(panes(page)).toHaveCount(2);
+
+    await page.keyboard.press("Control+Shift+Enter");
+    await expect(panes(page)).toHaveCount(3);
+  });
+
+  test("Close Pane removes the focused pane (Ctrl+Shift+W)", async ({ page }) => {
     await openDualPane(page);
 
-    const rightTab = page.locator(".right-pane .tab").first();
-    await rightTab.hover();
-    await rightTab.locator(".tab-close").click();
+    await page.keyboard.press("Control+Shift+W");
 
-    await expect(page.locator(".pane-container.dual-pane")).toHaveCount(0);
-    await expect(page.locator(".right-pane")).toHaveCount(0);
-    await expect(page.locator(".left-pane .entry-item").first()).toBeVisible();
+    await expect(panes(page)).toHaveCount(1);
+    await expect(panes(page).first().locator(".entry-item").first()).toBeVisible();
+  });
+
+  test("a multi-pane tab can be renamed and reopened from the command palette", async ({ page }) => {
+    await openDualPane(page);
+
+    // Double-click the tab title → inline rename input.
+    await page.locator(".tab").first().dblclick();
+    const input = page.locator(".tab-rename-input");
+    await expect(input).toBeVisible();
+    await input.fill("My Workspace");
+    await input.press("Enter");
+
+    await expect(page.locator(".tab .tab-cwd")).toHaveText("My Workspace");
+
+    // Collapse to a single pane so the restore visibly changes the layout.
+    await page.keyboard.press("Control+\\");
+    await expect(panes(page)).toHaveCount(1);
+
+    // The rename saved a workspace — reopen it VSCode-style from the palette.
+    await page.keyboard.press("Control+Shift+P");
+    const palette = page.locator(".command-palette-dialog");
+    await palette.locator(".search-input").fill("My Workspace");
+    await expect(
+      palette.locator(".command-item").filter({ hasText: "Workspaces: Open My Workspace" })
+    ).toBeVisible();
+    await palette
+      .locator(".command-item")
+      .filter({ hasText: "Workspaces: Open My Workspace" })
+      .click();
+
+    // The two-pane layout is back, with its custom name.
+    await expect(panes(page)).toHaveCount(2);
+    await expect(page.locator(".tab .tab-cwd")).toHaveText("My Workspace");
+  });
+
+  test("single-pane tabs cannot be renamed by double-click", async ({ page }) => {
+    await page.goto("/?path=/home/user");
+    await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
+    // Open a second tab so the strip is visible.
+    await page.keyboard.press("Control+t");
+    await expect(page.locator(".tab")).toHaveCount(2);
+
+    await page.locator(".tab").first().dblclick();
+    await expect(page.locator(".tab-rename-input")).toHaveCount(0);
   });
 });

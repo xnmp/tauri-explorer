@@ -24,7 +24,7 @@
   import GitStatusBadge from "./GitStatusBadge.svelte";
   import ThumbnailImage from "./ThumbnailImage.svelte";
   import FolderThumbnail from "./FolderThumbnail.svelte";
-  import InlineNewFolder from "./InlineNewFolder.svelte";
+  import InlineNewFolder, { NEW_FOLDER_SENTINEL, isNewFolderSentinel } from "./InlineNewFolder.svelte";
   import ItemButton from "./ItemButton.svelte";
   import VirtualList from "./VirtualList.svelte";
 
@@ -72,12 +72,20 @@
     autoFillColumns(contentWidth - VIEWPORT_PAD_X, tileConfig.gridMinWidth, tileGap)
   );
 
-  const rows = $derived(chunkIntoRows(explorer.displayEntries, tileColumns));
+  // The new-folder editor rides INSIDE the virtual grid as a sentinel first
+  // tile (#257) — not as a band above the scroller. Real-entry indices shift
+  // by one while it's present (see sentinelOffset).
+  const gridEntries = $derived(
+    explorer.isCreatingFolder ? [NEW_FOLDER_SENTINEL, ...explorer.displayEntries] : explorer.displayEntries,
+  );
+  const sentinelOffset = $derived(explorer.isCreatingFolder ? 1 : 0);
+
+  const rows = $derived(chunkIntoRows(gridEntries, tileColumns));
 
   // Map an entry index to its row and forward to VirtualList's row scroller.
   let rowScrollToIndex = $state<((row: number) => void) | undefined>();
   scrollToIndex = (index: number) => {
-    rowScrollToIndex?.(Math.floor(index / tileColumns));
+    rowScrollToIndex?.(Math.floor((index + sentinelOffset) / tileColumns));
   };
 
   // Folder previews only render at large/xlarge tile sizes (smaller tiles
@@ -112,9 +120,6 @@
   style:--tile-padding={isSmall ? "6px 4px 6px" : "12px 8px 10px"}
   style:--tile-name-height="{NAME_HEIGHT}px"
 >
-  {#if explorer.isCreatingFolder}
-    <InlineNewFolder {explorer} variant="tiles" />
-  {/if}
   <VirtualList
     class="tiles-scroller file-rows"
     items={rows}
@@ -127,8 +132,11 @@
     {#snippet children(row)}
       <div class="tile-row" style="grid-template-columns: repeat({tileColumns}, minmax(0, 1fr)); gap: var(--tile-gap);">
         {#each row.items as entry, col (entry.path)}
+          {#if isNewFolderSentinel(entry)}
+            <InlineNewFolder {explorer} variant="tiles" />
+          {:else}
           {@const iconColor = getFileIconColor(entry)}
-          <ItemButton class="tile-item" index={row.startIndex + col} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
+          <ItemButton class="tile-item" index={row.startIndex + col - sentinelOffset} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
             <div class="tile-icon" style:color={iconColor} data-drag-icon>
               {#if isImageFile(entry)}
                 <ThumbnailImage path={entry.path} size={tileConfig.displaySize} genSize={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} />
@@ -145,6 +153,7 @@
             <span data-drag-name><EntryName {entry} {explorer} variant="tiles" /></span>
             <GitStatusBadge entryName={entry.name} />
           </ItemButton>
+          {/if}
         {/each}
       </div>
     {/snippet}

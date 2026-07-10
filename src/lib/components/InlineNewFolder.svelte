@@ -2,9 +2,30 @@
   Inline new folder creation input.
   Extracted from FileList.svelte — was duplicated across details/list/tiles views.
 -->
+<script lang="ts" module>
+  import type { FileEntry } from "$lib/domain/file";
+
+  /**
+   * Sentinel entry the views prepend to their items while a folder is being
+   * created, so the editor renders as the FIRST ROW INSIDE the virtualized
+   * list instead of a band above the whole pane (#257). The NUL byte makes
+   * the path impossible for a real entry.
+   */
+  export const NEW_FOLDER_SENTINEL: FileEntry = {
+    name: "\u0000new-folder",
+    kind: "directory",
+    path: "\u0000new-folder",
+    size: 0,
+    modified: "",
+  };
+
+  export function isNewFolderSentinel(entry: FileEntry): boolean {
+    return entry === NEW_FOLDER_SENTINEL;
+  }
+</script>
+
 <script lang="ts">
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
-  import type { FileEntry } from "$lib/domain/file";
   import FileIcon from "./FileIcon.svelte";
   import { tick } from "svelte";
 

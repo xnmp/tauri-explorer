@@ -8,7 +8,7 @@
   import { useColumnResize } from "$lib/composables/use-column-resize.svelte";
   import FileItem from "./FileItem.svelte";
   import VirtualList from "./VirtualList.svelte";
-  import InlineNewFolder from "./InlineNewFolder.svelte";
+  import InlineNewFolder, { NEW_FOLDER_SENTINEL, isNewFolderSentinel } from "./InlineNewFolder.svelte";
 
   import type { FileEntry } from "$lib/domain/file";
 
@@ -23,6 +23,12 @@
 
   // Column resize composable
   const columnResize = useColumnResize(undefined, () => settingsStore.columnVisibility);
+
+  // The new-folder editor rides INSIDE the virtual list as a sentinel first
+  // item (#257) — not as a band above the scroller.
+  const listItems = $derived(
+    explorer.isCreatingFolder ? [NEW_FOLDER_SENTINEL, ...explorer.displayEntries] : explorer.displayEntries,
+  );
 
   // Column header context menu state
   let columnMenuPos = $state<{ x: number; y: number } | null>(null);
@@ -140,24 +146,24 @@
     </div>
   {/if}
 
-  {#if explorer.isCreatingFolder}
-    <InlineNewFolder {explorer} variant="details" />
-  {/if}
-
   <VirtualList
-    items={explorer.displayEntries}
+    items={listItems}
     itemHeight={32}
     getKey={(entry) => entry.path}
     bind:scrollToIndex
   >
-    {#snippet children(entry, index)}
-      <FileItem
-        {entry}
-        {explorer}
-        onclick={(event) => onitemclick(entry, event)}
-        ondblclick={() => onitemdblclick(entry)}
-        selected={explorer.isSelected(entry)}
-      />
+    {#snippet children(entry)}
+      {#if isNewFolderSentinel(entry)}
+        <InlineNewFolder {explorer} variant="details" />
+      {:else}
+        <FileItem
+          {entry}
+          {explorer}
+          onclick={(event) => onitemclick(entry, event)}
+          ondblclick={() => onitemdblclick(entry)}
+          selected={explorer.isSelected(entry)}
+        />
+      {/if}
     {/snippet}
   </VirtualList>
 </div>

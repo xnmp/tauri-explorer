@@ -103,6 +103,11 @@
         const path = event.payload;
         // Always track it — this is the loop guard for the other direction.
         lastShellCwd = path;
+        // A cd WE injected echoing back must never drive navigation: during
+        // fast tab switches the echo lands while a different tab is active
+        // and would overwrite that tab's cwd (#266). Only genuine user cds
+        // (typed in the shell) pull the explorer along.
+        if (injectedCds.delete(path)) return;
         if (!settingsStore.explorerFollowsTerminal) return;
         const explorer = windowTabsManager.getActiveExplorer();
         if (explorer && explorer.currentPath !== path) {
@@ -137,10 +142,20 @@
    * the automatic sync must win regardless of what's on the prompt. The
    * clear byte is shell-family-specific (see buildCdSyncSequence).
    */
+  // Targets of cds we injected whose OSC 7 echo hasn't arrived yet (#266).
+  // Bounded: entries are consumed by the echo; a shell without OSC 7 support
+  // never fires the cwd listener at all, so the set can't grow unobserved.
+  const injectedCds = new Set<string>();
+
   function writeCd(path: string): void {
     // Defensive: never inject `cd 'null'` if a caller ever passes a nullish
     // target (see the queue-poll re-entrancy guard, #154).
     if (terminalId === null || path == null) return;
+    injectedCds.add(path);
+    if (injectedCds.size > 8) {
+      const oldest = injectedCds.values().next().value;
+      if (oldest !== undefined) injectedCds.delete(oldest);
+    }
     terminalWrite(terminalId, buildCdSyncSequence(path, isWindows));
   }
 
@@ -149,6 +164,10 @@
     if (terminalId === null) return;
     const status = await terminalStatus(terminalId);
     lastShellCwd = status.cwd ?? lastShellCwd;
+    // Fast tab switches: the status round-trip may outlive this sync's tab —
+    // a stale cd would drag the shell (and, via its echo, the NEW tab) to
+    // the previous tab's directory (#266). Latest target wins; drop the rest.
+    if (windowTabsManager.getActiveExplorer()?.currentPath !== path) return;
     switch (decideCdSync(path, status.cwd, status.busy)) {
       case "skip":
         return;
@@ -189,8 +208,13 @@
         pendingCd = null;
         stopQueuePoll();
         queueToastShown = false;
-        // Re-check against the shell's cwd: it may have cd'd itself meanwhile.
-        if (target !== null && decideCdSync(target, status.cwd, false) === "write") {
+        // Re-check against the shell's cwd (it may have cd'd itself) AND the
+        // active tab (it may have switched while the command ran, #266).
+        if (
+          target !== null &&
+          windowTabsManager.getActiveExplorer()?.currentPath === target &&
+          decideCdSync(target, status.cwd, false) === "write"
+        ) {
           writeCd(target);
         }
       } catch (err) {

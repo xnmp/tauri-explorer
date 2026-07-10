@@ -61,7 +61,7 @@ export function useItemInteractions(deps: ItemInteractionsDeps) {
     // count badge so the ghost shows that ALL selected items are dragged.
     // The element must be rendered when setDragImage snapshots it — park it
     // off-screen and remove it on the next tick.
-    if (isMulti) {
+    if (isMulti && typeof document !== "undefined" && typeof event.dataTransfer.setDragImage === "function") {
       const ghost = createDragGhost(
         event.currentTarget as HTMLElement,
         `${paths.length} items`,

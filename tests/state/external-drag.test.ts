@@ -13,12 +13,12 @@ vi.mock("@crabnebula/tauri-plugin-drag", () => ({
 // `isMac` is a module-level constant in domain/platform.ts, evaluated once at
 // import time. To test platform-specific behavior we mock the module and update
 // the exported value per test via `mockIsMac`.
-let mockIsMac = false;
-let mockIsWindows = false;
+const platformState = vi.hoisted(() => ({ isMac: false, isWindows: false }));
+
 vi.mock("$lib/domain/platform", () => ({
-  get isMac() { return mockIsMac; },
-  get isWindows() { return mockIsWindows; },
-  isCopyModifier: (e: { altKey: boolean; ctrlKey: boolean }) => mockIsMac ? e.altKey : e.ctrlKey,
+  get isMac() { return platformState.isMac; },
+  get isWindows() { return platformState.isWindows; },
+  isCopyModifier: (e: { altKey: boolean; ctrlKey: boolean }) => platformState.isMac ? e.altKey : e.ctrlKey,
 }));
 
 import { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
@@ -57,8 +57,8 @@ function makeExplorer(selected: FileEntry[]): ExplorerInstance {
 describe("external drag-out", () => {
   beforeEach(() => {
     startDragMock.mockReset();
-    mockIsMac = false;
-    mockIsWindows = false;
+    platformState.isMac = false;
+    platformState.isWindows = false;
     (globalThis as { window?: unknown }).window = { __TAURI_INTERNALS__: {} };
   });
 
@@ -92,7 +92,7 @@ describe("external drag-out", () => {
   });
 
   it("skips native drag on macOS (WKWebView bridges HTML5 drag to native pasteboard)", () => {
-    mockIsMac = true;
+    platformState.isMac = true;
     const entry = makeEntry("/h/x.txt", "x.txt");
     const interactions = useItemInteractions({
       getExplorer: () => makeExplorer([entry]),
@@ -105,7 +105,7 @@ describe("external drag-out", () => {
   });
 
   it("sets text/uri-list with file:// URLs for external app drops", () => {
-    mockIsMac = true;
+    platformState.isMac = true;
     const entry = makeEntry("/h/my file.txt", "my file.txt");
     const interactions = useItemInteractions({
       getExplorer: () => makeExplorer([entry]),
@@ -138,7 +138,7 @@ describe("external drag-out", () => {
     // OS-level drag that Tauri intercepts, suppressing the DOM drag events
     // (which broke folder/tab/breadcrumb drops). So: no native drag, and no
     // preventDefault on dragstart (that would cancel the HTML5 drag).
-    mockIsWindows = true;
+    platformState.isWindows = true;
     const entry = makeEntry("C:\\Users\\chonw\\Downloads\\image.jpg", "image.jpg");
     const interactions = useItemInteractions({
       getExplorer: () => makeExplorer([entry]),

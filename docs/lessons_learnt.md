@@ -1520,3 +1520,14 @@ clearing staged, amend folding).
   round-trip landed. App-wide constants belong in a shared cached store
   (`src/lib/state/home.svelte.ts`) read synchronously via `$derived` —
   fetch once, every later mount renders its final form on the first frame.
+
+## 2026-07-10 fix/command-palette-lag (#234): palette felt ~150ms slow to open
+
+- **Entrance animations on keystroke-summoned surfaces read as input lag.**
+  The command palette (and QuickOpen / content search) opened with a 150ms
+  opacity+slide animation, and the modal overlay layered its own 150ms fade
+  on top — actual DOM+paint was ~40ms, but the surface wasn't legible until
+  the fades finished. VSCode-style palettes must be fully opaque on their
+  first frame: entrance animations removed for palette-style surfaces
+  (`animation: none` on `.top-aligned` overlays). Measured keypress→legible:
+  ~150ms → ~27ms.

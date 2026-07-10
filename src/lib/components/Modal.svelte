@@ -165,6 +165,9 @@
     padding-top: var(--modal-top-offset, 10vh);
     background: rgba(0, 0, 0, 0.4);
     backdrop-filter: none;
+    /* Palette-style surfaces open on a keystroke mid-flow; the overlay fade
+       delays legibility and reads as input lag (#234). */
+    animation: none;
   }
 
   @keyframes modal-overlay-in {

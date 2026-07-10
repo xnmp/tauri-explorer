@@ -9,10 +9,13 @@ import {
   hasLeaf,
   countLeaves,
   splitLeaf,
+  splitNode,
+  hasNode,
   removeLeaf,
   updateRatio,
   leafRects,
   dwindlePlacement,
+  leafSiblingContext,
   type PaneNode,
 } from "$lib/domain/pane-layout";
 
@@ -143,5 +146,70 @@ describe("dwindlePlacement", () => {
 
   it("falls back to right for an unknown leaf", () => {
     expect(dwindlePlacement(leaf("a"), "missing", 1)).toBe("right");
+  });
+});
+
+describe("splitNode / hasNode (#229)", () => {
+  it("hasNode finds leaves and split ids", () => {
+    const tree = splitLeaf(leaf("a"), "a", "right", "b", "s1");
+    expect(hasNode(tree, "a")).toBe(true);
+    expect(hasNode(tree, "s1")).toBe(true);
+    expect(hasNode(tree, "nope")).toBe(false);
+  });
+
+  it("wraps a whole split subtree in a new split", () => {
+    // (a | b) then wrap the s1 subtree with c above it.
+    const tree = splitLeaf(leaf("a"), "a", "right", "b", "s1");
+    const wrapped = splitNode(tree, "s1", "up", "c", "s2");
+    expect(leafIds(wrapped)).toEqual(["c", "a", "b"]);
+    expect((wrapped as any).direction).toBe("column");
+    expect((wrapped as any).first).toEqual(leaf("c"));
+    expect((wrapped as any).second.id).toBe("s1");
+  });
+
+  it("returns the tree unchanged for a missing target", () => {
+    const tree = splitLeaf(leaf("a"), "a", "right", "b", "s1");
+    expect(splitNode(tree, "zzz", "left", "c", "s2")).toEqual(tree);
+  });
+});
+
+describe("leafSiblingContext (#229)", () => {
+  it("returns null for the root leaf (no sibling)", () => {
+    expect(leafSiblingContext(leaf("a"), "a")).toBeNull();
+  });
+
+  it("captures sibling, placement, and ratio for a row split", () => {
+    const tree = updateRatio(splitLeaf(leaf("a"), "a", "right", "b", "s1"), "s1", 0.3);
+    // a is first in a row → it sat to the LEFT of b.
+    expect(leafSiblingContext(tree, "a")).toEqual({ siblingId: "b", placement: "left", ratio: 0.3 });
+    expect(leafSiblingContext(tree, "b")).toEqual({ siblingId: "a", placement: "right", ratio: 0.3 });
+  });
+
+  it("captures up/down placements for a column split", () => {
+    const tree = splitLeaf(leaf("a"), "a", "down", "b", "s1");
+    expect(leafSiblingContext(tree, "a")?.placement).toBe("up");
+    expect(leafSiblingContext(tree, "b")?.placement).toBe("down");
+  });
+
+  it("the sibling can be a whole subtree", () => {
+    // ((a | b) over c): c's sibling is the s1 subtree.
+    const inner = splitLeaf(leaf("a"), "a", "right", "b", "s1");
+    const tree = splitNode(inner, "s1", "down", "c", "s2");
+    expect(leafSiblingContext(tree, "c")).toEqual({ siblingId: "s1", placement: "down", ratio: 0.5 });
+  });
+
+  it("round-trips: removeLeaf then splitNode with the context restores the layout shape", () => {
+    const inner = splitLeaf(leaf("a"), "a", "right", "b", "s1");
+    const tree = updateRatio(splitNode(inner, "s1", "down", "c", "s2"), "s2", 0.7);
+    const ctx = leafSiblingContext(tree, "c")!;
+    const removed = removeLeaf(tree, "c")!;
+    const restored = updateRatio(
+      splitNode(removed, ctx.siblingId, ctx.placement, "c2", "s3"),
+      "s3",
+      ctx.ratio,
+    );
+    expect(leafIds(restored)).toEqual(["a", "b", "c2"]);
+    expect((restored as any).direction).toBe("column");
+    expect((restored as any).ratio).toBe(0.7);
   });
 });

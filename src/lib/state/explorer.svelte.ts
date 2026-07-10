@@ -98,6 +98,10 @@ function createExplorerState(seed?: ExplorerSeed) {
   let filterQuery = $state("");
   let showFilter = $state(false);
 
+  // Per-pane miller columns layer count (#229). null = follow the global
+  // setting, so panes without an explicit choice track Settings changes.
+  let millerLayersOverride = $state<number | null>(null);
+
   // Navigation callback for UI (e.g. focusing the selected item after nav)
   let onNavigateCallback: (() => void) | null = null;
 
@@ -760,6 +764,17 @@ function createExplorerState(seed?: ExplorerSeed) {
     // View
     setSorting,
     setViewMode,
+    // Miller columns (per-pane, #229)
+    get millerLayers() {
+      return millerLayersOverride ?? settingsStore.millerLayers;
+    },
+    setMillerLayers(n: number) {
+      millerLayersOverride = Math.max(0, Math.min(3, n));
+    },
+    toggleMillerColumns() {
+      const on = (millerLayersOverride ?? settingsStore.millerLayers) > 0;
+      millerLayersOverride = on ? 0 : settingsStore.state.millerLayersPreferred;
+    },
     // Filter
     get filterQuery() { return filterQuery; },
     get showFilter() { return showFilter; },

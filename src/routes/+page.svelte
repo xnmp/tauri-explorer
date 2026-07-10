@@ -54,10 +54,10 @@
   // from boot t0 to here is the JS download+parse cost the lazy-loading targets.
   markStartup("bundle-exec");
 
-  const millerAsLeftIsland = $derived(
-    settingsStore.macOsVibrancy && !settingsStore.showSidebar && settingsStore.millerLayers > 0
-  );
   const leftExplorer = $derived(windowTabsManager.getActiveExplorer());
+  const millerAsLeftIsland = $derived(
+    settingsStore.macOsVibrancy && !settingsStore.showSidebar && (leftExplorer?.millerLayers ?? 0) > 0
+  );
 
   /** Convert a filesystem path to a URL usable in src/background-image. */
   function convertFileSrc(path: string): string {

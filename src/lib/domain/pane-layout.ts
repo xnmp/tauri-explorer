@@ -64,8 +64,32 @@ export function splitLeaf(
   newLeafId: string,
   splitId: string,
 ): PaneNode {
-  if (root.type === "leaf") {
-    if (root.id !== targetId) return root;
+  if (root.type === "leaf" && root.id !== targetId) return root;
+  if (root.type === "split" && !hasLeaf(root, targetId)) return root;
+  return splitNode(root, targetId, placement, newLeafId, splitId);
+}
+
+/** Whether any node (leaf or split) with `id` exists in the tree. */
+export function hasNode(root: PaneNode, id: string): boolean {
+  if (root.id === id) return true;
+  if (root.type === "leaf") return false;
+  return hasNode(root.first, id) || hasNode(root.second, id);
+}
+
+/**
+ * Wrap the node `targetId` (a leaf OR a whole split subtree) in a new
+ * split, placing a new leaf `newLeafId` on the given side of it. Returns
+ * the new root, or the unchanged root if the target doesn't exist.
+ * `splitId` names the created split node (for later ratio updates).
+ */
+export function splitNode(
+  root: PaneNode,
+  targetId: string,
+  placement: SplitPlacement,
+  newLeafId: string,
+  splitId: string,
+): PaneNode {
+  if (root.id === targetId) {
     const direction: SplitDirection = placement === "left" || placement === "right" ? "row" : "column";
     const newFirst = placement === "left" || placement === "up";
     return {
@@ -77,11 +101,45 @@ export function splitLeaf(
       second: newFirst ? root : leaf(newLeafId),
     };
   }
+  if (root.type === "leaf") return root;
   return {
     ...root,
-    first: splitLeaf(root.first, targetId, placement, newLeafId, splitId),
-    second: splitLeaf(root.second, targetId, placement, newLeafId, splitId),
+    first: splitNode(root.first, targetId, placement, newLeafId, splitId),
+    second: splitNode(root.second, targetId, placement, newLeafId, splitId),
   };
+}
+
+/**
+ * Where a leaf sits relative to its sibling — everything needed to undo
+ * its removal (#229): re-split the sibling node with the same placement
+ * and ratio. Null when the leaf is the root (no sibling) or absent.
+ */
+export interface LeafSiblingContext {
+  /** The node (leaf or whole subtree) the leaf was split against. */
+  siblingId: string;
+  /** Side of the sibling the leaf occupied. */
+  placement: SplitPlacement;
+  /** The parent split's ratio (first child's share). */
+  ratio: number;
+}
+
+export function leafSiblingContext(root: PaneNode, id: string): LeafSiblingContext | null {
+  if (root.type === "leaf") return null;
+  const leafIsFirst = root.first.type === "leaf" && root.first.id === id;
+  const leafIsSecond = root.second.type === "leaf" && root.second.id === id;
+  if (leafIsFirst || leafIsSecond) {
+    const sibling = leafIsFirst ? root.second : root.first;
+    const placement: SplitPlacement =
+      root.direction === "row"
+        ? leafIsFirst
+          ? "left"
+          : "right"
+        : leafIsFirst
+          ? "up"
+          : "down";
+    return { siblingId: sibling.id, placement, ratio: root.ratio };
+  }
+  return leafSiblingContext(root.first, id) ?? leafSiblingContext(root.second, id);
 }
 
 /**

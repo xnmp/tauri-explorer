@@ -27,11 +27,10 @@
 │                                                         │
 │  ┌─────────────────────────────────────────────────┐    │
 │  │  +page.svelte (root)                            │    │
-│  │  ├── TitleBar (drag region + window controls)  │    │
-│  │  ├── SharedToolbar (search, theme, win controls)│    │
+│  │  ├── TitleBar (tab strip + drag + win controls)│    │
+│  │  │   └── WindowTabBar (window tab strip)        │    │
 │  │  ├── Sidebar (activity bar + files / SCM views) │    │
 │  │  ├── PaneContainer                              │    │
-│  │  │   ├── WindowTabBar (window tab strip)        │    │
 │  │  │   └── PaneLayoutView (recursive split tree)  │    │
 │  │  │       └── ExplorerPane (one per leaf pane)   │    │
 │  │  │           ├── NavigationBar (breadcrumbs)    │    │

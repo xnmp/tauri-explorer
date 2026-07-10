@@ -18,9 +18,12 @@ import {
   leafIds,
   countLeaves,
   splitLeaf,
+  splitNode,
+  hasNode,
   removeLeaf,
   updateRatio,
   dwindlePlacement,
+  leafSiblingContext,
 } from "$lib/domain/pane-layout";
 import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
 import { loadPersisted, savePersisted, removePersisted } from "./persisted";
@@ -127,6 +130,22 @@ function createWindowTabsManager() {
 
   // Stack of recently closed tabs for Ctrl+Shift+T restoration (persisted)
   const closedTabs = createClosedTabsStore();
+
+  // Stack of recently closed PANES (#229): Ctrl+Shift+T restores the last
+  // closed surface, ghostty-style — a pane back into its split position, or
+  // the last closed tab when that's more recent. In-memory: a pane snapshot
+  // is only meaningful while its tab still lives in this window.
+  interface ClosedPaneSnapshot {
+    tabId: string;
+    path: string;
+    /** Node the pane was split against (leaf or subtree), with placement/ratio. */
+    siblingId: string;
+    placement: SplitPlacement;
+    ratio: number;
+    ts: number;
+  }
+  const MAX_CLOSED_PANES = 20;
+  let closedPanes: ClosedPaneSnapshot[] = [];
 
   // Pick up snapshots written by other windows when this window regains
   // focus (instead of re-reading localStorage from the canRestoreTab getter).
@@ -575,6 +594,7 @@ function createWindowTabsManager() {
       tab: persistTab(tab),
       closedAt: tabIndex,
       fromClosedWindow,
+      closedTs: Date.now(),
     };
 
     // Closing the last tab snapshots then attempts window.close(), which can
@@ -679,6 +699,65 @@ function createWindowTabsManager() {
   /** Close the active tab */
   function closeActiveTab(): void {
     if (activeTabId) closeTab(activeTabId);
+  }
+
+  /** Close the focused surface, ghostty-style (#229): the focused pane when
+   *  the active tab has several, otherwise the whole tab. */
+  function closeSurface(): void {
+    const tab = activeTab;
+    if (tab?.kind === "explorer" && countLeaves(tab.layout) > 1) {
+      closePane();
+    } else {
+      closeActiveTab();
+    }
+  }
+
+  /** Drop pane snapshots whose tab no longer lives in this window (their
+   *  close is superseded by the tab's own snapshot). */
+  function pruneClosedPanes(): void {
+    closedPanes = closedPanes.filter((p) => findTab(p.tabId)?.kind === "explorer");
+  }
+
+  /** Restore a closed pane back into its tab at its original split position.
+   *  Falls back to splitting the focused pane when the sibling is gone. */
+  function restorePane(snapshot: ClosedPaneSnapshot): void {
+    const tab = findTab(snapshot.tabId);
+    if (tab?.kind !== "explorer") return;
+    setActiveTab(tab.id);
+    const { explorerId } = createAndRegisterExplorer(snapshot.path, undefined, undefined, false);
+    const paneId = generateId("pane");
+    const splitId = generateId("split");
+    updateActiveExplorerTab((t) => {
+      const layout = hasNode(t.layout, snapshot.siblingId)
+        ? updateRatio(
+            splitNode(t.layout, snapshot.siblingId, snapshot.placement, paneId, splitId),
+            splitId,
+            snapshot.ratio,
+          )
+        : splitLeaf(t.layout, t.activePaneId, snapshot.placement, paneId, splitId);
+      return {
+        ...t,
+        layout,
+        panes: { ...t.panes, [paneId]: { explorerId, path: snapshot.path } },
+        activePaneId: paneId,
+      };
+    });
+    saveState();
+  }
+
+  /** Restore the most recently closed surface (#229): the last closed pane
+   *  when it's newer than the last closed tab, else the last closed tab.
+   *  Returns false when there's nothing to restore. */
+  function restoreClosedSurface(): false | RestoreResult {
+    closedTabs.refresh();
+    pruneClosedPanes();
+    const topPane = closedPanes[closedPanes.length - 1];
+    if (topPane && topPane.ts >= (closedTabs.peek()?.closedTs ?? 0)) {
+      closedPanes.pop();
+      restorePane(topPane);
+      return { restored: true };
+    }
+    return restoreClosedTab();
   }
 
   /** Set the active tab */
@@ -849,6 +928,21 @@ function createWindowTabsManager() {
       return;
     }
 
+    // Snapshot for Ctrl+Shift+T (#229): where the pane sat relative to its
+    // sibling, so restore re-splits at the original position.
+    const context = leafSiblingContext(tab.layout, target);
+    if (context) {
+      closedPanes.push({
+        tabId: tab.id,
+        path: panePath(tab, target),
+        siblingId: context.siblingId,
+        placement: context.placement,
+        ratio: context.ratio,
+        ts: Date.now(),
+      });
+      if (closedPanes.length > MAX_CLOSED_PANES) closedPanes.shift();
+    }
+
     explorers.get(pane.explorerId)?.destroy();
     explorers.delete(pane.explorerId);
 
@@ -971,6 +1065,7 @@ function createWindowTabsManager() {
     openGitGraphTab,
     closeTab,
     closeActiveTab,
+    closeSurface,
     exportTab,
     adoptTab,
     removeTransferredTab,
@@ -978,10 +1073,14 @@ function createWindowTabsManager() {
       return WINDOW_LABEL;
     },
     restoreClosedTab,
+    restoreClosedSurface,
     get canRestoreTab() {
       // No side effects in the getter: the stack is refreshed on window
       // focus and explicitly before restore (restoreClosedTab).
       return closedTabs.size > 0;
+    },
+    get canRestoreSurface() {
+      return closedTabs.size > 0 || closedPanes.some((p) => findTab(p.tabId)?.kind === "explorer");
     },
     setActiveTab,
     nextTab,

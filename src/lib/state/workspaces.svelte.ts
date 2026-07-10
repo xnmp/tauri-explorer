@@ -36,15 +36,6 @@ function saveWorkspaces(ws: Workspace[]): void {
 function createWorkspacesStore() {
   let workspaces = $state<Workspace[]>(loadWorkspaces());
 
-  // Change listeners (e.g. the palette's dynamic "Workspaces: Open …"
-  // commands re-sync on every mutation). Kept as plain callbacks so the
-  // non-reactive command registry can subscribe without a rune context.
-  const listeners = new Set<() => void>();
-
-  function notify(): void {
-    for (const listener of listeners) listener();
-  }
-
   function save(name: string, tabState: PersistedTabState): Workspace {
     const existing = workspaces.find((w) => w.name === name);
     const now = Date.now();
@@ -54,7 +45,6 @@ function createWorkspacesStore() {
       const updated: Workspace = { ...existing, updatedAt: now, state: tabState };
       workspaces = workspaces.map((w) => (w.id === existing.id ? updated : w));
       saveWorkspaces(workspaces);
-      notify();
       return updated;
     }
 
@@ -69,14 +59,12 @@ function createWorkspacesStore() {
 
     workspaces = [workspace, ...workspaces].slice(0, MAX_WORKSPACES);
     saveWorkspaces(workspaces);
-    notify();
     return workspace;
   }
 
   function remove(id: string): void {
     workspaces = workspaces.filter((w) => w.id !== id);
     saveWorkspaces(workspaces);
-    notify();
   }
 
   function rename(id: string, newName: string): void {
@@ -84,13 +72,6 @@ function createWorkspacesStore() {
       w.id === id ? { ...w, name: newName, updatedAt: Date.now() } : w
     );
     saveWorkspaces(workspaces);
-    notify();
-  }
-
-  /** Subscribe to workspace list changes; returns an unsubscribe. */
-  function subscribe(listener: () => void): () => void {
-    listeners.add(listener);
-    return () => listeners.delete(listener);
   }
 
   function get(id: string): Workspace | undefined {
@@ -108,7 +89,6 @@ function createWorkspacesStore() {
     remove,
     rename,
     get,
-    subscribe,
   };
 }
 

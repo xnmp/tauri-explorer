@@ -40,36 +40,38 @@ export const viewCommands: Command[] = [
       if (mode) settingsStore.setViewMode(mode);
     },
   },
+  // Miller columns act on the focused pane only (#229); the global setting
+  // (Settings dialog) remains the default for panes without a choice.
   {
     id: "view.toggleMillerColumns",
     label: "Toggle Miller Columns",
     category: "view",
     shortcut: "Alt+M E",
-    handler: () => settingsStore.toggleMillerColumns(),
+    handler: () => getActiveExplorer()?.toggleMillerColumns(),
   },
   {
     id: "view.millerLayers0",
     label: "Miller Columns: Off",
     category: "view",
-    handler: () => settingsStore.setMillerLayers(0),
+    handler: () => getActiveExplorer()?.setMillerLayers(0),
   },
   {
     id: "view.millerLayers1",
     label: "Miller Columns: 1 Layer",
     category: "view",
-    handler: () => settingsStore.setMillerLayers(1),
+    handler: () => getActiveExplorer()?.setMillerLayers(1),
   },
   {
     id: "view.millerLayers2",
     label: "Miller Columns: 2 Layers",
     category: "view",
-    handler: () => settingsStore.setMillerLayers(2),
+    handler: () => getActiveExplorer()?.setMillerLayers(2),
   },
   {
     id: "view.millerLayers3",
     label: "Miller Columns: 3 Layers",
     category: "view",
-    handler: () => settingsStore.setMillerLayers(3),
+    handler: () => getActiveExplorer()?.setMillerLayers(3),
   },
   {
     id: "view.sortByName",

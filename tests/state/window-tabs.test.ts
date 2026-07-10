@@ -4,7 +4,7 @@
  * pane splitting, titles, rename-to-workspace, and tab behavior.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   generateId,
   extractFolderName,
@@ -710,5 +710,127 @@ describe("adversarial review regressions (#167)", () => {
     const manager = createWindowTabsManager();
     expect(() => manager.init("/home/user")).not.toThrow();
     expect(manager.tabs.length).toBe(1);
+  });
+});
+
+describe("close surface (#229)", () => {
+  it("closes the focused pane when the tab has several", () => {
+    const manager = freshManager();
+    manager.splitPane("right", "/srv/docs");
+    expect(manager.activePaneIds).toHaveLength(2);
+
+    manager.closeSurface();
+
+    expect(manager.tabs).toHaveLength(1);
+    expect(manager.activePaneIds).toHaveLength(1);
+    expect(manager.getPanePath(manager.activePaneId)).toBe("/home/user");
+  });
+
+  it("closes the whole tab when it has a single pane", () => {
+    const manager = freshManager();
+    manager.createTab("/srv/gone");
+    expect(manager.tabs).toHaveLength(2);
+
+    manager.closeSurface();
+
+    expect(manager.tabs).toHaveLength(1);
+    expect(manager.getTabPath(manager.activeTabId!)).toBe("/home/user");
+  });
+});
+
+describe("closed-pane restore (#229)", () => {
+  let nowSpy: ReturnType<typeof vi.spyOn>;
+  let clock = 0;
+
+  beforeEach(() => {
+    clock = 1_000_000;
+    nowSpy = vi.spyOn(Date, "now").mockImplementation(() => ++clock);
+  });
+
+  afterEach(() => {
+    nowSpy.mockRestore();
+  });
+
+  it("Ctrl+Shift+T restores the last closed pane back into its split position", () => {
+    const manager = freshManager();
+    manager.splitPane("down", "/srv/docs");
+    const orderBefore = [...manager.activePaneIds];
+    expect(orderBefore).toHaveLength(2);
+
+    manager.closePane(); // closes the focused (second) pane
+    expect(manager.activePaneIds).toHaveLength(1);
+
+    const result = manager.restoreClosedSurface();
+    expect(result).toMatchObject({ restored: true });
+    expect(manager.activePaneIds).toHaveLength(2);
+    // Restored below the surviving pane, focused, at its old path.
+    expect(manager.activePaneId).toBe(manager.activePaneIds[1]);
+    expect(manager.getPanePath(manager.activePaneId)).toBe("/srv/docs");
+    // No tab was restored in the process.
+    expect(manager.tabs).toHaveLength(1);
+  });
+
+  it("restores a pane closed on the LEFT back to the left", () => {
+    const manager = freshManager();
+    manager.splitPane("left", "/srv/first");
+    // Focused pane is the new left pane.
+    manager.closePane();
+
+    manager.restoreClosedSurface();
+
+    expect(manager.activePaneIds).toHaveLength(2);
+    expect(manager.getPanePath(manager.activePaneIds[0])).toBe("/srv/first");
+  });
+
+  it("restores the tab, not the pane, when the tab close is more recent", () => {
+    const manager = freshManager();
+    manager.splitPane("right", "/srv/docs");
+    manager.closePane(); // pane close first
+    const gone = manager.createTab("/tmp/gone");
+    manager.closeTab(gone.id); // tab close second (more recent)
+
+    manager.restoreClosedSurface();
+    expect(manager.tabs).toHaveLength(2);
+    expect(manager.tabs.some((t) => manager.getTabPath(t.id) === "/tmp/gone")).toBe(true);
+  });
+
+  it("skips pane snapshots whose tab is gone and restores the closed tab", () => {
+    const manager = freshManager();
+    const tab = manager.createTab("/srv/multi");
+    manager.splitPane("right", "/srv/extra");
+    manager.closePane(); // pane snapshot for this tab
+    manager.closeTab(tab.id); // the whole tab goes (more recent anyway)
+    manager.createTab("/tmp/keepalive");
+
+    manager.restoreClosedSurface();
+    // The multi-pane tab returns; its pane snapshot is stale and pruned.
+    expect(manager.tabs.some((t) => manager.getTabPath(t.id) === "/srv/multi")).toBe(true);
+    manager.restoreClosedSurface();
+    expect(manager.canRestoreSurface).toBe(false);
+  });
+});
+
+describe("per-pane miller columns (#229)", () => {
+  it("changing miller layers on one pane leaves the other pane alone", () => {
+    const manager = freshManager();
+    manager.splitPane("right", "/srv/docs");
+    const [firstId, secondId] = manager.activePaneIds;
+    const first = manager.getExplorer(firstId)!;
+    const second = manager.getExplorer(secondId)!;
+    expect(first.millerLayers).toBe(0);
+
+    second.setMillerLayers(2);
+
+    expect(second.millerLayers).toBe(2);
+    expect(first.millerLayers).toBe(0);
+  });
+
+  it("toggle turns miller on to the preferred layer count and off again", () => {
+    const manager = freshManager();
+    const explorer = manager.getActiveExplorer()!;
+    explorer.toggleMillerColumns();
+    expect(explorer.millerLayers).toBeGreaterThan(0);
+    explorer.toggleMillerColumns();
+    expect(explorer.millerLayers).toBe(0);
   });
 });

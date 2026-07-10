@@ -209,4 +209,19 @@ describe("branchPath row expansion", () => {
     // Expansion after the last row changes nothing.
     expect(branchPath(line, 14, 28, { afterRow: 2, extra: 100 })).toBe("M 7 14.0 L 7 70.0");
   });
+
+  it("keeps a stretched lane change vertical and crosses only in the last row-height", () => {
+    // The expansion (open commit details) lands inside the lane-change
+    // segment: the line must run straight down the stretch and curve only
+    // in the final row-height at the destination, not smear a diagonal
+    // across the whole expanded block.
+    const line = { colorIndex: 0, points: [{ lane: 0, row: 0 }, { lane: 1, row: 1 }] };
+    // Without expansion: a single one-row cubic (d = 22.4).
+    expect(branchPath(line, 14, 28)).toBe("M 7 14.0 C 7 36.4 21 19.6 21 42.0");
+    // With 100px inserted after row 0: vertical to 100px above the
+    // destination (y2 = 142), then the same one-row-height cubic.
+    expect(branchPath(line, 14, 28, { afterRow: 0, extra: 100 })).toBe(
+      "M 7 14.0 L 7 114.0 C 7 136.4 21 119.6 21 142.0",
+    );
+  });
 });

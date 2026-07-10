@@ -7,17 +7,21 @@ import { describe, it, expect } from "vitest";
 import { showTitleBar, showWindowTabBar } from "$lib/domain/titlebar";
 
 describe("showTitleBar", () => {
-  it("hides entirely with no controls and not integrated (Hyprland-style chrome-less)", () => {
-    expect(showTitleBar(false, false)).toBe(false);
+  it("hides entirely with no controls, not integrated, and no tab strip (Hyprland-style chrome-less)", () => {
+    expect(showTitleBar(false, false, false)).toBe(false);
   });
 
   it("shows when window controls are enabled", () => {
-    expect(showTitleBar(false, true)).toBe(true);
+    expect(showTitleBar(false, true, false)).toBe(true);
   });
 
   it("always shows when integrated", () => {
-    expect(showTitleBar(true, false)).toBe(true);
-    expect(showTitleBar(true, true)).toBe(true);
+    expect(showTitleBar(true, false, false)).toBe(true);
+    expect(showTitleBar(true, true, false)).toBe(true);
+  });
+
+  it("shows when the tab strip is visible even without controls (#229)", () => {
+    expect(showTitleBar(false, false, true)).toBe(true);
   });
 });
 

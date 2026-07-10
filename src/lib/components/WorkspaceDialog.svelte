@@ -161,7 +161,9 @@
 
 <style>
   .dialog {
-    background: var(--layer-default);
+    /* Solid surface like SettingsDialog — --layer-default is translucent
+       and made the modal hard to read over busy content (#229). */
+    background: var(--background-solid);
     border: 1px solid var(--surface-stroke);
     border-radius: var(--radius-lg);
     width: 400px;

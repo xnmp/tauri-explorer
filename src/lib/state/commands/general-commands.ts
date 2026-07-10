@@ -6,6 +6,7 @@ import type { Command } from "../commands.svelte";
 import { windowTabsManager } from "../window-tabs.svelte";
 import { settingsStore } from "../settings.svelte";
 import { bookmarksStore } from "../bookmarks.svelte";
+import { workspacesStore } from "../workspaces.svelte";
 import { recentFilesStore } from "../recent-files.svelte";
 import { dialogStore } from "../dialogs.svelte";
 import { openInTerminal, gitRepoRoot } from "$lib/api/files";
@@ -45,24 +46,35 @@ export const tabCommands: Command[] = [
     handler: () => void windowTabsManager.createTab(),
   },
   {
+    // Ghostty-style (#229): closes the focused pane when the active tab has
+    // several, otherwise closes the tab.
+    id: "surface.close",
+    label: "Close Surface",
+    category: "general",
+    shortcut: "Ctrl+W",
+    handler: () => windowTabsManager.closeSurface(),
+  },
+  {
     id: "tabs.closeTab",
     label: "Close Tab",
     category: "general",
-    shortcut: "Ctrl+W",
+    shortcut: "Ctrl+Shift+W",
     handler: () => windowTabsManager.closeActiveTab(),
   },
   {
+    // Restores the most recently closed pane back into its split position;
+    // restores the last closed tab when that close is more recent (#229).
     id: "tabs.restoreClosedTab",
-    label: "Restore Closed Tab",
+    label: "Restore Closed Pane or Tab",
     category: "general",
     shortcut: "Ctrl+Shift+T",
     handler: () => {
-      const result = windowTabsManager.restoreClosedTab();
+      const result = windowTabsManager.restoreClosedSurface();
       if (result && result.openInNewWindow) {
         openNewWindow(result.openInNewWindow);
       }
     },
-    when: () => windowTabsManager.canRestoreTab,
+    when: () => windowTabsManager.canRestoreSurface,
   },
   {
     id: "tabs.nextTab",
@@ -174,6 +186,24 @@ export const recentCommands: Command[] = [
 
 /** Workspace commands */
 export const workspaceCommands: Command[] = [
+  {
+    // One palette entry (#229): opens a second menu listing the saved
+    // workspaces; picking one restores its layout.
+    id: "workspace.openNamed",
+    label: "Workspaces: Open...",
+    category: "general",
+    when: () => workspacesStore.count > 0,
+    handler: () => {
+      dialogStore.openPicker({
+        title: "Open workspace",
+        options: workspacesStore.list.map((w) => ({ id: w.id, label: w.name })),
+        onSelect: (id) => {
+          const workspace = workspacesStore.get(id);
+          if (workspace) windowTabsManager.restoreFromState(workspace.state);
+        },
+      });
+    },
+  },
   {
     id: "workspace.open",
     label: "Workspaces: Manage...",

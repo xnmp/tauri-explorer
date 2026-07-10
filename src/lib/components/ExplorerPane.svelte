@@ -282,7 +282,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   {#if paneExplorer}
     <NavigationBar explorer={paneExplorer} />
     <div class="pane-content">
-      {#if settingsStore.millerLayers > 0 && !(settingsStore.macOsVibrancy && !settingsStore.showSidebar)}
+      {#if paneExplorer.millerLayers > 0 && !(settingsStore.macOsVibrancy && !settingsStore.showSidebar)}
         <MillerColumns explorer={paneExplorer} />
       {/if}
       <!-- SCM panel sits between the Miller columns and the file list (#227);

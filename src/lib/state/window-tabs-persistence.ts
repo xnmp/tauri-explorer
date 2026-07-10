@@ -320,6 +320,10 @@ export interface ClosedTabSnapshot {
   tab?: PersistedWindowTab;
   closedAt: number; // insertion index within the window's tab strip
   fromClosedWindow: boolean; // true if this was the last tab when window closed
+  /** Wall-clock close time (#229) — ordered against closed PANES so
+   *  Ctrl+Shift+T restores the most recently closed surface. Absent in
+   *  old snapshots (treated as 0, i.e. older than any pane close). */
+  closedTs?: number;
 }
 
 /** Tolerate closed-tab snapshots persisted by older builds. */
@@ -336,6 +340,7 @@ export function normalizeClosedSnapshot(raw: unknown): ClosedTabSnapshot | null 
       tab: isPersistedWindowTab(s.tab) ? s.tab : undefined,
       closedAt: s.closedAt ?? 0,
       fromClosedWindow: !!s.fromClosedWindow,
+      ...(typeof s.closedTs === "number" ? { closedTs: s.closedTs } : {}),
     };
   }
   if (typeof s?.leftPath === "string") {

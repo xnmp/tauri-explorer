@@ -89,11 +89,12 @@
 | Feature | Files to change |
 |---------|----------------|
 | Window tabs + pane layout trees (#228) | `window-tabs.svelte.ts`, `domain/pane-layout.ts`, `WindowTabBar.svelte`, `PaneContainer.svelte`, `PaneLayoutView.svelte` |
-| Pane splits (ghostty-style, #228) | `pane-commands.ts` (`pane.splitLeft/Right/Up/Down` Ctrl+Alt+Shift+Arrows, `pane.new` Ctrl+Shift+Enter dwindle via `settings.defaultPaneLayout`, `pane.close` Ctrl+Shift+W), `windowTabsManager.splitPane/newPane/closePane` |
-| Tab rename → workspace (#228) | `WindowTabBar.svelte` (double-click, multi-pane tabs only), `windowTabsManager.renameTab` (saves to `workspacesStore`), `workspace-commands.ts` (dynamic "Workspaces: Open <name>" palette entries) |
+| Pane splits (ghostty-style, #228/#229) | `pane-commands.ts` (`pane.splitLeft/Right/Up/Down` Ctrl+Alt+L / ' / P / ;, `pane.new` Ctrl+M dwindle via `settings.defaultPaneLayout`, `pane.close` palette-only), `windowTabsManager.splitPane/newPane/closePane` |
+| Tab rename → workspace (#228/#229) | `WindowTabBar.svelte` (double-click, multi-pane tabs only), `windowTabsManager.renameTab` (saves to `workspacesStore`), `general-commands.ts` `workspace.openNamed` ("Workspaces: Open..." opens an OptionPicker submenu) |
 | New tab (Ctrl+T) | `windowTabsManager.createTab()` |
-| Close tab (Ctrl+W) | `windowTabsManager.closeActiveTab()` |
-| Restore closed tab | `windowTabsManager.restoreClosedTab()` (persisted stack) |
+| Close surface (Ctrl+W, ghostty-style #229) | `windowTabsManager.closeSurface()` — focused pane when the tab has several, else the tab |
+| Close tab (Ctrl+Shift+W) | `windowTabsManager.closeActiveTab()` |
+| Restore closed surface (Ctrl+Shift+T, #229) | `windowTabsManager.restoreClosedSurface()` — last closed pane back into its split position (in-memory stack), else last closed tab (persisted stack) |
 | Tab reorder | `WindowTabBar.svelte` (drag), `windowTabsManager.reorderTabs(from, to)` |
 | New window (Ctrl+N) | `command-definitions.ts:openNewWindow()` — creates `WebviewWindow` with URL params |
 | Dual pane (Ctrl+\\) | `windowTabsManager.toggleDualPane()`, `PaneContainer.svelte` |

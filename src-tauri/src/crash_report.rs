@@ -155,11 +155,15 @@ pub async fn log_frontend_error(message: String) {
     log::error!("[frontend] {}", truncated);
 }
 
-/// Open an https URL in the default browser (used for "Report on GitHub").
+/// Open a GitHub URL in the default browser (used for "Report on GitHub").
+/// Host-pinned, not just scheme-checked: this command's only job is opening
+/// the repo's issue page, so it must not be usable as a generic URL opener.
 #[tauri::command]
 pub async fn open_external_url(url: String) -> Result<(), AppError> {
-    if !url.starts_with("https://") {
-        return Err(AppError::Other("Only https URLs may be opened".to_string()));
+    if !crate::update_check::is_github_url(&url) {
+        return Err(AppError::Other(
+            "Only https://github.com/ URLs may be opened".to_string(),
+        ));
     }
     opener::open(&url).map_err(|e| AppError::Other(e.to_string()))
 }

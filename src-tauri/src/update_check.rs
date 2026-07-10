@@ -52,8 +52,8 @@ fn is_newer(latest: &str, current: &str) -> bool {
 }
 
 /// True only for URLs on github.com itself (the release page we may open in
-/// the user's browser).
-fn is_github_url(url: &str) -> bool {
+/// the user's browser). Also used by crash_report's "Report on GitHub" flow.
+pub(crate) fn is_github_url(url: &str) -> bool {
     url.starts_with("https://github.com/")
 }
 

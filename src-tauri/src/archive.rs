@@ -234,6 +234,19 @@ fn extract_archive_sync(
     Ok(dest.to_string_lossy().to_string())
 }
 
+/// Verify that an existing path resolves inside `canon_root` after following
+/// symlinks. Catches symlinked directory components that a lexical
+/// `starts_with` on the unresolved path cannot see.
+fn ensure_within(canon_root: &Path, path: &Path) -> Result<(), AppError> {
+    let resolved = fs::canonicalize(path)?;
+    if !resolved.starts_with(canon_root) {
+        return Err(AppError::InvalidPath(
+            "ZIP entry resolves outside the destination directory".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn extract_entries(
     app: Option<&tauri::AppHandle>,
     archive: &Path,
@@ -245,6 +258,12 @@ fn extract_entries(
     let file = fs::File::open(archive)?;
     let mut zip = zip::ZipArchive::new(file)
         .map_err(|e| AppError::Other(format!("Failed to read ZIP archive: {}", e)))?;
+
+    // Resolve the destination once up front. Per-entry containment checks
+    // below compare against this real path, so a symlinked directory inside
+    // dest can't redirect writes outside it (zip-slip via symlink, which a
+    // purely lexical starts_with() on the unresolved path would miss).
+    let canon_dest = fs::canonicalize(dest)?;
 
     // Pre-scan: validate every entry and detect conflicts BEFORE writing anything.
     // entry_paths[i] = (destination path, is_dir)
@@ -270,8 +289,10 @@ fn extract_entries(
         }
 
         // Existing directories merge harmlessly; existing files would be
-        // silently overwritten, so refuse up front.
-        if !entry.is_dir() && entry_path.exists() {
+        // silently overwritten, so refuse up front. symlink_metadata (not
+        // exists()) so a dangling symlink at the target also counts as
+        // occupied instead of being silently followed on create.
+        if !entry.is_dir() && fs::symlink_metadata(&entry_path).is_ok() {
             return Err(AppError::AlreadyExists(
                 entry_path.to_string_lossy().to_string(),
             ));
@@ -305,18 +326,37 @@ fn extract_entries(
 
             if *is_dir {
                 fs::create_dir_all(entry_path)?;
+                ensure_within(&canon_dest, entry_path)?;
             } else {
                 if let Some(parent) = entry_path.parent() {
                     fs::create_dir_all(parent)?;
+                    ensure_within(&canon_dest, parent)?;
                 }
-                let mut outfile = fs::File::create(entry_path)?;
+                // create_new: never follow a symlink planted at the target
+                // between the pre-scan and this write, and never truncate a
+                // file that appeared in that window.
+                let mut outfile = fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(entry_path)?;
                 // Stream in chunks so each one reports progress and observes
                 // cancellation, instead of one opaque std::io::copy.
+                // Cap output at the size declared in the central directory:
+                // a zip bomb's entries inflate far past what they declare.
+                let declared = entry.size();
+                let mut written: u64 = 0;
                 let mut buf = vec![0u8; 1024 * 1024];
                 loop {
                     let n = entry.read(&mut buf)?;
                     if n == 0 {
                         break;
+                    }
+                    written += n as u64;
+                    if written > declared {
+                        return Err(AppError::Other(format!(
+                            "ZIP entry expands past its declared size of {} bytes; refusing to extract",
+                            declared
+                        )));
                     }
                     std::io::Write::write_all(&mut outfile, &buf[..n])?;
                     tracker.advance(n as u64, entry_path)?;
@@ -642,6 +682,69 @@ mod tests {
 
         let content = fs::read_to_string(dest_path.join("source/hello.txt")).unwrap();
         assert_eq!(content, "hello world");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_rejects_symlinked_dir_escape() {
+        // Zip contains data/inner.txt. At the destination, "data" is a
+        // symlink pointing outside — extraction must refuse rather than
+        // follow it and write outside the destination (zip-slip variant).
+        let dir = tempdir().unwrap();
+        let build = dir.path().join("build");
+        fs::create_dir_all(build.join("data")).unwrap();
+        fs::write(build.join("data/inner.txt"), "payload").unwrap();
+        let zip_path = compress_to_zip_sync(
+            None,
+            vec![build.join("data").to_string_lossy().to_string()],
+            None,
+        )
+        .unwrap();
+
+        let dest = dir.path().join("dest");
+        fs::create_dir(&dest).unwrap();
+        let moved_zip = dest.join("data.zip");
+        fs::rename(&zip_path, &moved_zip).unwrap();
+        let outside = dir.path().join("outside");
+        fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, dest.join("data")).unwrap();
+
+        let err = extract_archive_sync(None, moved_zip.to_string_lossy().to_string(), true, None)
+            .unwrap_err();
+        assert!(matches!(err, AppError::InvalidPath(_)), "got {err:?}");
+        assert!(
+            !outside.join("inner.txt").exists(),
+            "extraction escaped the destination directory"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_extract_refuses_dangling_symlink_at_target() {
+        // A dangling symlink occupying an entry's path must count as an
+        // existing file, not be followed and created elsewhere.
+        let dir = tempdir().unwrap();
+        let build = dir.path().join("build");
+        fs::create_dir(&build).unwrap();
+        fs::write(build.join("hello.txt"), "hi").unwrap();
+        let zip_path = compress_to_zip_sync(
+            None,
+            vec![build.join("hello.txt").to_string_lossy().to_string()],
+            None,
+        )
+        .unwrap();
+
+        let dest = dir.path().join("dest");
+        fs::create_dir(&dest).unwrap();
+        let moved_zip = dest.join("hello.zip");
+        fs::rename(&zip_path, &moved_zip).unwrap();
+        let target = dir.path().join("planted");
+        std::os::unix::fs::symlink(&target, dest.join("hello.txt")).unwrap();
+
+        let err = extract_archive_sync(None, moved_zip.to_string_lossy().to_string(), true, None)
+            .unwrap_err();
+        assert!(matches!(err, AppError::AlreadyExists(_)), "got {err:?}");
+        assert!(!target.exists(), "write went through the planted symlink");
     }
 
     #[test]

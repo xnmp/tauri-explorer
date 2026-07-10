@@ -29,6 +29,7 @@
   import { isShellReservedKey } from "$lib/domain/terminal-keys";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { themeStore } from "$lib/state/theme.svelte";
   import { terminalPanelStore } from "$lib/state/terminal.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { toastStore } from "$lib/state/toast.svelte";
@@ -269,10 +270,13 @@
     };
   });
 
-  // Re-theme xterm when the app theme changes. CSS vars cascade on their own,
-  // but xterm's colors are plain values that must be pushed imperatively.
+  // Re-theme xterm when the painted app theme changes. CSS vars cascade on
+  // their own, but xterm's colors are plain values that must be pushed
+  // imperatively. Keyed on appliedThemeId (not the persisted setting) so the
+  // terminal also follows theme-picker live previews and never drifts from
+  // the rest of the UI (#251).
   $effect(() => {
-    settingsStore.theme; // dependency: theme id
+    themeStore.appliedThemeId; // dependency: painted theme id
     if (!term || !panelEl) return;
     term.options.theme = buildTerminalTheme(resolveThemeColor);
   });

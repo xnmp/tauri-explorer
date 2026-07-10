@@ -262,7 +262,18 @@
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div class="sidebar-view scm-view" bind:this={rootEl} onkeydown={onRowKeydown} role="presentation">
-  {#if !isRepo}
+  {#if scmStore.pending}
+    <!-- Repo detection / first summary fetch in flight (#271): shimmer rows
+         instead of prematurely claiming "not a git repository". -->
+    <div class="loading-state" role="status" aria-label="Loading git status">
+      {#each { length: 4 } as _, i}
+        <div class="skeleton-row" style="--delay: {i * 120}ms">
+          <span class="skeleton-block" style="width: {[62, 44, 71, 53][i]}%"></span>
+          <span class="skeleton-block skeleton-letter"></span>
+        </div>
+      {/each}
+    </div>
+  {:else if !isRepo}
     <div class="empty-state">
       <div class="empty-title">Not a git repository</div>
       <div class="empty-hint">
@@ -1048,6 +1059,37 @@
   .row-btn.destructive:hover {
     color: var(--error, #e5534b);
     background: color-mix(in srgb, var(--error, #e5534b) 15%, transparent);
+  }
+
+  .loading-state {
+    padding: 12px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .skeleton-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .skeleton-block {
+    height: 10px;
+    border-radius: 5px;
+    background: var(--subtle-fill-secondary, rgba(128, 128, 128, 0.15));
+    animation: skeleton-pulse 1.2s ease-in-out var(--delay, 0ms) infinite;
+  }
+
+  .skeleton-letter {
+    width: 10px;
+    flex-shrink: 0;
+  }
+
+  @keyframes skeleton-pulse {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 1; }
   }
 
   .clean-state {

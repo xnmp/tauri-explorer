@@ -39,6 +39,11 @@ function createScmStore() {
   let repoRoot = $state<string | null>(null);
   let summary = $state<GitStatusSummary>(emptySummary());
   let loading = $state(false);
+  // Last known summary per repo root (#271): served immediately when a repo
+  // becomes active again so switching panes/tabs doesn't flash the empty
+  // state, then refreshed in the background. Watcher events evict entries
+  // for repos that changed while inactive.
+  const summaryCache = new Map<string, GitStatusSummary>();
   let commitMessage = $state("");
   let amend = $state(false);
   let commitError = $state<string | null>(null);
@@ -59,6 +64,7 @@ function createScmStore() {
   async function refreshSummary(): Promise<void> {
     const gen = ++refreshGeneration;
     if (!repoRoot) {
+      loading = false;
       summary = emptySummary();
       return;
     }
@@ -68,6 +74,7 @@ function createScmStore() {
     if (gen !== refreshGeneration) return;
     loading = false;
     summary = result.ok ? result.data : emptySummary();
+    if (result.ok) summaryCache.set(root, result.data);
   }
 
   /** Refresh the summary and announce the change so other git consumers
@@ -80,9 +87,16 @@ function createScmStore() {
   async function setActivePath(path: string): Promise<void> {
     if (path === activePath) return;
     activePath = path;
+    // Repo detection is itself an IPC round-trip; without the flag the view
+    // renders "not a git repository" during it (#271). Every exit path below
+    // ends in refreshSummary (or the competing call's), which clears it.
+    loading = true;
     const detected = await detectRepo(path);
     if (activePath !== path) return;
-    if (detected === repoRoot) return;
+    if (detected === repoRoot) {
+      loading = false;
+      return;
+    }
 
     if (watcherPath) {
       try { await gitUnwatchRepo(watcherPath); } catch { /* non-Tauri */ }
@@ -91,6 +105,9 @@ function createScmStore() {
     repoRoot = detected;
     selectedPath = null;
     activeDiff = null;
+    // Serve the last known summary for this repo (or the empty state for a
+    // fresh/non-repo) while the refresh runs — never another repo's rows.
+    summary = (detected && summaryCache.get(detected)) || emptySummary();
 
     if (repoRoot) {
       await gitWatchRepo(repoRoot);
@@ -116,8 +133,13 @@ function createScmStore() {
     // Local changes already refreshed the summary before notifying, so only
     // watcher events (changes made outside this store) trigger a re-fetch.
     await subscribeGitChanges((change) => {
-      if (change.source === "watcher" && repoRoot && change.repoRoot === repoRoot) {
+      if (change.source !== "watcher") return;
+      if (repoRoot && change.repoRoot === repoRoot) {
         void refreshSummary();
+      } else if (change.repoRoot) {
+        // An inactive repo changed: its cached summary is stale — evict so
+        // the next activation fetches fresh instead of serving it (#271).
+        summaryCache.delete(change.repoRoot);
       }
     });
   }
@@ -221,6 +243,10 @@ function createScmStore() {
       };
     },
     get loading() { return loading; },
+    /** True while we have nothing to show yet for the active path — repo
+     *  detection or the first summary fetch is still in flight. Cached
+     *  summaries keep this false, so background refreshes don't flash. */
+    get pending() { return loading && !summary.is_repo; },
     get commitMessage() { return commitMessage; },
     get amend() { return amend; },
     get commitError() { return commitError; },

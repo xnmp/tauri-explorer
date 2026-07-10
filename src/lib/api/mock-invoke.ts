@@ -1603,6 +1603,22 @@ export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>)
   // Add small delay to simulate async operation
   await new Promise((resolve) => setTimeout(resolve, 10));
 
+  // Per-command extra latency, settable from E2E tests / the console
+  // (window.__MOCK_LATENCY__ = { git_status: 2000 }) or via URL for
+  // fetches that fire during boot (?mockLatency=git_status:2000,foo:500),
+  // to make transient loading states observable and assertable (#271).
+  const g = globalThis as { __MOCK_LATENCY__?: Record<string, number>; location?: Location };
+  if (!g.__MOCK_LATENCY__ && typeof location !== "undefined") {
+    g.__MOCK_LATENCY__ = {};
+    const param = new URLSearchParams(location.search).get("mockLatency");
+    for (const pair of param?.split(",") ?? []) {
+      const [name, ms] = pair.split(":");
+      if (name && Number(ms) > 0) g.__MOCK_LATENCY__[name] = Number(ms);
+    }
+  }
+  const extraLatency = g.__MOCK_LATENCY__?.[cmd];
+  if (extraLatency) await new Promise((resolve) => setTimeout(resolve, extraLatency));
+
   const handler = mockCommands[cmd];
   if (!handler) {
     throw new Error(`Unknown command: ${cmd}`);

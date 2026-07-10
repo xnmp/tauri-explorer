@@ -274,7 +274,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   class:active={showActiveBorder}
   class:inactive={isInactive}
   role="region"
-  aria-label="{paneId} file browser pane"
+  aria-label="file browser pane"
   tabindex="0"
   onfocus={handleFocus}
   onclick={handleFocus}
@@ -286,8 +286,8 @@ import { nextRemovableRoot } from "$lib/domain/drives";
         <MillerColumns explorer={paneExplorer} />
       {/if}
       <!-- SCM panel sits between the Miller columns and the file list (#227);
-           left pane only — it is a singleton view, like VSCode's. -->
-      {#if paneId === "left" && settingsStore.showGitStatus && settingsStore.showScmPanel}
+           primary (first) pane only — it is a singleton view, like VSCode's. -->
+      {#if windowTabsManager.isPrimaryPane(paneId) && settingsStore.showGitStatus && settingsStore.showScmPanel}
         <ScmPanel />
       {/if}
       <FileList explorer={paneExplorer} />

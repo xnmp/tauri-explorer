@@ -46,24 +46,39 @@ export interface ExplorerCoreState {
   selectionAnchorIndex: number | null;
 }
 
-/** Pane identifiers for dual pane layout */
-export type PaneId = "left" | "right";
+/**
+ * Pane identifier: the id of a leaf in a tab's pane layout tree (#228).
+ * Opaque — pane-scoped components pass it through to the manager.
+ */
+export type PaneId = string;
 
 /**
- * A single tab within a pane's tab strip, as a tagged union (#56) so panes
- * can host non-explorer content later (git graph, settings, diff-only, …).
- * Today only the explorer kind exists; `GitGraphTab` is the first planned
- * non-explorer kind (#51) and renders a placeholder until #58 lands.
+ * A window-level tab, as a tagged union (#56) so tabs can host
+ * non-explorer content (git graph, settings, diff-only, …).
  */
-export type PaneTab = ExplorerTab | GitGraphTab;
+export type WindowTab = ExplorerTab | GitGraphTab;
 
-/** A filesystem explorer view — references its explorer instance by ID. */
+/** @deprecated alias kept from the per-pane-tabs era (#140). */
+export type PaneTab = WindowTab;
+
+/** A pane within an explorer tab: references its explorer instance by ID.
+ *  `path` is the creation/restore path; the live path comes from the
+ *  explorer instance. */
+export interface TabPane {
+  explorerId: string;
+  path: string;
+}
+
+/** A filesystem explorer tab owning a pane layout tree (#228). Leaf ids of
+ *  `layout` key into `panes`. */
 export interface ExplorerTab {
   id: string;
   kind: "explorer";
-  explorerId: string;
-  path: string;
-  title: string;
+  layout: import("$lib/domain/pane-layout").PaneNode;
+  panes: Record<PaneId, TabPane>;
+  activePaneId: PaneId;
+  /** Custom title — only multi-pane tabs can be renamed. */
+  name?: string;
 }
 
 /** A git history graph for a repository (#51). */
@@ -72,10 +87,4 @@ export interface GitGraphTab {
   kind: "git-graph";
   repoPath: string;
   title: string;
-}
-
-/** A pane's tab strip: its tabs and which one is active. */
-export interface PaneTabs {
-  tabs: PaneTab[];
-  activeTabId: string | null;
 }

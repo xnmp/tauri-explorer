@@ -1,11 +1,14 @@
 <!--
-  PaneTabBar component - VSCode-style tab strip owned by a single pane.
-  Issues: tauri-explorer-ldfx (window tabs), #140 (per-pane tabs)
+  WindowTabBar component - VSCode-style tab strip owned by the window (#228).
+  Issues: tauri-explorer-ldfx (window tabs), #228 (pane layout trees)
 
-  Each pane renders its own strip; a tab is a single explorer view.
-  Dragging a tab onto the other pane's strip moves it across panes.
+  The window renders one strip; a tab is an explorer view (with a pane
+  layout tree) or a git graph. Tabs drag to reorder, tear off into new
+  windows, or transfer to other windows. Multi-pane tabs can be renamed
+  (double-click) — renaming also saves the layout as a workspace.
 -->
 <script lang="ts">
+  import { tick } from "svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { getDropSourcePaths } from "$lib/state/drop-operations";
@@ -20,14 +23,11 @@
   import { openNewWindow } from "$lib/state/commands/shared";
   import { parentDir } from "$lib/domain/path";
   import { isCopyModifier } from "$lib/domain/platform";
-  import { showPaneTabBar } from "$lib/domain/titlebar";
+  import { showWindowTabBar } from "$lib/domain/titlebar";
   import type { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-  import type { PaneId } from "$lib/state/types";
 
-  const { paneId }: { paneId: PaneId } = $props();
-
-  const tabs = $derived(windowTabsManager.panes[paneId].tabs);
-  const activeTabId = $derived(windowTabsManager.panes[paneId].activeTabId);
+  const tabs = $derived(windowTabsManager.tabs);
+  const activeTabId = $derived(windowTabsManager.activeTabId);
 
   // When "git root in tab title" is on, resolve each tab's repo root (cached in
   // the manager). Runs here because the async work needs a component owner; the
@@ -41,11 +41,15 @@
   });
 
   const showTabArea = $derived(
-    showPaneTabBar(tabs.length, windowTabsManager.dualPaneEnabled),
+    showWindowTabBar(
+      tabs.length,
+      windowTabsManager.activeTab?.kind === "explorer" &&
+        windowTabsManager.canRenameTab(windowTabsManager.activeTab.id),
+    ),
   );
 
   // Track tab IDs that existed on first render to skip entrance animation.
-  // Initialized lazily on the first render pass so it sees the pane's
+  // Initialized lazily on the first render pass so it sees the window's
   // then-current tabs without touching reactive state at setup time.
   let knownTabIds: Set<string> | null = null;
 
@@ -54,7 +58,7 @@
 
   function isNewTab(tabId: string): boolean {
     if (!knownTabIds) {
-      knownTabIds = new Set(windowTabsManager.panes[paneId].tabs.map((t) => t.id));
+      knownTabIds = new Set(windowTabsManager.tabs.map((t) => t.id));
     }
     if (knownTabIds.has(tabId)) return false;
     knownTabIds.add(tabId);
@@ -87,7 +91,7 @@
   }
 
   function handleNewTab(): void {
-    windowTabsManager.createTabIn(paneId);
+    windowTabsManager.createTab();
   }
 
   function handleTabKeydown(event: KeyboardEvent, tabId: string): void {
@@ -95,15 +99,54 @@
       event.preventDefault();
       windowTabsManager.setActiveTab(tabId);
     }
+    if (event.key === "F2") {
+      event.preventDefault();
+      startRename(tabId);
+    }
+  }
+
+  // ── Inline rename (#228): multi-pane tabs only ──
+  let renamingTabId = $state<string | null>(null);
+  let renameValue = $state("");
+
+  function startRename(tabId: string): void {
+    if (!windowTabsManager.canRenameTab(tabId)) return;
+    const tab = tabs.find((t) => t.id === tabId);
+    if (!tab) return;
+    renamingTabId = tabId;
+    renameValue = windowTabsManager.getTabTitle(tab);
+    void tick().then(() => {
+      const input = document.querySelector<HTMLInputElement>(".tab-rename-input");
+      input?.focus();
+      input?.select();
+    });
+  }
+
+  function commitRename(): void {
+    if (renamingTabId) {
+      windowTabsManager.renameTab(renamingTabId, renameValue);
+    }
+    renamingTabId = null;
+  }
+
+  function handleRenameKeydown(event: KeyboardEvent): void {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commitRename();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      renamingTabId = null;
+    }
+    event.stopPropagation();
   }
 
   // Tab drag is POINTER-based (not HTML5): HTML5 drag events never reach another
   // Tauri webview, force a "no-drop" cursor, and hide the drag image outside the
   // window. Pointer events with implicit mouse capture keep firing (with screen
   // coordinates) even over other windows / the desktop, so we render our own
-  // ghost, reorder within the strip, move across panes, hand the tab off to
-  // whichever window the cursor is over, or tear off a new window AT the
-  // cursor. File drops ONTO a tab still use the HTML5/native path further below.
+  // ghost, reorder within the strip, hand the tab off to whichever window the
+  // cursor is over, or tear off a new window AT the cursor. File drops ONTO a
+  // tab still use the HTML5/native path further below.
   let dropTargetTabId = $state<string | null>(null);
   let fileDropTargetTabId = $state<string | null>(null);
   let draggingTabId = $state<string | null>(null);
@@ -129,6 +172,7 @@
   function handleTabMouseDown(event: MouseEvent, tabId: string): void {
     if (event.button !== 0) return;
     if ((event.target as HTMLElement).closest(".tab-close")) return; // close btn owns its clicks
+    if (renamingTabId === tabId) return; // rename input owns the pointer
     tabPtr = {
       tabId,
       startX: event.clientX,
@@ -163,10 +207,9 @@
     return el?.getAttribute("data-tab-id") ?? null;
   }
 
-  /** Which pane's tab strip (if any) is under the point. */
-  function paneAreaAtPoint(x: number, y: number): PaneId | null {
-    const area = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest?.(".tab-area");
-    return (area?.getAttribute("data-pane-id") as PaneId | null) ?? null;
+  /** Whether the window's tab strip is under the point. */
+  function tabAreaAtPoint(x: number, y: number): boolean {
+    return !!(document.elementFromPoint(x, y) as HTMLElement | null)?.closest?.(".tab-area");
   }
 
   function onTabMouseMove(event: MouseEvent): void {
@@ -198,7 +241,7 @@
     // browser E2E environment keeps the ghost-until-release behavior).
     if (
       isTauri &&
-      paneAreaAtPoint(event.clientX, event.clientY) === null &&
+      !tabAreaAtPoint(event.clientX, event.clientY) &&
       Math.abs(event.clientY - tabPtr.startY) > DETACH_THRESHOLD_PX
     ) {
       void detachIntoWindow(event);
@@ -306,21 +349,13 @@
     tabDragState.clear();
     if (!pending || pending.sourceWindow !== windowTabsManager.windowLabel) return;
 
-    // 1) Released over a tab strip in THIS window → reorder (same pane) or
-    //    move across panes (the other pane's strip).
-    const targetPaneId = paneAreaAtPoint(event.clientX, event.clientY);
-    if (targetPaneId) {
+    // 1) Released over the tab strip in THIS window → reorder.
+    if (tabAreaAtPoint(event.clientX, event.clientY)) {
       const overId = tabAtPoint(event.clientX, event.clientY);
-      if (targetPaneId === paneId) {
-        if (overId && overId !== ptr.tabId) {
-          const from = tabs.findIndex((t) => t.id === ptr.tabId);
-          const to = tabs.findIndex((t) => t.id === overId);
-          if (from >= 0 && to >= 0) windowTabsManager.reorderTabs(paneId, from, to);
-        }
-      } else {
-        const targetTabs = windowTabsManager.panes[targetPaneId].tabs;
-        const at = overId ? targetTabs.findIndex((t) => t.id === overId) : undefined;
-        windowTabsManager.moveTabToPane(ptr.tabId, targetPaneId, at === -1 ? undefined : at);
+      if (overId && overId !== ptr.tabId) {
+        const from = tabs.findIndex((t) => t.id === ptr.tabId);
+        const to = tabs.findIndex((t) => t.id === overId);
+        if (from >= 0 && to >= 0) windowTabsManager.reorderTabs(from, to);
       }
       return;
     }
@@ -342,7 +377,7 @@
       });
       windowTabsManager.removeTransferredTab(pending.tabId);
     }
-    // Released over our own window (but not a tab strip) → no-op.
+    // Released over our own window (but not the tab strip) → no-op.
   }
 
   function onTabDragKey(event: KeyboardEvent): void {
@@ -417,11 +452,7 @@
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <!-- Drag handlers only — keyboard interaction lives on the tabs. -->
   <!-- svelte-ignore a11y_interactive_supports_focus -->
-  <div
-    class="tab-area"
-    role="tablist"
-    data-pane-id={paneId}
-  >
+  <div class="tab-area" role="tablist">
     {#each tabs as tab (tab.id)}
       {@const display = windowTabsManager.getTabDisplay(tab)}
       <div
@@ -438,6 +469,7 @@
         data-tab-id={tab.id}
         onmousedown={(e) => handleTabMouseDown(e, tab.id)}
         onclick={() => { if (suppressNextClick) { suppressNextClick = false; return; } handleTabClick(tab.id); }}
+        ondblclick={() => startRename(tab.id)}
         onkeydown={(e) => handleTabKeydown(e, tab.id)}
         onauxclick={(e) => handleTabMiddleClick(e, tab.id)}
         title={windowTabsManager.getTabTooltip(tab)}
@@ -484,15 +516,29 @@
             />
           </svg>
         {/if}
-        <span class="tab-title">
-          {#if display.repo}
-            <!-- Repo name shrinks/ellipsizes first; the current folder stays
-                 visible as long as possible (full path is in the tooltip). -->
-            <span class="tab-repo">{display.repo}</span>
-            <span class="tab-sep" aria-hidden="true">›</span>
-          {/if}
-          <span class="tab-cwd">{display.name}</span>
-        </span>
+        {#if renamingTabId === tab.id}
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            class="tab-rename-input"
+            type="text"
+            bind:value={renameValue}
+            onkeydown={handleRenameKeydown}
+            onblur={commitRename}
+            onmousedown={(e) => e.stopPropagation()}
+            onclick={(e) => e.stopPropagation()}
+            aria-label="Rename tab"
+          />
+        {:else}
+          <span class="tab-title">
+            {#if display.repo}
+              <!-- Repo name shrinks/ellipsizes first; the current folder stays
+                   visible as long as possible (full path is in the tooltip). -->
+              <span class="tab-repo">{display.repo}</span>
+              <span class="tab-sep" aria-hidden="true">›</span>
+            {/if}
+            <span class="tab-cwd">{display.name}</span>
+          </span>
+        {/if}
         <button
           class="tab-close"
           onclick={(e) => handleTabClose(e, tab.id)}
@@ -786,6 +832,18 @@
     overflow: hidden;
     white-space: nowrap;
     transition: color var(--transition-fast);
+  }
+
+  .tab-rename-input {
+    width: 130px;
+    padding: 2px 6px;
+    background: var(--control-fill, rgba(0, 0, 0, 0.2));
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 12px;
+    color: var(--text-primary);
+    outline: none;
   }
 
   /* Repo name is context: dimmed, and it's the first thing to shrink/ellipsize

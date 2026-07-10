@@ -22,6 +22,7 @@ import {
   terminalCommands,
   generalDialogCommands,
 } from "./commands/general-commands";
+import { initWorkspaceOpenCommands } from "./commands/workspace-commands";
 
 /** Register all commands */
 export function registerAllCommands(): void {
@@ -45,6 +46,10 @@ export function registerAllCommands(): void {
 
   // Register commands with the command registry
   registerCommands(allCommands);
+
+  // Dynamic per-workspace open commands (#228) — kept in sync with the
+  // workspaces store.
+  initWorkspaceOpenCommands();
 
   // Register default shortcuts with the keybindings store
   const defaultShortcuts: Record<string, string> = {};

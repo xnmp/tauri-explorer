@@ -57,7 +57,7 @@
   const millerAsLeftIsland = $derived(
     settingsStore.macOsVibrancy && !settingsStore.showSidebar && settingsStore.millerLayers > 0
   );
-  const leftExplorer = $derived(windowTabsManager.getExplorer("left"));
+  const leftExplorer = $derived(windowTabsManager.getActiveExplorer());
 
   /** Convert a filesystem path to a URL usable in src/background-image. */
   function convertFileSrc(path: string): string {

@@ -30,7 +30,25 @@ export function useDropTarget(deps: DropTargetDeps) {
     copyDropTargets[entry.path] = copying;
   }
 
-  function handleDragLeave(entry: FileEntry): void {
+  function handleDragLeave(event: DragEvent, entry: FileEntry): void {
+    // dragenter/dragleave pair per ELEMENT, not per subtree: moving the
+    // cursor onto a child of the row fires dragleave on the row, and the
+    // next dragover re-highlights it — a blink on every small move (#242).
+    // Ignore leaves that stay inside the row: by relatedTarget when the
+    // engine provides it, by coordinates otherwise (WebKit's dragleave
+    // relatedTarget is null).
+    const row = event.currentTarget as HTMLElement | null;
+    if (row) {
+      const related = event.relatedTarget as Node | null;
+      if (related && row.contains(related)) return;
+      if (!related && (event.clientX !== 0 || event.clientY !== 0)) {
+        const r = row.getBoundingClientRect();
+        if (
+          event.clientX >= r.left && event.clientX < r.right &&
+          event.clientY >= r.top && event.clientY < r.bottom
+        ) return;
+      }
+    }
     dropTargets[entry.path] = false;
     copyDropTargets[entry.path] = false;
   }

@@ -81,9 +81,9 @@
   {:else}
     <span class="icon-cat linked-folder">
       <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
-        <path d="M2 14C2 11.79 3.79 10 6 10H14.34C15.4 10 16.42 10.42 17.17 11.17L20 14H42C44.21 14 46 15.79 46 18V37C46 39.21 44.21 41 42 41H6C3.79 41 2 39.21 2 37V14Z" fill="currentColor" opacity="0.85"/>
-        <path d="M2 22C2 20.34 3.34 19 5 19H43C44.66 19 46 20.34 46 22V39C46 40.66 44.66 42 43 42H5C3.34 42 2 40.66 2 39V22Z" fill="currentColor"/>
-        <path d="M18 33L30 21M30 21H21M30 21V30" stroke="var(--icon-link-arrow, #fff)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M2 10C2 7.2 3.79 5 6 5H14.34C15.4 5 16.42 5.5 17.17 6.5L20 10H42C44.21 10 46 12.2 46 15V38.75C46 41.5 44.21 43.75 42 43.75H6C3.79 43.75 2 41.5 2 38.75V10Z" fill="currentColor" opacity="0.85"/>
+        <path d="M2 20C2 17.9 3.34 16.25 5 16.25H43C44.66 16.25 46 17.9 46 20V41.25C46 43.3 44.66 45 43 45H5C3.34 45 2 43.3 2 41.25V20Z" fill="currentColor"/>
+        <path d="M18 34L30 22M30 22H21M30 22V31" stroke="var(--icon-link-arrow, #fff)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
     </span>
   {/if}
@@ -119,8 +119,8 @@
   -->
   {#if entry.kind === "directory"}
     <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
-      <path d="M5 18H43V38C43 39.66 41.66 41 40 41H8C6.34 41 5 39.66 5 38V18Z" stroke="currentColor" stroke-width="1.5" fill="none"/>
-      <path d="M5 14C5 12.34 6.34 11 8 11H17L21 15H40C41.66 15 43 16.34 43 18" stroke="currentColor" stroke-width="1.5" fill="none"/>
+      <path d="M5 15H43V40C43 42.1 41.66 43.75 40 43.75H8C6.34 43.75 5 42.1 5 40V15Z" stroke="currentColor" stroke-width="1.5" fill="none"/>
+      <path d="M5 10C5 7.9 6.34 6.25 8 6.25H17L21 11.25H40C41.66 11.25 43 12.9 43 15" stroke="currentColor" stroke-width="1.5" fill="none"/>
     </svg>
   {:else}
     <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
@@ -224,11 +224,13 @@
     Large icons: 64x64 element, 48x48 viewBox (tiles view)
   -->
   {#if entry.kind === "directory"}
+    <!-- Taller silhouette (y 5–45, ~4:3.5) so tile folders read the same
+         visual size as square image thumbnails (#264). -->
     <svg class="folder-large" width="64" height="64" viewBox="0 0 48 48" fill="none">
-      <path d="M2 14C2 11.79 3.79 10 6 10H14.34C15.4 10 16.42 10.42 17.17 11.17L20 14H42C44.21 14 46 15.79 46 18V37C46 39.21 44.21 41 42 41H6C3.79 41 2 39.21 2 37V14Z" fill="var(--icon-folder, #e8a800)" opacity="0.85"/>
-      <rect x="2" y="18" width="44" height="2" fill="var(--icon-folder, #e8a800)" opacity="0.2" rx="0.5"/>
-      <path d="M2 22C2 20.34 3.34 19 5 19H43C44.66 19 46 20.34 46 22V39C46 40.66 44.66 42 43 42H5C3.34 42 2 40.66 2 39V22Z" fill="var(--icon-folder, #f0b400)"/>
-      <path d="M2 22C2 20.34 3.34 19 5 19H43C44.66 19 46 20.34 46 22V23H2V22Z" fill="white" opacity="0.25"/>
+      <path d="M2 10C2 7.2 3.79 5 6 5H14.34C15.4 5 16.42 5.5 17.17 6.5L20 10H42C44.21 10 46 12.2 46 15V38.75C46 41.5 44.21 43.75 42 43.75H6C3.79 43.75 2 41.5 2 38.75V10Z" fill="var(--icon-folder, #e8a800)" opacity="0.85"/>
+      <rect x="2" y="15" width="44" height="2.5" fill="var(--icon-folder, #e8a800)" opacity="0.2" rx="0.5"/>
+      <path d="M2 20C2 17.9 3.34 16.25 5 16.25H43C44.66 16.25 46 17.9 46 20V41.25C46 43.3 44.66 45 43 45H5C3.34 45 2 43.3 2 41.25V20Z" fill="var(--icon-folder, #f0b400)"/>
+      <path d="M2 20C2 17.9 3.34 16.25 5 16.25H43C44.66 16.25 46 17.9 46 20V21.25H2V20Z" fill="white" opacity="0.25"/>
     </svg>
   {:else if iconCategory === "image"}
     <span class="icon-cat icon-image">

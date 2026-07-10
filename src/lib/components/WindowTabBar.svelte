@@ -785,6 +785,12 @@
     background:
       radial-gradient(
         circle var(--fillet) at 0 0,
+        transparent calc(var(--fillet) - 1.5px),
+        var(--surface-stroke) calc(var(--fillet) - 0.75px),
+        transparent calc(var(--fillet) + 0.5px)
+      ),
+      radial-gradient(
+        circle var(--fillet) at 0 0,
         transparent calc(var(--fillet) - 0.5px),
         var(--background-card) var(--fillet)
       ),
@@ -798,6 +804,12 @@
   .tab-fillet.right {
     right: calc(-1 * var(--fillet));
     background:
+      radial-gradient(
+        circle var(--fillet) at 100% 0,
+        transparent calc(var(--fillet) - 1.5px),
+        var(--surface-stroke) calc(var(--fillet) - 0.75px),
+        transparent calc(var(--fillet) + 0.5px)
+      ),
       radial-gradient(
         circle var(--fillet) at 100% 0,
         transparent calc(var(--fillet) - 0.5px),

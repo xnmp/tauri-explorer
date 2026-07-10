@@ -1619,3 +1619,22 @@ clearing staged, amend folding).
   agent-browser CLI invocations are >1.5s apart, so the chord always
   expires — it looks like the feature is broken when it isn't. Assert chord
   behavior in Playwright, not via the CLI.
+
+## 2026-07-10 fix/theme-switch-consistency (#251, #164): theme commit reverted itself
+
+- **Never mutate global state from an `$effect` teardown.** ThemePicker's
+  open-effect returned `() => themeStore.previewTheme(themeStore.currentThemeId)`
+  to revert un-committed previews. On commit the teardown fired with a STALE
+  `currentThemeId` (the pre-commit theme) and reverted the freshly-committed
+  `data-theme` — while `settingsStore.theme` kept the new value. Symptoms:
+  themes needed two attempts, and the terminal (keyed on settings) switched
+  "independently". Fix: do the revert in the effect BODY on the close branch
+  (fresh reads), with `untrack()` around store reads so committing (which
+  mutates `currentThemeId`) can't re-trigger the session-init effect.
+- **Diagnose DOM-attribute fights by proxying `setAttribute` with a stack
+  trace** (`window.__trace` + `new Error().stack`) — one repro run pinpointed
+  the exact effect frame (`execute_effect_teardown`) doing the revert.
+- **Imperative repaint consumers should key on the PAINTED theme, not the
+  persisted setting.** themeStore now exposes `appliedThemeId` (updated by
+  applyTheme, i.e. also during picker live-previews); TerminalPanel re-themes
+  from it, so xterm follows previews and can never drift from the DOM.

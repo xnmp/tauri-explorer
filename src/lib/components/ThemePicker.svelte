@@ -4,7 +4,7 @@
   Enter commits and persists it; Escape reverts to the previously-active theme.
 -->
 <script lang="ts">
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import { themeStore } from "$lib/state/theme.svelte";
 
   interface Props {
@@ -30,20 +30,33 @@
     );
   });
 
+  // Tracks an open picker session so the close branch below only fires for a
+  // session that actually started. Plain let — only read/written in the effect.
+  let pickerSession = false;
+
   $effect(() => {
     if (open && inputRef) {
-      originalThemeId = themeStore.currentThemeId;
+      pickerSession = true;
+      // untrack: session init must not re-run when the theme store changes
+      // mid-session (committing a theme mutates currentThemeId while the
+      // picker is still open).
+      originalThemeId = untrack(() => themeStore.currentThemeId);
       query = "";
       // Start selection at the currently-active theme so arrowing moves
       // relative to the user's current choice.
-      const idx = themeStore.availableThemes.findIndex((t) => t.id === originalThemeId);
+      const idx = untrack(() => themeStore.availableThemes).findIndex((t) => t.id === originalThemeId);
       selectedIndex = idx >= 0 ? idx : 0;
       mouseMoved = false;
       tick().then(() => { inputRef?.focus(); scrollToSelected(); });
+    } else if (!open && pickerSession) {
+      pickerSession = false;
       // Revert any un-committed preview on every close path (Escape, click
       // outside, or the parent flipping `open` externally). After a commit,
       // currentThemeId is the newly-set theme, so re-applying it is a no-op.
-      return () => themeStore.previewTheme(themeStore.currentThemeId);
+      // Must run in the effect BODY, not a teardown: the teardown variant
+      // observed a stale currentThemeId and reverted the committed theme,
+      // making theme switches need two attempts (#251, #164).
+      themeStore.previewTheme(untrack(() => themeStore.currentThemeId));
     }
   });
 

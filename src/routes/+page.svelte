@@ -6,6 +6,7 @@
   import "@fontsource-variable/inter";
   import { onMount } from "svelte";
   import { installGlobalErrorHandlers } from "$lib/api/crash";
+  import { isShellReservedKey } from "$lib/domain/terminal-keys";
   import { themeStore } from "$lib/state/theme.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
@@ -163,8 +164,19 @@
 
     // Skip shortcut handling (including hardcoded shortcuts below) if in an
     // input field or a modal dialog is open — e.g. Ctrl+J while typing in a
-    // rename input must not open the jobs panel.
-    if (isInputField || dialogStore.hasModalOpen) {
+    // rename input must not open the jobs panel. The embedded terminal is an
+    // exception: xterm focuses a hidden textarea, but app shortcuts must keep
+    // working there (#249) — the shell keeps its own keys via the
+    // isShellReservedKey gate below.
+    const isTerminalFocus = !!target.closest?.(".terminal-panel");
+    if ((isInputField && !isTerminalFocus) || dialogStore.hasModalOpen) {
+      return;
+    }
+
+    // While the terminal is focused the shell owns typing and single-Ctrl
+    // combos (readline, Ctrl+C interrupt…); only app-shortcut-shaped combos
+    // and pending chord suffixes fall through to command matching (#249).
+    if (isTerminalFocus && isShellReservedKey(event) && !keybindingsStore.isChordActive) {
       return;
     }
 

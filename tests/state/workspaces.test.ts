@@ -1,7 +1,7 @@
 /**
  * Tests for the workspaces store (#228): saving named tab layouts,
- * update-on-same-name, rename/delete, and change notification (which
- * drives the palette's dynamic "Workspaces: Open …" commands).
+ * update-on-same-name, rename/delete, and persistence. The palette's
+ * "Workspaces: Open..." picker (#229) reads the list at open time.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -55,21 +55,6 @@ describe("workspacesStore", () => {
 
     workspacesStore.remove(ws.id);
     expect(workspacesStore.count).toBe(0);
-  });
-
-  it("notifies subscribers on save, rename, and remove", () => {
-    const events: number[] = [];
-    const unsubscribe = workspacesStore.subscribe(() => events.push(workspacesStore.count));
-
-    const ws = workspacesStore.save("Notify", sampleState());
-    workspacesStore.rename(ws.id, "Renamed");
-    workspacesStore.remove(ws.id);
-
-    expect(events).toEqual([1, 1, 0]);
-    unsubscribe();
-
-    workspacesStore.save("After", sampleState());
-    expect(events).toEqual([1, 1, 0]); // no event after unsubscribe
   });
 
   it("persists across store reloads via localStorage", () => {

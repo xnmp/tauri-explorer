@@ -148,8 +148,9 @@
     flex-shrink: 0;
     padding: 1px 6px;
     border-radius: 4px;
-    border: 1px solid var(--border-color, #ccc);
-    background: var(--background-secondary, #f5f5f5);
+    border: 1px solid var(--control-stroke);
+    background: var(--subtle-fill-tertiary);
+    color: var(--text-secondary);
     font-family: inherit;
     font-size: 11px;
   }

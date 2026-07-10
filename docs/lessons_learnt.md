@@ -1498,3 +1498,15 @@ clearing staged, amend folding).
   (`resolveDownloads()` in `website/app.js`), keeping the version-built URLs
   only as an offline/rate-limit fallback, and refreshes baked-in anchor
   `href`s from the live map at click time via a `data-dl` delegate.
+
+## 2026-07-10 fix/shortcut-menu-badges (#240): white kbd badges on dark themes
+
+- **A `var(--foo, light-fallback)` with an undefined variable renders the
+  light fallback on every theme.** `ShortcutCheatsheet`, `PickerQuickOpen`,
+  and `CrashNotice` styled controls with `--background-secondary` /
+  `--border-color` / `--accent-color`, none of which any theme defines, so
+  the `#f5f5f5`/`#ccc` fallbacks painted white chips on dark themes. Use the
+  real theme tokens (`--subtle-fill-tertiary`, `--control-fill`,
+  `--control-stroke`, `--accent`) and avoid hardcoded fallbacks that mask a
+  missing token — grep for the var name across `src/lib/themes/` before
+  introducing one.

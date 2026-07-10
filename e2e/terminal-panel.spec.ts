@@ -37,6 +37,24 @@ test.describe("Terminal panel", () => {
     await expect(panel).toBeVisible();
   });
 
+  test("Alt+M T chord toggles the panel, not just opens it (#250)", async ({ page }) => {
+    await expect(page.locator(".terminal-panel")).toHaveCount(0);
+
+    await page.keyboard.press("Alt+m");
+    await page.keyboard.press("t");
+    const panel = page.locator(".terminal-panel");
+    await expect(panel).toBeVisible({ timeout: 5000 });
+
+    // Pressing the chord again hides the panel (session stays mounted).
+    // Focus back on the file list first — shortcuts while the terminal
+    // itself is focused are issue #249's scope.
+    await page.locator(".file-list").first().click();
+    await page.keyboard.press("Alt+m");
+    await page.keyboard.press("t");
+    await expect(panel).toBeHidden();
+    await expect(panel).toBeAttached();
+  });
+
   test("panel background follows the app theme", async ({ page }) => {
     await page.keyboard.press("Control+`");
     const panel = page.locator(".terminal-panel");

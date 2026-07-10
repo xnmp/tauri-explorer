@@ -227,15 +227,16 @@ export const workspaceCommands: Command[] = [
 export const terminalCommands: Command[] = [
   {
     id: "general.openTerminal",
-    label: "Open Terminal Here",
+    label: "Terminal Here",
     category: "general",
     shortcut: "Alt+M T",
     handler: () => {
       // With the integrated terminal enabled, "here" means the embedded panel
-      // (it starts in the active explorer's directory); otherwise fall back
-      // to the external terminal app (#237).
+      // (it starts in the active explorer's directory) and the shortcut
+      // toggles it like Ctrl+` (#250); otherwise fall back to the external
+      // terminal app (#237).
       if (settingsStore.enableTerminal) {
-        terminalPanelStore.open();
+        terminalPanelStore.toggle();
         return;
       }
       const explorer = getActiveExplorer();

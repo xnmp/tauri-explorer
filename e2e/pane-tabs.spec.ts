@@ -36,10 +36,11 @@ test.describe("Window tabs with panes", () => {
     await expect(page.locator(".tab .tab-cwd")).toHaveText("user | home");
   });
 
-  test("directional split creates a third pane (Ctrl+Alt+; = split down)", async ({ page }) => {
+  test("directional split creates a third pane (Super+Alt+; = split down)", async ({ page }) => {
     await openDualPane(page);
 
-    await page.keyboard.press("Control+Alt+Semicolon");
+    // Default moved from Ctrl+Alt to Cmd/Super+Alt in #239.
+    await page.keyboard.press("Meta+Alt+Semicolon");
 
     await expect(panes(page)).toHaveCount(3);
     // The new pane duplicated the focused pane's directory and is browsable.

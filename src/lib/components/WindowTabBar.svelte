@@ -701,9 +701,10 @@
     border-color: var(--surface-stroke);
   }
 
-  /* The active tab is fused to the pane — hover must not lift or restyle it. */
+  /* The active tab is fused to the pane — hover must not lift or restyle it.
+     No background override: .tab:hover doesn't set one, and redeclaring it
+     here would drop the hairline stroke layers from .tab.active. */
   .tab.active:hover {
-    background: linear-gradient(var(--background-card), var(--background-card)), var(--background-solid);
     color: var(--text-primary);
     transform: none;
   }
@@ -735,23 +736,32 @@
   }
 
   .tab.active {
+    --fillet: 14px;
     /* --background-card is translucent in every theme; painted straight over
        the titlebar's own card layer it composites into a DIFFERENT color
        than the pane below (and reads as see-through, #243). Layering it
        over --background-solid reproduces the pane's effective surface
        opaquely, so the tab both fuses with the pane and stands apart from
-       inactive tabs. */
-    background: linear-gradient(var(--background-card), var(--background-card)), var(--background-solid);
+       inactive tabs.
+       The top two layers are the hairline side strokes (#243): drawn as
+       background strips rather than an inset box-shadow so they can END at
+       the fillet tangent point, --fillet above the base — a full-height
+       stroke would cut a chord through the fillet's flare curve, doubling
+       the hairline at the bottom corners (#268). The fillet's own ring
+       continues the stroke tangentially from there. */
+    background:
+      linear-gradient(var(--surface-stroke), var(--surface-stroke)) left top /
+        1px calc(100% - var(--fillet)) no-repeat,
+      linear-gradient(var(--surface-stroke), var(--surface-stroke)) right top /
+        1px calc(100% - var(--fillet)) no-repeat,
+      linear-gradient(var(--background-card), var(--background-card)),
+      var(--background-solid);
     color: var(--text-primary);
     font-weight: var(--font-weight-semibold);
     border-top: 2px solid var(--accent);
     /* No lift and no drop shadow: the tab's base must FUSE with the pane
        surface below it (Chrome-style) — any translateY or shadow reads as
-       a seam at the junction. Hairline side strokes separate it from
-       neighbouring inactive tabs on low-contrast themes (#243). */
-    box-shadow:
-      inset 1px 0 0 var(--surface-stroke),
-      inset -1px 0 0 var(--surface-stroke);
+       a seam at the junction. */
     transform: none;
     z-index: 2;
     opacity: 1;
@@ -767,8 +777,9 @@
      outer corner — so the tab's vertical edge bends smoothly outward and
      meets the pane tangentially instead of at 90°. z-index above the
      strip's baseline ::after so the line terminates AT the curve. */
+  /* --fillet is inherited from .tab.active, which uses it to end its side
+     hairlines at the tangent point. */
   .tab-fillet {
-    --fillet: 14px;
     position: absolute;
     bottom: 0;
     width: var(--fillet);

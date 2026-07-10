@@ -5,10 +5,10 @@
 -->
 <script lang="ts">
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { tick, onMount } from "svelte";
+  import { tick } from "svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { getHomeDirectory } from "$lib/api/files";
+  import { homeDirectory } from "$lib/state/home.svelte";
   import { getDropSourcePaths, handleFileDropMany } from "$lib/state/drop-operations";
   import { truncateBreadcrumbs } from "$lib/domain/breadcrumb-truncation";
   import { isWslDistroRoot, isWslHome } from "$lib/domain/wsl";
@@ -24,13 +24,10 @@
 
   let { explorer }: Props = $props();
 
-  // Home directory detection for breadcrumb collapsing
-  let homeDir = $state<string | null>(null);
-
-  onMount(async () => {
-    const result = await getHomeDirectory();
-    if (result.ok) homeDir = result.data;
-  });
+  // Home directory detection for breadcrumb collapsing. Read from the shared
+  // app-wide cache so a freshly mounted bar (new tab / tab switch) collapses
+  // the home prefix on first paint instead of flashing the raw path (#233).
+  const homeDir = $derived(homeDirectory.value);
 
   const homeParts = $derived(homeDir ? homeDir.split(/[/\\]/).filter(Boolean) : []);
 

@@ -435,10 +435,9 @@
         {@const tree = buildTree(opts.rows)}
         {@render treeNode(tree, 0, opts.kind)}
       {:else}
-      <ul class="row-list" role="list">
+      <ul class="row-list" role="listbox" aria-label="{opts.kind} files">
         {#each opts.rows as row (row.path)}
           {@const parts = splitPath(row.path)}
-          <!-- svelte-ignore a11y_click_events_have_key_events -->
           <li
             class="row"
             class:selected={scmStore.selectedPath === row.path}
@@ -448,7 +447,8 @@
             tabindex="0"
             onclick={() => { scmStore.setSelected(row.path); scmStore.openDiff(row.path, opts.kind === 'staged'); settingsStore.openPreviewPane(); }}
             onkeydown={(e) => { if (e.key === 'Enter') { scmStore.setSelected(row.path); scmStore.openDiff(row.path, opts.kind === 'staged'); settingsStore.openPreviewPane(); } }}
-            role="listitem"
+            role="option"
+            aria-selected={scmStore.selectedPath === row.path}
             title={row.path}
           >
             <span class="file-name">{parts.name}</span>
@@ -463,7 +463,7 @@
                   title="Unstage"
                   aria-label="Unstage {row.path}"
                   onclick={(e) => { e.stopPropagation(); scmStore.unstage([row.path]); }}
-                >−</button>
+                >{@render actionIcon("unstage")}</button>
               {:else if opts.kind === "merge"}
                 <button
                   type="button"
@@ -471,15 +471,15 @@
                   title="Stage"
                   aria-label="Stage {row.path}"
                   onclick={(e) => { e.stopPropagation(); scmStore.stage([row.path]); }}
-                >+</button>
+                >{@render actionIcon("stage")}</button>
               {:else}
                 <button
                   type="button"
-                  class="row-btn"
+                  class="row-btn destructive"
                   title={opts.kind === "untracked" ? "Remove file" : "Discard changes"}
                   aria-label={opts.kind === "untracked" ? `Remove ${row.path}` : `Discard ${row.path}`}
                   onclick={(e) => { e.stopPropagation(); onDiscard(row, opts.kind === "untracked"); }}
-                >↺</button>
+                >{@render actionIcon("discard")}</button>
                 {#if opts.kind === "untracked"}
                   <button
                     type="button"
@@ -487,7 +487,7 @@
                     title="Add to .gitignore"
                     aria-label="Ignore {row.path}"
                     onclick={(e) => { e.stopPropagation(); onIgnore(row.path); }}
-                  >⊘</button>
+                  >{@render actionIcon("ignore")}</button>
                 {/if}
                 <button
                   type="button"
@@ -495,7 +495,7 @@
                   title="Stage"
                   aria-label="Stage {row.path}"
                   onclick={(e) => { e.stopPropagation(); scmStore.stage([row.path]); }}
-                >+</button>
+                >{@render actionIcon("stage")}</button>
               {/if}
             </span>
             <span class="status-letter {statusClass(row.status)}" aria-label={row.status}>
@@ -509,17 +509,39 @@
   </div>
 {/snippet}
 
+<!-- Row action icons as SVGs: the previous text glyphs (− + ↺ ⊘) rendered at
+     inconsistent sizes because their font metrics differ wildly at the same
+     font-size — ↺ in particular drew visibly larger than the rest (#270). -->
+{#snippet actionIcon(kind: "stage" | "unstage" | "discard" | "ignore")}
+  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    {#if kind === "stage"}
+      <path d="M8 3.5v9M3.5 8h9" />
+    {:else if kind === "unstage"}
+      <path d="M3.5 8h9" />
+    {:else if kind === "discard"}
+      <path d="M6.5 3.5L3.5 6l3 2.5" />
+      <path d="M3.5 6h5a3.25 3.25 0 0 1 0 6.5H6.5" />
+    {:else}
+      <circle cx="8" cy="8" r="5" />
+      <path d="M4.7 4.7l6.6 6.6" />
+    {/if}
+  </svg>
+{/snippet}
+
 {#snippet treeNode(node: ScmTreeNode, depth: number, kind: "staged" | "changes" | "untracked" | "merge")}
-  <ul class="row-list tree-list" role="list" style="padding-left: {depth === 0 ? 4 : 0}px">
+  <ul class="row-list tree-list" role={depth === 0 ? "tree" : "group"} style="padding-left: {depth === 0 ? 4 : 0}px">
     {#each Array.from(node.children.values()) as child (child.fullDir)}
       {@const collapsed = collapsedFolders.has(child.fullDir)}
       {@const folderPaths = collectPaths(child)}
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
       <li
         class="row tree-folder"
         style="padding-left: {depth * 12 + 4}px"
+        tabindex="0"
         onclick={() => toggleFolder(child.fullDir)}
-        role="listitem"
+        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleFolder(child.fullDir); } }}
+        role="treeitem"
+        aria-expanded={!collapsed}
+        aria-selected="false"
       >
         {#each { length: depth } as _, i}
           <span class="depth-guide" style="left: {i * 12 + 10}px"></span>
@@ -531,21 +553,21 @@
         <span class="row-actions folder-actions">
           {#if kind === "staged"}
             <button type="button" class="row-btn" title="Unstage folder" aria-label="Unstage {child.name}"
-              onclick={(e) => { e.stopPropagation(); scmStore.unstage(folderPaths); }}>−</button>
+              onclick={(e) => { e.stopPropagation(); scmStore.unstage(folderPaths); }}>{@render actionIcon("unstage")}</button>
           {:else if kind === "merge"}
             <button type="button" class="row-btn" title="Stage folder" aria-label="Stage {child.name}"
-              onclick={(e) => { e.stopPropagation(); scmStore.stage(folderPaths); }}>+</button>
+              onclick={(e) => { e.stopPropagation(); scmStore.stage(folderPaths); }}>{@render actionIcon("stage")}</button>
           {:else}
-            <button type="button" class="row-btn"
+            <button type="button" class="row-btn destructive"
               title={kind === "untracked" ? "Remove folder" : "Discard folder changes"}
               aria-label={kind === "untracked" ? `Remove ${child.name}` : `Discard ${child.name}`}
-              onclick={(e) => { e.stopPropagation(); requestDiscard(folderPaths, kind === "untracked"); }}>↺</button>
+              onclick={(e) => { e.stopPropagation(); requestDiscard(folderPaths, kind === "untracked"); }}>{@render actionIcon("discard")}</button>
             {#if kind === "untracked"}
               <button type="button" class="row-btn" title="Add folder to .gitignore" aria-label="Ignore {child.name}"
-                onclick={(e) => { e.stopPropagation(); onIgnore(child.fullDir); }}>⊘</button>
+                onclick={(e) => { e.stopPropagation(); onIgnore(child.fullDir); }}>{@render actionIcon("ignore")}</button>
             {/if}
             <button type="button" class="row-btn" title="Stage folder" aria-label="Stage {child.name}"
-              onclick={(e) => { e.stopPropagation(); scmStore.stage(folderPaths); }}>+</button>
+              onclick={(e) => { e.stopPropagation(); scmStore.stage(folderPaths); }}>{@render actionIcon("stage")}</button>
           {/if}
         </span>
       </li>
@@ -555,7 +577,6 @@
     {/each}
     {#each node.files as row (row.path)}
       {@const fileName = basename(row.path)}
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
       <li
         class="row tree-file"
         class:selected={scmStore.selectedPath === row.path}
@@ -566,7 +587,8 @@
         tabindex="0"
         onclick={() => { scmStore.setSelected(row.path); scmStore.openDiff(row.path, kind === 'staged'); settingsStore.openPreviewPane(); }}
         onkeydown={(e) => { if (e.key === 'Enter') { scmStore.setSelected(row.path); scmStore.openDiff(row.path, kind === 'staged'); settingsStore.openPreviewPane(); } }}
-        role="listitem"
+        role="treeitem"
+        aria-selected={scmStore.selectedPath === row.path}
         title={row.path}
       >
         {#each { length: depth } as _, i}
@@ -576,21 +598,21 @@
         <span class="row-actions">
           {#if kind === "staged"}
             <button type="button" class="row-btn" title="Unstage" aria-label="Unstage {row.path}"
-              onclick={(e) => { e.stopPropagation(); scmStore.unstage([row.path]); }}>−</button>
+              onclick={(e) => { e.stopPropagation(); scmStore.unstage([row.path]); }}>{@render actionIcon("unstage")}</button>
           {:else if kind === "merge"}
             <button type="button" class="row-btn" title="Stage" aria-label="Stage {row.path}"
-              onclick={(e) => { e.stopPropagation(); scmStore.stage([row.path]); }}>+</button>
+              onclick={(e) => { e.stopPropagation(); scmStore.stage([row.path]); }}>{@render actionIcon("stage")}</button>
           {:else}
-            <button type="button" class="row-btn"
+            <button type="button" class="row-btn destructive"
               title={kind === "untracked" ? "Remove file" : "Discard changes"}
               aria-label={kind === "untracked" ? `Remove ${row.path}` : `Discard ${row.path}`}
-              onclick={(e) => { e.stopPropagation(); onDiscard(row, kind === "untracked"); }}>↺</button>
+              onclick={(e) => { e.stopPropagation(); onDiscard(row, kind === "untracked"); }}>{@render actionIcon("discard")}</button>
             {#if kind === "untracked"}
               <button type="button" class="row-btn" title="Add to .gitignore" aria-label="Ignore {row.path}"
-                onclick={(e) => { e.stopPropagation(); onIgnore(row.path); }}>⊘</button>
+                onclick={(e) => { e.stopPropagation(); onIgnore(row.path); }}>{@render actionIcon("ignore")}</button>
             {/if}
             <button type="button" class="row-btn" title="Stage" aria-label="Stage {row.path}"
-              onclick={(e) => { e.stopPropagation(); scmStore.stage([row.path]); }}>+</button>
+              onclick={(e) => { e.stopPropagation(); scmStore.stage([row.path]); }}>{@render actionIcon("stage")}</button>
           {/if}
         </span>
         <span class="status-letter {statusClass(row.status)}" aria-label={row.status}>
@@ -995,25 +1017,37 @@
 
   .row-btn {
     flex-shrink: 0;
-    width: 16px;
-    height: 16px;
+    width: 18px;
+    height: 18px;
     padding: 0;
     border: none;
     background: transparent;
     color: var(--text-secondary);
-    font-size: 13px;
     border-radius: 4px;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-family: inherit;
     line-height: 1;
-    transition: color var(--transition-fast);
+    transition:
+      color var(--transition-fast),
+      background-color var(--transition-fast);
   }
 
+  /* A color-only hover read as barely-there (#270): give the hovered button
+     a visible pill so it's obvious which action the cursor is on. */
   .row-btn:hover {
     color: var(--text-primary);
+    background: var(--control-fill-secondary, rgba(128, 128, 128, 0.22));
+  }
+
+  .row-btn:active {
+    background: var(--control-fill-tertiary, rgba(128, 128, 128, 0.32));
+  }
+
+  .row-btn.destructive:hover {
+    color: var(--error, #e5534b);
+    background: color-mix(in srgb, var(--error, #e5534b) 15%, transparent);
   }
 
   .clean-state {

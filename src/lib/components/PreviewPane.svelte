@@ -92,10 +92,75 @@
     resetZoom();
   }
 
+  /** Zoom keeping the image point under the cursor fixed (standard image-
+   *  viewer behavior). The transform is `translate(pan) scale(zoom)` around
+   *  the container center, so for a cursor at offset c from that center the
+   *  point stays put when pan' = c - (c - pan) * zoom'/zoom. */
+  let imageContainerEl = $state<HTMLElement | null>(null);
+
+  function zoomAtPoint(next: number, clientX: number, clientY: number): void {
+    const prev = zoom;
+    setZoom(next);
+    if (zoom === prev || zoom === 1 || !imageContainerEl) return;
+    const rect = imageContainerEl.getBoundingClientRect();
+    const cx = clientX - (rect.left + rect.width / 2);
+    const cy = clientY - (rect.top + rect.height / 2);
+    panX = cx - ((cx - panX) * zoom) / prev;
+    panY = cy - ((cy - panY) * zoom) / prev;
+  }
+
   function handleFullscreenWheel(event: WheelEvent): void {
-    if (!fullscreen || !event.ctrlKey) return;
+    if (!fullscreen) return;
     event.preventDefault();
-    setZoom(zoom * (event.deltaY < 0 ? 1.15 : 1 / 1.15));
+    const factor = event.deltaY < 0 ? 1.15 : 1 / 1.15;
+    zoomAtPoint(zoom * factor, event.clientX, event.clientY);
+  }
+
+  // --- Drag-to-pan while zoomed (#236) ---
+  let panning = $state(false);
+  let panMoved = false;
+  let lastPointerX = 0;
+  let lastPointerY = 0;
+
+  function handleImagePointerDown(event: PointerEvent): void {
+    if (!fullscreen || zoom <= 1 || event.button !== 0) return;
+    panning = true;
+    panMoved = false;
+    lastPointerX = event.clientX;
+    lastPointerY = event.clientY;
+    try {
+      (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    } catch {
+      // Pointer already released (or synthetic event) — pan still works, the
+      // capture is just a nicety for drags that leave the container.
+    }
+  }
+
+  function handleImagePointerMove(event: PointerEvent): void {
+    if (!panning) return;
+    const dx = event.clientX - lastPointerX;
+    const dy = event.clientY - lastPointerY;
+    if (Math.abs(dx) + Math.abs(dy) > 2) panMoved = true;
+    panX += dx;
+    panY += dy;
+    lastPointerX = event.clientX;
+    lastPointerY = event.clientY;
+  }
+
+  function handleImagePointerUp(): void {
+    panning = false;
+  }
+
+  /** Click toggles fullscreen only for a clean click at fit zoom — a drag
+   *  release or a click while zoomed must not exit. */
+  function handleImageClick(event: MouseEvent): void {
+    event.stopPropagation();
+    if (panMoved) {
+      panMoved = false;
+      return;
+    }
+    if (fullscreen && zoom > 1) return;
+    toggleFullscreen();
   }
 
   // While fullscreen: Esc exits; +/- and 0 zoom; arrows pan when zoomed,
@@ -634,9 +699,15 @@
         <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
         <div
           class="preview-image-container"
+          class:panning
+          bind:this={imageContainerEl}
           onwheel={handleFullscreenWheel}
-          onclick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
+          onclick={handleImageClick}
           ondblclick={(e) => e.stopPropagation()}
+          onpointerdown={handleImagePointerDown}
+          onpointermove={handleImagePointerMove}
+          onpointerup={handleImagePointerUp}
+          onpointercancel={handleImagePointerUp}
         >
           <img
             src={previewImageUrl}
@@ -644,6 +715,7 @@
             class="preview-image"
             class:zoomed={fullscreen && zoom > 1}
             style:transform={imageTransform}
+            draggable="false"
           />
           {#if fullscreen}
             <div class="fs-zoom-indicator">{Math.round(zoom * 100)}%</div>
@@ -725,10 +797,14 @@
     user-select: none;
   }
 
-  /* Fullscreen: cover the whole window (overrides the inline width). */
+  /* Fullscreen: cover the whole window (overrides the inline width). The
+     nested zoom cancels the root UI zoom — otherwise 100vw/100vh are laid out
+     pre-zoom and render zoom× the screen size, pushing the image off-center
+     and off-screen (#236). */
   .preview-pane.fullscreen {
     position: fixed;
     inset: 0;
+    zoom: calc(1 / var(--app-zoom, 1));
     width: 100vw !important;
     height: 100vh;
     z-index: 1000;
@@ -862,6 +938,10 @@
   .preview-pane.fullscreen .preview-image.zoomed {
     cursor: grab;
     transition: none;
+  }
+  .preview-pane.fullscreen .preview-image-container.panning,
+  .preview-pane.fullscreen .preview-image-container.panning .preview-image {
+    cursor: grabbing;
   }
 
   /* Hide the window tab bar / title bar while a preview is fullscreen. */

@@ -13,6 +13,7 @@ import { handleFileDropMany } from "$lib/state/drop-operations";
 import { isCopyModifier as isCopyMod } from "$lib/domain/platform";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
 import { parentDir, isInsideDir, samePath } from "$lib/domain/path";
+import { logFrontendError } from "$lib/api/crash";
 
 export interface NativeDropDeps {
   getActiveExplorer: () => ExplorerInstance | undefined;
@@ -32,6 +33,18 @@ export function useNativeDropHandler(deps: NativeDropDeps) {
 
     // Check both in-memory (same-window) and localStorage (cross-window) drag state
     const dragData = dragState.current ?? dragState.readCrossWindow();
+
+    // TEMP diagnostics for #253 (multi-file DnD "path not found"): persist the
+    // exact paths wry delivered vs the drag-state paths into the rotating log,
+    // so a real-app repro pinpoints which stage mangles them. Remove once
+    // #253 is diagnosed.
+    if (paths.length > 1 || dragData?.paths) {
+      void logFrontendError(
+        `[dnd-debug #253] drop wryPaths=${JSON.stringify(paths)} ` +
+        `dragPaths=${JSON.stringify(dragData?.paths ?? dragData?.path ?? null)} ` +
+        `target=${JSON.stringify(target)}`,
+      );
+    }
     const internalPaths = dragData?.paths
       ? dragData.paths
       : dragData?.path

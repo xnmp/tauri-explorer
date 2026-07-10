@@ -512,10 +512,15 @@ fn move_entry_impl(
     let dest_dir_path = PathBuf::from(&dest_dir);
 
     if !entry_exists(&source_path) {
+        // Debug-format the raw string: multi-file DnD reports "path not
+        // found" (#253) and any hidden characters (percent-encoding, CR/LF
+        // from uri-list parsing) must be visible in the log.
+        log::warn!("move_entry: source does not exist: {source:?} (dest_dir {dest_dir:?})");
         return Err(AppError::NotFound(source.clone()));
     }
 
     if !dest_dir_path.exists() {
+        log::warn!("move_entry: dest dir does not exist: {dest_dir:?} (source {source:?})");
         return Err(AppError::NotFound(format!(
             "Destination directory does not exist: {}",
             dest_dir

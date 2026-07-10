@@ -1473,6 +1473,21 @@ clearing staged, amend folding).
   the expansion shift down by the measured details height (bound via
   `clientHeight`), so polylines and vertices stay aligned with their rows.
 
+## 2026-07-10 fix/git-graph-crossing (#232): edge crossings smear when commit details are open
+
+- **A geometry constant tuned for one row height breaks when a row stretches.**
+  `branchPath` drew every lane change as one cubic between adjacent rows.
+  With commit details open, `RowExpand` makes that segment `rowHeight +
+  panelHeight` tall and the curve smears into a long diagonal across the
+  panel. Fix: when a segment's pixel span exceeds one row height, run
+  vertical through the stretch and curve only in the final row-height at the
+  destination. Symptom only reproduces with a row selected — screenshot
+  graph bugs in both collapsed and expanded states.
+- **Greedy leftmost lane claiming makes long edges staircase.** Intermediate
+  edge rows re-claimed the leftmost free lane each row, so edges drifted left
+  as neighboring branches ended. `claimPoint` now prefers the lane the line
+  already occupies while free, collapsing the crossing into the final row.
+
 ## 2026-07-10 fix/website-downloads-preview-tour (#230): dead download links
 
 - **Never hardcode a release version inside `releases/latest/download/<asset>`

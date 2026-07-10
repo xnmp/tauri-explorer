@@ -274,7 +274,14 @@ export function branchPath(
     const y1 = y(prev.row);
     const x2 = x(b.lane);
     const y2 = y(b.row);
-    path += ` C ${x1} ${(y1 + d).toFixed(1)} ${x2} ${(y2 - d).toFixed(1)} ${x2} ${y2.toFixed(1)}`;
+    // A row expansion (open commit details) can stretch this segment far
+    // beyond one row height. Stay vertical through the stretch and cross
+    // only in the final row-height, hugging the destination — otherwise the
+    // curve smears into a long diagonal across the expanded block.
+    const yCross = y2 - rowHeight;
+    if (yCross > y1 + 0.5) path += ` L ${x1} ${yCross.toFixed(1)}`;
+    const yStart = Math.max(y1, yCross);
+    path += ` C ${x1} ${(yStart + d).toFixed(1)} ${x2} ${(y2 - d).toFixed(1)} ${x2} ${y2.toFixed(1)}`;
     i++;
   }
   return path;

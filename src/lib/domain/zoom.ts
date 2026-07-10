@@ -75,41 +75,33 @@ export function getZoomFactor(): number {
 
 /**
  * Convert a mouse clientX/Y to a container-relative CSS coordinate.
- * Handles the engine difference in how CSS zoom affects event/rect coordinates.
+ *
+ * Standardized CSS zoom (Interop 2024; Chromium ≥128, WebKitGTK ≥2.44,
+ * Safari ≥17.4): clientX/Y AND getBoundingClientRect are both post-zoom
+ * viewport px on EVERY engine, so the conversion is one subtraction and one
+ * division, engine-independent — the same model fixedFromClient adopted in
+ * #227. The old "WebKitGTK reports pre-zoom rects" branch survived here and
+ * re-broke the marquee at zoom on the real Linux webview (#241).
  */
 export function clientToCSSRelative(clientCoord: number, rectEdge: number): number {
-  const zoom = getZoomFactor();
-  if (zoom === 1) return clientCoord - rectEdge;
-  if (usesViewportZoomCoords) {
-    return (clientCoord - rectEdge) / zoom;
-  }
-  return clientCoord / zoom - rectEdge;
+  return (clientCoord - rectEdge) / getZoomFactor();
 }
 
 /**
  * Convert a getBoundingClientRect dimension (width/height) to CSS pixels.
- * On WKWebView/Chromium, getBoundingClientRect returns viewport (post-zoom)
- * values. On WebKitGTK it already returns CSS (pre-zoom) values.
+ * Rects are post-zoom viewport px under standardized CSS zoom — one division
+ * on every engine (#241).
  */
 export function rectDimToCSS(value: number): number {
-  if (!usesViewportZoomCoords) return value;
   return value / getZoomFactor();
 }
 
 /**
  * Convert a CSS-space value to the viewport space used by getBoundingClientRect.
- * On WKWebView/Chromium this multiplies by zoom. On WebKitGTK it's a no-op
- * (rect already CSS).
+ * The inverse of rectDimToCSS — one multiplication on every engine (#241).
  */
 export function cssToRect(value: number): number {
-  if (!usesViewportZoomCoords) return value;
   return value * getZoomFactor();
-}
-
-/** Convert a mouse event's clientX/clientY to zoom-adjusted CSS coordinates. */
-export function adjustForZoom(x: number, y: number): { x: number; y: number } {
-  const zoom = getZoomFactor();
-  return { x: x / zoom, y: y / zoom };
 }
 
 /**

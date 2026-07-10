@@ -9,6 +9,7 @@ import { bookmarksStore } from "../bookmarks.svelte";
 import { workspacesStore } from "../workspaces.svelte";
 import { recentFilesStore } from "../recent-files.svelte";
 import { dialogStore } from "../dialogs.svelte";
+import { terminalPanelStore } from "../terminal.svelte";
 import { openInTerminal, gitRepoRoot } from "$lib/api/files";
 import { toastStore } from "../toast.svelte";
 import { readFocusedWindowState } from "../focused-window";
@@ -230,6 +231,13 @@ export const terminalCommands: Command[] = [
     category: "general",
     shortcut: "Alt+M T",
     handler: () => {
+      // With the integrated terminal enabled, "here" means the embedded panel
+      // (it starts in the active explorer's directory); otherwise fall back
+      // to the external terminal app (#237).
+      if (settingsStore.enableTerminal) {
+        terminalPanelStore.open();
+        return;
+      }
       const explorer = getActiveExplorer();
       if (explorer) {
         openInTerminal(explorer.state.currentPath, settingsStore.terminalApp);

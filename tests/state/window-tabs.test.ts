@@ -24,7 +24,6 @@ beforeEach(() => {
 
 /** Leaf paths of a persisted explorer tab, in visual order. */
 function tabPaths(tab: PersistedWindowTab): string[] {
-  if (tab.kind !== "explorer") return [tab.path];
   return persistedLeaves(tab.layout).map((l) => l.path);
 }
 
@@ -150,11 +149,13 @@ describe("v2 (per-pane strips) state migration", () => {
     expect(migrated.tabs.some((t) => t.id === "r1")).toBe(false);
   });
 
-  it("keeps the remaining strip tabs as single-pane tabs, git graphs intact", () => {
+  it("keeps the remaining strip tabs as single-pane tabs; v2 git-graph tabs become graph panes (#272)", () => {
     const migrated = migrateV2State(v2);
     expect(migrated.tabs.map((t) => t.id)).toEqual(["l1", "l2", "r2"]);
     expect(tabPaths(migrated.tabs[0])).toEqual(["/home/a"]);
-    expect(migrated.tabs[2].kind).toBe("git-graph");
+    const graphTab = migrated.tabs[2];
+    expect(graphTab.kind).toBe("explorer");
+    expect(graphTab.layout).toMatchObject({ type: "leaf", path: "/srv/b", gitGraph: "/srv/b" });
   });
 
   it("does not merge when dual pane was off", () => {
@@ -626,64 +627,73 @@ describe("persistence round-trip", () => {
   });
 });
 
-describe("tagged-union tab kinds (#56)", () => {
-  it("openGitGraphTab creates a git-graph tab and reuses it per repo", () => {
+describe("per-pane git graph (#272)", () => {
+  it("toggleGitGraphInActivePane sets and clears the active pane's graph", () => {
     const manager = freshManager();
-    const tab = manager.openGitGraphTab("/home/user/project");
+    const paneId = manager.activePaneId;
 
-    expect(tab.kind).toBe("git-graph");
-    expect(manager.activeTabId).toBe(tab.id);
-    expect(manager.getTabPath(tab.id)).toBe("/home/user/project");
-    expect(manager.getTabTitle(tab)).toBe("Graph: project");
+    manager.toggleGitGraphInActivePane("/home/user/project");
+    expect(manager.getPaneGitGraph(paneId)).toBe("/home/user/project");
 
-    // Same repo → reuse, no duplicate.
-    const again = manager.openGitGraphTab("/home/user/project");
-    expect(again.id).toBe(tab.id);
-    expect(manager.tabs.filter((t) => t.kind === "git-graph")).toHaveLength(1);
+    // Toggling again returns the pane to the file listing.
+    manager.toggleGitGraphInActivePane(null);
+    expect(manager.getPaneGitGraph(paneId)).toBeUndefined();
   });
 
-  it("a git-graph tab has no explorer and survives a persistence round-trip", () => {
+  it("a graph pane survives a persistence round-trip", () => {
     const manager = freshManager();
-    manager.openGitGraphTab("/home/user/project");
-    expect(manager.getActiveExplorer()).toBeUndefined();
-    expect(manager.activePaneIds).toEqual([]);
+    manager.toggleGitGraphInActivePane("/home/user/project");
 
     const state = manager.captureState();
     const restored = createWindowTabsManager();
     restored.restoreFromState(state);
 
-    const graphTab = restored.tabs.find((t) => t.kind === "git-graph")!;
-    expect(graphTab).toBeDefined();
-    expect(restored.getTabPath(graphTab.id)).toBe("/home/user/project");
-    expect(restored.tabs[0].kind).toBe("explorer");
+    const paneId = restored.activePaneId;
+    expect(restored.getPaneGitGraph(paneId)).toBe("/home/user/project");
   });
 
-  it("pane operations are no-ops on a git-graph tab", () => {
+  it("pre-#272 persisted git-graph TABS migrate to explorer tabs with a graph pane", () => {
     const manager = freshManager();
-    manager.openGitGraphTab("/home/user/project");
+    manager.restoreFromState({
+      version: 3,
+      tabs: [{ id: "g1", kind: "git-graph", path: "/home/user/project" }],
+      activeTabId: "g1",
+    });
+
+    expect(manager.tabs).toHaveLength(1);
+    const tab = manager.tabs[0];
+    expect(tab.kind).toBe("explorer");
+    expect(manager.getTabPath(tab.id)).toBe("/home/user/project");
+    expect(manager.getPaneGitGraph(tab.activePaneId)).toBe("/home/user/project");
+  });
+
+  it("pane operations still work while a pane shows the graph", () => {
+    const manager = freshManager();
+    manager.toggleGitGraphInActivePane("/home/user/project");
     expect(() => {
       manager.splitPane("right");
       manager.newPane();
       manager.closePane();
-      manager.toggleDualPane();
     }).not.toThrow();
-    expect(manager.tabs).toHaveLength(2);
   });
 });
 
 describe("adversarial review regressions (#167)", () => {
-  it("Ctrl+Shift+T restores a closed git-graph tab as a git-graph tab", () => {
+  it("Ctrl+Shift+T restores a closed tab with its graph pane intact", () => {
     const manager = freshManager();
-    const graph = manager.openGitGraphTab("/home/user/project");
-    manager.closeTab(graph.id);
+    manager.createTab("/home/user/project");
+    const graphTabId = manager.activeTabId!;
+    manager.toggleGitGraphInActivePane("/home/user/project");
+    manager.closeTab(graphTabId);
 
     const result = manager.restoreClosedTab();
 
     expect(result).toMatchObject({ restored: true });
-    const restored = manager.tabs.find((t) => t.kind === "git-graph");
+    const restored = manager.tabs.find(
+      (t) => manager.getPaneGitGraph(t.activePaneId) === "/home/user/project",
+    );
     expect(restored).toBeDefined();
     expect(manager.getTabPath(restored!.id)).toBe("/home/user/project");
-    expect(manager.getTabTitle(restored!)).toBe("Graph: project");
   });
 
   it("init survives a corrupt saved state (falls back to a fresh tab)", () => {

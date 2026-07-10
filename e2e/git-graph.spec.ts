@@ -8,7 +8,7 @@ import { waitForEntries } from "./helpers";
 
 async function openGraphViaPalette(page: import("@playwright/test").Page, expectGraph = true) {
   await page.keyboard.press("Control+Shift+p");
-  await page.locator("input:focus").fill("Show Commit Graph");
+  await page.locator("input:focus").fill("Toggle Commit Graph");
   await page.keyboard.press("Enter");
   // The synthetic "Uncommitted Changes" row arrives with the async git
   // summary and shifts every row index when it lands (a real race on slower
@@ -61,24 +61,41 @@ test.describe("Git graph tab", () => {
     const circleCount = await underlay.locator("circle").count();
     expect(circleCount).toBeGreaterThanOrEqual(18);
 
-    // The tab strip shows the graph tab; closing it returns to the explorer.
-    const graphTab = page.locator(".tab").filter({ hasText: "Graph: project" });
-    await expect(graphTab).toBeVisible();
-    await graphTab.hover();
-    await graphTab.locator(".tab-close").click();
+    // Per-pane (#272): the graph renders inside the current pane — no
+    // separate tab appears. Re-invoking the command toggles back to files.
+    await expect(page.locator(".tab").filter({ hasText: "Graph:" })).toHaveCount(0);
+    await openGraphViaPalette(page, false);
     await expect(page.locator('[data-testid="git-graph-view"]')).toHaveCount(0);
     await expect(page.locator(".entry-item").first()).toBeVisible();
   });
 
-  test("re-invoking the command reuses the existing graph tab", async ({ page }) => {
+  test("re-invoking the command toggles the graph off in the pane (#272)", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents/project");
     await waitForEntries(page);
 
     await openGraphViaPalette(page);
     await expect(page.locator('[data-testid="git-graph-view"]')).toBeVisible();
+    await openGraphViaPalette(page, false);
+
+    await expect(page.locator('[data-testid="git-graph-view"]')).toHaveCount(0);
+    await expect(page.locator(".entry-item").first()).toBeVisible();
+  });
+
+  test("graph is per-pane: one pane shows the graph, the split shows files (#272)", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+
+    // Split, then toggle the graph in the (focused) new pane.
+    await page.keyboard.press("Control+Shift+p");
+    await page.locator("input:focus").fill("Split Pane Right");
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".explorer-pane")).toHaveCount(2);
+
     await openGraphViaPalette(page);
 
-    await expect(page.locator(".tab").filter({ hasText: "Graph: project" })).toHaveCount(1);
+    // The graph lives inside ONE pane; the other pane still lists files.
+    await expect(page.locator(".explorer-pane [data-testid='git-graph-view']")).toHaveCount(1);
+    await expect(page.locator(".explorer-pane .entry-item").first()).toBeVisible();
   });
 
   test("outside a repo the command toasts instead of opening a tab", async ({ page }) => {
@@ -184,7 +201,7 @@ test("Ctrl+Alt+G opens the commit graph (#221)", async ({ page }) => {
 });
 
 test.describe("Git graph snapshot cache (#255)", () => {
-  test("switching back to a git-graph tab paints instantly from cache", async ({ page }) => {
+  test("re-showing the graph in a pane paints instantly from cache (#272)", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents/project");
     await waitForEntries(page);
     await openGraphViaPalette(page);
@@ -199,10 +216,10 @@ test.describe("Git graph snapshot cache (#255)", () => {
       }).observe(document.body, { subtree: true, childList: true });
     });
 
-    // Switch to the explorer tab and back to the graph tab.
-    await page.keyboard.press("Control+Tab");
-    await expect(page.locator(".file-list .content")).toBeVisible();
-    await page.keyboard.press("Control+Tab");
+    // Toggle the pane back to the file listing, then to the graph again.
+    await openGraphViaPalette(page, false);
+    await expect(page.locator(".entry-item").first()).toBeVisible();
+    await openGraphViaPalette(page, false);
 
     // The graph must be there immediately — rows painted from the snapshot,
     // never the "Loading history…" placeholder.

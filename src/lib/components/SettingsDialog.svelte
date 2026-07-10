@@ -790,7 +790,7 @@
           <div class="setting-row" class:hidden={!matchesSearch(...rows.enableGitGraph)}>
             <div class="setting-info">
               <span class="setting-label">Git Commit Graph</span>
-              <span class="setting-description">Enable the git graph tab (command palette: Git: Show Commit Graph)</span>
+              <span class="setting-description">Show the repo's commit graph in the active pane (command palette: Git: Toggle Commit Graph, Ctrl+Alt+G)</span>
             </div>
             <label class="toggle">
               <input

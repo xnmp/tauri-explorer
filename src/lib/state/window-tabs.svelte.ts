@@ -186,21 +186,21 @@ function createWindowTabsManager() {
     return explorers.get(pane.explorerId)?.state.currentPath || pane.path;
   }
 
-  /** Live path for a tab: its active pane's path, or the repo path for
-   *  non-explorer kinds. */
+  /** Live path for a tab: its active pane's path. */
   function getTabLivePath(tab: WindowTab): string {
-    if (tab.kind !== "explorer") return tab.repoPath;
     return panePath(tab, tab.activePaneId);
   }
 
   /** Serialize one live tab (paths read from the live explorers). */
   function persistTab(tab: WindowTab): PersistedWindowTab {
-    if (tab.kind !== "explorer") {
-      return { id: tab.id, kind: "git-graph", path: tab.repoPath };
-    }
     const toPersisted = (node: PaneNode): PersistedNode =>
       node.type === "leaf"
-        ? { type: "leaf", id: node.id, path: panePath(tab, node.id) }
+        ? {
+            type: "leaf",
+            id: node.id,
+            path: panePath(tab, node.id),
+            ...(tab.panes[node.id]?.gitGraph ? { gitGraph: tab.panes[node.id].gitGraph } : {}),
+          }
         : {
             type: "split",
             id: node.id,
@@ -287,9 +287,6 @@ function createWindowTabsManager() {
 
   /** Structured display (icon + repo + name) for rendering a tab. */
   function getTabDisplay(tab: WindowTab): TabDisplay {
-    if (tab.kind !== "explorer") {
-      return { isGitRoot: tab.kind === "git-graph", repo: null, name: tab.title };
-    }
     if (countLeaves(tab.layout) > 1) {
       return { isGitRoot: false, repo: null, name: multiPaneTitle(tab) };
     }
@@ -304,7 +301,6 @@ function createWindowTabsManager() {
 
   /** Plain-text tab title (used for the drag ghost and width measurement). */
   function getTabTitle(tab: WindowTab): string {
-    if (tab.kind !== "explorer") return tab.title;
     const d = getTabDisplay(tab);
     return d.repo ? `${d.repo} › ${d.name}` : d.name;
   }
@@ -341,7 +337,6 @@ function createWindowTabsManager() {
 
   /** Get tooltip for a tab: every pane's path. */
   function getTabTooltip(tab: WindowTab): string {
-    if (tab.kind !== "explorer") return tab.repoPath;
     return leafIds(tab.layout)
       .map((paneId) => panePath(tab, paneId))
       .join("\n");
@@ -427,22 +422,26 @@ function createWindowTabsManager() {
     return tab;
   }
 
-  /** Open a git-graph tab for `repoPath` (#51/#56).
-   *  Reuses an existing graph tab for the same repo instead of duplicating. */
-  function openGitGraphTab(repoPath: string): WindowTab {
-    const existing = tabs.find((t) => t.kind === "git-graph" && t.repoPath === repoPath);
-    if (existing) {
-      setActiveTab(existing.id);
-      return existing;
+  /** The repo whose commit graph a pane is showing, if any (#272). */
+  function getPaneGitGraph(paneId: PaneId): string | undefined {
+    for (const tab of tabs) {
+      if (tab.panes[paneId]) return tab.panes[paneId].gitGraph;
     }
-    const tab: WindowTab = {
-      id: generateId("tab"),
-      kind: "git-graph",
-      repoPath,
-      title: `Graph: ${extractFolderName(repoPath)}`,
-    };
-    insertTab(tab);
-    return tab;
+    return undefined;
+  }
+
+  /** Toggle the commit graph in the active pane (#272): showing → back to
+   *  the file listing; hidden → the graph for `repoPath`. */
+  function toggleGitGraphInActivePane(repoPath: string | null): void {
+    const tab = activeTab;
+    const pane = tab?.panes[tab.activePaneId];
+    if (!tab || !pane) return;
+    if (pane.gitGraph) {
+      delete pane.gitGraph;
+    } else if (repoPath) {
+      pane.gitGraph = repoPath;
+    }
+    saveState();
   }
 
   /** Rebuild a live tab from its persisted form (fresh explorers, non-tracking
@@ -452,15 +451,6 @@ function createWindowTabsManager() {
     persisted: PersistedWindowTab,
     opts: { regenerateIds?: boolean; overridePath?: string } = {},
   ): WindowTab {
-    if (persisted.kind === "git-graph") {
-      return {
-        id: opts.regenerateIds ? generateId("tab") : persisted.id,
-        kind: "git-graph",
-        repoPath: persisted.path,
-        title: `Graph: ${extractFolderName(persisted.path)}`,
-      };
-    }
-
     const idMap = new Map<string, string>();
     const mapId = (id: string): string => {
       if (!opts.regenerateIds) return id;
@@ -475,7 +465,7 @@ function createWindowTabsManager() {
         const isActiveTarget = node.id === persisted.activePaneId && !!opts.overridePath;
         const path = isActiveTarget ? opts.overridePath! : node.path;
         const { explorerId } = createAndRegisterExplorer(path, undefined, undefined, false);
-        panes[paneId] = { explorerId, path };
+        panes[paneId] = { explorerId, path, ...(node.gitGraph ? { gitGraph: node.gitGraph } : {}) };
         return leaf(paneId);
       }
       return {
@@ -680,16 +670,18 @@ function createWindowTabsManager() {
     if (snapshot.tab) {
       insertTab(reviveTab(snapshot.tab, { regenerateIds: true }), at);
     } else if (snapshot.kind === "git-graph") {
-      // A graph tab restores as a graph tab (#167) — no explorer to create.
-      insertTab(
+      // Pre-#272 snapshot of a graph TAB: restore as a single-pane explorer
+      // tab at the repo path with the graph showing.
+      const tab = reviveTab(
         {
           id: generateId("tab"),
-          kind: "git-graph",
-          repoPath: snapshot.path,
-          title: `Graph: ${extractFolderName(snapshot.path)}`,
+          kind: "explorer",
+          layout: { type: "leaf", id: "restored-pane", path: snapshot.path, gitGraph: snapshot.path },
+          activePaneId: "restored-pane",
         },
-        at,
+        { regenerateIds: true },
       );
+      insertTab(tab, at);
     } else {
       adoptTab({ path: snapshot.path }, at);
     }
@@ -1062,7 +1054,8 @@ function createWindowTabsManager() {
     // Tab operations
     init,
     createTab,
-    openGitGraphTab,
+    getPaneGitGraph,
+    toggleGitGraphInActivePane,
     closeTab,
     closeActiveTab,
     closeSurface,

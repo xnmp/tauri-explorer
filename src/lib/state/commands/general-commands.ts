@@ -111,20 +111,26 @@ export const tabCommands: Command[] = [
   },
 ];
 
-/** Git graph command (#51): open the repo's commit graph as a tab. */
+/** Git graph command (#51, #272): toggle the repo's commit graph in the
+ *  active pane — on when browsing a repo, off again from within the graph. */
 export const gitGraphCommands: Command[] = [
   {
     id: "git.showGraph",
-    label: "Git: Show Commit Graph",
+    label: "Git: Toggle Commit Graph",
     category: "general",
     shortcut: "Ctrl+Alt+G",
     when: () => settingsStore.enableGitGraph,
     handler: async () => {
+      const tab = windowTabsManager.activeTab;
+      if (tab?.panes[tab.activePaneId]?.gitGraph) {
+        windowTabsManager.toggleGitGraphInActivePane(null);
+        return;
+      }
       const path = getActiveExplorer()?.state.currentPath;
       if (!path) return;
       const root = await gitRepoRoot(path);
       if (root.ok && root.data) {
-        windowTabsManager.openGitGraphTab(root.data);
+        windowTabsManager.toggleGitGraphInActivePane(root.data);
       } else {
         toastStore.show("Not inside a git repository", "info");
       }

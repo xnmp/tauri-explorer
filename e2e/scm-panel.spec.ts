@@ -50,6 +50,37 @@ test.describe("SCM panel UI", () => {
     await expect(untrackedSection.getByText("router.tsx")).toBeVisible();
   });
 
+  test("shows a loading skeleton while the summary fetch is in flight, not the empty state (#271)", async ({ page }) => {
+    await page.goto("/");
+    await page.evaluate(() => {
+      const raw = localStorage.getItem("explorer-settings");
+      const s = raw ? JSON.parse(raw) : {};
+      s.showGitStatus = true;
+      s.showScmPanel = true;
+      localStorage.setItem("explorer-settings", JSON.stringify(s));
+    });
+    await page.reload();
+    await page.waitForLoadState("domcontentloaded");
+
+    // Slow the summary fetch down so the transient loading state is observable.
+    await page.evaluate(() => {
+      (window as unknown as { __MOCK_LATENCY__?: Record<string, number> }).__MOCK_LATENCY__ = {
+        git_status: 1500,
+      };
+    });
+    await page.getByText("Documents", { exact: true }).first().dblclick();
+    await page.getByText("project", { exact: true }).first().dblclick();
+
+    // While loading: skeleton, and crucially NOT the not-a-repo empty state.
+    const skeleton = page.locator(".loading-state");
+    await expect(skeleton).toBeVisible();
+    await expect(page.getByText(/Not a git repository/i)).not.toBeVisible();
+
+    // Once the fetch lands, real sections replace the skeleton.
+    await expect(page.locator('[data-section="staged"]')).toBeVisible({ timeout: 5000 });
+    await expect(skeleton).not.toBeVisible();
+  });
+
   test("empty-state shows Initialize Repository when active pane is not a repo", async ({ page }) => {
     await page.goto("/");
     await page.evaluate(() => {

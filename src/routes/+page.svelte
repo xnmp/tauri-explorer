@@ -221,9 +221,12 @@
     }
   });
 
-  // Apply zoom level reactively
+  // Apply zoom level reactively. --app-zoom mirrors the factor so fullscreen
+  // overlays can cancel the root zoom in CSS (zoom: calc(1 / var(--app-zoom)))
+  // and actually cover the visible viewport (#236).
   $effect(() => {
     document.documentElement.style.zoom = `${settingsStore.zoomLevel}%`;
+    document.documentElement.style.setProperty("--app-zoom", String(settingsStore.zoomLevel / 100));
   });
 
   // Push the configured ffmpeg path to the backend on startup and whenever it

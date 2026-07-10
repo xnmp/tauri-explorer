@@ -1553,3 +1553,18 @@ clearing staged, amend folding).
   theme-specific.** Unfocused tabs used `--background`, defined only by the
   tahoe theme — everywhere else tabs were transparent and indistinct. Same
   bug class as #240; grep `src/lib/themes/` for a token before using it.
+
+## 2026-07-10 fix/fullscreen-preview-pan-zoom-center (#236): fullscreen image off-center; no pan/zoom
+
+- **`position: fixed; inset: 0; width: 100vw` does NOT cover the visible
+  viewport when the app uses root CSS zoom.** Under `documentElement.style.
+  zoom`, viewport units are laid out pre-zoom and render zoom× the screen
+  size — the fullscreen preview overflowed the window and its "centered"
+  image sat off-center. Fix: the root zoom effect now mirrors the factor
+  into `--app-zoom`, and fullscreen overlays cancel it with
+  `zoom: calc(1 / var(--app-zoom, 1))`.
+- **Svelte batches DOM updates: reading `style.transform` synchronously after
+  `dispatchEvent` in a browser eval shows the stale value.** Wrap the read in
+  a `setTimeout`/rAF before concluding a handler "didn't fire".
+- **Guard `setPointerCapture` with try/catch** — it throws for released or
+  synthetic pointerIds, killing the whole handler.

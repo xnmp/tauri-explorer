@@ -39,6 +39,18 @@ let activeChordPrefix = $state<string | null>(null);
 let chordTimeoutId: ReturnType<typeof setTimeout> | null = null;
 const CHORD_TIMEOUT_MS = 1500;
 
+/** WebKitGTK maps only GDK_META_MASK into event.metaKey — the Super/Mod4
+ * modifier (the Linux "Cmd") never sets it, so Cmd+… bindings could not fire
+ * in the real Linux app (#244). The Super KEY itself does arrive as a
+ * keydown/keyup (key "Super"/"Meta"/"OS"), so its held state is tracked here
+ * and overlaid as the meta modifier during matching. Not $state: read only
+ * inside event handling, never rendered. */
+let superKeyHeld = false;
+
+function isSuperKeyEvent(event: KeyboardEvent): boolean {
+  return event.key === "Super" || event.key === "Meta" || event.key === "OS";
+}
+
 function loadUserShortcuts(): UserKeybindings {
   return loadPersisted(STORAGE_KEY, {});
 }
@@ -175,6 +187,8 @@ function createKeybindingsStore() {
     event: KeyboardEvent,
     isAvailable?: (commandId: string) => boolean,
   ): string | undefined {
+    const matchOpts = superKeyHeld && !event.metaKey ? { metaHeld: true } : undefined;
+
     // If we're in chord-waiting mode, check suffix keys
     if (activeChordPrefix !== null) {
       const prefix = activeChordPrefix;
@@ -192,7 +206,7 @@ function createKeybindingsStore() {
         const prefixStr = shortcut.substring(0, shortcut.indexOf(" ")).trim();
         if (prefixStr.toLowerCase() !== prefix.toLowerCase()) continue;
 
-        if (matchesShortcut(event, chord.suffix)) {
+        if (matchesShortcut(event, chord.suffix, matchOpts)) {
           if (!isAvailable || isAvailable(commandId)) {
             return commandId;
           }
@@ -207,7 +221,7 @@ function createKeybindingsStore() {
       const chord = getChordForCommand(commandId);
       if (!chord) continue;
 
-      if (matchesShortcut(event, chord.prefix)) {
+      if (matchesShortcut(event, chord.prefix, matchOpts)) {
         // A chord prefix was matched — enter waiting mode
         const shortcut = getShortcut(commandId)!;
         activeChordPrefix = shortcut.substring(0, shortcut.indexOf(" ")).trim();
@@ -219,7 +233,7 @@ function createKeybindingsStore() {
     // Normal single-key shortcut matching
     for (const commandId of Object.keys(defaultShortcuts)) {
       const shortcut = getShortcut(commandId);
-      if (shortcut && matchesShortcutString(event, shortcut)) {
+      if (shortcut && matchesShortcutString(event, shortcut, matchOpts)) {
         if (!isAvailable || isAvailable(commandId)) {
           return commandId;
         }
@@ -258,7 +272,19 @@ function createKeybindingsStore() {
     cancelChord();
   }
 
+  /** Track Super-key held state from window keydown/keyup (see superKeyHeld). */
+  function trackModifierKey(event: KeyboardEvent, down: boolean): void {
+    if (isSuperKeyEvent(event)) superKeyHeld = down;
+  }
+
+  /** Clear tracked modifier state (window blur — keyups can be lost). */
+  function resetTrackedModifiers(): void {
+    superKeyHeld = false;
+  }
+
   return {
+    trackModifierKey,
+    resetTrackedModifiers,
     registerDefault,
     registerDefaults,
     getShortcut,

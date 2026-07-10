@@ -110,6 +110,9 @@
   });
 
   async function handleKeydown(event: KeyboardEvent): Promise<void> {
+    // Track the Super key's held state before any early return — WebKitGTK
+    // never maps Super into event.metaKey, the store overlays it (#244).
+    keybindingsStore.trackModifierKey(event, true);
     const isModifier = event.ctrlKey || event.metaKey;
 
     // Skip if focus is in an input field (except for special cases)
@@ -441,9 +444,17 @@
 
     // Global keyboard shortcuts
     window.addEventListener("keydown", handleKeydown);
+    // Super-key held tracking (#244): keyup releases, blur resets (keyups
+    // are lost when focus leaves the window with the modifier held).
+    const handleKeyup = (e: KeyboardEvent) => keybindingsStore.trackModifierKey(e, false);
+    const handleBlur = () => keybindingsStore.resetTrackedModifiers();
+    window.addEventListener("keyup", handleKeyup);
+    window.addEventListener("blur", handleBlur);
 
     return () => {
       window.removeEventListener("keydown", handleKeydown);
+      window.removeEventListener("keyup", handleKeyup);
+      window.removeEventListener("blur", handleBlur);
       nativeDropHandler.cleanup();
       fileWatchers.cleanup();
       windowLifecycle.cleanup();

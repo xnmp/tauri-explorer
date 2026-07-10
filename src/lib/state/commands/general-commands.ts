@@ -245,6 +245,20 @@ export const terminalCommands: Command[] = [
       }
     },
   },
+  {
+    id: "general.insertPathsIntoTerminal",
+    label: "Insert Selected Paths into Terminal",
+    category: "general",
+    shortcut: "Alt+T",
+    when: () => settingsStore.enableTerminal,
+    handler: () => {
+      // Type the selection (space-delimited, shell-quoted) into the shell
+      // prompt and focus it, opening the panel if hidden (#265).
+      const explorer = getActiveExplorer();
+      const paths = explorer?.getSelectedEntries().map((e) => e.path) ?? [];
+      terminalPanelStore.insertPaths(paths);
+    },
+  },
 ];
 
 /** General dialog commands */

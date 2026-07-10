@@ -16,6 +16,7 @@ import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { parentDir, basename, isInsideDir, samePath } from "$lib/domain/path";
 import { dragState } from "$lib/state/drag.svelte";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
+import { terminalPanelStore } from "$lib/state/terminal.svelte";
 import { handleFileDropMany } from "$lib/state/drop-operations";
 import { startExternalDrag } from "./use-external-drag.svelte";
 import { resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights } from "./use-native-drop-target.svelte";
@@ -172,7 +173,10 @@ export function usePointerDrag(deps: PointerDragDeps) {
     const isCopy = event.altKey;
     const explorer = deps.getExplorer();
 
-    if (target?.type === "sidebar") {
+    if (target?.type === "terminal") {
+      // Type the paths into the shell prompt (#265).
+      terminalPanelStore.insertPaths([...dragPaths]);
+    } else if (target?.type === "sidebar") {
       for (const p of dragPaths) {
         bookmarksStore.addBookmark(p);
       }

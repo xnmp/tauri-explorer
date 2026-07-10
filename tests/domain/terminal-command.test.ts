@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { buildCdCommand, buildCdSyncSequence, shellSingleQuote } from "$lib/domain/terminal-command";
+import { buildCdCommand, buildCdSyncSequence, buildPathsInsertion, shellSingleQuote } from "$lib/domain/terminal-command";
 
 describe("shellSingleQuote", () => {
   it("wraps plain paths", () => {
@@ -69,5 +69,28 @@ describe("buildCdSyncSequence", () => {
   it("prefixes ESC (console clear-line) on Windows — cmd/PowerShell don't grok Ctrl+U (#150)", () => {
     expect(buildCdSyncSequence("D:\\Media", true)).toBe('\x1bcd /d "D:\\Media"\r');
     expect(buildCdSyncSequence("D:\\Media", true)).not.toContain("\x15");
+  });
+});
+
+describe("buildPathsInsertion (#265)", () => {
+  it("space-joins shell-quoted paths with a trailing space and no newline", () => {
+    expect(buildPathsInsertion(["/a/b.txt", "/c d/e.png"], false)).toBe(
+      "'/a/b.txt' '/c d/e.png' ",
+    );
+  });
+
+  it("escapes embedded single quotes on POSIX", () => {
+    expect(buildPathsInsertion(["/it's here"], false)).toBe("'/it'\\''s here' ");
+  });
+
+  it("double-quotes on Windows", () => {
+    expect(buildPathsInsertion(["C:\\My Files\\a.txt", "D:\\b"], true)).toBe(
+      '"C:\\My Files\\a.txt" "D:\\b" ',
+    );
+  });
+
+  it("never appends a carriage return (nothing may auto-execute)", () => {
+    expect(buildPathsInsertion(["/x"], false)).not.toContain("\r");
+    expect(buildPathsInsertion(["C:\\x"], true)).not.toContain("\r");
   });
 });

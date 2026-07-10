@@ -51,3 +51,14 @@ export function buildCdSyncSequence(path: string, isWindows: boolean): string {
   const clearLine = isWindows ? "\x1b" : "\x15";
   return clearLine + buildCdCommand(path, isWindows);
 }
+
+/**
+ * Paths typed into the shell prompt on drop-onto-terminal / Alt+T (#265):
+ * space-delimited, shell-quoted, with a trailing space so the user can keep
+ * typing (or the paths extend a half-typed command). Deliberately NO
+ * carriage return — nothing executes without the user pressing Enter.
+ */
+export function buildPathsInsertion(paths: string[], isWindows: boolean): string {
+  const quoted = paths.map((p) => (isWindows ? `"${p}"` : shellSingleQuote(p)));
+  return quoted.join(" ") + " ";
+}

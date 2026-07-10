@@ -214,6 +214,26 @@ test.describe("Git graph commit context actions", () => {
     await expect(menu).toHaveCount(0);
   });
 
+  test("right-clicking another commit while a menu is open opens its menu in one click (#263)", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+
+    const view = page.locator('[data-testid="git-graph-view"]');
+    await view.locator(".commit-row").nth(8).click({ button: "right" });
+    const menu = page.locator('[data-testid="git-graph-menu"]');
+    await expect(menu).toBeVisible();
+    const firstBox = (await menu.boundingBox())!;
+
+    // Second right-click on a row ABOVE the open menu lands on the backdrop
+    // (force: the backdrop intercepting the pointer is the point) — it must
+    // open that row's menu in one click, not merely cancel the first.
+    await view.locator(".commit-row").nth(2).click({ button: "right", force: true });
+    await expect(menu).toBeVisible();
+    const secondBox = (await menu.boundingBox())!;
+    expect(secondBox.y).not.toBe(firstBox.y);
+  });
+
   test("create branch adds a branch ref chip at that commit", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents/project");
     await waitForEntries(page);

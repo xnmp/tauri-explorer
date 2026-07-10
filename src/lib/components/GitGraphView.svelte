@@ -324,6 +324,24 @@
     prompt = null;
   }
 
+  /** Right-click on the backdrop: open the menu for the commit row under the
+   *  cursor in ONE click (instead of the first click merely cancelling the
+   *  previous menu, #263). Falls back to just closing over non-commit areas. */
+  function backdropContextMenu(event: MouseEvent): void {
+    event.preventDefault();
+    const row = document
+      .elementsFromPoint(event.clientX, event.clientY)
+      .find((el) => el.classList.contains("commit-row")) as HTMLElement | undefined;
+    const commit = row?.dataset.oid
+      ? displayCommits.find((c) => c.short_oid === row.dataset.oid)
+      : undefined;
+    if (commit && commit.oid !== UNCOMMITTED) {
+      openMenu(event, commit);
+    } else {
+      closeMenu();
+    }
+  }
+
   /** Run a mutating action, then reload the graph and refresh the SCM panel
    *  (always — a conflicting op still mutates the repo). */
   async function runAction(label: string, fn: () => Promise<void>): Promise<void> {
@@ -592,7 +610,7 @@
       class="menu-backdrop"
       aria-label="Close menu"
       onclick={closeMenu}
-      oncontextmenu={(e) => { e.preventDefault(); closeMenu(); }}
+      oncontextmenu={backdropContextMenu}
     ></button>
     {@const m = menu}
     <div
@@ -1060,7 +1078,9 @@
     z-index: 41;
     min-width: 232px;
     padding: 4px;
-    background: var(--background-card, #1e1e1e);
+    /* --background-card is translucent in every theme — composite it over
+       the solid background so the menu is opaque (#263, same as #243). */
+    background: linear-gradient(var(--background-card, #1e1e1e), var(--background-card, #1e1e1e)), var(--background-solid, #1e1e1e);
     border: 1px solid var(--divider);
     border-radius: 8px;
     box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
@@ -1112,7 +1132,7 @@
     top: -4px;
     min-width: 220px;
     padding: 4px;
-    background: var(--background-card, #1e1e1e);
+    background: linear-gradient(var(--background-card, #1e1e1e), var(--background-card, #1e1e1e)), var(--background-solid, #1e1e1e);
     border: 1px solid var(--divider);
     border-radius: 8px;
     box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
@@ -1136,7 +1156,7 @@
     width: 320px;
     max-width: calc(100vw - 32px);
     padding: 14px 16px;
-    background: var(--background-card, #1e1e1e);
+    background: linear-gradient(var(--background-card, #1e1e1e), var(--background-card, #1e1e1e)), var(--background-solid, #1e1e1e);
     border: 1px solid var(--divider);
     border-radius: 10px;
     box-shadow: 0 12px 36px rgba(0, 0, 0, 0.4);

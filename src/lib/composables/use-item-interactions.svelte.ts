@@ -12,6 +12,7 @@ import { clipboardStore } from "$lib/state/clipboard.svelte";
 import { dragState } from "$lib/state/drag.svelte";
 import { useDropTarget } from "./use-drop-target.svelte";
 import { startExternalDrag } from "./use-external-drag.svelte";
+import { createDragGhost } from "./use-pointer-drag.svelte";
 
 interface ItemInteractionsDeps {
   getExplorer: () => ExplorerInstance;
@@ -54,6 +55,23 @@ export function useItemInteractions(deps: ItemInteractionsDeps) {
     event.dataTransfer.effectAllowed = "all";
 
     dragState.start({ path: entry.path, name: entry.name, kind: entry.kind, paths: isMulti ? paths : undefined });
+
+    // Multi-drag ghost (#258): the engine's default drag image is a snapshot
+    // of the single row under the cursor. Replace it with a fanned stack +
+    // count badge so the ghost shows that ALL selected items are dragged.
+    // The element must be rendered when setDragImage snapshots it — park it
+    // off-screen and remove it on the next tick.
+    if (isMulti) {
+      const ghost = createDragGhost(
+        event.currentTarget as HTMLElement,
+        `${paths.length} items`,
+        paths.length,
+      );
+      ghost.style.left = "-1000px";
+      ghost.style.top = "-1000px";
+      event.dataTransfer.setDragImage(ghost, 30, 30);
+      setTimeout(() => ghost.remove(), 0);
+    }
 
     // Per-engine in-app drag strategy:
     //

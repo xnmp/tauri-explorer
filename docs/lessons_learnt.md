@@ -1472,3 +1472,14 @@ clearing staged, amend folding).
   with it.** `branchPath` takes a `RowExpand {afterRow, extra}` — rows after
   the expansion shift down by the measured details height (bound via
   `clientHeight`), so polylines and vertices stay aligned with their rows.
+
+## 2026-07-10 fix/website-downloads-preview-tour (#230): dead download links
+
+- **Never hardcode a release version inside `releases/latest/download/<asset>`
+  URLs.** The `latest` path segment tracks the newest release but the asset
+  filename embeds the version, so every release silently 404s all download
+  buttons (the site shipped 1.0.1 URLs while the release was 1.1.0). The
+  website now resolves asset URLs from the GitHub releases API at runtime
+  (`resolveDownloads()` in `website/app.js`), keeping the version-built URLs
+  only as an offline/rate-limit fallback, and refreshes baked-in anchor
+  `href`s from the live map at click time via a `data-dl` delegate.

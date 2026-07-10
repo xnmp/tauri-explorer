@@ -6,15 +6,33 @@
 
 const REPO = "https://github.com/xnmp/tauri-explorer";
 const REL = `${REPO}/releases/latest/download`;
-const VERSION = "1.0.1";
+const VERSION = "1.1.0";
 
+/* Release asset filenames embed the version, so `releases/latest/download/<name>`
+   goes 404 the moment a new version ships. These VERSION-built URLs are only the
+   fallback; resolveDownloads() swaps in the live asset URLs from the GitHub API. */
 const DL = {
   linux: `${REL}/tauri-explorer_${VERSION}_amd64.AppImage`,
   deb: `${REL}/tauri-explorer_${VERSION}_amd64.deb`,
   rpm: `${REL}/tauri-explorer-${VERSION}-1.x86_64.rpm`,
   win: `${REL}/tauri-explorer_${VERSION}_x64_en-US.msi`,
   mac: `${REL}/tauri-explorer_${VERSION}_aarch64.dmg`,
+  exe: `${REL}/tauri-explorer_${VERSION}_x64-setup.exe`,
 };
+const DL_ASSET = { linux: /\.AppImage$/, deb: /\.deb$/, rpm: /\.rpm$/, win: /\.msi$/, mac: /\.dmg$/, exe: /-setup\.exe$/ };
+
+function resolveDownloads() {
+  fetch("https://api.github.com/repos/xnmp/tauri-explorer/releases/latest")
+    .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+    .then((rel) => {
+      for (const a of rel.assets || [])
+        for (const [key, pat] of Object.entries(DL_ASSET))
+          if (pat.test(a.name)) DL[key] = a.browser_download_url;
+      const v = (rel.tag_name || "").replace(/^v/, "");
+      if (v) $("status-right").textContent = `v${v} · MIT`;
+    })
+    .catch(() => { /* offline or rate-limited: the VERSION fallback stands */ });
+}
 
 const THEMES = [
   { id: "light", label: "Daylight" },
@@ -90,9 +108,9 @@ nothing.</p>
 the sidebar, the list, this preview pane. Press <kbd>Ctrl+P</kbd> and type
 <code>git</code>. That reflex is the product.</p>
 <div class="dl-row">
-  <a class="dl-btn" href="${DL.linux}">Download for Linux</a>
-  <a class="dl-btn ghost" href="${DL.win}">Windows</a>
-  <a class="dl-btn ghost" href="${DL.mac}">macOS</a>
+  <a class="dl-btn" data-dl="linux" href="${DL.linux}">Download for Linux</a>
+  <a class="dl-btn ghost" data-dl="win" href="${DL.win}">Windows</a>
+  <a class="dl-btn ghost" data-dl="mac" href="${DL.mac}">macOS</a>
 </div>
 <p class="note">Free and MIT-licensed. No account, no telemetry — see <code>trust/</code>.</p>
 ${shot("details-view.png", "The real thing: details view, git status column, breadcrumb bar.")}
@@ -104,20 +122,20 @@ ${shot("details-view.png", "The real thing: details view, git status column, bre
 <h1>Install</h1>
 <h2>Linux</h2>
 <div class="dl-row">
-  <a class="dl-btn" href="${DL.linux}">AppImage</a>
-  <a class="dl-btn ghost" href="${DL.deb}">.deb</a>
-  <a class="dl-btn ghost" href="${DL.rpm}">.rpm</a>
+  <a class="dl-btn" data-dl="linux" href="${DL.linux}">AppImage</a>
+  <a class="dl-btn ghost" data-dl="deb" href="${DL.deb}">.deb</a>
+  <a class="dl-btn ghost" data-dl="rpm" href="${DL.rpm}">.rpm</a>
 </div>
 <pre><code>chmod +x tauri-explorer_${VERSION}_amd64.AppImage
 ./tauri-explorer_${VERSION}_amd64.AppImage</code></pre>
 <p>Arch users: a <code>PKGBUILD</code> ships in the repo.</p>
 <h2>Windows</h2>
 <div class="dl-row">
-  <a class="dl-btn" href="${DL.win}">MSI installer</a>
-  <a class="dl-btn ghost" href="${REL}/tauri-explorer_${VERSION}_x64-setup.exe">Setup .exe</a>
+  <a class="dl-btn" data-dl="win" href="${DL.win}">MSI installer</a>
+  <a class="dl-btn ghost" data-dl="exe" href="${DL.exe}">Setup .exe</a>
 </div>
 <h2>macOS (Apple Silicon)</h2>
-<div class="dl-row"><a class="dl-btn" href="${DL.mac}">.dmg</a></div>
+<div class="dl-row"><a class="dl-btn" data-dl="mac" href="${DL.mac}">.dmg</a></div>
 <p class="note">Binaries aren't code-signed yet, so Gatekeeper and SmartScreen
 will warn on first launch — right-click → Open on macOS. It's open source;
 audit it, or build from source with <code>bun</code> + <code>cargo</code>.</p>
@@ -487,13 +505,13 @@ function render() {
     dl.textContent = "GET IT";
     sb.appendChild(dl);
     const links = [
-      ["Linux (AppImage)", DL.linux], ["Windows (.msi)", DL.win], ["macOS (.dmg)", DL.mac],
+      ["Linux (AppImage)", "linux"], ["Windows (.msi)", "win"], ["macOS (.dmg)", "mac"],
     ];
-    for (const [label, href] of links) {
+    for (const [label, key] of links) {
       const a = document.createElement("button");
       a.className = "side-item";
       a.innerHTML = `<span class="ico">${SVG.down}</span>${label}`;
-      a.onclick = () => window.open(href, "_blank");
+      a.onclick = () => window.open(DL[key], "_blank");
       sb.appendChild(a);
     }
   }
@@ -760,6 +778,7 @@ const COMMANDS = [
   { cat: "GO", label: "View Changelog", run: () => window.open(`${REPO}/blob/main/CHANGELOG.md`, "_blank") },
   { cat: "GO", label: "Report a Bug", run: () => window.open(`${REPO}/issues/new`, "_blank") },
   { cat: "HELP", label: "Keyboard Shortcuts", run: () => { closeAll(); ks.open(); } },
+  { cat: "HELP", label: "Start the Guided Tour", run: () => tourStart() },
 ];
 let cpIndex = 0;
 function cpRender() {
@@ -1652,17 +1671,17 @@ function focusPane(i) {
   markFocus();
 }
 
-function toggleDualPane() {
+function toggleDualPane(opts = {}) {
   if (pane2) {
     pane2 = null;
     focusedPane = 0;
     $("filelist2").hidden = true;
-    toast("Back to one pane.", { ms: 1800 });
+    if (!opts.silent) toast("Back to one pane.", { ms: 1800 });
   } else {
     pane2 = { cwd: [...cwd], sel: null };
     $("filelist2").hidden = false;
     render2();
-    toast(`Dual pane — click a pane to focus it. <kbd>F5</kbd> copies the selected file across, <kbd>F6</kbd> moves it.`, { ms: 7000 });
+    if (!opts.silent) toast(`Dual pane — click a pane to focus it. <kbd>F5</kbd> copies the selected file across, <kbd>F6</kbd> moves it.`, { ms: 7000 });
   }
   markFocus();
 }
@@ -1981,6 +2000,13 @@ $("term-input").addEventListener("keydown", (e) => {
 /* context menu closes on any click elsewhere */
 document.addEventListener("click", () => { $("ctx").hidden = true; });
 
+/* download links are baked into content HTML at load; refresh the href from
+   the (possibly API-resolved) DL map at the moment of the click */
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("a[data-dl]");
+  if (a && DL[a.dataset.dl]) a.href = DL[a.dataset.dl];
+});
+
 /* lightbox: click a preview image to maximize it, click again to close */
 function openLightbox(src, caption) {
   $("lightbox-img").src = src;
@@ -2009,9 +2035,197 @@ document.addEventListener("click", (e) => {
   if (!e.target.closest(".theme-wrap")) setThemeMenu(false);
 });
 
+/* ── Guided tour: a spotlight walks the features, in order ── */
+
+const TOUR_STEPS = [
+  {
+    title: "This site is the app",
+    body: `Everything on this page is a working copy of Tauri Explorer — same layout,
+      same shortcuts. Sixty seconds, twelve stops. <kbd>→</kbd> next, <kbd>←</kbd> back, <kbd>Esc</kbd> bails.`,
+  },
+  {
+    title: "The sidebar",
+    body: `A plain folder tree — draggable, hideable. Every bar on this page (and in
+      the app) can be hidden, down to a bare file list. Real builds live under <em>GET IT</em>.`,
+    target: () => $("sidebar"),
+  },
+  {
+    title: "A path bar you can type in",
+    body: `Click the breadcrumb (or <kbd>Ctrl+L</kbd>) and it becomes an input, like a
+      browser's address bar — over your real filesystem in the app.`,
+    target: () => $("breadcrumb"),
+  },
+  {
+    title: "Four views",
+    body: `Details, List, Tiles, and Miller columns. The app virtual-scrolls the details
+      view, so hundred-thousand-file folders stay at 60fps.`,
+    target: () => $("view-switch"),
+  },
+  {
+    title: "The preview pane",
+    body: `Selecting a file previews it instantly — images, code, documents. Drag the
+      divider to resize; this page remembers, and so does the app.`,
+    prep: () => { navigate([]); openEntry(FS.children[0]); },
+    target: () => $("preview"),
+  },
+  {
+    title: "Ctrl+P — the reflex",
+    body: `Fuzzy quick-open, ranked by frecency, exactly like your editor's. Here it
+      finds this site's files; in the app it finds anything on your disk.`,
+    prep: () => { qo.open(); const i = $("qo-input"); i.value = "git"; i.dispatchEvent(new Event("input")); },
+    target: () => document.querySelector(".modal.qo"),
+  },
+  {
+    title: "Ctrl+Shift+P — every action",
+    body: `A command palette holds every command — download builds, switch themes,
+      toggle any bar. If you can click it, you can type it.`,
+    prep: () => { cp.open(); },
+    target: () => document.querySelector(".modal.cp"),
+  },
+  {
+    title: "Ctrl+Shift+F — grep, everywhere",
+    body: `Content search inside files. In the app this is ripgrep underneath — the
+      fastest grep there is, wired to a UI.`,
+    prep: () => { cs.open(); const i = $("cs-input"); i.value = "ripgrep"; i.dispatchEvent(new Event("input")); },
+    target: () => document.querySelector(".modal.cs"),
+  },
+  {
+    title: "Ctrl+` — integrated terminal",
+    body: `A terminal docked under the file list, its cwd synced to where you're
+      browsing. This one is a tiny real shell — try <code>ls</code> after the tour.`,
+    prep: () => toggleTerminal(true),
+    term: true,
+    target: () => $("terminal"),
+  },
+  {
+    title: "A live commit graph",
+    body: `This repo's actual history. Click a commit — branch, tag, cherry-pick,
+      revert all work right here, exactly as they do in the app.`,
+    prep: openGraph,
+    target: () => document.querySelector(".modal.gg"),
+  },
+  {
+    title: "Ctrl+\\ — dual pane",
+    body: `Two panes, focus follows your click. <kbd>F5</kbd> copies the selection
+      across, <kbd>F6</kbd> moves it — the orthodox-file-manager workflow, keyboard first.`,
+    prep: () => {
+      setPreview(false); selectedName = null; render();
+      if (!pane2) toggleDualPane({ silent: true });
+    },
+    dual: true,
+    target: () => $("filelist2"),
+  },
+  {
+    title: "Themes are plain CSS",
+    body: `Thirteen themes on this page alone — <kbd>Ctrl+T</kbd> cycles them. The app's
+      themes are plain CSS files; ship your own.`,
+    target: () => $("theme-btn"),
+  },
+  {
+    title: "Get the real thing",
+    body: `Free and MIT-licensed — no account, no telemetry. Linux, Windows, and macOS
+      builds, straight from GitHub releases.`,
+    prep: () => { navigate([]); openEntry(FS.children[0]); },
+    target: () => $("preview-body").querySelector(".dl-row"),
+  },
+];
+
+let tourIdx = -1;
+let tourRestore = null;
+
+function tourPosition() {
+  const step = TOUR_STEPS[tourIdx];
+  if (!step) return;
+  const spot = $("tour-spot"), card = $("tour-card");
+  const el = step.target && step.target();
+  const r = el && !el.hidden ? el.getBoundingClientRect() : null;
+  if (r && r.width) {
+    const pad = 6;
+    spot.classList.remove("center");
+    card.classList.remove("center");
+    spot.style.top = r.top - pad + "px";
+    spot.style.left = r.left - pad + "px";
+    spot.style.width = r.width + pad * 2 + "px";
+    spot.style.height = r.height + pad * 2 + "px";
+    const cw = card.offsetWidth, ch = card.offsetHeight, gap = 16;
+    let top, left;
+    if (r.right + gap + cw <= innerWidth - 12) { left = r.right + gap; top = r.top; }
+    else if (r.left - gap - cw >= 12) { left = r.left - gap - cw; top = r.top; }
+    else if (r.bottom + gap + ch <= innerHeight - 12) { left = r.left; top = r.bottom + gap; }
+    else { left = r.left; top = r.top - gap - ch; }
+    card.style.top = Math.max(12, Math.min(top, innerHeight - ch - 12)) + "px";
+    card.style.left = Math.max(12, Math.min(left, innerWidth - cw - 12)) + "px";
+  } else {
+    // no target (welcome step, or hidden on this viewport): dim it all, center the card
+    spot.classList.add("center");
+    card.classList.add("center");
+    spot.style.top = "50%"; spot.style.left = "50%";
+    spot.style.width = "0"; spot.style.height = "0";
+    card.style.top = ""; card.style.left = "";
+  }
+}
+
+function tourGo(i) {
+  if (i >= TOUR_STEPS.length) { tourEnd(); return; }
+  tourIdx = Math.max(0, i);
+  const step = TOUR_STEPS[tourIdx];
+  // baseline between stops: overlays shut, panels back unless this stop wants them
+  closeAll();
+  if (!step.term && !tourRestore.term) toggleTerminal(false);
+  if (!step.dual && pane2 && !tourRestore.dual) toggleDualPane({ silent: true });
+  if (step.prep) step.prep();
+  $("tour-step").textContent = `${tourIdx + 1} / ${TOUR_STEPS.length}`;
+  $("tour-title").textContent = step.title;
+  $("tour-body").innerHTML = step.body;
+  $("tour-back").style.visibility = tourIdx === 0 ? "hidden" : "visible";
+  $("tour-next").textContent = tourIdx === TOUR_STEPS.length - 1 ? "Finish" : "Next ›";
+  tourPosition();
+  // overlays pop in with a 130ms transform — settle the spotlight once they land
+  setTimeout(tourPosition, 180);
+}
+
+function tourKeys(e) {
+  e.stopPropagation();
+  if (e.key === "Escape") { e.preventDefault(); tourEnd(); }
+  else if (e.key === "ArrowRight" || e.key === "Enter" || e.key === " ") { e.preventDefault(); tourGo(tourIdx + 1); }
+  else if (e.key === "ArrowLeft") { e.preventDefault(); tourGo(tourIdx - 1); }
+}
+
+function tourStart() {
+  closeAll();
+  localStorage.setItem("hintDismissed", "1");
+  $("hint").hidden = true;
+  tourRestore = { term: !$("terminal").hidden, dual: !!pane2 };
+  $("tour").hidden = false;
+  document.addEventListener("keydown", tourKeys, true);
+  window.addEventListener("resize", tourPosition);
+  tourGo(0);
+}
+
+function tourEnd() {
+  if ($("tour").hidden) return;
+  $("tour").hidden = true;
+  document.removeEventListener("keydown", tourKeys, true);
+  window.removeEventListener("resize", tourPosition);
+  closeAll();
+  if (!tourRestore.term) toggleTerminal(false);
+  if (!tourRestore.dual && pane2) toggleDualPane({ silent: true });
+  tourIdx = -1;
+  toast(`That's the tour. <kbd>Ctrl+P</kbd> is the habit to take with you — or grab a build from the sidebar.`, { ms: 6000 });
+}
+
+$("tour-next").onclick = () => tourGo(tourIdx + 1);
+$("tour-back").onclick = () => tourGo(tourIdx - 1);
+$("tour-skip").onclick = tourEnd;
+$("tour-veil").onclick = () => tourGo(tourIdx + 1);
+
 /* first-run hint (dismiss persists, like the app) */
 if (localStorage.getItem("hintDismissed") !== "1") $("hint").hidden = false;
+else toastOnce("tour-offer",
+  "New here since last time: a guided tour that spotlights everything this page can do.",
+  { action: { label: "Take the tour", run: tourStart }, ms: 10000 });
 $("hint-dismiss").onclick = () => { localStorage.setItem("hintDismissed", "1"); $("hint").hidden = true; };
+$("hint-tour").onclick = tourStart;
 
 /* boot: land on README, preview open — the pitch reads itself */
 renderTabs();
@@ -2019,6 +2233,7 @@ applyChrome();
 renderThemeMenu();
 render();
 openEntry(FS.children[0]);
+resolveDownloads();
 
 /* guided nudges, staggered so they read as a tour (each fires once ever) */
 setTimeout(() => toastOnce("tour-zen",

@@ -4,6 +4,9 @@
  */
 
 import { invoke, extractError, type ApiResult } from "./common";
+import type { GitFileEntry, GitStatusCode } from "$lib/domain/git";
+
+export type { GitFileEntry, GitStatusCode };
 
 /**
  * Git file status types.
@@ -28,23 +31,6 @@ export async function getGitStatus(path: string): Promise<ApiResult<GitStatusRes
 }
 
 // ----- SCM git backend (#53) ----- //
-
-export type GitStatusCode =
-  | "Modified"
-  | "Added"
-  | "Deleted"
-  | "Renamed"
-  | "Copied"
-  | "Untracked"
-  | "Ignored"
-  | "Conflicted"
-  | "TypeChange";
-
-export interface GitFileEntry {
-  path: string;
-  old_path: string | null;
-  status: GitStatusCode;
-}
 
 export interface GitStatusSummary {
   is_repo: boolean;

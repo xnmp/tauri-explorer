@@ -339,4 +339,179 @@ test.describe("Git graph commit context actions", () => {
     // The tip commit's deterministic OID starts with "0010" (commit #16 = 0x10).
     expect(clip.startsWith("0010")).toBe(true);
   });
+
+  test("copy commit subject writes the commit summary to the clipboard", async ({ page, context, browserName }) => {
+    test.skip(browserName === "webkit", "WebKit does not support Playwright clipboard permissions");
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+
+    const view = page.locator('[data-testid="git-graph-view"]');
+    await view.locator(".commit-row").nth(2).click({ button: "right" }); // the tip merge commit
+    await page.locator('[data-testid="git-graph-menu"]').getByText("Copy Commit Subject").click();
+
+    const clip = await page.evaluate(() => navigator.clipboard.readText());
+    expect(clip).toBe("Merge hotfix into main");
+  });
+
+  test("hard reset moves the current branch and HEAD chips to the target commit", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+
+    const view = page.locator('[data-testid="git-graph-view"]');
+    // HEAD + main start on the tip (merge) commit at row 2.
+    const tip = view.locator(".commit-row").nth(2);
+    await expect(tip).toHaveClass(/is-head/);
+    await expect(tip.locator(".ref-branch", { hasText: "main" })).toBeVisible();
+
+    // Hard-reset onto an older commit.
+    const target = view.locator(".commit-row").filter({ hasText: "Add core module" });
+    await target.click({ button: "right" });
+    const menu = page.locator('[data-testid="git-graph-menu"]');
+    // The Reset submenu is hover-revealed; open it, then pick Hard.
+    await menu.locator(".has-submenu").hover();
+    await menu.getByText("Hard — discard all changes").click();
+
+    // The mock moves main + HEAD to the target: its chips now decorate it, and
+    // the old tip is no longer HEAD.
+    const movedTarget = view.locator(".commit-row").filter({ hasText: "Add core module" });
+    await expect(movedTarget).toHaveClass(/is-head/);
+    await expect(movedTarget.locator(".ref-branch", { hasText: "main" })).toBeVisible();
+    await expect(view.locator(".commit-row").nth(2)).not.toHaveClass(/is-head/);
+  });
+
+  test("soft reset also moves HEAD to the target commit", async ({ page }) => {
+    // The mock does not differentiate reset modes, so this is the lighter
+    // assertion: soft reset still relocates the HEAD marker.
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+
+    const view = page.locator('[data-testid="git-graph-view"]');
+    const target = view.locator(".commit-row").filter({ hasText: "Project scaffolding" });
+    await target.click({ button: "right" });
+    const menu = page.locator('[data-testid="git-graph-menu"]');
+    await menu.locator(".has-submenu").hover();
+    await menu.getByText("Soft — keep changes & index").click();
+
+    await expect(
+      view.locator(".commit-row").filter({ hasText: "Project scaffolding" }),
+    ).toHaveClass(/is-head/);
+    await expect(view.locator(".commit-row").nth(2)).not.toHaveClass(/is-head/);
+  });
+
+  test("cherry-pick appends a new top commit with the picked summary", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+
+    const view = page.locator('[data-testid="git-graph-view"]');
+    await view
+      .locator(".commit-row")
+      .filter({ hasText: "Bump version to 1.0" })
+      .click({ button: "right" });
+    await page.locator('[data-testid="git-graph-menu"]').getByText("Cherry-pick").click();
+
+    // The mock appends a commit onto HEAD carrying the picked commit's summary;
+    // it lands as the newest real commit, directly below the uncommitted row.
+    await expect(view.locator(".commit-row").nth(1)).toContainText("Bump version to 1.0");
+  });
+
+  test("revert appends a new top commit titled Revert \"…\"", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+
+    const view = page.locator('[data-testid="git-graph-view"]');
+    await view
+      .locator(".commit-row")
+      .filter({ hasText: "Add structured logging" })
+      .click({ button: "right" });
+    await page.locator('[data-testid="git-graph-menu"]').getByText("Revert").click();
+
+    await expect(view.locator(".commit-row").nth(1)).toContainText(
+      'Revert "Add structured logging"',
+    );
+  });
+
+  test("merge into current branch appends the merge commit", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+
+    const view = page.locator('[data-testid="git-graph-view"]');
+    // The feature branch commit — merge resolves the target to its branch name.
+    await view
+      .locator(".commit-row")
+      .filter({ hasText: "Add tests for feature X" })
+      .click({ button: "right" });
+    await page.locator('[data-testid="git-graph-menu"]').getByText("Merge into current branch").click();
+
+    await expect(view.locator(".commit-row").nth(1)).toContainText(
+      "Merge feature into current branch",
+    );
+  });
+
+  test("rebase current branch on a commit appends the rebased commit", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+
+    const view = page.locator('[data-testid="git-graph-view"]');
+    await view
+      .locator(".commit-row")
+      .filter({ hasText: "Add core module" })
+      .click({ button: "right" });
+    await page
+      .locator('[data-testid="git-graph-menu"]')
+      .getByText("Rebase current branch on this Commit")
+      .click();
+
+    // The mock records the rebase as a synthetic top commit.
+    await expect(view.locator(".commit-row").nth(1)).toContainText("Rebased onto");
+  });
+
+  test("create tag adds a tag ref chip at that commit", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+
+    const view = page.locator('[data-testid="git-graph-view"]');
+    const tip = view.locator(".commit-row").nth(2);
+    await tip.click({ button: "right" });
+
+    await page.locator('[data-testid="git-graph-menu"]').getByText("Create Tag…").click();
+    const prompt = page.locator('[data-testid="git-graph-prompt"]');
+    await expect(prompt).toBeVisible();
+    await prompt.locator("input").fill("v2.0");
+    await prompt.getByText("Create tag", { exact: true }).click();
+
+    // The new tag chip decorates the tip commit after the reload.
+    await expect(
+      view.locator(".commit-row").nth(2).locator(".ref-tag", { hasText: "v2.0" }),
+    ).toBeVisible();
+  });
+
+  test("a commit with no local branch offers a detached checkout that moves HEAD", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+
+    const view = page.locator('[data-testid="git-graph-view"]');
+    // "Add core module" carries no local-branch ref, so checkout is detached.
+    const bare = view.locator(".commit-row").filter({ hasText: "Add core module" });
+    await bare.click({ button: "right" });
+    const menu = page.locator('[data-testid="git-graph-menu"]');
+    await expect(menu.getByText("Checkout (detached)")).toBeVisible();
+
+    await menu.getByText("Checkout (detached)").click();
+
+    // HEAD detaches onto that commit; the marker moves off the old tip.
+    await expect(
+      view.locator(".commit-row").filter({ hasText: "Add core module" }),
+    ).toHaveClass(/is-head/);
+    await expect(view.locator(".commit-row").nth(2)).not.toHaveClass(/is-head/);
+  });
 });

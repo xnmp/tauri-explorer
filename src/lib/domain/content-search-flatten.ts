@@ -4,7 +4,7 @@
  * Extracted from ContentSearchDialog.svelte.
  */
 
-import type { ContentSearchResult, ContentMatch } from "$lib/api/files";
+import type { ContentSearchResult, ContentMatch } from "$lib/domain/content-search";
 
 export interface FlattenedResult {
   filePath: string;

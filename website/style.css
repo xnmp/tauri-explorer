@@ -240,16 +240,24 @@ body {
   font-size: 14px;
   color: var(--text);
   background: var(--bg);
+  box-sizing: border-box;
+  padding: clamp(10px, 2vmin, 26px);
 }
 
-/* ── The window: maximized, edge to edge — like a real app ── */
+/* ── The window: fills the page, but floats on a margin so it
+      reads as an Explorer window, not the page itself ── */
 .window {
   width: 100%;
-  height: 100dvh;
+  height: 100%;
   display: flex;
   flex-direction: column;
   background: var(--bg-card);
   overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.12),
+    0 12px 40px rgba(0, 0, 0, 0.28);
 }
 
 /* Every bar hides, exactly like the real app's chrome toggles. */

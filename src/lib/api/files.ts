@@ -699,7 +699,13 @@ export {
   gitCommit,
   gitWatchRepo,
   gitUnwatchRepo,
+  gitMergeAbort,
+  gitRebaseAbort,
+  gitRebaseContinue,
+  gitCherryPickAbort,
+  gitRevertAbort,
   type GitFileEntry,
   type GitStatusSummary,
   type GitStatusCode,
+  type GitOpState,
 } from "./git";

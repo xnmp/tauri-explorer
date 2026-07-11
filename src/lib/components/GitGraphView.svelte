@@ -6,7 +6,10 @@
   the list nears its end.
 -->
 <script lang="ts" module>
-  import type { CommitInfo as CachedCommitInfo, RefInfo as CachedRefInfo } from "$lib/api/git-log";
+  import { gitLog, type CommitInfo as CachedCommitInfo, type RefInfo as CachedRefInfo } from "$lib/api/git-log";
+  import { gitSummary } from "$lib/api/files";
+
+  const PAGE_SIZE = 300;
 
   /**
    * Per-repo snapshot of the loaded graph, kept across tab switches (#255):
@@ -34,11 +37,53 @@
       if (oldest !== undefined) graphCache.delete(oldest);
     }
   }
+
+  /** Fetch the page-0 data (first PAGE_SIZE commits + working summary) shared
+   *  by the view's own initial load and the background warm (#287). */
+  async function fetchPage0Snapshot(repoPath: string): Promise<GraphSnapshot> {
+    const page = await gitLog(repoPath, { skip: 0, limit: PAGE_SIZE });
+    const headOid =
+      Object.entries(page.refs).find(([, rs]) => rs.some((r) => r.kind === "Head"))?.[0] ?? null;
+    const summary = await gitSummary(repoPath);
+    const workingChanges = summary.ok
+      ? summary.data.staged.length +
+        summary.data.changes.length +
+        summary.data.untracked.length +
+        summary.data.merge.length
+      : 0;
+    return {
+      commits: page.commits.slice(0, PAGE_SIZE),
+      refs: page.refs,
+      hasMore: page.has_more,
+      headOid,
+      workingChanges,
+    };
+  }
+
+  const warmInFlight = new Set<string>();
+
+  /**
+   * Best-effort background warm (#287): populate graphCache for a repo before
+   * its git-graph tab is ever opened, so the first open paints instantly from
+   * cache instead of showing "Loading history…". No-op if already cached or a
+   * warm for the same repo is already in flight; failures are swallowed (the
+   * view still loads normally when actually opened).
+   */
+  export async function warmGraphSnapshot(repoPath: string): Promise<void> {
+    if (!repoPath || graphCache.has(repoPath) || warmInFlight.has(repoPath)) return;
+    warmInFlight.add(repoPath);
+    try {
+      cacheSnapshot(repoPath, await fetchPage0Snapshot(repoPath));
+    } catch {
+      /* best-effort warm — ignore failures */
+    } finally {
+      warmInFlight.delete(repoPath);
+    }
+  }
 </script>
 
 <script lang="ts">
   import {
-    gitLog,
     gitCommitFiles,
     gitCommitFileDiff,
     gitCheckout,
@@ -61,14 +106,14 @@
   import { gitStatusLetter } from "$lib/domain/git";
   import { notifyLocalGitChange } from "$lib/state/git-refresh";
   import { toastStore } from "$lib/state/toast.svelte";
-  import { gitDiff, gitSummary } from "$lib/api/files";
+  import { gitDiff } from "$lib/api/files";
   import { untrack } from "svelte";
 
   const { repoPath }: { repoPath: string } = $props();
 
   const ROW_HEIGHT = 28;
   const LANE_WIDTH = 14;
-  const PAGE_SIZE = 300;
+  // PAGE_SIZE lives in the module script (shared with warmGraphSnapshot).
   const UNCOMMITTED = "*";
 
   let commits = $state<CommitInfo[]>([]);
@@ -273,31 +318,31 @@
     loading = true;
     error = null;
     try {
-      const page = await gitLog(repoPath, { skip, limit: PAGE_SIZE });
-      commits = skip === 0 ? page.commits : [...commits, ...page.commits];
-      refs = skip === 0 ? page.refs : { ...refs, ...page.refs };
-      hasMore = page.has_more;
       if (skip === 0) {
-        headOid =
-          Object.entries(page.refs).find(([, rs]) => rs.some((r) => r.kind === "Head"))?.[0] ??
-          null;
-        const summary = await gitSummary(repoPath);
-        workingChanges = summary.ok
-          ? summary.data.staged.length +
-            summary.data.changes.length +
-            summary.data.untracked.length +
-            summary.data.merge.length
-          : 0;
+        // Same page-0 fetch used by the background warm (#287), so an open
+        // that follows a warm reuses identical data.
+        const snapshot = await fetchPage0Snapshot(repoPath);
+        commits = snapshot.commits;
+        refs = snapshot.refs;
+        hasMore = snapshot.hasMore;
+        headOid = snapshot.headOid;
+        workingChanges = snapshot.workingChanges;
+        cacheSnapshot(repoPath, snapshot);
+      } else {
+        const page = await gitLog(repoPath, { skip, limit: PAGE_SIZE });
+        commits = [...commits, ...page.commits];
+        refs = { ...refs, ...page.refs };
+        hasMore = page.has_more;
+        // Snapshot page 0 for instant remount paint (#255) — deliberately not
+        // the full paged history, which can grow unbounded.
+        cacheSnapshot(repoPath, {
+          commits: commits.slice(0, PAGE_SIZE),
+          refs,
+          hasMore: hasMore || commits.length > PAGE_SIZE,
+          headOid,
+          workingChanges,
+        });
       }
-      // Snapshot page 0 for instant remount paint (#255) — deliberately not
-      // the full paged history, which can grow unbounded.
-      cacheSnapshot(repoPath, {
-        commits: commits.slice(0, PAGE_SIZE),
-        refs,
-        hasMore: hasMore || commits.length > PAGE_SIZE,
-        headOid,
-        workingChanges,
-      });
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     } finally {

@@ -41,16 +41,23 @@ fn validate_arg(kind: &str, value: &str) -> Result<(), AppError> {
 /// Run `git <args>` in `repo_path`, mapping a non-zero exit to the trimmed
 /// stderr (so the frontend can toast git's own message).
 fn run_git(repo_path: &str, args: &[&str]) -> Result<(), AppError> {
+    run_git_with_env(repo_path, args, &[])
+}
+
+/// Like `run_git` but with extra environment variables. Used to set
+/// `GIT_EDITOR=true` for `rebase --continue`, so git never blocks waiting on
+/// an interactive editor in a headless/desktop context.
+fn run_git_with_env(repo_path: &str, args: &[&str], envs: &[(&str, &str)]) -> Result<(), AppError> {
     let dir = Path::new(repo_path);
     if !dir.is_dir() {
         return Err(AppError::NotFound(repo_path.to_string()));
     }
-    let output = Command::new("git")
-        .no_console()
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .map_err(AppError::from)?;
+    let mut cmd = Command::new("git");
+    cmd.no_console().args(args).current_dir(dir);
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    let output = cmd.output().map_err(AppError::from)?;
 
     if output.status.success() {
         return Ok(());
@@ -71,6 +78,22 @@ async fn run_git_async(repo_path: String, args: Vec<String>) -> Result<(), AppEr
     tokio::task::spawn_blocking(move || {
         let refs: Vec<&str> = args.iter().map(String::as_str).collect();
         run_git(&repo_path, &refs)
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("git action task join: {e}")))?
+}
+
+/// `run_git_with_env` behind `spawn_blocking`, owning its args/envs.
+async fn run_git_env_async(
+    repo_path: String,
+    args: Vec<String>,
+    envs: Vec<(String, String)>,
+) -> Result<(), AppError> {
+    tokio::task::spawn_blocking(move || {
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let env_refs: Vec<(&str, &str)> =
+            envs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        run_git_with_env(&repo_path, &refs, &env_refs)
     })
     .await
     .map_err(|e| AppError::Other(format!("git action task join: {e}")))?
@@ -148,6 +171,48 @@ pub async fn git_reset(repo_path: String, oid: String, mode: String) -> Result<(
         other => return Err(AppError::Other(format!("invalid reset mode: {other}"))),
     };
     run_git_async(repo_path, vec!["reset".into(), flag.into(), oid]).await
+}
+
+// ----- In-progress operation abort / continue (#294) ----- //
+//
+// These drive the SCM panel's in-progress banner. They shell out exactly like
+// the operations above and surface git's own stderr on failure.
+
+/// Abort an in-progress merge, restoring the pre-merge working tree/index.
+#[tauri::command]
+pub async fn git_merge_abort(repo_path: String) -> Result<(), AppError> {
+    run_git_async(repo_path, vec!["merge".into(), "--abort".into()]).await
+}
+
+/// Abort an in-progress rebase, returning to the original branch state.
+#[tauri::command]
+pub async fn git_rebase_abort(repo_path: String) -> Result<(), AppError> {
+    run_git_async(repo_path, vec!["rebase".into(), "--abort".into()]).await
+}
+
+/// Continue an in-progress rebase after conflicts have been resolved and
+/// staged. `GIT_EDITOR=true` prevents git from opening an editor for the
+/// commit message, which would otherwise block indefinitely.
+#[tauri::command]
+pub async fn git_rebase_continue(repo_path: String) -> Result<(), AppError> {
+    run_git_env_async(
+        repo_path,
+        vec!["rebase".into(), "--continue".into()],
+        vec![("GIT_EDITOR".into(), "true".into())],
+    )
+    .await
+}
+
+/// Abort an in-progress cherry-pick sequence.
+#[tauri::command]
+pub async fn git_cherry_pick_abort(repo_path: String) -> Result<(), AppError> {
+    run_git_async(repo_path, vec!["cherry-pick".into(), "--abort".into()]).await
+}
+
+/// Abort an in-progress revert sequence.
+#[tauri::command]
+pub async fn git_revert_abort(repo_path: String) -> Result<(), AppError> {
+    run_git_async(repo_path, vec!["revert".into(), "--abort".into()]).await
 }
 
 #[cfg(test)]
@@ -296,6 +361,43 @@ mod tests {
             git_out(p, &["log", "--oneline", "-1", "--format=%s"]),
             "side change"
         );
+    }
+
+    #[test]
+    fn merge_abort_restores_clean_state() {
+        // Build a conflicted merge, then abort it and assert the repo is clean.
+        let dir = TempDir::new().unwrap();
+        let p = dir.path();
+        git(p, &["init", "-b", "main"]);
+        git(p, &["config", "commit.gpgsign", "false"]);
+        git(p, &["config", "user.name", "Test"]);
+        git(p, &["config", "user.email", "t@x"]);
+        write(p, "a.txt", "root\n");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-m", "root"]);
+        git(p, &["checkout", "-b", "feature"]);
+        write(p, "a.txt", "feature\n");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-m", "feature"]);
+        git(p, &["checkout", "main"]);
+        write(p, "a.txt", "main\n");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-m", "main"]);
+        // This merge conflicts and leaves MERGE_HEAD behind.
+        let _ = Command::new("git")
+            .current_dir(p)
+            .args(["merge", "feature"])
+            .output()
+            .unwrap();
+        assert!(p.join(".git/MERGE_HEAD").exists(), "expected merge in progress");
+
+        run_git(&repo_path(&dir), &["merge", "--abort"]).unwrap();
+
+        // Merge state cleared and the working tree restored to main's content.
+        assert!(!p.join(".git/MERGE_HEAD").exists(), "MERGE_HEAD should be gone");
+        assert_eq!(fs::read_to_string(p.join("a.txt")).unwrap(), "main\n");
+        // A porcelain status is empty (clean tree).
+        assert!(git_out(p, &["status", "--porcelain"]).is_empty());
     }
 
     #[test]

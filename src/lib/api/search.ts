@@ -4,6 +4,9 @@
  */
 
 import { invoke, extractError, type ApiResult } from "./common";
+import type { ContentMatch, ContentSearchResult } from "$lib/domain/content-search";
+
+export type { ContentMatch, ContentSearchResult };
 
 /**
  * Search result from fuzzy file search.
@@ -102,26 +105,6 @@ export async function cancelSearch(searchId: number): Promise<ApiResult<void>> {
 // Content Search (ripgrep)
 // Issue: tauri-explorer-3a1q
 // ===================
-
-/**
- * A single match within a file.
- */
-export interface ContentMatch {
-  lineNumber: number;
-  column: number;
-  lineContent: string;
-  matchStart: number;
-  matchEnd: number;
-}
-
-/**
- * Search result for a single file containing matches.
- */
-export interface ContentSearchResult {
-  path: string;
-  relativePath: string;
-  matches: ContentMatch[];
-}
 
 /**
  * Event payload for streaming content search results.

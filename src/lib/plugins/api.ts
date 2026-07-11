@@ -23,6 +23,10 @@ import { jobsStore } from "$lib/state/jobs.svelte";
 import { toastStore, type ToastType } from "$lib/state/toast.svelte";
 import { readConfigFile } from "$lib/api/files";
 import { writeConfigQueued } from "$lib/state/persisted";
+import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+import { dialogStore } from "$lib/state/dialogs.svelte";
+import { performFileTransfer } from "$lib/state/file-transfer";
+import type { FileEntry } from "$lib/domain/file";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 // ----- Settings descriptors -----
@@ -71,10 +75,48 @@ export interface PluginEvents {
   listen<T = unknown>(name: string, handler: (payload: T) => void): void;
 }
 
+/** Outcome of a workspace file operation (structural subset of the shared
+ *  transfer result). `error === "skipped"` means a no-op or user cancel. */
+export interface PluginMoveResult {
+  ok: boolean;
+  error?: string;
+}
+
+/**
+ * Read/act on the active file-explorer pane. This is the seam plugins use to
+ * reach the workspace — they never import the window/tab or explorer stores
+ * directly, so this surface stays the single, honest list of what a plugin can
+ * do to the file view.
+ */
+export interface PluginWorkspace {
+  /** Entries selected in the active pane. Empty when nothing is selected or
+   *  there is no active explorer pane. */
+  getSelection(): FileEntry[];
+  /** Entries currently listed in the active pane (after sort/filter). Used to
+   *  gather in-context candidates such as sibling folders. */
+  getVisibleEntries(): FileEntry[];
+  /** Navigate the active pane to a path — e.g. open a plugin's virtual folder. */
+  navigate(path: string): Promise<void>;
+  /** Refresh every open pane so listings reflect filesystem changes the plugin
+   *  caused (a written output file, a moved entry). Silent — no loading flash. */
+  refreshPanes(): Promise<void>;
+  /** Move a file into a destination directory through the shared transfer flow
+   *  (conflict prompt, undo, toast, cross-window broadcast, pane refresh). */
+  moveFile(sourcePath: string, targetDir: string): Promise<PluginMoveResult>;
+}
+
 /**
  * The capability surface handed to a plugin's `activate`. Plugins never call
- * `invoke` directly — every side effect routes through this object so it can be
- * tracked and torn down.
+ * `invoke` or reach into app stores directly — the common side effects route
+ * through this object so they can be tracked, torn down, and audited in one
+ * place: contribution registration, jobs, toasts, events, plugin storage, the
+ * workspace (selection / navigation / pane refresh / moves), and opening
+ * Settings.
+ *
+ * The one documented exception is a plugin purpose-built to extend a specific
+ * core subsystem (e.g. the theme engine): it may import that subsystem's store
+ * directly rather than grow this shared context with a single-consumer method.
+ * Such cases carry a justification comment at the import site.
  */
 export interface PluginContext {
   registerCommand(cmd: Command): void;
@@ -92,6 +134,10 @@ export interface PluginContext {
   toast: PluginToast;
   events: PluginEvents;
   storage: PluginStorage;
+  /** Read/act on the active file-explorer pane. */
+  workspace: PluginWorkspace;
+  /** Open the app Settings dialog (e.g. from a "configure API key" prompt). */
+  openSettings(): void;
 }
 
 export interface Plugin {
@@ -204,6 +250,27 @@ export function createPluginContext(pluginId: string): {
       },
     },
     storage,
+    workspace: {
+      getSelection: () => windowTabsManager.getActiveExplorer()?.getSelectedEntries() ?? [],
+      getVisibleEntries: () => windowTabsManager.getActiveExplorer()?.displayEntries ?? [],
+      navigate: async (path) => {
+        await windowTabsManager.getActiveExplorer()?.navigateTo(path);
+      },
+      // Refresh every explorer instance (across tabs), silently — a plugin's
+      // background job may have written a file into any pane's directory.
+      refreshPanes: async () => {
+        await Promise.all(
+          windowTabsManager.getAllExplorers().map((exp) => exp.refresh({ silent: true })),
+        );
+      },
+      moveFile: (sourcePath, targetDir) =>
+        performFileTransfer(sourcePath, targetDir, false, {
+          onRefresh: () => {
+            for (const exp of windowTabsManager.getAllExplorers()) void exp.refresh({ silent: true });
+          },
+        }),
+    },
+    openSettings: () => dialogStore.openSettings(),
   };
 
   return {

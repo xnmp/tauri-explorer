@@ -16,6 +16,17 @@ import {
   osClipboardReadFiles,
   osClipboardWriteFiles,
 } from "$lib/api/os-clipboard";
+import { toastStore } from "./toast.svelte";
+
+/** Mirror the in-app clipboard to the OS clipboard, surfacing failures
+ *  (e.g. wl-clipboard not installed) instead of silently dropping them —
+ *  the in-app copy still works either way (#279). */
+async function mirrorToOsClipboard(paths: string[]): Promise<void> {
+  const result = await osClipboardWriteFiles(paths);
+  if (!result.ok) {
+    toastStore.error(`Copy works in-app, but the system clipboard failed: ${result.error}`);
+  }
+}
 
 export type ClipboardOperation = "copy" | "cut";
 
@@ -88,7 +99,7 @@ function createClipboardStore() {
       if (entries.length === 0) return;
       content = { entries, operation: "copy" };
       await Promise.all([
-        osClipboardWriteFiles(entries.map((e) => e.path)),
+        mirrorToOsClipboard(entries.map((e) => e.path)),
         broadcast(content),
       ]);
     },
@@ -100,7 +111,7 @@ function createClipboardStore() {
       if (entries.length === 0) return;
       content = { entries, operation: "cut" };
       await Promise.all([
-        osClipboardWriteFiles(entries.map((e) => e.path)),
+        mirrorToOsClipboard(entries.map((e) => e.path)),
         broadcast(content),
       ]);
     },
@@ -139,9 +150,13 @@ function createClipboardStore() {
     },
 
     async readOsFiles(): Promise<OsClipboardContent | null> {
-      const paths = await osClipboardReadFiles();
-      if (paths.length === 0) return null;
-      return { paths, operation: "copy" };
+      const result = await osClipboardReadFiles();
+      if (!result.ok) {
+        toastStore.error(`Reading the system clipboard failed: ${result.error}`);
+        return null;
+      }
+      if (result.data.length === 0) return null;
+      return { paths: result.data, operation: "copy" };
     },
 
     /** Cleanup listener (call on app unmount). */

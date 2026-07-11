@@ -25,7 +25,7 @@
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { saveFocusedWindowState } from "$lib/state/focused-window";
   import { terminalPanelStore } from "$lib/state/terminal.svelte";
-  import { setFfmpegPath } from "$lib/api/files";
+  import { setFfmpegPath } from "$lib/api/system";
   import { useNativeDropHandler } from "$lib/composables/use-native-drop-handler";
   import { useFileWatchers } from "$lib/composables/use-file-watchers";
   import { useWindowLifecycle } from "$lib/composables/use-window-lifecycle";
@@ -258,19 +258,22 @@
     document.documentElement.style.setProperty("--bg-opacity", String(opacity));
   });
 
-  // Apply vibrancy mode attribute. It drives the translucent "floating island"
-  // CSS shared by macOS vibrancy and the Windows Mica/Acrylic backdrop — both
-  // need the app background to go transparent so the native effect shows through.
+  // Apply vibrancy mode attribute. It drives the "floating island" CSS shared
+  // by macOS vibrancy, the Windows Mica/Acrylic backdrop, and the
+  // platform-independent floatingIslands setting (#277). Native backdrops
+  // need the app background to go transparent so the effect shows through;
+  // without one, the no-blur path paints a themed depth gradient instead —
+  // same island layout, no transparency required (works on Linux).
   $effect(() => {
     const windowsBackdrop = settingsStore.windowsBackdrop !== "off";
-    if (settingsStore.macOsVibrancy || windowsBackdrop) {
+    const nativeBackdrop =
+      (settingsStore.macOsVibrancy && settingsStore.vibrancyBlur) || windowsBackdrop;
+    if (settingsStore.macOsVibrancy || windowsBackdrop || settingsStore.floatingIslands) {
       document.documentElement.setAttribute("data-vibrancy", "");
-      // No-blur is a macOS-only fallback (solid theme background); Windows
-      // backdrops always blur, so never apply it there.
-      if (settingsStore.macOsVibrancy && !settingsStore.vibrancyBlur) {
-        document.documentElement.setAttribute("data-vibrancy-no-blur", "");
-      } else {
+      if (nativeBackdrop) {
         document.documentElement.removeAttribute("data-vibrancy-no-blur");
+      } else {
+        document.documentElement.setAttribute("data-vibrancy-no-blur", "");
       }
     } else {
       document.documentElement.removeAttribute("data-vibrancy");
@@ -741,7 +744,8 @@
     z-index: 1;
   }
 
-  /* macOS native vibrancy mode: floating islands on NSVisualEffectView */
+  /* Floating-island mode: macOS vibrancy, Windows Mica/Acrylic, or the
+     platform-independent floatingIslands setting (#277). */
   :global([data-vibrancy]) {
     --titlebar-opacity: 0;
     --sidebar-opacity: 0;
@@ -754,6 +758,18 @@
         rgba(0, 0, 0, 0.02) 100%
       ),
       color-mix(in srgb, var(--vibrancy-island-card, var(--background-card)) 98%, transparent);
+    /* Material weight encodes hierarchy: structural surfaces (sidebar) sit
+       heavier — receded toward the backdrop — so content islands read as
+       the lighter, foreground material. */
+    --vibrancy-island-bg-structural:
+      linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.03) 0%,
+        transparent 40%,
+        rgba(0, 0, 0, 0.03) 100%
+      ),
+      color-mix(in srgb, var(--vibrancy-island-card, var(--background-card)) 72%, transparent);
+    --vibrancy-island-filter: blur(12px) brightness(1.08) saturate(1.2);
     --vibrancy-island-stroke: var(--surface-stroke);
     --vibrancy-island-radius: 14px;
     --vibrancy-island-glow:
@@ -762,6 +778,19 @@
       0 1px 3px rgba(0, 0, 0, 0.15),
       0 4px 12px rgba(0, 0, 0, 0.2),
       0 12px 32px rgba(0, 0, 0, 0.15);
+  }
+
+  /* Translucent surfaces go frosty/solid when the user asks for it. */
+  @media (prefers-reduced-transparency: reduce) {
+    :global([data-vibrancy]) {
+      --vibrancy-island-filter: none;
+      --vibrancy-island-bg:
+        linear-gradient(var(--background-card), var(--background-card)),
+        var(--background-solid);
+      --vibrancy-island-bg-structural:
+        linear-gradient(var(--background-card), var(--background-card)),
+        var(--background-solid);
+    }
   }
 
   :global([data-vibrancy]) :global(body) {
@@ -798,14 +827,52 @@
       var(--background-solid);
   }
 
-  /* No-blur mode: use theme background instead of transparency */
+  /* No-blur mode: the island layout without any native transparency —
+     macOS with blur off, and every platform (Linux) via floatingIslands
+     (#277). Islands become opaque (blur over an opaque backdrop is wasted
+     GPU), and the backdrop gets a quiet depth gradient — a whisper of the
+     accent falling from the top, edges receding — so the islands still
+     read as floating above a lit surface rather than painted on a flat
+     wall. */
+  :global([data-vibrancy-no-blur]) {
+    --vibrancy-island-filter: none;
+    --vibrancy-island-bg:
+      linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.04) 0%,
+        transparent 40%,
+        rgba(0, 0, 0, 0.02) 100%
+      ),
+      linear-gradient(var(--background-card), var(--background-card)),
+      var(--background-solid);
+    --vibrancy-island-bg-structural:
+      linear-gradient(
+        var(--background-card-secondary, var(--background-card)),
+        var(--background-card-secondary, var(--background-card))
+      ),
+      var(--background-solid);
+  }
+
   :global([data-vibrancy-no-blur]) :global(body) {
     background: var(--background-solid);
     box-shadow: none;
   }
 
   :global([data-vibrancy-no-blur]) .explorer {
-    background: var(--background-mica);
+    background:
+      radial-gradient(
+        120% 90% at 50% -10%,
+        color-mix(in srgb, var(--accent) 7%, transparent) 0%,
+        transparent 55%
+      ),
+      linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--background-mica, var(--background-solid)) 97%, white) 0%,
+        var(--background-mica, var(--background-solid)) 40%,
+        color-mix(in srgb, var(--background-mica, var(--background-solid)) 95%, black) 100%
+      );
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
   :global([data-vibrancy]) .main-content {

@@ -6,7 +6,7 @@
   import { settingsStore, type IconTheme, type ThumbnailSize, type WindowsBackdrop, type PaneLayoutMode } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import { isMac, isWindows } from "$lib/domain/platform";
-  import { listInstalledTerminals } from "$lib/api/files";
+  import { listInstalledTerminals } from "$lib/api/open";
   import { warmPoolShutdown } from "$lib/api/warm-pool";
   import { spawnWarmWindow } from "$lib/state/warm-window";
   import KeybindingsSettings from "./KeybindingsSettings.svelte";
@@ -94,6 +94,7 @@
     windowControls: ["Show Window Controls", "Display minimize, maximize and close buttons"],
     integratedTitleBar: ["Integrated Title Bar", "Show tabs in the title bar alongside window controls (requires restart)"],
     vibrancy: ["Window Vibrancy", "Native macOS translucent frosted-glass effect (requires restart)"],
+    floatingIslands: ["Floating Islands", "Panels float as rounded islands over the backdrop. Works on every platform; pairs with native transparency on macOS/Windows when enabled", "vibrancy", "island", "layout"],
     nativeBlur: ["Native Blur", "Use macOS frosted glass blur (off = theme background, requires restart)"],
     windowsBackdrop: ["Window Backdrop", "Windows translucent Mica/Acrylic frosted-glass effect (enabling from Off requires restart)"],
     windowsBackdropOpacity: ["Backdrop Opacity", "How see-through the Acrylic backdrop is (lower = more transparent)"],
@@ -132,6 +133,7 @@
     rows.theme, rows.iconTheme, rows.thumbnailSize, rows.showSidebar, rows.windowControls,
     ...(isMac ? [rows.integratedTitleBar, rows.vibrancy, rows.nativeBlur] : []),
     ...(isWindows ? [rows.windowsBackdrop, rows.windowsBackdropOpacity] : []),
+    rows.floatingIslands,
     rows.addressBar, rows.statusBar,
   ];
   const navBarRows = [rows.navBack, rows.navForward, rows.navUp, rows.navRefresh];
@@ -362,6 +364,21 @@
           </div>
           {/if}
           {/if}
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.floatingIslands)}>
+            <div class="setting-info">
+              <span class="setting-label">Floating Islands</span>
+              <span class="setting-description">Panels float as rounded islands over the backdrop — works on every platform, pairs with native transparency where available (#277)</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.floatingIslands}
+                onchange={() => settingsStore.update({ floatingIslands: !settingsStore.floatingIslands })}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
 
           <div class="setting-row" class:hidden={!matchesSearch(...rows.addressBar)}>
             <div class="setting-info">

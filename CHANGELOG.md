@@ -2,6 +2,16 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.3.0 — 2026-07-11
+
+### Added
+- **Upscale plugin** — right-click a JPG/PNG/WebP → "Upscale Image" runs ByteDance SeedVR2 on fal.ai (2-4×) and drops the result next to the original, with jobs-panel progress and toasts. API key lives in plugin settings (or the `FAL_KEY` env var).
+- **Floating Islands on every platform** — the island layout (rounded floating panels) is no longer gated behind macOS vibrancy / Windows Mica. A new Appearance toggle enables it anywhere; without native transparency the backdrop gets a themed depth gradient instead. Structural surfaces (sidebar) now read as a heavier material than content islands, and `prefers-reduced-transparency` is honored.
+
+### Improved
+- Clipboard failures now tell you why: a missing `wl-clipboard`/`xclip` surfaces as a toast ("copy works in-app, but the system clipboard failed…") instead of a silent no-op copy.
+- Architecture sweep (adversarial review, applied): ~600 lines of duplicated plugin-dialog CSS unified; shared Rust plugin-job scaffolding; panel resize/persist logic deduplicated into one composable; tab-title logic extracted from the window-tabs store; `api/open.ts` + `api/system.ts` split out of the IPC grab-bag; dead code removed; +21 new behavior tests for previously untested stores.
+
 ## v1.2.0 — 2026-07-11
 
 ### Added

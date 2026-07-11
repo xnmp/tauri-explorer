@@ -6,9 +6,11 @@
 -->
 <script lang="ts">
   import Modal from "$lib/components/Modal.svelte";
+  import "../plugin-dialog.css";
   import type { PluginJobs, PluginToast } from "$lib/plugins/api";
   import { startNanoBananaJob, checkPathsExist } from "$lib/api/files";
   import { parentDir, basename } from "$lib/domain/path";
+  import { findAvailableFilename } from "$lib/domain/available-filename";
 
   interface Props {
     open: boolean;
@@ -38,25 +40,6 @@
   const outputDir = $derived(parentDir(sourcePath));
   const hasApiKey = $derived(!!apiKey);
 
-  /** Find next available output name: photo_edit.png, photo_edit_2.png, ... */
-  async function findAvailableFilename(dir: string, name: string): Promise<string> {
-    const dot = name.lastIndexOf(".");
-    const base = dot > 0 ? name.slice(0, dot) : name;
-    const ext = dot > 0 ? name.slice(dot) : ".png";
-    const editBase = base + "_edit";
-
-    // Check first candidate and a batch of numbered variants
-    const candidates = [editBase + ext];
-    for (let i = 2; i <= 20; i++) {
-      candidates.push(`${editBase}_${i}${ext}`);
-    }
-    const paths = candidates.map((c) => `${dir}/${c}`);
-    const exists = await checkPathsExist(paths);
-
-    const firstAvailable = candidates.find((_, i) => !exists[i]);
-    return firstAvailable ?? `${editBase}_${Date.now()}${ext}`;
-  }
-
   $effect(() => {
     if (open) {
       prompt = "";
@@ -64,7 +47,7 @@
       model = "nanobanana-pro";
       submitting = false;
       // Resolve available filename asynchronously
-      findAvailableFilename(outputDir, fileName).then((name) => {
+      findAvailableFilename(outputDir, fileName, "_edit", checkPathsExist).then((name) => {
         outputFilename = name;
       });
       requestAnimationFrame(() => inputRef?.focus());
@@ -113,7 +96,7 @@
   labelledby="nano-banana-title"
   onkeydown={handleKeydown}
 >
-    <div class="dialog">
+    <div class="dialog plugin-dialog">
       <header class="dialog-header">
         <div class="header-content">
           <svg class="header-icon" width="20" height="20" viewBox="0 0 20 20" fill="none">
@@ -201,232 +184,8 @@
 </Modal>
 
 <style>
+  /* Shared chrome comes from ../plugin-dialog.css; only the width is ours. */
   .dialog {
     width: 480px;
-    max-width: 90vw;
-    background: var(--background-solid);
-    border: 1px solid var(--surface-stroke);
-    border-radius: var(--radius-lg);
-    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-    animation: slideUp 150ms cubic-bezier(0, 0, 0, 1);
-  }
-
-  @keyframes slideUp {
-    from { opacity: 0; transform: translateY(20px) scale(0.98); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
-  }
-
-  .dialog-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 16px 20px;
-    border-bottom: 1px solid var(--divider);
-  }
-
-  .header-content {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .header-icon {
-    color: var(--accent);
-  }
-
-  .dialog-header h2 {
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--text-primary);
-    margin: 0;
-  }
-
-  .close-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    padding: 0;
-    background: transparent;
-    border: none;
-    border-radius: var(--radius-sm);
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-  }
-
-  .close-btn:hover {
-    background: var(--subtle-fill-secondary);
-    color: var(--text-primary);
-  }
-
-  .dialog-body {
-    padding: 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-  }
-
-  .file-info {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    background: var(--subtle-fill);
-    border-radius: var(--radius-sm);
-    font-size: 13px;
-  }
-
-  .file-label {
-    color: var(--text-tertiary);
-  }
-
-  .file-name {
-    color: var(--text-primary);
-    font-weight: 500;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .api-key-warning {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 12px;
-    background: color-mix(in srgb, var(--system-caution) 15%, transparent);
-    border: 1px solid color-mix(in srgb, var(--system-caution) 30%, transparent);
-    border-radius: var(--radius-sm);
-    font-size: 13px;
-    color: var(--text-primary);
-  }
-
-  .api-key-warning svg {
-    color: var(--system-caution);
-    flex-shrink: 0;
-  }
-
-  .link-btn {
-    background: none;
-    border: none;
-    color: var(--accent);
-    cursor: pointer;
-    font-family: inherit;
-    font-size: 13px;
-    text-decoration: underline;
-    padding: 0;
-  }
-
-  .link-btn:hover {
-    color: var(--accent-hover, var(--accent));
-  }
-
-  .prompt-field {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .prompt-label {
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-secondary);
-  }
-
-  .model-select {
-    appearance: none;
-    -webkit-appearance: none;
-    padding: 10px 32px 10px 14px;
-    background: var(--control-fill);
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 5l3 3 3-3' fill='none' stroke='%238a95b8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 10px center;
-    border: 1px solid var(--control-stroke);
-    border-radius: var(--radius-sm);
-    font-family: inherit;
-    font-size: 14px;
-    color: var(--text-primary);
-    cursor: pointer;
-    outline: none;
-    transition: border-color var(--transition-fast);
-  }
-
-  .model-select:focus {
-    border-color: var(--accent);
-  }
-
-  .model-select:disabled {
-    opacity: 0.6;
-  }
-
-  .model-select option {
-    background: var(--background-solid);
-    color: var(--text-primary);
-  }
-
-  .prompt-input {
-    padding: 10px 14px;
-    background: var(--control-fill);
-    border: 1px solid var(--control-stroke);
-    border-radius: var(--radius-sm);
-    font-family: inherit;
-    font-size: 14px;
-    color: var(--text-primary);
-    outline: none;
-    transition: border-color var(--transition-fast);
-  }
-
-  .prompt-input:focus {
-    border-color: var(--accent);
-  }
-
-  .prompt-input::placeholder {
-    color: var(--text-tertiary);
-  }
-
-  .prompt-input:disabled {
-    opacity: 0.6;
-  }
-
-  .dialog-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-  }
-
-  .btn {
-    padding: 8px 20px;
-    border: none;
-    border-radius: var(--radius-sm);
-    font-family: inherit;
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all var(--transition-fast);
-  }
-
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-secondary {
-    background: var(--control-fill);
-    color: var(--text-primary);
-    border: 1px solid var(--control-stroke);
-  }
-
-  .btn-secondary:hover:not(:disabled) {
-    background: var(--control-fill-secondary);
-  }
-
-  .btn-primary {
-    background: var(--accent);
-    color: var(--text-on-accent);
-  }
-
-  .btn-primary:hover:not(:disabled) {
-    filter: brightness(1.1);
   }
 </style>

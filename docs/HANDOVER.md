@@ -1,59 +1,40 @@
-# Session Handover — as of 2026-07-10
+# Session Handover — as of 2026-07-11 (evening)
 
-Continuing work on tauri-explorer — get ready for the next round of features.
+Continuing work on tauri-explorer — v1.3.0 is released; the architecture sweep is applied; ready for the next round.
 
-**Previous session summary:** Fixed and shipped all 10 open UX issues (#233–#242) in one pass: shortcut-badge theming, address-bar flash, command-palette lag, tab hover fillet, fullscreen-preview center + pan/zoom, Alt+M T integrated terminal, tab-strip blending, directional pane hotkey defaults, marquee-at-zoom regression (+ WebKit e2e coverage), and drag-hover highlight blinking. Each got its own `fix/<slug>` branch, screenshots, tests, and a `--no-ff` merge to `dev`; all issues closed, `dev` pushed.
+**Previous session summary:** Shipped the **upscale plugin** (#276: right-click JPG/PNG/WebP → SeedVR2 on fal.ai via a Rust queue job; replaced the old session-level skill), made the **floating-islands layout cross-platform** (#277: new `floatingIslands` setting works on Linux with a themed depth-gradient backdrop + apple-design material hierarchy), then ran an **adversarial Fable architecture sweep** and applied it: plugin-scaffolding dedup + domain cleanups (#278), clipboard AppError surfacing (#279), settings/commands behavior tests (#280), tab-display extraction from the window-tabs god store (#281), api/open+system split (#282). Released **v1.3.0** (#283).
 
 **Key context:**
-- `dev` is green and pushed: 502/502 e2e (`ALL_VIEW_MODES=1`), 924 unit tests, 0 svelte-check errors.
-- `new_todo.md` is empty and there is no open issue backlog from this batch — next session starts by taking new feature requests, converting them into GitHub issues (with `## Screenshots` checkbox section), then one branch per issue.
-- Default directional split hotkeys are now **Cmd/Super+Alt + P/L/;/'** (#239); any new e2e or docs must use `Meta+Alt+…`, not `Ctrl+Alt`.
-- Command palette / QuickOpen / ContentSearch have **no entrance animation** by design (#234) — don't "polish" one back in; keystroke-summoned surfaces must be legible on their first frame.
-- Fullscreen overlays that must cover the visible viewport need `zoom: calc(1 / var(--app-zoom, 1))` — `--app-zoom` is set alongside `documentElement.style.zoom` in `+page.svelte` (#236). Reuse it for any future fullscreen/overlay feature.
-- `screenshots/_issue-refs/` is intentionally untracked (user's clipboard references for issues #238/#240); leave or ask before touching.
+- Verify the v1.3.0 "Build & Release" workflow completed and assets exist: `gh run list --workflow=release.yml` (the PR to main may still have been in flight at session end — check `gh pr list` and merge if needed).
+- Gates before release: 984 unit tests, 214 Rust tests, 0 svelte-check errors, full `ALL_VIEW_MODES=1` E2E 524/525 (1 terminal-panel load-contention flake, passes isolated).
+- **Sweep findings deliberately deferred** (revisit only when feature work forces the seam): PreviewPane 3-way split (C1), other big-but-cohesive components (C2), mock-invoke behavioral drift vs real git (C3 — grow `e2e-tauri` instead), window-tabs closed-pane-restore extraction (B2 step 2 — the next natural increment; tab-display extraction proved the pattern in `state/tab-display.svelte.ts`).
+- **New conventions the sweep established** (enforce in review): plugin dialogs use `plugins/plugin-dialog.css` (`.plugin-dialog` root class) + `domain/available-filename.ts`; Rust plugin jobs use `plugin_job.rs` (ids/validation/timeout/`{prefix}-complete|-error` emission); panel resize via `usePersistedPanelWidth` (no raw localStorage in components); backend commands return `Result<_, AppError>` — bools only for pure probes; `api/open.ts` (external programs) and `api/system.ts` (window/OS plumbing) exist — don't re-fatten files.ts, whose re-exports are now named, not `export *`.
+- **Upscale plugin**: `src/lib/plugins/upscale/` + `src-tauri/src/{upscale,fal}.rs`. fal gotchas: scoped keys 403 on documented upload endpoints — use `rest.alpha.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3` → PUT; queue errors arrive as a `detail` array WITH status COMPLETED; min input 128×128. Key in plugin settings or `FAL_KEY` (~/.zshenv).
+- **Floating islands**: `floatingIslands` setting → `data-vibrancy` (+ `data-vibrancy-no-blur` when no native backdrop). Island materials: `--vibrancy-island-bg` (content) vs `--vibrancy-island-bg-structural` (sidebar, heavier) vs `--vibrancy-island-filter` (blur; `none` in no-blur/reduced-transparency). The apple-design skill is installed at `~/.claude/skills/apple-design` — load it for any motion/material/typography work.
+- `screenshots/_issue-refs/`, `docs/AI-native-ideas.md`, `docs/code-map/` stay untracked — never `git add -A`.
+- HANDOVER.md and any tracked doc can't be edited on `dev` — hooks require a chore branch + issue even for docs.
 
-**Current state:** Everything merged and working; no in-progress branches; working tree clean except untracked `.rtk_tmp` and `screenshots/_issue-refs/` (and this handover file — do NOT commit it).
+**Current state:** All issues #276–#284 closed; dev pushed; no open branches besides the release PR (if still open). Working tree clean except intentionally-untracked files.
 
-**Next steps:** Ask the user for the next feature list (or check `new_todo.md` / new GitHub issues), write implementation plans, create issues, then follow the per-issue checklist in CLAUDE.md.
+**Next steps:** Confirm the release PR merged + workflow published v1.3.0 assets; then new feature requests → issues → branches per CLAUDE.md.
 
 ---
 
 ## Architecture & Learnings
 
-### Frontend layout (`src/lib/`)
-- `domain/` — pure logic, no framework deps. Notable: `zoom.ts` (coordinate conversions under CSS zoom), `keybinding-parser.ts` (chords, `Cmd`→meta aliasing, display formatting), `path.ts`, `fuzzy-score.ts`.
-- `state/` — Svelte 5 rune stores. `settings.svelte.ts` (all persisted settings + `TOGGLE_SETTINGS` command metadata), `commands/` (palette command registries: `pane-commands.ts`, `general-commands.ts`, `navigation-commands.ts`), `window-tabs.svelte.ts`, `terminal.svelte.ts` (integrated terminal visibility), **new:** `home.svelte.ts` (app-wide cached home dir — read `homeDirectory.value` synchronously instead of calling `getHomeDirectory()` per component).
-- `composables/` — `use-drop-target.svelte.ts` (folder drop highlight; dragleave now child-aware), `use-marquee-selection.svelte.ts`, `use-native-drop-target.svelte.ts` (position-based highlight via `elementFromPoint`), `use-pointer-drag.svelte.ts`.
-- `components/` — `WindowTabBar.svelte` (tabs + fillets + hover pill), `PreviewPane.svelte` (preview + fullscreen pan/zoom), `Modal.svelte` + `modal.css` (shared dialog chrome), `NavigationBar.svelte` (breadcrumbs/anchor icons), `ShortcutCheatsheet.svelte` (Ctrl+/).
-- Entry: `src/routes/+page.svelte` — global shortcuts (Ctrl+`, Ctrl+\, zoom effect setting `--app-zoom`), lazy-mounts PreviewPane/TerminalPanel behind settings flags.
+### Layering (post-sweep state)
+- `domain/` pure (zero state imports — `UndoAction` now lives in `domain/undo-operations.ts`, `extractFolderName` in `domain/tab-title.ts`); `state/` rune-store singletons; `api/` = IPC wrappers with `ApiResult`, now split: files (fs CRUD) / open (external programs) / system (window/OS) / git / search / thumbnails / archive / config; `plugins/` built-ins registered in `plugins/registry.svelte.ts` `BUILT_IN_PLUGINS`.
+- `window-tabs.svelte.ts` (~990 lines) still owns tab CRUD, pane trees, restore stacks, persistence, explorer lifecycle; its display/title/git-root decoration lives in `state/tab-display.svelte.ts` (factory taking `{getTabs, getTabLivePath, panePath}` getters — the pattern for further extractions).
+- Adding an AI plugin now costs: frontend `plugins/<id>/index.ts` (+dialog importing `../plugin-dialog.css`, root class `dialog plugin-dialog`), one entry in BUILT_IN_PLUGINS, an api wrapper, a Rust module on `plugin_job.rs`, `mod` + `generate_handler!` in lib.rs, and a `start_<id>_job: () => 1` mock.
 
-### CSS zoom coordinate model (IMPORTANT — recurring bug source)
-Standardized CSS zoom (Interop 2024; Chromium ≥128, WebKitGTK ≥2.44): `clientX/Y` **and** `getBoundingClientRect()` are both post-zoom viewport px on EVERY engine. All converters in `domain/zoom.ts` are now single-division/multiplication and engine-independent (`clientToCSSRelative`, `rectDimToCSS`, `cssToRect`, `fixedFromClient`, `fixedFromRect`). The legacy "WebKitGTK reports pre-zoom rects" model is DEAD — if you find an engine branch on zoom coordinates, it's a bug. When touching `domain/zoom.ts`, run `PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true WEBKIT=1 npx playwright test e2e/zoom-positioning.spec.ts --project=webkit`.
-Also: `position: fixed; width: 100vw` does NOT cover the visible viewport under root zoom — cancel with `zoom: calc(1 / var(--app-zoom, 1))`.
+### CSS zoom + theming
+(unchanged — see the recurring-bug-source sections in the previous handover / lessons_learnt: standardized zoom = post-zoom px everywhere, no engine branches; grep themes before using a token; no light-hex var fallbacks.)
 
-### Theming (recurring bug source)
-Theme token set lives in `src/lib/themes/*.css` (`dark.css` is the reference list). There is NO `--background`, `--background-secondary`, `--border-color`, or `--accent-color` — grep `src/lib/themes/` before using a token. Correct idioms: controls `--control-fill`/`--control-stroke`, subtle chips `--subtle-fill-tertiary`, cards `--background-card`, accents `--accent`/`--text-on-accent`. Never write `var(--foo, #f5f5f5)`-style light fallbacks — they silently paint white on dark themes.
+### Testing & dev-loop
+- Unit: `bunx vitest run --maxWorkers=2` (full-parallel dies with `Unknown system error -122` in sandboxed shells; also caused ONE phantom "37 files failed" run — rerun before believing it). Rust: `cd src-tauri && cargo test`.
+- E2E: `rtk proxy npx playwright test --reporter=line` (rtk's parser chokes otherwise); session gate `ALL_VIEW_MODES=1`; terminal-panel spec is the current flake under full-suite load.
+- Store tests: `vi.resetModules()` + dynamic import per test for singletons; `vi.mock` the api modules; see `tests/state/{scm-summary-cache,clipboard-os-errors,settings-init,commands-registry}.test.ts`.
+- agent-browser: `AGENT_BROWSER_SESSION=<name>`; screenshots to repo-relative `screenshots/<branch>/<name>.png`; `touch` sources if the running Vite server serves stale modules after branch switches; LSP diagnostics can be stale right after a checkout — trust `bun run check`.
 
-### Tab bar (`WindowTabBar.svelte`)
-- `.tab-area` is `background: transparent` — the titlebar owns the strip surface. Never re-add a background layer to a child strip.
-- Active tab fuses to the pane via `.tab-fillet` spans (concave radial-gradient corners, z-index 3). Unfocused hover is an inset pill on `::before` (`inset: 4px 2px 3px`) so it can't collide with fillets.
-- Unfocused tabs: `--control-fill-tertiary` fill, `--text-secondary` text, opacity 1.
-
-### Drag & drop
-- Linux uses HTML5 DnD (`usesHtml5Drag = !isMac && !isWindows` in `domain/platform.ts`); mac/windows use pointer-drag + `elementFromPoint` highlighting.
-- dragenter/dragleave pair per ELEMENT not subtree: `useDropTarget.handleDragLeave(event, entry)` ignores leaves into the row's own children (relatedTarget containment; coordinate-in-rect fallback because WebKit's dragleave relatedTarget is null; (0,0)+null = window exit, clears).
-- Playwright synthetic DnD does NOT validate real browser DnD.
-
-### Testing & verification workflow
-- Unit: `bun run test` (also runs perf suite — one perf benchmark is occasionally flaky under load; rerun before believing a failure). Single file: `bunx vitest run tests/path/file.test.ts`.
-- E2E: `npx playwright test` (Chromium, dev server on 1420); full gate before ending a session: `ALL_VIEW_MODES=1 npx playwright test`. E2E failures in `beforeEach` timeouts are usually load contention — close stray agent-browser sessions and retry the spec in isolation before debugging.
-- WebKit project (`WEBKIT=1 … --project=webkit`) is the only thing that exercises the engine the real Linux app runs — use it for anything coordinate/zoom/drag related.
-- rtk truncates long playwright output; use `rtk proxy npx playwright test --reporter=line` for full output.
-- agent-browser: set `AGENT_BROWSER_SESSION=<name>` per task; screenshots MUST go to `screenshots/<branch>/` (a hook enforces the relative path). Gotchas: inline previews of dark modals can look white — pixel-sample with `ffmpeg -vf "crop=1:1:X:Y" -f rawvideo -pix_fmt rgb24 - | od -An -tu1`; DOM reads right after `dispatchEvent` in eval are stale (Svelte batches) — wrap in setTimeout/rAF; the daemon drops commands when too many are batched in one bash call; `document.dispatchEvent(keydown)` bubbles to window-capture handlers.
-- Palette-driven testing: preview pane toggles with **Space**; "Toggle Preview Pane" is hidden from the palette because its `when()` excludes input focus (the palette input itself) — pre-existing quirk, arguably a bug worth an issue.
-
-### Workflow reminders (hooks enforce these)
-- Branch names need a matching open GitHub issue (`fix/<slug>` ↔ issue title containing `<slug>`); re-use the issue's branch name for follow-up commits (e.g. e2e fix for #239 reused `fix/directional-pane-hotkeys`).
-- Merge hook: `git merge <branch> --no-ff -m …` — branch name must come FIRST after `merge`; screenshots must be COMMITTED on the feature branch before merging; "None required" in the issue's Screenshots section skips the check.
-- Issues do not reliably auto-close on merge — close manually with `gh issue close <n> --comment "..."`.
-- Update `docs/lessons_learnt.md` (append at bottom) for every behavioral bugfix; this session added five entries worth skimming.
+### Workflow (hooks)
+- Branch ↔ open issue title match; merges `git merge <branch> --no-ff` (branch name first, no `--ff-only` anywhere — sync local branches with `git reset --hard origin/<branch>`); screenshots committed separately and Read before commit; `main` is PR-protected (release = PR dev→main via `gh pr create`/`gh pr merge`); release workflow runs on push to main; bump versions in package.json/Cargo.toml/Cargo.lock/tauri.conf.json/PKGBUILD + CHANGELOG.

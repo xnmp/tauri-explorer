@@ -1575,6 +1575,8 @@ const mockCommands: Record<string, CommandHandler> = {
 
   start_nano_banana_job: () => 1,
 
+  start_upscale_job: () => 1,
+
   // Deterministic fake filename suggestions so browser E2E exercises the picker
   // without a real model. Derives names from the original's extension.
   ai_suggest_destination: (args) => {

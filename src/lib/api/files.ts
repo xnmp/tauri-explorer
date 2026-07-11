@@ -695,6 +695,36 @@ export async function startNanoBananaJob(
   }
 }
 
+// ===================
+// Upscale (fal.ai SeedVR2)
+// Issue: #276
+// ===================
+
+/**
+ * Start a SeedVR2 image upscale job.
+ * Returns job ID immediately; listen for upscale-complete/error events.
+ */
+export async function startUpscaleJob(
+  sourcePath: string,
+  outputDir: string,
+  outputFilename: string,
+  apiKey: string,
+  upscaleFactor: number,
+): Promise<ApiResult<number>> {
+  try {
+    const jobId = await invoke<number>("start_upscale_job", {
+      sourcePath,
+      outputDir,
+      outputFilename,
+      apiKey,
+      upscaleFactor,
+    });
+    return { ok: true, data: jobId };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
 /** File-picker portal window → backend: deliver the user's choice.
  *  `paths` are absolute filesystem paths; `cancelled` aborts the request. */
 export async function pickerRespond(

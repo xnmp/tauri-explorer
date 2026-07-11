@@ -9,6 +9,7 @@ mod config;
 mod content_search;
 mod crash_report;
 pub mod error;
+mod fal;
 mod files;
 mod gemini;
 pub mod git;
@@ -22,6 +23,7 @@ mod portal;
 mod process_ext;
 mod progress;
 mod update_check;
+mod upscale;
 /// Non-Linux stub so the command registry stays platform-independent.
 #[cfg(not(target_os = "linux"))]
 mod portal {
@@ -220,6 +222,7 @@ pub fn run(launch_dir: Option<String>) {
             wallpaper::set_as_wallpaper,
             // Nano Banana (AI image editing)
             nano_banana::start_nano_banana_job,
+            upscale::start_upscale_job,
             // AI rename suggestions
             ai_rename::ai_suggest_filenames,
             ai_organize::ai_suggest_destination,

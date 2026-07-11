@@ -7,7 +7,7 @@ import type { DirectoryListing, FileEntry } from "$lib/domain/file";
 import { selectPreviewImages } from "$lib/domain/folder-preview";
 import { parentDir, basename } from "$lib/domain/path";
 import { emitWatcherGitChange } from "$lib/state/git-refresh";
-import type { GitFileEntry, GitStatusCode, GitStatusSummary } from "$lib/api/files";
+import type { GitFileEntry, GitStatusCode, GitStatusSummary, GitOpState } from "$lib/api/files";
 
 // Check if we're running in Tauri v2
 // Note: Tauri v2 uses __TAURI_INTERNALS__, not __TAURI__ (v1)
@@ -345,6 +345,7 @@ interface MockGitState {
   changes: GitFileEntry[];
   untracked: GitFileEntry[];
   merge: GitFileEntry[];
+  op_state: GitOpState;
 }
 
 interface MockGitCommit {
@@ -370,7 +371,10 @@ function seedGitState(): MockGitState {
       { path: ".env.example", old_path: null, status: "Untracked" },
       { path: "assets/logo.png", old_path: null, status: "Untracked" },
     ],
-    merge: [{ path: "src/constants.ts", old_path: null, status: "Conflicted" }],
+    // Default seed is a normal dirty tree (no operation in progress). E2E can
+    // drive a merge-conflict flow via `__mockGitStartMergeConflict()`.
+    merge: [],
+    op_state: "clean",
   };
 }
 
@@ -436,7 +440,14 @@ function mockGitSummary(): GitStatusSummary {
       .filter((e) => !mockGitignored.has(e.path))
       .map((e) => ({ ...e })),
     merge: mockGit.merge.map((e) => ({ ...e })),
+    op_state: mockGit.op_state,
   };
+}
+
+/** Clear any in-progress operation state (mirrors git's abort commands). */
+function mockClearOperation(): void {
+  mockGit.merge = [];
+  mockGit.op_state = "clean";
 }
 
 if (typeof window !== "undefined") {
@@ -445,6 +456,7 @@ if (typeof window !== "undefined") {
     __mockGitCommits?: MockGitCommit[];
     __mockGitExternalModify?: (path: string) => void;
     __mockGitSetClean?: () => void;
+    __mockGitStartMergeConflict?: () => void;
     __mockGitState?: () => MockGitState;
   };
   // Reset the repo to its seed state (mock/browser only).
@@ -474,6 +486,17 @@ if (typeof window !== "undefined") {
     mockGit.changes = [];
     mockGit.untracked = [];
     mockGit.merge = [];
+    mockGit.op_state = "clean";
+    emitWatcherGitChange(MOCK_REPO_ROOT);
+  };
+  // Put the mock repo into an in-progress merge with one conflicted file, then
+  // fire the watcher change so the SCM panel refreshes into the banner state.
+  // Drives the merge-conflict E2E flow.
+  w.__mockGitStartMergeConflict = () => {
+    mockGit.op_state = "merge";
+    if (!mockGit.merge.some((e) => e.path === "src/constants.ts")) {
+      mockGit.merge.push({ path: "src/constants.ts", old_path: null, status: "Conflicted" });
+    }
     emitWatcherGitChange(MOCK_REPO_ROOT);
   };
   w.__mockGitState = () => mockGit;
@@ -1258,17 +1281,21 @@ const mockCommands: Record<string, CommandHandler> = {
     if (msg.trim().length === 0 && !amend) {
       throw new Error("commit message cannot be empty");
     }
-    const committed = [
-      ...mockGit.staged.map((e) => e.path),
-      ...mockGit.merge.map((e) => e.path),
-    ];
+    // Unresolved conflicts block the commit entirely (mirrors the backend
+    // `index.has_conflicts()` guard). Resolving = staging moves the entry out
+    // of `merge`, at which point committing is allowed.
+    if (mockGit.merge.length > 0) {
+      throw new Error(`resolve ${mockGit.merge.length} conflicted file(s) before committing`);
+    }
+    const committed = mockGit.staged.map((e) => e.path);
     if (committed.length === 0 && !amend) {
       throw new Error("nothing to commit");
     }
-    // Staged + resolved-merge entries become part of the commit; the working
+    // Only staged (resolved) entries become part of the commit; the working
     // tree (changes/untracked) is left untouched, mirroring the real backend.
+    // A completed commit also ends any in-progress operation.
     mockGit.staged = [];
-    mockGit.merge = [];
+    mockGit.op_state = "clean";
     const effectiveMessage =
       msg.trim().length === 0 && amend
         ? mockGitCommits[mockGitCommits.length - 1]?.message ?? ""
@@ -1310,6 +1337,33 @@ const mockCommands: Record<string, CommandHandler> = {
   },
   git_watch_repo: () => null,
   git_unwatch_repo: () => null,
+
+  // In-progress operation abort / continue (#294): clear the mock operation
+  // state so the next git_status reports a clean tree.
+  git_merge_abort: () => {
+    mockClearOperation();
+    return null;
+  },
+  git_rebase_abort: () => {
+    mockClearOperation();
+    return null;
+  },
+  git_rebase_continue: () => {
+    // Continue only succeeds once conflicts are resolved (staged).
+    if (mockGit.merge.length > 0) {
+      throw new Error("resolve conflicts before continuing the rebase");
+    }
+    mockClearOperation();
+    return null;
+  },
+  git_cherry_pick_abort: () => {
+    mockClearOperation();
+    return null;
+  },
+  git_revert_abort: () => {
+    mockClearOperation();
+    return null;
+  },
 
   // ----- Git history / commit graph (#57) -----
 
@@ -1495,7 +1549,23 @@ const mockCommands: Record<string, CommandHandler> = {
     const archivePath = args.archivePath as string;
     const extractHere = (args.extractHere as boolean) ?? false;
     const parentPath = parentDir(archivePath);
-    if (extractHere) return parentPath;
+    if (extractHere) {
+      // Mirror the backend: extract the archive's contents directly into the
+      // parent directory so they show up in the listing. Uses the same
+      // deterministic contents the read_archive mock reports (README.md,
+      // data.json, src/) so E2E can assert the extracted entries appear.
+      const entries = mockFiles[parentPath] || (mockFiles[parentPath] = []);
+      const extracted: FileEntry[] = [
+        file("README.md", `${parentPath}/README.md`, 512),
+        file("data.json", `${parentPath}/data.json`, 2048),
+        dir("src", `${parentPath}/src`, true),
+      ];
+      for (const e of extracted) {
+        if (!entries.some((x) => x.path === e.path)) entries.push(e);
+      }
+      mockFiles[`${parentPath}/src`] ||= [];
+      return parentPath;
+    }
     const folderName = basename(archivePath).replace(/\.zip$/i, "");
     const destPath = `${parentPath}/${folderName}`;
     const entries = mockFiles[parentPath] || (mockFiles[parentPath] = []);

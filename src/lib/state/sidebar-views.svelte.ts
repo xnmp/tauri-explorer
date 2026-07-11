@@ -3,29 +3,31 @@
  *
  * An entry here adds a pluggable view to the activity-bar sidebar. Each view
  * is kept mounted (toggled via `hidden`) so scroll/selection survive switches.
+ *
+ * This module owns only the plain descriptors (id/label), the active-view
+ * selection, and its persistence. The id -> {icon, component} mapping is a
+ * presentation concern and lives in the components layer (see
+ * `src/lib/components/sidebar-view-registry.ts`) so this state module has no
+ * dependency on Svelte components.
  */
 
-import type { Component } from "svelte";
-import FilesSidebarView from "$lib/components/FilesSidebarView.svelte";
+import { loadPersistedRaw, savePersistedRaw } from "$lib/state/persisted";
 
-export interface SidebarView {
+export interface SidebarViewDescriptor {
   id: string;
   label: string;
-  icon: Component;
-  component: Component;
 }
 
-import FilesIcon from "$lib/components/icons/FilesIcon.svelte";
-
-export const ALL_SIDEBAR_VIEWS: SidebarView[] = [
-  { id: "files", label: "Explorer", icon: FilesIcon, component: FilesSidebarView },
+export const ALL_SIDEBAR_VIEWS: SidebarViewDescriptor[] = [
+  { id: "files", label: "Explorer" },
 ];
 
+// Stored as a raw view id (not JSON) — predates persisted.ts's JSON
+// convention, kept as-is so existing users' saved values still load.
 const STORAGE_KEY = "explorer-sidebar-active-view";
 
 function loadInitial(): string {
-  if (typeof localStorage === "undefined") return ALL_SIDEBAR_VIEWS[0].id;
-  const saved = localStorage.getItem(STORAGE_KEY);
+  const saved = loadPersistedRaw(STORAGE_KEY);
   if (saved && ALL_SIDEBAR_VIEWS.some((v) => v.id === saved)) return saved;
   return ALL_SIDEBAR_VIEWS[0].id;
 }
@@ -45,9 +47,7 @@ function createSidebarViewStore() {
     setActive(id: string) {
       if (!ALL_SIDEBAR_VIEWS.some((v) => v.id === id)) return;
       activeId = id;
-      if (typeof localStorage !== "undefined") {
-        localStorage.setItem(STORAGE_KEY, id);
-      }
+      savePersistedRaw(STORAGE_KEY, id);
     },
   };
 }

@@ -9,16 +9,11 @@ import type { Color } from "@tauri-apps/api/webviewWindow";
 import { isMac, isWindows } from "$lib/domain/platform";
 import { windowsBackdropEffects } from "./window-backdrop";
 import { settingsStore } from "./settings.svelte";
+import { EXPLORER_BG_RGBA_KEY, loadPersisted } from "./persisted";
 
 function getPersistedBgColor(): Color | undefined {
-  const raw = localStorage.getItem("explorer-bg-rgba");
-  if (!raw) return undefined;
-  try {
-    const [r, g, b, a] = JSON.parse(raw) as [number, number, number, number];
-    return [r, g, b, a];
-  } catch {
-    return undefined;
-  }
+  const rgba = loadPersisted<[number, number, number, number] | null>(EXPLORER_BG_RGBA_KEY, null);
+  return rgba ?? undefined;
 }
 
 /** Appearance/behavior options for a new explorer window. Mirrors the main

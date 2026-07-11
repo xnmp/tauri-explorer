@@ -19,6 +19,7 @@ import ScmPanel from "./ScmPanel.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { gitStatusStore } from "$lib/state/git-status.svelte";
+  import { gitWarmer } from "$lib/state/git-warm";
   import { drivesStore } from "$lib/state/drives.svelte";
   import { directoryKey } from "$lib/domain/path";
 import { nextRemovableRoot } from "$lib/domain/drives";
@@ -64,9 +65,13 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   $effect(() => {
     const path = paneExplorer.currentPath;
     const enabled = settingsStore.showGitStatus;
-    // Virtual (`scheme://…`) paths aren't real repos — skip git status.
-    if (enabled && path && !isVirtualPath(path)) {
-      untrack(() => gitStatusStore.fetchForDirectory(path));
+    // Virtual (`scheme://…`) paths aren't real repos — skip git.
+    if (path && !isVirtualPath(path)) {
+      if (enabled) untrack(() => gitStatusStore.fetchForDirectory(path));
+      // After (not blocking) the badge fetch, warm the git-graph + SCM caches
+      // in the background (#287). Debounce + per-feature gating live in the
+      // warmer; non-git users pay zero extra IPC.
+      untrack(() => gitWarmer.schedule(path));
     }
   });
 

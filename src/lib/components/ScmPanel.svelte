@@ -104,7 +104,7 @@
     border: 1px solid var(--vibrancy-island-stroke);
     background: var(--vibrancy-island-bg);
     box-shadow: var(--vibrancy-island-glow);
-    backdrop-filter: blur(12px) brightness(1.08) saturate(1.2);
-    -webkit-backdrop-filter: blur(12px) brightness(1.08) saturate(1.2);
+    backdrop-filter: var(--vibrancy-island-filter, blur(12px) brightness(1.08) saturate(1.2));
+    -webkit-backdrop-filter: var(--vibrancy-island-filter, blur(12px) brightness(1.08) saturate(1.2));
   }
 </style>

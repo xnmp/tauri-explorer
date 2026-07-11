@@ -4,7 +4,7 @@
  * ScmSidebarView.svelte so it can be unit tested.
  */
 
-import type { GitFileEntry } from "$lib/api/files";
+import type { GitFileEntry } from "$lib/domain/git";
 
 /** Tree node used by the folder-grouped SCM rendering. */
 export interface ScmTreeNode {

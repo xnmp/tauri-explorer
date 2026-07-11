@@ -7,9 +7,8 @@
 -->
 <script lang="ts">
   import Modal from "$lib/components/Modal.svelte";
-  import type { PluginToast } from "$lib/plugins/api";
+  import type { PluginToast, PluginMoveResult } from "$lib/plugins/api";
   import { suggestDestination } from "$lib/api/ai-organize";
-  import { performFileTransfer } from "$lib/state/file-transfer";
 
   interface Props {
     open: boolean;
@@ -21,7 +20,9 @@
     apiKey: string;
     toast: PluginToast;
     onOpenSettings: () => void;
-    refresh: () => void;
+    /** Move the file into a destination dir via the plugin workspace seam
+     *  (conflict prompt, undo, toast, pane refresh all handled upstream). */
+    moveFile: (sourcePath: string, targetDir: string) => Promise<PluginMoveResult>;
     onClose: () => void;
   }
 
@@ -35,7 +36,7 @@
     apiKey,
     toast,
     onOpenSettings,
-    refresh,
+    moveFile,
     onClose,
   }: Props = $props();
 
@@ -73,9 +74,7 @@
     if (applying) return;
     applying = true;
     // The shared transfer flow handles conflicts, undo, toast, and broadcast.
-    const result = await performFileTransfer(filePath, destDir, false, {
-      onRefresh: refresh,
-    });
+    const result = await moveFile(filePath, destDir);
     if (result.ok) {
       onClose();
     } else {

@@ -13,27 +13,15 @@
 //! (no `--yolo`).
 
 use crate::error::AppError;
-use serde::Serialize;
+use crate::plugin_job;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use tauri::{AppHandle, Emitter};
-
-static NEXT_JOB_ID: AtomicU64 = AtomicU64::new(1);
-
-/// Generous upper bound for a single edit job; gemini can be slow but should
-/// never run forever.
-const JOB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+use tauri::AppHandle;
 
 /// Single-quote a string for embedding in the gemini slash-command string.
 /// A prompt like `x'; rm -rf ~'` must stay a single token when gemini
 /// re-parses the command.
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
-}
-
-/// A bare filename that cannot escape its directory.
-fn is_valid_output_filename(name: &str) -> bool {
-    !name.is_empty() && !name.contains(['/', '\\']) && name != "." && name != ".."
 }
 
 /// A file extension safe to embed in the slash-command: ascii-alphanumeric
@@ -55,21 +43,6 @@ fn sanitized_ext(name: &Path) -> String {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-pub struct NanoBananaCompleteEvent {
-    #[serde(rename = "jobId")]
-    pub job_id: u64,
-    #[serde(rename = "outputPath")]
-    pub output_path: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct NanoBananaErrorEvent {
-    #[serde(rename = "jobId")]
-    pub job_id: u64,
-    pub error: String,
-}
-
 /// Start a Nano Banana image editing job.
 /// Returns the job ID immediately; emits `nano-banana-complete` or `nano-banana-error` events.
 #[tauri::command]
@@ -87,84 +60,33 @@ pub async fn start_nano_banana_job(
         return Err(AppError::NotFound(source_path));
     }
 
-    let output = PathBuf::from(&output_dir);
-    if !output.is_dir() {
-        return Err(AppError::InvalidPath(format!(
-            "Output directory does not exist: {}",
-            output_dir
-        )));
-    }
-
-    // The output filename must stay inside output_dir — reject separators
-    // and traversal outright rather than trusting the caller.
-    if !is_valid_output_filename(&output_filename) {
-        return Err(AppError::InvalidPath(format!(
-            "Invalid output filename: {}",
-            output_filename
-        )));
-    }
+    plugin_job::validate_output_target(&output_dir, &output_filename)?;
 
     let api_key = crate::gemini::resolve_api_key(&api_key)?;
-
-    let job_id = NEXT_JOB_ID.fetch_add(1, Ordering::Relaxed);
+    let job_id = plugin_job::next_job_id();
 
     tokio::spawn(async move {
-        // tempfile: unpredictable name and 0700 on unix. A fixed, sequential
-        // name in the shared system temp dir would let another local user
-        // pre-plant a symlink and receive the staged source image.
-        let work_dir = match tempfile::Builder::new()
-            .prefix(&format!("tauri-explorer-nanobanana-{}-", job_id))
-            .tempdir()
-        {
-            Ok(dir) => dir,
-            Err(e) => {
-                let _ = app.emit(
-                    "nano-banana-error",
-                    NanoBananaErrorEvent {
-                        job_id,
-                        error: format!("Failed to create work dir: {}", e),
-                    },
-                );
-                return;
-            }
+        let job = async {
+            // tempfile: unpredictable name and 0700 on unix. A fixed,
+            // sequential name in the shared system temp dir would let another
+            // local user pre-plant a symlink and receive the staged source.
+            let work_dir = tempfile::Builder::new()
+                .prefix(&format!("tauri-explorer-nanobanana-{}-", job_id))
+                .tempdir()
+                .map_err(|e| AppError::Other(format!("Failed to create work dir: {}", e)))?;
+            // TempDir removes itself when this future completes (drop).
+            run_gemini_edit(
+                work_dir.path(),
+                &source_path,
+                &prompt,
+                &output_dir,
+                &output_filename,
+                &api_key,
+                &model,
+            )
+            .await
         };
-        let job = run_gemini_edit(
-            work_dir.path(),
-            &source_path,
-            &prompt,
-            &output_dir,
-            &output_filename,
-            &api_key,
-            &model,
-        );
-        let result = match tokio::time::timeout(JOB_TIMEOUT, job).await {
-            Ok(result) => result,
-            Err(_) => Err(AppError::Other(format!(
-                "Nano Banana job timed out after {} minutes",
-                JOB_TIMEOUT.as_secs() / 60
-            ))),
-        };
-        drop(work_dir); // TempDir removes itself on drop
-        match result {
-            Ok(output_path) => {
-                let _ = app.emit(
-                    "nano-banana-complete",
-                    NanoBananaCompleteEvent {
-                        job_id,
-                        output_path,
-                    },
-                );
-            }
-            Err(e) => {
-                let _ = app.emit(
-                    "nano-banana-error",
-                    NanoBananaErrorEvent {
-                        job_id,
-                        error: e.to_string(),
-                    },
-                );
-            }
-        }
+        plugin_job::run_and_emit(&app, "nano-banana", job_id, job).await;
     });
 
     Ok(job_id)
@@ -380,14 +302,5 @@ mod tests {
         assert_eq!(sanitized_ext(Path::new("x.-'-")), "png");
     }
 
-    #[test]
-    fn output_filename_cannot_traverse() {
-        assert!(is_valid_output_filename("edited.png"));
-        assert!(!is_valid_output_filename(""));
-        assert!(!is_valid_output_filename("../escape.png"));
-        assert!(!is_valid_output_filename("a/b.png"));
-        assert!(!is_valid_output_filename("a\\b.png"));
-        assert!(!is_valid_output_filename("."));
-        assert!(!is_valid_output_filename(".."));
-    }
+    // Output-filename traversal rejection is covered by plugin_job::tests.
 }

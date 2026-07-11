@@ -27,7 +27,7 @@ import {
 } from "$lib/domain/pane-layout";
 import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
 import { loadPersisted, savePersisted, removePersisted } from "./persisted";
-import { parentDir, directoryKey } from "$lib/domain/path";
+import { basename, parentDir, directoryKey } from "$lib/domain/path";
 import { disambiguateTabTitles, gitTabDisplay, type GitTabDisplay } from "$lib/domain/tab-title";
 import { settingsStore } from "./settings.svelte";
 import { workspacesStore } from "./workspaces.svelte";
@@ -97,10 +97,11 @@ export function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** Extract folder name from path for tab title */
+/** Folder name for a tab title: domain basename, with the original
+ *  fallbacks preserved — root stays "/", empty becomes "Explorer" (#278). */
 export function extractFolderName(path: string): string {
-  const parts = path.split(/[/\\]/).filter(Boolean);
-  return parts.length > 0 ? parts[parts.length - 1] : path || "Explorer";
+  const name = basename(path);
+  return name && name !== "/" ? name : path || "Explorer";
 }
 
 /** Separator between pane folder names in a multi-pane tab title. */

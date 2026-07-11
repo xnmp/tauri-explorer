@@ -5,10 +5,10 @@
 <script lang="ts">
   import {
     operationsManager,
-    formatBytes,
     getOperationLabel,
     type Operation,
   } from "$lib/state/operations.svelte";
+  import { formatSize } from "$lib/domain/file";
 
   const operations = $derived(operationsManager.operations);
   const showDialog = $derived(operationsManager.showProgressDialog);
@@ -37,21 +37,6 @@
   function handleClose(): void {
     if (!hasActive) {
       operationsManager.hideDialog();
-    }
-  }
-
-  function getStatusIcon(status: Operation["status"]): string {
-    switch (status) {
-      case "running":
-        return "spinner";
-      case "completed":
-        return "check";
-      case "cancelled":
-        return "cancel";
-      case "error":
-        return "error";
-      default:
-        return "pending";
     }
   }
 
@@ -148,7 +133,7 @@
                     {op.progress.toFixed(0)}%
                     {#if op.bytesProcessed !== undefined && op.totalBytes !== undefined}
                       <span class="bytes-text">
-                        {formatBytes(op.bytesProcessed)} / {formatBytes(op.totalBytes)}
+                        {formatSize(op.bytesProcessed)} / {formatSize(op.totalBytes)}
                       </span>
                     {/if}
                   </div>

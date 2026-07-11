@@ -20,9 +20,7 @@
 import type { Plugin, PluginContext } from "../api";
 import { readTextFile, readConfigFile } from "$lib/api/files";
 import { buildContentHint, canSendContentHint, CONTENT_HINT_MAX_CHARS } from "$lib/domain/ai-rename";
-import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
-import { dialogStore } from "$lib/state/dialogs.svelte";
 import { parentDir, directoryKey } from "$lib/domain/path";
 import { isVirtualPath } from "$lib/domain/virtual-path";
 import type { FileEntry } from "$lib/domain/file";
@@ -122,10 +120,9 @@ export const aiOrganizePlugin: Plugin = {
     await seedApiKeyFromAiRename(ctx);
 
     const openPicker = async (entry: FileEntry): Promise<void> => {
-      const explorer = windowTabsManager.getActiveExplorer();
       const candidates = gatherCandidates(
         entry,
-        explorer?.displayEntries ?? [],
+        ctx.workspace.getVisibleEntries(),
         bookmarksStore.list.map((b) => b.path),
       );
       const apiKey = await currentApiKey(ctx);
@@ -138,8 +135,8 @@ export const aiOrganizePlugin: Plugin = {
         count: SUGGESTION_COUNT,
         apiKey,
         toast: ctx.toast,
-        onOpenSettings: () => dialogStore.openSettings(),
-        refresh: () => windowTabsManager.refreshAllPanes(),
+        onOpenSettings: () => ctx.openSettings(),
+        moveFile: (src: string, destDir: string) => ctx.workspace.moveFile(src, destDir),
       });
     };
 
@@ -179,14 +176,10 @@ export const aiOrganizePlugin: Plugin = {
       label: "AI: Suggest Destination…",
       category: "file",
       handler: () => {
-        const explorer = windowTabsManager.getActiveExplorer();
-        const file = selectedFile(explorer?.getSelectedEntries() ?? []);
+        const file = selectedFile(ctx.workspace.getSelection());
         if (file) void openPicker(file);
       },
-      when: () => {
-        const explorer = windowTabsManager.getActiveExplorer();
-        return selectedFile(explorer?.getSelectedEntries() ?? []) !== null;
-      },
+      when: () => selectedFile(ctx.workspace.getSelection()) !== null,
     });
   },
 };

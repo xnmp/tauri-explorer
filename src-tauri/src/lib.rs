@@ -217,6 +217,11 @@ pub fn run(launch_dir: Option<String>) {
             git_actions::git_merge,
             git_actions::git_rebase,
             git_actions::git_reset,
+            git_actions::git_merge_abort,
+            git_actions::git_rebase_abort,
+            git_actions::git_rebase_continue,
+            git_actions::git_cherry_pick_abort,
+            git_actions::git_revert_abort,
             // Drives / volumes
             files::drives::list_drives,
             // Wallpaper

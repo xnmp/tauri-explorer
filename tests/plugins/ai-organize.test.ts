@@ -44,6 +44,14 @@ function makeFakeCtx(seedStorage: Record<string, unknown> = {}) {
         store = { ...v };
       },
     },
+    workspace: {
+      getSelection: () => [],
+      getVisibleEntries: () => [],
+      navigate: async () => {},
+      refreshPanes: async () => {},
+      moveFile: async () => ({ ok: true }),
+    },
+    openSettings: () => {},
   } as unknown as PluginContext;
 
   return { ctx, commands, contextMenu, settingsSections, dialogs, getStore: () => store };

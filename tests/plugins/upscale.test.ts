@@ -56,6 +56,14 @@ function makeFakeCtx() {
       get: async () => ({}),
       set: async () => {},
     },
+    workspace: {
+      getSelection: () => [],
+      getVisibleEntries: () => [],
+      navigate: async () => {},
+      refreshPanes: async () => {},
+      moveFile: async () => ({ ok: true }),
+    },
+    openSettings: () => {},
   };
 
   return { ctx, commands, contextMenu, settingsSections, dialogs, events };

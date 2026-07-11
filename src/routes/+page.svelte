@@ -34,17 +34,12 @@
   import CrashNotice from "$lib/components/CrashNotice.svelte";
   import UpdateNotice from "$lib/components/UpdateNotice.svelte";
   import ShortcutCheatsheet from "$lib/components/ShortcutCheatsheet.svelte";
-    import FilePicker, { type PickerInfo } from "$lib/components/FilePicker.svelte";
+    import type { PickerInfo } from "$lib/components/FilePicker.svelte";
   import Sidebar from "$lib/components/Sidebar.svelte";
     import PaneContainer from "$lib/components/PaneContainer.svelte";
-  import QuickOpen from "$lib/components/QuickOpen.svelte";
-  import CommandPalette from "$lib/components/CommandPalette.svelte";
-  import OptionPicker from "$lib/components/OptionPicker.svelte";
   import ProgressDialog from "$lib/components/ProgressDialog.svelte";
-  import ContentSearchDialog from "$lib/components/ContentSearchDialog.svelte";
-  import ConflictDialog from "$lib/components/ConflictDialog.svelte";
-  import JobsPanel from "$lib/components/JobsPanel.svelte";
   import type { Component } from "svelte";
+  import { conflictResolver } from "$lib/state/conflict-resolver.svelte";
   import { gitStatusStore } from "$lib/state/git-status.svelte";
   import { initTabTransferListener } from "$lib/state/tab-transfer";
   import StatusBar from "$lib/components/StatusBar.svelte";
@@ -83,6 +78,13 @@
   let SettingsDialog = $state<Component<{ open: boolean; onClose: () => void }> | null>(null);
   let WorkspaceDialog = $state<Component<{ open: boolean; onClose: () => void }> | null>(null);
   let BulkRenameDialog = $state<Component<any> | null>(null);
+  let QuickOpen = $state<Component<{ open: boolean; onClose: () => void }> | null>(null);
+  let CommandPalette = $state<Component<{ open: boolean; onClose: () => void }> | null>(null);
+  let ContentSearchDialog = $state<Component<{ open: boolean; onClose: () => void }> | null>(null);
+  let FilePicker = $state<Component<{ info: PickerInfo }> | null>(null);
+  let ConflictDialog = $state<Component<any> | null>(null);
+  let JobsPanel = $state<Component<{ open: boolean; onClose: () => void }> | null>(null);
+  let OptionPicker = $state<Component<any> | null>(null);
 
   $effect(() => {
     if (dialogStore.isThemePickerOpen && !ThemePicker) {
@@ -96,6 +98,27 @@
     }
     if (dialogStore.isBulkRenameOpen && !BulkRenameDialog) {
       void import("$lib/components/BulkRenameDialog.svelte").then((m) => (BulkRenameDialog = m.default));
+    }
+    if (dialogStore.isQuickOpenOpen && !QuickOpen) {
+      void import("$lib/components/QuickOpen.svelte").then((m) => (QuickOpen = m.default));
+    }
+    if (dialogStore.isCommandPaletteOpen && !CommandPalette) {
+      void import("$lib/components/CommandPalette.svelte").then((m) => (CommandPalette = m.default));
+    }
+    if (dialogStore.isContentSearchOpen && !ContentSearchDialog) {
+      void import("$lib/components/ContentSearchDialog.svelte").then((m) => (ContentSearchDialog = m.default));
+    }
+    if (pickerInfo && !FilePicker) {
+      void import("$lib/components/FilePicker.svelte").then((m) => (FilePicker = m.default));
+    }
+    if (conflictResolver.isActive && !ConflictDialog) {
+      void import("$lib/components/ConflictDialog.svelte").then((m) => (ConflictDialog = m.default));
+    }
+    if (dialogStore.isJobsPanelOpen && !JobsPanel) {
+      void import("$lib/components/JobsPanel.svelte").then((m) => (JobsPanel = m.default));
+    }
+    if (dialogStore.isPickerOpen && !OptionPicker) {
+      void import("$lib/components/OptionPicker.svelte").then((m) => (OptionPicker = m.default));
     }
   });
 
@@ -478,7 +501,9 @@
 <AnimatedBackground />
 
 {#if pickerInfo}
-  <FilePicker info={pickerInfo} />
+  {#if FilePicker}
+    <FilePicker info={pickerInfo} />
+  {/if}
 {:else}
 <main class="explorer">
   <TitleBar />
@@ -515,13 +540,21 @@
 <CrashNotice />
 <UpdateNotice />
 <ShortcutCheatsheet open={dialogStore.isShortcutsOpen} onClose={() => dialogStore.closeShortcuts()} />
-<QuickOpen open={dialogStore.isQuickOpenOpen} onClose={() => dialogStore.closeQuickOpen()} />
-<CommandPalette open={dialogStore.isCommandPaletteOpen} onClose={() => dialogStore.closeCommandPalette()} />
+{#if QuickOpen}
+  <QuickOpen open={dialogStore.isQuickOpenOpen} onClose={() => dialogStore.closeQuickOpen()} />
+{/if}
+{#if CommandPalette}
+  <CommandPalette open={dialogStore.isCommandPaletteOpen} onClose={() => dialogStore.closeCommandPalette()} />
+{/if}
 {#if ThemePicker}
   <ThemePicker open={dialogStore.isThemePickerOpen} onClose={() => dialogStore.closeThemePicker()} />
 {/if}
-<OptionPicker />
-<ContentSearchDialog open={dialogStore.isContentSearchOpen} onClose={() => dialogStore.closeContentSearch()} />
+{#if OptionPicker}
+  <OptionPicker />
+{/if}
+{#if ContentSearchDialog}
+  <ContentSearchDialog open={dialogStore.isContentSearchOpen} onClose={() => dialogStore.closeContentSearch()} />
+{/if}
 {#if SettingsDialog}
   <SettingsDialog open={dialogStore.isSettingsOpen} onClose={() => dialogStore.closeSettings()} />
 {/if}
@@ -540,12 +573,16 @@
   {@const DialogComponent = d.component}
   <DialogComponent open={true} {...d.props} onClose={() => dialogRegistry.close(d.id)} />
 {/each}
-<JobsPanel
-  open={dialogStore.isJobsPanelOpen}
-  onClose={() => dialogStore.closeJobsPanel()}
-/>
+{#if JobsPanel}
+  <JobsPanel
+    open={dialogStore.isJobsPanelOpen}
+    onClose={() => dialogStore.closeJobsPanel()}
+  />
+{/if}
 <ProgressDialog />
-<ConflictDialog />
+{#if ConflictDialog}
+  <ConflictDialog />
+{/if}
 {/if}
 
 <style>

@@ -16,9 +16,15 @@ import {
   gitUnstage,
   gitUnwatchRepo,
   gitWatchRepo,
+  gitMergeAbort,
+  gitRebaseAbort,
+  gitRebaseContinue,
+  gitCherryPickAbort,
+  gitRevertAbort,
   type GitFileEntry,
   type GitStatusSummary,
 } from "$lib/api/files";
+import type { GitOpState } from "$lib/domain/git";
 import { subscribeGitChanges, notifyLocalGitChange } from "./git-refresh";
 
 function emptySummary(): GitStatusSummary {
@@ -31,6 +37,7 @@ function emptySummary(): GitStatusSummary {
     changes: [],
     untracked: [],
     merge: [],
+    op_state: "clean",
   };
 }
 
@@ -198,7 +205,14 @@ function createScmStore() {
   async function commit(opts?: { forceAmend?: boolean }): Promise<{ ok: boolean; error?: string }> {
     const msg = commitMessage.trim();
     if (!repoRoot) return { ok: false, error: "not a git repository" };
-    const hasStaged = summary.staged.length > 0 || summary.merge.length > 0;
+    // Unresolved merge/rebase conflicts block every commit — git refuses while
+    // the index has conflicts. Staging a conflict (resolving it) moves it out
+    // of `merge`, so this only fires while conflicts remain.
+    if (summary.merge.length > 0) {
+      commitError = `Resolve ${summary.merge.length} conflicted file(s) before committing`;
+      return { ok: false, error: commitError };
+    }
+    const hasStaged = summary.staged.length > 0;
     const effectiveAmend = amend || (msg.length === 0 && hasStaged && !!opts?.forceAmend);
     if (msg.length === 0 && !effectiveAmend) {
       commitError = "Commit message cannot be empty";
@@ -218,6 +232,35 @@ function createScmStore() {
     amend = false;
     await refresh();
     return { ok: true };
+  }
+
+  /**
+   * Abort the in-progress operation reported by `summary.op_state`, then
+   * refresh. Dispatches to the matching backend abort command. No-op when the
+   * repo is clean.
+   */
+  async function abortOperation(): Promise<{ ok: boolean; error?: string }> {
+    if (!repoRoot) return { ok: false, error: "not a git repository" };
+    const op: GitOpState = summary.op_state;
+    const abortByOp: Partial<Record<GitOpState, (r: string) => Promise<{ ok: boolean; error?: string }>>> = {
+      merge: gitMergeAbort,
+      rebase: gitRebaseAbort,
+      cherry_pick: gitCherryPickAbort,
+      revert: gitRevertAbort,
+    };
+    const fn = abortByOp[op];
+    if (!fn) return { ok: true };
+    const r = await fn(repoRoot);
+    await refresh();
+    return r.ok ? { ok: true } : { ok: false, error: r.error };
+  }
+
+  /** Continue an in-progress rebase (conflicts resolved & staged), then refresh. */
+  async function continueRebase(): Promise<{ ok: boolean; error?: string }> {
+    if (!repoRoot) return { ok: false, error: "not a git repository" };
+    const r = await gitRebaseContinue(repoRoot);
+    await refresh();
+    return r.ok ? { ok: true } : { ok: false, error: r.error };
   }
 
   function setCommitMessage(msg: string): void {
@@ -289,6 +332,8 @@ function createScmStore() {
     unstage,
     discard,
     commit,
+    abortOperation,
+    continueRebase,
     setCommitMessage,
     setAmend,
     setSelected,

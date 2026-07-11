@@ -46,6 +46,7 @@ function makeSummary(root: string, changedPath: string): GitStatusSummary {
     changes: [{ path: changedPath, status: "Modified", old_path: null }],
     untracked: [],
     merge: [],
+    op_state: "clean",
   };
 }
 

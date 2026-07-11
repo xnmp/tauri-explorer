@@ -21,6 +21,24 @@ export interface GitFileEntry {
   status: GitStatusCode;
 }
 
+/**
+ * In-progress repo operation reported by the backend (`repo.state()`).
+ * `clean` means no operation is under way. The others drive the SCM panel's
+ * in-progress banner (abort / continue).
+ */
+export type GitOpState = "clean" | "merge" | "rebase" | "cherry_pick" | "revert";
+
+/** Human-readable label for an in-progress operation banner. */
+export function gitOpStateLabel(state: GitOpState): string {
+  switch (state) {
+    case "merge": return "Merge";
+    case "rebase": return "Rebase";
+    case "cherry_pick": return "Cherry-pick";
+    case "revert": return "Revert";
+    case "clean": return "";
+  }
+}
+
 /** Convert a git status string to its single-letter indicator */
 export function gitStatusLetter(status: string): string {
   switch (status) {

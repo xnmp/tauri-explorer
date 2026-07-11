@@ -1,6 +1,10 @@
 <!--
   DetailsView - Column-based details view with VirtualList and sortable headers.
   Issue: tauri-explorer-9djf.5
+
+  NOTE: unlike List/Tiles this view virtualizes per-ROW-of-one and wires item
+  interactions inside each FileItem, so it deliberately does NOT use the shared
+  useRowGridView composable (which is for the multi-column grid views).
 -->
 <script lang="ts">
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";

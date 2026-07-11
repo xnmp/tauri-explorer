@@ -51,6 +51,9 @@ function createScmStore() {
   let activeDiff = $state<{ path: string; staged: boolean } | null>(null);
   let watcherPath: string | null = null;
   let subscribed = false;
+  // Repo roots with a warm currently in flight — dedups concurrent warms
+  // for the same repo (#287).
+  const warmInFlight = new Set<string>();
 
   async function detectRepo(path: string): Promise<string | null> {
     if (!path) return null;
@@ -114,6 +117,31 @@ function createScmStore() {
       watcherPath = repoRoot;
     }
     await refreshSummary();
+  }
+
+  /**
+   * Background warm (#287): populate summaryCache for the repo containing
+   * `path` without mounting the SCM panel, so the panel's first open serves
+   * a cached summary instead of flashing the empty/loading state. Purely
+   * additive — it never touches activePath, repoRoot, the single watcher, or
+   * refreshGeneration, so it cannot race the panel's own setActivePath flow.
+   * No-op if the repo is already cached or a warm for it is in flight;
+   * failures are swallowed (best-effort).
+   */
+  async function warm(path: string): Promise<void> {
+    try {
+      const root = await detectRepo(path);
+      if (!root || summaryCache.has(root) || warmInFlight.has(root)) return;
+      warmInFlight.add(root);
+      try {
+        const result = await gitSummary(root);
+        if (result.ok && !summaryCache.has(root)) summaryCache.set(root, result.data);
+      } finally {
+        warmInFlight.delete(root);
+      }
+    } catch {
+      /* best-effort warm — ignore failures */
+    }
   }
 
   function filterToDir<T extends { path: string }>(entries: T[]): T[] {
@@ -255,6 +283,7 @@ function createScmStore() {
 
     // actions
     setActivePath,
+    warm,
     refresh,
     stage,
     unstage,

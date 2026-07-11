@@ -17,9 +17,10 @@ import { nanoBananaPlugin } from "./nano-banana";
 import { aiRenamePlugin } from "./ai-rename";
 import { aiOrganizePlugin } from "./ai-organize";
 import { themeFromImagePlugin } from "./theme-from-image";
+import { upscalePlugin } from "./upscale";
 
 /** Statically-imported built-in plugins (explicit imports — no dynamic load). */
-const BUILT_IN_PLUGINS: Plugin[] = [demoPlugin, nanoBananaPlugin, aiRenamePlugin, aiOrganizePlugin, themeFromImagePlugin];
+const BUILT_IN_PLUGINS: Plugin[] = [demoPlugin, nanoBananaPlugin, aiRenamePlugin, aiOrganizePlugin, themeFromImagePlugin, upscalePlugin];
 
 export interface PluginInfo {
   id: string;

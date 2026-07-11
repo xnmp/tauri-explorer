@@ -11,7 +11,7 @@
  */
 
 import { listUserThemes, setWindowTheme } from "$lib/api/files";
-import { loadPersisted, removePersisted } from "./persisted";
+import { EXPLORER_BG_RGBA_KEY, loadPersisted, removePersisted, savePersisted, savePersistedRaw } from "./persisted";
 import { settingsStore } from "./settings.svelte";
 
 interface ThemeColors {
@@ -157,7 +157,9 @@ function createThemeState() {
     document.documentElement.classList.toggle("hljs-dark", scheme !== "light");
     requestAnimationFrame(() => {
       const raw = getComputedStyle(document.body).backgroundColor || "";
-      if (raw) localStorage.setItem("explorer-bg", raw);
+      // Raw CSS color string, not JSON — app.html's pre-paint script reads
+      // this key directly, so the exact format must be preserved.
+      if (raw) savePersistedRaw("explorer-bg", raw);
       const match = raw.match(/[\d.]+/g);
       if (match && match.length >= 3) {
         const vals = match.map(Number);
@@ -168,7 +170,7 @@ function createThemeState() {
         const a = vals[3] !== undefined
           ? Math.round((isFloat || vals[3] <= 1 ? vals[3] : vals[3] / 255) * 255)
           : 255;
-        localStorage.setItem("explorer-bg-rgba", JSON.stringify([r, g, b, a]));
+        savePersisted(EXPLORER_BG_RGBA_KEY, [r, g, b, a]);
       }
       const colorScheme = getComputedStyle(document.documentElement).colorScheme;
       setWindowTheme(colorScheme === "light" ? "light" : "dark");

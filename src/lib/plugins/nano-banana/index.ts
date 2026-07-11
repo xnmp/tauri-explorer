@@ -24,8 +24,6 @@ import { basename } from "$lib/domain/path";
 import { isVirtualPath } from "$lib/domain/virtual-path";
 import { readConfigFile } from "$lib/api/files";
 import { writeConfigQueued } from "$lib/state/persisted";
-import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-import { dialogStore } from "$lib/state/dialogs.svelte";
 import type { FileEntry } from "$lib/domain/file";
 import NanoBananaDialog from "./NanoBananaDialog.svelte";
 
@@ -95,7 +93,7 @@ export const nanoBananaPlugin: Plugin = {
         apiKey,
         jobs: ctx.jobs,
         toast: ctx.toast,
-        onOpenSettings: () => dialogStore.openSettings(),
+        onOpenSettings: () => ctx.openSettings(),
       });
     };
 
@@ -137,8 +135,7 @@ export const nanoBananaPlugin: Plugin = {
       label: "Nano Banana: Edit Image…",
       category: "plugins",
       handler: () => {
-        const entries = windowTabsManager.getActiveExplorer()?.getSelectedEntries() ?? [];
-        const image = selectedImage(entries);
+        const image = selectedImage(ctx.workspace.getSelection());
         if (image) void openEditor(image.path);
         else ctx.toast.show("Select an image first", "info");
       },
@@ -148,7 +145,7 @@ export const nanoBananaPlugin: Plugin = {
     ctx.events.listen<{ jobId: number; outputPath: string }>("nano-banana-complete", ({ jobId, outputPath }) => {
       ctx.jobs.complete(jobId, outputPath);
       ctx.toast.show(`Nano Banana complete: ${basename(outputPath)}`, "success");
-      for (const exp of windowTabsManager.getAllExplorers()) void exp.refresh();
+      void ctx.workspace.refreshPanes();
     });
 
     ctx.events.listen<{ jobId: number; error: string }>("nano-banana-error", ({ jobId, error }) => {

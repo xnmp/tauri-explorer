@@ -1702,3 +1702,21 @@ clearing staged, amend folding).
 
 ### Terminal cwd sync vs fast tab switches (#266)
 - Every `await` in a cd-sync pipeline is a tab-switch race: re-validate the target against the ACTIVE explorer after each round-trip, and consume the OSC 7 echoes of self-injected cds so they never drive explorer-follows-terminal navigation onto the wrong tab.
+
+### Round #268–#282 (hairlines, plugins, islands, architecture sweep)
+
+### One stroke per silhouette point (#268)
+- When a shape is composed of a body plus corner/fillet pieces, each carrying its own border, the body's straight stroke chords through the fillet curve. Draw side hairlines as background strips sized `calc(100% - var(--fillet))` (not full-height inset box-shadow) so the fillet's ring is the ONLY stroke along the curve. And a rule that redeclares `background` on hover silently drops background-drawn strokes.
+
+### Text glyphs are not icons (#270)
+- `↺ ⊘ + −` at the same font-size render at wildly different visual sizes (font metrics). Use stroke SVGs with one shared geometry (see `actionIcon` snippet in ScmSidebarView).
+
+### Loading states need a "pending" gate, not just a flag (#271)
+- A store's `loading` flag nobody reads is worse than none. The view must distinguish "nothing to show yet" (skeleton) from "resolved: empty" (not-a-repo message); a per-key cache serves stale-while-revalidate so re-activation never flashes. Mock latency knob: `?mockLatency=cmd:ms` / `window.__MOCK_LATENCY__` makes transient states E2E-assertable.
+
+### fal.ai integration (#276)
+- Scoped keys 403 on the documented `api.fal.ai` upload endpoints; use the client flow `POST rest.alpha.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3` → PUT bytes. Queue validation errors arrive with status COMPLETED and a `detail` array — check the body, not the status.
+
+### Sweep-applied conventions (#278–#282)
+- Plugin dialogs share `plugins/plugin-dialog.css` (root `.plugin-dialog`); plugin jobs share `plugin_job.rs` (ids, output validation, timeout, event emission) and `domain/available-filename.ts`. Panel resize/persist goes through `usePersistedPanelWidth` — never raw localStorage in components. Backend commands must return `Result<_, AppError>`; booleans are only for pure probes (menu enablement).
+- Dev-loop gotchas: full-parallel vitest dies in sandboxed shells with `Unknown system error -122` — cap with `--maxWorkers=2`; a still-running Vite server serves stale modules after branch switches — `touch` the files; LSP diagnostics right after a branch switch can be stale — re-run `bun run check` before believing them.

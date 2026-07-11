@@ -3,54 +3,19 @@
 -->
 <script lang="ts">
   import { sidebarViewsStore } from "$lib/state/sidebar-views.svelte";
+  import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte";
 
-  const SIDEBAR_WIDTH_KEY = "explorer-sidebar-width";
-  const MIN_WIDTH = 180;
-  const MAX_WIDTH = 400;
-  const DEFAULT_WIDTH = 240;
-
-  const parsedWidth = typeof localStorage !== "undefined"
-    ? parseInt(localStorage.getItem(SIDEBAR_WIDTH_KEY) ?? "", 10)
-    : NaN;
-  const savedWidth = Number.isNaN(parsedWidth) ? DEFAULT_WIDTH : parsedWidth;
-
-  let sidebarWidth = $state(Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, savedWidth)));
-  let isResizing = $state(false);
+  const resize = usePersistedPanelWidth("explorer-sidebar-width", {
+    min: 180,
+    max: 400,
+    default: 240,
+  });
 
   const views = $derived(sidebarViewsStore.views);
   const activeId = $derived(sidebarViewsStore.activeId);
-
-  function startResize(event: MouseEvent) {
-    event.preventDefault();
-    isResizing = true;
-
-    const startX = event.clientX;
-    const startWidth = sidebarWidth;
-
-    function onMouseMove(e: MouseEvent) {
-      const delta = e.clientX - startX;
-      sidebarWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startWidth + delta));
-    }
-
-    function onMouseUp() {
-      isResizing = false;
-      if (typeof localStorage !== "undefined") {
-        localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth));
-      }
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    }
-
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-    document.body.style.cursor = "ew-resize";
-    document.body.style.userSelect = "none";
-  }
 </script>
 
-<div class="sidebar-container" class:resizing={isResizing} style="width: {sidebarWidth}px">
+<div class="sidebar-container" class:resizing={resize.isResizing} style="width: {resize.width}px">
   <div class="sidebar">
     {#each views as view (view.id)}
       {@const ViewComponent = view.component}
@@ -67,7 +32,7 @@
   </div>
   <div
     class="resize-handle"
-    onmousedown={startResize}
+    onmousedown={resize.startResize}
     role="separator"
     aria-orientation="vertical"
     aria-label="Resize sidebar"

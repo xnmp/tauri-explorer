@@ -6,8 +6,16 @@
  * API dependencies are injected to keep this module framework-free and testable.
  */
 
-import type { UndoAction } from "$lib/state/types";
 import { parentDir, basename, joinPath } from "./path";
+
+/** Undoable action types. Lives in domain — these describe invertible
+ *  filesystem operations, independent of any store (#278). */
+export type UndoAction =
+  | { type: "rename"; path: string; oldName: string; newName: string }
+  | { type: "move"; sourcePath: string; destPath: string; originalDir: string }
+  | { type: "copy"; copiedPath: string; parentDir: string }
+  | { type: "batch"; actions: UndoAction[]; label: string }
+  | { type: "delete"; paths: string[]; parentDir: string };
 
 /** Minimal result type matching the API contract (data is irrelevant for undo/redo). */
 export type UndoResult = { ok: true } | { ok: false; error: string };

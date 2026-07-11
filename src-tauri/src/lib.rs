@@ -18,6 +18,7 @@ mod git_common;
 pub mod git_log;
 mod nano_banana;
 mod palette;
+mod plugin_job;
 #[cfg(target_os = "linux")]
 mod portal;
 mod process_ext;

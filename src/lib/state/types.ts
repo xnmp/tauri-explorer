@@ -6,13 +6,8 @@
 /** Available view modes for the file list */
 export type ViewMode = "details" | "list" | "tiles";
 
-/** Undoable action types */
-export type UndoAction =
-  | { type: "rename"; path: string; oldName: string; newName: string }
-  | { type: "move"; sourcePath: string; destPath: string; originalDir: string }
-  | { type: "copy"; copiedPath: string; parentDir: string }
-  | { type: "batch"; actions: UndoAction[]; label: string }
-  | { type: "delete"; paths: string[]; parentDir: string };
+/** Undoable action types — canonical definition lives in domain (#278). */
+export type { UndoAction } from "$lib/domain/undo-operations";
 
 /** Selection options for click handlers */
 export interface SelectOptions {
@@ -58,9 +53,6 @@ export type PaneId = string;
  * per-pane (#272) — but the discriminant stays for future kinds.
  */
 export type WindowTab = ExplorerTab;
-
-/** @deprecated alias kept from the per-pane-tabs era (#140). */
-export type PaneTab = WindowTab;
 
 /** A pane within an explorer tab: references its explorer instance by ID.
  *  `path` is the creation/restore path; the live path comes from the

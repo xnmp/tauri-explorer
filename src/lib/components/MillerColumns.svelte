@@ -9,6 +9,7 @@
 -->
 <script lang="ts">
   import { untrack, onMount } from "svelte";
+import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { fetchDirectory, watchDirectory, unwatchDirectory, isDirectoryEmpty } from "$lib/api/files";
@@ -288,49 +289,15 @@
   }
 
   // Resizable width
-  const MILLER_WIDTH_KEY = "explorer-miller-width";
-  const MIN_WIDTH = 120;
-  const MAX_WIDTH = 600;
-  const DEFAULT_WIDTH = 200;
-
-  let savedWidth = typeof localStorage !== "undefined"
-    ? parseInt(localStorage.getItem(MILLER_WIDTH_KEY) || String(DEFAULT_WIDTH), 10)
-    : DEFAULT_WIDTH;
-
-  let millerWidth = $state(Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, savedWidth)));
-  let isResizing = $state(false);
-
-  function startResize(event: MouseEvent) {
-    event.preventDefault();
-    isResizing = true;
-    const startX = event.clientX;
-    const startWidth = millerWidth;
-
-    function onMouseMove(e: MouseEvent) {
-      const delta = e.clientX - startX;
-      millerWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startWidth + delta));
-    }
-
-    function onMouseUp() {
-      isResizing = false;
-      if (typeof localStorage !== "undefined") {
-        localStorage.setItem(MILLER_WIDTH_KEY, String(millerWidth));
-      }
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-    }
-
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-    document.body.style.cursor = "ew-resize";
-    document.body.style.userSelect = "none";
-  }
+  const resize = usePersistedPanelWidth("explorer-miller-width", {
+    min: 120,
+    max: 600,
+    default: 200,
+  });
 </script>
 
 {#if columns.length > 0}
-  <div class="miller-columns" class:resizing={isResizing} style="width: {millerWidth}px">
+  <div class="miller-columns" class:resizing={resize.isResizing} style="width: {resize.width}px">
     {#each columns as column (column.path)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
@@ -380,7 +347,7 @@
     {/each}
     <div
       class="resize-handle"
-      onmousedown={startResize}
+      onmousedown={resize.startResize}
       role="separator"
       aria-orientation="vertical"
       aria-label="Resize miller columns"

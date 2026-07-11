@@ -1,42 +1,16 @@
 //! Image upscaling via fal.ai SeedVR2 (#276).
 //!
-//! Same job skeleton as nano_banana.rs: return a job ID immediately, do the
-//! work on a background task with a hard timeout, and emit
-//! `upscale-complete` / `upscale-error` events the plugin listens for.
-//! The HTTP legwork (CDN upload, queue submit/poll, download) lives in
-//! `fal.rs`; it's all blocking `ureq`, so it runs under `spawn_blocking`.
+//! Job scaffolding (id allocation, output validation, timeout, event
+//! emission) comes from `plugin_job.rs` (#278). The HTTP legwork (CDN
+//! upload, queue submit/poll, download) lives in `fal.rs`; it's all
+//! blocking `ureq`, so it runs under `spawn_blocking`.
 
 use crate::error::AppError;
-use serde::Serialize;
+use crate::plugin_job;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
-static NEXT_JOB_ID: AtomicU64 = AtomicU64::new(1);
-
-/// Upscales of large images can queue + run for a while, but never forever.
-const JOB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 const POLL_SECS: u64 = 3;
-
-/// A bare filename that cannot escape its directory.
-fn is_valid_output_filename(name: &str) -> bool {
-    !name.is_empty() && !name.contains(['/', '\\']) && name != "." && name != ".."
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct UpscaleCompleteEvent {
-    #[serde(rename = "jobId")]
-    pub job_id: u64,
-    #[serde(rename = "outputPath")]
-    pub output_path: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct UpscaleErrorEvent {
-    #[serde(rename = "jobId")]
-    pub job_id: u64,
-    pub error: String,
-}
 
 /// Start a SeedVR2 upscale job for a local image.
 /// Returns the job ID immediately; emits `upscale-complete` or `upscale-error`.
@@ -54,22 +28,7 @@ pub async fn start_upscale_job(
         return Err(AppError::NotFound(source_path));
     }
 
-    let output = PathBuf::from(&output_dir);
-    if !output.is_dir() {
-        return Err(AppError::InvalidPath(format!(
-            "Output directory does not exist: {}",
-            output_dir
-        )));
-    }
-
-    // The output filename must stay inside output_dir — reject separators
-    // and traversal outright rather than trusting the caller.
-    if !is_valid_output_filename(&output_filename) {
-        return Err(AppError::InvalidPath(format!(
-            "Invalid output filename: {}",
-            output_filename
-        )));
-    }
+    let final_output = plugin_job::validate_output_target(&output_dir, &output_filename)?;
 
     if !(1.0..=8.0).contains(&upscale_factor) {
         return Err(AppError::InvalidPath(format!(
@@ -79,35 +38,17 @@ pub async fn start_upscale_job(
     }
 
     let api_key = crate::fal::resolve_fal_key(&api_key)?;
-    let job_id = NEXT_JOB_ID.fetch_add(1, Ordering::Relaxed);
+    let job_id = plugin_job::next_job_id();
 
     tokio::spawn(async move {
-        let final_output = output.join(&output_filename);
-        let job = tokio::task::spawn_blocking(move || {
-            run_seedvr_upscale(&source, &final_output, &api_key, upscale_factor)
-        });
-        let result = match tokio::time::timeout(JOB_TIMEOUT, job).await {
-            Ok(Ok(result)) => result,
-            Ok(Err(join_err)) => Err(AppError::Other(format!("Upscale task failed: {}", join_err))),
-            Err(_) => Err(AppError::Other(format!(
-                "Upscale job timed out after {} minutes",
-                JOB_TIMEOUT.as_secs() / 60
-            ))),
+        let job = async {
+            tokio::task::spawn_blocking(move || {
+                run_seedvr_upscale(&source, &final_output, &api_key, upscale_factor)
+            })
+            .await
+            .map_err(|e| AppError::Other(format!("Upscale task failed: {}", e)))?
         };
-        match result {
-            Ok(output_path) => {
-                let _ = app.emit("upscale-complete", UpscaleCompleteEvent { job_id, output_path });
-            }
-            Err(e) => {
-                let _ = app.emit(
-                    "upscale-error",
-                    UpscaleErrorEvent {
-                        job_id,
-                        error: e.to_string(),
-                    },
-                );
-            }
-        }
+        plugin_job::run_and_emit(&app, "upscale", job_id, job).await;
     });
 
     Ok(job_id)
@@ -152,20 +93,4 @@ fn run_seedvr_upscale(
     crate::fal::download_to(url, final_output)?;
 
     Ok(final_output.to_string_lossy().to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn output_filename_cannot_traverse() {
-        assert!(is_valid_output_filename("upscaled.png"));
-        assert!(!is_valid_output_filename(""));
-        assert!(!is_valid_output_filename("../escape.png"));
-        assert!(!is_valid_output_filename("a/b.png"));
-        assert!(!is_valid_output_filename("a\\b.png"));
-        assert!(!is_valid_output_filename("."));
-        assert!(!is_valid_output_filename(".."));
-    }
 }

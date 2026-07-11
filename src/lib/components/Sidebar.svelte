@@ -129,14 +129,15 @@
     );
   }
 
-  /* Vibrancy: sidebar as floating island */
+  /* Vibrancy: sidebar as floating island. Structural material — heavier
+     than the content islands so hierarchy reads at a glance (#277). */
   :global([data-vibrancy]) .sidebar-container {
     border-radius: var(--vibrancy-island-radius);
     border: 1px solid var(--vibrancy-island-stroke);
     box-shadow: var(--vibrancy-island-glow);
-    background: var(--vibrancy-island-bg);
-    backdrop-filter: blur(12px) brightness(1.08) saturate(1.2);
-    -webkit-backdrop-filter: blur(12px) brightness(1.08) saturate(1.2);
+    background: var(--vibrancy-island-bg-structural, var(--vibrancy-island-bg));
+    backdrop-filter: var(--vibrancy-island-filter, blur(12px) brightness(1.08) saturate(1.2));
+    -webkit-backdrop-filter: var(--vibrancy-island-filter, blur(12px) brightness(1.08) saturate(1.2));
   }
 
   :global([data-vibrancy]) .sidebar {

@@ -85,6 +85,7 @@ export interface Settings {
   integratedTitleBar: boolean; // macOS: render tabs in title bar with overlay traffic lights
   macOsVibrancy: boolean; // macOS: native window vibrancy (translucent frosted glass), requires restart
   vibrancyBlur: boolean; // macOS: enable native blur behind vibrancy (off = theme background, no blur)
+  floatingIslands: boolean; // island layout on any OS — panels float as rounded islands; composes with native macOS/Windows transparency, plain themed backdrop elsewhere (#277)
   windowsBackdrop: WindowsBackdrop; // Windows: translucent system backdrop (Mica/Acrylic), requires restart
   windowsBackdropOpacity: number; // Windows: acrylic tint opacity 0-100 (lower = more see-through)
   yaziNavigation: boolean; // left/right arrows navigate up/into folders in details/list view
@@ -150,6 +151,7 @@ const DEFAULT_SETTINGS: Settings = {
   integratedTitleBar: false,
   macOsVibrancy: false,
   vibrancyBlur: true,
+  floatingIslands: false,
   windowsBackdrop: "off",
   windowsBackdropOpacity: 65,
   yaziNavigation: true,
@@ -399,6 +401,9 @@ function createSettingsStore() {
     get vibrancyBlur() {
       return settings.vibrancyBlur;
     },
+    get floatingIslands() {
+      return settings.floatingIslands;
+    },
     get windowsBackdrop() {
       return settings.windowsBackdrop;
     },
@@ -573,6 +578,7 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
   { key: "integratedTitleBar", label: "Toggle Integrated Title Bar" },
   { key: "macOsVibrancy", label: "Toggle macOS Vibrancy" },
   { key: "vibrancyBlur", label: "Toggle Vibrancy Blur" },
+  { key: "floatingIslands", label: "Toggle Floating Islands" },
   { key: "terminalFollowsExplorer", label: "Toggle Terminal Follows Explorer" },
   { key: "explorerFollowsTerminal", label: "Toggle Explorer Follows Terminal" },
 ];

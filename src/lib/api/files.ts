@@ -225,23 +225,6 @@ export async function moveEntry(
   }
 }
 
-/**
- * Open a file in the system's default application.
- *
- * @param path - Full path to file to open
- * @returns Result indicating success or error message
- */
-export async function openFile(path: string): Promise<ApiResult<void>> {
-  const guard = virtualPathGuard(path);
-  if (guard) return guard;
-  try {
-    await invoke("open_file", { path });
-    return { ok: true, data: undefined };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
 /** Resolved target of a Windows `.lnk` shortcut. */
 export interface ShortcutTarget {
   target: string;
@@ -258,94 +241,6 @@ export async function resolveShortcut(path: string): Promise<ShortcutTarget | nu
     return (await invoke<ShortcutTarget | null>("resolve_shortcut", { path })) ?? null;
   } catch {
     return null;
-  }
-}
-
-/**
- * Open a file at a specific line number using a known text editor.
- * Falls back to default open if no known editor is found.
- */
-export async function openFileAtLine(path: string, line: number): Promise<ApiResult<void>> {
-  const guard = virtualPathGuard(path);
-  if (guard) return guard;
-  try {
-    await invoke("open_file_at_line", { path, line });
-    return { ok: true, data: undefined };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/**
- * Open a file with a specific application.
- *
- * @param path - Full path to file to open
- * @param app - Application command to open with
- * @returns Result indicating success or error message
- */
-export async function openFileWith(path: string, app: string): Promise<ApiResult<void>> {
-  const guard = virtualPathGuard(path);
-  if (guard) return guard;
-  try {
-    await invoke("open_file_with", { path, app });
-    return { ok: true, data: undefined };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/**
- * Open an image file with sibling images passed to the viewer,
- * enabling arrow-key navigation in viewers like imv, feh, etc.
- */
-export async function openImageWithSiblings(path: string): Promise<ApiResult<void>> {
-  const guard = virtualPathGuard(path);
-  if (guard) return guard;
-  try {
-    await invoke("open_image_with_siblings", { path });
-    return { ok: true, data: undefined };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/**
- * Open a terminal at a directory path.
- *
- * @param path - Path (directory or file, uses parent for files)
- * @returns Result indicating success or error message
- */
-export async function openInTerminal(path: string, terminal?: string): Promise<ApiResult<void>> {
-  try {
-    await invoke("open_in_terminal", { path, terminal: terminal || null });
-    return { ok: true, data: undefined };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/**
- * List terminal emulators that are actually installed on this machine, so the
- * settings UI can offer a dropdown instead of a free-text command.
- */
-export async function listInstalledTerminals(): Promise<ApiResult<string[]>> {
-  try {
-    const data = await invoke<string[]>("list_installed_terminals");
-    return { ok: true, data };
-  } catch (err) {
-    return { ok: false, error: extractError(err) };
-  }
-}
-
-/**
- * Set an explicit ffmpeg binary path for video/audio thumbnails (empty string
- * clears it and reverts to auto-detection). Best-effort; ignores errors.
- */
-export async function setFfmpegPath(path: string): Promise<void> {
-  try {
-    await invoke("set_ffmpeg_path", { path });
-  } catch {
-    // Not in Tauri runtime or command unavailable — ignore.
   }
 }
 
@@ -725,34 +620,14 @@ export async function startUpscaleJob(
   }
 }
 
-/** File-picker portal window → backend: deliver the user's choice.
- *  `paths` are absolute filesystem paths; `cancelled` aborts the request. */
-export async function pickerRespond(
-  token: string,
-  paths: string[],
-  cancelled: boolean,
-): Promise<void> {
-  try {
-    await invoke("picker_respond", { token, paths, cancelled });
-  } catch {
-    // Browser/mock mode — the e2e mock records the call instead.
-  }
-}
-
-export async function setWindowTheme(theme: "light" | "dark"): Promise<void> {
-  try {
-    await invoke<void>("set_window_theme", { theme });
-  } catch {
-    // Non-critical — only affects vibrancy appearance
-  }
-}
-
 // ===================
 // Concern-focused re-exports (façade)
 // Issue: refactor/audit-tier4-splits (#212)
+// Issue: refactor/finish-api-files-split-into-open-and-system-modules (#282)
 //
-// Split out of this file into cohesive modules; re-exported here so existing
-// importers of `$lib/api/files` continue to resolve every symbol unchanged.
+// Split out of this file into cohesive modules; re-exported here (by exact
+// symbol, not `export *`) so existing importers of `$lib/api/files` continue
+// to resolve every symbol they actually use unchanged.
 // ===================
 
 export {
@@ -764,9 +639,67 @@ export {
   type ApiResult,
 } from "./common";
 
-export * from "./search";
-export * from "./thumbnails";
-export * from "./archive";
-export * from "./config";
-export * from "./git";
-export * from "./warm-pool";
+export {
+  openFile,
+  openFileAtLine,
+  openFileWith,
+  openImageWithSiblings,
+  openInTerminal,
+  listInstalledTerminals,
+} from "./open";
+
+export { pickerRespond, setWindowTheme, setFfmpegPath } from "./system";
+
+export {
+  fuzzySearch,
+  type SearchResult,
+  startStreamingSearch,
+  cancelSearch,
+  type SearchResultsEvent,
+  startContentSearch,
+  cancelContentSearch,
+  type ContentMatch,
+  type ContentSearchResult,
+  type ContentSearchEvent,
+} from "./search";
+
+export {
+  getMicroThumbnail,
+  getThumbnailData,
+  getVideoThumbnailData,
+  getFolderPreview,
+} from "./thumbnails";
+
+export {
+  compressToZip,
+  cancelCompress,
+  extractArchive,
+  listArchiveContents,
+  cancelExtract,
+  type ZipProgressEvent,
+} from "./archive";
+
+export {
+  readConfigFile,
+  writeConfigFile,
+  listUserThemes,
+} from "./config";
+
+export {
+  getGitStatus,
+  type GitFileStatus,
+  gitInit,
+  gitRepoRoot,
+  gitAddToGitignore,
+  gitSummary,
+  gitStage,
+  gitUnstage,
+  gitDiscard,
+  gitDiff,
+  gitCommit,
+  gitWatchRepo,
+  gitUnwatchRepo,
+  type GitFileEntry,
+  type GitStatusSummary,
+  type GitStatusCode,
+} from "./git";

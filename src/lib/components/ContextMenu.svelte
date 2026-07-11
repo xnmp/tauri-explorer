@@ -11,7 +11,7 @@
   import { settingsStore, type ThumbnailSize } from "$lib/state/settings.svelte";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
-  import { openFile } from "$lib/api/files";
+  import { openFile } from "$lib/api/open";
   import { setWallpaper, openTerminal } from "$lib/state/commands/system-actions";
   import type { FileEntry } from "$lib/domain/file";
   import { parentDir } from "$lib/domain/path";

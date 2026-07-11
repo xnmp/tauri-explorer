@@ -6,7 +6,7 @@
   import { settingsStore, type IconTheme, type ThumbnailSize, type WindowsBackdrop, type PaneLayoutMode } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import { isMac, isWindows } from "$lib/domain/platform";
-  import { listInstalledTerminals } from "$lib/api/files";
+  import { listInstalledTerminals } from "$lib/api/open";
   import { warmPoolShutdown } from "$lib/api/warm-pool";
   import { spawnWarmWindow } from "$lib/state/warm-window";
   import KeybindingsSettings from "./KeybindingsSettings.svelte";

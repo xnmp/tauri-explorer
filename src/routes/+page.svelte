@@ -25,7 +25,7 @@
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { saveFocusedWindowState } from "$lib/state/focused-window";
   import { terminalPanelStore } from "$lib/state/terminal.svelte";
-  import { setFfmpegPath } from "$lib/api/files";
+  import { setFfmpegPath } from "$lib/api/system";
   import { useNativeDropHandler } from "$lib/composables/use-native-drop-handler";
   import { useFileWatchers } from "$lib/composables/use-file-watchers";
   import { useWindowLifecycle } from "$lib/composables/use-window-lifecycle";

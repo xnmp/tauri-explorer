@@ -8,7 +8,7 @@
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
-  import { openFile, openImageWithSiblings } from "$lib/api/files";
+  import { openFile, openImageWithSiblings } from "$lib/api/open";
   import { resolveActivation } from "$lib/api/activate";
   import { dragState } from "$lib/state/drag.svelte";
   import { getDropSourcePaths, handleFileDropMany } from "$lib/state/drop-operations";

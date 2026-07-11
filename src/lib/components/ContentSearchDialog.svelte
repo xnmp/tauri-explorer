@@ -8,7 +8,7 @@
 -->
 <script lang="ts">
   import { tick } from "svelte";
-  import { openFile, openFileAtLine } from "$lib/api/files";
+  import { openFile, openFileAtLine } from "$lib/api/open";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { parentDir } from "$lib/domain/path";
   import { highlightMatch, type FlattenedResult } from "$lib/domain/content-search-flatten";

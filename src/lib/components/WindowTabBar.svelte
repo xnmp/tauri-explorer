@@ -1,11 +1,14 @@
 <!--
-  PaneTabBar component - VSCode-style tab strip owned by a single pane.
-  Issues: tauri-explorer-ldfx (window tabs), #140 (per-pane tabs)
+  WindowTabBar component - VSCode-style tab strip owned by the window (#228).
+  Issues: tauri-explorer-ldfx (window tabs), #228 (pane layout trees)
 
-  Each pane renders its own strip; a tab is a single explorer view.
-  Dragging a tab onto the other pane's strip moves it across panes.
+  The window renders one strip; a tab is an explorer view (with a pane
+  layout tree) or a git graph. Tabs drag to reorder, tear off into new
+  windows, or transfer to other windows. Multi-pane tabs can be renamed
+  (double-click) — renaming also saves the layout as a workspace.
 -->
 <script lang="ts">
+  import { tick } from "svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { getDropSourcePaths } from "$lib/state/drop-operations";
@@ -20,14 +23,11 @@
   import { openNewWindow } from "$lib/state/commands/shared";
   import { parentDir } from "$lib/domain/path";
   import { isCopyModifier } from "$lib/domain/platform";
-  import { showPaneTabBar } from "$lib/domain/titlebar";
+  import { showWindowTabBar } from "$lib/domain/titlebar";
   import type { WebviewWindow } from "@tauri-apps/api/webviewWindow";
-  import type { PaneId } from "$lib/state/types";
 
-  const { paneId }: { paneId: PaneId } = $props();
-
-  const tabs = $derived(windowTabsManager.panes[paneId].tabs);
-  const activeTabId = $derived(windowTabsManager.panes[paneId].activeTabId);
+  const tabs = $derived(windowTabsManager.tabs);
+  const activeTabId = $derived(windowTabsManager.activeTabId);
 
   // When "git root in tab title" is on, resolve each tab's repo root (cached in
   // the manager). Runs here because the async work needs a component owner; the
@@ -41,11 +41,15 @@
   });
 
   const showTabArea = $derived(
-    showPaneTabBar(tabs.length, windowTabsManager.dualPaneEnabled),
+    showWindowTabBar(
+      tabs.length,
+      windowTabsManager.activeTab?.kind === "explorer" &&
+        windowTabsManager.canRenameTab(windowTabsManager.activeTab.id),
+    ),
   );
 
   // Track tab IDs that existed on first render to skip entrance animation.
-  // Initialized lazily on the first render pass so it sees the pane's
+  // Initialized lazily on the first render pass so it sees the window's
   // then-current tabs without touching reactive state at setup time.
   let knownTabIds: Set<string> | null = null;
 
@@ -54,7 +58,7 @@
 
   function isNewTab(tabId: string): boolean {
     if (!knownTabIds) {
-      knownTabIds = new Set(windowTabsManager.panes[paneId].tabs.map((t) => t.id));
+      knownTabIds = new Set(windowTabsManager.tabs.map((t) => t.id));
     }
     if (knownTabIds.has(tabId)) return false;
     knownTabIds.add(tabId);
@@ -87,7 +91,7 @@
   }
 
   function handleNewTab(): void {
-    windowTabsManager.createTabIn(paneId);
+    windowTabsManager.createTab();
   }
 
   function handleTabKeydown(event: KeyboardEvent, tabId: string): void {
@@ -95,15 +99,54 @@
       event.preventDefault();
       windowTabsManager.setActiveTab(tabId);
     }
+    if (event.key === "F2") {
+      event.preventDefault();
+      startRename(tabId);
+    }
+  }
+
+  // ── Inline rename (#228): multi-pane tabs only ──
+  let renamingTabId = $state<string | null>(null);
+  let renameValue = $state("");
+
+  function startRename(tabId: string): void {
+    if (!windowTabsManager.canRenameTab(tabId)) return;
+    const tab = tabs.find((t) => t.id === tabId);
+    if (!tab) return;
+    renamingTabId = tabId;
+    renameValue = windowTabsManager.getTabTitle(tab);
+    void tick().then(() => {
+      const input = document.querySelector<HTMLInputElement>(".tab-rename-input");
+      input?.focus();
+      input?.select();
+    });
+  }
+
+  function commitRename(): void {
+    if (renamingTabId) {
+      windowTabsManager.renameTab(renamingTabId, renameValue);
+    }
+    renamingTabId = null;
+  }
+
+  function handleRenameKeydown(event: KeyboardEvent): void {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commitRename();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      renamingTabId = null;
+    }
+    event.stopPropagation();
   }
 
   // Tab drag is POINTER-based (not HTML5): HTML5 drag events never reach another
   // Tauri webview, force a "no-drop" cursor, and hide the drag image outside the
   // window. Pointer events with implicit mouse capture keep firing (with screen
   // coordinates) even over other windows / the desktop, so we render our own
-  // ghost, reorder within the strip, move across panes, hand the tab off to
-  // whichever window the cursor is over, or tear off a new window AT the
-  // cursor. File drops ONTO a tab still use the HTML5/native path further below.
+  // ghost, reorder within the strip, hand the tab off to whichever window the
+  // cursor is over, or tear off a new window AT the cursor. File drops ONTO a
+  // tab still use the HTML5/native path further below.
   let dropTargetTabId = $state<string | null>(null);
   let fileDropTargetTabId = $state<string | null>(null);
   let draggingTabId = $state<string | null>(null);
@@ -129,6 +172,7 @@
   function handleTabMouseDown(event: MouseEvent, tabId: string): void {
     if (event.button !== 0) return;
     if ((event.target as HTMLElement).closest(".tab-close")) return; // close btn owns its clicks
+    if (renamingTabId === tabId) return; // rename input owns the pointer
     tabPtr = {
       tabId,
       startX: event.clientX,
@@ -163,10 +207,9 @@
     return el?.getAttribute("data-tab-id") ?? null;
   }
 
-  /** Which pane's tab strip (if any) is under the point. */
-  function paneAreaAtPoint(x: number, y: number): PaneId | null {
-    const area = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest?.(".tab-area");
-    return (area?.getAttribute("data-pane-id") as PaneId | null) ?? null;
+  /** Whether the window's tab strip is under the point. */
+  function tabAreaAtPoint(x: number, y: number): boolean {
+    return !!(document.elementFromPoint(x, y) as HTMLElement | null)?.closest?.(".tab-area");
   }
 
   function onTabMouseMove(event: MouseEvent): void {
@@ -198,7 +241,7 @@
     // browser E2E environment keeps the ghost-until-release behavior).
     if (
       isTauri &&
-      paneAreaAtPoint(event.clientX, event.clientY) === null &&
+      !tabAreaAtPoint(event.clientX, event.clientY) &&
       Math.abs(event.clientY - tabPtr.startY) > DETACH_THRESHOLD_PX
     ) {
       void detachIntoWindow(event);
@@ -306,21 +349,13 @@
     tabDragState.clear();
     if (!pending || pending.sourceWindow !== windowTabsManager.windowLabel) return;
 
-    // 1) Released over a tab strip in THIS window → reorder (same pane) or
-    //    move across panes (the other pane's strip).
-    const targetPaneId = paneAreaAtPoint(event.clientX, event.clientY);
-    if (targetPaneId) {
+    // 1) Released over the tab strip in THIS window → reorder.
+    if (tabAreaAtPoint(event.clientX, event.clientY)) {
       const overId = tabAtPoint(event.clientX, event.clientY);
-      if (targetPaneId === paneId) {
-        if (overId && overId !== ptr.tabId) {
-          const from = tabs.findIndex((t) => t.id === ptr.tabId);
-          const to = tabs.findIndex((t) => t.id === overId);
-          if (from >= 0 && to >= 0) windowTabsManager.reorderTabs(paneId, from, to);
-        }
-      } else {
-        const targetTabs = windowTabsManager.panes[targetPaneId].tabs;
-        const at = overId ? targetTabs.findIndex((t) => t.id === overId) : undefined;
-        windowTabsManager.moveTabToPane(ptr.tabId, targetPaneId, at === -1 ? undefined : at);
+      if (overId && overId !== ptr.tabId) {
+        const from = tabs.findIndex((t) => t.id === ptr.tabId);
+        const to = tabs.findIndex((t) => t.id === overId);
+        if (from >= 0 && to >= 0) windowTabsManager.reorderTabs(from, to);
       }
       return;
     }
@@ -342,7 +377,7 @@
       });
       windowTabsManager.removeTransferredTab(pending.tabId);
     }
-    // Released over our own window (but not a tab strip) → no-op.
+    // Released over our own window (but not the tab strip) → no-op.
   }
 
   function onTabDragKey(event: KeyboardEvent): void {
@@ -417,11 +452,7 @@
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <!-- Drag handlers only — keyboard interaction lives on the tabs. -->
   <!-- svelte-ignore a11y_interactive_supports_focus -->
-  <div
-    class="tab-area"
-    role="tablist"
-    data-pane-id={paneId}
-  >
+  <div class="tab-area" role="tablist">
     {#each tabs as tab (tab.id)}
       {@const display = windowTabsManager.getTabDisplay(tab)}
       <div
@@ -438,6 +469,7 @@
         data-tab-id={tab.id}
         onmousedown={(e) => handleTabMouseDown(e, tab.id)}
         onclick={() => { if (suppressNextClick) { suppressNextClick = false; return; } handleTabClick(tab.id); }}
+        ondblclick={() => startRename(tab.id)}
         onkeydown={(e) => handleTabKeydown(e, tab.id)}
         onauxclick={(e) => handleTabMiddleClick(e, tab.id)}
         title={windowTabsManager.getTabTooltip(tab)}
@@ -484,15 +516,29 @@
             />
           </svg>
         {/if}
-        <span class="tab-title">
-          {#if display.repo}
-            <!-- Repo name shrinks/ellipsizes first; the current folder stays
-                 visible as long as possible (full path is in the tooltip). -->
-            <span class="tab-repo">{display.repo}</span>
-            <span class="tab-sep" aria-hidden="true">›</span>
-          {/if}
-          <span class="tab-cwd">{display.name}</span>
-        </span>
+        {#if renamingTabId === tab.id}
+          <!-- svelte-ignore a11y_autofocus -->
+          <input
+            class="tab-rename-input"
+            type="text"
+            bind:value={renameValue}
+            onkeydown={handleRenameKeydown}
+            onblur={commitRename}
+            onmousedown={(e) => e.stopPropagation()}
+            onclick={(e) => e.stopPropagation()}
+            aria-label="Rename tab"
+          />
+        {:else}
+          <span class="tab-title">
+            {#if display.repo}
+              <!-- Repo name shrinks/ellipsizes first; the current folder stays
+                   visible as long as possible (full path is in the tooltip). -->
+              <span class="tab-repo">{display.repo}</span>
+              <span class="tab-sep" aria-hidden="true">›</span>
+            {/if}
+            <span class="tab-cwd">{display.name}</span>
+          </span>
+        {/if}
         <button
           class="tab-close"
           onclick={(e) => handleTabClose(e, tab.id)}
@@ -541,29 +587,14 @@
     scrollbar-width: none;
     -ms-overflow-style: none;
     position: relative;
-    background: color-mix(in srgb, var(--background-card) calc(var(--titlebar-opacity, 1) * 100%), transparent);
+    /* No background of its own: the titlebar owns the strip surface. Painting
+       a second (semi-transparent) layer here made the tabbed section a
+       different shade from the tabless remainder of the bar (#238). */
+    background: transparent;
   }
 
   .tab-area::-webkit-scrollbar {
     display: none;
-  }
-
-  /* Elegant bottom border accent line */
-  .tab-area::after {
-    content: "";
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 1px;
-    background: linear-gradient(
-      90deg,
-      transparent,
-      var(--surface-stroke) 10%,
-      var(--surface-stroke) 90%,
-      transparent
-    );
-    pointer-events: none;
   }
 
   @keyframes tabSlideIn {
@@ -596,12 +627,14 @@
     gap: 8px;
     height: 30px;
     padding: 0 10px 0 12px;
-    background: var(--background);
+    /* Subtle-but-visible fill: --background was undefined outside the tahoe
+       theme, leaving unfocused tabs transparent and indistinct (#238). */
+    background: var(--control-fill-tertiary);
     border-radius: var(--radius-sm) var(--radius-sm) 0 0;
     font-size: 12px;
     font-weight: var(--font-weight-medium);
     letter-spacing: -0.01em;
-    color: var(--text-tertiary);
+    color: var(--text-secondary);
     cursor: pointer;
     transition: all var(--transition-normal);
     flex-shrink: 0;
@@ -609,7 +642,7 @@
     position: relative;
     border: none;
     border-top: 2px solid var(--surface-stroke, rgba(0, 0, 0, 0.1));
-    opacity: 0.8;
+    opacity: 1;
     transform-origin: bottom center;
     overflow: hidden;
   }
@@ -652,21 +685,26 @@
     transition: opacity var(--transition-fast);
   }
 
-  .tab:hover::before {
+  /* Chrome-style hover: an inset rounded pill instead of a full-height
+     rectangle, so the highlight never butts into the active tab's fillet
+     flare at the strip base (#235). Repurposes the ::before overlay as the
+     pill; the active tab keeps its gradient ::before untouched. */
+  .tab:hover:not(.active)::before {
     opacity: 1;
+    inset: 4px 2px 3px 2px;
+    border-radius: var(--radius-sm);
+    background: var(--control-fill-secondary);
   }
 
   .tab:hover {
-    background: var(--control-fill-secondary);
-    color: var(--text-secondary);
+    color: var(--text-primary);
     border-color: var(--surface-stroke);
-    transform: translateY(-1px);
-    opacity: 1;
   }
 
-  /* The active tab is fused to the pane — hover must not lift or restyle it. */
+  /* The active tab is fused to the pane — hover must not lift or restyle it.
+     No background override: .tab:hover doesn't set one, and redeclaring it
+     here would drop the hairline stroke layers from .tab.active. */
   .tab.active:hover {
-    background: var(--background-card);
     color: var(--text-primary);
     transform: none;
   }
@@ -689,7 +727,7 @@
   .tab.file-drop-target,
   .tab:global(.drop-target) {
     border-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 15%, var(--background));
+    background: color-mix(in srgb, var(--accent) 15%, var(--background-card));
     box-shadow:
       0 0 0 1px var(--accent),
       0 0 8px color-mix(in srgb, var(--accent) 40%, transparent);
@@ -698,14 +736,32 @@
   }
 
   .tab.active {
-    background: var(--background-card);
+    --fillet: 14px;
+    /* --background-card is translucent in every theme; painted straight over
+       the titlebar's own card layer it composites into a DIFFERENT color
+       than the pane below (and reads as see-through, #243). Layering it
+       over --background-solid reproduces the pane's effective surface
+       opaquely, so the tab both fuses with the pane and stands apart from
+       inactive tabs.
+       The top two layers are the hairline side strokes (#243): drawn as
+       background strips rather than an inset box-shadow so they can END at
+       the fillet tangent point, --fillet above the base — a full-height
+       stroke would cut a chord through the fillet's flare curve, doubling
+       the hairline at the bottom corners (#268). The fillet's own ring
+       continues the stroke tangentially from there. */
+    background:
+      linear-gradient(var(--surface-stroke), var(--surface-stroke)) left top /
+        1px calc(100% - var(--fillet)) no-repeat,
+      linear-gradient(var(--surface-stroke), var(--surface-stroke)) right top /
+        1px calc(100% - var(--fillet)) no-repeat,
+      linear-gradient(var(--background-card), var(--background-card)),
+      var(--background-solid);
     color: var(--text-primary);
     font-weight: var(--font-weight-semibold);
     border-top: 2px solid var(--accent);
     /* No lift and no drop shadow: the tab's base must FUSE with the pane
        surface below it (Chrome-style) — any translateY or shadow reads as
        a seam at the junction. */
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
     transform: none;
     z-index: 2;
     opacity: 1;
@@ -721,8 +777,9 @@
      outer corner — so the tab's vertical edge bends smoothly outward and
      meets the pane tangentially instead of at 90°. z-index above the
      strip's baseline ::after so the line terminates AT the curve. */
+  /* --fillet is inherited from .tab.active, which uses it to end its side
+     hairlines at the tangent point. */
   .tab-fillet {
-    --fillet: 14px;
     position: absolute;
     bottom: 0;
     width: var(--fillet);
@@ -731,22 +788,49 @@
     z-index: 3;
   }
 
+  /* Two stacked radial layers per fillet: translucent card over solid — the
+     same opaque composite as the active tab — while the concave circle stays
+     transparent in BOTH layers so the titlebar shows through (#243). */
   .tab-fillet.left {
     left: calc(-1 * var(--fillet));
-    background: radial-gradient(
-      circle var(--fillet) at 0 0,
-      transparent calc(var(--fillet) - 0.5px),
-      var(--background-card) var(--fillet)
-    );
+    background:
+      radial-gradient(
+        circle var(--fillet) at 0 0,
+        transparent calc(var(--fillet) - 1.5px),
+        var(--surface-stroke) calc(var(--fillet) - 0.75px),
+        transparent calc(var(--fillet) + 0.5px)
+      ),
+      radial-gradient(
+        circle var(--fillet) at 0 0,
+        transparent calc(var(--fillet) - 0.5px),
+        var(--background-card) var(--fillet)
+      ),
+      radial-gradient(
+        circle var(--fillet) at 0 0,
+        transparent calc(var(--fillet) - 0.5px),
+        var(--background-solid) var(--fillet)
+      );
   }
 
   .tab-fillet.right {
     right: calc(-1 * var(--fillet));
-    background: radial-gradient(
-      circle var(--fillet) at 100% 0,
-      transparent calc(var(--fillet) - 0.5px),
-      var(--background-card) var(--fillet)
-    );
+    background:
+      radial-gradient(
+        circle var(--fillet) at 100% 0,
+        transparent calc(var(--fillet) - 1.5px),
+        var(--surface-stroke) calc(var(--fillet) - 0.75px),
+        transparent calc(var(--fillet) + 0.5px)
+      ),
+      radial-gradient(
+        circle var(--fillet) at 100% 0,
+        transparent calc(var(--fillet) - 0.5px),
+        var(--background-card) var(--fillet)
+      ),
+      radial-gradient(
+        circle var(--fillet) at 100% 0,
+        transparent calc(var(--fillet) - 0.5px),
+        var(--background-solid) var(--fillet)
+      );
   }
 
   .tab.active::before {
@@ -786,6 +870,18 @@
     overflow: hidden;
     white-space: nowrap;
     transition: color var(--transition-fast);
+  }
+
+  .tab-rename-input {
+    width: 130px;
+    padding: 2px 6px;
+    background: var(--control-fill, rgba(0, 0, 0, 0.2));
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 12px;
+    color: var(--text-primary);
+    outline: none;
   }
 
   /* Repo name is context: dimmed, and it's the first thing to shrink/ellipsize

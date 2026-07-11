@@ -5,6 +5,37 @@
   refs decoration chips, summary, author and date. Pages in more commits as
   the list nears its end.
 -->
+<script lang="ts" module>
+  import type { CommitInfo as CachedCommitInfo, RefInfo as CachedRefInfo } from "$lib/api/git-log";
+
+  /**
+   * Per-repo snapshot of the loaded graph, kept across tab switches (#255):
+   * PaneContainer recreates GitGraphView on every activation, and without
+   * this the view re-runs gitLog+gitSummary IPC and re-renders from scratch —
+   * a visible lag. A remount paints synchronously from the snapshot, then
+   * refreshes in the background.
+   */
+  interface GraphSnapshot {
+    commits: CachedCommitInfo[];
+    refs: Record<string, CachedRefInfo[]>;
+    hasMore: boolean;
+    headOid: string | null;
+    workingChanges: number;
+  }
+
+  const graphCache = new Map<string, GraphSnapshot>();
+  const GRAPH_CACHE_MAX = 8;
+
+  function cacheSnapshot(repoPath: string, snapshot: GraphSnapshot): void {
+    graphCache.delete(repoPath); // re-insert to refresh LRU position
+    graphCache.set(repoPath, snapshot);
+    if (graphCache.size > GRAPH_CACHE_MAX) {
+      const oldest = graphCache.keys().next().value;
+      if (oldest !== undefined) graphCache.delete(oldest);
+    }
+  }
+</script>
+
 <script lang="ts">
   import {
     gitLog,
@@ -23,7 +54,7 @@
     type CommitFile,
     type ResetMode,
   } from "$lib/api/git-log";
-  import { assignLayout, branchPath, groupRefChips, GRAPH_PALETTE, type GraphLayout, type BranchLine, type RefChips } from "$lib/domain/git-graph";
+  import { assignLayout, branchPath, groupRefChips, sliceBranchLine, GRAPH_PALETTE, type GraphLayout, type BranchLine, type RefChips } from "$lib/domain/git-graph";
   import { clientToFixed } from "$lib/domain/zoom";
   import { parseUnifiedDiff, type ParsedDiff } from "$lib/domain/diff";
   import { highlightDiffLine } from "$lib/domain/syntax-highlight";
@@ -31,6 +62,7 @@
   import { notifyLocalGitChange } from "$lib/state/git-refresh";
   import { toastStore } from "$lib/state/toast.svelte";
   import { gitDiff, gitSummary } from "$lib/api/files";
+  import { untrack } from "svelte";
 
   const { repoPath }: { repoPath: string } = $props();
 
@@ -54,6 +86,21 @@
   /** Working-tree change count → synthetic top row (reference behavior). */
   let workingChanges = $state(0);
   let headOid = $state<string | null>(null);
+
+  // Paint the last-known graph immediately on remount (#255); the load
+  // effect below still refreshes from git in the background.
+  {
+    // untrack: the view is {#key}ed on repoPath, so the initial value is the
+    // right one for this instance's lifetime.
+    const cached = graphCache.get(untrack(() => repoPath));
+    if (cached) {
+      commits = cached.commits;
+      refs = cached.refs;
+      hasMore = cached.hasMore;
+      headOid = cached.headOid;
+      workingChanges = cached.workingChanges;
+    }
+  }
 
   // Inline per-file diff (#221, VSCode Git Graph parity): one open at a time.
   let openDiffPath = $state<string | null>(null);
@@ -162,11 +209,56 @@
   /** SVG stretch below the inline details block (see domain RowExpand). */
   const rowExpand = $derived(
     expandedIndex >= 0 && detailsHeight > 0
-      ? { afterRow: expandedIndex, extra: detailsHeight }
+      ? // +6: the block's bottom gap (its margin-bottom is outside offsetHeight).
+        { afterRow: expandedIndex, extra: detailsHeight + 6 }
       : undefined,
   );
   const graphHeight = $derived(
     displayCommits.length * ROW_HEIGHT + (rowExpand?.extra ?? 0),
+  );
+
+  // ── Render windowing (#256) ────────────────────────────────────────────────
+  // Only the rows (and SVG geometry) inside the scroll viewport ± overscan
+  // are in the DOM; rows are absolutely positioned at their grid offset so
+  // scrolling needs no reflow of siblings.
+  const OVERSCAN = 12;
+  let scrollTop = $state(0);
+  let viewportHeight = $state(0);
+
+  /** Row index at a given scroll offset, accounting for the inline expansion. */
+  function rowAtY(y: number): number {
+    if (rowExpand) {
+      const expandTop = (rowExpand.afterRow + 1) * ROW_HEIGHT;
+      if (y >= expandTop) y = Math.max(expandTop, y - rowExpand.extra);
+    }
+    return Math.floor(y / ROW_HEIGHT);
+  }
+
+  /** Pixel offset of a row, accounting for the inline expansion above it. */
+  function rowY(index: number): number {
+    return index * ROW_HEIGHT + (rowExpand && index > rowExpand.afterRow ? rowExpand.extra : 0);
+  }
+
+  const startRow = $derived(Math.max(0, rowAtY(scrollTop) - OVERSCAN));
+  const endRow = $derived(
+    Math.min(displayCommits.length - 1, rowAtY(scrollTop + viewportHeight) + OVERSCAN),
+  );
+  const visibleRows = $derived(
+    displayCommits.slice(startRow, endRow + 1).map((commit, i) => ({ commit, index: startRow + i })),
+  );
+  /** Branch lines clipped to the window (full line kept for the dashed
+   *  uncommitted branch — it's split at HEAD by object identity below). */
+  const visibleBranches = $derived(
+    layout.branches
+      .map((line) =>
+        line === uncommittedBranch ? line : sliceBranchLine(line, startRow - 2, endRow + 2),
+      )
+      .filter((line): line is BranchLine => line !== null),
+  );
+  const visibleVertices = $derived(
+    layout.vertices
+      .slice(startRow, endRow + 1)
+      .map((vertex, i) => ({ vertex, vi: startRow + i })),
   );
 
   /** The branch line leaving the synthetic row (drawn gray + dashed up to
@@ -197,6 +289,15 @@
             summary.data.merge.length
           : 0;
       }
+      // Snapshot page 0 for instant remount paint (#255) — deliberately not
+      // the full paged history, which can grow unbounded.
+      cacheSnapshot(repoPath, {
+        commits: commits.slice(0, PAGE_SIZE),
+        refs,
+        hasMore: hasMore || commits.length > PAGE_SIZE,
+        headOid,
+        workingChanges,
+      });
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     } finally {
@@ -210,16 +311,16 @@
     void loadPage(0);
   });
 
-  function loadMore(): void {
-    if (!loading && hasMore) void loadPage(commits.length);
-  }
+  // One shared formatter: constructing Intl state per row per render is a
+  // measurable cost at hundreds of rows (#256).
+  const dateFormatter = new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
 
   function formatDate(unixSeconds: number): string {
-    return new Date(unixSeconds * 1000).toLocaleDateString(undefined, {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
+    return dateFormatter.format(new Date(unixSeconds * 1000));
   }
 
   function colorOf(index: number): string {
@@ -240,9 +341,10 @@
     };
   }
 
-  /** Near-bottom incremental loading for the plain scroller. */
+  /** Window tracking + near-bottom incremental loading. */
   function handleScroll(event: Event): void {
     const el = event.target as HTMLElement;
+    scrollTop = el.scrollTop;
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - ROW_HEIGHT * 20) {
       if (!loading && hasMore) void loadPage(commits.length);
     }
@@ -252,21 +354,6 @@
   function chipsFor(oid: string): RefChips {
     return groupRefChips(refs[oid] ?? []);
   }
-
-  function refClass(kind: RefInfo["kind"]): string {
-    switch (kind) {
-      case "Head": return "ref-head";
-      case "LocalBranch": return "ref-branch";
-      case "RemoteBranch": return "ref-remote";
-      case "Tag": return "ref-tag";
-    }
-  }
-
-  interface Row {
-    commit: CommitInfo;
-    index: number;
-  }
-  const rows: Row[] = $derived(commits.map((commit, index) => ({ commit, index })));
 
   // ----- Commit context menu (VSCode "Git Graph"-parity actions) -----
 
@@ -322,6 +409,24 @@
   function closeMenu(): void {
     menu = null;
     prompt = null;
+  }
+
+  /** Right-click on the backdrop: open the menu for the commit row under the
+   *  cursor in ONE click (instead of the first click merely cancelling the
+   *  previous menu, #263). Falls back to just closing over non-commit areas. */
+  function backdropContextMenu(event: MouseEvent): void {
+    event.preventDefault();
+    const row = document
+      .elementsFromPoint(event.clientX, event.clientY)
+      .find((el) => el.classList.contains("commit-row")) as HTMLElement | undefined;
+    const commit = row?.dataset.oid
+      ? displayCommits.find((c) => c.short_oid === row.dataset.oid)
+      : undefined;
+    if (commit && commit.oid !== UNCOMMITTED) {
+      openMenu(event, commit);
+    } else {
+      closeMenu();
+    }
   }
 
   /** Run a mutating action, then reload the graph and refresh the SCM panel
@@ -398,17 +503,6 @@
 <svelte:window onkeydown={onWindowKeydown} />
 
 <div class="git-graph-view" data-testid="git-graph-view">
-  <header class="graph-header">
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <circle cx="4" cy="3.5" r="1.6" stroke="currentColor" stroke-width="1.3" />
-      <circle cx="4" cy="12.5" r="1.6" stroke="currentColor" stroke-width="1.3" />
-      <circle cx="11.5" cy="3.5" r="1.6" stroke="currentColor" stroke-width="1.3" />
-      <path d="M4 5.1V10.9M11.5 5.1V6.5C11.5 8.2 10 9 8 9H6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
-    </svg>
-    <span class="repo-path" title={repoPath}>{repoPath}</span>
-    <span class="count">{commits.length}{hasMore ? "+" : ""} commits</span>
-  </header>
-
   {#if error}
     <div class="graph-status error">{error}</div>
   {:else if commits.length === 0 && loading}
@@ -416,7 +510,7 @@
   {:else if commits.length === 0}
     <div class="graph-status">No commits.</div>
   {:else}
-    <div class="graph-scroller" onscroll={handleScroll}>
+    <div class="graph-scroller" onscroll={handleScroll} bind:clientHeight={viewportHeight}>
       <div class="graph-body" style:height="{graphHeight}px">
         <svg
           class="graph-underlay"
@@ -424,7 +518,7 @@
           height={graphHeight}
           aria-hidden="true"
         >
-          {#each layout.branches as line, li (li)}
+          {#each visibleBranches as line, li (li)}
             {#if line === uncommittedBranch}
               {@const parts = splitUncommitted(line)}
               <path class="branch-halo" d={branchPath(parts.dirty, LANE_WIDTH, ROW_HEIGHT, rowExpand)} />
@@ -454,7 +548,7 @@
               />
             {/if}
           {/each}
-          {#each layout.vertices as vertex, vi (vi)}
+          {#each visibleVertices as { vertex, vi } (vi)}
             {@const cx = vertex.lane * LANE_WIDTH + LANE_WIDTH / 2}
             {@const cy = vi * ROW_HEIGHT + ROW_HEIGHT / 2 + (rowExpand && vi > rowExpand.afterRow ? rowExpand.extra : 0)}
             {#if displayCommits[vi]?.oid === UNCOMMITTED}
@@ -470,7 +564,7 @@
           {/each}
         </svg>
 
-        {#each displayCommits as commit, index (commit.oid)}
+        {#each visibleRows as { commit, index } (commit.oid)}
           {@const chips = chipsFor(commit.oid)}
           {@const synthetic = commit.oid === UNCOMMITTED}
           <div
@@ -479,6 +573,7 @@
             class:is-head={chips.isHead}
             class:uncommitted={synthetic}
             style:padding-left="{graphWidth + 20}px"
+            style:top="{rowY(index)}px"
             data-oid={commit.short_oid}
             role="button"
             tabindex="0"
@@ -521,8 +616,9 @@
             <div
               class="commit-detail-inline"
               data-testid="git-graph-detail"
-              bind:clientHeight={detailsHeight}
+              bind:offsetHeight={detailsHeight}
               style:margin-left="{graphWidth + 12}px"
+              style:top="{rowY(index) + ROW_HEIGHT}px"
             >
               <button class="detail-close" onclick={closeDetails} aria-label="Close details">✕</button>
               <div class="detail-columns">
@@ -603,7 +699,7 @@
       class="menu-backdrop"
       aria-label="Close menu"
       onclick={closeMenu}
-      oncontextmenu={(e) => { e.preventDefault(); closeMenu(); }}
+      oncontextmenu={backdropContextMenu}
     ></button>
     {@const m = menu}
     <div
@@ -703,29 +799,6 @@
     color: var(--text-primary);
   }
 
-  .graph-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 14px;
-    border-bottom: 1px solid var(--divider);
-    color: var(--text-secondary);
-    font-size: 12px;
-    flex-shrink: 0;
-  }
-
-  .repo-path {
-    font-family: var(--font-mono, monospace);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .count {
-    margin-left: auto;
-    color: var(--text-tertiary);
-  }
-
   .graph-status {
     flex: 1;
     display: flex;
@@ -740,6 +813,11 @@
   }
 
   .commit-row {
+    /* Windowed rendering (#256): rows sit at their absolute grid offset so
+       the visible slice needs no sibling flow. */
+    position: absolute;
+    left: 0;
+    right: 0;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -773,7 +851,9 @@
      Margin-left (set inline) clears the graph lanes; opaque card so lanes
      never show through (#227, VSCode layout). */
   .commit-detail-inline {
-    position: relative;
+    position: absolute;
+    left: 0;
+    right: 0;
     border: 1px solid var(--divider);
     border-radius: var(--radius-sm);
     margin-right: 12px;
@@ -1094,7 +1174,9 @@
     z-index: 41;
     min-width: 232px;
     padding: 4px;
-    background: var(--background-card, #1e1e1e);
+    /* --background-card is translucent in every theme — composite it over
+       the solid background so the menu is opaque (#263, same as #243). */
+    background: linear-gradient(var(--background-card, #1e1e1e), var(--background-card, #1e1e1e)), var(--background-solid, #1e1e1e);
     border: 1px solid var(--divider);
     border-radius: 8px;
     box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
@@ -1146,7 +1228,7 @@
     top: -4px;
     min-width: 220px;
     padding: 4px;
-    background: var(--background-card, #1e1e1e);
+    background: linear-gradient(var(--background-card, #1e1e1e), var(--background-card, #1e1e1e)), var(--background-solid, #1e1e1e);
     border: 1px solid var(--divider);
     border-radius: 8px;
     box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
@@ -1170,7 +1252,7 @@
     width: 320px;
     max-width: calc(100vw - 32px);
     padding: 14px 16px;
-    background: var(--background-card, #1e1e1e);
+    background: linear-gradient(var(--background-card, #1e1e1e), var(--background-card, #1e1e1e)), var(--background-solid, #1e1e1e);
     border: 1px solid var(--divider);
     border-radius: 10px;
     box-shadow: 0 12px 36px rgba(0, 0, 0, 0.4);

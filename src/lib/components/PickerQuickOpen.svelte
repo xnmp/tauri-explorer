@@ -123,9 +123,9 @@
     box-sizing: border-box;
     padding: 8px 10px;
     border-radius: 6px;
-    border: 1px solid var(--border-color, #ccc);
-    background: var(--background-secondary, #fff);
-    color: var(--text-primary, #222);
+    border: 1px solid var(--control-stroke);
+    background: var(--control-fill);
+    color: var(--text-primary);
     font-size: 14px;
     outline: none;
   }

@@ -4,7 +4,8 @@
 
   Sits to the LEFT of the main file list in any view mode.
   Shows 1-3 ancestor directory listings. Clicking a directory
-  navigates into it. Controlled by settingsStore.millerLayers (0=off).
+  navigates into it. Controlled by the pane's explorer.millerLayers
+  (0=off; per-pane since #229, defaulting from settings).
 -->
 <script lang="ts">
   import { untrack, onMount } from "svelte";
@@ -105,7 +106,7 @@
   $effect(() => {
     const crumbs = explorer.breadcrumbs;
     const currentPath = explorer.currentPath;
-    const layers = settingsStore.millerLayers;
+    const layers = explorer.millerLayers;
     if (layers === 0 || crumbs.length <= 1) {
       rawColumns = [];
       return;
@@ -361,7 +362,7 @@
                 ondragend={usesHtml5Drag ? handleDragEnd : undefined}
                 onmousedown={usesPointerDrag ? (e) => pointerDrag!.handlePointerDown(e, entry, false) : undefined}
                 ondragover={(e) => dropTarget.handleDragOver(e, entry)}
-                ondragleave={() => dropTarget.handleDragLeave(entry)}
+                ondragleave={(e) => dropTarget.handleDragLeave(e, entry)}
                 ondrop={(e) => dropTarget.handleDrop(e, entry)}
               >
                 <span class="col-icon" data-drag-icon>

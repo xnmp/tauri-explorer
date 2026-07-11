@@ -1,28 +1,46 @@
 /**
- * Per-pane tabs state management.
- * Issues: tauri-explorer-ldfx (window tabs), #140 (dual-pane-as-windows)
+ * Window tabs state management.
+ * Issues: tauri-explorer-ldfx (window tabs), #228 (pane layout trees)
  *
- * The window owns up to two panes (left/right); each pane owns its own
- * tab strip. Layout state (dual-pane enabled, split ratio, active pane)
- * is window-level. A tab is a single explorer — the second pane behaves
- * like another window docked to the side, with its own independent tabs.
+ * The window owns a single tab strip. Each explorer tab owns a pane layout
+ * tree (binary splits, ghostty-style): leaves are panes, each backed by its
+ * own explorer instance. Dual pane is just the two-pane special case;
+ * arbitrary splits (up/down/left/right, dwindle) are first-class. Tabs with
+ * two or more panes can be renamed; renaming also saves the layout as a
+ * workspace.
  */
 
-import type { PaneId, PaneTab, ExplorerTab, PaneTabs } from "./types";
+import type { PaneId, WindowTab, ExplorerTab, TabPane } from "./types";
+import {
+  type PaneNode,
+  type SplitPlacement,
+  leaf,
+  leafIds,
+  countLeaves,
+  splitLeaf,
+  splitNode,
+  hasNode,
+  removeLeaf,
+  updateRatio,
+  dwindlePlacement,
+  leafSiblingContext,
+} from "$lib/domain/pane-layout";
 import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
 import { loadPersisted, savePersisted, removePersisted } from "./persisted";
 import { parentDir, directoryKey } from "$lib/domain/path";
 import { disambiguateTabTitles, gitTabDisplay, type GitTabDisplay } from "$lib/domain/tab-title";
 import { settingsStore } from "./settings.svelte";
+import { workspacesStore } from "./workspaces.svelte";
 import { gitRepoRoot } from "$lib/api/files";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  type PersistedPaneTab,
-  type PersistedPaneTabs,
+  type PersistedNode,
+  type PersistedWindowTab,
   type PersistedTabState,
   type LegacyPersistedTabState,
   isLegacyState,
   migrateLegacyState,
+  migrateV2State,
   normalizePersistedState,
   countPersistedTabs,
   type TabSnapshot,
@@ -39,6 +57,7 @@ import { createClosedTabsStore } from "./closed-tabs";
 export {
   isLegacyState,
   migrateLegacyState,
+  migrateV2State,
   normalizePersistedState,
   countPersistedTabs,
   normalizeSnapshot,
@@ -46,8 +65,8 @@ export {
   normalizeClosedSnapshot,
 };
 export type {
-  PersistedPaneTab,
-  PersistedPaneTabs,
+  PersistedNode,
+  PersistedWindowTab,
   PersistedTabState,
   LegacyPersistedTabState,
   TabSnapshot,
@@ -73,7 +92,7 @@ const WINDOW_LABEL = detectWindowLabel();
 // for backward compatibility with existing saved state.
 const STORAGE_KEY = WINDOW_LABEL === "main" ? "explorer-tabs" : `explorer-tabs:${WINDOW_LABEL}`;
 
-/** Generate unique IDs for tabs and explorers */
+/** Generate unique IDs for tabs, panes, splits, and explorers */
 export function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -84,19 +103,24 @@ export function extractFolderName(path: string): string {
   return parts.length > 0 ? parts[parts.length - 1] : path || "Explorer";
 }
 
-function emptyPane(): PaneTabs {
-  return { tabs: [], activeTabId: null };
-}
+/** Separator between pane folder names in a multi-pane tab title. */
+const PANE_TITLE_SEPARATOR = " | ";
+
+type ExternalSeed = {
+  currentPath: string;
+  entries: any[];
+  sortBy: string;
+  sortAscending: boolean;
+  viewMode: string;
+};
 
 function createWindowTabsManager() {
   // Explorer instances registry (keyed by explorerId)
   const explorers = new Map<string, ExplorerInstance>();
 
-  // Per-pane tab strips + window-level layout state
-  let panes = $state<Record<PaneId, PaneTabs>>({ left: emptyPane(), right: emptyPane() });
-  let activePaneId = $state<PaneId>("left");
-  let dualPaneEnabled = $state(false);
-  let splitRatio = $state(0.5);
+  // Window-level tab strip
+  let tabs = $state<WindowTab[]>([]);
+  let activeTabId = $state<string | null>(null);
 
   // Cache of folder → git repo root (string), or null when not in a repo.
   // Populated lazily by ensureGitRoot (driven from the tab bar) only while the
@@ -107,11 +131,39 @@ function createWindowTabsManager() {
   // Stack of recently closed tabs for Ctrl+Shift+T restoration (persisted)
   const closedTabs = createClosedTabsStore();
 
+  // Stack of recently closed PANES (#229): Ctrl+Shift+T restores the last
+  // closed surface, ghostty-style — a pane back into its split position, or
+  // the last closed tab when that's more recent. In-memory: a pane snapshot
+  // is only meaningful while its tab still lives in this window.
+  interface ClosedPaneSnapshot {
+    tabId: string;
+    path: string;
+    /** Node the pane was split against (leaf or subtree), with placement/ratio. */
+    siblingId: string;
+    placement: SplitPlacement;
+    ratio: number;
+    ts: number;
+  }
+  const MAX_CLOSED_PANES = 20;
+  let closedPanes: ClosedPaneSnapshot[] = [];
+
   // Pick up snapshots written by other windows when this window regains
   // focus (instead of re-reading localStorage from the canRestoreTab getter).
   if (typeof window !== "undefined") {
     window.addEventListener("focus", () => closedTabs.refresh());
   }
+
+  const activeTab = $derived(tabs.find((t) => t.id === activeTabId) ?? null);
+
+  /** The active tab's focused pane id ("" for non-explorer tabs). */
+  const activePaneId = $derived(
+    activeTab?.kind === "explorer" ? activeTab.activePaneId : "",
+  );
+
+  /** Pane ids of the active tab, in visual order. */
+  const activePaneIds = $derived(
+    activeTab?.kind === "explorer" ? leafIds(activeTab.layout) : [],
+  );
 
   /** Destroy all registered explorers (unwatch dirs, drop listeners) and clear the registry. */
   function destroyAllExplorers(): void {
@@ -121,39 +173,54 @@ function createWindowTabsManager() {
     explorers.clear();
   }
 
-  /** Find which pane a tab lives in. */
-  function paneOf(tabId: string): PaneId | null {
-    if (panes.left.tabs.some((t) => t.id === tabId)) return "left";
-    if (panes.right.tabs.some((t) => t.id === tabId)) return "right";
-    return null;
+  function findTab(tabId: string): WindowTab | null {
+    return tabs.find((t) => t.id === tabId) ?? null;
   }
 
-  function findTab(tabId: string): PaneTab | null {
-    return (
-      panes.left.tabs.find((t) => t.id === tabId) ??
-      panes.right.tabs.find((t) => t.id === tabId) ??
-      null
-    );
+  /** Live path of one pane of an explorer tab. */
+  function panePath(tab: ExplorerTab, paneId: PaneId): string {
+    const pane = tab.panes[paneId];
+    if (!pane) return "/home";
+    // || not ??: an explorer that hasn't completed its first navigation
+    // reports "" — fall back to the pane's creation path, never persist "".
+    return explorers.get(pane.explorerId)?.state.currentPath || pane.path;
   }
 
-  /** All tabs across both panes (left first). */
-  function allTabs(): PaneTab[] {
-    return [...panes.left.tabs, ...panes.right.tabs];
+  /** Live path for a tab: its active pane's path. */
+  function getTabLivePath(tab: WindowTab): string {
+    return panePath(tab, tab.activePaneId);
+  }
+
+  /** Serialize one live tab (paths read from the live explorers). */
+  function persistTab(tab: WindowTab): PersistedWindowTab {
+    const toPersisted = (node: PaneNode): PersistedNode =>
+      node.type === "leaf"
+        ? {
+            type: "leaf",
+            id: node.id,
+            path: panePath(tab, node.id),
+            ...(tab.panes[node.id]?.gitGraph ? { gitGraph: tab.panes[node.id].gitGraph } : {}),
+          }
+        : {
+            type: "split",
+            id: node.id,
+            direction: node.direction,
+            ratio: node.ratio,
+            first: toPersisted(node.first),
+            second: toPersisted(node.second),
+          };
+    return {
+      id: tab.id,
+      kind: "explorer",
+      layout: toPersisted(tab.layout),
+      activePaneId: tab.activePaneId,
+      ...(tab.name ? { name: tab.name } : {}),
+    };
   }
 
   /** Capture the current tab state as a serializable snapshot */
   function captureState(): PersistedTabState {
-    const capturePane = (paneId: PaneId): PersistedPaneTabs => ({
-      tabs: panes[paneId].tabs.map((t) => ({ id: t.id, path: getTabLivePath(t), kind: t.kind })),
-      activeTabId: panes[paneId].activeTabId,
-    });
-    return {
-      version: 2,
-      panes: { left: capturePane("left"), right: capturePane("right") },
-      activePaneId,
-      dualPaneEnabled,
-      splitRatio,
-    };
+    return { version: 3, tabs: tabs.map(persistTab), activeTabId };
   }
 
   /** Save current tab state to localStorage */
@@ -161,33 +228,32 @@ function createWindowTabsManager() {
     savePersisted(STORAGE_KEY, captureState());
   }
 
-  /** Load tab state from localStorage (migrating pre-inversion state) */
+  /** Load tab state from localStorage (migrating older shapes) */
   function loadState(): PersistedTabState | null {
     return normalizePersistedState(loadPersisted<unknown>(STORAGE_KEY, null));
   }
 
-  /** The active pane's active tab */
-  const activeTab = $derived(
-    panes[activePaneId].tabs.find((t) => t.id === panes[activePaneId].activeTabId) ?? null,
-  );
-
   /** How a tab labels itself.
    *  - git mode (setting on + folder inside a repo): a git icon, the repo root
    *    name, and the current folder (`repo` is null when the cwd *is* the root).
-   *  - normal mode: a folder icon and the (disambiguated) folder name. */
+   *  - single-pane normal mode: a folder icon and the (disambiguated) folder name.
+   *  - multi-pane: the custom name if renamed, else every pane's folder name
+   *    joined (no disambiguation — the combination is the identity). */
   type TabDisplay = GitTabDisplay;
 
-  /** Per-tab display info across both panes. Normal-mode tabs are
+  /** Per-tab display info for SINGLE-pane explorer tabs. Normal-mode tabs are
    *  disambiguated against each other (VS Code style); git-mode tabs carry
    *  repo + cwd, which is already distinct. Reactive on tab paths, the
    *  git-root cache, and the setting. */
-  const tabDisplays = $derived.by((): Map<string, TabDisplay> => {
+  const singlePaneDisplays = $derived.by((): Map<string, TabDisplay> => {
     const useGit = settingsStore.tabTitleGitRoot;
     const normal: { id: string; path: string }[] = [];
     const gitMode = new Map<string, { repoRoot: string; cwd: string }>();
 
-    const tabs = allTabs().filter((t) => t.kind === "explorer");
-    for (const t of tabs) {
+    const singles = tabs.filter(
+      (t): t is ExplorerTab => t.kind === "explorer" && countLeaves(t.layout) === 1,
+    );
+    for (const t of singles) {
       const cwd = getTabLivePath(t);
       const root = useGit ? gitRoots.get(directoryKey(cwd)) : null;
       if (root) gitMode.set(t.id, { repoRoot: root, cwd });
@@ -196,7 +262,7 @@ function createWindowTabsManager() {
 
     const disamb = disambiguateTabTitles(normal);
     const out = new Map<string, TabDisplay>();
-    for (const t of tabs) {
+    for (const t of singles) {
       const g = gitMode.get(t.id);
       if (g) {
         out.set(t.id, gitTabDisplay(g.cwd, g.repoRoot));
@@ -211,13 +277,21 @@ function createWindowTabsManager() {
     return out;
   });
 
+  /** Multi-pane title: custom name, or all pane folder names joined. */
+  function multiPaneTitle(tab: ExplorerTab): string {
+    if (tab.name) return tab.name;
+    return leafIds(tab.layout)
+      .map((paneId) => extractFolderName(panePath(tab, paneId)))
+      .join(PANE_TITLE_SEPARATOR);
+  }
+
   /** Structured display (icon + repo + name) for rendering a tab. */
-  function getTabDisplay(tab: PaneTab): TabDisplay {
-    if (tab.kind !== "explorer") {
-      return { isGitRoot: tab.kind === "git-graph", repo: null, name: tab.title };
+  function getTabDisplay(tab: WindowTab): TabDisplay {
+    if (countLeaves(tab.layout) > 1) {
+      return { isGitRoot: false, repo: null, name: multiPaneTitle(tab) };
     }
     return (
-      tabDisplays.get(tab.id) ?? {
+      singlePaneDisplays.get(tab.id) ?? {
         isGitRoot: false,
         repo: null,
         name: extractFolderName(getTabLivePath(tab)),
@@ -226,10 +300,7 @@ function createWindowTabsManager() {
   }
 
   /** Plain-text tab title (used for the drag ghost and width measurement). */
-  function getTabTitle(tab: PaneTab): string {
-    if (tab.kind !== "explorer") return tab.title;
-    const explorer = explorers.get(tab.explorerId);
-    if (!explorer) return tab.title || "Explorer";
+  function getTabTitle(tab: WindowTab): string {
     const d = getTabDisplay(tab);
     return d.repo ? `${d.repo} › ${d.name}` : d.name;
   }
@@ -245,29 +316,30 @@ function createWindowTabsManager() {
     const result = await gitRepoRoot(path);
     gitRootPending.delete(key);
     const root = result.ok ? result.data : null;
-    // Reassign for reactivity so tabDisplayTitles recomputes.
+    // Reassign for reactivity so title derivations recompute.
     gitRoots = new Map(gitRoots).set(key, root);
   }
 
-  /** Live path for a tab: the explorer's current path, or the repo path
-   *  for non-explorer kinds. */
-  function getTabLivePath(tab: PaneTab): string {
-    if (tab.kind !== "explorer") return tab.repoPath;
-    const explorer = explorers.get(tab.explorerId);
-    // || not ??: an explorer that hasn't completed its first navigation
-    // reports "" — fall back to the tab's creation path, never persist "".
-    return explorer?.state.currentPath || tab.path;
-  }
-
-  /** Get the directory path for any tab by ID (either pane). */
+  /** Get the directory path for any tab by ID (its active pane). */
   function getTabPath(tabId: string): string | undefined {
     const tab = findTab(tabId);
     return tab ? getTabLivePath(tab) : undefined;
   }
 
-  /** Get tooltip for a tab */
-  function getTabTooltip(tab: PaneTab): string {
-    return getTabLivePath(tab);
+  /** Live path of a pane by ID (searched across all tabs), with the pane's
+   *  creation path as fallback while its explorer is still loading. */
+  function getPanePath(paneId: PaneId): string | undefined {
+    for (const tab of tabs) {
+      if (tab.kind === "explorer" && tab.panes[paneId]) return panePath(tab, paneId);
+    }
+    return undefined;
+  }
+
+  /** Get tooltip for a tab: every pane's path. */
+  function getTabTooltip(tab: WindowTab): string {
+    return leafIds(tab.layout)
+      .map((paneId) => panePath(tab, paneId))
+      .join("\n");
   }
 
   /** Create a new explorer and register it. If a source explorer is
@@ -276,7 +348,7 @@ function createWindowTabsManager() {
   function createAndRegisterExplorer(
     path: string,
     sourceExplorer?: ExplorerInstance,
-    externalSeed?: { currentPath: string; entries: any[]; sortBy: string; sortAscending: boolean; viewMode: string },
+    externalSeed?: ExternalSeed,
     track = true,
   ): { explorerId: string; explorer: ExplorerInstance } {
     const explorerId = generateId("explorer");
@@ -290,7 +362,7 @@ function createWindowTabsManager() {
           viewMode: sourceExplorer.viewMode,
         }
       : externalSeed?.currentPath === path
-        ? externalSeed as any
+        ? (externalSeed as any)
         : undefined;
     const explorer = createExplorerState(seed);
     explorers.set(explorerId, explorer);
@@ -304,149 +376,157 @@ function createWindowTabsManager() {
     return { explorerId, explorer };
   }
 
-  /** Create a tab object with a new explorer */
-  function createTabObject(path: string, sourceExplorer?: ExplorerInstance, externalSeed?: any, track = true): ExplorerTab {
+  /** Create a single-pane explorer tab object (not yet inserted). */
+  function createTabObject(
+    path: string,
+    sourceExplorer?: ExplorerInstance,
+    externalSeed?: ExternalSeed,
+    track = true,
+  ): ExplorerTab {
     const { explorerId } = createAndRegisterExplorer(path, sourceExplorer, externalSeed, track);
+    const paneId = generateId("pane");
     return {
       id: generateId("tab"),
       kind: "explorer",
-      explorerId,
-      path,
-      title: extractFolderName(path),
+      layout: leaf(paneId),
+      panes: { [paneId]: { explorerId, path } },
+      activePaneId: paneId,
     };
   }
 
-  /** Create a new tab in the given pane and activate it (and the pane). */
-  function createTabIn(paneId: PaneId, initialPath?: string, externalSeed?: any): PaneTab {
+  /** Insert a tab after the active one and activate it. */
+  function insertTab(tab: WindowTab, index?: number): void {
+    const activeIndex = tabs.findIndex((t) => t.id === activeTabId);
+    const at =
+      index !== undefined
+        ? Math.max(0, Math.min(index, tabs.length))
+        : activeIndex >= 0
+          ? activeIndex + 1
+          : tabs.length;
+    const newTabs = [...tabs];
+    newTabs.splice(at, 0, tab);
+    tabs = newTabs;
+    activeTabId = tab.id;
+    saveState();
+  }
+
+  /** Create a new tab and activate it. */
+  function createTab(initialPath?: string, externalSeed?: ExternalSeed): WindowTab {
     const defaultPath = "/home";
-    const pane = panes[paneId];
-    const paneActiveTab = pane.tabs.find((t) => t.id === pane.activeTabId);
-
-    // Inherit path and entries from the pane's active explorer so the new
+    // Inherit path and entries from the active pane's explorer so the new
     // tab renders instantly instead of flashing a loading state.
-    const sourceExplorer =
-      paneActiveTab?.kind === "explorer" ? explorers.get(paneActiveTab.explorerId) : undefined;
-    const path = initialPath ?? (paneActiveTab ? getTabLivePath(paneActiveTab) : defaultPath);
-
+    const sourceExplorer = getActiveExplorer();
+    const path = initialPath ?? (activeTab ? getTabLivePath(activeTab) : defaultPath);
     const tab = createTabObject(path, sourceExplorer, externalSeed);
-
-    // Insert after the pane's active tab or at end
-    const activeIndex = pane.tabs.findIndex((t) => t.id === pane.activeTabId);
-    const insertIndex = activeIndex >= 0 ? activeIndex + 1 : pane.tabs.length;
-
-    const newTabs = [...pane.tabs];
-    newTabs.splice(insertIndex, 0, tab);
-    panes = { ...panes, [paneId]: { tabs: newTabs, activeTabId: tab.id } };
-    activePaneId = paneId;
-    saveState();
-
+    insertTab(tab);
     return tab;
   }
 
-  /** Create a new tab in the active pane. */
-  function createTab(initialPath?: string, externalSeed?: any): PaneTab {
-    return createTabIn(activePaneId, initialPath, externalSeed);
-  }
-
-  /** Open a git-graph tab for `repoPath` in the active pane (#51/#56).
-   *  Reuses an existing graph tab for the same repo instead of duplicating. */
-  function openGitGraphTab(repoPath: string): PaneTab {
-    const pane = panes[activePaneId];
-    const existing = pane.tabs.find(
-      (t) => t.kind === "git-graph" && t.repoPath === repoPath,
-    );
-    if (existing) {
-      setActiveTab(existing.id);
-      return existing;
+  /** The repo whose commit graph a pane is showing, if any (#272). */
+  function getPaneGitGraph(paneId: PaneId): string | undefined {
+    for (const tab of tabs) {
+      if (tab.panes[paneId]) return tab.panes[paneId].gitGraph;
     }
-    const tab: PaneTab = {
-      id: generateId("tab"),
-      kind: "git-graph",
-      repoPath,
-      title: `Graph: ${extractFolderName(repoPath)}`,
-    };
-    const activeIndex = pane.tabs.findIndex((t) => t.id === pane.activeTabId);
-    const insertIndex = activeIndex >= 0 ? activeIndex + 1 : pane.tabs.length;
-    const newTabs = [...pane.tabs];
-    newTabs.splice(insertIndex, 0, tab);
-    panes = { ...panes, [activePaneId]: { tabs: newTabs, activeTabId: tab.id } };
+    return undefined;
+  }
+
+  /** Toggle the commit graph in the active pane (#272): showing → back to
+   *  the file listing; hidden → the graph for `repoPath`. */
+  function toggleGitGraphInActivePane(repoPath: string | null): void {
+    const tab = activeTab;
+    const pane = tab?.panes[tab.activePaneId];
+    if (!tab || !pane) return;
+    if (pane.gitGraph) {
+      delete pane.gitGraph;
+    } else if (repoPath) {
+      pane.gitGraph = repoPath;
+    }
     saveState();
-    return tab;
+  }
+
+  /** Rebuild a live tab from its persisted form (fresh explorers, non-tracking
+   *  loads). `regenerateIds` gives the tab and its panes fresh ids (adopting
+   *  into a window that may already contain the original ids). */
+  function reviveTab(
+    persisted: PersistedWindowTab,
+    opts: { regenerateIds?: boolean; overridePath?: string } = {},
+  ): WindowTab {
+    const idMap = new Map<string, string>();
+    const mapId = (id: string): string => {
+      if (!opts.regenerateIds) return id;
+      if (!idMap.has(id)) idMap.set(id, generateId("pane"));
+      return idMap.get(id)!;
+    };
+
+    const panes: Record<PaneId, TabPane> = {};
+    const build = (node: PersistedNode): PaneNode => {
+      if (node.type === "leaf") {
+        const paneId = mapId(node.id);
+        const isActiveTarget = node.id === persisted.activePaneId && !!opts.overridePath;
+        const path = isActiveTarget ? opts.overridePath! : node.path;
+        const { explorerId } = createAndRegisterExplorer(path, undefined, undefined, false);
+        panes[paneId] = { explorerId, path, ...(node.gitGraph ? { gitGraph: node.gitGraph } : {}) };
+        return leaf(paneId);
+      }
+      return {
+        type: "split",
+        id: opts.regenerateIds ? generateId("split") : node.id,
+        direction: node.direction,
+        ratio: node.ratio,
+        first: build(node.first),
+        second: build(node.second),
+      };
+    };
+
+    const layout = build(persisted.layout);
+    const paneIds = leafIds(layout);
+    const mappedActive = mapId(persisted.activePaneId);
+    return {
+      id: opts.regenerateIds ? generateId("tab") : persisted.id,
+      kind: "explorer",
+      layout,
+      panes,
+      activePaneId: paneIds.includes(mappedActive) ? mappedActive : paneIds[0],
+      ...(persisted.name ? { name: persisted.name } : {}),
+    };
   }
 
   /** Serialize a live tab for cross-window transfer / tear-off. */
   function exportTab(tabId: string): TabSnapshot | null {
     const tab = findTab(tabId);
     if (!tab) return null;
-    return { path: getTabLivePath(tab) };
+    return { path: getTabLivePath(tab), tab: persistTab(tab) };
   }
 
-  /** Adopt a tab transferred from another window: create a fresh explorer
-   *  from the snapshot, insert at `index` (default: end) in `paneId`
-   *  (default: active pane), and activate. */
-  function adoptTab(snapshot: TabSnapshot, index?: number, paneId?: PaneId): PaneTab {
+  /** Adopt a tab transferred from another window: rebuild it with fresh
+   *  explorers (and fresh ids), insert at `index` (default: after active),
+   *  and activate. */
+  function adoptTab(snapshot: TabSnapshot, index?: number): WindowTab {
     const normalized = normalizeSnapshot(snapshot) ?? { path: "/home" };
-    const targetPane: PaneId = paneId ?? (dualPaneEnabled ? activePaneId : "left");
-    const tab = createTabObject(normalized.path);
-
-    const pane = panes[targetPane];
-    const at = index === undefined ? pane.tabs.length : Math.max(0, Math.min(index, pane.tabs.length));
-    const newTabs = [...pane.tabs];
-    newTabs.splice(at, 0, tab);
-    panes = { ...panes, [targetPane]: { tabs: newTabs, activeTabId: tab.id } };
-    activePaneId = targetPane;
-    saveState();
+    const tab = normalized.tab
+      ? reviveTab(normalized.tab, { regenerateIds: true })
+      : createTabObject(normalized.path);
+    insertTab(tab, index ?? tabs.length);
     return tab;
   }
 
-  /** Restore tabs from a persisted state (either shape; v1 is migrated).
-   *  @param overridePath - If set, the active pane's active tab navigates
+  /** Restore tabs from a persisted state (any shape; v1/v2 are migrated).
+   *  @param overridePath - If set, the active tab's active pane navigates
    *    here instead of its saved path (avoids racing navigations). */
   function restoreFromState(state: PersistedTabState | unknown, overridePath?: string): void {
     const normalized = normalizePersistedState(state);
-    if (!normalized) return;
+    if (!normalized || normalized.tabs.length === 0) return;
 
     // Destroy before clearing — otherwise backend watch refcounts and
     // streaming listeners leak for every replaced explorer.
     destroyAllExplorers();
 
-    const restorePane = (paneId: PaneId): PaneTabs => {
-      const persisted = normalized.panes[paneId];
-      const tabs = persisted.tabs.map((pt): PaneTab => {
-        if (pt.kind === "git-graph") {
-          return {
-            id: pt.id,
-            kind: "git-graph",
-            repoPath: pt.path,
-            title: `Graph: ${extractFolderName(pt.path)}`,
-          };
-        }
-        const isActiveTarget =
-          paneId === normalized.activePaneId && pt.id === persisted.activeTabId && !!overridePath;
-        const { explorerId } = createAndRegisterExplorer(
-          isActiveTarget ? overridePath! : pt.path,
-          undefined,
-          undefined,
-          false,
-        );
-        return {
-          id: pt.id,
-          kind: "explorer",
-          explorerId,
-          path: isActiveTarget ? overridePath! : pt.path,
-          title: extractFolderName(pt.path),
-        };
-      });
-      const activeTabId = tabs.some((t) => t.id === persisted.activeTabId)
-        ? persisted.activeTabId
-        : (tabs[0]?.id ?? null);
-      return { tabs, activeTabId };
-    };
-
-    panes = { left: restorePane("left"), right: restorePane("right") };
-    dualPaneEnabled = normalized.dualPaneEnabled && panes.right.tabs.length > 0;
-    activePaneId = dualPaneEnabled && normalized.activePaneId === "right" ? "right" : "left";
-    splitRatio = normalized.splitRatio;
+    tabs = normalized.tabs.map((pt) =>
+      reviveTab(pt, {
+        overridePath: pt.id === normalized.activeTabId ? overridePath : undefined,
+      }),
+    );
+    activeTabId = normalized.activeTabId ?? tabs[0]?.id ?? null;
   }
 
   /** Initialize - restores from localStorage or creates a new tab.
@@ -455,23 +535,21 @@ function createWindowTabsManager() {
    *    via Ctrl+N that receive their path via URL params.
    *  @param overridePath - When set, the active tab navigates here instead
    *    of its saved path. Used for CLI cwd so we don't race two navigations. */
-  function init(initialPath: string, skipRestore = false, overridePath?: string): PaneTab {
+  function init(initialPath: string, skipRestore = false, overridePath?: string): WindowTab | null {
     if (!skipRestore) {
       // Try to restore from localStorage (cold start / app relaunch)
       const savedState = loadState();
-      if (savedState && savedState.panes.left.tabs.length > 0) {
+      if (savedState && savedState.tabs.length > 0) {
         restoreFromState(savedState, overridePath);
-        const pane = panes[activePaneId];
-        const restored = pane.tabs.find((t) => t.id === pane.activeTabId) ?? pane.tabs[0];
+        const restored = tabs.find((t) => t.id === activeTabId) ?? tabs[0];
         if (restored) return restored;
       }
     }
 
     // No saved state or child window — create a fresh tab
     destroyAllExplorers();
-    panes = { left: emptyPane(), right: emptyPane() };
-    activePaneId = "left";
-    dualPaneEnabled = false;
+    tabs = [];
+    activeTabId = null;
 
     // Tear-off windows receive their tab through a label-keyed localStorage
     // seed written by the source window.
@@ -488,8 +566,8 @@ function createWindowTabsManager() {
     // Check for parent-window seed (child windows get entries pre-loaded)
     const targetPath = overridePath ?? initialPath;
     const seedKey = `dir-seed:${targetPath}`;
-    const seed = loadPersisted<{ currentPath: string; entries: any[]; sortBy: string; sortAscending: boolean; viewMode: string; ts: number } | null>(seedKey, null);
-    let externalSeed: any = undefined;
+    const seed = loadPersisted<(ExternalSeed & { ts: number }) | null>(seedKey, null);
+    let externalSeed: ExternalSeed | undefined = undefined;
     if (seed && Date.now() - seed.ts < 5000) {
       externalSeed = seed;
       removePersisted(seedKey);
@@ -499,13 +577,14 @@ function createWindowTabsManager() {
   }
 
   /** Snapshot a tab for Ctrl+Shift+T restoration */
-  function snapshotTab(tab: PaneTab, paneId: PaneId, tabIndex: number, fromClosedWindow = false): void {
+  function snapshotTab(tab: WindowTab, tabIndex: number, fromClosedWindow = false): void {
     const snapshot: ClosedTabSnapshot = {
       path: getTabLivePath(tab),
-      paneId,
       kind: tab.kind,
+      tab: persistTab(tab),
       closedAt: tabIndex,
       fromClosedWindow,
+      closedTs: Date.now(),
     };
 
     // Closing the last tab snapshots then attempts window.close(), which can
@@ -516,7 +595,6 @@ function createWindowTabsManager() {
         top &&
         top.fromClosedWindow &&
         top.path === snapshot.path &&
-        top.paneId === snapshot.paneId &&
         top.closedAt === snapshot.closedAt
       ) {
         return;
@@ -526,43 +604,38 @@ function createWindowTabsManager() {
     closedTabs.push(snapshot);
   }
 
-  /** Close a tab by ID. Closes the window if it's the last tab overall. */
+  /** Close a tab by ID. Closes the window if it's the last tab. */
   function closeTab(tabId: string): void {
     removeTab(tabId, { snapshot: true });
   }
 
-  /** Remove a tab that moved to another window/pane. No Ctrl+Shift+T
-   *  snapshot — the tab still lives, just elsewhere. Closes the window if
-   *  it was the last tab. */
+  /** Remove a tab that moved to another window. No Ctrl+Shift+T snapshot —
+   *  the tab still lives, just elsewhere. Closes the window if it was the
+   *  last tab. */
   function removeTransferredTab(tabId: string): void {
     removeTab(tabId, { snapshot: false });
   }
 
-  function destroyTabExplorer(tab: PaneTab): void {
+  function destroyTabExplorers(tab: WindowTab): void {
     if (tab.kind !== "explorer") return;
-    const explorer = explorers.get(tab.explorerId);
-    explorer?.destroy();
-    explorers.delete(tab.explorerId);
+    for (const pane of Object.values(tab.panes)) {
+      explorers.get(pane.explorerId)?.destroy();
+      explorers.delete(pane.explorerId);
+    }
   }
 
   function removeTab(tabId: string, opts: { snapshot: boolean }): void {
-    const paneId = paneOf(tabId);
-    if (!paneId) return;
-    const pane = panes[paneId];
-    const tabIndex = pane.tabs.findIndex((t) => t.id === tabId);
-    const tab = pane.tabs[tabIndex];
-
-    const isLastInPane = pane.tabs.length <= 1;
-    const otherPaneId: PaneId = paneId === "left" ? "right" : "left";
-    // Last tab overall = last in this pane and the other pane is empty too.
-    const isLastOverall = isLastInPane && panes[otherPaneId].tabs.length === 0;
+    const tabIndex = tabs.findIndex((t) => t.id === tabId);
+    if (tabIndex < 0) return;
+    const tab = tabs[tabIndex];
+    const isLast = tabs.length <= 1;
 
     // Snapshot before closing (even if it's the last tab)
     if (opts.snapshot) {
-      snapshotTab(tab, paneId, tabIndex, isLastOverall);
+      snapshotTab(tab, tabIndex, isLast);
     }
 
-    if (isLastOverall) {
+    if (isLast) {
       // Close the window when closing the last tab
       import("@tauri-apps/api/window")
         .then(({ getCurrentWindow }) => getCurrentWindow().close())
@@ -570,29 +643,14 @@ function createWindowTabsManager() {
       return;
     }
 
-    destroyTabExplorer(tab);
+    destroyTabExplorers(tab);
 
-    if (isLastInPane) {
-      // The pane collapses. If the LEFT pane emptied, the other pane's tabs
-      // move into it so the window always has a populated left pane.
-      const promoted = paneId === "left" ? panes[otherPaneId] : panes.left;
-      panes = { left: promoted, right: emptyPane() };
-      dualPaneEnabled = false;
-      activePaneId = "left";
-      saveState();
-      return;
-    }
-
-    const newTabs = pane.tabs.filter((t) => t.id !== tabId);
-
-    // Update active tab if closing the pane's active one
-    let newActiveId = pane.activeTabId;
-    if (pane.activeTabId === tabId) {
+    const newTabs = tabs.filter((t) => t.id !== tabId);
+    if (activeTabId === tabId) {
       const newIndex = Math.max(0, tabIndex - 1);
-      newActiveId = newTabs[newIndex]?.id ?? null;
+      activeTabId = newTabs[newIndex]?.id ?? null;
     }
-
-    panes = { ...panes, [paneId]: { tabs: newTabs, activeTabId: newActiveId } };
+    tabs = newTabs;
     saveState();
   }
 
@@ -608,254 +666,425 @@ function createWindowTabsManager() {
       return { restored: true, openInNewWindow: snapshot.path };
     }
 
-    // Restore into the pane it was closed from when that pane is visible;
-    // otherwise into the left pane.
-    const targetPane: PaneId =
-      snapshot.paneId === "right" && !dualPaneEnabled ? "left" : snapshot.paneId;
-    const at = Math.min(snapshot.closedAt, panes[targetPane].tabs.length);
-    if (snapshot.kind === "git-graph") {
-      // A graph tab restores as a graph tab (#167) — no explorer to create.
-      const tab: PaneTab = {
-        id: generateId("tab"),
-        kind: "git-graph",
-        repoPath: snapshot.path,
-        title: `Graph: ${extractFolderName(snapshot.path)}`,
-      };
-      const pane = panes[targetPane];
-      const newTabs = [...pane.tabs];
-      newTabs.splice(at, 0, tab);
-      panes = { ...panes, [targetPane]: { tabs: newTabs, activeTabId: tab.id } };
-      activePaneId = targetPane;
-      saveState();
+    const at = Math.min(snapshot.closedAt, tabs.length);
+    if (snapshot.tab) {
+      insertTab(reviveTab(snapshot.tab, { regenerateIds: true }), at);
+    } else if (snapshot.kind === "git-graph") {
+      // Pre-#272 snapshot of a graph TAB: restore as a single-pane explorer
+      // tab at the repo path with the graph showing.
+      const tab = reviveTab(
+        {
+          id: generateId("tab"),
+          kind: "explorer",
+          layout: { type: "leaf", id: "restored-pane", path: snapshot.path, gitGraph: snapshot.path },
+          activePaneId: "restored-pane",
+        },
+        { regenerateIds: true },
+      );
+      insertTab(tab, at);
     } else {
-      adoptTab({ path: snapshot.path }, at, targetPane);
+      adoptTab({ path: snapshot.path }, at);
     }
     return { restored: true };
   }
 
-  /** Close the active pane's active tab */
+  /** Close the active tab */
   function closeActiveTab(): void {
-    const id = panes[activePaneId].activeTabId;
-    if (id) closeTab(id);
+    if (activeTabId) closeTab(activeTabId);
   }
 
-  /** Set the active tab (in whichever pane it lives; focuses that pane) */
-  function setActiveTab(tabId: string): void {
-    const paneId = paneOf(tabId);
-    if (!paneId) return;
-    panes = { ...panes, [paneId]: { ...panes[paneId], activeTabId: tabId } };
-    activePaneId = paneId;
+  /** Close the focused surface, ghostty-style (#229): the focused pane when
+   *  the active tab has several, otherwise the whole tab. */
+  function closeSurface(): void {
+    const tab = activeTab;
+    if (tab?.kind === "explorer" && countLeaves(tab.layout) > 1) {
+      closePane();
+    } else {
+      closeActiveTab();
+    }
+  }
+
+  /** Drop pane snapshots whose tab no longer lives in this window (their
+   *  close is superseded by the tab's own snapshot). */
+  function pruneClosedPanes(): void {
+    closedPanes = closedPanes.filter((p) => findTab(p.tabId)?.kind === "explorer");
+  }
+
+  /** Restore a closed pane back into its tab at its original split position.
+   *  Falls back to splitting the focused pane when the sibling is gone. */
+  function restorePane(snapshot: ClosedPaneSnapshot): void {
+    const tab = findTab(snapshot.tabId);
+    if (tab?.kind !== "explorer") return;
+    setActiveTab(tab.id);
+    const { explorerId } = createAndRegisterExplorer(snapshot.path, undefined, undefined, false);
+    const paneId = generateId("pane");
+    const splitId = generateId("split");
+    updateActiveExplorerTab((t) => {
+      const layout = hasNode(t.layout, snapshot.siblingId)
+        ? updateRatio(
+            splitNode(t.layout, snapshot.siblingId, snapshot.placement, paneId, splitId),
+            splitId,
+            snapshot.ratio,
+          )
+        : splitLeaf(t.layout, t.activePaneId, snapshot.placement, paneId, splitId);
+      return {
+        ...t,
+        layout,
+        panes: { ...t.panes, [paneId]: { explorerId, path: snapshot.path } },
+        activePaneId: paneId,
+      };
+    });
     saveState();
   }
 
-  /** Move to next tab in the active pane (wraps around) */
+  /** Restore the most recently closed surface (#229): the last closed pane
+   *  when it's newer than the last closed tab, else the last closed tab.
+   *  Returns false when there's nothing to restore. */
+  function restoreClosedSurface(): false | RestoreResult {
+    closedTabs.refresh();
+    pruneClosedPanes();
+    const topPane = closedPanes[closedPanes.length - 1];
+    if (topPane && topPane.ts >= (closedTabs.peek()?.closedTs ?? 0)) {
+      closedPanes.pop();
+      restorePane(topPane);
+      return { restored: true };
+    }
+    return restoreClosedTab();
+  }
+
+  /** Set the active tab */
+  function setActiveTab(tabId: string): void {
+    if (!findTab(tabId)) return;
+    activeTabId = tabId;
+    saveState();
+  }
+
+  /** Move to next tab (wraps around) */
   function nextTab(): void {
     cycleTab(1);
   }
 
-  /** Move to previous tab in the active pane (wraps around) */
+  /** Move to previous tab (wraps around) */
   function prevTab(): void {
     cycleTab(-1);
   }
 
   function cycleTab(delta: number): void {
-    const pane = panes[activePaneId];
-    if (pane.tabs.length <= 1) return;
-    const currentIndex = pane.tabs.findIndex((t) => t.id === pane.activeTabId);
-    const nextIndex = (currentIndex + delta + pane.tabs.length) % pane.tabs.length;
-    panes = { ...panes, [activePaneId]: { ...pane, activeTabId: pane.tabs[nextIndex].id } };
+    if (tabs.length <= 1) return;
+    const currentIndex = tabs.findIndex((t) => t.id === activeTabId);
+    const nextIndex = (currentIndex + delta + tabs.length) % tabs.length;
+    activeTabId = tabs[nextIndex].id;
     saveState();
   }
 
-  /** Get the explorer of a pane's active tab */
-  function getExplorer(paneId: PaneId): ExplorerInstance | undefined {
-    const pane = panes[paneId];
-    const tab = pane.tabs.find((t) => t.id === pane.activeTabId);
-    return tab && tab.kind === "explorer" ? explorers.get(tab.explorerId) : undefined;
+  /** Rename a tab. Only multi-pane explorer tabs are renameable; the named
+   *  layout is also saved as a workspace (#228) so it can be reopened from
+   *  the command palette. */
+  function renameTab(tabId: string, name: string): boolean {
+    const tab = findTab(tabId);
+    const trimmed = name.trim();
+    if (!trimmed || !canRenameTab(tabId) || tab?.kind !== "explorer") return false;
+    tabs = tabs.map((t) => (t.id === tabId ? { ...t, name: trimmed } : t));
+    saveState();
+    const renamed = findTab(tabId)!;
+    workspacesStore.save(trimmed, {
+      version: 3,
+      tabs: [persistTab(renamed)],
+      activeTabId: renamed.id,
+    });
+    return true;
   }
 
-  /** Iterate all known explorer instances across every pane and tab.
+  /** A tab is renameable when it's an explorer tab with two or more panes. */
+  function canRenameTab(tabId: string): boolean {
+    const tab = findTab(tabId);
+    return tab?.kind === "explorer" && countLeaves(tab.layout) > 1;
+  }
+
+  /** Get the explorer backing a pane (searched across all tabs, so pane-
+   *  scoped components keep working during tab transitions). */
+  function getExplorer(paneId: PaneId): ExplorerInstance | undefined {
+    for (const tab of tabs) {
+      if (tab.kind !== "explorer") continue;
+      const pane = tab.panes[paneId];
+      if (pane) return explorers.get(pane.explorerId);
+    }
+    return undefined;
+  }
+
+  /** Iterate all known explorer instances across every tab and pane.
    *  Used by callers that need to broadcast a refresh to every pane that
    *  may currently be viewing an affected directory (e.g. cross-tab paste). */
   function getAllExplorers(): ExplorerInstance[] {
     return Array.from(explorers.values());
   }
 
-  /** Get the active explorer (active pane's active tab) */
+  /** Get the active explorer (active tab's active pane) */
   function getActiveExplorer(): ExplorerInstance | undefined {
-    return getExplorer(activePaneId);
+    const tab = activeTab;
+    if (tab?.kind !== "explorer") return undefined;
+    return explorers.get(tab.panes[tab.activePaneId]?.explorerId ?? "");
   }
 
   /** Silently refresh the visible panes — for file operations (drops,
-   *  pastes, external changes) that may affect either pane. The hidden
-   *  right pane is skipped in single-pane mode (no wasted IPC);
-   *  toggleDualPane refreshes it when it becomes visible again. */
+   *  pastes, external changes) that may affect any visible pane. Hidden
+   *  tabs are skipped (no wasted IPC); they refresh on activation. */
   function refreshAllPanes(): void {
-    getExplorer("left")?.refresh({ silent: true });
-    if (dualPaneEnabled) {
-      getExplorer("right")?.refresh({ silent: true });
+    const tab = activeTab;
+    if (tab?.kind !== "explorer") return;
+    for (const paneId of leafIds(tab.layout)) {
+      explorers.get(tab.panes[paneId]?.explorerId ?? "")?.refresh({ silent: true });
     }
   }
 
-  /** Set the active pane */
+  /** Update the active explorer tab's layout/panes in place (immutably). */
+  function updateActiveExplorerTab(
+    update: (tab: ExplorerTab) => ExplorerTab,
+  ): ExplorerTab | null {
+    const tab = activeTab;
+    if (tab?.kind !== "explorer") return null;
+    const updated = update(tab);
+    tabs = tabs.map((t) => (t.id === tab.id ? updated : t));
+    return updated;
+  }
+
+  /** Set the active (focused) pane of the active tab. */
   function setActivePane(paneId: PaneId): void {
-    if (activePaneId === paneId) return;
-    if (paneId === "right" && !dualPaneEnabled) return;
-    activePaneId = paneId;
+    const tab = activeTab;
+    if (tab?.kind !== "explorer" || tab.activePaneId === paneId) return;
+    if (!tab.panes[paneId]) return;
+    updateActiveExplorerTab((t) => ({ ...t, activePaneId: paneId }));
     saveState();
   }
 
-  /** Switch to the other pane */
+  /** Focus the next pane of the active tab (cycles in visual order). */
   function switchPane(): void {
-    if (!dualPaneEnabled) return;
-    setActivePane(activePaneId === "left" ? "right" : "left");
+    const tab = activeTab;
+    if (tab?.kind !== "explorer") return;
+    const ids = leafIds(tab.layout);
+    if (ids.length <= 1) return;
+    const idx = ids.indexOf(tab.activePaneId);
+    setActivePane(ids[(idx + 1) % ids.length]);
   }
 
-  /** Toggle dual pane mode: open/close the second pane. The right pane's
-   *  tabs survive a close and reappear on reopen; a first open seeds one
-   *  tab at the left pane's parent directory (a more useful default than
-   *  mirroring the same folder). */
+  /** Split the active pane, placing a new pane on the given side.
+   *  The new pane opens at `initialPath` (default: the source pane's
+   *  directory, seeded with its entries so it renders instantly). */
+  function splitPane(placement: SplitPlacement, initialPath?: string): void {
+    const tab = activeTab;
+    if (tab?.kind !== "explorer") return;
+    const sourceExplorer = getActiveExplorer();
+    const sourcePath = panePath(tab, tab.activePaneId);
+    const path = initialPath ?? sourcePath;
+    const { explorerId } = createAndRegisterExplorer(path, sourceExplorer);
+    const paneId = generateId("pane");
+    updateActiveExplorerTab((t) => ({
+      ...t,
+      layout: splitLeaf(t.layout, t.activePaneId, placement, paneId, generateId("split")),
+      panes: { ...t.panes, [paneId]: { explorerId, path } },
+      activePaneId: paneId,
+    }));
+    saveState();
+  }
+
+  /** Create a new pane according to the configured layout mode.
+   *  Dwindle (default) splits the focused pane along its longer rendered
+   *  axis (Hyprland-style); "right"/"down" always split that way. */
+  function newPane(): void {
+    const tab = activeTab;
+    if (tab?.kind !== "explorer") return;
+    const mode = settingsStore.defaultPaneLayout;
+    if (mode === "right" || mode === "down") {
+      splitPane(mode);
+      return;
+    }
+    const aspect =
+      typeof window !== "undefined" && window.innerHeight > 0
+        ? window.innerWidth / window.innerHeight
+        : 16 / 9;
+    splitPane(dwindlePlacement(tab.layout, tab.activePaneId, aspect));
+  }
+
+  /** Close a pane of the active tab (default: the focused pane).
+   *  Closing the last pane closes the tab. */
+  function closePane(paneId?: PaneId): void {
+    const tab = activeTab;
+    if (tab?.kind !== "explorer") return;
+    const target = paneId ?? tab.activePaneId;
+    const pane = tab.panes[target];
+    if (!pane) return;
+
+    const newLayout = removeLeaf(tab.layout, target);
+    if (newLayout === null) {
+      closeTab(tab.id);
+      return;
+    }
+
+    // Snapshot for Ctrl+Shift+T (#229): where the pane sat relative to its
+    // sibling, so restore re-splits at the original position.
+    const context = leafSiblingContext(tab.layout, target);
+    if (context) {
+      closedPanes.push({
+        tabId: tab.id,
+        path: panePath(tab, target),
+        siblingId: context.siblingId,
+        placement: context.placement,
+        ratio: context.ratio,
+        ts: Date.now(),
+      });
+      if (closedPanes.length > MAX_CLOSED_PANES) closedPanes.shift();
+    }
+
+    explorers.get(pane.explorerId)?.destroy();
+    explorers.delete(pane.explorerId);
+
+    const remaining = leafIds(newLayout);
+    const oldOrder = leafIds(tab.layout);
+    // Focus the nearest surviving pane (previous in visual order).
+    const closedIndex = oldOrder.indexOf(target);
+    const fallback = remaining[Math.max(0, Math.min(closedIndex - 1, remaining.length - 1))];
+    updateActiveExplorerTab((t) => {
+      const { [target]: _closed, ...panes } = t.panes;
+      return {
+        ...t,
+        layout: newLayout,
+        panes,
+        activePaneId: t.activePaneId === target ? fallback : t.activePaneId,
+        // A single-pane tab is no longer renameable — drop a stale custom name.
+        ...(remaining.length === 1 ? { name: undefined } : {}),
+      };
+    });
+    saveState();
+  }
+
+  /** Whether the active tab shows more than one pane (drives pane-scoped
+   *  UI like focus borders and pane commands). */
+  const multiPane = $derived(
+    activeTab?.kind === "explorer" && countLeaves(activeTab.layout) > 1,
+  );
+
+  /** Toggle dual pane mode (Ctrl+\): a single-pane tab splits right —
+   *  seeded at the parent directory, a more useful default than mirroring
+   *  the same folder; a multi-pane tab collapses to just the focused pane. */
   function toggleDualPane(): void {
-    if (dualPaneEnabled) {
-      dualPaneEnabled = false;
-      activePaneId = "left";
+    const tab = activeTab;
+    if (tab?.kind !== "explorer") return;
+
+    if (countLeaves(tab.layout) > 1) {
+      // Collapse: keep only the focused pane.
+      for (const paneId of leafIds(tab.layout)) {
+        if (paneId === tab.activePaneId) continue;
+        const pane = tab.panes[paneId];
+        explorers.get(pane.explorerId)?.destroy();
+        explorers.delete(pane.explorerId);
+      }
+      updateActiveExplorerTab((t) => ({
+        ...t,
+        layout: leaf(t.activePaneId),
+        panes: { [t.activePaneId]: t.panes[t.activePaneId] },
+        name: undefined,
+      }));
       saveState();
       return;
     }
 
-    dualPaneEnabled = true;
-    if (panes.right.tabs.length === 0) {
-      const leftPath = getExplorer("left")?.state.currentPath || "/home";
-      const parent = parentDir(leftPath);
-      createTabIn("right", parent && parent !== leftPath ? parent : leftPath);
-    } else {
-      // The right pane received no refreshes while hidden — catch up.
-      getExplorer("right")?.refresh({ silent: true });
-      saveState();
-    }
+    const currentPath = panePath(tab, tab.activePaneId);
+    const parent = parentDir(currentPath);
+    splitPane("right", parent && parent !== currentPath ? parent : currentPath);
   }
 
   /** Set dual pane mode */
   function setDualPane(enabled: boolean): void {
-    if (dualPaneEnabled === enabled) return;
+    if (multiPane === enabled) return;
     toggleDualPane();
   }
 
-  /** Set split ratio (window-level) */
-  function setSplitRatio(ratio: number): void {
-    splitRatio = Math.max(0.2, Math.min(0.8, ratio));
+  /** Set a split's ratio on the active tab (divider drag). */
+  function setSplitRatio(splitId: string, ratio: number): void {
+    updateActiveExplorerTab((t) => ({ ...t, layout: updateRatio(t.layout, splitId, ratio) }));
     saveState();
   }
 
-  /** Reorder tabs within a pane's strip */
-  function reorderTabs(paneId: PaneId, fromIndex: number, toIndex: number): void {
-    const pane = panes[paneId];
-    if (fromIndex < 0 || fromIndex >= pane.tabs.length) return;
-    if (toIndex < 0 || toIndex >= pane.tabs.length) return;
+  /** Reorder tabs within the strip */
+  function reorderTabs(fromIndex: number, toIndex: number): void {
+    if (fromIndex < 0 || fromIndex >= tabs.length) return;
+    if (toIndex < 0 || toIndex >= tabs.length) return;
     if (fromIndex === toIndex) return;
 
-    const newTabs = [...pane.tabs];
+    const newTabs = [...tabs];
     const [moved] = newTabs.splice(fromIndex, 1);
     newTabs.splice(toIndex, 0, moved);
-
-    panes = { ...panes, [paneId]: { ...pane, tabs: newTabs } };
-    saveState();
-  }
-
-  /** Move a live tab to the other pane's strip (same window — the explorer
-   *  instance moves with it, no destroy/recreate). No-op when it's the
-   *  pane's last tab: the source pane would collapse mid-drag. */
-  function moveTabToPane(tabId: string, targetPaneId: PaneId, index?: number): void {
-    const sourcePaneId = paneOf(tabId);
-    if (!sourcePaneId || sourcePaneId === targetPaneId) return;
-    const source = panes[sourcePaneId];
-    if (source.tabs.length <= 1) return;
-
-    const tab = source.tabs.find((t) => t.id === tabId)!;
-    const sourceTabs = source.tabs.filter((t) => t.id !== tabId);
-    let sourceActive = source.activeTabId;
-    if (sourceActive === tabId) {
-      const oldIndex = source.tabs.findIndex((t) => t.id === tabId);
-      sourceActive = sourceTabs[Math.max(0, oldIndex - 1)]?.id ?? null;
-    }
-
-    const target = panes[targetPaneId];
-    const at = index === undefined ? target.tabs.length : Math.max(0, Math.min(index, target.tabs.length));
-    const targetTabs = [...target.tabs];
-    targetTabs.splice(at, 0, tab);
-
-    panes = {
-      ...panes,
-      [sourcePaneId]: { tabs: sourceTabs, activeTabId: sourceActive },
-      [targetPaneId]: { tabs: targetTabs, activeTabId: tabId },
-    } as Record<PaneId, PaneTabs>;
-    activePaneId = targetPaneId;
+    tabs = newTabs;
     saveState();
   }
 
   return {
-    // Pane state getters
-    get panes() {
-      return panes;
-    },
-    /** The active pane's tab strip (kept for command `when:` guards). */
+    // Tab state getters
     get tabs() {
-      return panes[activePaneId].tabs;
+      return tabs;
     },
     get activeTabId() {
-      return panes[activePaneId].activeTabId;
+      return activeTabId;
     },
     get activeTab() {
       return activeTab;
     },
-    /** The active tab of a specific pane (for per-kind content dispatch). */
-    paneActiveTab(paneId: PaneId): PaneTab | null {
-      const pane = panes[paneId];
-      return pane.tabs.find((t) => t.id === pane.activeTabId) ?? null;
-    },
-    /** Total tab count across both panes. */
     get totalTabCount() {
-      return panes.left.tabs.length + panes.right.tabs.length;
+      return tabs.length;
     },
 
-    // Window-level layout state
+    // Pane state (active tab)
     get activePaneId() {
       return activePaneId;
     },
-    get dualPaneEnabled() {
-      return dualPaneEnabled;
+    get activePaneIds() {
+      return activePaneIds;
     },
-    get splitRatio() {
-      return splitRatio;
+    /** True when the active tab shows more than one pane. Kept under the
+     *  historical name — command `when:` guards and pane chrome key off it. */
+    get dualPaneEnabled() {
+      return multiPane;
+    },
+    /** Whether `paneId` is the first (primary) pane of the active tab —
+     *  singleton chrome like the SCM panel renders only there. */
+    isPrimaryPane(paneId: PaneId): boolean {
+      return activePaneIds[0] === paneId;
     },
 
     // Tab operations
     init,
     createTab,
-    createTabIn,
-    openGitGraphTab,
+    getPaneGitGraph,
+    toggleGitGraphInActivePane,
     closeTab,
     closeActiveTab,
+    closeSurface,
     exportTab,
     adoptTab,
-    moveTabToPane,
     removeTransferredTab,
     get windowLabel() {
       return WINDOW_LABEL;
     },
     restoreClosedTab,
+    restoreClosedSurface,
     get canRestoreTab() {
       // No side effects in the getter: the stack is refreshed on window
       // focus and explicitly before restore (restoreClosedTab).
       return closedTabs.size > 0;
     },
+    get canRestoreSurface() {
+      return closedTabs.size > 0 || closedPanes.some((p) => findTab(p.tabId)?.kind === "explorer");
+    },
     setActiveTab,
     nextTab,
     prevTab,
     reorderTabs,
+    renameTab,
+    canRenameTab,
     getTabTitle,
     getTabDisplay,
     getTabPath,
+    getPanePath,
     getTabTooltip,
     ensureGitRoot,
 
@@ -865,9 +1094,12 @@ function createWindowTabsManager() {
     getAllExplorers,
     refreshAllPanes,
 
-    // Pane operations (window-level)
+    // Pane operations (active tab)
     setActivePane,
     switchPane,
+    splitPane,
+    newPane,
+    closePane,
     toggleDualPane,
     setDualPane,
     setSplitRatio,

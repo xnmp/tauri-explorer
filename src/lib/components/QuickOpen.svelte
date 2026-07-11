@@ -10,11 +10,11 @@
     cancelSearch,
     fuzzySearch,
     openFile,
-    getHomeDirectory,
     type SearchResult,
     type SearchResultsEvent,
   } from "$lib/api/files";
   import { recentFilesStore } from "$lib/state/recent-files.svelte";
+  import { homeDirectory } from "$lib/state/home.svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { parentDir, basename, directoryKey, toForwardSlashes, expandTilde as expandTildePath } from "$lib/domain/path";
@@ -49,7 +49,7 @@
   let loading = $state(false);
   let inputRef = $state<HTMLInputElement | null>(null);
   let resultsContainerRef = $state<HTMLElement | null>(null);
-  let homeDir = $state<string | null>(null);
+  const homeDir = $derived(homeDirectory.value);
   // Guard: hover may only change the selection after a DELIBERATE pointer move.
   // Rows react to mousemove (not mouseenter — that also fires when a row
   // re-renders or scrolls under a stationary cursor), and the move must clear a
@@ -57,8 +57,6 @@
   // update re-anchors so movement from before can't steal the selection.
   const pointer = usePointerIntent();
 
-  // Fetch home directory for tilde expansion
-  getHomeDirectory().then((r) => { if (r.ok) homeDir = r.data; });
 
   /** Expand leading ~ to home directory path */
   function expandTilde(path: string): string {
@@ -577,18 +575,8 @@
     border-radius: var(--radius-lg);
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
     overflow: hidden;
-    animation: slideDown 150ms cubic-bezier(0, 0, 0, 1);
-  }
-
-  @keyframes slideDown {
-    from {
-      opacity: 0;
-      transform: translateY(-20px) scale(0.98);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0) scale(1);
-    }
+    /* No entrance animation: palette-style surfaces must be legible the frame
+       they open (VSCode behavior) — a fade/slide reads as input lag (#234). */
   }
 
   .search-container {

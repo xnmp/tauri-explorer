@@ -121,6 +121,10 @@ function createThemeState() {
   }
 
   let currentThemeId = $state(initialTheme);
+  // The theme actually painted on the DOM right now — diverges from
+  // currentThemeId during picker live-previews. Consumers that must repaint
+  // imperatively on any visual theme change (e.g. the terminal) key on this.
+  let appliedThemeId = $state(initialTheme);
   let themes = $state<ThemeInfo[]>([]);
 
   // Apply the saved theme synchronously at store creation. The primary flash
@@ -144,6 +148,13 @@ function createThemeState() {
 
   function applyTheme(themeId: string) {
     document.documentElement.setAttribute("data-theme", themeId);
+    appliedThemeId = themeId;
+    // Keep the shared hljs token palette (themes/syntax.css) in sync with the
+    // theme's color-scheme. getComputedStyle here forces a synchronous style
+    // recalc, so the class flips in the same frame as the theme (#246).
+    const scheme = getComputedStyle(document.documentElement).colorScheme;
+    document.documentElement.classList.toggle("hljs-light", scheme === "light");
+    document.documentElement.classList.toggle("hljs-dark", scheme !== "light");
     requestAnimationFrame(() => {
       const raw = getComputedStyle(document.body).backgroundColor || "";
       if (raw) localStorage.setItem("explorer-bg", raw);
@@ -200,6 +211,9 @@ function createThemeState() {
   return {
     get currentThemeId() {
       return currentThemeId;
+    },
+    get appliedThemeId() {
+      return appliedThemeId;
     },
     get currentTheme() {
       return currentTheme;

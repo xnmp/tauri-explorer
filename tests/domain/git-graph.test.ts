@@ -84,6 +84,32 @@ describe("assignLayout", () => {
     }
   });
 
+  it("keeps a long edge in its lane and crosses only at the destination row", () => {
+    // m is an octopus merge. The edge m→f spans rows 1-3; the edge m→q ends
+    // at row 2, freeing lane 1 below it. The m→f edge must NOT drift left
+    // into the freed lane — it stays parallel in its own lane and crosses to
+    // f's lane in the final row only.
+    const layout = assignLayout([
+      c("m", "p", "q", "f"),
+      c("a"),
+      c("q"),
+      c("b"),
+      c("f"),
+      c("p"),
+    ]);
+    const edgeToF = layout.branches.find(
+      (b) => b.points[0]?.row === 0 && b.points[b.points.length - 1]?.row === 4,
+    );
+    expect(edgeToF).toBeDefined();
+    const mid = edgeToF!.points.slice(1, -1); // rows 1..3
+    // All intermediate points share one lane — no staircase drift.
+    expect(new Set(mid.map((p) => p.lane)).size).toBe(1);
+    // The lane change happens in the single final segment, onto f's dot.
+    expect(edgeToF!.points[edgeToF!.points.length - 1].lane).toBe(layout.vertices[4].lane);
+    expect(mid[0].lane).not.toBe(layout.vertices[4].lane);
+    expectContinuous(layout);
+  });
+
   it("tolerates parents outside the loaded page and empty input", () => {
     expect(assignLayout([])).toEqual({ vertices: [], branches: [], laneCount: 1 });
     const layout = assignLayout([c("tip", "not-loaded")]);
@@ -182,5 +208,62 @@ describe("branchPath row expansion", () => {
     expect(branchPath(line, 14, 28, { afterRow: 0, extra: 100 })).toBe("M 7 14.0 L 7 170.0");
     // Expansion after the last row changes nothing.
     expect(branchPath(line, 14, 28, { afterRow: 2, extra: 100 })).toBe("M 7 14.0 L 7 70.0");
+  });
+
+  it("keeps a stretched lane change vertical and crosses only in the last row-height", () => {
+    // The expansion (open commit details) lands inside the lane-change
+    // segment: the line must run straight down the stretch and curve only
+    // in the final row-height at the destination, not smear a diagonal
+    // across the whole expanded block.
+    const line = { colorIndex: 0, points: [{ lane: 0, row: 0 }, { lane: 1, row: 1 }] };
+    // Without expansion: a single one-row cubic (d = 22.4).
+    expect(branchPath(line, 14, 28)).toBe("M 7 14.0 C 7 36.4 21 19.6 21 42.0");
+    // With 100px inserted after row 0: vertical to 100px above the
+    // destination (y2 = 142), then the same one-row-height cubic.
+    expect(branchPath(line, 14, 28, { afterRow: 0, extra: 100 })).toBe(
+      "M 7 14.0 L 7 114.0 C 7 136.4 21 119.6 21 142.0",
+    );
+  });
+});
+
+describe("sliceBranchLine (#256, render windowing)", () => {
+  const line = (rows: Array<[number, number]>) => ({
+    colorIndex: 3,
+    points: rows.map(([lane, row]) => ({ lane, row })),
+  });
+
+  it("returns null when the line lies entirely outside the window", async () => {
+    const { sliceBranchLine } = await import("$lib/domain/git-graph");
+    expect(sliceBranchLine(line([[0, 0], [0, 5]]), 10, 20)).toBeNull();
+    expect(sliceBranchLine(line([[0, 30], [0, 40]]), 10, 20)).toBeNull();
+    expect(sliceBranchLine(line([]), 0, 10)).toBeNull();
+  });
+
+  it("returns the line unchanged when fully inside the window", async () => {
+    const { sliceBranchLine } = await import("$lib/domain/git-graph");
+    const l = line([[0, 12], [1, 13], [1, 18]]);
+    expect(sliceBranchLine(l, 10, 20)).toBe(l);
+  });
+
+  it("trims points outside the window but keeps the straddling endpoints", async () => {
+    const { sliceBranchLine } = await import("$lib/domain/git-graph");
+    const l = line([[0, 0], [0, 5], [1, 15], [1, 25], [1, 40]]);
+    const sliced = sliceBranchLine(l, 10, 20)!;
+    expect(sliced.points).toEqual([
+      { lane: 0, row: 5 },
+      { lane: 1, row: 15 },
+      { lane: 1, row: 25 },
+    ]);
+    expect(sliced.colorIndex).toBe(3);
+  });
+
+  it("keeps a long straight segment that crosses the whole window", async () => {
+    const { sliceBranchLine } = await import("$lib/domain/git-graph");
+    const l = line([[2, 0], [2, 100]]);
+    const sliced = sliceBranchLine(l, 40, 60)!;
+    expect(sliced.points).toEqual([
+      { lane: 2, row: 0 },
+      { lane: 2, row: 100 },
+    ]);
   });
 });

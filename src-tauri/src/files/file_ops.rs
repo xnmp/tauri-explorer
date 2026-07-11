@@ -60,17 +60,21 @@ fn is_same_entry(a: &Path, b: &Path) -> bool {
 
 /// Reject copying/moving a directory into itself or one of its descendants.
 fn reject_dir_into_itself(source: &Path, dest_dir: &Path) -> Result<(), AppError> {
-    if source.is_dir() {
-        if let (Ok(canon_src), Ok(canon_dest)) =
-            (fs::canonicalize(source), fs::canonicalize(dest_dir))
-        {
-            if canon_dest.starts_with(&canon_src) {
-                return Err(AppError::InvalidPath(format!(
-                    "Cannot copy or move a directory into itself: {}",
-                    source.display()
-                )));
-            }
-        }
+    if !source.is_dir() {
+        return Ok(());
+    }
+    let dest_inside_source = match (fs::canonicalize(source), fs::canonicalize(dest_dir)) {
+        (Ok(canon_src), Ok(canon_dest)) => canon_dest.starts_with(&canon_src),
+        // Canonicalization can fail on exotic/virtual filesystems. Fall back
+        // to the lexical relationship rather than skipping the guard — the
+        // check matters most exactly when the paths are misbehaving.
+        _ => dest_dir.starts_with(source),
+    };
+    if dest_inside_source {
+        return Err(AppError::InvalidPath(format!(
+            "Cannot copy or move a directory into itself: {}",
+            source.display()
+        )));
     }
     Ok(())
 }
@@ -508,10 +512,15 @@ fn move_entry_impl(
     let dest_dir_path = PathBuf::from(&dest_dir);
 
     if !entry_exists(&source_path) {
+        // Debug-format the raw string: multi-file DnD reports "path not
+        // found" (#253) and any hidden characters (percent-encoding, CR/LF
+        // from uri-list parsing) must be visible in the log.
+        log::warn!("move_entry: source does not exist: {source:?} (dest_dir {dest_dir:?})");
         return Err(AppError::NotFound(source.clone()));
     }
 
     if !dest_dir_path.exists() {
+        log::warn!("move_entry: dest dir does not exist: {dest_dir:?} (source {source:?})");
         return Err(AppError::NotFound(format!(
             "Destination directory does not exist: {}",
             dest_dir

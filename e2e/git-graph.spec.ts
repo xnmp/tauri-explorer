@@ -8,7 +8,7 @@ import { waitForEntries } from "./helpers";
 
 async function openGraphViaPalette(page: import("@playwright/test").Page, expectGraph = true) {
   await page.keyboard.press("Control+Shift+p");
-  await page.locator("input:focus").fill("Show Commit Graph");
+  await page.locator("input:focus").fill("Toggle Commit Graph");
   await page.keyboard.press("Enter");
   // The synthetic "Uncommitted Changes" row arrives with the async git
   // summary and shifts every row index when it lands (a real race on slower
@@ -30,7 +30,6 @@ test.describe("Git graph tab", () => {
     // The graph view replaces the explorer pane content.
     const view = page.locator('[data-testid="git-graph-view"]');
     await expect(view).toBeVisible();
-    await expect(view).toContainText("17 commits");
 
     // Commit rows render with the mocked history (newest first: the merge).
     const rows = view.locator(".commit-row");
@@ -62,24 +61,41 @@ test.describe("Git graph tab", () => {
     const circleCount = await underlay.locator("circle").count();
     expect(circleCount).toBeGreaterThanOrEqual(18);
 
-    // The tab strip shows the graph tab; closing it returns to the explorer.
-    const graphTab = page.locator(".tab").filter({ hasText: "Graph: project" });
-    await expect(graphTab).toBeVisible();
-    await graphTab.hover();
-    await graphTab.locator(".tab-close").click();
+    // Per-pane (#272): the graph renders inside the current pane — no
+    // separate tab appears. Re-invoking the command toggles back to files.
+    await expect(page.locator(".tab").filter({ hasText: "Graph:" })).toHaveCount(0);
+    await openGraphViaPalette(page, false);
     await expect(page.locator('[data-testid="git-graph-view"]')).toHaveCount(0);
     await expect(page.locator(".entry-item").first()).toBeVisible();
   });
 
-  test("re-invoking the command reuses the existing graph tab", async ({ page }) => {
+  test("re-invoking the command toggles the graph off in the pane (#272)", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents/project");
     await waitForEntries(page);
 
     await openGraphViaPalette(page);
     await expect(page.locator('[data-testid="git-graph-view"]')).toBeVisible();
+    await openGraphViaPalette(page, false);
+
+    await expect(page.locator('[data-testid="git-graph-view"]')).toHaveCount(0);
+    await expect(page.locator(".entry-item").first()).toBeVisible();
+  });
+
+  test("graph is per-pane: one pane shows the graph, the split shows files (#272)", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+
+    // Split, then toggle the graph in the (focused) new pane.
+    await page.keyboard.press("Control+Shift+p");
+    await page.locator("input:focus").fill("Split Pane Right");
+    await page.keyboard.press("Enter");
+    await expect(page.locator(".explorer-pane")).toHaveCount(2);
+
     await openGraphViaPalette(page);
 
-    await expect(page.locator(".tab").filter({ hasText: "Graph: project" })).toHaveCount(1);
+    // The graph lives inside ONE pane; the other pane still lists files.
+    await expect(page.locator(".explorer-pane [data-testid='git-graph-view']")).toHaveCount(1);
+    await expect(page.locator(".explorer-pane .entry-item").first()).toBeVisible();
   });
 
   test("outside a repo the command toasts instead of opening a tab", async ({ page }) => {
@@ -184,6 +200,38 @@ test("Ctrl+Alt+G opens the commit graph (#221)", async ({ page }) => {
   await expect(page.locator('[data-testid="git-graph-view"]')).toBeVisible({ timeout: 3000 });
 });
 
+test.describe("Git graph snapshot cache (#255)", () => {
+  test("re-showing the graph in a pane paints instantly from cache (#272)", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+
+    // Watch for any appearance of the loading placeholder from now on.
+    await page.evaluate(() => {
+      (window as unknown as { __loadingFlashes: number }).__loadingFlashes = 0;
+      new MutationObserver(() => {
+        if (document.querySelector(".graph-status")) {
+          (window as unknown as { __loadingFlashes: number }).__loadingFlashes++;
+        }
+      }).observe(document.body, { subtree: true, childList: true });
+    });
+
+    // Toggle the pane back to the file listing, then to the graph again.
+    await openGraphViaPalette(page, false);
+    await expect(page.locator(".entry-item").first()).toBeVisible();
+    await openGraphViaPalette(page, false);
+
+    // The graph must be there immediately — rows painted from the snapshot,
+    // never the "Loading history…" placeholder.
+    const view = page.locator('[data-testid="git-graph-view"]');
+    await expect(view.locator(".commit-row").first()).toContainText("Uncommitted Changes");
+    const flashes = await page.evaluate(
+      () => (window as unknown as { __loadingFlashes: number }).__loadingFlashes,
+    );
+    expect(flashes).toBe(0);
+  });
+});
+
 test.describe("Git graph commit context actions", () => {
   test("right-click opens the commit menu with the expected actions", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents/project");
@@ -213,6 +261,26 @@ test.describe("Git graph commit context actions", () => {
     // Escape dismisses the menu.
     await page.keyboard.press("Escape");
     await expect(menu).toHaveCount(0);
+  });
+
+  test("right-clicking another commit while a menu is open opens its menu in one click (#263)", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+
+    const view = page.locator('[data-testid="git-graph-view"]');
+    await view.locator(".commit-row").nth(8).click({ button: "right" });
+    const menu = page.locator('[data-testid="git-graph-menu"]');
+    await expect(menu).toBeVisible();
+    const firstBox = (await menu.boundingBox())!;
+
+    // Second right-click on a row ABOVE the open menu lands on the backdrop
+    // (force: the backdrop intercepting the pointer is the point) — it must
+    // open that row's menu in one click, not merely cancel the first.
+    await view.locator(".commit-row").nth(2).click({ button: "right", force: true });
+    await expect(menu).toBeVisible();
+    const secondBox = (await menu.boundingBox())!;
+    expect(secondBox.y).not.toBe(firstBox.y);
   });
 
   test("create branch adds a branch ref chip at that commit", async ({ page }) => {

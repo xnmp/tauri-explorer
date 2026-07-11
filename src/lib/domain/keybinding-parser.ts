@@ -7,6 +7,7 @@
  */
 
 import { normalizeKeyForShortcut } from "./keyboard";
+import { isMac } from "./platform";
 
 /** Parsed representation of a single keyboard shortcut step */
 export interface ParsedShortcut {
@@ -163,27 +164,38 @@ export function parseShortcut(shortcut: string): ParsedShortcut | null {
   return result;
 }
 
+/** Optional modifier overlays for matching (see keybindings store, #244). */
+export interface MatchOptions {
+  /** Treat the meta/Super modifier as held even though event.metaKey is
+   * false. WebKitGTK maps only GDK_META_MASK into metaKey — the Super/Mod4
+   * modifier (the Linux "Cmd") never sets it, so the caller tracks the
+   * Super key's held state and overlays it here. */
+  metaHeld?: boolean;
+}
+
 /**
  * Check if a keyboard event matches a parsed shortcut.
  */
 export function matchesShortcut(
   event: KeyboardEvent,
-  shortcut: ParsedShortcut
+  shortcut: ParsedShortcut,
+  options?: MatchOptions
 ): boolean {
+  const metaDown = event.metaKey || options?.metaHeld === true;
   // Check modifiers — exact in both directions so extra held modifiers
   // (e.g. Ctrl+Meta+P against a Ctrl+P binding) never leak through.
   if (shortcut.meta) {
     // Explicit Meta binding: metaKey required, ctrl must match exactly.
-    if (!event.metaKey) return false;
+    if (!metaDown) return false;
     if (shortcut.ctrl !== event.ctrlKey) return false;
   } else if (shortcut.ctrl) {
     // "Ctrl" bindings fire on either Ctrl or Cmd (mac convention, matching
     // eventToShortcutString which records Cmd as "Ctrl") — but exactly one
     // of the two, never both and never neither.
-    if (event.ctrlKey === event.metaKey) return false;
+    if (event.ctrlKey === metaDown) return false;
   } else {
     // Binding has no ctrl/meta: the event must not have them either.
-    if (event.ctrlKey || event.metaKey) return false;
+    if (event.ctrlKey || metaDown) return false;
   }
   if (shortcut.shift !== event.shiftKey) return false;
   if (shortcut.alt !== event.altKey) return false;
@@ -254,14 +266,15 @@ export function parseChord(shortcutString: string): ParsedChord | null {
  */
 export function matchesShortcutString(
   event: KeyboardEvent,
-  shortcutString: string
+  shortcutString: string,
+  options?: MatchOptions
 ): boolean {
   // Chord shortcuts should not be matched as single-key shortcuts
   if (isChordShortcut(shortcutString)) return false;
 
   const parsed = parseShortcut(shortcutString);
   if (!parsed) return false;
-  return matchesShortcut(event, parsed);
+  return matchesShortcut(event, parsed, options);
 }
 
 /**
@@ -273,7 +286,7 @@ function formatParsedShortcut(parsed: ParsedShortcut): string {
   if (parsed.ctrl) parts.push("Ctrl");
   if (parsed.shift) parts.push("Shift");
   if (parsed.alt) parts.push("Alt");
-  if (parsed.meta) parts.push("Meta");
+  if (parsed.meta) parts.push(isMac ? "Cmd" : "Super");
 
   // Format the key for display
   let displayKey = parsed.key;

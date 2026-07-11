@@ -26,6 +26,11 @@ function createGitStatusStore() {
   let currentPath = $state<string>("");
   let loading = $state(false);
   let subscribed = false;
+  // Count of in-flight doFetch calls. refresh() fans out concurrently via
+  // Promise.all, so `loading` must stay true until ALL of them settle — a
+  // plain boolean would get cleared by whichever fetch finishes first while
+  // its siblings are still in flight.
+  let pendingFetches = 0;
 
   async function fetchForDirectory(path: string): Promise<void> {
     currentPath = path;
@@ -34,24 +39,29 @@ function createGitStatusStore() {
   }
 
   async function doFetch(path: string): Promise<void> {
+    pendingFetches++;
     loading = true;
-    const result = await getGitStatus(path);
-    if (result.ok) {
-      const next: Record<string, DirGitStatus> = {
-        ...byDir,
-        [path]: { isGitRepo: result.data.is_git_repo, statuses: result.data.statuses },
-      };
-      // Bound the cache: evict oldest entries that aren't the active dir.
-      const keys = Object.keys(next);
-      if (keys.length > MAX_TRACKED_DIRS) {
-        for (const key of keys) {
-          if (Object.keys(next).length <= MAX_TRACKED_DIRS) break;
-          if (key !== path && key !== currentPath) delete next[key];
+    try {
+      const result = await getGitStatus(path);
+      if (result.ok) {
+        const next: Record<string, DirGitStatus> = {
+          ...byDir,
+          [path]: { isGitRepo: result.data.is_git_repo, statuses: result.data.statuses },
+        };
+        // Bound the cache: evict oldest entries that aren't the active dir.
+        const keys = Object.keys(next);
+        if (keys.length > MAX_TRACKED_DIRS) {
+          for (const key of keys) {
+            if (Object.keys(next).length <= MAX_TRACKED_DIRS) break;
+            if (key !== path && key !== currentPath) delete next[key];
+          }
         }
+        byDir = next;
       }
-      byDir = next;
+    } finally {
+      pendingFetches--;
+      loading = pendingFetches > 0;
     }
-    loading = false;
   }
 
   /** Re-fetch all tracked directories (both panes may show different dirs). */

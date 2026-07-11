@@ -11,6 +11,7 @@
   import type { PaneId } from "$lib/state/types";
   import NavigationBar from "./NavigationBar.svelte";
   import FileList from "./FileList.svelte";
+  import GitGraphView from "./GitGraphView.svelte";
   import MillerColumns from "./MillerColumns.svelte";
   import ContextMenu from "./ContextMenu.svelte";
 import ScmPanel from "./ScmPanel.svelte";
@@ -36,6 +37,10 @@ import { nextRemovableRoot } from "$lib/domain/drives";
 
   // Get explorer from window tabs manager
   const paneExplorer = $derived(windowTabsManager.getExplorer(paneId) ?? createExplorerState());
+
+  // Repo whose commit graph this pane shows instead of the file listing
+  // (#272). Toggled per-pane via git.showGraph (Ctrl+Alt+G).
+  const paneGitGraph = $derived(windowTabsManager.getPaneGitGraph(paneId));
 
   let paneRef = $state<HTMLElement | null>(null);
 
@@ -274,20 +279,26 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   class:active={showActiveBorder}
   class:inactive={isInactive}
   role="region"
-  aria-label="{paneId} file browser pane"
+  aria-label="file browser pane"
   tabindex="0"
   onfocus={handleFocus}
   onclick={handleFocus}
 >
-  {#if paneExplorer}
+  {#if paneGitGraph}
+    <!-- Keyed so switching between graphs of different repos recreates the
+         view — no selected-commit/state bleed or in-flight races (#167). -->
+    {#key paneGitGraph}
+      <GitGraphView repoPath={paneGitGraph} />
+    {/key}
+  {:else if paneExplorer}
     <NavigationBar explorer={paneExplorer} />
     <div class="pane-content">
-      {#if settingsStore.millerLayers > 0 && !(settingsStore.macOsVibrancy && !settingsStore.showSidebar)}
+      {#if paneExplorer.millerLayers > 0 && !(settingsStore.macOsVibrancy && !settingsStore.showSidebar)}
         <MillerColumns explorer={paneExplorer} />
       {/if}
       <!-- SCM panel sits between the Miller columns and the file list (#227);
-           left pane only — it is a singleton view, like VSCode's. -->
-      {#if paneId === "left" && settingsStore.showGitStatus && settingsStore.showScmPanel}
+           primary (first) pane only — it is a singleton view, like VSCode's. -->
+      {#if windowTabsManager.isPrimaryPane(paneId) && settingsStore.showGitStatus && settingsStore.showScmPanel}
         <ScmPanel />
       {/if}
       <FileList explorer={paneExplorer} />

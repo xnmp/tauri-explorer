@@ -46,15 +46,15 @@ export function withAlpha(color: string, alpha: number): string | undefined {
  * both light and dark solid backgrounds.
  */
 export function buildTerminalTheme(resolve: (varName: string) => string): TerminalTheme {
-  const background = resolve("--background-solid") || "#1c1c1e";
+  const solid = resolve("--background-solid") || "#1c1c1e";
   const foreground = resolve("--text-primary") || "#e8e8ed";
   const accent = resolve("--accent") || "#4cc2f4";
 
   return {
-    background,
+    background: solid,
     foreground,
     cursor: accent,
-    cursorAccent: background,
+    cursorAccent: solid,
     selectionBackground: withAlpha(accent, 0.35),
   };
 }

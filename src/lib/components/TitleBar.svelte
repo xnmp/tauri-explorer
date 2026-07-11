@@ -1,20 +1,32 @@
 <!--
-  Custom title bar — a drag region and window controls. Tabs live in each
-  pane's own strip (PaneTabBar), so the bar renders only when window
-  controls or the integrated title bar are enabled; users on compositors
-  with their own window chrome (e.g. Hyprland) can hide it entirely by
-  disabling showWindowControls.
+  Custom title bar — the window's top row (#229): the tab strip on the
+  left, a drag region, and the window controls on the right. Sidebar,
+  panes, and preview all render UNDER this bar. Users on compositors with
+  their own window chrome (e.g. Hyprland) can hide the controls by
+  disabling showWindowControls; the bar still shows while the tab strip
+  has tabs to render.
 -->
 <script lang="ts">
   import { getCurrentWindow, type Window } from "@tauri-apps/api/window";
   import { onMount } from "svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { isMac } from "$lib/domain/platform";
   import * as titlebar from "$lib/domain/titlebar";
+  import WindowTabBar from "./WindowTabBar.svelte";
+
+  const tabStripVisible = $derived(
+    titlebar.showWindowTabBar(
+      windowTabsManager.tabs.length,
+      windowTabsManager.activeTab?.kind === "explorer" &&
+        windowTabsManager.canRenameTab(windowTabsManager.activeTab.id),
+    ),
+  );
   const showTitleBar = $derived(
     titlebar.showTitleBar(
       settingsStore.integratedTitleBar,
       settingsStore.showWindowControls,
+      tabStripVisible,
     ),
   );
 
@@ -70,6 +82,7 @@
 {#if showTitleBar}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="titlebar" class:integrated={isMac && settingsStore.integratedTitleBar} onmousedown={handleDragStart}>
+    <WindowTabBar />
     <div class="spacer"></div>
 
     {#if settingsStore.showWindowControls}
@@ -119,7 +132,9 @@
 <style>
   .titlebar {
     display: flex;
-    align-items: center;
+    /* Tabs fuse with the content below the bar (fillets); controls re-center
+       themselves via align-self. */
+    align-items: flex-end;
     height: 38px;
     background: color-mix(in srgb, var(--background-card) calc(var(--titlebar-opacity, 1) * 100%), transparent);
     user-select: none;
@@ -154,6 +169,7 @@
 
   .window-controls {
     display: flex;
+    align-self: center;
     height: 100%;
     margin-left: 4px;
   }

@@ -54,8 +54,8 @@
     max-width: min(720px, calc(100vw - 32px));
     padding: 10px 16px;
     border-radius: 8px;
-    background: var(--background-card, #fff);
-    border: 1px solid var(--border-color, #ddd);
+    background: var(--background-card);
+    border: 1px solid var(--surface-stroke);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
     font-size: 13px;
     color: var(--text-primary, #222);
@@ -74,16 +74,16 @@
   .crash-actions button {
     padding: 4px 10px;
     border-radius: 5px;
-    border: 1px solid var(--border-color, #ccc);
-    background: var(--background-secondary, #f5f5f5);
+    border: 1px solid var(--control-stroke);
+    background: var(--control-fill);
     color: inherit;
     font-size: 12px;
     cursor: pointer;
   }
 
   .crash-report-btn {
-    background: var(--accent-color, #0078d4);
-    border-color: var(--accent-color, #0078d4);
-    color: #fff;
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--text-on-accent);
   }
 </style>

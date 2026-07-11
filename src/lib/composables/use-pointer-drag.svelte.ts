@@ -16,6 +16,7 @@ import type { ExplorerInstance } from "$lib/state/explorer.svelte";
 import { parentDir, basename, isInsideDir, samePath } from "$lib/domain/path";
 import { dragState } from "$lib/state/drag.svelte";
 import { bookmarksStore } from "$lib/state/bookmarks.svelte";
+import { terminalPanelStore } from "$lib/state/terminal.svelte";
 import { handleFileDropMany } from "$lib/state/drop-operations";
 import { startExternalDrag } from "./use-external-drag.svelte";
 import { resolveDropTargetAtPoint, highlightTargetAtPoint, clearHighlights } from "./use-native-drop-target.svelte";
@@ -102,7 +103,7 @@ export function usePointerDrag(deps: PointerDragDeps) {
       dragActive = true;
       dragState.start(entryData!);
       const fallback = dragPaths.length > 1 ? `${dragPaths.length} items` : basename(dragPaths[0]);
-      ghostEl = createDragGhost(sourceEl, fallback);
+      ghostEl = createDragGhost(sourceEl, fallback, dragPaths.length);
     }
 
     const zoom = getZoomFactor();
@@ -172,7 +173,10 @@ export function usePointerDrag(deps: PointerDragDeps) {
     const isCopy = event.altKey;
     const explorer = deps.getExplorer();
 
-    if (target?.type === "sidebar") {
+    if (target?.type === "terminal") {
+      // Type the paths into the shell prompt (#265).
+      terminalPanelStore.insertPaths([...dragPaths]);
+    } else if (target?.type === "sidebar") {
       for (const p of dragPaths) {
         bookmarksStore.addBookmark(p);
       }
@@ -241,25 +245,69 @@ export function usePointerDrag(deps: PointerDragDeps) {
   return { handlePointerDown };
 }
 
-export function createDragGhost(sourceEl?: HTMLElement | null, fallbackText?: string): HTMLElement {
+export function createDragGhost(
+  sourceEl?: HTMLElement | null,
+  fallbackText?: string,
+  itemCount = 1,
+): HTMLElement {
   const el = document.createElement("div");
   el.className = "pointer-drag-ghost";
 
-  if (sourceEl) {
-    const icon = sourceEl.querySelector<HTMLElement>("[data-drag-icon]");
-    const name = sourceEl.querySelector<HTMLElement>("[data-drag-name]");
+  const icon = sourceEl?.querySelector<HTMLElement>("[data-drag-icon]") ?? null;
+  const name = sourceEl?.querySelector<HTMLElement>("[data-drag-name]") ?? null;
+
+  if (itemCount > 1 && icon) {
+    // Multi-drag (#258): a fanned stack of the icon with a count badge, so
+    // the ghost reads as "all N items", not just the row under the cursor.
+    const stack = document.createElement("div");
+    stack.style.cssText = "position: relative; width: 44px; height: 40px;";
+    const layers = Math.min(3, itemCount);
+    for (let i = layers - 1; i >= 0; i--) {
+      const layer = icon.cloneNode(true) as HTMLElement;
+      layer.style.cssText += `
+        position: absolute;
+        left: ${8 + i * 5}px;
+        top: ${8 - i * 4}px;
+        transform: rotate(${(i - 1) * 6}deg);
+        opacity: ${1 - i * 0.25};
+      `;
+      stack.appendChild(layer);
+    }
+    const badge = document.createElement("span");
+    badge.textContent = String(itemCount);
+    badge.style.cssText = `
+      position: absolute;
+      right: -6px;
+      bottom: -4px;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 4px;
+      border-radius: 9px;
+      background: var(--accent, #0078d4);
+      color: #fff;
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 18px;
+      text-align: center;
+      box-sizing: border-box;
+    `;
+    stack.appendChild(badge);
+    el.appendChild(stack);
+    const label = document.createElement("span");
+    label.textContent = fallbackText || `${itemCount} items`;
+    el.appendChild(label);
+  } else if (icon || name) {
     if (icon) el.appendChild(icon.cloneNode(true));
     if (name) el.appendChild(name.cloneNode(true));
-    if (!icon && !name) el.textContent = fallbackText || "";
-  } else if (fallbackText) {
-    el.textContent = fallbackText;
+  } else {
+    el.textContent = fallbackText || "";
   }
 
   el.style.cssText = `
     position: fixed;
     pointer-events: none;
     z-index: 2147483647;
-    opacity: 0.85;
+    opacity: 0.6;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -269,7 +317,7 @@ export function createDragGhost(sourceEl?: HTMLElement | null, fallbackText?: st
     color: var(--text-primary, #eee);
     text-align: center;
     max-width: 120px;
-    overflow: hidden;
+    overflow: visible;
     text-overflow: ellipsis;
   `;
   document.body.appendChild(el);

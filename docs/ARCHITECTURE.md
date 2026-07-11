@@ -27,20 +27,17 @@
 │                                                         │
 │  ┌─────────────────────────────────────────────────┐    │
 │  │  +page.svelte (root)                            │    │
-│  │  ├── TitleBar (drag region + window controls)  │    │
-│  │  ├── SharedToolbar (search, theme, win controls)│    │
+│  │  ├── TitleBar (tab strip + drag + win controls)│    │
+│  │  │   └── WindowTabBar (window tab strip)        │    │
 │  │  ├── Sidebar (activity bar + files / SCM views) │    │
 │  │  ├── PaneContainer                              │    │
-│  │  │   ├── left pane                              │    │
-│  │  │   │   ├── PaneTabBar (per-pane tab strip)    │    │
-│  │  │   │   └── ExplorerPane                       │    │
-│  │  │   │       ├── NavigationBar (breadcrumbs)    │    │
-│  │  │   │       └── FileList (dispatcher)          │    │
-│  │  │   │           ├── DetailsView → VirtualList  │    │
-│  │  │   │           ├── ListView (CSS grid)        │    │
-│  │  │   │           └── TilesView (CSS auto-fill)  │    │
-│  │  │   └── right pane (if dual pane): PaneTabBar  │    │
-│  │  │       + ExplorerPane                         │    │
+│  │  │   └── PaneLayoutView (recursive split tree)  │    │
+│  │  │       └── ExplorerPane (one per leaf pane)   │    │
+│  │  │           ├── NavigationBar (breadcrumbs)    │    │
+│  │  │           └── FileList (dispatcher)          │    │
+│  │  │               ├── DetailsView → VirtualList  │    │
+│  │  │               ├── ListView (CSS grid)        │    │
+│  │  │               └── TilesView (CSS auto-fill)  │    │
 │  │  ├── PreviewPane (optional)                     │    │
 │  │  ├── StatusBar                                  │    │
 │  │  └── Overlay Dialogs                            │    │

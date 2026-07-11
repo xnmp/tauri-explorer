@@ -21,7 +21,7 @@
   import EntryName from "./EntryName.svelte";
   import FileIcon from "./FileIcon.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
-  import InlineNewFolder from "./InlineNewFolder.svelte";
+  import InlineNewFolder, { NEW_FOLDER_SENTINEL, isNewFolderSentinel } from "./InlineNewFolder.svelte";
   import ItemButton from "./ItemButton.svelte";
   import VirtualList from "./VirtualList.svelte";
 
@@ -59,19 +59,24 @@
     return Math.max(1, Math.min(6, Math.floor(contentWidth / settingsStore.listColumnMaxWidth)));
   });
 
-  const rows = $derived(chunkIntoRows(explorer.displayEntries, effectiveListColumns));
+  // The new-folder editor rides INSIDE the virtual grid as a sentinel first
+  // cell (#257) — not as a band above the scroller. Real-entry indices shift
+  // by one while it's present (see sentinelOffset).
+  const gridEntries = $derived(
+    explorer.isCreatingFolder ? [NEW_FOLDER_SENTINEL, ...explorer.displayEntries] : explorer.displayEntries,
+  );
+  const sentinelOffset = $derived(explorer.isCreatingFolder ? 1 : 0);
+
+  const rows = $derived(chunkIntoRows(gridEntries, effectiveListColumns));
 
   // Map an entry index to its row and forward to VirtualList's row scroller.
   let rowScrollToIndex = $state<((row: number) => void) | undefined>();
   scrollToIndex = (index: number) => {
-    rowScrollToIndex?.(Math.floor(index / effectiveListColumns));
+    rowScrollToIndex?.(Math.floor((index + sentinelOffset) / effectiveListColumns));
   };
 </script>
 
 <div class="list-view" data-columns={effectiveListColumns}>
-  {#if explorer.isCreatingFolder}
-    <InlineNewFolder {explorer} variant="list" />
-  {/if}
   <VirtualList
     class="list-scroller file-rows"
     items={rows}
@@ -84,13 +89,17 @@
     {#snippet children(row)}
       <div class="list-row" style="grid-template-columns: repeat({effectiveListColumns}, minmax(0, 1fr));">
         {#each row.items as entry, col (entry.path)}
-          <ItemButton class="list-item" index={row.startIndex + col} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
+          {#if isNewFolderSentinel(entry)}
+            <InlineNewFolder {explorer} variant="list" />
+          {:else}
+          <ItemButton class="list-item" index={row.startIndex + col - sentinelOffset} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
             <span class="list-icon" data-drag-icon style:color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined}>
               <FileIcon {entry} size="small" />
             </span>
             <span data-drag-name><EntryName {entry} {explorer} variant="list" /></span>
             <GitStatusBadge entryName={entry.name} />
           </ItemButton>
+          {/if}
         {/each}
       </div>
     {/snippet}

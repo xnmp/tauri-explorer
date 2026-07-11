@@ -11,6 +11,7 @@
 import type { FileEntry } from "$lib/domain/file";
 import { isShortcut } from "$lib/domain/file-types";
 import { resolveShortcut } from "$lib/api/files";
+import { basename } from "$lib/domain/path";
 
 export interface ActivationTarget {
   kind: "directory" | "file";
@@ -18,10 +19,6 @@ export interface ActivationTarget {
   path: string;
   /** Basename of the path, for display/recents. */
   name: string;
-}
-
-function basename(path: string): string {
-  return path.split(/[\\/]/).pop() || path;
 }
 
 export async function resolveActivation(entry: FileEntry): Promise<ActivationTarget> {

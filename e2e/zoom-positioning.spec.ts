@@ -90,6 +90,59 @@ test.describe("Overlay positioning under zoom", () => {
     expect(Math.abs(rect.y - clickY)).toBeLessThan(TOLERANCE);
   });
 
+  // Marquee selection under zoom (#241). The regression channel: domain/zoom's
+  // client→CSS conversions kept a legacy "WebKitGTK reports pre-zoom rects"
+  // branch after #227 standardized fixed-overlay math, so the rubber band
+  // drifted from the cursor on the real Linux webview while Chromium stayed
+  // green. This asserts BOTH the band's on-screen geometry and the selection
+  // outcome; run it under WEBKIT=1 to cover the engine that regressed.
+  test("marquee tracks the cursor and selects covered entries while zoomed (#241)", async ({ page }) => {
+    await page.goto("/?path=/home/user/Downloads");
+    await waitForEntries(page);
+    const zoom = await zoomIn(page, 3);
+    expect(zoom).toBeGreaterThan(1);
+
+    const files = page.locator(".entry-item");
+    const count = await files.count();
+    expect(count).toBeGreaterThanOrEqual(2);
+
+    // Start on background below the visually lowest entry (#130).
+    let maxBottom = 0;
+    for (const item of await files.all()) {
+      const b = await item.boundingBox();
+      if (b) maxBottom = Math.max(maxBottom, b.y + b.height);
+    }
+    const content = page.locator(".file-list .content").first();
+    const box = (await content.boundingBox())!;
+    const startX = box.x + 40;
+    const startY = Math.min(maxBottom + 10, box.y + box.height - 5);
+    const endX = box.x + box.width - 40;
+    // Stay below the header clamp (32 CSS px × zoom): the marquee's top edge
+    // is clamped there by design, which would read as false drift.
+    const endY = box.y + Math.ceil(32 * zoom) + 10;
+
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    // steps>1: WebKit's pointer synthesis drops single-jump marquee updates.
+    await page.mouse.move(endX, endY, { steps: 8 });
+    await page.waitForTimeout(80); // let the rAF-throttled move flush
+
+    // The rubber band must track the cursor in viewport space — drift by the
+    // zoom factor is exactly the recurring bug.
+    const rect = (await page.locator(".marquee-rect").boundingBox())!;
+    const tol = 12;
+    expect(Math.abs(rect.x - Math.min(startX, endX))).toBeLessThan(tol);
+    expect(Math.abs(rect.y - Math.min(startY, endY))).toBeLessThan(tol);
+    expect(Math.abs(rect.x + rect.width - Math.max(startX, endX))).toBeLessThan(tol);
+    expect(Math.abs(rect.y + rect.height - Math.max(startY, endY))).toBeLessThan(tol);
+
+    await page.mouse.up();
+    await page.waitForTimeout(100);
+
+    // Outcome: the sweep covered every entry, so every entry is selected.
+    expect(await page.locator(".entry-item.selected").count()).toBe(count);
+  });
+
   test("context menu is exact at 100% zoom (control case)", async ({ page }) => {
     await page.goto(HOME_URL);
     await waitForEntries(page);

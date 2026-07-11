@@ -1294,16 +1294,17 @@ const mockCommands: Record<string, CommandHandler> = {
         "",
       ].join("\n");
     }
+    // Real code lines so diff syntax highlighting is exercised (#246).
     return [
       `diff --git a/${p} b/${p}`,
       "index 1111111..2222222 100644",
       `--- a/${p}`,
       `+++ b/${p}`,
-      "@@ -1,3 +1,3 @@",
-      " unchanged line",
-      "-removed line",
-      "+added line",
-      " more context",
+      "@@ -1,4 +1,4 @@",
+      ' import { useState } from "react";',
+      "-export function App() { return null; }",
+      "+export function App() { return <div>hello</div>; }",
+      ' const VERSION = "1.0";',
       "",
     ].join("\n");
   },
@@ -1601,6 +1602,22 @@ const mockConfigFiles: Record<string, string> = {};
 export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   // Add small delay to simulate async operation
   await new Promise((resolve) => setTimeout(resolve, 10));
+
+  // Per-command extra latency, settable from E2E tests / the console
+  // (window.__MOCK_LATENCY__ = { git_status: 2000 }) or via URL for
+  // fetches that fire during boot (?mockLatency=git_status:2000,foo:500),
+  // to make transient loading states observable and assertable (#271).
+  const g = globalThis as { __MOCK_LATENCY__?: Record<string, number>; location?: Location };
+  if (!g.__MOCK_LATENCY__ && typeof location !== "undefined") {
+    g.__MOCK_LATENCY__ = {};
+    const param = new URLSearchParams(location.search).get("mockLatency");
+    for (const pair of param?.split(",") ?? []) {
+      const [name, ms] = pair.split(":");
+      if (name && Number(ms) > 0) g.__MOCK_LATENCY__[name] = Number(ms);
+    }
+  }
+  const extraLatency = g.__MOCK_LATENCY__?.[cmd];
+  if (extraLatency) await new Promise((resolve) => setTimeout(resolve, extraLatency));
 
   const handler = mockCommands[cmd];
   if (!handler) {

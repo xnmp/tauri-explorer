@@ -1,23 +1,25 @@
 /**
- * Title bar / pane tab strip visibility rules.
+ * Title bar / tab strip visibility rules.
  *
- * Tabs are per-pane (each pane renders its own strip), so the title bar
- * no longer hosts tabs: it renders only when window controls are enabled
- * (Windows 11 style) or the integrated title bar is on (macOS style).
- * A pane's tab strip shows when the pane has multiple tabs, or whenever
- * dual-pane is on (so both panes expose their strips as drag targets and
- * the layout stays symmetric).
+ * The title bar is the window's top row and hosts the tab strip (#229):
+ * tabs on the left, drag region, then the window controls on the right.
+ * It renders when window controls are enabled (Windows 11 style), the
+ * integrated title bar is on (macOS style), or the tab strip has
+ * something to show. The tab strip shows when there are multiple tabs,
+ * or when the active tab is renameable (multi-pane) so its rename
+ * affordance stays reachable.
  */
 
 /** Whether the title bar row renders at all. */
 export function showTitleBar(
   integratedTitleBar: boolean,
   showWindowControls: boolean,
+  tabStripVisible: boolean,
 ): boolean {
-  return integratedTitleBar || showWindowControls;
+  return integratedTitleBar || showWindowControls || tabStripVisible;
 }
 
-/** Whether a pane's tab strip is visible. */
-export function showPaneTabBar(tabCount: number, dualPaneEnabled: boolean): boolean {
-  return dualPaneEnabled || tabCount > 1;
+/** Whether the window's tab strip is visible. */
+export function showWindowTabBar(tabCount: number, activeTabRenameable: boolean): boolean {
+  return tabCount > 1 || activeTabRenameable;
 }

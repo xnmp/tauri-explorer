@@ -23,10 +23,13 @@
   import { onMount } from "svelte";
   import { terminalSpawn, terminalReserveId, terminalWrite, terminalResize, terminalKill, terminalStatus } from "$lib/api/terminal";
   import { buildTerminalTheme } from "$lib/domain/terminal-theme";
-  import { buildCdSyncSequence } from "$lib/domain/terminal-command";
+  import { buildCdSyncSequence, buildPathsInsertion } from "$lib/domain/terminal-command";
   import { decideCdSync } from "$lib/domain/terminal-cwd-sync";
   import { isWindows } from "$lib/domain/platform";
+  import { isShellReservedKey, isHardcodedAppShortcut } from "$lib/domain/terminal-keys";
+  import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { themeStore } from "$lib/state/theme.svelte";
   import { terminalPanelStore } from "$lib/state/terminal.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { toastStore } from "$lib/state/toast.svelte";
@@ -100,6 +103,11 @@
         const path = event.payload;
         // Always track it — this is the loop guard for the other direction.
         lastShellCwd = path;
+        // A cd WE injected echoing back must never drive navigation: during
+        // fast tab switches the echo lands while a different tab is active
+        // and would overwrite that tab's cwd (#266). Only genuine user cds
+        // (typed in the shell) pull the explorer along.
+        if (injectedCds.delete(path)) return;
         if (!settingsStore.explorerFollowsTerminal) return;
         const explorer = windowTabsManager.getActiveExplorer();
         if (explorer && explorer.currentPath !== path) {
@@ -109,6 +117,10 @@
 
       await terminalSpawn(id, cwd, term.cols, term.rows);
       terminalId = id;
+      // Path insertions requested while the shell was still spawning (#265).
+      for (const data of pendingInsertions.splice(0)) {
+        terminalWrite(id, data);
+      }
     } catch (err) {
       term.writeln(`\r\nFailed to start shell: ${err}`);
       exited = true;
@@ -134,10 +146,32 @@
    * the automatic sync must win regardless of what's on the prompt. The
    * clear byte is shell-family-specific (see buildCdSyncSequence).
    */
+  // Insertions typed before the PTY finished spawning; flushed by spawnShell.
+  const pendingInsertions: string[] = [];
+
+  /** Type paths into the prompt (space-delimited, shell-quoted, no Enter)
+   *  and focus the terminal — drop-onto-terminal and Alt+T (#265). */
+  function insertPaths(paths: string[]): void {
+    const data = buildPathsInsertion(paths, isWindows);
+    if (terminalId !== null) terminalWrite(terminalId, data);
+    else pendingInsertions.push(data);
+    term?.focus();
+  }
+
+  // Targets of cds we injected whose OSC 7 echo hasn't arrived yet (#266).
+  // Bounded: entries are consumed by the echo; a shell without OSC 7 support
+  // never fires the cwd listener at all, so the set can't grow unobserved.
+  const injectedCds = new Set<string>();
+
   function writeCd(path: string): void {
     // Defensive: never inject `cd 'null'` if a caller ever passes a nullish
     // target (see the queue-poll re-entrancy guard, #154).
     if (terminalId === null || path == null) return;
+    injectedCds.add(path);
+    if (injectedCds.size > 8) {
+      const oldest = injectedCds.values().next().value;
+      if (oldest !== undefined) injectedCds.delete(oldest);
+    }
     terminalWrite(terminalId, buildCdSyncSequence(path, isWindows));
   }
 
@@ -146,6 +180,10 @@
     if (terminalId === null) return;
     const status = await terminalStatus(terminalId);
     lastShellCwd = status.cwd ?? lastShellCwd;
+    // Fast tab switches: the status round-trip may outlive this sync's tab —
+    // a stale cd would drag the shell (and, via its echo, the NEW tab) to
+    // the previous tab's directory (#266). Latest target wins; drop the rest.
+    if (windowTabsManager.getActiveExplorer()?.currentPath !== path) return;
     switch (decideCdSync(path, status.cwd, status.busy)) {
       case "skip":
         return;
@@ -186,8 +224,13 @@
         pendingCd = null;
         stopQueuePoll();
         queueToastShown = false;
-        // Re-check against the shell's cwd: it may have cd'd itself meanwhile.
-        if (target !== null && decideCdSync(target, status.cwd, false) === "write") {
+        // Re-check against the shell's cwd (it may have cd'd itself) AND the
+        // active tab (it may have switched while the command ran, #266).
+        if (
+          target !== null &&
+          windowTabsManager.getActiveExplorer()?.currentPath === target &&
+          decideCdSync(target, status.cwd, false) === "write"
+        ) {
           writeCd(target);
         }
       } catch (err) {
@@ -220,6 +263,20 @@
     });
     fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
+
+    // App shortcuts win over the shell for Alt/Meta/Ctrl+Shift combos, chord
+    // suffixes AND any Ctrl combo the app has bound (#249, #260): returning
+    // false makes xterm ignore the key, and the event still bubbles to the
+    // window handler in +page.svelte, which runs the matching command.
+    // Shell-reserved keys (typing, shell-critical Ctrl combos like Ctrl+C,
+    // unbound readline combos) never reach the app handler.
+    term.attachCustomKeyEventHandler((event) => {
+      if (event.type !== "keydown") return true;
+      if (keybindingsStore.isChordActive) return false;
+      const appBound = keybindingsStore.matchesAnyBinding(event) || isHardcodedAppShortcut(event);
+      return isShellReservedKey(event, { appBound });
+    });
+
     term.open(termEl!);
     fitAddon.fit();
 
@@ -244,7 +301,10 @@
 
     spawnShell().then(() => term?.focus());
 
+    const unregisterSink = terminalPanelStore.registerPathsSink(insertPaths);
+
     return () => {
+      unregisterSink();
       resizeObserver.disconnect();
       if (rafId !== null) cancelAnimationFrame(rafId);
       unlistenOutput?.();
@@ -256,12 +316,28 @@
     };
   });
 
-  // Re-theme xterm when the app theme changes. CSS vars cascade on their own,
-  // but xterm's colors are plain values that must be pushed imperatively.
+  // Re-theme xterm when the painted app theme changes. CSS vars cascade on
+  // their own, but xterm's colors are plain values that must be pushed
+  // imperatively. Keyed on appliedThemeId (not the persisted setting) so the
+  // terminal also follows theme-picker live previews and never drifts from
+  // the rest of the UI (#251).
   $effect(() => {
-    settingsStore.theme; // dependency: theme id
+    themeStore.appliedThemeId; // dependency: painted theme id
     if (!term || !panelEl) return;
-    term.options.theme = buildTerminalTheme(resolveThemeColor);
+    const built = buildTerminalTheme(resolveThemeColor);
+    term.options.theme = built;
+    // WebKitGTK (2.46+, Wayland) fails to repaint the terminal's large
+    // background regions when their colors change via CSS-var recompute or
+    // xterm's generated stylesheet — the region freezes on the old theme
+    // while text keeps updating (#261, same family as wry#1524). INLINE
+    // style writes DO invalidate the paint, so push the resolved background
+    // onto every background-owning element, and force a full text repaint.
+    panelEl.style.backgroundColor = built.background;
+    for (const sel of [".xterm-viewport", ".xterm-scrollable-element", ".xterm-screen"]) {
+      const el = panelEl.querySelector<HTMLElement>(sel);
+      if (el) el.style.backgroundColor = built.background;
+    }
+    term.refresh(0, term.rows - 1);
   });
 
   // Terminal follows explorer: when the active pane navigates, cd the shell.
@@ -357,6 +433,12 @@
 
   .terminal-panel.hidden {
     display: none;
+  }
+
+  /* Drop target (#265): dropping files types their paths into the prompt. */
+  .terminal-panel:global(.drop-target) {
+    box-shadow: inset 0 0 0 1px var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, var(--background-solid));
   }
 
   .resize-handle {

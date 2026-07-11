@@ -6,8 +6,8 @@
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| **TitleBar** | `TitleBar.svelte` | Custom decorationless title bar (drag region + window controls), visible only when window controls or the integrated title bar are enabled |
-| **PaneTabBar** | `PaneTabBar.svelte` | Per-pane tab strip: tab buttons (closeable, reorderable, draggable across panes/windows), new tab button. Shown with 2+ tabs or in dual-pane mode |
+| **TitleBar** | `TitleBar.svelte` | Custom decorationless title bar hosting the `WindowTabBar`, a drag region, and the window controls (#229); visible when window controls / integrated title bar are enabled or the tab strip has tabs to show |
+| **WindowTabBar** | `WindowTabBar.svelte` | Window tab strip (#228): tab buttons (closeable, reorderable, draggable across windows), new tab button, double-click rename for multi-pane tabs (saves the layout as a workspace). Rendered inside `TitleBar` (#229); shown with 2+ tabs or when the active tab is renameable |
 | **SharedToolbar** | `SharedToolbar.svelte` | Search box, theme switcher, settings gear button, window controls (minimize/maximize/close) |
 | **ThemeSwitcher** | `ThemeSwitcher.svelte` | Dropdown to select theme |
 | **Sidebar** | `Sidebar.svelte` | Host shell: activity-bar icon strip + active view + resize handle (180-400px). Views switch instantly; inactive views stay mounted (hidden) so scroll/selection survive. Active view persists per-window. |
@@ -15,12 +15,9 @@
 | **FilesSidebarView** | `FilesSidebarView.svelte` | Explorer view: Bookmarks (system folders + user bookmarks with drag-to-reorder, custom icons for Repos/Code folders), Removable Drives, Recent locations (sorted by frecency score, excludes bookmarked paths, configurable count). |
 | **ScmSidebarView** | `ScmSidebarView.svelte` | Source Control view: branch line, commit input (Enter commits, Shift+Enter newline, amend toggle), Merge / Staged / Changes / Untracked sections with hover actions (stage / unstage / discard). Empty state with Initialize Repository button when not a git repo. Arrow keys move row selection. Clicking a row opens `ScmDiffView` in the active pane. |
 | **ScmDiffView** | `ScmDiffView.svelte` | Unified-diff viewer that replaces the `FileList` in the active pane when a SCM row is clicked (#55). Virtualized via `VirtualList` for large diffs, renders +/− gutters with old/new line numbers, shows a "Binary file changed" placeholder for binary diffs, header actions (Open File, Stage/Unstage, Discard). Escape or Back returns to the file list. |
-<<<<<<< HEAD
-| **PaneContainer** | `PaneContainer.svelte` | Manages single/dual pane layout with resizable divider; renders a `PaneTabBar` above each `ExplorerPane` |
-=======
 | **VirtualList** | `VirtualList.svelte` | Shared DOM virtualizer. Details virtualizes by entry; List and Tiles chunk entries into row-major rows (`domain/virtual-layout.ts`) and virtualize by row (#128), so large folders keep only visible rows in the DOM |
-| **PaneContainer** | `PaneContainer.svelte` | Manages single/dual pane layout with resizable divider |
->>>>>>> perf/virtualize-list-tiles-views
+| **PaneContainer** | `PaneContainer.svelte` | Hosts the active tab's `PaneLayoutView` tree. The git graph renders per-pane inside `ExplorerPane` (#272); the tab strip itself lives in `TitleBar` (#229) |
+| **PaneLayoutView** | `PaneLayoutView.svelte` | Recursive renderer for a tab's pane layout tree (#228): leaves render `ExplorerPane`s, splits render two children with a resizable divider (row or column) |
 | **ExplorerPane** | `ExplorerPane.svelte` | Self-contained pane with NavigationBar + FileList + ContextMenu + dialogs. Handles arrow-key navigation |
 | **NavigationBar** | `NavigationBar.svelte` | Back/Forward/Up/Refresh buttons, breadcrumb bar with editable path input and autocomplete |
 | **FileList** | `FileList.svelte` | View mode dispatcher. Handles: marquee selection, type-ahead, background click/context menu, background drag-and-drop |

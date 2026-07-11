@@ -3,7 +3,7 @@
   Issue: tauri-explorer-npjh.1, tauri-explorer-oytv
 -->
 <script lang="ts">
-  import { settingsStore, type IconTheme, type ThumbnailSize, type WindowsBackdrop } from "$lib/state/settings.svelte";
+  import { settingsStore, type IconTheme, type ThumbnailSize, type WindowsBackdrop, type PaneLayoutMode } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import { isMac, isWindows } from "$lib/domain/platform";
   import { listInstalledTerminals } from "$lib/api/files";
@@ -108,6 +108,7 @@
     yaziNavigation: ["Yazi-style Navigation", "Left/right arrows navigate up/into folders in details and list view"],
     autoEnterSingleSubdir: ["Auto-Enter Single Subfolder", "When a folder contains only one subfolder (and nothing else), descend into it automatically"],
     tabTitleGitRoot: ["Git Repo Root in Tab Title", "When the folder is inside a git repository, show the repo's root folder name in the tab title"],
+    defaultPaneLayout: ["New Pane Layout", "How the New Pane command places panes: dwindle splits along the longer axis (Hyprland-style), or always right/down", "split", "pane"],
     showManuallyHidden: ["Show Manually Hidden Items", "Reveal items hidden via the right-click Hide action (shown dimmed)"],
     gitStatus: ["Git Status Indicators", "Show modified/untracked indicators for files in git repositories"],
     recentItems: ["Recent Items in Sidebar", "Number of recent locations to show (0 to hide)"],
@@ -135,7 +136,7 @@
   ];
   const navBarRows = [rows.navBack, rows.navForward, rows.navUp, rows.navRefresh];
   const behaviorRows = [
-    rows.showHidden, rows.millerHideEmpty, rows.yaziNavigation, rows.autoEnterSingleSubdir, rows.tabTitleGitRoot, rows.showManuallyHidden,
+    rows.showHidden, rows.millerHideEmpty, rows.yaziNavigation, rows.autoEnterSingleSubdir, rows.tabTitleGitRoot, rows.defaultPaneLayout, rows.showManuallyHidden,
     rows.gitStatus, rows.recentItems, rows.quickOpenDebug, rows.warmWindow, rows.confirmDelete,
     rows.backgroundOpacity, rows.backgroundImage, rows.wallpaperBlur, rows.terminalApp,
     rows.previewFontSize, rows.ffmpegPath,
@@ -517,6 +518,22 @@
             </label>
           </div>
 
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.defaultPaneLayout)}>
+            <div class="setting-info">
+              <span class="setting-label">New Pane Layout</span>
+              <span class="setting-description">How the New Pane command places panes: dwindle splits along the longer axis (Hyprland-style), or always right/down</span>
+            </div>
+            <select
+              class="theme-select"
+              value={settingsStore.defaultPaneLayout}
+              onchange={(e) => settingsStore.setDefaultPaneLayout(e.currentTarget.value as PaneLayoutMode)}
+            >
+              <option value="dwindle">Dwindle</option>
+              <option value="right">Split Right</option>
+              <option value="down">Split Down</option>
+            </select>
+          </div>
+
           <div class="setting-row" class:hidden={!matchesSearch(...rows.warmWindow)}>
             <div class="setting-info">
               <span class="setting-label">Pre-warm New Windows</span>
@@ -773,7 +790,7 @@
           <div class="setting-row" class:hidden={!matchesSearch(...rows.enableGitGraph)}>
             <div class="setting-info">
               <span class="setting-label">Git Commit Graph</span>
-              <span class="setting-description">Enable the git graph tab (command palette: Git: Show Commit Graph)</span>
+              <span class="setting-description">Show the repo's commit graph in the active pane (command palette: Git: Toggle Commit Graph, Ctrl+Alt+G)</span>
             </div>
             <label class="toggle">
               <input

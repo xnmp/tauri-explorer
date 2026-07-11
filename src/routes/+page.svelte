@@ -6,6 +6,7 @@
   import "@fontsource-variable/inter";
   import { onMount } from "svelte";
   import { installGlobalErrorHandlers } from "$lib/api/crash";
+  import { isShellReservedKey, isHardcodedAppShortcut } from "$lib/domain/terminal-keys";
   import { themeStore } from "$lib/state/theme.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
@@ -54,10 +55,10 @@
   // from boot t0 to here is the JS download+parse cost the lazy-loading targets.
   markStartup("bundle-exec");
 
+  const leftExplorer = $derived(windowTabsManager.getActiveExplorer());
   const millerAsLeftIsland = $derived(
-    settingsStore.macOsVibrancy && !settingsStore.showSidebar && settingsStore.millerLayers > 0
+    settingsStore.macOsVibrancy && !settingsStore.showSidebar && (leftExplorer?.millerLayers ?? 0) > 0
   );
-  const leftExplorer = $derived(windowTabsManager.getExplorer("left"));
 
   /** Convert a filesystem path to a URL usable in src/background-image. */
   function convertFileSrc(path: string): string {
@@ -109,6 +110,9 @@
   });
 
   async function handleKeydown(event: KeyboardEvent): Promise<void> {
+    // Track the Super key's held state before any early return — WebKitGTK
+    // never maps Super into event.metaKey, the store overlays it (#244).
+    keybindingsStore.trackModifierKey(event, true);
     const isModifier = event.ctrlKey || event.metaKey;
 
     // Skip if focus is in an input field (except for special cases)
@@ -163,9 +167,22 @@
 
     // Skip shortcut handling (including hardcoded shortcuts below) if in an
     // input field or a modal dialog is open — e.g. Ctrl+J while typing in a
-    // rename input must not open the jobs panel.
-    if (isInputField || dialogStore.hasModalOpen) {
+    // rename input must not open the jobs panel. The embedded terminal is an
+    // exception: xterm focuses a hidden textarea, but app shortcuts must keep
+    // working there (#249) — the shell keeps its own keys via the
+    // isShellReservedKey gate below.
+    const isTerminalFocus = !!target.closest?.(".terminal-panel");
+    if ((isInputField && !isTerminalFocus) || dialogStore.hasModalOpen) {
       return;
+    }
+
+    // While the terminal is focused the shell owns typing, shell-critical
+    // Ctrl combos (Ctrl+C interrupt…) and UNBOUND Ctrl combos (readline);
+    // combos the app has bound — plus Alt/Meta/Ctrl+Shift combos and pending
+    // chord suffixes — fall through to command matching (#249, #260).
+    if (isTerminalFocus && !keybindingsStore.isChordActive) {
+      const appBound = keybindingsStore.matchesAnyBinding(event) || isHardcodedAppShortcut(event);
+      if (isShellReservedKey(event, { appBound })) return;
     }
 
     // Ctrl+J: Open jobs panel (hardcoded)
@@ -221,9 +238,12 @@
     }
   });
 
-  // Apply zoom level reactively
+  // Apply zoom level reactively. --app-zoom mirrors the factor so fullscreen
+  // overlays can cancel the root zoom in CSS (zoom: calc(1 / var(--app-zoom)))
+  // and actually cover the visible viewport (#236).
   $effect(() => {
     document.documentElement.style.zoom = `${settingsStore.zoomLevel}%`;
+    document.documentElement.style.setProperty("--app-zoom", String(settingsStore.zoomLevel / 100));
   });
 
   // Push the configured ffmpeg path to the backend on startup and whenever it
@@ -426,9 +446,17 @@
 
     // Global keyboard shortcuts
     window.addEventListener("keydown", handleKeydown);
+    // Super-key held tracking (#244): keyup releases, blur resets (keyups
+    // are lost when focus leaves the window with the modifier held).
+    const handleKeyup = (e: KeyboardEvent) => keybindingsStore.trackModifierKey(e, false);
+    const handleBlur = () => keybindingsStore.resetTrackedModifiers();
+    window.addEventListener("keyup", handleKeyup);
+    window.addEventListener("blur", handleBlur);
 
     return () => {
       window.removeEventListener("keydown", handleKeydown);
+      window.removeEventListener("keyup", handleKeyup);
+      window.removeEventListener("blur", handleBlur);
       nativeDropHandler.cleanup();
       fileWatchers.cleanup();
       windowLifecycle.cleanup();

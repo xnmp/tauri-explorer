@@ -46,6 +46,7 @@
 </script>
 
 <script lang="ts">
+  import { untrack } from "svelte";
   import { getThumbnailCache, setThumbnailCache } from "$lib/state/thumbnail-cache";
 
   /**
@@ -119,6 +120,28 @@
   let loadedKey: string | null = null;
   let inflightKey: string | null = null;
 
+  // Hydrate synchronously from the shared LRU cache at mount: remounts
+  // (virtual-list rechunk, fullscreen-preview exit, duplicating a tab) must
+  // paint the cached thumbnail on their FIRST frame instead of flashing the
+  // placeholder while waiting for the IntersectionObserver's initial tick
+  // (#247, #248). The cache is invalidated on file change/rename by
+  // thumbnail-cache.ts, so a hit is always current.
+  {
+    // untrack: reading the initial prop values here is intentional — later
+    // changes go through the reloadKey load effect.
+    const initialKey = untrack(() => `${kind}:${path}:${backendSize}:${quality}`);
+    const cached = getThumbnailCache(initialKey);
+    if (cached?.full) {
+      microUrl = cached.micro;
+      fullUrl = cached.full;
+      // Cache hits skip the micro→full cross-fade: the full image is already
+      // in memory, and waiting for onload + 150ms fade shows the pixelated
+      // micro layer on every remount (#259).
+      fullLoaded = true;
+      loadedKey = initialKey;
+    }
+  }
+
   // Load thumbnails when visible, unless this key is already loaded/loading
   $effect(() => {
     if (!visible || reloadKey === loadedKey || reloadKey === inflightKey) return;
@@ -141,6 +164,7 @@
       if (cached?.full) {
         microUrl = null;
         fullUrl = cached.full;
+        fullLoaded = true; // cache hit — no cross-fade (#259)
         loading = false;
         error = false;
         loadedKey = currentKey;
@@ -195,6 +219,7 @@
       if (cached?.full) {
         microUrl = cached.micro;
         fullUrl = cached.full;
+        fullLoaded = true; // cache hit — no cross-fade (#259)
         loading = false;
         error = false;
         loadedKey = currentKey;
@@ -255,7 +280,10 @@
 </script>
 
 <div class="thumbnail-container" style="--size: {size}px" bind:this={containerEl}>
-  {#if !visible || (loading && !microUrl)}
+  {#if (!microUrl && !fullUrl && !error) || (loading && !microUrl)}
+    <!-- Placeholder only while nothing is loaded yet — a loaded thumbnail
+         stays visible through IntersectionObserver flickers (layout shifts,
+         fullscreen-preview exit) instead of flashing back to the SVG (#247). -->
     <!-- SVG placeholder while waiting for first thumbnail -->
     <svg width={size} height={size} viewBox="0 0 48 48" fill="none" class="thumbnail-placeholder">
       <rect x="6" y="6" width="36" height="36" rx="4" fill={fallbackColor} fill-opacity="0.1"/>

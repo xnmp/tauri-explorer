@@ -1472,3 +1472,233 @@ clearing staged, amend folding).
   with it.** `branchPath` takes a `RowExpand {afterRow, extra}` — rows after
   the expansion shift down by the measured details height (bound via
   `clientHeight`), so polylines and vertices stay aligned with their rows.
+
+## 2026-07-10 fix/git-graph-crossing (#232): edge crossings smear when commit details are open
+
+- **A geometry constant tuned for one row height breaks when a row stretches.**
+  `branchPath` drew every lane change as one cubic between adjacent rows.
+  With commit details open, `RowExpand` makes that segment `rowHeight +
+  panelHeight` tall and the curve smears into a long diagonal across the
+  panel. Fix: when a segment's pixel span exceeds one row height, run
+  vertical through the stretch and curve only in the final row-height at the
+  destination. Symptom only reproduces with a row selected — screenshot
+  graph bugs in both collapsed and expanded states.
+- **Greedy leftmost lane claiming makes long edges staircase.** Intermediate
+  edge rows re-claimed the leftmost free lane each row, so edges drifted left
+  as neighboring branches ended. `claimPoint` now prefers the lane the line
+  already occupies while free, collapsing the crossing into the final row.
+
+## 2026-07-10 fix/website-downloads-preview-tour (#230): dead download links
+
+- **Never hardcode a release version inside `releases/latest/download/<asset>`
+  URLs.** The `latest` path segment tracks the newest release but the asset
+  filename embeds the version, so every release silently 404s all download
+  buttons (the site shipped 1.0.1 URLs while the release was 1.1.0). The
+  website now resolves asset URLs from the GitHub releases API at runtime
+  (`resolveDownloads()` in `website/app.js`), keeping the version-built URLs
+  only as an offline/rate-limit fallback, and refreshes baked-in anchor
+  `href`s from the live map at click time via a `data-dl` delegate.
+
+## 2026-07-10 fix/shortcut-menu-badges (#240): white kbd badges on dark themes
+
+- **A `var(--foo, light-fallback)` with an undefined variable renders the
+  light fallback on every theme.** `ShortcutCheatsheet`, `PickerQuickOpen`,
+  and `CrashNotice` styled controls with `--background-secondary` /
+  `--border-color` / `--accent-color`, none of which any theme defines, so
+  the `#f5f5f5`/`#ccc` fallbacks painted white chips on dark themes. Use the
+  real theme tokens (`--subtle-fill-tertiary`, `--control-fill`,
+  `--control-stroke`, `--accent`) and avoid hardcoded fallbacks that mask a
+  missing token — grep for the var name across `src/lib/themes/` before
+  introducing one.
+
+## 2026-07-10 fix/address-bar-flash (#233): raw path flashes before the home icon
+
+- **Per-component async fetches of app-wide constants cause first-paint
+  flashes on every mount.** Each NavigationBar fetched the home directory in
+  its own `onMount`, so every new tab/pane first rendered the raw
+  `/home/user/...` crumbs and only collapsed to the house icon when the IPC
+  round-trip landed. App-wide constants belong in a shared cached store
+  (`src/lib/state/home.svelte.ts`) read synchronously via `$derived` —
+  fetch once, every later mount renders its final form on the first frame.
+
+## 2026-07-10 fix/command-palette-lag (#234): palette felt ~150ms slow to open
+
+- **Entrance animations on keystroke-summoned surfaces read as input lag.**
+  The command palette (and QuickOpen / content search) opened with a 150ms
+  opacity+slide animation, and the modal overlay layered its own 150ms fade
+  on top — actual DOM+paint was ~40ms, but the surface wasn't legible until
+  the fades finished. VSCode-style palettes must be fully opaque on their
+  first frame: entrance animations removed for palette-style surfaces
+  (`animation: none` on `.top-aligned` overlays). Measured keypress→legible:
+  ~150ms → ~27ms.
+
+## 2026-07-10 fix/tab-hover-fillet (#235): hover highlight fought the active tab's fillet
+
+- **When the active tab flares into the pane with fillets, neighbors can't
+  paint full-height hover rectangles** — the rectangle's square base shows
+  through the fillet's transparent notch. Chrome's answer (now ours): the
+  hover highlight is an inset rounded pill (`::before` with `inset: 4px 2px
+  3px`) that stays clear of the strip base entirely, so it composes with any
+  neighbor state.
+
+## 2026-07-10 fix/tab-strip-blend (#238): tab strip shade differed from the tabless bar
+
+- **Never stack a second semi-transparent surface layer inside a bar that
+  already paints one.** `.tab-area` painted the same `color-mix` background
+  as its parent `.titlebar`, doubling the layer (and covering the titlebar's
+  depth gradient) so the tabbed section rendered a different shade than the
+  tabless remainder. Child strips should be `background: transparent` — the
+  bar owns the surface.
+- **`var(--foo)` with no fallback silently paints nothing when the token is
+  theme-specific.** Unfocused tabs used `--background`, defined only by the
+  tahoe theme — everywhere else tabs were transparent and indistinct. Same
+  bug class as #240; grep `src/lib/themes/` for a token before using it.
+
+## 2026-07-10 fix/fullscreen-preview-pan-zoom-center (#236): fullscreen image off-center; no pan/zoom
+
+- **`position: fixed; inset: 0; width: 100vw` does NOT cover the visible
+  viewport when the app uses root CSS zoom.** Under `documentElement.style.
+  zoom`, viewport units are laid out pre-zoom and render zoom× the screen
+  size — the fullscreen preview overflowed the window and its "centered"
+  image sat off-center. Fix: the root zoom effect now mirrors the factor
+  into `--app-zoom`, and fullscreen overlays cancel it with
+  `zoom: calc(1 / var(--app-zoom, 1))`.
+- **Svelte batches DOM updates: reading `style.transform` synchronously after
+  `dispatchEvent` in a browser eval shows the stale value.** Wrap the read in
+  a `setTimeout`/rAF before concluding a handler "didn't fire".
+- **Guard `setPointerCapture` with try/catch** — it throws for released or
+  synthetic pointerIds, killing the whole handler.
+
+## 2026-07-10 fix/marquee-zoom-offset (#241): marquee drifted at zoom AGAIN
+
+- **When a coordinate model gets standardized, migrate EVERY converter, not
+  just the one that reproduced.** #227 moved fixedFromClient/fixedFromRect to
+  the standardized CSS-zoom model (client and rect coords are post-zoom
+  viewport px on every engine, incl. WebKitGTK ≥2.44), but left
+  clientToCSSRelative/rectDimToCSS/cssToRect on the legacy "WebKitGTK
+  reports pre-zoom rects" split — so the marquee re-broke on the real Linux
+  webview while every Chromium test stayed green.
+- **A zoom-coordinate regression is only covered if a test runs the engine
+  that diverges.** The marquee e2e never zoomed, and the zoom e2e never
+  marqueed; both ran Chromium. Added a marquee-under-zoom spec asserting the
+  band's viewport geometry AND the selection outcome, and verified it fails
+  on WebKit (WEBKIT=1) against the legacy code. Run `WEBKIT=1 npx playwright
+  test e2e/zoom-positioning.spec.ts --project=webkit` when touching
+  domain/zoom.ts.
+
+## 2026-07-10 fix/drag-hover-folder-blink (#242): drop-target highlight blinked during hover
+
+- **dragenter/dragleave pair per ELEMENT, not per subtree.** Moving the
+  cursor onto a child of a folder row fires dragleave on the row while the
+  drag is still over the folder; the next dragover re-highlights it — a
+  blink on every small move. Fix in `useDropTarget.handleDragLeave`: ignore
+  leaves whose `relatedTarget` is inside the row, falling back to a
+  coordinate-in-rect check when relatedTarget is null (WebKit). A (0,0)
+  null-relatedTarget leave still clears (window exit).
+
+## 2026-07-10 fix/terminal-shortcut-precedence (#249): app shortcuts died while terminal focused
+
+- **xterm focuses a hidden `<textarea>`, so a blanket `isInputField`
+  early-return in the global keydown handler swallows every app shortcut
+  while the terminal is focused.** The fix splits key ownership like
+  terminal emulators / VS Code do: the shell keeps plain typing and
+  single-Ctrl combos (readline binds nearly every Ctrl+<key>), the app gets
+  Alt/Meta combos, Ctrl+Shift combos, and pending chord suffixes. The rule
+  lives in `domain/terminal-keys.ts` (`isShellReservedKey`) and is applied
+  in BOTH places: `+page.svelte` (let terminal-focused events through the
+  input-field gate) and `TerminalPanel.svelte`
+  (`attachCustomKeyEventHandler` returns false so xterm ignores app combos
+  while the event still bubbles to the window handler).
+- **E2E toggle tests failed with a stale dev server, not a real bug.** After
+  several branch switches, the long-running `bun run dev` (HMR churn) made
+  previously-green terminal-panel specs fail deterministically. Restarting
+  the dev server fixed all of them. If an e2e failure appears on code the
+  suite just passed, restart the 1420 server before debugging.
+- **agent-browser can't drive chords with a timeout.** Chord shortcuts
+  (Alt+M T) have a 1.5s suffix window (`CHORD_TIMEOUT_MS`); separate
+  agent-browser CLI invocations are >1.5s apart, so the chord always
+  expires — it looks like the feature is broken when it isn't. Assert chord
+  behavior in Playwright, not via the CLI.
+
+## 2026-07-10 fix/theme-switch-consistency (#251, #164): theme commit reverted itself
+
+- **Never mutate global state from an `$effect` teardown.** ThemePicker's
+  open-effect returned `() => themeStore.previewTheme(themeStore.currentThemeId)`
+  to revert un-committed previews. On commit the teardown fired with a STALE
+  `currentThemeId` (the pre-commit theme) and reverted the freshly-committed
+  `data-theme` — while `settingsStore.theme` kept the new value. Symptoms:
+  themes needed two attempts, and the terminal (keyed on settings) switched
+  "independently". Fix: do the revert in the effect BODY on the close branch
+  (fresh reads), with `untrack()` around store reads so committing (which
+  mutates `currentThemeId`) can't re-trigger the session-init effect.
+- **Diagnose DOM-attribute fights by proxying `setAttribute` with a stack
+  trace** (`window.__trace` + `new Error().stack`) — one repro run pinpointed
+  the exact effect frame (`execute_effect_teardown`) doing the revert.
+- **Imperative repaint consumers should key on the PAINTED theme, not the
+  persisted setting.** themeStore now exposes `appliedThemeId` (updated by
+  applyTheme, i.e. also during picker live-previews); TerminalPanel re-themes
+  from it, so xterm follows previews and can never drift from the DOM.
+
+## 2026-07-10 fix/pane-split-hotkeys (#244): Super/Cmd bindings never fired on Linux
+
+- **WebKitGTK never maps the Super/Mod4 modifier into `event.metaKey`** (it
+  only translates GDK_META_MASK), so any `Cmd+…` default was dead on the real
+  Linux app while every Chromium-based e2e passed. Verified live:
+  `hyprctl dispatch sendshortcut "SUPER ALT, semicolon, class:tauri-explorer"`
+  delivered `meta=false alt=true`, and every `getModifierState` variant
+  (Super/Meta/Hyper/OS/Mod4) was false. The Super KEY itself does arrive
+  (`key="Super"`, WebKit code `OSLeft`), so `keybindings.svelte.ts` tracks its
+  held state from window keydown/keyup (blur resets) and overlays it as the
+  meta modifier via `matchesShortcut(…, { metaHeld })`.
+- **Driving held-modifier shortcuts into a real window:** `sendshortcut`
+  can't hold a modifier (it's press+release) and `wtype`'s virtual keyboard
+  delivers garbage `event.code` and drops mod state. What works:
+  `hyprctl dispatch sendkeystate "SUPER, Super_L, down, <win>"` → sendshortcut
+  the combo → `sendkeystate … up`. That reproduces a physical hold exactly.
+- **Fast real-app debug loop:** run the dev binary (`src-tauri/target/debug/…`,
+  dials the 1420 dev server) and persist webview facts with the existing
+  `log_frontend_error` command — HMR applies frontend edits to the live
+  window, no rebuild needed. Screenshot with `grim -g "<x>,<y> <w>x<h>"`
+  using geometry from `hyprctl clients`.
+
+## 2026-07-10 fix/multi-file-dnd (#253): multi-file drag arrived as one concatenated path
+
+- **WebKitGTK flattens a JS-set `text/uri-list` when an in-app HTML5 drag
+  drops back onto the webview:** the CRLF separators are stripped, wry strips
+  `file://` from the first entry only, and the frontend receives ONE string —
+  `/a/x.pngfile:///a/y.jpgfile:///a/z.png`. Internal-drag detection then
+  fails (no drag-state path matches the blob), the drop is treated as
+  external, and `move_entry` correctly reports "Path not found" for the
+  garbage path. Single-file drags need no separator, hence "single works,
+  multi doesn't". Fix: `splitFlattenedUriList` in `domain/path.ts`, applied
+  to wry-delivered paths in `use-native-drop-handler` before any routing.
+- **The diagnosis came from one logged repro, not simulation:** a real GTK
+  drag can't be synthesized without a pointer, so the drop handler logged
+  wry's paths vs the drag state via the existing `log_frontend_error`
+  bridge, and the user's single repro made the mangling obvious. When a bug
+  needs physical input, land targeted logging and ask for one repro instead
+  of guessing at fixes.
+
+## Round: #255–#266 (2026-07-11)
+
+### WebKitGTK stale paint: computed styles right, pixels wrong (#261)
+- On WebKitGTK 2.46+/Wayland, large regions (the terminal panel) can freeze on an old theme's colors while `getComputedStyle` reports the NEW values — the style system is fine, paint invalidation is not. `WEBKIT_DISABLE_COMPOSITING_MODE=1` (set in lib.rs) was REMOVED upstream in 2.46, so the wry#1524 ghosting family is back despite the env var.
+- **Inline style writes DO invalidate paint** where var()-recompute and xterm's regenerated theme stylesheet don't. The fix: push resolved colors inline onto every background-owning element + `term.refresh()`.
+- The xterm WebGL renderer is NOT a fix here: its canvas doesn't composite at all under this driver (region becomes a hole to the window backdrop).
+- Debug technique that cracked it: paint probes (`el.style.backgroundColor = "red"`) + a dev-only file-polling eval channel (fetch `/debug-cmd.json` from `static/`, run code, report via `log_frontend_error`). Beats blind hyprctl keystrokes. CAUTION: HMR leaves the OLD poll interval running — a schema change made stale code call `setTheme(undefined)` and corrupted `data-theme`; restart the binary after editing the channel.
+- The app pre-warms a hidden window: file-driven debug channels get answered TWICE (label `main` + `explorer-warm-*`). Tag responses with the webview label.
+
+### Terminal key ownership v2 (#260)
+- The #249 "shell keeps all single-Ctrl combos" rule made Ctrl+P/Ctrl+J unusable from the terminal. VS Code's model works better: a Ctrl combo the app has BOUND skips the shell, except a shell-critical whitelist (Ctrl+C/D/V/X/Z/A). Needs a side-effect-free `matchesAnyBinding` — `findMatchingCommand` mutates chord state, so calling it from a gate double-fires chords.
+- Shortcuts hardcoded in +page.svelte (Ctrl+J/,/\) are invisible to the registry — any registry-driven gate needs an explicit hardcoded-shortcut predicate or they silently die in gated contexts.
+
+### Virtualized views: inline editors must ride INSIDE the list (#257)
+- After DOM-virtualization (#128), anything rendered above the VirtualList (the inline new-folder editor) reads as its own band above the pane. Prepend a sentinel item to the items array and render the editor in the row/cell snippet; offset real-entry indices by the sentinel while it's present.
+
+### Git graph perf (#255/#256)
+- `{#key}`-remounted views re-run their IPC on every tab switch; a module-level LRU snapshot (paint from cache, refresh in background) makes switches instant without lifecycle changes.
+- Windowing rows over an absolute-positioned canvas: slice SVG branch polylines to the window but KEEP straddling segment endpoints — a straight lane encoded as two distant points must still cross the viewport (`sliceBranchLine`).
+- `bind:clientHeight` excludes borders; absolute row math needs `bind:offsetHeight` or rows overlap the measured block by the border width.
+
+### Terminal cwd sync vs fast tab switches (#266)
+- Every `await` in a cd-sync pipeline is a tab-switch race: re-validate the target against the ACTIVE explorer after each round-trip, and consume the OSC 7 echoes of self-injected cds so they never drive explorer-follows-terminal navigation onto the wrong tab.

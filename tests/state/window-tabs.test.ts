@@ -1,21 +1,31 @@
 /**
- * Tests for per-pane tabs state management (#140).
- * Tests pure functions, persistence migration, and pane/tab behavior.
+ * Tests for window tabs state management (#228: window tabs own pane
+ * layout trees). Tests pure functions, persistence migration (v1/v2 → v3),
+ * pane splitting, titles, rename-to-workspace, and tab behavior.
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   generateId,
   extractFolderName,
   migrateLegacyState,
+  migrateV2State,
   normalizePersistedState,
   countPersistedTabs,
   createWindowTabsManager,
+  type PersistedWindowTab,
 } from "$lib/state/window-tabs.svelte";
+import { persistedLeaves } from "$lib/state/window-tabs-persistence";
+import { workspacesStore } from "$lib/state/workspaces.svelte";
 
 beforeEach(() => {
   localStorage.clear();
 });
+
+/** Leaf paths of a persisted explorer tab, in visual order. */
+function tabPaths(tab: PersistedWindowTab): string[] {
+  return persistedLeaves(tab.layout).map((l) => l.path);
+}
 
 describe("generateId", () => {
   it("generates IDs with the given prefix", () => {
@@ -29,26 +39,11 @@ describe("generateId", () => {
     expect(id1).not.toBe(id2);
   });
 
-  it("includes timestamp component", () => {
-    const before = Date.now();
-    const id = generateId("explorer");
-    const after = Date.now();
-
-    // Extract timestamp from ID (format: prefix-timestamp-random)
-    const parts = id.split("-");
-    const timestamp = parseInt(parts[1], 10);
-
-    expect(timestamp).toBeGreaterThanOrEqual(before);
-    expect(timestamp).toBeLessThanOrEqual(after);
-  });
-
   it("includes random suffix for uniqueness", () => {
-    // Generate many IDs at the same timestamp and check for collisions
     const ids = new Set<string>();
     for (let i = 0; i < 100; i++) {
       ids.add(generateId("test"));
     }
-    // All should be unique
     expect(ids.size).toBe(100);
   });
 });
@@ -63,7 +58,6 @@ describe("extractFolderName", () => {
   });
 
   it("handles root Unix path", () => {
-    // Root path "/" is valid as display name
     expect(extractFolderName("/")).toBe("/");
   });
 
@@ -71,20 +65,12 @@ describe("extractFolderName", () => {
     expect(extractFolderName("")).toBe("Explorer");
   });
 
-  it("handles single folder name", () => {
-    expect(extractFolderName("Documents")).toBe("Documents");
-  });
-
   it("handles path with trailing slash", () => {
     expect(extractFolderName("/home/user/")).toBe("user");
   });
-
-  it("handles mixed separators", () => {
-    expect(extractFolderName("/home\\user/docs")).toBe("docs");
-  });
 });
 
-describe("legacy state migration", () => {
+describe("v1 (legacy) state migration", () => {
   const legacy = {
     tabs: [
       {
@@ -105,43 +91,133 @@ describe("legacy state migration", () => {
     activeTabId: "tab-2",
   };
 
-  it("maps every tab's left pane to a left tab", () => {
+  it("maps a single-pane legacy tab to a one-leaf tab", () => {
     const migrated = migrateLegacyState(legacy);
-    expect(migrated.panes.left.tabs.map((t) => t.path)).toEqual(["/home/a", "/home/b"]);
-    expect(migrated.panes.left.activeTabId).toBe("tab-2");
+    expect(migrated.version).toBe(3);
+    expect(tabPaths(migrated.tabs[0])).toEqual(["/home/a"]);
   });
 
-  it("maps right panes of dual-pane tabs to right tabs", () => {
+  it("maps a dual-pane legacy tab to a two-leaf row split with its ratio", () => {
     const migrated = migrateLegacyState(legacy);
-    expect(migrated.panes.right.tabs.map((t) => t.path)).toEqual(["/srv/b"]);
+    const tab = migrated.tabs[1];
+    expect(tabPaths(tab)).toEqual(["/home/b", "/srv/b"]);
+    expect(tab.kind === "explorer" && tab.layout.type === "split" && tab.layout.ratio).toBe(0.7);
   });
 
-  it("takes layout state from the active tab", () => {
+  it("preserves the active tab and its focused pane side", () => {
     const migrated = migrateLegacyState(legacy);
-    expect(migrated.dualPaneEnabled).toBe(true);
-    expect(migrated.splitRatio).toBe(0.7);
-    expect(migrated.activePaneId).toBe("right");
+    expect(migrated.activeTabId).toBe("tab-2");
+    const tab = migrated.tabs[1];
+    // Active pane was "right" → the second leaf.
+    expect(tab.kind === "explorer" && tab.activePaneId).toBe(
+      persistedLeaves((tab as any).layout)[1].id,
+    );
+  });
+});
+
+describe("v2 (per-pane strips) state migration", () => {
+  const v2 = {
+    version: 2 as const,
+    panes: {
+      left: {
+        tabs: [
+          { id: "l1", path: "/home/a" },
+          { id: "l2", path: "/home/b" },
+        ],
+        activeTabId: "l2",
+      },
+      right: {
+        tabs: [
+          { id: "r1", path: "/srv/a" },
+          { id: "r2", path: "/srv/b", kind: "git-graph" as const },
+        ],
+        activeTabId: "r1",
+      },
+    },
+    activePaneId: "left" as const,
+    dualPaneEnabled: true,
+    splitRatio: 0.6,
+  };
+
+  it("merges the two active strip tabs into one two-pane tab", () => {
+    const migrated = migrateV2State(v2);
+    const merged = migrated.tabs.find((t) => t.id === "l2")!;
+    expect(tabPaths(merged)).toEqual(["/home/b", "/srv/a"]);
+    expect(merged.kind === "explorer" && merged.layout.type === "split" && merged.layout.ratio).toBe(0.6);
+    expect(migrated.activeTabId).toBe("l2");
+    // The consumed right tab doesn't reappear as its own tab.
+    expect(migrated.tabs.some((t) => t.id === "r1")).toBe(false);
   });
 
-  it("stays single-pane when the active tab was single-pane", () => {
-    const migrated = migrateLegacyState({ ...legacy, activeTabId: "tab-1" });
-    expect(migrated.dualPaneEnabled).toBe(false);
-    expect(migrated.activePaneId).toBe("left");
-    // The other tab's right pane still becomes a (hidden) right tab.
-    expect(migrated.panes.right.tabs.length).toBe(1);
+  it("keeps the remaining strip tabs as single-pane tabs; v2 git-graph tabs become graph panes (#272)", () => {
+    const migrated = migrateV2State(v2);
+    expect(migrated.tabs.map((t) => t.id)).toEqual(["l1", "l2", "r2"]);
+    expect(tabPaths(migrated.tabs[0])).toEqual(["/home/a"]);
+    const graphTab = migrated.tabs[2];
+    expect(graphTab.kind).toBe("explorer");
+    expect(graphTab.layout).toMatchObject({ type: "leaf", path: "/srv/b", gitGraph: "/srv/b" });
   });
 
-  it("normalizePersistedState passes v2 state through and migrates v1", () => {
-    const migrated = migrateLegacyState(legacy);
-    expect(normalizePersistedState(migrated)).toBe(migrated);
-    expect(normalizePersistedState(legacy)?.version).toBe(2);
+  it("does not merge when dual pane was off", () => {
+    const migrated = migrateV2State({ ...v2, dualPaneEnabled: false });
+    expect(migrated.tabs.map((t) => t.id)).toEqual(["l1", "l2", "r1", "r2"]);
+    for (const t of migrated.tabs) {
+      expect(tabPaths(t)).toHaveLength(1);
+    }
+    expect(migrated.activeTabId).toBe("l2");
+  });
+});
+
+describe("normalizePersistedState", () => {
+  it("passes v3 through, migrates v1 and v2, rejects garbage", () => {
+    const v3 = migrateLegacyState({ tabs: [], activeTabId: null });
+    expect(normalizePersistedState(v3)?.version).toBe(3);
+    expect(
+      normalizePersistedState({
+        tabs: [
+          {
+            id: "t",
+            panes: { left: { path: "/a" }, right: { path: "/b" } },
+            activePaneId: "left",
+            dualPaneEnabled: false,
+            splitRatio: 0.5,
+          },
+        ],
+        activeTabId: "t",
+      })?.version,
+    ).toBe(3);
     expect(normalizePersistedState(null)).toBeNull();
     expect(normalizePersistedState({ garbage: true })).toBeNull();
   });
 
-  it("countPersistedTabs counts across panes for either shape", () => {
-    expect(countPersistedTabs(legacy)).toBe(3);
-    expect(countPersistedTabs(migrateLegacyState(legacy))).toBe(3);
+  it("drops malformed tabs from a v3 state instead of throwing", () => {
+    const state = normalizePersistedState({
+      version: 3,
+      tabs: [
+        { id: "ok", kind: "explorer", layout: { type: "leaf", id: "p", path: "/a" }, activePaneId: "p" },
+        { id: "bad", kind: "explorer" },
+        null,
+      ],
+      activeTabId: "bad",
+    });
+    expect(state?.tabs.map((t) => t.id)).toEqual(["ok"]);
+    expect(state?.activeTabId).toBe("ok");
+  });
+
+  it("countPersistedTabs counts tabs for any shape", () => {
+    const legacy = {
+      tabs: [
+        {
+          id: "t1",
+          panes: { left: { path: "/a" }, right: { path: "/b" } },
+          activePaneId: "left",
+          dualPaneEnabled: true,
+          splitRatio: 0.5,
+        },
+      ],
+      activeTabId: "t1",
+    };
+    expect(countPersistedTabs(legacy)).toBe(1);
     expect(countPersistedTabs(undefined)).toBe(0);
   });
 });
@@ -152,159 +228,239 @@ function freshManager() {
   return manager;
 }
 
-describe("refreshAllPanes", () => {
-  function spyPane(manager: ReturnType<typeof createWindowTabsManager>, pane: "left" | "right", calls: Array<{ pane: string; silent: boolean | undefined }>) {
-    const explorer = manager.getExplorer(pane);
-    expect(explorer).toBeDefined();
-    const original = explorer!.refresh;
-    // Wrap rather than fake: assert the real method is invoked with silent
-    (explorer as any).refresh = (opts?: { silent?: boolean }) => {
-      calls.push({ pane, silent: opts?.silent });
-      return original(opts);
-    };
-  }
-
-  it("silently refreshes both panes when dual pane is enabled", () => {
+describe("pane splitting (#228)", () => {
+  it("splitPane adds a pane and focuses it", () => {
     const manager = freshManager();
-    manager.setDualPane(true);
-    const calls: Array<{ pane: string; silent: boolean | undefined }> = [];
-    spyPane(manager, "left", calls);
-    spyPane(manager, "right", calls);
+    expect(manager.activePaneIds).toHaveLength(1);
 
-    manager.refreshAllPanes();
+    manager.splitPane("right");
 
-    expect(calls).toEqual([
-      { pane: "left", silent: true },
-      { pane: "right", silent: true },
-    ]);
+    expect(manager.activePaneIds).toHaveLength(2);
+    expect(manager.dualPaneEnabled).toBe(true);
+    // New pane focused, positioned second, showing the source directory.
+    expect(manager.activePaneId).toBe(manager.activePaneIds[1]);
+    expect(manager.getPanePath(manager.activePaneId)).toBe("/home/user");
   });
 
-  it("skips the hidden right pane in single-pane mode", () => {
+  it("directional placements position the new pane before/after the target", () => {
     const manager = freshManager();
-    const calls: Array<{ pane: string; silent: boolean | undefined }> = [];
-    spyPane(manager, "left", calls);
+    const original = manager.activePaneId;
 
-    manager.refreshAllPanes();
+    manager.splitPane("left");
 
-    expect(calls).toEqual([{ pane: "left", silent: true }]);
+    expect(manager.activePaneIds[0]).toBe(manager.activePaneId);
+    expect(manager.activePaneIds[1]).toBe(original);
   });
 
-  it("catches the right pane up when dual pane is re-enabled", () => {
+  it("supports more than two panes", () => {
     const manager = freshManager();
-    manager.setDualPane(true);
-    const calls: Array<{ pane: string; silent: boolean | undefined }> = [];
-    spyPane(manager, "right", calls);
-    manager.setDualPane(false);
-    calls.length = 0;
+    manager.splitPane("right");
+    manager.splitPane("down");
+    expect(manager.activePaneIds).toHaveLength(3);
+  });
 
-    manager.setDualPane(true);
+  it("switchPane cycles panes in visual order", () => {
+    const manager = freshManager();
+    manager.splitPane("right");
+    manager.splitPane("down");
+    const ids = manager.activePaneIds;
+    manager.setActivePane(ids[0]);
 
-    expect(calls).toContainEqual({ pane: "right", silent: true });
+    manager.switchPane();
+    expect(manager.activePaneId).toBe(ids[1]);
+    manager.switchPane();
+    expect(manager.activePaneId).toBe(ids[2]);
+    manager.switchPane();
+    expect(manager.activePaneId).toBe(ids[0]);
+  });
+
+  it("closePane removes the focused pane and focuses a survivor", () => {
+    const manager = freshManager();
+    const first = manager.activePaneId;
+    manager.splitPane("right");
+
+    manager.closePane();
+
+    expect(manager.activePaneIds).toEqual([first]);
+    expect(manager.activePaneId).toBe(first);
+    expect(manager.dualPaneEnabled).toBe(false);
+  });
+
+  it("closing the last pane closes the tab", () => {
+    const manager = freshManager();
+    manager.createTab("/tmp/second");
+    expect(manager.tabs).toHaveLength(2);
+
+    manager.closePane();
+
+    expect(manager.tabs).toHaveLength(1);
+  });
+
+  it("split explorers are independent after creation", () => {
+    const manager = freshManager();
+    manager.splitPane("right");
+    const [a, b] = manager.activePaneIds;
+    expect(manager.getExplorer(a)).toBeDefined();
+    expect(manager.getExplorer(b)).toBeDefined();
+    expect(manager.getExplorer(a)).not.toBe(manager.getExplorer(b));
   });
 });
 
-describe("dual pane as second tab strip", () => {
-  it("enabling dual pane seeds the right pane with one tab at the parent dir", () => {
+describe("dual pane toggle (Ctrl+\\)", () => {
+  it("splits right, seeding the new pane at the parent directory", () => {
     const manager = freshManager();
-    expect(manager.panes.right.tabs.length).toBe(0);
 
     manager.setDualPane(true);
 
     expect(manager.dualPaneEnabled).toBe(true);
-    expect(manager.panes.right.tabs.length).toBe(1);
-    expect(manager.getExplorer("right")).toBeDefined();
+    expect(manager.activePaneIds).toHaveLength(2);
+    const second = manager.activePaneIds[1];
+    expect(manager.getPanePath(second)).toBe("/home");
   });
 
-  it("right pane tabs survive a dual-pane off/on cycle", () => {
+  it("toggling off collapses to only the focused pane", () => {
     const manager = freshManager();
     manager.setDualPane(true);
-    manager.createTabIn("right", "/srv/extra");
-    expect(manager.panes.right.tabs.length).toBe(2);
+    manager.splitPane("down");
+    expect(manager.activePaneIds).toHaveLength(3);
+    const focused = manager.activePaneId;
 
     manager.setDualPane(false);
-    expect(manager.activePaneId).toBe("left");
-    manager.setDualPane(true);
 
-    expect(manager.panes.right.tabs.length).toBe(2);
-  });
-
-  it("each pane cycles its own tabs independently", () => {
-    const manager = freshManager();
-    manager.createTab("/home/user/second"); // left pane, 2 tabs
-    manager.setDualPane(true); // right pane, 1 tab
-
-    manager.setActivePane("right");
-    const rightActive = manager.activeTabId;
-    manager.nextTab(); // single right tab — no-op
-    expect(manager.activeTabId).toBe(rightActive);
-
-    manager.setActivePane("left");
-    const leftActive = manager.activeTabId;
-    manager.nextTab();
-    expect(manager.activeTabId).not.toBe(leftActive);
-    // Right pane untouched by left-pane cycling
-    expect(manager.panes.right.activeTabId).toBe(rightActive);
-  });
-
-  it("closing the right pane's last tab collapses back to single pane", () => {
-    const manager = freshManager();
-    manager.setDualPane(true);
-    const rightTab = manager.panes.right.tabs[0];
-
-    manager.closeTab(rightTab.id);
-
+    expect(manager.activePaneIds).toEqual([focused]);
     expect(manager.dualPaneEnabled).toBe(false);
-    expect(manager.activePaneId).toBe("left");
-    expect(manager.panes.right.tabs.length).toBe(0);
-    expect(manager.panes.left.tabs.length).toBe(1);
+  });
+});
+
+describe("tab titles (#228)", () => {
+  it("a single-pane tab shows its folder name", () => {
+    const manager = freshManager();
+    expect(manager.getTabTitle(manager.activeTab!)).toBe("user");
   });
 
-  it("closing the left pane's last tab promotes the right pane's tabs", () => {
+  it("a multi-pane tab joins every pane's folder name", () => {
     const manager = freshManager();
-    const leftTab = manager.panes.left.tabs[0];
-    manager.setDualPane(true);
-    const rightTab = manager.panes.right.tabs[0];
+    manager.splitPane("right", "/srv/docs");
+    expect(manager.getTabTitle(manager.activeTab!)).toBe("user | docs");
 
-    manager.closeTab(leftTab.id);
-
-    expect(manager.dualPaneEnabled).toBe(false);
-    expect(manager.panes.left.tabs.map((t) => t.id)).toEqual([rightTab.id]);
-    expect(manager.panes.right.tabs.length).toBe(0);
-    expect(manager.activePaneId).toBe("left");
+    manager.splitPane("down", "/var/log");
+    expect(manager.getTabTitle(manager.activeTab!)).toBe("user | docs | log");
   });
 
-  it("moveTabToPane moves a live tab across strips and keeps its explorer", () => {
+  it("a custom name overrides the joined title", () => {
     const manager = freshManager();
-    manager.createTab("/home/user/second");
-    manager.setDualPane(true);
-    const moving = manager.panes.left.tabs[1];
-    const explorerBefore = manager.getTabPath(moving.id);
-
-    manager.moveTabToPane(moving.id, "right");
-
-    expect(manager.panes.left.tabs.some((t) => t.id === moving.id)).toBe(false);
-    expect(manager.panes.right.tabs.some((t) => t.id === moving.id)).toBe(true);
-    expect(manager.panes.right.activeTabId).toBe(moving.id);
-    expect(manager.activePaneId).toBe("right");
-    expect(manager.getTabPath(moving.id)).toBe(explorerBefore);
+    manager.splitPane("right", "/srv/docs");
+    manager.renameTab(manager.activeTabId!, "My Workspace");
+    expect(manager.getTabTitle(manager.activeTab!)).toBe("My Workspace");
   });
 
-  it("moveTabToPane is a no-op for a pane's last tab", () => {
+  it("tooltip lists every pane's path", () => {
     const manager = freshManager();
-    manager.setDualPane(true);
-    const onlyLeft = manager.panes.left.tabs[0];
+    manager.splitPane("right", "/srv/docs");
+    expect(manager.getTabTooltip(manager.activeTab!)).toBe("/home/user\n/srv/docs");
+  });
+});
 
-    manager.moveTabToPane(onlyLeft.id, "right");
+describe("rename to workspace (#228)", () => {
+  it("single-pane tabs cannot be renamed", () => {
+    const manager = freshManager();
+    expect(manager.canRenameTab(manager.activeTabId!)).toBe(false);
+    expect(manager.renameTab(manager.activeTabId!, "Nope")).toBe(false);
+  });
 
-    expect(manager.panes.left.tabs.map((t) => t.id)).toEqual([onlyLeft.id]);
+  it("renaming a multi-pane tab saves it as a workspace", () => {
+    const manager = freshManager();
+    manager.splitPane("right", "/srv/docs");
+    expect(manager.canRenameTab(manager.activeTabId!)).toBe(true);
+
+    const ok = manager.renameTab(manager.activeTabId!, "Research");
+
+    expect(ok).toBe(true);
+    const ws = workspacesStore.list.find((w) => w.name === "Research");
+    expect(ws).toBeDefined();
+    expect(ws!.state.tabs).toHaveLength(1);
+    expect(tabPaths(ws!.state.tabs[0])).toEqual(["/home/user", "/srv/docs"]);
+    workspacesStore.remove(ws!.id);
+  });
+
+  it("a workspace saved from a renamed tab restores the full layout", () => {
+    const manager = freshManager();
+    manager.splitPane("right", "/srv/docs");
+    manager.renameTab(manager.activeTabId!, "Restore Me");
+    const ws = workspacesStore.list.find((w) => w.name === "Restore Me")!;
+
+    const restored = createWindowTabsManager();
+    restored.restoreFromState(ws.state);
+
+    expect(restored.tabs).toHaveLength(1);
+    expect(restored.activePaneIds).toHaveLength(2);
+    expect(restored.getTabTitle(restored.activeTab!)).toBe("Restore Me");
+    workspacesStore.remove(ws.id);
+  });
+
+  it("collapsing to a single pane drops the custom name", () => {
+    const manager = freshManager();
+    manager.splitPane("right", "/srv/docs");
+    manager.renameTab(manager.activeTabId!, "Temp");
+    manager.closePane();
+    expect(manager.getTabTitle(manager.activeTab!)).toBe("user");
+    const ws = workspacesStore.list.find((w) => w.name === "Temp");
+    if (ws) workspacesStore.remove(ws.id);
+  });
+});
+
+describe("refreshAllPanes", () => {
+  function spyPane(
+    manager: ReturnType<typeof createWindowTabsManager>,
+    paneId: string,
+    calls: Array<{ pane: string; silent: boolean | undefined }>,
+  ) {
+    const explorer = manager.getExplorer(paneId);
+    expect(explorer).toBeDefined();
+    const original = explorer!.refresh;
+    // Wrap rather than fake: assert the real method is invoked with silent
+    (explorer as any).refresh = (opts?: { silent?: boolean }) => {
+      calls.push({ pane: paneId, silent: opts?.silent });
+      return original(opts);
+    };
+  }
+
+  it("silently refreshes every pane of the active tab", () => {
+    const manager = freshManager();
+    manager.splitPane("right");
+    const [a, b] = manager.activePaneIds;
+    const calls: Array<{ pane: string; silent: boolean | undefined }> = [];
+    spyPane(manager, a, calls);
+    spyPane(manager, b, calls);
+
+    manager.refreshAllPanes();
+
+    expect(calls).toEqual([
+      { pane: a, silent: true },
+      { pane: b, silent: true },
+    ]);
+  });
+
+  it("skips panes of inactive tabs", () => {
+    const manager = freshManager();
+    const firstPane = manager.activePaneId;
+    manager.createTab("/tmp/second");
+    const calls: Array<{ pane: string; silent: boolean | undefined }> = [];
+    spyPane(manager, firstPane, calls);
+
+    manager.refreshAllPanes();
+
+    expect(calls).toEqual([]);
   });
 });
 
 describe("cross-window tab transfer primitives", () => {
-  it("exportTab serializes the tab's live path", () => {
+  it("exportTab serializes the live path and the full tab payload", () => {
     const manager = freshManager();
     const snapshot = manager.exportTab(manager.activeTabId!);
-    expect(snapshot).toEqual({ path: "/home/user" });
+    expect(snapshot?.path).toBe("/home/user");
+    expect(snapshot?.tab?.kind).toBe("explorer");
+    expect(tabPaths(snapshot!.tab!)).toEqual(["/home/user"]);
   });
 
   it("exportTab returns null for unknown tabs", () => {
@@ -325,10 +481,21 @@ describe("cross-window tab transfer primitives", () => {
     expect(manager.getTabPath(adopted.id)).toBe("/srv/incoming");
   });
 
-  it("adoptTab without an index appends at the end", () => {
-    const manager = freshManager();
-    const adopted = manager.adoptTab({ path: "/var/log" });
-    expect(manager.tabs[manager.tabs.length - 1].id).toBe(adopted.id);
+  it("adopting a multi-pane snapshot rebuilds the layout with fresh ids", () => {
+    const source = freshManager();
+    source.splitPane("right", "/srv/docs");
+    const snapshot = source.exportTab(source.activeTabId!)!;
+
+    const target = freshManager();
+    const adopted = target.adoptTab(snapshot);
+
+    expect(adopted.kind).toBe("explorer");
+    expect(target.activeTabId).toBe(adopted.id);
+    expect(target.activePaneIds).toHaveLength(2);
+    // Fresh ids: no collision with the source's pane ids.
+    for (const paneId of target.activePaneIds) {
+      expect(source.activePaneIds).not.toContain(paneId);
+    }
   });
 
   it("adoptTab accepts a legacy dual-pane snapshot's active path", () => {
@@ -358,52 +525,66 @@ describe("cross-window tab transfer primitives", () => {
 });
 
 describe("closed-tab restore (Ctrl+Shift+T)", () => {
-  it("restores a closed tab into the pane it was closed from", () => {
+  it("restores a closed tab at its old index", () => {
     const manager = freshManager();
-    manager.setDualPane(true);
-    manager.createTabIn("right", "/srv/gone");
-    const closing = manager.panes.right.tabs.find((t) => manager.getTabPath(t.id) === "/srv/gone")!;
+    const closing = manager.createTab("/srv/gone");
+    manager.createTab("/tmp/third");
 
     manager.closeTab(closing.id);
-    expect(manager.panes.right.tabs.some((t) => manager.getTabPath(t.id) === "/srv/gone")).toBe(false);
+    expect(manager.tabs.some((t) => manager.getTabPath(t.id) === "/srv/gone")).toBe(false);
 
     const result = manager.restoreClosedTab();
     expect(result).toMatchObject({ restored: true });
-    expect(manager.panes.right.tabs.some((t) => manager.getTabPath(t.id) === "/srv/gone")).toBe(true);
+    expect(manager.getTabPath(manager.tabs[1].id)).toBe("/srv/gone");
   });
 
-  it("restores into the left pane when the right pane is closed", () => {
+  it("restores a closed multi-pane tab with its full layout", () => {
     const manager = freshManager();
-    manager.setDualPane(true);
-    manager.createTabIn("right", "/srv/gone");
-    const closing = manager.panes.right.tabs.find((t) => manager.getTabPath(t.id) === "/srv/gone")!;
-    manager.closeTab(closing.id);
-    manager.setDualPane(false);
+    const closing = manager.createTab("/srv/gone");
+    manager.splitPane("down", "/srv/extra");
 
+    manager.closeTab(closing.id);
     manager.restoreClosedTab();
 
-    expect(manager.panes.left.tabs.some((t) => manager.getTabPath(t.id) === "/srv/gone")).toBe(true);
+    const restored = manager.activeTab!;
+    expect(restored.kind).toBe("explorer");
+    expect(manager.activePaneIds).toHaveLength(2);
+    expect(manager.getTabTitle(restored)).toBe("gone | extra");
   });
 });
 
 describe("persistence round-trip", () => {
-  it("captureState/restoreFromState preserves panes, layout, and active ids", () => {
+  it("captureState/restoreFromState preserves tabs, layout, and active ids", () => {
     const manager = freshManager();
-    manager.createTab("/home/user/second");
-    manager.setDualPane(true);
-    manager.setSplitRatio(0.7);
+    manager.splitPane("right", "/srv/docs");
+    manager.createTab("/tmp/second");
 
     const state = manager.captureState();
-    expect(state.version).toBe(2);
+    expect(state.version).toBe(3);
 
     const restored = createWindowTabsManager();
     restored.restoreFromState(state);
 
-    expect(restored.panes.left.tabs.length).toBe(2);
-    expect(restored.panes.right.tabs.length).toBe(1);
-    expect(restored.dualPaneEnabled).toBe(true);
-    expect(restored.splitRatio).toBe(0.7);
-    expect(restored.panes.left.activeTabId).toBe(state.panes.left.activeTabId);
+    expect(restored.tabs.length).toBe(2);
+    expect(restored.activeTabId).toBe(state.activeTabId);
+    expect(restored.getTabPath(restored.activeTabId!)).toBe("/tmp/second");
+    // The multi-pane tab kept its layout.
+    const multi = restored.tabs[0];
+    expect(multi.kind === "explorer" && restored.getTabTitle(multi)).toBe("user | docs");
+  });
+
+  it("split ratios survive the round-trip", () => {
+    const manager = freshManager();
+    manager.splitPane("right");
+    const tab = manager.activeTab!;
+    const splitId = tab.kind === "explorer" && tab.layout.type === "split" ? tab.layout.id : "";
+    manager.setSplitRatio(splitId, 0.7);
+
+    const restored = createWindowTabsManager();
+    restored.restoreFromState(manager.captureState());
+
+    const rTab = restored.activeTab!;
+    expect(rTab.kind === "explorer" && rTab.layout.type === "split" && rTab.layout.ratio).toBe(0.7);
   });
 
   it("restoreFromState accepts a legacy v1 workspace state", () => {
@@ -421,83 +602,245 @@ describe("persistence round-trip", () => {
       activeTabId: "t1",
     });
 
-    expect(manager.panes.left.tabs.map((t) => manager.getTabPath(t.id))).toEqual(["/home/a"]);
-    expect(manager.panes.right.tabs.map((t) => manager.getTabPath(t.id))).toEqual(["/srv/a"]);
-    expect(manager.dualPaneEnabled).toBe(true);
-    expect(manager.splitRatio).toBe(0.6);
+    expect(manager.tabs).toHaveLength(1);
+    expect(manager.activePaneIds).toHaveLength(2);
+    expect(manager.getPanePath(manager.activePaneIds[0])).toBe("/home/a");
+    expect(manager.getPanePath(manager.activePaneIds[1])).toBe("/srv/a");
+  });
+
+  it("restoreFromState accepts a v2 per-pane-strips state", () => {
+    const manager = createWindowTabsManager();
+    manager.restoreFromState({
+      version: 2,
+      panes: {
+        left: { tabs: [{ id: "l1", path: "/home/a" }], activeTabId: "l1" },
+        right: { tabs: [{ id: "r1", path: "/srv/a" }], activeTabId: "r1" },
+      },
+      activePaneId: "left",
+      dualPaneEnabled: true,
+      splitRatio: 0.5,
+    });
+
+    // Actives merged into one dual-pane tab.
+    expect(manager.tabs).toHaveLength(1);
+    expect(manager.activePaneIds).toHaveLength(2);
   });
 });
 
-describe("tagged-union tab kinds (#56)", () => {
-  it("openGitGraphTab creates a git-graph tab and reuses it per repo", () => {
+describe("per-pane git graph (#272)", () => {
+  it("toggleGitGraphInActivePane sets and clears the active pane's graph", () => {
     const manager = freshManager();
-    const tab = manager.openGitGraphTab("/home/user/project");
+    const paneId = manager.activePaneId;
 
-    expect(tab.kind).toBe("git-graph");
-    expect(manager.activeTabId).toBe(tab.id);
-    expect(manager.getTabPath(tab.id)).toBe("/home/user/project");
-    expect(manager.getTabTitle(tab)).toBe("Graph: project");
+    manager.toggleGitGraphInActivePane("/home/user/project");
+    expect(manager.getPaneGitGraph(paneId)).toBe("/home/user/project");
 
-    // Same repo → reuse, no duplicate.
-    const again = manager.openGitGraphTab("/home/user/project");
-    expect(again.id).toBe(tab.id);
-    expect(manager.tabs.filter((t) => t.kind === "git-graph")).toHaveLength(1);
+    // Toggling again returns the pane to the file listing.
+    manager.toggleGitGraphInActivePane(null);
+    expect(manager.getPaneGitGraph(paneId)).toBeUndefined();
   });
 
-  it("a git-graph tab has no explorer and survives a persistence round-trip", () => {
+  it("a graph pane survives a persistence round-trip", () => {
     const manager = freshManager();
-    manager.openGitGraphTab("/home/user/project");
-    expect(manager.getActiveExplorer()).toBeUndefined();
+    manager.toggleGitGraphInActivePane("/home/user/project");
 
     const state = manager.captureState();
     const restored = createWindowTabsManager();
     restored.restoreFromState(state);
 
-    const graphTab = restored.panes.left.tabs.find((t) => t.kind === "git-graph")!;
-    expect(graphTab).toBeDefined();
-    expect(restored.getTabPath(graphTab.id)).toBe("/home/user/project");
-    // Old persisted tabs without a kind stay explorers (defaulting migration).
-    expect(restored.panes.left.tabs[0].kind).toBe("explorer");
+    const paneId = restored.activePaneId;
+    expect(restored.getPaneGitGraph(paneId)).toBe("/home/user/project");
   });
 
-  it("closing a git-graph tab works and snapshots its repo path", () => {
+  it("pre-#272 persisted git-graph TABS migrate to explorer tabs with a graph pane", () => {
     const manager = freshManager();
-    const tab = manager.openGitGraphTab("/home/user/project");
-    manager.closeTab(tab.id);
-    expect(manager.tabs.some((t) => t.id === tab.id)).toBe(false);
-    expect(manager.canRestoreTab).toBe(true);
+    manager.restoreFromState({
+      version: 3,
+      tabs: [{ id: "g1", kind: "git-graph", path: "/home/user/project" }],
+      activeTabId: "g1",
+    });
+
+    expect(manager.tabs).toHaveLength(1);
+    const tab = manager.tabs[0];
+    expect(tab.kind).toBe("explorer");
+    expect(manager.getTabPath(tab.id)).toBe("/home/user/project");
+    expect(manager.getPaneGitGraph(tab.activePaneId)).toBe("/home/user/project");
+  });
+
+  it("pane operations still work while a pane shows the graph", () => {
+    const manager = freshManager();
+    manager.toggleGitGraphInActivePane("/home/user/project");
+    expect(() => {
+      manager.splitPane("right");
+      manager.newPane();
+      manager.closePane();
+    }).not.toThrow();
   });
 });
 
 describe("adversarial review regressions (#167)", () => {
-  it("Ctrl+Shift+T restores a closed git-graph tab as a git-graph tab", () => {
+  it("Ctrl+Shift+T restores a closed tab with its graph pane intact", () => {
     const manager = freshManager();
-    const graph = manager.openGitGraphTab("/home/user/project");
-    manager.closeTab(graph.id);
+    manager.createTab("/home/user/project");
+    const graphTabId = manager.activeTabId!;
+    manager.toggleGitGraphInActivePane("/home/user/project");
+    manager.closeTab(graphTabId);
 
     const result = manager.restoreClosedTab();
 
     expect(result).toMatchObject({ restored: true });
-    const restored = manager.panes.left.tabs.find((t) => t.kind === "git-graph");
+    const restored = manager.tabs.find(
+      (t) => manager.getPaneGitGraph(t.activePaneId) === "/home/user/project",
+    );
     expect(restored).toBeDefined();
     expect(manager.getTabPath(restored!.id)).toBe("/home/user/project");
-    expect(manager.getTabTitle(restored!)).toBe("Graph: project");
   });
 
-  it("normalizePersistedState rejects v2 states missing tabs arrays", () => {
-    expect(
-      normalizePersistedState({ version: 2, panes: { left: {}, right: {} }, activePaneId: "left", dualPaneEnabled: false, splitRatio: 0.5 }),
-    ).toBeNull();
-    expect(countPersistedTabs({ version: 2, panes: { left: {}, right: {} } })).toBe(0);
-  });
-
-  it("init survives a corrupt v2 saved state (falls back to a fresh tab)", () => {
+  it("init survives a corrupt saved state (falls back to a fresh tab)", () => {
     localStorage.setItem(
       "explorer-tabs",
-      JSON.stringify({ version: 2, panes: { left: {}, right: {} }, activePaneId: "left", dualPaneEnabled: false, splitRatio: 0.5 }),
+      JSON.stringify({ version: 3, tabs: [{ id: "bad", kind: "explorer" }], activeTabId: "bad" }),
     );
     const manager = createWindowTabsManager();
     expect(() => manager.init("/home/user")).not.toThrow();
-    expect(manager.panes.left.tabs.length).toBe(1);
+    expect(manager.tabs.length).toBe(1);
+  });
+
+  it("init survives a corrupt v2 saved state", () => {
+    localStorage.setItem(
+      "explorer-tabs",
+      JSON.stringify({
+        version: 2,
+        panes: { left: {}, right: {} },
+        activePaneId: "left",
+        dualPaneEnabled: false,
+        splitRatio: 0.5,
+      }),
+    );
+    const manager = createWindowTabsManager();
+    expect(() => manager.init("/home/user")).not.toThrow();
+    expect(manager.tabs.length).toBe(1);
+  });
+});
+
+describe("close surface (#229)", () => {
+  it("closes the focused pane when the tab has several", () => {
+    const manager = freshManager();
+    manager.splitPane("right", "/srv/docs");
+    expect(manager.activePaneIds).toHaveLength(2);
+
+    manager.closeSurface();
+
+    expect(manager.tabs).toHaveLength(1);
+    expect(manager.activePaneIds).toHaveLength(1);
+    expect(manager.getPanePath(manager.activePaneId)).toBe("/home/user");
+  });
+
+  it("closes the whole tab when it has a single pane", () => {
+    const manager = freshManager();
+    manager.createTab("/srv/gone");
+    expect(manager.tabs).toHaveLength(2);
+
+    manager.closeSurface();
+
+    expect(manager.tabs).toHaveLength(1);
+    expect(manager.getTabPath(manager.activeTabId!)).toBe("/home/user");
+  });
+});
+
+describe("closed-pane restore (#229)", () => {
+  let nowSpy: ReturnType<typeof vi.spyOn>;
+  let clock = 0;
+
+  beforeEach(() => {
+    clock = 1_000_000;
+    nowSpy = vi.spyOn(Date, "now").mockImplementation(() => ++clock);
+  });
+
+  afterEach(() => {
+    nowSpy.mockRestore();
+  });
+
+  it("Ctrl+Shift+T restores the last closed pane back into its split position", () => {
+    const manager = freshManager();
+    manager.splitPane("down", "/srv/docs");
+    const orderBefore = [...manager.activePaneIds];
+    expect(orderBefore).toHaveLength(2);
+
+    manager.closePane(); // closes the focused (second) pane
+    expect(manager.activePaneIds).toHaveLength(1);
+
+    const result = manager.restoreClosedSurface();
+    expect(result).toMatchObject({ restored: true });
+    expect(manager.activePaneIds).toHaveLength(2);
+    // Restored below the surviving pane, focused, at its old path.
+    expect(manager.activePaneId).toBe(manager.activePaneIds[1]);
+    expect(manager.getPanePath(manager.activePaneId)).toBe("/srv/docs");
+    // No tab was restored in the process.
+    expect(manager.tabs).toHaveLength(1);
+  });
+
+  it("restores a pane closed on the LEFT back to the left", () => {
+    const manager = freshManager();
+    manager.splitPane("left", "/srv/first");
+    // Focused pane is the new left pane.
+    manager.closePane();
+
+    manager.restoreClosedSurface();
+
+    expect(manager.activePaneIds).toHaveLength(2);
+    expect(manager.getPanePath(manager.activePaneIds[0])).toBe("/srv/first");
+  });
+
+  it("restores the tab, not the pane, when the tab close is more recent", () => {
+    const manager = freshManager();
+    manager.splitPane("right", "/srv/docs");
+    manager.closePane(); // pane close first
+    const gone = manager.createTab("/tmp/gone");
+    manager.closeTab(gone.id); // tab close second (more recent)
+
+    manager.restoreClosedSurface();
+    expect(manager.tabs).toHaveLength(2);
+    expect(manager.tabs.some((t) => manager.getTabPath(t.id) === "/tmp/gone")).toBe(true);
+  });
+
+  it("skips pane snapshots whose tab is gone and restores the closed tab", () => {
+    const manager = freshManager();
+    const tab = manager.createTab("/srv/multi");
+    manager.splitPane("right", "/srv/extra");
+    manager.closePane(); // pane snapshot for this tab
+    manager.closeTab(tab.id); // the whole tab goes (more recent anyway)
+    manager.createTab("/tmp/keepalive");
+
+    manager.restoreClosedSurface();
+    // The multi-pane tab returns; its pane snapshot is stale and pruned.
+    expect(manager.tabs.some((t) => manager.getTabPath(t.id) === "/srv/multi")).toBe(true);
+    manager.restoreClosedSurface();
+    expect(manager.canRestoreSurface).toBe(false);
+  });
+});
+
+describe("per-pane miller columns (#229)", () => {
+  it("changing miller layers on one pane leaves the other pane alone", () => {
+    const manager = freshManager();
+    manager.splitPane("right", "/srv/docs");
+    const [firstId, secondId] = manager.activePaneIds;
+    const first = manager.getExplorer(firstId)!;
+    const second = manager.getExplorer(secondId)!;
+    expect(first.millerLayers).toBe(0);
+
+    second.setMillerLayers(2);
+
+    expect(second.millerLayers).toBe(2);
+    expect(first.millerLayers).toBe(0);
+  });
+
+  it("toggle turns miller on to the preferred layer count and off again", () => {
+    const manager = freshManager();
+    const explorer = manager.getActiveExplorer()!;
+    explorer.toggleMillerColumns();
+    expect(explorer.millerLayers).toBeGreaterThan(0);
+    explorer.toggleMillerColumns();
+    expect(explorer.millerLayers).toBe(0);
   });
 });

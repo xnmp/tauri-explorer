@@ -12,7 +12,7 @@
   import type { FileEntry } from "$lib/domain/file";
   import FileIcon from "./FileIcon.svelte";
   import PickerQuickOpen from "./PickerQuickOpen.svelte";
-  import { parentDir } from "$lib/domain/path";
+  import { joinPath, parentDir } from "$lib/domain/path";
   import type { SearchResult } from "$lib/api/files";
 
   export interface PickerInfo {
@@ -68,10 +68,6 @@
       result.push(acc);
     }
     return result;
-  }
-
-  function joinPath(dir: string, name: string): string {
-    return dir === "/" ? `/${name}` : `${dir}/${name}`;
   }
 
   async function loadDir(path: string): Promise<void> {

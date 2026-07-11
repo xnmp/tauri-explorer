@@ -109,9 +109,27 @@ pub async fn start_nano_banana_job(
     let job_id = NEXT_JOB_ID.fetch_add(1, Ordering::Relaxed);
 
     tokio::spawn(async move {
-        let work_dir = std::env::temp_dir().join(format!("tauri-explorer-nanobanana-{}", job_id));
+        // tempfile: unpredictable name and 0700 on unix. A fixed, sequential
+        // name in the shared system temp dir would let another local user
+        // pre-plant a symlink and receive the staged source image.
+        let work_dir = match tempfile::Builder::new()
+            .prefix(&format!("tauri-explorer-nanobanana-{}-", job_id))
+            .tempdir()
+        {
+            Ok(dir) => dir,
+            Err(e) => {
+                let _ = app.emit(
+                    "nano-banana-error",
+                    NanoBananaErrorEvent {
+                        job_id,
+                        error: format!("Failed to create work dir: {}", e),
+                    },
+                );
+                return;
+            }
+        };
         let job = run_gemini_edit(
-            &work_dir,
+            work_dir.path(),
             &source_path,
             &prompt,
             &output_dir,
@@ -126,7 +144,7 @@ pub async fn start_nano_banana_job(
                 JOB_TIMEOUT.as_secs() / 60
             ))),
         };
-        let _ = std::fs::remove_dir_all(&work_dir);
+        drop(work_dir); // TempDir removes itself on drop
         match result {
             Ok(output_path) => {
                 let _ = app.emit(

@@ -14,6 +14,9 @@
  * - Merge edges snap to a point already reserved for the same parent where
  *   possible instead of claiming fresh lanes, which keeps busy graphs tight.
  * - Lanes are claimed greedily left-to-right per row, first come first served.
+ * - Once a line occupies a lane it stays there while the lane is free, so
+ *   lines run parallel and cross over in a single row at their destination
+ *   instead of drifting left as lanes free up.
  */
 
 export interface GraphCommitLike {
@@ -31,6 +34,34 @@ export interface GraphPoint {
 export interface BranchLine {
   colorIndex: number;
   points: GraphPoint[];
+}
+
+/**
+ * Restrict a branch line to the points needed to draw rows [startRow, endRow]
+ * (#256, render windowing). Keeps the straddling segment endpoints — a long
+ * straight lane encoded as two distant points must still cross the window —
+ * and returns null when the line doesn't intersect the window at all.
+ * Assumes `points` rows are non-decreasing (assignLayout emits top-down).
+ */
+export function sliceBranchLine(
+  line: BranchLine,
+  startRow: number,
+  endRow: number,
+): BranchLine | null {
+  const pts = line.points;
+  if (pts.length === 0) return null;
+  if (pts[0].row > endRow || pts[pts.length - 1].row < startRow) return null;
+  if (pts.length < 2) return line;
+
+  // Last point at-or-above the window start…
+  let first = 0;
+  while (first + 1 < pts.length && pts[first + 1].row <= startRow) first++;
+  // …through the first point at-or-below the window end.
+  let last = pts.length - 1;
+  while (last - 1 > first && pts[last - 1].row >= endRow) last--;
+
+  if (first === 0 && last === pts.length - 1) return line;
+  return { colorIndex: line.colorIndex, points: pts.slice(first, last + 1) };
 }
 
 export interface GraphVertex {
@@ -83,14 +114,17 @@ export function assignLayout(commits: readonly GraphCommitLike[]): GraphLayout {
     return colorEnds.length - 1;
   }
 
-  /** Reserved-or-fresh lane on `row` for the given reservation key. */
-  function claimPoint(row: number, key: string | null): number {
+  /** Reserved-or-fresh lane on `row` for the given reservation key. Prefers
+   *  the lane the line already occupies (`preferred`) when it is free, so
+   *  lines stay parallel and only change lanes at their destination. */
+  function claimPoint(row: number, key: string | null, preferred?: number): number {
     const v = vertices[row];
     if (key !== null) {
       for (const [lane, k] of v.reserved) {
         if (k === key) return lane;
       }
     }
+    if (preferred !== undefined && !v.reserved.has(preferred)) return preferred;
     while (v.reserved.has(v.nextFreeLane)) v.nextFreeLane++;
     const lane = v.nextFreeLane;
     laneCount = Math.max(laneCount, lane + 1);
@@ -140,15 +174,17 @@ export function assignLayout(commits: readonly GraphCommitLike[]): GraphLayout {
       const colorIndex = willJoin ? parent.onBranch! : availableColor(startRow);
       const id = `edge:${branchIds++}:${parentRow}`;
       const line: BranchLine = { colorIndex, points: [{ lane: startLane, row: startRow }] };
+      let prevLane = startLane;
       for (let row = startRow + 1; row <= parentRow; row++) {
         let lane: number;
         if (row === parentRow) {
           lane = placeDot(row);
         } else {
-          lane = claimPoint(row, id);
+          lane = claimPoint(row, id, prevLane);
           reserve(row, lane, id);
         }
         line.points.push({ lane, row });
+        prevLane = lane;
       }
       if (!willJoin) {
         parent.onBranch = colorIndex;
@@ -165,6 +201,7 @@ export function assignLayout(commits: readonly GraphCommitLike[]): GraphLayout {
     const line: BranchLine = { colorIndex, points: [{ lane: startLane, row: startRow }] };
 
     let targetRow = parentRow;
+    let prevLane = startLane;
     for (let row = startRow + 1; row < commits.length; row++) {
       const v = vertices[row];
       const isTarget = row === targetRow;
@@ -172,10 +209,11 @@ export function assignLayout(commits: readonly GraphCommitLike[]): GraphLayout {
       if (isTarget) {
         lane = placeDot(row);
       } else {
-        lane = claimPoint(row, id);
+        lane = claimPoint(row, id, prevLane);
         reserve(row, lane, id);
       }
       line.points.push({ lane, row });
+      prevLane = lane;
 
       if (!isTarget) continue;
       if (v.onBranch !== null) break; // joined an existing line — terminate
@@ -264,7 +302,14 @@ export function branchPath(
     const y1 = y(prev.row);
     const x2 = x(b.lane);
     const y2 = y(b.row);
-    path += ` C ${x1} ${(y1 + d).toFixed(1)} ${x2} ${(y2 - d).toFixed(1)} ${x2} ${y2.toFixed(1)}`;
+    // A row expansion (open commit details) can stretch this segment far
+    // beyond one row height. Stay vertical through the stretch and cross
+    // only in the final row-height, hugging the destination — otherwise the
+    // curve smears into a long diagonal across the expanded block.
+    const yCross = y2 - rowHeight;
+    if (yCross > y1 + 0.5) path += ` L ${x1} ${yCross.toFixed(1)}`;
+    const yStart = Math.max(y1, yCross);
+    path += ` C ${x1} ${(yStart + d).toFixed(1)} ${x2} ${(y2 - d).toFixed(1)} ${x2} ${y2.toFixed(1)}`;
     i++;
   }
   return path;

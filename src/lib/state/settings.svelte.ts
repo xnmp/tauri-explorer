@@ -96,7 +96,13 @@ export interface Settings {
   terminalFollowsExplorer: boolean; // auto-cd the embedded terminal when the active pane navigates (#149)
   explorerFollowsTerminal: boolean; // navigate the active pane when the terminal's shell changes cwd (OSC 7) (#149)
   pluginsEnabled: Record<string, boolean>; // per-plugin enable state (id → enabled); absent id falls back to the plugin's default (#142)
+  defaultPaneLayout: PaneLayoutMode; // how the generic "New Pane" command splits (#228)
 }
+
+/** How the generic "New Pane" command places new panes (#228):
+ *  dwindle = split the focused pane along its longer axis (Hyprland-style);
+ *  right/down = always split that way. */
+export type PaneLayoutMode = "dwindle" | "right" | "down";
 
 const MIN_ZOOM = 50;
 const MAX_ZOOM = 200;
@@ -155,6 +161,7 @@ const DEFAULT_SETTINGS: Settings = {
   terminalFollowsExplorer: true,
   explorerFollowsTerminal: true,
   pluginsEnabled: {},
+  defaultPaneLayout: "dwindle",
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -415,6 +422,12 @@ function createSettingsStore() {
     },
     get ffmpegPath() {
       return settings.ffmpegPath;
+    },
+    get defaultPaneLayout() {
+      return settings.defaultPaneLayout;
+    },
+    setDefaultPaneLayout(mode: PaneLayoutMode): void {
+      update({ defaultPaneLayout: mode });
     },
     get tabTitleGitRoot() {
       return settings.tabTitleGitRoot;

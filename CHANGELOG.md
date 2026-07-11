@@ -2,6 +2,26 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.2.0 — 2026-07-11
+
+### Added
+- **Per-pane git graph** — Ctrl+Alt+G now toggles the commit graph *inside the active pane* instead of opening a separate window tab, so a graph can sit right next to a normal explorer pane in a split. Invoking it again from within the graph returns the pane to its file listing. Old saved graph tabs migrate automatically.
+- **Drop files on the terminal** — dropping files onto the integrated terminal (or pressing Alt+T with a selection) types their shell-escaped paths at the prompt.
+- **Syntax highlighting in diff views** via a shared highlight palette.
+
+### Improved
+- **Source Control panel**: summaries are cached per repo (switching panes/tabs no longer refetches and flashes), a loading skeleton shows while the first fetch runs instead of a premature "Not a git repository", row action glyphs are now uniform SVG icons, and hovered actions get a visible highlight (discard tints red).
+- **Drag ghosts**: multi-file drags show a fanned stack with a count badge, and every drag ghost (single files included) is translucent so the drop target stays visible.
+- **Git graph performance**: windowed rendering for large histories and instant repaint from a per-repo snapshot cache.
+- **Active tab polish**: the hairline border traces the fillet curves as one continuous stroke and composites opaquely over the pane surface.
+
+### Fixed
+- Terminal: cwd sync no longer races fast tab switches; app shortcuts win over the shell while the terminal is focused; theme switches repaint reliably under WebKitGTK; Alt+M T toggles the terminal instead of only opening it.
+- Multi-file drops recover from WebKitGTK's flattened uri-list; Super+Alt pane-split hotkeys work on Linux.
+- Thumbnails: cache hits paint full-res immediately and survive layout shifts/remounts.
+- Inline new-folder editor renders correctly inside the virtual list; marquee selection tracks the cursor under zoom; folder drop-target highlight no longer blinks; drive letters render as normal breadcrumbs.
+- Security hardening: ZIP extraction guards against symlink zip-slip, `open_external_url` is host-pinned, AI job temp dirs are randomized, and vitest/vite were bumped past security advisories.
+
 ## v1.1.0 — 2026-07-05
 
 ### Added

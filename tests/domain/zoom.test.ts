@@ -1,9 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   detectViewportZoomCoords,
   detectChromiumEngine,
   fixedFromClient,
   fixedFromRect,
+  clientToCSSRelative,
+  rectDimToCSS,
+  cssToRect,
 } from "../../src/lib/domain/zoom";
 
 /**
@@ -99,6 +102,49 @@ describe("detectViewportZoomCoords", () => {
       expect(fixedFromRect(100, 2, true, true)).toBe(50);
       expect(fixedFromRect(100, 2, false, false)).toBe(50);
       expect(fixedFromRect(100, 2, true, false)).toBe(50);
+    });
+  });
+
+  /**
+   * Marquee-path conversions (#241). Under standardized CSS zoom, clientX/Y
+   * and getBoundingClientRect are BOTH post-zoom viewport px on every engine
+   * (incl. WebKitGTK ≥2.44 — the real Tauri Linux webview), so these must be
+   * a single division/multiplication with NO engine branch. The old
+   * "WebKitGTK reports pre-zoom rects" model is what kept re-breaking the
+   * marquee at zoom.
+   */
+  describe("marquee-path conversions under live zoom", () => {
+    const setZoom = (zoom: string) => {
+      (globalThis as { document?: unknown }).document = {
+        documentElement: { style: { zoom } },
+      };
+    };
+
+    beforeEach(() => setZoom("200%"));
+    afterEach(() => {
+      delete (globalThis as { document?: unknown }).document;
+    });
+
+    it("clientToCSSRelative subtracts the rect edge then divides once", () => {
+      // cursor at viewport 300, container edge at viewport 100, zoom 2
+      // → container-relative CSS coordinate (300 - 100) / 2 = 100
+      expect(clientToCSSRelative(300, 100)).toBe(100);
+    });
+
+    it("rectDimToCSS divides a rect dimension by the zoom", () => {
+      expect(rectDimToCSS(400)).toBe(200);
+    });
+
+    it("cssToRect is the inverse of rectDimToCSS", () => {
+      expect(cssToRect(rectDimToCSS(360))).toBe(360);
+      expect(cssToRect(150)).toBe(300);
+    });
+
+    it("all three are identity at zoom 1", () => {
+      setZoom("");
+      expect(clientToCSSRelative(300, 100)).toBe(200);
+      expect(rectDimToCSS(400)).toBe(400);
+      expect(cssToRect(150)).toBe(150);
     });
   });
 });

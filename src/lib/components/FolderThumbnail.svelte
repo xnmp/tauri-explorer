@@ -119,11 +119,12 @@
 
   // Photo geometry (fractions of the tile): a square front photo centred in
   // the pocket, with up to two photos fanned behind it. Sized to fill the
-  // folder interior — the slim flap lip (y36/48 = 75%) overlapping their
+  // folder interior — the slim flap lip (y37.5/48 ≈ 78%) overlapping their
   // bottom edge is what makes them read as "inside"; sizes are kept close so
-  // the front photo frames the back pair.
-  const frontSize = $derived(Math.round(size * 0.58));
-  const backSize = $derived(Math.round(size * 0.52));
+  // the front photo frames the back pair. Scaled with the taller folder
+  // silhouette (#264).
+  const frontSize = $derived(Math.round(size * 0.68));
+  const backSize = $derived(Math.round(size * 0.6));
 </script>
 
 <div class="folder-thumb" bind:this={containerEl} style="--size: {size}px">
@@ -134,7 +135,7 @@
       <!-- Folder back: tab (top-left) + body. Shares FileIcon's folder-large
            silhouette so a preview folder is the exact same size as a plain
            one; theme colour slightly darkened for the panel behind the photos. -->
-      <path d="M2 14C2 11.79 3.79 10 6 10H14.34C15.4 10 16.42 10.42 17.17 11.17L20 14H42C44.21 14 46 15.79 46 18V37C46 39.21 44.21 41 42 41H6C3.79 41 2 39.21 2 37V14Z" class="folder-back-fill"/>
+      <path d="M2 10C2 7.2 3.79 5 6 5H14.34C15.4 5 16.42 5.5 17.17 6.5L20 10H42C44.21 10 46 12.2 46 15V38.75C46 41.5 44.21 43.75 42 43.75H6C3.79 43.75 2 41.5 2 38.75V10Z" class="folder-back-fill"/>
     </svg>
     {#if imagePaths[1]}
       <div class="photo back-photo left" style="width: {backSize}px; height: {backSize}px">
@@ -154,8 +155,8 @@
            as tucked into the folder pocket. Matches FileIcon's front-panel
            width and rounded bottom; slim lip (y36) keeps nearly the whole
            interior open so the photos can fill the folder. -->
-      <path d="M2 36H46V39C46 40.66 44.66 42 43 42H5C3.34 42 2 40.66 2 39V36Z" class="folder-front-fill"/>
-      <path d="M2 36H46V37.5H2V36Z" fill="#fff" fill-opacity="0.35"/>
+      <path d="M2 37.5H46V41.25C46 43.3 44.66 45 43 45H5C3.34 45 2 43.3 2 41.25V37.5Z" class="folder-front-fill"/>
+      <path d="M2 37.5H46V39H2V37.5Z" fill="#fff" fill-opacity="0.35"/>
     </svg>
   {/if}
 </div>
@@ -197,10 +198,10 @@
 
   .front-photo {
     /* Front photo filling the pocket: top edge just below the folder back's
-       top (y14/48 ≈ 29%) so the folder silhouette stays readable, bottom edge
-       tucked behind the front flap (lip at y36/48 = 75%). Narrow enough that
-       the fanned back pair stays visible on either side. */
-    top: 28%;
+       mouth (y10/48 ≈ 21%) so the folder silhouette stays readable, bottom
+       edge tucked behind the front flap (lip at y37.5/48 ≈ 78%). Narrow
+       enough that the fanned back pair stays visible on either side. */
+    top: 21%;
     left: 50%;
     transform: translateX(-50%);
   }
@@ -208,7 +209,7 @@
   .back-photo {
     /* Fanned wider than the front photo so their rotated edges peek out at
        the sides; kept inside the pocket like the front photo. */
-    top: 32%;
+    top: 25%;
     opacity: 0.95;
   }
 

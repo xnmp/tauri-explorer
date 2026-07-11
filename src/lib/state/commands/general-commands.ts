@@ -6,8 +6,10 @@ import type { Command } from "../commands.svelte";
 import { windowTabsManager } from "../window-tabs.svelte";
 import { settingsStore } from "../settings.svelte";
 import { bookmarksStore } from "../bookmarks.svelte";
+import { workspacesStore } from "../workspaces.svelte";
 import { recentFilesStore } from "../recent-files.svelte";
 import { dialogStore } from "../dialogs.svelte";
+import { terminalPanelStore } from "../terminal.svelte";
 import { openInTerminal, gitRepoRoot } from "$lib/api/files";
 import { toastStore } from "../toast.svelte";
 import { readFocusedWindowState } from "../focused-window";
@@ -45,24 +47,35 @@ export const tabCommands: Command[] = [
     handler: () => void windowTabsManager.createTab(),
   },
   {
+    // Ghostty-style (#229): closes the focused pane when the active tab has
+    // several, otherwise closes the tab.
+    id: "surface.close",
+    label: "Close Surface",
+    category: "general",
+    shortcut: "Ctrl+W",
+    handler: () => windowTabsManager.closeSurface(),
+  },
+  {
     id: "tabs.closeTab",
     label: "Close Tab",
     category: "general",
-    shortcut: "Ctrl+W",
+    shortcut: "Ctrl+Shift+W",
     handler: () => windowTabsManager.closeActiveTab(),
   },
   {
+    // Restores the most recently closed pane back into its split position;
+    // restores the last closed tab when that close is more recent (#229).
     id: "tabs.restoreClosedTab",
-    label: "Restore Closed Tab",
+    label: "Restore Closed Pane or Tab",
     category: "general",
     shortcut: "Ctrl+Shift+T",
     handler: () => {
-      const result = windowTabsManager.restoreClosedTab();
+      const result = windowTabsManager.restoreClosedSurface();
       if (result && result.openInNewWindow) {
         openNewWindow(result.openInNewWindow);
       }
     },
-    when: () => windowTabsManager.canRestoreTab,
+    when: () => windowTabsManager.canRestoreSurface,
   },
   {
     id: "tabs.nextTab",
@@ -98,20 +111,26 @@ export const tabCommands: Command[] = [
   },
 ];
 
-/** Git graph command (#51): open the repo's commit graph as a tab. */
+/** Git graph command (#51, #272): toggle the repo's commit graph in the
+ *  active pane — on when browsing a repo, off again from within the graph. */
 export const gitGraphCommands: Command[] = [
   {
     id: "git.showGraph",
-    label: "Git: Show Commit Graph",
+    label: "Git: Toggle Commit Graph",
     category: "general",
     shortcut: "Ctrl+Alt+G",
     when: () => settingsStore.enableGitGraph,
     handler: async () => {
+      const tab = windowTabsManager.activeTab;
+      if (tab?.panes[tab.activePaneId]?.gitGraph) {
+        windowTabsManager.toggleGitGraphInActivePane(null);
+        return;
+      }
       const path = getActiveExplorer()?.state.currentPath;
       if (!path) return;
       const root = await gitRepoRoot(path);
       if (root.ok && root.data) {
-        windowTabsManager.openGitGraphTab(root.data);
+        windowTabsManager.toggleGitGraphInActivePane(root.data);
       } else {
         toastStore.show("Not inside a git repository", "info");
       }
@@ -175,6 +194,24 @@ export const recentCommands: Command[] = [
 /** Workspace commands */
 export const workspaceCommands: Command[] = [
   {
+    // One palette entry (#229): opens a second menu listing the saved
+    // workspaces; picking one restores its layout.
+    id: "workspace.openNamed",
+    label: "Workspaces: Open...",
+    category: "general",
+    when: () => workspacesStore.count > 0,
+    handler: () => {
+      dialogStore.openPicker({
+        title: "Open workspace",
+        options: workspacesStore.list.map((w) => ({ id: w.id, label: w.name })),
+        onSelect: (id) => {
+          const workspace = workspacesStore.get(id);
+          if (workspace) windowTabsManager.restoreFromState(workspace.state);
+        },
+      });
+    },
+  },
+  {
     id: "workspace.open",
     label: "Workspaces: Manage...",
     category: "general",
@@ -196,14 +233,36 @@ export const workspaceCommands: Command[] = [
 export const terminalCommands: Command[] = [
   {
     id: "general.openTerminal",
-    label: "Open Terminal Here",
+    label: "Terminal Here",
     category: "general",
     shortcut: "Alt+M T",
     handler: () => {
+      // With the integrated terminal enabled, "here" means the embedded panel
+      // (it starts in the active explorer's directory) and the shortcut
+      // toggles it like Ctrl+` (#250); otherwise fall back to the external
+      // terminal app (#237).
+      if (settingsStore.enableTerminal) {
+        terminalPanelStore.toggle();
+        return;
+      }
       const explorer = getActiveExplorer();
       if (explorer) {
         openInTerminal(explorer.state.currentPath, settingsStore.terminalApp);
       }
+    },
+  },
+  {
+    id: "general.insertPathsIntoTerminal",
+    label: "Insert Selected Paths into Terminal",
+    category: "general",
+    shortcut: "Alt+T",
+    when: () => settingsStore.enableTerminal,
+    handler: () => {
+      // Type the selection (space-delimited, shell-quoted) into the shell
+      // prompt and focus it, opening the panel if hidden (#265).
+      const explorer = getActiveExplorer();
+      const paths = explorer?.getSelectedEntries().map((e) => e.path) ?? [];
+      terminalPanelStore.insertPaths(paths);
     },
   },
 ];

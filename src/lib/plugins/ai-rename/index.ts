@@ -29,8 +29,12 @@ import {
   sanitizeChosenName,
   CONTENT_HINT_MAX_CHARS,
 } from "$lib/domain/ai-rename";
-import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-import { dialogStore } from "$lib/state/dialogs.svelte";
+// Direct import justification (#291): the inline-rename autocomplete store is a
+// single-slot core extension point that only this plugin fills — conceptually a
+// contribution like a fs-provider, but too niche to grow the shared
+// PluginContext with an ai-rename-specific method. The provider is registered
+// below and explicitly torn down in deactivate() (it isn't in the ctx disposal
+// ledger). Workspace/settings/dialog side effects still route through ctx.
 import {
   renameSuggestionStore,
   type RenameSuggestionProvider,
@@ -134,8 +138,8 @@ export const aiRenamePlugin: Plugin = {
         count,
         apiKey,
         toast: ctx.toast,
-        onOpenSettings: () => dialogStore.openSettings(),
-        refresh: () => windowTabsManager.refreshAllPanes(),
+        onOpenSettings: () => ctx.openSettings(),
+        refresh: () => void ctx.workspace.refreshPanes(),
       });
     };
 
@@ -191,8 +195,7 @@ export const aiRenamePlugin: Plugin = {
       label: "AI: Suggest Rename…",
       category: "plugins",
       handler: () => {
-        const entries = windowTabsManager.getActiveExplorer()?.getSelectedEntries() ?? [];
-        const file = selectedFile(entries);
+        const file = selectedFile(ctx.workspace.getSelection());
         if (file) void openPicker(file);
         else ctx.toast.show("Select a single file first", "info");
       },

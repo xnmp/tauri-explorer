@@ -10,13 +10,11 @@
 -->
 <script lang="ts">
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
-  import { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
-  import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
+  import { useRowGridView } from "$lib/composables/use-row-grid-view.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { autoFillColumns, chunkIntoRows } from "$lib/domain/virtual-layout";
+  import { autoFillColumns } from "$lib/domain/virtual-layout";
   import { getFileIconColor, isImageFile, isVideoFile } from "$lib/domain/file-types";
 
-  import { usesPointerDrag } from "$lib/domain/platform";
   import { settingsStore, THUMBNAIL_SIZE_CONFIG } from "$lib/state/settings.svelte";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import EntryName from "./EntryName.svelte";
@@ -24,7 +22,7 @@
   import GitStatusBadge from "./GitStatusBadge.svelte";
   import ThumbnailImage from "./ThumbnailImage.svelte";
   import FolderThumbnail from "./FolderThumbnail.svelte";
-  import InlineNewFolder, { NEW_FOLDER_SENTINEL, isNewFolderSentinel } from "./InlineNewFolder.svelte";
+  import InlineNewFolder, { isNewFolderSentinel } from "./InlineNewFolder.svelte";
   import ItemButton from "./ItemButton.svelte";
   import VirtualList from "./VirtualList.svelte";
 
@@ -46,15 +44,6 @@
   // Viewport horizontal padding (8px each side) reserved out of the grid width.
   const VIEWPORT_PAD_X = 16;
 
-  // Shared item interactions (DnD, context menu with select-on-right-click)
-  const interactions = useItemInteractions({
-    getExplorer: () => explorer,
-    refreshPanes: () => windowTabsManager.refreshAllPanes(),
-    selectOnContextMenu: true,
-  });
-
-  const pointerDrag = usesPointerDrag ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
-
   const effectiveThumbnailSize = $derived(
     folderViewsStore.getThumbnailSize(explorer.currentPath, settingsStore.thumbnailSize)
   );
@@ -72,21 +61,15 @@
     autoFillColumns(contentWidth - VIEWPORT_PAD_X, tileConfig.gridMinWidth, tileGap)
   );
 
-  // The new-folder editor rides INSIDE the virtual grid as a sentinel first
-  // tile (#257) — not as a band above the scroller. Real-entry indices shift
-  // by one while it's present (see sentinelOffset).
-  const gridEntries = $derived(
-    explorer.isCreatingFolder ? [NEW_FOLDER_SENTINEL, ...explorer.displayEntries] : explorer.displayEntries,
-  );
-  const sentinelOffset = $derived(explorer.isCreatingFolder ? 1 : 0);
-
-  const rows = $derived(chunkIntoRows(gridEntries, tileColumns));
-
-  // Map an entry index to its row and forward to VirtualList's row scroller.
-  let rowScrollToIndex = $state<((row: number) => void) | undefined>();
-  scrollToIndex = (index: number) => {
-    rowScrollToIndex?.(Math.floor((index + sentinelOffset) / tileColumns));
-  };
+  // Shared row-grid wiring (interactions, pointer drag, sentinel splice,
+  // row chunking, scrollToIndex mapping) — see useRowGridView.
+  const grid = useRowGridView({
+    getExplorer: () => explorer,
+    refreshPanes: () => windowTabsManager.refreshAllPanes(),
+    getColumns: () => tileColumns,
+  });
+  const { interactions, pointerDrag } = grid;
+  scrollToIndex = grid.scrollToIndex;
 
   // Folder previews only render at large/xlarge tile sizes (smaller tiles
   // keep the plain folder icon, like Windows Explorer).
@@ -122,12 +105,12 @@
 >
   <VirtualList
     class="tiles-scroller file-rows"
-    items={rows}
+    items={grid.rows}
     itemHeight={tileRowHeight}
     itemOverflow="visible"
     viewportPadding="8px"
     getKey={(row) => row.startIndex}
-    bind:scrollToIndex={rowScrollToIndex}
+    bind:scrollToIndex={grid.rowScrollToIndex}
   >
     {#snippet children(row)}
       <div class="tile-row" style="grid-template-columns: repeat({tileColumns}, minmax(0, 1fr)); gap: var(--tile-gap);">
@@ -136,7 +119,7 @@
             <InlineNewFolder {explorer} variant="tiles" />
           {:else}
           {@const iconColor = getFileIconColor(entry)}
-          <ItemButton class="tile-item" index={row.startIndex + col - sentinelOffset} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
+          <ItemButton class="tile-item" index={row.startIndex + col - grid.sentinelOffset} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
             <div class="tile-icon" style:color={iconColor} data-drag-icon>
               {#if isImageFile(entry)}
                 <ThumbnailImage path={entry.path} size={tileConfig.displaySize} genSize={tileConfig.genSize} quality={tileConfig.quality} fallbackColor={iconColor} />

@@ -13,6 +13,7 @@
 //! interoperable with Explorer. Data is passed via environment variables, never
 //! interpolated into the script, so filenames can't break or inject it.
 
+use crate::error::AppError;
 use std::process::Command;
 
 /// Detect whether the session is Wayland or X11.
@@ -21,31 +22,47 @@ fn is_wayland() -> bool {
     std::env::var("WAYLAND_DISPLAY").is_ok()
 }
 
-/// Try to read a specific MIME type from the clipboard.
-/// Returns `None` if the tool isn't available or the MIME type isn't present.
+/// A clipboard tool failed to start. Distinguish "not installed" — the
+/// common, actionable case (#279) — from other spawn failures.
 #[cfg(not(windows))]
-fn read_mime(mime: &str) -> Option<String> {
+fn tool_error(tool: &str, package: &str, e: std::io::Error) -> AppError {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        AppError::Other(format!(
+            "{} is not installed — install {} for clipboard file support",
+            tool, package
+        ))
+    } else {
+        AppError::Other(format!("Failed to start {}: {}", tool, e))
+    }
+}
+
+/// Try to read a specific MIME type from the clipboard.
+/// `Ok(None)` means the MIME type isn't present (an empty clipboard is not
+/// an error); `Err` means the clipboard tool itself is unusable (#279).
+#[cfg(not(windows))]
+fn read_mime(mime: &str) -> Result<Option<String>, AppError> {
     let output = if is_wayland() {
         Command::new("wl-paste")
             .args(["--no-newline", "--type", mime])
             .output()
-            .ok()?
+            .map_err(|e| tool_error("wl-paste", "wl-clipboard", e))?
     } else {
         Command::new("xclip")
             .args(["-o", "-selection", "clipboard", "-t", mime])
             .output()
-            .ok()?
+            .map_err(|e| tool_error("xclip", "xclip", e))?
     };
 
+    // Non-success here means "that MIME type isn't on the clipboard".
     if !output.status.success() {
-        return None;
+        return Ok(None);
     }
 
     let text = String::from_utf8_lossy(&output.stdout).into_owned();
     if text.is_empty() {
-        return None;
+        return Ok(None);
     }
-    Some(text)
+    Ok(Some(text))
 }
 
 /// Parse `file://` URIs into filesystem paths.
@@ -95,10 +112,11 @@ fn percent_decode(input: &str) -> String {
 
 /// Read file paths from the OS clipboard.
 /// Tries `x-special/gnome-copied-files` first (GNOME/XFCE/MATE), then `text/uri-list` (KDE).
+/// `Ok(vec![])` = no file paths on the clipboard; `Err` = broken tooling (#279).
 #[cfg(not(windows))]
-fn read_clipboard_file_paths() -> Vec<String> {
+fn read_clipboard_file_paths() -> Result<Vec<String>, AppError> {
     // GNOME/XFCE format: first line is "copy" or "cut", rest are URIs
-    if let Some(text) = read_mime("x-special/gnome-copied-files") {
+    if let Some(text) = read_mime("x-special/gnome-copied-files")? {
         let uris: String = text
             .lines()
             .skip(1) // skip "copy" / "cut" line
@@ -106,19 +124,19 @@ fn read_clipboard_file_paths() -> Vec<String> {
             .join("\n");
         let paths = parse_file_uris(&uris);
         if !paths.is_empty() {
-            return paths;
+            return Ok(paths);
         }
     }
 
     // KDE/generic format: plain URI list
-    if let Some(text) = read_mime("text/uri-list") {
+    if let Some(text) = read_mime("text/uri-list")? {
         let paths = parse_file_uris(&text);
         if !paths.is_empty() {
-            return paths;
+            return Ok(paths);
         }
     }
 
-    Vec::new()
+    Ok(Vec::new())
 }
 
 /// Percent-encode a file path for use in `file://` URIs.
@@ -148,39 +166,40 @@ fn paths_to_uris(paths: &[String]) -> Vec<String> {
 }
 
 /// Write clipboard data with a specific MIME type using native tools.
-/// Uses wl-copy on Wayland, xclip on X11.
+/// Uses wl-copy on Wayland, xclip on X11. Failures carry the reason (#279).
 #[cfg(not(windows))]
-fn write_mime(mime: &str, data: &[u8]) -> bool {
+fn write_mime(mime: &str, data: &[u8]) -> Result<(), AppError> {
+    let tool = if is_wayland() { "wl-copy" } else { "xclip" };
+    let package = if is_wayland() { "wl-clipboard" } else { "xclip" };
     let mut child = if is_wayland() {
-        match Command::new("wl-copy")
+        Command::new("wl-copy")
             .args(["--type", mime])
             .stdin(std::process::Stdio::piped())
             .spawn()
-        {
-            Ok(c) => c,
-            Err(_) => return false,
-        }
     } else {
-        match Command::new("xclip")
+        Command::new("xclip")
             .args(["-i", "-selection", "clipboard", "-t", mime])
             .stdin(std::process::Stdio::piped())
             .spawn()
-        {
-            Ok(c) => c,
-            Err(_) => return false,
-        }
-    };
+    }
+    .map_err(|e| tool_error(tool, package, e))?;
 
     if let Some(ref mut stdin) = child.stdin {
         use std::io::Write;
-        if stdin.write_all(data).is_err() {
-            return false;
-        }
+        stdin
+            .write_all(data)
+            .map_err(|e| AppError::Other(format!("Failed to write to {}: {}", tool, e)))?;
     }
     // Drop stdin to signal EOF
     child.stdin.take();
 
-    child.wait().map(|s| s.success()).unwrap_or(false)
+    let status = child
+        .wait()
+        .map_err(|e| AppError::Other(format!("Failed to wait for {}: {}", tool, e)))?;
+    if !status.success() {
+        return Err(AppError::Other(format!("{} exited with {}", tool, status)));
+    }
+    Ok(())
 }
 
 /// Write file paths to the OS clipboard in formats understood by
@@ -194,9 +213,9 @@ fn write_mime(mime: &str, data: &[u8]) -> bool {
 /// (richest: carries copy/cut semantics); KDE/Dolphin paste of our copies is
 /// not supported until a multi-target clipboard backend is used.
 #[cfg(not(windows))]
-fn write_clipboard_file_paths(paths: &[String]) -> bool {
+fn write_clipboard_file_paths(paths: &[String]) -> Result<(), AppError> {
     if paths.is_empty() {
-        return false;
+        return Err(AppError::InvalidPath("No paths to copy".to_string()));
     }
 
     let uris = paths_to_uris(paths);
@@ -355,15 +374,19 @@ fn ps_lines(stdout: &[u8]) -> Vec<String> {
 }
 
 #[cfg(windows)]
-fn read_clipboard_file_paths() -> Vec<String> {
+fn read_clipboard_file_paths() -> Result<Vec<String>, AppError> {
     let script = r#"
 Add-Type -AssemblyName System.Windows.Forms
 $files = [System.Windows.Forms.Clipboard]::GetFileDropList()
 if ($files) { $files -join "`n" }
 "#;
     match run_powershell(script, &[]) {
-        Some(o) if o.status.success() => ps_lines(&o.stdout),
-        _ => Vec::new(),
+        Some(o) if o.status.success() => Ok(ps_lines(&o.stdout)),
+        Some(o) => Err(AppError::Other(format!(
+            "PowerShell clipboard read exited with {}",
+            o.status
+        ))),
+        None => Err(AppError::Other("Failed to start PowerShell for clipboard read".to_string())),
     }
 }
 
@@ -371,9 +394,9 @@ if ($files) { $files -join "`n" }
 /// so Explorer (and other apps) can paste them. Copy semantics, matching the
 /// Linux path (which only offers "copy").
 #[cfg(windows)]
-fn write_clipboard_file_paths(paths: &[String]) -> bool {
+fn write_clipboard_file_paths(paths: &[String]) -> Result<(), AppError> {
     if paths.is_empty() {
-        return false;
+        return Err(AppError::InvalidPath("No paths to copy".to_string()));
     }
     let joined = paths.join("\n");
     let script = r#"
@@ -382,9 +405,14 @@ $col = New-Object System.Collections.Specialized.StringCollection
 foreach ($p in ($env:CLIP_PATHS -split "`n")) { if ($p) { [void]$col.Add($p) } }
 [System.Windows.Forms.Clipboard]::SetFileDropList($col)
 "#;
-    run_powershell(script, &[("CLIP_PATHS", &joined)])
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    match run_powershell(script, &[("CLIP_PATHS", &joined)]) {
+        Some(o) if o.status.success() => Ok(()),
+        Some(o) => Err(AppError::Other(format!(
+            "PowerShell clipboard write exited with {}",
+            o.status
+        ))),
+        None => Err(AppError::Other("Failed to start PowerShell for clipboard write".to_string())),
+    }
 }
 
 #[cfg(windows)]
@@ -426,18 +454,19 @@ $img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
 /// Paste clipboard image data to a file in the given directory.
 /// Returns the path of the created file, or an error.
 #[tauri::command]
-pub async fn clipboard_paste_image(directory: String) -> Result<String, String> {
+pub async fn clipboard_paste_image(directory: String) -> Result<String, AppError> {
     tokio::task::spawn_blocking(move || clipboard_paste_image_sync(directory))
         .await
-        .map_err(|e| format!("Task join error: {}", e))?
+        .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
 }
 
-fn clipboard_paste_image_sync(directory: String) -> Result<String, String> {
-    let data = read_clipboard_image().ok_or("No image data in clipboard")?;
+fn clipboard_paste_image_sync(directory: String) -> Result<String, AppError> {
+    let data = read_clipboard_image()
+        .ok_or_else(|| AppError::Other("No image data in clipboard".to_string()))?;
 
     let dir = std::path::Path::new(&directory);
     if !dir.is_dir() {
-        return Err(format!("Not a directory: {}", directory));
+        return Err(AppError::InvalidPath(format!("Not a directory: {}", directory)));
     }
 
     // Generate a timestamped filename
@@ -450,35 +479,40 @@ fn clipboard_paste_image_sync(directory: String) -> Result<String, String> {
         // Add milliseconds to disambiguate
         let filename = format!("img-{}.png", now.format("%Y%m%d-%H%M%S-%3f"));
         let filepath = dir.join(&filename);
-        std::fs::write(&filepath, &data).map_err(|e| format!("Failed to write image: {}", e))?;
+        std::fs::write(&filepath, &data).map_err(|e| AppError::Other(format!("Failed to write image: {}", e)))?;
         return Ok(filepath.to_string_lossy().to_string());
     }
 
-    std::fs::write(&filepath, &data).map_err(|e| format!("Failed to write image: {}", e))?;
+    std::fs::write(&filepath, &data).map_err(|e| AppError::Other(format!("Failed to write image: {}", e)))?;
 
     log::info!("Pasted clipboard image to: {}", filename);
     Ok(filepath.to_string_lossy().to_string())
 }
 
+/// Probe used for paste-menu enablement — silent `false` on failure is the
+/// right behavior here; the actionable errors surface on the actual
+/// read/write commands (#279).
 #[tauri::command]
 pub async fn clipboard_has_files() -> bool {
-    tokio::task::spawn_blocking(|| !read_clipboard_file_paths().is_empty())
-        .await
-        .unwrap_or(false)
+    tokio::task::spawn_blocking(|| {
+        read_clipboard_file_paths().map(|p| !p.is_empty()).unwrap_or(false)
+    })
+    .await
+    .unwrap_or(false)
 }
 
 #[tauri::command]
-pub async fn clipboard_read_files() -> Vec<String> {
+pub async fn clipboard_read_files() -> Result<Vec<String>, AppError> {
     tokio::task::spawn_blocking(read_clipboard_file_paths)
         .await
-        .unwrap_or_default()
+        .map_err(|e| AppError::Other(format!("Clipboard task failed: {}", e)))?
 }
 
 #[tauri::command]
-pub async fn clipboard_write_files(paths: Vec<String>) -> bool {
+pub async fn clipboard_write_files(paths: Vec<String>) -> Result<(), AppError> {
     tokio::task::spawn_blocking(move || write_clipboard_file_paths(&paths))
         .await
-        .unwrap_or(false)
+        .map_err(|e| AppError::Other(format!("Clipboard task failed: {}", e)))?
 }
 
 #[cfg(test)]

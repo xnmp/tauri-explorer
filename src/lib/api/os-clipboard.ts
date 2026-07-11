@@ -1,17 +1,25 @@
 /**
  * OS Clipboard API for file operations.
- * Issue: tauri-explorer-za55, tauri-explorer-rdra
+ * Issue: tauri-explorer-za55, tauri-explorer-rdra, #279
  *
- * Write uses tauri-plugin-clipboard-x (works cross-platform).
- * Read uses custom Tauri commands that parse Linux clipboard formats
- * (x-special/gnome-copied-files, text/uri-list) via wl-paste/xclip.
+ * Read/write use custom Tauri commands that parse Linux clipboard formats
+ * (x-special/gnome-copied-files, text/uri-list) via wl-paste/xclip, and
+ * CF_HDROP via PowerShell on Windows. Failures carry a reason (e.g.
+ * "wl-copy is not installed") so callers can surface it instead of a
+ * silent no-op copy (#279).
  */
 
 import { invoke } from "./files";
 
+export type OsClipboardResult<T> = { ok: true; data: T } | { ok: false; error: string };
+
+function errorMessage(error: unknown): string {
+  return typeof error === "string" ? error : error instanceof Error ? error.message : String(error);
+}
+
 /**
- * Check if the OS clipboard contains files.
- * Uses custom Tauri command for Linux MIME type support.
+ * Check if the OS clipboard contains files. A pure probe (menu enablement):
+ * failures deliberately read as "no files".
  */
 export async function osClipboardHasFiles(): Promise<boolean> {
   try {
@@ -23,29 +31,27 @@ export async function osClipboardHasFiles(): Promise<boolean> {
 }
 
 /**
- * Read file paths from the OS clipboard.
- * Uses custom Tauri command that reads x-special/gnome-copied-files
- * and text/uri-list formats via wl-paste (Wayland) or xclip (X11).
+ * Read file paths from the OS clipboard. `ok: true` with an empty array
+ * means the clipboard holds no files; `ok: false` means the clipboard
+ * tooling itself failed (missing wl-clipboard/xclip, PowerShell error).
  */
-export async function osClipboardReadFiles(): Promise<string[]> {
+export async function osClipboardReadFiles(): Promise<OsClipboardResult<string[]>> {
   try {
-    return await invoke<string[]>("clipboard_read_files");
+    return { ok: true, data: await invoke<string[]>("clipboard_read_files") };
   } catch (error) {
-    console.error("Failed to read files from OS clipboard:", error);
-    return [];
+    return { ok: false, error: errorMessage(error) };
   }
 }
 
 /**
- * Write file paths to the OS clipboard.
- * Uses custom Tauri command that writes x-special/gnome-copied-files
- * via wl-copy (Wayland) or xclip (X11) for native file manager support.
+ * Write file paths to the OS clipboard so external file managers can paste
+ * them. Failure carries the reason for the caller to surface.
  */
-export async function osClipboardWriteFiles(filePaths: string[]): Promise<boolean> {
+export async function osClipboardWriteFiles(filePaths: string[]): Promise<OsClipboardResult<void>> {
   try {
-    return await invoke<boolean>("clipboard_write_files", { paths: filePaths });
+    await invoke<void>("clipboard_write_files", { paths: filePaths });
+    return { ok: true, data: undefined };
   } catch (error) {
-    console.error("Failed to write files to OS clipboard:", error);
-    return false;
+    return { ok: false, error: errorMessage(error) };
   }
 }

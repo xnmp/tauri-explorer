@@ -12,7 +12,6 @@
 
 import type { Plugin } from "../api";
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
-import { windowTabsManager } from "$lib/state/window-tabs.svelte";
 
 const DEMO_ROOT = "demo://";
 
@@ -55,7 +54,7 @@ export const demoPlugin: Plugin = {
       label: "Demo: Open Virtual Folder",
       category: "plugins",
       handler: () => {
-        void windowTabsManager.getActiveExplorer()?.navigateTo(DEMO_ROOT);
+        void ctx.workspace.navigate(DEMO_ROOT);
       },
     });
 

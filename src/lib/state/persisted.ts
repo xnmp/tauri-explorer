@@ -14,6 +14,14 @@ import { writeConfigFile } from "$lib/api/files";
 const isAvailable = typeof localStorage !== "undefined";
 
 /**
+ * localStorage key for the last-painted background color, as an [r,g,b,a]
+ * JSON array. Written by theme.svelte.ts on every theme apply, read by
+ * window-appearance.ts to seed new windows' background color before their
+ * first paint. Shared as a constant so the two modules can't drift.
+ */
+export const EXPLORER_BG_RGBA_KEY = "explorer-bg-rgba";
+
+/**
  * Load a value from localStorage, returning the default if not found or invalid.
  */
 export function loadPersisted<T>(key: string, defaultValue: T): T {
@@ -48,6 +56,33 @@ export function savePersisted<T>(key: string, value: T): void {
 export function removePersisted(key: string): void {
   if (!isAvailable) return;
   localStorage.removeItem(key);
+}
+
+/**
+ * Load a raw (non-JSON) string from localStorage, returning null if missing.
+ * Use this for values that predate the JSON-encoded convention above — e.g.
+ * plain CSS color strings — where switching to JSON encoding would break
+ * existing readers of the raw stored value.
+ */
+export function loadPersistedRaw(key: string): string | null {
+  if (!isAvailable) return null;
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Save a raw (non-JSON) string to localStorage as-is.
+ */
+export function savePersistedRaw(key: string, value: string): void {
+  if (!isAvailable) return;
+  try {
+    localStorage.setItem(key, value);
+  } catch (err) {
+    console.warn(`Failed to persist "${key}" to localStorage:`, err);
+  }
 }
 
 // --- Serialized config-file writer (latest wins) ---

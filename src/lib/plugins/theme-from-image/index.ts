@@ -14,6 +14,12 @@ import { basename } from "$lib/domain/path";
 import { buildTheme, themeIdFromName } from "$lib/domain/theme-from-palette";
 import { extractPalette } from "$lib/api/thumbnails";
 import { writeThemeFile } from "$lib/api/config";
+// Direct import justification (#291): this plugin is purpose-built to extend the
+// theme engine — generating a theme and applying it (themeStore) and reading the
+// configured wallpaper (settingsStore.backgroundImage) are theme-subsystem
+// concerns no other plugin touches. Per the PluginContext docstring, a plugin
+// that extends one specific core subsystem may import that subsystem's store
+// directly rather than grow the shared context with a single-consumer method.
 import { themeStore } from "$lib/state/theme.svelte";
 import { settingsStore } from "$lib/state/settings.svelte";
 

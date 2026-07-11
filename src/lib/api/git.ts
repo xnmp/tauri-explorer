@@ -4,9 +4,9 @@
  */
 
 import { invoke, extractError, type ApiResult } from "./common";
-import type { GitFileEntry, GitStatusCode } from "$lib/domain/git";
+import type { GitFileEntry, GitStatusCode, GitOpState } from "$lib/domain/git";
 
-export type { GitFileEntry, GitStatusCode };
+export type { GitFileEntry, GitStatusCode, GitOpState };
 
 /**
  * Git file status types.
@@ -41,6 +41,8 @@ export interface GitStatusSummary {
   changes: GitFileEntry[];
   untracked: GitFileEntry[];
   merge: GitFileEntry[];
+  /** In-progress operation, or "clean". Drives the SCM in-progress banner. */
+  op_state: GitOpState;
 }
 
 export interface GitCommitResult {
@@ -158,6 +160,53 @@ export async function gitWatchRepo(repoPath: string): Promise<ApiResult<void>> {
 export async function gitUnwatchRepo(repoPath: string): Promise<ApiResult<void>> {
   try {
     await invoke<void>("git_unwatch_repo", { repoPath });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+// ----- In-progress operation abort / continue (#294) ----- //
+
+export async function gitMergeAbort(repoPath: string): Promise<ApiResult<void>> {
+  try {
+    await invoke<void>("git_merge_abort", { repoPath });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+export async function gitRebaseAbort(repoPath: string): Promise<ApiResult<void>> {
+  try {
+    await invoke<void>("git_rebase_abort", { repoPath });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+export async function gitRebaseContinue(repoPath: string): Promise<ApiResult<void>> {
+  try {
+    await invoke<void>("git_rebase_continue", { repoPath });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+export async function gitCherryPickAbort(repoPath: string): Promise<ApiResult<void>> {
+  try {
+    await invoke<void>("git_cherry_pick_abort", { repoPath });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+export async function gitRevertAbort(repoPath: string): Promise<ApiResult<void>> {
+  try {
+    await invoke<void>("git_revert_abort", { repoPath });
     return { ok: true, data: undefined };
   } catch (err) {
     return { ok: false, error: extractError(err) };

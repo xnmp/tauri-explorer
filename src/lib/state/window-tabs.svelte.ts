@@ -227,7 +227,7 @@ function createWindowTabsManager() {
     getTabLivePath,
     panePath,
   });
-  const { getTabDisplay, getTabTitle, ensureGitRoot } = tabDisplay;
+  const { getTabDisplay, getTabTitle, ensureGitRoot, getGitRoot } = tabDisplay;
 
   /** Get the directory path for any tab by ID (its active pane). */
   function getTabPath(tabId: string): string | undefined {
@@ -996,6 +996,7 @@ function createWindowTabsManager() {
     getPanePath,
     getTabTooltip,
     ensureGitRoot,
+    getGitRoot,
 
     // Explorer access
     getExplorer,

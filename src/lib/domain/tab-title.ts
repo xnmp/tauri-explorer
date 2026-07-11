@@ -110,3 +110,10 @@ export function gitTabDisplay(
     name: atRoot ? basename(repoRoot) : basename(cwd),
   };
 }
+
+/** Folder name for a tab title: basename, with the original fallbacks —
+ *  root stays "/", empty becomes "Explorer" (#278/#281). */
+export function extractFolderName(path: string): string {
+  const name = basename(path);
+  return name && name !== "/" ? name : path || "Explorer";
+}

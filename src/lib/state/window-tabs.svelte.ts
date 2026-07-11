@@ -27,11 +27,10 @@ import {
 } from "$lib/domain/pane-layout";
 import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
 import { loadPersisted, savePersisted, removePersisted } from "./persisted";
-import { basename, parentDir, directoryKey } from "$lib/domain/path";
-import { disambiguateTabTitles, gitTabDisplay, type GitTabDisplay } from "$lib/domain/tab-title";
+import { parentDir } from "$lib/domain/path";
+import { createTabDisplay } from "./tab-display.svelte";
 import { settingsStore } from "./settings.svelte";
 import { workspacesStore } from "./workspaces.svelte";
-import { gitRepoRoot } from "$lib/api/files";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   type PersistedNode,
@@ -97,15 +96,8 @@ export function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** Folder name for a tab title: domain basename, with the original
- *  fallbacks preserved — root stays "/", empty becomes "Explorer" (#278). */
-export function extractFolderName(path: string): string {
-  const name = basename(path);
-  return name && name !== "/" ? name : path || "Explorer";
-}
-
-/** Separator between pane folder names in a multi-pane tab title. */
-const PANE_TITLE_SEPARATOR = " | ";
+// Re-exported for existing importers/tests; canonical home is domain (#281).
+export { extractFolderName } from "$lib/domain/tab-title";
 
 type ExternalSeed = {
   currentPath: string;
@@ -122,12 +114,6 @@ function createWindowTabsManager() {
   // Window-level tab strip
   let tabs = $state<WindowTab[]>([]);
   let activeTabId = $state<string | null>(null);
-
-  // Cache of folder → git repo root (string), or null when not in a repo.
-  // Populated lazily by ensureGitRoot (driven from the tab bar) only while the
-  // "git root in tab title" setting is on. Keyed by directoryKey(path).
-  let gitRoots = $state(new Map<string, string | null>());
-  const gitRootPending = new Set<string>();
 
   // Stack of recently closed tabs for Ctrl+Shift+T restoration (persisted)
   const closedTabs = createClosedTabsStore();
@@ -234,92 +220,14 @@ function createWindowTabsManager() {
     return normalizePersistedState(loadPersisted<unknown>(STORAGE_KEY, null));
   }
 
-  /** How a tab labels itself.
-   *  - git mode (setting on + folder inside a repo): a git icon, the repo root
-   *    name, and the current folder (`repo` is null when the cwd *is* the root).
-   *  - single-pane normal mode: a folder icon and the (disambiguated) folder name.
-   *  - multi-pane: the custom name if renamed, else every pane's folder name
-   *    joined (no disambiguation — the combination is the identity). */
-  type TabDisplay = GitTabDisplay;
-
-  /** Per-tab display info for SINGLE-pane explorer tabs. Normal-mode tabs are
-   *  disambiguated against each other (VS Code style); git-mode tabs carry
-   *  repo + cwd, which is already distinct. Reactive on tab paths, the
-   *  git-root cache, and the setting. */
-  const singlePaneDisplays = $derived.by((): Map<string, TabDisplay> => {
-    const useGit = settingsStore.tabTitleGitRoot;
-    const normal: { id: string; path: string }[] = [];
-    const gitMode = new Map<string, { repoRoot: string; cwd: string }>();
-
-    const singles = tabs.filter(
-      (t): t is ExplorerTab => t.kind === "explorer" && countLeaves(t.layout) === 1,
-    );
-    for (const t of singles) {
-      const cwd = getTabLivePath(t);
-      const root = useGit ? gitRoots.get(directoryKey(cwd)) : null;
-      if (root) gitMode.set(t.id, { repoRoot: root, cwd });
-      else normal.push({ id: t.id, path: cwd });
-    }
-
-    const disamb = disambiguateTabTitles(normal);
-    const out = new Map<string, TabDisplay>();
-    for (const t of singles) {
-      const g = gitMode.get(t.id);
-      if (g) {
-        out.set(t.id, gitTabDisplay(g.cwd, g.repoRoot));
-      } else {
-        out.set(t.id, {
-          isGitRoot: false,
-          repo: null,
-          name: disamb.get(t.id) ?? extractFolderName(getTabLivePath(t)),
-        });
-      }
-    }
-    return out;
+  // Tab labels/titles + git-root decoration live in their own module (#281);
+  // it reads tabs/paths through these getters so reactivity is unchanged.
+  const tabDisplay = createTabDisplay({
+    getTabs: () => tabs,
+    getTabLivePath,
+    panePath,
   });
-
-  /** Multi-pane title: custom name, or all pane folder names joined. */
-  function multiPaneTitle(tab: ExplorerTab): string {
-    if (tab.name) return tab.name;
-    return leafIds(tab.layout)
-      .map((paneId) => extractFolderName(panePath(tab, paneId)))
-      .join(PANE_TITLE_SEPARATOR);
-  }
-
-  /** Structured display (icon + repo + name) for rendering a tab. */
-  function getTabDisplay(tab: WindowTab): TabDisplay {
-    if (countLeaves(tab.layout) > 1) {
-      return { isGitRoot: false, repo: null, name: multiPaneTitle(tab) };
-    }
-    return (
-      singlePaneDisplays.get(tab.id) ?? {
-        isGitRoot: false,
-        repo: null,
-        name: extractFolderName(getTabLivePath(tab)),
-      }
-    );
-  }
-
-  /** Plain-text tab title (used for the drag ghost and width measurement). */
-  function getTabTitle(tab: WindowTab): string {
-    const d = getTabDisplay(tab);
-    return d.repo ? `${d.repo} › ${d.name}` : d.name;
-  }
-
-  /** Fetch (and cache) the git repo root for a folder. No-op unless the
-   *  setting is on and we haven't already resolved/queued this folder. Called
-   *  from the tab bar so the async work has a component owner. */
-  async function ensureGitRoot(path: string): Promise<void> {
-    if (!settingsStore.tabTitleGitRoot || !path) return;
-    const key = directoryKey(path);
-    if (gitRoots.has(key) || gitRootPending.has(key)) return;
-    gitRootPending.add(key);
-    const result = await gitRepoRoot(path);
-    gitRootPending.delete(key);
-    const root = result.ok ? result.data : null;
-    // Reassign for reactivity so title derivations recompute.
-    gitRoots = new Map(gitRoots).set(key, root);
-  }
+  const { getTabDisplay, getTabTitle, ensureGitRoot } = tabDisplay;
 
   /** Get the directory path for any tab by ID (its active pane). */
   function getTabPath(tabId: string): string | undefined {

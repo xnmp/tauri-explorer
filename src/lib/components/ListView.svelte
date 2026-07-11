@@ -11,17 +11,14 @@
 <script lang="ts">
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { useItemInteractions } from "$lib/composables/use-item-interactions.svelte";
-  import { usePointerDrag } from "$lib/composables/use-pointer-drag.svelte";
+  import { useRowGridView } from "$lib/composables/use-row-grid-view.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { chunkIntoRows } from "$lib/domain/virtual-layout";
   import { getFileIconColor } from "$lib/domain/file-types";
 
-  import { usesPointerDrag } from "$lib/domain/platform";
   import EntryName from "./EntryName.svelte";
   import FileIcon from "./FileIcon.svelte";
   import GitStatusBadge from "./GitStatusBadge.svelte";
-  import InlineNewFolder, { NEW_FOLDER_SENTINEL, isNewFolderSentinel } from "./InlineNewFolder.svelte";
+  import InlineNewFolder, { isNewFolderSentinel } from "./InlineNewFolder.svelte";
   import ItemButton from "./ItemButton.svelte";
   import VirtualList from "./VirtualList.svelte";
 
@@ -43,15 +40,6 @@
   // `white-space: nowrap`, so every row is exactly this tall.
   const LIST_ROW_HEIGHT = 30;
 
-  // Shared item interactions (DnD, context menu with select-on-right-click)
-  const interactions = useItemInteractions({
-    getExplorer: () => explorer,
-    refreshPanes: () => windowTabsManager.refreshAllPanes(),
-    selectOnContextMenu: true,
-  });
-
-  const pointerDrag = usesPointerDrag ? usePointerDrag({ getExplorer: () => explorer, refreshPanes: () => windowTabsManager.refreshAllPanes() }) : null;
-
   // Compute effective list column count (auto or fixed)
   const effectiveListColumns = $derived.by(() => {
     if (settingsStore.listViewColumns > 0) return settingsStore.listViewColumns;
@@ -59,32 +47,26 @@
     return Math.max(1, Math.min(6, Math.floor(contentWidth / settingsStore.listColumnMaxWidth)));
   });
 
-  // The new-folder editor rides INSIDE the virtual grid as a sentinel first
-  // cell (#257) — not as a band above the scroller. Real-entry indices shift
-  // by one while it's present (see sentinelOffset).
-  const gridEntries = $derived(
-    explorer.isCreatingFolder ? [NEW_FOLDER_SENTINEL, ...explorer.displayEntries] : explorer.displayEntries,
-  );
-  const sentinelOffset = $derived(explorer.isCreatingFolder ? 1 : 0);
-
-  const rows = $derived(chunkIntoRows(gridEntries, effectiveListColumns));
-
-  // Map an entry index to its row and forward to VirtualList's row scroller.
-  let rowScrollToIndex = $state<((row: number) => void) | undefined>();
-  scrollToIndex = (index: number) => {
-    rowScrollToIndex?.(Math.floor((index + sentinelOffset) / effectiveListColumns));
-  };
+  // Shared row-grid wiring (interactions, pointer drag, sentinel splice,
+  // row chunking, scrollToIndex mapping) — see useRowGridView.
+  const grid = useRowGridView({
+    getExplorer: () => explorer,
+    refreshPanes: () => windowTabsManager.refreshAllPanes(),
+    getColumns: () => effectiveListColumns,
+  });
+  const { interactions, pointerDrag } = grid;
+  scrollToIndex = grid.scrollToIndex;
 </script>
 
 <div class="list-view" data-columns={effectiveListColumns}>
   <VirtualList
     class="list-scroller file-rows"
-    items={rows}
+    items={grid.rows}
     itemHeight={LIST_ROW_HEIGHT}
     itemOverflow="visible"
     viewportPadding="6px 8px"
     getKey={(row) => row.startIndex}
-    bind:scrollToIndex={rowScrollToIndex}
+    bind:scrollToIndex={grid.rowScrollToIndex}
   >
     {#snippet children(row)}
       <div class="list-row" style="grid-template-columns: repeat({effectiveListColumns}, minmax(0, 1fr));">
@@ -92,7 +74,7 @@
           {#if isNewFolderSentinel(entry)}
             <InlineNewFolder {explorer} variant="list" />
           {:else}
-          <ItemButton class="list-item" index={row.startIndex + col - sentinelOffset} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
+          <ItemButton class="list-item" index={row.startIndex + col - grid.sentinelOffset} {entry} {explorer} {interactions} {pointerDrag} {onitemclick} {onitemdblclick}>
             <span class="list-icon" data-drag-icon style:color={entry.kind !== "directory" ? getFileIconColor(entry) : undefined}>
               <FileIcon {entry} size="small" />
             </span>

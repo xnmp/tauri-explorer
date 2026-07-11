@@ -16,8 +16,6 @@
 import type { Plugin, PluginContext } from "../api";
 import { basename } from "$lib/domain/path";
 import { isVirtualPath } from "$lib/domain/virtual-path";
-import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-import { dialogStore } from "$lib/state/dialogs.svelte";
 import type { FileEntry } from "$lib/domain/file";
 import UpscaleDialog from "./UpscaleDialog.svelte";
 
@@ -70,7 +68,7 @@ export const upscalePlugin: Plugin = {
         apiKey,
         jobs: ctx.jobs,
         toast: ctx.toast,
-        onOpenSettings: () => dialogStore.openSettings(),
+        onOpenSettings: () => ctx.openSettings(),
       });
     };
 
@@ -110,8 +108,7 @@ export const upscalePlugin: Plugin = {
       label: "Upscale: Upscale Image…",
       category: "plugins",
       handler: () => {
-        const entries = windowTabsManager.getActiveExplorer()?.getSelectedEntries() ?? [];
-        const image = selectedImage(entries);
+        const image = selectedImage(ctx.workspace.getSelection());
         if (image) void openUpscaler(image.path);
         else ctx.toast.show("Select a JPG, PNG, or WebP image first", "info");
       },
@@ -123,7 +120,7 @@ export const upscalePlugin: Plugin = {
       ({ jobId, outputPath }) => {
         ctx.jobs.complete(jobId, outputPath);
         ctx.toast.show(`Upscale complete: ${basename(outputPath)}`, "success");
-        for (const exp of windowTabsManager.getAllExplorers()) void exp.refresh();
+        void ctx.workspace.refreshPanes();
       },
     );
 

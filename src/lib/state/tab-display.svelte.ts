@@ -123,5 +123,13 @@ export function createTabDisplay(deps: TabDisplayDeps) {
     gitRoots = new Map(gitRoots).set(key, root);
   }
 
-  return { getTabDisplay, getTabTitle, ensureGitRoot };
+  /** Read the cached git repo root for a folder: the root string, `null` when
+   *  known not to be a repo, or `undefined` when not yet resolved. Lets other
+   *  consumers (git-warm, #287) reuse the tab bar's probe instead of issuing a
+   *  duplicate gitRepoRoot IPC. */
+  function getGitRoot(path: string): string | null | undefined {
+    return path ? gitRoots.get(directoryKey(path)) : undefined;
+  }
+
+  return { getTabDisplay, getTabTitle, ensureGitRoot, getGitRoot };
 }

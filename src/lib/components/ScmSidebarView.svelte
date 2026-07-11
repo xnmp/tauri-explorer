@@ -16,6 +16,7 @@
   import { parentDir, basename } from "$lib/domain/path";
   import { settingsStore } from "$lib/state/settings.svelte";
   import type { GitFileEntry, GitStatusCode } from "$lib/api/files";
+  import { gitOpStateLabel } from "$lib/domain/git";
   import Modal from "./Modal.svelte";
 
   import { buildTree, collectPaths, type ScmTreeNode } from "$lib/domain/scm-tree";
@@ -234,13 +235,39 @@
   const fullStagedCount = $derived(fullSummary.staged.length);
   const fullMergeCount = $derived(fullSummary.merge.length);
 
+  // In-progress operation (repo-wide): drives the banner and blocks commits.
+  const opState = $derived(fullSummary.op_state);
+  const opInProgress = $derived(opState !== "clean");
+  const opLabel = $derived(gitOpStateLabel(opState));
+
+  async function onAbortOperation(): Promise<void> {
+    const label = opLabel;
+    const r = await scmStore.abortOperation();
+    if (!r.ok) {
+      toastStore.error(`Abort failed: ${r.error}`);
+      return;
+    }
+    toastStore.success(`${label} aborted`);
+  }
+
+  async function onContinueRebase(): Promise<void> {
+    const r = await scmStore.continueRebase();
+    if (!r.ok) {
+      toastStore.error(`Rebase continue failed: ${r.error}`);
+      return;
+    }
+    toastStore.success("Rebase continued");
+  }
+
   /** Whether the commit button should be active. Uses full (unfiltered) counts
-   *  since commits operate repo-wide. */
+   *  since commits operate repo-wide. Unresolved conflicts block every commit,
+   *  mirroring git's own refusal while the index is unmerged. */
   const canCommit = $derived.by(() => {
     if (!isRepo) return false;
+    if (fullMergeCount > 0) return false;
     const msg = scmStore.commitMessage.trim();
     if (scmStore.amend) return true;
-    const hasStaged = fullStagedCount > 0 || fullMergeCount > 0;
+    const hasStaged = fullStagedCount > 0;
     return msg.length > 0 && hasStaged;
   });
 
@@ -285,6 +312,37 @@
       </button>
     </div>
   {:else}
+    {#if opInProgress}
+      <div class="op-banner" role="status" data-op={opState}>
+        <div class="op-banner-text">
+          <span class="op-banner-title">{opLabel} in progress</span>
+          <span class="op-banner-detail">
+            {#if fullMergeCount > 0}
+              {fullMergeCount} conflicted file{fullMergeCount === 1 ? "" : "s"} — resolve, then {opState === "rebase" ? "continue" : "commit"}
+            {:else}
+              conflicts resolved — {opState === "rebase" ? "continue the rebase" : "commit to finish"}
+            {/if}
+          </span>
+        </div>
+        <div class="op-banner-actions">
+          {#if opState === "rebase"}
+            <button
+              type="button"
+              class="op-banner-btn continue"
+              disabled={fullMergeCount > 0}
+              title={fullMergeCount > 0 ? "Resolve all conflicts first" : "git rebase --continue"}
+              onclick={onContinueRebase}
+            >Continue</button>
+          {/if}
+          <button
+            type="button"
+            class="op-banner-btn abort"
+            title="Abort the {opLabel.toLowerCase()} and restore the previous state"
+            onclick={onAbortOperation}
+          >Abort</button>
+        </div>
+      </div>
+    {/if}
     <div class="commit-panel">
       <div class="branch-line">
         <span class="branch-icon" aria-hidden="true">⌥</span>
@@ -804,6 +862,75 @@
     font-size: 11px;
     color: var(--system-critical, #dc2626);
     padding: 2px 4px;
+  }
+
+  .op-banner {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--divider);
+    background: color-mix(in srgb, var(--system-caution, #f59e0b) 14%, var(--background-card));
+    border-left: 3px solid var(--system-caution, #f59e0b);
+  }
+
+  .op-banner-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .op-banner-title {
+    font-size: 12px;
+    font-weight: var(--font-weight-semibold, 600);
+    color: var(--text-primary);
+  }
+
+  .op-banner-detail {
+    font-size: 11px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+  }
+
+  .op-banner-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .op-banner-btn {
+    height: 24px;
+    padding: 0 10px;
+    border-radius: var(--radius-sm, 4px);
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: var(--font-weight-medium, 500);
+    cursor: pointer;
+    border: 1px solid var(--divider);
+    background: var(--background-card);
+    color: var(--text-secondary);
+    transition: background var(--transition-fast), opacity var(--transition-fast);
+  }
+
+  .op-banner-btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--text-primary) 8%, var(--background-card));
+  }
+
+  .op-banner-btn.abort {
+    border-color: color-mix(in srgb, var(--system-critical, #dc2626) 50%, var(--divider));
+    color: var(--system-critical, #dc2626);
+  }
+
+  .op-banner-btn.continue {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .op-banner-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
 
   .commit-row {

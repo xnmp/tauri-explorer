@@ -69,6 +69,33 @@ test.describe("Git graph tab", () => {
     await expect(page.locator(".entry-item").first()).toBeVisible();
   });
 
+  test("SCM panel stays visible alongside the graph (#333)", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await page.evaluate(() => {
+      const raw = localStorage.getItem("explorer-settings");
+      const s = raw ? JSON.parse(raw) : {};
+      s.showGitStatus = true;
+      s.showScmPanel = true;
+      localStorage.setItem("explorer-settings", JSON.stringify(s));
+    });
+    await page.reload();
+    await waitForEntries(page);
+    await expect(page.locator(".scm-panel")).toBeVisible();
+
+    await openGraphViaPalette(page);
+
+    // Both surfaces at once: the graph renders commit rows while the SCM
+    // panel keeps its real working-tree content (not just an empty shell).
+    await expect(page.locator('[data-testid="git-graph-view"]')).toBeVisible();
+    await expect(page.locator(".scm-panel")).toBeVisible();
+    await expect(page.locator('.scm-panel [data-section="changes"] .count-badge')).toHaveText("2");
+
+    // Toggling the graph off returns to the file list with the panel intact.
+    await openGraphViaPalette(page, false);
+    await expect(page.locator(".entry-item").first()).toBeVisible();
+    await expect(page.locator(".scm-panel")).toBeVisible();
+  });
+
   test("re-invoking the command toggles the graph off in the pane (#272)", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents/project");
     await waitForEntries(page);

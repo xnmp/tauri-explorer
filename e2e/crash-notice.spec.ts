@@ -33,6 +33,10 @@ test("no crash notice on a clean launch", async ({ page }) => {
 
 test("a frontend error is recorded and offered as a crash on next launch", async ({ page }) => {
   await page.goto("/");
+  // goto resolves before any app JS runs under Vite dev, so wait until the
+  // app is interactive — dispatching earlier races handler installation and
+  // the error would go unrecorded.
+  await page.waitForSelector(".file-list");
 
   // Trigger an uncaught error the global handler captures + records.
   await page.evaluate(() => {

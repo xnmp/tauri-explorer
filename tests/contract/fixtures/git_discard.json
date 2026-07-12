@@ -1,0 +1,6 @@
+{
+  "discard_conflicted_refuses": {
+    "expect_error": true,
+    "error_substring": "conflict"
+  }
+}

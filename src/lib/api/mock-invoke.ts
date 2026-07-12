@@ -323,6 +323,22 @@ function getDirectoryEntries(path: string): FileEntry[] {
   return mockFiles[path] || [];
 }
 
+// Mirror the backend listing contract (src-tauri/.../dir_listing.rs sort_entries):
+// directories first, then case-insensitively by name. Dotfiles are retained in
+// the listing (the frontend filters hidden entries). Returns a sorted copy so
+// the stored insertion order (relied on by copy-name generation, fuzzy search)
+// is never mutated.
+function sortListing(entries: FileEntry[]): FileEntry[] {
+  return [...entries].sort((a, b) => {
+    const aIsNotDir = a.kind === "directory" ? 0 : 1;
+    const bIsNotDir = b.kind === "directory" ? 0 : 1;
+    if (aIsNotDir !== bIsNotDir) return aIsNotDir - bIsNotDir;
+    const an = a.name.toLowerCase();
+    const bn = b.name.toLowerCase();
+    return an < bn ? -1 : an > bn ? 1 : 0;
+  });
+}
+
 // Mock command handlers
 type CommandHandler = (args: Record<string, unknown>) => unknown;
 
@@ -415,9 +431,19 @@ function mockUnstagePath(path: string): void {
   }
 }
 
-/** Discard mirrors git.rs: refuses a path with staged changes unless forced;
- *  otherwise reverts (changes) or removes (untracked). */
+/** Discard mirrors git.rs: refuses a conflicted (merge) path outright, refuses
+ *  a path with staged changes unless forced; otherwise reverts (changes) or
+ *  removes (untracked). */
 function mockDiscardPath(path: string, force: boolean): void {
+  // Conflicted paths have no single obviously-correct resolution, so git.rs
+  // refuses to discard them (never force-bypassed) rather than silently
+  // deleting — discarding one here would drop the entry and mask data loss.
+  if (mockGit.merge.some((e) => e.path === path)) {
+    throw new Error(
+      `cannot discard '${path}': it has an unresolved merge conflict. ` +
+        `Resolve the conflict (stage the file) or abort the operation.`,
+    );
+  }
   if (!force && mockGit.staged.some((e) => e.path === path)) {
     throw new Error(
       `refusing to discard '${path}' with staged changes; pass force=true to override`,
@@ -790,7 +816,7 @@ const mockCommands: Record<string, CommandHandler> = {
     if (!(path in mockFiles)) {
       throw new Error(`Path not found: ${path}`);
     }
-    const entries = getDirectoryEntries(path);
+    const entries = sortListing(getDirectoryEntries(path));
     return { path, entries, listing_id: null } as DirectoryListing;
   },
 
@@ -843,7 +869,7 @@ const mockCommands: Record<string, CommandHandler> = {
     if (!(path in mockFiles)) {
       throw new Error(`Path not found: ${path}`);
     }
-    const entries = getDirectoryEntries(path);
+    const entries = sortListing(getDirectoryEntries(path));
     return { path, entries, listing_id: null } as DirectoryListing;
   },
 
@@ -1259,6 +1285,7 @@ const mockCommands: Record<string, CommandHandler> = {
         changes: [],
         untracked: [],
         merge: [],
+        op_state: "clean",
       };
     }
     return mockGitSummary();

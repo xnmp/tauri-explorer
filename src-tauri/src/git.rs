@@ -1126,4 +1126,138 @@ mod tests {
         // Critically: the file is still on disk (no data loss).
         assert!(file.exists(), "conflicted file must not be deleted");
     }
+
+    /// Contract tests mirroring the mock-side vitest suite in
+    /// `tests/contract/git.contract.test.ts`. Both suites drive their backend
+    /// (real git2 here, mock-invoke there) through the same scenarios and assert
+    /// against the same shared JSON fixtures embedded below. If the mock's
+    /// classification / guards drift from real git behavior, one side fails.
+    mod contract {
+        use super::*;
+        use serde_json::{json, Value};
+
+        fn fixture(name: &str) -> Value {
+            let raw = match name {
+                "git_status.json" => {
+                    include_str!("../../tests/contract/fixtures/git_status.json")
+                }
+                "git_commit.json" => {
+                    include_str!("../../tests/contract/fixtures/git_commit.json")
+                }
+                "git_discard.json" => {
+                    include_str!("../../tests/contract/fixtures/git_discard.json")
+                }
+                other => panic!("unknown fixture {other}"),
+            };
+            serde_json::from_str(raw).expect("fixture is valid JSON")
+        }
+
+        /// { statusCode: count } histogram for one bucket. Mirrors the JS
+        /// `counts()` helper — paths are dropped, only classification counts.
+        fn bucket_counts(entries: &[GitFileEntry]) -> Value {
+            let mut m = serde_json::Map::new();
+            for e in entries {
+                let key = match serde_json::to_value(e.status).unwrap() {
+                    Value::String(s) => s,
+                    other => panic!("status did not serialize to a string: {other:?}"),
+                };
+                let next = m.get(&key).and_then(Value::as_u64).unwrap_or(0) + 1;
+                m.insert(key, json!(next));
+            }
+            Value::Object(m)
+        }
+
+        fn normalize(s: &GitStatusSummary) -> Value {
+            json!({
+                "op_state": s.op_state,
+                "staged": bucket_counts(&s.staged),
+                "changes": bucket_counts(&s.changes),
+                "untracked": bucket_counts(&s.untracked),
+                "merge": bucket_counts(&s.merge),
+            })
+        }
+
+        #[test]
+        fn git_status_clean_matches_fixture() {
+            let dir = init_repo();
+            write(dir.path(), "a.txt", "hello\n");
+            commit_all(dir.path(), "init");
+            assert_eq!(
+                normalize(&sync_status(dir.path())),
+                fixture("git_status.json")["clean"]
+            );
+        }
+
+        #[test]
+        fn git_status_dirty_tree_matches_fixture() {
+            let dir = init_repo();
+            write(dir.path(), "t1.txt", "v1\n");
+            write(dir.path(), "t2.txt", "v1\n");
+            write(dir.path(), "t3.txt", "v1\n");
+            commit_all(dir.path(), "init");
+
+            // One staged modification.
+            write(dir.path(), "t1.txt", "v2\n");
+            {
+                let repo = open_repo(dir.path()).unwrap();
+                stage_paths_inner(&repo, &["t1.txt".into()]).unwrap();
+            }
+            // Two unstaged worktree modifications.
+            write(dir.path(), "t2.txt", "v2\n");
+            write(dir.path(), "t3.txt", "v2\n");
+            // Three untracked files.
+            write(dir.path(), "u1.txt", "x\n");
+            write(dir.path(), "u2.txt", "x\n");
+            write(dir.path(), "u3.txt", "x\n");
+
+            assert_eq!(
+                normalize(&sync_status(dir.path())),
+                fixture("git_status.json")["dirty_tree"]
+            );
+        }
+
+        #[test]
+        fn git_status_conflicted_merge_matches_fixture() {
+            let dir = conflicted_repo();
+            assert_eq!(
+                normalize(&sync_status(dir.path())),
+                fixture("git_status.json")["conflicted_merge"]
+            );
+        }
+
+        #[test]
+        fn git_commit_conflict_guard_matches_fixture() {
+            let dir = conflicted_repo();
+            let fx = fixture("git_commit.json");
+            let sub = fx["commit_while_conflicted"]["error_substring"]
+                .as_str()
+                .unwrap();
+            let path = dir.path().to_str().unwrap().to_string();
+            match tokio_test_block(git_commit(path, "resolve merge".into(), None)) {
+                Err(AppError::Other(m)) => {
+                    assert!(m.contains(sub), "message {m:?} lacks {sub:?}")
+                }
+                other => panic!("expected guard error, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn git_discard_conflict_guard_matches_fixture() {
+            let dir = conflicted_repo();
+            let fx = fixture("git_discard.json");
+            let sub = fx["discard_conflicted_refuses"]["error_substring"]
+                .as_str()
+                .unwrap();
+            let file = dir.path().join("a.txt");
+            let path = dir.path().to_str().unwrap().to_string();
+            match tokio_test_block(git_discard(path, vec!["a.txt".into()], None)) {
+                Err(AppError::Other(m)) => {
+                    assert!(m.contains(sub), "message {m:?} lacks {sub:?}")
+                }
+                other => panic!("expected guard error, got {other:?}"),
+            }
+            // Refusing must not delete the conflicted file.
+            assert!(file.exists(), "conflicted file must not be deleted");
+        }
+    }
 }

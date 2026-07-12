@@ -1,0 +1,6 @@
+{
+  "commit_while_conflicted": {
+    "expect_error": true,
+    "error_substring": "conflicted"
+  }
+}

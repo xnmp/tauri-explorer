@@ -408,4 +408,40 @@ mod tests {
         assert!(empty);
         assert!(!full);
     }
+
+    /// Contract test mirroring `tests/contract/fs-ops.contract.test.ts`
+    /// (mock side). Both build the `listing_order` scenario from the shared
+    /// fixture and assert the same ordering contract: directories first, then
+    /// case-insensitive by name, dotfiles included. If the mock's listing
+    /// order drifts from this backend, one side fails.
+    #[test]
+    fn contract_listing_order_matches_fixture() {
+        let fx: serde_json::Value =
+            serde_json::from_str(include_str!("../../../tests/contract/fixtures/fs_ops.json"))
+                .expect("fixture is valid JSON");
+        let scenario = &fx["listing_order"];
+        let as_strs = |key: &str| -> Vec<&str> {
+            scenario[key]
+                .as_array()
+                .unwrap_or_else(|| panic!("fixture key {key} missing"))
+                .iter()
+                .map(|v| v.as_str().expect("fixture names are strings"))
+                .collect()
+        };
+
+        let dir = tempdir().unwrap();
+        for d in as_strs("input_dirs") {
+            fs::create_dir(dir.path().join(d)).unwrap();
+        }
+        for f in as_strs("input_files") {
+            fs::write(dir.path().join(f), "x").unwrap();
+        }
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let listing = rt
+            .block_on(list_directory(dir.path().to_string_lossy().to_string()))
+            .unwrap();
+        let names: Vec<&str> = listing.entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, as_strs("expected_order"));
+    }
 }

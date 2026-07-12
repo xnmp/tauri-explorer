@@ -78,8 +78,9 @@
 | `src/lib/themes/` | Bundled CSS themes → [cross-cutting.md](architecture/cross-cutting.md) |
 | `src-tauri/src/` | Rust backend modules → [backend.md](architecture/backend.md) |
 | `tests/` | Vitest unit tests |
+| `tests/contract/` | Mock↔backend contract tests: shared JSON fixtures (`fixtures/`) asserted by both a vitest suite driving `mock-invoke.ts` and mirrored `#[test]`s driving the real commands (`src-tauri/src/git.rs` `mod contract`, `files/dir_listing.rs`, `files/file_ops.rs`) — drift in either side fails a suite |
 | `e2e/` | Playwright e2e tests (browser + mocked IPC) |
-| `e2e-tauri/` | WebdriverIO + tauri-driver smoke suite against the real binary (Linux + Windows only) |
+| `e2e-tauri/` | WebdriverIO + tauri-driver smoke suite against the real binary (Linux + Windows only); includes emit-before-listen race coverage (`specs/listener-races.spec.ts`) |
 
 ---
 

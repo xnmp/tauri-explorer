@@ -69,6 +69,44 @@ test.describe("Git graph tab", () => {
     await expect(page.locator(".entry-item").first()).toBeVisible();
   });
 
+  test("branch filter shows only the selected branch's history (#342)", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+    const view = page.locator('[data-testid="git-graph-view"]');
+    await expect(view.locator(".commit-row")).toHaveCount(18);
+
+    // Open the popover; the text box filters the branch list itself.
+    await page.locator('[data-testid="branch-filter-btn"]').click();
+    const popover = page.locator('[data-testid="branch-popover"]');
+    await expect(popover).toBeVisible();
+    await popover.locator(".bf-search").fill("feat");
+    await expect(popover.locator("label.bf-row")).toHaveCount(1);
+
+    // "only feature": the graph reduces to feature's ancestry — 10 commits
+    // plus the synthetic uncommitted row; the stash (based on main's tip)
+    // and everything merge-only drops out.
+    const row = popover.locator("label.bf-row", { hasText: "feature" });
+    await row.hover();
+    await row.locator(".bf-only").click();
+    await expect(view.locator(".commit-row")).toHaveCount(11);
+    await expect(view.locator(".commit-row").filter({ hasText: "Merge hotfix into main" })).toHaveCount(0);
+    await expect(view.locator(".commit-row").filter({ hasText: "Implement feature X" })).toHaveCount(1);
+    await expect(page.locator('[data-testid="branch-filter-btn"] .bf-count')).toHaveText("1");
+
+    // The filter persists across closing and reopening the graph.
+    await page.keyboard.press("Escape");
+    await openGraphViaPalette(page, false);
+    await expect(view).toHaveCount(0);
+    await openGraphViaPalette(page);
+    await expect(view.locator(".commit-row")).toHaveCount(11);
+
+    // "All branches" restores the full graph.
+    await page.locator('[data-testid="branch-filter-btn"]').click();
+    await popover.locator(".bf-all").click();
+    await expect(view.locator(".commit-row")).toHaveCount(18);
+  });
+
   test("graph columns resize by dragging header handles and persist (#341)", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents/project");
     await waitForEntries(page);

@@ -1433,11 +1433,38 @@ const mockCommands: Record<string, CommandHandler> = {
     if (!repoPath.startsWith("/home/user/Documents/project")) {
       return { commits: [], refs: {}, has_more: false, next_cursor: null };
     }
-    const options = (args.options as { skip?: number; limit?: number } | null) ?? {};
+    const options =
+      (args.options as { skip?: number; limit?: number; branches?: string[] } | null) ?? {};
     const skip = Math.max(0, options.skip ?? 0);
     const limit = Math.max(1, options.limit ?? 500);
 
-    const all = mockCommitGraph();
+    let all = mockCommitGraph();
+    // Branch filter (#342): mirror the backend's seeded revwalk — keep only
+    // commits reachable from the selected branch tips; stash rows survive
+    // only when their base commit does.
+    if (options.branches && options.branches.length > 0) {
+      const tips = new Map<string, string>();
+      for (const [oid, refList] of Object.entries(MOCK_GRAPH_REFS)) {
+        for (const r of refList) {
+          if (r.kind === "LocalBranch" || r.kind === "RemoteBranch") tips.set(r.name, oid);
+        }
+      }
+      const byOid = new Map(all.filter((c) => !("stash" in c)).map((c) => [c.oid, c]));
+      const reachable = new Set<string>();
+      const queue = options.branches
+        .map((n) => tips.get(n))
+        .filter((o): o is string => o !== undefined);
+      while (queue.length > 0) {
+        const oid = queue.pop()!;
+        if (reachable.has(oid)) continue;
+        reachable.add(oid);
+        const c = byOid.get(oid);
+        if (c) queue.push(...c.parents);
+      }
+      all = all.filter((c) =>
+        "stash" in c ? reachable.has(c.parents[0]) : reachable.has(c.oid),
+      );
+    }
     const page = all.slice(skip, skip + limit);
     const hasMore = skip + limit < all.length;
     return {
@@ -1460,13 +1487,20 @@ const mockCommands: Record<string, CommandHandler> = {
         detached: false,
       };
     }
-    const tip = fullOid(12);
+    // Tips mirror MOCK_GRAPH_REFS (the git_log decorations) so the branch
+    // filter's list and the graph's chips can't drift (#342).
+    const tip = fullOid(16);
     return {
       local_branches: [
         { name: "main", target: tip },
+        { name: "hotfix", target: fullOid(13) },
+        { name: "experiment", target: fullOid(14) },
         { name: "feature", target: fullOid(10) },
       ],
-      remote_branches: [{ name: "origin/main", target: fullOid(11) }],
+      remote_branches: [
+        { name: "origin/main", target: tip },
+        { name: "origin/hotfix", target: fullOid(13) },
+      ],
       tags: [
         { name: "v1.0", target: fullOid(5) },
         { name: "v0.9", target: fullOid(1) },

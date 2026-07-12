@@ -103,6 +103,11 @@ pub struct GitLogOptions {
     pub skip: usize,
     /// Max commits to return. Default 500; clamped to a sane ceiling.
     pub limit: Option<usize>,
+    /// When set, walk history from only these branch tips (shorthand names,
+    /// local like `main` or remote like `origin/main`) instead of HEAD plus
+    /// every branch. Names that don't resolve are ignored; if none resolve
+    /// the page is empty. `None` = no filter (#342).
+    pub branches: Option<Vec<String>>,
 }
 
 const DEFAULT_LIMIT: usize = 500;
@@ -241,18 +246,36 @@ fn build_log(
     walk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)
         .map_err(to_app_err)?;
 
-    // Seed from every local + remote branch tip plus HEAD so the graph shows
-    // all lanes, not just the current branch. Falls back gracefully on an
-    // empty / unborn repo (push_head errors → no commits).
+    // Seed the walk. Default: every local + remote branch tip plus HEAD so
+    // the graph shows all lanes, not just the current branch. With a branch
+    // filter (#342): only the selected tips — commits reachable from none of
+    // them (including HEAD's, if its branch is deselected) drop out. Falls
+    // back gracefully on an empty / unborn repo (push_head errors → no
+    // commits).
     let mut seeded = false;
-    if walk.push_head().is_ok() {
-        seeded = true;
-    }
-    if let Ok(branches) = repo.branches(None) {
-        for b in branches.flatten() {
-            if let Some(oid) = b.0.get().target() {
-                if walk.push(oid).is_ok() {
-                    seeded = true;
+    if let Some(names) = &opts.branches {
+        for name in names {
+            let branch = repo
+                .find_branch(name, git2::BranchType::Local)
+                .or_else(|_| repo.find_branch(name, git2::BranchType::Remote));
+            if let Ok(b) = branch {
+                if let Some(oid) = b.get().target() {
+                    if walk.push(oid).is_ok() {
+                        seeded = true;
+                    }
+                }
+            }
+        }
+    } else {
+        if walk.push_head().is_ok() {
+            seeded = true;
+        }
+        if let Ok(branches) = repo.branches(None) {
+            for b in branches.flatten() {
+                if let Some(oid) = b.0.get().target() {
+                    if walk.push(oid).is_ok() {
+                        seeded = true;
+                    }
                 }
             }
         }
@@ -579,6 +602,49 @@ mod tests {
         assert_eq!(stash_row.parents[0], page.commits[stash_pos + 1].oid);
     }
 
+    #[test]
+    fn branch_filter_walks_only_selected_tips() {
+        let (dir, repo) = init_repo();
+        let p = dir.path().to_path_buf();
+        write(&p, "a.txt", "one");
+        let c1 = commit(&repo, "base", &[]);
+        // Side branch off base, with its own tip; main advances separately.
+        repo.branch("side", &repo.find_commit(c1).unwrap(), false)
+            .unwrap();
+        write(&p, "a.txt", "two");
+        let _main_tip = commit(&repo, "main tip", &[c1]);
+        repo.set_head("refs/heads/side").unwrap();
+        write(&p, "b.txt", "side");
+        let _side_tip = commit(&repo, "side tip", &[c1]);
+
+        // Unfiltered: both tips plus the shared base.
+        let all = build_log(&repo, &GitLogOptions::default(), Vec::new(), &no_cancel()).unwrap();
+        assert_eq!(all.commits.len(), 3);
+
+        // Filtered to main: the side tip drops out — even though HEAD is on
+        // side (the filter replaces the HEAD seed, it does not add to it).
+        let opts = GitLogOptions {
+            branches: Some(vec!["main".into()]),
+            ..Default::default()
+        };
+        let page = build_log(&repo, &opts, Vec::new(), &no_cancel()).unwrap();
+        let sums: Vec<_> = page.commits.iter().map(|c| c.summary.as_str()).collect();
+        assert!(sums.contains(&"main tip"), "missing main tip: {sums:?}");
+        assert!(sums.contains(&"base"), "missing shared base: {sums:?}");
+        assert!(
+            !sums.contains(&"side tip"),
+            "filtered branch leaked: {sums:?}"
+        );
+
+        // Unresolvable names are ignored; nothing resolvable → empty page.
+        let opts = GitLogOptions {
+            branches: Some(vec!["no-such-branch".into()]),
+            ..Default::default()
+        };
+        let empty = build_log(&repo, &opts, Vec::new(), &no_cancel()).unwrap();
+        assert!(empty.commits.is_empty());
+    }
+
     fn init_repo() -> (TempDir, Repository) {
         let dir = TempDir::new().unwrap();
         let repo = Repository::init(dir.path()).unwrap();
@@ -744,6 +810,7 @@ mod tests {
             &GitLogOptions {
                 skip: 0,
                 limit: Some(4),
+                ..Default::default()
             },
             Vec::new(),
             &no_cancel(),
@@ -762,6 +829,7 @@ mod tests {
             &GitLogOptions {
                 skip: 4,
                 limit: Some(4),
+                ..Default::default()
             },
             Vec::new(),
             &no_cancel(),
@@ -776,6 +844,7 @@ mod tests {
             &GitLogOptions {
                 skip: 8,
                 limit: Some(4),
+                ..Default::default()
             },
             Vec::new(),
             &no_cancel(),
@@ -805,6 +874,7 @@ mod tests {
             &GitLogOptions {
                 skip: 100,
                 limit: Some(10),
+                ..Default::default()
             },
             Vec::new(),
             &no_cancel(),

@@ -1,0 +1,19 @@
+name: Feature request
+description: Suggest an improvement or new capability
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's the friction?
+      description: Describe the workflow that's slower or clunkier than it should be — that context matters more than a specific solution.
+      placeholder: "When I want to …, I currently have to …"
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: How would it ideally work? Keyboard-first suggestions especially welcome.
+    validations:
+      required: false

@@ -30,7 +30,10 @@ pub fn is_valid_output_filename(name: &str) -> bool {
 /// Validate the job's write target: `output_dir` must be an existing
 /// directory and `output_filename` a bare, traversal-free name. Returns the
 /// joined output path.
-pub fn validate_output_target(output_dir: &str, output_filename: &str) -> Result<PathBuf, AppError> {
+pub fn validate_output_target(
+    output_dir: &str,
+    output_filename: &str,
+) -> Result<PathBuf, AppError> {
     let output = PathBuf::from(output_dir);
     if !output.is_dir() {
         return Err(AppError::InvalidPath(format!(
@@ -84,7 +87,10 @@ pub async fn run_and_emit(
         Ok(output_path) => {
             let _ = app.emit(
                 &format!("{}-complete", event_prefix),
-                PluginJobCompleteEvent { job_id, output_path },
+                PluginJobCompleteEvent {
+                    job_id,
+                    output_path,
+                },
             );
         }
         Err(e) => {

@@ -963,10 +963,7 @@ mod tests {
         // Each entry is under this cap; only the aggregate exceeds it.
         let err = extract_entries(None, Path::new(&zip_path), &dest, true, 0, None, 6000)
             .expect_err("archive declaring more than the cap must be refused");
-        assert!(
-            err.to_string().contains("extraction limit"),
-            "got {err:?}"
-        );
+        assert!(err.to_string().contains("extraction limit"), "got {err:?}");
         // Refused before writing anything.
         assert!(!dest.join("source").exists());
         assert!(!dest.join("source/a.bin").exists());

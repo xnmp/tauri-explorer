@@ -15,7 +15,7 @@ Grep the export name; the singleton is usually `xxxStore` (a `$state` class inst
 | `windowTabsManager`, `generateId`, `extractFolderName` | window-tabs.svelte.ts | **Tab/window/pane-split manager** — tabs, split layout tree, active pane. Largest store. |
 | `ExplorerInstance` (class) | explorer.svelte.ts | **Per-pane central store** — listing, selection, navigation, sort, view mode. Hottest file. |
 | `settingsStore`, `Settings`, `TOGGLE_SETTINGS`, `THUMBNAIL_SIZE_CONFIG`, `generateToggleCommands`, `ColumnVisibility`, `PaneLayoutMode`, `NavBarButtons`, `IconTheme`, `ThumbnailSize`, `WindowsBackdrop` | settings.svelte.ts | All user settings + toggle-command generation. Persists `settings.json`. |
-| `scmStore` | scm.svelte.ts | Git SCM panel state (staged/unstaged/commit box). |
+| `getScmStore(paneId)` | scm.svelte.ts | Per-pane git SCM panel state (staged/unstaged/commit box), #334. |
 | `gitStatusStore` | git-status.svelte.ts | Per-file git status badges cache for the file list. |
 | `commandsStore` helpers: `registerCommand(s)`, `getAllCommands`, `getAvailableCommands`, `getCommandsByFrecency`, `getRecentCommands`, `getCommand`, `getCommandShortcut`, `Command`, `CommandCategory` | commands.svelte.ts | Command palette registry + frecency ranking. |
 | `registerAllCommands` | command-definitions.ts | Registers the full command set at startup. |

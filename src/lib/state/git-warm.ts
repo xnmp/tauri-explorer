@@ -9,7 +9,7 @@
 
 import { gitRepoRoot } from "$lib/api/files";
 import { settingsStore } from "./settings.svelte";
-import { scmStore } from "./scm.svelte";
+import { warmScmSummary } from "./scm.svelte";
 import { windowTabsManager } from "./window-tabs.svelte";
 import { warmGraphSnapshot } from "$lib/components/GitGraphView.svelte";
 import { createGitWarmer, type GitWarmer } from "$lib/domain/git-warm";
@@ -29,7 +29,7 @@ async function resolveRepoRoot(path: string): Promise<string | null> {
 export const gitWarmer: GitWarmer = createGitWarmer({
   resolveRepoRoot,
   warmGraph: (root) => void warmGraphSnapshot(root),
-  warmScm: (root) => void scmStore.warm(root),
+  warmScm: (root) => void warmScmSummary(root),
   graphEnabled: () => settingsStore.enableGitGraph,
   scmEnabled: () => settingsStore.showGitStatus,
 });

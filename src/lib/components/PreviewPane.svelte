@@ -14,7 +14,11 @@
   import { settingsStore } from "$lib/state/settings.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
   import { getFileIconColor } from "$lib/domain/file-types";
-  import { scmStore } from "$lib/state/scm.svelte";
+  import { getScmStore } from "$lib/state/scm.svelte";
+
+  // Window-global surface: the preview's SCM diff follows the ACTIVE pane's
+  // store (#334) — reactive through windowTabsManager.activePaneId.
+  const scmStore = $derived(getScmStore(windowTabsManager.activePaneId || "default"));
   import { parseUnifiedDiff, type ParsedDiff, type DiffLine } from "$lib/domain/diff";
   import FileIcon from "./FileIcon.svelte";
   /** Detect if the current theme uses a light color scheme.

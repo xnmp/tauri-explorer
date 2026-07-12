@@ -54,12 +54,13 @@ async function flushMicrotasks(times = 10): Promise<void> {
   for (let i = 0; i < times; i++) await Promise.resolve();
 }
 
-/** Fresh store per test — the module exports a singleton. */
+/** Fresh store per test — module reset clears the shared summary cache. */
 async function freshStore() {
   vi.resetModules();
   const mod = await import("$lib/state/scm.svelte");
-  await mod.scmStore.initWatcherListener();
-  return mod.scmStore;
+  const store = mod.getScmStore("test-pane");
+  await store.initWatcherListener();
+  return store;
 }
 
 beforeEach(() => {

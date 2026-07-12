@@ -721,6 +721,9 @@ pub async fn git_commit(
 
 struct WatcherEntry {
     _watcher: RecommendedWatcher,
+    /// Refcount (#334): multiple panes (or windows) can watch the same repo;
+    /// the OS watcher is dropped only when the last consumer unwatches.
+    count: usize,
 }
 
 static WATCHERS: OnceLock<Mutex<std::collections::HashMap<String, WatcherEntry>>> = OnceLock::new();
@@ -748,7 +751,8 @@ pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), App
     let mut map = watchers_map()
         .lock()
         .map_err(|e| AppError::Other(format!("git watchers lock poisoned: {e}")))?;
-    if map.contains_key(&key) {
+    if let Some(entry) = map.get_mut(&key) {
+        entry.count += 1;
         return Ok(());
     }
 
@@ -810,7 +814,13 @@ pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), App
     if !git_dir.starts_with(&repo_root) {
         let _ = watcher.watch(&git_dir, RecursiveMode::Recursive);
     }
-    map.insert(key, WatcherEntry { _watcher: watcher });
+    map.insert(
+        key,
+        WatcherEntry {
+            _watcher: watcher,
+            count: 1,
+        },
+    );
     Ok(())
 }
 
@@ -824,10 +834,16 @@ pub async fn git_unwatch_repo(repo_path: String) -> Result<(), AppError> {
             .unwrap_or(repo_path),
         Err(_) => repo_path,
     };
-    watchers_map()
+    let mut map = watchers_map()
         .lock()
-        .map_err(|e| AppError::Other(format!("git watchers lock poisoned: {e}")))?
-        .remove(&key);
+        .map_err(|e| AppError::Other(format!("git watchers lock poisoned: {e}")))?;
+    if let Some(entry) = map.get_mut(&key) {
+        if entry.count > 1 {
+            entry.count -= 1;
+        } else {
+            map.remove(&key);
+        }
+    }
     Ok(())
 }
 

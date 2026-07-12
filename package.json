@@ -20,6 +20,7 @@
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:perf": "playwright test e2e/performance.spec.ts",
     "test:e2e:tauri": "wdio run e2e-tauri/wdio.conf.ts",
+    "lint:arch": "node scripts/arch-lint.mjs --strict",
     "perf:check": "bun run scripts/perf-check.ts",
     "perf:baseline": "bun run scripts/perf-check.ts --update",
     "clean": "bash scripts/clean-rebuild.sh",

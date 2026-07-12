@@ -345,6 +345,7 @@ import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte
         </div>
       </div>
     {/each}
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- mouse-drag resize handle; role=separator conveys the correct semantics to AT, keyboard resize is a separate unimplemented feature -->
     <div
       class="resize-handle"
       onmousedown={resize.startResize}

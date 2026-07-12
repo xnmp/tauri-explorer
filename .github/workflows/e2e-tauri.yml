@@ -32,7 +32,7 @@ jobs:
       # save a binary-less cache, which later runs then restored (ENOENT at
       # spawn). tauri-driver is now installed unconditionally below.
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -41,7 +41,7 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-registry-
 
       - name: Cache Rust target
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: src-tauri/target
           key: ${{ runner.os }}-target-debug-${{ hashFiles('src-tauri/Cargo.lock') }}

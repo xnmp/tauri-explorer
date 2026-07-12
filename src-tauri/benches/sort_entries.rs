@@ -1,7 +1,7 @@
-//! Baseline (recorded on first `cargo bench` run, 12-core Linux dev box,
-//! release profile via criterion's default settings):
+//! Baseline (recorded 2026-07-12 on the first `cargo bench` run; 12-core
+//! Linux dev box, release profile via criterion's default settings):
 //!
-//!   sort_entries/10k_entries   time: [~4.1 ms 4.2 ms 4.3 ms]
+//!   sort_entries/10k_entries   time: [1.4000 ms 1.4019 ms 1.4039 ms]
 //!
 //! Re-run `cargo bench` after touching `sort_entries` (src/files/dir_listing.rs)
 //! and compare against this baseline.

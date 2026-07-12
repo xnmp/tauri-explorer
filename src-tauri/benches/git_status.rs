@@ -1,7 +1,7 @@
-//! Baseline (recorded on first `cargo bench` run, 12-core Linux dev box,
-//! release profile via criterion's default settings):
+//! Baseline (recorded 2026-07-12 on the first `cargo bench` run; 12-core
+//! Linux dev box, release profile via criterion's default settings):
 //!
-//!   git_status/collect_status   time: [~410 us 425 us 441 us]
+//!   git_status/collect_status   time: [423.82 µs 424.40 µs 424.97 µs]
 //!
 //! Re-run `cargo bench` after touching `collect_status` (src/git.rs) or its
 //! `classify`/`repo_op_state` helpers and compare against this baseline.

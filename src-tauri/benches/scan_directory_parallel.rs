@@ -1,7 +1,7 @@
-//! Baseline (recorded on first `cargo bench` run, 12-core Linux dev box,
-//! release profile via criterion's default settings):
+//! Baseline (recorded 2026-07-12 on the first `cargo bench` run; 12-core
+//! Linux dev box, release profile via criterion's default settings):
 //!
-//!   scan_directory_parallel/10k_files   time: [~24.8 ms 25.4 ms 26.1 ms]
+//!   scan_directory_parallel/10k_files   time: [5.7315 ms 5.7472 ms 5.7648 ms]
 //!
 //! Re-run `cargo bench` after touching `scan_directory_parallel` or
 //! `sort_entries` (src/files/dir_listing.rs) and compare against this

@@ -16,12 +16,12 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 
-// Measured 2026-07-12 (chore/perf-regression-guards): main chunk
-// _app/immutable/chunks/*.js was 689,460 bytes raw / 217,331 bytes gzip.
-// Budget = that gzip size + 10%, rounded. Raise deliberately (with a note
-// here) when a feature legitimately grows the cold-start payload; never
-// raise it just to make CI green.
-const BUDGET_GZIP_BYTES = 239_064;
+// Measured 2026-07-12 (chore/perf-regression-guards, post merge of dev):
+// main chunk _app/immutable/chunks/*.js was 691,381 bytes raw / 217,992
+// bytes gzip. Budget = that gzip size + 10%. Raise deliberately (with a
+// note here) when a feature legitimately grows the cold-start payload;
+// never raise it just to make CI green.
+const BUDGET_GZIP_BYTES = 239_791;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const clientDir = resolve(repoRoot, ".svelte-kit/output/client");

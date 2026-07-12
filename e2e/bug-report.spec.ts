@@ -28,6 +28,12 @@ test("Report a Bug opens a pre-filled GitHub issue with diagnostics", async ({ p
   expect(decoded).toContain("Tauri Explorer: v0.0.0-mock");
   expect(decoded).toContain("OS: linux (x86_64)");
   expect(decoded).toContain("What happened?");
+  // #302: the report carries a recent-logs tail so maintainers get context
+  // (the user reviews it in the GitHub form before submitting).
+  expect(decoded).toContain("## Recent logs");
+  expect(decoded).toContain("tauri_explorer");
+  // Stay under the URL length cap even with logs attached.
+  expect(url.length).toBeLessThanOrEqual(6000);
 });
 
 test("Open Logs Folder navigates the pane to the log directory", async ({ page }) => {

@@ -5,7 +5,6 @@
 <script lang="ts">
   import "@fontsource-variable/inter";
   import { onMount } from "svelte";
-  import { installGlobalErrorHandlers } from "$lib/api/crash";
   import { isShellReservedKey, isHardcodedAppShortcut } from "$lib/domain/terminal-keys";
   import { themeStore } from "$lib/state/theme.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
@@ -350,7 +349,6 @@
 
   onMount(() => {
     markStartup("mount");
-    installGlobalErrorHandlers();
 
     // Initialize theme from saved preference
     themeStore.initTheme();

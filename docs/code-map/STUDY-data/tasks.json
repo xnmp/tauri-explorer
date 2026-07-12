@@ -1,0 +1,102 @@
+[
+  {
+    "id": "F1",
+    "category": "feature",
+    "text": "Add a 'Copy full path' action to the file right-click context menu that copies the absolute path(s) of the selected file(s) to the OS clipboard."
+  },
+  {
+    "id": "F2",
+    "category": "feature",
+    "text": "Add 'file extension' as a new sort option for the file listing, selectable wherever sort order can currently be chosen (e.g. Details-view column behavior / sort menus), persisted like the existing sort preferences."
+  },
+  {
+    "id": "F3",
+    "category": "feature",
+    "text": "Implement Ctrl+Shift+T to reopen the most recently closed window tab, restoring its directory (and navigation history if feasible)."
+  },
+  {
+    "id": "F4",
+    "category": "feature",
+    "text": "When multiple files are selected, show the total size of the selection in the status bar (e.g. '5 items selected, 12.3 MB')."
+  },
+  {
+    "id": "B1",
+    "category": "bugfix",
+    "text": "Bug report: after renaming the folder that a window tab is showing, the tab's title still displays the old folder name. Identify the code paths involved (rename flow and tab-title derivation) and the most likely fix site(s)."
+  },
+  {
+    "id": "B2",
+    "category": "bugfix",
+    "text": "Bug report: Quick Open (Ctrl+P) sometimes shows results from the previously visited directory right after navigating to a new one. Identify how quick-open queries are issued, cancelled, and keyed to a directory, and the most likely fix site(s)."
+  },
+  {
+    "id": "B3",
+    "category": "bugfix",
+    "text": "Bug report: marquee (rubber-band) selection can select files that are currently hidden (e.g. dotfiles while 'show hidden' is off). Identify where marquee selection computes its candidate set, where visibility filtering happens, and the most likely fix site(s)."
+  },
+  {
+    "id": "B4",
+    "category": "bugfix",
+    "text": "Bug report: after renaming an image file, its thumbnail still shows the old image. Identify how thumbnails are keyed and cached (frontend and backend) and where invalidation on rename should happen."
+  },
+  {
+    "id": "P1",
+    "category": "perf",
+    "text": "Performance: opening a directory with 50,000 entries is slow to first render. Identify the hot paths across the backend directory listing and the frontend rendering pipeline — the specific files/functions you would profile and optimize."
+  },
+  {
+    "id": "P2",
+    "category": "perf",
+    "text": "Performance: while a content search (Ctrl+Shift+F) streams a large number of results, the UI stutters. Identify how results stream from the Rust backend to the frontend and where batching/throttling exists or should be added."
+  },
+  {
+    "id": "P3",
+    "category": "perf",
+    "text": "Performance: switching between window tabs re-fetches and re-renders the directory listing even when nothing changed. Identify how a tab switch drives listing loads and where caching exists or could be added."
+  },
+  {
+    "id": "P4",
+    "category": "perf",
+    "text": "Performance: generating thumbnails for a folder with thousands of images saturates the CPU. Identify where thumbnail generation is requested and scheduled, and how concurrency is limited (or not), across frontend and backend."
+  },
+  {
+    "id": "X1",
+    "category": "bugfix",
+    "text": "Bug report: miller columns don't update when a folder is deleted or renamed by another process (or from another window) — the stale folder stays visible until manual refresh. Identify how miller columns get their data, how filesystem-change events flow to them, and the most likely fix site(s)."
+  },
+  {
+    "id": "X2",
+    "category": "bugfix",
+    "text": "Bug report: the M/U/etc git status badges on files in the listing don't update when a file changes or after staging/committing in the SCM panel. Identify where the badges get their data, how git status refresh is triggered, and the most likely fix site(s)."
+  },
+  {
+    "id": "X3",
+    "category": "bugfix",
+    "text": "Bug report: dragging files and dropping onto their own source folder (same source and destination) still highlights the window as a valid drop target, even though the drop does nothing. Identify where drop-target validity is computed during a drag and where the fix goes."
+  },
+  {
+    "id": "X4",
+    "category": "feature",
+    "text": "Feature: the 'Recent' section of the sidebar should omit folders that no longer exist (deleted, moved, or renamed), and update live when one disappears. Identify where recent locations are stored, scored, and rendered, and where the existence check would go."
+  },
+  {
+    "id": "X5",
+    "category": "perf",
+    "text": "Bug report: deleting a single item in tiles view makes ALL thumbnails momentarily flash and reassemble (they re-load, not re-generate). Identify why one deletion re-renders every tile and where to fix it."
+  },
+  {
+    "id": "X6",
+    "category": "feature",
+    "text": "Feature: every toggleable setting should automatically appear in the command palette as a toggle command showing its current ON/OFF state, without having to register each one manually. Identify where settings are defined, where palette commands are registered, and how to wire them together."
+  },
+  {
+    "id": "X7",
+    "category": "bugfix",
+    "text": "Bug report: the path-autocomplete pill pops up while typing in the content-search (Ctrl+Shift+F) dialog and steals up/down arrow-key navigation from the results list. Identify how the autocomplete attaches to inputs and where to scope or suppress it."
+  },
+  {
+    "id": "X8",
+    "category": "bugfix",
+    "text": "Bug report: cancelling a multi-file copy/move operation leaves the progress dialog stuck on screen instead of dismissing it. Identify how progress dialogs track operation state, how cancellation propagates from UI to backend, and the most likely fix site(s)."
+  }
+]

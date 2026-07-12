@@ -1,0 +1,1122 @@
+{
+ "P1": {
+  "core": [
+   {
+    "path": "src-tauri/src/files/dir_listing.rs",
+    "why": "Backend hot path: scan_directory_parallel (jwalk max_depth 1 + per-entry symlink_metadata), start_streaming_directory (batch=100, 1ms emit pacing), list_directory (5s cache). All 50k entries scanned+sorted before first batch returns."
+   },
+   {
+    "path": "src-tauri/src/files/mod.rs",
+    "why": "metadata_to_entry does per-entry stat/lstat/read_link syscalls (50k of them); sort_entries; DirectoryListing/FileEntry serde serialization over IPC. fill_is_empty controls the per-subdir read_dir probe."
+   },
+   {
+    "path": "src/lib/state/explorer.svelte.ts",
+    "why": "navigateInternal owns the streaming ingest buffer (perf #1/#2: avoids O(n^2) recopy+resort per batch) and the displayEntries $derived running filterHidden+sortEntries over the full array on each commit."
+   },
+   {
+    "path": "src/lib/state/directory-listing.ts",
+    "why": "createDirectoryListing: persistent directory-entries event listener, early-buffer for pre-id chunks, invoke of start_streaming_directory. Delivers 50k entries in chunks to the store."
+   },
+   {
+    "path": "src/lib/domain/file.ts",
+    "why": "sortEntries (already-sorted linear check + shared Intl.Collator) and filterHidden run over the entire entry array on each displayEntries recompute. Core O(n log n) pipeline cost."
+   },
+   {
+    "path": "src/lib/components/VirtualList.svelte",
+    "why": "Virtual scroller: renders only visible window, rAF-coalesced scroll, visible-range/offset math. Decides whether 50k rows mount or ~34. First-render layout and scroll perf live here."
+   },
+   {
+    "path": "src/lib/components/FileItem.svelte",
+    "why": "Per-visible-row render: derived formatting, clipboard/selection/drop reactivity, and a per-row $effect firing emptyFolderResolver.request \u2192 is_directory_empty IPC. Multiplied across rendered rows."
+   },
+   {
+    "path": "src/lib/components/DetailsView.svelte",
+    "why": "Default view: feeds explorer.displayEntries into VirtualList (itemHeight=32) rendering FileItem per row. Dominant render path for a 50k dir in Details mode."
+   }
+  ],
+  "peripheral": [
+   {
+    "path": "docs/perf-review.md",
+    "why": "Verified perf analysis ranking exactly these hot paths (#1/#2 ingest, #3-5 per-row, #6 is_empty scan, #7 scroll, #10 IPC hops) with a progress log of what shipped."
+   },
+   {
+    "path": "src/lib/api/files.ts",
+    "why": "startStreamingDirectory / fetchDirectory / isDirectoryEmpty invoke wrappers; provider short-circuit for virtual paths. The IPC boundary between store and Rust."
+   },
+   {
+    "path": "src/lib/state/empty-folders.svelte.ts",
+    "why": "Lazy is_empty resolver with 8-way concurrency pool; a folder-heavy 50k dir queues many is_directory_empty IPC calls as rows scroll in."
+   },
+   {
+    "path": "src/lib/domain/file-types.ts",
+    "why": "getFileType / getFileIconColor / formatDate (cached Intl.DateTimeFormat) called per rendered row from FileItem."
+   },
+   {
+    "path": "src/lib/domain/virtual-layout.ts",
+    "why": "Pure computeOffsets / firstVisibleIndex / lastVisibleIndexExclusive used by VirtualList range math."
+   },
+   {
+    "path": "src/lib/domain/raf-coalesce.ts",
+    "why": "createRafCoalescer batches VirtualList scroll writes to one per frame (perf #7)."
+   },
+   {
+    "path": "src/lib/composables/use-item-interactions.svelte.ts",
+    "why": "isInClipboard / isClipboardCut membership checks invoked per row (perf #5, Set-backed)."
+   },
+   {
+    "path": "src/lib/state/clipboard.svelte.ts",
+    "why": "Provides the derived clipboard path Set that per-row membership checks read."
+   },
+   {
+    "path": "src/lib/components/FileIcon.svelte",
+    "why": "27KB per-row icon component rendered inside each FileItem; icon resolution cost multiplied across visible rows."
+   },
+   {
+    "path": "src/lib/components/EntryName.svelte",
+    "why": "Per-row name/rename component mounted inside every FileItem."
+   },
+   {
+    "path": "src/lib/components/ListView.svelte",
+    "why": "Alternate view; also virtualizes via VirtualList but always name-sorted."
+   },
+   {
+    "path": "src/lib/components/TilesView.svelte",
+    "why": "Tiles view uses content-visibility + rAF-chunked mounting rather than DOM windowing (perf #8); different render-cost profile."
+   },
+   {
+    "path": "src/lib/components/FileList.svelte",
+    "why": "View-mode dispatcher + 150ms loading-spinner defer; gates which view renders entries and the blank/loading state before first paint."
+   },
+   {
+    "path": "src-tauri/src/lib.rs",
+    "why": "Registers list_directory / start_streaming_directory / is_directory_empty commands and holds Startup: timing instrumentation."
+   },
+   {
+    "path": "e2e/performance.spec.ts",
+    "why": "Wall-clock folder-navigation and scroll/selection budgets; harness to validate a first-render optimization."
+   }
+  ],
+  "notes": "Flow: explorer.navigateInternal \u2192 directory-listing.ts \u2192 api/files.startStreamingDirectory \u2192 Rust start_streaming_directory (dir_listing.rs). scan_directory_parallel runs on a blocking thread: jwalk depth-1 then metadata_to_entry (mod.rs) does per-entry lstat (\u224850k syscalls) then sort_entries. Nothing returns until the full scan+sort finishes \u2014 first paint is gated on all 50k stats. is_empty left None (perf #6), resolved lazily by empty-folders.svelte.ts.\n\nBackend returns first 100 inline, streams the rest as directory-entries events. directory-listing.ts routes them to onEntries \u2192 a non-reactive streamBuffer, committed to coreState.entries on a 100ms throttle (perf #1/#2 fix; was O(n^2)). Each commit invalidates displayEntries ($derived), re-running filterHidden+sortEntries (file.ts) over the whole array. displayEntries \u2192 FileList \u2192 DetailsView \u2192 VirtualList renders only ~34 FileItem rows; per-row work is scroll cost, not first render.\n\nTwo routes: (A) backend scan + serde serialization of 50k entries over IPC \u2014 dominates for 50k, no Rust benches yet; (B) frontend ingest buffering + filter/sort + VirtualList windowing. Caveat: dev server uses mock-invoke.ts (no real FS), so E2E understates backend cost; real numbers need the Tauri binary + Startup: logs. Most perf-review.md items already shipped, so remaining first-render wins center on the backend scan.",
+  "agent_id": "a251c2ba1a835ac95"
+ },
+ "F4": {
+  "core": [
+   {
+    "path": "src/lib/components/StatusBar.svelte",
+    "why": "The status bar component. Already computes selectedCount and selectedSize (sum of file sizes over selectedEntries) via $derived and renders '{n} selected (formatSize)'. Single file where this feature lives / would be modified."
+   }
+  ],
+  "peripheral": [
+   {
+    "path": "src/lib/domain/file.ts",
+    "why": "Defines FileEntry (readonly size, kind, path) and formatSize(bytes) \u2014 pure helper rendering '12.3 MB'. Read for byte-formatting contract; changes only if a different format is wanted."
+   },
+   {
+    "path": "src/lib/state/explorer.svelte.ts",
+    "why": "Per-pane state exposing selectedPaths (SvelteSet<string>) and displayEntries getters StatusBar reads to derive selected entries and sizes. Source of selection data; context."
+   },
+   {
+    "path": "src/lib/state/window-tabs.svelte.ts",
+    "why": "Provides windowTabsManager.getActiveExplorer(), the entry point StatusBar uses to reach the active pane's selection/entries."
+   },
+   {
+    "path": "src/routes/+page.svelte",
+    "why": "SPA root mounting <StatusBar /> gated by settingsStore.showStatusBar (lines 50, 507-508). Confirms where the status bar renders."
+   },
+   {
+    "path": "e2e/statusbar-selection.spec.ts",
+    "why": "Existing Playwright E2E asserting the status bar shows selection count and size; place to extend/verify assertions."
+   }
+  ],
+  "notes": "IMPORTANT: This feature is ALREADY implemented. StatusBar.svelte (lines 24-34, 50-60): (1) builds selectedEntries by filtering displayEntries to paths in explorer.selectedPaths; (2) computes selectedSize = sum of e.size over file-kind selected entries; (3) renders '{selectedCount} selected ... ({formatSize(selectedSize)})'. The requested behaviour exists, though wording is 'N selected (12.3 MB)' not 'N items selected, 12.3 MB'.\\n\\nFlow: +page.svelte mounts StatusBar -> StatusBar calls windowTabsManager.getActiveExplorer() (window-tabs.svelte.ts) -> reads explorer.selectedPaths (SvelteSet) and displayEntries (explorer.svelte.ts) -> filters/reduces to selectedSize -> formats via formatSize() from domain/file.ts. All reactive via $derived/$derived.by.\\n\\nIf implementing from scratch, the ONLY file that must change is StatusBar.svelte; the rest (FileEntry.size, formatSize, selectedPaths, displayEntries) is pre-existing infrastructure consumed by it. If the task is just wording/format tweaks to match the exact example, still only StatusBar.svelte template lines 50-60 (optionally formatSize). Directories are excluded from the sum (no meaningful size), consistent with formatSize's documented contract. Verification lives in e2e/statusbar-selection.spec.ts.",
+  "agent_id": "a34e62cd89545ce9b"
+ },
+ "B3": {
+  "core": [
+   {
+    "path": "src/lib/composables/use-marquee-selection.svelte.ts",
+    "why": "Computes the marquee candidate set: getSelectedIndices() (details, geometry/itemHeight range) and getSelectedIndicesFromDOM() (list/tiles, reads data-index off rendered items). Where 'which items the band covers' is decided."
+   },
+   {
+    "path": "src/lib/components/FileList.svelte",
+    "why": "updateMarqueeSelection() (~L209-227) dispatches per view to the index fns using displayEntries.length, then calls explorer.selectByIndices. Glue tying candidate set to the filtered list; likely fix site."
+   },
+   {
+    "path": "src/lib/state/explorer.svelte.ts",
+    "why": "displayEntries derived (L122-137: filterHidden + manualHiddenStore + filterQuery) is the visibility filter; selectByIndices wrapper (L491-499) maps indices into displayEntries. Central locus for scoping marquee to visible entries."
+   },
+   {
+    "path": "src/lib/domain/file.ts",
+    "why": "filterHidden() (L133-141) is the predicate defining 'hidden' (dotfiles '.', '~$', isSystemHidden). The definition the marquee must respect via displayEntries."
+   },
+   {
+    "path": "src/lib/state/selection.ts",
+    "why": "Pure selectByIndices() (L55-86) maps index array -> paths within displayEntries bounds. Only bounds-checks, not visibility; if indices reference an unfiltered set, hidden files leak here."
+   }
+  ],
+  "peripheral": [
+   {
+    "path": "src/lib/components/ItemButton.svelte",
+    "why": "Sets data-index (documented as 'Global index in displayEntries', L28-30/L64) read by getSelectedIndicesFromDOM, and applies .hidden-entry dim class (L69). Index alignment source for DOM-based marquee."
+   },
+   {
+    "path": "src/lib/components/ListView.svelte",
+    "why": "Iterates displayEntries; passes index={row.startIndex + col - sentinelOffset} (L95). NEW_FOLDER_SENTINEL offset (L66-68) is a potential index-misalignment source for marquee mapping."
+   },
+   {
+    "path": "src/lib/components/TilesView.svelte",
+    "why": "Same as ListView for tiles: iterates displayEntries, passes data-index with sentinel offset (L79/L139). DOM-based marquee reads these."
+   },
+   {
+    "path": "src/lib/state/manual-hidden.svelte.ts",
+    "why": "manualHiddenStore backs the manual-hidden portion of displayEntries filtering; relevant if 'hidden' includes user-hidden entries, not just dotfiles."
+   },
+   {
+    "path": "src/lib/state/settings.svelte.ts",
+    "why": "Holds showHidden / showManuallyHidden flags (L53) that gate filterHidden and the manual-hidden filter driving displayEntries."
+   },
+   {
+    "path": "src/lib/components/VirtualList.svelte",
+    "why": "Virtualization: only visible items are in the DOM, so getSelectedIndicesFromDOM sees just rendered (filtered) rows. Context for why the DOM path normally can't include filtered-out entries."
+   },
+   {
+    "path": "src/lib/components/FileItem.svelte",
+    "why": "Details-view row; applies .hidden-entry dim class (L91). Context for the visual meaning of 'hidden' (dimmed but still selectable when shown)."
+   }
+  ],
+  "notes": "Flow: mousedown on background -> marquee.start(); mousemove -> FileList.updateMarqueeSelection(). It picks candidate indices by view: details uses getSelectedIndices(scrollTop, displayEntries.length) (geometry range at itemHeight=32); list/tiles use getSelectedIndicesFromDOM() reading data-index off rendered .list-item/.tile-item nodes. Indices -> explorer.selectByIndices -> selection.selectByIndices, mapping i -> displayEntries[i].path.\n\nVisibility filter lives in explorer.svelte.ts displayEntries (filterHidden from file.ts + manualHiddenStore + filterQuery). All views iterate displayEntries and set data-index into it; both marquee paths map through it. So in CURRENT code a dotfile hidden by show-hidden isn't in displayEntries, has no index/DOM node, and isn't selectable; .hidden-entry only dims dotfiles/manual-hidden that ARE shown. I could not reproduce an active leak statically.\n\nTwo fix routes: (A) index-space divergence: a candidate index misaligns with filtered displayEntries (e.g. NEW_FOLDER_SENTINEL offset -> -1 in List/TilesView, or details geometry overshoot). Fix in use-marquee-selection.svelte.ts + FileList.svelte. (B) wrong source list: indices computed against unfiltered coreState.entries; fix by routing through displayEntries. Most defensible: guard candidate-set so indices only address filtered displayEntries; selection.ts bounds-checks but does NOT re-check visibility.",
+  "agent_id": "a632c2f7810f8a1a1"
+ },
+ "B4": {
+  "core": [
+   {
+    "path": "src/lib/state/thumbnail-cache.ts",
+    "why": "Frontend blob-URL LRU. renameThumbnailCache (L63-71) is the rename-invalidation point. BUG: matches key.startsWith(oldPath+':') but stored keys are `kind:path:size:quality`, so it never matches. Stale comment L18 omits the kind prefix."
+   },
+   {
+    "path": "src/lib/components/ThumbnailImage.svelte",
+    "why": "Builds cache key reloadKey=`${kind}:${path}:${backendSize}:${quality}` (L116,132), reads/writes cache (L133,191,272), hydrates from cache on mount (L129-143). The `kind:` prefix is what renameThumbnailCache fails to account for."
+   },
+   {
+    "path": "src/lib/state/pane-mutations.ts",
+    "why": "rename() (L83-103) is the only caller of renameThumbnailCache (L94), run after the backend rename with oldPath/newPath. The trigger point for frontend invalidation."
+   },
+   {
+    "path": "src-tauri/src/thumbnails.rs",
+    "why": "Backend keying/caching. generate_cache_key (L87-107) = hash(path+mtime+len+size+version) for disk cache + THUMB_LRU (L293-305). Path is in the key so rename regenerates; backend self-invalidates, so the stale bug is frontend-side."
+   }
+  ],
+  "peripheral": [
+   {
+    "path": "src-tauri/src/files/file_ops.rs",
+    "why": "rename_entry (L254-280) does fs::rename and returns the new FileEntry; does NOT touch the thumbnail cache. Confirms no backend invalidation hook exists."
+   },
+   {
+    "path": "src/lib/api/thumbnails.ts",
+    "why": "IPC wrappers (getThumbnailData/getMicroThumbnail/getVideoThumbnailData, clearThumbnailCache) that ThumbnailImage calls; shows blob-URL creation."
+   },
+   {
+    "path": "src/lib/api/files.ts",
+    "why": "renameEntry wrapper (invoke 'rename_entry') and re-exports the thumbnail API used by ThumbnailImage."
+   },
+   {
+    "path": "src/lib/components/TilesView.svelte",
+    "why": "Primary consumer rendering ThumbnailImage/FolderThumbnail per entry; shows path prop flowing into the cache key and re-render after rename."
+   },
+   {
+    "path": "src/lib/components/FolderThumbnail.svelte",
+    "why": "Folder-preview tiles reuse ThumbnailImage and share the cache; relevant to renameThumbnailCache's `oldPath + '/'` child re-key branch for directory renames."
+   },
+   {
+    "path": "src/lib/state/pane-watch.ts",
+    "why": "fs-watch refresh with local-mutation cooldown so thumbnails don't flash after rename; context for entries refresh vs cache."
+   },
+   {
+    "path": "src/lib/state/pane-refresh.ts",
+    "why": "Refresh/cooldown logic (markLocalMutation) used by rename flow; context for post-rename re-render timing."
+   }
+  ],
+  "notes": "Flow: TilesView/FolderThumbnail render ThumbnailImage per entry.path. It builds reloadKey=`${kind}:${path}:${backendSize}:${quality}`, checks the frontend blob-URL LRU (thumbnail-cache.ts); on miss calls IPC (api/thumbnails.ts) -> backend thumbnails.rs, keyed by generate_cache_key=hash(path+mtime+len+size). On rename: pane-mutations.rename() calls apiRenameEntry (backend fs::rename in file_ops.rs, which does NOT purge thumbnails) then renameThumbnailCache(oldPath,newPath).\n\nBackend keys include path, so newPath=>new key=>regenerates; self-invalidating, not the stale source. Frontend cache keyed only by path/kind/size/quality (no content) is the layer that serves a stale bitmap.\n\nRoot cause (verified): renameThumbnailCache matches key.startsWith(oldPath+':')/(oldPath+'/'), but every stored key is prefixed with `image:`/`video:` (ThumbnailImage L116/132, stored L191/272), so the re-key loop never matches -- dead code. Stale comment thumbnail-cache.ts L18 lists the key without the kind prefix.\n\nFix routes (same core files): (1) make renameThumbnailCache prefix-aware or delete-instead-of-rekey to force regen; (2) centralize key construction in a shared helper both files import and purge by path across kinds at the pane-mutations trigger. Either way the fix is in thumbnail-cache.ts + ThumbnailImage key alignment + the pane-mutations call site.",
+  "agent_id": "a6767e0b7cd060163"
+ },
+ "P3": {
+  "core": [
+   {
+    "path": "src/lib/components/PaneContainer.svelte",
+    "why": "Wraps the active tab in `{#key activeTab.id}` (line 28), destroying/remounting the whole pane subtree (PaneLayoutView>ExplorerPane>FileList>VirtualList) on every switch. Primary driver of the re-render and the fix location."
+   },
+   {
+    "path": "src/lib/state/window-tabs.svelte.ts",
+    "why": "Owns setActiveTab, activeTab, and the persistent `explorers` Map caching per-tab explorer instances. refreshAllPanes claims hidden tabs 'refresh on activation'. Keep-alive/cache logic lives here."
+   },
+   {
+    "path": "src/lib/state/explorer.svelte.ts",
+    "why": "The ExplorerInstance persisted per pane; holds cached coreState.entries (listing data surviving a switch) and navigateInternal's isSeeded no-flash logic. Central to what is cached vs re-fetched."
+   },
+   {
+    "path": "src/lib/components/ExplorerPane.svelte",
+    "why": "Remounted per switch; re-runs $effects (git-status fetchForDirectory lines 59-66, drives fold, onNavigate) and re-resolves getExplorer(paneId). Its remount re-triggers side-effect fetches."
+   },
+   {
+    "path": "src/lib/components/VirtualList.svelte",
+    "why": "Remount resets scrollTop to 0 (line 56) and rebuilds all visible rows, so switching back loses scroll position and re-renders the listing even though data is unchanged."
+   }
+  ],
+  "peripheral": [
+   {
+    "path": "src/lib/state/pane-refresh.ts",
+    "why": "Implements fingerprint change-detection (entriesFingerprint) and 'Already up to date' no-op \u2014 the paint-from-cache primitive relevant to 'even when nothing changed'."
+   },
+   {
+    "path": "src/lib/state/refresh-manager.ts",
+    "why": "Documents/enforces the 3-layer refresh policy (WHEN/WHETHER/HOW) with dedup+debounce; context for where a refresh is suppressed vs run."
+   },
+   {
+    "path": "src/lib/state/directory-listing.ts",
+    "why": "The streaming backend fetch path (startStreamingDirectory) a switch would re-invoke if the listing were re-fetched; shows the per-instance persistent listener."
+   },
+   {
+    "path": "src/lib/state/git-status.svelte.ts",
+    "why": "Per-directory cache (byDir); fetchForDirectory returns early if cached (line 37), so ExplorerPane's remount effect does not re-hit the backend for visited dirs."
+   },
+   {
+    "path": "src/lib/state/thumbnail-cache.ts",
+    "why": "Module-level per-key LRU cache; ThumbnailImage reads it on (re)mount so remounted rows repaint from cache rather than re-fetching."
+   },
+   {
+    "path": "src/lib/components/PaneLayoutView.svelte",
+    "why": "The recursive subtree PaneContainer remounts under `{#key}`; affected by any keep-alive change."
+   },
+   {
+    "path": "src/lib/components/FileList.svelte",
+    "why": "Remounts on switch: sets up ResizeObserver and deferred-spinner $effect; onRefresh wires to refreshAllPanes."
+   },
+   {
+    "path": "src/lib/components/GitGraphView.svelte",
+    "why": "Precedent: also `{#key}`-remounted in PaneContainer, it added a module-level LRU snapshot cache (#255) that paints synchronously on remount then refreshes in background."
+   },
+   {
+    "path": "docs/lessons_learnt.md",
+    "why": "Line 1699: '`{#key}`-remounted views re-run their IPC on every tab switch; a module-level LRU snapshot makes switches instant without lifecycle changes.'"
+   }
+  ],
+  "notes": "Flow: tab click -> setActiveTab -> activeTabId. PaneContainer's activeTab $derived recomputes; the `{#key activeTab.id}` (line 28) tears down the old subtree and mounts fresh. Explorer STATE (entries, selection) is NOT destroyed \u2014 it persists in the `explorers` Map via getExplorer(paneId). So listing DATA is already cached on switch-back; the cost is (1) full re-render of virtual rows, (2) lost scroll (VirtualList scrollTop resets), (3) re-running ExplorerPane $effects.\n\nRe 're-fetch': a plain switch does NOT re-invoke the listing \u2014 no navigateTo/refresh/initialLoad on remount. The perceived re-fetch is remount side effects (git-status, ThumbnailImage), both already cached, so visited dirs hit cache not backend. To kill render churn/scroll loss, target the `{#key}` remount.\n\nRoute A (keep-alive): stop `{#key}`-remounting in PaneContainer; render inactive explorer tabs hidden (display:none) so DOM/scroll/effects persist. Touches PaneContainer.svelte, window-tabs.svelte.ts, ExplorerPane/VirtualList (run effects only when active). Route B (snapshot cache, per GitGraphView #255): keep remount but paint from a module-level cache; entries already persist so the gap is scroll + redundant effects. Route A removes both re-render and re-fetch; Route B follows precedent (lessons 1699, graphCache).",
+  "agent_id": "a74b75041d7fc1ed1"
+ },
+ "F1": {
+  "core": [
+   {
+    "path": "src/lib/components/ContextMenu.svelte",
+    "why": "The file right-click menu. Add a 'Copy full path' menu-item button inside the {#if hasSelection} block plus a handler reading explorer.getSelectedEntries() paths, writing to clipboard, then contextMenuStore.close(). The definite change."
+   },
+   {
+    "path": "src/lib/state/explorer.svelte.ts",
+    "why": "Clean home for the logic: add copyPathToClipboard(entries) beside copyToClipboard/cutToClipboard (lines 572-582) and expose it in the returned object (line 837), mirroring the existing clipboard action + toast pattern."
+   }
+  ],
+  "peripheral": [
+   {
+    "path": "src/lib/components/GitGraphView.svelte",
+    "why": "Reference text-clipboard copy: copyToClipboard() at line 488 uses navigator.clipboard.writeText + toastStore.clipboard/error. The new handler should follow this exact pattern (webview browser clipboard API, no Tauri command)."
+   },
+   {
+    "path": "src/lib/state/toast.svelte.ts",
+    "why": "toastStore gives user feedback (success/clipboard/error). New action calls toastStore.success/clipboard after writing, matching copyToClipboard."
+   },
+   {
+    "path": "src/lib/state/commands/file-commands.ts",
+    "why": "Optional command-palette + shortcut entry (e.g. edit.copyPath, Ctrl+Shift+C). editCommands follow getActiveExplorer()?.copyToClipboard with a when: selection>0 guard; a 'Copy Path' command slots in identically."
+   },
+   {
+    "path": "src/lib/api/os-clipboard.ts",
+    "why": "Distinguishes the existing OS *file* clipboard (file:// URIs / CF_HDROP for pasting files) from the new plain-text path copy. Confirms this is NOT the mechanism to reuse."
+   },
+   {
+    "path": "src-tauri/src/clipboard.rs",
+    "why": "Backend for clipboard_write_files/read_files (file URIs, images). Confirms no existing text-clipboard Tauri command; frontend uses navigator.clipboard.writeText, so no Rust change needed."
+   },
+   {
+    "path": "src/lib/domain/file.ts",
+    "why": "FileEntry.path (line 12) is the absolute path the action copies. Confirms the data source for single and multi-select."
+   },
+   {
+    "path": "src/lib/state/context-menu.svelte.ts",
+    "why": "contextMenuStore controls open/close/position/owner used by every handler (contextMenuStore.close()). Context for menu lifecycle."
+   },
+   {
+    "path": "src/lib/state/context-menu-items.svelte.ts",
+    "why": "Plugin-contributed menu item registry (contextMenuItems.itemsFor). A more decoupled route could register 'Copy full path' here instead of hardcoding the button."
+   },
+   {
+    "path": "e2e/paste-copy-same-folder.spec.ts",
+    "why": "Closest existing E2E for clipboard/context-menu flows; a new spec asserting the menu item copies the path would live alongside it."
+   }
+  ],
+  "notes": "Control flow: right-click sets selection; ContextMenu.svelte (owned via contextMenuStore.owner === explorer.contextMenuOwner) renders menu-item buttons inside {#if hasSelection}. Each handler reads explorer.getSelectedEntries() (explorer.svelte.ts:482), acts, then contextMenuStore.close(). FileEntry.path (file.ts:12) is already absolute, so 'Copy full path' = entries.map(e=>e.path).join(\"\\n\").\n\nKey distinction: the OS *file* clipboard (os-clipboard.ts -> clipboard.rs, file:// URIs / CF_HDROP) is for pasting files into other file managers and is NOT wanted here. 'Copy full path' is plain TEXT via navigator.clipboard.writeText (GitGraphView.svelte:488), which works in the webview with no Tauri command. So no backend/Rust change needed.\n\nTwo routes:\n- Route A (minimal): button + inline async handler in ContextMenu.svelte calling navigator.clipboard.writeText and toastStore.success/error. Core: ContextMenu.svelte only.\n- Route B (recommended, matches conventions): add copyPathToClipboard(entries) in explorer.svelte.ts by copyToClipboard (line 572), export at 837; ContextMenu.svelte calls it; optionally add edit.copyPath command in file-commands.ts for palette+shortcut. Core: both files.\n\nMulti-select already handled by getSelectedEntries(). Edge cases: guard empty selection (length>0, like every handler) and catch clipboard rejection -> toastStore.error. Add a matching SVG icon. Repo merge hook requires a screenshot of the new item.",
+  "agent_id": "a7d65f7aaf1b2300e"
+ },
+ "P2": {
+  "core": [
+   {
+    "path": "src-tauri/src/content_search.rs",
+    "why": "Backend streaming source. perform_content_search() walks files on parallel threads via mpsc; collector loop (363-399) does adaptive time-based batching (16ms first-paint, then 100ms) and emits 'content-search-results'. Primary batching site."
+   },
+   {
+    "path": "src/lib/composables/use-content-search.svelte.ts",
+    "why": "Frontend stream owner. ingest() (77-107) runs per backend event: dedup, flattenBatch, then publish() replaces the whole flattened array. No frontend coalescing beyond backend cadence \u2014 candidate for rAF-throttled publishing."
+   },
+   {
+    "path": "src/lib/components/ContentSearchDialog.svelte",
+    "why": "Renders results. Derives `rows` from search.flattened (49-53), feeds VirtualList (290-375) with variable getItemHeight. Each streamed batch changes rows, re-triggering the derived chain. Hosts 200ms debounced auto-search."
+   },
+   {
+    "path": "src/lib/components/VirtualList.svelte",
+    "why": "Virtualization. layout $derived.by (79-82) runs computeOffsets over the ENTIRE items array on every change, so each streamed batch recomputes full offsets (O(n)/batch, quadratic) \u2014 likely dominant stutter. Coalesces scroll but not item growth."
+   },
+   {
+    "path": "src/lib/domain/content-search-flatten.ts",
+    "why": "Pure flattening: flattenBatch (O(batch), incremental per streamed file) and rebuildAllFlattened (O(total), on filter/expand). Governs how many rows the UI renders per streamed file."
+   }
+  ],
+  "peripheral": [
+   {
+    "path": "src/lib/api/search.ts",
+    "why": "IPC wrappers startContentSearch/cancelContentSearch (160-194) and ContentSearchEvent/ContentSearchResult/ContentSearchStart types (120-147). The event payload shape and streaming-vs-inline contract."
+   },
+   {
+    "path": "src/lib/domain/virtual-layout.ts",
+    "why": "Pure layout math: computeOffsets prefix sums, firstVisibleIndex/lastVisibleIndexExclusive binary search. The per-batch cost recomputed by VirtualList lives here."
+   },
+   {
+    "path": "src/lib/domain/raf-coalesce.ts",
+    "why": "createRafCoalescer \u2014 existing one-write-per-frame throttle used for scroll; the natural building block if ingest/publish needs coalescing during streaming."
+   },
+   {
+    "path": "src/lib/api/mock-invoke.ts",
+    "why": "Mock start_content_search (line 999) returns full results inline (no streaming) for browser/E2E; explains the inline fallback branch and why Playwright can't reproduce streaming stutter."
+   },
+   {
+    "path": "src-tauri/src/task_registry.rs",
+    "why": "TaskRegistry backing CONTENT_SEARCHES: allocates search_id and the AtomicBool cancel flag used by the walker/collector and max_results early-quit."
+   }
+  ],
+  "notes": "Flow: Ctrl+Shift+F -> ContentSearchDialog debounces 200ms -> search.start() -> startContentSearch invoke -> Rust spawns a thread; perform_content_search runs a parallel ignore::WalkBuilder, workers send ContentSearchResult over mpsc. A collector loop drains it and emits 'content-search-results' in ADAPTIVE TIME-BASED BATCHES (16ms first, then 100ms; content_search.rs:363-399). Backend caps MAX_MATCHES_PER_FILE=50 and clamps max_results to 5000.\n\nFrontend: useContentSearch listens; ingest() fires per event (dedup, flattenBatch, publish replaces the $state.raw array). ContentSearchDialog derives rows, renders via VirtualList (already virtualized).\n\nBatching EXISTS at the backend collector loop (primary throttle). Where stutter can still arise / batching could be added:\n- Route A (backend): tune steady interval or cap batch size in content_search.rs; 100ms + up-to-5000 results means large late batches.\n- Route B (frontend): publish() replaces the array every event with no coalescing; add rAF-coalesced publish (raf-coalesce.ts) in use-content-search.svelte.ts.\n- Route C (VirtualList): computeOffsets rebuilds full offsets over the whole growing list per batch (quadratic); fix by incrementally extending offsets on append.\n\nAmbiguity: fix could live at A, B, or C \u2014 all included. C scales with total rows and is the strongest candidate under a large result stream; A/B scale with event frequency. E2E can't reproduce this since mock-invoke returns inline.",
+  "agent_id": "a8745dd23127f5ee7"
+ },
+ "F3": {
+  "core": [
+   {
+    "path": "src/lib/state/window-tabs.svelte.ts",
+    "why": "Heart: snapshotTab() captures a closed tab; restoreClosedTab()/restoreClosedSurface() reopen it via reviveTab at old index; closeTab/removeTab trigger snapshots; canRestoreTab/canRestoreSurface guard the command."
+   },
+   {
+    "path": "src/lib/state/commands/general-commands.ts",
+    "why": "Registers tabs.restoreClosedTab with shortcut 'Ctrl+Shift+T'; handler calls restoreClosedSurface() (+openNewWindow when openInNewWindow), gated by when: canRestoreSurface. The keybinding lives here."
+   },
+   {
+    "path": "src/lib/state/closed-tabs.ts",
+    "why": "createClosedTabsStore(): localStorage-backed capped LIFO stack (push/pop/peek/refresh/size) holding closed-tab snapshots across windows. The undo stack backing Ctrl+Shift+T."
+   },
+   {
+    "path": "src/lib/state/window-tabs-persistence.ts",
+    "why": "Defines ClosedTabSnapshot, PersistedNode/PersistedWindowTab (leaf stores only `path`), normalizeClosedSnapshot, RestoreResult. Nav-history restoration would add history fields to these types."
+   }
+  ],
+  "peripheral": [
+   {
+    "path": "src/lib/state/commands/shared.ts",
+    "why": "Provides openNewWindow() used by the handler when the restored tab was the last tab of a closed window (opens a fresh window instead of the strip)."
+   },
+   {
+    "path": "src/lib/state/explorer.svelte.ts",
+    "why": "Owns per-pane coreState.history/historyIndex and ExplorerSeed. The 'restore navigation history' route seeds history here; createExplorerState currently resets history to [] regardless of seed."
+   },
+   {
+    "path": "src/lib/state/navigation.ts",
+    "why": "Pure history helpers (HistoryState, pushToHistory, canGoBack/Forward). Reference for the back/forward stack shape to persist and restore."
+   },
+   {
+    "path": "src/lib/state/types.ts",
+    "why": "Type defs for WindowTab/ExplorerTab/TabPane/PaneId and ExplorerCoreState.history; read to understand tab and history data shapes."
+   },
+   {
+    "path": "tests/state/window-tabs.test.ts",
+    "why": "Existing unit coverage: 'closed-tab restore (Ctrl+Shift+T)' and 'closed-pane restore' assert index/layout/git-graph restoration. Where new behavior would be tested."
+   },
+   {
+    "path": "e2e/pane-tabs.spec.ts",
+    "why": "E2E asserting Control+Shift+T restores the last closed pane into its split position; browser-level regression check for the keybinding."
+   }
+  ],
+  "notes": "IMPORTANT: directory restoration is ALREADY IMPLEMENTED (issues ldfx, #140, #167, #229); Ctrl+Shift+T works today.\n\nFlow: closeTab -> removeTab({snapshot:true}) -> snapshotTab() builds ClosedTabSnapshot {path, kind, tab: persistTab(...), closedAt index, fromClosedWindow, closedTs} -> closedTabs.push() (localStorage LIFO cap 20, shared across windows via focus refresh). Command tabs.restoreClosedTab (Ctrl+Shift+T) -> restoreClosedSurface() compares most-recent closed PANE (in-memory closedPanes) vs closed TAB by timestamp, restores the newer. restoreClosedTab() pops and either reviveTab(snapshot.tab,{regenerateIds}) -> insertTab at closedAt (full layout+directory), re-creates a git-graph tab, or adoptTab({path}); if fromClosedWindow returns {openInNewWindow} and handler calls openNewWindow.\n\nDirectory IS restored (leaf stores path; reviveTab navigates there). Navigation history is NOT: persistTab serializes only `path`, and createExplorerState always inits history:[]/historyIndex:-1.\n\nTwo routes:\n- A (directory-only, already satisfied): no change; verify/extend tests.\n- B (add nav-history): add history/historyIndex to the leaf in window-tabs-persistence.ts, read explorers.get(...).state.history in persistTab, thread through ExternalSeed/createAndRegisterExplorer/reviveTab (window-tabs.svelte.ts), extend ExplorerSeed + coreState init in explorer.svelte.ts.\n\nNote: closed-tabs uses one shared key 'explorer-closed-tabs' (cross-window); tab state is per-window namespaced.",
+  "agent_id": "ae2ce57008106287c"
+ },
+ "F2": {
+  "core": [
+   {
+    "path": "src/lib/domain/file.ts",
+    "why": "Defines `SortField = \"name\"|\"size\"|\"modified\"|\"type\"` (line 27) and `sortEntries` comparator (lines 50-97). Adding an \"extension\" value needs a new type member and comparator case; `fileExtension()` helper (line 29) exists here."
+   },
+   {
+    "path": "src/lib/state/commands/view-commands.ts",
+    "why": "Command-palette sort entries (Sort by Name/Date/Size/Type, lines 77-99) each call `setSorting(field)`. A new \"Sort by File Extension\" command calling `setSorting(\"extension\")` is added here."
+   },
+   {
+    "path": "src/lib/components/DetailsView.svelte",
+    "why": "Details column headers; Name/Date/Size are clickable sort buttons calling `explorer.setSorting(...)` with indicator UI, but Type (lines 96-104) is a plain non-sortable div. Exposing extension sort in Details means adding a sortable header here."
+   }
+  ],
+  "peripheral": [
+   {
+    "path": "src/lib/state/explorer.svelte.ts",
+    "why": "`setSorting(by: SortField)` (line 436) toggles direction/persists, and `sortedEntries` derived (lines 132-138) calls `sortEntries`. Typed against SortField so a new value works without logic change, but is the control-flow hub."
+   },
+   {
+    "path": "src/lib/state/sort-prefs.ts",
+    "why": "Per-directory persistence of `SortPref { sortBy: SortField; sortAscending }` to localStorage. Generic over SortField so a new value persists automatically \u2014 the 'persisted like existing sort preferences' mechanism."
+   },
+   {
+    "path": "src/lib/state/types.ts",
+    "why": "Pane state interface declares `sortBy: SortField` (lines 40-41); confirms the type flows through pane state. No edit needed but relevant context."
+   },
+   {
+    "path": "src/lib/state/window-tabs.svelte.ts",
+    "why": "Serializes `sortBy` (typed as string, lines 112, 365) for tab/session restore; a new value round-trips without change but this is where cross-tab persistence lives."
+   },
+   {
+    "path": "src/lib/state/commands/shared.ts",
+    "why": "Builds explorer seed passing `sortBy`/`sortAscending` (lines 42-43) when spawning panes/tabs; part of sort-state propagation."
+   },
+   {
+    "path": "tests/domain/file.test.ts",
+    "why": "`sortEntries` unit tests iterate fields `[\"name\",\"size\",\"modified\",\"type\"]` (line 66). A new extension field should be added here with a dedicated ordering assertion."
+   },
+   {
+    "path": "src/lib/state/settings.svelte.ts",
+    "why": "Holds `columnVisibility` incl. the Type column (lines 66, 131); relevant if extension sort is surfaced via the Details Type column or a new column."
+   }
+  ],
+  "notes": "Flow: UI (DetailsView headers OR view-commands palette) -> `explorer.setSorting(field)` -> mutates `coreState.sortBy/sortAscending` + `saveSortPref(currentPath,...)` (sort-prefs.ts, localStorage). `sortedEntries` $derived re-runs `sortEntries(filtered, sortBy, ascending)` (file.ts). On dir load `getSortPref` restores it (explorer.svelte.ts ~223). SortField flows: file.ts -> explorer.svelte.ts, types.ts, sort-prefs.ts; window-tabs/shared serialize sortBy for tab restore.\n\nIMPORTANT ambiguity: an extension sort effectively ALREADY exists as SortField \\\"type\\\" \u2014 its comparator (file.ts 71-79) sorts by `fileExtension()` then name, with a \\\"Sort by Type\\\" palette command. Two routes:\n\nRoute A (new distinct field): add `\\\"extension\\\"` to SortField + comparator case in file.ts, a palette command in view-commands.ts, optional Details header, and test cases. Persistence/tabs/seeds are generic over SortField, no change needed. This is the likely-intended gold task.\n\nRoute B (surface existing \\\"type\\\" as \\\"file extension\\\"): the sort exists but is palette-only; work is making the inert Type column header clickable (DetailsView 96-104) and relabeling, no new field.\n\nNote: List/Tiles views ignore per-pane sort and always sort by name (explorer.svelte.ts 132-138), so extension sort only manifests in Details view. FileList.svelte just dispatches and needs no change.",
+  "agent_id": "ae8814119c39400ca"
+ },
+ "X7": {
+  "core": [
+   {
+    "path": "src/lib/components/BreadcrumbAutocomplete.svelte",
+    "why": "The path-autocomplete 'pill': renders .suggestions-dropdown and handleKeydown (lines 83-119) preventDefaults ArrowUp/ArrowDown/Tab/Enter while showSuggestions is true \u2014 the arrow-stealing behavior to scope/suppress."
+   },
+   {
+    "path": "src/lib/domain/autocomplete.ts",
+    "why": "Pure logic backing the pill: parsePathInput + filterDirectorySuggestions generate the directory suggestions that make the dropdown appear."
+   },
+   {
+    "path": "src/lib/components/NavigationBar.svelte",
+    "why": "The sole attachment point: editingPath (line 142) + breadcrumbs-container conditionally mounts <BreadcrumbAutocomplete> (lines 338-345). This is how the autocomplete attaches to an input \u2014 only the address bar."
+   },
+   {
+    "path": "src/lib/components/ContentSearchDialog.svelte",
+    "why": "The Ctrl+Shift+F dialog whose results nav is allegedly stolen. handleKeydown (lines 121-137) owns ArrowUp/Down list nav and its search <input> (211-222); fix ensures autocomplete never handles keys here."
+   }
+  ],
+  "peripheral": [
+   {
+    "path": "src/lib/components/Modal.svelte",
+    "why": "ContentSearchDialog wraps content in Modal, passing onkeydown (line 200); Modal.handleKeydown (line 101) forwards events and does Tab focus-trapping \u2014 relevant to how keydown reaches the dialog handler."
+   },
+   {
+    "path": "src/routes/+page.svelte",
+    "why": "Global keydown (lines 112-175) with input-field/modal gating, plus where NavigationBar and ContentSearchDialog are composed \u2014 context for key routing when a dialog is open."
+   },
+   {
+    "path": "src/lib/composables/use-content-search.svelte.ts",
+    "why": "Backs the results list (search.flattened / rows) that arrow keys navigate; context for the selection being stolen."
+   },
+   {
+    "path": "src/lib/domain/content-search-flatten.ts",
+    "why": "Defines FlattenedResult rows the list renders/navigates; context for the results the arrows move through."
+   }
+  ],
+  "notes": "Flow: the autocomplete is fully self-contained. domain/autocomplete.ts feeds BreadcrumbAutocomplete.svelte, which renders the '.suggestions-dropdown' pill and, in handleKeydown, preventDefaults ArrowUp/Down/Tab/Enter whenever showSuggestions && suggestions.length>0. That component is mounted ONLY by NavigationBar.svelte, inside breadcrumbs-container, only while editingPath===true. ContentSearchDialog.svelte is independent: it does NOT import BreadcrumbAutocomplete, has its own search <input> and its own handleKeydown (ArrowUp/Down move the VirtualList results), routed through Modal.svelte.\n\nAMBIGUITY (verified in code): there is no shared/global autocomplete action attached to arbitrary inputs; the only users of parsePathInput/filterDirectorySuggestions and '.suggestions-dropdown' are BreadcrumbAutocomplete. So the literal symptom (breadcrumb pill inside the Ctrl+Shift+F dialog) cannot arise from current wiring \u2014 the two keydown systems don't overlap.\n\nTwo plausible fix routes, same core set: (1) Scope-at-source \u2014 keep the pill bound to the breadcrumb; guard BreadcrumbAutocomplete.svelte keydown and NavigationBar.svelte attachment so autocomplete never handles keys outside the address bar (most literal 'scope it'). (2) Suppress-at-dialog \u2014 if a shared autocomplete were attached generically, opt out in ContentSearchDialog.svelte's input; under current code this is preventative, not a live bug. domain/autocomplete.ts is the shared seam if refactoring toward reuse.",
+  "agent_id": "a5ecf24dc55a678ba"
+ },
+ "X5": {
+  "core": [
+   {
+    "path": "src/lib/components/TilesView.svelte",
+    "why": "Root cause. Rows keyed by row.startIndex (129); each row is its own per-row `{#each row.items (entry.path)}` (134). A delete shifts later entries one slot, so boundary tiles cross into another row's block, which Svelte remounts."
+   },
+   {
+    "path": "src/lib/domain/virtual-layout.ts",
+    "why": "chunkIntoRows (lines 24-31) groups flat displayEntries into per-row VirtualRow objects by startIndex. This row grouping is why a single deletion reflows every subsequent row boundary. A stable-across-delete fix touches this chunking."
+   },
+   {
+    "path": "src/lib/components/ThumbnailImage.svelte",
+    "why": "The remounted tile re-runs this. Mount-time cache hydration (129-143) sets fullUrl+fullLoaded synchronously, but the fresh <img src=blob:> still async-decodes -> the flash ('re-load, not re-generate'). Alternate flash-free-remount fix lives here."
+   },
+   {
+    "path": "src/lib/state/thumbnail-cache.ts",
+    "why": "Module LRU meant to make remounts flash-free. It is untouched by a delete (only rename re-keys), so thumbnails re-load from cache, not re-generate \u2014 confirming the flash is a DOM remount/decode issue, not backend work."
+   },
+   {
+    "path": "src/lib/components/VirtualList.svelte",
+    "why": "Row-level virtualization. getKey=(row)=>row.startIndex and `{#each visibleItems (key)}` with `{@render children(item)}`. Stable startIndex keys keep row wrappers but re-render shifted inner items \u2014 the structure forcing cross-row remounts."
+   }
+  ],
+  "peripheral": [
+   {
+    "path": "src/lib/state/pane-mutations.ts",
+    "why": "confirmDelete (105-151) does optimistic `entries.filter(...)`. Filter preserves surviving object refs (not wholesale replacement) yet shifts positions \u2014 the state change that triggers the row reflow."
+   },
+   {
+    "path": "src/lib/state/pane-watch.ts",
+    "why": "MUTATION_COOLDOWN_MS (1000ms) guard; its comment says a watcher refresh 'would trigger an identical refresh causing all thumbnails to flash.' A second/compounding cause suppressed by markLocalMutation."
+   },
+   {
+    "path": "src/lib/state/pane-refresh.ts",
+    "why": "Replaces `coreState.entries = allEntries` wholesale (line 106) with new objects, guarded by fingerprint + cooldown. If it fires it is the second route to a full-grid flash."
+   },
+   {
+    "path": "src/lib/state/explorer.svelte.ts",
+    "why": "Owns displayEntries $derived (122-139) consumed by TilesView and wires refresh+mutations+watch cooldown. Shows how a delete propagates to the view."
+   },
+   {
+    "path": "src/lib/components/ListView.svelte",
+    "why": "Shares identical chunkIntoRows + startIndex-keyed row + per-row path-keyed each (70-104). Same reflow-remount flaw; a structural fix applies here too (no thumbnails, so flash is invisible but remount cost is real)."
+   },
+   {
+    "path": "src/lib/components/ItemButton.svelte",
+    "why": "Wraps each tile and renders `{@render children()}` (line 84) holding ThumbnailImage. When ItemButton's node is destroyed on a cross-row shift, the thumbnail child is destroyed and remounted \u2014 the concrete remount vector."
+   },
+   {
+    "path": "docs/lessons_learnt.md",
+    "why": "Line 103 documents prior thumbnail-flash-on-delete/rename and the cooldown fix; #247/#248/#259 (cited in ThumbnailImage) cover remount-flash mitigation. Background before choosing a fix route."
+   },
+   {
+    "path": "src/lib/components/FileList.svelte",
+    "why": "Dispatches to TilesView/ListView/DetailsView, passing displayEntries + scrollToIndex. Entry point for how the view receives the mutated entry list."
+   }
+  ],
+  "notes": "Flow: delete -> confirmDelete sets entries=filter(deleted) (keeps surviving refs, shifts positions) -> displayEntries shrinks by one -> chunkIntoRows -> VirtualList rows keyed by stable startIndex, each a SEPARATE per-row `{#each row.items (entry.path)}`. Contents shift one slot, so each boundary holds a different entry; the first-of-next-row item moves into the previous row's DIFFERENT #each block. Svelte can't move keyed nodes across blocks -> destroys+recreates them, remounting ItemButton+ThumbnailImage at ~every row boundary across the viewport ('all tiles flash and reassemble'). On remount ThumbnailImage hydrates fullUrl from the LRU synchronously, but the new <img src=blob:> still async-decodes -> one-frame flash. Backend + frontend cache untouched -> 're-load, not re-generate'.\n\nFix routes: A (primary, structural): stop tiles remounting on reflow \u2014 change chunking/keying in TilesView.svelte / virtual-layout.ts / VirtualList.svelte (e.g. one flat path-keyed each with CSS-grid wrapping so nodes MOVE not recreate). ListView shares the flaw. B (mitigation): make ThumbnailImage remount flash-free (img decoding=sync or persistent decoded element).\n\nAmbiguity: a wholesale watcher refresh (pane-refresh.ts) replacing entries is a second full-grid-flash source, suppressed by pane-watch.ts's 1s cooldown. If flash reproduces with cooldown active, Route A is the true cause; verify by timing \u2014 immediate on delete (rechunk) vs after watcher event (refresh).\"",
+  "agent_id": "a64ae36682555a846"
+ },
+ "X6": {
+  "core": [
+   {
+    "path": "src/lib/state/settings.svelte.ts",
+    "why": "Defines Settings + DEFAULT_SETTINGS, plus ToggleSettingMeta, the TOGGLE_SETTINGS metadata array, and generateToggleCommands() that maps each entry to a Command with toggleState() reading settingsStore.state[key] and a default flip handler."
+   },
+   {
+    "path": "src/lib/state/commands.svelte.ts",
+    "why": "Defines the Command interface with optional toggleState?: () => boolean (the ON/OFF state carrier) and the registry (registerCommands/getAvailableCommands). The toggle-command contract lives here."
+   },
+   {
+    "path": "src/lib/state/commands/view-commands.ts",
+    "why": "Imports generateToggleCommands and spreads ...generateToggleCommands() into the exported viewCommands array (line 205) \u2014 the single wiring point injecting auto-generated toggle commands into the registered set."
+   },
+   {
+    "path": "src/lib/components/CommandPalette.svelte",
+    "why": "When cmd.toggleState exists, computes on = cmd.toggleState() and renders the ON/OFF toggle-badge (lines 190-193) \u2014 where current state becomes user-visible in the palette."
+   },
+   {
+    "path": "src/lib/state/command-definitions.ts",
+    "why": "registerAllCommands() aggregates viewCommands (which now includes generated toggles) into the registry and registers their default shortcuts. Generated toggles reach the live registry through here."
+   }
+  ],
+  "peripheral": [
+   {
+    "path": "src/lib/state/keybindings.svelte.ts",
+    "why": "Toggle metas may carry a shortcut; registerAllCommands feeds these into keybindingsStore.registerDefaults, and getCommandShortcut resolves the display shortcut shown next to generated toggles."
+   },
+   {
+    "path": "src/lib/state/types.ts",
+    "why": "Defines ViewMode and value types used by the Settings interface; context for which keys are boolean-toggleable vs enum/number."
+   },
+   {
+    "path": "src/lib/state/persisted.ts",
+    "why": "loadPersisted/savePersisted/writeConfigQueued back settingsStore.update, so toggling a generated command persists through here."
+   },
+   {
+    "path": "src/lib/plugins/api.ts",
+    "why": "Shows the manual registerCommand path used by plugins (the pattern auto-registration avoids); confirms toggleState is optional on plugin commands too."
+   },
+   {
+    "path": "src/lib/components/SettingsDialog.svelte",
+    "why": "The settings UI exposing the same toggles; a dev cross-checks labels/keys here when adding a new toggleable setting."
+   }
+  ],
+  "notes": "This feature is ALREADY IMPLEMENTED. Flow: settings.svelte.ts declares Settings + DEFAULT_SETTINGS; TOGGLE_SETTINGS: ToggleSettingMeta[] names each toggleable key with a label (optional id/shortcut/when/custom handler). generateToggleCommands() maps each meta to Command{ id: meta.id ?? `setting.toggle.${key}`, category view, toggleState: () => Boolean(settingsStore.state[key]), handler: meta.handler ?? flip via settingsStore.update({[key]: !state[key]}) }. view-commands.ts spreads ...generateToggleCommands() into viewCommands (line 205); command-definitions.registerAllCommands() registers them and pushes shortcuts to keybindingsStore. commands.svelte.ts Command has optional toggleState; CommandPalette.svelte paints ON/OFF badge (lines 190-193).\\n\\nAMBIGUITY - two routes:\\n(1) Current semi-automatic: adding a toggle needs one line appended to TOGGLE_SETTINGS in settings.svelte.ts (only that file), then it auto-appears with badge.\\n(2) Fully-automatic: derive commands directly from DEFAULT_SETTINGS entries where typeof value === boolean (excluding nested objects navBarButtons/columnVisibility/pluginsEnabled and non-user platform flags like warmWindow), auto-labeling. Still lives in settings.svelte.ts; command interface, palette render, and view-commands spread unchanged. Not all booleans are currently listed, so route 2 needs an exclude list. Both routes center on the same 5 core files, concentrated in settings.svelte.ts.",
+  "agent_id": "aba00eca50de0a276"
+ },
+ "X1": {
+  "core": [
+   {
+    "path": "src/lib/components/MillerColumns.svelte",
+    "why": "Owns all miller data/refresh. $effect (L106-153) builds columns from breadcrumbs, watches each column path, loadColumn fetches into rawCache. onMount 'directory-changed' listener (L182-218) is the invalidation path and most likely fix site."
+   },
+   {
+    "path": "src-tauri/src/files/fs_watcher.rs",
+    "why": "Emits the 'directory-changed' events miller depends on. NonRecursive refcounted watch; notify callback derives PARENT dir (L70-75), invalidates cache, 300ms-debounced emit. Coverage/path-string mismatch here breaks miller updates."
+   }
+  ],
+  "peripheral": [
+   {
+    "path": "src/lib/composables/use-file-watchers.ts",
+    "why": "Main-pane equivalent: handles 'directory-changed' plus the cross-window BroadcastChannel (initFileChangeListener). Miller does NOT hook the cross-window channel; alternate fix route would route those events to miller."
+   },
+   {
+    "path": "src/lib/state/file-events.ts",
+    "why": "Cross-window BroadcastChannel. Miller has no subscriber, so 'from another window' relies solely on the fs_watcher firing."
+   },
+   {
+    "path": "src/lib/state/pane-mutations.ts",
+    "why": "Local delete/rename logic; confirmDelete and rename do NOT call broadcastFileChange (only create/symlink/archive do), so cross-window propagation of deletes/renames leans entirely on the fs watcher."
+   },
+   {
+    "path": "src/lib/api/files.ts",
+    "why": "IPC wrappers watchDirectory/unwatchDirectory (L569-586) and fetchDirectory/list_directory (L26-45) miller uses to register watches and reload column data."
+   },
+   {
+    "path": "src-tauri/src/files/dir_listing.rs",
+    "why": "Backend dir cache + invalidate_dir_cache_sync (L36) called by the notify callback so miller's reload gets fresh entries. Relevant if stale data persists despite an event."
+   },
+   {
+    "path": "src/lib/state/pane-watch.ts",
+    "why": "Per-pane watch + local-mutation cooldown; suppresses main-pane refresh after local edits but does not gate MillerColumns \u2014 context for double-refresh behavior."
+   }
+  ],
+  "notes": "Data flow: MillerColumns derives columns from explorer.breadcrumbs (ancestors=crumbs.slice(0,-1), last `layers` shown). Each visible column path is fetched via fetchDirectory into an infinite-TTL rawCache Map and registered with watchDirectory. Displayed `columns` is a $derived mapping rawColumns through filterEntries.\n\nEvent flow: fs change -> notify (fs_watcher.rs) -> derive PARENT dir -> invalidate cache -> 300ms debounce -> emit 'directory-changed' {path:parentDir} to ALL windows (same process). A deleted/renamed folder registers against its PARENT = a miller column path; the onMount listener (L182-218) matches changedPath against rawCache/rawColumns and reloads that column.\n\nMost likely fix site: the miller listener (L182-218), specifically the `rawCache.has(changedPath)` guard and exact `col.path === changedPath` match. Verify: (a) path normalization mismatch between notify's parent().to_string_lossy() and breadcrumb crumb.path (slash/separator/case) skips reload; (b) if the deleted folder is itself an ancestor column (not a child entry), the event fires for the grandparent, which may be outside the visible `layers` window and thus unwatched, so no event reaches miller.\n\nTwo routes: A) fix miller path matching / broaden fs_watcher registration; B) subscribe miller to the file-events BroadcastChannel like use-file-watchers.ts, since deletes/renames aren't broadcast and miller only listens to the Tauri watcher.",
+  "agent_id": "abf32be1919d0fcfe"
+ },
+ "X4": {
+  "core": [
+   {
+    "path": "src/lib/components/FilesSidebarView.svelte",
+    "why": "Renders the sidebar 'Recent' section. `recentLocations` $derived (237-252) reads frecencyStore entries+scores and filters. onMount (257-276) triggers pruneNonExistent for live removal."
+   },
+   {
+    "path": "src/lib/state/frecency.svelte.ts",
+    "why": "Stores/scores the recent locations behind the sidebar (entries, computeFrecencyScore, getScoreMap) and has pruneNonExistent() (115-126) that calls checkPathsExist and drops missing paths."
+   },
+   {
+    "path": "src/lib/api/files.ts",
+    "why": "checkPathsExist() (495-502) frontend bridge invoking the backend batch existence check used by pruneNonExistent; falls back to assume-exists on error."
+   },
+   {
+    "path": "src-tauri/src/files/file_ops.rs",
+    "why": "Backend `check_paths_exist` command (853-860) does the lstat-based existence test per path; source of truth for whether a folder still exists."
+   }
+  ],
+  "peripheral": [
+   {
+    "path": "src/lib/state/recent-files.svelte.ts",
+    "why": "Parallel 'recent files' store (feeds QuickOpen, not sidebar Recent) with its own identical pruneNonExistent (54-64), pruned in the same sidebar onMount."
+   },
+   {
+    "path": "src/lib/state/pane-mutations.ts",
+    "why": "Calls frecencyStore.pruneNonExistent after rename (99) and delete (147) for live update on in-app mutations."
+   },
+   {
+    "path": "src/lib/state/paste-operations.ts",
+    "why": "Calls frecencyStore.pruneNonExistent (230) after paste/move."
+   },
+   {
+    "path": "src/lib/state/drop-operations.ts",
+    "why": "Calls frecencyStore.pruneNonExistent (157) after drag-drop moves."
+   },
+   {
+    "path": "src/lib/state/file-transfer.ts",
+    "why": "Calls frecencyStore.pruneNonExistent (182) after transfers."
+   },
+   {
+    "path": "src/lib/components/QuickOpen.svelte",
+    "why": "Invokes both stores' pruneNonExistent (404-415) with untrack; shows the call pattern and a second recent surface."
+   },
+   {
+    "path": "src-tauri/src/lib.rs",
+    "why": "Registers check_paths_exist in the Tauri invoke_handler (146)."
+   },
+   {
+    "path": "src/lib/domain/path.ts",
+    "why": "directoryKey (134) and basename (193) used to canonicalise/label recent entries and match against bookmarks/system folders."
+   },
+   {
+    "path": "src/lib/state/settings.svelte.ts",
+    "why": "recentItemsCount (clamped 0-20) limits how many Recent items render; 0 hides the section."
+   },
+   {
+    "path": "src/lib/state/drives.svelte.ts",
+    "why": "mountedRoots powers ejectedDriveHidesPath so Recent paths on unmounted drives hide even before a disk existence prune."
+   }
+  ],
+  "notes": "Key: the sidebar 'Recent' section is backed by frecencyStore (folder frecency ranking), NOT recentFilesStore (that feeds QuickOpen). Flow: access -> frecencyStore.recordAccess/recordFileAction stores the containing folder with timestamps -> FilesSidebarView `recentLocations` $derived reads entries + getScoreMap(), excludes home/root/bookmarked/system/ejected-drive paths, sorts by score, slices to recentItemsCount -> rendered ~546-590 with a remove button calling frecencyStore.remove.\n\nExistence check: frecencyStore.pruneNonExistent() -> checkPathsExist -> invoke('check_paths_exist') -> file_ops.rs entry_exists (lstat, broken symlinks still count), filters missing and re-saves; $derived recomputes so the item vanishes. Live triggers already wired: sidebar onMount (deferred 1500ms) + visibilitychange, plus after every mutation (pane-mutations rename/delete, paste, drop, file-transfer). Ejected drives hide separately via ejectedDriveHidesPath + mountedRoots.\n\nNote: feature is ALREADY LARGELY IMPLEMENTED (issues tauri-jrek/kwe/omkn); a task mostly verifies/extends. Two extension routes if gaps remain: (1) real-time via a fs watcher that prunes the instant a folder vanishes while focused (subscription in frecency store/sidebar); (2) render-time filtering of recentLocations against a live existence set inside the $derived instead of mutating the store. Same core files either way.",
+  "agent_id": "ad26cab3bfb92332a"
+ },
+ "B1": {
+  "core": [
+   {
+    "path": "src/lib/state/window-tabs.svelte.ts",
+    "why": "Tab-title derivation lives here. getTabDisplay/getTabTitle -> singlePaneDisplays/multiPaneTitle -> getTabLivePath -> panePath (lines ~94-98) read the live explorer currentPath and feed extractFolderName/disambiguateTabTitles. The title is a pure derivation of currentPath, so the stale name is a direct symptom of currentPath not being updated. This is the tab-title side of the bug."
+   },
+   {
+    "path": "src/lib/state/pane-mutations.ts",
+    "why": "rename() (lines 83-103) is the frontend rename flow. It rewrites the child entry in coreState.entries but never updates currentPath and \u2014 unlike createFolder/symlink/extract/compress \u2014 never calls broadcastFileChange. A pane whose currentPath IS the renamed folder is never told to follow the new path. Primary fix candidate (emit/broadcast rename old->new and/or update affected panes' currentPath)."
+   },
+   {
+    "path": "src/lib/composables/use-file-watchers.ts",
+    "why": "Dispatches directory-changed (backend watcher) and cross-window file-change events to explorers, matching only when currentPath === changedPath. A pane showing the renamed folder never matches (backend reports the PARENT dir), so it never refreshes. Likely fix site: recognize a renamed current directory and follow it to the new path rather than dropping the event."
+   },
+   {
+    "path": "src-tauri/src/files/fs_watcher.rs",
+    "why": "Root cause on the backend: on rename/create/remove it reduces every event path to its parent() and emits directory-changed for the parent only (lines 68-85). Renaming /a/X therefore emits /a, never /a/X, so the pane sitting on /a/X gets no matching notification. Fix candidate: also emit for the renamed directory itself / carry rename source+dest."
+   },
+   {
+    "path": "src/lib/state/pane-refresh.ts",
+    "why": "HOW a refresh is applied. If a pane on the renamed dir did refresh, load() of the now-missing old path fails and it calls navigateToParent() (lines 72-78) \u2014 which would show the parent, not the new folder name. Part of the 'follow the rename to the new path' fix rather than falling back to parent."
+   },
+   {
+    "path": "src/lib/state/explorer.svelte.ts",
+    "why": "Owns per-pane currentPath, navigateTo, navigateToParent and the watch. currentPath is set only via applyNavigation (line 219); nothing here reacts to the current folder being renamed. A correct fix (update/follow currentPath when the shown folder is renamed) would land here, and this is what the tab title ultimately reads."
+   }
+  ],
+  "peripheral": [
+   {
+    "path": "src/lib/domain/tab-title.ts",
+    "why": "Pure title formatting: disambiguateTabTitles and gitTabDisplay. Consumes paths from window-tabs; read for context on how the basename becomes the label, but not the fix site (it just reflects whatever path it's given)."
+   },
+   {
+    "path": "src/lib/domain/path.ts",
+    "why": "basename/directoryKey/parentDir used by tab-title and window-tabs to compute the displayed folder name. Context for name extraction."
+   },
+   {
+    "path": "src/lib/components/WindowTabBar.svelte",
+    "why": "Renders the tab titles from getTabDisplay/getTabTitle and hosts ensureGitRoot. Where the stale title is visible; also contains custom multi-pane tab renaming (unrelated to folder rename)."
+   },
+   {
+    "path": "src/lib/api/files.ts",
+    "why": "renameEntry() wraps the rename_entry IPC (line 94) and watchDirectory/unwatchDirectory. The bridge for the rename call; read for the request/response shape (returns the new FileEntry with new path)."
+   },
+   {
+    "path": "src-tauri/src/files/file_ops.rs",
+    "why": "Backend rename_entry (line 254) performs fs::rename and returns the renamed FileEntry. Confirms the new path is available; relevant if the fix propagates old->new path from the mutation."
+   },
+   {
+    "path": "src/lib/state/dialogs.svelte.ts",
+    "why": "Holds renamingEntry / startRename (lines 69,121) consumed by pane-mutations.rename(). Rename entry-point state; context for how the child entry (not currentPath) is selected for rename."
+   },
+   {
+    "path": "src/lib/composables/use-inline-rename.svelte.ts",
+    "why": "Inline F2 rename UX (handleRenameKeydown/Blur) that triggers the mutation. Entry point context; renames a child entry, illustrating why the local pane title is unaffected but a pane showing the folder is."
+   },
+   {
+    "path": "src/lib/components/EntryName.svelte",
+    "why": "UI that wires the inline rename input to the composable. Peripheral entry-point context."
+   },
+   {
+    "path": "src/lib/components/ContextMenu.svelte",
+    "why": "Right-click Rename action (handleRename, line 123) \u2014 another rename entry point."
+   },
+   {
+    "path": "src/lib/state/file-events.ts",
+    "why": "broadcastFileChange / initFileChangeListener cross-window plumbing. rename() notably does NOT broadcast here; relevant if the fix adds cross-window rename notification."
+   },
+   {
+    "path": "src/lib/state/refresh-manager.ts",
+    "why": "Debounces/dedupes refresh requests fanned out from the watcher. Documents the three-layer refresh policy; context for where a rename-follow should hook without adding a fourth gate."
+   },
+   {
+    "path": "src/lib/state/pane-watch.ts",
+    "why": "Per-pane OS watch keyed to currentPath and the local-mutation cooldown. Explains why the pane that performed the rename suppresses its own echo and why a stale-path pane keeps watching the old path."
+   },
+   {
+    "path": "src/lib/state/types.ts",
+    "why": "WindowTab/ExplorerTab/TabPane/ExplorerCoreState shapes (pane.path fallback, currentPath). Reference for the pane<->explorer<->title data model."
+   }
+  ],
+  "notes": "CONTROL/DATA FLOW (verified in code):\\n1. Tab title = pure derivation of a pane's live currentPath. window-tabs.svelte.ts getTabDisplay -> getTabLivePath(tab) -> panePath(tab, activePaneId) -> `explorers.get(pane.explorerId)?.state.currentPath || pane.path`, then extractFolderName / disambiguateTabTitles (domain/tab-title.ts). So the title is stale iff currentPath is stale. No title-side bug per se.\\n2. Rename write path: EntryName/ContextMenu -> use-inline-rename -> dialogs.renamingEntry -> pane-mutations.rename() -> api/files.renameEntry -> Rust file_ops.rename_entry. rename() updates coreState.entries for the CHILD entry only; it never updates currentPath and (uniquely among the mutations) never calls broadcastFileChange.\\n3. Notification path for a pane that is SHOWING the renamed folder: backend fs_watcher.rs reduces every event path to parent() and emits `directory-changed` for the PARENT dir (renaming /a/X emits /a, never /a/X). use-file-watchers.ts only refreshes explorers where currentPath === changedPath, so the pane on /a/X never matches -> no refresh, no navigateToParent -> currentPath stays /a/X -> tab keeps old name 'X'. This is the exact repro.\\n\\nWHY OLD NAME (not parent name) SHOWS: because the affected pane receives NO matching event at all. If it did refresh, pane-refresh.ts would fail to list the missing old path and fall back to navigateToParent (showing the PARENT name), which is a different-but-also-wrong outcome \u2014 so any fix that merely notifies must also FOLLOW the rename to the new path, not just refresh.\\n\\nTWO VALID FIX ROUTES:\\n- Route A (frontend, most self-contained): in pane-mutations.rename(), after success, detect panes/explorers whose currentPath equals (or is inside) the renamed path and update their currentPath to result.data.path (and re-point the watch). Would also add broadcastFileChange for cross-window parity. Touches pane-mutations.ts + explorer.svelte.ts (a follow/rename-current-dir helper) + pane-watch.ts. Title fixes itself via the derivation. Cross-window still needs a rename-aware signal carrying old->new (file-events.ts / use-file-watchers.ts).\\n- Route B (notification-driven): make fs_watcher.rs emit for the renamed directory itself (and/or emit a rename event with source+dest), and have use-file-watchers.ts/pane-refresh.ts/explorer.svelte.ts respond by following the current dir to its new path instead of navigateToParent. More general (covers external renames too) but requires backend + frontend changes.\\n\\nAMBIGUITY: The scenario 'rename the folder a tab is showing' is only reachable when the rename is issued from a DIFFERENT pane/tab/window that shows the parent (you cannot rename the folder you are inside from within it). A pure single-pane same-tab flow never hits this because that pane shows the parent, not the renamed child. The robust fix therefore spans the rename-notification boundary (Route A or B), not the title code. window-tabs.svelte.ts is where the symptom manifests and is essential to understand, but is unlikely to be edited.",
+  "agent_id": "a033f12c46836f20a"
+ },
+ "X2": {
+  "core": [
+   {
+    "path": "src/lib/state/git-status.svelte.ts",
+    "why": "The badge data store. Holds the per-directory status cache `byDir` (bounded to 8 dirs), `fetchForDirectory` (returns early if cached), `doFetch`, `refresh()` (re-fetches all tracked dirs), and `getStatus(dir,name)` which the badge component reads. Any 'badges go stale' bug lives here: stale cache not being replaced, refresh not fanning out, or the reactive `byDir` reassignment not firing. `initWatcherListener()` subscribes it to the git-change hub."
+   },
+   {
+    "path": "src/lib/state/git-refresh.ts",
+    "why": "The single notification hub both stores consume. Owns the one `git-status-changed` Tauri listener (dispatches source:'watcher'), `notifyLocalGitChange` (source:'local', called by SCM after stage/commit), and `emitWatcherGitChange`. If the badge store's subscriber isn't dispatched to, or the listener never attaches, badges never refresh. Central coordination point for both reported symptoms."
+   },
+   {
+    "path": "src/lib/state/scm.svelte.ts",
+    "why": "The SCM panel actions. stage/unstage/discard/commit all call `refresh()` -> `refreshSummary()` + `notifyLocalGitChange(repoRoot)`, which is the path that should update badges after staging/committing. Also the ONLY place `gitWatchRepo` is started (setActivePath:113), so the backend `git-status-changed` watcher only exists once a repo has been made active in the SCM view."
+   },
+   {
+    "path": "src/lib/composables/use-file-watchers.ts",
+    "why": "Handles the general `directory-changed` fs watcher event and, at line 58, conditionally calls `gitStatusStore.refresh()` guarded by `settingsStore.showGitStatus && gitStatusStore.currentPath === changedPath`. This is the fallback badge-refresh path for file changes; the `currentPath === changedPath` guard is a likely fix site (currentPath is only the most-recently-fetched dir, so an inactive/second pane's change may be skipped)."
+   },
+   {
+    "path": "src/lib/components/GitStatusBadge.svelte",
+    "why": "Renders the M/U/A/D badge. Resolves `directory` from the owning pane (via pane-context + windowTabsManager) and computes `gitStatus` via `$derived(gitStatusStore.getStatus(directory, entryName))`. If the derived/reactive read of the store's `byDir` doesn't retrigger on refresh, or `directory` resolves wrong, badges display stale/empty values."
+   },
+   {
+    "path": "src-tauri/src/files/git_status.rs",
+    "why": "Backend source of the badge data: `get_git_status` command runs `git status --porcelain -z` and returns `{is_git_repo, statuses: name->GitFileStatus}` aggregated to the browsed dir's top-level entries. Any wrong/missing status for a changed file originates here."
+   },
+   {
+    "path": "src-tauri/src/git.rs",
+    "why": "`git_watch_repo` (line 662) sets up the notify watcher that emits the `git-status-changed` event (with 200ms coalescing/trailing debounce) driving refresh. This watcher is what should fire on external file changes; if it isn't started (SCM panel never opened) or debounce drops the event, badges won't update on file change."
+   }
+  ],
+  "peripheral": [
+   {
+    "path": "src/lib/api/git.ts",
+    "why": "IPC wrappers: `getGitStatus` (badge data) and `gitWatchRepo/gitUnwatchRepo`, plus stage/commit/etc. Read to trace the frontend->backend boundary."
+   },
+   {
+    "path": "src/routes/+page.svelte",
+    "why": "Startup calls `gitStatusStore.initWatcherListener()` (line 388). If this were removed the badge store would never subscribe to git changes \u2014 a prerequisite for the refresh to work at all."
+   },
+   {
+    "path": "src/lib/components/ExplorerPane.svelte",
+    "why": "Triggers `gitStatusStore.fetchForDirectory(path)` in an effect on dir/setting change, and sets the pane-id context consumed by the badge. Governs initial badge population per pane."
+   },
+   {
+    "path": "src/lib/state/pane-context.ts",
+    "why": "Provides `getPaneIdContext` the badge uses to resolve which pane/directory an entry belongs to; load-bearing for correct per-directory status lookup in dual-pane."
+   },
+   {
+    "path": "src/lib/components/ListView.svelte",
+    "why": "Renders <GitStatusBadge> in List view (line 100); one of three views that must all show updated badges."
+   },
+   {
+    "path": "src/lib/components/TilesView.svelte",
+    "why": "Renders <GitStatusBadge> in Tiles view (line 154)."
+   },
+   {
+    "path": "src/lib/components/FileItem.svelte",
+    "why": "Renders <GitStatusBadge> in Details view (line 115), with hideOnRename."
+   },
+   {
+    "path": "src-tauri/src/files/fs_watcher.rs",
+    "why": "Emits the `directory-changed` event (debounced) that drives the fallback badge-refresh in use-file-watchers.ts. Determines whether a pure content modification even produces an event."
+   },
+   {
+    "path": "src/lib/components/ScmSidebarView.svelte",
+    "why": "Only caller of `scmStore.setActivePath` / `initWatcherListener`, i.e. the trigger that starts the backend git watcher. Relevant to whether file-change events exist when the SCM panel is closed."
+   },
+   {
+    "path": "src/lib/api/mock-invoke.ts",
+    "why": "Mock backend for E2E: `git_watch_repo` no-ops and `__mockGitExternalModify`/`__mockGitSetClean` drive `emitWatcherGitChange`. Shows the expected refresh contract and is where an E2E repro would hook in."
+   },
+   {
+    "path": "src/lib/state/settings.svelte.ts",
+    "why": "`showGitStatus` gates both the fetch and the badge render; a fix or repro must account for this flag."
+   }
+  ],
+  "notes": "Data flow: backend `get_git_status` (src-tauri/src/files/git_status.rs) -> IPC `getGitStatus` (api/git.ts) -> gitStatusStore.byDir cache (state/git-status.svelte.ts) -> GitStatusBadge reads `getStatus(directory,entryName)` in a $derived. `directory` is resolved per-entry from pane-context + windowTabsManager, keyed by the pane's currentPath so dual panes don't bleed.\n\nRefresh is coordinated through ONE hub, state/git-refresh.ts, with two producers and two consumers:\n- Producer 1 (watcher): src-tauri/src/git.rs `git_watch_repo` emits `git-status-changed`; git-refresh's `ensureWatcherListener` dispatches source:'watcher'.\n- Producer 2 (local): scm.svelte.ts stage/unstage/discard/commit -> `refresh()` -> `notifyLocalGitChange(repoRoot)` dispatches source:'local'.\n- Consumer A (badges): git-status.svelte.ts `initWatcherListener` (registered at +page.svelte:388) refreshes on ANY change.\n- Consumer B (SCM summary): scm.svelte.ts `initWatcherListener` refreshes only on source:'watcher' (local already refreshed itself).\n\nTwo plausible bug routes, both worth checking:\n\nRoute A - 'after staging/committing' symptom. The chain scm action -> refresh() -> notifyLocalGitChange -> git-refresh dispatch -> badge subscriber -> gitStatusStore.refresh() should already update badges. If it doesn't, the fix is in one of: scm.svelte.ts (a mutation path that skips `refresh()`/notify, or notifies with the wrong/undefined repoRoot), git-refresh.ts (subscriber not receiving local events), or git-status.svelte.ts refresh()/doFetch not replacing the cached entry (e.g. `fetchForDirectory` early-returns on cache and refresh() doesn't re-run for the right dir). Also verify gitStatusStore.initWatcherListener actually ran (+page.svelte).\n\nRoute B - 'when a file changes' symptom. Two mechanisms exist and both are fragile: (1) the backend git watcher (git.rs) only runs after `scmStore.setActivePath` calls gitWatchRepo, which only happens when ScmSidebarView is mounted/active \u2014 so with the SCM panel closed, no `git-status-changed` fires and badges never refresh on external edits; (2) the fallback in use-file-watchers.ts refreshes badges on `directory-changed` but is gated by `gitStatusStore.currentPath === changedPath`, where currentPath is merely the last-fetched dir, so the inactive pane (or a content-only modification that doesn't reliably emit directory-changed via fs_watcher.rs) is skipped. Most likely fix sites for this route: relax/replace the currentPath guard in use-file-watchers.ts to refresh whenever the changed dir is tracked, and/or start the git watcher independently of the SCM panel (decouple gitWatchRepo from scm.setActivePath).\n\nReactivity caveat to verify in-code: GitStatusBadge's `$derived` calls `gitStatusStore.getStatus()`, which reads the store's `$state byDir`; doFetch reassigns `byDir = {...}` (top-level), so this should retrigger. If a regression changed doFetch to mutate byDir in place instead of reassigning, badges would go stale even though data is fetched \u2014 check git-status.svelte.ts doFetch for that.\n\nPrecision note: the wiring in the current tree looks largely intact (single hub, both stores subscribed, local+watcher producers present), so the seeded/real defect is most likely a narrow one in git-status.svelte.ts (cache/refresh) or use-file-watchers.ts (guard) rather than a missing subscription.",
+  "agent_id": "a16d1a164d2fc3cee"
+ },
+ "X3": {
+  "core": [
+   {
+    "path": "src/lib/components/FileList.svelte",
+    "why": "handleListDragOver (lines 233-251) is the HTML5 background-drop handler that sets `isDropTarget`, which drives `class:drop-target={isDropTarget}` on the `.content` div (lines 304-306) \u2014 i.e. the highlight of 'the window' as a drop target. Its no-op suppression guard (lines 242-246) uses strict `parentDir(p) === explorer.currentPath` instead of the separator-agnostic `samePath()` used everywhere else, so the same-source-folder highlight can leak through. This is the most direct site of the reported window highlight."
+   },
+   {
+    "path": "src/lib/composables/use-native-drop-handler.ts",
+    "why": "handleNativeOver (lines 98-115) computes drop-target validity for the Tauri onDragDropEvent 'over' phase (external + cross-window drags). It suppresses the background/window highlight when every source path already lives in destDir via `samePath(parentDir(p), destDir)` then calls highlightTarget. This is the native-drag equivalent of the FileList guard and a candidate fix location."
+   },
+   {
+    "path": "src/lib/composables/use-pointer-drag.svelte.ts",
+    "why": "onMouseMove (lines 132-147) plus the isNoOpDropPath helper (lines 40-44) is the macOS pointer-drag highlight-validity computation. It is the reference/correct implementation: it clears the highlight when `dragPaths.every(p => isNoOpDropPath(destDir, p))`, where isNoOpDropPath = `samePath(parentDir(source), targetDir) || isInsideDir(targetDir, source)`. Covers the same-source-folder no-op for folder/tab/background targets consistently."
+   },
+   {
+    "path": "src/lib/composables/use-native-drop-target.svelte.ts",
+    "why": "Applies the actual `.drop-target` class to the resolved element (highlightAtCoords/highlightTarget/highlightTargetAtPoint, lines 116-147) and resolves target type via resolveDropTarget/resolveDropTargetAtPoint. It is the shared highlight primitive all validity guards call into; it does NOT itself know source paths, so any 'compute validity inside the highlighter' route would add source-awareness here."
+   }
+  ],
+  "peripheral": [
+   {
+    "path": "src/lib/domain/path.ts",
+    "why": "Defines the pure comparison helpers the guards use/should use: samePath (lines 225-227, separator-agnostic equality), parentDir (100-123), isInsideDir (209-213), sameDirectory (148-150). The FileList `===` bug is precisely a failure to use samePath here."
+   },
+   {
+    "path": "src/lib/composables/use-drop-target.svelte.ts",
+    "why": "handleDragOver/isDropTarget (lines 22-31, 82-84) highlight an individual directory ENTRY as a drop target (main views + Miller columns). No same-source no-op guard on the highlight (only handleDrop filters via isInsideDir at line 76); relevant when the 'source folder' is itself visible as a row, and shows the pattern the fix must stay consistent with."
+   },
+   {
+    "path": "src/lib/state/drag.svelte.ts",
+    "why": "Shared drag-source state (dragState.current / readCrossWindow) providing the source paths every validity guard reads to decide whether the destination equals the source folder."
+   },
+   {
+    "path": "src/lib/state/drop-operations.ts",
+    "why": "getDropSourcePaths (line 46) and handleFileDropMany (line 88) run at drop time and already filter no-op sources, which is why 'the drop does nothing' \u2014 contextualizes that only the highlight, not the operation, is wrong."
+   },
+   {
+    "path": "src/lib/composables/use-external-drop.svelte.ts",
+    "why": "Wraps Tauri webview.onDragDropEvent and dispatches 'over' events to handleNativeOver \u2014 the plumbing that feeds the native highlight path."
+   },
+   {
+    "path": "src/lib/components/MillerColumns.svelte",
+    "why": "Consumes both useDropTarget and usePointerDrag (lines 245-247); a Miller-column background/entry drop is another surface where the same-source highlight logic must hold."
+   }
+  ],
+  "notes": "Three parallel drag mechanisms each compute drop-target validity/highlight independently, which is the ambiguity for 'where the fix goes' \u2014 the correct fix likely touches whichever mechanism the reporter used, and ideally all three for consistency:\n\n1) HTML5 in-app drag (Linux/WebKitGTK, and per-entry everywhere): FileItem/ItemButton set `draggable` + ondragstart when usesHtml5Drag. Background highlight = FileList.svelte `handleListDragOver` \u2192 `isDropTarget` \u2192 `.content.drop-target` (the 'window'). Its no-op guard uses strict `parentDir(p) === explorer.currentPath` (FileList.svelte:245) \u2014 the odd one out; every other site uses samePath(). On mixed-separator paths this comparison fails and the window stays highlighted for a same-source-folder drop.\n\n2) Native Tauri onDragDropEvent (external + cross-window on all platforms): use-external-drop \u2192 use-native-drop-handler `handleNativeOver` \u2192 suppresses via `samePath(parentDir(p), destDir)` then `highlightTarget` (use-native-drop-target).\n\n3) macOS pointer drag: FileItem/ItemButton/ListView/TilesView/MillerColumns wire usePointerDrag; `onMouseMove` uses isNoOpDropPath = `samePath(parentDir(source), targetDir) || isInsideDir(targetDir, source)` to clear the highlight. This is the most complete/correct guard.\n\nData flow: drag source paths live in drag.svelte.ts (dragState). Each 'over/dragover' handler resolves a destination (folder/tab/background/etc.), compares each source's parentDir to the destination, and either suppresses or calls a highlight primitive. use-native-drop-target.svelte.ts owns the actual `.drop-target` class application and resolveDropTarget hit-testing but is source-unaware, so validity must be decided by its callers. domain/path.ts provides the comparison helpers.\n\nMost likely single-file fix: change FileList.svelte:245 from `parentDir(p) === explorer.currentPath` to `samePath(parentDir(p), explorer.currentPath)` (import already present pattern), matching the other two guards. If the report is platform-specific to native/macOS, the fix instead lives in use-native-drop-handler.ts handleNativeOver or use-pointer-drag.svelte.ts \u2014 but those already guard via samePath/isNoOpDropPath, so FileList's strict `===` is the strongest concrete defect. Note the guards check background/current-folder equality; the folder/tab-target no-op path additionally relies on isInsideDir (self/descendant), which handleNativeOver does NOT apply during 'over' (only at drop time, line 83), a secondary inconsistency worth flagging.",
+  "agent_id": "a60abc6514c4a5082"
+ },
+ "X8": {
+  "core": [
+   {
+    "path": "src/lib/state/operations.svelte.ts",
+    "why": "The operations store that backs every progress dialog. Holds `showProgressDialog` state plus the `operations` list, and defines cancellation: `cancelOperation` (markCancelled + filter row out + `closeDialogIfEmpty`), `cancelAllOperations`, and `closeDialogIfEmpty` which ONLY hides the panel when `operations.length === 0`. This is the primary place the dialog's visibility is decided, so a 'stuck after cancel' bug is most likely rooted here (e.g. dialog left visible because the list isn't empty, or the dialog-show `dialogTimerId`/re-show logic firing after cancel)."
+   },
+   {
+    "path": "src/lib/state/paste-operations.ts",
+    "why": "Drives the actual multi-file COPY/MOVE batch (`pasteEntries`). Starts one operation for the whole batch (line 55), registers the `copy-progress` listener that relays a dialog Cancel to the backend via `cancelCopy` (lines 73-88), detects cancellation at the loop top (line 101) and via a 'cancelled' error (line 174), and finalizes by calling `cancelOperation`/`failOperation`/`completeOperation` (lines 214-219). The cancel-detection and finalize ordering here determine whether the tracked op is removed so the dialog can dismiss."
+   },
+   {
+    "path": "src/lib/components/ProgressDialog.svelte",
+    "why": "Renders the progress panel and owns the Cancel / Cancel All buttons. Visibility guard is `{#if showDialog && operations.length > 0}` (line 72); handlers `handleCancel` -> `cancelOperation`, `handleCancelAll` -> `cancelAllOperations` (lines 21-27). Any fix that changes how cancel dismisses the panel is validated/observed here; a guard or handler mismatch would leave it on screen."
+   }
+  ],
+  "peripheral": [
+   {
+    "path": "src/lib/state/pane-mutations.ts",
+    "why": "Parallel route that uses the SAME operations store for compress/extract (`runArchiveJob`, lines 173-221): same listen-then-cancel-relay pattern and settle logic (`clearOperation`/`completeOperation`/`failOperation`). A fix to the cancel/dismiss contract in operations.svelte.ts would likely need mirroring here; useful reference for the intended pattern."
+   },
+   {
+    "path": "src/lib/api/files.ts",
+    "why": "IPC bridge: `copyEntry(..., jobId)` (line 179) passes the client job id, and `cancelCopy(jobId)` (line 198) invokes `cancel_copy`. Note `moveEntry` has no jobId param, so MOVE batches have no mid-file backend cancellation - relevant to why a move may keep running even though the row is removed."
+   },
+   {
+    "path": "src-tauri/src/files/file_ops.rs",
+    "why": "Backend `copy_entry`/`copy_entry_impl` register the job via `COPY_TASKS.start_with_id(job_id)` and `cancel_copy` flips the flag (lines 332-347). Cooperative cancellation returns the 'Copy cancelled' error the frontend keys on. Confirms only copies are cancellable, not moves."
+   },
+   {
+    "path": "src-tauri/src/progress.rs",
+    "why": "`ProgressTracker` emits throttled `copy-progress` events and performs the `check_cancelled` AtomicBool poll that aborts an in-flight copy. Explains how cancellation actually reaches streaming file work."
+   },
+   {
+    "path": "src-tauri/src/task_registry.rs",
+    "why": "Thread-safe registry backing copy-job cancellation (`start_with_id`, `cancel`, `cleanup`). Context for how a client-generated jobId maps to a cancel flag."
+   },
+   {
+    "path": "src/lib/api/mock-invoke.ts",
+    "why": "E2E/browser mock: `cancel_copy` is a no-op (line 993) and copies complete without events, so cancellation behavior differs from the real app - relevant when reproducing/testing the bug outside Tauri."
+   },
+   {
+    "path": "tests/state/paste-progress.test.ts",
+    "why": "Existing coverage of paste cancel ('cancellation mid-batch stops transferring', 'relays a mid-file cancel'). Notably asserts calls-count and toast, NOT `showProgressDialog === false` - a gap where a stuck-dialog regression could slip through; a fix should add that assertion here."
+   },
+   {
+    "path": "tests/state/operations-autohide.test.ts",
+    "why": "Documents the intended auto-hide contract (completed op lingers then panel hides when list empties; a running op keeps the panel). Baseline for the correct dismiss behavior."
+   },
+   {
+    "path": "tests/state/operations-cancelled-ids.test.ts",
+    "why": "Covers `cancelOperation`/`cancelAllOperations` removing the row while keeping the id observable via the TTL cancelled-set. Directly exercises the cancel path under test."
+   }
+  ],
+  "notes": "CONTROL/DATA FLOW (multi-file copy/move): User pastes/drops -> `pasteEntries` (paste-operations.ts) calls `operationsManager.startOperation(...)` ONCE for the whole batch, returning `op`. A dialog-show timer (`DIALOG_DELAY_MS=1500`) later sets `showProgressDialog=true`. The batch loops per source, calling `performFileTransfer` (file-transfer.ts) -> `copyEntry`/`moveEntry` (files.ts) -> Rust `copy_entry`/`move`. For copies a client-generated `jobId` keys `copy-progress` events; a registered listener updates progress and, if `isOperationCancelled(op.id)`, relays `cancelCopy(jobId)` to the backend (progress.rs flag -> copy returns 'Copy cancelled').\n\nCANCEL PATH: The dialog's Cancel button -> `handleCancel` -> `operationsManager.cancelOperation(op.id)`, which (1) `markCancelled` (adds id to a 60s-TTL set so in-flight workers still see the cancel), (2) FILTERS the row out of `operations`, (3) calls `closeDialogIfEmpty`, which hides the panel ONLY when `operations.length === 0`. The ProgressDialog render guard is `{#if showDialog && operations.length > 0}`. The async batch notices cancellation at the loop-top check (line 101) or via the 'cancelled' error (line 174 -> `cancelledByUser`), then finalizes (lines 214-219): if cancelled -> `cancelOperation` again (idempotent), else `failOperation` (which force-sets `showProgressDialog=true`) or `completeOperation` (lingers 1500ms then `clearOperation`).\n\nMOST LIKELY FIX SITE(S): The visibility decision lives in operations.svelte.ts (`cancelOperation` + `closeDialogIfEmpty` + the `dialogTimerId` show-timer). Two plausible root causes / routes:\n  ROUTE A (store-level): `closeDialogIfEmpty` only hides when the list is fully empty, and the dialog-show timer (`startOperation`, lines 84-91) can fire AFTER a cancel to re-set `showProgressDialog=true` when it sees a still-'running' op. If the batch's op is still status 'running' when the timer fires post-cancel (or a second concurrent op remains), the panel re-appears / stays. Fix would harden operations.svelte.ts so cancel force-hides and clears the pending show-timer unconditionally.\n  ROUTE B (batch-level): paste-operations.ts finalize can call `failOperation` (which force-shows the dialog and never auto-dismisses) when errors accumulated but the user actually cancelled - the guard at line 214 checks cancel FIRST, but a MOVE has no backend cancellation (moveEntry takes no jobId), so a large in-flight move keeps running and the op may not be seen as cancelled in time; the fix would ensure the cancelled batch always settles via `cancelOperation` and never re-shows via `failOperation`.\n\nASYMMETRY WORTH FLAGGING: copies are cancellable mid-file (jobId + `cancel_copy` + progress.rs flag); moves are NOT - `moveEntry` has no jobId and there is no `cancel_move`. So 'cancel a move' can only remove the row/close the dialog between files, never abort the current file. If the reported stuck-dialog is specific to MOVE, the backend/IPC (files.ts `moveEntry`, file_ops move command) would also need a cancellable job to fully fix it.\n\nTEST GAP: tests/state/paste-progress.test.ts exercises cancel but never asserts `operationsManager.showProgressDialog === false` afterward - the natural place to add a regression assertion for this bug.",
+  "agent_id": "a692adc25ed5a1eef"
+ },
+ "B2": {
+  "core": [
+   {
+    "path": "src/lib/components/QuickOpen.svelte",
+    "why": "The entire quick-open query lifecycle lives here and this is where the bug is. handleInput() (lines 251-319) captures the search root from getCwdPath() (line 282, reading windowTabsManager.getActiveExplorer().currentPath, lines 169-172), debounces 50ms, and issues startStreamingSearch(query, cwd, 20). Staleness is guarded ONLY by searchGeneration (line 203), which increments on typing \u2014 it is NOT bumped on directory change or on dialog close/reopen. setupSearchListener() (lines 208-248) discards events by generation, but when activeSearchId===null it LOCKS onto the searchId of the *first* event it sees (lines 225-226). Because the component is always mounted (state persists across opens) and backend cancellation is cooperative, a lingering search rooted at the previous directory can emit a 'search-results' event into the freshly-created generation-matching listener before startStreamingSearch returns the new searchId \u2014 the listener then adopts that stale searchId and renders results scoped to the old cwd. cancelActiveSearch() (lines 190-199) and the close/open $effects (lines 406-432) reset query/results but not searchGeneration/activeSearchId, so orphaned prior-directory searches can bleed through. This is the definitive fix site (key events to the issuing cwd / don't adopt an unknown searchId / bump generation on close)."
+   }
+  ],
+  "peripheral": [
+   {
+    "path": "src/lib/api/search.ts",
+    "why": "Defines the IPC wrappers startStreamingSearch/cancelSearch/fuzzySearch and the SearchResultsEvent payload shape (searchId, results, done, totalScanned). A fix that tags/verifies results against the issuing directory would extend this payload (e.g. add root) \u2014 read for context; optionally modified."
+   },
+   {
+    "path": "src-tauri/src/search.rs",
+    "why": "Backend start_streaming_search spawns a std::thread that walks from `root` and emits 'search-results' events (process_batch, lines 431-501; final emit lines 402-412). Cancellation is checked only between batches (lines 326, 382, 402), so a batch already in flight when cancel_search fires can still emit \u2014 the mechanism that lets previous-directory results leak. Would change here if the fix threads the search root into the event payload for frontend verification."
+   },
+   {
+    "path": "src-tauri/src/task_registry.rs",
+    "why": "Allocates streaming search IDs via a monotonic AtomicU64 starting at 1 (fetch_add, line 39). Confirms IDs are never reused, ruling out an ID-collision cause and isolating the bug to the frontend's 'adopt first searchId' race rather than backend id reuse."
+   },
+   {
+    "path": "src/lib/state/window-tabs.svelte.ts",
+    "why": "getActiveExplorer() (lines 823-827) is the source QuickOpen reads currentPath from to root each search. The active explorer/pane changing (or tab switch) is what changes the effective cwd underneath a running search."
+   },
+   {
+    "path": "src/lib/state/explorer.svelte.ts",
+    "why": "Owns currentPath and navigateTo (currentPath getter line 716; set on navigation line 219). Navigating to a new directory (including via QuickOpen selectResult -> explorer.navigateTo, QuickOpen.svelte lines 384-397) is the event that produces the 'new directory' whose quick-open should have superseded the old one."
+   },
+   {
+    "path": "src/lib/state/dialogs.svelte.ts",
+    "why": "openQuickOpen/closeQuickOpen toggle the `open` prop (lines 148-153). Because QuickOpen is only visually gated (Modal {#if open}) while its component instance stays mounted, the persistent searchGeneration/activeSearchId state survives close/reopen \u2014 a precondition for the stale-result leak."
+   },
+   {
+    "path": "src/routes/+page.svelte",
+    "why": "Mounts QuickOpen unconditionally (line 515) with open bound to dialogStore.isQuickOpenOpen, confirming the component (and its search state) is never torn down between opens."
+   }
+  ],
+  "notes": "Control/data flow: Ctrl+P -> dialogStore.openQuickOpen() -> +page.svelte passes open=true to the always-mounted QuickOpen.svelte. Typing fires handleInput() which, after a 50ms debounce, reads the search root from getCwdPath() = windowTabsManager.getActiveExplorer().currentPath, sets up a 'search-results' listener, and calls startStreamingSearch(query, cwd, 20). The Rust backend (search.rs) walks the tree on a std::thread and emits batched 'search-results' events tagged with a monotonic searchId (task_registry.rs). QuickOpen filters events two ways: (1) searchGeneration closure guard, incremented per debounce/keystroke; (2) activeSearchId, which it either learns from startStreamingSearch's return or ADOPTS from the first arriving event when still null.\\n\\nRoot cause (verified in code): searches are keyed to a query generation and a backend searchId, but NOT to the directory they were issued for, and the guard is never re-armed across dialog close/reopen (searchGeneration is component-scoped state that persists because the component stays mounted). The concrete leak: after navigating from dir A to dir B and reopening/typing, a still-running A-rooted backend search (cancellation is cooperative and only checked between batches in search.rs) can emit a batch into the newly created generation-matching listener before startStreamingSearch(B) resolves. With activeSearchId===null, setupSearchListener adopts A's searchId (lines 225-226) and renders A's results \u2014 'results from the previously visited directory.' Directory-independent frecency/recent matches are not the culprit; the leaked rows are backend fuzzy results whose paths sit under the old root.\\n\\nMost likely fix site: QuickOpen.svelte alone. Viable approaches (precision note \u2014 all are single-file except (b)): (a) capture the cwd at issue time and discard events not belonging to the current cwd/generation, and/or bump ++searchGeneration + null activeSearchId in the close and open $effects so orphaned searches can never match; (b) stop 'adopting' an unknown searchId \u2014 only accept events once startStreamingSearch has returned the concrete id, which additionally requires threading the search root into SearchResultsEvent (touches src/lib/api/search.ts + src-tauri/src/search.rs) if you want positive root verification rather than just id/generation matching. Route (a) is the minimal correct fix; route (b) is the more defensive cross-layer fix.\"}",
+  "agent_id": "a7a287f9e747e0c1e"
+ },
+ "P4": {
+  "core": [
+   {
+    "path": "src/lib/components/ThumbnailImage.svelte",
+    "why": "The primary frontend concurrency limiter and scheduler. Defines two module-level pools `createPool(8)` (microPool) and `createPool(4)` (fullPool) that cap how many `get_micro_thumbnail`/`get_thumbnail_data` invokes run at once. Each tile mounts one instance, uses an IntersectionObserver (rootMargin 200px) to gate work to visible tiles, and `acquire()`/`release()` around the invoke calls with stale-key bail-outs. This is where CPU saturation is throttled (or would be tuned)."
+   },
+   {
+    "path": "src-tauri/src/thumbnails.rs",
+    "why": "Backend generation. The Tauri commands `get_thumbnail`, `get_thumbnail_data`, `get_micro_thumbnail`, `get_video_thumbnail_data`, `get_folder_preview` each wrap the sync work in `tokio::task::spawn_blocking` with NO global semaphore/concurrency cap \u2014 so N concurrent frontend requests spawn N blocking decode/resize jobs (up to tokio's default 512-thread blocking pool). The only serialization is per-cache-key inflight locks (`INFLIGHT`/`with_inflight_lock`, lines ~229-262) which dedupe identical keys but do NOT throttle across distinct images. Any real backend-side concurrency cap would be added here."
+   },
+   {
+    "path": "src/lib/api/thumbnails.ts",
+    "why": "Frontend IPC bridge: `getThumbnailData`, `getMicroThumbnail`, `getVideoThumbnailData`, `getFolderPreview` call `invoke(\"get_thumbnail_data\" ...)` etc. This is the seam between the pool-limited component and the unbounded backend commands; a request-queue/batching layer would live here or in ThumbnailImage."
+   },
+   {
+    "path": "src/lib/components/TilesView.svelte",
+    "why": "The request originator. Renders one `ThumbnailImage` (image/video) or `FolderThumbnail` per file entry (lines ~142-147), gated by `isImageFile`/`isVideoFile`/`showFolderThumbnails`. For a folder of thousands of images this is what fans out thumbnail work; virtualization here bounds how many components mount at once."
+   },
+   {
+    "path": "src/lib/components/FolderThumbnail.svelte",
+    "why": "Secondary scheduler: calls `getFolderPreview` (its own spawn_blocking directory scan) per visible folder tile and then mounts up to 3 nested `ThumbnailImage` components (front + 2 back photos), each pulling from the same shared micro/full pools. Multiplies thumbnail requests when browsing folders-of-folders."
+   }
+  ],
+  "peripheral": [
+   {
+    "path": "src/lib/state/thumbnail-cache.ts",
+    "why": "Frontend bounded-LRU blob-URL cache (MAX_ENTRIES 500) keyed by `path:size:quality`. Cache hits short-circuit the pools entirely, so it directly affects how often the backend is hit on re-scroll/remount."
+   },
+   {
+    "path": "src-tauri/src/lib.rs",
+    "why": "Registers all thumbnail commands in the invoke_handler (lines 172-179) and builds the app/runtime. A backend-wide concurrency cap (global tokio Semaphore or `max_blocking_threads`) would be introduced around here \u2014 currently there is no such limit."
+   },
+   {
+    "path": "src-tauri/src/task_registry.rs",
+    "why": "Existing cancellable-background-task infrastructure; relevant if a fix routes thumbnail generation through a bounded/cancellable task queue instead of raw spawn_blocking."
+   },
+   {
+    "path": "src/lib/components/VirtualList.svelte",
+    "why": "Virtual scrolling determines how many tiles (and thus ThumbnailImage instances) are mounted at once, indirectly bounding concurrent requests beyond the IntersectionObserver's 200px margin."
+   },
+   {
+    "path": "src/lib/domain/virtual-layout.ts",
+    "why": "`autoFillColumns`/`chunkIntoRows` used by TilesView to compute how many tiles render per row/viewport \u2014 context for request fan-out size."
+   },
+   {
+    "path": "src/lib/state/settings.svelte.ts",
+    "why": "`THUMBNAIL_SIZE_CONFIG` / `thumbnailSize` tier controls generation size (larger = heavier decode/encode CPU) and `ffmpegPath` for video/audio; affects per-thumbnail cost."
+   },
+   {
+    "path": "src/lib/api/files.ts",
+    "why": "Barrel that re-exports the thumbnail API used by components (e.g. ThumbnailImage imports from `$lib/api/files`)."
+   },
+   {
+    "path": "src/lib/domain/file-types.ts",
+    "why": "`isImageFile`/`isVideoFile` gate which entries request thumbnails at all \u2014 the eligibility filter feeding the scheduler."
+   }
+  ],
+  "notes": "Control/data flow: TilesView renders one ThumbnailImage (image or kind=\\\"video\\\") or FolderThumbnail per file entry. ThumbnailImage is the ONLY place concurrency is bounded on the frontend: module-scoped `createPool(8)` (microPool) and `createPool(4)` (fullPool) plus an IntersectionObserver (rootMargin 200px) that only starts work for visible tiles and lets queued work bail if the tile scrolled away. On becoming visible it `microPool.acquire()` -> `getMicroThumbnail` (16x16, also pre-warms the full cache) -> `fullPool.acquire()` -> `getThumbnailData` (128x128). Results are stored in the frontend LRU blob cache (thumbnail-cache.ts) so re-scrolls avoid re-invoking. api/thumbnails.ts invokes the Tauri commands.\\n\\nBackend (thumbnails.rs): each command (`get_thumbnail`, `get_thumbnail_data`, `get_micro_thumbnail`, `get_video_thumbnail_data`, `get_folder_preview`) does `tokio::task::spawn_blocking(...)` with NO semaphore and NO explicit blocking-thread cap (lib.rs/main.rs set none, so tokio's default ~512-thread blocking pool applies). The per-cache-key `INFLIGHT` HashMap<String, Arc<Mutex<()>>> (with_inflight_lock) only serializes DUPLICATE requests for the SAME key \u2014 it does not throttle distinct images. So the effective concurrency limit today is entirely the frontend pools (max ~8 micro + 4 full inflight invokes); if that gate is bypassed or a batch of distinct images is requested, the backend will run all decodes in parallel and saturate CPU.\\n\\nKey nuance for a folder of thousands of images: virtualization (VirtualList) + IntersectionObserver mean only near-viewport tiles request thumbnails, and the 8/4 pools cap in-flight work \u2014 so CPU saturation typically comes from (a) fast scrolling churning many acquire/release cycles, (b) FolderThumbnail multiplying requests (folder-preview scan + up to 3 nested ThumbnailImages per folder tile), and/or (c) the pool caps being higher than the machine's core count. Thumbnails render only in Tiles view (Details/List views do not mount ThumbnailImage).\\n\\nTwo valid fix routes: (1) Frontend-only \u2014 tune/unify the pools in ThumbnailImage.svelte, add a shared global scheduler, or make pool size adaptive to hardwareConcurrency (files: ThumbnailImage.svelte, possibly api/thumbnails.ts, TilesView.svelte, FolderThumbnail.svelte). (2) Backend cap \u2014 add a global tokio Semaphore (sized to CPU cores) or a bounded worker queue guarding the spawn_blocking decode in thumbnails.rs, giving a hard limit independent of the frontend (files: thumbnails.rs, possibly lib.rs / task_registry.rs). A robust fix likely does both.\"",
+  "agent_id": "aa288f9bd2f33116c"
+ }
+}

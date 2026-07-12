@@ -717,18 +717,52 @@ const mockCommands: Record<string, CommandHandler> = {
   list_drives: () => mockDrives,
   log_startup_timing: () => undefined,
 
-  // Crash reporting (#184): a crash is simulated when the e2e test sets
-  // localStorage.mockCrashReport before load; consumed on first read.
+  // Crash reporting (#184, #302): a Rust crash is simulated when the e2e test
+  // sets localStorage.mockCrashReport before load; a frontend crash is
+  // simulated by record_frontend_crash writing localStorage.mockFrontendCrash.
+  // Either is consumed on first read, mirroring take_crash_report's mark-seen.
   take_crash_report: () => {
-    if (localStorage.getItem("mockCrashReport") !== "1") return null;
-    localStorage.removeItem("mockCrashReport");
-    return {
-      fileName: "crash-1700000000.txt",
-      contents:
-        "tauri-explorer 1.0.0 crash report\nos: linux (x86_64)\ntime: 1700000000 (unix)\npanic: mock panic for testing\nlocation: src/lib.rs:1:1\n\nbacktrace:\n<omitted>\n",
-    };
+    if (localStorage.getItem("mockCrashReport") === "1") {
+      localStorage.removeItem("mockCrashReport");
+      return {
+        fileName: "crash-1700000000.txt",
+        contents:
+          "tauri-explorer 1.0.0 crash report\nos: linux (x86_64)\ntime: 1700000000 (unix)\npanic: mock panic for testing\nlocation: src/lib.rs:1:1\n\nbacktrace:\n<omitted>\n",
+      };
+    }
+    const frontend = localStorage.getItem("mockFrontendCrash");
+    if (frontend) {
+      localStorage.removeItem("mockFrontendCrash");
+      return JSON.parse(frontend);
+    }
+    return null;
   },
   log_frontend_error: () => undefined,
+  // Frontend crash capture (#302): persist a crash record the next "launch"
+  // (page reload) will offer via take_crash_report. Dedupe lives in crash.ts.
+  record_frontend_crash: (args) => {
+    const message = String(args.message ?? "");
+    const stack = args.stack ? String(args.stack) : "<no stack captured>";
+    localStorage.setItem(
+      "mockFrontendCrash",
+      JSON.stringify({
+        fileName: "crash-1700000001.txt",
+        contents:
+          `tauri-explorer 0.0.0-mock crash report\nos: linux (x86_64)\n` +
+          `time: 1700000001 (unix)\nsource: frontend (webview)\n` +
+          `panic: ${message}\nlocation: webview\n\nbacktrace:\n${stack}\n`,
+      }),
+    );
+    return undefined;
+  },
+  // Log tail (#302): fake recent log lines so the bug-report URL carries a
+  // populated "Recent logs" section in e2e.
+  read_log_tail: () =>
+    [
+      "[2024-01-01][12:00:00][INFO] tauri_explorer: started",
+      "[2024-01-01][12:00:01][WARN] tauri_explorer: slow directory listing",
+      "[2024-01-01][12:00:02][ERROR] tauri_explorer::files: permission denied",
+    ].join("\n"),
   open_external_url: (args) => {
     localStorage.setItem("mock-opened-url", args.url as string);
     return undefined;
@@ -1549,7 +1583,23 @@ const mockCommands: Record<string, CommandHandler> = {
     const archivePath = args.archivePath as string;
     const extractHere = (args.extractHere as boolean) ?? false;
     const parentPath = parentDir(archivePath);
-    if (extractHere) return parentPath;
+    if (extractHere) {
+      // Mirror the backend: extract the archive's contents directly into the
+      // parent directory so they show up in the listing. Uses the same
+      // deterministic contents the read_archive mock reports (README.md,
+      // data.json, src/) so E2E can assert the extracted entries appear.
+      const entries = mockFiles[parentPath] || (mockFiles[parentPath] = []);
+      const extracted: FileEntry[] = [
+        file("README.md", `${parentPath}/README.md`, 512),
+        file("data.json", `${parentPath}/data.json`, 2048),
+        dir("src", `${parentPath}/src`, true),
+      ];
+      for (const e of extracted) {
+        if (!entries.some((x) => x.path === e.path)) entries.push(e);
+      }
+      mockFiles[`${parentPath}/src`] ||= [];
+      return parentPath;
+    }
     const folderName = basename(archivePath).replace(/\.zip$/i, "");
     const destPath = `${parentPath}/${folderName}`;
     const entries = mockFiles[parentPath] || (mockFiles[parentPath] = []);

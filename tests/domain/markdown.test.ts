@@ -54,9 +54,27 @@ describe("renderMarkdown", () => {
     expect(html).toContain("bad");
   });
 
-  it("allows remote images but replaces local/data images with their alt text", () => {
-    const html = renderMarkdown("![remote](https://example.com/a.png)\n\n![local pic](./a.png)\n\n![evil](data:text/html,x)\n");
-    expect(html).toContain('<img src="https://example.com/a.png" alt="remote"');
+  it("renders remote images as link placeholders, never as <img>", () => {
+    // CSP img-src excludes https:, so an <img> would both break visually and
+    // invite loosening the CSP (a remote-beacon channel). The image degrades
+    // to a link the user can open deliberately.
+    const html = renderMarkdown("![remote pic](https://example.com/a.png)\n");
+    expect(html).not.toContain("<img");
+    expect(html).toContain('href="https://example.com/a.png"');
+    expect(html).toContain('class="md-image-placeholder"');
+    expect(html).toContain('rel="noopener noreferrer"');
+    expect(html).toContain("remote pic");
+  });
+
+  it("falls back to the URL as link text for remote images without alt text", () => {
+    const html = renderMarkdown("![](https://example.com/pic.png)\n");
+    expect(html).not.toContain("<img");
+    expect(html).toContain(">https://example.com/pic.png (image)</a>");
+  });
+
+  it("replaces local/data images with their alt text", () => {
+    const html = renderMarkdown("![local pic](./a.png)\n\n![evil](data:text/html,x)\n");
+    expect(html).not.toContain("<img");
     expect(html).not.toContain("data:text/html");
     expect(html).not.toContain('src="./a.png"');
     expect(html).toContain("local pic");

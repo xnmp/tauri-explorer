@@ -28,7 +28,7 @@ async function triggerConflict(page: Page): Promise<void> {
 }
 
 test.describe("Conflict dialog", () => {
-  test("pasting over an existing file shows the conflict with file details", async ({ page }) => {
+  test("pasting over an existing file shows the conflict with file details @smoke", async ({ page }) => {
     await triggerConflict(page);
 
     const dialog = page.locator(".conflict-dialog");
@@ -65,7 +65,7 @@ test.describe("Conflict dialog", () => {
     await expect(page.locator(".entry-item", { hasText: "notes.md" })).toHaveCount(1);
   });
 
-  test("Replace overwrites the existing file — one entry, source content wins", async ({ page }) => {
+  test("Replace overwrites the existing file — one entry, source content wins @smoke", async ({ page }) => {
     // Documents/notes.md is 4 KB; the pasted /home/user/notes.md is 2 KB.
     const notes = page.locator(".entry-item", { hasText: "notes.md" });
     await triggerConflict(page);

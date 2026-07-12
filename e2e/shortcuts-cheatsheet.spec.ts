@@ -25,7 +25,7 @@ test.describe("shortcut cheatsheet", () => {
     await expect(sheet).not.toBeVisible();
   });
 
-  test("cheatsheet opens from the command palette", async ({ page }) => {
+  test("cheatsheet opens from the command palette @smoke", async ({ page }) => {
     await page.goto("/");
     await waitForEntries(page);
     await page.keyboard.press("Control+Shift+p");

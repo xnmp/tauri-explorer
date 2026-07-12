@@ -132,6 +132,7 @@
         <div class="input-row">
           <label>
             <span>Find</span>
+            <!-- svelte-ignore a11y_autofocus -- Modal traps focus and documents [autofocus] as its initial-focus mechanism (see Modal.svelte); the pattern field is the primary input for this dialog -->
             <input type="text" bind:value={findPattern} placeholder="Text to find..." autofocus />
           </label>
           <label>

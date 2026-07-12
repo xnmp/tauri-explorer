@@ -21,7 +21,7 @@ async function renameFile(page: Page, from: string, to: string): Promise<void> {
 }
 
 test.describe("Redo", () => {
-  test("Ctrl+Y re-applies an undone rename", async ({ page }) => {
+  test("Ctrl+Y re-applies an undone rename @smoke", async ({ page }) => {
     await page.goto(DOCS_URL);
     await waitForEntries(page);
 

@@ -50,7 +50,7 @@ test.describe("Sorting", () => {
     await expectOrder(page, NAME_ASC);
   });
 
-  test("Size header sorts ascending, then descending on a second click", async ({ page }) => {
+  test("Size header sorts ascending, then descending on a second click @smoke", async ({ page }) => {
     await page.goto(DOCS_URL);
     await waitForEntries(page);
 

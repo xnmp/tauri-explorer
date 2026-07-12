@@ -1,11 +1,14 @@
 /**
- * Crash reporting bridge (#184).
- * Local capture only: panics land in files via the Rust panic hook; frontend
- * errors are forwarded into the rotating backend logs. Nothing leaves the
- * machine unless the user opens the pre-filled GitHub issue themselves.
+ * Crash reporting bridge (#184, #302).
+ * Local capture only: panics land in files via the Rust panic hook; uncaught
+ * webview errors are both mirrored into the rotating backend logs AND recorded
+ * as crash files so the next-launch notice can offer them exactly like a Rust
+ * crash. Nothing leaves the machine unless the user opens the pre-filled
+ * GitHub issue themselves.
  */
 
 import { invoke } from "./files";
+import { dedupeFrontendCrash, recentLogsSection } from "$lib/domain/crash-report";
 
 export interface CrashReport {
   fileName: string;
@@ -24,6 +27,22 @@ export function takeCrashReport(): Promise<CrashReport | null> {
 /** Forward a webview error into the backend's rotating log files. */
 export function logFrontendError(message: string): Promise<void> {
   return invoke<void>("log_frontend_error", { message });
+}
+
+/**
+ * Persist a webview error as a local crash file (#302), so the next launch's
+ * crash notice can offer it exactly like a Rust panic. Local write only.
+ */
+export function recordFrontendCrash(message: string, stack?: string): Promise<void> {
+  return invoke<void>("record_frontend_crash", { message, stack: stack ?? null });
+}
+
+/**
+ * Read the tail of the rotating log file (~50 lines by default) for embedding
+ * in a bug report. Reads a local file only — never transmitted by the app.
+ */
+export function readLogTail(maxLines = 50): Promise<string> {
+  return invoke<string>("read_log_tail", { maxLines }).catch(() => "");
 }
 
 /** Build the pre-filled GitHub issue URL for a crash report. */
@@ -52,9 +71,21 @@ export function getAppInfo(): Promise<AppInfo> {
   return invoke<AppInfo>("get_app_info");
 }
 
-/** Pre-filled GitHub issue URL for a user-initiated bug report (#197). */
-export function bugReportUrl(info: AppInfo): string {
-  const body = [
+/** GitHub rejects very long URLs; keep the whole issue URL comfortably under. */
+const MAX_BUG_REPORT_URL_CHARS = 6000;
+
+/**
+ * Pre-filled GitHub issue URL for a user-initiated bug report (#197, #302).
+ *
+ * When a `logTail` is supplied it is appended as a "Recent logs" section,
+ * trimmed oldest-line-first so the whole URL stays under the length cap.
+ *
+ * Consent/privacy: the logs are placed into the GitHub *new issue form*, which
+ * the user reviews and must click "Submit" on before anything is sent. The app
+ * itself performs no network call — it only opens the pre-filled form.
+ */
+export function bugReportUrl(info: AppInfo, logTail = ""): string {
+  const baseBody = [
     "## What happened?",
     "",
     "<!-- What did you do, what did you expect, what happened instead? -->",
@@ -69,7 +100,20 @@ export function bugReportUrl(info: AppInfo): string {
     "- Logs: Command Palette → \"Open Logs Folder\" (attach the latest file if relevant)",
     "",
   ].join("\n");
-  return `${REPO_ISSUES_URL}?title=${encodeURIComponent("Bug: ")}&body=${encodeURIComponent(body)}`;
+
+  const prefix = `${REPO_ISSUES_URL}?title=${encodeURIComponent("Bug: ")}&body=`;
+  // encodeURIComponent can expand characters up to ~3x, so shrink the log
+  // budget until the *encoded* URL fits rather than guessing an upfront cap.
+  let logBudget = 3500;
+  let url = `${prefix}${encodeURIComponent(baseBody)}`;
+  while (logBudget > 0) {
+    const section = recentLogsSection(logTail, logBudget);
+    const body = section ? `${baseBody}\n${section}` : baseBody;
+    url = `${prefix}${encodeURIComponent(body)}`;
+    if (url.length <= MAX_BUG_REPORT_URL_CHARS || !section) break;
+    logBudget -= 400;
+  }
+  return url;
 }
 
 /** Open an https URL in the system browser. */
@@ -89,6 +133,22 @@ function forward(message: string): void {
   });
 }
 
+/** Messages already recorded as crashes this session (dedupe key set). */
+let recordedCrashKeys: ReadonlySet<string> = new Set();
+
+/**
+ * Record a webview error as a crash file, deduping identical messages within
+ * the session so a repeating error yields one report, not a burst.
+ */
+function capture(message: string, stack?: string): void {
+  const { record, seen } = dedupeFrontendCrash(recordedCrashKeys, message);
+  recordedCrashKeys = seen;
+  if (!record) return;
+  void recordFrontendCrash(message, stack).catch(() => {
+    // A failed crash write must never re-enter the error handler.
+  });
+}
+
 /**
  * Install window-level error handlers that mirror uncaught frontend errors
  * into the backend log files. Idempotent per window.
@@ -99,13 +159,18 @@ export function installGlobalErrorHandlers(): void {
   installed = true;
   window.addEventListener("error", (event) => {
     const where = event.filename ? ` (${event.filename}:${event.lineno}:${event.colno})` : "";
-    forward(`uncaught: ${event.message}${where}`);
+    const message = `uncaught: ${event.message}${where}`;
+    forward(message);
+    capture(message, event.error instanceof Error ? event.error.stack : undefined);
   });
   window.addEventListener("unhandledrejection", (event) => {
-    const reason =
-      event.reason instanceof Error
-        ? `${event.reason.message}\n${event.reason.stack ?? ""}`
-        : String(event.reason);
-    forward(`unhandled rejection: ${reason}`);
+    const isError = event.reason instanceof Error;
+    const message = isError
+      ? `unhandled rejection: ${event.reason.message}`
+      : `unhandled rejection: ${String(event.reason)}`;
+    forward(
+      isError ? `${message}\n${(event.reason as Error).stack ?? ""}` : message,
+    );
+    capture(message, isError ? (event.reason as Error).stack : undefined);
   });
 }

@@ -705,15 +705,10 @@
     color: var(--text-primary);
   }
 
-  /* Default: show chevron, hide powerline */
+  /* Default: show chevron. --breadcrumb-chevron-display lets themes (e.g. hacker.css)
+     hide it in favor of a different separator treatment. */
   .separator .chevron-icon {
     display: var(--breadcrumb-chevron-display, flex);
-  }
-
-  .separator .powerline-icon {
-    display: var(--breadcrumb-powerline-display, none);
-    height: 20px;
-    width: 8px;
   }
 
   /* Filter bar — styled to match the address bar (.breadcrumbs-container).

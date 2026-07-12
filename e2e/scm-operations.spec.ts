@@ -49,7 +49,7 @@ function badge(page: Page, section: string) {
 }
 
 test.describe("SCM panel operations", () => {
-  test("staging a changed file moves it into Staged and updates counts", async ({ page }) => {
+  test("staging a changed file moves it into Staged and updates counts @smoke", async ({ page }) => {
     await openScmOnRepo(page);
 
     await expect(badge(page, "staged")).toHaveText("1");
@@ -93,7 +93,7 @@ test.describe("SCM panel operations", () => {
     await expect(badge(page, "staged")).toHaveText("1");
   });
 
-  test("commit clears the input, empties Staged, and records the message", async ({ page }) => {
+  test("commit clears the input, empties Staged, and records the message @smoke", async ({ page }) => {
     await openScmOnRepo(page);
 
     await page.getByLabel("Commit message").fill("feat: ship the thing");

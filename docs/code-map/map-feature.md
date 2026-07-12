@@ -1,0 +1,263 @@
+# Code Map — Feature Clusters
+
+Tauri v2 file explorer. Most tasks are feature-shaped and cut across
+`component → store/state → api bridge → Rust command`. Each cluster lists files
+in pipeline order, then FLOW lines naming the events/functions that connect them.
+Paths relative to repo root. No line numbers (they go stale).
+
+Central hubs (open these for almost anything): `src/lib/state/explorer.svelte.ts`
+(per-pane store: entries, selection, navigation; `createExplorerState`),
+`src/routes/+page.svelte` (SPA root: global shortcuts, store init, layout),
+`src/lib/api/files.ts` (all IPC wrappers), `src/lib/api/mock-invoke.ts` (fake
+backend for E2E/browser).
+
+---
+
+## View modes & virtualization
+- `components/FileList.svelte` — dispatches to Details/List/Tiles by view mode
+- `components/DetailsView.svelte` — virtual-scrolled table (columns, sort headers)
+- `components/ListView.svelte` — CSS-grid columns view
+- `components/TilesView.svelte` — auto-fill tile grid
+- `components/VirtualList.svelte` — windowing engine (visible-range calc, spacers)
+- `domain/virtual-layout.ts` — row/col geometry math for the virtualizer
+- `composables/use-progressive-render.svelte.ts` — chunked reveal of large lists
+- `state/commands/view-commands.ts` — view.details/list/tiles, sort, columns cmds
+- `state/sort-prefs.ts`, `state/folder-views.svelte.ts` — per-folder view+sort persistence
+- FLOW: view mode lives on explorer store; `FileList` reads it, mounts one view; all three must change together for display features.
+
+## Selection & marquee
+- `composables/use-marquee-selection.svelte.ts` — drag-rect candidate set + hit-testing
+- `composables/use-item-interactions.svelte.ts` — click/ctrl/shift selection, focus
+- `state/selection.ts` — pure selection-set helpers (range, toggle)
+- `composables/use-type-ahead.svelte.ts` — type-to-select by name prefix
+- selection state stored on `explorer.svelte.ts` (`selectedPaths`, anchor)
+- FLOW: pointer events in item-interactions/marquee → mutate explorer selection set → views highlight via `selectedPaths`.
+
+## Directory listing & refresh/watcher events
+- `state/directory-listing.ts` — `createDirectoryListing`: invoke + streamed-chunk accumulation, cancellation
+- `state/pane-refresh.ts` — `createPaneRefresh`: re-list without UI flash (fingerprint diff)
+- `state/refresh-manager.ts` — global debounce/dedup/rate-limit (`requestRefresh`)
+- `state/pane-watch.ts` — per-pane watcher gate + local-mutation cooldown
+- `composables/use-file-watchers.ts` — subscribes to `directory-changed` + cross-window channel
+- `state/file-events.ts` — BroadcastChannel `explorer-file-changes` between windows
+- `api/files.ts` — `watchDirectory`/`unwatchDirectory`, `listDirectory`, `startStreamingDirectory`
+- `src-tauri/src/files/fs_watcher.rs` — notify watcher → emits event; `files/dir_listing.rs` — listing + streaming
+- FLOW: `directory-changed` (fs_watcher.rs → use-file-watchers.ts) and cross-window `broadcastFileChange` both funnel through `requestRefresh` → pane `refresh()`. Refresh policy split across 3 layers — read header of `refresh-manager.ts` before touching.
+
+## Navigation, address bar, breadcrumb, autocomplete
+- `components/NavigationBar.svelte` — back/fwd/up/refresh + breadcrumbs per pane
+- `components/BreadcrumbAutocomplete.svelte` — path-typing dropdown
+- `components/NavigationHistoryMenu.svelte` — back/fwd history dropdown
+- `domain/autocomplete.ts` — `parsePathInput`, `filterDirectorySuggestions`
+- `domain/breadcrumb-truncation.ts` — collapse long crumb chains
+- `domain/path.ts` — path parsing/join/parent (`parentDir`), WSL/UNC handling
+- `state/navigation.ts` — history stack, navigate/back/forward
+- FLOW: navigate mutates explorer.currentPath + history; breadcrumbs derived from currentPath; autocomplete lists dirs via `listDirectory`.
+
+## Window tabs
+- `components/WindowTabBar.svelte` — tab strip UI, drag-reorder, tear-off
+- `state/window-tabs.svelte.ts` — `windowTabsManager`: tab list, active tab, per-tab explorer
+- `state/window-tabs-persistence.ts` — save/restore tab sessions
+- `state/closed-tabs.ts` — reopen-closed-tab stack
+- `state/tab-transfer.ts` — drag tab across windows (`sendTabToWindow`, `initTabTransferListener`, screen-pos hit-test)
+- `domain/tab-title.ts` — compute tab label from path
+- `state/warm-window.ts`, `api/warm-pool.ts`, `src-tauri/src/warm_pool.rs` — pre-spawned windows for instant new-tab/window
+- FLOW: each tab owns an `ExplorerInstance`; cross-window tab drag serializes a `TabSnapshot` via `sendTabToWindow` → listener claims it. Persistence via localStorage.
+
+## Workspaces & split panes
+- `components/PaneContainer.svelte`, `components/PaneLayoutView.svelte`, `components/ExplorerPane.svelte` — pane tree render + focus
+- `domain/pane-layout.ts` — binary split-tree ops (`splitLeaf`, `removeLeaf`, `leafSiblingContext`)
+- `state/workspaces.svelte.ts` — saved workspace layouts (`workspacesStore`)
+- `components/WorkspaceDialog.svelte` — save/load workspace UI
+- `state/pane-context.ts`, `state/commands/pane-commands.ts` — active-pane resolution + split cmds
+- FLOW: pane layout tree in explorer/window-tabs; split/close mutate the `PaneNode` tree; each leaf = one ExplorerInstance.
+
+## Internal drag & drop (move/copy within app)
+- `composables/use-pointer-drag.svelte.ts` — pointer-based drag, `createDragGhost`, multi-select ghost
+- `composables/use-pointer-intent.svelte.ts` — distinguish click vs drag start
+- `state/drag.svelte.ts` — `dragState` shared store (localStorage cross-window fallback)
+- `composables/use-drop-target.svelte.ts` — dropzone highlight + accept logic
+- `state/drop-operations.ts` — `handleFileDrop`/`handleFileDropMany`, source-path extraction
+- `state/file-transfer.ts` — `performFileTransfer` (move vs copy decision)
+- `composables/use-sidebar-drag.svelte.ts` — drag onto sidebar bookmarks
+- FLOW: pointer-drag sets `dragState` → drop-target computes destination → `performFileTransfer` → `moveEntry`/`copyEntry` (files.ts → file_ops.rs). Branch: `fix/multi-file-drag-ghost-opacity`.
+
+## External drag/drop (OS ↔ app)
+- `composables/use-external-drag.svelte.ts` — start OS drag-out of files
+- `composables/use-external-drop.svelte.ts`, `use-native-drop-target.svelte.ts`, `use-native-drop-handler.ts` — accept OS file drops
+- `api/activate.ts` — window focus/activate on drop
+- FLOW: Tauri `dragDropEnabled: false` (in-webview HTML5 DnD); native drop handlers translate OS payload → file transfer. See MEMORY.md DnD notes.
+
+## Copy / paste / file-ops & progress
+- `state/clipboard.svelte.ts` — in-app cut/copy path set
+- `state/paste-operations.ts` — paste orchestration (conflict, dest)
+- `state/pane-mutations.ts` — `createPaneMutations`: optimistic add/remove/rename on entries
+- `state/operations.svelte.ts` — `operationsManager`: tracked long ops, `formatBytes`
+- `components/ProgressDialog.svelte`, `components/JobsPanel.svelte`, `state/jobs.svelte.ts` — progress UI
+- `components/ConflictDialog.svelte`, `state/conflict-resolver.svelte.ts` — overwrite/rename prompts
+- `api/files.ts` (copyEntry, moveEntry, estimateSize, checkPathsExist), `api/os-clipboard.ts`
+- `src-tauri/src/files/file_ops.rs` (copy/move/create), `src-tauri/src/progress.rs`, `src-tauri/src/clipboard.rs`
+- FLOW: paste → estimate → conflict check → invoke copy with progress events → operationsManager updates ProgressDialog; on done `broadcastFileChange` + refresh.
+
+## Rename flows
+- `composables/use-inline-rename.svelte.ts` — inline edit field lifecycle
+- `components/EntryName.svelte` — name label + inline rename input
+- `components/BulkRenameDialog.svelte` — multi-file pattern rename
+- `components/InlineNewFolder.svelte` — new-folder inline create
+- `state/rename-suggestion.svelte.ts`, `domain/ai-rename.ts`, `api/ai-rename.ts` — AI rename suggestions
+- `api/files.ts` (renameEntry, createDirectory), `src-tauri/src/files/file_ops.rs`
+- FLOW: inline-rename commits → `renameEntry` → pane-mutations renames entry + `renameThumbnailCache` so thumb doesn't flash.
+
+## Delete / trash / undo
+- `components/DeleteDialog.svelte` — confirm permanent vs trash
+- `state/undo.svelte.ts` — `undoStore` op-history stack
+- `state/undo-helpers.ts`, `domain/undo-operations.ts` — invertible op descriptors
+- `api/files.ts` (moveToTrash, moveMultipleToTrash, deleteEntryPermanent, restoreFromTrash)
+- `src-tauri/src/files/file_ops.rs`
+- FLOW: delete → trash → push inverse (restore) onto undoStore → Ctrl+Z pops and re-invokes.
+
+## Thumbnails
+- `components/ThumbnailImage.svelte` — img element + load/error/placeholder states
+- `components/FolderThumbnail.svelte` — folder collage from children
+- `state/thumbnail-cache.ts` — in-memory cache (`getThumbnailCache`, `renameThumbnailCache`)
+- `api/thumbnails.ts` — getThumbnail/getThumbnailData/getMicroThumbnail/getVideoThumbnailData/getFolderPreview
+- `domain/folder-preview.ts` — folder-preview shaping
+- `src-tauri/src/thumbnails.rs` — disk cache, image/video decode; `files/dir_listing.rs` folder preview
+- FLOW: ThumbnailImage requests via api/thumbnails → Rust cache lookup/generate → data URL cached in thumbnail-cache.ts keyed by path. Rename preserves cache via `renameThumbnailCache`.
+
+## Preview pane
+- `components/PreviewPane.svelte` — text/image/diff/archive preview + syntax highlight
+- `domain/syntax-highlight.ts` — `highlightCode`, `highlightDiffLine` (hljs)
+- `domain/diff.ts`, `domain/markdown.ts` — diff parsing, markdown render
+- `api/files.ts` (readTextFile, readImageAsBlobUrl, listArchiveContents, gitDiff)
+- `themes/syntax.css` — shared hljs token colors
+- FLOW: selection change → PreviewPane fetches content by type → highlights → renders. 512KB read cap, 50KB highlight cap.
+
+## Miller columns
+- `components/MillerColumns.svelte` — multi-column cascading browser
+- `state/commands/view-commands.ts` — `view.toggleMillerColumns`, millerLayers0-3
+- reuses `explorer.svelte.ts` per-column listing + `directory-listing.ts`
+- FLOW: each column is a listing of the selected dir in the prior column; layer count is a view command/setting.
+
+## Git status badges
+- `components/GitStatusBadge.svelte` — per-row M/A/? badge glyph
+- `state/git-status.svelte.ts` — `gitStatusStore`: path→status map, `refresh()`
+- `state/git-refresh.ts` — debounced git-status refresh
+- `api/git.ts` (getGitStatus), `src-tauri/src/files/git_status.rs`
+- FLOW: `git-status-changed` (git.rs emit) + `directory-changed` → gitStatusStore.refresh → badges re-derive; gated on `settings.showGitStatus`.
+
+## Git SCM panel
+- `components/ScmSidebarView.svelte` — staged/unstaged/untracked tree, commit box
+- `components/ScmPanel.svelte`, `components/ScmDiffView.svelte` — panel shell + inline diff
+- `components/GitGraphView.svelte` — commit graph / log
+- `state/scm.svelte.ts` — `scmStore`: repo state, stage/commit actions
+- `domain/scm-tree.ts`, `domain/git-graph.ts`, `domain/git.ts` — tree grouping, graph layout
+- `api/git.ts`, `api/git-log.ts`; `src-tauri/src/git.rs`, `git_actions.rs`, `git_log.rs`, `git_common.rs`
+- FLOW: scmStore invokes git stage/unstage/commit/diff/log → Rust git2 ops → `git-status-changed` emit refreshes panel + badges.
+
+## Quick Open (Ctrl+P fuzzy file finder)
+- `components/QuickOpen.svelte` — modal, streamed results, keyboard nav
+- `components/PickerQuickOpen.svelte` — variant used inside file picker
+- `domain/fuzzy-score.ts` — match scoring/ranking
+- `api/search.ts` — `startStreamingSearch`, `fuzzySearch`, `cancelSearch`
+- `src-tauri/src/search.rs` — nucleo fuzzy engine, streaming emits
+- FLOW: query → startStreamingSearch → backend emits result chunks (race-safe: listener before invoke) → sorted by fuzzy-score → Enter navigates/opens.
+
+## Content search (grep, Ctrl+Shift+F)
+- `components/ContentSearchDialog.svelte` — query/results UI
+- `composables/use-content-search.svelte.ts` — search lifecycle, streamed hits
+- `domain/content-search-flatten.ts` — file→line-hit flattening for list
+- `api/search.ts` — `startContentSearch`, `cancelContentSearch`
+- `src-tauri/src/content_search.rs` — ripgrep-based grep, streaming
+- FLOW: query → startContentSearch → backend emits per-file matches → flattened → click opens `openFileAtLine`.
+
+## Command palette
+- `components/CommandPalette.svelte` — searchable command list
+- `state/commands.svelte.ts` — registry (`registerCommand`, `executeCommand`, frecency)
+- `state/command-definitions.ts` — command type/category defs
+- `state/commands/` — `file-commands.ts`, `view-commands.ts`, `navigation-commands.ts`, `pane-commands.ts`, `general-commands.ts`, `system-actions.ts`, `shared.ts`
+- `state/frecency.svelte.ts` — recency+frequency ranking
+- FLOW: commands registered at startup from `commands/*` modules → palette filters via fuzzy-score + frecency → `executeCommand(id)` runs action.
+
+## Keyboard shortcuts
+- `+page.svelte` — global keydown dispatch
+- `state/keybindings.svelte.ts` — `keybindingsStore`: binding map, resolve
+- `domain/keybinding-parser.ts` — parse "Ctrl+Shift+P" ↔ event
+- `domain/keyboard.ts` — key event normalization
+- `components/KeybindingsSettings.svelte`, `components/ShortcutCheatsheet.svelte` — edit + cheat sheet UI
+- FLOW: keydown → keybindingsStore resolves binding → runs command id via `executeCommand`. Bindings persisted (localStorage).
+
+## Settings
+- `components/SettingsDialog.svelte` — all settings sections (largest UI file)
+- `state/settings.svelte.ts` — `settingsStore` (persisted flags/values)
+- `state/persisted.ts` — localStorage load/save helpers
+- `api/config.ts`, `src-tauri/src/config.rs` — JSON config file persistence (disk)
+- `plugins/settings-registry.svelte.ts` — plugin-contributed settings rows
+- FLOW: settingsStore is source of truth; components read `settingsStore.<flag>`; changes persist to localStorage + optionally config file. Many features gated here (showGitStatus, thumbnails, etc.).
+
+## Sidebar (bookmarks / recent / drives)
+- `components/Sidebar.svelte`, `components/FilesSidebarView.svelte` — sidebar shell + files tree
+- `state/bookmarks.svelte.ts` — `bookmarksStore` (pinned folders)
+- `state/recent-files.svelte.ts` — `recentFilesStore`
+- `state/drives.svelte.ts` — `drivesStore` (mounted volumes)
+- `domain/drives.ts`; `api/files.ts` (listDrives); `src-tauri/src/files/drives.rs`
+- `state/sidebar-views.svelte.ts` — which sidebar sections are shown/expanded
+- FLOW: sidebar sections read their stores; drives polled from `listDrives` (drives.rs); bookmarks/recent persisted in localStorage; drop-onto-sidebar adds bookmark.
+
+## Context menu
+- `components/ContextMenu.svelte` — right-click menu (largest component; all actions)
+- `state/context-menu.svelte.ts` — open/close + position
+- `state/context-menu-items.svelte.ts` — menu item list per context
+- FLOW: right-click → context-menu store opens with items for the target → item runs command/op.
+
+## Status bar
+- `components/StatusBar.svelte` — selection count, item count, size totals
+- reads `explorer.svelte.ts` (entries/selection) + `operations.svelte.ts` (formatBytes)
+- FLOW: derived from active pane's entries + selectedPaths; live op status from operationsManager.
+
+## Toasts & dialogs
+- `components/ToastOverlay.svelte`, `state/toast.svelte.ts` — `toastStore` transient notices
+- `state/dialogs.svelte.ts` — `dialogStore` generic dialog orchestration
+- `components/Modal.svelte`, `components/modal.css` — modal shell
+- `components/CrashNotice.svelte`/`state`+`api/crash.ts`, `UpdateNotice.svelte`+`api/update.ts`
+- FLOW: any store calls `toastStore.show(...)`; ToastOverlay renders queue.
+
+## Theming
+- `state/theme.svelte.ts` — `themeStore` (active theme, apply)
+- `themes/*.css` — theme variable sets (dark, light, ocean-blue, tahoe, …); `themes/index.css` aggregates
+- `components/ThemePicker.svelte` — theme selection UI
+- `domain/theme-from-palette.ts`, `src-tauri/src/palette.rs`, `plugins/theme-from-image/` — generate theme from image palette
+- `state/window-backdrop.ts`, `state/window-appearance.ts`, `components/AnimatedBackground.svelte`, `background-animations/` (particles, starfield, registry) — window backdrop + animated bg
+- FLOW: themeStore sets CSS vars / `data-theme`; `set_window_theme`/`set_window_backdrop` for native chrome.
+
+## Plugins
+- `plugins/registry.svelte.ts` — `pluginRegistry` (register/enable)
+- `plugins/api.ts` — `Plugin`/`PluginContext` contract (storage, jobs, toast, settings)
+- `plugins/dialog-registry.svelte.ts`, `settings-registry.svelte.ts`, `fs-providers.ts` — extension points
+- built-ins: `plugins/ai-organize/`, `ai-rename/`, `nano-banana/`, `theme-from-image/`, `upscale/`, `demo/`
+- backend: `src-tauri/src/ai_organize.rs`, `ai_rename.rs`, `nano_banana.rs`, `gemini.rs`, `upscale.rs`, `fal.rs`
+- FLOW: plugins register commands/settings/dialogs via PluginContext at startup; AI actions invoke Gemini-backed Rust commands (upscale invokes fal.ai's SeedVR2 queue API via `fal.rs`).
+
+## Terminal panel
+- `components/TerminalPanel.svelte` — embedded terminal UI
+- `state/terminal.svelte.ts`; `domain/terminal-*.ts` (command, cwd-sync, keys, theme)
+- `api/terminal.ts`; `src-tauri/src/terminal.rs` — PTY spawn/write/resize/kill
+- FLOW: terminal_spawn/write/resize (terminal.rs) ↔ TerminalPanel; cwd synced to active pane via terminal-cwd-sync.
+
+## Archives, external apps, wallpaper, system
+- `api/archive.ts`, `src-tauri/src/archive.rs` — zip compress/extract, list contents
+- `src-tauri/src/files/external_apps.rs`, `api/files.ts` (openFileWith, openImageWithSiblings) — open-with
+- `src-tauri/src/wallpaper.rs` (setAsWallpaper), `system.rs` (get_app_info, dirs), `portal.rs` (Linux portals)
+- `src-tauri/src/files/shortcuts.rs` — .lnk/.desktop resolution
+
+---
+
+## Cross-cutting
+
+- **IPC pattern**: frontend `invoke("cmd", {args})` wrapped in `api/*.ts`; outside Tauri, `api/mock-invoke.ts` intercepts (detects `__TAURI_INTERNALS__`). Rust `#[tauri::command] async fn` registered in `src-tauri/src/lib.rs`.
+- **Refresh manager** (`state/refresh-manager.ts`): single choke point. WHEN=refresh-manager, WHETHER=pane-watch, HOW=pane-refresh. Don't add a 4th gate.
+- **Key event names**: `directory-changed` (fs_watcher.rs → use-file-watchers.ts → refresh), `git-status-changed` (git.rs → git-status.svelte.ts). Cross-window: BroadcastChannel `explorer-file-changes` (file-events.ts) and `explorer-drag-data` in localStorage (drag.svelte.ts).
+- **Persistence**: UI/prefs via `state/persisted.ts` (localStorage: settings, keybindings, bookmarks, recent, tabs, drag). Durable config via `api/config.ts` → `config.rs` JSON files.
+- **Cancellable backend tasks**: `src-tauri/src/task_registry.rs` — search/listing/copy/compress use cancel_* commands.
+- **Warm pool**: pre-spawned windows (`warm_pool.rs` + `state/warm-window.ts`) for instant new window/tab.
+- **Rule**: display features must update all three views (DetailsView/ListView/TilesView) via FileList.svelte.

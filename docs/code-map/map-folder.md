@@ -1,0 +1,269 @@
+# Code Map — Folder Axis
+
+Exhaustive per-file index. Read this first, then jump. One line per source file: `file — what it owns / when to open`. No line numbers (they go stale).
+
+Layout: frontend `src/lib/` (components / state / api / composables / domain / plugins / background-animations / themes) + entry `src/routes/`; backend `src-tauri/src/`. Features usually cut component → store → api → Rust command.
+
+---
+
+## src/routes/ — SPA entry
+- `+page.svelte` — app root. Global keyboard shortcuts, store init, layout composition (TitleBar > toolbar > Sidebar + PaneContainer > StatusBar), overlay dialogs. Open for global shortcut wiring / top-level layout.
+- `+layout.ts` — SvelteKit adapter-static SPA config (prerender/ssr flags). Rarely touched.
+
+## src/lib/components/ — Svelte 5 UI. Views, dialogs, panels, item chrome.
+- `FileList.svelte` — dispatches to Details/List/Tiles by view mode; hosts marquee, drop, empty-state. Central view entry.
+- `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
+- `ListView.svelte` — CSS-grid compact list view.
+- `TilesView.svelte` — CSS auto-fill grid tile view with thumbnails.
+- `VirtualList.svelte` — variable-height windowed scroller used by views. Perf-critical.
+- `MillerColumns.svelte` — column/Miller-columns browsing mode.
+- `FileItem.svelte` — single entry row/tile (icon, name, badges, selection state).
+- `ItemButton.svelte` — shared entry button wrapper wiring drag-drop + interaction handlers.
+- `EntryName.svelte` — shared inline rename input/display across all views.
+- `FileIcon.svelte` — file/folder icon resolution (Material/nerd-font theme).
+- `ThumbnailImage.svelte` — lazy image/video thumbnail loader w/ cache + intersection. Hot.
+- `FolderThumbnail.svelte` — Windows-style folder preview tile (up to 3 nested images, #146).
+- `GitStatusBadge.svelte` — per-entry git status letter/color decoration.
+- `ExplorerPane.svelte` — one pane: navigation bar + FileList + preview; owns pane-scoped context.
+- `PaneContainer.svelte` — hosts active tab content (explorer / scm / git-graph pane).
+- `PaneLayoutView.svelte` — recursive renderer for a tab's split pane-layout tree (#228).
+- `NavigationBar.svelte` — per-pane back/fwd/up + breadcrumb strip + address bar.
+- `NavigationHistoryMenu.svelte` — full back/forward history dropdown.
+- `BreadcrumbAutocomplete.svelte` — editable address bar with directory autocomplete.
+- `CaretPicker.svelte` — subdirectory dropdown from a breadcrumb separator caret.
+- `Sidebar.svelte` — activity-bar + hosts registered sidebar views.
+- `FilesSidebarView.svelte` — Files sidebar: bookmarks, recent, drives tree.
+- `ScmSidebarView.svelte` — Source Control sidebar panel (#54).
+- `ScmPanel.svelte` — standalone SCM panel (stage/unstage/commit lists).
+- `ScmDiffView.svelte` — unified diff viewer replacing FileList for a diff.
+- `GitGraphView.svelte` — commit-graph pane content (#51/#58).
+- `icons/FilesIcon.svelte`, `icons/ScmIcon.svelte` — activity-bar SVG icons.
+- `CommandPalette.svelte` — Ctrl+Shift+P command palette UI.
+- `QuickOpen.svelte` — Ctrl+P fuzzy file finder.
+- `PickerQuickOpen.svelte` — Quick Open for the portal file-picker window (#190).
+- `ContentSearchDialog.svelte` — Ctrl+Shift+F grep-across-files dialog + streamed results.
+- `OptionPicker.svelte` — generic secondary list picker.
+- `ContextMenu.svelte` — right-click menu renderer (items from context-menu stores).
+- `Modal.svelte` + `modal.css` — base modal shell + shared modal styling.
+- `SettingsDialog.svelte` — settings dialog shell (toggles, sections, plugin sections).
+- `KeybindingsSettings.svelte` — keybinding customization UI in settings.
+- `ShortcutCheatsheet.svelte` — keyboard shortcut cheatsheet overlay.
+- `ThemePicker.svelte` — theme selection UI.
+- `RenameDialog`? see `dialogs.svelte.ts`; dialogs present: `DeleteDialog.svelte`, `ConflictDialog.svelte` (paste conflict overwrite/skip), `BulkRenameDialog.svelte`, `WorkspaceDialog.svelte` (save/restore workspaces), `ProgressDialog.svelte` (copy/move/extract progress), `InlineNewFolder.svelte` (inline new-folder input), `FilePicker.svelte` (portal file-picker window).
+- `PreviewPane.svelte` — file preview (image/text/markdown/syntax).
+- `TerminalPanel.svelte` — embedded xterm.js terminal panel (#139).
+- `StatusBar.svelte` — bottom status bar (selection count, size, path).
+- `TitleBar.svelte` — window title bar + tab strip host + window controls.
+- `WindowTabBar.svelte` — window tab strip (drag/reorder/tear-off).
+- `JobsPanel.svelte` — background jobs viewer (Ctrl+J).
+- `ToastOverlay.svelte` — stacked toast notifications.
+- `CrashNotice.svelte` — crash-report banner (#184).
+- `UpdateNotice.svelte` — update-available banner (#185).
+- `AnimatedBackground.svelte` — canvas background animation host.
+
+## src/lib/state/ — Svelte 5 runes stores + pure pane logic. Business state lives here.
+- `explorer.svelte.ts` — CENTRAL per-pane store: listing, selection, navigation, view mode; delegates to pane-* modules. First stop for most features.
+- `types.ts` — shared explorer state types (ViewMode, pane shapes).
+- `pane-context.ts` — Svelte context for resolving the current pane inside components.
+- `pane-mutations.ts` — per-pane create/rename/delete/symlink/archive mutations.
+- `pane-refresh.ts` — flicker-free re-list of current dir (streamed chunk accumulation).
+- `pane-watch.ts` — per-pane fs-watch + local-mutation cooldown (pure).
+- `directory-listing.ts` — streaming/event-based incremental dir load management.
+- `navigation.ts` — pure back/forward history utilities.
+- `selection.ts` — pure selection math (range/toggle/anchor).
+- `sort-prefs.ts` — per-directory sort preference persistence.
+- `refresh-manager.ts` — dedupe/debounce/rate-limit directory refresh requests.
+- `pane-refresh.ts` / `pane-watch.ts` (above); `refresh-manager.ts` owns policy layering.
+- `git-refresh.ts` — single `git-status-changed` listener; fans out to badge + SCM subscribers.
+- `git-status.svelte.ts` — per-entry git status cache store.
+- `scm.svelte.ts` — Source Control state (staged/unstaged/commit, #54).
+- `file-events.ts` — cross-window file-change broadcast (affected dirs → all windows).
+- `file-transfer.ts` — shared move/copy transfer core: conflict detect, undo, toast, frecency, broadcast.
+- `paste-operations.ts` — batch paste (conflict apply-to-all, progress) over file-transfer.
+- `drop-operations.ts` — shared drop-handler logic for drag-drop (over file-transfer).
+- `conflict-resolver.svelte.ts` — paste conflict resolution state (overwrite/skip/cancel).
+- `clipboard.svelte.ts` — cross-pane/window file clipboard (cut/copy paths).
+- `drag.svelte.ts` — shared in-app drag state (DragData; dataTransfer is unreliable in Tauri).
+- `undo.svelte.ts` — global undo/redo stack store.
+- `undo-helpers.ts` — pure undo/redo helpers.
+- `operations.svelte.ts` — progress tracking for copy/move/delete/compress/extract.
+- `dialogs.svelte.ts` — global dialog open/close state (rename/delete/etc).
+- `context-menu.svelte.ts` — context menu open state + position.
+- `context-menu-items.svelte.ts` — registry for plugin-provided context-menu items.
+- `command-definitions.ts` — command palette command definitions (assembles command modules).
+- `commands.svelte.ts` — command registry + palette store.
+- `commands/shared.ts` — shared helpers for command modules.
+- `commands/file-commands.ts` — file ops commands (new/rename/delete/copy...).
+- `commands/navigation-commands.ts` — navigation commands (back/fwd/up/goto).
+- `commands/pane-commands.ts` — split/close/focus pane commands.
+- `commands/view-commands.ts` — view-mode/sort/show-hidden toggle commands. Hot.
+- `commands/general-commands.ts` — misc app commands (settings, palette, etc).
+- `commands/system-actions.ts` — system actions not touching pane state (open terminal, reveal).
+- `keybindings.svelte.ts` — customizable keybinding store (chords, conflicts, persistence).
+- `window-tabs.svelte.ts` — tab management (open/close/reorder/active). Central for tabs.
+- `window-tabs-persistence.ts` — persist/migrate window tab tree (PersistedNode).
+- `tab-transfer.ts` — cross-window tab drag/tear-off (localStorage handshake).
+- `closed-tabs.ts` — closed-tab LIFO stack for Ctrl+Shift+T.
+- `focused-window.ts` — last-focused window path/viewMode for Ctrl+N inheritance.
+- `warm-window.ts` — pre-warmed hidden window pool logic (fast Ctrl+N).
+- `window-appearance.ts` — shared window creation options (parity across code paths).
+- `window-backdrop.ts` — Windows Mica/Acrylic translucent backdrop (CSS strength).
+- `workspaces.svelte.ts` — save/restore named workspaces.
+- `bookmarks.svelte.ts` — sidebar bookmarks store.
+- `recent-files.svelte.ts` — recent files store.
+- `frecency.svelte.ts` — zoxide-style frecency path ranking.
+- `drives.svelte.ts` — mounted drives/volumes reactive store.
+- `home.svelte.ts` — cached home directory (sync `.value`).
+- `sidebar-views.svelte.ts` — activity-bar sidebar view registry (#52).
+- `folder-views.svelte.ts` — per-folder view overrides (e.g. thumbnail size, #8762).
+- `empty-folders.svelte.ts` — lazy empty-folder resolver (avoids per-subdir read_dir, #129).
+- `manual-hidden.svelte.ts` — per-folder manually-hidden entry registry.
+- `settings.svelte.ts` — global settings store (toggles, defaults). Very hot for feature flags.
+- `theme.svelte.ts` — active theme state + CSS var application.
+- `terminal.svelte.ts` — embedded terminal panel state (#139).
+- `jobs.svelte.ts` — background jobs store (Ctrl+J).
+- `toast.svelte.ts` — toast notification store.
+- `rename-suggestion.svelte.ts` — inline-rename autocomplete providers (#215).
+- `thumbnail-cache.ts` — client-side thumbnail cache + in-flight dedupe. Hot for preview perf.
+- `persisted.ts` — localStorage-backed persistent-state utility (SSR/test guards).
+- `startup-timing.ts` — cold-start boot milestone instrumentation.
+- `tab-transfer.ts` (above).
+
+## src/lib/api/ — invoke() bridge to Rust. Thin IPC wrappers; grep here for Tauri command names.
+- `common.ts` — mock-aware `invoke`, error extraction, Result types. Base of every api call.
+- `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate). Hot.
+- `mock-invoke.ts` — fake filesystem data for browser/E2E (no Tauri). Open when E2E data wrong.
+- `search.ts` — fuzzy file search + content search IPC + streaming. Hot.
+- `git.ts` — git status decoration + SCM (stage/commit/diff) IPC.
+- `git-log.ts` — git history / commit-graph IPC (#57).
+- `thumbnails.ts` — image/video thumbnail, folder preview, palette-extract IPC.
+- `archive.ts` — zip compress/extract/preview IPC.
+- `config.ts` — JSON config persistence + user theme CSS file IPC.
+- `os-clipboard.ts` — OS clipboard file cut/copy/paste IPC.
+- `terminal.ts` — embedded terminal spawn/write/resize IPC (#139).
+- `activate.ts` — resolve what double-click/Enter activation targets.
+- `ai-organize.ts` — AI "where does this file belong" IPC (#158).
+- `ai-rename.ts` — AI rename suggestion IPC (#145).
+- `crash.ts` — crash-report capture bridge (#184).
+- `update.ts` — GitHub-release update check (once/day throttle, #185).
+- `warm-pool.ts` — warm-window pool IPC wrappers.
+
+## src/lib/composables/ — reusable behavior modules (`.svelte.ts` = runes-aware).
+- `use-item-interactions.svelte.ts` — shared click/select/activate logic across views.
+- `use-inline-rename.svelte.ts` — inline rename edit lifecycle.
+- `use-marquee-selection.svelte.ts` — rubber-band marquee: candidate set + hit-testing.
+- `use-type-ahead.svelte.ts` — type-to-select matching in file lists.
+- `use-column-resize.svelte.ts` — Details-view column width drag/persist.
+- `use-progressive-render.svelte.ts` — chunked render to avoid freeze on huge dirs.
+- `use-drop-target.svelte.ts` — directory-entry drop-target behavior.
+- `use-native-drop-target.svelte.ts` — position-based drop target detection.
+- `use-native-drop-handler.ts` — handle native (external) OS file drops.
+- `use-external-drop.svelte.ts` — external file drops into the app.
+- `use-external-drag.svelte.ts` — native OS drag out to other apps (VSCode/Finder).
+- `use-pointer-drag.svelte.ts` — pointer-event drag for macOS (in-app DnD). [modified on branch]
+- `use-pointer-intent.svelte.ts` — pointer-vs-keyboard intent for pickers.
+- `use-sidebar-drag.svelte.ts` — lightweight sidebar-item pointer drag (macOS).
+- `use-content-search.svelte.ts` — content-search stream lifecycle for the dialog.
+- `use-file-watchers.ts` — subscribe file-change/event listeners.
+- `use-window-lifecycle.ts` — window lifecycle (focus/close/resize) handlers.
+
+## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
+- `file.ts` — file entry types + pure ops (sort, filter, format). Hot.
+- `file-types.ts` — extension→type/category detection + display.
+- `path.ts` — path normalization/join/parent/relative helpers.
+- `platform.ts` — isMac/isWindows/isLinux detection.
+- `wsl.ts` — WSL path recognition.
+- `virtual-path.ts` — virtual (plugin-provided) path parsing.
+- `drives.ts` — pure removable-drive tracking (isUnderRoot).
+- `fuzzy-score.ts` — fuzzy match scorer for QuickOpen.
+- `word-boundary.ts` — word-boundary helpers (fuzzy/rename).
+- `autocomplete.ts` — address-bar path autocomplete logic.
+- `breadcrumb-truncation.ts` — breadcrumb width/truncation math.
+- `content-search-flatten.ts` — flatten/paginate grep results.
+- `keyboard.ts` — keyboard shortcut normalization utils.
+- `keybinding-parser.ts` — parse/format keybinding chords.
+- `git.ts` — git status letter/indicator conversion.
+- `git-graph.ts` — commit-graph lane layout (#58/#179).
+- `scm-tree.ts` — fold flat repo file list into a tree.
+- `diff.ts` — unified-diff parser (#55).
+- `undo-operations.ts` — pure undo/redo execution logic.
+- `virtual-layout.ts` — variable-height virtual list layout math (VirtualList).
+- `pane-layout.ts` — pane split-tree pure logic (#228).
+- `tab-title.ts` — VS Code-style tab title disambiguation.
+- `titlebar.ts` — title bar / tab strip visibility rules.
+- `folder-preview.ts` — folder preview image selection (#146).
+- `nerd-icons.ts` — nerd-font icon mappings (Material theme).
+- `syntax-highlight.ts` — highlight.js wrapper for preview.
+- `markdown.ts` — safe markdown render for preview.
+- `zoom.ts` — CSS zoom level utils.
+- `raf-coalesce.ts` — coalesce high-freq value streams via rAF.
+- `theme-from-palette.ts` — build theme from extracted image palette (#203).
+- `ai-rename.ts` — pure AI-rename suggestion logic (#145).
+- `terminal-command.ts` — shell command construction/quoting for terminal.
+- `terminal-cwd-sync.ts` — "terminal follows explorer" cwd decision (#149).
+- `terminal-keys.ts` — terminal vs app key-ownership rules (#249/#260).
+- `terminal-theme.ts` — map CSS theme vars → xterm.js theme.
+
+## src/lib/plugins/ — plugin system + built-in plugins.
+- `api.ts` — plugin API surface exposed to plugins.
+- `registry.svelte.ts` — built-in plugin registry + lifecycle.
+- `dialog-registry.svelte.ts` — registry for plugin modal dialogs.
+- `settings-registry.svelte.ts` — registry for plugin settings sections.
+- `fs-providers.ts` — virtual-filesystem provider registry + dispatch.
+- `demo/index.ts` — demo plugin exercising every contribution seam.
+- `ai-organize/index.ts` + `AiOrganizeDialog.svelte` — AI organize plugin (#158).
+- `ai-rename/index.ts` + `AiRenameDialog.svelte` — AI rename plugin (#145).
+- `nano-banana/index.ts` + `NanoBananaDialog.svelte` — Nano Banana image-edit plugin.
+- `theme-from-image/index.ts` — generate theme from an image (#203).
+
+## src/lib/background-animations/ — canvas backgrounds (registry-driven).
+- `registry.ts` — name→render-fn map + AnimationColors.
+- `index.ts` — public re-exports (register/get/theme animation).
+- `particles.ts` — floating dots + connection lines.
+- `starfield.ts` — twinkling stars + constellation lines.
+
+## src/lib/themes/ — CSS theme files. Edit for theming/colors.
+- `index.css` (aggregator), `syntax.css` (code highlight), and per-theme: `dark.css`, `light.css`, `aurora.css`, `desert.css`, `hacker.css`, `horizon.css`, `ocean-blue.css`, `solarized-light.css`, `tahoe.css`.
+
+## src/lib/types/
+- `pretext.d.ts` — ambient TS type declarations.
+
+## src-tauri/src/ — Rust backend. Tauri commands; all commands are `async fn`.
+- `main.rs` — binary entry (console-window guard).
+- `lib.rs` — app entry: builder, command registration, plugin setup. Grep here to find where a command is wired.
+- `error.rs` — unified command error type.
+- `config.rs` — JSON config file persistence.
+- `search.rs` — fuzzy search (nucleo).
+- `content_search.rs` — grep-across-files (ripgrep/grep crate).
+- `thumbnails.rs` — image/video thumbnail generation + cache. Hot.
+- `palette.rs` — dominant-color extraction for themes (#203).
+- `wallpaper.rs` — set desktop wallpaper (mac/Linux/Windows).
+- `archive.rs` — zip compress/extract.
+- `clipboard.rs` — OS clipboard file operations.
+- `progress.rs` — byte-level progress + cooperative cancellation for streaming file ops.
+- `task_registry.rs` — cancellable background task registry.
+- `terminal.rs` — embedded terminal (PTY) backend (#139).
+- `system.rs` — system commands: trash, launch context, window theme, log paths.
+- `process_ext.rs` — suppress console-window flash for spawned children.
+- `portal.rs` — xdg-desktop-portal FileChooser backend (Linux).
+- `crash_report.rs` — local crash capture (#184).
+- `update_check.rs` — update check via GitHub releases (#185).
+- `warm_pool.rs` — pre-warmed hidden window registry.
+- `gemini.rs` — shared helpers for shelling out to `gemini` CLI.
+- `ai_organize.rs` — AI destination suggestions via Gemini (#158).
+- `ai_rename.rs` — AI rename suggestions via Gemini (#145).
+- `nano_banana.rs` — Nano Banana image editing via Gemini.
+- `git.rs` — SCM panel git backend: status/stage/commit/diff (#53).
+- `git_log.rs` — git history / commit-graph backend (#57).
+- `git_actions.rs` — mutating git actions for commit-graph tab (VSCode parity).
+- `git_common.rs` — shared git plumbing (used by git/git_log/git_actions).
+
+### src-tauri/src/files/ — file operations module.
+- `mod.rs` — files module root + re-exports.
+- `dir_listing.rs` — directory listing with caching + streaming. Hot.
+- `file_ops.rs` — CRUD: create/rename/copy/move/delete/symlink/estimate.
+- `fs_watcher.rs` — filesystem watcher → directory-changed events.
+- `git_status.rs` — per-entry git status indicators.
+- `drives.rs` — enumerate drives/volumes cross-platform.
+- `external_apps.rs` — open files / image viewers / terminals externally.
+- `shortcuts.rs` — Windows `.lnk` shortcut resolution.

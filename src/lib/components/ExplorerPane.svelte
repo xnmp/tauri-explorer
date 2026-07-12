@@ -291,11 +291,18 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   onclick={handleFocus}
 >
   {#if paneGitGraph}
-    <!-- Keyed so switching between graphs of different repos recreates the
-         view — no selected-commit/state bleed or in-flight races (#167). -->
-    {#key paneGitGraph}
-      <GitGraphView repoPath={paneGitGraph} />
-    {/key}
+    <div class="pane-content">
+      <!-- Same gating as the explorer branch below: the SCM panel stays
+           available while the graph has the pane (#333). -->
+      {#if windowTabsManager.isPrimaryPane(paneId) && settingsStore.showGitStatus && settingsStore.showScmPanel}
+        <ScmPanel />
+      {/if}
+      <!-- Keyed so switching between graphs of different repos recreates the
+           view — no selected-commit/state bleed or in-flight races (#167). -->
+      {#key paneGitGraph}
+        <GitGraphView repoPath={paneGitGraph} />
+      {/key}
+    </div>
   {:else if paneExplorer}
     <NavigationBar explorer={paneExplorer} />
     <div class="pane-content">

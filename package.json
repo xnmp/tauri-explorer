@@ -34,7 +34,7 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@chenglou/pretext": "^0.0.7",
+    "@chenglou/pretext": "^0.0.8",
     "@crabnebula/tauri-plugin-drag": "^2.1.0",
     "@fontsource-variable/inter": "^5.2.8",
     "@tauri-apps/api": "^2.10.1",

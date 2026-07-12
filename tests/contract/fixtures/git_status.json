@@ -1,0 +1,23 @@
+{
+  "clean": {
+    "op_state": "clean",
+    "staged": {},
+    "changes": {},
+    "untracked": {},
+    "merge": {}
+  },
+  "dirty_tree": {
+    "op_state": "clean",
+    "staged": { "Modified": 1 },
+    "changes": { "Modified": 2 },
+    "untracked": { "Untracked": 3 },
+    "merge": {}
+  },
+  "conflicted_merge": {
+    "op_state": "merge",
+    "staged": {},
+    "changes": {},
+    "untracked": {},
+    "merge": { "Conflicted": 1 }
+  }
+}

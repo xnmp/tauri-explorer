@@ -170,7 +170,11 @@ fn paths_to_uris(paths: &[String]) -> Vec<String> {
 #[cfg(not(windows))]
 fn write_mime(mime: &str, data: &[u8]) -> Result<(), AppError> {
     let tool = if is_wayland() { "wl-copy" } else { "xclip" };
-    let package = if is_wayland() { "wl-clipboard" } else { "xclip" };
+    let package = if is_wayland() {
+        "wl-clipboard"
+    } else {
+        "xclip"
+    };
     let mut child = if is_wayland() {
         Command::new("wl-copy")
             .args(["--type", mime])
@@ -386,7 +390,9 @@ if ($files) { $files -join "`n" }
             "PowerShell clipboard read exited with {}",
             o.status
         ))),
-        None => Err(AppError::Other("Failed to start PowerShell for clipboard read".to_string())),
+        None => Err(AppError::Other(
+            "Failed to start PowerShell for clipboard read".to_string(),
+        )),
     }
 }
 
@@ -411,7 +417,9 @@ foreach ($p in ($env:CLIP_PATHS -split "`n")) { if ($p) { [void]$col.Add($p) } }
             "PowerShell clipboard write exited with {}",
             o.status
         ))),
-        None => Err(AppError::Other("Failed to start PowerShell for clipboard write".to_string())),
+        None => Err(AppError::Other(
+            "Failed to start PowerShell for clipboard write".to_string(),
+        )),
     }
 }
 
@@ -466,7 +474,10 @@ fn clipboard_paste_image_sync(directory: String) -> Result<String, AppError> {
 
     let dir = std::path::Path::new(&directory);
     if !dir.is_dir() {
-        return Err(AppError::InvalidPath(format!("Not a directory: {}", directory)));
+        return Err(AppError::InvalidPath(format!(
+            "Not a directory: {}",
+            directory
+        )));
     }
 
     // Generate a timestamped filename
@@ -479,11 +490,13 @@ fn clipboard_paste_image_sync(directory: String) -> Result<String, AppError> {
         // Add milliseconds to disambiguate
         let filename = format!("img-{}.png", now.format("%Y%m%d-%H%M%S-%3f"));
         let filepath = dir.join(&filename);
-        std::fs::write(&filepath, &data).map_err(|e| AppError::Other(format!("Failed to write image: {}", e)))?;
+        std::fs::write(&filepath, &data)
+            .map_err(|e| AppError::Other(format!("Failed to write image: {}", e)))?;
         return Ok(filepath.to_string_lossy().to_string());
     }
 
-    std::fs::write(&filepath, &data).map_err(|e| AppError::Other(format!("Failed to write image: {}", e)))?;
+    std::fs::write(&filepath, &data)
+        .map_err(|e| AppError::Other(format!("Failed to write image: {}", e)))?;
 
     log::info!("Pasted clipboard image to: {}", filename);
     Ok(filepath.to_string_lossy().to_string())
@@ -495,7 +508,9 @@ fn clipboard_paste_image_sync(directory: String) -> Result<String, AppError> {
 #[tauri::command]
 pub async fn clipboard_has_files() -> bool {
     tokio::task::spawn_blocking(|| {
-        read_clipboard_file_paths().map(|p| !p.is_empty()).unwrap_or(false)
+        read_clipboard_file_paths()
+            .map(|p| !p.is_empty())
+            .unwrap_or(false)
     })
     .await
     .unwrap_or(false)

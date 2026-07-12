@@ -52,7 +52,7 @@ pub struct GitFileEntry {
     pub status: GitStatusCode,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct GitStatusSummary {
     pub is_repo: bool,
     pub repo_root: Option<String>,
@@ -62,6 +62,41 @@ pub struct GitStatusSummary {
     pub changes: Vec<GitFileEntry>,
     pub untracked: Vec<GitFileEntry>,
     pub merge: Vec<GitFileEntry>,
+    /// In-progress repo operation, from git2 `repo.state()`. One of
+    /// `clean` | `merge` | `rebase` | `cherry_pick` | `revert`. Drives the
+    /// SCM panel's in-progress banner (abort / continue). Operations we don't
+    /// offer a workflow for (bisect, apply-mailbox, …) collapse to `clean`.
+    pub op_state: String,
+}
+
+impl Default for GitStatusSummary {
+    fn default() -> Self {
+        GitStatusSummary {
+            is_repo: false,
+            repo_root: None,
+            branch: None,
+            detached: false,
+            staged: Vec::new(),
+            changes: Vec::new(),
+            untracked: Vec::new(),
+            merge: Vec::new(),
+            op_state: "clean".to_string(),
+        }
+    }
+}
+
+/// Map git2's repository state to the SCM banner's operation vocabulary.
+/// Only operations we expose abort/continue for get a distinct value;
+/// everything else (clean, bisect, apply-mailbox) reports `clean`.
+fn repo_op_state(repo: &Repository) -> &'static str {
+    use git2::RepositoryState as S;
+    match repo.state() {
+        S::Merge => "merge",
+        S::Revert | S::RevertSequence => "revert",
+        S::CherryPick | S::CherryPickSequence => "cherry_pick",
+        S::Rebase | S::RebaseInteractive | S::RebaseMerge => "rebase",
+        _ => "clean",
+    }
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -228,7 +263,9 @@ fn classify(entry: &git2::StatusEntry<'_>, workdir: &Path) -> Classified {
     out
 }
 
-fn collect_status(repo: &Repository) -> Result<GitStatusSummary, AppError> {
+// pub: exercised directly by the `git_status` criterion bench
+// (src-tauri/benches/git_status.rs).
+pub fn collect_status(repo: &Repository) -> Result<GitStatusSummary, AppError> {
     let workdir = repo
         .workdir()
         .ok_or_else(|| AppError::Other("git: bare repository has no working tree".into()))?;
@@ -247,6 +284,7 @@ fn collect_status(repo: &Repository) -> Result<GitStatusSummary, AppError> {
         repo_root: Some(workdir.to_string_lossy().to_string()),
         branch: None,
         detached: false,
+        op_state: repo_op_state(repo).to_string(),
         ..Default::default()
     };
 
@@ -297,6 +335,7 @@ fn map_non_repo(path: &Path) -> Result<GitStatusSummary, AppError> {
         changes: Vec::new(),
         untracked: Vec::new(),
         merge: Vec::new(),
+        op_state: "clean".to_string(),
     })
     .inspect(|_s| {
         let _ = path;
@@ -493,12 +532,34 @@ pub async fn git_discard(
             .ok_or_else(|| AppError::Other("git: bare repository has no working tree".into()))?
             .to_path_buf();
 
+        let index = repo.index().map_err(to_app_err)?;
+
+        // Conflicted paths have NO stage-0 index entry (only stages 1/2/3),
+        // so the stage-0 probe below would misclassify them as untracked and
+        // DELETE them from disk — silent data loss. Detect them explicitly and
+        // refuse: discarding a conflict has no single obviously-correct
+        // resolution (ours vs theirs vs base), so the safe action is to make
+        // the user resolve the file or abort the whole operation. Never falls
+        // into the untracked-delete branch.
+        for p in &paths {
+            let pp = Path::new(p);
+            if index.get_path(pp, 1).is_some()
+                || index.get_path(pp, 2).is_some()
+                || index.get_path(pp, 3).is_some()
+            {
+                return Err(AppError::Other(format!(
+                    "cannot discard '{}': it has an unresolved merge conflict. \
+                     Resolve the conflict (stage the file) or abort the operation.",
+                    p
+                )));
+            }
+        }
+
         // For tracked files, checkout from HEAD / index restores contents.
         // For untracked files (no HEAD/index entry), just delete from disk.
         let mut checkout_paths: Vec<String> = Vec::new();
         let mut delete_paths: Vec<PathBuf> = Vec::new();
 
-        let index = repo.index().map_err(to_app_err)?;
         for p in &paths {
             if index.get_path(Path::new(p), 0).is_some() {
                 checkout_paths.push(p.clone());
@@ -597,6 +658,18 @@ pub async fn git_commit(
         };
 
         let mut index = repo.index().map_err(to_app_err)?;
+
+        // Guard unresolved merge conflicts up front with a clear message,
+        // rather than letting `write_tree` fail with a raw GIT_EUNMERGED. git
+        // itself refuses to commit while any path is unmerged.
+        if index.has_conflicts() {
+            let n = index.conflicts().map(|c| c.count()).unwrap_or(0);
+            return Err(AppError::Other(format!(
+                "resolve {} conflicted file(s) before committing",
+                n.max(1)
+            )));
+        }
+
         let tree_oid = index.write_tree().map_err(to_app_err)?;
         let tree = repo.find_tree(tree_oid).map_err(to_app_err)?;
 
@@ -960,5 +1033,231 @@ mod tests {
 
         let content = fs::read_to_string(dir.path().join("a.txt")).unwrap();
         assert_eq!(content, "original\n");
+    }
+
+    /// Minimal single-threaded executor for the few async command tests.
+    fn tokio_test_block<F: std::future::Future>(fut: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(fut)
+    }
+
+    /// Build a repo left in a conflicted merge state on `a.txt`.
+    fn conflicted_repo() -> TempDir {
+        let dir = init_repo();
+        write(dir.path(), "a.txt", "root\n");
+        commit_all(dir.path(), "root");
+
+        Command::new("git")
+            .current_dir(dir.path())
+            .args(["checkout", "-b", "feature"])
+            .status()
+            .unwrap();
+        write(dir.path(), "a.txt", "feature\n");
+        commit_all(dir.path(), "feature");
+
+        Command::new("git")
+            .current_dir(dir.path())
+            .args(["checkout", "-"])
+            .status()
+            .unwrap();
+        write(dir.path(), "a.txt", "main\n");
+        commit_all(dir.path(), "main");
+
+        let _ = Command::new("git")
+            .current_dir(dir.path())
+            .args(["merge", "feature"])
+            .status();
+        dir
+    }
+
+    #[test]
+    fn conflicted_merge_reports_op_state_merge() {
+        let dir = conflicted_repo();
+        let s = sync_status(dir.path());
+        assert_eq!(s.op_state, "merge");
+        assert!(!s.merge.is_empty());
+    }
+
+    #[test]
+    fn clean_repo_reports_op_state_clean() {
+        let dir = init_repo();
+        write(dir.path(), "a.txt", "hello\n");
+        commit_all(dir.path(), "init");
+        let s = sync_status(dir.path());
+        assert_eq!(s.op_state, "clean");
+    }
+
+    #[test]
+    fn commit_while_conflicted_is_blocked() {
+        let dir = conflicted_repo();
+        let path = dir.path().to_str().unwrap().to_string();
+        let err = tokio_test_block(git_commit(path, "resolve merge".into(), None));
+        match err {
+            Err(AppError::Other(m)) => {
+                assert!(
+                    m.contains("conflicted") && m.contains("before committing"),
+                    "unexpected message: {m}"
+                );
+            }
+            other => panic!("expected guard error, got {other:?}"),
+        }
+        // HEAD is unchanged: the "main" commit is still the tip (merge not made).
+        let tip = Command::new("git")
+            .current_dir(dir.path())
+            .args(["log", "-1", "--format=%s"])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&tip.stdout).trim(), "main");
+    }
+
+    #[test]
+    fn discard_on_conflicted_file_does_not_delete_it() {
+        let dir = conflicted_repo();
+        let file = dir.path().join("a.txt");
+        assert!(file.exists());
+        let path = dir.path().to_str().unwrap().to_string();
+
+        let res = tokio_test_block(git_discard(path, vec!["a.txt".into()], None));
+        // Refuses rather than silently deleting.
+        assert!(matches!(res, Err(AppError::Other(m)) if m.contains("unresolved merge conflict")));
+        // Critically: the file is still on disk (no data loss).
+        assert!(file.exists(), "conflicted file must not be deleted");
+    }
+
+    /// Contract tests mirroring the mock-side vitest suite in
+    /// `tests/contract/git.contract.test.ts`. Both suites drive their backend
+    /// (real git2 here, mock-invoke there) through the same scenarios and assert
+    /// against the same shared JSON fixtures embedded below. If the mock's
+    /// classification / guards drift from real git behavior, one side fails.
+    mod contract {
+        use super::*;
+        use serde_json::{json, Value};
+
+        fn fixture(name: &str) -> Value {
+            let raw = match name {
+                "git_status.json" => {
+                    include_str!("../../tests/contract/fixtures/git_status.json")
+                }
+                "git_commit.json" => {
+                    include_str!("../../tests/contract/fixtures/git_commit.json")
+                }
+                "git_discard.json" => {
+                    include_str!("../../tests/contract/fixtures/git_discard.json")
+                }
+                other => panic!("unknown fixture {other}"),
+            };
+            serde_json::from_str(raw).expect("fixture is valid JSON")
+        }
+
+        /// { statusCode: count } histogram for one bucket. Mirrors the JS
+        /// `counts()` helper — paths are dropped, only classification counts.
+        fn bucket_counts(entries: &[GitFileEntry]) -> Value {
+            let mut m = serde_json::Map::new();
+            for e in entries {
+                let key = match serde_json::to_value(e.status).unwrap() {
+                    Value::String(s) => s,
+                    other => panic!("status did not serialize to a string: {other:?}"),
+                };
+                let next = m.get(&key).and_then(Value::as_u64).unwrap_or(0) + 1;
+                m.insert(key, json!(next));
+            }
+            Value::Object(m)
+        }
+
+        fn normalize(s: &GitStatusSummary) -> Value {
+            json!({
+                "op_state": s.op_state,
+                "staged": bucket_counts(&s.staged),
+                "changes": bucket_counts(&s.changes),
+                "untracked": bucket_counts(&s.untracked),
+                "merge": bucket_counts(&s.merge),
+            })
+        }
+
+        #[test]
+        fn git_status_clean_matches_fixture() {
+            let dir = init_repo();
+            write(dir.path(), "a.txt", "hello\n");
+            commit_all(dir.path(), "init");
+            assert_eq!(
+                normalize(&sync_status(dir.path())),
+                fixture("git_status.json")["clean"]
+            );
+        }
+
+        #[test]
+        fn git_status_dirty_tree_matches_fixture() {
+            let dir = init_repo();
+            write(dir.path(), "t1.txt", "v1\n");
+            write(dir.path(), "t2.txt", "v1\n");
+            write(dir.path(), "t3.txt", "v1\n");
+            commit_all(dir.path(), "init");
+
+            // One staged modification.
+            write(dir.path(), "t1.txt", "v2\n");
+            {
+                let repo = open_repo(dir.path()).unwrap();
+                stage_paths_inner(&repo, &["t1.txt".into()]).unwrap();
+            }
+            // Two unstaged worktree modifications.
+            write(dir.path(), "t2.txt", "v2\n");
+            write(dir.path(), "t3.txt", "v2\n");
+            // Three untracked files.
+            write(dir.path(), "u1.txt", "x\n");
+            write(dir.path(), "u2.txt", "x\n");
+            write(dir.path(), "u3.txt", "x\n");
+
+            assert_eq!(
+                normalize(&sync_status(dir.path())),
+                fixture("git_status.json")["dirty_tree"]
+            );
+        }
+
+        #[test]
+        fn git_status_conflicted_merge_matches_fixture() {
+            let dir = conflicted_repo();
+            assert_eq!(
+                normalize(&sync_status(dir.path())),
+                fixture("git_status.json")["conflicted_merge"]
+            );
+        }
+
+        #[test]
+        fn git_commit_conflict_guard_matches_fixture() {
+            let dir = conflicted_repo();
+            let fx = fixture("git_commit.json");
+            let sub = fx["commit_while_conflicted"]["error_substring"]
+                .as_str()
+                .unwrap();
+            let path = dir.path().to_str().unwrap().to_string();
+            match tokio_test_block(git_commit(path, "resolve merge".into(), None)) {
+                Err(AppError::Other(m)) => {
+                    assert!(m.contains(sub), "message {m:?} lacks {sub:?}")
+                }
+                other => panic!("expected guard error, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn git_discard_conflict_guard_matches_fixture() {
+            let dir = conflicted_repo();
+            let fx = fixture("git_discard.json");
+            let sub = fx["discard_conflicted_refuses"]["error_substring"]
+                .as_str()
+                .unwrap();
+            let file = dir.path().join("a.txt");
+            let path = dir.path().to_str().unwrap().to_string();
+            match tokio_test_block(git_discard(path, vec!["a.txt".into()], None)) {
+                Err(AppError::Other(m)) => {
+                    assert!(m.contains(sub), "message {m:?} lacks {sub:?}")
+                }
+                other => panic!("expected guard error, got {other:?}"),
+            }
+            // Refusing must not delete the conflicted file.
+            assert!(file.exists(), "conflicted file must not be deleted");
+        }
     }
 }

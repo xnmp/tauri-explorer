@@ -155,6 +155,64 @@ pub async fn log_frontend_error(message: String) {
     log::error!("[frontend] {}", truncated);
 }
 
+/// Persist a crash report for an uncaught webview error (#302), in the same
+/// file format the panic hook uses so `take_crash_report` and the next-launch
+/// crash notice treat it identically. The frontend dedupes bursts, so this is
+/// called at most once per distinct message per session. Local write only —
+/// nothing is sent anywhere.
+#[tauri::command]
+pub async fn record_frontend_crash(
+    app: tauri::AppHandle,
+    message: String,
+    stack: Option<String>,
+) -> Result<(), AppError> {
+    let dir = crash_dir(&app)?;
+    // Defensive caps: a pathological message/stack shouldn't bloat the file.
+    let message: String = message.chars().take(4000).collect();
+    let stack: String = stack.unwrap_or_default().chars().take(8000).collect();
+    tokio::task::spawn_blocking(move || {
+        let epoch_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let backtrace = if stack.is_empty() {
+            "<no stack captured>".to_string()
+        } else {
+            stack
+        };
+        let report = format!(
+            "tauri-explorer {} crash report\n\
+             os: {} ({})\n\
+             time: {} (unix)\n\
+             source: frontend (webview)\n\
+             panic: {}\n\
+             location: webview\n\n\
+             backtrace:\n{}\n",
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            epoch_secs,
+            message,
+            backtrace
+        );
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| AppError::Other(format!("Failed to create crashes dir: {}", e)))?;
+        let file = dir.join(format!("{}{}{}", CRASH_PREFIX, epoch_secs, CRASH_SUFFIX));
+        std::fs::write(&file, report)
+            .map_err(|e| AppError::Other(format!("Failed to write crash report: {}", e)))?;
+        // Stacks can carry absolute paths — keep reports owner-readable only.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600))
+                .map_err(|e| AppError::Other(format!("Failed to set crash perms: {}", e)))?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
+}
+
 /// Open a GitHub URL in the default browser (used for "Report on GitHub").
 /// Host-pinned, not just scheme-checked: this command's only job is opening
 /// the repo's issue page, so it must not be usable as a generic URL opener.

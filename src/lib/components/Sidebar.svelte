@@ -3,6 +3,7 @@
 -->
 <script lang="ts">
   import { sidebarViewsStore } from "$lib/state/sidebar-views.svelte";
+  import { SIDEBAR_VIEW_PRESENTATION } from "$lib/components/sidebar-view-registry";
   import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte";
 
   const resize = usePersistedPanelWidth("explorer-sidebar-width", {
@@ -18,7 +19,7 @@
 <div class="sidebar-container" class:resizing={resize.isResizing} style="width: {resize.width}px">
   <div class="sidebar">
     {#each views as view (view.id)}
-      {@const ViewComponent = view.component}
+      {@const ViewComponent = SIDEBAR_VIEW_PRESENTATION[view.id].component}
       <div
         class="sidebar-view-host"
         role="tabpanel"
@@ -30,6 +31,7 @@
       </div>
     {/each}
   </div>
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- mouse-drag resize handle; role=separator conveys the correct semantics to AT, keyboard resize is a separate unimplemented feature -->
   <div
     class="resize-handle"
     onmousedown={resize.startResize}

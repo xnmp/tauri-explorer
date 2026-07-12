@@ -2,6 +2,26 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.3.1 — 2026-07-12
+
+A hardening release: two new safety features, a faster feel in git repos and large folders, security fixes, and a very large investment in test coverage and regression guards.
+
+### Added
+- **Merge-conflict handling in Source Control** — when a merge, rebase, cherry-pick, or revert leaves conflicts, the panel shows an in-progress banner with the conflict count and one-click **Abort** (plus **Continue** for rebases). Committing is blocked until conflicts are resolved, and discarding a conflicted file no longer risks silently deleting it from disk.
+- **Frontend crash capture** — uncaught webview errors are now recorded locally exactly like Rust panics and surface in the next-launch crash notice; **Report a Bug** pre-fills the issue with a recent log excerpt. Everything stays local and opt-in — nothing is ever sent automatically.
+
+### Improved
+- **Git feels instant**: entering a repo pre-warms the git graph and Source Control caches in the background, so opening either paints immediately instead of "Loading history…".
+- **Large flat folders list faster** — per-file metadata lookups now run in parallel.
+- **Faster startup, smaller bundle** — cold-start dialogs (Quick Open, Command Palette, content search, conflict, jobs, file picker) load on demand; main chunk gzip down ~5.7%.
+- **Website**: the demo Explorer window now floats with a margin, rounded corners, and shadow instead of filling the page edge-to-edge.
+
+### Fixed
+- **Security hardening**: zip extraction now rejects archives whose declared total size would fill the disk (zip-bomb guard), and the asset-protocol scope no longer exposes plugin API-key files or browser profile data to the webview. Side effect by design: remote images in Markdown previews are blocked by CSP and render as links instead.
+
+### Internal
+- Test & tooling sweep: outcome-asserting E2E coverage for git-graph actions (reset/cherry-pick/revert/merge/rebase/tag), bulk rename, conflict-dialog branches, jobs panel, clipboard paste, address bar, and the most defect-prone stores (571 E2E tests total); mock↔backend contract tests so the browser mock can't drift from the Rust backend; tiered merge gating (@smoke tags + affected-by-diff selection); Criterion perf benches and a bundle-size budget; a non-blocking architecture linter enforcing layering rules; plugin workspace-API seam and layering refactors; accessibility warnings triaged to zero; weekly Dependabot updates.
+
 ## v1.3.0 — 2026-07-11
 
 ### Added

@@ -7,7 +7,7 @@
 
 use crate::error::AppError;
 use crate::plugin_job;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 
 const POLL_SECS: u64 = 3;
@@ -56,8 +56,8 @@ pub async fn start_upscale_job(
 
 /// Blocking: upload → queue → poll → download. Runs under spawn_blocking.
 fn run_seedvr_upscale(
-    source: &PathBuf,
-    final_output: &PathBuf,
+    source: &Path,
+    final_output: &Path,
     api_key: &str,
     upscale_factor: f64,
 ) -> Result<String, AppError> {

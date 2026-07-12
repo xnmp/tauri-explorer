@@ -18,6 +18,19 @@ static COMPRESS_TASKS: TaskRegistry = TaskRegistry::new();
 /// Cancellable extraction jobs (same scheme, separate namespace).
 static EXTRACT_TASKS: TaskRegistry = TaskRegistry::new();
 
+/// Aggregate cap on total declared (uncompressed) bytes an archive may expand
+/// to. Per-entry caps already stop a single zip-bomb entry from inflating past
+/// its declared size, but a malicious archive can still declare thousands of
+/// modest entries that together exhaust the disk. This is a defence-in-depth
+/// backstop checked in the pre-scan, before a single byte is written.
+///
+/// We use a fixed generous cap rather than querying real free space: portable
+/// free-space detection needs a new dependency (fs2/sysinfo — neither is in the
+/// tree, `libc`'s statvfs is Unix-only) and free space is racy anyway (it can
+/// drop between the check and the write). 100 GiB clears any legitimate archive
+/// while still refusing the petabyte-scale totals a crafted bomb declares.
+const MAX_EXTRACT_TOTAL_BYTES: u64 = 100 * 1024 * 1024 * 1024;
+
 /// Byte-level progress + cancellation, threaded through the zip walk. Emits
 /// `zip-progress` (compress) or `unzip-progress` (extract) events with the
 /// job id, running byte count, and current file.
@@ -219,6 +232,7 @@ fn extract_archive_sync(
         extract_here,
         job_id.unwrap_or(0),
         cancelled.as_deref(),
+        MAX_EXTRACT_TOTAL_BYTES,
     );
     if let Some(id) = job_id {
         EXTRACT_TASKS.cleanup(id);
@@ -254,6 +268,7 @@ fn extract_entries(
     extract_here: bool,
     job_id: u64,
     cancelled: Option<&AtomicBool>,
+    max_total_bytes: u64,
 ) -> Result<(), AppError> {
     let file = fs::File::open(archive)?;
     let mut zip = zip::ZipArchive::new(file)
@@ -299,9 +314,23 @@ fn extract_entries(
         }
 
         if !entry.is_dir() {
-            total_bytes += entry.size();
+            // saturating: declared sizes are attacker-controlled u64s, so a
+            // crafted archive could wrap the sum past 2^64 and slip under the
+            // aggregate cap below.
+            total_bytes = total_bytes.saturating_add(entry.size());
         }
         entry_paths.push((entry_path, entry.is_dir()));
+    }
+
+    // Aggregate zip-bomb guard, checked before any write. The per-entry cap
+    // during extraction only stops a single entry inflating past its declared
+    // size; an archive can still *declare* an exhaustive total across many
+    // entries and fill the disk honestly.
+    if total_bytes > max_total_bytes {
+        return Err(AppError::Other(format!(
+            "Archive declares {} bytes of uncompressed data, exceeding the {} byte extraction limit; refusing to extract",
+            total_bytes, max_total_bytes
+        )));
     }
 
     log::info!(
@@ -898,12 +927,46 @@ mod tests {
         // extract_here=true, extract_entries owns best-effort cleanup.
         let dest = dir.path().join("out");
         fs::create_dir_all(&dest).unwrap();
-        let err = extract_entries(None, Path::new(&zip_path), &dest, true, job_id, Some(&flag))
-            .expect_err("cancelled extraction must fail");
+        let err = extract_entries(
+            None,
+            Path::new(&zip_path),
+            &dest,
+            true,
+            job_id,
+            Some(&flag),
+            MAX_EXTRACT_TOTAL_BYTES,
+        )
+        .expect_err("cancelled extraction must fail");
         assert!(err.to_string().contains("cancelled"));
         // Aborted before writing anything.
         assert!(!dest.join("source/big.bin").exists());
         EXTRACT_TASKS.cleanup(job_id);
+    }
+
+    #[test]
+    fn test_extract_refuses_archive_declaring_more_than_total_cap() {
+        // An archive whose entries together declare more output than the
+        // aggregate cap must be refused during the pre-scan, before any
+        // write. The cap is injected small here so the test doesn't need a
+        // real 100 GiB archive; the production call site passes
+        // MAX_EXTRACT_TOTAL_BYTES through the same parameter.
+        let dir = tempdir().unwrap();
+        let src_dir = dir.path().join("source");
+        fs::create_dir(&src_dir).unwrap();
+        fs::write(src_dir.join("a.bin"), vec![0u8; 4096]).unwrap();
+        fs::write(src_dir.join("b.bin"), vec![0u8; 4096]).unwrap();
+        let zip_path =
+            compress_to_zip_sync(None, vec![src_dir.to_string_lossy().to_string()], None).unwrap();
+
+        let dest = dir.path().join("out");
+        fs::create_dir_all(&dest).unwrap();
+        // Each entry is under this cap; only the aggregate exceeds it.
+        let err = extract_entries(None, Path::new(&zip_path), &dest, true, 0, None, 6000)
+            .expect_err("archive declaring more than the cap must be refused");
+        assert!(err.to_string().contains("extraction limit"), "got {err:?}");
+        // Refused before writing anything.
+        assert!(!dest.join("source").exists());
+        assert!(!dest.join("source/a.bin").exists());
     }
 
     #[test]

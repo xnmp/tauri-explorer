@@ -30,3 +30,34 @@ test("no crash notice on a clean launch", async ({ page }) => {
   await page.goto("/");
   await expect(page.locator('[data-testid="crash-notice"]')).not.toBeVisible();
 });
+
+test("a frontend error is recorded and offered as a crash on next launch", async ({ page }) => {
+  await page.goto("/");
+  // goto resolves before any app JS runs under Vite dev, so wait until the
+  // app is interactive — dispatching earlier races handler installation and
+  // the error would go unrecorded.
+  await page.waitForSelector(".file-list");
+
+  // Trigger an uncaught error the global handler captures + records.
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new ErrorEvent("error", { message: "synthetic frontend boom", filename: "app.js" }),
+    );
+  });
+
+  // record_frontend_crash persists the record for the next launch.
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("mockFrontendCrash")))
+    .not.toBeNull();
+
+  // Next launch: the notice offers the frontend crash exactly like a Rust one.
+  await page.reload();
+  const notice = page.locator('[data-testid="crash-notice"]');
+  await expect(notice).toBeVisible();
+  await expect(notice).toContainText("crashed last time");
+  await expect(notice).toContainText("nothing was sent anywhere");
+
+  // Consumed on read: a further reload must not re-offer the same crash.
+  await page.reload();
+  await expect(page.locator('[data-testid="crash-notice"]')).not.toBeVisible();
+});

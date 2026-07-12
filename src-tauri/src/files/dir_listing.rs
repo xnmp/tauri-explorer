@@ -51,20 +51,24 @@ pub async fn invalidate_dir_cache(path: String) -> Result<(), AppError> {
 /// false so a folder isn't optimistically hidden).
 #[tauri::command]
 pub async fn is_directory_empty(path: String, include_hidden: bool) -> Result<bool, AppError> {
-    let dir_path = PathBuf::from(&path);
-    let read = match fs::read_dir(&dir_path) {
-        Ok(r) => r,
-        Err(_) => return Ok(false),
-    };
-    for entry in read.flatten() {
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-        if !include_hidden && name_str.starts_with('.') {
-            continue;
+    // read_dir is blocking work; keep it off the async executor.
+    super::run_blocking(move || {
+        let dir_path = PathBuf::from(&path);
+        let read = match fs::read_dir(&dir_path) {
+            Ok(r) => r,
+            Err(_) => return Ok(false),
+        };
+        for entry in read.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if !include_hidden && name_str.starts_with('.') {
+                continue;
+            }
+            return Ok(false);
         }
-        return Ok(false);
-    }
-    Ok(true)
+        Ok(true)
+    })
+    .await
 }
 
 /// List directory contents.
@@ -160,16 +164,15 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
 }
 
 /// Sort entries: directories first, then by name case-insensitively.
-fn sort_entries(entries: &mut [FileEntry]) {
-    entries.sort_by(|a, b| {
-        let a_is_dir = matches!(a.kind, FileKind::Directory);
-        let b_is_dir = matches!(b.kind, FileKind::Directory);
-
-        match (a_is_dir, b_is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-        }
+// pub: exercised directly by the `sort_entries` criterion bench
+// (src-tauri/benches/sort_entries.rs).
+pub fn sort_entries(entries: &mut [FileEntry]) {
+    // Cache the (non-directory, lowercased-name) key so each name is lowercased
+    // once rather than twice per comparison. `false < true`, so directories
+    // (is_not_directory = false) sort ahead of files, then name case-insensitively.
+    entries.sort_by_cached_key(|e| {
+        let is_not_directory = !matches!(e.kind, FileKind::Directory);
+        (is_not_directory, e.name.to_lowercase())
     });
 }
 
@@ -194,8 +197,16 @@ static LISTINGS: crate::task_registry::TaskRegistry = crate::task_registry::Task
 
 /// Scan a directory using jwalk for parallel metadata reading.
 /// Returns entries sorted (directories first, then by name).
-fn scan_directory_parallel(dir_path: &PathBuf) -> Vec<FileEntry> {
-    let mut entries: Vec<FileEntry> = jwalk::WalkDir::new(dir_path)
+// pub: exercised directly by the `scan_directory_parallel` criterion bench
+// (src-tauri/benches/scan_directory_parallel.rs).
+pub fn scan_directory_parallel(dir_path: &PathBuf) -> Vec<FileEntry> {
+    use rayon::prelude::*;
+
+    // jwalk parallelizes readdir, but the per-entry symlink_metadata stat would
+    // otherwise serialize on the consuming thread. Collect the child paths first,
+    // then fan the stat + metadata_to_entry work out across rayon's thread pool so
+    // a flat 10k-entry dir doesn't stat on a single core.
+    let paths: Vec<PathBuf> = jwalk::WalkDir::new(dir_path)
         .max_depth(1)
         .skip_hidden(false)
         .into_iter()
@@ -205,7 +216,13 @@ fn scan_directory_parallel(dir_path: &PathBuf) -> Vec<FileEntry> {
             if dir_entry.depth() == 0 {
                 return None;
             }
-            let path = dir_entry.path();
+            Some(dir_entry.path())
+        })
+        .collect();
+
+    let mut entries: Vec<FileEntry> = paths
+        .into_par_iter()
+        .filter_map(|path| {
             let metadata = fs::symlink_metadata(&path).ok()?;
             Some(metadata_to_entry(&path, &metadata))
         })
@@ -390,5 +407,41 @@ mod tests {
             .unwrap();
         assert!(empty);
         assert!(!full);
+    }
+
+    /// Contract test mirroring `tests/contract/fs-ops.contract.test.ts`
+    /// (mock side). Both build the `listing_order` scenario from the shared
+    /// fixture and assert the same ordering contract: directories first, then
+    /// case-insensitive by name, dotfiles included. If the mock's listing
+    /// order drifts from this backend, one side fails.
+    #[test]
+    fn contract_listing_order_matches_fixture() {
+        let fx: serde_json::Value =
+            serde_json::from_str(include_str!("../../../tests/contract/fixtures/fs_ops.json"))
+                .expect("fixture is valid JSON");
+        let scenario = &fx["listing_order"];
+        let as_strs = |key: &str| -> Vec<&str> {
+            scenario[key]
+                .as_array()
+                .unwrap_or_else(|| panic!("fixture key {key} missing"))
+                .iter()
+                .map(|v| v.as_str().expect("fixture names are strings"))
+                .collect()
+        };
+
+        let dir = tempdir().unwrap();
+        for d in as_strs("input_dirs") {
+            fs::create_dir(dir.path().join(d)).unwrap();
+        }
+        for f in as_strs("input_files") {
+            fs::write(dir.path().join(f), "x").unwrap();
+        }
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let listing = rt
+            .block_on(list_directory(dir.path().to_string_lossy().to_string()))
+            .unwrap();
+        let names: Vec<&str> = listing.entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, as_strs("expected_order"));
     }
 }

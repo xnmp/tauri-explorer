@@ -10,7 +10,9 @@ mod content_search;
 mod crash_report;
 pub mod error;
 mod fal;
-mod files;
+// pub: criterion benches (src-tauri/benches/) call into
+// files::dir_listing::{scan_directory_parallel, sort_entries} directly.
+pub mod files;
 mod gemini;
 pub mod git;
 pub mod git_actions;
@@ -45,7 +47,7 @@ mod warm_pool;
 
 use system::{
     get_launch_cwd, get_log_dir, log_startup_timing, move_multiple_to_trash, move_to_trash,
-    restore_from_trash, set_window_theme, LaunchCwd,
+    read_log_tail, restore_from_trash, set_window_theme, LaunchCwd,
 };
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
@@ -115,9 +117,11 @@ pub fn run(launch_dir: Option<String>) {
             // Launch info
             get_launch_cwd,
             get_log_dir,
+            read_log_tail,
             system::get_app_info,
             crash_report::take_crash_report,
             crash_report::log_frontend_error,
+            crash_report::record_frontend_crash,
             crash_report::open_external_url,
             palette::extract_palette,
             config::write_theme_file,
@@ -217,6 +221,11 @@ pub fn run(launch_dir: Option<String>) {
             git_actions::git_merge,
             git_actions::git_rebase,
             git_actions::git_reset,
+            git_actions::git_merge_abort,
+            git_actions::git_rebase_abort,
+            git_actions::git_rebase_continue,
+            git_actions::git_cherry_pick_abort,
+            git_actions::git_revert_abort,
             // Drives / volumes
             files::drives::list_drives,
             // Wallpaper

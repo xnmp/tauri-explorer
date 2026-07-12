@@ -46,19 +46,30 @@ export function useFileWatchers(deps: FileWatcherDeps) {
       }
     });
 
-    // Listen for filesystem watcher events from backend (auto-refresh)
-    listen<{ path: string }>("directory-changed", (event) => {
-      const changedPath = event.payload.path;
-      for (const exp of deps.getAllExplorers()) {
-        if (exp.currentPath === changedPath) {
-          requestRefresh((opts) => exp.refresh(opts), exp.currentPath);
+    // Listen for filesystem watcher events from backend (auto-refresh).
+    // Outside Tauri the event system is unavailable and listen() throws
+    // (same guard as state/drives.svelte.ts); refresh still works manually.
+    try {
+      listen<{ path: string }>("directory-changed", (event) => {
+        const changedPath = event.payload.path;
+        for (const exp of deps.getAllExplorers()) {
+          if (exp.currentPath === changedPath) {
+            requestRefresh((opts) => exp.refresh(opts), exp.currentPath);
+          }
         }
-      }
-      // Also refresh git status badges for the changed directory
-      if (settingsStore.showGitStatus && gitStatusStore.currentPath === changedPath) {
-        gitStatusStore.refresh();
-      }
-    }).then(track((fn) => { unlistenWatcher = fn; }));
+        // Also refresh git status badges for the changed directory
+        if (settingsStore.showGitStatus && gitStatusStore.currentPath === changedPath) {
+          gitStatusStore.refresh();
+        }
+      }).then(
+        track((fn) => {
+          unlistenWatcher = fn;
+        }),
+        () => {},
+      );
+    } catch {
+      // Not running under Tauri — no backend watcher events to subscribe to.
+    }
   }
 
   function cleanup(): void {

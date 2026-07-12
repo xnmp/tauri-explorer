@@ -19,6 +19,7 @@ import ScmPanel from "./ScmPanel.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { gitStatusStore } from "$lib/state/git-status.svelte";
+  import { gitWarmer } from "$lib/state/git-warm";
   import { drivesStore } from "$lib/state/drives.svelte";
   import { directoryKey } from "$lib/domain/path";
 import { nextRemovableRoot } from "$lib/domain/drives";
@@ -64,9 +65,13 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   $effect(() => {
     const path = paneExplorer.currentPath;
     const enabled = settingsStore.showGitStatus;
-    // Virtual (`scheme://…`) paths aren't real repos — skip git status.
-    if (enabled && path && !isVirtualPath(path)) {
-      untrack(() => gitStatusStore.fetchForDirectory(path));
+    // Virtual (`scheme://…`) paths aren't real repos — skip git.
+    if (path && !isVirtualPath(path)) {
+      if (enabled) untrack(() => gitStatusStore.fetchForDirectory(path));
+      // After (not blocking) the badge fetch, warm the git-graph + SCM caches
+      // in the background (#287). Debounce + per-feature gating live in the
+      // warmer; non-git users pay zero extra IPC.
+      untrack(() => gitWarmer.schedule(path));
     }
   });
 
@@ -272,13 +277,14 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   // Note: Tab initialization is handled at page level by windowTabsManager
 </script>
 
-<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -- pane-level click-to-focus delegation; keyboard users get the same activation via Tab + onfocus below -->
+<!-- svelte-ignore a11y_click_events_have_key_events -- onclick mirrors onfocus, so Tab already provides the keyboard equivalent -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -- tabindex=0 is required so keyboard users can Tab into the pane, mirroring the click handler -->
 <section
   bind:this={paneRef}
   class="explorer-pane"
   class:active={showActiveBorder}
   class:inactive={isInactive}
-  role="region"
   aria-label="file browser pane"
   tabindex="0"
   onfocus={handleFocus}

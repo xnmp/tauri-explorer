@@ -13,6 +13,8 @@
     "test:watch": "vitest",
     "test:perf": "vitest run -c vitest.perf.config.ts",
     "bench:render": "vitest run tests/perf/render.bench.ts",
+    "bench:rust": "cd src-tauri && cargo bench",
+    "check:bundle": "node scripts/check-bundle-size.mjs",
     "test:e2e": "playwright test",
     "test:e2e:all": "ALL_VIEW_MODES=1 playwright test",
     "test:e2e:ui": "playwright test --ui",

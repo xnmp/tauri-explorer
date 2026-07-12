@@ -18,6 +18,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Single E2E test | `npx playwright test e2e/specific.spec.ts` |
 | Tauri-binary E2E smoke (Linux/Windows only) | `bun run test:e2e:tauri` (needs `cargo install tauri-driver` and a built binary) |
 | Performance tests | `bun run test:perf` |
+| Rust criterion benches | `bun run bench:rust` (baselines recorded in `src-tauri/benches/*.rs` header comments) |
+| Bundle-size budget check | `bun run check:bundle` (builds frontend, fails if main chunk gzip exceeds budget in `scripts/check-bundle-size.mjs`) |
 | Rust build only | `cd src-tauri && cargo build` |
 | Runnable release binary | `bun run build && cd src-tauri && cargo build --release --features tauri/custom-protocol` — a bare `cargo build --release` yields a DEV-mode binary that dials localhost:1420 (Tauri gates prod on the `custom-protocol` feature, which only the Tauri CLI passes) |
 | Rust tests only | `cd src-tauri && cargo test` |

@@ -18,6 +18,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Single E2E test | `npx playwright test e2e/specific.spec.ts` |
 | Tauri-binary E2E smoke (Linux/Windows only) | `bun run test:e2e:tauri` (needs `cargo install tauri-driver` and a built binary) |
 | Performance tests | `bun run test:perf` |
+| Rust criterion benches | `bun run bench:rust` (baselines recorded in `src-tauri/benches/*.rs` header comments) |
+| Bundle-size budget check | `bun run check:bundle` (builds frontend, fails if main chunk gzip exceeds budget in `scripts/check-bundle-size.mjs`) |
 | Rust build only | `cd src-tauri && cargo build` |
 | Runnable release binary | `bun run build && cd src-tauri && cargo build --release --features tauri/custom-protocol` — a bare `cargo build --release` yields a DEV-mode binary that dials localhost:1420 (Tauri gates prod on the `custom-protocol` feature, which only the Tauri CLI passes) |
 | Rust tests only | `cd src-tauri && cargo test` |
@@ -67,6 +69,13 @@ Frontend calls `invoke("command_name", { args })` via `src/lib/api/files.ts`. Wh
 - **Start at [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — architecture diagram and pointers to deep references.
 - Deep references in `docs/architecture/`: [backend](docs/architecture/backend.md), [frontend](docs/architecture/frontend.md), [components](docs/architecture/components.md), [features](docs/architecture/features.md), [cross-cutting](docs/architecture/cross-cutting.md).
 - Lessons learnt: [docs/lessons_learnt.md](docs/lessons_learnt.md) — gotchas from closed issues.
+
+### Code maps
+
+- For cross-layer searches and bug hunts, read [docs/code-map/map-feature.md](docs/code-map/map-feature.md) first.
+- For task-shaped changes (add a palette command / context-menu action / Tauri command / persisted setting), use the recipes in [docs/code-map/map-playbook.md](docs/code-map/map-playbook.md).
+- Do **not** use `docs/ARCHITECTURE.md` or `docs/architecture/` to locate change sites — measured net-negative for this purpose.
+- When adding features, update the relevant map and run `python3 docs/code-map/validate.py`.
 
 ## Issue Tracking (GitHub Issues)
 

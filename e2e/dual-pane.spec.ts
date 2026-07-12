@@ -25,7 +25,7 @@ async function openDualPane(page: Page): Promise<void> {
 }
 
 test.describe("Dual pane", () => {
-  test("Ctrl+\\ toggles the second pane on and off", async ({ page }) => {
+  test("Ctrl+\\ toggles the second pane on and off @smoke", async ({ page }) => {
     await openDualPane(page);
 
     await page.keyboard.press("Control+\\");

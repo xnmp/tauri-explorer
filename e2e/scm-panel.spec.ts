@@ -27,7 +27,7 @@ async function openScmOnRepo(page: Page): Promise<void> {
 }
 
 test.describe("SCM panel UI", () => {
-  test("shows the mocked repo's staged / changes / untracked sections with counts", async ({ page }) => {
+  test("shows the mocked repo's staged / changes / untracked sections with counts @smoke", async ({ page }) => {
     await openScmOnRepo(page);
 
     const stagedSection = page.locator('[data-section="staged"]');

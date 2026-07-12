@@ -263,7 +263,9 @@ fn classify(entry: &git2::StatusEntry<'_>, workdir: &Path) -> Classified {
     out
 }
 
-fn collect_status(repo: &Repository) -> Result<GitStatusSummary, AppError> {
+// pub: exercised directly by the `git_status` criterion bench
+// (src-tauri/benches/git_status.rs).
+pub fn collect_status(repo: &Repository) -> Result<GitStatusSummary, AppError> {
     let workdir = repo
         .workdir()
         .ok_or_else(|| AppError::Other("git: bare repository has no working tree".into()))?;

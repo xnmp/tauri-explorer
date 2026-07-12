@@ -164,7 +164,9 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
 }
 
 /// Sort entries: directories first, then by name case-insensitively.
-fn sort_entries(entries: &mut [FileEntry]) {
+// pub: exercised directly by the `sort_entries` criterion bench
+// (src-tauri/benches/sort_entries.rs).
+pub fn sort_entries(entries: &mut [FileEntry]) {
     // Cache the (non-directory, lowercased-name) key so each name is lowercased
     // once rather than twice per comparison. `false < true`, so directories
     // (is_not_directory = false) sort ahead of files, then name case-insensitively.
@@ -195,7 +197,9 @@ static LISTINGS: crate::task_registry::TaskRegistry = crate::task_registry::Task
 
 /// Scan a directory using jwalk for parallel metadata reading.
 /// Returns entries sorted (directories first, then by name).
-fn scan_directory_parallel(dir_path: &PathBuf) -> Vec<FileEntry> {
+// pub: exercised directly by the `scan_directory_parallel` criterion bench
+// (src-tauri/benches/scan_directory_parallel.rs).
+pub fn scan_directory_parallel(dir_path: &PathBuf) -> Vec<FileEntry> {
     use rayon::prelude::*;
 
     // jwalk parallelizes readdir, but the per-entry symlink_metadata stat would

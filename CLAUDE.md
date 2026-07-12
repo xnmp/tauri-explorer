@@ -68,6 +68,13 @@ Frontend calls `invoke("command_name", { args })` via `src/lib/api/files.ts`. Wh
 - Deep references in `docs/architecture/`: [backend](docs/architecture/backend.md), [frontend](docs/architecture/frontend.md), [components](docs/architecture/components.md), [features](docs/architecture/features.md), [cross-cutting](docs/architecture/cross-cutting.md).
 - Lessons learnt: [docs/lessons_learnt.md](docs/lessons_learnt.md) — gotchas from closed issues.
 
+### Code maps
+
+- For cross-layer searches and bug hunts, read [docs/code-map/map-feature.md](docs/code-map/map-feature.md) first.
+- For task-shaped changes (add a palette command / context-menu action / Tauri command / persisted setting), use the recipes in [docs/code-map/map-playbook.md](docs/code-map/map-playbook.md).
+- Do **not** use `docs/ARCHITECTURE.md` or `docs/architecture/` to locate change sites — measured net-negative for this purpose.
+- When adding features, update the relevant map and run `python3 docs/code-map/validate.py`.
+
 ## Issue Tracking (GitHub Issues)
 
 Key commands:

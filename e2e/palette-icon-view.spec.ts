@@ -6,7 +6,7 @@ import { test, expect } from "@playwright/test";
 import { HOME_URL, waitForEntries } from "./helpers";
 
 test.describe("Command palette icon view switch", () => {
-  test("selecting tile size command switches view to tiles", async ({ page }) => {
+  test("selecting tile size command switches view to tiles @smoke", async ({ page }) => {
     await page.goto(HOME_URL);
     await waitForEntries(page);
 

@@ -29,7 +29,9 @@
             "$HOME/.kube/**",
             "$HOME/.config/gcloud/**",
             "$HOME/.netrc",
-            "$HOME/.docker/config.json"
+            "$HOME/.docker/config.json",
+            "$HOME/.config/tauri-explorer/plugin.*.json",
+            "$HOME/.mozilla/**"
           ]
         }
       }

@@ -12,7 +12,7 @@ for (const viewMode of VIEW_MODES) {
     });
 
     test.describe("Initial Load", () => {
-      test("app loads without errors", async ({ page }) => {
+      test("app loads without errors @smoke", async ({ page }) => {
         const errors: string[] = [];
         page.on("console", (msg) => {
           if (msg.type() === "error") errors.push(msg.text());
@@ -30,7 +30,7 @@ for (const viewMode of VIEW_MODES) {
         await expect(page.getByText("Bookmarks")).toBeVisible();
       });
 
-      test("FileList shows directory contents", async ({ page }) => {
+      test("FileList shows directory contents @smoke", async ({ page }) => {
         await expect(page.locator(".file-list")).toBeVisible();
         const items = page.locator(".entry-item");
         await expect(items.first()).toBeVisible({ timeout: 5000 });
@@ -38,7 +38,7 @@ for (const viewMode of VIEW_MODES) {
     });
 
     test.describe("Folder Navigation", () => {
-      test("double-click on folder navigates into it", async ({ page }) => {
+      test("double-click on folder navigates into it @smoke", async ({ page }) => {
         const folder = page.locator(".entry-item.directory").first();
         const folderName = await folder.locator(".entry-name").textContent();
         expect(folderName).toBeTruthy();
@@ -61,7 +61,7 @@ for (const viewMode of VIEW_MODES) {
         expect(newBreadcrumbs).toBe(initialBreadcrumbs);
       });
 
-      test("back button works after navigation", async ({ page }) => {
+      test("back button works after navigation @smoke", async ({ page }) => {
         const initialBreadcrumbs = await page.locator(".breadcrumbs-container").textContent();
 
         const folder = page.locator(".entry-item.directory").first();
@@ -72,7 +72,7 @@ for (const viewMode of VIEW_MODES) {
         await expect(page.locator(".breadcrumbs-container")).toHaveText(initialBreadcrumbs ?? "");
       });
 
-      test("up button navigates to parent directory", async ({ page }) => {
+      test("up button navigates to parent directory @smoke", async ({ page }) => {
         const folder = page.locator(".entry-item.directory").first();
         const folderName = await folder.locator(".entry-name").textContent();
         await folder.dblclick();

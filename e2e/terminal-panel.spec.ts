@@ -17,7 +17,7 @@ test.describe("Terminal panel", () => {
     await waitForEntries(page);
   });
 
-  test("Ctrl+` opens the panel with a live xterm instance and toggles it closed", async ({ page }) => {
+  test("Ctrl+` opens the panel with a live xterm instance and toggles it closed @smoke", async ({ page }) => {
     await expect(page.locator(".terminal-panel")).toHaveCount(0);
 
     await page.keyboard.press("Control+`");

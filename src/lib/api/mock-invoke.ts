@@ -1583,7 +1583,23 @@ const mockCommands: Record<string, CommandHandler> = {
     const archivePath = args.archivePath as string;
     const extractHere = (args.extractHere as boolean) ?? false;
     const parentPath = parentDir(archivePath);
-    if (extractHere) return parentPath;
+    if (extractHere) {
+      // Mirror the backend: extract the archive's contents directly into the
+      // parent directory so they show up in the listing. Uses the same
+      // deterministic contents the read_archive mock reports (README.md,
+      // data.json, src/) so E2E can assert the extracted entries appear.
+      const entries = mockFiles[parentPath] || (mockFiles[parentPath] = []);
+      const extracted: FileEntry[] = [
+        file("README.md", `${parentPath}/README.md`, 512),
+        file("data.json", `${parentPath}/data.json`, 2048),
+        dir("src", `${parentPath}/src`, true),
+      ];
+      for (const e of extracted) {
+        if (!entries.some((x) => x.path === e.path)) entries.push(e);
+      }
+      mockFiles[`${parentPath}/src`] ||= [];
+      return parentPath;
+    }
     const folderName = basename(archivePath).replace(/\.zip$/i, "");
     const destPath = `${parentPath}/${folderName}`;
     const entries = mockFiles[parentPath] || (mockFiles[parentPath] = []);

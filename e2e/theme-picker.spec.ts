@@ -25,7 +25,7 @@ test.describe("Theme picker", () => {
     await waitForEntries(page);
   });
 
-  test("committing a theme applies it visually on the first attempt", async ({ page }) => {
+  test("committing a theme applies it visually on the first attempt @smoke", async ({ page }) => {
     await openThemePicker(page);
 
     await page.locator(".theme-picker-dialog .search-input").fill("aurora");

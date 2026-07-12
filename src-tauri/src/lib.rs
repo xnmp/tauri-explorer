@@ -10,7 +10,9 @@ mod content_search;
 mod crash_report;
 pub mod error;
 mod fal;
-mod files;
+// pub: criterion benches (src-tauri/benches/) call into
+// files::dir_listing::{scan_directory_parallel, sort_entries} directly.
+pub mod files;
 mod gemini;
 pub mod git;
 pub mod git_actions;

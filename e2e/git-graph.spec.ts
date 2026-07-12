@@ -21,7 +21,7 @@ async function openGraphViaPalette(page: import("@playwright/test").Page, expect
 }
 
 test.describe("Git graph tab", () => {
-  test("opens from the palette and renders the commit graph with refs", async ({ page }) => {
+  test("opens from the palette and renders the commit graph with refs @smoke", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents/project");
     await waitForEntries(page);
 

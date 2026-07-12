@@ -15,7 +15,7 @@ async function startInlineNewFolder(page: import("@playwright/test").Page) {
 }
 
 test.describe("Inline new folder", () => {
-  test("editor renders as the first row inside the virtual list and creates the folder", async ({ page }) => {
+  test("editor renders as the first row inside the virtual list and creates the folder @smoke", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents");
     await waitForEntries(page);
 

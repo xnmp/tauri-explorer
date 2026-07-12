@@ -12,7 +12,7 @@ for (const viewMode of VIEW_MODES) {
     });
 
     test.describe("Single Selection", () => {
-      test("single-click on file selects it", async ({ page }) => {
+      test("single-click on file selects it @smoke", async ({ page }) => {
         const file = page.locator(".entry-item").first();
         await file.click();
         await expect(file).toHaveClass(/selected/);
@@ -35,7 +35,7 @@ for (const viewMode of VIEW_MODES) {
         ).toBeTruthy();
       });
 
-      test("clicking another file changes selection", async ({ page }) => {
+      test("clicking another file changes selection @smoke", async ({ page }) => {
         const files = page.locator(".entry-item");
         const firstFile = files.nth(0);
         const secondFile = files.nth(1);
@@ -60,7 +60,7 @@ for (const viewMode of VIEW_MODES) {
     });
 
     test.describe("Multi-Selection", () => {
-      test("Ctrl+click adds to selection", async ({ page }) => {
+      test("Ctrl+click adds to selection @smoke", async ({ page }) => {
         const files = page.locator(".entry-item");
         const firstFile = files.nth(0);
         const secondFile = files.nth(1);
@@ -72,7 +72,7 @@ for (const viewMode of VIEW_MODES) {
         await expect(secondFile).toHaveClass(/selected/);
       });
 
-      test("Shift+click selects range", async ({ page }) => {
+      test("Shift+click selects range @smoke", async ({ page }) => {
         const files = page.locator(".entry-item");
         const count = await files.count();
         expect(count, "mock home dir must provide at least 3 entries").toBeGreaterThanOrEqual(3);
@@ -109,7 +109,7 @@ for (const viewMode of VIEW_MODES) {
         await page.mouse.up();
       });
 
-      test("drag selection selects files within rectangle", async ({ page }) => {
+      test("drag selection selects files within rectangle @smoke", async ({ page }) => {
         // Navigate to a directory with few items so there's always empty background space
         await page.goto("/?path=/home/user/Downloads");
         await waitForEntries(page);

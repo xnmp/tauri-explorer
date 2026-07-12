@@ -19,7 +19,7 @@ async function rightNeighbourIndex(page: import("@playwright/test").Page) {
 }
 
 test.describe("List view layout stability", () => {
-  test("a long display name does not shift or widen other columns", async ({ page }) => {
+  test("a long display name does not shift or widen other columns @smoke", async ({ page }) => {
     await page.goto(HOME_URL);
     await waitForEntries(page);
     await switchViewMode(page, "list");

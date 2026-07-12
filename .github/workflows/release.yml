@@ -14,7 +14,7 @@ jobs:
       version: ${{ steps.ver.outputs.version }}
       tag_exists: ${{ steps.check.outputs.exists }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: ver
         run: echo "version=v$(jq -r .version package.json)" >> "$GITHUB_OUTPUT"
       - id: check
@@ -52,7 +52,7 @@ jobs:
               src-tauri/target/release/bundle/nsis/*-setup.exe
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -110,7 +110,7 @@ jobs:
     needs: [version-check, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/download-artifact@v4
         with:

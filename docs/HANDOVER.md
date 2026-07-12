@@ -1,42 +1,45 @@
-# Session Handover — as of 2026-07-12
+# Session Handover — as of 2026-07-12 (v1.3.1 released)
 
-Continuing work on tauri-explorer — the disciplined-engineering hardening sweep is fully merged; next is the **big release with promotion** (v1.4.0).
+Continuing work on tauri-explorer — **v1.3.1 is released**; next is closing the wider-audience gaps (signing, packaging channels, repo polish) and the promotion push.
 
-**Previous session summary:** A very large hardening session: shipped the website window-margin (#286), git-graph/SCM background preload (#287), full SCM merge-conflict handling with op banner + abort/continue (#294), frontend crash capture + log tail in bug reports (#302), security hardening (#303), tiered E2E gating with @smoke + affected-by-diff merge hook (#298), non-blocking arch-lint hook (#304), mock↔backend contract tests (#299), criterion/bundle perf guards (#300), E2E coverage tiers 1–3 + git-graph action tests (#288/#295/#296/#297), a11y-to-zero + CLAUDE.md code-map docs + dependabot (#301). Also produced an adversarial architecture re-review (4 fixes merged: plugin seam #291, layering #292, row-grid composable #293, lazy dialogs #290, dir-scan perf #289), a whole-app security audit (no crits/highs), and a regression-effectiveness report (artifact: https://claude.ai/code/artifact/616afd80-b40f-4ce5-aa49-5486bfda160e).
+**Previous session summary:** Released v1.3.1: merged the version bump + CHANGELOG (#320), un-redded dev CI (it had been failing since v1.3.0 shipped — local gates never caught it), merged PR dev→main, and verified the release workflow published all six platform assets. Also fixed the website's stale hardcoded version (1.1.0 → 1.3.1, #323) and produced a wider-audience gap assessment.
 
 **Key context:**
-- **Gates on final dev (23f6dbc):** 571/571 E2E `ALL_VIEW_MODES`, 1050 unit, 228 Rust (+1 known PTY flake `pty_shell_runs_in_cwd_and_emits_output` — fails only under full-suite load, passes isolated), `bun run check` 0 errors 0 warnings, `bun run lint:arch` clean.
-- **Release prep still to do:** bump versions (package.json/Cargo.toml/Cargo.lock/tauri.conf.json/PKGBUILD + CHANGELOG) to v1.4.0, PR dev→main (`gh pr create`/`gh pr merge` — main is PR-protected), release workflow runs on push to main. CHANGELOG has a LOT to say this time — mine the merged issue list #286–#304.
-- **Vercel deploy of the website is STILL PENDING** — the permission classifier blocks `vercel deploy --prod` in auto mode. User must run `cd website && vercel deploy --prod` themselves (or `!`-prefix it in-session). The framed-window change (#286) is merged but not live.
-- **New gating machinery:** merges to dev now run affected-specs-in-full + @smoke-on-rest (41 tags, ~37s) via `.claude/hooks/run_e2e_for_merge.sh` + `scripts/e2e-affected.mjs`; falls back to full suite on unmappable changes. The affected script reads `docs/code-map/map-feature.md` (untracked!) — safe ALL fallback where missing. Session-end gate stays `ALL_VIEW_MODES=1 npx playwright test`.
-- **New local perf guards (NOT CI, user's explicit choice):** `bun run bench:rust` (baselines recorded in src-tauri/benches/*.rs headers: scan 10k = 5.75ms, git_status = 424µs, sort 10k = 1.40ms) and `bun run check:bundle` (budget 239,791B gzip, 90.9% used).
-- **Arch-lint:** `bun run lint:arch` (strict) / non-blocking PostToolUse hook warns on layering violations. Known allowlisted item worth fixing: `state/git-warm.ts` imports `warmGraphSnapshot` from GitGraphView.svelte module context — proper fix is moving the graph snapshot cache into `state/`.
-- **Product gaps discovered by test agents (candidate release-blockers or fast-follows):** conflict dialog has NO keep-both/rename option (only Replace/Skip); no copy-path context action; no Ctrl+L binding (address edit is click-only); plugin JobsPanel has no progress/cancel affordance; mock `restore_from_trash` is a no-op so trash-undo isn't E2E-testable.
-- **User feedback locked in this session:** parallel agents OK for read-only investigation when asked; implementation agents run ONE AT A TIME with capped workers (memory, not just tokens — the user killed an 8-agent fleet). Avoid the word "unusually" in assessments; be concrete.
+- **CI was red on dev for ~20 runs and nobody noticed** — the previous session's "all gates green" was local-only. Three causes, all fixed: (1) `cargo fmt` drift from the CI runner's newer stable Rust (#322); (2) clippy `ptr_arg` errors in `src-tauri/src/upscale.rs` (#324); (3) a real bug (#325): `useFileWatchers.setup()` called Tauri `listen("directory-changed")` unguarded → `transformCallback` TypeError on every browser/E2E load → the #302 crash-capture recorded it → crash-notice toast overlaid the viewport bottom → blocked context-menu clicks in `folder-thumbnails`/`thumbnail-size` specs. **Always check `gh run list --branch dev` / `gh pr checks` at session end, not just local gates.**
+- **#325 fix details:** `listen()` now wrapped in try/catch (same pattern as `state/drives.svelte.ts`); crash capture moved from `+page.svelte` onMount to `src/hooks.client.ts` (client entry — catches init/mount-phase errors too); crash-notice spec now waits for `.file-list` before dispatching its synthetic error (under Vite dev, `page.goto` resolves before ANY app JS runs — the spec had been passing tautologically off the real file-watchers error).
+- **v1.3.1 release verified:** tag + GitHub release with deb/rpm/AppImage/dmg/msi/setup.exe, all named as `website/app.js` `DL_ASSET` patterns expect.
+- **Vercel deploy of the website is STILL PENDING** (carried over from last session, now two changes behind: framed-window #286 + version bump #323). The permission classifier blocks `vercel deploy --prod`; user must run `cd website && vercel deploy --prod` themselves (or `!`-prefix it in-session).
+- **Wider-audience gaps identified (inventory-verified, in rough priority order):**
+  1. No code signing/notarization (macOS Gatekeeper + Windows SmartScreen warnings; README admits it). Needs Apple Developer ID + notarization and a Windows cert (or accept warnings for now).
+  2. No auto-update — only a once-a-day GitHub-API "new version" banner (`check_for_update`); `tauri-plugin-updater` not installed. Fine for v1, but decide before promoting.
+  3. No package-manager channels: PKGBUILD is CI-local only (`source=()` empty — not AUR-publishable as-is); no Homebrew cask, winget manifest, or Flathub.
+  4. Repo hygiene: GitHub description says "Tauri Windows Explorer" (stale/wrong), homepage URL unset, no CONTRIBUTING.md / issue templates / SECURITY.md; `Cargo.toml` missing `license` field + `authors = ["you"]`; bundle identifier is generic `com.explorer.app` (changing it later orphans user config dirs — decide BEFORE wide distribution).
+  5. Old build artifacts (`*.pkg.tar.zst`, `pkg/`) committed at repo root — unprofessional for a public repo.
+  6. No end-user docs beyond the in-app cheatsheet and the website demo (acceptable; README install section exists).
+- **Product gaps (candidate fast-follows, from test agents last session):** conflict dialog lacks keep-both/rename; no copy-path context action; no Ctrl+L address-edit binding; plugin JobsPanel lacks progress/cancel; mock `restore_from_trash` is a no-op.
 
-**Current state:** All issues #286–#304 closed; dev pushed (23f6dbc); working tree clean except the intentionally-untracked files (docs/code-map/, docs/AI-native-ideas.md, docs/gotcha-study/, screenshots/_issue-refs/). No open branches. Version files still say v1.3.0.
+**Current state:** main == v1.3.1 release; dev is ahead of main only by the website version fix (#323) + this handover, which ride the next release. No open issues besides the handover one, no branches with pending work. Working tree clean except intentionally-untracked files (docs/code-map/, docs/AI-native-ideas.md, docs/gotcha-study/, screenshots/_issue-refs/). All local gates AND GitHub CI green as of 582c287.
 
-**Next steps:** 1) Have the user deploy the website. 2) Version bump + CHANGELOG + PR dev→main → release v1.4.0; verify release workflow assets. 3) Promotion material (positioning per memory: VSCode-for-filesystem, Ctrl+P/Ctrl+Shift+F/palette first). 4) Optional fast-follows from the product-gap list above.
+**Next steps:** 1) User deploys website (`cd website && vercel deploy --prod`). 2) Pick wider-audience gaps to close (suggest: repo hygiene + bundle identifier decision first — cheap and irreversible-if-wrong respectively; then signing). 3) Promotion material (positioning per memory: VSCode-for-filesystem, Ctrl+P/Ctrl+Shift+F/palette first). 4) Optional product fast-follows above.
 
 ---
 
 ## Architecture & Learnings
 
-### Layering (post-hardening state)
-- `domain/` pure (owns GitFileEntry/GitStatusCode/ContentSearchResult now; zero api/state imports — enforced by arch-lint); `state/` rune stores (no component imports; sidebar-view components live in `components/sidebar-view-registry.ts`); `api/` split barrels, named re-exports only; plugins route through `PluginContext.workspace` + `openSettings` (documented exceptions: theme-from-image theme stores, ai-rename suggestion provider, nano-banana legacy key migration).
-- List/Tiles share `composables/use-row-grid-view.svelte.ts` (lazy getters preserve rune reactivity); DetailsView intentionally per-row FileItem.
-- SCM: `GitStatusSummary.op_state` (`clean|merge|rebase|cherry_pick|revert` from `repo.state()`); commit guarded on `index.has_conflicts()`; `git_discard` refuses conflicted paths (was a silent file-delete data-loss bug); abort/continue commands in git_actions.rs (`GIT_EDITOR=true` for rebase --continue). Banner in ScmSidebarView (`.op-banner`).
-- Preload: `gitWarmer` (state/git-warm.ts + pure domain/git-warm.ts scheduler, 250ms debounce, once per repo/session) fills GitGraphView module `graphCache` + `scmStore.summaryCache` from ExplorerPane's currentPath effect.
-- Crash: webview error/unhandledrejection → `record_frontend_crash` → same crash-file + next-launch notice as Rust panics; Report-a-Bug appends log tail (URL ≤6000 chars); everything local/opt-in (product promises no telemetry — do not add network calls).
-- Contract tests: `tests/contract/fixtures/*.json` consumed by both vitest (mock) and `include_str!` Rust tests — extend fixtures when changing IPC semantics, or drift returns.
+### This session's new learnings
+- **CI toolchain drift:** CI uses `dtolnay/rust-toolchain@stable` — GitHub's runner stable advances past local (local rustc 1.93 vs CI 1.97); fmt/clippy diverge. When the `rust` job fails fast (<1m) it's fmt; ~6m is clippy/tests. rtk tee logs for local repro live in `~/.local/share/rtk/tee/`.
+- **Crash capture interacts with E2E:** any uncaught error in mock mode becomes a crash file → next-launch notice toast → can cover bottom-of-viewport UI and block Playwright clicks. If thumbnail/menu specs start timing out after an error-handling change, screenshot the failure artifact first (`gh run download <id> -n playwright-report`).
+- **Vite dev boot order:** `page.goto` resolves at the load event, but under dev-mode module streaming NO app JS (not even `hooks.client.ts`) has run yet. E2E specs that need app handlers must wait for app-interactive (`.file-list`) first. In prod builds the bundle executes before load, so `hooks.client.ts` install is early enough for real crash coverage.
+- **Screenshot-path hook:** branch `fix/foo` → `screenshots/fix/foo/<name>.png` (the slash becomes a directory). agent-browser must be given exactly that repo-relative path (hook blocks absolute paths; daemon cwd is the repo so relative works).
+- **`gh pr merge` on a checks-pending PR:** merge state shows `UNSTABLE` while checks run but `MERGEABLE` — wait for `CLEAN` before merging release PRs.
+
+### Layering (unchanged from hardening sweep)
+- `domain/` pure; `state/` rune stores; `api/` split barrels (mock-aware `invoke` in `api/common.ts` — only positive Tauri detection is latched); plugins via `PluginContext`. Arch-lint: `bun run lint:arch` (strict) + non-blocking edit hook. Known allowlisted debt: `state/git-warm.ts` imports from GitGraphView module context.
+- Crash path: `hooks.client.ts` → `installGlobalErrorHandlers()` (error + unhandledrejection) → dedupe → `record_frontend_crash`; mock stores in localStorage (`mockFrontendCrash`), consumed-on-read by `take_crash_report`. Everything local; product promises no telemetry — no network calls.
+- SCM/preload/contract-tests details: see git history of this file (previous handover, commit 439a44e) — all still accurate.
 
 ### Testing & dev-loop
-- Unit `bunx vitest run --maxWorkers=2`; Rust `cd src-tauri && cargo test` (PTY test flakes under load — rerun isolated before believing it); merge-gate is automatic; session gate `ALL_VIEW_MODES=1 npx playwright test` (571 tests, ~4.3m).
-- Worktree agents: base off main → `git merge origin/dev` first; `bun install` in worktree; scratch playwright config on `DEV_PORT=<4189+>`; never port 1420. Locked worktrees need `git worktree unlock` then `remove -f -f`.
-- Long-running vite on 1420 wedges into blank-page `effect_orphan` after branch switches — restart the server, don't debug the branch.
-- Screenshot hook wants repo-relative `screenshots/<branch>/<name>.png`; compound `commit && merge` commands get pre-checked by the screenshot hook before the commit exists — run commit and merge as separate Bash calls.
-- agent-browser: text selectors can be ambiguous (`text=Documents` matches sidebar+list) — drive rows via `dispatchEvent(new MouseEvent('dblclick', {bubbles:true}))` in an eval IIFE; `press Control+Alt+g` works for app shortcuts.
-- rtk cargo-test log paths land in `~/.local/share/rtk/tee/` — grep there for failure details; a failed `&&` chain leaves the shell cwd wherever the failure happened (check cwd when "No tests found").
-
-### Workflow (hooks)
-- Branch ↔ open issue title match; issues need `## Screenshots` section; merges `--no-ff` from dev checkout; merge hook runs affected+smoke; `main` PR-only; screenshots committed on the feature branch BEFORE merging; issue auto-close on merge usually works (close manually with a comment when it races).
+- Unit `bunx vitest run --maxWorkers=2` (1050); Rust `cd src-tauri && cargo test` (228, PTY test flakes under load); merge-gate automatic (affected+smoke); session gate `ALL_VIEW_MODES=1 npx playwright test`; **plus check GitHub CI on dev before ending a session**.
+- CI rust job = fmt --check, clippy `--all-targets --features avif -- -D warnings`, tests. Match it locally before pushing Rust changes.
+- Playwright failure artifacts: `gh run download <run-id> -n playwright-report` → `data/*.png` screenshots + trace zips (`unzip`; grep `0-trace.trace` for `pageError`).
+- Workflow hooks: `git merge <branch> --no-ff -m ...` (branch name must come first for the screenshot hook); commit and merge as separate Bash calls; branch ↔ open-issue title match enforced.

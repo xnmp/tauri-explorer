@@ -55,8 +55,11 @@ async function flushMicrotasks(times = 10): Promise<void> {
 async function freshStore() {
   vi.resetModules();
   const mod = await import("$lib/state/scm.svelte");
-  await mod.scmStore.initWatcherListener();
-  return mod.scmStore;
+  const store = mod.getScmStore("test-pane");
+  await store.initWatcherListener();
+  // warm moved to module scope (#334): it feeds the cache shared by all
+  // pane stores. Expose it alongside the store, matching the old shape.
+  return Object.assign(store, { warm: mod.warmScmSummary });
 }
 
 beforeEach(() => {

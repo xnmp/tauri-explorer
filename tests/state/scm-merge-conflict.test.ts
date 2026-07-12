@@ -73,7 +73,7 @@ async function storeWith(s: GitStatusSummary) {
   gitRepoRootMock.mockResolvedValue({ ok: true, data: "/repo" });
   gitSummaryMock.mockResolvedValue({ ok: true, data: s });
   const mod = await import("$lib/state/scm.svelte");
-  const store = mod.scmStore;
+  const store = mod.getScmStore("test-pane");
   await store.setActivePath("/repo");
   await flushMicrotasks();
   return store;

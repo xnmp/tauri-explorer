@@ -27,6 +27,25 @@ async function openScmOnRepo(page: Page): Promise<void> {
 }
 
 test.describe("SCM panel UI", () => {
+  test("each pane shows its own independent git panel (#334)", async ({ page }) => {
+    await openScmOnRepo(page);
+    await expect(page.locator('[data-section="changes"]')).toBeVisible();
+
+    // Split: the second pane opens at the parent directory, which is OUTSIDE
+    // the mocked repo — so the two panels must show different repo states
+    // simultaneously (previously a single panel followed the active pane).
+    await page.keyboard.press("Control+\\");
+    await expect(page.locator(".scm-panel")).toHaveCount(2);
+
+    const left = page.locator(".explorer-pane").first();
+    const right = page.locator(".explorer-pane").nth(1);
+    await expect(left.locator('[data-section="changes"] .count-badge')).toHaveText("2");
+    await expect(right.locator(".scm-panel")).toContainText("Not a git repository");
+    // And the left panel keeps its repo rows while the right stays empty.
+    await expect(left.locator(".scm-panel").getByText("index.css")).toBeVisible();
+    await expect(right.locator('[data-section="changes"]')).toHaveCount(0);
+  });
+
   test("shows the mocked repo's staged / changes / untracked sections with counts @smoke", async ({ page }) => {
     await openScmOnRepo(page);
 

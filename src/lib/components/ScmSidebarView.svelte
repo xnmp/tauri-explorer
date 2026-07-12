@@ -8,8 +8,9 @@
   the `git-status-changed` watcher event.
 -->
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { scmStore } from "$lib/state/scm.svelte";
+  import { onMount, onDestroy } from "svelte";
+  import { getScmStore } from "$lib/state/scm.svelte";
+  import { getPaneIdContext } from "$lib/state/pane-context";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { gitInit, gitAddToGitignore } from "$lib/api/files";
   import { toastStore } from "$lib/state/toast.svelte";
@@ -20,6 +21,12 @@
   import Modal from "./Modal.svelte";
 
   import { buildTree, collectPaths, type ScmTreeNode } from "$lib/domain/scm-tree";
+
+  // Per-pane store (#334): this view tracks the pane it is mounted in, so a
+  // second pane on another repo gets its own independent SCM panel. Falls
+  // back to a shared "default" store when mounted outside a pane.
+  const paneId = getPaneIdContext() ?? "default";
+  const scmStore = getScmStore(paneId);
 
   // Collapsed folder sets, keyed per repo root so toggling between repos
   // doesn't mix collapse state.
@@ -75,15 +82,23 @@
 
   onMount(() => {
     scmStore.initWatcherListener();
-    const active = windowTabsManager.getActiveExplorer();
-    if (active?.currentPath) scmStore.setActivePath(active.currentPath);
+    const explorer = windowTabsManager.getExplorer(paneId) ?? windowTabsManager.getActiveExplorer();
+    if (explorer?.currentPath) scmStore.setActivePath(explorer.currentPath);
   });
 
-  // Track active explorer path → repo root resolution. Genuine side effect
-  // (async IPC + watcher registration), so $effect is appropriate here.
+  // Panel unmount (pane closed, panel toggled off, tab switched away):
+  // detach the store so its watcher is released; the shared summary cache
+  // keeps the repaint instant on remount (#334).
+  onDestroy(() => {
+    void scmStore.release();
+  });
+
+  // Track THIS pane's explorer path → repo root resolution (#334); panels in
+  // other panes follow their own explorers. Genuine side effect (async IPC +
+  // watcher registration), so $effect is appropriate here.
   $effect(() => {
-    const active = windowTabsManager.getActiveExplorer();
-    const path = active?.currentPath;
+    const explorer = windowTabsManager.getExplorer(paneId) ?? windowTabsManager.getActiveExplorer();
+    const path = explorer?.currentPath;
     if (path) scmStore.setActivePath(path);
   });
 
@@ -122,8 +137,8 @@
   }
 
   async function onInitRepo(): Promise<void> {
-    const active = windowTabsManager.getActiveExplorer();
-    const path = active?.currentPath;
+    const explorer = windowTabsManager.getExplorer(paneId) ?? windowTabsManager.getActiveExplorer();
+    const path = explorer?.currentPath;
     if (!path) return;
     const r = await gitInit(path);
     if (!r.ok) {

@@ -1,10 +1,15 @@
 /**
  * Source-control state (#54).
  *
- * Reactive store that tracks the git repo for the active pane, fetches the
- * summary (staged / changes / untracked / merge), and coordinates stage /
- * unstage / discard / commit actions. Listens for `git-status-changed` from
- * the Rust watcher (`git.rs`) to refresh without polling.
+ * Reactive store that tracks the git repo for a pane, fetches the summary
+ * (staged / changes / untracked / merge), and coordinates stage / unstage /
+ * discard / commit actions. Listens for `git-status-changed` from the Rust
+ * watcher (`git.rs`) to refresh without polling.
+ *
+ * Per-pane instances (#334): stores are created per pane via `getScmStore`,
+ * so two panes on different repos show independent git panels. The summary
+ * cache is shared module-wide (same repo → same data); global surfaces
+ * (preview diff, palette commands) resolve `activeScmStore()`.
  */
 
 import {
@@ -41,16 +46,52 @@ function emptySummary(): GitStatusSummary {
   };
 }
 
+// Last known summary per repo root (#271): served immediately when a repo
+// becomes active again so switching panes/tabs doesn't flash the empty
+// state, then refreshed in the background. Watcher events evict entries
+// for repos that changed while inactive. Shared across pane stores (#334) —
+// the same repo has the same summary regardless of which pane shows it.
+const summaryCache = new Map<string, GitStatusSummary>();
+// Repo roots with a warm currently in flight — dedups concurrent warms
+// for the same repo (#287).
+const warmInFlight = new Set<string>();
+
+async function detectRepo(path: string): Promise<string | null> {
+  if (!path) return null;
+  const r = await gitRepoRoot(path);
+  return r.ok ? r.data : null;
+}
+
+/**
+ * Background warm (#287): populate the shared summaryCache for the repo
+ * containing `path` without mounting any SCM panel, so a panel's first open
+ * serves a cached summary instead of flashing the empty/loading state.
+ * Purely additive — it never touches any store's activePath, repoRoot,
+ * watcher, or refreshGeneration, so it cannot race a panel's own
+ * setActivePath flow. No-op if the repo is already cached or a warm for it
+ * is in flight; failures are swallowed (best-effort).
+ */
+export async function warmScmSummary(path: string): Promise<void> {
+  try {
+    const root = await detectRepo(path);
+    if (!root || summaryCache.has(root) || warmInFlight.has(root)) return;
+    warmInFlight.add(root);
+    try {
+      const result = await gitSummary(root);
+      if (result.ok && !summaryCache.has(root)) summaryCache.set(root, result.data);
+    } finally {
+      warmInFlight.delete(root);
+    }
+  } catch {
+    /* best-effort warm — ignore failures */
+  }
+}
+
 function createScmStore() {
   let activePath = $state<string>("");
   let repoRoot = $state<string | null>(null);
   let summary = $state<GitStatusSummary>(emptySummary());
   let loading = $state(false);
-  // Last known summary per repo root (#271): served immediately when a repo
-  // becomes active again so switching panes/tabs doesn't flash the empty
-  // state, then refreshed in the background. Watcher events evict entries
-  // for repos that changed while inactive.
-  const summaryCache = new Map<string, GitStatusSummary>();
   let commitMessage = $state("");
   let amend = $state(false);
   let commitError = $state<string | null>(null);
@@ -58,15 +99,6 @@ function createScmStore() {
   let activeDiff = $state<{ path: string; staged: boolean } | null>(null);
   let watcherPath: string | null = null;
   let subscribed = false;
-  // Repo roots with a warm currently in flight — dedups concurrent warms
-  // for the same repo (#287).
-  const warmInFlight = new Set<string>();
-
-  async function detectRepo(path: string): Promise<string | null> {
-    if (!path) return null;
-    const r = await gitRepoRoot(path);
-    return r.ok ? r.data : null;
-  }
 
   let refreshGeneration = 0;
 
@@ -127,27 +159,18 @@ function createScmStore() {
   }
 
   /**
-   * Background warm (#287): populate summaryCache for the repo containing
-   * `path` without mounting the SCM panel, so the panel's first open serves
-   * a cached summary instead of flashing the empty/loading state. Purely
-   * additive — it never touches activePath, repoRoot, the single watcher, or
-   * refreshGeneration, so it cannot race the panel's own setActivePath flow.
-   * No-op if the repo is already cached or a warm for it is in flight;
-   * failures are swallowed (best-effort).
+   * Detach this pane's store when its panel unmounts (#334): drop the
+   * watcher (refcounted in the backend) and reset the active path so a
+   * remount at the same path re-runs detection and re-watches. The shared
+   * summaryCache keeps the last summary for an instant repaint.
    */
-  async function warm(path: string): Promise<void> {
-    try {
-      const root = await detectRepo(path);
-      if (!root || summaryCache.has(root) || warmInFlight.has(root)) return;
-      warmInFlight.add(root);
-      try {
-        const result = await gitSummary(root);
-        if (result.ok && !summaryCache.has(root)) summaryCache.set(root, result.data);
-      } finally {
-        warmInFlight.delete(root);
-      }
-    } catch {
-      /* best-effort warm — ignore failures */
+  async function release(): Promise<void> {
+    activePath = "";
+    repoRoot = null;
+    if (watcherPath) {
+      const p = watcherPath;
+      watcherPath = null;
+      try { await gitUnwatchRepo(p); } catch { /* non-Tauri */ }
     }
   }
 
@@ -326,7 +349,7 @@ function createScmStore() {
 
     // actions
     setActivePath,
-    warm,
+    release,
     refresh,
     stage,
     unstage,
@@ -344,4 +367,24 @@ function createScmStore() {
   };
 }
 
-export const scmStore = createScmStore();
+export type ScmStore = ReturnType<typeof createScmStore>;
+
+// One store per pane (#334). Pane ids recur across tab switches, so the map
+// stays small; a pane's store keeps its commit-message draft across panel
+// toggles, and release() (called on panel unmount) drops its watcher.
+const paneScmStores = new Map<string, ScmStore>();
+
+export function getScmStore(paneId: string): ScmStore {
+  let store = paneScmStores.get(paneId);
+  if (!store) {
+    store = createScmStore();
+    paneScmStores.set(paneId, store);
+  }
+  return store;
+}
+
+/** Close the diff in every pane's store (used when a setting invalidates
+ *  open diffs — a diff may be open in a non-active pane). */
+export function closeAllDiffs(): void {
+  for (const store of paneScmStores.values()) store.closeDiff();
+}

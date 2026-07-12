@@ -150,7 +150,7 @@ backend for E2E/browser).
 - `components/ScmSidebarView.svelte` — staged/unstaged/untracked tree, commit box
 - `components/ScmPanel.svelte`, `components/ScmDiffView.svelte` — panel shell + inline diff
 - `components/GitGraphView.svelte` — commit graph / log
-- `state/scm.svelte.ts` — `scmStore`: repo state, stage/commit actions
+- `state/scm.svelte.ts` — per-pane stores via `getScmStore(paneId)` (#334): repo state, stage/commit actions; shared summary cache + `warmScmSummary`
 - `domain/scm-tree.ts`, `domain/git-graph.ts`, `domain/git.ts` — tree grouping, graph layout
 - `api/git.ts`, `api/git-log.ts`; `src-tauri/src/git.rs`, `git_actions.rs`, `git_log.rs`, `git_common.rs`
 - FLOW: scmStore invokes git stage/unstage/commit/diff/log → Rust git2 ops → `git-status-changed` emit refreshes panel + badges.

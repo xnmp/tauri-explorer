@@ -14,7 +14,7 @@ import { openInTerminal, gitRepoRoot } from "$lib/api/files";
 import { toastStore } from "../toast.svelte";
 import { readFocusedWindowState } from "../focused-window";
 import { getActiveExplorer, openNewWindow } from "./shared";
-import { getAppInfo, bugReportUrl, openExternalUrl } from "$lib/api/crash";
+import { getAppInfo, bugReportUrl, openExternalUrl, readLogTail } from "$lib/api/crash";
 import { getLogDir } from "$lib/api/files";
 
 /** Window commands */
@@ -274,8 +274,10 @@ export const generalDialogCommands: Command[] = [
     label: "Report a Bug",
     category: "general",
     handler: async () => {
-      const info = await getAppInfo();
-      await openExternalUrl(bugReportUrl(info));
+      const [info, logTail] = await Promise.all([getAppInfo(), readLogTail()]);
+      // Logs ride along in the pre-filled issue form the user reviews and
+      // submits themselves (#302) — the app opens the form, sends nothing.
+      await openExternalUrl(bugReportUrl(info, logTail));
     },
   },
   {

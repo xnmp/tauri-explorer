@@ -41,7 +41,10 @@ const created = vi.hoisted(() => ({
   calls: [] as Array<{ label: string; options: Record<string, unknown> }>,
 }));
 vi.mock("@tauri-apps/api/webviewWindow", () => ({
-  WebviewWindow: vi.fn().mockImplementation((label: string, options: Record<string, unknown>) => {
+  // A `function` (not arrow) so it is constructable: warm-window calls
+  // `new WebviewWindow(...)`, and vitest 4 constructs mock implementations
+  // with real `new` semantics.
+  WebviewWindow: vi.fn(function (label: string, options: Record<string, unknown>) {
     created.calls.push({ label, options });
     return { once: vi.fn() };
   }),

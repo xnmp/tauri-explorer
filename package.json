@@ -46,8 +46,8 @@
   "devDependencies": {
     "@playwright/test": "^1.58.2",
     "@sveltejs/adapter-static": "^3.0.6",
-    "@sveltejs/kit": "^2.55.0",
-    "@sveltejs/vite-plugin-svelte": "^5.0.0",
+    "@sveltejs/kit": "^2.69.2",
+    "@sveltejs/vite-plugin-svelte": "^7.2.0",
     "@tauri-apps/cli": "^2",
     "@types/mocha": "^10.0.10",
     "@wdio/cli": "^9.27.0",
@@ -57,8 +57,8 @@
     "svelte": "^5.53.11",
     "svelte-check": "^4.4.5",
     "typescript": "~5.6.2",
-    "vite": "^6.4.3",
-    "vitest": "^3.2.6",
+    "vite": "^8.1.4",
+    "vitest": "^4.1.10",
     "webdriverio": "^9.27.0"
   },
   "overrides": {

@@ -12,7 +12,7 @@ for (const viewMode of VIEW_MODES) {
     });
 
     test.describe("Context Menu", () => {
-      test("right-click on file shows context menu", async ({ page }) => {
+      test("right-click on file shows context menu @smoke", async ({ page }) => {
         const file = page.locator(".entry-item").first();
         await file.click({ button: "right" });
 
@@ -56,7 +56,7 @@ for (const viewMode of VIEW_MODES) {
     });
 
     test.describe("Cut/Copy/Paste", () => {
-      test("Ctrl+C marks file as copied with clipboard banner", async ({ page }) => {
+      test("Ctrl+C marks file as copied with clipboard banner @smoke", async ({ page }) => {
         const file = page.locator(".entry-item").first();
         await file.click();
 
@@ -67,7 +67,7 @@ for (const viewMode of VIEW_MODES) {
         await expect(banner).toContainText("Copied");
       });
 
-      test("Ctrl+X marks file as cut with faded appearance", async ({ page }) => {
+      test("Ctrl+X marks file as cut with faded appearance @smoke", async ({ page }) => {
         const file = page.locator(".entry-item").first();
         await file.click();
 
@@ -145,7 +145,7 @@ for (const viewMode of VIEW_MODES) {
         await expect(file).toHaveClass(/cut/);
       });
 
-      test("context menu Copy works on file", async ({ page }) => {
+      test("context menu Copy works on file @smoke", async ({ page }) => {
         const file = page.locator(".entry-item").first();
         await file.click();
         await file.click({ button: "right" });
@@ -178,7 +178,7 @@ for (const viewMode of VIEW_MODES) {
     });
 
     test.describe("Rename", () => {
-      test("F2 opens inline rename", async ({ page }) => {
+      test("F2 opens inline rename @smoke", async ({ page }) => {
         const file = page.locator(".entry-item").first();
         await file.click();
 
@@ -245,7 +245,7 @@ for (const viewMode of VIEW_MODES) {
         await expect(file.locator(".entry-name")).toHaveText(originalName!);
       });
 
-      test("Enter confirms rename and updates the entry name", async ({ page }) => {
+      test("Enter confirms rename and updates the entry name @smoke", async ({ page }) => {
         const file = page.locator(".entry-item:not(.directory)").first();
         await file.click();
 
@@ -266,7 +266,7 @@ for (const viewMode of VIEW_MODES) {
     });
 
     test.describe("Delete", () => {
-      test("Delete key opens delete confirmation", async ({ page }) => {
+      test("Delete key opens delete confirmation @smoke", async ({ page }) => {
         const file = page.locator(".entry-item").first();
         await file.click();
 
@@ -360,7 +360,7 @@ for (const viewMode of VIEW_MODES) {
     });
 
     test.describe("New Folder", () => {
-      test("right-click on empty space shows New folder option", async ({ page }) => {
+      test("right-click on empty space shows New folder option @smoke", async ({ page }) => {
         await page.locator(".file-list .content").first().click({
           button: "right",
           position: { x: 10, y: 400 },

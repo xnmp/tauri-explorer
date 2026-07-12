@@ -15,7 +15,7 @@ test.describe("Breadcrumb truncation", () => {
     await waitForEntries(page);
   });
 
-  test("short paths show all segments without truncation", async ({ page }) => {
+  test("short paths show all segments without truncation @smoke", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents");
     await waitForEntries(page);
 

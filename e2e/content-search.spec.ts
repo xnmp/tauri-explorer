@@ -18,7 +18,7 @@ async function openContentSearch(page: Page): Promise<void> {
 }
 
 test.describe("Content search (Ctrl+Shift+F)", () => {
-  test("searching finds matches across files with highlighted content", async ({ page }) => {
+  test("searching finds matches across files with highlighted content @smoke", async ({ page }) => {
     await openContentSearch(page);
 
     const input = page.locator(".content-search-dialog .search-input");
@@ -83,7 +83,7 @@ test.describe("Content search (Ctrl+Shift+F)", () => {
     expect(secondSelected).not.toBe(firstSelected);
   });
 
-  test("Enter on a result opens it and closes the dialog", async ({ page }) => {
+  test("Enter on a result opens it and closes the dialog @smoke", async ({ page }) => {
     await openContentSearch(page);
 
     await page.locator(".content-search-dialog .search-input").fill("greet");

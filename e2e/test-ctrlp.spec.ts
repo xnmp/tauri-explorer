@@ -12,7 +12,7 @@ test.describe("Quick Open (Ctrl+P)", () => {
     await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
   });
 
-  test("Ctrl+P opens quick open dialog", async ({ page }) => {
+  test("Ctrl+P opens quick open dialog @smoke", async ({ page }) => {
     await page.keyboard.press("Control+p");
     const quickOpen = page.locator(".quick-open-dialog");
     await expect(quickOpen).toBeVisible({ timeout: 2000 });
@@ -57,7 +57,7 @@ test.describe("Quick Open (Ctrl+P)", () => {
     await expect(quickOpen).not.toBeVisible();
   });
 
-  test("searching for a folder in a large project returns results", async ({ page }) => {
+  test("searching for a folder in a large project returns results @smoke", async ({ page }) => {
     // Navigate to Documents/project (100+ files, 15+ subdirectories)
     await page.locator(".entry-item", { hasText: "Documents" }).first().dblclick();
     await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
@@ -104,7 +104,7 @@ test.describe("Quick Open (Ctrl+P)", () => {
       .toContain("components");
   });
 
-  test("searching for a file among many returns results", async ({ page }) => {
+  test("searching for a file among many returns results @smoke", async ({ page }) => {
     // Navigate to Documents/project
     await page.locator(".entry-item", { hasText: "Documents" }).first().dblclick();
     await page.locator(".entry-item").first().waitFor({ timeout: 5000 });

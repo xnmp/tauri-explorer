@@ -134,6 +134,31 @@ pub async fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
     Ok(log_dir.to_string_lossy().to_string())
 }
 
+/// Read the last `max_lines` lines of the rotating log file for embedding in
+/// a bug report (#302). Returns "" when no log file exists yet. Reads a local
+/// file only — the app transmits nothing; the user pastes/reviews it in the
+/// GitHub issue form themselves.
+#[tauri::command]
+pub async fn read_log_tail(app: tauri::AppHandle, max_lines: usize) -> Result<String, AppError> {
+    use tauri::Manager;
+    let log_dir = app
+        .path()
+        .app_log_dir()
+        .map_err(|e| AppError::Other(format!("Failed to resolve log directory: {}", e)))?;
+    files::run_blocking(move || {
+        // tauri_plugin_log defaults the file name to the product name.
+        let file = log_dir.join(concat!(env!("CARGO_PKG_NAME"), ".log"));
+        let contents = match std::fs::read_to_string(&file) {
+            Ok(c) => c,
+            Err(_) => return Ok(String::new()), // no log yet → empty tail
+        };
+        let lines: Vec<&str> = contents.lines().collect();
+        let start = lines.len().saturating_sub(max_lines);
+        Ok(lines[start..].join("\n"))
+    })
+    .await
+}
+
 /// Restore files from the system trash by their original paths.
 /// Finds the most recently deleted item matching each path and restores it.
 /// Note: trash::os_limited is only available on Linux/Windows (not macOS).

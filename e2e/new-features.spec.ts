@@ -95,7 +95,7 @@ test.describe("Theme System", () => {
     expect(options.some((o) => /hacker/i.test(o))).toBe(true);
   });
 
-  test("switching themes changes data-theme attribute", async ({ page }) => {
+  test("switching themes changes data-theme attribute @smoke", async ({ page }) => {
     await openSettings(page);
     const themeSelect = page.locator(".color-theme-select");
 

@@ -25,7 +25,7 @@ async function confirmDeleteDialog(page: Page): Promise<void> {
 }
 
 test.describe("Delete / restore", () => {
-  test("confirming the delete dialog removes the entry; the delete is undoable", async ({ page }) => {
+  test("confirming the delete dialog removes the entry; the delete is undoable @smoke", async ({ page }) => {
     await page.goto(DOCS_URL);
     await waitForEntries(page);
 

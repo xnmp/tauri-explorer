@@ -971,10 +971,7 @@ mod tests {
         fs::write(&victim, "x").unwrap();
         assert!(victim.exists());
 
-        block_on(delete_entry_permanent(
-            victim.to_string_lossy().to_string(),
-        ))
-        .unwrap();
+        block_on(delete_entry_permanent(victim.to_string_lossy().to_string())).unwrap();
 
         assert!(!victim.exists(), "deleted entry must leave the directory");
     }

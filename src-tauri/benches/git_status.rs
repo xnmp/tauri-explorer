@@ -30,7 +30,8 @@ fn build_fixture() -> (tempfile::TempDir, Repository) {
     }
     {
         let mut index = repo.index().expect("index");
-        index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
+        index
+            .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
             .expect("add all");
         index.write().expect("write index");
         let tree_id = index.write_tree().expect("write tree");
@@ -50,8 +51,11 @@ fn build_fixture() -> (tempfile::TempDir, Repository) {
 
     // Stage a fresh batch of new files (staged/added).
     for i in 0..10 {
-        fs::write(dir.path().join(format!("staged_{i:02}.txt")), b"staged content")
-            .expect("write staged file");
+        fs::write(
+            dir.path().join(format!("staged_{i:02}.txt")),
+            b"staged content",
+        )
+        .expect("write staged file");
     }
     {
         let mut index = repo.index().expect("index");

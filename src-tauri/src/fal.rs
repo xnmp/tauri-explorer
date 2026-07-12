@@ -56,13 +56,14 @@ pub fn upload_file(local_path: &Path, api_key: &str) -> Result<String, AppError>
         .unwrap_or("upload.bin");
     let bytes = std::fs::read(local_path).map_err(|e| http_err("Failed to read input file", e))?;
 
-    let mut init = ureq::post("https://rest.alpha.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3")
-        .header("Authorization", &format!("Key {}", api_key))
-        .send_json(serde_json::json!({
-            "file_name": file_name,
-            "content_type": content_type_for(local_path),
-        }))
-        .map_err(|e| http_err("fal storage initiate failed", e))?;
+    let mut init =
+        ureq::post("https://rest.alpha.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3")
+            .header("Authorization", &format!("Key {}", api_key))
+            .send_json(serde_json::json!({
+                "file_name": file_name,
+                "content_type": content_type_for(local_path),
+            }))
+            .map_err(|e| http_err("fal storage initiate failed", e))?;
     let init: Value = init
         .body_mut()
         .read_json()
@@ -86,7 +87,12 @@ pub fn upload_file(local_path: &Path, api_key: &str) -> Result<String, AppError>
 /// Submit a request to a fal queue model and block until the result JSON is
 /// available (polling every `poll_secs`). The caller owns the overall
 /// timeout (wrap in `tokio::time::timeout`).
-pub fn run_queue_job(model: &str, input: Value, api_key: &str, poll_secs: u64) -> Result<Value, AppError> {
+pub fn run_queue_job(
+    model: &str,
+    input: Value,
+    api_key: &str,
+    poll_secs: u64,
+) -> Result<Value, AppError> {
     let auth = format!("Key {}", api_key);
 
     let mut submit = ureq::post(&format!("https://queue.fal.run/{}", model))
@@ -132,7 +138,10 @@ pub fn run_queue_job(model: &str, input: Value, api_key: &str, poll_secs: u64) -
     // Validation errors surface as a `detail` array with status COMPLETED.
     if let Some(detail) = result.get("detail") {
         let msg = detail[0]["msg"].as_str().unwrap_or("unknown fal error");
-        return Err(AppError::Other(format!("fal rejected the request: {}", msg)));
+        return Err(AppError::Other(format!(
+            "fal rejected the request: {}",
+            msg
+        )));
     }
     Ok(result)
 }
@@ -145,7 +154,8 @@ pub fn download_to(url: &str, dest: &Path) -> Result<(), AppError> {
     let mut reader = resp.body_mut().as_reader();
     let mut file =
         std::fs::File::create(dest).map_err(|e| http_err("Failed to create output file", e))?;
-    std::io::copy(&mut reader, &mut file).map_err(|e| http_err("Failed to write output file", e))?;
+    std::io::copy(&mut reader, &mut file)
+        .map_err(|e| http_err("Failed to write output file", e))?;
     Ok(())
 }
 
@@ -171,6 +181,9 @@ mod tests {
         assert_eq!(content_type_for(Path::new("a.JPG")), "image/jpeg");
         assert_eq!(content_type_for(Path::new("a.png")), "image/png");
         assert_eq!(content_type_for(Path::new("a.webp")), "image/webp");
-        assert_eq!(content_type_for(Path::new("noext")), "application/octet-stream");
+        assert_eq!(
+            content_type_for(Path::new("noext")),
+            "application/octet-stream"
+        );
     }
 }

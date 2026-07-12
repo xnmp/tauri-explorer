@@ -389,12 +389,18 @@ mod tests {
             .args(["merge", "feature"])
             .output()
             .unwrap();
-        assert!(p.join(".git/MERGE_HEAD").exists(), "expected merge in progress");
+        assert!(
+            p.join(".git/MERGE_HEAD").exists(),
+            "expected merge in progress"
+        );
 
         run_git(&repo_path(&dir), &["merge", "--abort"]).unwrap();
 
         // Merge state cleared and the working tree restored to main's content.
-        assert!(!p.join(".git/MERGE_HEAD").exists(), "MERGE_HEAD should be gone");
+        assert!(
+            !p.join(".git/MERGE_HEAD").exists(),
+            "MERGE_HEAD should be gone"
+        );
         assert_eq!(fs::read_to_string(p.join("a.txt")).unwrap(), "main\n");
         // A porcelain status is empty (clean tree).
         assert!(git_out(p, &["status", "--porcelain"]).is_empty());

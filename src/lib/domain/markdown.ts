@@ -4,7 +4,9 @@
  * Pure module (no DOM/framework deps, Node-testable):
  * - raw HTML in the source is escaped and shown as text — markdown
  *   formatting only, so no sanitizer dependency is needed
- * - link/image URLs are allowlisted (no javascript:/data: schemes)
+ * - link URLs are allowlisted (no javascript:/data: schemes); images never
+ *   render as <img> — remote ones become link placeholders (CSP img-src
+ *   excludes https:, see the image renderer), local/other degrade to alt text
  * - fenced code blocks reuse the highlight.js setup from
  *   syntax-highlight.ts, so previews keep syntax highlighting
  */
@@ -48,13 +50,20 @@ const marked = new Marked({
     },
     image(token: Tokens.Image): string {
       const trimmed = token.href.trim();
-      // Remote images only; local paths can't resolve inside the webview
-      // and data:/other schemes stay out entirely.
-      if (!/^https?:/i.test(trimmed)) {
-        return `<span class="md-image-placeholder">${escapeHtml(token.text || token.href)}</span>`;
+      // Never emit a live <img>. The app CSP's img-src deliberately excludes
+      // https: — that strictness is what blunts asset-protocol XSS
+      // amplification, and allowing remote origins would open a zero-click
+      // network beacon channel from merely previewing a markdown file. Under
+      // that CSP a remote <img> renders as a broken image anyway, so show
+      // remote images as an explicit link the user can choose to open.
+      if (/^https?:/i.test(trimmed)) {
+        const label = token.text.trim() || trimmed;
+        const title = token.title ? ` title="${escapeHtml(token.title)}"` : "";
+        return `<a class="md-image-placeholder" href="${escapeHtml(trimmed)}"${title} target="_blank" rel="noopener noreferrer">${escapeHtml(label)} (image)</a>`;
       }
-      const title = token.title ? ` title="${escapeHtml(token.title)}"` : "";
-      return `<img src="${escapeHtml(trimmed)}" alt="${escapeHtml(token.text)}"${title} loading="lazy" />`;
+      // Local paths can't resolve inside the webview and data:/other schemes
+      // stay out entirely — degrade to the alt text.
+      return `<span class="md-image-placeholder">${escapeHtml(token.text || token.href)}</span>`;
     },
   },
 });

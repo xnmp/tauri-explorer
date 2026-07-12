@@ -97,6 +97,12 @@ existing `read_config_file` / `write_config_file` commands (via
 `writeConfigQueued`). `validate_filename` forbids path separators, so plugin
 config uses the **prefixed flat name** `plugin.<id>.json` — never a subdirectory.
 
+**Key storage caveat:** API keys entered in plugin settings are stored
+**plaintext** (file mode 0600) in `~/.config/tauri-explorer/plugin.<id>.json`.
+On shared machines, prefer the `FAL_KEY` / `GEMINI_API_KEY` environment
+variables — the backend falls back to them (`fal.rs` / `gemini.rs`) and they
+are never persisted to disk.
+
 ## Virtual filesystem (the `scheme://` seam)
 
 A provider serves a URL scheme (`demo://`, and later `keep://`). Dispatch:

@@ -1166,10 +1166,9 @@
     font-weight: 600;
   }
 
-  .preview-markdown :global(img) {
-    max-width: 100%;
-  }
-
+  /* Markdown never emits <img> (CSP img-src excludes https:, see
+     domain/markdown.ts) — images degrade to this placeholder, a link for
+     remote URLs or plain alt text otherwise. */
   .preview-markdown :global(.md-image-placeholder) {
     color: var(--text-tertiary);
     font-style: italic;

@@ -108,6 +108,8 @@
   import { toastStore } from "$lib/state/toast.svelte";
   import { gitDiff } from "$lib/api/files";
   import { untrack } from "svelte";
+  import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte";
+  import { loadPersisted, savePersisted } from "$lib/state/persisted";
 
   const { repoPath }: { repoPath: string } = $props();
 
@@ -247,6 +249,46 @@
   );
   const layout: GraphLayout = $derived(assignLayout(displayCommits));
   const graphWidth = $derived(Math.max(2, layout.laneCount) * LANE_WIDTH);
+
+  // Column widths (#341): author/date are drag-resizable via header handles
+  // (on their left edge → inverted drag) and persisted. The graph gutter is
+  // auto (lane-derived) until first dragged, then a fixed width that clips
+  // the lane overflow — deep histories can't squeeze the message column out.
+  const authorCol = usePersistedPanelWidth("git-graph-col-author", { min: 60, max: 320, default: 120, invert: true });
+  const dateCol = usePersistedPanelWidth("git-graph-col-date", { min: 56, max: 220, default: 84, invert: true });
+  const GRAPH_COL_KEY = "git-graph-col-graph";
+  const GRAPH_COL_MIN = 28;
+  const GRAPH_COL_MAX = 800;
+  const savedGraphCol = loadPersisted<unknown>(GRAPH_COL_KEY, null);
+  let graphCol = $state<number | null>(
+    typeof savedGraphCol === "number" && Number.isFinite(savedGraphCol) ? savedGraphCol : null,
+  );
+  let graphColResizing = $state(false);
+  const effectiveGraphWidth = $derived(
+    graphCol === null ? graphWidth : Math.max(GRAPH_COL_MIN, Math.min(GRAPH_COL_MAX, graphCol)),
+  );
+
+  function startGraphColResize(event: MouseEvent): void {
+    event.preventDefault();
+    graphColResizing = true;
+    const startX = event.clientX;
+    const startWidth = effectiveGraphWidth;
+    function onMouseMove(e: MouseEvent) {
+      graphCol = Math.max(GRAPH_COL_MIN, Math.min(GRAPH_COL_MAX, startWidth + (e.clientX - startX)));
+    }
+    function onMouseUp() {
+      graphColResizing = false;
+      savePersisted(GRAPH_COL_KEY, graphCol);
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+    document.body.style.cursor = "ew-resize";
+    document.body.style.userSelect = "none";
+  }
   /** Row index of the expanded (selected) commit, or -1. */
   const expandedIndex = $derived(
     selected ? displayCommits.findIndex((c) => c.oid === selected!.oid) : -1,
@@ -555,8 +597,52 @@
   {:else if commits.length === 0}
     <div class="graph-status">No commits.</div>
   {:else}
+    <div class="graph-header" style:padding-left="{effectiveGraphWidth + 20}px">
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- mouse-drag resize handles; role=separator conveys the semantics, keyboard resize is a separate unimplemented feature -->
+      <span
+        class="col-handle handle-graph"
+        class:active={graphColResizing}
+        style:left="{effectiveGraphWidth + 6}px"
+        onmousedown={startGraphColResize}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize graph column"
+        data-testid="handle-graph"
+      ></span>
+      <span class="gh-message">Message</span>
+      <span class="gh-author" style:width="{authorCol.width}px">
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <span
+          class="col-handle handle-in-cell"
+          class:active={authorCol.isResizing}
+          onmousedown={authorCol.startResize}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize author column"
+          data-testid="handle-author"
+        ></span>
+        Author
+      </span>
+      <span class="gh-date" style:width="{dateCol.width}px">
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <span
+          class="col-handle handle-in-cell"
+          class:active={dateCol.isResizing}
+          onmousedown={dateCol.startResize}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize date column"
+          data-testid="handle-date"
+        ></span>
+        Date
+      </span>
+      <span class="gh-oid">Commit</span>
+    </div>
     <div class="graph-scroller" onscroll={handleScroll} bind:clientHeight={viewportHeight}>
       <div class="graph-body" style:height="{graphHeight}px">
+        <!-- Clip window for the lane SVG: when the user narrows the graph
+             column below the lane-derived width, overflow is cut (#341). -->
+        <div class="graph-clip" style:width="{effectiveGraphWidth}px">
         <svg
           class="graph-underlay"
           width={graphWidth}
@@ -608,6 +694,7 @@
             {/if}
           {/each}
         </svg>
+        </div>
 
         {#each visibleRows as { commit, index } (commit.oid)}
           {@const chips = chipsFor(commit.oid)}
@@ -617,7 +704,7 @@
             class:selected={selected?.oid === commit.oid}
             class:is-head={chips.isHead}
             class:uncommitted={synthetic}
-            style:padding-left="{graphWidth + 20}px"
+            style:padding-left="{effectiveGraphWidth + 20}px"
             style:top="{rowY(index)}px"
             data-oid={commit.short_oid}
             role="button"
@@ -647,8 +734,8 @@
                 <span class="ref ref-tag">{tag}</span>
               {/each}
               <span class="summary" title={commit.summary}>{commit.summary}</span>
-              <span class="author">{commit.author_name}</span>
-              <span class="date">{formatDate(commit.author_time)}</span>
+              <span class="author" style:width="{authorCol.width}px">{commit.author_name}</span>
+              <span class="date" style:width="{dateCol.width}px">{formatDate(commit.author_time)}</span>
               <span class="oid">{commit.short_oid}</span>
             {/if}
           </div>
@@ -662,7 +749,7 @@
               class="commit-detail-inline"
               data-testid="git-graph-detail"
               bind:offsetHeight={detailsHeight}
-              style:margin-left="{graphWidth + 12}px"
+              style:margin-left="{effectiveGraphWidth + 12}px"
               style:top="{rowY(index) + ROW_HEIGHT}px"
             >
               <button class="detail-close" onclick={closeDetails} aria-label="Close details">✕</button>
@@ -1083,10 +1170,87 @@
     color: var(--text-tertiary);
   }
 
+  /* Column header (#341): mirrors the row layout (same left padding and gap)
+     so labels align with their columns; hosts the drag handles. */
+  .graph-header {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 26px;
+    flex-shrink: 0;
+    padding: 0 14px 0 10px; /* left is overridden inline to clear the lanes */
+    border-bottom: 1px solid var(--divider);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    user-select: none;
+  }
+
+  .gh-message {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .gh-author,
+  .gh-date {
+    position: relative;
+    flex-shrink: 0;
+    text-align: right;
+  }
+
+  .gh-oid {
+    flex-shrink: 0;
+    width: 60px;
+    margin-left: 8px;
+    text-align: right;
+  }
+
+  .col-handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 9px;
+    cursor: ew-resize;
+    z-index: 2;
+  }
+
+  .col-handle::after {
+    content: "";
+    position: absolute;
+    left: 4px;
+    top: 5px;
+    bottom: 5px;
+    width: 1px;
+    background: var(--divider);
+  }
+
+  .col-handle:hover::after,
+  .col-handle.active::after {
+    background: var(--accent);
+    width: 2px;
+  }
+
+  /* Author/date handles sit on the cell's left edge, in the flex gap. */
+  .handle-in-cell {
+    left: -9px;
+  }
+
   .graph-scroller {
     flex: 1;
     overflow-y: auto;
     min-height: 0;
+  }
+
+  /* Clip window for the lane SVG (#341): same origin the underlay used to
+     have; hides lanes beyond the (possibly user-narrowed) graph column. */
+  .graph-clip {
+    position: absolute;
+    top: 0;
+    left: 10px;
+    height: 100%;
+    overflow: hidden;
+    pointer-events: none;
   }
 
   .graph-body {
@@ -1096,7 +1260,7 @@
   .graph-underlay {
     position: absolute;
     top: 0;
-    left: 10px;
+    left: 0;
     pointer-events: none;
   }
 
@@ -1139,6 +1303,10 @@
     flex-shrink: 0;
     margin-left: 8px;
     font-variant-numeric: tabular-nums;
+    /* Fixed so the header's "Commit" label stays aligned (#341). */
+    width: 60px;
+    text-align: right;
+    overflow: hidden;
   }
 
   .ref {

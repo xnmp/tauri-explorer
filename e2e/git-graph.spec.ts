@@ -69,6 +69,42 @@ test.describe("Git graph tab", () => {
     await expect(page.locator(".entry-item").first()).toBeVisible();
   });
 
+  test("graph columns resize by dragging header handles and persist (#341)", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+
+    const authorCell = page.locator(".gh-author");
+    expect(Math.round((await authorCell.boundingBox())!.width)).toBe(120);
+
+    // Drag the author handle 40px LEFT — the handle sits on the column's
+    // left edge, so the column grows to 160px, and rows follow.
+    const handle = (await page.locator('[data-testid="handle-author"]').boundingBox())!;
+    await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(handle.x + handle.width / 2 - 40, handle.y + handle.height / 2, { steps: 4 });
+    await page.mouse.up();
+    expect(Math.round((await authorCell.boundingBox())!.width)).toBe(160);
+    const rowAuthor = page.locator(".commit-row .author").first();
+    expect(Math.round((await rowAuthor.boundingBox())!.width)).toBe(160);
+
+    // Narrow the graph gutter: rows shift left by the same amount.
+    const summaryBefore = (await page.locator(".commit-row .summary").nth(1).boundingBox())!;
+    const gh = (await page.locator('[data-testid="handle-graph"]').boundingBox())!;
+    await page.mouse.move(gh.x + gh.width / 2, gh.y + gh.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(gh.x + gh.width / 2 - 20, gh.y + gh.height / 2, { steps: 4 });
+    await page.mouse.up();
+    const summaryAfter = (await page.locator(".commit-row .summary").nth(1).boundingBox())!;
+    expect(summaryBefore.x - summaryAfter.x).toBeGreaterThan(10);
+
+    // Widths persist across a reload.
+    await page.reload();
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+    expect(Math.round((await authorCell.boundingBox())!.width)).toBe(160);
+  });
+
   test("SCM panel stays visible alongside the graph (#333)", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents/project");
     await page.evaluate(() => {

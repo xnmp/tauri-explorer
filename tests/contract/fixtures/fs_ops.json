@@ -1,0 +1,15 @@
+{
+  "listing_order": {
+    "input_dirs": ["Zebra", "apple"],
+    "input_files": ["Banana.txt", "apple.txt", ".hidden", "README"],
+    "expected_order": ["apple", "Zebra", ".hidden", "apple.txt", "Banana.txt", "README"]
+  },
+  "rename": {
+    "original": "old-name.txt",
+    "new_name": "renamed.txt",
+    "expected_kind": "file"
+  },
+  "delete": {
+    "target": "condemned.txt"
+  }
+}

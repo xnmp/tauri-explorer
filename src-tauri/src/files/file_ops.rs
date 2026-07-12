@@ -917,6 +917,68 @@ mod tests {
         assert!(dir.path().join("new_name.txt").exists());
     }
 
+    // ----- Shared-fixture contract tests (#299) -----
+    // Mirror `tests/contract/fs-ops.contract.test.ts` (mock side): both drive
+    // the rename/delete scenarios from tests/contract/fixtures/fs_ops.json and
+    // assert the same shape + semantics, so mock drift fails one side.
+
+    fn fs_ops_fixture() -> serde_json::Value {
+        serde_json::from_str(include_str!("../../../tests/contract/fixtures/fs_ops.json"))
+            .expect("fixture is valid JSON")
+    }
+
+    #[test]
+    fn contract_rename_matches_fixture() {
+        let fx = fs_ops_fixture();
+        let original = fx["rename"]["original"].as_str().unwrap();
+        let new_name = fx["rename"]["new_name"].as_str().unwrap();
+        let expected_kind = fx["rename"]["expected_kind"].as_str().unwrap();
+
+        let dir = tempdir().unwrap();
+        let source = dir.path().join(original);
+        fs::write(&source, "x").unwrap();
+
+        let entry = block_on(rename_entry(
+            source.to_string_lossy().to_string(),
+            new_name.to_string(),
+        ))
+        .unwrap();
+
+        // Shape: returned entry carries the new name, full new path, and kind.
+        assert_eq!(entry.name, new_name);
+        assert_eq!(
+            entry.path,
+            dir.path().join(new_name).to_string_lossy().to_string()
+        );
+        let kind = match serde_json::to_value(&entry.kind).unwrap() {
+            serde_json::Value::String(s) => s,
+            other => panic!("kind did not serialize to a string: {other:?}"),
+        };
+        assert_eq!(kind, expected_kind);
+
+        // Semantics: old name gone, new name present.
+        assert!(!source.exists());
+        assert!(dir.path().join(new_name).exists());
+    }
+
+    #[test]
+    fn contract_delete_matches_fixture() {
+        let fx = fs_ops_fixture();
+        let target = fx["delete"]["target"].as_str().unwrap();
+
+        let dir = tempdir().unwrap();
+        let victim = dir.path().join(target);
+        fs::write(&victim, "x").unwrap();
+        assert!(victim.exists());
+
+        block_on(delete_entry_permanent(
+            victim.to_string_lossy().to_string(),
+        ))
+        .unwrap();
+
+        assert!(!victim.exists(), "deleted entry must leave the directory");
+    }
+
     #[test]
     fn test_generate_copy_name() {
         let dir = tempdir().unwrap();

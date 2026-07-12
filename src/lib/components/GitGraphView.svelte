@@ -39,9 +39,17 @@
   }
 
   /** Fetch the page-0 data (first PAGE_SIZE commits + working summary) shared
-   *  by the view's own initial load and the background warm (#287). */
-  async function fetchPage0Snapshot(repoPath: string): Promise<GraphSnapshot> {
-    const page = await gitLog(repoPath, { skip: 0, limit: PAGE_SIZE });
+   *  by the view's own initial load and the background warm (#287). Pass a
+   *  branch subset to fetch a filtered page (#342) — never cached. */
+  async function fetchPage0Snapshot(
+    repoPath: string,
+    branches: string[] | null = null,
+  ): Promise<GraphSnapshot> {
+    const page = await gitLog(repoPath, {
+      skip: 0,
+      limit: PAGE_SIZE,
+      ...(branches ? { branches } : {}),
+    });
     const headOid =
       Object.entries(page.refs).find(([, rs]) => rs.some((r) => r.kind === "Head"))?.[0] ?? null;
     const summary = await gitSummary(repoPath);
@@ -94,6 +102,7 @@
     gitMerge,
     gitRebase,
     gitReset,
+    gitRefs,
     type CommitInfo,
     type RefInfo,
     type CommitFile,
@@ -134,9 +143,23 @@
   let workingChanges = $state(0);
   let headOid = $state<string | null>(null);
 
+  // Branch subset filter (#342): null = all branches. Persisted per repo so a
+  // curated view (e.g. just dev + main) survives reopening the graph.
+  const BRANCH_FILTER_KEY = `git-graph-branch-filter:${untrack(() => repoPath)}`;
+  const savedBranchFilter = loadPersisted<unknown>(BRANCH_FILTER_KEY, null);
+  let branchFilter = $state<string[] | null>(
+    Array.isArray(savedBranchFilter) &&
+      savedBranchFilter.length > 0 &&
+      savedBranchFilter.every((s) => typeof s === "string")
+      ? (savedBranchFilter as string[])
+      : null,
+  );
+
   // Paint the last-known graph immediately on remount (#255); the load
-  // effect below still refreshes from git in the background.
-  {
+  // effect below still refreshes from git in the background. Skipped while a
+  // branch filter is active — the warm cache is always the UNFILTERED page 0,
+  // and flashing it would briefly show branches the user hid (#342).
+  if (untrack(() => branchFilter) === null) {
     // untrack: the view is {#key}ed on repoPath, so the initial value is the
     // right one for this instance's lifetime.
     const cached = graphCache.get(untrack(() => repoPath));
@@ -357,33 +380,42 @@
   );
 
   async function loadPage(skip: number): Promise<void> {
+    // Captured once so a mid-flight filter change can't mix pages; filtered
+    // loads never touch the snapshot cache (it holds the unfiltered page 0).
+    const filter = untrack(() => branchFilter);
     loading = true;
     error = null;
     try {
       if (skip === 0) {
         // Same page-0 fetch used by the background warm (#287), so an open
         // that follows a warm reuses identical data.
-        const snapshot = await fetchPage0Snapshot(repoPath);
+        const snapshot = await fetchPage0Snapshot(repoPath, filter);
         commits = snapshot.commits;
         refs = snapshot.refs;
         hasMore = snapshot.hasMore;
         headOid = snapshot.headOid;
         workingChanges = snapshot.workingChanges;
-        cacheSnapshot(repoPath, snapshot);
+        if (filter === null) cacheSnapshot(repoPath, snapshot);
       } else {
-        const page = await gitLog(repoPath, { skip, limit: PAGE_SIZE });
+        const page = await gitLog(repoPath, {
+          skip,
+          limit: PAGE_SIZE,
+          ...(filter ? { branches: filter } : {}),
+        });
         commits = [...commits, ...page.commits];
         refs = { ...refs, ...page.refs };
         hasMore = page.has_more;
         // Snapshot page 0 for instant remount paint (#255) — deliberately not
         // the full paged history, which can grow unbounded.
-        cacheSnapshot(repoPath, {
-          commits: commits.slice(0, PAGE_SIZE),
-          refs,
-          hasMore: hasMore || commits.length > PAGE_SIZE,
-          headOid,
-          workingChanges,
-        });
+        if (filter === null) {
+          cacheSnapshot(repoPath, {
+            commits: commits.slice(0, PAGE_SIZE),
+            refs,
+            hasMore: hasMore || commits.length > PAGE_SIZE,
+            headOid,
+            workingChanges,
+          });
+        }
       }
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
@@ -392,11 +424,59 @@
     }
   }
 
-  // Genuine side effect (IPC) keyed on the repo this tab shows.
+  // Genuine side effect (IPC) keyed on the repo this tab shows and the
+  // active branch filter; loadPage reads the filter via untrack, so the
+  // explicit reads here are the only dependencies.
   $effect(() => {
     void repoPath;
-    void loadPage(0);
+    void branchFilter;
+    untrack(() => void loadPage(0));
   });
+
+  // ----- Branch filter popover (#342) -----
+
+  let branchPopoverOpen = $state(false);
+  let branchQuery = $state("");
+  let branchList = $state<Array<{ name: string; remote: boolean }>>([]);
+
+  async function toggleBranchPopover(): Promise<void> {
+    branchPopoverOpen = !branchPopoverOpen;
+    if (branchPopoverOpen && branchList.length === 0) {
+      try {
+        const r = await gitRefs(repoPath);
+        branchList = [
+          ...r.local_branches.map((b) => ({ name: b.name, remote: false })),
+          ...r.remote_branches.map((b) => ({ name: b.name, remote: true })),
+        ];
+      } catch {
+        branchList = [];
+      }
+    }
+  }
+
+  const filteredBranchList = $derived(
+    branchList.filter((b) => b.name.toLowerCase().includes(branchQuery.toLowerCase())),
+  );
+
+  function setBranchFilter(next: string[] | null): void {
+    branchFilter = next && next.length > 0 ? next : null;
+    savePersisted(BRANCH_FILTER_KEY, branchFilter);
+    // The selected commit may not exist in the new subset.
+    closeDetails();
+  }
+
+  function isBranchShown(name: string): boolean {
+    return branchFilter === null || branchFilter.includes(name);
+  }
+
+  /** Checkbox semantics: from "all", unchecking X shows everything but X;
+   *  re-checking the last missing branch collapses back to "all". */
+  function toggleBranch(name: string): void {
+    const all = branchList.map((b) => b.name);
+    const cur = branchFilter ?? all;
+    const next = cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name];
+    setBranchFilter(next.length === all.length ? null : next);
+  }
 
   // One shared formatter: constructing Intl state per row per render is a
   // measurable cost at hundreds of rows (#256).
@@ -583,6 +663,10 @@
   }
 
   function onWindowKeydown(event: KeyboardEvent): void {
+    if (event.key === "Escape" && branchPopoverOpen) {
+      branchPopoverOpen = false;
+      return;
+    }
     if (event.key === "Escape" && (menu || prompt)) closeMenu();
   }
 </script>
@@ -592,12 +676,72 @@
 <div class="git-graph-view" data-testid="git-graph-view">
   {#if error}
     <div class="graph-status error">{error}</div>
-  {:else if commits.length === 0 && loading}
-    <div class="graph-status">Loading history…</div>
-  {:else if commits.length === 0}
-    <div class="graph-status">No commits.</div>
   {:else}
     <div class="graph-header" style:padding-left="{effectiveGraphWidth + 20}px">
+      <button
+        class="branch-filter-btn"
+        class:filtered={branchFilter !== null}
+        onclick={() => void toggleBranchPopover()}
+        title="Filter branches"
+        aria-label="Filter branches"
+        data-testid="branch-filter-btn"
+      >
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+          <circle cx="4.5" cy="3.5" r="1.7" />
+          <circle cx="4.5" cy="12.5" r="1.7" />
+          <circle cx="11.5" cy="6" r="1.7" />
+          <path d="M4.5 5.2v5.6 M11.5 7.7c0 2.6-4.5 1.8-7 3.4" />
+        </svg>
+        {#if branchFilter}<span class="bf-count">{branchFilter.length}</span>{/if}
+      </button>
+      {#if branchPopoverOpen}
+        <button
+          class="menu-backdrop"
+          aria-label="Close branch filter"
+          onclick={() => (branchPopoverOpen = false)}
+        ></button>
+        <div class="branch-popover" data-testid="branch-popover">
+          <!-- svelte-ignore a11y_autofocus -- opened by explicit user action; focus goes where they're about to type -->
+          <input
+            class="bf-search"
+            placeholder="Filter branches…"
+            bind:value={branchQuery}
+            autofocus
+          />
+          <div class="bf-list">
+            <button
+              class="bf-row bf-all"
+              class:bf-active={branchFilter === null}
+              onclick={() => setBranchFilter(null)}
+            >
+              All branches
+            </button>
+            {#each filteredBranchList as b (b.name)}
+              <label class="bf-row" title="Show or hide {b.name}">
+                <input
+                  type="checkbox"
+                  checked={isBranchShown(b.name)}
+                  onchange={() => toggleBranch(b.name)}
+                />
+                <span class="bf-name">{b.name}</span>
+                {#if b.remote}<span class="bf-remote">remote</span>{/if}
+                <button
+                  class="bf-only"
+                  title="Show only {b.name}"
+                  onclick={(e) => {
+                    e.preventDefault();
+                    setBranchFilter([b.name]);
+                  }}
+                >
+                  only
+                </button>
+              </label>
+            {:else}
+              <div class="bf-empty">No branches</div>
+            {/each}
+          </div>
+        </div>
+      {/if}
       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- mouse-drag resize handles; role=separator conveys the semantics, keyboard resize is a separate unimplemented feature -->
       <span
         class="col-handle handle-graph"
@@ -638,6 +782,11 @@
       </span>
       <span class="gh-oid">Commit</span>
     </div>
+    {#if commits.length === 0 && loading}
+      <div class="graph-status">Loading history…</div>
+    {:else if commits.length === 0}
+      <div class="graph-status">No commits.</div>
+    {:else}
     <div class="graph-scroller" onscroll={handleScroll} bind:clientHeight={viewportHeight}>
       <div class="graph-body" style:height="{graphHeight}px">
         <!-- Clip window for the lane SVG: when the user narrows the graph
@@ -823,6 +972,7 @@
         {/each}
       </div>
     </div>
+    {/if}
   {/if}
 
   {#if menu}
@@ -1234,6 +1384,135 @@
   /* Author/date handles sit on the cell's left edge, in the flex gap. */
   .handle-in-cell {
     left: -9px;
+  }
+
+  /* ----- Branch filter (#342) ----- */
+
+  .branch-filter-btn {
+    position: absolute;
+    left: 6px;
+    top: 3px;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    height: 20px;
+    padding: 0 4px;
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-tertiary);
+    cursor: pointer;
+    z-index: 3;
+  }
+
+  .branch-filter-btn:hover {
+    background: var(--subtle-fill-secondary);
+    color: var(--text-primary);
+  }
+
+  .branch-filter-btn.filtered {
+    color: var(--accent);
+  }
+
+  .bf-count {
+    font-size: 10px;
+    font-weight: 700;
+  }
+
+  /* Sits above the .menu-backdrop (z 40) that closes it. */
+  .branch-popover {
+    position: absolute;
+    top: 27px;
+    left: 6px;
+    z-index: 41;
+    width: 240px;
+    max-height: 320px;
+    display: flex;
+    flex-direction: column;
+    background: var(--background-solid);
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+    font-weight: 400;
+  }
+
+  .bf-search {
+    margin: 6px;
+    padding: 4px 8px;
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-sm);
+    background: var(--background-card);
+    color: var(--text-primary);
+    font-size: 12px;
+  }
+
+  .bf-list {
+    overflow-y: auto;
+    padding: 0 4px 6px;
+  }
+
+  .bf-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 3px 6px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+
+  .bf-row:hover {
+    background: var(--subtle-fill-secondary);
+  }
+
+  button.bf-row {
+    background: none;
+    border: none;
+    text-align: left;
+    font: inherit;
+  }
+
+  .bf-all.bf-active {
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .bf-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .bf-remote {
+    font-size: 10px;
+    color: var(--text-tertiary);
+    border: 1px solid var(--divider);
+    border-radius: 3px;
+    padding: 0 3px;
+  }
+
+  .bf-only {
+    visibility: hidden;
+    background: none;
+    border: none;
+    font-size: 10px;
+    color: var(--accent);
+    cursor: pointer;
+    padding: 0 2px;
+  }
+
+  .bf-row:hover .bf-only {
+    visibility: visible;
+  }
+
+  .bf-empty {
+    padding: 6px 8px;
+    color: var(--text-tertiary);
+    font-size: 12px;
   }
 
   .graph-scroller {

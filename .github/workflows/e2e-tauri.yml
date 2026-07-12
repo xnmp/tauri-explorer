@@ -19,7 +19,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -32,7 +32,7 @@ jobs:
       # save a binary-less cache, which later runs then restored (ENOENT at
       # spawn). tauri-driver is now installed unconditionally below.
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -41,7 +41,7 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-registry-
 
       - name: Cache Rust target
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: src-tauri/target
           key: ${{ runner.os }}-target-debug-${{ hashFiles('src-tauri/Cargo.lock') }}
@@ -131,7 +131,7 @@ jobs:
 
       - name: Upload WDIO logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wdio-logs-${{ matrix.os }}
           path: |

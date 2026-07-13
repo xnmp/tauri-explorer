@@ -3,7 +3,7 @@
  *
  * Ships disabled (`enabledByDefault: false`); enabled from Settings. Used by
  * the plugin-system e2e test and as the reference for building a built-in
- * plugin (see docs/architecture/plugins.md). It contributes:
+ * plugin (see the Plugins cluster in docs/code-map/map-feature.md). It contributes:
  *   - a command ("Demo: Hello" → toast) and a nav command ("Demo: Open Virtual Folder")
  *   - a context-menu item (when any entry is selected → toast with its name)
  *   - a settings section (one text row)

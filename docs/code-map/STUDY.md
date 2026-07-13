@@ -29,7 +29,7 @@ Full task texts: `STUDY-data/tasks.json` (checked in alongside this doc at study
 | **C1** existing-docs | `docs/ARCHITECTURE.md`, `docs/architecture/*` | read ARCHITECTURE.md first, follow pointers |
 | **M-folder** | `docs/code-map/map-folder.md` | read map first, then search |
 | **M-feature** | `docs/code-map/map-feature.md` | read map first, then search |
-| **M-symbol** | `docs/code-map/map-symbols.md` | read map first, then search |
+| **M-symbol** | `docs/code-map/map-symbols.md` (built for the study; **retired** afterwards — see §10.4) | read map first, then search |
 | **M-playbook** | `docs/code-map/map-playbook.md` | read map first, then search |
 
 Notes and known contaminations, stated up front:
@@ -197,7 +197,19 @@ Three challenges raised in review, answered from the data:
 1. **Code maps work, but modestly, and only where search is actually expensive.** The honest headline is not "maps halve search cost" — it's: a good map buys **~9% cheaper searches overall (−11% compute-weighted), ~25–30% on expensive cross-layer bug/perf tasks, 13–15% fewer turns, slightly better answers, and better-calibrated confidence**, for a one-time ~$3 build cost. The ceiling was visible in the baseline anatomy: only ~26% of search *bytes* are orientation; the rest is reading code you genuinely have to read. Measured against *end-to-end task cost* (search ≈ 10–20% of a task's tokens), the dollar case is ~1–2% and does not justify maintenance by itself — see §9.3; the durable wins are the latency reduction, the calibration fix, and the negative finding about prose docs.
 2. **The existing prose architecture docs are a net negative for search agents** — costlier, lower quality, 2.5× more wrong files in answers. They may still serve humans and onboarding, but agents should not be pointed at `docs/architecture/` for "where do I change X" work. This is the single most actionable finding.
 3. **Structure matters less than existence and size.** Folder, feature, and playbook maps all performed within noise of each other; the symbol index — the biggest doc — was the only map that failed to pay for itself. Below ~20KB, *any* accurate curated map beats none; past that, doc-read overhead erases the gain.
-4. **Recommendation** (encoded in `README.md`): use **`map-feature.md`** as the default read-first doc for cross-layer bug/perf work (best cost, near-best quality); fall back to `map-folder.md`'s exhaustive index when a task matches no cluster; skip maps entirely for small, obviously-localized tasks; retire `map-symbols.md` unless it shrinks.
+4. **Recommendation** (encoded in `README.md`): use **`map-feature.md`** as the default read-first doc for cross-layer bug/perf work (best cost, near-best quality); fall back to `map-folder.md`'s exhaustive index when a task matches no cluster; skip maps entirely for small, obviously-localized tasks; retire `map-symbols.md`.
+
+## 11. Acted-on outcomes (#347)
+
+The study's recommendations were implemented rather than left as prose:
+
+1. **CI staleness guards (two)** — `.github/workflows/ci.yml` runs `docs/code-map/validate.py --coverage` on every push/PR. The maps' entire measured benefit rests on their accuracy: an agent that trusts a map naming a moved file searches *worse* than one with no map. *References*: every file a map names must exist. *Coverage*: every source file must appear in `map-folder.md`, so a new file nobody mapped fails the build. Belt-and-suspenders: CLAUDE.md's per-issue checklist (step 6) also instructs the implementer to update the maps as part of the work.
+   - The coverage guard justified itself immediately: on first run it found **21 source files absent from `map-folder.md`** — including an entire `upscale` plugin and its Rust backend (`fal.rs`, `upscale.rs`, `plugin_job.rs`) — files that existed *before* the maps were written. The "exhaustive" folder map was never exhaustive; a human-invisible gap that only a mechanical check surfaces.
+2. **`docs/ARCHITECTURE.md` and `docs/architecture/` deleted** (7 files, ~1,160 lines). The study measured that doc set as net-negative for locating change sites, and the maps now serve that function; the prose remains in git history if the design rationale is ever wanted back. Every reference was repointed (`CLAUDE.md`, `CONTRIBUTING.md`, and two source-comment links in `src/lib/plugins/`).
+3. **`map-symbols.md` deleted** — the one variant that failed to pay for itself (largest doc, +2.0% net cost, weakest perf-task recall). Its results remain in §9.2 as evidence for the size rule: past ~20KB a map stops paying.
+4. **`CLAUDE.md` routes agents** to `map-feature.md` (cross-layer searches) and `map-playbook.md` (task-shaped changes), and explicitly warns off `docs/architecture/` for change-site location.
+
+**Deliberately not done:** the end-to-end ROI question (§9.3) — whether better initial file sets reduce *rework* during implementation, where most tokens actually live — remains unmeasured. It is the only mechanism by which maps could pay for themselves in tokens rather than latency, and answering it requires an implement-and-test benchmark (~10–30× per-run cost). The current recommendation deliberately rests on the latency, calibration, and negative-prose-doc findings, which are measured.
 5. **Judge-scored quality never degraded under any map** (8.25–8.40 vs 8.12 baseline), and precision held — the feared "trust the map, skip verification" failure mode did not materialize for purpose-built maps at these sizes.
 
 **Study cost:** ~$275 of subagent inference (203 Sonnet searcher-run dollars including retry waste, $62 Opus oracles, plus builders and judges), ~22M subagent tokens, ~2.5 hours wall-clock, zero source files modified.

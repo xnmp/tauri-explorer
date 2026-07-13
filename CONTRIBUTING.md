@@ -31,7 +31,7 @@ Before opening a PR, please make sure `bun run check`, `bun run test`, and `carg
 
 ## Architecture
 
-Start at [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The short version: `src/lib/domain/` is pure logic, `src/lib/state/` is Svelte 5 rune stores, `src/lib/api/` bridges to the Rust backend via Tauri IPC (with a browser mock for tests), and `src-tauri/src/` is the Rust side. All Tauri commands are `async fn`.
+Start at [docs/code-map/](docs/code-map/) — `map-feature.md` for how a feature threads through the layers, `map-folder.md` for a per-file index. The short version: `src/lib/domain/` is pure logic, `src/lib/state/` is Svelte 5 rune stores, `src/lib/api/` bridges to the Rust backend via Tauri IPC (with a browser mock for tests), and `src-tauri/src/` is the Rust side. All Tauri commands are `async fn`.
 
 ## License
 

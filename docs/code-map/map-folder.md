@@ -9,6 +9,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src/routes/ — SPA entry
 - `+page.svelte` — app root. Global keyboard shortcuts, store init, layout composition (TitleBar > toolbar > Sidebar + PaneContainer > StatusBar), overlay dialogs. Open for global shortcut wiring / top-level layout.
 - `+layout.ts` — SvelteKit adapter-static SPA config (prerender/ssr flags). Rarely touched.
+- `src/hooks.client.ts` — SPA client entry; installs global crash/error handlers before the app mounts (catches early init errors).
 
 ## src/lib/components/ — Svelte 5 UI. Views, dialogs, panels, item chrome.
 - `FileList.svelte` — dispatches to Details/List/Tiles by view mode; hosts marquee, drop, empty-state. Central view entry.
@@ -60,6 +61,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `CrashNotice.svelte` — crash-report banner (#184).
 - `UpdateNotice.svelte` — update-available banner (#185).
 - `AnimatedBackground.svelte` — canvas background animation host.
+- `sidebar-view-registry.ts` — maps sidebar-view ids (owned by `state/sidebar-views.svelte.ts`) to their icon + Svelte component.
 
 ## src/lib/state/ — Svelte 5 runes stores + pure pane logic. Business state lives here.
 - `explorer.svelte.ts` — CENTRAL per-pane store: listing, selection, navigation, view mode; delegates to pane-* modules. First stop for most features.
@@ -127,6 +129,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `thumbnail-cache.ts` — client-side thumbnail cache + in-flight dedupe. Hot for preview perf.
 - `persisted.ts` — localStorage-backed persistent-state utility (SSR/test guards).
 - `startup-timing.ts` — cold-start boot milestone instrumentation.
+- `tab-display.svelte.ts` — computes tab titles/icons: git-root decoration, VS Code-style disambiguation, multi-pane title joining.
+- `git-warm.ts` — wires the pure git-warm scheduler to the repo-root probe + git-graph/SCM cache warmers.
 - `tab-transfer.ts` (above).
 
 ## src/lib/api/ — invoke() bridge to Rust. Thin IPC wrappers; grep here for Tauri command names.
@@ -147,6 +151,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `crash.ts` — crash-report capture bridge (#184).
 - `update.ts` — GitHub-release update check (once/day throttle, #185).
 - `warm-pool.ts` — warm-window pool IPC wrappers.
+- `open.ts` — open files in the default/chosen app, image viewer (with siblings), or a terminal.
+- `system.ts` — OS/window-shell plumbing: picker response, native window theme, ffmpeg path. Not filesystem.
 
 ## src/lib/composables/ — reusable behavior modules (`.svelte.ts` = runes-aware).
 - `use-item-interactions.svelte.ts` — shared click/select/activate logic across views.
@@ -166,6 +172,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-content-search.svelte.ts` — content-search stream lifecycle for the dialog.
 - `use-file-watchers.ts` — subscribe file-change/event listeners.
 - `use-window-lifecycle.ts` — window lifecycle (focus/close/resize) handlers.
+- `use-panel-resize.svelte.ts` — persisted drag-resizable panel width; shared by Sidebar, SCM panel, miller-column handles.
+- `use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) for List + Tiles views.
 
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
 - `file.ts` — file entry types + pure ops (sort, filter, format). Hot.
@@ -203,6 +211,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal-cwd-sync.ts` — "terminal follows explorer" cwd decision (#149).
 - `terminal-keys.ts` — terminal vs app key-ownership rules (#249/#260).
 - `terminal-theme.ts` — map CSS theme vars → xterm.js theme.
+- `content-search.ts` — `ContentMatch`/`ContentSearchResult` types for ripgrep results; re-exported by `api/search.ts`.
+- `crash-report.ts` — pure crash-dedupe + log-tail→markdown helpers behind `api/crash.ts`.
+- `git-warm.ts` — pure scheduler: when (and whether) to warm git-graph/SCM caches after a pane settles.
+- `available-filename.ts` — collision-free output filename (`photo_upscaled_2.png`) for plugin dialogs writing beside the original.
 
 ## src/lib/plugins/ — plugin system + built-in plugins.
 - `api.ts` — plugin API surface exposed to plugins.
@@ -215,6 +227,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ai-rename/index.ts` + `AiRenameDialog.svelte` — AI rename plugin (#145).
 - `nano-banana/index.ts` + `NanoBananaDialog.svelte` — Nano Banana image-edit plugin.
 - `theme-from-image/index.ts` — generate theme from an image (#203).
+- `upscale/index.ts` + `UpscaleDialog.svelte` — image upscale plugin (fal.ai SeedVR2): settings, context-menu item, command, dialog.
+- `plugin-dialog.css` — shared `.plugin-dialog` chrome (header/body/inputs/buttons) reused by the nano-banana / ai-rename / upscale dialogs.
 
 ## src/lib/background-animations/ — canvas backgrounds (registry-driven).
 - `registry.ts` — name→render-fn map + AnimationColors.
@@ -253,6 +267,9 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ai_organize.rs` — AI destination suggestions via Gemini (#158).
 - `ai_rename.rs` — AI rename suggestions via Gemini (#145).
 - `nano_banana.rs` — Nano Banana image editing via Gemini.
+- `fal.rs` — fal.ai REST helpers: API-key resolution, CDN upload, queue submit/poll, result download. Shared by upscale + nano-banana.
+- `upscale.rs` — `start_upscale_job` command: uploads the image, runs the SeedVR2 queue job via `fal.rs`, writes the result.
+- `plugin_job.rs` — shared plugin-job scaffolding: job-id alloc, output-path validation, timeout wrapper, complete/error events.
 - `git.rs` — SCM panel git backend: status/stage/commit/diff (#53).
 - `git_log.rs` — git history / commit-graph backend (#57).
 - `git_actions.rs` — mutating git actions for commit-graph tab (VSCode parity).

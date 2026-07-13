@@ -4,7 +4,7 @@
  * Loading model — decided by CSP. `script-src 'self'` (tauri.conf.json) rules
  * out runtime-loaded plugin JS. Plugins are therefore build-time-bundled
  * modules statically imported into the registry, with runtime enable/disable.
- * See docs/architecture/plugins.md.
+ * See the Plugins cluster in docs/code-map/map-feature.md.
  *
  * A plugin declares `activate(ctx)` and (optionally) `deactivate()`. Every
  * contribution made through the context is tracked and disposed automatically

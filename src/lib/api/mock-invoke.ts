@@ -1426,6 +1426,8 @@ const mockCommands: Record<string, CommandHandler> = {
     return null;
   },
   git_fetch: () => null,
+  git_delete_branch: () => null,
+  git_delete_remote_branch: () => null,
 
   // ----- Git history / commit graph (#57) -----
 

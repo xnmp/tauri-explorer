@@ -768,6 +768,22 @@
     -webkit-backdrop-filter: blur(60px) saturate(125%);
   }
 
+  /* Fullscreen preview (#379): on Chromium/WebView2 a backdrop-filter makes
+     .explorer the containing block for position:fixed descendants, so the
+     "fullscreen" preview laid out inside it and was clipped by the preview
+     island's overflow:hidden — the rest of the app stayed visible around
+     the image on Windows. The fullscreen preview covers the window with an
+     opaque background, so suspending the blur (and the island's clip) for
+     that moment is invisible. */
+  :global([data-preview-fullscreen]) .explorer {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  :global([data-preview-fullscreen][data-vibrancy]) .preview-island {
+    overflow: visible;
+  }
+
   /* Mica effect gradient overlay — disabled due to gradient banding artifacts */
 
 

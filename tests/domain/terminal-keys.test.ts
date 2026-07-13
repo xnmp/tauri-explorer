@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { isShellReservedKey, isHardcodedAppShortcut } from "$lib/domain/terminal-keys";
+import {
+  isShellReservedKey,
+  isHardcodedAppShortcut,
+  resolveTerminalShortcut,
+  TERMINAL_LINE_ACTIONS,
+} from "$lib/domain/terminal-keys";
 
 const key = (
   k: string,
@@ -62,5 +67,39 @@ describe("isHardcodedAppShortcut (#260)", () => {
     expect(isHardcodedAppShortcut(key("j"))).toBe(false);
     expect(isHardcodedAppShortcut(key("j", { ctrlKey: true, altKey: true }))).toBe(false);
     expect(isHardcodedAppShortcut(key("p", { ctrlKey: true }))).toBe(false);
+  });
+});
+
+describe("resolveTerminalShortcut (#375)", () => {
+  const kev = (k: string, mods: Partial<KeyboardEvent> = {}) =>
+    ({ key: k, ctrlKey: false, altKey: false, metaKey: false, shiftKey: false, ...mods }) as KeyboardEvent;
+
+  it("returns the mapped control sequence for a bound combo", () => {
+    const map = { beginningOfLine: "Home", killLineBackward: "Ctrl+U" };
+    expect(resolveTerminalShortcut(kev("Home"), map)).toBe("\x01");
+    expect(resolveTerminalShortcut(kev("u", { ctrlKey: true }), map)).toBe("\x15");
+  });
+
+  it("supports Alt combos (Alt+Backspace → delete word)", () => {
+    const map = { deleteWordBackward: "Alt+Backspace" };
+    expect(resolveTerminalShortcut(kev("Backspace", { altKey: true }), map)).toBe("\x17");
+    expect(resolveTerminalShortcut(kev("Backspace"), map)).toBeNull();
+  });
+
+  it("returns null with an empty map — native behavior is the default", () => {
+    expect(resolveTerminalShortcut(kev("Home"), {})).toBeNull();
+    expect(resolveTerminalShortcut(kev("c", { ctrlKey: true }), {})).toBeNull();
+  });
+
+  it("ignores unknown action ids and empty bindings", () => {
+    expect(resolveTerminalShortcut(kev("Home"), { bogus: "Home", endOfLine: "" })).toBeNull();
+  });
+
+  it("exposes a stable action catalogue for the settings UI", () => {
+    const ids = TERMINAL_LINE_ACTIONS.map((a) => a.id);
+    expect(ids).toContain("beginningOfLine");
+    expect(ids).toContain("endOfLine");
+    expect(ids).toContain("deleteWordBackward");
+    expect(ids).toContain("killLineBackward");
   });
 });

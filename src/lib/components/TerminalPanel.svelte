@@ -26,7 +26,7 @@
   import { buildCdSyncSequence, buildPathsInsertion } from "$lib/domain/terminal-command";
   import { decideCdSync, createInjectedCdTracker } from "$lib/domain/terminal-cwd-sync";
   import { isWindows } from "$lib/domain/platform";
-  import { isShellReservedKey, isHardcodedAppShortcut } from "$lib/domain/terminal-keys";
+  import { isShellReservedKey, isHardcodedAppShortcut, resolveTerminalShortcut } from "$lib/domain/terminal-keys";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
@@ -294,6 +294,15 @@
           .catch(() => {
             /* clipboard unavailable — the native paste path may still work */
           });
+        event.preventDefault();
+        return false;
+      }
+      // User-configured line-editing shortcuts (#375): inject the mapped
+      // readline control byte. Default map is empty, so nothing changes
+      // unless the user binds an action in Settings → Terminal.
+      const sequence = resolveTerminalShortcut(event, settingsStore.terminalShortcuts);
+      if (sequence !== null) {
+        if (terminalId !== null) terminalWrite(terminalId, sequence);
         event.preventDefault();
         return false;
       }

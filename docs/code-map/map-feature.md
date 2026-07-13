@@ -21,6 +21,7 @@ backend for E2E/browser).
 - `components/VirtualList.svelte` — windowing engine (visible-range calc, spacers)
 - `domain/virtual-layout.ts` — row/col geometry math for the virtualizer
 - `composables/use-progressive-render.svelte.ts` — chunked reveal of large lists
+- `composables/use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) behind List + Tiles
 - `state/commands/view-commands.ts` — view.details/list/tiles, sort, columns cmds
 - `state/sort-prefs.ts`, `state/folder-views.svelte.ts` — per-folder view+sort persistence
 - FLOW: view mode lives on explorer store; `FileList` reads it, mounts one view; all three must change together for display features.
@@ -61,6 +62,7 @@ backend for E2E/browser).
 - `state/closed-tabs.ts` — reopen-closed-tab stack
 - `state/tab-transfer.ts` — drag tab across windows (`sendTabToWindow`, `initTabTransferListener`, screen-pos hit-test)
 - `domain/tab-title.ts` — compute tab label from path
+- `state/tab-display.svelte.ts` — tab title/icon derivation: git-root decoration, VS Code-style disambiguation, multi-pane joining
 - `state/warm-window.ts`, `api/warm-pool.ts`, `src-tauri/src/warm_pool.rs` — pre-spawned windows for instant new-tab/window
 - FLOW: each tab owns an `ExplorerInstance`; cross-window tab drag serializes a `TabSnapshot` via `sendTabToWindow` → listener claims it. Persistence via localStorage.
 
@@ -153,6 +155,7 @@ backend for E2E/browser).
 - `state/scm.svelte.ts` — per-pane stores via `getScmStore(paneId)` (#334): repo state, stage/commit actions; shared summary cache + `warmScmSummary`
 - `domain/scm-tree.ts`, `domain/git-graph.ts`, `domain/git.ts` — tree grouping, graph layout
 - `api/git.ts`, `api/git-log.ts`; `src-tauri/src/git.rs`, `git_actions.rs`, `git_log.rs`, `git_common.rs`
+- `domain/git-warm.ts` (pure: when to warm) + `state/git-warm.ts` (wiring) — pre-warm graph/SCM caches once a pane settles on a repo
 - FLOW: scmStore invokes git stage/unstage/commit/diff/log → Rust git2 ops → `git-status-changed` emit refreshes panel + badges.
 
 ## Quick Open (Ctrl+P fuzzy file finder)
@@ -202,6 +205,8 @@ backend for E2E/browser).
 - `state/drives.svelte.ts` — `drivesStore` (mounted volumes)
 - `domain/drives.ts`; `api/files.ts` (listDrives); `src-tauri/src/files/drives.rs`
 - `state/sidebar-views.svelte.ts` — which sidebar sections are shown/expanded
+- `components/sidebar-view-registry.ts` — sidebar-view id → icon + component (add a new section here)
+- `composables/use-panel-resize.svelte.ts` — persisted drag-resize width (also used by SCM panel, miller columns)
 - FLOW: sidebar sections read their stores; drives polled from `listDrives` (drives.rs); bookmarks/recent persisted in localStorage; drop-onto-sidebar adds bookmark.
 
 ## Context menu
@@ -220,6 +225,7 @@ backend for E2E/browser).
 - `state/dialogs.svelte.ts` — `dialogStore` generic dialog orchestration
 - `components/Modal.svelte`, `components/modal.css` — modal shell
 - `components/CrashNotice.svelte`/`state`+`api/crash.ts`, `UpdateNotice.svelte`+`api/update.ts`
+- `src/hooks.client.ts` — installs global crash/error handlers before mount; `domain/crash-report.ts` — pure dedupe + log-tail→markdown
 - FLOW: any store calls `toastStore.show(...)`; ToastOverlay renders queue.
 
 ## Theming
@@ -235,7 +241,8 @@ backend for E2E/browser).
 - `plugins/api.ts` — `Plugin`/`PluginContext` contract (storage, jobs, toast, settings)
 - `plugins/dialog-registry.svelte.ts`, `settings-registry.svelte.ts`, `fs-providers.ts` — extension points
 - built-ins: `plugins/ai-organize/`, `ai-rename/`, `nano-banana/`, `theme-from-image/`, `upscale/`, `demo/`
-- backend: `src-tauri/src/ai_organize.rs`, `ai_rename.rs`, `nano_banana.rs`, `gemini.rs`, `upscale.rs`, `fal.rs`
+- backend: `src-tauri/src/ai_organize.rs`, `ai_rename.rs`, `nano_banana.rs`, `gemini.rs`, `upscale.rs`, `fal.rs`, `plugin_job.rs` (shared job scaffolding: id alloc, output-path validation, timeout, complete/error events)
+- shared UI: `plugins/plugin-dialog.css` (dialog chrome), `domain/available-filename.ts` (collision-free output name)
 - FLOW: plugins register commands/settings/dialogs via PluginContext at startup; AI actions invoke Gemini-backed Rust commands (upscale invokes fal.ai's SeedVR2 queue API via `fal.rs`).
 
 ## Terminal panel

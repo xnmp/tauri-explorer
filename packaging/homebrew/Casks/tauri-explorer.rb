@@ -1,6 +1,6 @@
 cask "tauri-explorer" do
-  version "1.3.1"
-  sha256 "4631713e2cd9db143017718fba9d40159c37cf0f5e1da5bf1b36ac86b442bef2"
+  version "1.3.2"
+  sha256 "4f8513cb8262c2c7173a912b19ad0a974cd492e21e209bfff9ff5259731a0964"
 
   url "https://github.com/xnmp/tauri-explorer/releases/download/v#{version}/tauri-explorer_#{version}_aarch64.dmg"
   name "Tauri Explorer"
@@ -19,9 +19,10 @@ cask "tauri-explorer" do
   ]
 
   caveats <<~EOS
-    The app is not yet code-signed or notarized, so macOS will block the
-    first launch. To open it: right-click the app in Finder and choose
-    "Open", or run:
-      xattr -d com.apple.quarantine "#{appdir}/tauri-explorer.app"
+    The app is not yet code-signed or notarized, so macOS will report it
+    as "damaged" on first launch (right-click → Open does NOT bypass this
+    on macOS 15+, and Homebrew no longer offers --no-quarantine). Clear
+    the quarantine flag after installing:
+      xattr -r -d com.apple.quarantine /Applications/tauri-explorer.app
   EOS
 end

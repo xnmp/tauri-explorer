@@ -17,14 +17,15 @@ If you've ever opened your editor just to move files faster than your file manag
 Grab the [latest release](https://github.com/xnmp/tauri-explorer/releases/latest) — AppImage/deb/rpm, MSI, or dmg. On Linux it can even [replace your system file picker](https://tauri-explorer.vercel.app) (xdg-desktop-portal FileChooser backend).
 
 ```bash
-# macOS (Apple Silicon)
+# macOS (Apple Silicon) — second command needed until the app is notarized
 brew install --cask xnmp/tap/tauri-explorer
+xattr -r -d com.apple.quarantine /Applications/tauri-explorer.app
 
 # Arch Linux (repacks the release .deb; source-build PKGBUILD at repo root)
 git clone https://github.com/xnmp/tauri-explorer && cd tauri-explorer/packaging/aur && makepkg -si
 ```
 
-Binaries aren't code-signed yet; macOS and Windows will warn on first launch (macOS: right-click → Open).
+Binaries aren't code-signed yet. Windows shows a SmartScreen warning on first launch. macOS reports un-notarized downloads as "damaged" and blocks them — the `xattr` command above clears the quarantine flag (Homebrew removed its `--no-quarantine` option, so this manual step is the only way until the app is notarized).
 
 ## Building
 

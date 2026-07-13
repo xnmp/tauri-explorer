@@ -38,7 +38,7 @@ When developing in WSL (e.g. on the `windows` branch), the Windows side builds/t
 - **`state/`** — Reactive stores using Svelte 5 runes (`$state`, `$derived`). Key stores: `explorer.svelte.ts` (per-pane state), `settings.svelte.ts`, `commands.svelte.ts` (command palette), `window-tabs.svelte.ts` (tab management).
 - **`api/`** — Bridge to Rust backend via Tauri `invoke()`. `files.ts` wraps all IPC calls. `mock-invoke.ts` provides fake data when running outside Tauri (used by E2E tests in browser).
 - **`composables/`** — Reusable behavior modules (drag-and-drop, column resize, marquee selection).
-- **`components/`** — Svelte components. See `docs/architecture/components.md` for the full table.
+- **`components/`** — Svelte components. See [docs/code-map/map-folder.md](docs/code-map/map-folder.md) for the full per-file table.
 - **`themes/`** — CSS theme files.
 
 ### Backend (`src-tauri/src/`)
@@ -66,16 +66,16 @@ Frontend calls `invoke("command_name", { args })` via `src/lib/api/files.ts`. Wh
 
 ## Documentation
 
-- **Start at [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — architecture diagram and pointers to deep references.
-- Deep references in `docs/architecture/`: [backend](docs/architecture/backend.md), [frontend](docs/architecture/frontend.md), [components](docs/architecture/components.md), [features](docs/architecture/features.md), [cross-cutting](docs/architecture/cross-cutting.md).
+- **Start at [docs/code-map/](docs/code-map/)** — the code maps are the entry point for finding anything in this codebase. The prose architecture docs that used to live in `docs/architecture/` were deleted (#347): a controlled study ([STUDY.md](docs/code-map/STUDY.md), 240 measured search runs) found them *net-negative* for locating change sites versus no docs at all (+4.6% cost, −4.8% quality, 2.5× more wrong files). They remain in git history if ever needed.
 - Lessons learnt: [docs/lessons_learnt.md](docs/lessons_learnt.md) — gotchas from closed issues.
 
 ### Code maps
 
-- For cross-layer searches and bug hunts, read [docs/code-map/map-feature.md](docs/code-map/map-feature.md) first.
-- For task-shaped changes (add a palette command / context-menu action / Tauri command / persisted setting), use the recipes in [docs/code-map/map-playbook.md](docs/code-map/map-playbook.md).
-- Do **not** use `docs/ARCHITECTURE.md` or `docs/architecture/` to locate change sites — measured net-negative for this purpose.
-- When adding features, update the relevant map and run `python3 docs/code-map/validate.py`.
+- For cross-layer searches and bug hunts, read [map-feature.md](docs/code-map/map-feature.md) first — feature clusters spanning component → store → api → Rust, with the events that connect them.
+- For task-shaped changes (add a palette command / context-menu action / Tauri command / persisted setting), use the recipes in [map-playbook.md](docs/code-map/map-playbook.md).
+- When nothing matches a cluster or recipe, fall back to [map-folder.md](docs/code-map/map-folder.md) — an exhaustive one-line-per-file index.
+- For a small, obviously-localized change (one component you can already name), skip the maps and just grep — they measured as a net loss on cheap tasks.
+- **Keep the maps current or they turn harmful**: an agent that trusts a map naming a moved file searches worse than one with no map. When you add or move a source file, add it to `map-folder.md` (and to the relevant `map-feature.md` cluster if it belongs to a feature), then run `python3 docs/code-map/validate.py --coverage`. CI runs the same check.
 
 ## Issue Tracking (GitHub Issues)
 
@@ -117,7 +117,7 @@ Agent-tool worktrees are created from the repo's **default branch (main)**, not 
 3. Implement, then run `bun run test` and fix failures
 4. Take required screenshots with `agent-browser` CLI; verify they capture working functionality
 5. Create E2E Playwright tests if needed
-6. Update docs: `ARCHITECTURE.md` for features, `lessons_learnt.md` for bugfixes
+6. Update the code maps: add any new/moved source file to `docs/code-map/map-folder.md`, update the relevant `map-feature.md` cluster (and `map-playbook.md` recipe if you changed a task shape), then run `python3 docs/code-map/validate.py --coverage`. Also update `lessons_learnt.md` for bugfixes.
 7. Merge to `dev` with a descriptive merge commit (hooks run E2E tests; fix any regressions)
 8. Before stopping a session, run `ALL_VIEW_MODES=1 npx playwright test`
 

@@ -8,6 +8,19 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Code maps are only useful while they are accurate: an agent that trusts a map
+  # naming a moved file searches worse than one with no map at all. Two guards —
+  # references (every file a map names exists) and coverage (every source file is
+  # in map-folder.md, so new files can't go unmapped).
+  code-maps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate code maps (references + coverage)
+        run: python3 docs/code-map/validate.py --coverage
+
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 20

@@ -19,7 +19,17 @@
 
   // Window-global surface: the preview's SCM diff follows the ACTIVE pane's
   // store (#334) — reactive through windowTabsManager.activePaneId.
-  const scmStore = $derived(getScmStore(windowTabsManager.activePaneId || "default"));
+  // The active pane's SCM store — but the SIDEBAR scm view has no pane
+  // context and writes its diffs to the "default" store, so clicking a
+  // change there never reached the preview pane (#386). Read whichever
+  // store actually holds an open diff, preferring the pane's.
+  const paneScmStore = $derived(getScmStore(windowTabsManager.activePaneId || "default"));
+  const sidebarScmStore = $derived(getScmStore("default"));
+  const scmStore = $derived.by(() => {
+    if (paneScmStore.activeDiff || paneScmStore.commitDiff) return paneScmStore;
+    if (sidebarScmStore.activeDiff || sidebarScmStore.commitDiff) return sidebarScmStore;
+    return paneScmStore;
+  });
   import { parseUnifiedDiff, type ParsedDiff, type DiffLine } from "$lib/domain/diff";
   import FileIcon from "./FileIcon.svelte";
   /** Detect if the current theme uses a light color scheme.

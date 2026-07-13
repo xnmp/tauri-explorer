@@ -4,6 +4,12 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## 2026-07-14 fix/windows-scm-diff-preview-pane: per-pane stores need a story for pane-less surfaces
+- **Keying stores by pane context breaks silently for components that live OUTSIDE any pane.** The sidebar SCM view has no pane context so it wrote diffs to the "default" store, while the preview pane read the ACTIVE pane's store — sidebar clicks showed nothing, and the per-pane panel working masked it. When a reader and writer must rendezvous through a keyed store, either share the key derivation or have the reader scan the candidate stores.
+
+## 2026-07-14 fix/copy-paste-snappier: never gate an operation's start on its progress-bar prerequisites
+- **`estimateSize` (a full recursive walk) ran BEFORE the first byte copied**, so big pastes felt frozen before the progress dialog even moved. Kick prerequisite scans off concurrently and let progress degrade gracefully (file-count granularity) until they land. Same family: show optimistic entries per-file, not after the whole batch; toast before the confirming re-list.
+
 ## 2026-07-13 fix/windows-fullscreen-preview-edges: backdrop-filter creates a fixed-position containing block on Chromium
 - **A `backdrop-filter` (or `filter`) on ANY ancestor turns it into the containing block for `position: fixed` descendants on Chromium/WebView2** — the "fullscreen" preview laid out inside `.explorer` and got clipped by the preview island's `overflow: hidden`, so it only looked broken on Windows. When a fixed overlay must cover the window, suspend ancestor filters for its lifetime (a root attribute like `data-preview-fullscreen` makes that a one-line CSS rule).
 

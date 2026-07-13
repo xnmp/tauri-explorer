@@ -585,8 +585,11 @@ function mockCommitGraph(): MockCommit[] {
     parents: c.parents.map(fullOid),
     author_name: c.n % 3 === 0 ? "Bob Dev" : "Alice Coder",
     author_email: c.n % 3 === 0 ? "bob@example.com" : "alice@example.com",
-    // Older commits (higher index) get earlier timestamps.
-    author_time: GRAPH_BASE_TIME - i * 3600,
+    // The newest three commits are "today" (minutes/hours old) so the
+    // graph's relative-time wording is exercised (#389); older commits get
+    // fixed historical timestamps.
+    author_time:
+      i < 3 ? Math.floor(Date.now() / 1000) - [30, 5 * 60, 5 * 3600][i] : GRAPH_BASE_TIME - i * 3600,
     summary: c.summary,
     ...(c.stash ? { stash: c.stash } : {}),
   }));

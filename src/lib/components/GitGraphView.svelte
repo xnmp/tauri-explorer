@@ -129,7 +129,7 @@
   import { clientToFixed } from "$lib/domain/zoom";
   import { parseUnifiedDiff, type ParsedDiff } from "$lib/domain/diff";
   import { highlightDiffLine } from "$lib/domain/syntax-highlight";
-  import { gitStatusLetter } from "$lib/domain/git";
+  import { gitStatusLetter, relativeTimeToday } from "$lib/domain/git";
   import { notifyLocalGitChange, subscribeGitChanges } from "$lib/state/git-refresh";
   import { gitWatchRepo, gitUnwatchRepo } from "$lib/api/git";
   import { directoryKey } from "$lib/domain/path";
@@ -628,7 +628,10 @@
   });
 
   function formatDate(unixSeconds: number): string {
-    return dateFormatter.format(new Date(unixSeconds * 1000));
+    // Today's commits read as an age ("5 minutes ago", #389); older ones
+    // keep the date. Recomputed on graph reloads (the repo watcher makes
+    // those frequent), so the wording stays fresh enough without a timer.
+    return relativeTimeToday(unixSeconds, Date.now()) ?? dateFormatter.format(new Date(unixSeconds * 1000));
   }
 
   function colorOf(index: number): string {

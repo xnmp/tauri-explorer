@@ -46,3 +46,31 @@ describe("gitStatusLetter", () => {
     expect(gitStatusLetter("")).toBe("?");
   });
 });
+
+describe("relativeTimeToday (#389)", () => {
+  // Fixed "now": 2026-07-14 15:00 local time.
+  const now = new Date(2026, 6, 14, 15, 0, 0).getTime();
+  const at = (h: number, m: number) => new Date(2026, 6, 14, h, m, 0).getTime() / 1000;
+
+  it("renders ages for commits made today", async () => {
+    const { relativeTimeToday } = await import("$lib/domain/git");
+    expect(relativeTimeToday(at(14, 59), now)).toBe("1 minute ago");
+    expect(relativeTimeToday(at(14, 55), now)).toBe("5 minutes ago");
+    expect(relativeTimeToday(at(10, 0), now)).toBe("5 hours ago");
+    expect(relativeTimeToday(at(14, 0), now)).toBe("1 hour ago");
+  });
+
+  it("says 'just now' under a minute and for future skew", async () => {
+    const { relativeTimeToday } = await import("$lib/domain/git");
+    expect(relativeTimeToday(now / 1000 - 30, now)).toBe("just now");
+    expect(relativeTimeToday(now / 1000 + 120, now)).toBe("just now");
+  });
+
+  it("returns null for other days (caller falls back to the date)", async () => {
+    const { relativeTimeToday } = await import("$lib/domain/git");
+    const yesterday = new Date(2026, 6, 13, 23, 59, 0).getTime() / 1000;
+    expect(relativeTimeToday(yesterday, now)).toBeNull();
+    const lastYear = new Date(2025, 6, 14, 15, 0, 0).getTime() / 1000;
+    expect(relativeTimeToday(lastYear, now)).toBeNull();
+  });
+});

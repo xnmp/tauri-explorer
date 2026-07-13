@@ -2,6 +2,24 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.3.2 — 2026-07-13
+
+A distribution + git-workflow release: the app gets a proper bundle identifier and install channels (AUR, winget, Homebrew), and the git tooling grows into a real multi-repo workflow — per-pane panels, a filterable graph, and resizable columns.
+
+### Added
+- **Per-pane git panels** — each pane's Source Control panel now follows its own directory, so two panes open on two different repos show independent staging areas, commit boxes, and status. Repo watchers are reference-counted, so panes (or windows) sharing a repo no longer disturb each other's live updates.
+- **SCM panel alongside the commit graph** — opening the git graph no longer hides Source Control; working-tree changes and history are visible side by side.
+- **Branch filter in the git graph** — a VS Code-style branch popover (text filter, per-branch checkboxes, hover "only", "All branches") shows just the branches you care about; the history walk happens repo-side, and the selection persists per repo.
+- **Resizable git graph columns** — a new header row (Message / Author / Date / Commit) with drag handles; the graph lane gutter can be pinned to a fixed width so deep histories can't squeeze out the commit messages. Widths persist.
+
+### Changed
+- **New bundle identifier `io.github.xnmp.tauri-explorer`** (was `com.explorer.app`). macOS treats this as a new app identity: window tabs and quick-open history reset once after upgrading (settings are unaffected — they live in a version-independent location).
+- **Install channels**: AUR (`tauri-explorer-bin`), winget (`xnmp.TauriExplorer`), and a Homebrew cask (`xnmp/tap/tauri-explorer`) are packaged in-repo; README lists all install options.
+- Frontend toolchain moved to vite 8 (Rolldown), vitest 4, and TypeScript 5.9; Rust dependencies refreshed (tokio 1.52, chrono, trash, opener, icns). No user-visible changes expected.
+
+### Fixed
+- Website download links now track the released version.
+
 ## v1.3.1 — 2026-07-12
 
 A hardening release: two new safety features, a faster feel in git repos and large folders, security fixes, and a very large investment in test coverage and regression guards.

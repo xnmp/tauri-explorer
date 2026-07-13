@@ -23,6 +23,6 @@ cask "tauri-explorer" do
     as "damaged" on first launch (right-click → Open does NOT bypass this
     on macOS 15+, and Homebrew no longer offers --no-quarantine). Clear
     the quarantine flag after installing:
-      xattr -r -d com.apple.quarantine "#{appdir}/tauri-explorer.app"
+      xattr -r -d com.apple.quarantine /Applications/tauri-explorer.app
   EOS
 end

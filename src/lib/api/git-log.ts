@@ -169,3 +169,21 @@ export async function gitReset(repoPath: string, oid: string, mode: ResetMode): 
 export async function gitFetch(repoPath: string): Promise<void> {
   await invoke("git_fetch", { repoPath });
 }
+
+/** Delete a local branch; `force` drops unmerged commits (#371). */
+export async function gitDeleteBranch(
+  repoPath: string,
+  name: string,
+  force: boolean,
+): Promise<void> {
+  await invoke("git_delete_branch", { repoPath, name, force });
+}
+
+/** Delete `name` on `remote` (git push <remote> --delete <name>) (#371). */
+export async function gitDeleteRemoteBranch(
+  repoPath: string,
+  remote: string,
+  name: string,
+): Promise<void> {
+  await invoke("git_delete_remote_branch", { repoPath, remote, name });
+}

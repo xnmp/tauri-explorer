@@ -113,6 +113,8 @@
     gitReset,
     gitRefs,
     gitFetch,
+    gitDeleteBranch,
+    gitDeleteRemoteBranch,
     type CommitInfo,
     type RefInfo,
     type CommitFile,
@@ -703,6 +705,27 @@
     void runAction(`Reset (${mode})`, () => gitReset(repoPath, oid, mode));
   }
 
+  /** Delete a local branch; optionally its counterpart on each tracking
+   *  remote (#371). Safe (-d) unless `force`; git's refusals (unmerged,
+   *  checked out) surface as the toast. */
+  function deleteBranch(name: string, force: boolean, remotes: string[]): void {
+    void runAction(`Delete branch '${name}'`, async () => {
+      await gitDeleteBranch(repoPath, name, force);
+      for (const remote of remotes) {
+        await gitDeleteRemoteBranch(repoPath, remote, name);
+      }
+    });
+  }
+
+  /** Delete a remote-only branch chip like "origin/feat/x" (#371). */
+  function deleteRemoteChip(chip: string): void {
+    const i = chip.indexOf("/");
+    if (i <= 0) return;
+    void runAction(`Delete ${chip}`, () =>
+      gitDeleteRemoteBranch(repoPath, chip.slice(0, i), chip.slice(i + 1)),
+    );
+  }
+
   function startPrompt(kind: "branch" | "tag", oid: string): void {
     prompt = { kind, oid, value: "" };
     menu = null;
@@ -1112,6 +1135,8 @@
       oncontextmenu={backdropContextMenu}
     ></button>
     {@const m = menu}
+    {@const menuChips = chipsFor(m.commit.oid)}
+    {@const deletableHeads = menuChips.heads.filter((h) => !h.active)}
     <div
       class="commit-menu"
       data-testid="git-graph-menu"
@@ -1158,6 +1183,33 @@
           </button>
         </div>
       </div>
+      {#if deletableHeads.length > 0 || menuChips.remotes.length > 0}
+        <div class="menu-sep"></div>
+        {#each deletableHeads as head (head.name)}
+          <div class="menu-item has-submenu" role="menuitem" tabindex="-1">
+            <span>Delete Branch '{head.name}'</span>
+            <span class="submenu-arrow">▸</span>
+            <div class="submenu" role="menu">
+              <button class="menu-item" role="menuitem" onclick={() => deleteBranch(head.name, false, [])}>
+                Delete — refuse if unmerged
+              </button>
+              <button class="menu-item" role="menuitem" onclick={() => deleteBranch(head.name, true, [])}>
+                Force delete
+              </button>
+              {#if head.remotes.length > 0}
+                <button class="menu-item" role="menuitem" onclick={() => deleteBranch(head.name, false, head.remotes)}>
+                  Delete + remote ({head.remotes.join(", ")})
+                </button>
+              {/if}
+            </div>
+          </div>
+        {/each}
+        {#each menuChips.remotes as remoteChip (remoteChip)}
+          <button class="menu-item" role="menuitem" onclick={() => deleteRemoteChip(remoteChip)}>
+            Delete Remote Branch '{remoteChip}'
+          </button>
+        {/each}
+      {/if}
       <div class="menu-sep"></div>
       <button class="menu-item" role="menuitem" onclick={() => copyToClipboard(m.commit.oid, "commit hash")}>
         Copy Commit Hash

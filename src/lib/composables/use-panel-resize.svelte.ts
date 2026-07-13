@@ -15,6 +15,9 @@ export interface PanelResizeOptions {
   min: number;
   max: number;
   default: number;
+  /** Set when the handle sits on the panel's LEFT edge, so dragging left
+      (negative dx) grows the panel instead of shrinking it. */
+  invert?: boolean;
 }
 
 export interface PanelResize {
@@ -43,7 +46,8 @@ export function usePersistedPanelWidth(key: string, opts: PanelResizeOptions): P
     const startWidth = width;
 
     function onMouseMove(e: MouseEvent) {
-      width = clamp(startWidth + (e.clientX - startX));
+      const dx = e.clientX - startX;
+      width = clamp(startWidth + (opts.invert ? -dx : dx));
     }
 
     function onMouseUp() {

@@ -1,0 +1,41 @@
+name: Bug report
+description: Something broke or behaved wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Tip: the fastest way to file a complete report is from inside the app — **Command Palette → "Report a Bug"**. It pre-fills this form with your OS, app version, and a recent log excerpt (you see everything before submitting; nothing is sent automatically).
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what happened instead?
+      placeholder: "Dragged a folder onto the sidebar and…"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: Command Palette → "About", or the filename you downloaded
+      placeholder: "v1.3.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux (X11)
+        - Linux (Wayland)
+        - Windows
+        - macOS
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / crash report
+      description: If the app crashed, the next launch offers a locally saved crash report — paste it here.
+      render: text

@@ -14,7 +14,7 @@ jobs:
       version: ${{ steps.ver.outputs.version }}
       tag_exists: ${{ steps.check.outputs.exists }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: ver
         run: echo "version=v$(jq -r .version package.json)" >> "$GITHUB_OUTPUT"
       - id: check
@@ -52,7 +52,7 @@ jobs:
               src-tauri/target/release/bundle/nsis/*-setup.exe
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -63,7 +63,7 @@ jobs:
           targets: ${{ matrix.rust-target }}
 
       - name: Cache cargo registry and tauri-cli
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -101,7 +101,7 @@ jobs:
         run: cargo tauri build ${{ matrix.tauri-args }}
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact-name }}
           path: ${{ matrix.artifact-paths }}
@@ -110,9 +110,9 @@ jobs:
     needs: [version-check, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true

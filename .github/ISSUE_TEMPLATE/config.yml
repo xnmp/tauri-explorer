@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Try the live demo first
+    url: https://tauri-explorer.vercel.app
+    about: A working in-browser copy of the app — useful for checking whether behavior is a bug or by design.
+  - name: Security vulnerabilities
+    url: https://github.com/xnmp/tauri-explorer/security/advisories/new
+    about: Please report security issues privately, not as public issues.

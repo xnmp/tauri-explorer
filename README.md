@@ -14,9 +14,17 @@ If you've ever opened your editor just to move files faster than your file manag
 
 ## Install
 
-Grab the [latest release](https://github.com/xnmp/tauri-explorer/releases/latest) — AppImage/deb/rpm, MSI, or dmg. Arch users: a `PKGBUILD` ships in the repo. On Linux it can even [replace your system file picker](https://tauri-explorer.vercel.app) (xdg-desktop-portal FileChooser backend).
+Grab the [latest release](https://github.com/xnmp/tauri-explorer/releases/latest) — AppImage/deb/rpm, MSI, or dmg. On Linux it can even [replace your system file picker](https://tauri-explorer.vercel.app) (xdg-desktop-portal FileChooser backend).
 
-Binaries aren't code-signed yet; macOS and Windows will warn on first launch.
+```bash
+# macOS (Apple Silicon)
+brew install --cask xnmp/tap/tauri-explorer
+
+# Arch Linux (repacks the release .deb; source-build PKGBUILD at repo root)
+git clone https://github.com/xnmp/tauri-explorer && cd tauri-explorer/packaging/aur && makepkg -si
+```
+
+Binaries aren't code-signed yet; macOS and Windows will warn on first launch (macOS: right-click → Open).
 
 ## Building
 
@@ -32,4 +40,4 @@ bun run test:e2e  # browser e2e
 
 ## Status
 
-v1.0 released. If you hit a bug: Command Palette → "Report a Bug" (or [open an issue](https://github.com/xnmp/tauri-explorer/issues/new)).
+Actively developed — see the [changelog](CHANGELOG.md) and [releases](https://github.com/xnmp/tauri-explorer/releases) for what's new. If you hit a bug: Command Palette → "Report a Bug" (it pre-fills an issue with a local log excerpt — nothing is sent automatically), or [open an issue](https://github.com/xnmp/tauri-explorer/issues/new/choose).

@@ -11,7 +11,10 @@
 -->
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { scmStore } from "$lib/state/scm.svelte";
+  import { getScmStore } from "$lib/state/scm.svelte";
+  import { getPaneIdContext } from "$lib/state/pane-context";
+
+  const scmStore = getScmStore(getPaneIdContext() ?? "default");
   import { gitDiff, openFile } from "$lib/api/files";
   import { parseUnifiedDiff, type ParsedDiff, type DiffLine } from "$lib/domain/diff";
   import { toastStore } from "$lib/state/toast.svelte";

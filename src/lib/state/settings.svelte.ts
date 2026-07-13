@@ -564,7 +564,7 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
     shortcut: "Alt+M G",
     handler: () => {
       if (settingsStore.showScmPanel) {
-        import("./scm.svelte").then((m) => m.scmStore.closeDiff());
+        import("./scm.svelte").then((m) => m.closeAllDiffs());
       }
       settingsStore.toggleScmPanel();
     },

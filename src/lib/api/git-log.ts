@@ -51,6 +51,10 @@ export interface GitLogOptions {
   skip?: number;
   /** Max commits to return. Default 500, clamped to 5000. */
   limit?: number;
+  /** Walk history from only these branch tips (shorthand names, local like
+   *  `main` or remote like `origin/main`). Omitted = all branches + HEAD.
+   *  Unresolvable names are ignored; none resolving → empty page (#342). */
+  branches?: string[];
 }
 
 export interface GitRef {

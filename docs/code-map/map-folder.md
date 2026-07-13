@@ -237,7 +237,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `starfield.ts` — twinkling stars + constellation lines.
 
 ## src/lib/themes/ — CSS theme files. Edit for theming/colors.
-- `index.css` (aggregator), `syntax.css` (code highlight), and per-theme: `dark.css`, `light.css`, `aurora.css`, `desert.css`, `hacker.css`, `horizon.css`, `ocean-blue.css`, `solarized-light.css`, `tahoe.css`.
+- `index.css` (aggregator), `syntax.css` (code highlight), and per-theme: `dark.css`, `light.css`, `aurora.css`, `catppuccin.css`, `desert.css`, `gruvbox.css`, `hacker.css`, `horizon.css`, `nord.css`, `ocean-blue.css`, `solarized-light.css`, `tahoe.css`.
 
 ## src/lib/types/
 - `pretext.d.ts` — ambient TS type declarations.

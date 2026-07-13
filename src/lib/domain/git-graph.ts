@@ -171,7 +171,20 @@ export function assignLayout(commits: readonly GraphCommitLike[]): GraphLayout {
     // parent's existing dot, snapping to points already reserved for it.
     if (!isFirstParent || parent.onBranch !== null) {
       const willJoin = parent.onBranch !== null;
-      const colorIndex = willJoin ? parent.onBranch! : availableColor(startRow);
+      let colorIndex: number;
+      if (isFirstParent) {
+        // First-parent descent into an already-drawn branch: the edge is the
+        // tail of the CHILD's branch, so it keeps the child's color down to
+        // the join point — taking the parent's color painted the lower half
+        // of a branch in another branch's color (#368). Tips that were never
+        // colored (their only edge lands on an existing branch) get a fresh
+        // color here rather than silently defaulting to color 0.
+        colorIndex = start.onBranch ?? availableColor(startRow);
+        start.onBranch = colorIndex;
+        colorEnds[colorIndex] = Math.max(colorEnds[colorIndex] ?? 0, parentRow);
+      } else {
+        colorIndex = willJoin ? parent.onBranch! : availableColor(startRow);
+      }
       const id = `edge:${branchIds++}:${parentRow}`;
       const line: BranchLine = { colorIndex, points: [{ lane: startLane, row: startRow }] };
       let prevLane = startLane;

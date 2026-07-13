@@ -70,14 +70,24 @@ function applyBackdropStyling(): void {
 
   // Acrylic strength tint controls how see-through it is. Mica isn't see-through
   // (it samples the wallpaper), so it gets no tint.
+  const alpha = Math.min(100, Math.max(0, settingsStore.windowsBackdropOpacity)) / 100;
   if (mode === "acrylic") {
     const [r, g, b] = themeBackgroundRgb();
-    const alpha = Math.min(100, Math.max(0, settingsStore.windowsBackdropOpacity)) / 100;
     root.style.setProperty(TINT_VAR, `rgba(${r}, ${g}, ${b}, ${alpha})`);
     root.setAttribute(TINT_ATTR, "");
   } else {
     root.style.removeProperty(TINT_VAR);
     root.removeAttribute(TINT_ATTR);
+  }
+
+  // Island translucency (#382): the same slider drives how much of the
+  // native backdrop shows through the islands themselves. Islands used to
+  // be repainted fully opaque on Windows, so Mica/Acrylic only peeked
+  // through the chrome gaps and "transparency" read as broken.
+  if (mode !== "off") {
+    root.style.setProperty("--win-backdrop-strength", String(alpha));
+  } else {
+    root.style.removeProperty("--win-backdrop-strength");
   }
 }
 

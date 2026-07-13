@@ -115,6 +115,8 @@
     gitReset,
     gitRefs,
     gitFetch,
+    gitPull,
+    gitBranchBehindUpstream,
     gitBranchAuthors,
     gitDeleteBranch,
     gitDeleteRemoteBranch,
@@ -722,10 +724,39 @@
     }
   }
 
+  // Pull offer after checking out a branch whose upstream is ahead (#377).
+  let pullOffer = $state<{ branch: string; behind: number } | null>(null);
+
   function checkout(m: Menu): void {
-    void runAction("Checkout", () =>
-      gitCheckout(repoPath, m.checkoutBranch ?? m.commit.oid),
-    );
+    const branch = m.checkoutBranch;
+    closeMenu();
+    void (async () => {
+      try {
+        await gitCheckout(repoPath, branch ?? m.commit.oid);
+        toastStore.success("Checkout done");
+        // Only after a SUCCESSFUL branch checkout: a pull acts on the
+        // current branch, so offering it after a failure would pull the
+        // wrong branch.
+        if (branch) {
+          try {
+            const behind = await gitBranchBehindUpstream(repoPath, branch);
+            if (behind !== null && behind > 0) pullOffer = { branch, behind };
+          } catch {
+            /* no upstream info — nothing to offer */
+          }
+        }
+      } catch (err) {
+        toastStore.error(err instanceof Error ? err.message : String(err));
+      } finally {
+        await loadPage(0);
+        notifyLocalGitChange(repoPath);
+      }
+    })();
+  }
+
+  function confirmPull(): void {
+    pullOffer = null;
+    void runAction("Pull", () => gitPull(repoPath));
   }
   function cherryPick(oid: string): void {
     void runAction("Cherry-pick", () => gitCherryPick(repoPath, oid));
@@ -1307,6 +1338,25 @@
         <button class="prompt-btn primary" onclick={confirmPrompt}>
           {prompt.kind === "branch" ? "Create branch" : "Create tag"}
         </button>
+      </div>
+    </div>
+  {/if}
+
+  {#if pullOffer}
+    <button
+      class="menu-backdrop"
+      aria-label="Dismiss pull offer"
+      onclick={() => (pullOffer = null)}
+      oncontextmenu={(e) => { e.preventDefault(); pullOffer = null; }}
+    ></button>
+    <div class="name-prompt" data-testid="git-graph-pull-offer" role="dialog" aria-label="Pull from upstream">
+      <span class="prompt-label">
+        The remote is ahead of '{pullOffer.branch}' by {pullOffer.behind}
+        commit{pullOffer.behind === 1 ? "" : "s"}. Pull now?
+      </span>
+      <div class="prompt-actions">
+        <button class="prompt-btn" onclick={() => (pullOffer = null)}>Not now</button>
+        <button class="prompt-btn primary" onclick={confirmPull}>Pull</button>
       </div>
     </div>
   {/if}

@@ -2,6 +2,14 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.3.3 — 2026-07-13
+
+A macOS polish patch.
+
+### Fixed
+- **macOS app icon** — macOS 26 (Tahoe) rendered the old padded icon shrunken on a grey system tile. The icon now ships at full frame with its own silhouette (the same artwork the Windows Store logos use), so the dock shows it correctly without manual fixes.
+- **Install instructions** — Homebrew removed `--no-quarantine`, and right-click → Open no longer bypasses the "damaged" dialog for un-notarized apps on macOS 15+. The README and cask caveat now give the working command: `xattr -r -d com.apple.quarantine /Applications/tauri-explorer.app` (run right after install). Proper notarization is planned.
+
 ## v1.3.2 — 2026-07-13
 
 A distribution + git-workflow release: the app gets a proper bundle identifier and install channels (AUR, winget, Homebrew), and the git tooling grows into a real multi-repo workflow — per-pane panels, a filterable graph, and resizable columns.

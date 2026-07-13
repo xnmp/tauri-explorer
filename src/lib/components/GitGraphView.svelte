@@ -40,11 +40,19 @@
 
   /** Fetch the page-0 data (first PAGE_SIZE commits + working summary) shared
    *  by the view's own initial load and the background warm (#287). Pass a
-   *  branch subset to fetch a filtered page (#342) — never cached. */
+   *  branch subset to fetch a filtered page (#342) — never cached.
+   *
+   *  The log walk and the working-tree summary run CONCURRENTLY, and
+   *  `onLog` (when given) fires as soon as the log half is ready: the
+   *  status scan can take seconds on a large working tree but only feeds
+   *  the "Uncommitted Changes (N)" row, so the graph must not wait for it
+   *  (#367 — graph startup was gated on log *then* status, serially). */
   async function fetchPage0Snapshot(
     repoPath: string,
     branches: string[] | null = null,
+    onLog?: (partial: Omit<GraphSnapshot, "workingChanges">) => void,
   ): Promise<GraphSnapshot> {
+    const summaryPromise = gitSummary(repoPath);
     const page = await gitLog(repoPath, {
       skip: 0,
       limit: PAGE_SIZE,
@@ -52,20 +60,21 @@
     });
     const headOid =
       Object.entries(page.refs).find(([, rs]) => rs.some((r) => r.kind === "Head"))?.[0] ?? null;
-    const summary = await gitSummary(repoPath);
+    const partial = {
+      commits: page.commits.slice(0, PAGE_SIZE),
+      refs: page.refs,
+      hasMore: page.has_more,
+      headOid,
+    };
+    onLog?.(partial);
+    const summary = await summaryPromise;
     const workingChanges = summary.ok
       ? summary.data.staged.length +
         summary.data.changes.length +
         summary.data.untracked.length +
         summary.data.merge.length
       : 0;
-    return {
-      commits: page.commits.slice(0, PAGE_SIZE),
-      refs: page.refs,
-      hasMore: page.has_more,
-      headOid,
-      workingChanges,
-    };
+    return { ...partial, workingChanges };
   }
 
   const warmInFlight = new Set<string>();
@@ -390,12 +399,16 @@
     try {
       if (skip === 0) {
         // Same page-0 fetch used by the background warm (#287), so an open
-        // that follows a warm reuses identical data.
-        const snapshot = await fetchPage0Snapshot(repoPath, filter);
-        commits = snapshot.commits;
-        refs = snapshot.refs;
-        hasMore = snapshot.hasMore;
-        headOid = snapshot.headOid;
+        // that follows a warm reuses identical data. The commit list paints
+        // as soon as the log arrives; the working-changes count (a full
+        // status scan, slow on big working trees) fills in after (#367).
+        const snapshot = await fetchPage0Snapshot(repoPath, filter, (partial) => {
+          commits = partial.commits;
+          refs = partial.refs;
+          hasMore = partial.hasMore;
+          headOid = partial.headOid;
+          loading = false;
+        });
         workingChanges = snapshot.workingChanges;
         if (filter === null) cacheSnapshot(repoPath, snapshot);
       } else {

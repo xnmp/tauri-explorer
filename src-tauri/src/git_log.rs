@@ -546,6 +546,32 @@ mod tests {
         Arc::new(AtomicBool::new(false))
     }
 
+    /// Manual timing probe for page-0 cost on a real repository (#367).
+    /// Run with: GIT_LOG_BENCH_REPO=/path/to/big/repo \
+    ///   cargo test --release git_log_page0_timing -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn git_log_page0_timing() {
+        let Ok(path) = std::env::var("GIT_LOG_BENCH_REPO") else {
+            eprintln!("set GIT_LOG_BENCH_REPO");
+            return;
+        };
+        let repo = Repository::open(&path).unwrap();
+        for _ in 0..3 {
+            let t = std::time::Instant::now();
+            let page = build_log(&repo, &GitLogOptions::default(), Vec::new(), &no_cancel()).unwrap();
+            eprintln!(
+                "build_log page0: {:?} ({} commits, {} decorated)",
+                t.elapsed(),
+                page.commits.len(),
+                page.refs.len()
+            );
+        }
+        let t = std::time::Instant::now();
+        let _ = collect_decorations(&repo).unwrap();
+        eprintln!("collect_decorations alone: {:?}", t.elapsed());
+    }
+
     #[test]
     fn commit_file_diff_shows_changes_against_first_parent() {
         let (dir, repo) = init_repo();

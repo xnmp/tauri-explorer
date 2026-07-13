@@ -6,6 +6,7 @@
  */
 
 import { isVirtualPath } from "./virtual-path";
+import { directoryKey } from "./path";
 
 export type CdSyncAction = "write" | "queue" | "skip";
 
@@ -31,4 +32,60 @@ export function decideCdSync(
   if (lastShellCwd !== null && target === lastShellCwd) return "skip";
   if (busy) return "queue";
   return "write";
+}
+
+export interface InjectedCdTracker {
+  /** Record that a cd to `path` was injected (one echo now expected). */
+  add(path: string): void;
+  /** Consume one expected echo for `path`; true when the echo was ours and
+   *  must not drive explorer navigation. */
+  consume(path: string): boolean;
+  clear(): void;
+}
+
+/**
+ * Tracks cds WE injected whose OSC 7 echo hasn't arrived yet (#266, #364).
+ *
+ * A counted multiset, not a Set: fast tab switching can inject the same
+ * target twice before its first echo lands (A→B→A), and a Set deduped the
+ * two — the second echo then read as a user-typed cd and dragged whichever
+ * tab was active by then to the stale path. Keys are normalized with
+ * `directoryKey` because the shell's reported cwd can differ from the
+ * injected string (trailing slash, separator style, Windows case).
+ *
+ * Bounded by `cap` total pending entries (oldest evicted): a shell without
+ * OSC 7 support never echoes, and the tracker must not grow unobserved.
+ */
+export function createInjectedCdTracker(cap = 8): InjectedCdTracker {
+  const pending = new Map<string, number>();
+  let total = 0;
+
+  return {
+    add(path: string): void {
+      const key = directoryKey(path);
+      pending.set(key, (pending.get(key) ?? 0) + 1);
+      total++;
+      while (total > cap) {
+        const oldest = pending.keys().next().value;
+        if (oldest === undefined) break;
+        const n = pending.get(oldest)!;
+        if (n <= 1) pending.delete(oldest);
+        else pending.set(oldest, n - 1);
+        total--;
+      }
+    },
+    consume(path: string): boolean {
+      const key = directoryKey(path);
+      const n = pending.get(key);
+      if (!n) return false;
+      if (n === 1) pending.delete(key);
+      else pending.set(key, n - 1);
+      total--;
+      return true;
+    },
+    clear(): void {
+      pending.clear();
+      total = 0;
+    },
+  };
 }

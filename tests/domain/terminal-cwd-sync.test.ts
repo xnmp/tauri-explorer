@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decideCdSync } from "$lib/domain/terminal-cwd-sync";
+import { decideCdSync, createInjectedCdTracker } from "$lib/domain/terminal-cwd-sync";
 
 describe("decideCdSync", () => {
   it("writes when idle and the shell is elsewhere", () => {
@@ -25,6 +25,53 @@ describe("decideCdSync", () => {
   it("does not skip against a null cwd even for the same string path", () => {
     // null means 'unknown', never equal to a real path.
     expect(decideCdSync("", null, false)).toBe("write");
+  });
+});
+
+describe("createInjectedCdTracker (#266, #364)", () => {
+  it("consumes one echo per injection", () => {
+    const t = createInjectedCdTracker();
+    t.add("/a");
+    expect(t.consume("/a")).toBe(true);
+    expect(t.consume("/a")).toBe(false); // second echo is a genuine user cd
+  });
+
+  it("counts duplicate injections instead of deduping (fast A→B→A switch)", () => {
+    const t = createInjectedCdTracker();
+    t.add("/a"); // switch to tab A
+    t.add("/b"); // switch to tab B
+    t.add("/a"); // back to tab A before A's first echo lands
+    expect(t.consume("/a")).toBe(true);
+    expect(t.consume("/b")).toBe(true);
+    // The second /a echo is still ours — a Set-based tracker dropped it and
+    // dragged the active tab to the stale path.
+    expect(t.consume("/a")).toBe(true);
+    expect(t.consume("/a")).toBe(false);
+  });
+
+  it("normalizes paths so a differing echo still matches", () => {
+    const t = createInjectedCdTracker();
+    t.add("/home/user/repo");
+    expect(t.consume("/home/user/repo/")).toBe(true); // trailing slash echo
+    t.add("C:\\Users\\Me");
+    expect(t.consume("c:/users/me")).toBe(true); // Windows case + separators
+  });
+
+  it("evicts oldest entries beyond the cap (shells without OSC 7)", () => {
+    const t = createInjectedCdTracker(2);
+    t.add("/a");
+    t.add("/b");
+    t.add("/c"); // evicts /a
+    expect(t.consume("/a")).toBe(false);
+    expect(t.consume("/b")).toBe(true);
+    expect(t.consume("/c")).toBe(true);
+  });
+
+  it("clear() drops everything", () => {
+    const t = createInjectedCdTracker();
+    t.add("/a");
+    t.clear();
+    expect(t.consume("/a")).toBe(false);
   });
 });
 

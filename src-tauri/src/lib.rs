@@ -226,6 +226,7 @@ pub fn run(launch_dir: Option<String>) {
             git_actions::git_rebase_continue,
             git_actions::git_cherry_pick_abort,
             git_actions::git_revert_abort,
+            git_actions::git_fetch,
             // Drives / volumes
             files::drives::list_drives,
             // Wallpaper

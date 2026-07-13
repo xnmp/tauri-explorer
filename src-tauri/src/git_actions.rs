@@ -215,6 +215,18 @@ pub async fn git_revert_abort(repo_path: String) -> Result<(), AppError> {
     run_git_async(repo_path, vec!["revert".into(), "--abort".into()]).await
 }
 
+/// Fetch from every remote, pruning deleted remote branches (#370). Uses the
+/// CLI so the user's credential setup (helpers, ssh agent) applies — libgit2
+/// has no access to those.
+#[tauri::command]
+pub async fn git_fetch(repo_path: String) -> Result<(), AppError> {
+    run_git_async(
+        repo_path,
+        vec!["fetch".into(), "--all".into(), "--prune".into()],
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

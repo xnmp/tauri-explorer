@@ -164,3 +164,8 @@ export async function gitRebase(repoPath: string, oid: string): Promise<void> {
 export async function gitReset(repoPath: string, oid: string, mode: ResetMode): Promise<void> {
   await invoke("git_reset", { repoPath, oid, mode });
 }
+
+/** Fetch from every remote with pruning (#370). */
+export async function gitFetch(repoPath: string): Promise<void> {
+  await invoke("git_fetch", { repoPath });
+}

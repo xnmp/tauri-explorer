@@ -1013,19 +1013,51 @@
     display: none;
   }
 
+  /* --vibrancy-island-bg is a multi-layer background (sheen gradient over a
+     colour), not a colour — it can't be a radial-gradient stop (that made
+     the whole declaration invalid, background:none, no fillets: #361).
+     Instead paint the island material as-is and carve the concave curve out
+     with a mask; the stroke ring rides on top as its own layer, continuing
+     the active tab's 0.5px outline. */
   :global([data-vibrancy]) .tab-fillet.left {
-    background: radial-gradient(
+    background:
+      radial-gradient(
+        circle var(--fillet) at 0 0,
+        transparent calc(var(--fillet) - 0.25px),
+        var(--vibrancy-island-stroke) calc(var(--fillet) + 0.5px),
+        transparent calc(var(--fillet) + 1.25px)
+      ),
+      var(--vibrancy-island-bg);
+    -webkit-mask: radial-gradient(
       circle var(--fillet) at 0 0,
       transparent calc(var(--fillet) - 0.5px),
-      var(--vibrancy-island-bg) var(--fillet)
+      #000 var(--fillet)
+    );
+    mask: radial-gradient(
+      circle var(--fillet) at 0 0,
+      transparent calc(var(--fillet) - 0.5px),
+      #000 var(--fillet)
     );
   }
 
   :global([data-vibrancy]) .tab-fillet.right {
-    background: radial-gradient(
+    background:
+      radial-gradient(
+        circle var(--fillet) at 100% 0,
+        transparent calc(var(--fillet) - 0.25px),
+        var(--vibrancy-island-stroke) calc(var(--fillet) + 0.5px),
+        transparent calc(var(--fillet) + 1.25px)
+      ),
+      var(--vibrancy-island-bg);
+    -webkit-mask: radial-gradient(
       circle var(--fillet) at 100% 0,
       transparent calc(var(--fillet) - 0.5px),
-      var(--vibrancy-island-bg) var(--fillet)
+      #000 var(--fillet)
+    );
+    mask: radial-gradient(
+      circle var(--fillet) at 100% 0,
+      transparent calc(var(--fillet) - 0.5px),
+      #000 var(--fillet)
     );
   }
 

@@ -69,6 +69,9 @@ export interface Settings {
   viewMode: ViewMode; // default view mode for new panes
   previewPaneWidth: number; // width in px, 0 = default (280px)
   terminalPanelHeight: number; // embedded terminal panel height in px
+  // Terminal line-editing shortcuts (#375): action id → binding string
+  // ("Alt+Backspace"). Empty/missing = disabled (native key behavior).
+  terminalShortcuts: Record<string, string>;
   theme: string; // active theme id, e.g. "dark", "golden-hour"
   thumbnailSize: ThumbnailSize; // tile thumbnail size tier
   showGitStatus: boolean; // show git indicators on files
@@ -135,6 +138,7 @@ const DEFAULT_SETTINGS: Settings = {
   viewMode: "details",
   previewPaneWidth: 0,
   terminalPanelHeight: 240,
+  terminalShortcuts: {},
   theme: "light",
   thumbnailSize: "small",
   showGitStatus: false,
@@ -322,6 +326,9 @@ function createSettingsStore() {
     get terminalPanelHeight() {
       return settings.terminalPanelHeight;
     },
+    get terminalShortcuts() {
+      return settings.terminalShortcuts;
+    },
     get theme() {
       return settings.theme;
     },
@@ -470,6 +477,13 @@ function createSettingsStore() {
     },
     setTerminalPanelHeight(px: number): void {
       update({ terminalPanelHeight: Math.max(96, Math.min(800, Math.round(px))) });
+    },
+    /** Bind (or clear, with "") a terminal line-editing action (#375). */
+    setTerminalShortcut(actionId: string, binding: string): void {
+      const next = { ...settings.terminalShortcuts };
+      if (binding.trim()) next[actionId] = binding.trim();
+      else delete next[actionId];
+      update({ terminalShortcuts: next });
     },
     setViewMode(mode: ViewMode): void {
       update({ viewMode: mode });

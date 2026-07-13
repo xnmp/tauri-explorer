@@ -31,6 +31,7 @@ import {
 } from "$lib/api/files";
 import type { GitOpState } from "$lib/domain/git";
 import { subscribeGitChanges, notifyLocalGitChange } from "./git-refresh";
+import { filterEntriesToDir } from "$lib/domain/scm-tree";
 
 function emptySummary(): GitStatusSummary {
   return {
@@ -97,6 +98,9 @@ function createScmStore() {
   let commitError = $state<string | null>(null);
   let selectedPath = $state<string | null>(null);
   let activeDiff = $state<{ path: string; staged: boolean } | null>(null);
+  /** A COMMIT file diff routed to the preview pane from the git graph
+   *  (#366); mutually exclusive with `activeDiff` (working-tree). */
+  let commitDiff = $state<{ repoPath: string; oid: string; path: string } | null>(null);
   let watcherPath: string | null = null;
   let subscribed = false;
 
@@ -174,15 +178,11 @@ function createScmStore() {
     }
   }
 
+  // Separator/case-tolerant dir filter — the raw string version matched
+  // nothing on Windows (backslash pane paths vs git2's forward-slash root),
+  // blanking the whole panel (#380). Pure logic lives in domain/scm-tree.
   function filterToDir<T extends { path: string }>(entries: T[]): T[] {
-    if (!activePath || !repoRoot || activePath === repoRoot) return entries;
-    const root = repoRoot.endsWith("/") ? repoRoot.slice(0, -1) : repoRoot;
-    if (activePath === root) return entries;
-    const prefix = activePath + "/";
-    return entries.filter((e) => {
-      const fullPath = root + "/" + e.path;
-      return fullPath.startsWith(prefix);
-    });
+    return filterEntriesToDir(entries, repoRoot, activePath);
   }
 
   async function initWatcherListener(): Promise<void> {
@@ -301,11 +301,21 @@ function createScmStore() {
 
   function openDiff(path: string, staged: boolean): void {
     activeDiff = { path, staged };
+    commitDiff = null;
     selectedPath = path;
   }
 
   function closeDiff(): void {
     activeDiff = null;
+  }
+
+  function openCommitDiff(repoPath: string, oid: string, path: string): void {
+    commitDiff = { repoPath, oid, path };
+    activeDiff = null;
+  }
+
+  function closeCommitDiff(): void {
+    commitDiff = null;
   }
 
   function orderedRows(): GitFileEntry[] {
@@ -346,6 +356,7 @@ function createScmStore() {
     get commitError() { return commitError; },
     get selectedPath() { return selectedPath; },
     get activeDiff() { return activeDiff; },
+    get commitDiff() { return commitDiff; },
 
     // actions
     setActivePath,
@@ -362,6 +373,8 @@ function createScmStore() {
     setSelected,
     openDiff,
     closeDiff,
+    openCommitDiff,
+    closeCommitDiff,
     moveSelection,
     initWatcherListener,
   };

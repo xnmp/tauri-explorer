@@ -608,7 +608,7 @@
       max-width: 220px;
       opacity: 1;
       padding-left: 12px;
-      padding-right: 10px;
+      padding-right: 5px;
     }
   }
 
@@ -626,7 +626,7 @@
     align-items: center;
     gap: 8px;
     height: 30px;
-    padding: 0 10px 0 12px;
+    padding: 0 5px 0 12px;
     /* Subtle-but-visible fill: --background was undefined outside the tahoe
        theme, leaving unfocused tabs transparent and indistinct (#238). */
     background: var(--control-fill-tertiary);
@@ -781,9 +781,14 @@
      hairlines at the tangent point. */
   .tab-fillet {
     position: absolute;
-    bottom: 0;
-    width: var(--fillet);
-    height: var(--fillet);
+    /* 1px oversize on the tab-facing and base-facing sides: the stroke ring
+       sits OUTSIDE the flare curve (radius fillet…fillet+1) so it lines up
+       with the tab's inset side hairline and the titlebar's outset baseline
+       hairline (#360); the box must include that 1px or the ring clips at
+       both tangent points. The circle stays anchored at the original corner. */
+    bottom: -1px;
+    width: calc(var(--fillet) + 1px);
+    height: calc(var(--fillet) + 1px);
     pointer-events: none;
     z-index: 3;
   }
@@ -796,9 +801,9 @@
     background:
       radial-gradient(
         circle var(--fillet) at 0 0,
-        transparent calc(var(--fillet) - 1.5px),
-        var(--surface-stroke) calc(var(--fillet) - 0.75px),
-        transparent calc(var(--fillet) + 0.5px)
+        transparent calc(var(--fillet) - 0.25px),
+        var(--surface-stroke) calc(var(--fillet) + 0.5px),
+        transparent calc(var(--fillet) + 1.25px)
       ),
       radial-gradient(
         circle var(--fillet) at 0 0,
@@ -817,9 +822,9 @@
     background:
       radial-gradient(
         circle var(--fillet) at 100% 0,
-        transparent calc(var(--fillet) - 1.5px),
-        var(--surface-stroke) calc(var(--fillet) - 0.75px),
-        transparent calc(var(--fillet) + 0.5px)
+        transparent calc(var(--fillet) - 0.25px),
+        var(--surface-stroke) calc(var(--fillet) + 0.5px),
+        transparent calc(var(--fillet) + 1.25px)
       ),
       radial-gradient(
         circle var(--fillet) at 100% 0,
@@ -927,6 +932,9 @@
   }
 
   .tab-close {
+    /* Counteract the tab's 8px gap: the x sits closer to the title than
+       the icon/title spacing, so the tab doesn't read as padded-out (#363). */
+    margin-left: -4px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1005,19 +1013,51 @@
     display: none;
   }
 
+  /* --vibrancy-island-bg is a multi-layer background (sheen gradient over a
+     colour), not a colour — it can't be a radial-gradient stop (that made
+     the whole declaration invalid, background:none, no fillets: #361).
+     Instead paint the island material as-is and carve the concave curve out
+     with a mask; the stroke ring rides on top as its own layer, continuing
+     the active tab's 0.5px outline. */
   :global([data-vibrancy]) .tab-fillet.left {
-    background: radial-gradient(
+    background:
+      radial-gradient(
+        circle var(--fillet) at 0 0,
+        transparent calc(var(--fillet) - 0.25px),
+        var(--vibrancy-island-stroke) calc(var(--fillet) + 0.5px),
+        transparent calc(var(--fillet) + 1.25px)
+      ),
+      var(--vibrancy-island-bg);
+    -webkit-mask: radial-gradient(
       circle var(--fillet) at 0 0,
       transparent calc(var(--fillet) - 0.5px),
-      var(--vibrancy-island-bg) var(--fillet)
+      #000 var(--fillet)
+    );
+    mask: radial-gradient(
+      circle var(--fillet) at 0 0,
+      transparent calc(var(--fillet) - 0.5px),
+      #000 var(--fillet)
     );
   }
 
   :global([data-vibrancy]) .tab-fillet.right {
-    background: radial-gradient(
+    background:
+      radial-gradient(
+        circle var(--fillet) at 100% 0,
+        transparent calc(var(--fillet) - 0.25px),
+        var(--vibrancy-island-stroke) calc(var(--fillet) + 0.5px),
+        transparent calc(var(--fillet) + 1.25px)
+      ),
+      var(--vibrancy-island-bg);
+    -webkit-mask: radial-gradient(
       circle var(--fillet) at 100% 0,
       transparent calc(var(--fillet) - 0.5px),
-      var(--vibrancy-island-bg) var(--fillet)
+      #000 var(--fillet)
+    );
+    mask: radial-gradient(
+      circle var(--fillet) at 100% 0,
+      transparent calc(var(--fillet) - 0.5px),
+      #000 var(--fillet)
     );
   }
 

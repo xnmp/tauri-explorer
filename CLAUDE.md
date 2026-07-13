@@ -118,7 +118,7 @@ Agent-tool worktrees are created from the repo's **default branch (main)**, not 
 4. Take required screenshots with `agent-browser` CLI; verify they capture working functionality
 5. Create E2E Playwright tests if needed
 6. Update the code maps: add any new/moved source file to `docs/code-map/map-folder.md`, update the relevant `map-feature.md` cluster (and `map-playbook.md` recipe if you changed a task shape), then run `python3 docs/code-map/validate.py --coverage`. Also update `lessons_learnt.md` for bugfixes.
-7. Merge to `dev` with a descriptive merge commit (hooks run E2E tests; fix any regressions)
+7. Merge to `dev` with a descriptive squash commit (hooks run E2E tests; fix any regressions)
 8. Before stopping a session, run `ALL_VIEW_MODES=1 npx playwright test`
 
 ## Important Operational Principles

@@ -22,6 +22,7 @@ import ScmPanel from "./ScmPanel.svelte";
   import { gitWarmer } from "$lib/state/git-warm";
   import { drivesStore } from "$lib/state/drives.svelte";
   import { directoryKey } from "$lib/domain/path";
+  import { gitRepoRoot } from "$lib/api/files";
 import { nextRemovableRoot } from "$lib/domain/drives";
   import { isVirtualPath } from "$lib/domain/virtual-path";
 
@@ -57,6 +58,31 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     }
     window.addEventListener("keydown", onWindowKeydown);
     return () => window.removeEventListener("keydown", onWindowKeydown);
+  });
+
+  // Keep an open commit graph pointed at the pane's directory (#362):
+  // navigating while the graph shows (sidebar, miller columns, terminal
+  // cwd-sync) retargets the graph at the new directory's repo, or closes
+  // it back to the file listing when the directory isn't in a repo.
+  $effect(() => {
+    const graphRepo = paneGitGraph;
+    const path = paneExplorer.currentPath;
+    if (!graphRepo || !path || isVirtualPath(path)) return;
+    const pathKey = directoryKey(path);
+    const repoKey = directoryKey(graphRepo);
+    // Still inside the graph's repo: nothing to do (no IPC).
+    if (pathKey === repoKey || pathKey.startsWith(repoKey + "/")) return;
+    untrack(() =>
+      gitRepoRoot(path).then((result) => {
+        // Stale guards: the pane may have navigated again, closed the
+        // graph, or already been retargeted while the probe ran.
+        if (windowTabsManager.getPaneGitGraph(paneId) !== graphRepo) return;
+        if (paneExplorer.currentPath !== path) return;
+        const root = result.ok ? result.data : null;
+        if (root && directoryKey(root) === repoKey) return;
+        windowTabsManager.setPaneGitGraph(paneId, root);
+      }),
+    );
   });
 
   // Fetch git status when directory changes and setting is enabled.

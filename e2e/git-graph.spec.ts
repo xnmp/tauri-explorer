@@ -81,7 +81,9 @@ test.describe("Git graph tab", () => {
     const popover = page.locator('[data-testid="branch-popover"]');
     await expect(popover).toBeVisible();
     await popover.locator(".bf-search").fill("feat");
-    await expect(popover.locator("label.bf-row")).toHaveCount(1);
+    // Branch rows only — the persistent "Local branches only" toggle (#381)
+    // is also a label.bf-row but is not part of the filtered branch list.
+    await expect(popover.locator("label.bf-row:not(.bf-local-only)")).toHaveCount(1);
 
     // "only feature": the graph reduces to feature's ancestry — 10 commits
     // plus the synthetic uncommitted row; the stash (based on main's tip)

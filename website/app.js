@@ -6,7 +6,7 @@
 
 const REPO = "https://github.com/xnmp/tauri-explorer";
 const REL = `${REPO}/releases/latest/download`;
-const VERSION = "1.3.2";
+const VERSION = "1.3.3";
 
 /* Release asset filenames embed the version, so `releases/latest/download/<name>`
    goes 404 the moment a new version ships. These VERSION-built URLs are only the

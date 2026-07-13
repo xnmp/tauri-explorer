@@ -4,6 +4,21 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## 2026-07-13 fix/windows-fullscreen-preview-edges: backdrop-filter creates a fixed-position containing block on Chromium
+- **A `backdrop-filter` (or `filter`) on ANY ancestor turns it into the containing block for `position: fixed` descendants on Chromium/WebView2** — the "fullscreen" preview laid out inside `.explorer` and got clipped by the preview island's `overflow: hidden`, so it only looked broken on Windows. When a fixed overlay must cover the window, suspend ancestor filters for its lifetime (a root attribute like `data-preview-fullscreen` makes that a one-line CSS rule).
+
+## 2026-07-13 fix/windows-git-panel-no-changes: never raw-compare pane paths against git2 paths
+- **git2 reports paths with forward slashes; Windows pane paths use backslashes (and drive-letter case varies).** Any raw string comparison/prefix check between the two matches nothing on Windows — the SCM panel filtered every entry out and showed "no changes". Route all such comparisons through `directoryKey`/`sameDirectory` (domain/path).
+
+## 2026-07-13 fix/fast-tab-switch-terminal-races: dedup guards for event echoes must COUNT, not set-membership
+- **When you inject N copies of an action and swallow their echoes by key, a Set caps the swallow count at 1.** Fast tab switches injected `cd A` twice (A→B→A); the Set deduped them, so the second OSC 7 echo read as a user cd and dragged the active tab to a stale path. Echo trackers need a counted multiset, and keys need path normalization (the shell echoes `/foo/` for an injected `/foo`).
+
+## 2026-07-13 fix/git-graph-path-color-switches-midway: first-parent edges belong to the child's branch
+- **In the commit-graph layout, an edge from a commit to its first parent is the TAIL of the child's branch** — coloring it with the parent's branch color flips the visible line's color mid-path. Only non-first-parent (merge) edges take the merged-into branch's color; and a tip whose only edge joins an existing line still needs its own color allocated or its dot silently renders palette slot 0.
+
+## 2026-07-13 fix/git-graph-slow-startup-large-repos: don't gate first paint on a status scan
+- **`git status` (full working-tree scan) costs seconds on big repos; the revwalk costs milliseconds** (17.6ms for a 500-commit page over 12.7k history). Any view that combines "history + working changes" must paint history the moment the log lands and fill the working-changes row in later — awaiting both serially made graph startup look like a history problem when it was a status problem.
+
 ## 2026-07-05 fix/terminal-output-race: reserve event ids before spawning emitters
 - **Anything that emits namespaced events (`foo-{id}`) must let the client register listeners BEFORE the emitter starts.** terminal_spawn returned the id only after the PTY was live, so the shell's first output (the prompt) raced listener registration and was dropped — terminal opened blank. Same class as the content-search listener-before-invoke race. Fix shape: a `*_reserve_id` command, listeners on the reserved id, then spawn with that id. The CI smoke "flake" was this real bug.
 

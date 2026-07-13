@@ -60,3 +60,45 @@ describe("collectPaths", () => {
     ]);
   });
 });
+
+describe("filterEntriesToDir (#380)", () => {
+  const entries = [
+    { path: "src/app.ts" },
+    { path: "src/lib/util.ts" },
+    { path: "README.md" },
+  ];
+
+  it("returns everything at the repo root", async () => {
+    const { filterEntriesToDir } = await import("$lib/domain/scm-tree");
+    expect(filterEntriesToDir(entries, "/home/me/proj", "/home/me/proj")).toEqual(entries);
+  });
+
+  it("filters to a subdirectory", async () => {
+    const { filterEntriesToDir } = await import("$lib/domain/scm-tree");
+    expect(filterEntriesToDir(entries, "/home/me/proj", "/home/me/proj/src")).toEqual([
+      { path: "src/app.ts" },
+      { path: "src/lib/util.ts" },
+    ]);
+  });
+
+  it("tolerates Windows backslash pane paths against git2's forward-slash root", async () => {
+    const { filterEntriesToDir } = await import("$lib/domain/scm-tree");
+    // Repo root as git2 reports it; active path as the pane stores it.
+    expect(filterEntriesToDir(entries, "C:/Users/me/proj", "C:\\Users\\me\\proj")).toEqual(entries);
+    expect(filterEntriesToDir(entries, "C:/Users/me/proj", "c:\\users\\me\\proj\\src")).toEqual([
+      { path: "src/app.ts" },
+      { path: "src/lib/util.ts" },
+    ]);
+  });
+
+  it("tolerates a trailing separator on the root", async () => {
+    const { filterEntriesToDir } = await import("$lib/domain/scm-tree");
+    expect(filterEntriesToDir(entries, "/home/me/proj/", "/home/me/proj")).toEqual(entries);
+  });
+
+  it("passes through when root or path is missing", async () => {
+    const { filterEntriesToDir } = await import("$lib/domain/scm-tree");
+    expect(filterEntriesToDir(entries, null, "/x")).toEqual(entries);
+    expect(filterEntriesToDir(entries, "/x", "")).toEqual(entries);
+  });
+});

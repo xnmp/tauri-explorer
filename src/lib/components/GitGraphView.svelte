@@ -40,32 +40,43 @@
 
   /** Fetch the page-0 data (first PAGE_SIZE commits + working summary) shared
    *  by the view's own initial load and the background warm (#287). Pass a
-   *  branch subset to fetch a filtered page (#342) — never cached. */
+   *  branch subset to fetch a filtered page (#342) — never cached.
+   *
+   *  The log walk and the working-tree summary run CONCURRENTLY, and
+   *  `onLog` (when given) fires as soon as the log half is ready: the
+   *  status scan can take seconds on a large working tree but only feeds
+   *  the "Uncommitted Changes (N)" row, so the graph must not wait for it
+   *  (#367 — graph startup was gated on log *then* status, serially). */
   async function fetchPage0Snapshot(
     repoPath: string,
     branches: string[] | null = null,
+    onLog?: (partial: Omit<GraphSnapshot, "workingChanges">) => void,
+    localOnly = false,
   ): Promise<GraphSnapshot> {
+    const summaryPromise = gitSummary(repoPath);
     const page = await gitLog(repoPath, {
       skip: 0,
       limit: PAGE_SIZE,
       ...(branches ? { branches } : {}),
+      ...(localOnly ? { local_only: true } : {}),
     });
     const headOid =
       Object.entries(page.refs).find(([, rs]) => rs.some((r) => r.kind === "Head"))?.[0] ?? null;
-    const summary = await gitSummary(repoPath);
+    const partial = {
+      commits: page.commits.slice(0, PAGE_SIZE),
+      refs: page.refs,
+      hasMore: page.has_more,
+      headOid,
+    };
+    onLog?.(partial);
+    const summary = await summaryPromise;
     const workingChanges = summary.ok
       ? summary.data.staged.length +
         summary.data.changes.length +
         summary.data.untracked.length +
         summary.data.merge.length
       : 0;
-    return {
-      commits: page.commits.slice(0, PAGE_SIZE),
-      refs: page.refs,
-      hasMore: page.has_more,
-      headOid,
-      workingChanges,
-    };
+    return { ...partial, workingChanges };
   }
 
   const warmInFlight = new Set<string>();
@@ -103,6 +114,12 @@
     gitRebase,
     gitReset,
     gitRefs,
+    gitFetch,
+    gitPull,
+    gitBranchBehindUpstream,
+    gitBranchAuthors,
+    gitDeleteBranch,
+    gitDeleteRemoteBranch,
     type CommitInfo,
     type RefInfo,
     type CommitFile,
@@ -113,14 +130,25 @@
   import { parseUnifiedDiff, type ParsedDiff } from "$lib/domain/diff";
   import { highlightDiffLine } from "$lib/domain/syntax-highlight";
   import { gitStatusLetter } from "$lib/domain/git";
-  import { notifyLocalGitChange } from "$lib/state/git-refresh";
+  import { notifyLocalGitChange, subscribeGitChanges } from "$lib/state/git-refresh";
+  import { gitWatchRepo, gitUnwatchRepo } from "$lib/api/git";
+  import { directoryKey } from "$lib/domain/path";
   import { toastStore } from "$lib/state/toast.svelte";
   import { gitDiff } from "$lib/api/files";
   import { untrack } from "svelte";
   import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte";
   import { loadPersisted, savePersisted } from "$lib/state/persisted";
+  import { getScmStore } from "$lib/state/scm.svelte";
+  import { getPaneIdContext } from "$lib/state/pane-context";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+  import { settingsStore } from "$lib/state/settings.svelte";
 
   const { repoPath }: { repoPath: string } = $props();
+
+  // This pane's SCM store — the preview pane reads the ACTIVE pane's store,
+  // and clicking in the graph focuses its pane, so the two line up (#366).
+  const paneId = getPaneIdContext();
+  const scmStore = $derived(getScmStore(paneId ?? windowTabsManager.activePaneId ?? "default"));
 
   const ROW_HEIGHT = 28;
   const LANE_WIDTH = 14;
@@ -155,11 +183,22 @@
       : null,
   );
 
+  // Local-branches-only (#381): hide history reachable solely from
+  // remote-tracking branches. Persisted per repo, like the branch filter.
+  const LOCAL_ONLY_KEY = `git-graph-local-only:${untrack(() => repoPath)}`;
+  let localOnly = $state(loadPersisted<unknown>(LOCAL_ONLY_KEY, false) === true);
+
+  function toggleLocalOnly(): void {
+    localOnly = !localOnly;
+    savePersisted(LOCAL_ONLY_KEY, localOnly);
+  }
+
   // Paint the last-known graph immediately on remount (#255); the load
   // effect below still refreshes from git in the background. Skipped while a
   // branch filter is active — the warm cache is always the UNFILTERED page 0,
-  // and flashing it would briefly show branches the user hid (#342).
-  if (untrack(() => branchFilter) === null) {
+  // and flashing it would briefly show branches the user hid (#342). Same
+  // reasoning for local-only (#381).
+  if (untrack(() => branchFilter) === null && !untrack(() => localOnly)) {
     // untrack: the view is {#key}ed on repoPath, so the initial value is the
     // right one for this instance's lifetime.
     const cached = graphCache.get(untrack(() => repoPath));
@@ -220,6 +259,25 @@
 
   /** Expand/collapse one file's diff below its row. */
   async function toggleFileDiff(file: DetailFile): Promise<void> {
+    const forPreview = selected;
+    // Preview pane open (#366): route the diff there instead of inline.
+    if (settingsStore.showPreviewPane && forPreview) {
+      if (forPreview.oid === UNCOMMITTED) {
+        // Working-tree diffs go through the SCM store's own loader, which
+        // needs its repoRoot on THIS repo; otherwise keep the inline diff.
+        if (scmStore.repoRoot && directoryKey(scmStore.repoRoot) === directoryKey(repoPath)) {
+          openDiffPath = null;
+          openDiff = null;
+          scmStore.openDiff(file.path, !!file.staged);
+          return;
+        }
+      } else {
+        openDiffPath = null;
+        openDiff = null;
+        scmStore.openCommitDiff(repoPath, forPreview.oid, file.path);
+        return;
+      }
+    }
     if (openDiffPath === file.path) {
       openDiffPath = null;
       openDiff = null;
@@ -290,6 +348,30 @@
   const effectiveGraphWidth = $derived(
     graphCol === null ? graphWidth : Math.max(GRAPH_COL_MIN, Math.min(GRAPH_COL_MAX, graphCol)),
   );
+
+  // Column visibility (#372): author/date/commit are hideable via the
+  // header's right-click menu; message and the graph itself always show.
+  // Persisted globally (a layout preference, not per-repo).
+  const COLUMNS_KEY = "git-graph-columns";
+  type ColumnId = "author" | "date" | "commit";
+  const savedColumns = loadPersisted<unknown>(COLUMNS_KEY, null);
+  let shownColumns = $state<Record<ColumnId, boolean>>({
+    author: true,
+    date: true,
+    commit: true,
+    ...(typeof savedColumns === "object" && savedColumns !== null ? savedColumns : {}),
+  });
+  let columnMenu = $state<{ x: number; y: number } | null>(null);
+
+  function toggleColumn(id: ColumnId): void {
+    shownColumns = { ...shownColumns, [id]: !shownColumns[id] };
+    savePersisted(COLUMNS_KEY, shownColumns);
+  }
+
+  function openColumnMenu(event: MouseEvent): void {
+    event.preventDefault();
+    columnMenu = { x: clientToFixed(event.clientX), y: clientToFixed(event.clientY) };
+  }
 
   function startGraphColResize(event: MouseEvent): void {
     event.preventDefault();
@@ -381,33 +463,41 @@
 
   async function loadPage(skip: number): Promise<void> {
     // Captured once so a mid-flight filter change can't mix pages; filtered
-    // loads never touch the snapshot cache (it holds the unfiltered page 0).
+    // loads (branch subset OR local-only) never touch the snapshot cache
+    // (it holds the unfiltered page 0).
     const filter = untrack(() => branchFilter);
+    const local = untrack(() => localOnly);
+    const unfiltered = filter === null && !local;
     loading = true;
     error = null;
     try {
       if (skip === 0) {
         // Same page-0 fetch used by the background warm (#287), so an open
-        // that follows a warm reuses identical data.
-        const snapshot = await fetchPage0Snapshot(repoPath, filter);
-        commits = snapshot.commits;
-        refs = snapshot.refs;
-        hasMore = snapshot.hasMore;
-        headOid = snapshot.headOid;
+        // that follows a warm reuses identical data. The commit list paints
+        // as soon as the log arrives; the working-changes count (a full
+        // status scan, slow on big working trees) fills in after (#367).
+        const snapshot = await fetchPage0Snapshot(repoPath, filter, (partial) => {
+          commits = partial.commits;
+          refs = partial.refs;
+          hasMore = partial.hasMore;
+          headOid = partial.headOid;
+          loading = false;
+        }, local);
         workingChanges = snapshot.workingChanges;
-        if (filter === null) cacheSnapshot(repoPath, snapshot);
+        if (unfiltered) cacheSnapshot(repoPath, snapshot);
       } else {
         const page = await gitLog(repoPath, {
           skip,
           limit: PAGE_SIZE,
           ...(filter ? { branches: filter } : {}),
+          ...(local ? { local_only: true } : {}),
         });
         commits = [...commits, ...page.commits];
         refs = { ...refs, ...page.refs };
         hasMore = page.has_more;
         // Snapshot page 0 for instant remount paint (#255) — deliberately not
         // the full paged history, which can grow unbounded.
-        if (filter === null) {
+        if (unfiltered) {
           cacheSnapshot(repoPath, {
             commits: commits.slice(0, PAGE_SIZE),
             refs,
@@ -430,7 +520,39 @@
   $effect(() => {
     void repoPath;
     void branchFilter;
+    void localOnly;
     untrack(() => void loadPage(0));
+  });
+
+  // Live refresh (#365): watch the repo and reload page 0 when git state
+  // changes underneath us (pull/commit/checkout from the terminal, another
+  // window, or the SCM panel). Watcher events are coalesced backend-side;
+  // a short debounce here folds the watcher burst a pull produces into one
+  // reload, and reloads are skipped while a load is already in flight.
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  $effect(() => {
+    const repo = repoPath;
+    let disposed = false;
+    let unsub: (() => void) | undefined;
+    void gitWatchRepo(repo);
+    void subscribeGitChanges((change) => {
+      if (change.repoRoot && directoryKey(change.repoRoot) !== directoryKey(repo)) return;
+      if (refreshTimer !== null) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        if (!disposed && !untrack(() => loading)) void loadPage(0);
+      }, 300);
+    }).then((u) => {
+      if (disposed) u();
+      else unsub = u;
+    });
+    return () => {
+      disposed = true;
+      if (refreshTimer !== null) clearTimeout(refreshTimer);
+      refreshTimer = null;
+      unsub?.();
+      void gitUnwatchRepo(repo);
+    };
   });
 
   // ----- Branch filter popover (#342) -----
@@ -438,6 +560,11 @@
   let branchPopoverOpen = $state(false);
   let branchQuery = $state("");
   let branchList = $state<Array<{ name: string; remote: boolean }>>([]);
+
+  // Branch → creator map for the author filter (#376); loaded lazily with
+  // the branch list (the creator walk is per-branch work worth deferring).
+  let branchAuthors = $state<Record<string, string>>({});
+  let authorFilter = $state<string | null>(null);
 
   async function toggleBranchPopover(): Promise<void> {
     branchPopoverOpen = !branchPopoverOpen;
@@ -451,11 +578,25 @@
       } catch {
         branchList = [];
       }
+      try {
+        const authors = await gitBranchAuthors(repoPath);
+        branchAuthors = Object.fromEntries(authors.map((a) => [a.name, a.author]));
+      } catch {
+        branchAuthors = {};
+      }
     }
   }
 
+  const authorOptions = $derived(
+    [...new Set(Object.values(branchAuthors).filter((a) => a))].sort(),
+  );
+
   const filteredBranchList = $derived(
-    branchList.filter((b) => b.name.toLowerCase().includes(branchQuery.toLowerCase())),
+    branchList.filter(
+      (b) =>
+        b.name.toLowerCase().includes(branchQuery.toLowerCase()) &&
+        (authorFilter === null || branchAuthors[b.name] === authorFilter),
+    ),
   );
 
   function setBranchFilter(next: string[] | null): void {
@@ -611,10 +752,39 @@
     }
   }
 
+  // Pull offer after checking out a branch whose upstream is ahead (#377).
+  let pullOffer = $state<{ branch: string; behind: number } | null>(null);
+
   function checkout(m: Menu): void {
-    void runAction("Checkout", () =>
-      gitCheckout(repoPath, m.checkoutBranch ?? m.commit.oid),
-    );
+    const branch = m.checkoutBranch;
+    closeMenu();
+    void (async () => {
+      try {
+        await gitCheckout(repoPath, branch ?? m.commit.oid);
+        toastStore.success("Checkout done");
+        // Only after a SUCCESSFUL branch checkout: a pull acts on the
+        // current branch, so offering it after a failure would pull the
+        // wrong branch.
+        if (branch) {
+          try {
+            const behind = await gitBranchBehindUpstream(repoPath, branch);
+            if (behind !== null && behind > 0) pullOffer = { branch, behind };
+          } catch {
+            /* no upstream info — nothing to offer */
+          }
+        }
+      } catch (err) {
+        toastStore.error(err instanceof Error ? err.message : String(err));
+      } finally {
+        await loadPage(0);
+        notifyLocalGitChange(repoPath);
+      }
+    })();
+  }
+
+  function confirmPull(): void {
+    pullOffer = null;
+    void runAction("Pull", () => gitPull(repoPath));
   }
   function cherryPick(oid: string): void {
     void runAction("Cherry-pick", () => gitCherryPick(repoPath, oid));
@@ -630,6 +800,27 @@
   }
   function reset(oid: string, mode: ResetMode): void {
     void runAction(`Reset (${mode})`, () => gitReset(repoPath, oid, mode));
+  }
+
+  /** Delete a local branch; optionally its counterpart on each tracking
+   *  remote (#371). Safe (-d) unless `force`; git's refusals (unmerged,
+   *  checked out) surface as the toast. */
+  function deleteBranch(name: string, force: boolean, remotes: string[]): void {
+    void runAction(`Delete branch '${name}'`, async () => {
+      await gitDeleteBranch(repoPath, name, force);
+      for (const remote of remotes) {
+        await gitDeleteRemoteBranch(repoPath, remote, name);
+      }
+    });
+  }
+
+  /** Delete a remote-only branch chip like "origin/feat/x" (#371). */
+  function deleteRemoteChip(chip: string): void {
+    const i = chip.indexOf("/");
+    if (i <= 0) return;
+    void runAction(`Delete ${chip}`, () =>
+      gitDeleteRemoteBranch(repoPath, chip.slice(0, i), chip.slice(i + 1)),
+    );
   }
 
   function startPrompt(kind: "branch" | "tag", oid: string): void {
@@ -662,7 +853,32 @@
     }
   }
 
+  // F5 (#370): refresh the graph INCLUDING a fetch from every remote, so
+  // remote-branch chips and ahead/behind state update — a plain reload only
+  // re-reads local refs. Guarded against overlap; failures (offline, auth)
+  // toast git's own message but still reload local state.
+  let fetching = $state(false);
+  async function refreshWithFetch(): Promise<void> {
+    if (fetching) return;
+    fetching = true;
+    try {
+      await gitFetch(repoPath);
+      toastStore.success("Fetched from remotes");
+    } catch (err) {
+      toastStore.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      fetching = false;
+      await loadPage(0);
+      notifyLocalGitChange(repoPath);
+    }
+  }
+
   function onWindowKeydown(event: KeyboardEvent): void {
+    if (event.key === "F5") {
+      event.preventDefault();
+      void refreshWithFetch();
+      return;
+    }
     if (event.key === "Escape" && branchPopoverOpen) {
       branchPopoverOpen = false;
       return;
@@ -677,10 +893,11 @@
   {#if error}
     <div class="graph-status error">{error}</div>
   {:else}
-    <div class="graph-header" style:padding-left="{effectiveGraphWidth + 20}px">
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- right-click opens the column-visibility menu; not reachable by keyboard by design (parity with the row context menu) -->
+    <div class="graph-header" role="row" tabindex="-1" style:padding-left="{effectiveGraphWidth + 20}px" oncontextmenu={openColumnMenu}>
       <button
         class="branch-filter-btn"
-        class:filtered={branchFilter !== null}
+        class:filtered={branchFilter !== null || localOnly}
         onclick={() => void toggleBranchPopover()}
         title="Filter branches"
         aria-label="Filter branches"
@@ -708,7 +925,26 @@
             bind:value={branchQuery}
             autofocus
           />
+          {#if authorOptions.length > 0}
+            <!-- Author = branch creator: author of the branch's first unique
+                 commit (tip author for fully-merged branches) (#376). -->
+            <select
+              class="bf-author"
+              title="Filter branches by creator"
+              value={authorFilter ?? ""}
+              onchange={(e) => (authorFilter = e.currentTarget.value || null)}
+            >
+              <option value="">Any author</option>
+              {#each authorOptions as author (author)}
+                <option value={author}>{author}</option>
+              {/each}
+            </select>
+          {/if}
           <div class="bf-list">
+            <label class="bf-row bf-local-only" title="Hide history reachable only from remote-tracking branches">
+              <input type="checkbox" checked={localOnly} onchange={toggleLocalOnly} />
+              <span class="bf-name">Local branches only</span>
+            </label>
             <button
               class="bf-row bf-all"
               class:bf-active={branchFilter === null}
@@ -754,34 +990,65 @@
         data-testid="handle-graph"
       ></span>
       <span class="gh-message">Message</span>
-      <span class="gh-author" style:width="{authorCol.width}px">
-        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-        <span
-          class="col-handle handle-in-cell"
-          class:active={authorCol.isResizing}
-          onmousedown={authorCol.startResize}
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize author column"
-          data-testid="handle-author"
-        ></span>
-        Author
-      </span>
-      <span class="gh-date" style:width="{dateCol.width}px">
-        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-        <span
-          class="col-handle handle-in-cell"
-          class:active={dateCol.isResizing}
-          onmousedown={dateCol.startResize}
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize date column"
-          data-testid="handle-date"
-        ></span>
-        Date
-      </span>
-      <span class="gh-oid">Commit</span>
+      {#if shownColumns.author}
+        <span class="gh-author" style:width="{authorCol.width}px">
+          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+          <span
+            class="col-handle handle-in-cell"
+            class:active={authorCol.isResizing}
+            onmousedown={authorCol.startResize}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize author column"
+            data-testid="handle-author"
+          ></span>
+          Author
+        </span>
+      {/if}
+      {#if shownColumns.date}
+        <span class="gh-date" style:width="{dateCol.width}px">
+          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+          <span
+            class="col-handle handle-in-cell"
+            class:active={dateCol.isResizing}
+            onmousedown={dateCol.startResize}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize date column"
+            data-testid="handle-date"
+          ></span>
+          Date
+        </span>
+      {/if}
+      {#if shownColumns.commit}<span class="gh-oid">Commit</span>{/if}
     </div>
+    {#if columnMenu}
+      <button
+        class="menu-backdrop"
+        aria-label="Close column menu"
+        onclick={() => (columnMenu = null)}
+        oncontextmenu={(e) => { e.preventDefault(); columnMenu = null; }}
+      ></button>
+      <div
+        class="commit-menu"
+        data-testid="git-graph-column-menu"
+        role="menu"
+        tabindex="-1"
+        style="left: {columnMenu.x}px; top: {columnMenu.y}px;"
+      >
+        {#each [["author", "Author"], ["date", "Date"], ["commit", "Commit"]] as [id, label] (id)}
+          <button
+            class="menu-item"
+            role="menuitemcheckbox"
+            aria-checked={shownColumns[id as ColumnId]}
+            onclick={() => toggleColumn(id as ColumnId)}
+          >
+            <span class="col-check">{shownColumns[id as ColumnId] ? "✓" : ""}</span>
+            {label}
+          </button>
+        {/each}
+      </div>
+    {/if}
     {#if commits.length === 0 && loading}
       <div class="graph-status">Loading history…</div>
     {:else if commits.length === 0}
@@ -877,15 +1144,19 @@
                 </span>
               {/each}
               {#each chips.remotes as remote (remote)}
-                <span class="ref ref-remote">{remote}</span>
+                <span class="ref ref-remote" title="Remote-only branch — no local branch tracks {remote}">
+                  <svg class="remote-cloud" width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="M4.5 12.5a3 3 0 0 1-.3-6 4 4 0 0 1 7.8-.9 2.9 2.9 0 0 1-.5 5.9z" />
+                  </svg>{remote}
+                </span>
               {/each}
               {#each chips.tags as tag (tag)}
                 <span class="ref ref-tag">{tag}</span>
               {/each}
               <span class="summary" title={commit.summary}>{commit.summary}</span>
-              <span class="author" style:width="{authorCol.width}px">{commit.author_name}</span>
-              <span class="date" style:width="{dateCol.width}px">{formatDate(commit.author_time)}</span>
-              <span class="oid">{commit.short_oid}</span>
+              {#if shownColumns.author}<span class="author" style:width="{authorCol.width}px">{commit.author_name}</span>{/if}
+              {#if shownColumns.date}<span class="date" style:width="{dateCol.width}px">{formatDate(commit.author_time)}</span>{/if}
+              {#if shownColumns.commit}<span class="oid">{commit.short_oid}</span>{/if}
             {/if}
           </div>
           {#if selected?.oid === commit.oid}
@@ -984,6 +1255,8 @@
       oncontextmenu={backdropContextMenu}
     ></button>
     {@const m = menu}
+    {@const menuChips = chipsFor(m.commit.oid)}
+    {@const deletableHeads = menuChips.heads.filter((h) => !h.active)}
     <div
       class="commit-menu"
       data-testid="git-graph-menu"
@@ -1030,6 +1303,33 @@
           </button>
         </div>
       </div>
+      {#if deletableHeads.length > 0 || menuChips.remotes.length > 0}
+        <div class="menu-sep"></div>
+        {#each deletableHeads as head (head.name)}
+          <div class="menu-item has-submenu" role="menuitem" tabindex="-1">
+            <span>Delete Branch '{head.name}'</span>
+            <span class="submenu-arrow">▸</span>
+            <div class="submenu" role="menu">
+              <button class="menu-item" role="menuitem" onclick={() => deleteBranch(head.name, false, [])}>
+                Delete — refuse if unmerged
+              </button>
+              <button class="menu-item" role="menuitem" onclick={() => deleteBranch(head.name, true, [])}>
+                Force delete
+              </button>
+              {#if head.remotes.length > 0}
+                <button class="menu-item" role="menuitem" onclick={() => deleteBranch(head.name, false, head.remotes)}>
+                  Delete + remote ({head.remotes.join(", ")})
+                </button>
+              {/if}
+            </div>
+          </div>
+        {/each}
+        {#each menuChips.remotes as remoteChip (remoteChip)}
+          <button class="menu-item" role="menuitem" onclick={() => deleteRemoteChip(remoteChip)}>
+            Delete Remote Branch '{remoteChip}'
+          </button>
+        {/each}
+      {/if}
       <div class="menu-sep"></div>
       <button class="menu-item" role="menuitem" onclick={() => copyToClipboard(m.commit.oid, "commit hash")}>
         Copy Commit Hash
@@ -1066,6 +1366,25 @@
         <button class="prompt-btn primary" onclick={confirmPrompt}>
           {prompt.kind === "branch" ? "Create branch" : "Create tag"}
         </button>
+      </div>
+    </div>
+  {/if}
+
+  {#if pullOffer}
+    <button
+      class="menu-backdrop"
+      aria-label="Dismiss pull offer"
+      onclick={() => (pullOffer = null)}
+      oncontextmenu={(e) => { e.preventDefault(); pullOffer = null; }}
+    ></button>
+    <div class="name-prompt" data-testid="git-graph-pull-offer" role="dialog" aria-label="Pull from upstream">
+      <span class="prompt-label">
+        The remote is ahead of '{pullOffer.branch}' by {pullOffer.behind}
+        commit{pullOffer.behind === 1 ? "" : "s"}. Pull now?
+      </span>
+      <div class="prompt-actions">
+        <button class="prompt-btn" onclick={() => (pullOffer = null)}>Not now</button>
+        <button class="prompt-btn primary" onclick={confirmPull}>Pull</button>
       </div>
     </div>
   {/if}
@@ -1446,6 +1765,17 @@
     font-size: 12px;
   }
 
+  /* Author (branch creator) dropdown, #376 — matches the search field. */
+  .bf-author {
+    margin: 0 6px 6px;
+    padding: 4px 8px;
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-sm);
+    background: var(--background-card);
+    color: var(--text-primary);
+    font-size: 12px;
+  }
+
   .bf-list {
     overflow-y: auto;
     padding: 0 4px 6px;
@@ -1610,10 +1940,18 @@
     border-color: color-mix(in srgb, #10b981 40%, transparent);
   }
 
+  /* Remote-only branch (no local branch tracks it, #381): dashed outline +
+     cloud glyph distinguish it from a local branch chip at a glance. */
   .ref-remote {
     background: color-mix(in srgb, #3b82f6 15%, transparent);
     color: #3b82f6;
     border-color: color-mix(in srgb, #3b82f6 40%, transparent);
+    border-style: dashed;
+  }
+
+  .remote-cloud {
+    margin-right: 3px;
+    vertical-align: -1px;
   }
 
   .ref-tag {
@@ -1701,6 +2039,13 @@
     height: 1px;
     margin: 4px 6px;
     background: var(--divider);
+  }
+
+  /* Fixed-width tick gutter so column labels stay aligned (#372). */
+  .col-check {
+    display: inline-block;
+    width: 12px;
+    color: var(--accent);
   }
 
   .has-submenu {

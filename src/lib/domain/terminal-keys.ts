@@ -50,6 +50,47 @@ export function isShellReservedKey(event: KeyEventLike, context?: ShellKeyContex
   return !context?.appBound;
 }
 
+// ─── Configurable line-editing shortcuts (#375) ─────────────────────────────
+
+import { matchesShortcutString } from "./keybinding-parser";
+
+/** A shell line-editing action a key combo can be bound to. The sequence is
+ *  the readline/emacs control byte the shell understands — portable across
+ *  bash/zsh/fish and PSReadLine, unlike terminal escape sequences. */
+export interface TerminalLineAction {
+  id: string;
+  label: string;
+  sequence: string;
+}
+
+export const TERMINAL_LINE_ACTIONS: readonly TerminalLineAction[] = [
+  { id: "beginningOfLine", label: "Beginning of line", sequence: "\x01" }, // C-a
+  { id: "endOfLine", label: "End of line", sequence: "\x05" }, // C-e
+  { id: "deleteWordBackward", label: "Delete word backward", sequence: "\x17" }, // C-w
+  { id: "killLineBackward", label: "Delete to line start", sequence: "\x15" }, // C-u
+  { id: "killLineForward", label: "Delete to line end", sequence: "\x0b" }, // C-k
+  { id: "clearScreen", label: "Clear screen", sequence: "\x0c" }, // C-l
+] as const;
+
+/**
+ * Resolve a keydown against the user's terminal shortcut map
+ * (action id → binding string like "Alt+Backspace"); returns the control
+ * sequence to inject, or null when nothing matches. Unset/empty bindings
+ * are disabled — the default map is empty so out of the box every key keeps
+ * its native terminal behavior (full-screen apps like vim depend on it).
+ */
+export function resolveTerminalShortcut(
+  event: KeyboardEvent,
+  shortcuts: Record<string, string>,
+): string | null {
+  for (const action of TERMINAL_LINE_ACTIONS) {
+    const binding = shortcuts[action.id];
+    if (!binding) continue;
+    if (matchesShortcutString(event, binding)) return action.sequence;
+  }
+  return null;
+}
+
 /**
  * App shortcuts hardcoded in +page.svelte outside the keybindings registry
  * (Ctrl+J jobs, Ctrl+, settings, Ctrl+\ dual pane). The terminal gates need

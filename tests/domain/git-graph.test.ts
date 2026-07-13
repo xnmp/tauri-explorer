@@ -45,6 +45,26 @@ describe("assignLayout", () => {
     expectContinuous(layout);
   });
 
+  it("keeps the child's color on a first-parent edge into an existing branch (#368)", () => {
+    // Same topology as above: f2's first-parent edge descends into base,
+    // which already sits on main's line. The edge must stay in f2's color —
+    // painting it in base's color flipped the branch tail blue→orange.
+    const layout = assignLayout([c("m3", "m2", "f2"), c("f2", "base"), c("m2", "base"), c("base")]);
+    const [, f2] = layout.vertices;
+    const edge = layout.branches.find(
+      (b) => b.points[0]?.row === 1 && b.points[b.points.length - 1]?.row === 3,
+    );
+    expect(edge).toBeDefined();
+    expect(edge!.colorIndex).toBe(f2.colorIndex);
+  });
+
+  it("gives an uncolored tip a fresh color when its only edge joins an existing branch (#368)", () => {
+    // tip's first parent is base, already on main's chain drawn from m2.
+    const layout = assignLayout([c("m2", "base"), c("tip", "base"), c("base")]);
+    const [m2, tip] = layout.vertices;
+    expect(tip.colorIndex).not.toBe(m2.colorIndex);
+  });
+
   it("colors belong to branches and are reused once the branch ends", () => {
     // Two disjoint linear histories, one after the other: second reuses color 0.
     const layout = assignLayout([c("a2", "a1"), c("a1"), c("b2", "b1"), c("b1")]);

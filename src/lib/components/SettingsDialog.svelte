@@ -6,6 +6,7 @@
   import { settingsStore, type IconTheme, type ThumbnailSize, type WindowsBackdrop, type PaneLayoutMode } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import { isMac, isWindows } from "$lib/domain/platform";
+  import { TERMINAL_LINE_ACTIONS } from "$lib/domain/terminal-keys";
   import { listInstalledTerminals } from "$lib/api/open";
   import { warmPoolShutdown } from "$lib/api/warm-pool";
   import { spawnWarmWindow } from "$lib/state/warm-window";
@@ -97,7 +98,7 @@
     floatingIslands: ["Floating Islands", "Panels float as rounded islands over the backdrop. Works on every platform; pairs with native transparency on macOS/Windows when enabled", "vibrancy", "island", "layout"],
     nativeBlur: ["Native Blur", "Use macOS frosted glass blur (off = theme background, requires restart)"],
     windowsBackdrop: ["Window Backdrop", "Windows translucent Mica/Acrylic frosted-glass effect (enabling from Off requires restart)"],
-    windowsBackdropOpacity: ["Backdrop Opacity", "How see-through the Acrylic backdrop is (lower = more transparent)"],
+    windowsBackdropOpacity: ["Backdrop Opacity", "How see-through the app is over the Mica/Acrylic backdrop — islands included (lower = more transparent)"],
     addressBar: ["Show Address Bar", "Display the breadcrumb/path bar above the file list"],
     statusBar: ["Show Status Bar", "Display file info bar at the bottom (Alt+M U)"],
     navBack: ["Back", "Show the back navigation button"],
@@ -783,6 +784,32 @@
               <span class="toggle-slider"></span>
             </label>
           </div>
+
+          <!-- Line-editing shortcuts (#375): bind key combos to readline
+               actions. Empty = disabled (native terminal behavior). -->
+          <div class="setting-row terminal-shortcuts" class:hidden={!matchesSearch("Terminal Shortcuts", "line editing", "readline", "home", "end", "delete word")}>
+            <div class="setting-info">
+              <span class="setting-label">Line-Editing Shortcuts</span>
+              <span class="setting-description">
+                Bind keys (e.g. "Home", "Alt+Backspace", "Ctrl+U") to shell
+                line-editing actions. Empty = key keeps its native behavior.
+              </span>
+              <div class="terminal-shortcut-list">
+                {#each TERMINAL_LINE_ACTIONS as action (action.id)}
+                  <label class="terminal-shortcut-row">
+                    <span class="ts-label">{action.label}</span>
+                    <input
+                      class="ts-input"
+                      type="text"
+                      placeholder="unbound"
+                      value={settingsStore.terminalShortcuts[action.id] ?? ""}
+                      onchange={(e) => settingsStore.setTerminalShortcut(action.id, e.currentTarget.value)}
+                    />
+                  </label>
+                {/each}
+              </div>
+            </div>
+          </div>
         </section>
 
         <!-- Experimental Section (#175): feature flags for recently shipped surfaces -->
@@ -998,6 +1025,37 @@
 
   .settings-section:last-child {
     margin-bottom: 0;
+  }
+
+  /* Terminal line-editing shortcut bindings (#375). */
+  .terminal-shortcut-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 8px;
+  }
+
+  .terminal-shortcut-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .ts-label {
+    flex: 1;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .ts-input {
+    width: 140px;
+    padding: 3px 8px;
+    border: 1px solid var(--control-stroke);
+    border-radius: var(--radius-sm);
+    background: var(--control-fill);
+    color: var(--text-primary);
+    font-size: 12px;
+    font-family: var(--font-mono, monospace);
   }
 
   .section-title {

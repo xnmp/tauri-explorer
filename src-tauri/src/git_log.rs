@@ -108,6 +108,11 @@ pub struct GitLogOptions {
     /// every branch. Names that don't resolve are ignored; if none resolve
     /// the page is empty. `None` = no filter (#342).
     pub branches: Option<Vec<String>>,
+    /// Seed the walk from HEAD + LOCAL branch tips only, hiding history that
+    /// is reachable solely from remote-tracking branches (#381). Ignored when
+    /// `branches` is set (an explicit selection wins).
+    #[serde(default)]
+    pub local_only: bool,
 }
 
 const DEFAULT_LIMIT: usize = 500;
@@ -270,7 +275,13 @@ fn build_log(
         if walk.push_head().is_ok() {
             seeded = true;
         }
-        if let Ok(branches) = repo.branches(None) {
+        // Local-only (#381): hide history reachable solely from remotes.
+        let branch_type = if opts.local_only {
+            Some(git2::BranchType::Local)
+        } else {
+            None
+        };
+        if let Ok(branches) = repo.branches(branch_type) {
             for b in branches.flatten() {
                 if let Some(oid) = b.0.get().target() {
                     if walk.push(oid).is_ok() {
@@ -334,6 +345,79 @@ fn build_log(
         has_more,
         next_cursor,
     })
+}
+
+/// A branch and the author who "created" it (#376): the author of the oldest
+/// commit reachable from the branch tip but not from HEAD's history — i.e.
+/// the first commit unique to the branch. Fully-merged branches (no unique
+/// commits) fall back to the tip commit's author.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BranchAuthor {
+    pub name: String,
+    pub author: String,
+    pub remote: bool,
+}
+
+/// Per-branch walk cap: bounds the cost on pathological branches that
+/// diverged thousands of commits ago.
+const AUTHOR_WALK_CAP: usize = 2000;
+
+fn branch_creator(repo: &Repository, tip: Oid, trunk: Option<Oid>) -> Option<String> {
+    let mut walk = repo.revwalk().ok()?;
+    walk.push(tip).ok()?;
+    if let Some(t) = trunk {
+        if t != tip {
+            let _ = walk.hide(t);
+        }
+    }
+    let mut last: Option<String> = None;
+    for (i, step) in walk.enumerate() {
+        if i >= AUTHOR_WALK_CAP {
+            break;
+        }
+        let Ok(oid) = step else { break };
+        if let Ok(commit) = repo.find_commit(oid) {
+            last = Some(commit.author().name().unwrap_or("").to_string());
+        }
+    }
+    last.filter(|s| !s.is_empty())
+}
+
+fn collect_branch_authors(repo: &Repository) -> Result<Vec<BranchAuthor>, AppError> {
+    let trunk = repo.head().ok().and_then(|h| h.target());
+    let mut out = Vec::new();
+    for (branch, btype) in repo.branches(None).map_err(to_app_err)?.flatten() {
+        let Some(name) = branch.name().ok().flatten().map(str::to_string) else {
+            continue;
+        };
+        if name.ends_with("/HEAD") {
+            continue;
+        }
+        let Some(tip) = branch.get().target() else {
+            continue;
+        };
+        let author = branch_creator(repo, tip, trunk).or_else(|| {
+            repo.find_commit(tip)
+                .ok()
+                .map(|c| c.author().name().unwrap_or("").to_string())
+        });
+        out.push(BranchAuthor {
+            name,
+            author: author.unwrap_or_default(),
+            remote: btype == git2::BranchType::Remote,
+        });
+    }
+    Ok(out)
+}
+
+/// Branch → creator map for the branch-filter popover's author filter (#376).
+#[tauri::command]
+pub async fn git_branch_authors(repo_path: String) -> Result<Vec<BranchAuthor>, AppError> {
+    run_blocking(move |_cancelled| {
+        let repo = open_repo(Path::new(&repo_path))?;
+        collect_branch_authors(&repo)
+    })
+    .await
 }
 
 fn collect_refs(repo: &Repository) -> Result<GitRefs, AppError> {
@@ -546,6 +630,32 @@ mod tests {
         Arc::new(AtomicBool::new(false))
     }
 
+    /// Manual timing probe for page-0 cost on a real repository (#367).
+    /// Run with: GIT_LOG_BENCH_REPO=/path/to/big/repo \
+    ///   cargo test --release git_log_page0_timing -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn git_log_page0_timing() {
+        let Ok(path) = std::env::var("GIT_LOG_BENCH_REPO") else {
+            eprintln!("set GIT_LOG_BENCH_REPO");
+            return;
+        };
+        let repo = Repository::open(&path).unwrap();
+        for _ in 0..3 {
+            let t = std::time::Instant::now();
+            let page = build_log(&repo, &GitLogOptions::default(), Vec::new(), &no_cancel()).unwrap();
+            eprintln!(
+                "build_log page0: {:?} ({} commits, {} decorated)",
+                t.elapsed(),
+                page.commits.len(),
+                page.refs.len()
+            );
+        }
+        let t = std::time::Instant::now();
+        let _ = collect_decorations(&repo).unwrap();
+        eprintln!("collect_decorations alone: {:?}", t.elapsed());
+    }
+
     #[test]
     fn commit_file_diff_shows_changes_against_first_parent() {
         let (dir, repo) = init_repo();
@@ -643,6 +753,79 @@ mod tests {
         };
         let empty = build_log(&repo, &opts, Vec::new(), &no_cancel()).unwrap();
         assert!(empty.commits.is_empty());
+    }
+
+    #[test]
+    fn branch_authors_report_the_branch_creator_not_the_tip_committer() {
+        let (dir, repo) = init_repo();
+        let p = dir.path().to_path_buf();
+        write(&p, "a.txt", "one");
+        let base = commit(&repo, "base", &[]);
+
+        // Branch created by Creator; a later commit on it by Other. The
+        // branch's author must be Creator (first unique commit), not Other.
+        repo.branch("topic", &repo.find_commit(base).unwrap(), false)
+            .unwrap();
+        repo.set_head("refs/heads/topic").unwrap();
+        let creator = git2::Signature::now("Creator", "c@x").unwrap();
+        let other = git2::Signature::now("Other", "o@x").unwrap();
+        let tree = repo.find_commit(base).unwrap().tree().unwrap();
+        let first = repo
+            .commit(Some("HEAD"), &creator, &creator, "start topic", &tree, &[&repo.find_commit(base).unwrap()])
+            .unwrap();
+        let second = repo
+            .commit(Some("HEAD"), &other, &other, "continue topic", &tree, &[&repo.find_commit(first).unwrap()])
+            .unwrap();
+        let _ = second;
+        // Trunk: switch HEAD back to main so topic's commits are "unique".
+        repo.set_head("refs/heads/main").unwrap();
+
+        let authors = collect_branch_authors(&repo).unwrap();
+        let topic = authors.iter().find(|b| b.name == "topic").unwrap();
+        assert_eq!(topic.author, "Creator");
+        // Fully-merged branch (points at trunk history): falls back to tip author.
+        let main = authors.iter().find(|b| b.name == "main").unwrap();
+        assert_eq!(main.author, "Test User");
+    }
+
+    #[test]
+    fn local_only_hides_remote_only_history() {
+        let (dir, repo) = init_repo();
+        let p = dir.path().to_path_buf();
+        write(&p, "a.txt", "one");
+        let base = commit(&repo, "base", &[]);
+        write(&p, "a.txt", "two");
+        let _tip = commit(&repo, "main tip", &[base]);
+
+        // A commit reachable ONLY from a remote-tracking ref: committed with
+        // no ref update (HEAD untouched), then pointed to by refs/remotes/….
+        let sig = git2::Signature::now("Test User", "test@example.com").unwrap();
+        let base_commit = repo.find_commit(base).unwrap();
+        let tree = base_commit.tree().unwrap();
+        let remote_tip = repo
+            .commit(None, &sig, &sig, "remote only", &tree, &[&base_commit])
+            .unwrap();
+        repo.reference("refs/remotes/origin/legacy", remote_tip, true, "sim")
+            .unwrap();
+
+        let all = build_log(&repo, &GitLogOptions::default(), Vec::new(), &no_cancel()).unwrap();
+        let sums: Vec<_> = all.commits.iter().map(|c| c.summary.as_str()).collect();
+        assert!(
+            sums.contains(&"remote only"),
+            "unfiltered must include remote history: {sums:?}"
+        );
+
+        let opts = GitLogOptions {
+            local_only: true,
+            ..Default::default()
+        };
+        let page = build_log(&repo, &opts, Vec::new(), &no_cancel()).unwrap();
+        let sums: Vec<_> = page.commits.iter().map(|c| c.summary.as_str()).collect();
+        assert!(
+            !sums.contains(&"remote only"),
+            "local_only leaked remote-only history: {sums:?}"
+        );
+        assert!(sums.contains(&"main tip"), "local history missing: {sums:?}");
     }
 
     fn init_repo() -> (TempDir, Repository) {

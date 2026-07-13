@@ -339,6 +339,22 @@ function createWindowTabsManager() {
     return undefined;
   }
 
+  /** Point a pane's open commit graph at a different repo, or close it
+   *  (null). Used when the pane's directory changes while the graph is
+   *  showing — the graph follows the navigation instead of pinning the old
+   *  repo (#362). No-op when the pane isn't showing a graph. */
+  function setPaneGitGraph(paneId: PaneId, repoPath: string | null): void {
+    for (const tab of tabs) {
+      const pane = tab.panes[paneId];
+      if (!pane) continue;
+      if (!pane.gitGraph) return;
+      if (repoPath) pane.gitGraph = repoPath;
+      else delete pane.gitGraph;
+      saveState();
+      return;
+    }
+  }
+
   /** Toggle the commit graph in the active pane (#272): showing → back to
    *  the file listing; hidden → the graph for `repoPath`. */
   function toggleGitGraphInActivePane(repoPath: string | null): void {
@@ -964,6 +980,7 @@ function createWindowTabsManager() {
     init,
     createTab,
     getPaneGitGraph,
+    setPaneGitGraph,
     toggleGitGraphInActivePane,
     closeTab,
     closeActiveTab,

@@ -24,9 +24,9 @@
   import { terminalSpawn, terminalReserveId, terminalWrite, terminalResize, terminalKill, terminalStatus } from "$lib/api/terminal";
   import { buildTerminalTheme } from "$lib/domain/terminal-theme";
   import { buildCdSyncSequence, buildPathsInsertion } from "$lib/domain/terminal-command";
-  import { decideCdSync } from "$lib/domain/terminal-cwd-sync";
+  import { decideCdSync, createInjectedCdTracker } from "$lib/domain/terminal-cwd-sync";
   import { isWindows } from "$lib/domain/platform";
-  import { isShellReservedKey, isHardcodedAppShortcut } from "$lib/domain/terminal-keys";
+  import { isShellReservedKey, isHardcodedAppShortcut, resolveTerminalShortcut } from "$lib/domain/terminal-keys";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
@@ -107,7 +107,7 @@
         // fast tab switches the echo lands while a different tab is active
         // and would overwrite that tab's cwd (#266). Only genuine user cds
         // (typed in the shell) pull the explorer along.
-        if (injectedCds.delete(path)) return;
+        if (injectedCds.consume(path)) return;
         if (!settingsStore.explorerFollowsTerminal) return;
         const explorer = windowTabsManager.getActiveExplorer();
         if (explorer && explorer.currentPath !== path) {
@@ -158,20 +158,16 @@
     term?.focus();
   }
 
-  // Targets of cds we injected whose OSC 7 echo hasn't arrived yet (#266).
-  // Bounded: entries are consumed by the echo; a shell without OSC 7 support
-  // never fires the cwd listener at all, so the set can't grow unobserved.
-  const injectedCds = new Set<string>();
+  // Targets of cds we injected whose OSC 7 echo hasn't arrived yet
+  // (#266, #364): a counted, path-normalized tracker — see its doc for the
+  // fast-tab-switch race a plain Set reintroduced.
+  const injectedCds = createInjectedCdTracker();
 
   function writeCd(path: string): void {
     // Defensive: never inject `cd 'null'` if a caller ever passes a nullish
     // target (see the queue-poll re-entrancy guard, #154).
     if (terminalId === null || path == null) return;
     injectedCds.add(path);
-    if (injectedCds.size > 8) {
-      const oldest = injectedCds.values().next().value;
-      if (oldest !== undefined) injectedCds.delete(oldest);
-    }
     terminalWrite(terminalId, buildCdSyncSequence(path, isWindows));
   }
 
@@ -273,6 +269,43 @@
     term.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") return true;
       if (keybindingsStore.isChordActive) return false;
+      const ctrlOnly = event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey;
+      // Ctrl+C with a selection copies it (VS Code parity, #374): the user
+      // is copying terminal text, not interrupting the shell — and
+      // definitely not copying files in the explorer.
+      if (ctrlOnly && event.key.toLowerCase() === "c" && term?.hasSelection()) {
+        const text = term.getSelection();
+        term.clearSelection();
+        void navigator.clipboard.writeText(text).catch(() => {
+          toastStore.error("Could not copy selection");
+        });
+        event.preventDefault();
+        return false;
+      }
+      // Ctrl+V pastes explicitly through xterm (bracketed-paste aware):
+      // native paste into xterm's hidden textarea is unreliable in some
+      // WebViews (#374), and the explorer's file-paste must never fire here.
+      if (ctrlOnly && event.key.toLowerCase() === "v") {
+        void navigator.clipboard
+          .readText()
+          .then((text) => {
+            if (text) term?.paste(text);
+          })
+          .catch(() => {
+            /* clipboard unavailable — the native paste path may still work */
+          });
+        event.preventDefault();
+        return false;
+      }
+      // User-configured line-editing shortcuts (#375): inject the mapped
+      // readline control byte. Default map is empty, so nothing changes
+      // unless the user binds an action in Settings → Terminal.
+      const sequence = resolveTerminalShortcut(event, settingsStore.terminalShortcuts);
+      if (sequence !== null) {
+        if (terminalId !== null) terminalWrite(terminalId, sequence);
+        event.preventDefault();
+        return false;
+      }
       const appBound = keybindingsStore.matchesAnyBinding(event) || isHardcodedAppShortcut(event);
       return isShellReservedKey(event, { appBound });
     });

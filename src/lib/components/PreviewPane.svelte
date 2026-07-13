@@ -15,6 +15,7 @@
   import { frecencyStore } from "$lib/state/frecency.svelte";
   import { getFileIconColor } from "$lib/domain/file-types";
   import { getScmStore } from "$lib/state/scm.svelte";
+  import { gitCommitFileDiff } from "$lib/api/git-log";
 
   // Window-global surface: the preview's SCM diff follows the ACTIVE pane's
   // store (#334) — reactive through windowTabsManager.activePaneId.
@@ -294,6 +295,10 @@
 
   // --- Git diff preview state ---
   const activeDiff = $derived(scmStore.activeDiff);
+  // Commit file diff routed from the git graph (#366); wins over the
+  // working-tree diff when both are somehow set (openers clear the other).
+  const commitDiff = $derived(scmStore.commitDiff);
+  const diffPath = $derived(commitDiff?.path ?? activeDiff?.path ?? "");
   let diffParsed = $state<ParsedDiff | null>(null);
   let diffLoading = $state(false);
   let diffError = $state<string | null>(null);
@@ -353,6 +358,10 @@
   }
 
   $effect(() => {
+    if (commitDiff) {
+      void loadCommitDiff(commitDiff);
+      return;
+    }
     if (!activeDiff || !scmStore.repoRoot) {
       diffRequestGen++; // invalidate any in-flight request
       diffParsed = null;
@@ -366,6 +375,24 @@
     void scmStore.summary;
     loadDiff(scmStore.repoRoot, activeDiff.path, activeDiff.staged);
   });
+
+  /** Load a commit file diff for the graph-routed target (#366). */
+  async function loadCommitDiff(cd: { repoPath: string; oid: string; path: string }): Promise<void> {
+    const gen = ++diffRequestGen;
+    diffLoading = true;
+    diffError = null;
+    try {
+      const text = await gitCommitFileDiff(cd.repoPath, cd.oid, cd.path);
+      if (gen !== diffRequestGen || scmStore.commitDiff !== cd) return;
+      diffParsed = parseUnifiedDiff(text);
+    } catch (err) {
+      if (gen !== diffRequestGen) return;
+      diffError = err instanceof Error ? err.message : String(err);
+      diffParsed = null;
+    } finally {
+      if (gen === diffRequestGen) diffLoading = false;
+    }
+  }
 
   async function loadDiff(repoRoot: string, path: string, staged: boolean): Promise<void> {
     const gen = ++diffRequestGen;
@@ -619,24 +646,35 @@
       </svg>
     </button>
   {/if}
-  {#if activeDiff}
+  {#if activeDiff || commitDiff}
     <div class="preview-header">
-      <span class="preview-filename" title={activeDiff.path}>{activeDiff.path.split("/").pop()}</span>
-      <span class="preview-type-badge" class:diff-staged={activeDiff.staged} class:diff-unstaged={!activeDiff.staged}>
-        {diffSubtitle || "git diff"}
-      </span>
+      <span class="preview-filename" title={diffPath}>{diffPath.split("/").pop()}</span>
+      {#if commitDiff}
+        <span class="preview-type-badge diff-commit" title={commitDiff.oid}>
+          commit {commitDiff.oid.slice(0, 7)}
+        </span>
+      {:else if activeDiff}
+        <span class="preview-type-badge" class:diff-staged={activeDiff.staged} class:diff-unstaged={!activeDiff.staged}>
+          {diffSubtitle || "git diff"}
+        </span>
+      {/if}
     </div>
     <div class="diff-actions">
-      <button type="button" class="diff-action-btn" onclick={openDiffFileInEditor}>Open File</button>
-      {#if activeDiff.staged}
-        <button type="button" class="diff-action-btn" onclick={unstageFromDiff}>Unstage</button>
-      {:else}
-        <button type="button" class="diff-action-btn" onclick={stageFromDiff}>Stage</button>
-        {#if !diffParsed?.added}
-          <button type="button" class="diff-action-btn danger" onclick={discardFromDiff}>Discard</button>
+      {#if commitDiff}
+        <!-- Historical diff: stage/unstage/discard don't apply (#366). -->
+        <button type="button" class="diff-action-btn" title="Close diff (Esc)" onclick={() => scmStore.closeCommitDiff()}>Close</button>
+      {:else if activeDiff}
+        <button type="button" class="diff-action-btn" onclick={openDiffFileInEditor}>Open File</button>
+        {#if activeDiff.staged}
+          <button type="button" class="diff-action-btn" onclick={unstageFromDiff}>Unstage</button>
+        {:else}
+          <button type="button" class="diff-action-btn" onclick={stageFromDiff}>Stage</button>
+          {#if !diffParsed?.added}
+            <button type="button" class="diff-action-btn danger" onclick={discardFromDiff}>Discard</button>
+          {/if}
         {/if}
+        <button type="button" class="diff-action-btn" title="Close diff (Esc)" onclick={() => scmStore.closeDiff()}>Close</button>
       {/if}
-      <button type="button" class="diff-action-btn" title="Close diff (Esc)" onclick={() => scmStore.closeDiff()}>Close</button>
     </div>
     <div class="preview-content">
       {#if diffLoading}
@@ -658,7 +696,7 @@
                 <span class="diff-content">{line.text}</span>
               {:else}
                 <!-- highlightDiffLine output is hljs-generated/escaped HTML — safe sink (#227). -->
-                <span class="diff-content">{@html highlightDiffLine(line.text, activeDiff.path)}</span>
+                <span class="diff-content">{@html highlightDiffLine(line.text, diffPath)}</span>
               {/if}
             </div>
           {/each}
@@ -668,7 +706,7 @@
     <div class="preview-info">
       <div class="info-row">
         <span class="info-label">Path</span>
-        <span class="info-value" title={activeDiff.path}>{activeDiff.path}</span>
+        <span class="info-value" title={diffPath}>{diffPath}</span>
       </div>
     </div>
   {:else if !selectedFile}

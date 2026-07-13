@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 use crate::error::AppError;
-use crate::git_common::{open_repo, to_app_err};
+use crate::git_common::{open_repo, to_app_err, workdir_key};
 use crate::task_registry::TaskRegistry;
 
 static GIT_TASKS: TaskRegistry = TaskRegistry::new();
@@ -281,7 +281,7 @@ pub fn collect_status(repo: &Repository) -> Result<GitStatusSummary, AppError> {
 
     let mut summary = GitStatusSummary {
         is_repo: true,
-        repo_root: Some(workdir.to_string_lossy().to_string()),
+        repo_root: workdir_key(repo),
         branch: None,
         detached: false,
         op_state: repo_op_state(repo).to_string(),
@@ -361,16 +361,13 @@ pub async fn git_init(path: String) -> Result<String, AppError> {
     run_blocking(move |_cancel| {
         let p = PathBuf::from(&path);
         if let Ok(existing) = open_repo(&p) {
-            if let Some(wd) = existing.workdir() {
-                return Ok(wd.to_string_lossy().to_string());
+            if let Some(root) = workdir_key(&existing) {
+                return Ok(root);
             }
         }
         let repo = Repository::init(&p).map_err(to_app_err)?;
-        let root = repo
-            .workdir()
-            .ok_or_else(|| AppError::Other("git: init produced a bare repository".into()))?
-            .to_string_lossy()
-            .to_string();
+        let root = workdir_key(&repo)
+            .ok_or_else(|| AppError::Other("git: init produced a bare repository".into()))?;
         Ok(root)
     })
     .await
@@ -416,7 +413,7 @@ pub async fn git_repo_root(path: String) -> Result<Option<String>, AppError> {
     run_blocking(move |_cancel| {
         let p = PathBuf::from(&path);
         match open_repo(&p) {
-            Ok(repo) => Ok(repo.workdir().map(|wd| wd.to_string_lossy().to_string())),
+            Ok(repo) => Ok(workdir_key(&repo)),
             Err(_) => Ok(None),
         }
     })
@@ -746,7 +743,13 @@ pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), App
         }
         Err(_) => return Ok(()), // silently no-op when not a repo
     };
-    let key = repo_root.to_string_lossy().to_string();
+    let key = {
+        let mut s = repo_root.to_string_lossy().to_string();
+        while s.len() > 1 && (s.ends_with('/') || s.ends_with('\\')) {
+            s.pop();
+        }
+        s
+    };
 
     let mut map = watchers_map()
         .lock()
@@ -896,6 +899,24 @@ mod tests {
             .args(["commit", "-m", msg])
             .status()
             .unwrap();
+    }
+
+    #[test]
+    fn repo_root_is_reported_without_trailing_separator() {
+        // git2's workdir() keeps a trailing slash; the emitted root must not,
+        // or the same repo gets two identities in path-keyed caches (#369).
+        let dir = init_repo();
+        write(dir.path(), "a.txt", "hello\n");
+        commit_all(dir.path(), "init");
+
+        let repo = open_repo(dir.path()).unwrap();
+        let key = workdir_key(&repo).unwrap();
+        assert!(!key.ends_with('/') && !key.ends_with('\\'), "key: {key}");
+        assert!(key.len() > 1);
+
+        let s = sync_status(dir.path());
+        let root = s.repo_root.unwrap();
+        assert!(!root.ends_with('/') && !root.ends_with('\\'), "root: {root}");
     }
 
     #[test]

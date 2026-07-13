@@ -11,6 +11,8 @@ import { recentFilesStore } from "../recent-files.svelte";
 import { dialogStore } from "../dialogs.svelte";
 import { terminalPanelStore } from "../terminal.svelte";
 import { openInTerminal, gitRepoRoot } from "$lib/api/files";
+import { gitFetch } from "$lib/api/git-log";
+import { notifyLocalGitChange } from "$lib/state/git-refresh";
 import { toastStore } from "../toast.svelte";
 import { readFocusedWindowState } from "../focused-window";
 import { getActiveExplorer, openNewWindow } from "./shared";
@@ -133,6 +135,29 @@ export const gitGraphCommands: Command[] = [
         windowTabsManager.toggleGitGraphInActivePane(root.data);
       } else {
         toastStore.show("Not inside a git repository", "info");
+      }
+    },
+  },
+  {
+    id: "git.fetch",
+    label: "Git: Fetch from Origin",
+    category: "general",
+    handler: async () => {
+      const path = getActiveExplorer()?.state.currentPath;
+      if (!path) return;
+      const root = await gitRepoRoot(path);
+      if (!root.ok || !root.data) {
+        toastStore.show("Not inside a git repository", "info");
+        return;
+      }
+      try {
+        await gitFetch(root.data);
+        toastStore.success("Fetched from remotes");
+        // The repo watcher (git graph, SCM panel, badges) picks up the new
+        // refs; announce for consumers without a watcher.
+        notifyLocalGitChange(root.data);
+      } catch (err) {
+        toastStore.error(err instanceof Error ? err.message : String(err));
       }
     },
   },

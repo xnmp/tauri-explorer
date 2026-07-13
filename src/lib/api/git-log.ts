@@ -55,6 +55,9 @@ export interface GitLogOptions {
    *  `main` or remote like `origin/main`). Omitted = all branches + HEAD.
    *  Unresolvable names are ignored; none resolving → empty page (#342). */
   branches?: string[];
+  /** Seed from HEAD + local branches only, hiding history reachable solely
+   *  from remote-tracking branches (#381). Ignored when `branches` is set. */
+  local_only?: boolean;
 }
 
 export interface GitRef {
@@ -163,4 +166,54 @@ export async function gitRebase(repoPath: string, oid: string): Promise<void> {
 /** Reset the current branch to `oid` with the given mode. */
 export async function gitReset(repoPath: string, oid: string, mode: ResetMode): Promise<void> {
   await invoke("git_reset", { repoPath, oid, mode });
+}
+
+export interface BranchAuthor {
+  name: string;
+  /** The branch creator: author of its first unique commit; tip author for
+   *  fully-merged branches (#376). */
+  author: string;
+  remote: boolean;
+}
+
+/** Branch → creator list for the author filter (#376). */
+export async function gitBranchAuthors(repoPath: string): Promise<BranchAuthor[]> {
+  return invoke<BranchAuthor[]>("git_branch_authors", { repoPath });
+}
+
+/** Fetch from every remote with pruning (#370). */
+export async function gitFetch(repoPath: string): Promise<void> {
+  await invoke("git_fetch", { repoPath });
+}
+
+/** Fast-forward pull on the current branch (#377). */
+export async function gitPull(repoPath: string): Promise<void> {
+  await invoke("git_pull", { repoPath });
+}
+
+/** Commits `name`'s upstream has that the local branch lacks; null when no
+ *  upstream is configured (#377). */
+export async function gitBranchBehindUpstream(
+  repoPath: string,
+  name: string,
+): Promise<number | null> {
+  return invoke<number | null>("git_branch_behind_upstream", { repoPath, name });
+}
+
+/** Delete a local branch; `force` drops unmerged commits (#371). */
+export async function gitDeleteBranch(
+  repoPath: string,
+  name: string,
+  force: boolean,
+): Promise<void> {
+  await invoke("git_delete_branch", { repoPath, name, force });
+}
+
+/** Delete `name` on `remote` (git push <remote> --delete <name>) (#371). */
+export async function gitDeleteRemoteBranch(
+  repoPath: string,
+  remote: string,
+  name: string,
+): Promise<void> {
+  await invoke("git_delete_remote_branch", { repoPath, remote, name });
 }

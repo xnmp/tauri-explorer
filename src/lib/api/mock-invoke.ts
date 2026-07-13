@@ -615,6 +615,9 @@ const MOCK_GRAPH_REFS: Record<
     { name: "origin/hotfix", kind: "RemoteBranch" },
   ],
   [fullOid(14)]: [{ name: "experiment", kind: "LocalBranch" }],
+  // Remote-only branch (no local counterpart) — exercises the remote-only
+  // chip indicator and the local-only filter (#381).
+  [fullOid(8)]: [{ name: "origin/legacy-import", kind: "RemoteBranch" }],
   [fullOid(10)]: [{ name: "feature", kind: "LocalBranch" }],
   [fullOid(5)]: [{ name: "v1.0", kind: "Tag" }],
   [fullOid(1)]: [{ name: "v0.9", kind: "Tag" }],
@@ -1425,6 +1428,22 @@ const mockCommands: Record<string, CommandHandler> = {
     mockClearOperation();
     return null;
   },
+  git_fetch: () => null,
+  git_pull: () => null,
+  // Mock: pretend 'hotfix' is 2 behind its remote so the pull offer shows.
+  git_branch_behind_upstream: (args: Record<string, unknown>) =>
+    args.name === "hotfix" ? 2 : args.name === "main" ? 0 : null,
+  git_branch_authors: () => [
+    { name: "main", author: "Alice Coder", remote: false },
+    { name: "hotfix", author: "Alice Coder", remote: false },
+    { name: "experiment", author: "Bob Dev", remote: false },
+    { name: "feature", author: "Alice Coder", remote: false },
+    { name: "origin/main", author: "Alice Coder", remote: true },
+    { name: "origin/hotfix", author: "Alice Coder", remote: true },
+    { name: "origin/legacy-import", author: "Bob Dev", remote: true },
+  ],
+  git_delete_branch: () => null,
+  git_delete_remote_branch: () => null,
 
   // ----- Git history / commit graph (#57) -----
 

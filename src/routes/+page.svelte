@@ -768,6 +768,22 @@
     -webkit-backdrop-filter: blur(60px) saturate(125%);
   }
 
+  /* Fullscreen preview (#379): on Chromium/WebView2 a backdrop-filter makes
+     .explorer the containing block for position:fixed descendants, so the
+     "fullscreen" preview laid out inside it and was clipped by the preview
+     island's overflow:hidden — the rest of the app stayed visible around
+     the image on Windows. The fullscreen preview covers the window with an
+     opaque background, so suspending the blur (and the island's clip) for
+     that moment is invisible. */
+  :global([data-preview-fullscreen]) .explorer {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  :global([data-preview-fullscreen][data-vibrancy]) .preview-island {
+    overflow: visible;
+  }
+
   /* Mica effect gradient overlay — disabled due to gradient banding artifacts */
 
 
@@ -849,17 +865,33 @@
     background: var(--win-acrylic-tint, transparent);
   }
 
-  /* Windows Mica/Acrylic: the macOS island tint (a white sheen over a lighter,
-     translucent card) washes the UI out compared to normal mode. Repaint the
-     islands with the theme's normal elevated card colour over a solid base —
-     opaque (so the bright Acrylic doesn't bleed through and wash it out) and
-     keeping the theme's card colour instead of going flat black. The frost
-     still shows through the chrome/gaps (titlebar, sidebar, padding). Must
-     follow the [data-vibrancy] var block to win the specificity tie. */
+  /* Windows Mica/Acrylic (#382): the macOS island tint (a white sheen over a
+     lighter, translucent card) washes the UI out, but the previous fix —
+     fully OPAQUE islands — meant the native backdrop only peeked through the
+     chrome gaps and "transparency" read as broken. Islands now use the
+     theme's dark SOLID colour at the Backdrop Opacity slider's strength
+     (default 85%): dark enough not to wash out, translucent enough that the
+     Mica/Acrylic material actually shows through the whole UI. Must follow
+     the [data-vibrancy] var block to win the specificity tie. */
   :global([data-win-backdrop]) {
     --vibrancy-island-bg:
-      linear-gradient(var(--background-card), var(--background-card)),
-      var(--background-solid);
+      linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.04) 0%,
+        transparent 40%,
+        rgba(0, 0, 0, 0.02) 100%
+      ),
+      color-mix(
+        in srgb,
+        var(--background-solid) calc(var(--win-backdrop-strength, 0.85) * 100%),
+        transparent
+      );
+    --vibrancy-island-bg-structural:
+      color-mix(
+        in srgb,
+        var(--background-solid) calc(var(--win-backdrop-strength, 0.85) * 88%),
+        transparent
+      );
   }
 
   /* No-blur mode: the island layout without any native transparency —

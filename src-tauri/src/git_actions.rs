@@ -215,6 +215,84 @@ pub async fn git_revert_abort(repo_path: String) -> Result<(), AppError> {
     run_git_async(repo_path, vec!["revert".into(), "--abort".into()]).await
 }
 
+/// Fetch from every remote, pruning deleted remote branches (#370). Uses the
+/// CLI so the user's credential setup (helpers, ssh agent) applies — libgit2
+/// has no access to those.
+#[tauri::command]
+pub async fn git_fetch(repo_path: String) -> Result<(), AppError> {
+    run_git_async(
+        repo_path,
+        vec!["fetch".into(), "--all".into(), "--prune".into()],
+    )
+    .await
+}
+
+/// Fast-forward pull on the current branch (#377). `--ff-only` so a diverged
+/// branch errors (surfaced verbatim) instead of creating a surprise merge.
+#[tauri::command]
+pub async fn git_pull(repo_path: String) -> Result<(), AppError> {
+    run_git_async(repo_path, vec!["pull".into(), "--ff-only".into()]).await
+}
+
+/// How many commits `name`'s upstream has that the local branch lacks
+/// (#377): 0 = up to date or ahead; None = no upstream configured.
+#[tauri::command]
+pub async fn git_branch_behind_upstream(
+    repo_path: String,
+    name: String,
+) -> Result<Option<usize>, AppError> {
+    validate_arg("branch name", &name)?;
+    tokio::task::spawn_blocking(move || {
+        let repo = crate::git_common::open_repo(Path::new(&repo_path))?;
+        let branch = repo
+            .find_branch(&name, git2::BranchType::Local)
+            .map_err(crate::git_common::to_app_err)?;
+        let Ok(upstream) = branch.upstream() else {
+            return Ok(None);
+        };
+        let (Some(local), Some(remote)) = (branch.get().target(), upstream.get().target()) else {
+            return Ok(None);
+        };
+        let (_ahead, behind) = repo
+            .graph_ahead_behind(local, remote)
+            .map_err(crate::git_common::to_app_err)?;
+        Ok(Some(behind))
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("git action task join: {e}")))?
+}
+
+/// Delete a local branch (#371). `force` uses `-D` (drops unmerged commits);
+/// otherwise `-d`, and git's "not fully merged" refusal is surfaced verbatim.
+/// git itself refuses to delete the checked-out branch.
+#[tauri::command]
+pub async fn git_delete_branch(
+    repo_path: String,
+    name: String,
+    force: bool,
+) -> Result<(), AppError> {
+    validate_arg("branch name", &name)?;
+    let flag = if force { "-D" } else { "-d" };
+    run_git_async(repo_path, vec!["branch".into(), flag.into(), name]).await
+}
+
+/// Delete a branch on a remote (#371): `git push <remote> --delete <name>`.
+/// CLI for the same credential reasons as `git_fetch`.
+#[tauri::command]
+pub async fn git_delete_remote_branch(
+    repo_path: String,
+    remote: String,
+    name: String,
+) -> Result<(), AppError> {
+    validate_arg("remote", &remote)?;
+    validate_arg("branch name", &name)?;
+    run_git_async(
+        repo_path,
+        vec!["push".into(), remote, "--delete".into(), name],
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,6 +352,66 @@ mod tests {
 
     fn repo_path(dir: &TempDir) -> String {
         dir.path().to_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn behind_upstream_counts_remote_lead() {
+        let (dir, cs) = linear_repo();
+        let rp = repo_path(&dir);
+        // Local branch "topic" at c1; its "remote" ref at c2 (one ahead).
+        git(dir.path(), &["remote", "add", "origin", "."]);
+        git(dir.path(), &["branch", "topic", &cs[0]]);
+        git(dir.path(), &["update-ref", "refs/remotes/origin/topic", &cs[1]]);
+        git(dir.path(), &["config", "branch.topic.remote", "origin"]);
+        git(dir.path(), &["config", "branch.topic.merge", "refs/heads/topic"]);
+
+        let behind =
+            tokio_test_block(git_branch_behind_upstream(rp.clone(), "topic".into())).unwrap();
+        assert_eq!(behind, Some(1));
+
+        // No upstream configured → None.
+        git(dir.path(), &["branch", "loner", &cs[0]]);
+        let none = tokio_test_block(git_branch_behind_upstream(rp, "loner".into())).unwrap();
+        assert_eq!(none, None);
+    }
+
+    #[test]
+    fn delete_branch_local() {
+        let (dir, cs) = linear_repo();
+        let rp = repo_path(&dir);
+        // Merged branch: safe delete works.
+        run_git(&rp, &["branch", "merged", &cs[1]]).unwrap();
+        tokio_test_block(git_delete_branch(rp.clone(), "merged".into(), false)).unwrap();
+        assert!(git_out(dir.path(), &["branch", "--list", "merged"]).is_empty());
+
+        // Unmerged branch: -d refuses (git's message surfaced), -D deletes.
+        git(dir.path(), &["checkout", "-b", "wip", &cs[0]]);
+        write(dir.path(), "b.txt", "x\n");
+        git(dir.path(), &["add", "."]);
+        git(dir.path(), &["commit", "-m", "wip-only"]);
+        git(dir.path(), &["checkout", "main"]);
+        let err = tokio_test_block(git_delete_branch(rp.clone(), "wip".into(), false));
+        assert!(matches!(err, Err(AppError::Other(m)) if m.contains("not fully merged")));
+        tokio_test_block(git_delete_branch(rp.clone(), "wip".into(), true)).unwrap();
+        assert!(git_out(dir.path(), &["branch", "--list", "wip"]).is_empty());
+
+        // Checked-out branch: git refuses.
+        let err = tokio_test_block(git_delete_branch(rp, "main".into(), true));
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn delete_remote_branch_via_push() {
+        // "Remote" is a local bare repo; push --delete must remove the ref there.
+        let (dir, _cs) = linear_repo();
+        let rp = repo_path(&dir);
+        let remote_dir = TempDir::new().unwrap();
+        git(remote_dir.path(), &["init", "--bare"]);
+        git(dir.path(), &["remote", "add", "origin", remote_dir.path().to_str().unwrap()]);
+        git(dir.path(), &["push", "origin", "main:topic"]);
+        assert!(!git_out(dir.path(), &["ls-remote", "origin", "refs/heads/topic"]).is_empty());
+        tokio_test_block(git_delete_remote_branch(rp, "origin".into(), "topic".into())).unwrap();
+        assert!(git_out(dir.path(), &["ls-remote", "origin", "refs/heads/topic"]).is_empty());
     }
 
     #[test]

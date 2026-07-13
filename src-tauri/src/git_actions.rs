@@ -227,6 +227,41 @@ pub async fn git_fetch(repo_path: String) -> Result<(), AppError> {
     .await
 }
 
+/// Fast-forward pull on the current branch (#377). `--ff-only` so a diverged
+/// branch errors (surfaced verbatim) instead of creating a surprise merge.
+#[tauri::command]
+pub async fn git_pull(repo_path: String) -> Result<(), AppError> {
+    run_git_async(repo_path, vec!["pull".into(), "--ff-only".into()]).await
+}
+
+/// How many commits `name`'s upstream has that the local branch lacks
+/// (#377): 0 = up to date or ahead; None = no upstream configured.
+#[tauri::command]
+pub async fn git_branch_behind_upstream(
+    repo_path: String,
+    name: String,
+) -> Result<Option<usize>, AppError> {
+    validate_arg("branch name", &name)?;
+    tokio::task::spawn_blocking(move || {
+        let repo = crate::git_common::open_repo(Path::new(&repo_path))?;
+        let branch = repo
+            .find_branch(&name, git2::BranchType::Local)
+            .map_err(crate::git_common::to_app_err)?;
+        let Ok(upstream) = branch.upstream() else {
+            return Ok(None);
+        };
+        let (Some(local), Some(remote)) = (branch.get().target(), upstream.get().target()) else {
+            return Ok(None);
+        };
+        let (_ahead, behind) = repo
+            .graph_ahead_behind(local, remote)
+            .map_err(crate::git_common::to_app_err)?;
+        Ok(Some(behind))
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("git action task join: {e}")))?
+}
+
 /// Delete a local branch (#371). `force` uses `-D` (drops unmerged commits);
 /// otherwise `-d`, and git's "not fully merged" refusal is surfaced verbatim.
 /// git itself refuses to delete the checked-out branch.
@@ -317,6 +352,27 @@ mod tests {
 
     fn repo_path(dir: &TempDir) -> String {
         dir.path().to_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn behind_upstream_counts_remote_lead() {
+        let (dir, cs) = linear_repo();
+        let rp = repo_path(&dir);
+        // Local branch "topic" at c1; its "remote" ref at c2 (one ahead).
+        git(dir.path(), &["remote", "add", "origin", "."]);
+        git(dir.path(), &["branch", "topic", &cs[0]]);
+        git(dir.path(), &["update-ref", "refs/remotes/origin/topic", &cs[1]]);
+        git(dir.path(), &["config", "branch.topic.remote", "origin"]);
+        git(dir.path(), &["config", "branch.topic.merge", "refs/heads/topic"]);
+
+        let behind =
+            tokio_test_block(git_branch_behind_upstream(rp.clone(), "topic".into())).unwrap();
+        assert_eq!(behind, Some(1));
+
+        // No upstream configured → None.
+        git(dir.path(), &["branch", "loner", &cs[0]]);
+        let none = tokio_test_block(git_branch_behind_upstream(rp, "loner".into())).unwrap();
+        assert_eq!(none, None);
     }
 
     #[test]

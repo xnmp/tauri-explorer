@@ -186,6 +186,20 @@ export async function gitFetch(repoPath: string): Promise<void> {
   await invoke("git_fetch", { repoPath });
 }
 
+/** Fast-forward pull on the current branch (#377). */
+export async function gitPull(repoPath: string): Promise<void> {
+  await invoke("git_pull", { repoPath });
+}
+
+/** Commits `name`'s upstream has that the local branch lacks; null when no
+ *  upstream is configured (#377). */
+export async function gitBranchBehindUpstream(
+  repoPath: string,
+  name: string,
+): Promise<number | null> {
+  return invoke<number | null>("git_branch_behind_upstream", { repoPath, name });
+}
+
 /** Delete a local branch; `force` drops unmerged commits (#371). */
 export async function gitDeleteBranch(
   repoPath: string,

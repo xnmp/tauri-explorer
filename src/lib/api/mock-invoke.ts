@@ -1429,6 +1429,10 @@ const mockCommands: Record<string, CommandHandler> = {
     return null;
   },
   git_fetch: () => null,
+  git_pull: () => null,
+  // Mock: pretend 'hotfix' is 2 behind its remote so the pull offer shows.
+  git_branch_behind_upstream: (args: Record<string, unknown>) =>
+    args.name === "hotfix" ? 2 : args.name === "main" ? 0 : null,
   git_branch_authors: () => [
     { name: "main", author: "Alice Coder", remote: false },
     { name: "hotfix", author: "Alice Coder", remote: false },

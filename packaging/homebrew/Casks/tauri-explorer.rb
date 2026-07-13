@@ -21,9 +21,8 @@ cask "tauri-explorer" do
   caveats <<~EOS
     The app is not yet code-signed or notarized, so macOS will report it
     as "damaged" on first launch (right-click → Open does NOT bypass this
-    on macOS 15+). Either install with the quarantine flag disabled:
-      brew install --cask --no-quarantine xnmp/tap/tauri-explorer
-    or clear the flag after installing:
-      xattr -rd com.apple.quarantine "#{appdir}/tauri-explorer.app"
+    on macOS 15+, and Homebrew no longer offers --no-quarantine). Clear
+    the quarantine flag after installing:
+      xattr -r -d com.apple.quarantine "#{appdir}/tauri-explorer.app"
   EOS
 end

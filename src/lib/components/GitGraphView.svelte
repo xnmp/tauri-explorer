@@ -113,7 +113,9 @@
   import { parseUnifiedDiff, type ParsedDiff } from "$lib/domain/diff";
   import { highlightDiffLine } from "$lib/domain/syntax-highlight";
   import { gitStatusLetter } from "$lib/domain/git";
-  import { notifyLocalGitChange } from "$lib/state/git-refresh";
+  import { notifyLocalGitChange, subscribeGitChanges } from "$lib/state/git-refresh";
+  import { gitWatchRepo, gitUnwatchRepo } from "$lib/api/git";
+  import { directoryKey } from "$lib/domain/path";
   import { toastStore } from "$lib/state/toast.svelte";
   import { gitDiff } from "$lib/api/files";
   import { untrack } from "svelte";
@@ -431,6 +433,37 @@
     void repoPath;
     void branchFilter;
     untrack(() => void loadPage(0));
+  });
+
+  // Live refresh (#365): watch the repo and reload page 0 when git state
+  // changes underneath us (pull/commit/checkout from the terminal, another
+  // window, or the SCM panel). Watcher events are coalesced backend-side;
+  // a short debounce here folds the watcher burst a pull produces into one
+  // reload, and reloads are skipped while a load is already in flight.
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  $effect(() => {
+    const repo = repoPath;
+    let disposed = false;
+    let unsub: (() => void) | undefined;
+    void gitWatchRepo(repo);
+    void subscribeGitChanges((change) => {
+      if (change.repoRoot && directoryKey(change.repoRoot) !== directoryKey(repo)) return;
+      if (refreshTimer !== null) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        if (!disposed && !untrack(() => loading)) void loadPage(0);
+      }, 300);
+    }).then((u) => {
+      if (disposed) u();
+      else unsub = u;
+    });
+    return () => {
+      disposed = true;
+      if (refreshTimer !== null) clearTimeout(refreshTimer);
+      refreshTimer = null;
+      unsub?.();
+      void gitUnwatchRepo(repo);
+    };
   });
 
   // ----- Branch filter popover (#342) -----

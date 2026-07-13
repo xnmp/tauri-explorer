@@ -52,8 +52,24 @@ with (icons_dir / "icon.ico").open("wb") as f:
         f.write(data)
 print("Generated icon.ico")
 
-# Generate .icns (macOS) - Pillow supports saving as ICNS
+# Generate .icns (macOS). icon.png carries pre-Tahoe padding (tile at ~77%
+# of a transparent canvas); since macOS 26 the system tiles that padded art
+# onto a grey squircle backing, shrunken. The correct look — confirmed by
+# manually applying the Square*Logo art via Get Info — is the tile at nearly
+# full frame with ITS OWN silhouette (rounded corners, tab, transparency
+# outside), matching the Square*Logo framing. Crop to the opaque tile's
+# alpha bounding box (soft shadow excluded from the measure, clipped to the
+# margin like the Square logos) plus a small margin, alpha preserved.
+ICNS_MARGIN = 0.03
+alpha_bbox = png.getchannel("A").point(lambda a: 255 if a > 200 else 0).getbbox()
+bw, bh = alpha_bbox[2] - alpha_bbox[0], alpha_bbox[3] - alpha_bbox[1]
+side = round(max(bw, bh) * (1 + 2 * ICNS_MARGIN))
+cx, cy = (alpha_bbox[0] + alpha_bbox[2]) // 2, (alpha_bbox[1] + alpha_bbox[3]) // 2
+canvas = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+canvas.paste(png, (side // 2 - cx, side // 2 - cy), png)
+
 icns_sizes = [16, 32, 64, 128, 256, 512]
-icns_images = [png.resize((s, s), Image.LANCZOS) for s in icns_sizes]
+icns_images = [canvas.resize((s, s), Image.LANCZOS) for s in icns_sizes]
 icns_images[0].save(icons_dir / "icon.icns", format="ICNS", append_images=icns_images[1:])
-print("Generated icon.icns")
+canvas.resize((512, 512), Image.LANCZOS).save(icons_dir / "icns-preview.png")
+print("Generated icon.icns (Square-logo framing) + icns-preview.png")

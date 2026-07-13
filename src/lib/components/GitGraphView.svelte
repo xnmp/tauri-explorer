@@ -303,6 +303,30 @@
     graphCol === null ? graphWidth : Math.max(GRAPH_COL_MIN, Math.min(GRAPH_COL_MAX, graphCol)),
   );
 
+  // Column visibility (#372): author/date/commit are hideable via the
+  // header's right-click menu; message and the graph itself always show.
+  // Persisted globally (a layout preference, not per-repo).
+  const COLUMNS_KEY = "git-graph-columns";
+  type ColumnId = "author" | "date" | "commit";
+  const savedColumns = loadPersisted<unknown>(COLUMNS_KEY, null);
+  let shownColumns = $state<Record<ColumnId, boolean>>({
+    author: true,
+    date: true,
+    commit: true,
+    ...(typeof savedColumns === "object" && savedColumns !== null ? savedColumns : {}),
+  });
+  let columnMenu = $state<{ x: number; y: number } | null>(null);
+
+  function toggleColumn(id: ColumnId): void {
+    shownColumns = { ...shownColumns, [id]: !shownColumns[id] };
+    savePersisted(COLUMNS_KEY, shownColumns);
+  }
+
+  function openColumnMenu(event: MouseEvent): void {
+    event.preventDefault();
+    columnMenu = { x: clientToFixed(event.clientX), y: clientToFixed(event.clientY) };
+  }
+
   function startGraphColResize(event: MouseEvent): void {
     event.preventDefault();
     graphColResizing = true;
@@ -749,7 +773,8 @@
   {#if error}
     <div class="graph-status error">{error}</div>
   {:else}
-    <div class="graph-header" style:padding-left="{effectiveGraphWidth + 20}px">
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- right-click opens the column-visibility menu; not reachable by keyboard by design (parity with the row context menu) -->
+    <div class="graph-header" role="row" tabindex="-1" style:padding-left="{effectiveGraphWidth + 20}px" oncontextmenu={openColumnMenu}>
       <button
         class="branch-filter-btn"
         class:filtered={branchFilter !== null}
@@ -826,34 +851,65 @@
         data-testid="handle-graph"
       ></span>
       <span class="gh-message">Message</span>
-      <span class="gh-author" style:width="{authorCol.width}px">
-        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-        <span
-          class="col-handle handle-in-cell"
-          class:active={authorCol.isResizing}
-          onmousedown={authorCol.startResize}
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize author column"
-          data-testid="handle-author"
-        ></span>
-        Author
-      </span>
-      <span class="gh-date" style:width="{dateCol.width}px">
-        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-        <span
-          class="col-handle handle-in-cell"
-          class:active={dateCol.isResizing}
-          onmousedown={dateCol.startResize}
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize date column"
-          data-testid="handle-date"
-        ></span>
-        Date
-      </span>
-      <span class="gh-oid">Commit</span>
+      {#if shownColumns.author}
+        <span class="gh-author" style:width="{authorCol.width}px">
+          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+          <span
+            class="col-handle handle-in-cell"
+            class:active={authorCol.isResizing}
+            onmousedown={authorCol.startResize}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize author column"
+            data-testid="handle-author"
+          ></span>
+          Author
+        </span>
+      {/if}
+      {#if shownColumns.date}
+        <span class="gh-date" style:width="{dateCol.width}px">
+          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+          <span
+            class="col-handle handle-in-cell"
+            class:active={dateCol.isResizing}
+            onmousedown={dateCol.startResize}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize date column"
+            data-testid="handle-date"
+          ></span>
+          Date
+        </span>
+      {/if}
+      {#if shownColumns.commit}<span class="gh-oid">Commit</span>{/if}
     </div>
+    {#if columnMenu}
+      <button
+        class="menu-backdrop"
+        aria-label="Close column menu"
+        onclick={() => (columnMenu = null)}
+        oncontextmenu={(e) => { e.preventDefault(); columnMenu = null; }}
+      ></button>
+      <div
+        class="commit-menu"
+        data-testid="git-graph-column-menu"
+        role="menu"
+        tabindex="-1"
+        style="left: {columnMenu.x}px; top: {columnMenu.y}px;"
+      >
+        {#each [["author", "Author"], ["date", "Date"], ["commit", "Commit"]] as [id, label] (id)}
+          <button
+            class="menu-item"
+            role="menuitemcheckbox"
+            aria-checked={shownColumns[id as ColumnId]}
+            onclick={() => toggleColumn(id as ColumnId)}
+          >
+            <span class="col-check">{shownColumns[id as ColumnId] ? "✓" : ""}</span>
+            {label}
+          </button>
+        {/each}
+      </div>
+    {/if}
     {#if commits.length === 0 && loading}
       <div class="graph-status">Loading history…</div>
     {:else if commits.length === 0}
@@ -955,9 +1011,9 @@
                 <span class="ref ref-tag">{tag}</span>
               {/each}
               <span class="summary" title={commit.summary}>{commit.summary}</span>
-              <span class="author" style:width="{authorCol.width}px">{commit.author_name}</span>
-              <span class="date" style:width="{dateCol.width}px">{formatDate(commit.author_time)}</span>
-              <span class="oid">{commit.short_oid}</span>
+              {#if shownColumns.author}<span class="author" style:width="{authorCol.width}px">{commit.author_name}</span>{/if}
+              {#if shownColumns.date}<span class="date" style:width="{dateCol.width}px">{formatDate(commit.author_time)}</span>{/if}
+              {#if shownColumns.commit}<span class="oid">{commit.short_oid}</span>{/if}
             {/if}
           </div>
           {#if selected?.oid === commit.oid}
@@ -1773,6 +1829,13 @@
     height: 1px;
     margin: 4px 6px;
     background: var(--divider);
+  }
+
+  /* Fixed-width tick gutter so column labels stay aligned (#372). */
+  .col-check {
+    display: inline-block;
+    width: 12px;
+    color: var(--accent);
   }
 
   .has-submenu {

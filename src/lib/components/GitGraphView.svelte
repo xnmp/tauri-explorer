@@ -51,12 +51,14 @@
     repoPath: string,
     branches: string[] | null = null,
     onLog?: (partial: Omit<GraphSnapshot, "workingChanges">) => void,
+    localOnly = false,
   ): Promise<GraphSnapshot> {
     const summaryPromise = gitSummary(repoPath);
     const page = await gitLog(repoPath, {
       skip: 0,
       limit: PAGE_SIZE,
       ...(branches ? { branches } : {}),
+      ...(localOnly ? { local_only: true } : {}),
     });
     const headOid =
       Object.entries(page.refs).find(([, rs]) => rs.some((r) => r.kind === "Head"))?.[0] ?? null;
@@ -169,11 +171,22 @@
       : null,
   );
 
+  // Local-branches-only (#381): hide history reachable solely from
+  // remote-tracking branches. Persisted per repo, like the branch filter.
+  const LOCAL_ONLY_KEY = `git-graph-local-only:${untrack(() => repoPath)}`;
+  let localOnly = $state(loadPersisted<unknown>(LOCAL_ONLY_KEY, false) === true);
+
+  function toggleLocalOnly(): void {
+    localOnly = !localOnly;
+    savePersisted(LOCAL_ONLY_KEY, localOnly);
+  }
+
   // Paint the last-known graph immediately on remount (#255); the load
   // effect below still refreshes from git in the background. Skipped while a
   // branch filter is active — the warm cache is always the UNFILTERED page 0,
-  // and flashing it would briefly show branches the user hid (#342).
-  if (untrack(() => branchFilter) === null) {
+  // and flashing it would briefly show branches the user hid (#342). Same
+  // reasoning for local-only (#381).
+  if (untrack(() => branchFilter) === null && !untrack(() => localOnly)) {
     // untrack: the view is {#key}ed on repoPath, so the initial value is the
     // right one for this instance's lifetime.
     const cached = graphCache.get(untrack(() => repoPath));
@@ -419,8 +432,11 @@
 
   async function loadPage(skip: number): Promise<void> {
     // Captured once so a mid-flight filter change can't mix pages; filtered
-    // loads never touch the snapshot cache (it holds the unfiltered page 0).
+    // loads (branch subset OR local-only) never touch the snapshot cache
+    // (it holds the unfiltered page 0).
     const filter = untrack(() => branchFilter);
+    const local = untrack(() => localOnly);
+    const unfiltered = filter === null && !local;
     loading = true;
     error = null;
     try {
@@ -435,21 +451,22 @@
           hasMore = partial.hasMore;
           headOid = partial.headOid;
           loading = false;
-        });
+        }, local);
         workingChanges = snapshot.workingChanges;
-        if (filter === null) cacheSnapshot(repoPath, snapshot);
+        if (unfiltered) cacheSnapshot(repoPath, snapshot);
       } else {
         const page = await gitLog(repoPath, {
           skip,
           limit: PAGE_SIZE,
           ...(filter ? { branches: filter } : {}),
+          ...(local ? { local_only: true } : {}),
         });
         commits = [...commits, ...page.commits];
         refs = { ...refs, ...page.refs };
         hasMore = page.has_more;
         // Snapshot page 0 for instant remount paint (#255) — deliberately not
         // the full paged history, which can grow unbounded.
-        if (filter === null) {
+        if (unfiltered) {
           cacheSnapshot(repoPath, {
             commits: commits.slice(0, PAGE_SIZE),
             refs,
@@ -472,6 +489,7 @@
   $effect(() => {
     void repoPath;
     void branchFilter;
+    void localOnly;
     untrack(() => void loadPage(0));
   });
 
@@ -800,7 +818,7 @@
     <div class="graph-header" role="row" tabindex="-1" style:padding-left="{effectiveGraphWidth + 20}px" oncontextmenu={openColumnMenu}>
       <button
         class="branch-filter-btn"
-        class:filtered={branchFilter !== null}
+        class:filtered={branchFilter !== null || localOnly}
         onclick={() => void toggleBranchPopover()}
         title="Filter branches"
         aria-label="Filter branches"
@@ -829,6 +847,10 @@
             autofocus
           />
           <div class="bf-list">
+            <label class="bf-row bf-local-only" title="Hide history reachable only from remote-tracking branches">
+              <input type="checkbox" checked={localOnly} onchange={toggleLocalOnly} />
+              <span class="bf-name">Local branches only</span>
+            </label>
             <button
               class="bf-row bf-all"
               class:bf-active={branchFilter === null}
@@ -1028,7 +1050,11 @@
                 </span>
               {/each}
               {#each chips.remotes as remote (remote)}
-                <span class="ref ref-remote">{remote}</span>
+                <span class="ref ref-remote" title="Remote-only branch — no local branch tracks {remote}">
+                  <svg class="remote-cloud" width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="M4.5 12.5a3 3 0 0 1-.3-6 4 4 0 0 1 7.8-.9 2.9 2.9 0 0 1-.5 5.9z" />
+                  </svg>{remote}
+                </span>
               {/each}
               {#each chips.tags as tag (tag)}
                 <span class="ref ref-tag">{tag}</span>
@@ -1790,10 +1816,18 @@
     border-color: color-mix(in srgb, #10b981 40%, transparent);
   }
 
+  /* Remote-only branch (no local branch tracks it, #381): dashed outline +
+     cloud glyph distinguish it from a local branch chip at a glance. */
   .ref-remote {
     background: color-mix(in srgb, #3b82f6 15%, transparent);
     color: #3b82f6;
     border-color: color-mix(in srgb, #3b82f6 40%, transparent);
+    border-style: dashed;
+  }
+
+  .remote-cloud {
+    margin-right: 3px;
+    vertical-align: -1px;
   }
 
   .ref-tag {

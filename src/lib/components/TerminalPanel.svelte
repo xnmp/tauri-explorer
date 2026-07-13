@@ -269,6 +269,34 @@
     term.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") return true;
       if (keybindingsStore.isChordActive) return false;
+      const ctrlOnly = event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey;
+      // Ctrl+C with a selection copies it (VS Code parity, #374): the user
+      // is copying terminal text, not interrupting the shell — and
+      // definitely not copying files in the explorer.
+      if (ctrlOnly && event.key.toLowerCase() === "c" && term?.hasSelection()) {
+        const text = term.getSelection();
+        term.clearSelection();
+        void navigator.clipboard.writeText(text).catch(() => {
+          toastStore.error("Could not copy selection");
+        });
+        event.preventDefault();
+        return false;
+      }
+      // Ctrl+V pastes explicitly through xterm (bracketed-paste aware):
+      // native paste into xterm's hidden textarea is unreliable in some
+      // WebViews (#374), and the explorer's file-paste must never fire here.
+      if (ctrlOnly && event.key.toLowerCase() === "v") {
+        void navigator.clipboard
+          .readText()
+          .then((text) => {
+            if (text) term?.paste(text);
+          })
+          .catch(() => {
+            /* clipboard unavailable — the native paste path may still work */
+          });
+        event.preventDefault();
+        return false;
+      }
       const appBound = keybindingsStore.matchesAnyBinding(event) || isHardcodedAppShortcut(event);
       return isShellReservedKey(event, { appBound });
     });

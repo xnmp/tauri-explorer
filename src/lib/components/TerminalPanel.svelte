@@ -24,7 +24,7 @@
   import { terminalSpawn, terminalReserveId, terminalWrite, terminalResize, terminalKill, terminalStatus } from "$lib/api/terminal";
   import { buildTerminalTheme } from "$lib/domain/terminal-theme";
   import { buildCdSyncSequence, buildPathsInsertion } from "$lib/domain/terminal-command";
-  import { decideCdSync } from "$lib/domain/terminal-cwd-sync";
+  import { decideCdSync, createInjectedCdTracker } from "$lib/domain/terminal-cwd-sync";
   import { isWindows } from "$lib/domain/platform";
   import { isShellReservedKey, isHardcodedAppShortcut } from "$lib/domain/terminal-keys";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
@@ -107,7 +107,7 @@
         // fast tab switches the echo lands while a different tab is active
         // and would overwrite that tab's cwd (#266). Only genuine user cds
         // (typed in the shell) pull the explorer along.
-        if (injectedCds.delete(path)) return;
+        if (injectedCds.consume(path)) return;
         if (!settingsStore.explorerFollowsTerminal) return;
         const explorer = windowTabsManager.getActiveExplorer();
         if (explorer && explorer.currentPath !== path) {
@@ -158,20 +158,16 @@
     term?.focus();
   }
 
-  // Targets of cds we injected whose OSC 7 echo hasn't arrived yet (#266).
-  // Bounded: entries are consumed by the echo; a shell without OSC 7 support
-  // never fires the cwd listener at all, so the set can't grow unobserved.
-  const injectedCds = new Set<string>();
+  // Targets of cds we injected whose OSC 7 echo hasn't arrived yet
+  // (#266, #364): a counted, path-normalized tracker — see its doc for the
+  // fast-tab-switch race a plain Set reintroduced.
+  const injectedCds = createInjectedCdTracker();
 
   function writeCd(path: string): void {
     // Defensive: never inject `cd 'null'` if a caller ever passes a nullish
     // target (see the queue-poll re-entrancy guard, #154).
     if (terminalId === null || path == null) return;
     injectedCds.add(path);
-    if (injectedCds.size > 8) {
-      const oldest = injectedCds.values().next().value;
-      if (oldest !== undefined) injectedCds.delete(oldest);
-    }
     terminalWrite(terminalId, buildCdSyncSequence(path, isWindows));
   }
 

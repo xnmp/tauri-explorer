@@ -58,3 +58,4 @@ docs/potential_hooks.md
 .playwright-mcp/
 rebuild.sh
 screenshots/Screenshot 2026-01-18 140240.jpg
+src-tauri/icons/icns-preview.png

@@ -168,6 +168,19 @@ export async function gitReset(repoPath: string, oid: string, mode: ResetMode): 
   await invoke("git_reset", { repoPath, oid, mode });
 }
 
+export interface BranchAuthor {
+  name: string;
+  /** The branch creator: author of its first unique commit; tip author for
+   *  fully-merged branches (#376). */
+  author: string;
+  remote: boolean;
+}
+
+/** Branch → creator list for the author filter (#376). */
+export async function gitBranchAuthors(repoPath: string): Promise<BranchAuthor[]> {
+  return invoke<BranchAuthor[]>("git_branch_authors", { repoPath });
+}
+
 /** Fetch from every remote with pruning (#370). */
 export async function gitFetch(repoPath: string): Promise<void> {
   await invoke("git_fetch", { repoPath });

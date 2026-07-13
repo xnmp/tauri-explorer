@@ -115,6 +115,7 @@
     gitReset,
     gitRefs,
     gitFetch,
+    gitBranchAuthors,
     gitDeleteBranch,
     gitDeleteRemoteBranch,
     type CommitInfo,
@@ -530,6 +531,11 @@
   let branchQuery = $state("");
   let branchList = $state<Array<{ name: string; remote: boolean }>>([]);
 
+  // Branch → creator map for the author filter (#376); loaded lazily with
+  // the branch list (the creator walk is per-branch work worth deferring).
+  let branchAuthors = $state<Record<string, string>>({});
+  let authorFilter = $state<string | null>(null);
+
   async function toggleBranchPopover(): Promise<void> {
     branchPopoverOpen = !branchPopoverOpen;
     if (branchPopoverOpen && branchList.length === 0) {
@@ -542,11 +548,25 @@
       } catch {
         branchList = [];
       }
+      try {
+        const authors = await gitBranchAuthors(repoPath);
+        branchAuthors = Object.fromEntries(authors.map((a) => [a.name, a.author]));
+      } catch {
+        branchAuthors = {};
+      }
     }
   }
 
+  const authorOptions = $derived(
+    [...new Set(Object.values(branchAuthors).filter((a) => a))].sort(),
+  );
+
   const filteredBranchList = $derived(
-    branchList.filter((b) => b.name.toLowerCase().includes(branchQuery.toLowerCase())),
+    branchList.filter(
+      (b) =>
+        b.name.toLowerCase().includes(branchQuery.toLowerCase()) &&
+        (authorFilter === null || branchAuthors[b.name] === authorFilter),
+    ),
   );
 
   function setBranchFilter(next: string[] | null): void {
@@ -846,6 +866,21 @@
             bind:value={branchQuery}
             autofocus
           />
+          {#if authorOptions.length > 0}
+            <!-- Author = branch creator: author of the branch's first unique
+                 commit (tip author for fully-merged branches) (#376). -->
+            <select
+              class="bf-author"
+              title="Filter branches by creator"
+              value={authorFilter ?? ""}
+              onchange={(e) => (authorFilter = e.currentTarget.value || null)}
+            >
+              <option value="">Any author</option>
+              {#each authorOptions as author (author)}
+                <option value={author}>{author}</option>
+              {/each}
+            </select>
+          {/if}
           <div class="bf-list">
             <label class="bf-row bf-local-only" title="Hide history reachable only from remote-tracking branches">
               <input type="checkbox" checked={localOnly} onchange={toggleLocalOnly} />
@@ -1644,6 +1679,17 @@
 
   .bf-search {
     margin: 6px;
+    padding: 4px 8px;
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-sm);
+    background: var(--background-card);
+    color: var(--text-primary);
+    font-size: 12px;
+  }
+
+  /* Author (branch creator) dropdown, #376 — matches the search field. */
+  .bf-author {
+    margin: 0 6px 6px;
     padding: 4px 8px;
     border: 1px solid var(--divider);
     border-radius: var(--radius-sm);

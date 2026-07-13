@@ -112,6 +112,7 @@
     gitRebase,
     gitReset,
     gitRefs,
+    gitFetch,
     type CommitInfo,
     type RefInfo,
     type CommitFile,
@@ -708,7 +709,32 @@
     }
   }
 
+  // F5 (#370): refresh the graph INCLUDING a fetch from every remote, so
+  // remote-branch chips and ahead/behind state update — a plain reload only
+  // re-reads local refs. Guarded against overlap; failures (offline, auth)
+  // toast git's own message but still reload local state.
+  let fetching = $state(false);
+  async function refreshWithFetch(): Promise<void> {
+    if (fetching) return;
+    fetching = true;
+    try {
+      await gitFetch(repoPath);
+      toastStore.success("Fetched from remotes");
+    } catch (err) {
+      toastStore.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      fetching = false;
+      await loadPage(0);
+      notifyLocalGitChange(repoPath);
+    }
+  }
+
   function onWindowKeydown(event: KeyboardEvent): void {
+    if (event.key === "F5") {
+      event.preventDefault();
+      void refreshWithFetch();
+      return;
+    }
     if (event.key === "Escape" && branchPopoverOpen) {
       branchPopoverOpen = false;
       return;

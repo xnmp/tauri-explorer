@@ -1425,6 +1425,7 @@ const mockCommands: Record<string, CommandHandler> = {
     mockClearOperation();
     return null;
   },
+  git_fetch: () => null,
 
   // ----- Git history / commit graph (#57) -----
 

@@ -354,6 +354,24 @@ fn is_busy(handle: &TerminalHandle) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)] // three of these are the event callbacks
+/// Parse a WSL UNC path (`\\wsl$\<distro>\…` or `\\wsl.localhost\<distro>\…`,
+/// either separator style) into `(distro, linux_path)`. Platform-independent
+/// so the parsing rules are unit-testable everywhere (#378).
+fn parse_wsl_unc(path: &str) -> Option<(String, String)> {
+    let norm = path.replace('/', "\\");
+    let rest = norm
+        .strip_prefix("\\\\wsl$\\")
+        .or_else(|| norm.strip_prefix("\\\\wsl.localhost\\"))?;
+    let (distro, tail) = match rest.split_once('\\') {
+        Some((d, t)) => (d, t),
+        None => (rest, ""),
+    };
+    if distro.is_empty() {
+        return None;
+    }
+    Some((distro.to_string(), format!("/{}", tail.replace('\\', "/"))))
+}
+
 fn spawn_shell(
     id: u64,
     window_label: String,
@@ -379,10 +397,27 @@ fn spawn_shell(
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let mut cmd = CommandBuilder::new(&shell);
+    // Windows + WSL folder (#378): cmd.exe refuses a UNC working directory
+    // (falls back to C:\Windows) and PowerShell lands in ~, so a pane inside
+    // \\wsl$\… gets a wsl.exe shell started in the equivalent Linux path
+    // instead of the default shell.
+    let wsl_target = if cfg!(windows) {
+        cwd.as_deref().and_then(parse_wsl_unc)
+    } else {
+        None
+    };
+    let mut cmd = if let Some((distro, linux_path)) = &wsl_target {
+        let mut c = CommandBuilder::new("wsl.exe");
+        c.args(["-d", distro, "--cd", linux_path]);
+        c
+    } else {
+        CommandBuilder::new(&shell)
+    };
     cmd.env("TERM", "xterm-256color");
-    if let Some(dir) = cwd.filter(|d| std::path::Path::new(d).is_dir()) {
-        cmd.cwd(dir);
+    if wsl_target.is_none() {
+        if let Some(dir) = cwd.filter(|d| std::path::Path::new(d).is_dir()) {
+            cmd.cwd(dir);
+        }
     }
     // zsh doesn't emit OSC 7 by default — install a shim that does. bash's
     // PROMPT_COMMAND fallback is unreliable (a user bashrc routinely overwrites
@@ -621,6 +656,32 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
     use std::time::Duration;
+
+    #[test]
+    fn wsl_unc_paths_parse_to_distro_and_linux_path() {
+        assert_eq!(
+            parse_wsl_unc(r"\\wsl.localhost\Ubuntu\home\me\proj"),
+            Some(("Ubuntu".into(), "/home/me/proj".into()))
+        );
+        assert_eq!(
+            parse_wsl_unc(r"\\wsl$\Debian\tmp"),
+            Some(("Debian".into(), "/tmp".into()))
+        );
+        // Forward-slash spelling of the same UNC.
+        assert_eq!(
+            parse_wsl_unc("//wsl.localhost/Ubuntu/home/me"),
+            Some(("Ubuntu".into(), "/home/me".into()))
+        );
+        // Distro root.
+        assert_eq!(
+            parse_wsl_unc(r"\\wsl$\Ubuntu"),
+            Some(("Ubuntu".into(), "/".into()))
+        );
+        // Non-WSL paths pass through as None.
+        assert_eq!(parse_wsl_unc(r"C:\Users\me"), None);
+        assert_eq!(parse_wsl_unc("/home/me"), None);
+        assert_eq!(parse_wsl_unc(r"\\server\share"), None);
+    }
 
     #[test]
     fn utf8_splitter_passes_complete_text_through() {

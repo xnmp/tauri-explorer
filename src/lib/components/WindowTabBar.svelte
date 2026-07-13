@@ -608,7 +608,7 @@
       max-width: 220px;
       opacity: 1;
       padding-left: 12px;
-      padding-right: 10px;
+      padding-right: 5px;
     }
   }
 
@@ -781,9 +781,14 @@
      hairlines at the tangent point. */
   .tab-fillet {
     position: absolute;
-    bottom: 0;
-    width: var(--fillet);
-    height: var(--fillet);
+    /* 1px oversize on the tab-facing and base-facing sides: the stroke ring
+       sits OUTSIDE the flare curve (radius fillet…fillet+1) so it lines up
+       with the tab's inset side hairline and the titlebar's outset baseline
+       hairline (#360); the box must include that 1px or the ring clips at
+       both tangent points. The circle stays anchored at the original corner. */
+    bottom: -1px;
+    width: calc(var(--fillet) + 1px);
+    height: calc(var(--fillet) + 1px);
     pointer-events: none;
     z-index: 3;
   }
@@ -796,9 +801,9 @@
     background:
       radial-gradient(
         circle var(--fillet) at 0 0,
-        transparent calc(var(--fillet) - 1.5px),
-        var(--surface-stroke) calc(var(--fillet) - 0.75px),
-        transparent calc(var(--fillet) + 0.5px)
+        transparent calc(var(--fillet) - 0.25px),
+        var(--surface-stroke) calc(var(--fillet) + 0.5px),
+        transparent calc(var(--fillet) + 1.25px)
       ),
       radial-gradient(
         circle var(--fillet) at 0 0,
@@ -817,9 +822,9 @@
     background:
       radial-gradient(
         circle var(--fillet) at 100% 0,
-        transparent calc(var(--fillet) - 1.5px),
-        var(--surface-stroke) calc(var(--fillet) - 0.75px),
-        transparent calc(var(--fillet) + 0.5px)
+        transparent calc(var(--fillet) - 0.25px),
+        var(--surface-stroke) calc(var(--fillet) + 0.5px),
+        transparent calc(var(--fillet) + 1.25px)
       ),
       radial-gradient(
         circle var(--fillet) at 100% 0,

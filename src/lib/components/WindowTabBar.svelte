@@ -626,7 +626,7 @@
     align-items: center;
     gap: 8px;
     height: 30px;
-    padding: 0 10px 0 12px;
+    padding: 0 5px 0 12px;
     /* Subtle-but-visible fill: --background was undefined outside the tahoe
        theme, leaving unfocused tabs transparent and indistinct (#238). */
     background: var(--control-fill-tertiary);
@@ -927,6 +927,9 @@
   }
 
   .tab-close {
+    /* Counteract the tab's 8px gap: the x sits closer to the title than
+       the icon/title spacing, so the tab doesn't read as padded-out (#363). */
+    margin-left: -4px;
     display: flex;
     align-items: center;
     justify-content: center;

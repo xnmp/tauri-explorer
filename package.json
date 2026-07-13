@@ -1,6 +1,6 @@
 {
   "name": "tauri-explorer",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "A minimalistic, high-performance file explorer",
   "type": "module",
   "scripts": {

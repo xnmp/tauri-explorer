@@ -230,6 +230,35 @@ describe("branchPath row expansion", () => {
     expect(branchPath(line, 14, 28, { afterRow: 2, extra: 100 })).toBe("M 7 14.0 L 7 70.0");
   });
 
+  it("a stretched merge edge crosses out of the child dot in the FIRST row-height (#390)", () => {
+    // Same geometry as below, but flagged as a merge edge: the long vertical
+    // must run in the DESTINATION lane (the edge's own), not the child's —
+    // the trunk also occupies the child's lane below its dot, and the edge's
+    // color painted over it.
+    const line = {
+      colorIndex: 0,
+      mergeEdge: true,
+      points: [{ lane: 0, row: 0 }, { lane: 1, row: 1 }],
+    };
+    // Without expansion: unchanged single cubic.
+    expect(branchPath(line, 14, 28)).toBe("M 7 14.0 C 7 36.4 21 19.6 21 42.0");
+    // With 100px inserted after row 0: cross within the first row-height
+    // (14 → 42), then vertical in lane 1 down to the destination (y = 142).
+    expect(branchPath(line, 14, 28, { afterRow: 0, extra: 100 })).toBe(
+      "M 7 14.0 C 7 36.4 21 19.6 21 42.0 L 21 142.0",
+    );
+  });
+
+  it("marks non-first-parent edges as merge edges in the layout (#390)", () => {
+    // m3 = merge of m2 (first parent) and f2: exactly one merge edge.
+    const layout = assignLayout([c("m3", "m2", "f2"), c("f2", "base"), c("m2", "base"), c("base")]);
+    const mergeEdges = layout.branches.filter((b) => b.mergeEdge);
+    expect(mergeEdges).toHaveLength(1);
+    // It's the m3→f2 edge: starts at row 0, ends at f2's row.
+    expect(mergeEdges[0].points[0].row).toBe(0);
+    expect(mergeEdges[0].points[mergeEdges[0].points.length - 1].row).toBe(1);
+  });
+
   it("keeps a stretched lane change vertical and crosses only in the last row-height", () => {
     // The expansion (open commit details) lands inside the lane-change
     // segment: the line must run straight down the stretch and curve only

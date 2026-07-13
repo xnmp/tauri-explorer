@@ -16,7 +16,7 @@ Curated maps of this codebase whose sole purpose is to make code search cheap: a
 
 **Do NOT point search agents at `docs/ARCHITECTURE.md` / `docs/architecture/`** for "where do I change X" work: measured net negative (+4.6% cost, −4.8% quality, 2.5× more wrong files in answers). Those docs are for humans reading about design, not for locating change sites.
 
-[map-symbols.md](map-symbols.md) (store/command/event index) is retained as a reference but was the only variant that failed to pay for itself in the study — its size (~23KB) eats the savings. Prefer grep or shrink it before relying on it.
+A fourth variant, a symbol index (stores / Tauri commands / events), was built and tested but **retired** (#347): it was the only map that failed to pay for itself — the largest doc at ~5.5k tokens, +2.0% net search cost versus no docs at all, and the weakest perf-task recall of any map. Grep is the better tool for symbol lookup. The finding generalizes: past roughly 20KB, a map's read cost cancels the orientation it saves, so keep any future map small.
 
 ## Headline numbers (from STUDY.md)
 

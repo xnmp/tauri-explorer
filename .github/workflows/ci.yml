@@ -8,6 +8,18 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Code maps are only useful while their file references are accurate: an agent
+  # that trusts a map naming a moved file searches worse than one with no map at
+  # all. Fails the build when a refactor moves or deletes a referenced file.
+  code-maps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate code-map file references
+        run: python3 docs/code-map/validate.py
+
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 20

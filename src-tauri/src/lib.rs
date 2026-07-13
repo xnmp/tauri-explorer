@@ -227,6 +227,7 @@ pub fn run(launch_dir: Option<String>) {
             git_actions::git_cherry_pick_abort,
             git_actions::git_revert_abort,
             git_actions::git_fetch,
+            git_log::git_branch_authors,
             git_actions::git_delete_branch,
             git_actions::git_delete_remote_branch,
             // Drives / volumes

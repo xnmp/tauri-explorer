@@ -347,6 +347,79 @@ fn build_log(
     })
 }
 
+/// A branch and the author who "created" it (#376): the author of the oldest
+/// commit reachable from the branch tip but not from HEAD's history — i.e.
+/// the first commit unique to the branch. Fully-merged branches (no unique
+/// commits) fall back to the tip commit's author.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BranchAuthor {
+    pub name: String,
+    pub author: String,
+    pub remote: bool,
+}
+
+/// Per-branch walk cap: bounds the cost on pathological branches that
+/// diverged thousands of commits ago.
+const AUTHOR_WALK_CAP: usize = 2000;
+
+fn branch_creator(repo: &Repository, tip: Oid, trunk: Option<Oid>) -> Option<String> {
+    let mut walk = repo.revwalk().ok()?;
+    walk.push(tip).ok()?;
+    if let Some(t) = trunk {
+        if t != tip {
+            let _ = walk.hide(t);
+        }
+    }
+    let mut last: Option<String> = None;
+    for (i, step) in walk.enumerate() {
+        if i >= AUTHOR_WALK_CAP {
+            break;
+        }
+        let Ok(oid) = step else { break };
+        if let Ok(commit) = repo.find_commit(oid) {
+            last = Some(commit.author().name().unwrap_or("").to_string());
+        }
+    }
+    last.filter(|s| !s.is_empty())
+}
+
+fn collect_branch_authors(repo: &Repository) -> Result<Vec<BranchAuthor>, AppError> {
+    let trunk = repo.head().ok().and_then(|h| h.target());
+    let mut out = Vec::new();
+    for (branch, btype) in repo.branches(None).map_err(to_app_err)?.flatten() {
+        let Some(name) = branch.name().ok().flatten().map(str::to_string) else {
+            continue;
+        };
+        if name.ends_with("/HEAD") {
+            continue;
+        }
+        let Some(tip) = branch.get().target() else {
+            continue;
+        };
+        let author = branch_creator(repo, tip, trunk).or_else(|| {
+            repo.find_commit(tip)
+                .ok()
+                .map(|c| c.author().name().unwrap_or("").to_string())
+        });
+        out.push(BranchAuthor {
+            name,
+            author: author.unwrap_or_default(),
+            remote: btype == git2::BranchType::Remote,
+        });
+    }
+    Ok(out)
+}
+
+/// Branch → creator map for the branch-filter popover's author filter (#376).
+#[tauri::command]
+pub async fn git_branch_authors(repo_path: String) -> Result<Vec<BranchAuthor>, AppError> {
+    run_blocking(move |_cancelled| {
+        let repo = open_repo(Path::new(&repo_path))?;
+        collect_branch_authors(&repo)
+    })
+    .await
+}
+
 fn collect_refs(repo: &Repository) -> Result<GitRefs, AppError> {
     let mut out = GitRefs::default();
 
@@ -680,6 +753,39 @@ mod tests {
         };
         let empty = build_log(&repo, &opts, Vec::new(), &no_cancel()).unwrap();
         assert!(empty.commits.is_empty());
+    }
+
+    #[test]
+    fn branch_authors_report_the_branch_creator_not_the_tip_committer() {
+        let (dir, repo) = init_repo();
+        let p = dir.path().to_path_buf();
+        write(&p, "a.txt", "one");
+        let base = commit(&repo, "base", &[]);
+
+        // Branch created by Creator; a later commit on it by Other. The
+        // branch's author must be Creator (first unique commit), not Other.
+        repo.branch("topic", &repo.find_commit(base).unwrap(), false)
+            .unwrap();
+        repo.set_head("refs/heads/topic").unwrap();
+        let creator = git2::Signature::now("Creator", "c@x").unwrap();
+        let other = git2::Signature::now("Other", "o@x").unwrap();
+        let tree = repo.find_commit(base).unwrap().tree().unwrap();
+        let first = repo
+            .commit(Some("HEAD"), &creator, &creator, "start topic", &tree, &[&repo.find_commit(base).unwrap()])
+            .unwrap();
+        let second = repo
+            .commit(Some("HEAD"), &other, &other, "continue topic", &tree, &[&repo.find_commit(first).unwrap()])
+            .unwrap();
+        let _ = second;
+        // Trunk: switch HEAD back to main so topic's commits are "unique".
+        repo.set_head("refs/heads/main").unwrap();
+
+        let authors = collect_branch_authors(&repo).unwrap();
+        let topic = authors.iter().find(|b| b.name == "topic").unwrap();
+        assert_eq!(topic.author, "Creator");
+        // Fully-merged branch (points at trunk history): falls back to tip author.
+        let main = authors.iter().find(|b| b.name == "main").unwrap();
+        assert_eq!(main.author, "Test User");
     }
 
     #[test]

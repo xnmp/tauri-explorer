@@ -1429,6 +1429,15 @@ const mockCommands: Record<string, CommandHandler> = {
     return null;
   },
   git_fetch: () => null,
+  git_branch_authors: () => [
+    { name: "main", author: "Alice Coder", remote: false },
+    { name: "hotfix", author: "Alice Coder", remote: false },
+    { name: "experiment", author: "Bob Dev", remote: false },
+    { name: "feature", author: "Alice Coder", remote: false },
+    { name: "origin/main", author: "Alice Coder", remote: true },
+    { name: "origin/hotfix", author: "Alice Coder", remote: true },
+    { name: "origin/legacy-import", author: "Bob Dev", remote: true },
+  ],
   git_delete_branch: () => null,
   git_delete_remote_branch: () => null,
 

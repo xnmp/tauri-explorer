@@ -31,6 +31,7 @@ import {
 } from "$lib/api/files";
 import type { GitOpState } from "$lib/domain/git";
 import { subscribeGitChanges, notifyLocalGitChange } from "./git-refresh";
+import { filterEntriesToDir } from "$lib/domain/scm-tree";
 
 function emptySummary(): GitStatusSummary {
   return {
@@ -177,15 +178,11 @@ function createScmStore() {
     }
   }
 
+  // Separator/case-tolerant dir filter — the raw string version matched
+  // nothing on Windows (backslash pane paths vs git2's forward-slash root),
+  // blanking the whole panel (#380). Pure logic lives in domain/scm-tree.
   function filterToDir<T extends { path: string }>(entries: T[]): T[] {
-    if (!activePath || !repoRoot || activePath === repoRoot) return entries;
-    const root = repoRoot.endsWith("/") ? repoRoot.slice(0, -1) : repoRoot;
-    if (activePath === root) return entries;
-    const prefix = activePath + "/";
-    return entries.filter((e) => {
-      const fullPath = root + "/" + e.path;
-      return fullPath.startsWith(prefix);
-    });
+    return filterEntriesToDir(entries, repoRoot, activePath);
   }
 
   async function initWatcherListener(): Promise<void> {

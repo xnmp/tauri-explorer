@@ -5,6 +5,7 @@
  */
 
 import type { GitFileEntry } from "$lib/domain/git";
+import { directoryKey } from "$lib/domain/path";
 
 /** Tree node used by the folder-grouped SCM rendering. */
 export interface ScmTreeNode {
@@ -47,4 +48,26 @@ export function collectPaths(node: ScmTreeNode): string[] {
     paths.push(...collectPaths(child));
   }
   return paths;
+}
+
+/**
+ * Restrict repo-relative entries to those under `activePath` (#380).
+ *
+ * Pure and separator/case tolerant: on Windows the pane path uses
+ * backslashes ("C:\Users\me\proj\sub") while git2 reports the repo root
+ * with forward slashes ("C:/Users/me/proj") — a raw string prefix check
+ * matched nothing, so the git panel showed "no changes" for every repo.
+ * Both sides are normalized through `directoryKey` before comparing.
+ */
+export function filterEntriesToDir<T extends { path: string }>(
+  entries: T[],
+  repoRoot: string | null,
+  activePath: string,
+): T[] {
+  if (!activePath || !repoRoot) return entries;
+  const active = directoryKey(activePath);
+  const root = directoryKey(repoRoot);
+  if (active === root) return entries;
+  const prefix = active + "/";
+  return entries.filter((e) => directoryKey(root + "/" + e.path).startsWith(prefix));
 }

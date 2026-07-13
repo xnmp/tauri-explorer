@@ -1,61 +1,48 @@
-# Session Handover — as of 2026-07-12 evening (v1.3.1 released + distribution prep done)
+# Session Handover — as of 2026-07-13 (dependabot sweep + git panel/graph features)
 
-Continuing work on tauri-explorer — v1.3.1 is released, dev CI is green again, and all automatable wider-audience work is merged. What remains is **user-side actions** (accounts, submissions, Mac testing — see the checklist below) and then promotion.
+Continuing work on tauri-explorer. v1.3.1 released; website deployed and Homebrew tap repo created by the user. This session cleared the whole Dependabot backlog, cleaned the branch graveyard, and shipped four git-UX features. Everything verified: 580/580 ALL_VIEW_MODES E2E locally, and CI + macOS Smoke + Tauri binary E2E green on GitHub for every push.
 
-**Previous session summary:** Two arcs. (1) Released v1.3.1: version bump + CHANGELOG (#320), un-redded dev CI — it had been failing since v1.3.0 with rustfmt drift (#322), clippy ptr_arg (#324), and a real bug (#325): unguarded Tauri `listen()` in `use-file-watchers` whose uncaught error the new #302 crash capture turned into a click-blocking crash-notice toast in E2E; merged PR #321 to main; release workflow published all six assets. (2) Distribution prep: repo hygiene (#327: Cargo metadata, CONTRIBUTING/SECURITY/issue templates, README, GitHub description+homepage), bundle identifier → `io.github.xnmp.tauri-explorer` (#328), AUR -bin PKGBUILD validated with a real makepkg build (#329), winget manifests (#330), Homebrew cask (#331), website version fix (#323).
+**Previous session summary:** v1.3.1 release + distribution prep (AUR/winget/Homebrew packaging, repo hygiene, identifier change) — see git history of this file (commit f633e37) for the user action checklist details.
 
-## USER ACTION CHECKLIST (in order of impact)
+## This session
 
-1. **Deploy the website** (two changes behind: framed window #286 + v1.3.1 version fix #323):
-   `cd website && vercel deploy --prod` (or `!`-prefix it in a Claude session; the permission classifier blocks Claude running it).
-2. **Create the Homebrew tap** (blocked for Claude: public-repo creation). The cask is ready at `packaging/homebrew/Casks/tauri-explorer.rb`:
+1. **All 14 Dependabot PRs (#305–#318) resolved** via grouped local branches (PRs auto-closed when dev got the versions):
+   - #335: trash 5.2.6, chrono 0.4.45, tokio 1.52.3, opener 0.8.5, icns 0.4.0, pretext 0.0.8.
+   - #336: GitHub Actions majors — checkout v7, cache v6, upload-artifact v7, download-artifact v8 (Node-24 runtime bumps; download-artifact v8 enforces digest checks — safe, same-workflow artifacts).
+   - #337: **vite 8.1.4 (Rolldown) + vite-plugin-svelte 7.2.0 + vitest 4.1.10 + kit 2.69.2** — zero config changes; one test fix (vitest 4 constructs mocks with real `new` semantics — see lessons_learnt #337/#338 entry). Bundle 82.7 KiB gzip (35% of budget).
+   - #338: **TypeScript 7 is a no-go** — the native package drops the TS 5 CJS API (`ts.sys`); svelte-check ≤4.7.2 crashes at startup. Landed TS 5.9.3 + svelte-check 4.7.2; `@dependabot ignore this major version` posted on PR #312. Revisit when svelte-check ships native support.
+2. **Branch cleanup** (user request): 171 local branches → ~8 (all merged ones deleted, incl. a stale agent worktree). The git graph mess was refs, not history — no rewrite. Remote deletion of 17 merged branches was **blocked by the permission classifier** — command is in the checklist below.
+3. **Features** (each with E2E + screenshot, all merged):
+   - #333 SCM panel renders alongside the git graph (was mutually exclusive by construction in ExplorerPane).
+   - #341 Git graph column resize: header row + drag handles; lane gutter auto until dragged, then fixed+clipped (`usePersistedPanelWidth` gained `invert`).
+   - #342 Branch filter (VS Code style): popover with text filter/checkboxes/"only"; `GitLogOptions.branches` seeds the revwalk server-side; mock mirrors via parents-BFS; per-repo persistence; filtered pages bypass the warm snapshot cache.
+   - #334 **Per-pane git panels**: `scmStore` singleton → `getScmStore(paneId)`; shared module summary cache + `warmScmSummary`; panels `release()` on unmount; **backend repo watchers now refcounted** (unwatch previously killed other consumers' watcher unconditionally). Preview diff follows `windowTabsManager.activePaneId`.
+4. **Docs**: `docs/code-map/` finally committed (#340 — CLAUDE.md depended on uncommitted files); features.md rows (#343); lessons_learnt toolchain entry (#339). Issues #333–#343 all closed.
+
+## USER ACTION CHECKLIST (remaining)
+
+1. **Delete stale remote branches** (classifier blocks Claude):
    ```bash
-   gh repo create xnmp/homebrew-tap --public --description "Homebrew tap for xnmp's projects"
-   git clone https://github.com/xnmp/homebrew-tap && cd homebrew-tap
-   mkdir -p Casks && cp <repo>/packaging/homebrew/Casks/tauri-explorer.rb Casks/
-   git add -A && git commit -m "tauri-explorer 1.3.1" && git push
+   git push origin --delete chore/drop-macos-intel-build chore/gh-issues-migration docs/readme-vscode-positioning feat/macos-vibrancy feat/tauri-driver-cross-platform-e2e feature/icon-theme-system feature/material-icons feature/persisted-state-migration fix/ci-rollup-optional-deps fix/git-graph-crossing fix/miller-list-spacing fix/shortcut-menu-badges fix/website-downloads-preview-tour perf/marquee-selection-raf-throttle perf/warm-window-pool windows_fixes working
    ```
-3. **Test on a Mac** (Apple Silicon) — nothing macOS-side has been human-verified this session:
-   - `brew install --cask xnmp/tap/tauri-explorer` (after step 2). If it fails on the app name, the assumption to check is `app "tauri-explorer.app"` in the cask — verify the actual bundle name inside the dmg (`hdiutil attach`, `ls /Volumes/tauri-explorer*/`) and fix the cask.
-   - Gatekeeper flow: first launch must be right-click → Open (unsigned). Confirm the caveat text matches reality.
-   - Smoke the app itself: Ctrl+P / palette / file ops (macOS gets no automated binary E2E — WKWebView has no driver; only unit tests + the macos-smoke boot check cover it).
-   - Upgrade note: the next release (with the new bundle identifier) shows as a NEW app to macOS; old `com.explorer.app` webview state won't carry over (window tabs, quick-open frecency reset once — settings DO carry, they live in `~/Library/Application Support/tauri-explorer`).
-4. **Publish to AUR** (needs your AUR account + SSH key):
-   ```bash
-   git clone ssh://aur@aur.archlinux.org/tauri-explorer-bin.git && cd tauri-explorer-bin
-   cp <repo>/packaging/aur/{PKGBUILD,.SRCINFO} . && git add -A && git commit -m "1.3.1: initial import" && git push
-   ```
-   (Validated locally: `makepkg` builds and the package contains bin/desktop/icons/portal/dbus/license.)
-5. **Submit to winget** (needs a fork under your account; easiest with wingetcreate, or manually):
-   ```bash
-   # manual: fork microsoft/winget-pkgs, copy packaging/winget/manifests/x/xnmp/... into it, open PR
-   # easier: wingetcreate submit packaging/winget/manifests/x/xnmp/TauriExplorer/1.3.1 --token <gh-pat>
-   ```
-   Windows-side sanity check first if you can: `winget validate --manifest packaging/winget/manifests/x/xnmp/TauriExplorer/1.3.1`.
-6. **Code signing (the big unlock, both platforms):**
-   - macOS: enroll in Apple Developer Program ($99/yr) → Developer ID Application cert → add `APPLE_CERTIFICATE`/`APPLE_ID`+notarytool secrets to the repo and signing steps to release.yml (Tauri docs "macOS Code Signing"). Until then every Mac user hits Gatekeeper.
-   - Windows: cheapest modern route is Azure Trusted Signing (~$10/mo) or SignPath's free OSS tier. Kills SmartScreen warnings and smooths winget review.
-7. **Decide on auto-update** — currently only the daily "new version" banner. `tauri-plugin-updater` needs an updater keypair (`cargo tauri signer generate`) — keep the private key OUT of the repo (GitHub secret); pairs naturally with item 6.
-8. **Dependabot PRs #314–#318 are open** (vite 8 major among them) — triage when convenient.
+   Kept deliberately: `windows` (WSL flow), unmerged `mac`/`main-2`. Local unmerged branches awaiting a keep/delete decision: `feature/quickopen-recent-frecency` (6 commits, Mar), `fix/git-panel` (1 screenshot commit), `fix/theme-settings-persistence` (1 commit, Mar), `main-2` (Beads backup).
+2. **Publish to AUR** — full walkthrough given in-session: register at aur.archlinux.org (+ SSH key), clone `ssh://aur@aur.archlinux.org/tauri-explorer-bin.git`, copy `packaging/aur/{PKGBUILD,.SRCINFO}`, `git push origin HEAD:master` (AUR only accepts `master`).
+3. **Submit to winget** — `wingetcreate submit --token <pat> packaging\winget\manifests\x\xnmp\TauriExplorer\1.3.1` on Windows (PAT with public_repo). Validation bots + moderator ≈ 2–5 days.
+4. **Test on a Mac** — cask install, Gatekeeper right-click-Open flow, app smoke (unchanged from previous handover).
+5. **Code signing** — macOS: Apple Developer Program ($99/yr) → Developer ID Application cert → six repo secrets (`APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID`); Claude then wires the env block into release.yml's macOS build step. Windows: Azure Artifact Signing (~$10/mo, **individuals US/Canada only**), else SignPath Foundation (free OSS, weeks-long review) or Certum OSS (~€69/yr, worldwide).
+6. **Auto-update** — decided in-session: defer `tauri-plugin-updater` until code signing lands; then enable as check-and-prompt by default (not silent), generate the updater keypair (`cargo tauri signer generate`) and back up the private key offline — losing it permanently strands existing installs.
+7. **Uncommitted docs decision** — `docs/AI-native-ideas.md`, `docs/gotcha-study/`, `screenshots/_issue-refs/` remain untracked (repo is public; committing = publishing). code-map was committed per user choice.
 
-**Current state:** main == v1.3.1 release. dev is ahead by: website fix (#323), handovers, repo hygiene (#327), identifier change (#328), packaging (#329/#330/#331) — all ride the next release (suggest v1.3.2 soon so the new identifier + channels ship). All gates green locally (1050 unit / 228 Rust / 575-576 E2E — `tiles-rename-no-shift` flaked once under full-suite load, passes isolated, same family as the known PTY flake). GitHub CI on dev: CI + macOS smoke green; e2e-tauri Windows job flaked on the terminal PTY round-trip spec (known-flaky subsystem, passed on previous push with identical terminal code) — rerun was in flight at handover time; VERIFY it went green before building on top.
+## Next steps (Claude side)
 
-**Next steps (Claude side):** 1) Confirm e2e-tauri rerun green. 2) After user completes the checklist: cut v1.3.2 (identifier + packaging + website fix), update cask/PKGBUILD/winget manifests to 1.3.2 hashes (all three pin per-version URLs+sha256 — every release needs a bump commit in each channel until automated; consider a release-workflow step that regenerates them). 3) Promotion material (memory: VSCode-for-filesystem positioning, Ctrl+P/Ctrl+Shift+F/palette first). 4) Product fast-follows: conflict-dialog keep-both, copy-path action, Ctrl+L binding, JobsPanel progress/cancel.
+1. Cut **v1.3.2** (bundle identifier + packaging channels + website fix + this session's features ride it); bump cask/PKGBUILD/winget manifests to 1.3.2 hashes; consider a release-workflow step that regenerates the three channel files.
+2. Promotion material (memory: VSCode-for-filesystem positioning — Ctrl+P / Ctrl+Shift+F / palette first).
+3. Product fast-follows: conflict-dialog keep-both, copy-path action, Ctrl+L binding, JobsPanel progress/cancel.
 
----
+## New learnings this session (beyond lessons_learnt.md)
 
-## Architecture & Learnings
-
-### This session's new learnings
-- **CI toolchain drift:** CI uses `dtolnay/rust-toolchain@stable`, which advances past local (1.93 local vs 1.97 CI) — fmt/clippy diverge silently. **Check `gh run list --branch dev` at session end**; local gates are not enough. rust job failing <1m = fmt, ~6m = clippy/tests.
-- **Crash capture ↔ E2E interaction:** any uncaught browser-mode error becomes a crash file → next-launch notice toast → covers bottom-of-viewport UI → blocks Playwright clicks in specs that reload. Debug via `gh run download <id> -n playwright-report` (failure PNGs in `data/`, traces contain `pageError` entries with full stacks).
-- **Vite dev boot order:** `page.goto` resolves before ANY app JS runs (even `hooks.client.ts`) under dev-mode module streaming. E2E specs needing app handlers must wait for `.file-list` first. In prod builds the bundle executes before `load`, so `hooks.client.ts` is early enough for real crash coverage.
-- **Bundle identifier facts (verified against tauri-bundler source):** MSI upgradeCode = UUIDv5(DNS, "<productName>.exe.app.x64") — productName-based, NOT identifier; NSIS install identity also productName-based. This app's config/cache dirs are identifier-independent (`dirs::config_dir()/tauri-explorer`). Identifier change only resets webview-profile state (localStorage: tabs, frecency) once.
-- **AUR -bin pattern:** makepkg auto-extracts the .deb (ar archive) into $srcdir; `bsdtar -xf data.tar.gz -C $pkgdir usr` in package(). GitHub `releases/download/` + `/raw/<tag>/` URLs both work as sources. Watch sha256sums ORDER — it must match source array order (bit me once).
-- **Screenshot-path hook:** branch `fix/foo` → `screenshots/fix/foo/<name>.png` (slash → directory); agent-browser must get exactly that repo-relative path.
-- **Windows PTY flake family:** `terminal.spec.ts` round-trip in e2e-tauri (Windows runner) joins `pty_shell_runs_in_cwd_and_emits_output` — PTY output timing under CI load; rerun before believing it.
-
-### Layering & structure (stable)
-- `domain/` pure; `state/` rune stores; `api/` split barrels (mock-aware invoke in `api/common.ts`); crash path: `hooks.client.ts` → `installGlobalErrorHandlers` → dedupe → `record_frontend_crash` (mock: localStorage `mockFrontendCrash`, consumed-on-read). No telemetry — no network calls beyond the daily update check + opt-in AI plugins.
-- Packaging now lives in `packaging/`: `aur/` (publishable -bin), `winget/manifests/...` (mirrors winget-pkgs layout), `homebrew/Casks/`, plus the existing portal files. Root PKGBUILD stays the CI/local source build.
-- Per-issue workflow, gates, and hook quirks: unchanged — see the "Testing & dev-loop" and "Workflow (hooks)" sections of the previous handover (git history of this file, commit b1d53bf).
+- **Dependabot lockfile PRs conflict with each other** — resolve via grouped local bumps; PRs auto-close when the base branch contains the versions. Actions changelogs live in the PR bodies (`gh pr view N --json body`).
+- **AUR/winget/signing guidance** is written out in the 2026-07-13 conversation (register/claim flows, wingetcreate, Azure Artifact Signing geographic limits — GA since ~Apr 2026, individuals US/Canada only).
+- **git_unwatch_repo was drop-not-refcount** — any two consumers of one repo's watcher (panes, windows) could silently kill each other's events. Now refcounted in `git.rs`.
+- **agent-browser daemon EAGAIN** under rapid chained calls → memory note `agent-browser-daemon-eagain` (pace 2–4 commands per call, `fill` not `type`, verify state between steps).
+- Merge hook does NOT auto-close issues (CLAUDE.md claims it does) — close them manually at session end.

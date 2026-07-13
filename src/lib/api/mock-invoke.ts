@@ -615,6 +615,9 @@ const MOCK_GRAPH_REFS: Record<
     { name: "origin/hotfix", kind: "RemoteBranch" },
   ],
   [fullOid(14)]: [{ name: "experiment", kind: "LocalBranch" }],
+  // Remote-only branch (no local counterpart) — exercises the remote-only
+  // chip indicator and the local-only filter (#381).
+  [fullOid(8)]: [{ name: "origin/legacy-import", kind: "RemoteBranch" }],
   [fullOid(10)]: [{ name: "feature", kind: "LocalBranch" }],
   [fullOid(5)]: [{ name: "v1.0", kind: "Tag" }],
   [fullOid(1)]: [{ name: "v0.9", kind: "Tag" }],

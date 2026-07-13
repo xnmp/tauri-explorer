@@ -108,6 +108,11 @@ pub struct GitLogOptions {
     /// every branch. Names that don't resolve are ignored; if none resolve
     /// the page is empty. `None` = no filter (#342).
     pub branches: Option<Vec<String>>,
+    /// Seed the walk from HEAD + LOCAL branch tips only, hiding history that
+    /// is reachable solely from remote-tracking branches (#381). Ignored when
+    /// `branches` is set (an explicit selection wins).
+    #[serde(default)]
+    pub local_only: bool,
 }
 
 const DEFAULT_LIMIT: usize = 500;
@@ -270,7 +275,13 @@ fn build_log(
         if walk.push_head().is_ok() {
             seeded = true;
         }
-        if let Ok(branches) = repo.branches(None) {
+        // Local-only (#381): hide history reachable solely from remotes.
+        let branch_type = if opts.local_only {
+            Some(git2::BranchType::Local)
+        } else {
+            None
+        };
+        if let Ok(branches) = repo.branches(branch_type) {
             for b in branches.flatten() {
                 if let Some(oid) = b.0.get().target() {
                     if walk.push(oid).is_ok() {
@@ -669,6 +680,46 @@ mod tests {
         };
         let empty = build_log(&repo, &opts, Vec::new(), &no_cancel()).unwrap();
         assert!(empty.commits.is_empty());
+    }
+
+    #[test]
+    fn local_only_hides_remote_only_history() {
+        let (dir, repo) = init_repo();
+        let p = dir.path().to_path_buf();
+        write(&p, "a.txt", "one");
+        let base = commit(&repo, "base", &[]);
+        write(&p, "a.txt", "two");
+        let _tip = commit(&repo, "main tip", &[base]);
+
+        // A commit reachable ONLY from a remote-tracking ref: committed with
+        // no ref update (HEAD untouched), then pointed to by refs/remotes/….
+        let sig = git2::Signature::now("Test User", "test@example.com").unwrap();
+        let base_commit = repo.find_commit(base).unwrap();
+        let tree = base_commit.tree().unwrap();
+        let remote_tip = repo
+            .commit(None, &sig, &sig, "remote only", &tree, &[&base_commit])
+            .unwrap();
+        repo.reference("refs/remotes/origin/legacy", remote_tip, true, "sim")
+            .unwrap();
+
+        let all = build_log(&repo, &GitLogOptions::default(), Vec::new(), &no_cancel()).unwrap();
+        let sums: Vec<_> = all.commits.iter().map(|c| c.summary.as_str()).collect();
+        assert!(
+            sums.contains(&"remote only"),
+            "unfiltered must include remote history: {sums:?}"
+        );
+
+        let opts = GitLogOptions {
+            local_only: true,
+            ..Default::default()
+        };
+        let page = build_log(&repo, &opts, Vec::new(), &no_cancel()).unwrap();
+        let sums: Vec<_> = page.commits.iter().map(|c| c.summary.as_str()).collect();
+        assert!(
+            !sums.contains(&"remote only"),
+            "local_only leaked remote-only history: {sums:?}"
+        );
+        assert!(sums.contains(&"main tip"), "local history missing: {sums:?}");
     }
 
     fn init_repo() -> (TempDir, Repository) {

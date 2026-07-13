@@ -16,7 +16,7 @@ use std::sync::Arc;
 use git2::{
     DiffFormat, DiffLineType, DiffOptions, ObjectType, Repository, Signature, Status, StatusOptions,
 };
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::sync::OnceLock;
@@ -717,7 +717,7 @@ pub async fn git_commit(
 // ----- File watcher ----- //
 
 struct WatcherEntry {
-    _watcher: RecommendedWatcher,
+    _watcher: Box<dyn Watcher + Send>,
     /// Refcount (#334): multiple panes (or windows) can watch the same repo;
     /// the OS watcher is dropped only when the last consumer unwatches.
     count: usize,
@@ -743,13 +743,7 @@ pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), App
         }
         Err(_) => return Ok(()), // silently no-op when not a repo
     };
-    let key = {
-        let mut s = repo_root.to_string_lossy().to_string();
-        while s.len() > 1 && (s.ends_with('/') || s.ends_with('\\')) {
-            s.pop();
-        }
-        s
-    };
+    let key = watch_key_for(&repo_path);
 
     let mut map = watchers_map()
         .lock()
@@ -764,7 +758,7 @@ pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), App
     let last_emit: Arc<Mutex<Instant>> =
         Arc::new(Mutex::new(Instant::now() - Duration::from_secs(1)));
     let trailing_pending = Arc::new(AtomicBool::new(false));
-    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+    let handler = move |res: notify::Result<notify::Event>| {
         if let Ok(event) = res {
             // Ignore ephemeral lock files; coalesce emits to at most once per 200ms.
             let relevant = event.paths.iter().any(|p| {
@@ -805,8 +799,26 @@ pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), App
             drop(last);
             let _ = app_for_watcher.emit("git-status-changed", &key_for_event);
         }
-    })
-    .map_err(|e| AppError::Other(format!("git watch: {e}")))?;
+    };
+    // WSL/network shares (\\wsl$\…, \\wsl.localhost\…) don't deliver native
+    // change notifications to Windows — ReadDirectoryChangesW is effectively
+    // a no-op over 9P — so a natively-watched repo there never fires and the
+    // SCM panel looks frozen until reopened (#387). Poll those instead.
+    let is_unc = key.starts_with("\\\\") || key.starts_with("//");
+    let mut watcher: Box<dyn Watcher + Send> = if is_unc {
+        Box::new(
+            notify::PollWatcher::new(
+                handler,
+                notify::Config::default().with_poll_interval(Duration::from_secs(3)),
+            )
+            .map_err(|e| AppError::Other(format!("git watch: {e}")))?,
+        )
+    } else {
+        Box::new(
+            notify::recommended_watcher(handler)
+                .map_err(|e| AppError::Other(format!("git watch: {e}")))?,
+        )
+    };
 
     watcher
         .watch(&repo_root, RecursiveMode::Recursive)
@@ -827,16 +839,21 @@ pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), App
     Ok(())
 }
 
+/// The watcher-map key for a repo path: the normalized workdir (via
+/// `workdir_key`) or the path itself when it isn't a repo. Watch AND unwatch
+/// must derive keys identically — unwatch previously kept git2's trailing
+/// slash while watch stripped it, so refcounts never decremented and
+/// watchers leaked (#387).
+fn watch_key_for(repo_path: &str) -> String {
+    match open_repo(Path::new(repo_path)) {
+        Ok(r) => workdir_key(&r).unwrap_or_else(|| repo_path.to_string()),
+        Err(_) => repo_path.to_string(),
+    }
+}
+
 #[tauri::command]
 pub async fn git_unwatch_repo(repo_path: String) -> Result<(), AppError> {
-    let p = PathBuf::from(&repo_path);
-    let key = match open_repo(&p) {
-        Ok(r) => r
-            .workdir()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or(repo_path),
-        Err(_) => repo_path,
-    };
+    let key = watch_key_for(&repo_path);
     let mut map = watchers_map()
         .lock()
         .map_err(|e| AppError::Other(format!("git watchers lock poisoned: {e}")))?;
@@ -899,6 +916,27 @@ mod tests {
             .args(["commit", "-m", msg])
             .status()
             .unwrap();
+    }
+
+    #[test]
+    fn watch_and_unwatch_derive_identical_keys() {
+        // Unwatch used git2's raw (trailing-slash) workdir while watch
+        // stripped it — refcounts never decremented, watchers leaked (#387).
+        let dir = init_repo();
+        let plain = dir.path().to_str().unwrap().to_string();
+        let slashed = format!("{plain}/");
+        let sub = dir.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        let from_subdir = sub.to_str().unwrap().to_string();
+
+        let key = watch_key_for(&plain);
+        assert!(!key.ends_with('/') && !key.ends_with('\\'), "key: {key}");
+        assert_eq!(watch_key_for(&slashed), key);
+        assert_eq!(watch_key_for(&from_subdir), key, "subdir resolves to the same repo key");
+        // Non-repo path: passes through unchanged.
+        let other = TempDir::new().unwrap();
+        let p = other.path().to_str().unwrap().to_string();
+        assert_eq!(watch_key_for(&p), p);
     }
 
     #[test]

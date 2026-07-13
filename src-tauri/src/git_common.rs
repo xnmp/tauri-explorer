@@ -19,3 +19,17 @@ pub(crate) fn open_repo(path: &Path) -> Result<Repository, AppError> {
     )
     .map_err(to_app_err)
 }
+
+/// Repo workdir as the canonical cache-key string: full path with any
+/// trailing separator stripped (git2's `workdir()` keeps one, while pane
+/// paths and the mock backend don't — the mismatch gave the same repo two
+/// cache identities across the frontend's repo-keyed caches, #369).
+pub(crate) fn workdir_key(repo: &Repository) -> Option<String> {
+    repo.workdir().map(|wd| {
+        let mut s = wd.to_string_lossy().to_string();
+        while s.len() > 1 && (s.ends_with('/') || s.ends_with('\\')) {
+            s.pop();
+        }
+        s
+    })
+}

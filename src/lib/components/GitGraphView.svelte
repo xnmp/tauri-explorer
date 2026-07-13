@@ -138,8 +138,17 @@
   import { untrack } from "svelte";
   import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte";
   import { loadPersisted, savePersisted } from "$lib/state/persisted";
+  import { getScmStore } from "$lib/state/scm.svelte";
+  import { getPaneIdContext } from "$lib/state/pane-context";
+  import { windowTabsManager } from "$lib/state/window-tabs.svelte";
+  import { settingsStore } from "$lib/state/settings.svelte";
 
   const { repoPath }: { repoPath: string } = $props();
+
+  // This pane's SCM store — the preview pane reads the ACTIVE pane's store,
+  // and clicking in the graph focuses its pane, so the two line up (#366).
+  const paneId = getPaneIdContext();
+  const scmStore = $derived(getScmStore(paneId ?? windowTabsManager.activePaneId ?? "default"));
 
   const ROW_HEIGHT = 28;
   const LANE_WIDTH = 14;
@@ -250,6 +259,25 @@
 
   /** Expand/collapse one file's diff below its row. */
   async function toggleFileDiff(file: DetailFile): Promise<void> {
+    const forPreview = selected;
+    // Preview pane open (#366): route the diff there instead of inline.
+    if (settingsStore.showPreviewPane && forPreview) {
+      if (forPreview.oid === UNCOMMITTED) {
+        // Working-tree diffs go through the SCM store's own loader, which
+        // needs its repoRoot on THIS repo; otherwise keep the inline diff.
+        if (scmStore.repoRoot && directoryKey(scmStore.repoRoot) === directoryKey(repoPath)) {
+          openDiffPath = null;
+          openDiff = null;
+          scmStore.openDiff(file.path, !!file.staged);
+          return;
+        }
+      } else {
+        openDiffPath = null;
+        openDiff = null;
+        scmStore.openCommitDiff(repoPath, forPreview.oid, file.path);
+        return;
+      }
+    }
     if (openDiffPath === file.path) {
       openDiffPath = null;
       openDiff = null;

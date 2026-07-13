@@ -2,6 +2,34 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.4.0 — 2026-07-13
+
+A git-graph feature wave plus theme, terminal, and Windows fixes.
+
+### Added
+- **Git graph: live and navigation-aware** — the graph watches its repo and refreshes immediately when git state changes (a pull from the terminal, a commit from another window), and it follows directory changes: navigating within the repo keeps it, into another repo retargets it, out of any repo returns to the file listing.
+- **Git graph: F5 fetch + palette command** — F5 refreshes the graph including a `git fetch --all --prune`; "Git: Fetch from Origin" is available from the command palette in any repo folder.
+- **Git graph: delete branch** — safe delete, force delete, and delete-plus-tracking-remote from the commit context menu; remote-only branches get their own delete item.
+- **Git graph: hideable columns** — right-click the header to toggle Author/Date/Commit (persisted).
+- **Git graph: filter branches by author** — the branch popover gains an author dropdown; the author is the branch creator (first commit unique to the branch).
+- **Git graph: remote-only branches marked** — dashed outline + cloud glyph on branches with no local counterpart, and a "Local branches only" toggle in the branch filter.
+- **Git graph: diffs in the preview pane** — with the preview pane open, clicking a file in a commit's details shows the diff there (with a commit-sha badge) instead of inline.
+- **Checkout offers a pull** — checking out a branch whose remote is ahead offers a fast-forward pull.
+- **Themes: Catppuccin (Mocha), Nord, Gruvbox** — canonical palettes, auto-discovered by the theme picker.
+- **Terminal: configurable line-editing shortcuts** — bind Home/End/Alt+Backspace/Ctrl+U (and more) to shell line-editing actions in Settings → Terminal; unbound keys keep native behavior.
+
+### Fixed
+- **Git graph branch colors** — a branch line's tail no longer flips to another branch's color where it merges; branch tips always get their own color.
+- **Git graph startup** — the graph paints as soon as the commit log arrives instead of waiting for a full working-tree status scan (seconds on large repos).
+- **Repo cache identity** — repo roots are reported without a trailing separator everywhere, so the same repo can't carry two cache identities.
+- **Fast tab switching with the terminal** — the injected-cd echo tracker now counts duplicates and normalizes paths, so rapid A→B→A switches can't drag a tab (or its git graph) to a stale directory.
+- **Terminal Ctrl+C / Ctrl+V** — Ctrl+C copies the terminal selection when one exists (interrupt otherwise); Ctrl+V pastes reliably through xterm's bracketed-paste path.
+- **Tab bar polish** — tightened padding around the close button; the active tab's fillet hairline now joins the vertical and baseline hairlines seamlessly; floating-islands mode renders tab fillets again.
+- **Windows: terminal in WSL folders** — panes inside `\\wsl$\…` spawn `wsl.exe` in the equivalent Linux directory instead of a shell that can't use UNC working directories.
+- **Windows: fullscreen preview** — no longer clipped to the preview island (the app stayed visible around the image).
+- **Windows: git panel** — the changes list no longer comes up empty (path-separator mismatch in the directory filter).
+- **Windows: backdrop translucency** — islands are translucent over Mica/Acrylic at the Backdrop Opacity slider's strength instead of fully opaque, so the native material actually shows through.
+
 ## v1.3.3 — 2026-07-13
 
 A macOS polish patch.

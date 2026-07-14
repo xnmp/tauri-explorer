@@ -39,7 +39,7 @@ mod portal {
 }
 mod search;
 mod wsl;
-mod system;
+pub mod system;
 pub mod task_registry;
 mod terminal;
 mod thumbnails;

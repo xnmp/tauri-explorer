@@ -386,25 +386,9 @@ fn is_busy(handle: &TerminalHandle) -> bool {
     }
 }
 
-#[allow(clippy::too_many_arguments)] // three of these are the event callbacks
-/// Parse a WSL UNC path (`\\wsl$\<distro>\…` or `\\wsl.localhost\<distro>\…`,
-/// either separator style) into `(distro, linux_path)`. Platform-independent
-/// so the parsing rules are unit-testable everywhere (#378).
-fn parse_wsl_unc(path: &str) -> Option<(String, String)> {
-    let norm = path.replace('/', "\\");
-    let rest = norm
-        .strip_prefix("\\\\wsl$\\")
-        .or_else(|| norm.strip_prefix("\\\\wsl.localhost\\"))?;
-    let (distro, tail) = match rest.split_once('\\') {
-        Some((d, t)) => (d, t),
-        None => (rest, ""),
-    };
-    if distro.is_empty() {
-        return None;
-    }
-    Some((distro.to_string(), format!("/{}", tail.replace('\\', "/"))))
-}
+use crate::wsl::parse_wsl_unc;
 
+#[allow(clippy::too_many_arguments)] // three of these are the event callbacks
 fn spawn_shell(
     id: u64,
     window_label: String,
@@ -708,31 +692,7 @@ mod tests {
     assert_eq!(classify_shell(""), "posix");
 }
 
-#[test]
-fn wsl_unc_paths_parse_to_distro_and_linux_path() {
-        assert_eq!(
-            parse_wsl_unc(r"\\wsl.localhost\Ubuntu\home\me\proj"),
-            Some(("Ubuntu".into(), "/home/me/proj".into()))
-        );
-        assert_eq!(
-            parse_wsl_unc(r"\\wsl$\Debian\tmp"),
-            Some(("Debian".into(), "/tmp".into()))
-        );
-        // Forward-slash spelling of the same UNC.
-        assert_eq!(
-            parse_wsl_unc("//wsl.localhost/Ubuntu/home/me"),
-            Some(("Ubuntu".into(), "/home/me".into()))
-        );
-        // Distro root.
-        assert_eq!(
-            parse_wsl_unc(r"\\wsl$\Ubuntu"),
-            Some(("Ubuntu".into(), "/".into()))
-        );
-        // Non-WSL paths pass through as None.
-        assert_eq!(parse_wsl_unc(r"C:\Users\me"), None);
-        assert_eq!(parse_wsl_unc("/home/me"), None);
-        assert_eq!(parse_wsl_unc(r"\\server\share"), None);
-    }
+    // parse_wsl_unc's tests live with it in crate::wsl.
 
     #[test]
     fn utf8_splitter_passes_complete_text_through() {

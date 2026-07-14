@@ -248,7 +248,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `lib.rs` — app entry: builder, command registration, plugin setup. Grep here to find where a command is wired.
 - `error.rs` — unified command error type.
 - `config.rs` — JSON config file persistence.
-- `search.rs` — fuzzy search (nucleo). Two-pass walk: fast pass, then build-output trees (`target`, `node_modules`, …) deferred + score-penalized (#393).
+- `search.rs` — fuzzy search (nucleo). Two-pass walk: fast pass, then build-output trees (`target`, `node_modules`, …) deferred + score-penalized (#393); WSL UNC roots delegate the walk to the distro's `find` (#414).
+- `wsl.rs` — WSL UNC path parsing (`\\wsl.localhost\<distro>\…` → distro + Linux path), shared by terminal/search/git delegation.
 - `content_search.rs` — grep-across-files (ripgrep/grep crate).
 - `thumbnails.rs` — image/video thumbnail generation + cache. Hot.
 - `palette.rs` — dominant-color extraction for themes (#203).

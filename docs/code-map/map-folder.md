@@ -272,7 +272,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `fal.rs` — fal.ai REST helpers: API-key resolution, CDN upload, queue submit/poll, result download. Shared by upscale + nano-banana.
 - `upscale.rs` — `start_upscale_job` command: uploads the image, runs the SeedVR2 queue job via `fal.rs`, writes the result.
 - `plugin_job.rs` — shared plugin-job scaffolding: job-id alloc, output-path validation, timeout wrapper, complete/error events.
-- `git.rs` — SCM panel git backend: status/stage/commit/diff (#53).
+- `git.rs` — SCM panel git backend: status/stage/commit/diff (#53). Status/diff delegate to native `wsl.exe git` (porcelain=v2 parser) for `\\wsl.localhost\…` repos, falling back to libgit2 (#398).
 - `git_log.rs` — git history / commit-graph backend (#57).
 - `git_actions.rs` — mutating git actions for commit-graph tab (VSCode parity).
 - `git_common.rs` — shared git plumbing (used by git/git_log/git_actions).

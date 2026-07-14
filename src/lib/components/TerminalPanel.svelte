@@ -260,10 +260,18 @@
     queueToastShown = false;
   }
 
+  // App zoom compensation (#419): the app zooms via CSS `zoom` on the root,
+  // but xterm's selection hit-testing breaks under ancestor zoom (pointer
+  // coords and canvas cell metrics disagree, worst on WebKit). The panel
+  // counter-zooms itself back to net 1.0 and scales the FONT instead — same
+  // visual size, true-pixel coordinates.
+  const BASE_FONT_SIZE = 13;
+  const zoomFactor = $derived(settingsStore.zoomLevel / 100);
+
   onMount(() => {
     term = new Terminal({
       cursorBlink: true,
-      fontSize: 13,
+      fontSize: Math.round(BASE_FONT_SIZE * (settingsStore.zoomLevel / 100)),
       fontFamily: "'JetBrainsMono Nerd Font', 'Cascadia Code', 'SF Mono', Menlo, Consolas, monospace",
       theme: buildTerminalTheme(resolveThemeColor),
       scrollback: 5000,
@@ -415,6 +423,16 @@
     });
   });
 
+  // Keep the counter-zoom + font size in step with the app zoom level (#419).
+  $effect(() => {
+    const factor = zoomFactor;
+    if (!term) return;
+    term.options.fontSize = Math.round(BASE_FONT_SIZE * factor);
+    requestAnimationFrame(() => {
+      if (terminalPanelStore.visible) fitAddon?.fit();
+    });
+  });
+
   // Refit + refocus when the panel is re-shown (it keeps running while hidden;
   // display:none gives xterm a 0×0 box it must recover from).
   $effect(() => {
@@ -443,10 +461,14 @@
   }
 </script>
 
+<!-- Counter-zoom (#419): net zoom 1.0 inside the panel so xterm's pointer
+     math is exact; height is pre-multiplied so the panel occupies the same
+     visual space as it would zoomed. -->
 <div
   class="terminal-panel"
   class:hidden={!visible}
-  style:height="{settingsStore.terminalPanelHeight}px"
+  style:zoom={1 / zoomFactor}
+  style:height="{settingsStore.terminalPanelHeight * zoomFactor}px"
   bind:this={panelEl}
 >
   <div
@@ -515,6 +537,10 @@
   }
 
   .terminal-header {
+    /* Re-apply the app zoom the panel counter-zoomed away (#419): the header
+       is plain DOM (no xterm hit-testing), so it should match the rest of
+       the app's scale. */
+    zoom: var(--app-zoom, 1);
     display: flex;
     align-items: center;
     justify-content: space-between;

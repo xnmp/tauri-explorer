@@ -145,8 +145,8 @@ fn stream_find(
     stop: &dyn Fn() -> bool,
     on_line: &mut dyn FnMut(bool, &str),
 ) -> bool {
-    use std::io::BufRead;
     use crate::process_ext::NoConsole;
+    use std::io::BufRead;
     cmd.stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .stdin(std::process::Stdio::null())
@@ -317,15 +317,15 @@ fn walk_passes(
         if stop() || scanned >= DEFERRED_SCAN_CAP {
             return;
         }
-        let walker = WalkDir::new(&deferred_root).skip_hidden(true).process_read_dir(
-            |_depth, _path, _state, children| {
+        let walker = WalkDir::new(&deferred_root)
+            .skip_hidden(true)
+            .process_read_dir(|_depth, _path, _state, children| {
                 for e in children.iter_mut().flatten() {
                     if is_hard_skip(&e.file_name().to_string_lossy()) {
                         e.read_children_path = None;
                     }
                 }
-            },
-        );
+            });
         for entry in walker {
             if stop() || scanned >= DEFERRED_SCAN_CAP {
                 return;
@@ -400,12 +400,9 @@ fn normalize_rel_separators(p: String) -> String {
 /// Capped at `WALK_SAFETY_CAP` to bound memory for the non-streaming path.
 fn walk_entries(root_path: &PathBuf) -> Vec<Walked> {
     let mut entries: Vec<Walked> = Vec::new();
-    walk_passes(
-        root_path,
-        &|| false,
-        WALK_SAFETY_CAP,
-        &mut |w| entries.push(w),
-    );
+    walk_passes(root_path, &|| false, WALK_SAFETY_CAP, &mut |w| {
+        entries.push(w)
+    });
     entries
 }
 
@@ -772,8 +769,14 @@ mod tests {
 
     #[test]
     fn find_lines_parse_into_kind_and_rel_path() {
-        assert_eq!(parse_find_line("d\tsrc-tauri/target"), Some((true, "src-tauri/target")));
-        assert_eq!(parse_find_line("f\ta/b c/d.txt"), Some((false, "a/b c/d.txt")));
+        assert_eq!(
+            parse_find_line("d\tsrc-tauri/target"),
+            Some((true, "src-tauri/target"))
+        );
+        assert_eq!(
+            parse_find_line("f\ta/b c/d.txt"),
+            Some((false, "a/b c/d.txt"))
+        );
         assert_eq!(parse_find_line("l\tlink"), Some((false, "link")));
         assert_eq!(parse_find_line("no-tab-here"), None);
         assert_eq!(parse_find_line("d\t"), None);
@@ -786,7 +789,11 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn find_walk_passes_matches_jwalk_semantics() {
-        if std::process::Command::new("find").arg("--version").output().is_err() {
+        if std::process::Command::new("find")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
             eprintln!("skipping: no `find` on this machine");
             return;
         }
@@ -826,7 +833,9 @@ mod tests {
             "deferred pass must reach target/release/bundle/deb: {listing:?}"
         );
         assert!(
-            listing.contains(&"index.js @ node_modules/pkg/index.js dir=false deferred=true".to_string()),
+            listing.contains(
+                &"index.js @ node_modules/pkg/index.js dir=false deferred=true".to_string()
+            ),
             "node_modules contents are deferred: {listing:?}"
         );
         // Repo internals never appear.
@@ -1303,7 +1312,8 @@ mod tests {
             fmt_results(&result.results)
         );
         assert_eq!(
-            widgets[0].relative_path, "src/widget.ts",
+            widgets[0].relative_path,
+            "src/widget.ts",
             "the source copy must rank first, got: {:?}",
             fmt_results(&result.results)
         );
@@ -1348,7 +1358,12 @@ mod tests {
             .iter()
             .filter(|e| e.name == "target" && e.is_dir)
             .count();
-        assert_eq!(target_dirs, 1, "deferred root emitted once, got: {:?}", fmt_walked(&entries));
+        assert_eq!(
+            target_dirs,
+            1,
+            "deferred root emitted once, got: {:?}",
+            fmt_walked(&entries)
+        );
     }
 
     #[test]

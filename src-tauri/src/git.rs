@@ -1348,7 +1348,10 @@ mod tests {
 
         let repo = open_repo(dir.path()).unwrap();
         // core.filemode is what makes libgit2 compare modes at all.
-        repo.config().unwrap().set_bool("core.filemode", true).unwrap();
+        repo.config()
+            .unwrap()
+            .set_bool("core.filemode", true)
+            .unwrap();
 
         let honoring = collect_status_inner(&repo, false).unwrap();
         assert!(
@@ -1392,7 +1395,10 @@ mod tests {
         commit_all(dir.path(), "init");
 
         let repo = open_repo(dir.path()).unwrap();
-        repo.config().unwrap().set_bool("core.autocrlf", true).unwrap();
+        repo.config()
+            .unwrap()
+            .set_bool("core.autocrlf", true)
+            .unwrap();
         // Rewrite the working tree with CRLF, as a Windows checkout would.
         fs::write(dir.path().join("script.ahk"), "MsgBox\r\nReturn\r\n").unwrap();
 
@@ -1400,10 +1406,7 @@ mod tests {
         // makes the panel row a dead end).
         let mut o = DiffOptions::new();
         o.pathspec("script.ahk");
-        let patch = render_diff(
-            repo.diff_index_to_workdir(None, Some(&mut o)).unwrap(),
-        )
-        .unwrap();
+        let patch = render_diff(repo.diff_index_to_workdir(None, Some(&mut o)).unwrap()).unwrap();
         assert!(patch.is_empty(), "expected an empty diff, got: {patch:?}");
 
         let hiding = collect_status_inner(&repo, true).unwrap();
@@ -1441,7 +1444,11 @@ mod tests {
         let key = watch_key_for(&plain);
         assert!(!key.ends_with('/') && !key.ends_with('\\'), "key: {key}");
         assert_eq!(watch_key_for(&slashed), key);
-        assert_eq!(watch_key_for(&from_subdir), key, "subdir resolves to the same repo key");
+        assert_eq!(
+            watch_key_for(&from_subdir),
+            key,
+            "subdir resolves to the same repo key"
+        );
         // Non-repo path: passes through unchanged.
         let other = TempDir::new().unwrap();
         let p = other.path().to_str().unwrap().to_string();
@@ -1463,7 +1470,10 @@ mod tests {
 
         let s = sync_status(dir.path());
         let root = s.repo_root.unwrap();
-        assert!(!root.ends_with('/') && !root.ends_with('\\'), "root: {root}");
+        assert!(
+            !root.ends_with('/') && !root.ends_with('\\'),
+            "root: {root}"
+        );
     }
 
     #[test]
@@ -1861,13 +1871,7 @@ mod tests {
         fn v2_bytes(dir: &Path) -> Vec<u8> {
             Command::new("git")
                 .current_dir(dir)
-                .args([
-                    "status",
-                    "--porcelain=v2",
-                    "--branch",
-                    "-z",
-                    "-uall",
-                ])
+                .args(["status", "--porcelain=v2", "--branch", "-z", "-uall"])
                 .output()
                 .unwrap()
                 .stdout
@@ -2043,7 +2047,9 @@ mod tests {
             let dir = conflicted_repo();
             let p = parse_status_v2(&v2_bytes(dir.path()));
             assert!(
-                p.merge.iter().any(|e| e.status == GitStatusCode::Conflicted),
+                p.merge
+                    .iter()
+                    .any(|e| e.status == GitStatusCode::Conflicted),
                 "expected a conflicted entry, got {:?}",
                 p.merge
             );

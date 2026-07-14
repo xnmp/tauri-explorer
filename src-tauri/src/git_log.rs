@@ -643,7 +643,8 @@ mod tests {
         let repo = Repository::open(&path).unwrap();
         for _ in 0..3 {
             let t = std::time::Instant::now();
-            let page = build_log(&repo, &GitLogOptions::default(), Vec::new(), &no_cancel()).unwrap();
+            let page =
+                build_log(&repo, &GitLogOptions::default(), Vec::new(), &no_cancel()).unwrap();
             eprintln!(
                 "build_log page0: {:?} ({} commits, {} decorated)",
                 t.elapsed(),
@@ -771,10 +772,24 @@ mod tests {
         let other = git2::Signature::now("Other", "o@x").unwrap();
         let tree = repo.find_commit(base).unwrap().tree().unwrap();
         let first = repo
-            .commit(Some("HEAD"), &creator, &creator, "start topic", &tree, &[&repo.find_commit(base).unwrap()])
+            .commit(
+                Some("HEAD"),
+                &creator,
+                &creator,
+                "start topic",
+                &tree,
+                &[&repo.find_commit(base).unwrap()],
+            )
             .unwrap();
         let second = repo
-            .commit(Some("HEAD"), &other, &other, "continue topic", &tree, &[&repo.find_commit(first).unwrap()])
+            .commit(
+                Some("HEAD"),
+                &other,
+                &other,
+                "continue topic",
+                &tree,
+                &[&repo.find_commit(first).unwrap()],
+            )
             .unwrap();
         let _ = second;
         // Trunk: switch HEAD back to main so topic's commits are "unique".
@@ -825,7 +840,10 @@ mod tests {
             !sums.contains(&"remote only"),
             "local_only leaked remote-only history: {sums:?}"
         );
-        assert!(sums.contains(&"main tip"), "local history missing: {sums:?}");
+        assert!(
+            sums.contains(&"main tip"),
+            "local history missing: {sums:?}"
+        );
     }
 
     fn init_repo() -> (TempDir, Repository) {

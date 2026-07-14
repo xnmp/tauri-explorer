@@ -684,13 +684,16 @@ mod tests {
 
     #[test]
     fn shells_classify_into_dialect_families() {
-    assert_eq!(classify_shell(r"C:\Windows\system32\cmd.exe"), "cmd");
-    assert_eq!(classify_shell(r"C:\...\WindowsPowerShell\v1.0\powershell.exe"), "powershell");
-    assert_eq!(classify_shell("pwsh.exe"), "powershell");
-    assert_eq!(classify_shell("/bin/zsh"), "posix");
-    assert_eq!(classify_shell("/usr/bin/fish"), "posix");
-    assert_eq!(classify_shell(""), "posix");
-}
+        assert_eq!(classify_shell(r"C:\Windows\system32\cmd.exe"), "cmd");
+        assert_eq!(
+            classify_shell(r"C:\...\WindowsPowerShell\v1.0\powershell.exe"),
+            "powershell"
+        );
+        assert_eq!(classify_shell("pwsh.exe"), "powershell");
+        assert_eq!(classify_shell("/bin/zsh"), "posix");
+        assert_eq!(classify_shell("/usr/bin/fish"), "posix");
+        assert_eq!(classify_shell(""), "posix");
+    }
 
     // parse_wsl_unc's tests live with it in crate::wsl.
 

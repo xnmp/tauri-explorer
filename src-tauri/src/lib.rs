@@ -38,13 +38,13 @@ mod portal {
     }
 }
 mod search;
-mod wsl;
 pub mod system;
 pub mod task_registry;
 mod terminal;
 mod thumbnails;
 mod wallpaper;
 mod warm_pool;
+mod wsl;
 
 use system::{
     get_launch_cwd, get_log_dir, log_startup_timing, move_multiple_to_trash, move_to_trash,

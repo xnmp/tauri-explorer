@@ -247,7 +247,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `lib.rs` — app entry: builder, command registration, plugin setup. Grep here to find where a command is wired.
 - `error.rs` — unified command error type.
 - `config.rs` — JSON config file persistence.
-- `search.rs` — fuzzy search (nucleo).
+- `search.rs` — fuzzy search (nucleo). Two-pass walk: fast pass, then build-output trees (`target`, `node_modules`, …) deferred + score-penalized (#393).
 - `content_search.rs` — grep-across-files (ripgrep/grep crate).
 - `thumbnails.rs` — image/video thumbnail generation + cache. Hot.
 - `palette.rs` — dominant-color extraction for themes (#203).

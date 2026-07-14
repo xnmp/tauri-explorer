@@ -47,9 +47,13 @@ export async function pasteEntries(
   const opType = isCut ? "move" as const : "copy" as const;
   const label = sources.length === 1 ? sources[0].name : `${sources.length} items`;
 
-  // Estimate total size for byte-level progress
-  const sizeResult = await estimateSize(sources.map((s) => s.path));
-  const totalBytes = sizeResult.ok ? sizeResult.data.totalBytes : 0;
+  // Byte totals power the progress bar, but the recursive size scan can take
+  // seconds on big trees — it must not gate the transfer start (#388). Run it
+  // alongside; progress falls back to file-count granularity until it lands.
+  let totalBytes = 0;
+  void estimateSize(sources.map((s) => s.path)).then((sizeResult) => {
+    if (sizeResult.ok) totalBytes = sizeResult.data.totalBytes;
+  });
 
   // Start tracking operation in progress dialog
   const op = operationsManager.startOperation(opType, label, destPath);
@@ -153,6 +157,10 @@ export async function pasteEntries(
 
       if (result.ok && result.entry) {
         newEntries.push(result.entry);
+        // Each pasted entry appears in the listing the moment its transfer
+        // finishes instead of after the whole batch (#388); onEntriesAdded
+        // dedupes by path, so the final batch call below stays safe.
+        onEntriesAdded([result.entry]);
         // Track the pasted name so later sources in this batch with the same
         // name are detected as conflicts (the snapshot taken before the loop
         // doesn't know about entries created during the batch).
@@ -230,12 +238,14 @@ export async function pasteEntries(
     frecencyStore.pruneNonExistent();
   }
 
-  await onRefresh();
+  // Toast before the confirming refresh (#388): the entries are already
+  // visible optimistically, so feedback shouldn't wait on a re-list.
   const error = errors.length > 0 ? `Failed: ${errors.join(", ")}` : null;
   if (error) {
     toastStore.error(error);
   } else if (!operationsManager.isOperationCancelled(op.id)) {
     toastStore.success("Pasted successfully");
   }
+  await onRefresh();
   return error;
 }

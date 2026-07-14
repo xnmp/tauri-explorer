@@ -34,6 +34,12 @@ export interface GraphPoint {
 export interface BranchLine {
   colorIndex: number;
   points: GraphPoint[];
+  /** Merge edge (non-first-parent): when its FIRST segment is stretched by an
+   *  inline expansion, it crosses out of the child dot within the first
+   *  row-height instead of hugging the destination — otherwise its long
+   *  vertical runs down the CHILD's lane, painting over the trunk line that
+   *  also occupies it (#390). */
+  mergeEdge?: boolean;
 }
 
 /**
@@ -186,7 +192,11 @@ export function assignLayout(commits: readonly GraphCommitLike[]): GraphLayout {
         colorIndex = willJoin ? parent.onBranch! : availableColor(startRow);
       }
       const id = `edge:${branchIds++}:${parentRow}`;
-      const line: BranchLine = { colorIndex, points: [{ lane: startLane, row: startRow }] };
+      const line: BranchLine = {
+        colorIndex,
+        points: [{ lane: startLane, row: startRow }],
+        ...(isFirstParent ? {} : { mergeEdge: true }),
+      };
       let prevLane = startLane;
       for (let row = startRow + 1; row <= parentRow; row++) {
         let lane: number;
@@ -316,13 +326,25 @@ export function branchPath(
     const x2 = x(b.lane);
     const y2 = y(b.row);
     // A row expansion (open commit details) can stretch this segment far
-    // beyond one row height. Stay vertical through the stretch and cross
-    // only in the final row-height, hugging the destination — otherwise the
-    // curve smears into a long diagonal across the expanded block.
-    const yCross = y2 - rowHeight;
-    if (yCross > y1 + 0.5) path += ` L ${x1} ${yCross.toFixed(1)}`;
-    const yStart = Math.max(y1, yCross);
-    path += ` C ${x1} ${(yStart + d).toFixed(1)} ${x2} ${(y2 - d).toFixed(1)} ${x2} ${y2.toFixed(1)}`;
+    // beyond one row height. Stay vertical through the stretch and cross in
+    // a single row-height — a full-stretch curve smears into a long diagonal
+    // across the expanded block. WHICH end hugs matters (#390): a merge
+    // edge's first segment leaves the child dot, whose lane the trunk also
+    // occupies below it, so it must cross out IMMEDIATELY (first row-height)
+    // and run the stretch in its own destination lane. Every other segment
+    // hugs the destination (#221) — e.g. a first-parent edge's stretch runs
+    // in the CHILD's exclusive lane and crosses into the shared parent dot
+    // at the end.
+    if (line.mergeEdge && i === 1 && y2 - rowHeight > y1 + 0.5) {
+      const yCross = y1 + rowHeight;
+      path += ` C ${x1} ${(y1 + d).toFixed(1)} ${x2} ${(yCross - d).toFixed(1)} ${x2} ${yCross.toFixed(1)}`;
+      path += ` L ${x2} ${y2.toFixed(1)}`;
+    } else {
+      const yCross = y2 - rowHeight;
+      if (yCross > y1 + 0.5) path += ` L ${x1} ${yCross.toFixed(1)}`;
+      const yStart = Math.max(y1, yCross);
+      path += ` C ${x1} ${(yStart + d).toFixed(1)} ${x2} ${(y2 - d).toFixed(1)} ${x2} ${y2.toFixed(1)}`;
+    }
     i++;
   }
   return path;

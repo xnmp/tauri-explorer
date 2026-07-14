@@ -97,11 +97,14 @@ describe("large paste progress", () => {
     expect(progressSeen.length).toBe(50);
     expect([...progressSeen]).toEqual([...progressSeen].sort((a, b) => a - b));
 
-    // One batch undo covering all 50 moves; entries reported to the pane.
+    // One batch undo covering all 50 moves; entries reported to the pane
+    // incrementally as each transfer lands (#388) plus one final batch call.
     expect(undo.push).toHaveBeenCalledTimes(1);
     expect(undo.push.mock.calls[0][0]).toMatchObject({ type: "batch" });
     expect(undo.push.mock.calls[0][0].actions).toHaveLength(50);
-    expect(ctx.onEntriesAdded).toHaveBeenCalledTimes(1);
+    expect(ctx.onEntriesAdded).toHaveBeenCalledTimes(51);
+    const lastAdd = ctx.onEntriesAdded.mock.calls.at(-1)![0];
+    expect(lastAdd).toHaveLength(50);
     expect(toast.success).toHaveBeenCalledWith("Pasted successfully");
   });
 

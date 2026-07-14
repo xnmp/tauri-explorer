@@ -8,27 +8,164 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 
-/// Directories to skip during recursive search (for performance).
-const SKIP_DIRS: &[&str] = &[
+/// Directories that are never walked: repo internals, caches and editor state.
+/// Nothing a user would Quick Open to lives inside them.
+const HARD_SKIP_DIRS: &[&str] = &[
     ".git",
     ".svn",
     ".hg",
-    "node_modules",
     "__pycache__",
-    ".venv",
-    "venv",
     ".cache",
     ".npm",
     ".cargo",
+    ".idea",
+    ".vscode",
+];
+
+/// Build output and dependency trees. Their contents ARE reachable — a Windows
+/// installer really does live at `target/release/bundle/nsis` (#393) — but they
+/// are huge and must never crowd out source files, so they are walked only in a
+/// second pass, after the fast pass has emitted its results, and their hits are
+/// penalized (see [`DEFERRED_PENALTY`]).
+const DEFERRED_DIRS: &[&str] = &[
+    "node_modules",
     "target",
     "build",
     "dist",
     "out",
-    ".idea",
-    ".vscode",
+    ".venv",
+    "venv",
 ];
+
+/// Subtracted from a deferred hit's score, so a build artifact ranks below the
+/// source file it shadows (same name ⇒ the source wins on depth alone) without
+/// being buried under unrelated fuzzy noise — a *divisor* here sank an exact
+/// `nsis` folder-name match below 20 loose subsequence matches, i.e. right back
+/// out of the results.
+const DEFERRED_PENALTY: u32 = 40;
+
+/// Ceiling on entries scanned in the deferred pass. A `node_modules` +
+/// `target` pair can hold hundreds of thousands of files; the fast pass has
+/// already produced results by then, so this pass is a bonus, not a promise.
+const DEFERRED_SCAN_CAP: usize = 200_000;
+
+fn is_hard_skip(name: &str) -> bool {
+    HARD_SKIP_DIRS.contains(&name)
+}
+
+fn is_deferred(name: &str) -> bool {
+    DEFERRED_DIRS.contains(&name)
+}
+
+/// One walked entry. `deferred` marks a hit found inside a build-output tree.
+struct Walked {
+    relative_path: String,
+    name: String,
+    is_dir: bool,
+    deferred: bool,
+}
+
+/// Walk `root`, calling `on_entry` for every visible entry: the fast pass
+/// first (build-output trees pruned, but still reported as entries themselves),
+/// then those pruned trees, marked `deferred`. Stops early when `stop` returns
+/// true. Returns once both passes are done.
+fn walk_passes(
+    root: &Path,
+    stop: &dyn Fn() -> bool,
+    fast_cap: usize,
+    on_entry: &mut dyn FnMut(Walked),
+) {
+    let deferred_roots = Arc::new(Mutex::new(Vec::<PathBuf>::new()));
+
+    let collect = deferred_roots.clone();
+    let fast = WalkDir::new(root).skip_hidden(true).process_read_dir(
+        move |_depth, _path, _state, children| {
+            for e in children.iter_mut().flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if is_hard_skip(&name) {
+                    e.read_children_path = None;
+                } else if is_deferred(&name) {
+                    // Reported as an entry, but its contents wait for pass two.
+                    if let Ok(mut roots) = collect.lock() {
+                        roots.push(e.path());
+                    }
+                    e.read_children_path = None;
+                }
+            }
+        },
+    );
+
+    let mut emit = |entry: jwalk::DirEntry<((), ())>, deferred: bool| {
+        let path = entry.path();
+        if path == root {
+            return; // the root itself is not a result
+        }
+        let Ok(rel) = path.strip_prefix(root) else {
+            return;
+        };
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if name.starts_with('.') {
+            return; // hidden entries the walker didn't already filter
+        }
+        on_entry(Walked {
+            relative_path: normalize_rel_separators(rel.to_string_lossy().to_string()),
+            name,
+            is_dir: entry.file_type().is_dir(),
+            deferred,
+        });
+    };
+
+    for entry in fast.into_iter().take(fast_cap) {
+        if stop() {
+            return;
+        }
+        if let Ok(e) = entry {
+            emit(e, false);
+        }
+    }
+
+    // Pass two: the build-output trees, deprioritized and capped.
+    let roots = match deferred_roots.lock() {
+        Ok(r) => r.clone(),
+        Err(_) => return,
+    };
+    let mut scanned = 0usize;
+    for deferred_root in roots {
+        if stop() || scanned >= DEFERRED_SCAN_CAP {
+            return;
+        }
+        let walker = WalkDir::new(&deferred_root).skip_hidden(true).process_read_dir(
+            |_depth, _path, _state, children| {
+                for e in children.iter_mut().flatten() {
+                    if is_hard_skip(&e.file_name().to_string_lossy()) {
+                        e.read_children_path = None;
+                    }
+                }
+            },
+        );
+        for entry in walker {
+            if stop() || scanned >= DEFERRED_SCAN_CAP {
+                return;
+            }
+            scanned += 1;
+            if let Ok(e) = entry {
+                // Depth 0 is the deferred root itself, which the fast pass
+                // already emitted — a second copy would show up as a
+                // duplicate result.
+                if e.depth == 0 {
+                    continue;
+                }
+                emit(e, true);
+            }
+        }
+    }
+}
 
 /// Search result from fuzzy file search.
 #[derive(Debug, Clone, Serialize)]
@@ -82,54 +219,16 @@ fn normalize_rel_separators(p: String) -> String {
     }
 }
 
-/// Collect file/directory entries under `root_path` using jwalk.
-/// Returns `(relative_path, name, is_dir)` tuples.
+/// Collect file/directory entries under `root_path` (both passes).
 /// Capped at `WALK_SAFETY_CAP` to bound memory for the non-streaming path.
-fn walk_entries(root_path: &PathBuf) -> Vec<(String, String, bool)> {
-    let mut entries: Vec<(String, String, bool)> = Vec::new();
-
-    let walker = WalkDir::new(root_path).skip_hidden(true).process_read_dir(
-        |_depth, _path, _read_dir_state, children| {
-            for e in children.iter_mut().flatten() {
-                let name = e.file_name().to_string_lossy();
-                if SKIP_DIRS.contains(&name.as_ref()) {
-                    e.read_children_path = None;
-                }
-            }
-        },
+fn walk_entries(root_path: &PathBuf) -> Vec<Walked> {
+    let mut entries: Vec<Walked> = Vec::new();
+    walk_passes(
+        root_path,
+        &|| false,
+        WALK_SAFETY_CAP,
+        &mut |w| entries.push(w),
     );
-
-    for entry in walker.into_iter().take(WALK_SAFETY_CAP) {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-
-        // Skip the root itself
-        if entry.path() == *root_path {
-            continue;
-        }
-
-        let path = entry.path();
-        let relative_path = match path.strip_prefix(root_path) {
-            Ok(p) => normalize_rel_separators(p.to_string_lossy().to_string()),
-            Err(_) => continue,
-        };
-
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-
-        // Skip hidden files not caught by walker
-        if name.starts_with('.') {
-            continue;
-        }
-
-        let is_dir = entry.file_type().is_dir();
-        entries.push((relative_path, name, is_dir));
-    }
-
     entries
 }
 
@@ -143,13 +242,17 @@ const DIRECTORY_BONUS: u32 = 30;
 /// closer to the search root rank higher than deeply nested ones.
 /// Directories get an additional bonus to rank above files.
 fn score_entry(
-    name: &str,
-    relative_path: &str,
-    is_dir: bool,
+    entry: &Walked,
     query_lower: &str,
     pattern: &Pattern,
     matcher: &mut Matcher,
 ) -> Option<u32> {
+    let Walked {
+        name,
+        relative_path,
+        is_dir,
+        deferred,
+    } = entry;
     let mut buf = Vec::new();
     let haystack = Utf32Str::new(name, &mut buf);
     let base_score = if let Some(score) = pattern.score(haystack, matcher) {
@@ -166,12 +269,16 @@ fn score_entry(
     // Clamped to 0 so deep items are never penalized below their base score.
     let depth = relative_path.matches('/').count() + 1;
     let depth_bonus = (50u32).saturating_sub((depth as u32 - 1) * 5);
-    let dir_bonus = if is_dir { DIRECTORY_BONUS } else { 0 };
-    Some(
-        base_score
-            .saturating_add(depth_bonus)
-            .saturating_add(dir_bonus),
-    )
+    let dir_bonus = if *is_dir { DIRECTORY_BONUS } else { 0 };
+    let score = base_score
+        .saturating_add(depth_bonus)
+        .saturating_add(dir_bonus);
+    // A build artifact never outranks the source file it shadows (#393).
+    Some(if *deferred {
+        score.saturating_sub(DEFERRED_PENALTY)
+    } else {
+        score
+    })
 }
 
 /// Fuzzy search for files and directories recursively (non-streaming version).
@@ -219,16 +326,8 @@ fn fuzzy_search_sync(
     let mut scored: Vec<(u32, usize)> = entries
         .iter()
         .enumerate()
-        .filter_map(|(idx, (relative_path, name, is_dir))| {
-            score_entry(
-                name,
-                relative_path,
-                *is_dir,
-                &query_lower,
-                &pattern,
-                &mut matcher,
-            )
-            .map(|score| (score, idx))
+        .filter_map(|(idx, entry)| {
+            score_entry(entry, &query_lower, &pattern, &mut matcher).map(|score| (score, idx))
         })
         .collect();
 
@@ -238,14 +337,14 @@ fn fuzzy_search_sync(
         .into_iter()
         .take(limit)
         .map(|(score, idx)| {
-            let (relative_path, name, is_dir) = &entries[idx];
-            let full_path = root_path.join(relative_path);
+            let entry = &entries[idx];
+            let full_path = root_path.join(&entry.relative_path);
             SearchResult {
-                name: name.clone(),
+                name: entry.name.clone(),
                 path: full_path.to_string_lossy().to_string(),
-                relative_path: relative_path.clone(),
+                relative_path: entry.relative_path.clone(),
                 score,
-                kind: if *is_dir {
+                kind: if entry.is_dir {
                     "directory".to_string()
                 } else {
                     "file".to_string()
@@ -305,78 +404,39 @@ pub async fn start_streaming_search(
         let mut matcher = Matcher::new(Config::DEFAULT);
         let pattern = Pattern::parse(&query, CaseMatching::Ignore, Normalization::Smart);
 
-        let walker = WalkDir::new(&root_path).skip_hidden(true).process_read_dir(
-            |_depth, _path, _read_dir_state, children| {
-                // Don't remove skip-listed dirs — they should still appear as
-                // search results. Instead, prevent descent by clearing
-                // read_children_path so their contents aren't walked.
-                for e in children.iter_mut().flatten() {
-                    let name = e.file_name().to_string_lossy();
-                    if SKIP_DIRS.contains(&name.as_ref()) {
-                        e.read_children_path = None;
-                    }
+        let mut pending_entries: Vec<Walked> = Vec::new();
+
+        // Fast pass first, then the deferred build-output trees (#393), so the
+        // first results land as quickly as they always did.
+        walk_passes(
+            &root_path,
+            &|| cancelled.load(Ordering::Relaxed),
+            usize::MAX,
+            &mut |entry| {
+                pending_entries.push(entry);
+                total_scanned += 1;
+
+                // Process batch and emit results
+                if pending_entries.len() >= batch_size {
+                    let ctx = BatchContext {
+                        app: &app,
+                        search_id,
+                        root_path: &root_path,
+                        pattern: &pattern,
+                        limit,
+                        boost_prefix: boost_path.as_deref(),
+                        query_lower: &query_lower,
+                    };
+                    process_batch(
+                        &ctx,
+                        &mut pending_entries,
+                        &mut all_results,
+                        &mut matcher,
+                        total_scanned,
+                    );
                 }
             },
         );
-
-        let mut pending_entries: Vec<(String, String, bool)> = Vec::new();
-
-        for entry in walker {
-            // Check for cancellation
-            if cancelled.load(Ordering::Relaxed) {
-                break;
-            }
-
-            let entry = match entry {
-                Ok(e) => e,
-                Err(_) => continue,
-            };
-
-            // Skip the root itself
-            if entry.path() == root_path {
-                continue;
-            }
-
-            let path = entry.path();
-            let relative_path = match path.strip_prefix(&root_path) {
-                Ok(p) => normalize_rel_separators(p.to_string_lossy().to_string()),
-                Err(_) => continue,
-            };
-
-            let name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-
-            // Skip hidden files
-            if name.starts_with('.') {
-                continue;
-            }
-
-            let is_dir = entry.file_type().is_dir();
-            pending_entries.push((relative_path, name, is_dir));
-            total_scanned += 1;
-
-            // Process batch and emit results
-            if pending_entries.len() >= batch_size {
-                let ctx = BatchContext {
-                    app: &app,
-                    search_id,
-                    root_path: &root_path,
-                    pattern: &pattern,
-                    limit,
-                    boost_prefix: boost_path.as_deref(),
-                    query_lower: &query_lower,
-                };
-                process_batch(
-                    &ctx,
-                    &mut pending_entries,
-                    &mut all_results,
-                    &mut matcher,
-                    total_scanned,
-                );
-            }
-        }
 
         // Process remaining entries
         if !pending_entries.is_empty() && !cancelled.load(Ordering::Relaxed) {
@@ -430,7 +490,7 @@ struct BatchContext<'a> {
 
 fn process_batch(
     ctx: &BatchContext<'_>,
-    pending: &mut Vec<(String, String, bool)>,
+    pending: &mut Vec<Walked>,
     all_results: &mut Vec<SearchResult>,
     matcher: &mut Matcher,
     total_scanned: usize,
@@ -449,25 +509,24 @@ fn process_batch(
 
     let mut new_results: Vec<SearchResult> = pending
         .iter()
-        .filter_map(|(relative_path, name, is_dir)| {
-            let score = score_entry(name, relative_path, *is_dir, query_lower, pattern, matcher)?;
-            let full_path = root_path.join(relative_path);
-            // Boost score for results under the priority prefix
-            let boosted_score = if let Some(prefix) = boost_prefix {
-                if full_path.starts_with(prefix) {
+        .filter_map(|entry| {
+            let score = score_entry(entry, query_lower, pattern, matcher)?;
+            let full_path = root_path.join(&entry.relative_path);
+            // Boost results under the priority prefix (e.g. CWD) — but never a
+            // build artifact, which the CWD boost would lift back above the
+            // source files the penalty exists to protect (#393).
+            let boosted_score = match boost_prefix {
+                Some(prefix) if !entry.deferred && full_path.starts_with(prefix) => {
                     score.saturating_add(BOOST_SCORE)
-                } else {
-                    score
                 }
-            } else {
-                score
+                _ => score,
             };
             Some(SearchResult {
-                name: name.clone(),
+                name: entry.name.clone(),
                 path: full_path.to_string_lossy().to_string(),
-                relative_path: relative_path.clone(),
+                relative_path: entry.relative_path.clone(),
                 score: boosted_score,
-                kind: if *is_dir {
+                kind: if entry.is_dir {
                     "directory".to_string()
                 } else {
                     "file".to_string()
@@ -521,6 +580,19 @@ mod tests {
         root
     }
 
+    /// Helper: format walked entries for assertion messages.
+    fn fmt_walked(entries: &[Walked]) -> Vec<String> {
+        entries
+            .iter()
+            .map(|e| {
+                format!(
+                    "{} @ {} dir={} deferred={}",
+                    e.name, e.relative_path, e.is_dir, e.deferred
+                )
+            })
+            .collect()
+    }
+
     /// Helper: format results for assertion messages.
     fn fmt_results(results: &[SearchResult]) -> Vec<String> {
         results
@@ -545,8 +617,8 @@ mod tests {
         let entries = walk_entries(&PathBuf::from(&root));
 
         // Verify we collected entries from all depths
-        let names: Vec<&str> = entries.iter().map(|e| e.1.as_str()).collect();
-        let rel_paths: Vec<&str> = entries.iter().map(|e| e.0.as_str()).collect();
+        let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+        let rel_paths: Vec<&str> = entries.iter().map(|e| e.relative_path.as_str()).collect();
 
         // Root-level items
         assert!(names.contains(&"README.md"), "Should find root file");
@@ -593,24 +665,21 @@ mod tests {
         let entries = walk_entries(&PathBuf::from(&root));
 
         // Count "abc" directories
-        let abc_dirs: Vec<&(String, String, bool)> = entries
+        let abc_dirs: Vec<&Walked> = entries
             .iter()
-            .filter(|(_, name, is_dir)| name == "abc" && *is_dir)
+            .filter(|e| e.name == "abc" && e.is_dir)
             .collect();
         assert_eq!(
             abc_dirs.len(),
             2,
             "Should find both 'abc' directories, entries: {:?}",
-            entries
-                .iter()
-                .map(|(r, n, d)| format!("{n} @ {r} dir={d}"))
-                .collect::<Vec<_>>()
+            fmt_walked(&entries)
         );
 
         // Count "abc.txt" files
         let abc_files: Vec<_> = entries
             .iter()
-            .filter(|(_, name, is_dir)| name == "abc.txt" && !*is_dir)
+            .filter(|e| e.name == "abc.txt" && !e.is_dir)
             .collect();
         assert_eq!(abc_files.len(), 1, "Should find abc.txt file");
     }
@@ -634,14 +703,10 @@ mod tests {
         assert!(
             entries
                 .iter()
-                .any(|(_, name, is_dir)| name == "target_folder" && *is_dir),
-            "Should find deeply nested folder. Total entries: {}. Dirs found: {:?}",
+                .any(|e| e.name == "target_folder" && e.is_dir),
+            "Should find deeply nested folder. Total entries: {}. Entries: {:?}",
             entries.len(),
-            entries
-                .iter()
-                .filter(|(_, _, d)| *d)
-                .map(|(r, n, _)| format!("{n} @ {r}"))
-                .collect::<Vec<_>>()
+            fmt_walked(&entries)
         );
     }
 
@@ -934,6 +999,113 @@ mod tests {
             "Should find file in subdirectory, got: {:?}",
             fmt_results(&result.results)
         );
+    }
+
+    /// The reported bug: `target/` was pruned outright, so the Windows
+    /// installer folder at `target/release/bundle/nsis` — a real thing users
+    /// look for — was invisible to Quick Open (#393).
+    #[test]
+    fn test_finds_folders_inside_build_output_trees() {
+        let dir = tempdir().unwrap();
+        let root = visible_root(&dir);
+        build_project_tree(&root);
+        fs::create_dir_all(root.join("src-tauri/target/release/bundle/nsis")).unwrap();
+        File::create(root.join("src-tauri/target/release/bundle/nsis/setup.exe")).unwrap();
+        fs::create_dir_all(root.join("node_modules/lodash")).unwrap();
+
+        let result = fuzzy_search_sync("nsis".into(), root.to_string_lossy().into(), 20).unwrap();
+        let nsis = result
+            .results
+            .iter()
+            .find(|r| r.name == "nsis" && r.kind == "directory");
+        assert!(
+            nsis.is_some(),
+            "nsis under target/ must be reachable, got: {:?}",
+            fmt_results(&result.results)
+        );
+        assert_eq!(
+            nsis.unwrap().relative_path,
+            "src-tauri/target/release/bundle/nsis"
+        );
+
+        let result = fuzzy_search_sync("lodash".into(), root.to_string_lossy().into(), 20).unwrap();
+        assert!(
+            result.results.iter().any(|r| r.name == "lodash"),
+            "node_modules contents must be reachable too, got: {:?}",
+            fmt_results(&result.results)
+        );
+    }
+
+    /// …but build artifacts must never crowd out the source files that share
+    /// their name — the whole reason those trees were skipped in the first place.
+    #[test]
+    fn test_build_output_hits_rank_below_source_hits() {
+        let dir = tempdir().unwrap();
+        let root = visible_root(&dir);
+        fs::create_dir_all(root.join("src")).unwrap();
+        File::create(root.join("src/widget.ts")).unwrap();
+        fs::create_dir_all(root.join("dist/assets")).unwrap();
+        File::create(root.join("dist/assets/widget.ts")).unwrap();
+
+        let result = fuzzy_search_sync("widget".into(), root.to_string_lossy().into(), 20).unwrap();
+        let widgets: Vec<&SearchResult> = result
+            .results
+            .iter()
+            .filter(|r| r.name == "widget.ts")
+            .collect();
+        assert_eq!(
+            widgets.len(),
+            2,
+            "both copies found, got: {:?}",
+            fmt_results(&result.results)
+        );
+        assert_eq!(
+            widgets[0].relative_path, "src/widget.ts",
+            "the source copy must rank first, got: {:?}",
+            fmt_results(&result.results)
+        );
+        assert!(
+            widgets[0].score > widgets[1].score,
+            "the dist/ copy must be penalized: {:?}",
+            widgets
+                .iter()
+                .map(|r| (&r.relative_path, r.score))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// Repo internals stay invisible: nothing a user Quick Opens to is in .git.
+    #[test]
+    fn test_hard_skipped_dirs_are_never_walked() {
+        let dir = tempdir().unwrap();
+        let root = visible_root(&dir);
+        fs::create_dir_all(root.join(".git/objects")).unwrap();
+        File::create(root.join(".git/objects/deadbeef")).unwrap();
+        File::create(root.join("deadbeef.txt")).unwrap();
+
+        let result =
+            fuzzy_search_sync("deadbeef".into(), root.to_string_lossy().into(), 20).unwrap();
+        assert!(
+            result.results.iter().all(|r| !r.path.contains(".git")),
+            "'.git' contents must stay unreachable, got: {:?}",
+            fmt_results(&result.results)
+        );
+        assert!(result.results.iter().any(|r| r.name == "deadbeef.txt"));
+    }
+
+    #[test]
+    fn test_deferred_root_is_not_emitted_twice() {
+        let dir = tempdir().unwrap();
+        let root = visible_root(&dir);
+        fs::create_dir_all(root.join("target/release")).unwrap();
+        File::create(root.join("target/release/app.exe")).unwrap();
+
+        let entries = walk_entries(&PathBuf::from(&root));
+        let target_dirs = entries
+            .iter()
+            .filter(|e| e.name == "target" && e.is_dir)
+            .count();
+        assert_eq!(target_dirs, 1, "deferred root emitted once, got: {:?}", fmt_walked(&entries));
     }
 
     #[test]

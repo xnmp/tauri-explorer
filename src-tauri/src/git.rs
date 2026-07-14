@@ -9,6 +9,7 @@
 //! `tokio::task::spawn_blocking` so the Tauri async runtime is never blocked
 //! by libgit2. Cancellation is wired through the shared `TaskRegistry`.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -16,7 +17,7 @@ use std::sync::Arc;
 use git2::{
     DiffFormat, DiffLineType, DiffOptions, ObjectType, Repository, Signature, Status, StatusOptions,
 };
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::sync::OnceLock;
@@ -263,9 +264,106 @@ fn classify(entry: &git2::StatusEntry<'_>, workdir: &Path) -> Classified {
     out
 }
 
+/// Whether to hide status entries that have nothing to show.
+///
+/// On Windows, libgit2's status and diff disagree about the same file, and the
+/// panel ends up listing rows the user can click into an empty diff ("No
+/// changes to display"). Two ways this happens, both confirmed against real
+/// repos:
+///
+/// - **exec bit** (#392): Windows can't read it — least of all over a
+///   `\\wsl.localhost` UNC path — so a repo created under Linux
+///   (`core.filemode = true`) reports every `100755` file as modified.
+/// - **line endings** (#395): a CRLF working tree against LF blobs is listed
+///   as modified by status, while the diff applies the line-ending filter and
+///   comes back empty. Windows `git` itself reports the repo clean.
+///
+/// In both cases the honest answer is that nothing changed. A row that opens
+/// onto an empty diff is strictly worse than no row, so drop it. Off Windows
+/// none of this applies (a chmod there IS a real change) and the check — which
+/// costs two extra diffs — is skipped entirely.
+fn hides_empty_diffs() -> bool {
+    cfg!(windows)
+}
+
+/// Of `candidates` (repo-relative paths flagged modified/typechange), the ones
+/// that still show up in an actual diff. Returns the surviving
+/// `(staged, worktree)` paths; anything absent has an empty diff and is,
+/// as far as the user can act on it, unchanged.
+fn content_changed(
+    repo: &Repository,
+    candidates: &[String],
+) -> Result<(HashSet<String>, HashSet<String>), AppError> {
+    // A delta is NOT enough: libgit2 reports a delta for a CRLF-vs-LF file
+    // whose patch, once the line-ending filter has run, has no hunks at all
+    // (#395) — that delta is precisely the dead-end row we're trying to drop.
+    // Keep a path only if it has something displayable: at least one hunk, or
+    // a binary change (which the preview renders as "Binary file changed").
+    let displayable_paths = |diff: git2::Diff<'_>| {
+        let mut out = HashSet::new();
+        for (i, delta) in diff.deltas().enumerate() {
+            let Some(path) = delta
+                .new_file()
+                .path()
+                .or_else(|| delta.old_file().path())
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+            else {
+                continue;
+            };
+            let has_hunks = matches!(
+                git2::Patch::from_diff(&diff, i),
+                Ok(Some(ref p)) if p.num_hunks() > 0
+            );
+            if has_hunks || delta.flags().is_binary() {
+                out.insert(path);
+            }
+        }
+        out
+    };
+
+    // Pathspec-limited so the extra diffs cost work proportional to the number
+    // of changed files, not to the size of the tree.
+    let mut opts = DiffOptions::new();
+    opts.ignore_filemode(true);
+    for c in candidates {
+        opts.pathspec(c);
+    }
+
+    let head_tree = match repo.head() {
+        Ok(h) => Some(h.peel_to_tree().map_err(to_app_err)?),
+        Err(e) if e.code() == git2::ErrorCode::UnbornBranch => None,
+        Err(e) => return Err(to_app_err(e)),
+    };
+    let staged = displayable_paths(
+        repo.diff_tree_to_index(head_tree.as_ref(), None, Some(&mut opts))
+            .map_err(to_app_err)?,
+    );
+    let worktree = displayable_paths(
+        repo.diff_index_to_workdir(None, Some(&mut opts))
+            .map_err(to_app_err)?,
+    );
+    Ok((staged, worktree))
+}
+
+/// A status entry that could turn out to have an empty diff. A delete, a
+/// rename or an add always has something to show.
+fn may_have_empty_diff(entry: &GitFileEntry) -> bool {
+    matches!(
+        entry.status,
+        GitStatusCode::Modified | GitStatusCode::TypeChange
+    )
+}
+
 // pub: exercised directly by the `git_status` criterion bench
 // (src-tauri/benches/git_status.rs).
 pub fn collect_status(repo: &Repository) -> Result<GitStatusSummary, AppError> {
+    collect_status_inner(repo, hides_empty_diffs())
+}
+
+fn collect_status_inner(
+    repo: &Repository,
+    hide_empty_diffs: bool,
+) -> Result<GitStatusSummary, AppError> {
     let workdir = repo
         .workdir()
         .ok_or_else(|| AppError::Other("git: bare repository has no working tree".into()))?;
@@ -319,6 +417,25 @@ pub fn collect_status(repo: &Repository) -> Result<GitStatusSummary, AppError> {
         }
         if let Some(w) = c.worktree {
             summary.changes.push(w);
+        }
+    }
+
+    if hide_empty_diffs {
+        let candidates: Vec<String> = summary
+            .staged
+            .iter()
+            .chain(summary.changes.iter())
+            .filter(|e| may_have_empty_diff(e))
+            .map(|e| e.path.clone())
+            .collect();
+        if !candidates.is_empty() {
+            let (staged_keep, worktree_keep) = content_changed(repo, &candidates)?;
+            summary
+                .staged
+                .retain(|e| !may_have_empty_diff(e) || staged_keep.contains(&e.path));
+            summary
+                .changes
+                .retain(|e| !may_have_empty_diff(e) || worktree_keep.contains(&e.path));
         }
     }
 
@@ -616,6 +733,9 @@ pub async fn git_diff(
         let mut diff_opts = DiffOptions::new();
         diff_opts.pathspec(&path);
         diff_opts.context_lines(3);
+        // Same policy as the status list: on Windows a mode difference is an
+        // artifact, not a change, so it must not render as a diff either (#392).
+        diff_opts.ignore_filemode(hides_empty_diffs());
 
         let diff = if opts.staged {
             let head_tree = match repo.head() {
@@ -717,7 +837,7 @@ pub async fn git_commit(
 // ----- File watcher ----- //
 
 struct WatcherEntry {
-    _watcher: RecommendedWatcher,
+    _watcher: Box<dyn Watcher + Send>,
     /// Refcount (#334): multiple panes (or windows) can watch the same repo;
     /// the OS watcher is dropped only when the last consumer unwatches.
     count: usize,
@@ -743,13 +863,7 @@ pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), App
         }
         Err(_) => return Ok(()), // silently no-op when not a repo
     };
-    let key = {
-        let mut s = repo_root.to_string_lossy().to_string();
-        while s.len() > 1 && (s.ends_with('/') || s.ends_with('\\')) {
-            s.pop();
-        }
-        s
-    };
+    let key = watch_key_for(&repo_path);
 
     let mut map = watchers_map()
         .lock()
@@ -764,7 +878,7 @@ pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), App
     let last_emit: Arc<Mutex<Instant>> =
         Arc::new(Mutex::new(Instant::now() - Duration::from_secs(1)));
     let trailing_pending = Arc::new(AtomicBool::new(false));
-    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+    let handler = move |res: notify::Result<notify::Event>| {
         if let Ok(event) = res {
             // Ignore ephemeral lock files; coalesce emits to at most once per 200ms.
             let relevant = event.paths.iter().any(|p| {
@@ -805,8 +919,26 @@ pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), App
             drop(last);
             let _ = app_for_watcher.emit("git-status-changed", &key_for_event);
         }
-    })
-    .map_err(|e| AppError::Other(format!("git watch: {e}")))?;
+    };
+    // WSL/network shares (\\wsl$\…, \\wsl.localhost\…) don't deliver native
+    // change notifications to Windows — ReadDirectoryChangesW is effectively
+    // a no-op over 9P — so a natively-watched repo there never fires and the
+    // SCM panel looks frozen until reopened (#387). Poll those instead.
+    let is_unc = key.starts_with("\\\\") || key.starts_with("//");
+    let mut watcher: Box<dyn Watcher + Send> = if is_unc {
+        Box::new(
+            notify::PollWatcher::new(
+                handler,
+                notify::Config::default().with_poll_interval(Duration::from_secs(3)),
+            )
+            .map_err(|e| AppError::Other(format!("git watch: {e}")))?,
+        )
+    } else {
+        Box::new(
+            notify::recommended_watcher(handler)
+                .map_err(|e| AppError::Other(format!("git watch: {e}")))?,
+        )
+    };
 
     watcher
         .watch(&repo_root, RecursiveMode::Recursive)
@@ -827,16 +959,21 @@ pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), App
     Ok(())
 }
 
+/// The watcher-map key for a repo path: the normalized workdir (via
+/// `workdir_key`) or the path itself when it isn't a repo. Watch AND unwatch
+/// must derive keys identically — unwatch previously kept git2's trailing
+/// slash while watch stripped it, so refcounts never decremented and
+/// watchers leaked (#387).
+fn watch_key_for(repo_path: &str) -> String {
+    match open_repo(Path::new(repo_path)) {
+        Ok(r) => workdir_key(&r).unwrap_or_else(|| repo_path.to_string()),
+        Err(_) => repo_path.to_string(),
+    }
+}
+
 #[tauri::command]
 pub async fn git_unwatch_repo(repo_path: String) -> Result<(), AppError> {
-    let p = PathBuf::from(&repo_path);
-    let key = match open_repo(&p) {
-        Ok(r) => r
-            .workdir()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or(repo_path),
-        Err(_) => repo_path,
-    };
+    let key = watch_key_for(&repo_path);
     let mut map = watchers_map()
         .lock()
         .map_err(|e| AppError::Other(format!("git watchers lock poisoned: {e}")))?;
@@ -899,6 +1036,128 @@ mod tests {
             .args(["commit", "-m", msg])
             .status()
             .unwrap();
+    }
+
+    /// A mode-only change (chmod +x) is what Windows manufactures for every
+    /// 0755 file in a Linux-created repo, and it renders as a change with an
+    /// empty diff (#392). With the hide-empty-diffs policy on, it must not
+    /// reach the SCM panel; with it off (the Linux default), a real chmod
+    /// still must.
+    #[cfg(unix)]
+    #[test]
+    fn mode_only_change_is_dropped_only_when_empty_diffs_are_hidden() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = init_repo();
+        write(dir.path(), "script.sh", "#!/bin/sh\necho hi\n");
+        write(dir.path(), "notes.txt", "hello\n");
+        commit_all(dir.path(), "init");
+
+        let script = dir.path().join("script.sh");
+        let mut perms = fs::metadata(&script).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script, perms).unwrap();
+
+        let repo = open_repo(dir.path()).unwrap();
+        // core.filemode is what makes libgit2 compare modes at all.
+        repo.config().unwrap().set_bool("core.filemode", true).unwrap();
+
+        let honoring = collect_status_inner(&repo, false).unwrap();
+        assert!(
+            honoring.changes.iter().any(|e| e.path == "script.sh"),
+            "a real chmod must show as a change when modes are honored: {:?}",
+            honoring.changes
+        );
+
+        let ignoring = collect_status_inner(&repo, true).unwrap();
+        assert!(
+            ignoring.changes.is_empty(),
+            "mode-only change must not surface when modes are ignored: {:?}",
+            ignoring.changes
+        );
+
+        // A genuine content edit still surfaces under the ignoring policy.
+        write(dir.path(), "notes.txt", "hello\nworld\n");
+        let ignoring = collect_status_inner(&repo, true).unwrap();
+        assert!(
+            ignoring.changes.iter().any(|e| e.path == "notes.txt"),
+            "content changes must survive: {:?}",
+            ignoring.changes
+        );
+        assert!(
+            !ignoring.changes.iter().any(|e| e.path == "script.sh"),
+            "mode-only change must stay dropped: {:?}",
+            ignoring.changes
+        );
+    }
+
+    /// The other way a Windows status entry ends up with nothing behind it
+    /// (#395): a CRLF working tree against LF blobs with `core.autocrlf` on.
+    /// libgit2's status lists the file, its diff filters the line endings away
+    /// and comes back empty — Windows `git` calls the repo clean. The row must
+    /// not survive to the panel, because clicking it can only ever say "No
+    /// changes to display".
+    #[test]
+    fn crlf_only_change_with_an_empty_diff_is_dropped() {
+        let dir = init_repo();
+        write(dir.path(), "script.ahk", "MsgBox\nReturn\n"); // LF in the blob
+        commit_all(dir.path(), "init");
+
+        let repo = open_repo(dir.path()).unwrap();
+        repo.config().unwrap().set_bool("core.autocrlf", true).unwrap();
+        // Rewrite the working tree with CRLF, as a Windows checkout would.
+        fs::write(dir.path().join("script.ahk"), "MsgBox\r\nReturn\r\n").unwrap();
+
+        // Precondition: the diff for this file really is empty (this is what
+        // makes the panel row a dead end).
+        let mut o = DiffOptions::new();
+        o.pathspec("script.ahk");
+        let patch = render_diff(
+            repo.diff_index_to_workdir(None, Some(&mut o)).unwrap(),
+        )
+        .unwrap();
+        assert!(patch.is_empty(), "expected an empty diff, got: {patch:?}");
+
+        let hiding = collect_status_inner(&repo, true).unwrap();
+        assert!(
+            !hiding.changes.iter().any(|e| e.path == "script.ahk"),
+            "a file whose diff is empty must not be listed: {:?}",
+            hiding.changes
+        );
+
+        // A real edit to the same file still surfaces.
+        fs::write(
+            dir.path().join("script.ahk"),
+            "MsgBox\r\nReturn\r\nExitApp\r\n",
+        )
+        .unwrap();
+        let hiding = collect_status_inner(&repo, true).unwrap();
+        assert!(
+            hiding.changes.iter().any(|e| e.path == "script.ahk"),
+            "a real content change must survive: {:?}",
+            hiding.changes
+        );
+    }
+
+    #[test]
+    fn watch_and_unwatch_derive_identical_keys() {
+        // Unwatch used git2's raw (trailing-slash) workdir while watch
+        // stripped it — refcounts never decremented, watchers leaked (#387).
+        let dir = init_repo();
+        let plain = dir.path().to_str().unwrap().to_string();
+        let slashed = format!("{plain}/");
+        let sub = dir.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        let from_subdir = sub.to_str().unwrap().to_string();
+
+        let key = watch_key_for(&plain);
+        assert!(!key.ends_with('/') && !key.ends_with('\\'), "key: {key}");
+        assert_eq!(watch_key_for(&slashed), key);
+        assert_eq!(watch_key_for(&from_subdir), key, "subdir resolves to the same repo key");
+        // Non-repo path: passes through unchanged.
+        let other = TempDir::new().unwrap();
+        let p = other.path().to_str().unwrap().to_string();
+        assert_eq!(watch_key_for(&p), p);
     }
 
     #[test]

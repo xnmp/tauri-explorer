@@ -56,6 +56,22 @@ test.describe("Image preview click-to-fullscreen", () => {
     await expect(page.locator(".preview-image")).toBeVisible();
   });
 
+  test("fullscreen surface stays opaque in island/vibrancy mode (#391)", async ({ page }) => {
+    await openPicturesWithPreview(page);
+    // Island mode is what Windows Mica/Acrylic (and macOS vibrancy) turn on.
+    await page.evaluate(() => document.documentElement.setAttribute("data-vibrancy", ""));
+    const img = await selectAndWaitForImage(page, "photo1.jpg");
+    const pane = page.locator(".preview-pane");
+
+    await img.click();
+    await expect(pane).toHaveClass(/fullscreen/);
+
+    // A transparent surface let the whole app show through behind the image.
+    const bg = await pane.evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(bg).not.toBe("rgba(0, 0, 0, 0)");
+    expect(bg).not.toBe("transparent");
+  });
+
   test("Escape also exits the clicked-open fullscreen", async ({ page }) => {
     await openPicturesWithPreview(page);
     const img = await selectAndWaitForImage(page, "photo2.jpg");

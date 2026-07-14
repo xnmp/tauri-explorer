@@ -19,7 +19,17 @@
 
   // Window-global surface: the preview's SCM diff follows the ACTIVE pane's
   // store (#334) — reactive through windowTabsManager.activePaneId.
-  const scmStore = $derived(getScmStore(windowTabsManager.activePaneId || "default"));
+  // The active pane's SCM store — but the SIDEBAR scm view has no pane
+  // context and writes its diffs to the "default" store, so clicking a
+  // change there never reached the preview pane (#386). Read whichever
+  // store actually holds an open diff, preferring the pane's.
+  const paneScmStore = $derived(getScmStore(windowTabsManager.activePaneId || "default"));
+  const sidebarScmStore = $derived(getScmStore("default"));
+  const scmStore = $derived.by(() => {
+    if (paneScmStore.activeDiff || paneScmStore.commitDiff) return paneScmStore;
+    if (sidebarScmStore.activeDiff || sidebarScmStore.commitDiff) return sidebarScmStore;
+    return paneScmStore;
+  });
   import { parseUnifiedDiff, type ParsedDiff, type DiffLine } from "$lib/domain/diff";
   import FileIcon from "./FileIcon.svelte";
   /** Detect if the current theme uses a light color scheme.
@@ -364,6 +374,8 @@
     }
     if (!activeDiff || !scmStore.repoRoot) {
       diffRequestGen++; // invalidate any in-flight request
+      diffInFlight = null;
+      diffRenderedTarget = null;
       diffParsed = null;
       diffError = null;
       diffLoading = false;
@@ -379,6 +391,11 @@
   /** Load a commit file diff for the graph-routed target (#366). */
   async function loadCommitDiff(cd: { repoPath: string; oid: string; path: string }): Promise<void> {
     const gen = ++diffRequestGen;
+    // `diffParsed` is about to hold a COMMIT diff — the working-tree render
+    // cache must not claim it, or reopening that target would briefly show
+    // the commit's hunks under a working-tree badge.
+    diffRenderedTarget = null;
+    diffInFlight = null;
     diffLoading = true;
     diffError = null;
     try {
@@ -394,23 +411,52 @@
     }
   }
 
+  // The target currently being fetched, and the one `diffParsed` belongs to,
+  // both as `${repoRoot}|${path}|${staged}` (repo included: the pane and
+  // sidebar stores can sit on different repos that share a relative path).
+  let diffInFlight: string | null = null;
+  let diffRenderedTarget: string | null = null;
+
   async function loadDiff(repoRoot: string, path: string, staged: boolean): Promise<void> {
+    const target = `${repoRoot}|${path}|${staged}`;
+    // A repo on a UNC path is polled every 3s (#387), and each poll replaces
+    // `summary` — which this effect depends on — so a re-run would supersede
+    // the request already fetching this same target. Over a slow share the diff
+    // then never lands: the pane flashes a spinner forever and settles empty
+    // (#396). A redundant reload of a target we're already loading is dropped.
+    if (diffInFlight === target) return;
+    diffInFlight = target;
     const gen = ++diffRequestGen;
-    diffLoading = true;
-    diffError = null;
-    const r = await gitDiff(repoRoot, path, { staged });
-    // Drop stale responses: a newer request superseded this one, or the
-    // target (path OR staged flag) changed while we were fetching.
-    if (gen !== diffRequestGen) return;
-    const current = scmStore.activeDiff;
-    if (!current || current.path !== path || current.staged !== staged) return;
-    if (!r.ok) {
-      diffError = r.error;
+    // Re-checking the diff we're already showing must not blank it — that's the
+    // flash. A different target must, or the old file's diff would linger under
+    // the new file's header.
+    if (diffRenderedTarget !== target) {
       diffParsed = null;
-    } else {
-      diffParsed = parseUnifiedDiff(r.data);
+      diffLoading = true;
     }
-    diffLoading = false;
+    diffError = null;
+    try {
+      const r = await gitDiff(repoRoot, path, { staged });
+      // Drop stale responses: a newer request superseded this one, or the
+      // target (path OR staged flag) changed while we were fetching.
+      if (gen !== diffRequestGen) return;
+      const current = scmStore.activeDiff;
+      if (!current || current.path !== path || current.staged !== staged) return;
+      if (!r.ok) {
+        diffError = r.error;
+        diffParsed = null;
+        diffRenderedTarget = null;
+      } else {
+        diffParsed = parseUnifiedDiff(r.data);
+        diffRenderedTarget = target;
+      }
+      diffLoading = false;
+    } finally {
+      // Always release the target, and never leave a superseded request's
+      // spinner up: the winning request owns `diffLoading` from here.
+      if (diffInFlight === target) diffInFlight = null;
+      if (gen === diffRequestGen) diffLoading = false;
+    }
   }
 
   // Clear activeDiff when explorer file selection changes (not on initial render)
@@ -1419,5 +1465,14 @@
   :global([data-vibrancy]) .preview-pane {
     background: transparent;
     border-left: none;
+  }
+
+  /* …but the fullscreen surface must stay opaque (#391). The rule above has
+     the same specificity as `.preview-pane.fullscreen` and is declared later,
+     so in every island mode (macOS vibrancy, Windows Mica/Acrylic,
+     floatingIslands) it stripped the fullscreen background — the app behind
+     the image kept showing through, reading as a second preview. */
+  :global([data-vibrancy]) .preview-pane.fullscreen {
+    background: var(--background-solid, var(--background-card-secondary));
   }
 </style>

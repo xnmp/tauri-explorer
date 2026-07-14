@@ -54,3 +54,27 @@ export function gitStatusLetter(status: string): string {
     default: return "?";
   }
 }
+
+/**
+ * Relative wording for a commit made TODAY (local calendar day), or null so
+ * the caller falls back to its date formatting (#389): "just now",
+ * "N minutes ago", "N hours ago". Future timestamps (clock skew) read
+ * "just now" rather than a negative age.
+ */
+export function relativeTimeToday(unixSeconds: number, nowMs: number): string | null {
+  const then = new Date(unixSeconds * 1000);
+  const now = new Date(nowMs);
+  if (
+    then.getFullYear() !== now.getFullYear() ||
+    then.getMonth() !== now.getMonth() ||
+    then.getDate() !== now.getDate()
+  ) {
+    return null;
+  }
+  const ageSec = Math.max(0, Math.floor((nowMs - unixSeconds * 1000) / 1000));
+  if (ageSec < 60) return "just now";
+  const minutes = Math.floor(ageSec / 60);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+}

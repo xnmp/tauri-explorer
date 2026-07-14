@@ -585,8 +585,11 @@ function mockCommitGraph(): MockCommit[] {
     parents: c.parents.map(fullOid),
     author_name: c.n % 3 === 0 ? "Bob Dev" : "Alice Coder",
     author_email: c.n % 3 === 0 ? "bob@example.com" : "alice@example.com",
-    // Older commits (higher index) get earlier timestamps.
-    author_time: GRAPH_BASE_TIME - i * 3600,
+    // The newest three commits are "today" (minutes/hours old) so the
+    // graph's relative-time wording is exercised (#389); older commits get
+    // fixed historical timestamps.
+    author_time:
+      i < 3 ? Math.floor(Date.now() / 1000) - [30, 5 * 60, 5 * 3600][i] : GRAPH_BASE_TIME - i * 3600,
     summary: c.summary,
     ...(c.stash ? { stash: c.stash } : {}),
   }));
@@ -737,6 +740,12 @@ if (typeof window !== "undefined") {
   // Test affordance (mock/browser only): drop a drive to mimic an eject.
   (window as unknown as { __mockEjectDrive?: (path: string) => void }).__mockEjectDrive = (path: string) => {
     mockDrives = mockDrives.filter((d) => d.path !== path);
+  };
+  // Test affordance (mock/browser only): fire the watcher signal a repo on a
+  // UNC path gets every 3s from the poll watcher (#387). Used to prove a diff
+  // still lands while those refreshes rain on it (#396).
+  (window as unknown as { __mockGitPoll?: () => void }).__mockGitPoll = () => {
+    emitWatcherGitChange(MOCK_REPO_ROOT);
   };
 }
 

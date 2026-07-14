@@ -4,6 +4,12 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## 2026-07-14 fix/windows-scm-diff-preview-pane: per-pane stores need a story for pane-less surfaces
+- **Keying stores by pane context breaks silently for components that live OUTSIDE any pane.** The sidebar SCM view has no pane context so it wrote diffs to the "default" store, while the preview pane read the ACTIVE pane's store — sidebar clicks showed nothing, and the per-pane panel working masked it. When a reader and writer must rendezvous through a keyed store, either share the key derivation or have the reader scan the candidate stores.
+
+## 2026-07-14 fix/copy-paste-snappier: never gate an operation's start on its progress-bar prerequisites
+- **`estimateSize` (a full recursive walk) ran BEFORE the first byte copied**, so big pastes felt frozen before the progress dialog even moved. Kick prerequisite scans off concurrently and let progress degrade gracefully (file-count granularity) until they land. Same family: show optimistic entries per-file, not after the whole batch; toast before the confirming re-list.
+
 ## 2026-07-13 fix/windows-fullscreen-preview-edges: backdrop-filter creates a fixed-position containing block on Chromium
 - **A `backdrop-filter` (or `filter`) on ANY ancestor turns it into the containing block for `position: fixed` descendants on Chromium/WebView2** — the "fullscreen" preview laid out inside `.explorer` and got clipped by the preview island's `overflow: hidden`, so it only looked broken on Windows. When a fixed overlay must cover the window, suspend ancestor filters for its lifetime (a root attribute like `data-preview-fullscreen` makes that a one-line CSS rule).
 
@@ -1744,3 +1750,19 @@ clearing staged, amend folding).
 - vitest 4 constructs mock implementations with real `new` semantics: a `vi.fn().mockImplementation(arrow)` used as a constructor (`new WebviewWindow(...)`) throws "not a constructor" — and if the production code wraps construction in try/catch, the test fails silently downstream (empty capture array) instead of at the throw site. Use a `function` expression for any mock that gets `new`-ed.
 - TypeScript 7 (native compiler) does not expose the TS 5 CJS API (`ts.sys`); svelte-check (≤4.7.2) crashes at startup loading it. Stay on latest 5.x until svelte-check ships native-compiler support; `@dependabot ignore this major version` posted on #312.
 - vite 6→8 + vite-plugin-svelte 5→7 + vitest 3→4 + kit 2.69 needed zero config changes in this repo; the only casualty was the constructor mock above. Bundle budget unaffected (82.7 KiB gzip, 35% of budget).
+
+### CSS "override an override" ordering in island mode (#391)
+- The fullscreen preview lost its background on Windows/macOS island modes because `:global([data-vibrancy]) .preview-pane { background: transparent }` has the *same* specificity as `.preview-pane.fullscreen` and is declared later — so the app kept showing through the "fullscreen" image, reading as two previews. When a mode-wide rule zeroes a surface (`background: transparent` for islands), every state that needs that surface back (fullscreen, overlays) must be re-stated *after* it. Repro without Windows: set `data-vibrancy` + `data-win-backdrop` on `documentElement` in the browser.
+
+### Windows has no exec bit — a Linux repo's `core.filemode=true` manufactures changes (#392)
+- Over `\\wsl.localhost` (and on Windows generally) libgit2 reads every `100755` file as `100644`, so a repo created under Linux shows all its executables as Modified with an *empty* content diff ("No changes to display"). Git for Windows defaults `core.filemode=false` for exactly this reason. Both status paths need the policy: libgit2 (`git.rs` — filter mode-only entries + `DiffOptions::ignore_filemode`) and the CLI (`files/git_status.rs` — `git -c core.filemode=false status`). Never write the setting into the user's `.git/config`: the repo is shared with WSL, where a chmod *is* a real change.
+
+### "Don't rank these highly" was implemented as "make these invisible" (#393)
+- One `SKIP_DIRS` list did double duty in `search.rs`: repo internals (`.git`) and build output (`target`, `node_modules`, `dist`) were both *pruned*, so Quick Open could never reach `target/release/bundle/nsis` — a real path users look for. Split it: hard-skip repo internals, walk build output in a deferred second pass with penalized scores.
+- Tune the penalty against a real tree, not a fixture. A *divisor* (score / 4) looked principled and was wrong: it sank an exact `nsis` folder-name match below ~20 loose subsequence matches on long filenames, i.e. straight back out of the top-20 the backend emits. A flat subtraction (−40) keeps same-name source files ahead (they win on depth anyway) without burying an exact match under fuzzy noise.
+
+### libgit2 status and diff can disagree about the same file (#395)
+- On Windows, status lists a CRLF-vs-LF file as modified while the diff (post line-ending filter) has zero hunks — Windows `git` calls the repo clean. A *delta* is not evidence of a displayable change: `Patch::from_diff(...).num_hunks() > 0` (or a binary flag) is. The #392 empty-diff filter originally keyed on deltas and passed its filemode test while silently failing the CRLF case; the CRLF unit test caught it. Write the test for the *symptom class* (empty diff), not the first cause you found (filemode).
+
+### An effect keyed on a replaced-wholesale object can starve its own fetch (#396)
+- The preview's diff effect depends on the summary OBJECT (deliberately — content can change while the status list stays identical, so identity is the freshness signal; do NOT dedup identical summaries at the store). But UNC repos are polled every 3s (#387), so each inert tick re-ran the effect, and `loadDiff` invalidated the in-flight request each run — over a slow share the diff never landed. Fix at the consumer: drop a reload for a target already in flight, keep the rendered diff visible while re-verifying the same target, and reset the spinner in `finally`. Repro/regression: `__mockGitPoll()` + `?mockLatency=git_diff:1200` (test fails on the old code).

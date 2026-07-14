@@ -71,6 +71,54 @@ test.describe("SCM inline diff viewer", () => {
     await expect(infoValue).toHaveText("src/App.tsx");
   });
 
+  test("a slow diff still lands while poll refreshes rain on it (#396)", async ({ page }) => {
+    // A repo on a UNC path is polled every 3s (#387); each poll replaces the
+    // SCM summary, which the preview's diff effect depends on. Before the fix
+    // every refresh superseded the in-flight request, so on a slow share the
+    // diff never rendered: the pane flashed a spinner and settled on
+    // "No changes to display". Reproduce with a slow git_diff + a poll storm.
+    await page.goto("/");
+    await page.evaluate(() => {
+      const raw = localStorage.getItem("explorer-settings");
+      const s = raw ? JSON.parse(raw) : {};
+      s.showGitStatus = true;
+      s.showScmPanel = true;
+      s.showPreviewPane = true;
+      localStorage.setItem("explorer-settings", JSON.stringify(s));
+    });
+    // A diff slower than the poll interval is the whole point: every poll used
+    // to supersede the request in flight, so none could ever finish.
+    await page.goto("/?mockLatency=git_diff:1200");
+    await page.waitForLoadState("domcontentloaded");
+    await page.getByText("Documents", { exact: true }).first().dblclick();
+    await page.getByText("project", { exact: true }).first().dblclick();
+    await page.locator('[data-section="staged"]').waitFor({ state: "visible" });
+
+    await page.locator('[data-section="staged"] .row', { hasText: "App.tsx" }).click();
+
+    // Keep polling THROUGHOUT the assertion below (not before it): starvation
+    // only bites while the refreshes keep coming.
+    await page.evaluate(() => {
+      const w = window as unknown as { __mockGitPoll?: () => void; __stormId?: number };
+      w.__stormId = window.setInterval(() => w.__mockGitPoll?.(), 400);
+    });
+
+    const previewPane = page.locator(".preview-pane");
+    await expect(previewPane.locator('.diff-line[data-line-kind="add"]').first()).toBeVisible({
+      timeout: 6000,
+    });
+    await expect(previewPane.getByText("No changes to display")).toHaveCount(0);
+
+    await page.evaluate(() => {
+      const w = window as unknown as { __stormId?: number };
+      if (w.__stormId) clearInterval(w.__stormId);
+    });
+
+    // Not wedged on a spinner once the storm subsides.
+    await expect(previewPane.locator(".spinner")).toHaveCount(0);
+    await expect(previewPane.locator('.diff-line[data-line-kind="add"]').first()).toBeVisible();
+  });
+
   test("selecting a file in the explorer clears the diff", async ({ page }) => {
     await openScmOnRepo(page);
 

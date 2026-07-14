@@ -126,6 +126,32 @@
     return matched;
   }
 
+  /** Match the ACTIVE PANE's already-loaded entries against the term (#385).
+   *  The cwd's own files/folders must always be findable — and instantly —
+   *  independent of the backend walk (which missed cwd folders on Windows),
+   *  so they're merged in client-side like recents/frecency. */
+  function matchCwdEntries(term: string): SearchResult[] {
+    const explorer = windowTabsManager.getActiveExplorer();
+    if (!explorer) return [];
+    const lower = term.toLowerCase();
+    const matched: SearchResult[] = [];
+    for (const entry of explorer.displayEntries) {
+      const nameBonus = filenameMatchScore(entry.name, lower);
+      const fuzzy = fuzzyScorePath(lower, entry.name);
+      if (fuzzy <= 0 && nameBonus <= 0) continue;
+      matched.push({
+        name: entry.name,
+        path: entry.path,
+        relativePath: entry.name,
+        // Direct children of the cwd: score like a strong backend hit
+        // (fuzzy × 5 mirrors the recents weighting) plus the name bonus.
+        score: Math.round(fuzzy * 5) + nameBonus,
+        kind: entry.kind === "directory" ? "directory" : "file",
+      });
+    }
+    return matched;
+  }
+
   /** Re-rank search results by combining fuzzy score with frecency and filename bonus. */
   function rankWithFrecency(searchResults: SearchResult[]): SearchResult[] {
     if (searchResults.length === 0) return searchResults;
@@ -145,10 +171,18 @@
     return r.kind === "directory" ? r.score * DIRECTORY_BONUS : r.score;
   }
 
-  /** Merge primary results with extras (deduplicated), sorted by score descending. */
+  /** Merge primary results with extras, sorted by score descending. Dedupes
+   *  extras against the primary list AND among themselves — the same path
+   *  can arrive from recents, frecency, and the cwd listing (#385). */
   function mergeResultsByScore(primary: SearchResult[], extras: SearchResult[]): SearchResult[] {
     const seen = new Set(primary.map((r) => directoryKey(r.path)));
-    const unique = extras.filter((r) => !seen.has(directoryKey(r.path)));
+    const unique: SearchResult[] = [];
+    for (const r of extras) {
+      const key = directoryKey(r.path);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(r);
+    }
     const merged = [...primary, ...unique];
     merged.sort((a, b) => effectiveScore(b) - effectiveScore(a));
     return merged;
@@ -228,9 +262,10 @@
         return;
       }
 
-      // Rank backend results by frecency, then merge in recent/frecent matches
+      // Rank backend results by frecency, then merge in recent/frecent and
+      // cwd-listing matches (#385 — cwd entries must always be findable).
       const ranked = rankWithFrecency(payload.results);
-      const frecencyMatches = matchFrecencyAndRecent(query);
+      const frecencyMatches = [...matchFrecencyAndRecent(query), ...matchCwdEntries(query)];
       results = mergeResultsByScore(ranked, frecencyMatches);
       pointer.reset();
       totalScanned = payload.totalScanned;
@@ -274,9 +309,10 @@
       await cancelActiveSearch();
       if (generation !== searchGeneration) return;
 
-      // Show frecency/recent matches immediately (before backend responds)
-      const frecencyMatches = matchFrecencyAndRecent(query);
-      results = frecencyMatches;
+      // Show frecency/recent/cwd-listing matches immediately (before the
+      // backend responds) — cwd folders appear instantly (#385).
+      const frecencyMatches = [...matchFrecencyAndRecent(query), ...matchCwdEntries(query)];
+      results = mergeResultsByScore([], frecencyMatches);
 
       // Search from CWD so immediate directory contents are always found
       const cwd = getCwdPath();

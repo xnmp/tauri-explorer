@@ -2,6 +2,35 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.4.2 — 2026-07-14
+
+A big WSL/Windows correctness pass, a rebuilt git-graph filter, and a premium surface treatment for every theme.
+
+### Fixed
+- **Terminal cd sync speaks the spawned shell's dialect** — a pane inside `\\wsl.localhost` spawns a WSL (POSIX) shell, but cd syncs were sent in cmd.exe syntax with an ESC clear-prefix that zsh read as a meta key, eating the `c` of `cd` (`zsh: command not found: d`). The backend now reports what it actually spawned, paths translate both directions (`/home/…` ↔ `\\wsl.localhost\…`, `/mnt/c` ↔ `C:\`), and resizing the panel can no longer flood the shell with cds.
+- **Explorer no longer errors on WSL terminal startup** — the shell's reported cwd (`/home/user/...`) was treated as a Windows path (`unable to find folder: \home\user\...`); it now maps back to the distro's UNC share.
+- **Cmd+C/Cmd+V work in the terminal on macOS** — they copied/pasted *files* in the explorer instead of terminal text.
+- **Terminal selection aligns under app zoom** — the panel counter-zooms to net 1.0 and scales the font instead, so xterm's pointer math is exact.
+- **Home/End work at the mac prompt** — default bindings (clearable in Settings) map Home/End and Option+←/→ to line-start/end and word moves.
+- **Quick Open finds folders in WSL repos** — the walk from Windows crossed the 9P network boundary once per directory, so build-output folders like `target/release/bundle/deb` effectively never arrived; WSL roots now delegate the walk to the distro's native `find`.
+- **Windows no longer opens in `C:\Program Files\tauri-explorer`** — a launch cwd equal to the install directory is discarded in favor of home.
+- **Shortcuts work immediately after Alt+Tab on Windows** — the app re-asserts webview keyboard focus on window activation (WebView2 quirk).
+- **Toasts render in git-graph mode** — the toast overlay was mounted inside the file list, so graph-mode actions (including F5 refresh) gave no feedback at all; it now lives at the app root and F5 shows "Refreshing graph…" → "Fetched from remotes".
+- **Clipboard paste error toast** — no more "[object Object]", and a failed file-list probe no longer flashes an error when the paste succeeds another way (e.g. pasting an image on macOS).
+- **Active-tab fillet hairline** — the stroke ring now holds a solid 1px core, so the right corner can't render a pixel short at unlucky tab widths.
+- **Git graph re-entry is instant** — filtered views are snapshot-cached too (keyed by repo + filter), so going BACK into a large repo paints from cache instead of re-running the whole filtered log.
+
+### Added
+- **Git graph filter overhaul** — a select/deselect-all checkbox, themed author checkboxes (ticking an author toggles every branch they created), replacing the unthemed native dropdown.
+- **Git graph detail options** — hash/parents/author/date in the commit detail block are hidden by default (toggle "Details metadata" in the header menu); "Parent" is a new optional column.
+- **Git graph action modals** — Reset and Delete Branch suboptions open a modal instead of hover-cascading submenus; right-clicking a branch badge scopes Delete Branch to that badge.
+- **Terminal shortcut recorder** — bind line-editing shortcuts by pressing keys (Backspace clears, Esc cancels), with new word-left/word-right actions.
+- **Premium surface treatment for all themes** — Aurora's accent-tinted hairlines, glow shadows, breadcrumb pills and focus rings ported to every theme as pure CSS variables; dark themes gain a static accent backdrop with gently translucent surfaces. Zero runtime cost (the animated starfield stays Aurora-only).
+- **Miller columns as their own island** — in floating-islands mode without a sidebar, on every platform (previously macOS vibrancy only).
+
+### Performance
+- **SCM panel is instant on `\\wsl.localhost` repos** — status and diff delegate to the distro's native `git` (warm stat cache) instead of libgit2 re-hashing every tracked file across the 9P network boundary; stage/unstage/commit are unchanged and everything falls back to libgit2 if `wsl.exe` fails.
+
 ## v1.4.1 — 2026-07-14
 
 Correctness fixes for Windows and WSL repos, plus a snappier paste.

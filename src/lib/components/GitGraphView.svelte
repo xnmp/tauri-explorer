@@ -175,10 +175,9 @@
   // curated view (e.g. just dev + main) survives reopening the graph.
   const BRANCH_FILTER_KEY = `git-graph-branch-filter:${untrack(() => repoPath)}`;
   const savedBranchFilter = loadPersisted<unknown>(BRANCH_FILTER_KEY, null);
+  // An empty array is a valid persisted state: "no branches selected" (#413).
   let branchFilter = $state<string[] | null>(
-    Array.isArray(savedBranchFilter) &&
-      savedBranchFilter.length > 0 &&
-      savedBranchFilter.every((s) => typeof s === "string")
+    Array.isArray(savedBranchFilter) && savedBranchFilter.every((s) => typeof s === "string")
       ? (savedBranchFilter as string[])
       : null,
   );
@@ -564,7 +563,6 @@
   // Branch → creator map for the author filter (#376); loaded lazily with
   // the branch list (the creator walk is per-branch work worth deferring).
   let branchAuthors = $state<Record<string, string>>({});
-  let authorFilter = $state<string | null>(null);
 
   async function toggleBranchPopover(): Promise<void> {
     branchPopoverOpen = !branchPopoverOpen;
@@ -592,15 +590,12 @@
   );
 
   const filteredBranchList = $derived(
-    branchList.filter(
-      (b) =>
-        b.name.toLowerCase().includes(branchQuery.toLowerCase()) &&
-        (authorFilter === null || branchAuthors[b.name] === authorFilter),
-    ),
+    branchList.filter((b) => b.name.toLowerCase().includes(branchQuery.toLowerCase())),
   );
 
+  /** null = all branches; [] = none (#413). */
   function setBranchFilter(next: string[] | null): void {
-    branchFilter = next && next.length > 0 ? next : null;
+    branchFilter = next;
     savePersisted(BRANCH_FILTER_KEY, branchFilter);
     // The selected commit may not exist in the new subset.
     closeDetails();
@@ -617,6 +612,37 @@
     const cur = branchFilter ?? all;
     const next = cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name];
     setBranchFilter(next.length === all.length ? null : next);
+  }
+
+  /** Select/deselect-all (#413): everything shown → none; anything else → all. */
+  const allBranchesShown = $derived(branchFilter === null);
+  function toggleAllBranches(): void {
+    setBranchFilter(allBranchesShown ? [] : null);
+  }
+
+  // ----- Author checkboxes (#411, #412): batch-toggle an author's branches -----
+
+  function branchesByAuthor(author: string): string[] {
+    return branchList.filter((b) => branchAuthors[b.name] === author).map((b) => b.name);
+  }
+
+  /** An author reads as checked when every branch they created is shown. */
+  function isAuthorShown(author: string): boolean {
+    const names = branchesByAuthor(author);
+    return names.length > 0 && names.every((n) => isBranchShown(n));
+  }
+
+  /** Ticking an author selects all their branches; unticking deselects them. */
+  function toggleAuthor(author: string): void {
+    const all = branchList.map((b) => b.name);
+    const cur = new Set(branchFilter ?? all);
+    const names = branchesByAuthor(author);
+    if (names.length > 0 && names.every((n) => cur.has(n))) {
+      for (const n of names) cur.delete(n);
+    } else {
+      for (const n of names) cur.add(n);
+    }
+    setBranchFilter(cur.size === all.length ? null : [...cur]);
   }
 
   // One shared formatter: constructing Intl state per row per render is a
@@ -928,33 +954,40 @@
             bind:value={branchQuery}
             autofocus
           />
-          {#if authorOptions.length > 0}
-            <!-- Author = branch creator: author of the branch's first unique
-                 commit (tip author for fully-merged branches) (#376). -->
-            <select
-              class="bf-author"
-              title="Filter branches by creator"
-              value={authorFilter ?? ""}
-              onchange={(e) => (authorFilter = e.currentTarget.value || null)}
-            >
-              <option value="">Any author</option>
-              {#each authorOptions as author (author)}
-                <option value={author}>{author}</option>
-              {/each}
-            </select>
-          {/if}
           <div class="bf-list">
             <label class="bf-row bf-local-only" title="Hide history reachable only from remote-tracking branches">
               <input type="checkbox" checked={localOnly} onchange={toggleLocalOnly} />
               <span class="bf-name">Local branches only</span>
             </label>
-            <button
-              class="bf-row bf-all"
-              class:bf-active={branchFilter === null}
-              onclick={() => setBranchFilter(null)}
-            >
-              All branches
-            </button>
+            <!-- Select/deselect all (#413). -->
+            <label class="bf-row bf-all" title="Select or deselect every branch">
+              <input
+                type="checkbox"
+                checked={allBranchesShown}
+                indeterminate={!allBranchesShown && (branchFilter?.length ?? 0) > 0}
+                onchange={toggleAllBranches}
+                data-testid="bf-select-all"
+              />
+              <span class="bf-name">All branches</span>
+            </label>
+            {#if authorOptions.length > 0}
+              <!-- Author = branch creator: author of the branch's first unique
+                   commit (tip author for fully-merged branches) (#376).
+                   Ticking an author (de)selects all branches they created
+                   (#412); rows share the themed checkbox styling (#411). -->
+              <div class="bf-heading">Authors</div>
+              {#each authorOptions as author (author)}
+                <label class="bf-row bf-author-row" title="Show or hide branches created by {author}">
+                  <input
+                    type="checkbox"
+                    checked={isAuthorShown(author)}
+                    onchange={() => toggleAuthor(author)}
+                  />
+                  <span class="bf-name">{author}</span>
+                </label>
+              {/each}
+              <div class="bf-heading">Branches</div>
+            {/if}
             {#each filteredBranchList as b (b.name)}
               <label class="bf-row" title="Show or hide {b.name}">
                 <input
@@ -1768,15 +1801,13 @@
     font-size: 12px;
   }
 
-  /* Author (branch creator) dropdown, #376 — matches the search field. */
-  .bf-author {
-    margin: 0 6px 6px;
-    padding: 4px 8px;
-    border: 1px solid var(--divider);
-    border-radius: var(--radius-sm);
-    background: var(--background-card);
-    color: var(--text-primary);
-    font-size: 12px;
+  /* Section headings inside the filter popover (#412). */
+  .bf-heading {
+    padding: 6px 6px 2px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-tertiary);
   }
 
   .bf-list {
@@ -1800,16 +1831,9 @@
     background: var(--subtle-fill-secondary);
   }
 
-  button.bf-row {
-    background: none;
-    border: none;
-    text-align: left;
-    font: inherit;
-  }
-
-  .bf-all.bf-active {
-    color: var(--accent);
-    font-weight: 600;
+  .bf-all {
+    border-bottom: 1px solid var(--divider);
+    border-radius: 0;
   }
 
   .bf-name {

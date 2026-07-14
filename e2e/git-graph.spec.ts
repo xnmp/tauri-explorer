@@ -81,9 +81,12 @@ test.describe("Git graph tab", () => {
     const popover = page.locator('[data-testid="branch-popover"]');
     await expect(popover).toBeVisible();
     await popover.locator(".bf-search").fill("feat");
-    // Branch rows only — the persistent "Local branches only" toggle (#381)
-    // is also a label.bf-row but is not part of the filtered branch list.
-    await expect(popover.locator("label.bf-row:not(.bf-local-only)")).toHaveCount(1);
+    // Branch rows only — the persistent "Local branches only" toggle (#381),
+    // the select-all row (#413) and the author rows (#412) are also
+    // label.bf-row but are not part of the filtered branch list.
+    await expect(
+      popover.locator("label.bf-row:not(.bf-local-only):not(.bf-all):not(.bf-author-row)"),
+    ).toHaveCount(1);
 
     // "only feature": the graph reduces to feature's ancestry — 10 commits
     // plus the synthetic uncommitted row; the stash (based on main's tip)
@@ -106,6 +109,53 @@ test.describe("Git graph tab", () => {
     // "All branches" restores the full graph.
     await page.locator('[data-testid="branch-filter-btn"]').click();
     await popover.locator(".bf-all").click();
+    await expect(view.locator(".commit-row")).toHaveCount(18);
+  });
+
+  test("select-all checkbox and author checkboxes drive the branch filter (#411–#413)", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+    const view = page.locator('[data-testid="git-graph-view"]');
+    await expect(view.locator(".commit-row")).toHaveCount(18);
+
+    await page.locator('[data-testid="branch-filter-btn"]').click();
+    const popover = page.locator('[data-testid="branch-popover"]');
+    const selectAll = popover.locator('[data-testid="bf-select-all"]');
+    await expect(selectAll).toBeChecked();
+
+    // Deselect all: every branch checkbox clears and the graph empties down
+    // to the synthetic uncommitted row.
+    await selectAll.click();
+    await expect(selectAll).not.toBeChecked();
+    const branchBoxes = popover.locator(
+      "label.bf-row:not(.bf-local-only):not(.bf-all):not(.bf-author-row) input",
+    );
+    for (const box of await branchBoxes.all()) {
+      await expect(box).not.toBeChecked();
+    }
+    await expect(view.locator(".commit-row")).toHaveCount(0);
+
+    // Author checkboxes are themed rows, not a native select (#411): ticking
+    // Bob Dev selects exactly the branches he created (#412).
+    const bob = popover.locator("label.bf-author-row", { hasText: "Bob Dev" });
+    await expect(bob.locator("input")).not.toBeChecked();
+    await bob.locator("input").click();
+    await expect(bob.locator("input")).toBeChecked();
+    const experiment = popover.locator("label.bf-row:not(.bf-author-row)", { hasText: "experiment" });
+    await expect(experiment.locator("input")).toBeChecked();
+    const main = popover.locator("label.bf-row:not(.bf-author-row):not(.bf-local-only):not(.bf-all)", { hasText: "main" }).first();
+    await expect(main.locator("input")).not.toBeChecked();
+    // The graph now shows experiment's + origin/legacy-import's ancestry.
+    expect(await view.locator(".commit-row").count()).toBeGreaterThan(0);
+
+    // Unticking Bob deselects his branches again.
+    await bob.locator("input").click();
+    await expect(experiment.locator("input")).not.toBeChecked();
+    await expect(view.locator(".commit-row")).toHaveCount(0);
+
+    // Re-select all restores everything.
+    await selectAll.click();
     await expect(view.locator(".commit-row")).toHaveCount(18);
   });
 

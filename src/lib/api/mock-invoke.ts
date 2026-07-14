@@ -1469,8 +1469,9 @@ const mockCommands: Record<string, CommandHandler> = {
     let all = mockCommitGraph();
     // Branch filter (#342): mirror the backend's seeded revwalk — keep only
     // commits reachable from the selected branch tips; stash rows survive
-    // only when their base commit does.
-    if (options.branches && options.branches.length > 0) {
+    // only when their base commit does. An EMPTY selection seeds nothing and
+    // yields no commits (#413), exactly like the backend.
+    if (options.branches) {
       const tips = new Map<string, string>();
       for (const [oid, refList] of Object.entries(MOCK_GRAPH_REFS)) {
         for (const r of refList) {

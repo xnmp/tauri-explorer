@@ -6,6 +6,7 @@
   import "@fontsource-variable/inter";
   import { onMount } from "svelte";
   import { isShellReservedKey, isHardcodedAppShortcut } from "$lib/domain/terminal-keys";
+  import { isMac } from "$lib/domain/platform";
   import { themeStore } from "$lib/state/theme.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
@@ -204,7 +205,7 @@
     // chord suffixes — fall through to command matching (#249, #260).
     if (isTerminalFocus && !keybindingsStore.isChordActive) {
       const appBound = keybindingsStore.matchesAnyBinding(event) || isHardcodedAppShortcut(event);
-      if (isShellReservedKey(event, { appBound })) return;
+      if (isShellReservedKey(event, { appBound, isMac })) return;
     }
 
     // Ctrl+J: Open jobs panel (hardcoded)

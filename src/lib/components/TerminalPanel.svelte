@@ -26,7 +26,7 @@
   import { buildCdSyncSequence, buildPathsInsertion } from "$lib/domain/terminal-command";
   import { defaultShellProfile, fromShellCwd, type ShellProfile } from "$lib/domain/terminal-shell";
   import { decideCdSync, createInjectedCdTracker } from "$lib/domain/terminal-cwd-sync";
-  import { isWindows } from "$lib/domain/platform";
+  import { isWindows, isMac } from "$lib/domain/platform";
   import { isShellReservedKey, isHardcodedAppShortcut, resolveTerminalShortcut } from "$lib/domain/terminal-keys";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
@@ -280,11 +280,16 @@
     term.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") return true;
       if (keybindingsStore.isChordActive) return false;
-      const ctrlOnly = event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey;
-      // Ctrl+C with a selection copies it (VS Code parity, #374): the user
-      // is copying terminal text, not interrupting the shell — and
+      // The platform's primary clipboard modifier: Ctrl, but ⌘ on mac (#403)
+      // — Cmd+C/V while the terminal is focused must copy/paste terminal
+      // text, never fall through to the explorer's file clipboard.
+      const primaryOnly = isMac
+        ? event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
+        : event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey;
+      // Ctrl/Cmd+C with a selection copies it (VS Code parity, #374): the
+      // user is copying terminal text, not interrupting the shell — and
       // definitely not copying files in the explorer.
-      if (ctrlOnly && event.key.toLowerCase() === "c" && term?.hasSelection()) {
+      if (primaryOnly && event.key.toLowerCase() === "c" && term?.hasSelection()) {
         const text = term.getSelection();
         term.clearSelection();
         void navigator.clipboard.writeText(text).catch(() => {
@@ -293,10 +298,10 @@
         event.preventDefault();
         return false;
       }
-      // Ctrl+V pastes explicitly through xterm (bracketed-paste aware):
+      // Ctrl/Cmd+V pastes explicitly through xterm (bracketed-paste aware):
       // native paste into xterm's hidden textarea is unreliable in some
       // WebViews (#374), and the explorer's file-paste must never fire here.
-      if (ctrlOnly && event.key.toLowerCase() === "v") {
+      if (primaryOnly && event.key.toLowerCase() === "v") {
         void navigator.clipboard
           .readText()
           .then((text) => {
@@ -318,7 +323,7 @@
         return false;
       }
       const appBound = keybindingsStore.matchesAnyBinding(event) || isHardcodedAppShortcut(event);
-      return isShellReservedKey(event, { appBound });
+      return isShellReservedKey(event, { appBound, isMac });
     });
 
     term.open(termEl!);

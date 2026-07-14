@@ -53,6 +53,19 @@ describe("isShellReservedKey (#249, #260)", () => {
   it("gives Ctrl+Shift combos to the app (terminal-emulator convention)", () => {
     expect(isShellReservedKey(key("f", { ctrlKey: true, shiftKey: true }))).toBe(false);
   });
+
+  it("keeps ⌘-only clipboard combos with the terminal on mac (#403)", () => {
+    for (const k of ["c", "v", "x", "a", "z"]) {
+      expect(isShellReservedKey(key(k, { metaKey: true }), { appBound: true, isMac: true })).toBe(true);
+    }
+    // Same combos still belong to the app off-mac (Super bindings)…
+    expect(isShellReservedKey(key("c", { metaKey: true }), { appBound: true })).toBe(false);
+    // …and mac ⌘ combos outside the critical set stay app territory.
+    expect(isShellReservedKey(key("p", { metaKey: true }), { appBound: true, isMac: true })).toBe(false);
+    // Cmd+Shift / Cmd+Alt are app shortcut territory even on mac.
+    expect(isShellReservedKey(key("c", { metaKey: true, shiftKey: true }), { isMac: true })).toBe(false);
+    expect(isShellReservedKey(key("c", { metaKey: true, altKey: true }), { isMac: true })).toBe(false);
+  });
 });
 
 describe("isHardcodedAppShortcut (#260)", () => {

@@ -30,6 +30,9 @@ export const SHELL_CRITICAL_CTRL_KEYS: ReadonlySet<string> = new Set([
 export interface ShellKeyContext {
   /** The event matches a registered app keybinding or hardcoded app shortcut. */
   appBound?: boolean;
+  /** macOS: the primary clipboard modifier is ⌘, so Cmd+C/V/… must stay with
+   *  the terminal (#403) instead of falling into "Meta = app territory". */
+  isMac?: boolean;
 }
 
 /**
@@ -39,6 +42,19 @@ export interface ShellKeyContext {
 export function isShellReservedKey(event: KeyEventLike, context?: ShellKeyContext): boolean {
   // Plain keys and Shift+key are typing.
   if (!event.ctrlKey && !event.altKey && !event.metaKey) return true;
+  // On mac, ⌘-only clipboard/process combos belong to the terminal (#403):
+  // Cmd+C copies the terminal selection, Cmd+V pastes into the shell — the
+  // explorer's file clipboard must never fire while a prompt has focus.
+  if (
+    context?.isMac &&
+    event.metaKey &&
+    !event.ctrlKey &&
+    !event.altKey &&
+    !event.shiftKey &&
+    SHELL_CRITICAL_CTRL_KEYS.has(event.key.toLowerCase())
+  ) {
+    return true;
+  }
   // Alt/Meta combos are app shortcut territory (Alt+M chords, Super bindings).
   if (event.altKey || event.metaKey) return false;
   // Ctrl+Shift goes to the app.

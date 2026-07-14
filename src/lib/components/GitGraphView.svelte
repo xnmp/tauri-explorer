@@ -352,12 +352,14 @@
   // header's right-click menu; message and the graph itself always show.
   // Persisted globally (a layout preference, not per-repo).
   const COLUMNS_KEY = "git-graph-columns";
-  type ColumnId = "author" | "date" | "commit";
+  type ColumnId = "author" | "date" | "commit" | "parent";
   const savedColumns = loadPersisted<unknown>(COLUMNS_KEY, null);
   let shownColumns = $state<Record<ColumnId, boolean>>({
     author: true,
     date: true,
     commit: true,
+    // Parent OIDs are niche — a viewable column, off by default (#402).
+    parent: false,
     ...(typeof savedColumns === "object" && savedColumns !== null ? savedColumns : {}),
   });
   let columnMenu = $state<{ x: number; y: number } | null>(null);
@@ -365,6 +367,16 @@
   function toggleColumn(id: ColumnId): void {
     shownColumns = { ...shownColumns, [id]: !shownColumns[id] };
     savePersisted(COLUMNS_KEY, shownColumns);
+  }
+
+  // Commit-detail metadata (hash/parents/author/date) is hidden by default
+  // (#402) — the graph columns already carry it; the detail block leads with
+  // the message and files. Toggle lives in the header context menu.
+  const DETAIL_META_KEY = "git-graph-detail-meta";
+  let showDetailMeta = $state(loadPersisted<unknown>(DETAIL_META_KEY, false) === true);
+  function toggleDetailMeta(): void {
+    showDetailMeta = !showDetailMeta;
+    savePersisted(DETAIL_META_KEY, showDetailMeta);
   }
 
   function openColumnMenu(event: MouseEvent): void {
@@ -944,6 +956,10 @@
       actionModal = null;
       return;
     }
+    if (event.key === "Escape" && columnMenu) {
+      columnMenu = null;
+      return;
+    }
     if (event.key === "Escape" && (menu || prompt)) closeMenu();
   }
 </script>
@@ -1089,6 +1105,7 @@
         </span>
       {/if}
       {#if shownColumns.commit}<span class="gh-oid">Commit</span>{/if}
+      {#if shownColumns.parent}<span class="gh-oid gh-parent">Parent</span>{/if}
     </div>
     {#if columnMenu}
       <button
@@ -1104,7 +1121,7 @@
         tabindex="-1"
         style="left: {columnMenu.x}px; top: {columnMenu.y}px;"
       >
-        {#each [["author", "Author"], ["date", "Date"], ["commit", "Commit"]] as [id, label] (id)}
+        {#each [["author", "Author"], ["date", "Date"], ["commit", "Commit"], ["parent", "Parent"]] as [id, label] (id)}
           <button
             class="menu-item"
             role="menuitemcheckbox"
@@ -1115,6 +1132,19 @@
             {label}
           </button>
         {/each}
+        <div class="menu-sep"></div>
+        <!-- Hash/parents/author/date inside the commit detail block (#402):
+             hidden by default, toggleable here. -->
+        <button
+          class="menu-item"
+          role="menuitemcheckbox"
+          aria-checked={showDetailMeta}
+          onclick={toggleDetailMeta}
+          data-testid="toggle-detail-meta"
+        >
+          <span class="col-check">{showDetailMeta ? "✓" : ""}</span>
+          Details metadata
+        </button>
       </div>
     {/if}
     {#if commits.length === 0 && loading}
@@ -1230,6 +1260,7 @@
               {#if shownColumns.author}<span class="author" style:width="{authorCol.width}px">{commit.author_name}</span>{/if}
               {#if shownColumns.date}<span class="date" style:width="{dateCol.width}px">{formatDate(commit.author_time)}</span>{/if}
               {#if shownColumns.commit}<span class="oid">{commit.short_oid}</span>{/if}
+              {#if shownColumns.parent}<span class="oid parent-col">{commit.parents.map((p) => p.slice(0, 7)).join(" ") || "—"}</span>{/if}
             {/if}
           </div>
           {#if selected?.oid === commit.oid}
@@ -1249,10 +1280,14 @@
               <div class="detail-columns">
                 {#if !synthetic}
                   <div class="detail-meta-col">
-                    <div class="meta-line"><span class="meta-label">Commit:</span> <span class="meta-mono">{commit.oid}</span></div>
-                    <div class="meta-line"><span class="meta-label">Parents:</span> <span class="meta-mono">{commit.parents.map((p) => p.slice(0, 8)).join(", ") || "—"}</span>{#if commit.parents.length > 1} <span class="meta-note">(merge of {commit.parents.length} parents)</span>{/if}</div>
-                    <div class="meta-line"><span class="meta-label">Author:</span> {commit.author_name} &lt;{commit.author_email}&gt;</div>
-                    <div class="meta-line"><span class="meta-label">Date:</span> {formatDate(commit.author_time)}</div>
+                    <!-- Metadata hidden by default (#402); toggle via the
+                         header context menu ("Details metadata"). -->
+                    {#if showDetailMeta}
+                      <div class="meta-line"><span class="meta-label">Commit:</span> <span class="meta-mono">{commit.oid}</span></div>
+                      <div class="meta-line"><span class="meta-label">Parents:</span> <span class="meta-mono">{commit.parents.map((p) => p.slice(0, 8)).join(", ") || "—"}</span>{#if commit.parents.length > 1} <span class="meta-note">(merge of {commit.parents.length} parents)</span>{/if}</div>
+                      <div class="meta-line"><span class="meta-label">Author:</span> {commit.author_name} &lt;{commit.author_email}&gt;</div>
+                      <div class="meta-line"><span class="meta-label">Date:</span> {formatDate(commit.author_time)}</div>
+                    {/if}
                     <p class="detail-message">{commit.summary}</p>
                   </div>
                 {:else}
@@ -1784,6 +1819,12 @@
     width: 60px;
     margin-left: 8px;
     text-align: right;
+  }
+
+  /* Parent column (#402): wider — merges list two short OIDs. */
+  .gh-parent,
+  .parent-col {
+    width: 120px;
   }
 
   .col-handle {

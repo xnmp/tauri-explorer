@@ -286,13 +286,40 @@ test("clicking a commit opens the detail panel with its changed files", async ({
   const detail = page.locator('[data-testid="git-graph-detail"]');
   await expect(detail).toBeVisible();
   await expect(detail).toContainText("Merge hotfix into main");
-  await expect(detail).toContainText("merge of 2 parents");
+  // Hash/parents/author/date are hidden by default (#402).
+  await expect(detail).not.toContainText("merge of 2 parents");
   await expect(detail.locator(".detail-files li")).toHaveCount(1);
   await expect(detail).toContainText("src/file-16.ts");
+
+  // Toggling "Details metadata" in the header context menu reveals them.
+  await page.locator(".graph-header").click({ button: "right" });
+  await page.locator('[data-testid="toggle-detail-meta"]').click();
+  await page.keyboard.press("Escape");
+  await expect(detail).toContainText("merge of 2 parents");
+  await expect(detail).toContainText("Alice Coder");
 
   // Clicking the same row again collapses the panel.
   await view.locator(".commit-row").nth(2).click();
   await expect(detail).toHaveCount(0);
+});
+
+test("parent is a viewable column, off by default (#402)", async ({ page }) => {
+  await page.goto("/?path=/home/user/Documents/project");
+  await waitForEntries(page);
+  await openGraphViaPalette(page);
+
+  const view = page.locator('[data-testid="git-graph-view"]');
+  await expect(view.locator(".gh-parent")).toHaveCount(0);
+
+  await page.locator(".graph-header").click({ button: "right" });
+  const colMenu = page.locator('[data-testid="git-graph-column-menu"]');
+  await colMenu.getByText("Parent", { exact: true }).click();
+  await page.keyboard.press("Escape");
+
+  await expect(view.locator(".gh-parent")).toHaveText("Parent");
+  // The tip merge commit lists two parent OIDs.
+  const tipParents = view.locator(".commit-row").nth(2).locator(".parent-col");
+  await expect(tipParents).toContainText("000f000");
 });
 
 test("details expand inline below the clicked row (#221)", async ({ page }) => {

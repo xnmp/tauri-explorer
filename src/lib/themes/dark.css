@@ -38,25 +38,28 @@
   --miller-bg: rgba(30, 30, 32, 0.7);
   --content-bg: radial-gradient(ellipse at 50% 0%, rgba(76, 194, 244, 0.03) 0%, transparent 60%);
 
-  /* Surface/border colors */
-  --surface-stroke: rgba(255, 255, 255, 0.08);
-  --surface-stroke-flyout: rgba(255, 255, 255, 0.1);
-  --divider: rgba(255, 255, 255, 0.06);
+  /* Static depth backdrop - accent glow over solid base (no animation) */
+  --theme-background-image: radial-gradient(ellipse at 50% 0%, rgba(76, 194, 244, 0.05) 0%, transparent 55%), #1c1c1e;
+
+  /* Surface/border colors - accent-tinted hairlines */
+  --surface-stroke: rgba(76, 194, 244, 0.12);
+  --surface-stroke-flyout: rgba(76, 194, 244, 0.15);
+  --divider: rgba(76, 194, 244, 0.06);
 
   /* Control/input backgrounds */
-  --control-fill: rgba(255, 255, 255, 0.07);
-  --control-fill-secondary: rgba(255, 255, 255, 0.09);
+  --control-fill: rgba(76, 194, 244, 0.06);
+  --control-fill-secondary: rgba(76, 194, 244, 0.09);
   --control-fill-tertiary: rgba(255, 255, 255, 0.04);
   --control-fill-disabled: rgba(255, 255, 255, 0.04);
 
   /* Subtle hover/active fills */
   --subtle-fill: transparent;
-  --subtle-fill-secondary: rgba(255, 255, 255, 0.07);
-  --subtle-fill-tertiary: rgba(255, 255, 255, 0.04);
+  --subtle-fill-secondary: rgba(76, 194, 244, 0.07);
+  --subtle-fill-tertiary: rgba(76, 194, 244, 0.04);
 
   /* Control borders */
-  --control-stroke: rgba(255, 255, 255, 0.1);
-  --control-stroke-secondary: rgba(255, 255, 255, 0.08);
+  --control-stroke: rgba(76, 194, 244, 0.12);
+  --control-stroke-secondary: rgba(76, 194, 244, 0.08);
 
   /* Address bar */
   --address-bar-bg: rgba(255, 255, 255, 0.12);
@@ -65,8 +68,15 @@
   --address-bar-bg-hover: rgba(255, 255, 255, 0.16);
   --address-bar-stroke-hover: rgba(255, 255, 255, 0.24);
 
+  /* Breadcrumb pills - accent-tinted segments */
+  --breadcrumb-bg: rgba(76, 194, 244, 0.05);
+  --breadcrumb-hover-bg: rgba(76, 194, 244, 0.10);
+  --breadcrumb-active-bg: rgba(76, 194, 244, 0.15);
+  --breadcrumb-radius: 12px;
+  --breadcrumb-gap: 3px;
+
   /* Focus indicators */
-  --focus-stroke-outer: #ffffff;
+  --focus-stroke-outer: #4cc2f4;
   --focus-stroke-inner: #000000;
 
   /* System status colors - brighter for dark backgrounds */
@@ -75,10 +85,10 @@
   --system-caution: #ffd43b;
 
   /* Shadows - richer, deeper */
-  --shadow-flyout: 0 8px 24px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-flyout: 0 8px 24px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3), 0 0 12px rgba(76, 194, 244, 0.04);
   --shadow-dialog: 0 32px 64px rgba(0, 0, 0, 0.6), 0 4px 24px rgba(0, 0, 0, 0.35);
   --shadow-tooltip: 0 4px 12px rgba(0, 0, 0, 0.45);
-  --shadow-card: 0 1px 4px rgba(0, 0, 0, 0.2), 0 0 1px rgba(0, 0, 0, 0.15);
+  --shadow-card: 0 1px 4px rgba(0, 0, 0, 0.2), 0 0 1px rgba(0, 0, 0, 0.15), 0 0 8px rgba(76, 194, 244, 0.03);
   --shadow-subtle: 0 1px 2px rgba(0, 0, 0, 0.15);
 
   /* Mica overlay */
@@ -90,11 +100,11 @@
 
   /* Icon colors - themeable */
   /* Per-section opacity tokens (multiplied by global --bg-opacity) */
-  --sidebar-opacity: 1;
-  --toolbar-opacity: 1;
-  --content-opacity: 1;
-  --titlebar-opacity: 1;
-  --statusbar-opacity: 1;
+  --sidebar-opacity: 0.94;
+  --toolbar-opacity: 0.94;
+  --content-opacity: 0.92;
+  --titlebar-opacity: 0.94;
+  --statusbar-opacity: 0.94;
 
   --icon-folder: #ffc83d;
   /* --icon-file-tint: unset; when set, overrides ALL file icon colors */

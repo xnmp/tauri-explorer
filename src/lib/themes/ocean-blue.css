@@ -33,6 +33,16 @@
   --miller-bg: rgba(15, 35, 55, 0.65);
   --content-bg: radial-gradient(ellipse at 50% 0%, rgba(56, 189, 248, 0.04) 0%, transparent 60%);
 
+  /* Static depth backdrop - accent glow over solid base (no animation) */
+  --theme-background-image: radial-gradient(ellipse at 50% 0%, rgba(94, 183, 224, 0.05) 0%, transparent 55%), #0a1a2e;
+
+  /* Per-section opacity tokens (multiplied by global --bg-opacity) */
+  --sidebar-opacity: 0.94;
+  --toolbar-opacity: 0.94;
+  --content-opacity: 0.92;
+  --titlebar-opacity: 0.94;
+  --statusbar-opacity: 0.94;
+
   /* Surface/border colors - subtle blue glow */
   --surface-stroke: rgba(94, 183, 224, 0.15);
   --surface-stroke-flyout: rgba(94, 183, 224, 0.2);
@@ -53,6 +63,13 @@
   --control-stroke: rgba(94, 183, 224, 0.18);
   --control-stroke-secondary: rgba(94, 183, 224, 0.12);
 
+  /* Breadcrumb pills - accent-tinted segments */
+  --breadcrumb-bg: rgba(94, 183, 224, 0.05);
+  --breadcrumb-hover-bg: rgba(94, 183, 224, 0.10);
+  --breadcrumb-active-bg: rgba(94, 183, 224, 0.15);
+  --breadcrumb-radius: 12px;
+  --breadcrumb-gap: 3px;
+
   /* Focus indicators */
   --focus-stroke-outer: #5eb7e0;
   --focus-stroke-inner: #0a1929;
@@ -63,7 +80,7 @@
   --system-caution: #f0d060;
 
   /* Shadows - deep ocean shadows */
-  --shadow-flyout: 0 8px 20px rgba(0, 15, 30, 0.5);
+  --shadow-flyout: 0 8px 20px rgba(0, 15, 30, 0.5), 0 0 12px rgba(94, 183, 224, 0.04);
   --shadow-dialog: 0 32px 64px rgba(0, 15, 30, 0.6), 0 4px 24px rgba(0, 15, 30, 0.4);
   --shadow-tooltip: 0 4px 12px rgba(0, 15, 30, 0.5);
 
@@ -76,7 +93,7 @@
   );
 
   /* Premium shadows */
-  --shadow-card: 0 1px 4px rgba(0, 15, 30, 0.25), 0 0 1px rgba(0, 15, 30, 0.2);
+  --shadow-card: 0 1px 4px rgba(0, 15, 30, 0.25), 0 0 1px rgba(0, 15, 30, 0.2), 0 0 8px rgba(94, 183, 224, 0.03);
   --shadow-subtle: 0 1px 2px rgba(0, 15, 30, 0.2);
 
   /* Icon colors - themeable */

@@ -38,14 +38,17 @@
   --background-card-secondary: rgba(108, 111, 147, 0.08);
   --miller-bg: rgba(18, 20, 30, 0.7);
 
-  /* Surface/border colors */
-  --surface-stroke: rgba(213, 216, 218, 0.12);
-  --surface-stroke-flyout: rgba(213, 216, 218, 0.18);
-  --divider: rgba(213, 216, 218, 0.06);
+  /* Static depth backdrop - accent glow over solid base (no animation) */
+  --theme-background-image: radial-gradient(ellipse at 50% 0%, rgba(233, 86, 120, 0.05) 0%, transparent 55%), #141620;
+
+  /* Surface/border colors - accent-tinted hairlines */
+  --surface-stroke: rgba(233, 86, 120, 0.12);
+  --surface-stroke-flyout: rgba(233, 86, 120, 0.15);
+  --divider: rgba(233, 86, 120, 0.06);
 
   /* Control/input backgrounds */
-  --control-fill: rgba(213, 216, 218, 0.08);
-  --control-fill-secondary: rgba(213, 216, 218, 0.12);
+  --control-fill: rgba(233, 86, 120, 0.06);
+  --control-fill-secondary: rgba(233, 86, 120, 0.09);
   --control-fill-tertiary: rgba(213, 216, 218, 0.05);
   --control-fill-disabled: rgba(213, 216, 218, 0.04);
 
@@ -55,8 +58,15 @@
   --subtle-fill-tertiary: rgba(108, 111, 147, 0.18);
 
   /* Control borders */
-  --control-stroke: rgba(213, 216, 218, 0.15);
-  --control-stroke-secondary: rgba(213, 216, 218, 0.1);
+  --control-stroke: rgba(233, 86, 120, 0.12);
+  --control-stroke-secondary: rgba(233, 86, 120, 0.08);
+
+  /* Breadcrumb pills - accent-tinted segments */
+  --breadcrumb-bg: rgba(233, 86, 120, 0.05);
+  --breadcrumb-hover-bg: rgba(233, 86, 120, 0.10);
+  --breadcrumb-active-bg: rgba(233, 86, 120, 0.15);
+  --breadcrumb-radius: 12px;
+  --breadcrumb-gap: 3px;
 
   /* Focus indicators */
   --focus-stroke-outer: #e95678;
@@ -68,7 +78,7 @@
   --system-caution: #fab795;
 
   /* Shadows */
-  --shadow-flyout: 0 8px 20px rgba(10, 10, 18, 0.5);
+  --shadow-flyout: 0 8px 20px rgba(10, 10, 18, 0.5), 0 0 12px rgba(233, 86, 120, 0.04);
   --shadow-dialog: 0 32px 64px rgba(10, 10, 18, 0.6), 0 4px 24px rgba(10, 10, 18, 0.4);
   --shadow-tooltip: 0 4px 12px rgba(10, 10, 18, 0.5);
 
@@ -81,8 +91,15 @@
   );
 
   /* Premium shadows */
-  --shadow-card: 0 1px 4px rgba(10, 10, 18, 0.25), 0 0 1px rgba(10, 10, 18, 0.2);
+  --shadow-card: 0 1px 4px rgba(10, 10, 18, 0.25), 0 0 1px rgba(10, 10, 18, 0.2), 0 0 8px rgba(233, 86, 120, 0.03);
   --shadow-subtle: 0 1px 2px rgba(10, 10, 18, 0.2);
+
+  /* Per-section opacity tokens (multiplied by global --bg-opacity) */
+  --sidebar-opacity: 0.94;
+  --toolbar-opacity: 0.94;
+  --content-opacity: 0.92;
+  --titlebar-opacity: 0.94;
+  --statusbar-opacity: 0.94;
 
   /* Icon colors */
   --icon-folder: #fab795;

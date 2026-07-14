@@ -112,6 +112,19 @@ test.describe("Git graph tab", () => {
     await expect(view.locator(".commit-row")).toHaveCount(18);
   });
 
+  test("F5 refreshes the graph with visible feedback (#370, #417)", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+
+    await page.keyboard.press("F5");
+    // Immediate feedback, then the post-fetch confirmation.
+    await expect(page.locator(".toast", { hasText: "Refreshing graph" })).toBeVisible();
+    await expect(page.locator(".toast", { hasText: "Fetched from remotes" })).toBeVisible();
+    // The graph is still painted after the reload.
+    await expect(page.locator('[data-testid="git-graph-view"] .commit-row')).toHaveCount(18);
+  });
+
   test("select-all checkbox and author checkboxes drive the branch filter (#411–#413)", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents/project");
     await waitForEntries(page);

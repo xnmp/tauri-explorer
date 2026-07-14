@@ -890,6 +890,10 @@
   async function refreshWithFetch(): Promise<void> {
     if (fetching) return;
     fetching = true;
+    // Immediate feedback (#417): the fetch can take seconds, and without an
+    // opening toast F5 looks like it did nothing (or worse, like it merely
+    // focus-highlighted the selected row).
+    toastStore.show("Refreshing graph…", "info");
     try {
       await gitFetch(repoPath);
       toastStore.success("Fetched from remotes");

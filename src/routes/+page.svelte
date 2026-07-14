@@ -38,6 +38,7 @@
   import Sidebar from "$lib/components/Sidebar.svelte";
     import PaneContainer from "$lib/components/PaneContainer.svelte";
   import ProgressDialog from "$lib/components/ProgressDialog.svelte";
+  import ToastOverlay from "$lib/components/ToastOverlay.svelte";
   import type { Component } from "svelte";
   import { conflictResolver } from "$lib/state/conflict-resolver.svelte";
   import { gitStatusStore } from "$lib/state/git-status.svelte";
@@ -579,6 +580,9 @@
   />
 {/if}
 <ProgressDialog />
+<!-- Toasts live at the app root (#417): mounted per-FileList they vanished in
+     any pane mode without a file list (git graph), silently eating feedback. -->
+<ToastOverlay />
 {#if ConflictDialog}
   <ConflictDialog />
 {/if}

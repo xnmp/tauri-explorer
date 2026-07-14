@@ -796,14 +796,21 @@
   /* Two stacked radial layers per fillet: translucent card over solid — the
      same opaque composite as the active tab — while the concave circle stays
      transparent in BOTH layers so the titlebar shows through (#243). */
+  /* Stroke ring stops (#410): a SOLID 1px core (fillet → fillet+1) with a
+     0.5px feather each side. The previous ramp-up/ramp-down peaked at a
+     single radius, so at fractional device positions (tab x depends on the
+     accumulated widths of the tabs before it) the antialiased ring never
+     reached full opacity and read as a 1px gap — RHS only "some of the
+     time" because the phase shifts with tab layout. */
   .tab-fillet.left {
     left: calc(-1 * var(--fillet));
     background:
       radial-gradient(
         circle var(--fillet) at 0 0,
-        transparent calc(var(--fillet) - 0.25px),
-        var(--surface-stroke) calc(var(--fillet) + 0.5px),
-        transparent calc(var(--fillet) + 1.25px)
+        transparent calc(var(--fillet) - 0.5px),
+        var(--surface-stroke) var(--fillet),
+        var(--surface-stroke) calc(var(--fillet) + 1px),
+        transparent calc(var(--fillet) + 1.5px)
       ),
       radial-gradient(
         circle var(--fillet) at 0 0,
@@ -822,9 +829,10 @@
     background:
       radial-gradient(
         circle var(--fillet) at 100% 0,
-        transparent calc(var(--fillet) - 0.25px),
-        var(--surface-stroke) calc(var(--fillet) + 0.5px),
-        transparent calc(var(--fillet) + 1.25px)
+        transparent calc(var(--fillet) - 0.5px),
+        var(--surface-stroke) var(--fillet),
+        var(--surface-stroke) calc(var(--fillet) + 1px),
+        transparent calc(var(--fillet) + 1.5px)
       ),
       radial-gradient(
         circle var(--fillet) at 100% 0,

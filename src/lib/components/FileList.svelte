@@ -20,7 +20,6 @@
   import DetailsView from "./DetailsView.svelte";
   import ListView from "./ListView.svelte";
   import TilesView from "./TilesView.svelte";
-  import ToastOverlay from "./ToastOverlay.svelte";
   import InlineNewFolder from "./InlineNewFolder.svelte";
 
   import type { FileEntry } from "$lib/domain/file";
@@ -394,8 +393,6 @@
       ></div>
     {/if}
   </div>
-
-  <ToastOverlay />
 </div>
 
 <style>

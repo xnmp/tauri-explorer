@@ -4,6 +4,8 @@
  * quoting bugs here would execute in the user's real shell.
  */
 
+import { toShellPath, type ShellProfile } from "./terminal-shell";
+
 /** POSIX single-quote: safe for any bytes except the quote itself, which is
  *  closed-escaped-reopened ('\''). */
 export function shellSingleQuote(value: string): string {
@@ -32,11 +34,17 @@ export function shellSingleQuote(value: string): string {
  *   https://ss64.com/nt/syntax-percent.html
  *   https://ss64.com/nt/syntax-esc.html
  */
-export function buildCdCommand(path: string, isWindows: boolean): string {
-  if (isWindows) {
-    return `cd /d "${path}"\r`;
+export function buildCdCommand(path: string, profile: ShellProfile): string {
+  switch (profile.kind) {
+    case "cmd":
+      return `cd /d "${path}"\r`;
+    case "powershell":
+      // `/d` is a cmd.exe-ism; PowerShell's cd (Set-Location) changes drive
+      // on its own and takes a double-quoted literal.
+      return `cd "${path}"\r`;
+    case "posix":
+      return `cd ${shellSingleQuote(toShellPath(path, profile))}\r`;
   }
-  return `cd ${shellSingleQuote(path)}\r`;
 }
 
 /**
@@ -45,11 +53,13 @@ export function buildCdCommand(path: string, isWindows: boolean): string {
  * the cd command. The clear byte is shell-family-specific: Ctrl+U (0x15)
  * is readline/zsh kill-line, but cmd.exe/PowerShell don't interpret it —
  * they'd receive a stray NAK that corrupts the command line (#150). Both
- * Windows shells clear console line input on ESC (0x1b).
+ * Windows shells clear console line input on ESC (0x1b). ESC must never be
+ * sent to a POSIX shell: it is the meta prefix there, and `ESC c d …` types
+ * as Meta-C + "d …" — the "command not found: d" corruption of #409.
  */
-export function buildCdSyncSequence(path: string, isWindows: boolean): string {
-  const clearLine = isWindows ? "\x1b" : "\x15";
-  return clearLine + buildCdCommand(path, isWindows);
+export function buildCdSyncSequence(path: string, profile: ShellProfile): string {
+  const clearLine = profile.kind === "posix" ? "\x15" : "\x1b";
+  return clearLine + buildCdCommand(path, profile);
 }
 
 /**
@@ -58,7 +68,9 @@ export function buildCdSyncSequence(path: string, isWindows: boolean): string {
  * typing (or the paths extend a half-typed command). Deliberately NO
  * carriage return — nothing executes without the user pressing Enter.
  */
-export function buildPathsInsertion(paths: string[], isWindows: boolean): string {
-  const quoted = paths.map((p) => (isWindows ? `"${p}"` : shellSingleQuote(p)));
+export function buildPathsInsertion(paths: string[], profile: ShellProfile): string {
+  const quoted = paths.map((p) =>
+    profile.kind === "posix" ? shellSingleQuote(toShellPath(p, profile)) : `"${p}"`,
+  );
   return quoted.join(" ") + " ";
 }

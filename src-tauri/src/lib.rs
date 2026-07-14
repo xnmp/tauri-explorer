@@ -38,12 +38,13 @@ mod portal {
     }
 }
 mod search;
-mod system;
+pub mod system;
 pub mod task_registry;
 mod terminal;
 mod thumbnails;
 mod wallpaper;
 mod warm_pool;
+mod wsl;
 
 use system::{
     get_launch_cwd, get_log_dir, log_startup_timing, move_multiple_to_trash, move_to_trash,
@@ -415,6 +416,24 @@ pub fn run(launch_dir: Option<String>) {
             {
                 warm_pool::on_window_destroyed(app, label);
                 terminal::on_window_destroyed(label);
+            }
+            // WebView2 quirk (#415): activating the window (Alt+Tab, taskbar)
+            // focuses the native window but NOT the webview's keyboard focus —
+            // shortcuts are dead until the user clicks inside. Re-asserting
+            // focus moves keyboard focus into the webview. Windows-only: the
+            // other platforms hand focus over correctly, and re-entrant
+            // set_focus is pointless there.
+            #[cfg(windows)]
+            if let tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::Focused(true),
+                ..
+            } = &event
+            {
+                use tauri::Manager;
+                if let Some(w) = app.get_webview_window(label) {
+                    let _ = w.set_focus();
+                }
             }
         });
 }

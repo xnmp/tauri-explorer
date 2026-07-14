@@ -210,6 +210,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal-command.ts` — shell command construction/quoting for terminal.
 - `terminal-cwd-sync.ts` — "terminal follows explorer" cwd decision (#149).
 - `terminal-keys.ts` — terminal vs app key-ownership rules (#249/#260).
+- `terminal-shell.ts` — shell dialect profile + WSL↔Windows path translation (#409/#418).
 - `terminal-theme.ts` — map CSS theme vars → xterm.js theme.
 - `content-search.ts` — `ContentMatch`/`ContentSearchResult` types for ripgrep results; re-exported by `api/search.ts`.
 - `crash-report.ts` — pure crash-dedupe + log-tail→markdown helpers behind `api/crash.ts`.
@@ -247,7 +248,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `lib.rs` — app entry: builder, command registration, plugin setup. Grep here to find where a command is wired.
 - `error.rs` — unified command error type.
 - `config.rs` — JSON config file persistence.
-- `search.rs` — fuzzy search (nucleo). Two-pass walk: fast pass, then build-output trees (`target`, `node_modules`, …) deferred + score-penalized (#393).
+- `search.rs` — fuzzy search (nucleo). Two-pass walk: fast pass, then build-output trees (`target`, `node_modules`, …) deferred + score-penalized (#393); WSL UNC roots delegate the walk to the distro's `find` (#414).
+- `wsl.rs` — WSL UNC path parsing (`\\wsl.localhost\<distro>\…` → distro + Linux path), shared by terminal/search/git delegation.
 - `content_search.rs` — grep-across-files (ripgrep/grep crate).
 - `thumbnails.rs` — image/video thumbnail generation + cache. Hot.
 - `palette.rs` — dominant-color extraction for themes (#203).
@@ -270,7 +272,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `fal.rs` — fal.ai REST helpers: API-key resolution, CDN upload, queue submit/poll, result download. Shared by upscale + nano-banana.
 - `upscale.rs` — `start_upscale_job` command: uploads the image, runs the SeedVR2 queue job via `fal.rs`, writes the result.
 - `plugin_job.rs` — shared plugin-job scaffolding: job-id alloc, output-path validation, timeout wrapper, complete/error events.
-- `git.rs` — SCM panel git backend: status/stage/commit/diff (#53).
+- `git.rs` — SCM panel git backend: status/stage/commit/diff (#53). Status/diff delegate to native `wsl.exe git` (porcelain=v2 parser) for `\\wsl.localhost\…` repos, falling back to libgit2 (#398).
 - `git_log.rs` — git history / commit-graph backend (#57).
 - `git_actions.rs` — mutating git actions for commit-graph tab (VSCode parity).
 - `git_common.rs` — shared git plumbing (used by git/git_log/git_actions).

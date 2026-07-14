@@ -68,6 +68,175 @@ struct Walked {
     deferred: bool,
 }
 
+// ─── WSL delegation (#414) ───────────────────────────────────────────────────
+// Walking a `\\wsl.localhost\…` tree from Windows crosses the 9P network
+// boundary once per directory — tens of thousands of round-trips, so the
+// deferred pass (target/, node_modules/) effectively never finishes and
+// Quick Open "can't find" folders like target/release/bundle/deb. Delegate
+// the walk to the distro's native `find` (same pattern as terminals #378):
+// it scans the whole tree in well under a second and streams results back.
+
+#[cfg(any(windows, test))]
+/// `find` arguments for the fast pass over `linux_path`: hidden + hard-skip
+/// trees pruned silently; build-output trees pruned but printed (type `d`)
+/// so they appear as results themselves and seed the deferred pass.
+/// Output lines: `<y>\t<relative path>` (`%y` type char, `%P` path).
+fn find_fast_args(linux_path: &str) -> Vec<String> {
+    let mut args: Vec<String> = vec![linux_path.into(), "-mindepth".into(), "1".into()];
+    // Hidden entries and hard-skip dirs: prune, print nothing.
+    args.extend(["(".into(), "-name".into(), ".*".into()]);
+    for d in HARD_SKIP_DIRS {
+        args.extend(["-o".into(), "-name".into(), (*d).into()]);
+    }
+    args.extend([")".into(), "-prune".into(), "-o".into()]);
+    // Deferred dirs: prune but print the dir itself.
+    args.push("(".into());
+    let mut first = true;
+    for d in DEFERRED_DIRS {
+        if !first {
+            args.push("-o".into());
+        }
+        first = false;
+        args.extend(["-name".into(), (*d).into()]);
+    }
+    args.extend([
+        ")".into(),
+        "-prune".into(),
+        "-printf".into(),
+        "d\\t%P\\n".into(),
+        "-o".into(),
+        "-printf".into(),
+        "%y\\t%P\\n".into(),
+    ]);
+    args
+}
+
+#[cfg(any(windows, test))]
+/// `find` arguments for one deferred (build-output) tree: hidden and
+/// hard-skip dirs pruned; everything else printed.
+fn find_deferred_args(linux_path: &str) -> Vec<String> {
+    let mut args: Vec<String> = vec![linux_path.into(), "-mindepth".into(), "1".into()];
+    args.extend(["(".into(), "-name".into(), ".*".into()]);
+    for d in HARD_SKIP_DIRS {
+        args.extend(["-o".into(), "-name".into(), (*d).into()]);
+    }
+    args.extend([
+        ")".into(),
+        "-prune".into(),
+        "-o".into(),
+        "-printf".into(),
+        "%y\\t%P\\n".into(),
+    ]);
+    args
+}
+
+#[cfg(any(windows, test))]
+/// Parse one `find -printf '%y\t%P\n'` output line into (is_dir, rel_path).
+fn parse_find_line(line: &str) -> Option<(bool, &str)> {
+    let (kind, rel) = line.split_once('\t')?;
+    if rel.is_empty() {
+        return None;
+    }
+    Some((kind == "d", rel))
+}
+
+#[cfg(any(windows, test))]
+/// Run one `find` under `runner` (a pre-built Command missing only the find
+/// args), streaming parsed lines into `on_line`. Returns false if the
+/// process could not be spawned (caller falls back to jwalk).
+fn stream_find(
+    mut cmd: std::process::Command,
+    stop: &dyn Fn() -> bool,
+    on_line: &mut dyn FnMut(bool, &str),
+) -> bool {
+    use crate::process_ext::NoConsole;
+    use std::io::BufRead;
+    cmd.stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .stdin(std::process::Stdio::null())
+        .no_console();
+    let Ok(mut child) = cmd.spawn() else {
+        return false;
+    };
+    if let Some(out) = child.stdout.take() {
+        for line in std::io::BufReader::new(out).lines() {
+            if stop() {
+                let _ = child.kill();
+                break;
+            }
+            let Ok(line) = line else { break };
+            if let Some((is_dir, rel)) = parse_find_line(&line) {
+                on_line(is_dir, rel);
+            }
+        }
+    }
+    let _ = child.wait();
+    true
+}
+
+#[cfg(any(windows, test))]
+/// Both walk passes via the distro's native `find` (#414). Returns false when
+/// find could not run — the caller falls back to the jwalk implementation.
+fn find_walk_passes(
+    make_cmd: &dyn Fn() -> std::process::Command,
+    linux_path: &str,
+    stop: &dyn Fn() -> bool,
+    on_entry: &mut dyn FnMut(Walked),
+) -> bool {
+    let mut deferred_roots: Vec<String> = Vec::new();
+    let ok = stream_find(
+        {
+            let mut c = make_cmd();
+            c.args(find_fast_args(linux_path));
+            c
+        },
+        stop,
+        &mut |is_dir, rel| {
+            let name = rel.rsplit('/').next().unwrap_or(rel).to_string();
+            if is_dir && is_deferred(&name) {
+                deferred_roots.push(rel.to_string());
+            }
+            on_entry(Walked {
+                relative_path: rel.to_string(),
+                name,
+                is_dir,
+                deferred: false,
+            });
+        },
+    );
+    if !ok {
+        return false;
+    }
+    // Cell: the stop closure reads the counter while the line callback
+    // increments it — a plain usize would be a simultaneous & / &mut borrow.
+    let scanned = std::cell::Cell::new(0usize);
+    for root_rel in deferred_roots {
+        if stop() || scanned.get() >= DEFERRED_SCAN_CAP {
+            break;
+        }
+        let abs = format!("{}/{}", linux_path.trim_end_matches('/'), root_rel);
+        stream_find(
+            {
+                let mut c = make_cmd();
+                c.args(find_deferred_args(&abs));
+                c
+            },
+            &|| stop() || scanned.get() >= DEFERRED_SCAN_CAP,
+            &mut |is_dir, rel| {
+                scanned.set(scanned.get() + 1);
+                let name = rel.rsplit('/').next().unwrap_or(rel).to_string();
+                on_entry(Walked {
+                    relative_path: format!("{root_rel}/{rel}"),
+                    name,
+                    is_dir,
+                    deferred: true,
+                });
+            },
+        );
+    }
+    true
+}
+
 /// Walk `root`, calling `on_entry` for every visible entry: the fast pass
 /// first (build-output trees pruned, but still reported as entries themselves),
 /// then those pruned trees, marked `deferred`. Stops early when `stop` returns
@@ -78,6 +247,19 @@ fn walk_passes(
     fast_cap: usize,
     on_entry: &mut dyn FnMut(Walked),
 ) {
+    // WSL UNC roots delegate to the distro's native find (#414); on any
+    // failure (wsl.exe missing, no find) fall through to the jwalk passes.
+    #[cfg(windows)]
+    if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc(&root.to_string_lossy()) {
+        let make_cmd = move || {
+            let mut c = std::process::Command::new("wsl.exe");
+            c.args(["-d", &distro, "--", "find"]);
+            c
+        };
+        if find_walk_passes(&make_cmd, &linux_path, stop, on_entry) {
+            return;
+        }
+    }
     let deferred_roots = Arc::new(Mutex::new(Vec::<PathBuf>::new()));
 
     let collect = deferred_roots.clone();
@@ -140,15 +322,15 @@ fn walk_passes(
         if stop() || scanned >= DEFERRED_SCAN_CAP {
             return;
         }
-        let walker = WalkDir::new(&deferred_root).skip_hidden(true).process_read_dir(
-            |_depth, _path, _state, children| {
+        let walker = WalkDir::new(&deferred_root)
+            .skip_hidden(true)
+            .process_read_dir(|_depth, _path, _state, children| {
                 for e in children.iter_mut().flatten() {
                     if is_hard_skip(&e.file_name().to_string_lossy()) {
                         e.read_children_path = None;
                     }
                 }
-            },
-        );
+            });
         for entry in walker {
             if stop() || scanned >= DEFERRED_SCAN_CAP {
                 return;
@@ -221,14 +403,11 @@ fn normalize_rel_separators(p: String) -> String {
 
 /// Collect file/directory entries under `root_path` (both passes).
 /// Capped at `WALK_SAFETY_CAP` to bound memory for the non-streaming path.
-fn walk_entries(root_path: &PathBuf) -> Vec<Walked> {
+fn walk_entries(root_path: &Path) -> Vec<Walked> {
     let mut entries: Vec<Walked> = Vec::new();
-    walk_passes(
-        root_path,
-        &|| false,
-        WALK_SAFETY_CAP,
-        &mut |w| entries.push(w),
-    );
+    walk_passes(root_path, &|| false, WALK_SAFETY_CAP, &mut |w| {
+        entries.push(w)
+    });
     entries
 }
 
@@ -591,6 +770,84 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[test]
+    fn find_lines_parse_into_kind_and_rel_path() {
+        assert_eq!(
+            parse_find_line("d\tsrc-tauri/target"),
+            Some((true, "src-tauri/target"))
+        );
+        assert_eq!(
+            parse_find_line("f\ta/b c/d.txt"),
+            Some((false, "a/b c/d.txt"))
+        );
+        assert_eq!(parse_find_line("l\tlink"), Some((false, "link")));
+        assert_eq!(parse_find_line("no-tab-here"), None);
+        assert_eq!(parse_find_line("d\t"), None);
+    }
+
+    /// The find-delegated walk (#414), exercised against the REAL `find`
+    /// binary on a synthetic tree shaped like the WSL repro: hidden and
+    /// hard-skip trees invisible, build output deferred but reachable —
+    /// `target/release/bundle/deb` must come back as a deferred directory.
+    #[test]
+    #[cfg(unix)]
+    fn find_walk_passes_matches_jwalk_semantics() {
+        if std::process::Command::new("find")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("skipping: no `find` on this machine");
+            return;
+        }
+        let dir = tempdir().unwrap();
+        let root = visible_root(&dir);
+        fs::create_dir_all(root.join("src/lib")).unwrap();
+        File::create(root.join("src/lib/app.ts")).unwrap();
+        fs::create_dir_all(root.join(".git/objects")).unwrap();
+        File::create(root.join(".git/objects/junk")).unwrap();
+        fs::create_dir_all(root.join("src-tauri/target/release/bundle/deb")).unwrap();
+        File::create(root.join("src-tauri/target/release/bundle/deb/app.deb")).unwrap();
+        fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+        File::create(root.join("node_modules/pkg/index.js")).unwrap();
+
+        let root_str = root.to_string_lossy().to_string();
+        let make_cmd = || std::process::Command::new("find");
+        let mut entries: Vec<Walked> = Vec::new();
+        let ok = find_walk_passes(&make_cmd, &root_str, &|| false, &mut |w| entries.push(w));
+        assert!(ok, "find walk should run");
+
+        let listing = fmt_walked(&entries);
+        // Fast-pass entries, not deferred.
+        assert!(
+            listing.contains(&"app.ts @ src/lib/app.ts dir=false deferred=false".to_string()),
+            "source files walk in the fast pass: {listing:?}"
+        );
+        // The deferred root itself is a fast-pass entry…
+        assert!(
+            listing.contains(&"target @ src-tauri/target dir=true deferred=false".to_string()),
+            "build-output roots are entries themselves: {listing:?}"
+        );
+        // …and its contents arrive via the deferred pass, including the deb dir.
+        assert!(
+            listing.contains(
+                &"deb @ src-tauri/target/release/bundle/deb dir=true deferred=true".to_string()
+            ),
+            "deferred pass must reach target/release/bundle/deb: {listing:?}"
+        );
+        assert!(
+            listing.contains(
+                &"index.js @ node_modules/pkg/index.js dir=false deferred=true".to_string()
+            ),
+            "node_modules contents are deferred: {listing:?}"
+        );
+        // Repo internals never appear.
+        assert!(
+            !listing.iter().any(|l| l.contains(".git")),
+            "hard-skip trees must be invisible: {listing:?}"
+        );
     }
 
     /// Helper: format results for assertion messages.
@@ -1060,7 +1317,8 @@ mod tests {
             fmt_results(&result.results)
         );
         assert_eq!(
-            widgets[0].relative_path, "src/widget.ts",
+            widgets[0].relative_path,
+            "src/widget.ts",
             "the source copy must rank first, got: {:?}",
             fmt_results(&result.results)
         );
@@ -1105,7 +1363,12 @@ mod tests {
             .iter()
             .filter(|e| e.name == "target" && e.is_dir)
             .count();
-        assert_eq!(target_dirs, 1, "deferred root emitted once, got: {:?}", fmt_walked(&entries));
+        assert_eq!(
+            target_dirs,
+            1,
+            "deferred root emitted once, got: {:?}",
+            fmt_walked(&entries)
+        );
     }
 
     #[test]

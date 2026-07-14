@@ -620,7 +620,7 @@ function createExplorerState(seed?: ExplorerSeed) {
     // app since, the OS clipboard differs and must win — otherwise pasting a
     // file copied in Explorer silently pastes our stale internal selection.
     const internal = clipboardStore.content;
-    const osContent = await clipboardStore.readOsFiles();
+    const { content: osContent, error: osReadError } = await clipboardStore.readOsFiles();
 
     const internalPaths = internal ? internal.entries.map((e) => e.path) : null;
     const osMatchesInternal =
@@ -668,6 +668,12 @@ function createExplorerState(seed?: ExplorerSeed) {
       return result.error;
     }
 
+    // Nothing pasted: only now is a clipboard read failure worth surfacing
+    // (#401) — when another source (internal clipboard, image) satisfied the
+    // paste, the failed file-list probe was inconsequential noise.
+    if (osReadError) {
+      return `Reading the system clipboard failed: ${osReadError}`;
+    }
     return "Nothing in clipboard";
   }
 

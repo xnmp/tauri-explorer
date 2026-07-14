@@ -29,9 +29,16 @@
   const graphCache = new Map<string, GraphSnapshot>();
   const GRAPH_CACHE_MAX = 8;
 
-  function cacheSnapshot(repoPath: string, snapshot: GraphSnapshot): void {
-    graphCache.delete(repoPath); // re-insert to refresh LRU position
-    graphCache.set(repoPath, snapshot);
+  /** Cache key: filtered views are cached too (#416) — keyed by their filter
+   *  so a remount with the same filter paints instantly and can never flash
+   *  another filter's rows (#342). */
+  function snapshotKey(repoPath: string, branches: string[] | null, localOnly: boolean): string {
+    return `${repoPath}|${localOnly ? "local" : ""}|${branches ? branches.join("\n") : "*"}`;
+  }
+
+  function cacheSnapshot(key: string, snapshot: GraphSnapshot): void {
+    graphCache.delete(key); // re-insert to refresh LRU position
+    graphCache.set(key, snapshot);
     if (graphCache.size > GRAPH_CACHE_MAX) {
       const oldest = graphCache.keys().next().value;
       if (oldest !== undefined) graphCache.delete(oldest);
@@ -89,10 +96,11 @@
    * view still loads normally when actually opened).
    */
   export async function warmGraphSnapshot(repoPath: string): Promise<void> {
-    if (!repoPath || graphCache.has(repoPath) || warmInFlight.has(repoPath)) return;
+    const key = snapshotKey(repoPath, null, false);
+    if (!repoPath || graphCache.has(key) || warmInFlight.has(repoPath)) return;
     warmInFlight.add(repoPath);
     try {
-      cacheSnapshot(repoPath, await fetchPage0Snapshot(repoPath));
+      cacheSnapshot(key, await fetchPage0Snapshot(repoPath));
     } catch {
       /* best-effort warm — ignore failures */
     } finally {
@@ -175,10 +183,9 @@
   // curated view (e.g. just dev + main) survives reopening the graph.
   const BRANCH_FILTER_KEY = `git-graph-branch-filter:${untrack(() => repoPath)}`;
   const savedBranchFilter = loadPersisted<unknown>(BRANCH_FILTER_KEY, null);
+  // An empty array is a valid persisted state: "no branches selected" (#413).
   let branchFilter = $state<string[] | null>(
-    Array.isArray(savedBranchFilter) &&
-      savedBranchFilter.length > 0 &&
-      savedBranchFilter.every((s) => typeof s === "string")
+    Array.isArray(savedBranchFilter) && savedBranchFilter.every((s) => typeof s === "string")
       ? (savedBranchFilter as string[])
       : null,
   );
@@ -194,14 +201,15 @@
   }
 
   // Paint the last-known graph immediately on remount (#255); the load
-  // effect below still refreshes from git in the background. Skipped while a
-  // branch filter is active — the warm cache is always the UNFILTERED page 0,
-  // and flashing it would briefly show branches the user hid (#342). Same
-  // reasoning for local-only (#381).
-  if (untrack(() => branchFilter) === null && !untrack(() => localOnly)) {
-    // untrack: the view is {#key}ed on repoPath, so the initial value is the
-    // right one for this instance's lifetime.
-    const cached = graphCache.get(untrack(() => repoPath));
+  // effect below still refreshes from git in the background. The cache is
+  // keyed by repo + filter + local-only (#416), so a filtered remount paints
+  // its own filtered snapshot — never another filter's rows (#342, #381).
+  {
+    // untrack: the view is {#key}ed on repoPath, so the initial values are
+    // the right ones for this instance's lifetime.
+    const cached = graphCache.get(
+      untrack(() => snapshotKey(repoPath, branchFilter, localOnly)),
+    );
     if (cached) {
       commits = cached.commits;
       refs = cached.refs;
@@ -353,12 +361,14 @@
   // header's right-click menu; message and the graph itself always show.
   // Persisted globally (a layout preference, not per-repo).
   const COLUMNS_KEY = "git-graph-columns";
-  type ColumnId = "author" | "date" | "commit";
+  type ColumnId = "author" | "date" | "commit" | "parent";
   const savedColumns = loadPersisted<unknown>(COLUMNS_KEY, null);
   let shownColumns = $state<Record<ColumnId, boolean>>({
     author: true,
     date: true,
     commit: true,
+    // Parent OIDs are niche — a viewable column, off by default (#402).
+    parent: false,
     ...(typeof savedColumns === "object" && savedColumns !== null ? savedColumns : {}),
   });
   let columnMenu = $state<{ x: number; y: number } | null>(null);
@@ -366,6 +376,16 @@
   function toggleColumn(id: ColumnId): void {
     shownColumns = { ...shownColumns, [id]: !shownColumns[id] };
     savePersisted(COLUMNS_KEY, shownColumns);
+  }
+
+  // Commit-detail metadata (hash/parents/author/date) is hidden by default
+  // (#402) — the graph columns already carry it; the detail block leads with
+  // the message and files. Toggle lives in the header context menu.
+  const DETAIL_META_KEY = "git-graph-detail-meta";
+  let showDetailMeta = $state(loadPersisted<unknown>(DETAIL_META_KEY, false) === true);
+  function toggleDetailMeta(): void {
+    showDetailMeta = !showDetailMeta;
+    savePersisted(DETAIL_META_KEY, showDetailMeta);
   }
 
   function openColumnMenu(event: MouseEvent): void {
@@ -462,12 +482,12 @@
   );
 
   async function loadPage(skip: number): Promise<void> {
-    // Captured once so a mid-flight filter change can't mix pages; filtered
-    // loads (branch subset OR local-only) never touch the snapshot cache
-    // (it holds the unfiltered page 0).
+    // Captured once so a mid-flight filter change can't mix pages. Every
+    // page-0 load is cached under its own repo+filter key (#416), so
+    // re-entering the same view — filtered or not — paints instantly.
     const filter = untrack(() => branchFilter);
     const local = untrack(() => localOnly);
-    const unfiltered = filter === null && !local;
+    const cacheKey = snapshotKey(repoPath, filter, local);
     loading = true;
     error = null;
     try {
@@ -484,7 +504,7 @@
           loading = false;
         }, local);
         workingChanges = snapshot.workingChanges;
-        if (unfiltered) cacheSnapshot(repoPath, snapshot);
+        cacheSnapshot(cacheKey, snapshot);
       } else {
         const page = await gitLog(repoPath, {
           skip,
@@ -497,15 +517,13 @@
         hasMore = page.has_more;
         // Snapshot page 0 for instant remount paint (#255) — deliberately not
         // the full paged history, which can grow unbounded.
-        if (unfiltered) {
-          cacheSnapshot(repoPath, {
-            commits: commits.slice(0, PAGE_SIZE),
-            refs,
-            hasMore: hasMore || commits.length > PAGE_SIZE,
-            headOid,
-            workingChanges,
-          });
-        }
+        cacheSnapshot(cacheKey, {
+          commits: commits.slice(0, PAGE_SIZE),
+          refs,
+          hasMore: hasMore || commits.length > PAGE_SIZE,
+          headOid,
+          workingChanges,
+        });
       }
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
@@ -564,7 +582,6 @@
   // Branch → creator map for the author filter (#376); loaded lazily with
   // the branch list (the creator walk is per-branch work worth deferring).
   let branchAuthors = $state<Record<string, string>>({});
-  let authorFilter = $state<string | null>(null);
 
   async function toggleBranchPopover(): Promise<void> {
     branchPopoverOpen = !branchPopoverOpen;
@@ -592,15 +609,12 @@
   );
 
   const filteredBranchList = $derived(
-    branchList.filter(
-      (b) =>
-        b.name.toLowerCase().includes(branchQuery.toLowerCase()) &&
-        (authorFilter === null || branchAuthors[b.name] === authorFilter),
-    ),
+    branchList.filter((b) => b.name.toLowerCase().includes(branchQuery.toLowerCase())),
   );
 
+  /** null = all branches; [] = none (#413). */
   function setBranchFilter(next: string[] | null): void {
-    branchFilter = next && next.length > 0 ? next : null;
+    branchFilter = next;
     savePersisted(BRANCH_FILTER_KEY, branchFilter);
     // The selected commit may not exist in the new subset.
     closeDetails();
@@ -617,6 +631,37 @@
     const cur = branchFilter ?? all;
     const next = cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name];
     setBranchFilter(next.length === all.length ? null : next);
+  }
+
+  /** Select/deselect-all (#413): everything shown → none; anything else → all. */
+  const allBranchesShown = $derived(branchFilter === null);
+  function toggleAllBranches(): void {
+    setBranchFilter(allBranchesShown ? [] : null);
+  }
+
+  // ----- Author checkboxes (#411, #412): batch-toggle an author's branches -----
+
+  function branchesByAuthor(author: string): string[] {
+    return branchList.filter((b) => branchAuthors[b.name] === author).map((b) => b.name);
+  }
+
+  /** An author reads as checked when every branch they created is shown. */
+  function isAuthorShown(author: string): boolean {
+    const names = branchesByAuthor(author);
+    return names.length > 0 && names.every((n) => isBranchShown(n));
+  }
+
+  /** Ticking an author selects all their branches; unticking deselects them. */
+  function toggleAuthor(author: string): void {
+    const all = branchList.map((b) => b.name);
+    const cur = new Set(branchFilter ?? all);
+    const names = branchesByAuthor(author);
+    if (names.length > 0 && names.every((n) => cur.has(n))) {
+      for (const n of names) cur.delete(n);
+    } else {
+      for (const n of names) cur.add(n);
+    }
+    setBranchFilter(cur.size === all.length ? null : [...cur]);
   }
 
   // One shared formatter: constructing Intl state per row per render is a
@@ -674,10 +719,19 @@
     commit: CommitInfo;
     /** Branch to attach on Checkout, or null → detached checkout of the OID. */
     checkoutBranch: string | null;
+    /** Set when the menu was opened from a specific branch badge (#405):
+     *  branch-scoped entries (Delete Branch) show only this branch. */
+    scopedBranch: string | null;
   }
   let menu = $state<Menu | null>(null);
   // Inline name prompt for Create Branch / Create Tag.
   let prompt = $state<{ kind: "branch" | "tag"; oid: string; value: string } | null>(null);
+  // Suboption dialogs (#406): reset modes and delete-branch variants open as
+  // a modal instead of a cascading submenu.
+  type ActionModal =
+    | { kind: "reset"; oid: string; summary: string }
+    | { kind: "deleteBranch"; name: string; remotes: string[] };
+  let actionModal = $state<ActionModal | null>(null);
 
   function localBranchAt(oid: string): string | null {
     const ref = (refs[oid] ?? []).find((r) => r.kind === "LocalBranch");
@@ -703,7 +757,7 @@
     if (x !== m.x || y !== m.y) menu = { ...m, x, y };
   });
 
-  function openMenu(event: MouseEvent, commit: CommitInfo): void {
+  function openMenu(event: MouseEvent, commit: CommitInfo, scopedBranch: string | null = null): void {
     event.preventDefault();
     prompt = null;
     // clientToFixed: the menu is position:fixed, so cursor coordinates must be
@@ -713,13 +767,28 @@
       x: clientToFixed(event.clientX),
       y: clientToFixed(event.clientY),
       commit,
-      checkoutBranch: localBranchAt(commit.oid),
+      checkoutBranch: scopedBranch ?? localBranchAt(commit.oid),
+      scopedBranch,
     };
   }
 
   function closeMenu(): void {
     menu = null;
     prompt = null;
+  }
+
+  /** Open a suboption modal (#406), closing the context menu behind it. */
+  function openActionModal(modal: ActionModal): void {
+    actionModal = modal;
+    menu = null;
+  }
+
+  /** Run the chosen modal action and dismiss the modal. The action runs
+   *  FIRST: its closure reads the template's {@const modal}, a derived that
+   *  recomputes to null the instant actionModal clears. */
+  function confirmModalAction(fn: () => void): void {
+    fn();
+    actionModal = null;
   }
 
   /** Right-click on the backdrop: open the menu for the commit row under the
@@ -864,6 +933,10 @@
   async function refreshWithFetch(): Promise<void> {
     if (fetching) return;
     fetching = true;
+    // Immediate feedback (#417): the fetch can take seconds, and without an
+    // opening toast F5 looks like it did nothing (or worse, like it merely
+    // focus-highlighted the selected row).
+    toastStore.show("Refreshing graph…", "info");
     try {
       await gitFetch(repoPath);
       toastStore.success("Fetched from remotes");
@@ -884,6 +957,14 @@
     }
     if (event.key === "Escape" && branchPopoverOpen) {
       branchPopoverOpen = false;
+      return;
+    }
+    if (event.key === "Escape" && actionModal) {
+      actionModal = null;
+      return;
+    }
+    if (event.key === "Escape" && columnMenu) {
+      columnMenu = null;
       return;
     }
     if (event.key === "Escape" && (menu || prompt)) closeMenu();
@@ -928,33 +1009,40 @@
             bind:value={branchQuery}
             autofocus
           />
-          {#if authorOptions.length > 0}
-            <!-- Author = branch creator: author of the branch's first unique
-                 commit (tip author for fully-merged branches) (#376). -->
-            <select
-              class="bf-author"
-              title="Filter branches by creator"
-              value={authorFilter ?? ""}
-              onchange={(e) => (authorFilter = e.currentTarget.value || null)}
-            >
-              <option value="">Any author</option>
-              {#each authorOptions as author (author)}
-                <option value={author}>{author}</option>
-              {/each}
-            </select>
-          {/if}
           <div class="bf-list">
             <label class="bf-row bf-local-only" title="Hide history reachable only from remote-tracking branches">
               <input type="checkbox" checked={localOnly} onchange={toggleLocalOnly} />
               <span class="bf-name">Local branches only</span>
             </label>
-            <button
-              class="bf-row bf-all"
-              class:bf-active={branchFilter === null}
-              onclick={() => setBranchFilter(null)}
-            >
-              All branches
-            </button>
+            <!-- Select/deselect all (#413). -->
+            <label class="bf-row bf-all" title="Select or deselect every branch">
+              <input
+                type="checkbox"
+                checked={allBranchesShown}
+                indeterminate={!allBranchesShown && (branchFilter?.length ?? 0) > 0}
+                onchange={toggleAllBranches}
+                data-testid="bf-select-all"
+              />
+              <span class="bf-name">All branches</span>
+            </label>
+            {#if authorOptions.length > 0}
+              <!-- Author = branch creator: author of the branch's first unique
+                   commit (tip author for fully-merged branches) (#376).
+                   Ticking an author (de)selects all branches they created
+                   (#412); rows share the themed checkbox styling (#411). -->
+              <div class="bf-heading">Authors</div>
+              {#each authorOptions as author (author)}
+                <label class="bf-row bf-author-row" title="Show or hide branches created by {author}">
+                  <input
+                    type="checkbox"
+                    checked={isAuthorShown(author)}
+                    onchange={() => toggleAuthor(author)}
+                  />
+                  <span class="bf-name">{author}</span>
+                </label>
+              {/each}
+              <div class="bf-heading">Branches</div>
+            {/if}
             {#each filteredBranchList as b (b.name)}
               <label class="bf-row" title="Show or hide {b.name}">
                 <input
@@ -1024,6 +1112,7 @@
         </span>
       {/if}
       {#if shownColumns.commit}<span class="gh-oid">Commit</span>{/if}
+      {#if shownColumns.parent}<span class="gh-oid gh-parent">Parent</span>{/if}
     </div>
     {#if columnMenu}
       <button
@@ -1039,7 +1128,7 @@
         tabindex="-1"
         style="left: {columnMenu.x}px; top: {columnMenu.y}px;"
       >
-        {#each [["author", "Author"], ["date", "Date"], ["commit", "Commit"]] as [id, label] (id)}
+        {#each [["author", "Author"], ["date", "Date"], ["commit", "Commit"], ["parent", "Parent"]] as [id, label] (id)}
           <button
             class="menu-item"
             role="menuitemcheckbox"
@@ -1050,6 +1139,19 @@
             {label}
           </button>
         {/each}
+        <div class="menu-sep"></div>
+        <!-- Hash/parents/author/date inside the commit detail block (#402):
+             hidden by default, toggleable here. -->
+        <button
+          class="menu-item"
+          role="menuitemcheckbox"
+          aria-checked={showDetailMeta}
+          onclick={toggleDetailMeta}
+          data-testid="toggle-detail-meta"
+        >
+          <span class="col-check">{showDetailMeta ? "✓" : ""}</span>
+          Details metadata
+        </button>
       </div>
     {/if}
     {#if commits.length === 0 && loading}
@@ -1139,7 +1241,12 @@
                 <span class="ref ref-stash">{commit.stash}</span>
               {/if}
               {#each chips.heads as head (head.name)}
-                <span class="ref ref-branch" class:ref-active={head.active}>
+                <!-- svelte-ignore a11y_no_static_element_interactions -- right-click scopes the row context menu to this badge (#405); the row itself stays the keyboard target -->
+                <span
+                  class="ref ref-branch"
+                  class:ref-active={head.active}
+                  oncontextmenu={(e) => { e.stopPropagation(); openMenu(e, commit, head.name); }}
+                >
                   {head.name}
                   {#each head.remotes as remote (remote)}
                     <span class="ref-remote-sub" title="{remote}/{head.name} is at this commit">{remote}</span>
@@ -1160,6 +1267,7 @@
               {#if shownColumns.author}<span class="author" style:width="{authorCol.width}px">{commit.author_name}</span>{/if}
               {#if shownColumns.date}<span class="date" style:width="{dateCol.width}px">{formatDate(commit.author_time)}</span>{/if}
               {#if shownColumns.commit}<span class="oid">{commit.short_oid}</span>{/if}
+              {#if shownColumns.parent}<span class="oid parent-col">{commit.parents.map((p) => p.slice(0, 7)).join(" ") || "—"}</span>{/if}
             {/if}
           </div>
           {#if selected?.oid === commit.oid}
@@ -1179,10 +1287,14 @@
               <div class="detail-columns">
                 {#if !synthetic}
                   <div class="detail-meta-col">
-                    <div class="meta-line"><span class="meta-label">Commit:</span> <span class="meta-mono">{commit.oid}</span></div>
-                    <div class="meta-line"><span class="meta-label">Parents:</span> <span class="meta-mono">{commit.parents.map((p) => p.slice(0, 8)).join(", ") || "—"}</span>{#if commit.parents.length > 1} <span class="meta-note">(merge of {commit.parents.length} parents)</span>{/if}</div>
-                    <div class="meta-line"><span class="meta-label">Author:</span> {commit.author_name} &lt;{commit.author_email}&gt;</div>
-                    <div class="meta-line"><span class="meta-label">Date:</span> {formatDate(commit.author_time)}</div>
+                    <!-- Metadata hidden by default (#402); toggle via the
+                         header context menu ("Details metadata"). -->
+                    {#if showDetailMeta}
+                      <div class="meta-line"><span class="meta-label">Commit:</span> <span class="meta-mono">{commit.oid}</span></div>
+                      <div class="meta-line"><span class="meta-label">Parents:</span> <span class="meta-mono">{commit.parents.map((p) => p.slice(0, 8)).join(", ") || "—"}</span>{#if commit.parents.length > 1} <span class="meta-note">(merge of {commit.parents.length} parents)</span>{/if}</div>
+                      <div class="meta-line"><span class="meta-label">Author:</span> {commit.author_name} &lt;{commit.author_email}&gt;</div>
+                      <div class="meta-line"><span class="meta-label">Date:</span> {formatDate(commit.author_time)}</div>
+                    {/if}
                     <p class="detail-message">{commit.summary}</p>
                   </div>
                 {:else}
@@ -1259,7 +1371,11 @@
     ></button>
     {@const m = menu}
     {@const menuChips = chipsFor(m.commit.oid)}
-    {@const deletableHeads = menuChips.heads.filter((h) => !h.active)}
+    <!-- Badge-scoped menu (#405): opened from a branch chip, only that
+         branch's delete entry shows; opened from the row, all of them do. -->
+    {@const deletableHeads = menuChips.heads.filter(
+      (h) => !h.active && (m.scopedBranch === null || h.name === m.scopedBranch),
+    )}
     <div
       class="commit-menu"
       data-testid="git-graph-menu"
@@ -1291,41 +1407,24 @@
       <button class="menu-item" role="menuitem" onclick={() => rebase(m.commit.oid)}>
         Rebase current branch on this Commit
       </button>
-      <div class="menu-item has-submenu" role="menuitem" tabindex="-1">
-        <span>Reset current branch to this Commit</span>
-        <span class="submenu-arrow">▸</span>
-        <div class="submenu" role="menu">
-          <button class="menu-item" role="menuitem" onclick={() => reset(m.commit.oid, "soft")}>
-            Soft — keep changes & index
-          </button>
-          <button class="menu-item" role="menuitem" onclick={() => reset(m.commit.oid, "mixed")}>
-            Mixed — keep changes, reset index
-          </button>
-          <button class="menu-item" role="menuitem" onclick={() => reset(m.commit.oid, "hard")}>
-            Hard — discard all changes
-          </button>
-        </div>
-      </div>
+      <!-- Suboptions open a modal, not a cascading submenu (#406). -->
+      <button
+        class="menu-item"
+        role="menuitem"
+        onclick={() => openActionModal({ kind: "reset", oid: m.commit.oid, summary: m.commit.summary })}
+      >
+        Reset current branch to this Commit…
+      </button>
       {#if deletableHeads.length > 0 || menuChips.remotes.length > 0}
         <div class="menu-sep"></div>
         {#each deletableHeads as head (head.name)}
-          <div class="menu-item has-submenu" role="menuitem" tabindex="-1">
-            <span>Delete Branch '{head.name}'</span>
-            <span class="submenu-arrow">▸</span>
-            <div class="submenu" role="menu">
-              <button class="menu-item" role="menuitem" onclick={() => deleteBranch(head.name, false, [])}>
-                Delete — refuse if unmerged
-              </button>
-              <button class="menu-item" role="menuitem" onclick={() => deleteBranch(head.name, true, [])}>
-                Force delete
-              </button>
-              {#if head.remotes.length > 0}
-                <button class="menu-item" role="menuitem" onclick={() => deleteBranch(head.name, false, head.remotes)}>
-                  Delete + remote ({head.remotes.join(", ")})
-                </button>
-              {/if}
-            </div>
-          </div>
+          <button
+            class="menu-item"
+            role="menuitem"
+            onclick={() => openActionModal({ kind: "deleteBranch", name: head.name, remotes: head.remotes })}
+          >
+            Delete Branch '{head.name}'…
+          </button>
         {/each}
         {#each menuChips.remotes as remoteChip (remoteChip)}
           <button class="menu-item" role="menuitem" onclick={() => deleteRemoteChip(remoteChip)}>
@@ -1390,6 +1489,57 @@
         <button class="prompt-btn primary" onclick={confirmPull}>Pull</button>
       </div>
     </div>
+  {/if}
+
+  {#if actionModal}
+    <!-- Suboption modal (#406): reset modes / delete-branch variants. -->
+    <button
+      class="menu-backdrop"
+      aria-label="Cancel"
+      onclick={() => (actionModal = null)}
+      oncontextmenu={(e) => { e.preventDefault(); actionModal = null; }}
+    ></button>
+    {#if actionModal.kind === "reset"}
+      {@const modal = actionModal}
+      <div class="name-prompt action-modal" data-testid="git-graph-action-modal" role="dialog" aria-label="Reset current branch">
+        <span class="prompt-label">Reset current branch to “{modal.summary}”</span>
+        <div class="modal-options">
+          <button class="prompt-btn modal-option" onclick={() => confirmModalAction(() => reset(modal.oid, "soft"))}>
+            <span class="mo-title">Soft</span><span class="mo-desc">keep changes &amp; index</span>
+          </button>
+          <button class="prompt-btn modal-option" onclick={() => confirmModalAction(() => reset(modal.oid, "mixed"))}>
+            <span class="mo-title">Mixed</span><span class="mo-desc">keep changes, reset index</span>
+          </button>
+          <button class="prompt-btn modal-option danger" onclick={() => confirmModalAction(() => reset(modal.oid, "hard"))}>
+            <span class="mo-title">Hard</span><span class="mo-desc">discard all changes</span>
+          </button>
+        </div>
+        <div class="prompt-actions">
+          <button class="prompt-btn" onclick={() => (actionModal = null)}>Cancel</button>
+        </div>
+      </div>
+    {:else}
+      {@const modal = actionModal}
+      <div class="name-prompt action-modal" data-testid="git-graph-action-modal" role="dialog" aria-label="Delete branch">
+        <span class="prompt-label">Delete branch '{modal.name}'</span>
+        <div class="modal-options">
+          <button class="prompt-btn modal-option" onclick={() => confirmModalAction(() => deleteBranch(modal.name, false, []))}>
+            <span class="mo-title">Delete</span><span class="mo-desc">refuse if unmerged</span>
+          </button>
+          <button class="prompt-btn modal-option danger" onclick={() => confirmModalAction(() => deleteBranch(modal.name, true, []))}>
+            <span class="mo-title">Force delete</span><span class="mo-desc">even if unmerged</span>
+          </button>
+          {#if modal.remotes.length > 0}
+            <button class="prompt-btn modal-option danger" onclick={() => confirmModalAction(() => deleteBranch(modal.name, false, modal.remotes))}>
+              <span class="mo-title">Delete + remote</span><span class="mo-desc">{modal.remotes.join(", ")}</span>
+            </button>
+          {/if}
+        </div>
+        <div class="prompt-actions">
+          <button class="prompt-btn" onclick={() => (actionModal = null)}>Cancel</button>
+        </div>
+      </div>
+    {/if}
   {/if}
 </div>
 
@@ -1678,6 +1828,12 @@
     text-align: right;
   }
 
+  /* Parent column (#402): wider — merges list two short OIDs. */
+  .gh-parent,
+  .parent-col {
+    width: 120px;
+  }
+
   .col-handle {
     position: absolute;
     top: 0;
@@ -1768,15 +1924,13 @@
     font-size: 12px;
   }
 
-  /* Author (branch creator) dropdown, #376 — matches the search field. */
-  .bf-author {
-    margin: 0 6px 6px;
-    padding: 4px 8px;
-    border: 1px solid var(--divider);
-    border-radius: var(--radius-sm);
-    background: var(--background-card);
-    color: var(--text-primary);
-    font-size: 12px;
+  /* Section headings inside the filter popover (#412). */
+  .bf-heading {
+    padding: 6px 6px 2px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-tertiary);
   }
 
   .bf-list {
@@ -1800,16 +1954,9 @@
     background: var(--subtle-fill-secondary);
   }
 
-  button.bf-row {
-    background: none;
-    border: none;
-    text-align: left;
-    font: inherit;
-  }
-
-  .bf-all.bf-active {
-    color: var(--accent);
-    font-weight: 600;
+  .bf-all {
+    border-bottom: 1px solid var(--divider);
+    border-radius: 0;
   }
 
   .bf-name {
@@ -2051,34 +2198,34 @@
     color: var(--accent);
   }
 
-  .has-submenu {
-    position: relative;
-    justify-content: space-between;
-    cursor: default;
-  }
-
-  .submenu-arrow {
-    color: var(--text-tertiary);
-    font-size: 10px;
-  }
-
-  .submenu {
-    position: absolute;
-    left: 100%;
-    top: -4px;
-    min-width: 220px;
-    padding: 4px;
-    background: linear-gradient(var(--background-card, #1e1e1e), var(--background-card, #1e1e1e)), var(--background-solid, #1e1e1e);
-    border: 1px solid var(--divider);
-    border-radius: 8px;
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
-    display: none;
-    flex-direction: column;
-  }
-
-  .has-submenu:hover .submenu,
-  .has-submenu:focus-within .submenu {
+  /* Suboption modal (#406): stacked option buttons inside the name-prompt
+     dialog shell. */
+  .modal-options {
     display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 8px 0;
+  }
+
+  .modal-option {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    text-align: left;
+    justify-content: flex-start;
+  }
+
+  .modal-option.danger .mo-title {
+    color: var(--error, #e5534b);
+  }
+
+  .mo-title {
+    font-weight: 600;
+  }
+
+  .mo-desc {
+    font-size: 11px;
+    color: var(--text-tertiary);
   }
 
   /* ----- Name prompt popover (create branch / tag) ----- */

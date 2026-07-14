@@ -35,25 +35,28 @@
   --miller-bg: rgba(41, 46, 57, 0.7);
   --content-bg: radial-gradient(ellipse at 50% 0%, rgba(136, 192, 208, 0.04) 0%, transparent 60%);
 
-  /* Surface/border colors */
-  --surface-stroke: rgba(236, 239, 244, 0.09);
-  --surface-stroke-flyout: rgba(236, 239, 244, 0.11);
-  --divider: rgba(236, 239, 244, 0.06);
+  /* Static depth backdrop - accent glow over solid base (no animation) */
+  --theme-background-image: radial-gradient(ellipse at 50% 0%, rgba(136, 192, 208, 0.05) 0%, transparent 55%), #2e3440;
+
+  /* Surface/border colors - accent-tinted hairlines */
+  --surface-stroke: rgba(136, 192, 208, 0.12);
+  --surface-stroke-flyout: rgba(136, 192, 208, 0.15);
+  --divider: rgba(136, 192, 208, 0.06);
 
   /* Control/input backgrounds */
-  --control-fill: rgba(236, 239, 244, 0.07);
-  --control-fill-secondary: rgba(236, 239, 244, 0.09);
+  --control-fill: rgba(136, 192, 208, 0.06);
+  --control-fill-secondary: rgba(136, 192, 208, 0.09);
   --control-fill-tertiary: rgba(236, 239, 244, 0.04);
   --control-fill-disabled: rgba(236, 239, 244, 0.04);
 
   /* Subtle hover/active fills */
   --subtle-fill: transparent;
-  --subtle-fill-secondary: rgba(236, 239, 244, 0.07);
-  --subtle-fill-tertiary: rgba(236, 239, 244, 0.04);
+  --subtle-fill-secondary: rgba(136, 192, 208, 0.07);
+  --subtle-fill-tertiary: rgba(136, 192, 208, 0.04);
 
   /* Control borders */
-  --control-stroke: rgba(236, 239, 244, 0.1);
-  --control-stroke-secondary: rgba(236, 239, 244, 0.08);
+  --control-stroke: rgba(136, 192, 208, 0.12);
+  --control-stroke-secondary: rgba(136, 192, 208, 0.08);
 
   /* Address bar */
   --address-bar-bg: rgba(236, 239, 244, 0.1);
@@ -62,8 +65,15 @@
   --address-bar-bg-hover: rgba(236, 239, 244, 0.14);
   --address-bar-stroke-hover: rgba(236, 239, 244, 0.22);
 
+  /* Breadcrumb pills - accent-tinted segments */
+  --breadcrumb-bg: rgba(136, 192, 208, 0.05);
+  --breadcrumb-hover-bg: rgba(136, 192, 208, 0.10);
+  --breadcrumb-active-bg: rgba(136, 192, 208, 0.15);
+  --breadcrumb-radius: 12px;
+  --breadcrumb-gap: 3px;
+
   /* Focus indicators */
-  --focus-stroke-outer: #eceff4;
+  --focus-stroke-outer: #88c0d0;
   --focus-stroke-inner: #2e3440;
 
   /* System status colors - aurora */
@@ -72,10 +82,10 @@
   --system-caution: #ebcb8b;
 
   /* Shadows */
-  --shadow-flyout: 0 8px 24px rgba(36, 41, 51, 0.5), 0 2px 8px rgba(36, 41, 51, 0.3);
+  --shadow-flyout: 0 8px 24px rgba(36, 41, 51, 0.5), 0 2px 8px rgba(36, 41, 51, 0.3), 0 0 12px rgba(136, 192, 208, 0.04);
   --shadow-dialog: 0 32px 64px rgba(36, 41, 51, 0.6), 0 4px 24px rgba(36, 41, 51, 0.35);
   --shadow-tooltip: 0 4px 12px rgba(36, 41, 51, 0.45);
-  --shadow-card: 0 1px 4px rgba(36, 41, 51, 0.2), 0 0 1px rgba(36, 41, 51, 0.15);
+  --shadow-card: 0 1px 4px rgba(36, 41, 51, 0.2), 0 0 1px rgba(36, 41, 51, 0.15), 0 0 8px rgba(136, 192, 208, 0.03);
   --shadow-subtle: 0 1px 2px rgba(36, 41, 51, 0.15);
 
   /* Mica overlay */
@@ -86,11 +96,11 @@
   );
 
   /* Per-section opacity tokens (multiplied by global --bg-opacity) */
-  --sidebar-opacity: 1;
-  --toolbar-opacity: 1;
-  --content-opacity: 1;
-  --titlebar-opacity: 1;
-  --statusbar-opacity: 1;
+  --sidebar-opacity: 0.94;
+  --toolbar-opacity: 0.94;
+  --content-opacity: 0.92;
+  --titlebar-opacity: 0.94;
+  --statusbar-opacity: 0.94;
 
   /* Icon colors - frost + aurora set */
   --icon-folder: #ebcb8b;

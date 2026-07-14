@@ -149,14 +149,19 @@ function createClipboardStore() {
       return osClipboardHasFiles();
     },
 
-    async readOsFiles(): Promise<OsClipboardContent | null> {
+    /**
+     * Read file paths from the OS clipboard. A read failure is returned, not
+     * toasted — the caller may still satisfy the paste another way (e.g. an
+     * image on the clipboard makes the file-list read fail on macOS, #401)
+     * and should only surface the error when the whole paste comes up empty.
+     */
+    async readOsFiles(): Promise<{ content: OsClipboardContent | null; error: string | null }> {
       const result = await osClipboardReadFiles();
       if (!result.ok) {
-        toastStore.error(`Reading the system clipboard failed: ${result.error}`);
-        return null;
+        return { content: null, error: result.error };
       }
-      if (result.data.length === 0) return null;
-      return { paths: result.data, operation: "copy" };
+      if (result.data.length === 0) return { content: null, error: null };
+      return { content: { paths: result.data, operation: "copy" }, error: null };
     },
 
     /** Cleanup listener (call on app unmount). */

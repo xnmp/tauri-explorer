@@ -24,9 +24,10 @@
   import { terminalSpawn, terminalReserveId, terminalWrite, terminalResize, terminalKill, terminalStatus } from "$lib/api/terminal";
   import { buildTerminalTheme } from "$lib/domain/terminal-theme";
   import { buildCdSyncSequence, buildPathsInsertion } from "$lib/domain/terminal-command";
+  import { defaultShellProfile, fromShellCwd, type ShellProfile } from "$lib/domain/terminal-shell";
   import { decideCdSync, createInjectedCdTracker } from "$lib/domain/terminal-cwd-sync";
-  import { isWindows } from "$lib/domain/platform";
-  import { isShellReservedKey, isHardcodedAppShortcut, resolveTerminalShortcut } from "$lib/domain/terminal-keys";
+  import { isWindows, isMac } from "$lib/domain/platform";
+  import { isShellReservedKey, isHardcodedAppShortcut, resolveTerminalShortcut, effectiveTerminalShortcuts } from "$lib/domain/terminal-keys";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
@@ -39,6 +40,10 @@
   let term: Terminal | undefined;
   let fitAddon: FitAddon | undefined;
   let terminalId: number | null = null;
+  // Dialect of the shell the backend actually spawned (#409): a WSL pane gets
+  // a POSIX shell even on Windows, and every PTY write/read translates
+  // through this profile. Assumed platform default until spawn reports back.
+  let shellProfile: ShellProfile = defaultShellProfile(isWindows);
   let spawning = false;
   let exited = $state(false);
   let unlistenOutput: UnlistenFn | undefined;
@@ -100,7 +105,10 @@
       });
       // Explorer follows terminal: the shell reports its cwd via OSC 7.
       unlistenCwd = await listen<string>(`terminal-cwd-${id}`, (event) => {
-        const path = event.payload;
+        // The shell reports its own dialect's path (a WSL shell reports
+        // /home/…); translate to an explorer path before it touches
+        // navigation or the loop guards (#418).
+        const path = fromShellCwd(event.payload, shellProfile);
         // Always track it — this is the loop guard for the other direction.
         lastShellCwd = path;
         // A cd WE injected echoing back must never drive navigation: during
@@ -115,7 +123,8 @@
         }
       });
 
-      await terminalSpawn(id, cwd, term.cols, term.rows);
+      const info = await terminalSpawn(id, cwd, term.cols, term.rows);
+      shellProfile = { kind: info.shellKind, wslDistro: info.wslDistro };
       terminalId = id;
       // Path insertions requested while the shell was still spawning (#265).
       for (const data of pendingInsertions.splice(0)) {
@@ -152,7 +161,7 @@
   /** Type paths into the prompt (space-delimited, shell-quoted, no Enter)
    *  and focus the terminal — drop-onto-terminal and Alt+T (#265). */
   function insertPaths(paths: string[]): void {
-    const data = buildPathsInsertion(paths, isWindows);
+    const data = buildPathsInsertion(paths, shellProfile);
     if (terminalId !== null) terminalWrite(terminalId, data);
     else pendingInsertions.push(data);
     term?.focus();
@@ -168,19 +177,20 @@
     // target (see the queue-poll re-entrancy guard, #154).
     if (terminalId === null || path == null) return;
     injectedCds.add(path);
-    terminalWrite(terminalId, buildCdSyncSequence(path, isWindows));
+    terminalWrite(terminalId, buildCdSyncSequence(path, shellProfile));
   }
 
   /** Terminal follows explorer: reconcile the shell's cwd with `path`. */
   async function syncTerminalToPath(path: string): Promise<void> {
     if (terminalId === null) return;
     const status = await terminalStatus(terminalId);
-    lastShellCwd = status.cwd ?? lastShellCwd;
+    const statusCwd = status.cwd !== null ? fromShellCwd(status.cwd, shellProfile) : null;
+    lastShellCwd = statusCwd ?? lastShellCwd;
     // Fast tab switches: the status round-trip may outlive this sync's tab —
     // a stale cd would drag the shell (and, via its echo, the NEW tab) to
     // the previous tab's directory (#266). Latest target wins; drop the rest.
     if (windowTabsManager.getActiveExplorer()?.currentPath !== path) return;
-    switch (decideCdSync(path, status.cwd, status.busy)) {
+    switch (decideCdSync(path, statusCwd, status.busy)) {
       case "skip":
         return;
       case "write":
@@ -214,7 +224,8 @@
           return;
         }
         const status = await terminalStatus(terminalId);
-        lastShellCwd = status.cwd ?? lastShellCwd;
+        const statusCwd = status.cwd !== null ? fromShellCwd(status.cwd, shellProfile) : null;
+        lastShellCwd = statusCwd ?? lastShellCwd;
         if (status.busy) return;
         const target = pendingCd;
         pendingCd = null;
@@ -225,7 +236,7 @@
         if (
           target !== null &&
           windowTabsManager.getActiveExplorer()?.currentPath === target &&
-          decideCdSync(target, status.cwd, false) === "write"
+          decideCdSync(target, statusCwd, false) === "write"
         ) {
           writeCd(target);
         }
@@ -249,10 +260,18 @@
     queueToastShown = false;
   }
 
+  // App zoom compensation (#419): the app zooms via CSS `zoom` on the root,
+  // but xterm's selection hit-testing breaks under ancestor zoom (pointer
+  // coords and canvas cell metrics disagree, worst on WebKit). The panel
+  // counter-zooms itself back to net 1.0 and scales the FONT instead — same
+  // visual size, true-pixel coordinates.
+  const BASE_FONT_SIZE = 13;
+  const zoomFactor = $derived(settingsStore.zoomLevel / 100);
+
   onMount(() => {
     term = new Terminal({
       cursorBlink: true,
-      fontSize: 13,
+      fontSize: Math.round(BASE_FONT_SIZE * (settingsStore.zoomLevel / 100)),
       fontFamily: "'JetBrainsMono Nerd Font', 'Cascadia Code', 'SF Mono', Menlo, Consolas, monospace",
       theme: buildTerminalTheme(resolveThemeColor),
       scrollback: 5000,
@@ -269,11 +288,16 @@
     term.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") return true;
       if (keybindingsStore.isChordActive) return false;
-      const ctrlOnly = event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey;
-      // Ctrl+C with a selection copies it (VS Code parity, #374): the user
-      // is copying terminal text, not interrupting the shell — and
+      // The platform's primary clipboard modifier: Ctrl, but ⌘ on mac (#403)
+      // — Cmd+C/V while the terminal is focused must copy/paste terminal
+      // text, never fall through to the explorer's file clipboard.
+      const primaryOnly = isMac
+        ? event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
+        : event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey;
+      // Ctrl/Cmd+C with a selection copies it (VS Code parity, #374): the
+      // user is copying terminal text, not interrupting the shell — and
       // definitely not copying files in the explorer.
-      if (ctrlOnly && event.key.toLowerCase() === "c" && term?.hasSelection()) {
+      if (primaryOnly && event.key.toLowerCase() === "c" && term?.hasSelection()) {
         const text = term.getSelection();
         term.clearSelection();
         void navigator.clipboard.writeText(text).catch(() => {
@@ -282,10 +306,10 @@
         event.preventDefault();
         return false;
       }
-      // Ctrl+V pastes explicitly through xterm (bracketed-paste aware):
+      // Ctrl/Cmd+V pastes explicitly through xterm (bracketed-paste aware):
       // native paste into xterm's hidden textarea is unreliable in some
       // WebViews (#374), and the explorer's file-paste must never fire here.
-      if (ctrlOnly && event.key.toLowerCase() === "v") {
+      if (primaryOnly && event.key.toLowerCase() === "v") {
         void navigator.clipboard
           .readText()
           .then((text) => {
@@ -297,17 +321,20 @@
         event.preventDefault();
         return false;
       }
-      // User-configured line-editing shortcuts (#375): inject the mapped
-      // readline control byte. Default map is empty, so nothing changes
-      // unless the user binds an action in Settings → Terminal.
-      const sequence = resolveTerminalShortcut(event, settingsStore.terminalShortcuts);
+      // Line-editing shortcuts (#375, #404): inject the mapped readline
+      // control byte. Platform defaults (mac Home/End/word-nav) overlaid
+      // with the user's bindings from Settings → Terminal.
+      const sequence = resolveTerminalShortcut(
+        event,
+        effectiveTerminalShortcuts(settingsStore.terminalShortcuts, isMac),
+      );
       if (sequence !== null) {
         if (terminalId !== null) terminalWrite(terminalId, sequence);
         event.preventDefault();
         return false;
       }
       const appBound = keybindingsStore.matchesAnyBinding(event) || isHardcodedAppShortcut(event);
-      return isShellReservedKey(event, { appBound });
+      return isShellReservedKey(event, { appBound, isMac });
     });
 
     term.open(termEl!);
@@ -378,14 +405,31 @@
   // the panel has been opened at least once (terminalId is live). The
   // decideCdSync skip guard makes the reverse-direction navigateTo a no-op,
   // so the two directions don't ping-pong.
+  // The settings store replaces its whole state object on ANY update, so this
+  // effect also re-runs for unrelated changes — e.g. terminalPanelHeight on
+  // every pointermove of a panel drag-resize. Only a genuine path change may
+  // inject a cd, or a resize floods the shell with them (#409).
+  let lastSyncTarget: string | null = null;
   $effect(() => {
     const path = windowTabsManager.getActiveExplorer()?.currentPath;
     if (!settingsStore.terminalFollowsExplorer) return;
     if (!path || terminalId === null || !terminalPanelStore.everOpened) return;
+    if (path === lastSyncTarget) return;
+    lastSyncTarget = path;
     void syncTerminalToPath(path).catch((err) => {
       // terminalStatus may reject if the shell died between checks; a rejected
       // sync must not surface as an unhandled promise rejection (#154).
       console.error("[terminal] sync-to-path failed:", err);
+    });
+  });
+
+  // Keep the counter-zoom + font size in step with the app zoom level (#419).
+  $effect(() => {
+    const factor = zoomFactor;
+    if (!term) return;
+    term.options.fontSize = Math.round(BASE_FONT_SIZE * factor);
+    requestAnimationFrame(() => {
+      if (terminalPanelStore.visible) fitAddon?.fit();
     });
   });
 
@@ -417,10 +461,14 @@
   }
 </script>
 
+<!-- Counter-zoom (#419): net zoom 1.0 inside the panel so xterm's pointer
+     math is exact; height is pre-multiplied so the panel occupies the same
+     visual space as it would zoomed. -->
 <div
   class="terminal-panel"
   class:hidden={!visible}
-  style:height="{settingsStore.terminalPanelHeight}px"
+  style:zoom={1 / zoomFactor}
+  style:height="{settingsStore.terminalPanelHeight * zoomFactor}px"
   bind:this={panelEl}
 >
   <div
@@ -489,6 +537,10 @@
   }
 
   .terminal-header {
+    /* Re-apply the app zoom the panel counter-zoomed away (#419): the header
+       is plain DOM (no xterm hit-testing), so it should match the rest of
+       the app's scale. */
+    zoom: var(--app-zoom, 1);
     display: flex;
     align-items: center;
     justify-content: space-between;

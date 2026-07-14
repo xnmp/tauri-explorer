@@ -4,6 +4,7 @@
 
 import type { Command } from "../commands.svelte";
 import { getActiveExplorer } from "./shared";
+import { windowTabsManager } from "../window-tabs.svelte";
 
 export const navigationCommands: Command[] = [
   {
@@ -48,5 +49,12 @@ export const navigationCommands: Command[] = [
     category: "navigation",
     shortcut: "F5",
     handler: () => getActiveExplorer()?.refresh(),
+    // While the active pane shows the commit graph, F5 belongs to the graph's
+    // own fetch+reload handler (#417) — refreshing the hidden file listing
+    // here would double-handle the key with no visible effect.
+    when: () => {
+      const tab = windowTabsManager.activeTab;
+      return !tab?.panes?.[tab.activePaneId]?.gitGraph;
+    },
   },
 ];

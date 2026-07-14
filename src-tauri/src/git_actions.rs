@@ -361,9 +361,15 @@ mod tests {
         // Local branch "topic" at c1; its "remote" ref at c2 (one ahead).
         git(dir.path(), &["remote", "add", "origin", "."]);
         git(dir.path(), &["branch", "topic", &cs[0]]);
-        git(dir.path(), &["update-ref", "refs/remotes/origin/topic", &cs[1]]);
+        git(
+            dir.path(),
+            &["update-ref", "refs/remotes/origin/topic", &cs[1]],
+        );
         git(dir.path(), &["config", "branch.topic.remote", "origin"]);
-        git(dir.path(), &["config", "branch.topic.merge", "refs/heads/topic"]);
+        git(
+            dir.path(),
+            &["config", "branch.topic.merge", "refs/heads/topic"],
+        );
 
         let behind =
             tokio_test_block(git_branch_behind_upstream(rp.clone(), "topic".into())).unwrap();
@@ -407,10 +413,23 @@ mod tests {
         let rp = repo_path(&dir);
         let remote_dir = TempDir::new().unwrap();
         git(remote_dir.path(), &["init", "--bare"]);
-        git(dir.path(), &["remote", "add", "origin", remote_dir.path().to_str().unwrap()]);
+        git(
+            dir.path(),
+            &[
+                "remote",
+                "add",
+                "origin",
+                remote_dir.path().to_str().unwrap(),
+            ],
+        );
         git(dir.path(), &["push", "origin", "main:topic"]);
         assert!(!git_out(dir.path(), &["ls-remote", "origin", "refs/heads/topic"]).is_empty());
-        tokio_test_block(git_delete_remote_branch(rp, "origin".into(), "topic".into())).unwrap();
+        tokio_test_block(git_delete_remote_branch(
+            rp,
+            "origin".into(),
+            "topic".into(),
+        ))
+        .unwrap();
         assert!(git_out(dir.path(), &["ls-remote", "origin", "refs/heads/topic"]).is_empty());
     }
 

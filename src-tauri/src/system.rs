@@ -86,6 +86,22 @@ pub async fn get_launch_cwd(state: tauri::State<'_, LaunchCwd>) -> Result<String
     Ok(state.0.clone())
 }
 
+/// True when the launch cwd is a launcher artifact rather than a place the
+/// user meant: Start menu / Explorer on Windows launch the app with cwd set
+/// to its own install directory (`C:\Program Files\tauri-explorer`, #408),
+/// and Finder/DMG on macOS uses `/`. Both compare canonicalized so prefix
+/// (`\\?\`) and case differences on Windows can't defeat the check.
+pub fn is_launcher_artifact_cwd(cwd: &std::path::Path, exe_dir: Option<&std::path::Path>) -> bool {
+    if cwd == std::path::Path::new("/") {
+        return true;
+    }
+    let Some(exe_dir) = exe_dir else { return false };
+    match (cwd.canonicalize(), exe_dir.canonicalize()) {
+        (Ok(c), Ok(e)) => c == e,
+        _ => cwd == exe_dir,
+    }
+}
+
 /// Record the frontend cold-start timing summary in the app log. Written next
 /// to the Rust `Startup:` line so the backend (setup→build) and webview
 /// (boot→first directory visible) halves of cold start can be read together
@@ -209,4 +225,30 @@ pub async fn restore_from_trash(_paths: Vec<String>) -> Result<(), AppError> {
     Err(AppError::Other(
         "Cannot undo delete on macOS — use Finder to restore from Trash".to_string(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_launcher_artifact_cwd;
+    use std::path::Path;
+
+    #[test]
+    fn launcher_artifact_cwds_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe_dir = dir.path().join("Program Files").join("tauri-explorer");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+
+        // cwd == install dir → artifact (#408).
+        assert!(is_launcher_artifact_cwd(&exe_dir, Some(&exe_dir)));
+        // macOS Finder root.
+        assert!(is_launcher_artifact_cwd(Path::new("/"), Some(&exe_dir)));
+        assert!(is_launcher_artifact_cwd(Path::new("/"), None));
+
+        // A genuine launch directory passes through.
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        assert!(!is_launcher_artifact_cwd(&home, Some(&exe_dir)));
+        // Unknown exe dir: only "/" is rejected.
+        assert!(!is_launcher_artifact_cwd(&home, None));
+    }
 }

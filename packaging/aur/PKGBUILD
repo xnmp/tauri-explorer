@@ -2,7 +2,7 @@
 # Binary package repacking the official .deb release. For a source build,
 # see the PKGBUILD at the repo root.
 pkgname=tauri-explorer-bin
-pkgver=1.3.3
+pkgver=1.4.1
 pkgrel=1
 pkgdesc="A keyboard-first file manager: fuzzy quick-open, ripgrep content search, a command palette for every action"
 arch=('x86_64')
@@ -30,7 +30,7 @@ source_x86_64=("$url/releases/download/v$pkgver/tauri-explorer_${pkgver}_amd64.d
 sha256sums=('43efedaf882e2c9c2e7d6897ff3322001d1d81038d8e9b943c45eab9fd18b157'
             'c227502cb0c6ca4fa0f33f3ba6ca6b34306d088f456e828358470f18b1287d38'
             '2d6c8e46090d2359cc4085085efb20e8d91355804a9e65231b5db21e3fb407e4')
-sha256sums_x86_64=('9966b0209c10d192ad3aa471d077deb0fc866b82394fccec179ac6c38d04d0ac')
+sha256sums_x86_64=('49d7d72dcb46dce0fb7a15515ece456d5f6abe7e399a7ca2d164d0e9d60285f9')
 
 package() {
   # Binary, .desktop file, and hicolor icons straight from the deb payload.

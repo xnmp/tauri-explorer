@@ -30,8 +30,10 @@
 {/if}
 
 <style>
+  /* Fixed, not absolute (#417): the overlay is mounted once at the app root
+     and must overlay whatever the panes show (file list, git graph, …). */
   .toast-container {
-    position: absolute;
+    position: fixed;
     bottom: 16px;
     right: 16px;
     z-index: var(--z-toast);

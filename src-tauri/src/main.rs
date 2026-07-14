@@ -14,9 +14,19 @@ fn main() {
     let cli_path = std::env::args().nth(1).filter(|a| !a.starts_with("--"));
     let portal_mode = std::env::args().any(|a| a == "--file-chooser-portal");
 
-    // On macOS, launching from Finder/DMG sets cwd to "/" which is not useful.
-    // Fall back to the home directory in that case.
-    let cwd = cwd.filter(|p| p != "/");
+    // Launcher-artifact cwds are not useful launch locations: Finder/DMG on
+    // macOS sets "/", and Start menu / Explorer on Windows set the app's own
+    // install directory (#408). Fall back to the home directory (frontend
+    // default) in those cases.
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(std::path::Path::to_path_buf));
+    let cwd = cwd.filter(|p| {
+        !tauri_explorer_lib::system::is_launcher_artifact_cwd(
+            std::path::Path::new(p),
+            exe_dir.as_deref(),
+        )
+    });
 
     let launch_dir = cli_path.or(cwd);
 

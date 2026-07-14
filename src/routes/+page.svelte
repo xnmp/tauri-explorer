@@ -6,6 +6,7 @@
   import "@fontsource-variable/inter";
   import { onMount } from "svelte";
   import { isShellReservedKey, isHardcodedAppShortcut } from "$lib/domain/terminal-keys";
+  import { isMac } from "$lib/domain/platform";
   import { themeStore } from "$lib/state/theme.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
@@ -37,6 +38,7 @@
   import Sidebar from "$lib/components/Sidebar.svelte";
     import PaneContainer from "$lib/components/PaneContainer.svelte";
   import ProgressDialog from "$lib/components/ProgressDialog.svelte";
+  import ToastOverlay from "$lib/components/ToastOverlay.svelte";
   import type { Component } from "svelte";
   import { conflictResolver } from "$lib/state/conflict-resolver.svelte";
   import { gitStatusStore } from "$lib/state/git-status.svelte";
@@ -50,8 +52,18 @@
   markStartup("bundle-exec");
 
   const leftExplorer = $derived(windowTabsManager.getActiveExplorer());
+  // ONE island-mode condition (#407): macOS vibrancy, a Windows native
+  // backdrop, and the platform-independent Floating Islands setting all
+  // drive the same [data-vibrancy] island CSS — the only real platform
+  // difference is whether frosted-glass transparency backs it. Every
+  // island-layout decision must key off this, never off one platform's flag.
+  const islandMode = $derived(
+    settingsStore.macOsVibrancy ||
+      settingsStore.windowsBackdrop !== "off" ||
+      settingsStore.floatingIslands,
+  );
   const millerAsLeftIsland = $derived(
-    settingsStore.macOsVibrancy && !settingsStore.showSidebar && (leftExplorer?.millerLayers ?? 0) > 0
+    islandMode && !settingsStore.showSidebar && (leftExplorer?.millerLayers ?? 0) > 0
   );
 
   /** Convert a filesystem path to a URL usable in src/background-image. */
@@ -204,7 +216,7 @@
     // chord suffixes — fall through to command matching (#249, #260).
     if (isTerminalFocus && !keybindingsStore.isChordActive) {
       const appBound = keybindingsStore.matchesAnyBinding(event) || isHardcodedAppShortcut(event);
-      if (isShellReservedKey(event, { appBound })) return;
+      if (isShellReservedKey(event, { appBound, isMac })) return;
     }
 
     // Ctrl+J: Open jobs panel (hardcoded)
@@ -290,7 +302,7 @@
     const windowsBackdrop = settingsStore.windowsBackdrop !== "off";
     const nativeBackdrop =
       (settingsStore.macOsVibrancy && settingsStore.vibrancyBlur) || windowsBackdrop;
-    if (settingsStore.macOsVibrancy || windowsBackdrop || settingsStore.floatingIslands) {
+    if (islandMode) {
       document.documentElement.setAttribute("data-vibrancy", "");
       if (nativeBackdrop) {
         document.documentElement.removeAttribute("data-vibrancy-no-blur");
@@ -578,6 +590,9 @@
   />
 {/if}
 <ProgressDialog />
+<!-- Toasts live at the app root (#417): mounted per-FileList they vanished in
+     any pane mode without a file list (git graph), silently eating feedback. -->
+<ToastOverlay />
 {#if ConflictDialog}
   <ConflictDialog />
 {/if}

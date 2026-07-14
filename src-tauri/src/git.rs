@@ -31,7 +31,7 @@ use crate::task_registry::TaskRegistry;
 static GIT_TASKS: TaskRegistry = TaskRegistry::new();
 
 /// Single-letter status code matching git porcelain conventions.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum GitStatusCode {
     Modified,
     Added,
@@ -44,7 +44,7 @@ pub enum GitStatusCode {
     TypeChange,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct GitFileEntry {
     /// Repo-relative path (POSIX slashes).
     pub path: String,
@@ -442,6 +442,276 @@ fn collect_status_inner(
     Ok(summary)
 }
 
+// ----- WSL-delegated status / diff (#398) ----- //
+//
+// On the Windows build, a repo under `\\wsl.localhost\<distro>\…` is served
+// over the 9P network filesystem. libgit2's `status` re-reads and re-hashes
+// every tracked file across that boundary on every pass, which makes the SCM
+// panel take many seconds. The distro's own git, running inside Linux, has an
+// accurate stat cache and never crosses 9P, so we delegate the *read-only*
+// status/diff there via `wsl.exe`. Stage/unstage/commit stay on libgit2 (they
+// mutate the index and are not the hot path). Any spawn/exit failure falls
+// back to the libgit2 implementation, so nothing is lost when wsl.exe is
+// missing or the distro is down.
+//
+// The parser below is a pure function over porcelain=v2 `-z` bytes so it can be
+// unit-tested on any platform (this dev machine is Linux); only the `wsl.exe`
+// invocation is `#[cfg(windows)]`-gated.
+
+/// Porcelain v2 `--branch -z` output, decomposed into the summary's buckets.
+/// Compiled on Windows (where the delegation runs) and under `test` (where the
+/// pure parser is exercised on this Linux dev machine); elsewhere it would be
+/// dead code.
+#[cfg(any(windows, test))]
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ParsedV2 {
+    /// Branch name from `# branch.head`, unless detached.
+    branch: Option<String>,
+    detached: bool,
+    /// Commit oid from `# branch.oid` (absent for an unborn branch).
+    oid: Option<String>,
+    staged: Vec<GitFileEntry>,
+    changes: Vec<GitFileEntry>,
+    untracked: Vec<GitFileEntry>,
+    merge: Vec<GitFileEntry>,
+}
+
+/// Map a porcelain v2 XY status letter to a `GitStatusCode`. `'.'` (unmodified)
+/// is handled by the caller and never reaches here.
+#[cfg(any(windows, test))]
+fn v2_code(letter: u8) -> GitStatusCode {
+    match letter {
+        b'A' => GitStatusCode::Added,
+        b'D' => GitStatusCode::Deleted,
+        b'R' => GitStatusCode::Renamed,
+        b'C' => GitStatusCode::Copied,
+        b'T' => GitStatusCode::TypeChange,
+        // 'M' and anything unexpected collapse to Modified — the same
+        // conservative default the libgit2 path uses.
+        _ => GitStatusCode::Modified,
+    }
+}
+
+/// Split a porcelain v2 changed-entry record into its `XY` field and path.
+/// `meta_tokens` is the number of space-separated tokens that precede the
+/// path (8 for ordinary "1" entries, 9 for renamed/copied "2" entries). The
+/// path is the remainder, so embedded spaces survive. Metadata is ASCII, so
+/// splitting the lossy-decoded string on ' ' is safe even for non-UTF-8 paths.
+#[cfg(any(windows, test))]
+fn v2_xy_path(field: &[u8], meta_tokens: usize) -> Option<([u8; 2], String)> {
+    let s = String::from_utf8_lossy(field);
+    let mut it = s.splitn(meta_tokens + 1, ' ');
+    let _tag = it.next()?;
+    let xy = it.next()?.as_bytes();
+    let xy: [u8; 2] = [*xy.first()?, *xy.get(1)?];
+    // Consume the remaining metadata tokens (already took tag + XY).
+    for _ in 0..meta_tokens.saturating_sub(2) {
+        it.next()?;
+    }
+    let path = it.next()?.to_string();
+    if path.is_empty() {
+        return None;
+    }
+    Some((xy, path))
+}
+
+/// Route one changed entry into the staged / changes buckets. `x` is the index
+/// (staged) side, `y` the worktree side; either being `'.'` means "no change on
+/// that side". The rename/copy origin path attaches to whichever side carries
+/// the R/C code.
+#[cfg(any(windows, test))]
+fn push_v2_entry(p: &mut ParsedV2, xy: [u8; 2], path: String, orig: Option<String>) {
+    let [x, y] = xy;
+    if x != b'.' {
+        let old_path = matches!(x, b'R' | b'C').then(|| orig.clone()).flatten();
+        p.staged.push(GitFileEntry {
+            path: path.clone(),
+            old_path,
+            status: v2_code(x),
+        });
+    }
+    if y != b'.' {
+        let old_path = matches!(y, b'R' | b'C').then(|| orig.clone()).flatten();
+        p.changes.push(GitFileEntry {
+            path,
+            old_path,
+            status: v2_code(y),
+        });
+    }
+}
+
+/// Parse `git status --porcelain=v2 --branch -z` output into the summary
+/// buckets. Records are NUL-terminated; a rename/copy ("2") record is followed
+/// by an extra NUL-separated field holding the original path. Header lines
+/// start with `#`. Unrecognized records are skipped defensively.
+#[cfg(any(windows, test))]
+fn parse_status_v2(stdout: &[u8]) -> ParsedV2 {
+    let mut p = ParsedV2::default();
+    let mut fields = stdout.split(|b| *b == 0);
+    while let Some(field) = fields.next() {
+        match field.first() {
+            None => continue, // trailing empty field after the last NUL
+            Some(b'#') => {
+                let line = String::from_utf8_lossy(field);
+                if let Some(rest) = line.strip_prefix("# branch.head ") {
+                    if rest == "(detached)" {
+                        p.detached = true;
+                    } else {
+                        p.branch = Some(rest.to_string());
+                    }
+                } else if let Some(rest) = line.strip_prefix("# branch.oid ") {
+                    // "(initial)" marks an unborn branch — no commit yet.
+                    if rest != "(initial)" {
+                        p.oid = Some(rest.to_string());
+                    }
+                }
+            }
+            Some(b'1') => {
+                if let Some((xy, path)) = v2_xy_path(field, 8) {
+                    push_v2_entry(&mut p, xy, path, None);
+                }
+            }
+            Some(b'2') => {
+                // The origin path is the next NUL-separated field.
+                let orig = fields
+                    .next()
+                    .map(|f| String::from_utf8_lossy(f).to_string());
+                if let Some((xy, path)) = v2_xy_path(field, 9) {
+                    push_v2_entry(&mut p, xy, path, orig);
+                }
+            }
+            Some(b'u') => {
+                // Unmerged: 10 metadata tokens then path. Bucket as conflicted.
+                if let Some((_, path)) = v2_xy_path(field, 10) {
+                    p.merge.push(GitFileEntry {
+                        path,
+                        old_path: None,
+                        status: GitStatusCode::Conflicted,
+                    });
+                }
+            }
+            Some(b'?') => {
+                // "? <path>"
+                let path = String::from_utf8_lossy(&field[2..]).to_string();
+                if !path.is_empty() {
+                    p.untracked.push(GitFileEntry {
+                        path,
+                        old_path: None,
+                        status: GitStatusCode::Untracked,
+                    });
+                }
+            }
+            // '!' ignored entries and anything else: skip.
+            Some(_) => {}
+        }
+    }
+    p
+}
+
+/// Build a `GitStatusSummary` from parsed porcelain output. `op_state` comes
+/// from libgit2 (`repo.state()` only reads a few marker files, so it is cheap
+/// even over 9P — unlike `repo.statuses()`, which hashes the whole tree).
+#[cfg(any(windows, test))]
+fn summary_from_v2(parsed: ParsedV2, repo_root: String, op_state: String) -> GitStatusSummary {
+    let branch = if parsed.detached {
+        // Match the libgit2 path: a detached HEAD shows the short oid.
+        parsed.oid.as_deref().map(|o| format!("{:.7}", o))
+    } else {
+        parsed.branch
+    };
+    GitStatusSummary {
+        is_repo: true,
+        repo_root: Some(repo_root),
+        branch,
+        detached: parsed.detached,
+        staged: parsed.staged,
+        changes: parsed.changes,
+        untracked: parsed.untracked,
+        merge: parsed.merge,
+        op_state,
+    }
+}
+
+/// Delegate `git status` to the distro's native git when `repo` lives under a
+/// WSL UNC path. Returns `None` (caller falls back to libgit2) for any non-WSL
+/// repo or when `wsl.exe`/git fails to run or exits non-zero.
+#[cfg(windows)]
+fn wsl_status(repo: &Repository) -> Option<GitStatusSummary> {
+    use crate::process_ext::NoConsole;
+
+    let root = workdir_key(repo)?;
+    let (distro, linux_path) = crate::wsl::parse_wsl_unc(&root)?;
+
+    // `-uall` mirrors libgit2's `recurse_untracked_dirs(true)`: individual
+    // untracked files rather than a collapsed directory entry. No filemode
+    // override — native Linux git already reports modes correctly (#398, #392).
+    let output = std::process::Command::new("wsl.exe")
+        .no_console()
+        .args([
+            "-d",
+            &distro,
+            "--",
+            "git",
+            "-C",
+            &linux_path,
+            "status",
+            "--porcelain=v2",
+            "--branch",
+            "-z",
+            "-uall",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let parsed = parse_status_v2(&output.stdout);
+    Some(summary_from_v2(
+        parsed,
+        root,
+        repo_op_state(repo).to_string(),
+    ))
+}
+
+/// Delegate `git diff [--cached] -- <path>` to the distro's native git when
+/// `repo` lives under a WSL UNC path. Returns the unified-diff text (which the
+/// frontend parses exactly as it parses libgit2's rendered patch). Returns
+/// `None` for a non-WSL repo or any spawn/exit failure so the caller falls back
+/// to libgit2.
+#[cfg(windows)]
+fn wsl_diff(repo: &Repository, path: &str, staged: bool) -> Option<String> {
+    use crate::process_ext::NoConsole;
+
+    let root = workdir_key(repo)?;
+    let (distro, linux_path) = crate::wsl::parse_wsl_unc(&root)?;
+
+    // `--no-color` guards against a user's `color.ui = always`: libgit2's
+    // rendered patch carries no ANSI codes, and the frontend's unified-diff
+    // parser would choke on them.
+    let mut cmd = std::process::Command::new("wsl.exe");
+    cmd.no_console().args([
+        "-d",
+        &distro,
+        "--",
+        "git",
+        "-C",
+        &linux_path,
+        "diff",
+        "--no-color",
+    ]);
+    if staged {
+        cmd.arg("--cached");
+    }
+    cmd.arg("--").arg(path);
+
+    let output = cmd.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
 fn map_non_repo(path: &Path) -> Result<GitStatusSummary, AppError> {
     Ok(GitStatusSummary {
         is_repo: false,
@@ -542,7 +812,16 @@ pub async fn git_status(repo_path: String) -> Result<GitStatusSummary, AppError>
     run_blocking(move |_cancel| {
         let p = PathBuf::from(&repo_path);
         match open_repo(&p) {
-            Ok(repo) => collect_status(&repo),
+            Ok(repo) => {
+                // A repo under \\wsl.localhost\… hashes its whole tree over 9P
+                // on every libgit2 status pass; delegate to native WSL git
+                // instead, falling back to libgit2 on any failure (#398).
+                #[cfg(windows)]
+                if let Some(summary) = wsl_status(&repo) {
+                    return Ok(summary);
+                }
+                collect_status(&repo)
+            }
             Err(_) => map_non_repo(&p),
         }
     })
@@ -730,6 +1009,15 @@ pub async fn git_diff(
     let opts = options.unwrap_or_default();
     run_blocking(move |_cancel| {
         let repo = open_repo(Path::new(&repo_path))?;
+
+        // Over a \\wsl.localhost\… UNC path, delegate the diff to native WSL
+        // git (same reason as status, #398). Native Linux git needs no
+        // filemode override; on any failure we fall through to libgit2 below.
+        #[cfg(windows)]
+        if let Some(diff) = wsl_diff(&repo, &path, opts.staged) {
+            return Ok(diff);
+        }
+
         let mut diff_opts = DiffOptions::new();
         diff_opts.pathspec(&path);
         diff_opts.context_lines(3);
@@ -1060,7 +1348,10 @@ mod tests {
 
         let repo = open_repo(dir.path()).unwrap();
         // core.filemode is what makes libgit2 compare modes at all.
-        repo.config().unwrap().set_bool("core.filemode", true).unwrap();
+        repo.config()
+            .unwrap()
+            .set_bool("core.filemode", true)
+            .unwrap();
 
         let honoring = collect_status_inner(&repo, false).unwrap();
         assert!(
@@ -1104,7 +1395,10 @@ mod tests {
         commit_all(dir.path(), "init");
 
         let repo = open_repo(dir.path()).unwrap();
-        repo.config().unwrap().set_bool("core.autocrlf", true).unwrap();
+        repo.config()
+            .unwrap()
+            .set_bool("core.autocrlf", true)
+            .unwrap();
         // Rewrite the working tree with CRLF, as a Windows checkout would.
         fs::write(dir.path().join("script.ahk"), "MsgBox\r\nReturn\r\n").unwrap();
 
@@ -1112,10 +1406,7 @@ mod tests {
         // makes the panel row a dead end).
         let mut o = DiffOptions::new();
         o.pathspec("script.ahk");
-        let patch = render_diff(
-            repo.diff_index_to_workdir(None, Some(&mut o)).unwrap(),
-        )
-        .unwrap();
+        let patch = render_diff(repo.diff_index_to_workdir(None, Some(&mut o)).unwrap()).unwrap();
         assert!(patch.is_empty(), "expected an empty diff, got: {patch:?}");
 
         let hiding = collect_status_inner(&repo, true).unwrap();
@@ -1153,7 +1444,11 @@ mod tests {
         let key = watch_key_for(&plain);
         assert!(!key.ends_with('/') && !key.ends_with('\\'), "key: {key}");
         assert_eq!(watch_key_for(&slashed), key);
-        assert_eq!(watch_key_for(&from_subdir), key, "subdir resolves to the same repo key");
+        assert_eq!(
+            watch_key_for(&from_subdir),
+            key,
+            "subdir resolves to the same repo key"
+        );
         // Non-repo path: passes through unchanged.
         let other = TempDir::new().unwrap();
         let p = other.path().to_str().unwrap().to_string();
@@ -1175,7 +1470,10 @@ mod tests {
 
         let s = sync_status(dir.path());
         let root = s.repo_root.unwrap();
-        assert!(!root.ends_with('/') && !root.ends_with('\\'), "root: {root}");
+        assert!(
+            !root.ends_with('/') && !root.ends_with('\\'),
+            "root: {root}"
+        );
     }
 
     #[test]
@@ -1554,6 +1852,217 @@ mod tests {
             }
             // Refusing must not delete the conflicted file.
             assert!(file.exists(), "conflicted file must not be deleted");
+        }
+    }
+
+    /// Porcelain v2 `-z` parsing that backs the WSL-delegated status (#398).
+    /// The `wsl.exe` invocation itself is Windows-only, but the parser is a
+    /// pure function, so it is exercised here on Linux against both hand-built
+    /// byte fixtures (exact `-z` framing) and the real `git` binary.
+    mod v2 {
+        use super::*;
+        use std::process::Command;
+
+        fn paths(entries: &[GitFileEntry]) -> Vec<&str> {
+            entries.iter().map(|e| e.path.as_str()).collect()
+        }
+
+        /// Real `git status --porcelain=v2 --branch -z -uall` output for `dir`.
+        fn v2_bytes(dir: &Path) -> Vec<u8> {
+            Command::new("git")
+                .current_dir(dir)
+                .args(["status", "--porcelain=v2", "--branch", "-z", "-uall"])
+                .output()
+                .unwrap()
+                .stdout
+        }
+
+        #[test]
+        fn ordinary_staged_and_worktree_split_by_xy() {
+            // "1 M. …" is staged-only; "1 .M …" is worktree-only.
+            let raw = b"1 M. N... 100644 100644 100644 aaa bbb staged.txt\0\
+                        1 .M N... 100644 100644 100644 ccc ddd work.txt\0";
+            let p = parse_status_v2(raw);
+            assert_eq!(paths(&p.staged), ["staged.txt"]);
+            assert_eq!(p.staged[0].status, GitStatusCode::Modified);
+            assert_eq!(paths(&p.changes), ["work.txt"]);
+            assert_eq!(p.changes[0].status, GitStatusCode::Modified);
+            assert!(p.untracked.is_empty() && p.merge.is_empty());
+        }
+
+        #[test]
+        fn renamed_entry_carries_old_path_from_second_field() {
+            // "2 R. … R100 <new>\0<old>\0" — the origin path is a separate field.
+            let raw = b"2 R. N... 100644 100644 100644 aaa bbb R100 renamed.txt\0old.txt\0\
+                        ? untracked.txt\0";
+            let p = parse_status_v2(raw);
+            assert_eq!(paths(&p.staged), ["renamed.txt"]);
+            assert_eq!(p.staged[0].status, GitStatusCode::Renamed);
+            assert_eq!(p.staged[0].old_path.as_deref(), Some("old.txt"));
+            // The extra field must be consumed, not parsed as its own entry.
+            assert_eq!(paths(&p.untracked), ["untracked.txt"]);
+        }
+
+        #[test]
+        fn unmerged_entry_is_conflicted() {
+            let raw = b"u UU N... 100644 100644 100644 100644 aaa bbb ccc conflict.txt\0";
+            let p = parse_status_v2(raw);
+            assert_eq!(paths(&p.merge), ["conflict.txt"]);
+            assert_eq!(p.merge[0].status, GitStatusCode::Conflicted);
+            assert!(p.staged.is_empty() && p.changes.is_empty());
+        }
+
+        #[test]
+        fn untracked_and_ignored() {
+            let raw = b"? new.txt\0! build/ignored.o\0";
+            let p = parse_status_v2(raw);
+            // Untracked kept; ignored ("!") dropped.
+            assert_eq!(paths(&p.untracked), ["new.txt"]);
+            assert_eq!(p.untracked[0].status, GitStatusCode::Untracked);
+            assert!(p.staged.is_empty() && p.changes.is_empty() && p.merge.is_empty());
+        }
+
+        #[test]
+        fn paths_with_spaces_survive() {
+            let raw = b"1 .M N... 100644 100644 100644 aaa bbb my file.txt\0";
+            let p = parse_status_v2(raw);
+            assert_eq!(paths(&p.changes), ["my file.txt"]);
+        }
+
+        #[test]
+        fn branch_header_names_the_branch() {
+            let raw = b"# branch.oid abcdef1234567890\0# branch.head main\0";
+            let p = parse_status_v2(raw);
+            assert_eq!(p.branch.as_deref(), Some("main"));
+            assert!(!p.detached);
+        }
+
+        #[test]
+        fn detached_head_reports_short_oid() {
+            let raw = b"# branch.oid abcdef1234567890\0# branch.head (detached)\0";
+            let p = parse_status_v2(raw);
+            assert!(p.detached);
+            let s = summary_from_v2(p, "/repo".into(), "clean".into());
+            assert!(s.detached);
+            assert_eq!(s.branch.as_deref(), Some("abcdef1")); // 7 chars
+        }
+
+        #[test]
+        fn unborn_branch_has_no_oid() {
+            let raw = b"# branch.oid (initial)\0# branch.head main\0";
+            let p = parse_status_v2(raw);
+            assert_eq!(p.oid, None);
+            assert_eq!(p.branch.as_deref(), Some("main"));
+        }
+
+        #[test]
+        fn empty_output_is_a_clean_tree() {
+            assert_eq!(parse_status_v2(b""), ParsedV2::default());
+        }
+
+        // ---- Integration against the real git binary (mirrors how this repo
+        // tests WSL behavior via a tempdir repo, docs/lessons_learnt.md). ----
+
+        #[test]
+        fn real_git_staged_worktree_untracked_and_rename() {
+            let dir = init_repo();
+            write(dir.path(), "a.txt", "one\ntwo\n");
+            write(dir.path(), "b.txt", "keep\n");
+            write(dir.path(), "c.txt", "orig\n");
+            commit_all(dir.path(), "init");
+
+            // Staged rename a.txt -> renamed.txt
+            Command::new("git")
+                .current_dir(dir.path())
+                .args(["mv", "a.txt", "renamed.txt"])
+                .status()
+                .unwrap();
+            // Staged content edit on c.txt
+            write(dir.path(), "c.txt", "changed\n");
+            Command::new("git")
+                .current_dir(dir.path())
+                .args(["add", "c.txt"])
+                .status()
+                .unwrap();
+            // Unstaged worktree edit on b.txt
+            write(dir.path(), "b.txt", "keep\nmore\n");
+            // Untracked file
+            write(dir.path(), "u.txt", "x\n");
+
+            let p = parse_status_v2(&v2_bytes(dir.path()));
+
+            // Staged: the rename and the content edit.
+            let rename = p
+                .staged
+                .iter()
+                .find(|e| e.path == "renamed.txt")
+                .expect("staged rename present");
+            assert_eq!(rename.status, GitStatusCode::Renamed);
+            assert_eq!(rename.old_path.as_deref(), Some("a.txt"));
+            assert!(p
+                .staged
+                .iter()
+                .any(|e| e.path == "c.txt" && e.status == GitStatusCode::Modified));
+
+            // Worktree: only the unstaged b.txt edit.
+            assert_eq!(paths(&p.changes), ["b.txt"]);
+            assert_eq!(p.changes[0].status, GitStatusCode::Modified);
+
+            // Untracked.
+            assert_eq!(paths(&p.untracked), ["u.txt"]);
+            assert!(p.merge.is_empty());
+        }
+
+        #[test]
+        fn real_git_matches_libgit2_bucketing() {
+            // The delegated parse and the libgit2 path must agree on which
+            // files land in which bucket for the same tree.
+            let dir = init_repo();
+            write(dir.path(), "t1.txt", "v1\n");
+            write(dir.path(), "t2.txt", "v1\n");
+            commit_all(dir.path(), "init");
+            write(dir.path(), "t1.txt", "v2\n");
+            {
+                let repo = open_repo(dir.path()).unwrap();
+                stage_paths_inner(&repo, &["t1.txt".into()]).unwrap();
+            }
+            write(dir.path(), "t2.txt", "v2\n");
+            write(dir.path(), "u1.txt", "x\n");
+
+            let parsed = parse_status_v2(&v2_bytes(dir.path()));
+            let libgit2 = collect_status_inner(&open_repo(dir.path()).unwrap(), false).unwrap();
+
+            let sorted = |v: &[GitFileEntry]| {
+                let mut s: Vec<String> = v.iter().map(|e| e.path.clone()).collect();
+                s.sort();
+                s
+            };
+            assert_eq!(sorted(&parsed.staged), sorted(&libgit2.staged));
+            assert_eq!(sorted(&parsed.changes), sorted(&libgit2.changes));
+            assert_eq!(sorted(&parsed.untracked), sorted(&libgit2.untracked));
+        }
+
+        #[test]
+        fn real_git_unmerged_conflict_buckets_as_merge() {
+            let dir = conflicted_repo();
+            let p = parse_status_v2(&v2_bytes(dir.path()));
+            assert!(
+                p.merge
+                    .iter()
+                    .any(|e| e.status == GitStatusCode::Conflicted),
+                "expected a conflicted entry, got {:?}",
+                p.merge
+            );
+        }
+
+        #[test]
+        fn non_wsl_path_declines_delegation() {
+            // The fallback gate: only \\wsl$\ / \\wsl.localhost\ roots delegate;
+            // every ordinary path yields None so git_status/git_diff stay on
+            // libgit2. (The wsl.exe call itself is Windows-only.)
+            assert_eq!(crate::wsl::parse_wsl_unc("/home/me/proj"), None);
+            assert_eq!(crate::wsl::parse_wsl_unc(r"C:\Users\me\proj"), None);
+            assert!(crate::wsl::parse_wsl_unc(r"\\wsl.localhost\Ubuntu\home\me").is_some());
         }
     }
 }

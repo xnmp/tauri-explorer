@@ -1,6 +1,6 @@
 pkgbase = tauri-explorer-bin
 	pkgdesc = A keyboard-first file manager: fuzzy quick-open, ripgrep content search, a command palette for every action
-	pkgver = 1.3.3
+	pkgver = 1.4.1
 	pkgrel = 1
 	url = https://github.com/xnmp/tauri-explorer
 	arch = x86_64
@@ -16,13 +16,13 @@ pkgbase = tauri-explorer-bin
 	depends = webkit2gtk-4.1
 	provides = tauri-explorer
 	conflicts = tauri-explorer
-	source = https://github.com/xnmp/tauri-explorer/raw/v1.3.3/packaging/tauri-explorer.portal
-	source = https://github.com/xnmp/tauri-explorer/raw/v1.3.3/packaging/org.freedesktop.impl.portal.desktop.tauri_explorer.service
-	source = LICENSE-1.3.3::https://github.com/xnmp/tauri-explorer/raw/v1.3.3/LICENSE
+	source = https://github.com/xnmp/tauri-explorer/raw/v1.4.1/packaging/tauri-explorer.portal
+	source = https://github.com/xnmp/tauri-explorer/raw/v1.4.1/packaging/org.freedesktop.impl.portal.desktop.tauri_explorer.service
+	source = LICENSE-1.4.1::https://github.com/xnmp/tauri-explorer/raw/v1.4.1/LICENSE
 	sha256sums = 43efedaf882e2c9c2e7d6897ff3322001d1d81038d8e9b943c45eab9fd18b157
 	sha256sums = c227502cb0c6ca4fa0f33f3ba6ca6b34306d088f456e828358470f18b1287d38
 	sha256sums = 2d6c8e46090d2359cc4085085efb20e8d91355804a9e65231b5db21e3fb407e4
-	source_x86_64 = https://github.com/xnmp/tauri-explorer/releases/download/v1.3.3/tauri-explorer_1.3.3_amd64.deb
-	sha256sums_x86_64 = 9966b0209c10d192ad3aa471d077deb0fc866b82394fccec179ac6c38d04d0ac
+	source_x86_64 = https://github.com/xnmp/tauri-explorer/releases/download/v1.4.1/tauri-explorer_1.4.1_amd64.deb
+	sha256sums_x86_64 = 49d7d72dcb46dce0fb7a15515ece456d5f6abe7e399a7ca2d164d0e9d60285f9
 
 pkgname = tauri-explorer-bin

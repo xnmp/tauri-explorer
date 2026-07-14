@@ -52,8 +52,18 @@
   markStartup("bundle-exec");
 
   const leftExplorer = $derived(windowTabsManager.getActiveExplorer());
+  // ONE island-mode condition (#407): macOS vibrancy, a Windows native
+  // backdrop, and the platform-independent Floating Islands setting all
+  // drive the same [data-vibrancy] island CSS — the only real platform
+  // difference is whether frosted-glass transparency backs it. Every
+  // island-layout decision must key off this, never off one platform's flag.
+  const islandMode = $derived(
+    settingsStore.macOsVibrancy ||
+      settingsStore.windowsBackdrop !== "off" ||
+      settingsStore.floatingIslands,
+  );
   const millerAsLeftIsland = $derived(
-    settingsStore.macOsVibrancy && !settingsStore.showSidebar && (leftExplorer?.millerLayers ?? 0) > 0
+    islandMode && !settingsStore.showSidebar && (leftExplorer?.millerLayers ?? 0) > 0
   );
 
   /** Convert a filesystem path to a URL usable in src/background-image. */
@@ -292,7 +302,7 @@
     const windowsBackdrop = settingsStore.windowsBackdrop !== "off";
     const nativeBackdrop =
       (settingsStore.macOsVibrancy && settingsStore.vibrancyBlur) || windowsBackdrop;
-    if (settingsStore.macOsVibrancy || windowsBackdrop || settingsStore.floatingIslands) {
+    if (islandMode) {
       document.documentElement.setAttribute("data-vibrancy", "");
       if (nativeBackdrop) {
         document.documentElement.removeAttribute("data-vibrancy-no-blur");

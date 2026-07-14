@@ -29,9 +29,16 @@
   const graphCache = new Map<string, GraphSnapshot>();
   const GRAPH_CACHE_MAX = 8;
 
-  function cacheSnapshot(repoPath: string, snapshot: GraphSnapshot): void {
-    graphCache.delete(repoPath); // re-insert to refresh LRU position
-    graphCache.set(repoPath, snapshot);
+  /** Cache key: filtered views are cached too (#416) — keyed by their filter
+   *  so a remount with the same filter paints instantly and can never flash
+   *  another filter's rows (#342). */
+  function snapshotKey(repoPath: string, branches: string[] | null, localOnly: boolean): string {
+    return `${repoPath}|${localOnly ? "local" : ""}|${branches ? branches.join("\n") : "*"}`;
+  }
+
+  function cacheSnapshot(key: string, snapshot: GraphSnapshot): void {
+    graphCache.delete(key); // re-insert to refresh LRU position
+    graphCache.set(key, snapshot);
     if (graphCache.size > GRAPH_CACHE_MAX) {
       const oldest = graphCache.keys().next().value;
       if (oldest !== undefined) graphCache.delete(oldest);
@@ -89,10 +96,11 @@
    * view still loads normally when actually opened).
    */
   export async function warmGraphSnapshot(repoPath: string): Promise<void> {
-    if (!repoPath || graphCache.has(repoPath) || warmInFlight.has(repoPath)) return;
+    const key = snapshotKey(repoPath, null, false);
+    if (!repoPath || graphCache.has(key) || warmInFlight.has(repoPath)) return;
     warmInFlight.add(repoPath);
     try {
-      cacheSnapshot(repoPath, await fetchPage0Snapshot(repoPath));
+      cacheSnapshot(key, await fetchPage0Snapshot(repoPath));
     } catch {
       /* best-effort warm — ignore failures */
     } finally {
@@ -193,14 +201,15 @@
   }
 
   // Paint the last-known graph immediately on remount (#255); the load
-  // effect below still refreshes from git in the background. Skipped while a
-  // branch filter is active — the warm cache is always the UNFILTERED page 0,
-  // and flashing it would briefly show branches the user hid (#342). Same
-  // reasoning for local-only (#381).
-  if (untrack(() => branchFilter) === null && !untrack(() => localOnly)) {
-    // untrack: the view is {#key}ed on repoPath, so the initial value is the
-    // right one for this instance's lifetime.
-    const cached = graphCache.get(untrack(() => repoPath));
+  // effect below still refreshes from git in the background. The cache is
+  // keyed by repo + filter + local-only (#416), so a filtered remount paints
+  // its own filtered snapshot — never another filter's rows (#342, #381).
+  {
+    // untrack: the view is {#key}ed on repoPath, so the initial values are
+    // the right ones for this instance's lifetime.
+    const cached = graphCache.get(
+      untrack(() => snapshotKey(repoPath, branchFilter, localOnly)),
+    );
     if (cached) {
       commits = cached.commits;
       refs = cached.refs;
@@ -473,12 +482,12 @@
   );
 
   async function loadPage(skip: number): Promise<void> {
-    // Captured once so a mid-flight filter change can't mix pages; filtered
-    // loads (branch subset OR local-only) never touch the snapshot cache
-    // (it holds the unfiltered page 0).
+    // Captured once so a mid-flight filter change can't mix pages. Every
+    // page-0 load is cached under its own repo+filter key (#416), so
+    // re-entering the same view — filtered or not — paints instantly.
     const filter = untrack(() => branchFilter);
     const local = untrack(() => localOnly);
-    const unfiltered = filter === null && !local;
+    const cacheKey = snapshotKey(repoPath, filter, local);
     loading = true;
     error = null;
     try {
@@ -495,7 +504,7 @@
           loading = false;
         }, local);
         workingChanges = snapshot.workingChanges;
-        if (unfiltered) cacheSnapshot(repoPath, snapshot);
+        cacheSnapshot(cacheKey, snapshot);
       } else {
         const page = await gitLog(repoPath, {
           skip,
@@ -508,15 +517,13 @@
         hasMore = page.has_more;
         // Snapshot page 0 for instant remount paint (#255) — deliberately not
         // the full paged history, which can grow unbounded.
-        if (unfiltered) {
-          cacheSnapshot(repoPath, {
-            commits: commits.slice(0, PAGE_SIZE),
-            refs,
-            hasMore: hasMore || commits.length > PAGE_SIZE,
-            headOid,
-            workingChanges,
-          });
-        }
+        cacheSnapshot(cacheKey, {
+          commits: commits.slice(0, PAGE_SIZE),
+          refs,
+          hasMore: hasMore || commits.length > PAGE_SIZE,
+          headOid,
+          workingChanges,
+        });
       }
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);

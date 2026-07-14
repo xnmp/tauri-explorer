@@ -6,7 +6,7 @@
  */
 
 import { isVirtualPath } from "./virtual-path";
-import { directoryKey } from "./path";
+import { directoryKey, sameDirectory } from "./path";
 
 export type CdSyncAction = "write" | "queue" | "skip";
 
@@ -29,7 +29,9 @@ export function decideCdSync(
   // Virtual (`scheme://…`) locations don't exist in the real filesystem —
   // injecting `cd 'demo://'` into the shell would just error (#152).
   if (isVirtualPath(target)) return "skip";
-  if (lastShellCwd !== null && target === lastShellCwd) return "skip";
+  // Separator/case tolerant: the shell's reported cwd (possibly translated
+  // from a WSL Linux path) rarely matches the explorer's string byte-for-byte.
+  if (lastShellCwd !== null && sameDirectory(target, lastShellCwd)) return "skip";
   if (busy) return "queue";
   return "write";
 }

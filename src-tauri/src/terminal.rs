@@ -37,6 +37,39 @@ struct TerminalHandle {
     shell_cwd: Option<String>,
 }
 
+/// What `terminal_spawn` actually started (#409): the frontend must speak the
+/// spawned shell's dialect — cd syntax, clear-line byte, and path style all
+/// differ between cmd/PowerShell and a (possibly WSL) POSIX shell.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalSpawnInfo {
+    id: u64,
+    /// "posix" | "cmd" | "powershell"
+    shell_kind: String,
+    /// Set when the shell is `wsl.exe` into this distro (#378): the shell
+    /// speaks Linux paths that map to `\\wsl.localhost\<distro>\…`.
+    wsl_distro: Option<String>,
+}
+
+/// Classify a shell executable path into the dialect family the frontend
+/// needs ("cmd" | "powershell" | "posix").
+fn classify_shell(shell: &str) -> &'static str {
+    // Split on both separators by hand: std::path::Path only understands the
+    // host platform's separator, and this must classify Windows paths in
+    // platform-independent unit tests too.
+    let file = shell.rsplit(['/', '\\']).next().unwrap_or(shell);
+    let base = file
+        .strip_suffix(".exe")
+        .or_else(|| file.strip_suffix(".EXE"))
+        .unwrap_or(file)
+        .to_lowercase();
+    match base.as_str() {
+        "cmd" => "cmd",
+        "powershell" | "pwsh" => "powershell",
+        _ => "posix",
+    }
+}
+
 /// A cwd-sync status snapshot for one terminal (issue #149).
 #[derive(serde::Serialize)]
 pub struct TerminalStatus {
@@ -381,7 +414,7 @@ fn spawn_shell(
     on_output: impl Fn(String) + Send + 'static,
     on_exit: impl FnOnce(Option<u32>) + Send + 'static,
     on_cwd: impl Fn(String) + Send + 'static,
-) -> Result<u64, AppError> {
+) -> Result<TerminalSpawnInfo, AppError> {
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -498,7 +531,15 @@ fn spawn_shell(
         on_exit(code);
     });
 
-    Ok(id)
+    Ok(TerminalSpawnInfo {
+        id,
+        shell_kind: if wsl_target.is_some() {
+            "posix".to_string()
+        } else {
+            classify_shell(&shell).to_string()
+        },
+        wsl_distro: wsl_target.map(|(distro, _)| distro),
+    })
 }
 
 /// Kill every terminal owned by `label`. Reader threads observe EOF and
@@ -533,7 +574,7 @@ pub async fn terminal_spawn(
     cwd: Option<String>,
     cols: u16,
     rows: u16,
-) -> Result<u64, AppError> {
+) -> Result<TerminalSpawnInfo, AppError> {
     let label = window.label().to_string();
     {
         let map = terminals()
@@ -658,7 +699,17 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn wsl_unc_paths_parse_to_distro_and_linux_path() {
+    fn shells_classify_into_dialect_families() {
+    assert_eq!(classify_shell(r"C:\Windows\system32\cmd.exe"), "cmd");
+    assert_eq!(classify_shell(r"C:\...\WindowsPowerShell\v1.0\powershell.exe"), "powershell");
+    assert_eq!(classify_shell("pwsh.exe"), "powershell");
+    assert_eq!(classify_shell("/bin/zsh"), "posix");
+    assert_eq!(classify_shell("/usr/bin/fish"), "posix");
+    assert_eq!(classify_shell(""), "posix");
+}
+
+#[test]
+fn wsl_unc_paths_parse_to_distro_and_linux_path() {
         assert_eq!(
             parse_wsl_unc(r"\\wsl.localhost\Ubuntu\home\me\proj"),
             Some(("Ubuntu".into(), "/home/me/proj".into()))
@@ -743,7 +794,8 @@ mod tests {
             },
             |_| {},
         )
-        .expect("spawn failed");
+        .expect("spawn failed")
+        .id;
 
         {
             let mut map = terminals().lock().unwrap_or_else(|e| e.into_inner());
@@ -833,7 +885,7 @@ mod tests {
         terminals()
             .lock()
             .unwrap()
-            .get_mut(&b)
+            .get_mut(&b.id)
             .map(|h| h.killer.kill());
         let _ = exit_rx_b.recv_timeout(Duration::from_secs(10));
     }
@@ -1018,7 +1070,8 @@ mod tests {
             },
             |_| {},
         )
-        .expect("spawn failed");
+        .expect("spawn failed")
+        .id;
 
         let busy_now = || {
             let map = terminals().lock().unwrap_or_else(|e| e.into_inner());
@@ -1099,7 +1152,7 @@ mod tests {
         let canonical = dir.path().canonicalize().unwrap();
         let (tx, rx) = mpsc::channel::<String>();
         let (cwd_tx, cwd_rx) = mpsc::channel::<String>();
-        let id = spawn_shell(
+        let info = spawn_shell(
             NEXT_ID.fetch_add(1, Ordering::Relaxed),
             "zsh-osc7".into(),
             Some(canonical.to_string_lossy().into_owned()),
@@ -1130,7 +1183,7 @@ mod tests {
         terminals()
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .get_mut(&id)
+            .get_mut(&info.id)
             .map(|h| h.killer.kill());
 
         assert!(

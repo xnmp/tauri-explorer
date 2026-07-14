@@ -247,7 +247,7 @@ backend for E2E/browser).
 
 ## Terminal panel
 - `components/TerminalPanel.svelte` — embedded terminal UI
-- `state/terminal.svelte.ts`; `domain/terminal-*.ts` (command, cwd-sync, keys, theme)
+- `state/terminal.svelte.ts`; `domain/terminal-*.ts` (command, cwd-sync, keys, shell dialect/WSL path translation, theme)
 - `api/terminal.ts`; `src-tauri/src/terminal.rs` — PTY spawn/write/resize/kill
 - FLOW: terminal_spawn/write/resize (terminal.rs) ↔ TerminalPanel; cwd synced to active pane via terminal-cwd-sync.
 

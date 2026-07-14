@@ -7,10 +7,20 @@
  */
 
 import { invoke } from "./files";
+import type { ShellKind } from "$lib/domain/terminal-shell";
 
 /** Reserve a terminal id so listeners can register BEFORE the PTY spawns. */
 export async function terminalReserveId(): Promise<number> {
   return invoke<number>("terminal_reserve_id");
+}
+
+/** What the backend actually spawned (#409): the frontend must speak this
+ *  shell's dialect for cd syncs and path insertions. */
+export interface TerminalSpawnInfo {
+  id: number;
+  shellKind: ShellKind;
+  /** Set when the shell is `wsl.exe` into this distro (#378). */
+  wslDistro: string | null;
 }
 
 /**
@@ -23,8 +33,8 @@ export async function terminalSpawn(
   cwd: string | undefined,
   cols: number,
   rows: number
-): Promise<number> {
-  return invoke<number>("terminal_spawn", { id, cwd, cols, rows });
+): Promise<TerminalSpawnInfo> {
+  return invoke<TerminalSpawnInfo>("terminal_spawn", { id, cwd, cols, rows });
 }
 
 /** Write user input (keystrokes) to the terminal. */

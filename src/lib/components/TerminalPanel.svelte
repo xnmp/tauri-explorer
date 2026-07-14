@@ -24,6 +24,7 @@
   import { terminalSpawn, terminalReserveId, terminalWrite, terminalResize, terminalKill, terminalStatus } from "$lib/api/terminal";
   import { buildTerminalTheme } from "$lib/domain/terminal-theme";
   import { buildCdSyncSequence, buildPathsInsertion } from "$lib/domain/terminal-command";
+  import { defaultShellProfile, fromShellCwd, type ShellProfile } from "$lib/domain/terminal-shell";
   import { decideCdSync, createInjectedCdTracker } from "$lib/domain/terminal-cwd-sync";
   import { isWindows } from "$lib/domain/platform";
   import { isShellReservedKey, isHardcodedAppShortcut, resolveTerminalShortcut } from "$lib/domain/terminal-keys";
@@ -39,6 +40,10 @@
   let term: Terminal | undefined;
   let fitAddon: FitAddon | undefined;
   let terminalId: number | null = null;
+  // Dialect of the shell the backend actually spawned (#409): a WSL pane gets
+  // a POSIX shell even on Windows, and every PTY write/read translates
+  // through this profile. Assumed platform default until spawn reports back.
+  let shellProfile: ShellProfile = defaultShellProfile(isWindows);
   let spawning = false;
   let exited = $state(false);
   let unlistenOutput: UnlistenFn | undefined;
@@ -100,7 +105,10 @@
       });
       // Explorer follows terminal: the shell reports its cwd via OSC 7.
       unlistenCwd = await listen<string>(`terminal-cwd-${id}`, (event) => {
-        const path = event.payload;
+        // The shell reports its own dialect's path (a WSL shell reports
+        // /home/…); translate to an explorer path before it touches
+        // navigation or the loop guards (#418).
+        const path = fromShellCwd(event.payload, shellProfile);
         // Always track it — this is the loop guard for the other direction.
         lastShellCwd = path;
         // A cd WE injected echoing back must never drive navigation: during
@@ -115,7 +123,8 @@
         }
       });
 
-      await terminalSpawn(id, cwd, term.cols, term.rows);
+      const info = await terminalSpawn(id, cwd, term.cols, term.rows);
+      shellProfile = { kind: info.shellKind, wslDistro: info.wslDistro };
       terminalId = id;
       // Path insertions requested while the shell was still spawning (#265).
       for (const data of pendingInsertions.splice(0)) {
@@ -152,7 +161,7 @@
   /** Type paths into the prompt (space-delimited, shell-quoted, no Enter)
    *  and focus the terminal — drop-onto-terminal and Alt+T (#265). */
   function insertPaths(paths: string[]): void {
-    const data = buildPathsInsertion(paths, isWindows);
+    const data = buildPathsInsertion(paths, shellProfile);
     if (terminalId !== null) terminalWrite(terminalId, data);
     else pendingInsertions.push(data);
     term?.focus();
@@ -168,19 +177,20 @@
     // target (see the queue-poll re-entrancy guard, #154).
     if (terminalId === null || path == null) return;
     injectedCds.add(path);
-    terminalWrite(terminalId, buildCdSyncSequence(path, isWindows));
+    terminalWrite(terminalId, buildCdSyncSequence(path, shellProfile));
   }
 
   /** Terminal follows explorer: reconcile the shell's cwd with `path`. */
   async function syncTerminalToPath(path: string): Promise<void> {
     if (terminalId === null) return;
     const status = await terminalStatus(terminalId);
-    lastShellCwd = status.cwd ?? lastShellCwd;
+    const statusCwd = status.cwd !== null ? fromShellCwd(status.cwd, shellProfile) : null;
+    lastShellCwd = statusCwd ?? lastShellCwd;
     // Fast tab switches: the status round-trip may outlive this sync's tab —
     // a stale cd would drag the shell (and, via its echo, the NEW tab) to
     // the previous tab's directory (#266). Latest target wins; drop the rest.
     if (windowTabsManager.getActiveExplorer()?.currentPath !== path) return;
-    switch (decideCdSync(path, status.cwd, status.busy)) {
+    switch (decideCdSync(path, statusCwd, status.busy)) {
       case "skip":
         return;
       case "write":
@@ -214,7 +224,8 @@
           return;
         }
         const status = await terminalStatus(terminalId);
-        lastShellCwd = status.cwd ?? lastShellCwd;
+        const statusCwd = status.cwd !== null ? fromShellCwd(status.cwd, shellProfile) : null;
+        lastShellCwd = statusCwd ?? lastShellCwd;
         if (status.busy) return;
         const target = pendingCd;
         pendingCd = null;
@@ -225,7 +236,7 @@
         if (
           target !== null &&
           windowTabsManager.getActiveExplorer()?.currentPath === target &&
-          decideCdSync(target, status.cwd, false) === "write"
+          decideCdSync(target, statusCwd, false) === "write"
         ) {
           writeCd(target);
         }
@@ -378,10 +389,17 @@
   // the panel has been opened at least once (terminalId is live). The
   // decideCdSync skip guard makes the reverse-direction navigateTo a no-op,
   // so the two directions don't ping-pong.
+  // The settings store replaces its whole state object on ANY update, so this
+  // effect also re-runs for unrelated changes — e.g. terminalPanelHeight on
+  // every pointermove of a panel drag-resize. Only a genuine path change may
+  // inject a cd, or a resize floods the shell with them (#409).
+  let lastSyncTarget: string | null = null;
   $effect(() => {
     const path = windowTabsManager.getActiveExplorer()?.currentPath;
     if (!settingsStore.terminalFollowsExplorer) return;
     if (!path || terminalId === null || !terminalPanelStore.everOpened) return;
+    if (path === lastSyncTarget) return;
+    lastSyncTarget = path;
     void syncTerminalToPath(path).catch((err) => {
       // terminalStatus may reject if the shell died between checks; a rejected
       // sync must not surface as an unhandled promise rejection (#154).

@@ -2,6 +2,26 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.4.1 — 2026-07-14
+
+Correctness fixes for Windows and WSL repos, plus a snappier paste.
+
+### Fixed
+- **Fullscreen preview no longer shows the app behind it** — in island modes (Windows Mica/Acrylic, macOS vibrancy, floating islands) the fullscreen surface painted nothing, so the sidebar and file list stayed visible behind the image and it read as a second preview.
+- **The SCM panel stops inventing modified files on Windows** — two causes, same dead-end row: the POSIX exec bit Windows can't read (a Linux-created repo's `core.filemode = true` marked every executable as modified), and CRLF working trees whose diff is empty once the line-ending filter runs. Entries whose diff has nothing to show are now dropped on Windows, so the panel agrees with `git status`; on Linux a `chmod` is still a real change.
+- **Diffs survive background refreshes** — repos on `\\wsl.localhost` are polled every 3s, and each poll used to cancel the diff request in flight; on a slow share the preview flashed a spinner forever and settled on "No changes to display". An open diff now loads once, stays visible while it re-verifies, and never wedges on a spinner.
+- **Quick Open can reach build-output folders** — `target`, `node_modules`, `dist`, `build` and `out` were pruned outright, so nothing inside them was findable (Ctrl+P for `nsis` never found `target/release/bundle/nsis`). They are now searched in a deferred second pass, ranked below source files so artifacts can't crowd them out.
+- **Quick Open always finds the cwd's own entries** — direct children of the current folder are matched even before the backend walk returns.
+- **Sidebar SCM diffs reach the preview pane** — clicking a change in the sidebar's SCM view opened a diff the preview pane never read.
+- **SCM panel live updates** — watcher key symmetry plus polling for repos on UNC paths, so the panel refreshes on git changes from outside the app.
+- **Git graph merge edges** — stretched merge edges now cross out of the child dot immediately.
+
+### Added
+- **Relative times for today's commits in the git graph** — "2h ago" instead of a timestamp for commits from the last day.
+
+### Performance
+- **Snappier paste** — the size estimate runs concurrently, entries appear incrementally, and the toast lands earlier.
+
 ## v1.4.0 — 2026-07-13
 
 A git-graph feature wave plus theme, terminal, and Windows fixes.

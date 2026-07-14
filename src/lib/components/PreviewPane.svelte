@@ -1430,4 +1430,13 @@
     background: transparent;
     border-left: none;
   }
+
+  /* …but the fullscreen surface must stay opaque (#391). The rule above has
+     the same specificity as `.preview-pane.fullscreen` and is declared later,
+     so in every island mode (macOS vibrancy, Windows Mica/Acrylic,
+     floatingIslands) it stripped the fullscreen background — the app behind
+     the image kept showing through, reading as a second preview. */
+  :global([data-vibrancy]) .preview-pane.fullscreen {
+    background: var(--background-solid, var(--background-card-secondary));
+  }
 </style>

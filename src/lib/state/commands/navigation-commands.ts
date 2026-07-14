@@ -54,7 +54,7 @@ export const navigationCommands: Command[] = [
     // here would double-handle the key with no visible effect.
     when: () => {
       const tab = windowTabsManager.activeTab;
-      return !tab?.panes[tab.activePaneId]?.gitGraph;
+      return !tab?.panes?.[tab.activePaneId]?.gitGraph;
     },
   },
 ];

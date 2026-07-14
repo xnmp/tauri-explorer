@@ -1756,3 +1756,7 @@ clearing staged, amend folding).
 
 ### Windows has no exec bit — a Linux repo's `core.filemode=true` manufactures changes (#392)
 - Over `\\wsl.localhost` (and on Windows generally) libgit2 reads every `100755` file as `100644`, so a repo created under Linux shows all its executables as Modified with an *empty* content diff ("No changes to display"). Git for Windows defaults `core.filemode=false` for exactly this reason. Both status paths need the policy: libgit2 (`git.rs` — filter mode-only entries + `DiffOptions::ignore_filemode`) and the CLI (`files/git_status.rs` — `git -c core.filemode=false status`). Never write the setting into the user's `.git/config`: the repo is shared with WSL, where a chmod *is* a real change.
+
+### "Don't rank these highly" was implemented as "make these invisible" (#393)
+- One `SKIP_DIRS` list did double duty in `search.rs`: repo internals (`.git`) and build output (`target`, `node_modules`, `dist`) were both *pruned*, so Quick Open could never reach `target/release/bundle/nsis` — a real path users look for. Split it: hard-skip repo internals, walk build output in a deferred second pass with penalized scores.
+- Tune the penalty against a real tree, not a fixture. A *divisor* (score / 4) looked principled and was wrong: it sank an exact `nsis` folder-name match below ~20 loose subsequence matches on long filenames, i.e. straight back out of the top-20 the backend emits. A flat subtraction (−40) keeps same-name source files ahead (they win on depth anyway) without burying an exact match under fuzzy noise.

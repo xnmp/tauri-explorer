@@ -155,6 +155,12 @@ fn walk_passes(
             }
             scanned += 1;
             if let Ok(e) = entry {
+                // Depth 0 is the deferred root itself, which the fast pass
+                // already emitted — a second copy would show up as a
+                // duplicate result.
+                if e.depth == 0 {
+                    continue;
+                }
                 emit(e, true);
             }
         }
@@ -1085,6 +1091,21 @@ mod tests {
             fmt_results(&result.results)
         );
         assert!(result.results.iter().any(|r| r.name == "deadbeef.txt"));
+    }
+
+    #[test]
+    fn test_deferred_root_is_not_emitted_twice() {
+        let dir = tempdir().unwrap();
+        let root = visible_root(&dir);
+        fs::create_dir_all(root.join("target/release")).unwrap();
+        File::create(root.join("target/release/app.exe")).unwrap();
+
+        let entries = walk_entries(&PathBuf::from(&root));
+        let target_dirs = entries
+            .iter()
+            .filter(|e| e.name == "target" && e.is_dir)
+            .count();
+        assert_eq!(target_dirs, 1, "deferred root emitted once, got: {:?}", fmt_walked(&entries));
     }
 
     #[test]

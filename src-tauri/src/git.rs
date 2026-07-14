@@ -264,35 +264,61 @@ fn classify(entry: &git2::StatusEntry<'_>, workdir: &Path) -> Classified {
     out
 }
 
-/// Whether file-mode differences should be treated as "no change".
+/// Whether to hide status entries that have nothing to show.
 ///
-/// Windows has no POSIX exec bit — and over a `\\wsl.localhost` UNC path it
-/// can't even read the one Linux set. A repo created under Linux carries
-/// `core.filemode = true`, so libgit2 compares the index's `100755` against
-/// the `100644` Windows reports and flags every executable file as modified,
-/// with an empty content diff ("No changes to display", #392). Git for Windows
-/// avoids this by defaulting `core.filemode` to false; do the same. Off
-/// Windows a chmod is a real change and must keep showing up.
-fn ignores_filemode() -> bool {
+/// On Windows, libgit2's status and diff disagree about the same file, and the
+/// panel ends up listing rows the user can click into an empty diff ("No
+/// changes to display"). Two ways this happens, both confirmed against real
+/// repos:
+///
+/// - **exec bit** (#392): Windows can't read it — least of all over a
+///   `\\wsl.localhost` UNC path — so a repo created under Linux
+///   (`core.filemode = true`) reports every `100755` file as modified.
+/// - **line endings** (#395): a CRLF working tree against LF blobs is listed
+///   as modified by status, while the diff applies the line-ending filter and
+///   comes back empty. Windows `git` itself reports the repo clean.
+///
+/// In both cases the honest answer is that nothing changed. A row that opens
+/// onto an empty diff is strictly worse than no row, so drop it. Off Windows
+/// none of this applies (a chmod there IS a real change) and the check — which
+/// costs two extra diffs — is skipped entirely.
+fn hides_empty_diffs() -> bool {
     cfg!(windows)
 }
 
 /// Of `candidates` (repo-relative paths flagged modified/typechange), the ones
-/// that still differ once file-mode differences are ignored. Returns the
-/// surviving `(staged, worktree)` paths; anything absent was a mode-only change.
+/// that still show up in an actual diff. Returns the surviving
+/// `(staged, worktree)` paths; anything absent has an empty diff and is,
+/// as far as the user can act on it, unchanged.
 fn content_changed(
     repo: &Repository,
     candidates: &[String],
 ) -> Result<(HashSet<String>, HashSet<String>), AppError> {
-    let delta_paths = |diff: git2::Diff<'_>| {
-        diff.deltas()
-            .filter_map(|d| {
-                d.new_file()
-                    .path()
-                    .or_else(|| d.old_file().path())
-                    .map(|p| p.to_string_lossy().replace('\\', "/"))
-            })
-            .collect::<HashSet<String>>()
+    // A delta is NOT enough: libgit2 reports a delta for a CRLF-vs-LF file
+    // whose patch, once the line-ending filter has run, has no hunks at all
+    // (#395) — that delta is precisely the dead-end row we're trying to drop.
+    // Keep a path only if it has something displayable: at least one hunk, or
+    // a binary change (which the preview renders as "Binary file changed").
+    let displayable_paths = |diff: git2::Diff<'_>| {
+        let mut out = HashSet::new();
+        for (i, delta) in diff.deltas().enumerate() {
+            let Some(path) = delta
+                .new_file()
+                .path()
+                .or_else(|| delta.old_file().path())
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+            else {
+                continue;
+            };
+            let has_hunks = matches!(
+                git2::Patch::from_diff(&diff, i),
+                Ok(Some(ref p)) if p.num_hunks() > 0
+            );
+            if has_hunks || delta.flags().is_binary() {
+                out.insert(path);
+            }
+        }
+        out
     };
 
     // Pathspec-limited so the extra diffs cost work proportional to the number
@@ -308,20 +334,20 @@ fn content_changed(
         Err(e) if e.code() == git2::ErrorCode::UnbornBranch => None,
         Err(e) => return Err(to_app_err(e)),
     };
-    let staged = delta_paths(
+    let staged = displayable_paths(
         repo.diff_tree_to_index(head_tree.as_ref(), None, Some(&mut opts))
             .map_err(to_app_err)?,
     );
-    let worktree = delta_paths(
+    let worktree = displayable_paths(
         repo.diff_index_to_workdir(None, Some(&mut opts))
             .map_err(to_app_err)?,
     );
     Ok((staged, worktree))
 }
 
-/// A status entry that could be a mode-only artifact (a delete or a rename
-/// never is).
-fn may_be_mode_only(entry: &GitFileEntry) -> bool {
+/// A status entry that could turn out to have an empty diff. A delete, a
+/// rename or an add always has something to show.
+fn may_have_empty_diff(entry: &GitFileEntry) -> bool {
     matches!(
         entry.status,
         GitStatusCode::Modified | GitStatusCode::TypeChange
@@ -331,12 +357,12 @@ fn may_be_mode_only(entry: &GitFileEntry) -> bool {
 // pub: exercised directly by the `git_status` criterion bench
 // (src-tauri/benches/git_status.rs).
 pub fn collect_status(repo: &Repository) -> Result<GitStatusSummary, AppError> {
-    collect_status_inner(repo, ignores_filemode())
+    collect_status_inner(repo, hides_empty_diffs())
 }
 
 fn collect_status_inner(
     repo: &Repository,
-    ignore_filemode: bool,
+    hide_empty_diffs: bool,
 ) -> Result<GitStatusSummary, AppError> {
     let workdir = repo
         .workdir()
@@ -394,22 +420,22 @@ fn collect_status_inner(
         }
     }
 
-    if ignore_filemode {
+    if hide_empty_diffs {
         let candidates: Vec<String> = summary
             .staged
             .iter()
             .chain(summary.changes.iter())
-            .filter(|e| may_be_mode_only(e))
+            .filter(|e| may_have_empty_diff(e))
             .map(|e| e.path.clone())
             .collect();
         if !candidates.is_empty() {
             let (staged_keep, worktree_keep) = content_changed(repo, &candidates)?;
             summary
                 .staged
-                .retain(|e| !may_be_mode_only(e) || staged_keep.contains(&e.path));
+                .retain(|e| !may_have_empty_diff(e) || staged_keep.contains(&e.path));
             summary
                 .changes
-                .retain(|e| !may_be_mode_only(e) || worktree_keep.contains(&e.path));
+                .retain(|e| !may_have_empty_diff(e) || worktree_keep.contains(&e.path));
         }
     }
 
@@ -709,7 +735,7 @@ pub async fn git_diff(
         diff_opts.context_lines(3);
         // Same policy as the status list: on Windows a mode difference is an
         // artifact, not a change, so it must not render as a diff either (#392).
-        diff_opts.ignore_filemode(ignores_filemode());
+        diff_opts.ignore_filemode(hides_empty_diffs());
 
         let diff = if opts.staged {
             let head_tree = match repo.head() {
@@ -1014,12 +1040,12 @@ mod tests {
 
     /// A mode-only change (chmod +x) is what Windows manufactures for every
     /// 0755 file in a Linux-created repo, and it renders as a change with an
-    /// empty diff (#392). With the filemode-ignoring policy on, it must not
+    /// empty diff (#392). With the hide-empty-diffs policy on, it must not
     /// reach the SCM panel; with it off (the Linux default), a real chmod
     /// still must.
     #[cfg(unix)]
     #[test]
-    fn mode_only_change_is_dropped_only_when_filemode_is_ignored() {
+    fn mode_only_change_is_dropped_only_when_empty_diffs_are_hidden() {
         use std::os::unix::fs::PermissionsExt;
 
         let dir = init_repo();
@@ -1062,6 +1088,54 @@ mod tests {
             !ignoring.changes.iter().any(|e| e.path == "script.sh"),
             "mode-only change must stay dropped: {:?}",
             ignoring.changes
+        );
+    }
+
+    /// The other way a Windows status entry ends up with nothing behind it
+    /// (#395): a CRLF working tree against LF blobs with `core.autocrlf` on.
+    /// libgit2's status lists the file, its diff filters the line endings away
+    /// and comes back empty — Windows `git` calls the repo clean. The row must
+    /// not survive to the panel, because clicking it can only ever say "No
+    /// changes to display".
+    #[test]
+    fn crlf_only_change_with_an_empty_diff_is_dropped() {
+        let dir = init_repo();
+        write(dir.path(), "script.ahk", "MsgBox\nReturn\n"); // LF in the blob
+        commit_all(dir.path(), "init");
+
+        let repo = open_repo(dir.path()).unwrap();
+        repo.config().unwrap().set_bool("core.autocrlf", true).unwrap();
+        // Rewrite the working tree with CRLF, as a Windows checkout would.
+        fs::write(dir.path().join("script.ahk"), "MsgBox\r\nReturn\r\n").unwrap();
+
+        // Precondition: the diff for this file really is empty (this is what
+        // makes the panel row a dead end).
+        let mut o = DiffOptions::new();
+        o.pathspec("script.ahk");
+        let patch = render_diff(
+            repo.diff_index_to_workdir(None, Some(&mut o)).unwrap(),
+        )
+        .unwrap();
+        assert!(patch.is_empty(), "expected an empty diff, got: {patch:?}");
+
+        let hiding = collect_status_inner(&repo, true).unwrap();
+        assert!(
+            !hiding.changes.iter().any(|e| e.path == "script.ahk"),
+            "a file whose diff is empty must not be listed: {:?}",
+            hiding.changes
+        );
+
+        // A real edit to the same file still surfaces.
+        fs::write(
+            dir.path().join("script.ahk"),
+            "MsgBox\r\nReturn\r\nExitApp\r\n",
+        )
+        .unwrap();
+        let hiding = collect_status_inner(&repo, true).unwrap();
+        assert!(
+            hiding.changes.iter().any(|e| e.path == "script.ahk"),
+            "a real content change must survive: {:?}",
+            hiding.changes
         );
     }
 

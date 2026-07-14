@@ -741,6 +741,12 @@ if (typeof window !== "undefined") {
   (window as unknown as { __mockEjectDrive?: (path: string) => void }).__mockEjectDrive = (path: string) => {
     mockDrives = mockDrives.filter((d) => d.path !== path);
   };
+  // Test affordance (mock/browser only): fire the watcher signal a repo on a
+  // UNC path gets every 3s from the poll watcher (#387). Used to prove a diff
+  // still lands while those refreshes rain on it (#396).
+  (window as unknown as { __mockGitPoll?: () => void }).__mockGitPoll = () => {
+    emitWatcherGitChange(MOCK_REPO_ROOT);
+  };
 }
 
 const mockCommands: Record<string, CommandHandler> = {

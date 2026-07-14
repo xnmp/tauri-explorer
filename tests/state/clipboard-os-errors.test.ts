@@ -63,14 +63,16 @@ describe("clipboard OS-bridge failures (#279)", () => {
     expect(toastErrorMock).not.toHaveBeenCalled();
   });
 
-  it("readOsFiles toasts and returns null when the OS read fails", async () => {
+  it("readOsFiles returns the error WITHOUT toasting when the OS read fails (#401)", async () => {
     readFilesMock.mockResolvedValue({ ok: false, error: "xclip is not installed" });
     const store = await freshStore();
 
     const result = await store.readOsFiles();
 
-    expect(result).toBeNull();
-    expect(toastErrorMock).toHaveBeenCalledWith(expect.stringContaining("xclip is not installed"));
+    // The caller decides whether the failure matters — an image paste can
+    // still succeed after a failed file-list read (macOS), so no toast here.
+    expect(result).toEqual({ content: null, error: "xclip is not installed" });
+    expect(toastErrorMock).not.toHaveBeenCalled();
   });
 
   it("readOsFiles treats an empty clipboard as no-files, not an error", async () => {
@@ -79,7 +81,7 @@ describe("clipboard OS-bridge failures (#279)", () => {
 
     const result = await store.readOsFiles();
 
-    expect(result).toBeNull();
+    expect(result).toEqual({ content: null, error: null });
     expect(toastErrorMock).not.toHaveBeenCalled();
   });
 
@@ -89,6 +91,9 @@ describe("clipboard OS-bridge failures (#279)", () => {
 
     const result = await store.readOsFiles();
 
-    expect(result).toEqual({ paths: ["/x.png", "/y.png"], operation: "copy" });
+    expect(result).toEqual({
+      content: { paths: ["/x.png", "/y.png"], operation: "copy" },
+      error: null,
+    });
   });
 });

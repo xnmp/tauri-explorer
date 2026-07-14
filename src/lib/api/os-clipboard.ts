@@ -14,7 +14,19 @@ import { invoke } from "./files";
 export type OsClipboardResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
 function errorMessage(error: unknown): string {
-  return typeof error === "string" ? error : error instanceof Error ? error.message : String(error);
+  if (typeof error === "string") return error;
+  if (error instanceof Error) return error.message;
+  // Tauri command failures arrive as the serialized AppError object
+  // ({ kind, message }) — String() would render "[object Object]" (#401).
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message: unknown }).message;
+    if (typeof message === "string") return message;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
 }
 
 /**

@@ -76,6 +76,7 @@ struct Walked {
 // the walk to the distro's native `find` (same pattern as terminals #378):
 // it scans the whole tree in well under a second and streams results back.
 
+#[cfg(any(windows, test))]
 /// `find` arguments for the fast pass over `linux_path`: hidden + hard-skip
 /// trees pruned silently; build-output trees pruned but printed (type `d`)
 /// so they appear as results themselves and seed the deferred pass.
@@ -110,6 +111,7 @@ fn find_fast_args(linux_path: &str) -> Vec<String> {
     args
 }
 
+#[cfg(any(windows, test))]
 /// `find` arguments for one deferred (build-output) tree: hidden and
 /// hard-skip dirs pruned; everything else printed.
 fn find_deferred_args(linux_path: &str) -> Vec<String> {
@@ -128,6 +130,7 @@ fn find_deferred_args(linux_path: &str) -> Vec<String> {
     args
 }
 
+#[cfg(any(windows, test))]
 /// Parse one `find -printf '%y\t%P\n'` output line into (is_dir, rel_path).
 fn parse_find_line(line: &str) -> Option<(bool, &str)> {
     let (kind, rel) = line.split_once('\t')?;
@@ -137,6 +140,7 @@ fn parse_find_line(line: &str) -> Option<(bool, &str)> {
     Some((kind == "d", rel))
 }
 
+#[cfg(any(windows, test))]
 /// Run one `find` under `runner` (a pre-built Command missing only the find
 /// args), streaming parsed lines into `on_line`. Returns false if the
 /// process could not be spawned (caller falls back to jwalk).
@@ -170,6 +174,7 @@ fn stream_find(
     true
 }
 
+#[cfg(any(windows, test))]
 /// Both walk passes via the distro's native `find` (#414). Returns false when
 /// find could not run — the caller falls back to the jwalk implementation.
 fn find_walk_passes(

@@ -150,8 +150,17 @@ fn get_git_status_sync(path: &str) -> Result<GitStatusResponse, AppError> {
     // every file inside it — the aggregation below collapses children to the
     // top-level name anyway, and enumerating large untracked trees
     // (build output, node_modules) is by far the costliest part of status.
-    let output = Command::new("git")
-        .no_console()
+    let mut cmd = Command::new("git");
+    cmd.no_console();
+    // Windows can't read the POSIX exec bit (least of all over a
+    // `\\wsl.localhost` UNC path), so a Linux-created repo's `core.filemode =
+    // true` makes every 0755 file look modified. Git for Windows defaults the
+    // setting off; force it per-invocation so the badges agree with the SCM
+    // panel and with `git status` inside WSL (#392).
+    if cfg!(windows) {
+        cmd.args(["-c", "core.filemode=false"]);
+    }
+    let output = cmd
         .args(["status", "--porcelain", "-z", "-unormal", "."])
         .current_dir(dir)
         .output()

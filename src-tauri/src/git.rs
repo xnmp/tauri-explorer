@@ -9,6 +9,7 @@
 //! `tokio::task::spawn_blocking` so the Tauri async runtime is never blocked
 //! by libgit2. Cancellation is wired through the shared `TaskRegistry`.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -263,9 +264,80 @@ fn classify(entry: &git2::StatusEntry<'_>, workdir: &Path) -> Classified {
     out
 }
 
+/// Whether file-mode differences should be treated as "no change".
+///
+/// Windows has no POSIX exec bit — and over a `\\wsl.localhost` UNC path it
+/// can't even read the one Linux set. A repo created under Linux carries
+/// `core.filemode = true`, so libgit2 compares the index's `100755` against
+/// the `100644` Windows reports and flags every executable file as modified,
+/// with an empty content diff ("No changes to display", #392). Git for Windows
+/// avoids this by defaulting `core.filemode` to false; do the same. Off
+/// Windows a chmod is a real change and must keep showing up.
+fn ignores_filemode() -> bool {
+    cfg!(windows)
+}
+
+/// Of `candidates` (repo-relative paths flagged modified/typechange), the ones
+/// that still differ once file-mode differences are ignored. Returns the
+/// surviving `(staged, worktree)` paths; anything absent was a mode-only change.
+fn content_changed(
+    repo: &Repository,
+    candidates: &[String],
+) -> Result<(HashSet<String>, HashSet<String>), AppError> {
+    let delta_paths = |diff: git2::Diff<'_>| {
+        diff.deltas()
+            .filter_map(|d| {
+                d.new_file()
+                    .path()
+                    .or_else(|| d.old_file().path())
+                    .map(|p| p.to_string_lossy().replace('\\', "/"))
+            })
+            .collect::<HashSet<String>>()
+    };
+
+    // Pathspec-limited so the extra diffs cost work proportional to the number
+    // of changed files, not to the size of the tree.
+    let mut opts = DiffOptions::new();
+    opts.ignore_filemode(true);
+    for c in candidates {
+        opts.pathspec(c);
+    }
+
+    let head_tree = match repo.head() {
+        Ok(h) => Some(h.peel_to_tree().map_err(to_app_err)?),
+        Err(e) if e.code() == git2::ErrorCode::UnbornBranch => None,
+        Err(e) => return Err(to_app_err(e)),
+    };
+    let staged = delta_paths(
+        repo.diff_tree_to_index(head_tree.as_ref(), None, Some(&mut opts))
+            .map_err(to_app_err)?,
+    );
+    let worktree = delta_paths(
+        repo.diff_index_to_workdir(None, Some(&mut opts))
+            .map_err(to_app_err)?,
+    );
+    Ok((staged, worktree))
+}
+
+/// A status entry that could be a mode-only artifact (a delete or a rename
+/// never is).
+fn may_be_mode_only(entry: &GitFileEntry) -> bool {
+    matches!(
+        entry.status,
+        GitStatusCode::Modified | GitStatusCode::TypeChange
+    )
+}
+
 // pub: exercised directly by the `git_status` criterion bench
 // (src-tauri/benches/git_status.rs).
 pub fn collect_status(repo: &Repository) -> Result<GitStatusSummary, AppError> {
+    collect_status_inner(repo, ignores_filemode())
+}
+
+fn collect_status_inner(
+    repo: &Repository,
+    ignore_filemode: bool,
+) -> Result<GitStatusSummary, AppError> {
     let workdir = repo
         .workdir()
         .ok_or_else(|| AppError::Other("git: bare repository has no working tree".into()))?;
@@ -319,6 +391,25 @@ pub fn collect_status(repo: &Repository) -> Result<GitStatusSummary, AppError> {
         }
         if let Some(w) = c.worktree {
             summary.changes.push(w);
+        }
+    }
+
+    if ignore_filemode {
+        let candidates: Vec<String> = summary
+            .staged
+            .iter()
+            .chain(summary.changes.iter())
+            .filter(|e| may_be_mode_only(e))
+            .map(|e| e.path.clone())
+            .collect();
+        if !candidates.is_empty() {
+            let (staged_keep, worktree_keep) = content_changed(repo, &candidates)?;
+            summary
+                .staged
+                .retain(|e| !may_be_mode_only(e) || staged_keep.contains(&e.path));
+            summary
+                .changes
+                .retain(|e| !may_be_mode_only(e) || worktree_keep.contains(&e.path));
         }
     }
 
@@ -616,6 +707,9 @@ pub async fn git_diff(
         let mut diff_opts = DiffOptions::new();
         diff_opts.pathspec(&path);
         diff_opts.context_lines(3);
+        // Same policy as the status list: on Windows a mode difference is an
+        // artifact, not a change, so it must not render as a diff either (#392).
+        diff_opts.ignore_filemode(ignores_filemode());
 
         let diff = if opts.staged {
             let head_tree = match repo.head() {
@@ -916,6 +1010,59 @@ mod tests {
             .args(["commit", "-m", msg])
             .status()
             .unwrap();
+    }
+
+    /// A mode-only change (chmod +x) is what Windows manufactures for every
+    /// 0755 file in a Linux-created repo, and it renders as a change with an
+    /// empty diff (#392). With the filemode-ignoring policy on, it must not
+    /// reach the SCM panel; with it off (the Linux default), a real chmod
+    /// still must.
+    #[cfg(unix)]
+    #[test]
+    fn mode_only_change_is_dropped_only_when_filemode_is_ignored() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = init_repo();
+        write(dir.path(), "script.sh", "#!/bin/sh\necho hi\n");
+        write(dir.path(), "notes.txt", "hello\n");
+        commit_all(dir.path(), "init");
+
+        let script = dir.path().join("script.sh");
+        let mut perms = fs::metadata(&script).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script, perms).unwrap();
+
+        let repo = open_repo(dir.path()).unwrap();
+        // core.filemode is what makes libgit2 compare modes at all.
+        repo.config().unwrap().set_bool("core.filemode", true).unwrap();
+
+        let honoring = collect_status_inner(&repo, false).unwrap();
+        assert!(
+            honoring.changes.iter().any(|e| e.path == "script.sh"),
+            "a real chmod must show as a change when modes are honored: {:?}",
+            honoring.changes
+        );
+
+        let ignoring = collect_status_inner(&repo, true).unwrap();
+        assert!(
+            ignoring.changes.is_empty(),
+            "mode-only change must not surface when modes are ignored: {:?}",
+            ignoring.changes
+        );
+
+        // A genuine content edit still surfaces under the ignoring policy.
+        write(dir.path(), "notes.txt", "hello\nworld\n");
+        let ignoring = collect_status_inner(&repo, true).unwrap();
+        assert!(
+            ignoring.changes.iter().any(|e| e.path == "notes.txt"),
+            "content changes must survive: {:?}",
+            ignoring.changes
+        );
+        assert!(
+            !ignoring.changes.iter().any(|e| e.path == "script.sh"),
+            "mode-only change must stay dropped: {:?}",
+            ignoring.changes
+        );
     }
 
     #[test]

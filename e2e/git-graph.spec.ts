@@ -536,9 +536,11 @@ test.describe("Git graph commit context actions", () => {
     const target = view.locator(".commit-row").filter({ hasText: "Add core module" });
     await target.click({ button: "right" });
     const menu = page.locator('[data-testid="git-graph-menu"]');
-    // The Reset submenu is hover-revealed; open it, then pick Hard.
-    await menu.locator(".has-submenu").hover();
-    await menu.getByText("Hard — discard all changes").click();
+    // Reset suboptions open in a modal (#406); pick Hard there.
+    await menu.getByText("Reset current branch to this Commit…").click();
+    const modal = page.locator('[data-testid="git-graph-action-modal"]');
+    await expect(modal).toBeVisible();
+    await modal.getByText("Hard", { exact: true }).click();
 
     // The mock moves main + HEAD to the target: its chips now decorate it, and
     // the old tip is no longer HEAD.
@@ -559,13 +561,55 @@ test.describe("Git graph commit context actions", () => {
     const target = view.locator(".commit-row").filter({ hasText: "Project scaffolding" });
     await target.click({ button: "right" });
     const menu = page.locator('[data-testid="git-graph-menu"]');
-    await menu.locator(".has-submenu").hover();
-    await menu.getByText("Soft — keep changes & index").click();
+    await menu.getByText("Reset current branch to this Commit…").click();
+    const modal = page.locator('[data-testid="git-graph-action-modal"]');
+    await expect(modal).toBeVisible();
+    await modal.getByText("Soft", { exact: true }).click();
 
     await expect(
       view.locator(".commit-row").filter({ hasText: "Project scaffolding" }),
     ).toHaveClass(/is-head/);
     await expect(view.locator(".commit-row").nth(2)).not.toHaveClass(/is-head/);
+  });
+
+  test("branch badge right-click scopes Delete Branch to that badge; options open in a modal (#405, #406)", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+    const view = page.locator('[data-testid="git-graph-view"]');
+    const menu = page.locator('[data-testid="git-graph-menu"]');
+
+    // Row right-click on the commit where both hotfix and experiment sit —
+    // find a row with a non-active local branch chip.
+    const hotfixChip = view.locator(".ref-branch", { hasText: "hotfix" }).first();
+    const hotfixRow = view
+      .locator(".commit-row")
+      .filter({ has: page.locator(".ref-branch", { hasText: "hotfix" }) })
+      .first();
+    await hotfixRow.click({ button: "right" });
+    await expect(menu).toBeVisible();
+    const rowDeleteItems = await menu.locator(".menu-item", { hasText: "Delete Branch" }).allInnerTexts();
+    await page.keyboard.press("Escape");
+
+    // Badge right-click: only the clicked branch's delete entry shows.
+    await hotfixChip.click({ button: "right" });
+    await expect(menu).toBeVisible();
+    const badgeDeleteItems = await menu.locator(".menu-item", { hasText: "Delete Branch" }).allInnerTexts();
+    expect(badgeDeleteItems).toHaveLength(1);
+    expect(badgeDeleteItems[0]).toContain("hotfix");
+    expect(badgeDeleteItems.length).toBeLessThanOrEqual(rowDeleteItems.length);
+
+    // The delete entry opens a modal with the variants (#406), not a submenu.
+    await menu.getByText("Delete Branch 'hotfix'…").click();
+    const modal = page.locator('[data-testid="git-graph-action-modal"]');
+    await expect(modal).toBeVisible();
+    await expect(modal).toContainText("Delete branch 'hotfix'");
+    await expect(modal).toContainText("Force delete");
+    // Confirm the safe delete: the modal closes and the action reports done
+    // (the mock's git_delete_branch is a no-op, so the chip itself persists).
+    await modal.getByText("Delete", { exact: true }).click();
+    await expect(modal).toHaveCount(0);
+    await expect(page.locator(".toast", { hasText: "Delete branch 'hotfix' done" })).toBeVisible();
   });
 
   test("cherry-pick appends a new top commit with the picked summary", async ({ page }) => {

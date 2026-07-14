@@ -700,10 +700,19 @@
     commit: CommitInfo;
     /** Branch to attach on Checkout, or null → detached checkout of the OID. */
     checkoutBranch: string | null;
+    /** Set when the menu was opened from a specific branch badge (#405):
+     *  branch-scoped entries (Delete Branch) show only this branch. */
+    scopedBranch: string | null;
   }
   let menu = $state<Menu | null>(null);
   // Inline name prompt for Create Branch / Create Tag.
   let prompt = $state<{ kind: "branch" | "tag"; oid: string; value: string } | null>(null);
+  // Suboption dialogs (#406): reset modes and delete-branch variants open as
+  // a modal instead of a cascading submenu.
+  type ActionModal =
+    | { kind: "reset"; oid: string; summary: string }
+    | { kind: "deleteBranch"; name: string; remotes: string[] };
+  let actionModal = $state<ActionModal | null>(null);
 
   function localBranchAt(oid: string): string | null {
     const ref = (refs[oid] ?? []).find((r) => r.kind === "LocalBranch");
@@ -729,7 +738,7 @@
     if (x !== m.x || y !== m.y) menu = { ...m, x, y };
   });
 
-  function openMenu(event: MouseEvent, commit: CommitInfo): void {
+  function openMenu(event: MouseEvent, commit: CommitInfo, scopedBranch: string | null = null): void {
     event.preventDefault();
     prompt = null;
     // clientToFixed: the menu is position:fixed, so cursor coordinates must be
@@ -739,13 +748,28 @@
       x: clientToFixed(event.clientX),
       y: clientToFixed(event.clientY),
       commit,
-      checkoutBranch: localBranchAt(commit.oid),
+      checkoutBranch: scopedBranch ?? localBranchAt(commit.oid),
+      scopedBranch,
     };
   }
 
   function closeMenu(): void {
     menu = null;
     prompt = null;
+  }
+
+  /** Open a suboption modal (#406), closing the context menu behind it. */
+  function openActionModal(modal: ActionModal): void {
+    actionModal = modal;
+    menu = null;
+  }
+
+  /** Run the chosen modal action and dismiss the modal. The action runs
+   *  FIRST: its closure reads the template's {@const modal}, a derived that
+   *  recomputes to null the instant actionModal clears. */
+  function confirmModalAction(fn: () => void): void {
+    fn();
+    actionModal = null;
   }
 
   /** Right-click on the backdrop: open the menu for the commit row under the
@@ -914,6 +938,10 @@
     }
     if (event.key === "Escape" && branchPopoverOpen) {
       branchPopoverOpen = false;
+      return;
+    }
+    if (event.key === "Escape" && actionModal) {
+      actionModal = null;
       return;
     }
     if (event.key === "Escape" && (menu || prompt)) closeMenu();
@@ -1176,7 +1204,12 @@
                 <span class="ref ref-stash">{commit.stash}</span>
               {/if}
               {#each chips.heads as head (head.name)}
-                <span class="ref ref-branch" class:ref-active={head.active}>
+                <!-- svelte-ignore a11y_no_static_element_interactions -- right-click scopes the row context menu to this badge (#405); the row itself stays the keyboard target -->
+                <span
+                  class="ref ref-branch"
+                  class:ref-active={head.active}
+                  oncontextmenu={(e) => { e.stopPropagation(); openMenu(e, commit, head.name); }}
+                >
                   {head.name}
                   {#each head.remotes as remote (remote)}
                     <span class="ref-remote-sub" title="{remote}/{head.name} is at this commit">{remote}</span>
@@ -1296,7 +1329,11 @@
     ></button>
     {@const m = menu}
     {@const menuChips = chipsFor(m.commit.oid)}
-    {@const deletableHeads = menuChips.heads.filter((h) => !h.active)}
+    <!-- Badge-scoped menu (#405): opened from a branch chip, only that
+         branch's delete entry shows; opened from the row, all of them do. -->
+    {@const deletableHeads = menuChips.heads.filter(
+      (h) => !h.active && (m.scopedBranch === null || h.name === m.scopedBranch),
+    )}
     <div
       class="commit-menu"
       data-testid="git-graph-menu"
@@ -1328,41 +1365,24 @@
       <button class="menu-item" role="menuitem" onclick={() => rebase(m.commit.oid)}>
         Rebase current branch on this Commit
       </button>
-      <div class="menu-item has-submenu" role="menuitem" tabindex="-1">
-        <span>Reset current branch to this Commit</span>
-        <span class="submenu-arrow">▸</span>
-        <div class="submenu" role="menu">
-          <button class="menu-item" role="menuitem" onclick={() => reset(m.commit.oid, "soft")}>
-            Soft — keep changes & index
-          </button>
-          <button class="menu-item" role="menuitem" onclick={() => reset(m.commit.oid, "mixed")}>
-            Mixed — keep changes, reset index
-          </button>
-          <button class="menu-item" role="menuitem" onclick={() => reset(m.commit.oid, "hard")}>
-            Hard — discard all changes
-          </button>
-        </div>
-      </div>
+      <!-- Suboptions open a modal, not a cascading submenu (#406). -->
+      <button
+        class="menu-item"
+        role="menuitem"
+        onclick={() => openActionModal({ kind: "reset", oid: m.commit.oid, summary: m.commit.summary })}
+      >
+        Reset current branch to this Commit…
+      </button>
       {#if deletableHeads.length > 0 || menuChips.remotes.length > 0}
         <div class="menu-sep"></div>
         {#each deletableHeads as head (head.name)}
-          <div class="menu-item has-submenu" role="menuitem" tabindex="-1">
-            <span>Delete Branch '{head.name}'</span>
-            <span class="submenu-arrow">▸</span>
-            <div class="submenu" role="menu">
-              <button class="menu-item" role="menuitem" onclick={() => deleteBranch(head.name, false, [])}>
-                Delete — refuse if unmerged
-              </button>
-              <button class="menu-item" role="menuitem" onclick={() => deleteBranch(head.name, true, [])}>
-                Force delete
-              </button>
-              {#if head.remotes.length > 0}
-                <button class="menu-item" role="menuitem" onclick={() => deleteBranch(head.name, false, head.remotes)}>
-                  Delete + remote ({head.remotes.join(", ")})
-                </button>
-              {/if}
-            </div>
-          </div>
+          <button
+            class="menu-item"
+            role="menuitem"
+            onclick={() => openActionModal({ kind: "deleteBranch", name: head.name, remotes: head.remotes })}
+          >
+            Delete Branch '{head.name}'…
+          </button>
         {/each}
         {#each menuChips.remotes as remoteChip (remoteChip)}
           <button class="menu-item" role="menuitem" onclick={() => deleteRemoteChip(remoteChip)}>
@@ -1427,6 +1447,57 @@
         <button class="prompt-btn primary" onclick={confirmPull}>Pull</button>
       </div>
     </div>
+  {/if}
+
+  {#if actionModal}
+    <!-- Suboption modal (#406): reset modes / delete-branch variants. -->
+    <button
+      class="menu-backdrop"
+      aria-label="Cancel"
+      onclick={() => (actionModal = null)}
+      oncontextmenu={(e) => { e.preventDefault(); actionModal = null; }}
+    ></button>
+    {#if actionModal.kind === "reset"}
+      {@const modal = actionModal}
+      <div class="name-prompt action-modal" data-testid="git-graph-action-modal" role="dialog" aria-label="Reset current branch">
+        <span class="prompt-label">Reset current branch to “{modal.summary}”</span>
+        <div class="modal-options">
+          <button class="prompt-btn modal-option" onclick={() => confirmModalAction(() => reset(modal.oid, "soft"))}>
+            <span class="mo-title">Soft</span><span class="mo-desc">keep changes &amp; index</span>
+          </button>
+          <button class="prompt-btn modal-option" onclick={() => confirmModalAction(() => reset(modal.oid, "mixed"))}>
+            <span class="mo-title">Mixed</span><span class="mo-desc">keep changes, reset index</span>
+          </button>
+          <button class="prompt-btn modal-option danger" onclick={() => confirmModalAction(() => reset(modal.oid, "hard"))}>
+            <span class="mo-title">Hard</span><span class="mo-desc">discard all changes</span>
+          </button>
+        </div>
+        <div class="prompt-actions">
+          <button class="prompt-btn" onclick={() => (actionModal = null)}>Cancel</button>
+        </div>
+      </div>
+    {:else}
+      {@const modal = actionModal}
+      <div class="name-prompt action-modal" data-testid="git-graph-action-modal" role="dialog" aria-label="Delete branch">
+        <span class="prompt-label">Delete branch '{modal.name}'</span>
+        <div class="modal-options">
+          <button class="prompt-btn modal-option" onclick={() => confirmModalAction(() => deleteBranch(modal.name, false, []))}>
+            <span class="mo-title">Delete</span><span class="mo-desc">refuse if unmerged</span>
+          </button>
+          <button class="prompt-btn modal-option danger" onclick={() => confirmModalAction(() => deleteBranch(modal.name, true, []))}>
+            <span class="mo-title">Force delete</span><span class="mo-desc">even if unmerged</span>
+          </button>
+          {#if modal.remotes.length > 0}
+            <button class="prompt-btn modal-option danger" onclick={() => confirmModalAction(() => deleteBranch(modal.name, false, modal.remotes))}>
+              <span class="mo-title">Delete + remote</span><span class="mo-desc">{modal.remotes.join(", ")}</span>
+            </button>
+          {/if}
+        </div>
+        <div class="prompt-actions">
+          <button class="prompt-btn" onclick={() => (actionModal = null)}>Cancel</button>
+        </div>
+      </div>
+    {/if}
   {/if}
 </div>
 
@@ -2079,34 +2150,34 @@
     color: var(--accent);
   }
 
-  .has-submenu {
-    position: relative;
-    justify-content: space-between;
-    cursor: default;
-  }
-
-  .submenu-arrow {
-    color: var(--text-tertiary);
-    font-size: 10px;
-  }
-
-  .submenu {
-    position: absolute;
-    left: 100%;
-    top: -4px;
-    min-width: 220px;
-    padding: 4px;
-    background: linear-gradient(var(--background-card, #1e1e1e), var(--background-card, #1e1e1e)), var(--background-solid, #1e1e1e);
-    border: 1px solid var(--divider);
-    border-radius: 8px;
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
-    display: none;
-    flex-direction: column;
-  }
-
-  .has-submenu:hover .submenu,
-  .has-submenu:focus-within .submenu {
+  /* Suboption modal (#406): stacked option buttons inside the name-prompt
+     dialog shell. */
+  .modal-options {
     display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 8px 0;
+  }
+
+  .modal-option {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    text-align: left;
+    justify-content: flex-start;
+  }
+
+  .modal-option.danger .mo-title {
+    color: var(--error, #e5534b);
+  }
+
+  .mo-title {
+    font-weight: 600;
+  }
+
+  .mo-desc {
+    font-size: 11px;
+    color: var(--text-tertiary);
   }
 
   /* ----- Name prompt popover (create branch / tag) ----- */

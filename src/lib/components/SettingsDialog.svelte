@@ -6,7 +6,8 @@
   import { settingsStore, type IconTheme, type ThumbnailSize, type WindowsBackdrop, type PaneLayoutMode } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import { isMac, isWindows } from "$lib/domain/platform";
-  import { TERMINAL_LINE_ACTIONS } from "$lib/domain/terminal-keys";
+  import { TERMINAL_LINE_ACTIONS, defaultTerminalShortcuts } from "$lib/domain/terminal-keys";
+  import { eventToShortcutString, formatShortcut } from "$lib/domain/keybinding-parser";
   import { listInstalledTerminals } from "$lib/api/open";
   import { warmPoolShutdown } from "$lib/api/warm-pool";
   import { spawnWarmWindow } from "$lib/state/warm-window";
@@ -44,6 +45,54 @@
 
   let searchQuery = $state("");
   let searchInputRef = $state<HTMLInputElement | null>(null);
+
+  // ── Terminal shortcut recorder (#404): press keys instead of typing text ──
+  let recordingActionId = $state<string | null>(null);
+  const terminalDefaults = defaultTerminalShortcuts(isMac);
+
+  /** The binding shown for an action: user override wins; "" = disabled. */
+  function terminalBinding(actionId: string): { binding: string; isDefault: boolean } {
+    const user = settingsStore.terminalShortcuts[actionId];
+    if (user !== undefined) return { binding: user, isDefault: false };
+    return { binding: terminalDefaults[actionId] ?? "", isDefault: true };
+  }
+
+  function handleShortcutRecordKeydown(event: KeyboardEvent): void {
+    if (!recordingActionId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    if (event.key === "Escape") {
+      recordingActionId = null;
+      return;
+    }
+    // Backspace/Delete alone clears the binding (disables the action).
+    if ((event.key === "Backspace" || event.key === "Delete") && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey) {
+      settingsStore.setTerminalShortcut(recordingActionId, "");
+      recordingActionId = null;
+      return;
+    }
+    const shortcut = eventToShortcutString(event);
+    if (!shortcut) return; // modifier-only press — keep recording
+    settingsStore.setTerminalShortcut(recordingActionId, shortcut);
+    recordingActionId = null;
+  }
+
+  // Capture-phase while recording so app shortcuts can't steal the press;
+  // recording also ends when the dialog closes or the window blurs.
+  $effect(() => {
+    if (!recordingActionId) return;
+    const cancel = () => (recordingActionId = null);
+    window.addEventListener("keydown", handleShortcutRecordKeydown, true);
+    window.addEventListener("blur", cancel);
+    return () => {
+      window.removeEventListener("keydown", handleShortcutRecordKeydown, true);
+      window.removeEventListener("blur", cancel);
+    };
+  });
+  $effect(() => {
+    if (!open) recordingActionId = null;
+  });
 
   // Focus the search field whenever the dialog opens so the user can filter
   // settings by typing immediately. tick() waits for the Modal to mount the
@@ -791,21 +840,38 @@
             <div class="setting-info">
               <span class="setting-label">Line-Editing Shortcuts</span>
               <span class="setting-description">
-                Bind keys (e.g. "Home", "Alt+Backspace", "Ctrl+U") to shell
-                line-editing actions. Empty = key keeps its native behavior.
+                Click a binding, then press the keys. Backspace clears
+                (the key keeps its native behavior); Esc cancels.
               </span>
               <div class="terminal-shortcut-list">
                 {#each TERMINAL_LINE_ACTIONS as action (action.id)}
-                  <label class="terminal-shortcut-row">
+                  {@const tb = terminalBinding(action.id)}
+                  <div class="terminal-shortcut-row">
                     <span class="ts-label">{action.label}</span>
-                    <input
-                      class="ts-input"
-                      type="text"
-                      placeholder="unbound"
-                      value={settingsStore.terminalShortcuts[action.id] ?? ""}
-                      onchange={(e) => settingsStore.setTerminalShortcut(action.id, e.currentTarget.value)}
-                    />
-                  </label>
+                    <button
+                      class="ts-record"
+                      class:recording={recordingActionId === action.id}
+                      class:unbound={!tb.binding && recordingActionId !== action.id}
+                      onclick={() => (recordingActionId = recordingActionId === action.id ? null : action.id)}
+                      title="Click, then press the new key combo"
+                    >
+                      {#if recordingActionId === action.id}
+                        Press keys…
+                      {:else if tb.binding}
+                        {formatShortcut(tb.binding)}{tb.isDefault ? " (default)" : ""}
+                      {:else}
+                        unbound
+                      {/if}
+                    </button>
+                    {#if !tb.isDefault}
+                      <button
+                        class="ts-reset"
+                        title={terminalDefaults[action.id] ? "Reset to default" : "Remove binding"}
+                        aria-label="Reset binding"
+                        onclick={() => settingsStore.setTerminalShortcut(action.id, null)}
+                      >↺</button>
+                    {/if}
+                  </div>
                 {/each}
               </div>
             </div>
@@ -1047,8 +1113,8 @@
     color: var(--text-secondary);
   }
 
-  .ts-input {
-    width: 140px;
+  .ts-record {
+    width: 160px;
     padding: 3px 8px;
     border: 1px solid var(--control-stroke);
     border-radius: var(--radius-sm);
@@ -1056,6 +1122,36 @@
     color: var(--text-primary);
     font-size: 12px;
     font-family: var(--font-mono, monospace);
+    cursor: pointer;
+    text-align: center;
+  }
+
+  .ts-record:hover {
+    background: var(--control-fill-secondary, var(--subtle-fill-secondary));
+  }
+
+  .ts-record.recording {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .ts-record.unbound {
+    color: var(--text-tertiary);
+  }
+
+  .ts-reset {
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 2px 4px;
+    border-radius: var(--radius-sm);
+  }
+
+  .ts-reset:hover {
+    background: var(--subtle-fill-secondary);
+    color: var(--text-primary);
   }
 
   .section-title {

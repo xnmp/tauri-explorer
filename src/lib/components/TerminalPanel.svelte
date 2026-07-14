@@ -27,7 +27,7 @@
   import { defaultShellProfile, fromShellCwd, type ShellProfile } from "$lib/domain/terminal-shell";
   import { decideCdSync, createInjectedCdTracker } from "$lib/domain/terminal-cwd-sync";
   import { isWindows, isMac } from "$lib/domain/platform";
-  import { isShellReservedKey, isHardcodedAppShortcut, resolveTerminalShortcut } from "$lib/domain/terminal-keys";
+  import { isShellReservedKey, isHardcodedAppShortcut, resolveTerminalShortcut, effectiveTerminalShortcuts } from "$lib/domain/terminal-keys";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
@@ -313,10 +313,13 @@
         event.preventDefault();
         return false;
       }
-      // User-configured line-editing shortcuts (#375): inject the mapped
-      // readline control byte. Default map is empty, so nothing changes
-      // unless the user binds an action in Settings → Terminal.
-      const sequence = resolveTerminalShortcut(event, settingsStore.terminalShortcuts);
+      // Line-editing shortcuts (#375, #404): inject the mapped readline
+      // control byte. Platform defaults (mac Home/End/word-nav) overlaid
+      // with the user's bindings from Settings → Terminal.
+      const sequence = resolveTerminalShortcut(
+        event,
+        effectiveTerminalShortcuts(settingsStore.terminalShortcuts, isMac),
+      );
       if (sequence !== null) {
         if (terminalId !== null) terminalWrite(terminalId, sequence);
         event.preventDefault();

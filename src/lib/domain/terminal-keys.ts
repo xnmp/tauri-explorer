@@ -82,6 +82,8 @@ export interface TerminalLineAction {
 export const TERMINAL_LINE_ACTIONS: readonly TerminalLineAction[] = [
   { id: "beginningOfLine", label: "Beginning of line", sequence: "\x01" }, // C-a
   { id: "endOfLine", label: "End of line", sequence: "\x05" }, // C-e
+  { id: "wordLeft", label: "Move word left", sequence: "\x1bb" }, // M-b
+  { id: "wordRight", label: "Move word right", sequence: "\x1bf" }, // M-f
   { id: "deleteWordBackward", label: "Delete word backward", sequence: "\x17" }, // C-w
   { id: "killLineBackward", label: "Delete to line start", sequence: "\x15" }, // C-u
   { id: "killLineForward", label: "Delete to line end", sequence: "\x0b" }, // C-k
@@ -89,11 +91,37 @@ export const TERMINAL_LINE_ACTIONS: readonly TerminalLineAction[] = [
 ] as const;
 
 /**
- * Resolve a keydown against the user's terminal shortcut map
+ * Platform default bindings (#404). Off-mac the map is empty — every key
+ * keeps its native terminal behavior (full-screen apps like vim depend on
+ * it). On mac, Home/End and Option+arrows do nothing useful at a zsh prompt
+ * out of the box (zsh doesn't bind their escape sequences), so they default
+ * to the matching readline motions — each can be cleared in Settings
+ * (empty binding = native behavior) if a full-screen app needs the raw key.
+ */
+export function defaultTerminalShortcuts(isMac: boolean): Record<string, string> {
+  if (!isMac) return {};
+  return {
+    beginningOfLine: "Home",
+    endOfLine: "End",
+    wordLeft: "Alt+Left",
+    wordRight: "Alt+Right",
+  };
+}
+
+/** The map `resolveTerminalShortcut` should see: platform defaults overlaid
+ *  with the user's bindings (a user's empty string disables a default). */
+export function effectiveTerminalShortcuts(
+  user: Record<string, string>,
+  isMac: boolean,
+): Record<string, string> {
+  return { ...defaultTerminalShortcuts(isMac), ...user };
+}
+
+/**
+ * Resolve a keydown against a terminal shortcut map
  * (action id → binding string like "Alt+Backspace"); returns the control
  * sequence to inject, or null when nothing matches. Unset/empty bindings
- * are disabled — the default map is empty so out of the box every key keeps
- * its native terminal behavior (full-screen apps like vim depend on it).
+ * are disabled.
  */
 export function resolveTerminalShortcut(
   event: KeyboardEvent,

@@ -3,6 +3,8 @@ import {
   isShellReservedKey,
   isHardcodedAppShortcut,
   resolveTerminalShortcut,
+  defaultTerminalShortcuts,
+  effectiveTerminalShortcuts,
   TERMINAL_LINE_ACTIONS,
 } from "$lib/domain/terminal-keys";
 
@@ -114,5 +116,38 @@ describe("resolveTerminalShortcut (#375)", () => {
     expect(ids).toContain("endOfLine");
     expect(ids).toContain("deleteWordBackward");
     expect(ids).toContain("killLineBackward");
+    expect(ids).toContain("wordLeft");
+    expect(ids).toContain("wordRight");
+  });
+});
+
+describe("platform default shortcuts (#404)", () => {
+  const kev = (k: string, mods: Partial<KeyboardEvent> = {}) =>
+    ({ key: k, ctrlKey: false, altKey: false, metaKey: false, shiftKey: false, ...mods }) as KeyboardEvent;
+
+  it("is empty off-mac — every key keeps native behavior", () => {
+    expect(defaultTerminalShortcuts(false)).toEqual({});
+    expect(resolveTerminalShortcut(kev("Home"), effectiveTerminalShortcuts({}, false))).toBeNull();
+  });
+
+  it("mac defaults: Home/End move to line start/end, Option+arrows move by word", () => {
+    const map = effectiveTerminalShortcuts({}, true);
+    expect(resolveTerminalShortcut(kev("Home"), map)).toBe("\x01");
+    expect(resolveTerminalShortcut(kev("End"), map)).toBe("\x05");
+    expect(resolveTerminalShortcut(kev("ArrowLeft", { altKey: true }), map)).toBe("\x1bb");
+    expect(resolveTerminalShortcut(kev("ArrowRight", { altKey: true }), map)).toBe("\x1bf");
+  });
+
+  it("a user's empty binding disables a mac default (native key restored)", () => {
+    const map = effectiveTerminalShortcuts({ beginningOfLine: "" }, true);
+    expect(resolveTerminalShortcut(kev("Home"), map)).toBeNull();
+    // Other defaults unaffected.
+    expect(resolveTerminalShortcut(kev("End"), map)).toBe("\x05");
+  });
+
+  it("a user override replaces the default binding", () => {
+    const map = effectiveTerminalShortcuts({ wordLeft: "Ctrl+Left" }, true);
+    expect(resolveTerminalShortcut(kev("ArrowLeft", { altKey: true }), map)).toBeNull();
+    expect(resolveTerminalShortcut(kev("ArrowLeft", { ctrlKey: true }), map)).toBe("\x1bb");
   });
 });

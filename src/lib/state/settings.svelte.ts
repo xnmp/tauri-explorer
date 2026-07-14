@@ -478,11 +478,13 @@ function createSettingsStore() {
     setTerminalPanelHeight(px: number): void {
       update({ terminalPanelHeight: Math.max(96, Math.min(800, Math.round(px))) });
     },
-    /** Bind (or clear, with "") a terminal line-editing action (#375). */
-    setTerminalShortcut(actionId: string, binding: string): void {
+    /** Bind a terminal line-editing action (#375, #404). An empty string is
+     *  STORED — it disables the action, masking any platform default; `null`
+     *  removes the user entry so the platform default applies again. */
+    setTerminalShortcut(actionId: string, binding: string | null): void {
       const next = { ...settings.terminalShortcuts };
-      if (binding.trim()) next[actionId] = binding.trim();
-      else delete next[actionId];
+      if (binding === null) delete next[actionId];
+      else next[actionId] = binding.trim();
       update({ terminalShortcuts: next });
     },
     setViewMode(mode: ViewMode): void {

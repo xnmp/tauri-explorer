@@ -403,7 +403,7 @@ fn normalize_rel_separators(p: String) -> String {
 
 /// Collect file/directory entries under `root_path` (both passes).
 /// Capped at `WALK_SAFETY_CAP` to bound memory for the non-streaming path.
-fn walk_entries(root_path: &PathBuf) -> Vec<Walked> {
+fn walk_entries(root_path: &Path) -> Vec<Walked> {
     let mut entries: Vec<Walked> = Vec::new();
     walk_passes(root_path, &|| false, WALK_SAFETY_CAP, &mut |w| {
         entries.push(w)

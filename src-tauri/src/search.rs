@@ -577,8 +577,13 @@ fn score_entry(
     let score = base_score
         .saturating_add(depth_bonus)
         .saturating_add(dir_bonus);
-    // A build artifact never outranks the source file it shadows (#393).
-    Some(if *deferred {
+    // A build artifact never outranks the source file it shadows (#393) —
+    // but an exact name match is what the user asked for, not fuzzy noise:
+    // penalizing it buried `target/release/bundle/deb` under 20 unrelated
+    // `debug*` subsequence matches (#427). Exact-vs-exact same-name pairs
+    // still resolve in the source file's favor via the depth bonus.
+    let exact = name.to_lowercase() == query_lower;
+    Some(if *deferred && !exact {
         score.saturating_sub(DEFERRED_PENALTY)
     } else {
         score
@@ -983,7 +988,10 @@ mod tests {
     fn wsl_find_argv_uses_exec_not_dash_dash() {
         let argv = wsl_find_argv("Ubuntu");
         assert_eq!(argv, ["-d", "Ubuntu", "--exec", "find"]);
-        assert!(argv.iter().any(|a| a == "--exec"), "must use --exec: {argv:?}");
+        assert!(
+            argv.iter().any(|a| a == "--exec"),
+            "must use --exec: {argv:?}"
+        );
         assert!(
             !argv.iter().any(|a| a == "--"),
             "bare -- routes through the login shell: {argv:?}"
@@ -1445,6 +1453,35 @@ mod tests {
         assert!(
             result.results.iter().any(|r| r.name == "lodash"),
             "node_modules contents must be reachable too, got: {:?}",
+            fmt_results(&result.results)
+        );
+    }
+
+    /// The #427 burial: an exact-name match inside a build-output tree must
+    /// survive a repo full of fuzzy competitors. In the real repo, querying
+    /// "deb" produced 20+ shallow `debug*` subsequence matches whose
+    /// unpenalized scores pushed the exact `target/release/bundle/deb` hit
+    /// out of the top-20 emission entirely.
+    #[test]
+    fn test_exact_name_match_in_build_output_survives_fuzzy_crowd() {
+        let dir = tempdir().unwrap();
+        let root = visible_root(&dir);
+        fs::create_dir_all(root.join("src-tauri/target/release/bundle/deb")).unwrap();
+        File::create(root.join("src-tauri/target/release/bundle/deb/pkg.deb")).unwrap();
+        // 26 shallow fuzzy competitors, mirroring screenshots/branch dirs
+        // named debug-something in the real repo.
+        for c in b'a'..=b'z' {
+            File::create(root.join(format!("debug-{}.md", c as char))).unwrap();
+        }
+
+        let result = fuzzy_search_sync("deb".into(), root.to_string_lossy().into(), 20).unwrap();
+        let deb = result
+            .results
+            .iter()
+            .find(|r| r.name == "deb" && r.kind == "directory");
+        assert!(
+            deb.is_some(),
+            "exact-name deb under target/ must stay in the top results, got: {:?}",
             fmt_results(&result.results)
         );
     }

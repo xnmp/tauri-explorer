@@ -151,13 +151,42 @@ fn stream_find(
 ) -> bool {
     use crate::process_ext::NoConsole;
     use std::io::BufRead;
+    // stderr is piped (was null) purely so a non-zero exit can be explained in
+    // the log; it is drained on a helper thread to avoid a pipe-full deadlock.
     cmd.stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .stdin(std::process::Stdio::null())
         .no_console();
-    let Ok(mut child) = cmd.spawn() else {
-        return false;
+    // Grep-able record of the exact command line being spawned.
+    let cmd_desc = {
+        let prog = cmd.get_program().to_string_lossy().to_string();
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        format!("{prog} {}", args.join(" "))
     };
+    log::info!("quickfind: stream_find spawn: {cmd_desc}");
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            log::warn!("quickfind: stream_find spawn FAILED: {cmd_desc}: {e}");
+            return false;
+        }
+    };
+    // Drain stderr on a helper thread so a chatty `find` (permission-denied
+    // spam) can never block the stdout reader.
+    let stderr_handle = child.stderr.take().map(|mut err| {
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let mut raw = Vec::new();
+            let _ = err.read_to_end(&mut raw);
+            raw.truncate(1024); // cap logged stderr at ~1KB
+            String::from_utf8_lossy(&raw).to_string()
+        })
+    });
+    let mut parsed = 0usize;
+    let mut unparsed = 0usize;
     if let Some(out) = child.stdout.take() {
         for line in std::io::BufReader::new(out).lines() {
             if stop() {
@@ -166,11 +195,30 @@ fn stream_find(
             }
             let Ok(line) = line else { break };
             if let Some((is_dir, rel)) = parse_find_line(&line) {
+                parsed += 1;
                 on_line(is_dir, rel);
+            } else {
+                unparsed += 1;
             }
         }
     }
-    let _ = child.wait();
+    let status = child.wait();
+    let stderr_buf = stderr_handle
+        .and_then(|h| h.join().ok())
+        .unwrap_or_default();
+    match status {
+        Ok(st) => {
+            log::info!(
+                "quickfind: stream_find done: parsed={parsed} unparsed={unparsed} status={st}"
+            );
+            if !st.success() && !stderr_buf.trim().is_empty() {
+                log::warn!("quickfind: stream_find stderr: {}", stderr_buf.trim_end());
+            }
+        }
+        Err(e) => log::warn!(
+            "quickfind: stream_find wait FAILED: parsed={parsed} unparsed={unparsed}: {e}"
+        ),
+    }
     true
 }
 
@@ -184,6 +232,7 @@ fn find_walk_passes(
     on_entry: &mut dyn FnMut(Walked),
 ) -> bool {
     let mut deferred_roots: Vec<String> = Vec::new();
+    let mut fast_count = 0usize;
     let ok = stream_find(
         {
             let mut c = make_cmd();
@@ -192,6 +241,7 @@ fn find_walk_passes(
         },
         stop,
         &mut |is_dir, rel| {
+            fast_count += 1;
             let name = rel.rsplit('/').next().unwrap_or(rel).to_string();
             if is_dir && is_deferred(&name) {
                 deferred_roots.push(rel.to_string());
@@ -205,15 +255,27 @@ fn find_walk_passes(
         },
     );
     if !ok {
+        log::warn!("quickfind: find_walk_passes fast pass could not run; falling back to jwalk");
         return false;
     }
+    log::info!(
+        "quickfind: find_walk_passes fast pass emitted {fast_count} entries; deferred_roots={deferred_roots:?}"
+    );
     // Cell: the stop closure reads the counter while the line callback
     // increments it — a plain usize would be a simultaneous & / &mut borrow.
     let scanned = std::cell::Cell::new(0usize);
-    for root_rel in deferred_roots {
+    let total_roots = deferred_roots.len();
+    for (i, root_rel) in deferred_roots.iter().enumerate() {
         if stop() || scanned.get() >= DEFERRED_SCAN_CAP {
+            log::warn!(
+                "quickfind: find_walk_passes deferred cap/stop hit after {} entries; {} of {total_roots} roots left unwalked: {:?}",
+                scanned.get(),
+                total_roots - i,
+                &deferred_roots[i..]
+            );
             break;
         }
+        let before = scanned.get();
         let abs = format!("{}/{}", linux_path.trim_end_matches('/'), root_rel);
         stream_find(
             {
@@ -233,6 +295,11 @@ fn find_walk_passes(
                 });
             },
         );
+        log::info!(
+            "quickfind: find_walk_passes deferred root {root_rel:?} scanned {} entries (running total {})",
+            scanned.get() - before,
+            scanned.get()
+        );
     }
     true
 }
@@ -250,14 +317,33 @@ fn walk_passes(
     // WSL UNC roots delegate to the distro's native find (#414); on any
     // failure (wsl.exe missing, no find) fall through to the jwalk passes.
     #[cfg(windows)]
-    if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc(&root.to_string_lossy()) {
-        let make_cmd = move || {
-            let mut c = std::process::Command::new("wsl.exe");
-            c.args(["-d", &distro, "--", "find"]);
-            c
-        };
-        if find_walk_passes(&make_cmd, &linux_path, stop, on_entry) {
-            return;
+    {
+        let root_str = root.to_string_lossy();
+        match crate::wsl::parse_wsl_unc(&root_str) {
+            Some((distro, linux_path)) => {
+                log::info!(
+                    "quickfind: WSL UNC matched root={root_str:?} distro={distro:?} linux_path={linux_path:?}"
+                );
+                let make_cmd = move || {
+                    let mut c = std::process::Command::new("wsl.exe");
+                    c.args(["-d", &distro, "--", "find"]);
+                    c
+                };
+                if find_walk_passes(&make_cmd, &linux_path, stop, on_entry) {
+                    log::info!("quickfind: WSL find delegation completed for {linux_path:?}");
+                    return;
+                }
+                log::warn!(
+                    "quickfind: WSL find delegation returned false for {linux_path:?}; falling back to jwalk"
+                );
+            }
+            None => {
+                if root_str.starts_with('\\') {
+                    log::info!(
+                        "quickfind: UNC-like root {root_str:?} did NOT match parse_wsl_unc; using jwalk"
+                    );
+                }
+            }
         }
     }
     let deferred_roots = Arc::new(Mutex::new(Vec::<PathBuf>::new()));
@@ -303,14 +389,17 @@ fn walk_passes(
         });
     };
 
+    let mut fast_count = 0usize;
     for entry in fast.into_iter().take(fast_cap) {
         if stop() {
             return;
         }
         if let Ok(e) = entry {
             emit(e, false);
+            fast_count += 1;
         }
     }
+    log::info!("quickfind: jwalk fast pass processed {fast_count} entries");
 
     // Pass two: the build-output trees, deprioritized and capped.
     let roots = match deferred_roots.lock() {
@@ -318,11 +407,17 @@ fn walk_passes(
         Err(_) => return,
     };
     let mut scanned = 0usize;
-    for deferred_root in roots {
+    let roots_len = roots.len();
+    for (i, deferred_root) in roots.iter().enumerate() {
         if stop() || scanned >= DEFERRED_SCAN_CAP {
+            log::warn!(
+                "quickfind: jwalk deferred cap/stop hit after {scanned} entries; {} of {roots_len} roots left unwalked",
+                roots_len - i
+            );
             return;
         }
-        let walker = WalkDir::new(&deferred_root)
+        let before = scanned;
+        let walker = WalkDir::new(deferred_root)
             .skip_hidden(true)
             .process_read_dir(|_depth, _path, _state, children| {
                 for e in children.iter_mut().flatten() {
@@ -333,6 +428,9 @@ fn walk_passes(
             });
         for entry in walker {
             if stop() || scanned >= DEFERRED_SCAN_CAP {
+                log::warn!(
+                    "quickfind: jwalk deferred cap/stop hit mid-root {deferred_root:?} after {scanned} entries"
+                );
                 return;
             }
             scanned += 1;
@@ -346,6 +444,10 @@ fn walk_passes(
                 emit(e, true);
             }
         }
+        log::info!(
+            "quickfind: jwalk deferred root {deferred_root:?} scanned {} entries (running total {scanned})",
+            scanned - before
+        );
     }
 }
 
@@ -569,6 +671,7 @@ pub async fn start_streaming_search(
         query,
         root
     );
+    log::info!("quickfind: start_streaming_search query={query:?} root={root:?}");
     let (search_id, cancelled) = SEARCHES.start();
 
     let boost_path = boost_prefix.map(PathBuf::from);

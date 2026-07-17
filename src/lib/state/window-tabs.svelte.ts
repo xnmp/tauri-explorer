@@ -50,6 +50,7 @@ import {
   type RestoreResult,
 } from "./window-tabs-persistence";
 import { createClosedTabsStore } from "./closed-tabs";
+import { disposeScmStore } from "./scm.svelte";
 
 // Re-export persistence & migration helpers so existing importers of this
 // module keep working after the extraction (refactor/audit-tier4-splits #212).
@@ -136,8 +137,11 @@ function createWindowTabsManager() {
 
   // Pick up snapshots written by other windows when this window regains
   // focus (instead of re-reading localStorage from the canRestoreTab getter).
+  // Named (not inline) so dispose() can remove it — an inline arrow is
+  // unremovable and leaks the whole manager closure per factory call (#439).
+  const onWindowFocus = () => closedTabs.refresh();
   if (typeof window !== "undefined") {
-    window.addEventListener("focus", () => closedTabs.refresh());
+    window.addEventListener("focus", onWindowFocus);
   }
 
   const activeTab = $derived(tabs.find((t) => t.id === activeTabId) ?? null);
@@ -543,9 +547,10 @@ function createWindowTabsManager() {
 
   function destroyTabExplorers(tab: WindowTab): void {
     if (tab.kind !== "explorer") return;
-    for (const pane of Object.values(tab.panes)) {
+    for (const [paneId, pane] of Object.entries(tab.panes)) {
       explorers.get(pane.explorerId)?.destroy();
       explorers.delete(pane.explorerId);
+      disposeScmStore(paneId);
     }
   }
 
@@ -862,6 +867,7 @@ function createWindowTabsManager() {
 
     explorers.get(pane.explorerId)?.destroy();
     explorers.delete(pane.explorerId);
+    disposeScmStore(target);
 
     const remaining = leafIds(newLayout);
     const oldOrder = leafIds(tab.layout);
@@ -902,6 +908,7 @@ function createWindowTabsManager() {
         const pane = tab.panes[paneId];
         explorers.get(pane.explorerId)?.destroy();
         explorers.delete(pane.explorerId);
+        disposeScmStore(paneId);
       }
       updateActiveExplorerTab((t) => ({
         ...t,
@@ -1035,6 +1042,16 @@ function createWindowTabsManager() {
     save: saveState,
     captureState,
     restoreFromState,
+
+    /** Tear down this manager: remove the window focus listener and destroy
+     *  all explorers. The app singleton lives for the whole session, but the
+     *  factory is used in tests where undisposed managers would leak (#439). */
+    dispose() {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("focus", onWindowFocus);
+      }
+      destroyAllExplorers();
+    },
   };
 }
 

@@ -3,7 +3,7 @@
   Shown when the user clicks the breadcrumbs container to type a path.
 -->
 <script lang="ts">
-  import { tick } from "svelte";
+  import { tick, onDestroy } from "svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { expandTilde as expandTildePath, normalizePathInput } from "$lib/domain/path";
   import { parsePathInput, filterDirectorySuggestions } from "$lib/domain/autocomplete";
@@ -27,6 +27,10 @@
   let showSuggestions = $state(false);
   let fetchGeneration = 0;
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+  // Cancel a pending debounce if the component is destroyed (cancel/blur/Escape)
+  // before it fires — otherwise it issues a stray directory fetch post-unmount (#439).
+  onDestroy(() => clearTimeout(debounceTimer));
 
   // Auto-select the input on mount
   $effect(() => {

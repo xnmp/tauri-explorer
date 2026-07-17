@@ -4,6 +4,10 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## 2026-07-17 fix/quickfind-wsl-deep-folders: `wsl.exe -- cmd` runs through the distro user's login shell
+- **`wsl.exe -d <distro> -- find ...` joins the argv into a login-shell command line**, so an interactive shell like zsh interprets `find`'s metacharacters (`(`, `)`, `-name .*` → "unknown file attribute", exit 1, zero output) and the delegation silently produced nothing — Quick Open fell back to jwalk over 9P and deep entries never surfaced. Use `wsl.exe --exec` for literal argv with no shell. Also treat non-zero-exit-with-zero-output as delegation failure and log the child's stderr — the original bug was invisible because stderr was piped to null.
+- Verifying "the fix works" at the function level is not the same as the user running it: the fix sat unmerged on its branch while the installed v1.4.2 binary still had the old code path, so it "didn't work" for reasons that had nothing to do with the code. Check what build the reporter is actually running before re-debugging a fixed bug.
+
 ## 2026-07-14 fix/windows-scm-diff-preview-pane: per-pane stores need a story for pane-less surfaces
 - **Keying stores by pane context breaks silently for components that live OUTSIDE any pane.** The sidebar SCM view has no pane context so it wrote diffs to the "default" store, while the preview pane read the ACTIVE pane's store — sidebar clicks showed nothing, and the per-pane panel working masked it. When a reader and writer must rendezvous through a keyed store, either share the key derivation or have the reader scan the candidate stores.
 

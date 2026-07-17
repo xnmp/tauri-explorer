@@ -158,15 +158,7 @@ fn enumerate_drives() -> Vec<Drive> {
             continue;
         }
 
-        // Classify by Win32 DriveType (2=removable, 4=network), falling back to
-        // C:=fixed / everything-else=unknown when the type is unavailable.
-        let kind = match vol.drive_type {
-            2 => DriveKind::Removable,
-            3 => DriveKind::Fixed,
-            4 => DriveKind::Network,
-            _ if letter == 'C' => DriveKind::Fixed,
-            _ => DriveKind::Unknown,
-        };
+        let kind = classify_windows_drive(vol.drive_type, &vol.bus_type, letter);
 
         // Prefer the volume label, keep the letter as the dimmed detail.
         let (name, detail) = match volume_label {
@@ -193,6 +185,33 @@ fn is_google_drive_label(label: &str) -> bool {
     label.to_lowercase().contains("google drive")
 }
 
+/// External USB hard drives report `DriveType == 3` (fixed) even though they are
+/// ejectable removable media — only flash/SD media report `DriveType == 2`.
+/// The backing disk's bus type is what distinguishes them.
+#[cfg(target_os = "windows")]
+fn is_usb_bus(bus_type: &str) -> bool {
+    bus_type.eq_ignore_ascii_case("USB")
+}
+
+/// Map a Win32 `DriveType` (plus the backing disk's bus type) to a `DriveKind`.
+///
+/// USB hard drives enumerate as `DriveType == 3` (local disk), identical to the
+/// internal system disk, so classifying by `DriveType` alone files an external
+/// USB HDD (e.g. a TOURO) under Fixed. Promote USB-backed fixed disks to
+/// Removable. Falls back to C:=fixed / everything-else=unknown when the type is
+/// unavailable.
+#[cfg(target_os = "windows")]
+fn classify_windows_drive(drive_type: u32, bus_type: &str, letter: char) -> DriveKind {
+    match drive_type {
+        2 => DriveKind::Removable,
+        3 if is_usb_bus(bus_type) => DriveKind::Removable,
+        3 => DriveKind::Fixed,
+        4 => DriveKind::Network,
+        _ if letter == 'C' => DriveKind::Fixed,
+        _ => DriveKind::Unknown,
+    }
+}
+
 /// Per-drive volume metadata read from `Win32_LogicalDisk`.
 #[cfg(target_os = "windows")]
 #[derive(Default, Clone)]
@@ -204,6 +223,11 @@ struct WindowsVolInfo {
     provider: String,
     /// Win32 DriveType: 2=removable, 3=local disk, 4=network, 6=RAM.
     drive_type: u32,
+    /// Physical bus the backing disk sits on ("USB", "SATA", "NVMe", …). Empty
+    /// when unknown or for virtual/network volumes with no backing partition.
+    /// Used to promote USB hard drives (which report `DriveType == 3`) to
+    /// Removable.
+    bus_type: String,
 }
 
 /// Read drive-letter → volume metadata via PowerShell `Win32_LogicalDisk`.
@@ -222,9 +246,16 @@ fn windows_volume_info() -> std::collections::HashMap<char, WindowsVolInfo> {
 
     let mut map = HashMap::new();
 
-    // `|` separator avoids the comma-in-label ambiguity of CSV.
-    let script = "Get-CimInstance Win32_LogicalDisk | ForEach-Object { \
-         \"$($_.DeviceID)|$($_.VolumeName)|$($_.ProviderName)|$($_.DriveType)\" }";
+    // Build a drive-letter → bus-type map from the Storage cmdlets (Get-Partition
+    // / Get-Disk) so external USB hard drives — which report DriveType 3 (fixed)
+    // — can be told apart from internal disks. Virtual/network volumes have no
+    // backing partition and simply get an empty bus type. `|` separator avoids
+    // the comma-in-label ambiguity of CSV.
+    let script = "$bus = @{}; \
+         Get-Partition | Where-Object DriveLetter | ForEach-Object { \
+             try { $bus[\"$($_.DriveLetter):\"] = (Get-Disk -Number $_.DiskNumber).BusType } catch {} }; \
+         Get-CimInstance Win32_LogicalDisk | ForEach-Object { \
+             \"$($_.DeviceID)|$($_.VolumeName)|$($_.ProviderName)|$($_.DriveType)|$($bus[$_.DeviceID])\" }";
 
     let output = Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
@@ -240,7 +271,7 @@ fn windows_volume_info() -> std::collections::HashMap<char, WindowsVolInfo> {
 
     let text = String::from_utf8_lossy(&output.stdout);
     for line in text.lines() {
-        // Lines look like: "G:|Google Drive||3"
+        // Lines look like: "G:|Google Drive||3|USB" (bus type may be empty).
         let fields: Vec<&str> = line.trim().split('|').collect();
         if fields.len() < 4 {
             continue;
@@ -254,6 +285,7 @@ fn windows_volume_info() -> std::collections::HashMap<char, WindowsVolInfo> {
                 label: fields[1].trim().to_string(),
                 provider: fields[2].trim().to_string(),
                 drive_type: fields[3].trim().parse().unwrap_or(0),
+                bus_type: fields.get(4).map(|s| s.trim().to_string()).unwrap_or_default(),
             },
         );
     }
@@ -310,4 +342,63 @@ fn windows_wsl_drives() -> Vec<Drive> {
     }
 
     drives
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usb_hard_drive_reporting_fixed_is_removable() {
+        // External USB HDD (e.g. TOURO): DriveType 3 but on the USB bus.
+        assert!(matches!(
+            classify_windows_drive(3, "USB", 'E'),
+            DriveKind::Removable
+        ));
+    }
+
+    #[test]
+    fn internal_disk_stays_fixed() {
+        assert!(matches!(
+            classify_windows_drive(3, "SATA", 'D'),
+            DriveKind::Fixed
+        ));
+        assert!(matches!(
+            classify_windows_drive(3, "NVMe", 'C'),
+            DriveKind::Fixed
+        ));
+    }
+
+    #[test]
+    fn flash_media_is_removable_regardless_of_bus() {
+        assert!(matches!(
+            classify_windows_drive(2, "", 'F'),
+            DriveKind::Removable
+        ));
+    }
+
+    #[test]
+    fn network_and_unknown_are_unaffected_by_bus() {
+        assert!(matches!(
+            classify_windows_drive(4, "USB", 'Z'),
+            DriveKind::Network
+        ));
+        // No bus info, non-C letter, unknown type → Unknown.
+        assert!(matches!(
+            classify_windows_drive(0, "", 'X'),
+            DriveKind::Unknown
+        ));
+        // No bus info on C: still falls back to Fixed.
+        assert!(matches!(
+            classify_windows_drive(0, "", 'C'),
+            DriveKind::Fixed
+        ));
+    }
+
+    #[test]
+    fn bus_type_match_is_case_insensitive() {
+        assert!(is_usb_bus("usb"));
+        assert!(is_usb_bus("USB"));
+        assert!(!is_usb_bus("SATA"));
+    }
 }

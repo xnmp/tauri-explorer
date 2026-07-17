@@ -93,6 +93,11 @@ function createScmStore() {
   let repoRoot = $state<string | null>(null);
   let summary = $state<GitStatusSummary>(emptySummary());
   let loading = $state(false);
+  // Repo detection in flight for the current activePath (#426). Explicitly
+  // separate from `loading` (the summary fetch) so the view shows the skeleton
+  // — never "not a git repository" — while a slow WSL detectRepo is pending,
+  // and only settles to a real state once detection lands.
+  let detecting = $state(false);
   let commitMessage = $state("");
   let amend = $state(false);
   let commitError = $state<string | null>(null);
@@ -146,17 +151,20 @@ function createScmStore() {
     if (path === activePath) return;
     activePath = path;
     // Repo detection is itself an IPC round-trip; without the flag the view
-    // renders "not a git repository" during it (#271). Every exit path below
-    // ends in refreshSummary (or the competing call's), which clears it.
+    // renders "not a git repository" during it (#271, #426). Every exit path
+    // below ends in refreshSummary (or the competing call's), which clears it.
+    detecting = true;
     loading = true;
     const start = performance.now();
     const detected = await detectRepo(path);
     const elapsedMs = Math.round(performance.now() - start);
     console.info(`[scm] detectRepo for ${path} completed in ${elapsedMs}ms: repoRoot=${detected}`);
     if (activePath !== path) {
+      // Superseded by a newer setActivePath — that call owns detecting/loading.
       console.debug(`[scm] discarding stale repo detection for ${path}`);
       return;
     }
+    detecting = false;
     if (detected === repoRoot) {
       loading = false;
       return;
@@ -189,6 +197,7 @@ function createScmStore() {
   async function release(): Promise<void> {
     activePath = "";
     repoRoot = null;
+    detecting = false;
     if (watcherPath) {
       const p = watcherPath;
       watcherPath = null;
@@ -368,7 +377,7 @@ function createScmStore() {
     /** True while we have nothing to show yet for the active path — repo
      *  detection or the first summary fetch is still in flight. Cached
      *  summaries keep this false, so background refreshes don't flash. */
-    get pending() { return loading && !summary.is_repo; },
+    get pending() { return (loading || detecting) && !summary.is_repo; },
     get commitMessage() { return commitMessage; },
     get amend() { return amend; },
     get commitError() { return commitError; },

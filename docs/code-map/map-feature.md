@@ -146,7 +146,7 @@ backend for E2E/browser).
 - `state/git-status.svelte.ts` — `gitStatusStore`: path→status map, `refresh()`
 - `state/git-refresh.ts` — debounced git-status refresh
 - `api/git.ts` (getGitStatus), `src-tauri/src/files/git_status.rs`
-- FLOW: `git-status-changed` (git.rs emit) + `directory-changed` → gitStatusStore.refresh → badges re-derive; gated on `settings.showGitStatus`.
+- FLOW: `git-status-changed` (git.rs emit) + `directory-changed` → gitStatusStore.refresh → badges re-derive; gated on `settings.showGitStatus`. For `\\wsl.localhost\…` dirs the badge path (`get_git_status`) delegates rev-parse+status to the distro's native git via `wsl.exe --exec` instead of shelling Git-for-Windows over 9P (#425); `gitStatusStore` dedups concurrent identical fetches (#426).
 
 ## Git SCM panel
 - `components/ScmSidebarView.svelte` — staged/unstaged/untracked tree, commit box
@@ -156,7 +156,7 @@ backend for E2E/browser).
 - `domain/scm-tree.ts`, `domain/git-graph.ts`, `domain/git.ts` — tree grouping, graph layout
 - `api/git.ts`, `api/git-log.ts`; `src-tauri/src/git.rs`, `git_actions.rs`, `git_log.rs`, `git_common.rs`
 - `domain/git-warm.ts` (pure: when to warm) + `state/git-warm.ts` (wiring) — pre-warm graph/SCM caches once a pane settles on a repo
-- FLOW: scmStore invokes git stage/unstage/commit/diff/log → Rust git2 ops → `git-status-changed` emit refreshes panel + badges.
+- FLOW: scmStore invokes git stage/unstage/commit/diff/log → Rust git2 ops → `git-status-changed` emit refreshes panel + badges. WSL UNC repos: `git_repo_root`/`git_status`/`git_diff` delegate to native git (`wsl.exe --exec`) without a libgit2 open/discovery over 9P first, falling back to libgit2 only on delegation failure (#425); the UNC PollWatcher uses a 15s interval to limit 9P stat load (#426).
 
 ## Quick Open (Ctrl+P fuzzy file finder)
 - `components/QuickOpen.svelte` — modal, streamed results, keyboard nav

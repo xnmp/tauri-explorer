@@ -19,24 +19,27 @@ interface DirGitStatus {
 /** Max directories to keep statuses for (panes + recently visited dirs). */
 const MAX_TRACKED_DIRS = 8;
 
-// Diagnostics only (#424): paths with a doFetch currently in flight, purely
-// to detect and warn about duplicate concurrent fetches for the same
-// directory. Never read for control flow — today's dedup behavior (or lack
-// thereof) is unchanged.
-const inFlightFetches = new Set<string>();
-
 function createGitStatusStore() {
   /** Per-directory status maps, insertion-ordered for bounded eviction. */
   let byDir = $state<Record<string, DirGitStatus>>({});
   /** Most recently requested directory (kept for watcher compatibility). */
   let currentPath = $state<string>("");
   let loading = $state(false);
+  /** Directories with a fetch currently in flight, for per-dir loading UI —
+   *  distinct from "absent" (never fetched), which reads as no data yet. */
+  let loadingDirs = $state<Record<string, boolean>>({});
   let subscribed = false;
   // Count of in-flight doFetch calls. refresh() fans out concurrently via
   // Promise.all, so `loading` must stay true until ALL of them settle — a
   // plain boolean would get cleared by whichever fetch finishes first while
   // its siblings are still in flight.
   let pendingFetches = 0;
+
+  // Real in-flight dedup (#426): a concurrent request for a path already being
+  // fetched awaits the SAME promise instead of firing a second IPC call. At
+  // startup two consumers (both panes, watcher warm) raced identical fetches,
+  // piling up "Git for Windows" processes and ~1GB RAM over the 9P mount.
+  const inFlight = new Map<string, Promise<void>>();
 
   async function fetchForDirectory(path: string): Promise<void> {
     currentPath = path;
@@ -47,13 +50,21 @@ function createGitStatusStore() {
     await doFetch(path);
   }
 
-  async function doFetch(path: string): Promise<void> {
-    if (inFlightFetches.has(path)) {
-      console.warn(`[git-status] duplicate in-flight fetch for ${path}`);
+  function doFetch(path: string): Promise<void> {
+    const existing = inFlight.get(path);
+    if (existing) {
+      console.debug(`[git-status] joining in-flight fetch for ${path}`);
+      return existing;
     }
-    inFlightFetches.add(path);
+    const p = performFetch(path).finally(() => inFlight.delete(path));
+    inFlight.set(path, p);
+    return p;
+  }
+
+  async function performFetch(path: string): Promise<void> {
     pendingFetches++;
     loading = true;
+    loadingDirs = { ...loadingDirs, [path]: true };
     const start = performance.now();
     try {
       const result = await getGitStatus(path);
@@ -82,9 +93,10 @@ function createGitStatusStore() {
         console.warn(`[git-status] fetch for ${path} failed after ${elapsedMs}ms: ${result.error}`);
       }
     } finally {
-      inFlightFetches.delete(path);
       pendingFetches--;
       loading = pendingFetches > 0;
+      const { [path]: _done, ...rest } = loadingDirs;
+      loadingDirs = rest;
     }
   }
 
@@ -128,6 +140,9 @@ function createGitStatusStore() {
     get isGitRepo() { return byDir[currentPath]?.isGitRepo ?? false; },
     get loading() { return loading; },
     get currentPath() { return currentPath; },
+    /** True while a fetch for `directory` is in flight (distinct from having
+     *  no cached data yet). */
+    isDirLoading(directory: string): boolean { return loadingDirs[directory] ?? false; },
     fetchForDirectory,
     refresh,
     getStatus,

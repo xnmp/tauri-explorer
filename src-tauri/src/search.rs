@@ -141,9 +141,23 @@ fn parse_find_line(line: &str) -> Option<(bool, &str)> {
 }
 
 #[cfg(any(windows, test))]
+/// Argv prefix for `wsl.exe` that delegates `find` to `distro`, i.e. the args
+/// before the find arguments themselves.
+///
+/// Uses `--exec` rather than `--`: `wsl.exe -- <cmd>` joins the trailing argv
+/// and runs it through the distro user's **default login shell** (zsh here),
+/// which choked on the unquoted find metacharacters (`( -name … )`), exited 1
+/// and returned zero entries (#423). `--exec` launches find directly, passing
+/// argv verbatim — no shell, no quoting required.
+fn wsl_find_argv(distro: &str) -> [String; 4] {
+    ["-d".into(), distro.into(), "--exec".into(), "find".into()]
+}
+
+#[cfg(any(windows, test))]
 /// Run one `find` under `runner` (a pre-built Command missing only the find
-/// args), streaming parsed lines into `on_line`. Returns false if the
-/// process could not be spawned (caller falls back to jwalk).
+/// args), streaming parsed lines into `on_line`. Returns false if the process
+/// could not be spawned OR exited non-zero without producing any output
+/// (caller falls back to jwalk).
 fn stream_find(
     mut cmd: std::process::Command,
     stop: &dyn Fn() -> bool,
@@ -206,6 +220,12 @@ fn stream_find(
     let stderr_buf = stderr_handle
         .and_then(|h| h.join().ok())
         .unwrap_or_default();
+    // A process spawn is not success: `wsl.exe -- find …` used to run through
+    // the distro's login shell (zsh), which exited 1 on the unquoted find
+    // metacharacters and produced zero output. Treat a non-zero exit that
+    // yielded nothing as failure so the caller can fall back to jwalk. If we
+    // already streamed entries (e.g. the child was killed by `stop`), keep
+    // them — a fallback would only re-emit duplicates.
     match status {
         Ok(st) => {
             log::info!(
@@ -214,12 +234,15 @@ fn stream_find(
             if !st.success() && !stderr_buf.trim().is_empty() {
                 log::warn!("quickfind: stream_find stderr: {}", stderr_buf.trim_end());
             }
+            st.success() || parsed > 0
         }
-        Err(e) => log::warn!(
-            "quickfind: stream_find wait FAILED: parsed={parsed} unparsed={unparsed}: {e}"
-        ),
+        Err(e) => {
+            log::warn!(
+                "quickfind: stream_find wait FAILED: parsed={parsed} unparsed={unparsed}: {e}"
+            );
+            parsed > 0
+        }
     }
-    true
 }
 
 #[cfg(any(windows, test))]
@@ -326,7 +349,7 @@ fn walk_passes(
                 );
                 let make_cmd = move || {
                     let mut c = std::process::Command::new("wsl.exe");
-                    c.args(["-d", &distro, "--", "find"]);
+                    c.args(wsl_find_argv(&distro));
                     c
                 };
                 if find_walk_passes(&make_cmd, &linux_path, stop, on_entry) {
@@ -951,6 +974,36 @@ mod tests {
             !listing.iter().any(|l| l.contains(".git")),
             "hard-skip trees must be invisible: {listing:?}"
         );
+    }
+
+    /// The WSL delegation must use `--exec` (verbatim argv) rather than `--`,
+    /// which would route the find command through the distro's login shell and
+    /// mangle its metacharacters (#423).
+    #[test]
+    fn wsl_find_argv_uses_exec_not_dash_dash() {
+        let argv = wsl_find_argv("Ubuntu");
+        assert_eq!(argv, ["-d", "Ubuntu", "--exec", "find"]);
+        assert!(argv.iter().any(|a| a == "--exec"), "must use --exec: {argv:?}");
+        assert!(
+            !argv.iter().any(|a| a == "--"),
+            "bare -- routes through the login shell: {argv:?}"
+        );
+    }
+
+    /// When the fast-pass `find` exits non-zero without producing output (the
+    /// #423 failure mode: the login shell rejected the command), the walk must
+    /// report failure so the caller falls back to jwalk instead of silently
+    /// returning an empty result set.
+    #[test]
+    #[cfg(unix)]
+    fn find_walk_passes_fails_on_nonzero_exit() {
+        // `false` ignores its args and exits 1 with no stdout — a deterministic
+        // stand-in for the shell-mangled find that returned nothing.
+        let make_cmd = || std::process::Command::new("false");
+        let mut entries: Vec<Walked> = Vec::new();
+        let ok = find_walk_passes(&make_cmd, "/whatever", &|| false, &mut |w| entries.push(w));
+        assert!(!ok, "a non-zero exit with no output must return false");
+        assert!(entries.is_empty(), "no entries should have been emitted");
     }
 
     /// Helper: format results for assertion messages.

@@ -8,7 +8,7 @@
  * actually navigates (breadcrumb + listing change), that Escape cancels
  * without navigating, and the designed behaviour for a non-existent path.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { waitForEntries } from "./helpers";
 
 /** Click the empty right area of the breadcrumbs bar to enter edit mode. */

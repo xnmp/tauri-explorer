@@ -5,7 +5,7 @@
  * Rename is fully round-trippable in the browser mock: undo reverts the name,
  * redo re-applies it.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { waitForEntries } from "./helpers";
 
 const DOCS_URL = "/?path=/home/user/Documents";

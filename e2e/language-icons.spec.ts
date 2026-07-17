@@ -2,7 +2,7 @@
  * E2E test: language-specific file icons.
  * Issue: feat/language-icons
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { HOME_URL, waitForEntries } from "./helpers";
 
 test.describe("Language-specific file icons", () => {

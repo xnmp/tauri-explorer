@@ -6,7 +6,7 @@
  * image again reverts to the normal pane view. Uses the mock backend's
  * read_image_data_url so a real <img> renders in browser mode.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { waitForEntries, pressShortcut } from "./helpers";
 
 async function openPicturesWithPreview(page: Page) {

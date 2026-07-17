@@ -4,7 +4,7 @@
  * (Synthetic HTML5 drag exercises the app's dragstart/drop handlers; it
  * does not validate OS-level DnD, which is fine for the undo semantics.)
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { waitForEntries } from "./helpers";
 
 test("one Ctrl+Z reverts a multi-item drop", async ({ page }) => {

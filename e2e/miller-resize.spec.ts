@@ -2,7 +2,7 @@
  * E2E test: miller columns are resizable.
  * Issue: feat/miller-resize
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { HOME_URL, waitForEntries } from "./helpers";
 
 test.describe("Miller columns resize", () => {

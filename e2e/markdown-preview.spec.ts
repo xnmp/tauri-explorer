@@ -4,7 +4,7 @@
  * elements, fenced code highlighted by hljs, raw-HTML kept inert.
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { waitForEntries, pressShortcut } from "./helpers";
 
 test.describe("Markdown preview", () => {

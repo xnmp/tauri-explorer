@@ -3,7 +3,7 @@
  * the release page; the check is throttled to once per day.
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 test("update notice appears when a newer release exists", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("mockUpdateAvailable", "1"));

@@ -5,7 +5,7 @@
  * backdrop: data-vibrancy + data-vibrancy-no-blur on the root, and the
  * sidebar rendered as a rounded island.
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { waitForEntries } from "./helpers";
 
 test.describe("Floating islands (#277)", () => {

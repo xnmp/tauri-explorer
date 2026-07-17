@@ -8,7 +8,7 @@
  * user-visible result — a row changing section, a badge count, the commit
  * input clearing, the recorded commit message — not just that a node rendered.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 interface MockGitCommit {
   message: string;

@@ -6,7 +6,7 @@
  * default), the Gemini API key lives in a plugin settings section, and
  * disabling the plugin removes the context-menu entry.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { HOME_URL, waitForEntries, pressShortcut } from "./helpers";
 
 async function openSettings(page: Page) {

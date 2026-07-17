@@ -7,7 +7,7 @@
  * choosing one MOVES the file via the normal transfer flow — the mock fs
  * persists the move, so the source listing loses the file.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { waitForEntries, pressShortcut } from "./helpers";
 
 async function setApiKey(page: Page, key: string) {

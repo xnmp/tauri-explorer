@@ -6,7 +6,7 @@
  * the command palette.
  */
 
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 const panes = (page: Page) => page.locator(".explorer-pane");
 

@@ -4,7 +4,7 @@
  * stuck open.
  * Issue: feat/rename-box (click-away closes rename)
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { HOME_URL, waitForEntries } from "./helpers";
 
 test.describe("Rename click-away", () => {

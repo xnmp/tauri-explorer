@@ -12,7 +12,7 @@
  * mock: the trash delete is undoable (an "Undo" toast fires when Ctrl+Z runs
  * the recorded action) while a permanent delete records nothing to undo.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { waitForEntries } from "./helpers";
 
 const DOCS_URL = "/?path=/home/user/Documents";

@@ -16,7 +16,7 @@
  * navigation outcome end-to-end.
  */
 
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 async function gotoDir(page: Page, path: string) {
   await page.goto(`/?path=${encodeURIComponent(path)}`);

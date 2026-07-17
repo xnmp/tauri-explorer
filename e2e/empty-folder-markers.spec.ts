@@ -9,7 +9,7 @@
  *    persists to localStorage, so hides survive navigation and reload. Turning
  *    the setting on reveals hidden items dimmed so they can be unhidden.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { waitForEntries, pressShortcut } from "./helpers";
 
 function entry(page: Page, name: string) {

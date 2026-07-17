@@ -3,7 +3,7 @@
  * pointer-based on Mac where draggable is intentionally false).
  * Issue: feat/miller-to-bookmarks
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 test.describe("Miller columns drag to bookmarks", () => {
   test("miller column entries have draggable attribute on non-Mac", async ({ page }) => {

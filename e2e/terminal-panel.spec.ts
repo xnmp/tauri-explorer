@@ -6,7 +6,7 @@
  * theme-following background, and height persistence.
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { waitForEntries, HOME_URL } from "./helpers";
 
 test.describe("Terminal panel", () => {

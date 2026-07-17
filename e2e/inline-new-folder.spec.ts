@@ -5,7 +5,7 @@
  * band ABOVE the whole scroller. It must ride inside the virtual list as the
  * first row/cell, and creating the folder must still work end to end.
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { waitForEntries } from "./helpers";
 
 async function startInlineNewFolder(page: import("@playwright/test").Page) {

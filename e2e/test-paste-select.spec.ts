@@ -2,7 +2,7 @@
  * E2E test for paste-select feature (tauri-explorer-zktf)
  * Verifies that pasted files are selected after paste completes.
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { waitForEntries, pressShortcut } from "./helpers";
 
 test.describe("Paste selects pasted files", () => {

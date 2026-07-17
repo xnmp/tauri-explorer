@@ -2,7 +2,7 @@
  * E2E test: file icons show extension labels for code/document files.
  * Issue: feat/more-file-icons
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { HOME_URL, waitForEntries } from "./helpers";
 
 test.describe("File type icons", () => {

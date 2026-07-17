@@ -6,7 +6,7 @@
  * duplicated tab must paint its tiles from the shared LRU cache instead of
  * re-running the placeholder → load cycle.
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { waitForEntries } from "./helpers";
 
 async function openPicturesTiles(page: import("@playwright/test").Page) {

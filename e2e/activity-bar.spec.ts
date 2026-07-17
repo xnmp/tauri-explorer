@@ -4,7 +4,7 @@
  * With SCM moved to its own panel and the activity bar removed,
  * the sidebar renders the files view directly.
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 test.describe("Sidebar views", () => {
   test.beforeEach(async ({ page }) => {

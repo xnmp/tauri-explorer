@@ -2,7 +2,7 @@
  * E2E test: Miller columns panel alongside any view mode (directories only).
  * Issue: feat/miller-view
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { HOME_URL, waitForEntries } from "./helpers";
 
 test.describe("Miller columns panel", () => {

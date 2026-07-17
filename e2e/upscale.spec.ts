@@ -6,7 +6,7 @@
  * default), the fal.ai API key lives in a plugin settings section, and the
  * dialog pre-fills a `_upscaled` output filename.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { waitForEntries, pressShortcut } from "./helpers";
 
 async function rightClickImage(page: Page) {

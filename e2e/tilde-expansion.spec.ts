@@ -3,7 +3,7 @@
  * Issue: tauri-explorer-uh8c
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { waitForEntries } from "./helpers";
 
 test.describe("Tilde Expansion", () => {

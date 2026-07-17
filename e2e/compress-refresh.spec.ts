@@ -9,7 +9,7 @@
  * post-mutation refresh past the cooldown.
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { waitForEntries } from "./helpers";
 
 test.describe("Compress to ZIP listing refresh", () => {

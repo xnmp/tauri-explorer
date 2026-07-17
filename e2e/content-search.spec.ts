@@ -7,7 +7,7 @@
  * line content, filtering, case sensitivity, and keyboard navigation.
  */
 
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 async function openContentSearch(page: Page): Promise<void> {
   await page.goto("/?path=/home/user");

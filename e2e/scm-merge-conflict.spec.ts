@@ -7,7 +7,7 @@
  * resolving (staging) the conflict unblocks the commit and the commit lands,
  * and Abort clears the operation entirely.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 interface MockGitCommit {
   message: string;

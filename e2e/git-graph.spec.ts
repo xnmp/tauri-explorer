@@ -3,7 +3,7 @@
  * the current repo, the renderer draws the mocked 12-commit history with
  * lanes/edges and refs decoration, and the tab closes back to the explorer.
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { waitForEntries } from "./helpers";
 
 async function openGraphViaPalette(page: import("@playwright/test").Page, expectGraph = true) {

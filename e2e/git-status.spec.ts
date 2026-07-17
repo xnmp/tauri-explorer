@@ -4,7 +4,7 @@
  * settings toggle exists.
  * Issue: feat/git-status-indicators
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { HOME_URL, waitForEntries } from "./helpers";
 
 test.describe("Git status indicators", () => {

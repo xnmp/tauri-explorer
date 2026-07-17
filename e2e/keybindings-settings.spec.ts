@@ -3,7 +3,7 @@
  * Tests the keybindings customization UI in the Settings dialog.
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 async function waitForFileList(page: import("@playwright/test").Page) {
   await page.waitForSelector(".file-list");

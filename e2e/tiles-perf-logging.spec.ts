@@ -2,7 +2,7 @@
  * E2E test: tiles view scroll handler exists and doesn't error.
  * Issue: feat/tiles-scroll-perf-logging
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { HOME_URL, waitForEntries, switchViewMode } from "./helpers";
 
 test.describe("Tiles scroll performance logging", () => {

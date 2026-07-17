@@ -3,7 +3,7 @@
  * Issue: fix trailing-slash mismatch in filterToDir that caused empty SCM
  * panel when activePath was inside a repo subdirectory.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 async function openScmInSubfolder(page: Page): Promise<void> {
   await page.goto("/");

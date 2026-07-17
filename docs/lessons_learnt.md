@@ -4,6 +4,13 @@ Gotchas, non-obvious behaviors, and key takeaways from closed issues.
 
 ---
 
+## 2026-07-18 fix/local-tests-navigator-platform: Node/Bun now ship a real-OS `navigator` global
+- **Node 22 / Bun 1.3 expose a built-in `navigator` whose `platform` reflects the actual host OS**, so browser-only platform sniffing (`isWindows` in domain/platform.ts) is live inside vitest's Node environment too — and real local Chromium reports `Win32` anyway. Any `isWindows`-gated logic (here: backslash path normalization from aebf309) silently diverges from the POSIX-keyed mock fixtures on a Windows dev machine, failing every mock-based unit and e2e test locally while ubuntu CI stays green. Pin `navigator.platform` in `tests/setup.ts` and via the `e2e/fixtures.ts` wrapper (all specs import `test`/`expect` from there, not `@playwright/test`).
+- A green CI + red local (or vice versa) split on identical commits means an environment input differs — find the input (runtime globals, OS, locale) before touching product code or tests.
+
+## 2026-07-18 fix/quickfind-deferred-exact-match: penalties must not apply to exact matches
+- **`DEFERRED_PENALTY` subtracted from an exact name match buried `target/release/bundle/deb` below 20 fuzzy `debug*` matches** — the backend emits only the top-`limit` scored results, so the frontend can't rescue anything the backend drops. When a scoring penalty exists to demote noise, exempt exact matches: they are the query's literal target. Same family as the #393 `nsis` divisor bug; a subtraction just buries shallower.
+
 ## 2026-07-17 fix/quickfind-wsl-deep-folders: `wsl.exe -- cmd` runs through the distro user's login shell
 - **`wsl.exe -d <distro> -- find ...` joins the argv into a login-shell command line**, so an interactive shell like zsh interprets `find`'s metacharacters (`(`, `)`, `-name .*` → "unknown file attribute", exit 1, zero output) and the delegation silently produced nothing — Quick Open fell back to jwalk over 9P and deep entries never surfaced. Use `wsl.exe --exec` for literal argv with no shell. Also treat non-zero-exit-with-zero-output as delegation failure and log the child's stderr — the original bug was invisible because stderr was piped to null.
 - Verifying "the fix works" at the function level is not the same as the user running it: the fix sat unmerged on its branch while the installed v1.4.2 binary still had the old code path, so it "didn't work" for reasons that had nothing to do with the code. Check what build the reporter is actually running before re-debugging a fixed bug.

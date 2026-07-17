@@ -3,7 +3,7 @@
  * Issue: tauri-explorer-m2x3
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 test.describe("Quick Open (Ctrl+P)", () => {
   test.beforeEach(async ({ page }) => {

@@ -9,7 +9,7 @@
  * saved non-default theme, data-theme must already match the saved theme.
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 test.describe("Theme applied without flash", () => {
   test("saved theme is applied on reload before any post-load correction", async ({ page }) => {

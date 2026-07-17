@@ -110,3 +110,30 @@
   --icon-executable: #b8bb26;
   --icon-document: #bdae93;
 }
+
+/* --- #437: non-premium (flat / high-contrast) fallback --- */
+[data-theme="gruvbox"]:not([data-premium="true"]) {
+  --theme-background-image: initial;
+  --surface-stroke: rgba(235, 219, 178, 0.09);
+  --surface-stroke-flyout: rgba(235, 219, 178, 0.11);
+  --divider: rgba(235, 219, 178, 0.06);
+  --control-fill: rgba(235, 219, 178, 0.07);
+  --control-fill-secondary: rgba(235, 219, 178, 0.09);
+  --subtle-fill-secondary: rgba(235, 219, 178, 0.07);
+  --subtle-fill-tertiary: rgba(235, 219, 178, 0.04);
+  --control-stroke: rgba(235, 219, 178, 0.1);
+  --control-stroke-secondary: rgba(235, 219, 178, 0.08);
+  --breadcrumb-bg: initial;
+  --breadcrumb-hover-bg: initial;
+  --breadcrumb-active-bg: initial;
+  --breadcrumb-radius: initial;
+  --breadcrumb-gap: initial;
+  --focus-stroke-outer: #ebdbb2;
+  --shadow-flyout: 0 8px 24px rgba(29, 32, 33, 0.5), 0 2px 8px rgba(29, 32, 33, 0.3);
+  --shadow-card: 0 1px 4px rgba(29, 32, 33, 0.2), 0 0 1px rgba(29, 32, 33, 0.15);
+  --sidebar-opacity: 1;
+  --toolbar-opacity: 1;
+  --content-opacity: 1;
+  --titlebar-opacity: 1;
+  --statusbar-opacity: 1;
+}

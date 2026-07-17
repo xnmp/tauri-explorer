@@ -25,6 +25,11 @@
             t = JSON.parse(localStorage.getItem('theme') || 'null') || t || 'light';
           }
           document.documentElement.setAttribute('data-theme', t);
+          // Opt-in "premium" surface treatment (#437). Applied pre-paint so the
+          // flat (default) vs premium look is correct with no flash.
+          if (s.premiumTheme === true) {
+            document.documentElement.setAttribute('data-premium', 'true');
+          }
         } catch (e) {}
 
         var bg = localStorage.getItem('explorer-bg');

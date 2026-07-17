@@ -292,6 +292,19 @@
     document.documentElement.style.setProperty("--bg-opacity", String(opacity));
   });
 
+  // Apply the opt-in "premium" surface treatment (#437). When on, themes
+  // expose their accent-tinted hairlines, glow shadows, breadcrumb pills,
+  // translucent surfaces, and static depth backdrop; when off, a higher-
+  // specificity :not([data-premium="true"]) rule in each theme restores the
+  // prior flatter/high-contrast values.
+  $effect(() => {
+    if (settingsStore.premiumTheme) {
+      document.documentElement.setAttribute("data-premium", "true");
+    } else {
+      document.documentElement.removeAttribute("data-premium");
+    }
+  });
+
   // Apply vibrancy mode attribute. It drives the "floating island" CSS shared
   // by macOS vibrancy, the Windows Mica/Acrylic backdrop, and the
   // platform-independent floatingIslands setting (#277). Native backdrops

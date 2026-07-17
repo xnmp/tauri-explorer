@@ -104,3 +104,27 @@
   /* Icon colors */
   --icon-folder: #fab795;
 }
+
+/* --- #437: non-premium (flat / high-contrast) fallback --- */
+[data-theme="horizon"]:not([data-premium="true"]) {
+  --theme-background-image: initial;
+  --surface-stroke: rgba(213, 216, 218, 0.12);
+  --surface-stroke-flyout: rgba(213, 216, 218, 0.18);
+  --divider: rgba(213, 216, 218, 0.06);
+  --control-fill: rgba(213, 216, 218, 0.08);
+  --control-fill-secondary: rgba(213, 216, 218, 0.12);
+  --control-stroke: rgba(213, 216, 218, 0.15);
+  --control-stroke-secondary: rgba(213, 216, 218, 0.1);
+  --breadcrumb-bg: initial;
+  --breadcrumb-hover-bg: initial;
+  --breadcrumb-active-bg: initial;
+  --breadcrumb-radius: initial;
+  --breadcrumb-gap: initial;
+  --shadow-flyout: 0 8px 20px rgba(10, 10, 18, 0.5);
+  --shadow-card: 0 1px 4px rgba(10, 10, 18, 0.25), 0 0 1px rgba(10, 10, 18, 0.2);
+  --sidebar-opacity: 1;
+  --toolbar-opacity: 1;
+  --content-opacity: 1;
+  --titlebar-opacity: 1;
+  --statusbar-opacity: 1;
+}

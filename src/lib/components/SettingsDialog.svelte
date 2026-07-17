@@ -145,6 +145,7 @@
     integratedTitleBar: ["Integrated Title Bar", "Show tabs in the title bar alongside window controls (requires restart)"],
     vibrancy: ["Window Vibrancy", "Native macOS translucent frosted-glass effect (requires restart)"],
     floatingIslands: ["Floating Islands", "Panels float as rounded islands over the backdrop. Works on every platform; pairs with native transparency on macOS/Windows when enabled", "vibrancy", "island", "layout"],
+    premiumTheme: ["Premium Theme Effects", "Aurora-style surface treatment: accent-tinted hairlines, soft glow shadows, breadcrumb pills, translucent panels and a subtle depth backdrop. Off = flatter, higher-contrast look", "aurora", "glow", "gradient", "glass"],
     nativeBlur: ["Native Blur", "Use macOS frosted glass blur (off = theme background, requires restart)"],
     windowsBackdrop: ["Window Backdrop", "Windows translucent Mica/Acrylic frosted-glass effect (enabling from Off requires restart)"],
     windowsBackdropOpacity: ["Backdrop Opacity", "How see-through the app is over the Mica/Acrylic backdrop — islands included (lower = more transparent)"],
@@ -183,7 +184,7 @@
     rows.theme, rows.iconTheme, rows.thumbnailSize, rows.showSidebar, rows.windowControls,
     ...(isMac ? [rows.integratedTitleBar, rows.vibrancy, rows.nativeBlur] : []),
     ...(isWindows ? [rows.windowsBackdrop, rows.windowsBackdropOpacity] : []),
-    rows.floatingIslands,
+    rows.floatingIslands, rows.premiumTheme,
     rows.addressBar, rows.statusBar,
   ];
   const navBarRows = [rows.navBack, rows.navForward, rows.navUp, rows.navRefresh];
@@ -425,6 +426,21 @@
                 type="checkbox"
                 checked={settingsStore.floatingIslands}
                 onchange={() => settingsStore.update({ floatingIslands: !settingsStore.floatingIslands })}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.premiumTheme)}>
+            <div class="setting-info">
+              <span class="setting-label">Premium Theme Effects</span>
+              <span class="setting-description">Aurora-style surface treatment: accent-tinted hairlines, soft glow shadows, breadcrumb pills, translucent panels and a subtle depth backdrop. Off = flatter, higher-contrast look</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.premiumTheme}
+                onchange={() => settingsStore.togglePremiumTheme()}
               />
               <span class="toggle-slider"></span>
             </label>

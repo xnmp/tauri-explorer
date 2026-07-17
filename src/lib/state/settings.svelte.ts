@@ -73,6 +73,7 @@ export interface Settings {
   // ("Alt+Backspace"). Empty/missing = disabled (native key behavior).
   terminalShortcuts: Record<string, string>;
   theme: string; // active theme id, e.g. "dark", "golden-hour"
+  premiumTheme: boolean; // opt-in "premium/aurora" surface treatment (accent-tinted hairlines, glow shadows, breadcrumb pills, translucent surfaces, static depth backdrop). Off = flatter/high-contrast look (#437)
   thumbnailSize: ThumbnailSize; // tile thumbnail size tier
   showGitStatus: boolean; // show git indicators on files
   recentItemsCount: number; // number of recent locations in sidebar (0 = hidden)
@@ -140,6 +141,7 @@ const DEFAULT_SETTINGS: Settings = {
   terminalPanelHeight: 240,
   terminalShortcuts: {},
   theme: "light",
+  premiumTheme: false,
   thumbnailSize: "small",
   showGitStatus: false,
   recentItemsCount: 6,
@@ -331,6 +333,12 @@ function createSettingsStore() {
     },
     get theme() {
       return settings.theme;
+    },
+    get premiumTheme() {
+      return settings.premiumTheme;
+    },
+    togglePremiumTheme(): void {
+      update({ premiumTheme: !settings.premiumTheme });
     },
     get thumbnailSize() {
       return settings.thumbnailSize;
@@ -595,6 +603,7 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
   { key: "macOsVibrancy", label: "Toggle macOS Vibrancy" },
   { key: "vibrancyBlur", label: "Toggle Vibrancy Blur" },
   { key: "floatingIslands", label: "Toggle Floating Islands" },
+  { key: "premiumTheme", label: "Toggle Premium Theme Effects" },
   { key: "terminalFollowsExplorer", label: "Toggle Terminal Follows Explorer" },
   { key: "explorerFollowsTerminal", label: "Toggle Explorer Follows Terminal" },
 ];

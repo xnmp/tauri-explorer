@@ -106,8 +106,18 @@ fn parse_porcelain_z(stdout: &[u8]) -> Vec<(String, GitFileStatus)> {
     out
 }
 
+/// Truncate stderr for logging, matching the quickfind diagnostics pattern
+/// (search.rs): full output can be arbitrarily large (e.g. permission-denied
+/// spam), so cap what we log at ~1KB.
+fn truncate_stderr(stderr: &[u8]) -> String {
+    let mut buf = stderr.to_vec();
+    buf.truncate(1024);
+    String::from_utf8_lossy(&buf).trim_end().to_string()
+}
+
 /// Blocking implementation of [`get_git_status`].
 fn get_git_status_sync(path: &str) -> Result<GitStatusResponse, AppError> {
+    let total_start = std::time::Instant::now();
     let dir = Path::new(path);
     if !dir.exists() || !dir.is_dir() {
         return Ok(GitStatusResponse {
@@ -118,23 +128,44 @@ fn get_git_status_sync(path: &str) -> Result<GitStatusResponse, AppError> {
 
     // Check if inside a git repo and resolve the browsed dir's path relative
     // to the repo root in one call: stdout is "true\n<prefix>\n".
+    let rev_parse_start = std::time::Instant::now();
     let output = Command::new("git")
         .no_console()
         .args(["rev-parse", "--is-inside-work-tree", "--show-prefix"])
         .current_dir(dir)
         .output();
+    let rev_parse_ms = rev_parse_start.elapsed().as_millis();
 
     let prefix = match output {
         Ok(o) if o.status.success() => {
             let stdout = String::from_utf8_lossy(&o.stdout);
             let mut lines = stdout.lines();
             if lines.next() != Some("true") {
-                None // inside .git dir, not the work tree
+                // Inside .git dir, not the work tree: a genuine (if unusual)
+                // case, not a failure — debug only to avoid spamming logs for
+                // the common "just not a repo" outcome below.
+                log::debug!("gitstat: {path} is inside a .git dir, not the work tree");
+                None
             } else {
                 Some(lines.next().unwrap_or("").to_string())
             }
         }
-        _ => None,
+        Ok(o) => {
+            // This is the critical line for diagnosing WSL 9P flakiness: it
+            // catches `safe.directory` "dubious ownership" refusals and
+            // transient 9P errors that would otherwise be silently swallowed
+            // as "not a repo".
+            log::warn!(
+                "gitstat: {path} treated as not-a-repo: rev-parse exit {:?} in {rev_parse_ms}ms, stderr: {}",
+                o.status.code(),
+                truncate_stderr(&o.stderr)
+            );
+            None
+        }
+        Err(e) => {
+            log::warn!("gitstat: rev-parse spawn failed for {path}: {e}");
+            None
+        }
     };
 
     let Some(prefix) = prefix else {
@@ -160,11 +191,25 @@ fn get_git_status_sync(path: &str) -> Result<GitStatusResponse, AppError> {
     if cfg!(windows) {
         cmd.args(["-c", "core.filemode=false"]);
     }
+    let status_start = std::time::Instant::now();
     let output = cmd
         .args(["status", "--porcelain", "-z", "-unormal", "."])
         .current_dir(dir)
         .output()
-        .map_err(AppError::from)?;
+        .map_err(|e| {
+            log::warn!("gitstat: status spawn failed for {path}: {e}");
+            AppError::from(e)
+        })?;
+    let status_ms = status_start.elapsed().as_millis();
+    // Preserve prior behavior: a non-zero exit still falls through to parsing
+    // stdout (typically empty) rather than aborting — only log it here.
+    if !output.status.success() {
+        log::warn!(
+            "gitstat: status call exited non-zero for {path}: exit {:?} in {status_ms}ms, stderr: {}",
+            output.status.code(),
+            truncate_stderr(&output.stderr)
+        );
+    }
 
     let mut statuses: HashMap<String, GitFileStatus> = HashMap::new();
 
@@ -191,6 +236,12 @@ fn get_git_status_sync(path: &str) -> Result<GitStatusResponse, AppError> {
             }
         }
     }
+
+    let total_ms = total_start.elapsed().as_millis();
+    log::info!(
+        "gitstat: badge status for {path}: {} entries (rev-parse {rev_parse_ms}ms, status {status_ms}ms, total {total_ms}ms)",
+        statuses.len()
+    );
 
     Ok(GitStatusResponse {
         is_git_repo: true,
@@ -352,5 +403,34 @@ mod tests {
         let resp = status_of(dir.path());
         assert!(!resp.is_git_repo);
         assert!(resp.statuses.is_empty());
+    }
+
+    /// Manual diagnostic for #424: run the badge-status path directly against
+    /// a live WSL UNC directory and print timings/`gitstat:` log lines.
+    /// `cargo test wsl_diag_badge_status -- --ignored --nocapture` with
+    /// `WSL_GIT_DIAG_PATH` set to e.g. `\\wsl.localhost\Ubuntu\home\me\repo`.
+    #[test]
+    #[ignore]
+    fn wsl_diag_badge_status() {
+        crate::init_test_logger();
+        let Ok(path) = std::env::var("WSL_GIT_DIAG_PATH") else {
+            println!("WSL_GIT_DIAG_PATH not set; skipping. Example:");
+            println!(
+                r"  WSL_GIT_DIAG_PATH=\\wsl.localhost\Ubuntu\home\me\repo cargo test wsl_diag_badge_status -- --ignored --nocapture"
+            );
+            return;
+        };
+        let start = std::time::Instant::now();
+        let result = get_git_status_sync(&path);
+        let elapsed = start.elapsed();
+        match result {
+            Ok(resp) => println!(
+                "wsl_diag_badge_status: {path} -> is_git_repo={} entries={} in {:?}",
+                resp.is_git_repo,
+                resp.statuses.len(),
+                elapsed
+            ),
+            Err(e) => println!("wsl_diag_badge_status: {path} -> ERROR {e:?} in {elapsed:?}"),
+        }
     }
 }

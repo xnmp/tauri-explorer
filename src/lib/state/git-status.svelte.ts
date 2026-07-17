@@ -19,6 +19,12 @@ interface DirGitStatus {
 /** Max directories to keep statuses for (panes + recently visited dirs). */
 const MAX_TRACKED_DIRS = 8;
 
+// Diagnostics only (#424): paths with a doFetch currently in flight, purely
+// to detect and warn about duplicate concurrent fetches for the same
+// directory. Never read for control flow — today's dedup behavior (or lack
+// thereof) is unchanged.
+const inFlightFetches = new Set<string>();
+
 function createGitStatusStore() {
   /** Per-directory status maps, insertion-ordered for bounded eviction. */
   let byDir = $state<Record<string, DirGitStatus>>({});
@@ -34,16 +40,28 @@ function createGitStatusStore() {
 
   async function fetchForDirectory(path: string): Promise<void> {
     currentPath = path;
-    if (byDir[path]) return; // cached; watcher events keep it fresh
+    if (byDir[path]) {
+      console.debug(`[git-status] cache hit for ${path}`);
+      return; // cached; watcher events keep it fresh
+    }
     await doFetch(path);
   }
 
   async function doFetch(path: string): Promise<void> {
+    if (inFlightFetches.has(path)) {
+      console.warn(`[git-status] duplicate in-flight fetch for ${path}`);
+    }
+    inFlightFetches.add(path);
     pendingFetches++;
     loading = true;
+    const start = performance.now();
     try {
       const result = await getGitStatus(path);
+      const elapsedMs = Math.round(performance.now() - start);
       if (result.ok) {
+        console.info(
+          `[git-status] fetch for ${path} completed in ${elapsedMs}ms: is_git_repo=${result.data.is_git_repo} entries=${Object.keys(result.data.statuses).length}`,
+        );
         const next: Record<string, DirGitStatus> = {
           ...byDir,
           [path]: { isGitRepo: result.data.is_git_repo, statuses: result.data.statuses },
@@ -53,12 +71,18 @@ function createGitStatusStore() {
         if (keys.length > MAX_TRACKED_DIRS) {
           for (const key of keys) {
             if (Object.keys(next).length <= MAX_TRACKED_DIRS) break;
-            if (key !== path && key !== currentPath) delete next[key];
+            if (key !== path && key !== currentPath) {
+              console.debug(`[git-status] evicting tracked dir ${key}`);
+              delete next[key];
+            }
           }
         }
         byDir = next;
+      } else {
+        console.warn(`[git-status] fetch for ${path} failed after ${elapsedMs}ms: ${result.error}`);
       }
     } finally {
+      inFlightFetches.delete(path);
       pendingFetches--;
       loading = pendingFetches > 0;
     }
@@ -68,9 +92,15 @@ function createGitStatusStore() {
   async function refresh(): Promise<void> {
     const dirs = Object.keys(byDir);
     if (dirs.length === 0) {
-      if (currentPath) await doFetch(currentPath);
+      if (currentPath) {
+        console.info(`[git-status] refresh: refetching 1 dir: ${currentPath}`);
+        await doFetch(currentPath);
+      } else {
+        console.info("[git-status] refresh: no tracked dirs to refetch");
+      }
       return;
     }
+    console.info(`[git-status] refresh: refetching ${dirs.length} dirs: ${dirs.join(", ")}`);
     await Promise.all(dirs.map(doFetch));
   }
 

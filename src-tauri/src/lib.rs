@@ -52,6 +52,28 @@ use system::{
 };
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
+/// Minimal stdout logger for `#[ignore]`d diagnostic tests (git_status.rs,
+/// git.rs) run manually against a live WSL distro: `cargo test` normally has
+/// no `log` sink installed, so `gitstat:` lines would otherwise be silently
+/// dropped. Shared here so both test modules can install it.
+#[cfg(test)]
+pub(crate) fn init_test_logger() {
+    struct StdoutLog;
+    impl log::Log for StdoutLog {
+        fn enabled(&self, _metadata: &log::Metadata) -> bool {
+            true
+        }
+        fn log(&self, record: &log::Record) {
+            println!("[{}] {}", record.level(), record.args());
+        }
+        fn flush(&self) {}
+    }
+    // Multiple diagnostic tests may call this; a second install attempt is
+    // expected to fail and is intentionally ignored.
+    let _ = log::set_boxed_logger(Box::new(StdoutLog));
+    log::set_max_level(log::LevelFilter::Debug);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(launch_dir: Option<String>) {
     let t_start = std::time::Instant::now();

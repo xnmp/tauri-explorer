@@ -116,11 +116,23 @@ function createScmStore() {
     }
     const root = repoRoot;
     loading = true;
+    const start = performance.now();
     const result = await gitSummary(root);
-    if (gen !== refreshGeneration) return;
+    const elapsedMs = Math.round(performance.now() - start);
+    if (gen !== refreshGeneration) {
+      console.debug(`[scm] discarding stale refreshSummary result for ${root}`);
+      return;
+    }
     loading = false;
     summary = result.ok ? result.data : emptySummary();
-    if (result.ok) summaryCache.set(root, result.data);
+    if (result.ok) {
+      console.info(
+        `[scm] refreshSummary for ${root} completed in ${elapsedMs}ms: is_repo=${result.data.is_repo}`,
+      );
+      summaryCache.set(root, result.data);
+    } else {
+      console.warn(`[scm] refreshSummary for ${root} failed after ${elapsedMs}ms: ${result.error}`);
+    }
   }
 
   /** Refresh the summary and announce the change so other git consumers
@@ -137,8 +149,14 @@ function createScmStore() {
     // renders "not a git repository" during it (#271). Every exit path below
     // ends in refreshSummary (or the competing call's), which clears it.
     loading = true;
+    const start = performance.now();
     const detected = await detectRepo(path);
-    if (activePath !== path) return;
+    const elapsedMs = Math.round(performance.now() - start);
+    console.info(`[scm] detectRepo for ${path} completed in ${elapsedMs}ms: repoRoot=${detected}`);
+    if (activePath !== path) {
+      console.debug(`[scm] discarding stale repo detection for ${path}`);
+      return;
+    }
     if (detected === repoRoot) {
       loading = false;
       return;

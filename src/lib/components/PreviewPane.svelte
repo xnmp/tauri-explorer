@@ -50,11 +50,20 @@
   const DEFAULT_WIDTH = 280;
   const MIN_WIDTH = 160;
   const MAX_WIDTH = 600;
+  const DEFAULT_HEIGHT = 240;
+  const MIN_HEIGHT = 120;
+  const MAX_HEIGHT = 600;
   let resizing = $state(false);
   let startX = 0;
+  let startY = 0;
   let startWidth = 0;
+  let startHeight = 0;
 
   const paneWidth = $derived(settingsStore.previewPaneWidth || DEFAULT_WIDTH);
+  const paneHeight = $derived(settingsStore.previewPaneHeight || DEFAULT_HEIGHT);
+  // Dock edge — read directly like the other settings this component consumes.
+  const position = $derived(settingsStore.previewPanePosition);
+  const isVertical = $derived(position === "top" || position === "bottom");
 
   // --- Fullscreen preview (double-click to toggle, Esc to exit) ---
   // The image fits the screen (object-fit: contain). Zoom with +/- or Ctrl+wheel;
@@ -237,16 +246,26 @@
     event.preventDefault();
     resizing = true;
     startX = event.clientX;
+    startY = event.clientY;
     startWidth = paneWidth;
+    startHeight = paneHeight;
     document.addEventListener("mousemove", handleResizeMove);
     document.addEventListener("mouseup", handleResizeEnd);
   }
 
   function handleResizeMove(event: MouseEvent): void {
-    // Dragging left increases width (handle is on the left edge)
-    const delta = startX - event.clientX;
-    const newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startWidth + delta));
-    settingsStore.setPreviewPaneWidth(newWidth);
+    if (isVertical) {
+      // Bottom dock: handle on the top edge, dragging up grows the pane.
+      // Top dock: handle on the bottom edge, dragging down grows the pane.
+      const delta = position === "bottom" ? startY - event.clientY : event.clientY - startY;
+      const newHeight = Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, startHeight + delta));
+      settingsStore.setPreviewPaneHeight(newHeight);
+    } else {
+      // Right dock: handle on the left edge, dragging left grows the pane.
+      const delta = startX - event.clientX;
+      const newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startWidth + delta));
+      settingsStore.setPreviewPaneWidth(newWidth);
+    }
   }
 
   function handleResizeEnd(): void {
@@ -680,7 +699,12 @@
   class="preview-pane"
   class:resizing
   class:fullscreen
-  style="width: {paneWidth}px; --preview-font-size: {settingsStore.previewFontSize}px;"
+  class:vertical={isVertical}
+  class:dock-bottom={position === "bottom"}
+  class:dock-top={position === "top"}
+  style={isVertical
+    ? `height: ${paneHeight}px; --preview-font-size: ${settingsStore.previewFontSize}px;`
+    : `width: ${paneWidth}px; --preview-font-size: ${settingsStore.previewFontSize}px;`}
   ondblclick={toggleFullscreen}
 >
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -885,6 +909,21 @@
     user-select: none;
   }
 
+  /* Vertical docks fill the column width; the divider moves to the docked edge. */
+  .preview-pane.vertical {
+    width: 100%;
+    flex-shrink: 0;
+    border-left: none;
+  }
+
+  .preview-pane.dock-bottom {
+    border-top: 1px solid var(--divider);
+  }
+
+  .preview-pane.dock-top {
+    border-bottom: 1px solid var(--divider);
+  }
+
   /* Fullscreen: cover the whole window (overrides the inline width). The
      nested zoom cancels the root UI zoom — otherwise 100vw/100vh are laid out
      pre-zoom and render zoom× the screen size, pushing the image off-center
@@ -932,6 +971,28 @@
     cursor: col-resize;
     z-index: 10;
     transition: background var(--transition-normal);
+  }
+
+  /* Bottom dock: handle spans the top edge (row-resize). */
+  .preview-pane.dock-bottom .resize-handle {
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: auto;
+    width: auto;
+    height: 4px;
+    cursor: row-resize;
+  }
+
+  /* Top dock: handle spans the bottom edge (row-resize). */
+  .preview-pane.dock-top .resize-handle {
+    left: 0;
+    right: 0;
+    top: auto;
+    bottom: 0;
+    width: auto;
+    height: 4px;
+    cursor: row-resize;
   }
 
   .resize-handle:hover,

@@ -11,6 +11,11 @@ import { loadPersisted, savePersisted, writeConfigQueued } from "./persisted";
 import { readConfigFile } from "$lib/api/files";
 import type { ViewMode } from "./types";
 import type { Command, CommandCategory } from "./commands.svelte";
+import {
+  type PreviewPanePosition,
+  normalizePreviewPanePosition,
+  cyclePreviewPanePosition,
+} from "$lib/domain/preview-pane-position";
 
 /** Which navigation bar buttons to display */
 export interface NavBarButtons {
@@ -67,7 +72,9 @@ export interface Settings {
   listViewColumns: number; // 0 = auto (based on window width), 1-6 = fixed
   listColumnMaxWidth: number; // max width per column in px (used when listViewColumns=0)
   viewMode: ViewMode; // default view mode for new panes
-  previewPaneWidth: number; // width in px, 0 = default (280px)
+  previewPaneWidth: number; // width in px when docked right, 0 = default (280px)
+  previewPaneHeight: number; // height in px when docked top/bottom, 0 = default (240px)
+  previewPanePosition: PreviewPanePosition; // preview pane dock edge: right (default), bottom, top
   terminalPanelHeight: number; // embedded terminal panel height in px
   // Terminal line-editing shortcuts (#375): action id → binding string
   // ("Alt+Backspace"). Empty/missing = disabled (native key behavior).
@@ -139,6 +146,8 @@ const DEFAULT_SETTINGS: Settings = {
   listColumnMaxWidth: 250,
   viewMode: "details",
   previewPaneWidth: 0,
+  previewPaneHeight: 0,
+  previewPanePosition: "right",
   terminalPanelHeight: 240,
   terminalShortcuts: {},
   theme: "light",
@@ -327,6 +336,13 @@ function createSettingsStore() {
     get previewPaneWidth() {
       return settings.previewPaneWidth;
     },
+    get previewPaneHeight() {
+      return settings.previewPaneHeight;
+    },
+    // Normalize on read so a malformed persisted value can never break layout.
+    get previewPanePosition() {
+      return normalizePreviewPanePosition(settings.previewPanePosition);
+    },
     get terminalPanelHeight() {
       return settings.terminalPanelHeight;
     },
@@ -500,6 +516,15 @@ function createSettingsStore() {
     },
     setPreviewPaneWidth(px: number): void {
       update({ previewPaneWidth: Math.max(0, Math.min(600, px)) });
+    },
+    setPreviewPaneHeight(px: number): void {
+      update({ previewPaneHeight: Math.max(0, Math.min(600, px)) });
+    },
+    setPreviewPanePosition(position: string): void {
+      update({ previewPanePosition: normalizePreviewPanePosition(position) });
+    },
+    cyclePreviewPanePosition(): void {
+      update({ previewPanePosition: cyclePreviewPanePosition(settings.previewPanePosition) });
     },
     setTerminalPanelHeight(px: number): void {
       update({ terminalPanelHeight: Math.max(96, Math.min(800, Math.round(px))) });

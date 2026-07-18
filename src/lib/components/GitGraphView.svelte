@@ -2677,7 +2677,7 @@
   }
   .pr-detail-comment-time {
     color: var(--text-tertiary);
-    font-size: 11px;
+    font-size: var(--font-size-caption);
   }
   .pr-detail-comment-body {
     color: var(--text-secondary);

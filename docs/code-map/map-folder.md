@@ -79,6 +79,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-refresh.ts` — single `git-status-changed` listener; fans out to badge + SCM subscribers.
 - `git-graph-refresh.ts` — F5 refresh bus: GitGraphView registers its fetch+reload per pane id; the `gitGraph.refresh` command dispatches to the active pane (#432).
 - `git-status.svelte.ts` — per-entry git status cache store.
+- `git-summary-cache.ts` — shared per-repo `git_status` (working-tree summary) fetch: in-flight dedup + short TTL, used by SCM store + git-graph so one change is one scan, not several (#431).
 - `scm.svelte.ts` — Source Control state (staged/unstaged/commit, #54).
 - `file-events.ts` — cross-window file-change broadcast (affected dirs → all windows).
 - `file-transfer.ts` — shared move/copy transfer core: conflict detect, undo, toast, frecency, broadcast.

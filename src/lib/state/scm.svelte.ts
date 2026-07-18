@@ -31,6 +31,7 @@ import {
 } from "$lib/api/files";
 import type { GitOpState } from "$lib/domain/git";
 import { subscribeGitChanges, notifyLocalGitChange } from "./git-refresh";
+import { fetchGitSummary } from "./git-summary-cache";
 import { filterEntriesToDir } from "$lib/domain/scm-tree";
 
 function emptySummary(): GitStatusSummary {
@@ -122,7 +123,10 @@ function createScmStore() {
     const root = repoRoot;
     loading = true;
     const start = performance.now();
-    const result = await gitSummary(root);
+    // Route through the shared cache (#431): change-driven, so `force` bypasses
+    // the TTL to observe a post-mutation scan, while still joining any scan
+    // already in flight for this repo (e.g. the other pane's store).
+    const result = await fetchGitSummary(root, { force: true });
     const elapsedMs = Math.round(performance.now() - start);
     if (gen !== refreshGeneration) {
       console.debug(`[scm] discarding stale refreshSummary result for ${root}`);

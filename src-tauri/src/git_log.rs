@@ -113,6 +113,14 @@ pub struct GitLogOptions {
     /// `branches` is set (an explicit selection wins).
     #[serde(default)]
     pub local_only: bool,
+    /// Resume hint (#431): OID of the last real commit of the previous page
+    /// (the previous page's `next_cursor`). When set, the walk seeds from the
+    /// same tips but discards every commit up to *and including* this OID, then
+    /// collects the next `limit`. This is gap-free and immune to the synthetic
+    /// stash rows that a numeric `skip` miscounts (#432): the cursor keys on a
+    /// real commit OID, not a returned-row count. `skip` is ignored when a
+    /// cursor is present. `None` = page by `skip` (used for filtered queries).
+    pub cursor: Option<String>,
 }
 
 const DEFAULT_LIMIT: usize = 500;
@@ -304,6 +312,13 @@ fn build_log(
     let mut skipped = 0usize;
     let mut has_more = false;
 
+    // Cursor resume (#431): discard every commit up to and including the cursor
+    // OID, then collect. `passed_cursor` starts true when there is no cursor, so
+    // the numeric-`skip` path below runs unchanged. An unresolvable cursor OID
+    // is treated as "no cursor" (fall back to skip) rather than erroring.
+    let cursor_oid = opts.cursor.as_deref().and_then(|s| Oid::from_str(s).ok());
+    let mut passed_cursor = cursor_oid.is_none();
+
     for (i, step) in walk.enumerate() {
         // Cooperative cancellation — check periodically to avoid overhead.
         if i % 256 == 0 && cancelled.load(Ordering::Relaxed) {
@@ -311,7 +326,15 @@ fn build_log(
         }
         let oid = step.map_err(to_app_err)?;
 
-        if skipped < opts.skip {
+        if let Some(cur) = cursor_oid {
+            if !passed_cursor {
+                // Still walking through the already-returned prefix.
+                if oid == cur {
+                    passed_cursor = true;
+                }
+                continue;
+            }
+        } else if skipped < opts.skip {
             skipped += 1;
             continue;
         }
@@ -358,64 +381,169 @@ pub struct BranchAuthor {
     pub remote: bool,
 }
 
-/// Per-branch walk cap: bounds the cost on pathological branches that
-/// diverged thousands of commits ago.
-const AUTHOR_WALK_CAP: usize = 2000;
+/// Total decode cap for the single author walk (#431). Was applied *per
+/// branch* (`O(branches × 2000)` commit decodes on every popover open); it is
+/// now a global cap across ONE walk over all tips, so the cost is
+/// `O(unique-commits)` once, not per branch.
+const AUTHOR_WALK_CAP: usize = 10_000;
 
-fn branch_creator(repo: &Repository, tip: Oid, trunk: Option<Oid>) -> Option<String> {
-    let mut walk = repo.revwalk().ok()?;
-    walk.push(tip).ok()?;
-    if let Some(t) = trunk {
-        if t != tip {
-            let _ = walk.hide(t);
+/// (branch name, tip OID, is-remote) for every branch, skipping the symbolic
+/// remote HEAD. The tip OIDs form the cache key (below): the author map is
+/// valid as long as no branch tip moved.
+fn gather_branches(repo: &Repository) -> Vec<(String, Oid, bool)> {
+    let mut out = Vec::new();
+    if let Ok(branches) = repo.branches(None) {
+        for (branch, btype) in branches.flatten() {
+            let Some(name) = branch.name().ok().flatten().map(str::to_string) else {
+                continue;
+            };
+            if name.ends_with("/HEAD") {
+                continue;
+            }
+            let Some(tip) = branch.get().target() else {
+                continue;
+            };
+            out.push((name, tip, btype == git2::BranchType::Remote));
         }
     }
-    let mut last: Option<String> = None;
+    out
+}
+
+/// Order-independent signature of every branch tip. Cache invalidates when any
+/// tip OID changes (a branch moved, was created, or deleted).
+fn tips_signature(branches: &[(String, Oid, bool)]) -> String {
+    let mut parts: Vec<String> = branches
+        .iter()
+        .map(|(name, tip, _)| format!("{name}={tip}"))
+        .collect();
+    parts.sort();
+    parts.join("\n")
+}
+
+/// Author of the *first* commit unique to a branch (its "creator"), found by an
+/// in-memory walk over the pre-decoded `info` map (no libgit2 calls). The first
+/// unique commit is the oldest ROOT of the branch-unique set reachable from the
+/// tip — a unique commit whose parents all fall outside the set (i.e. in
+/// trunk). Ties (equal author time) are broken by OID for determinism. `None`
+/// when the branch has no unique commits (fully merged into trunk) — callers
+/// then fall back to the tip author. Attribution is topological (root-based),
+/// not min-time, so commits sharing a timestamp still resolve correctly.
+fn oldest_unique_author(
+    info: &std::collections::HashMap<Oid, (String, i64, Vec<Oid>)>,
+    tip: Oid,
+) -> Option<String> {
+    // Commits unique to this branch, reachable from the tip.
+    let mut stack = vec![tip];
+    let mut reachable = std::collections::HashSet::new();
+    while let Some(oid) = stack.pop() {
+        if !info.contains_key(&oid) || !reachable.insert(oid) {
+            continue;
+        }
+        for p in &info[&oid].2 {
+            stack.push(*p);
+        }
+    }
+    // The creator's commit is the oldest root of that set.
+    reachable
+        .iter()
+        .filter(|oid| info[oid].2.iter().all(|p| !reachable.contains(p)))
+        .min_by(|a, b| {
+            let (ia, ib) = (&info[*a], &info[*b]);
+            ia.1.cmp(&ib.1).then_with(|| a.cmp(b))
+        })
+        .map(|oid| info[oid].0.clone())
+        .filter(|s| !s.is_empty())
+}
+
+/// Branch → creator, computed with a SINGLE revwalk (#431). Previously each
+/// branch got its own revwalk of up to 2000 commits with a `find_commit` per
+/// step. Now one walk seeded from all tips (hiding trunk) decodes every commit
+/// unique to some branch exactly once into `info`; per-branch creator
+/// attribution is then a cheap in-memory traversal of that map.
+fn collect_branch_authors(
+    repo: &Repository,
+    branches: Vec<(String, Oid, bool)>,
+) -> Result<Vec<BranchAuthor>, AppError> {
+    let trunk = repo.head().ok().and_then(|h| h.target());
+
+    // One walk over all tips, hiding trunk history so only branch-unique
+    // commits are decoded. Topological keeps parents after children.
+    let mut walk = repo.revwalk().map_err(to_app_err)?;
+    walk.set_sorting(Sort::TOPOLOGICAL).map_err(to_app_err)?;
+    for (_, tip, _) in &branches {
+        let _ = walk.push(*tip);
+    }
+    if let Some(t) = trunk {
+        let _ = walk.hide(t);
+    }
+    // oid -> (author name, author time seconds, parent oids)
+    let mut info: std::collections::HashMap<Oid, (String, i64, Vec<Oid>)> =
+        std::collections::HashMap::new();
     for (i, step) in walk.enumerate() {
         if i >= AUTHOR_WALK_CAP {
             break;
         }
         let Ok(oid) = step else { break };
         if let Ok(commit) = repo.find_commit(oid) {
-            last = Some(commit.author().name().unwrap_or("").to_string());
+            let author = commit.author();
+            info.insert(
+                oid,
+                (
+                    author.name().unwrap_or("").to_string(),
+                    author.when().seconds(),
+                    commit.parent_ids().collect(),
+                ),
+            );
         }
     }
-    last.filter(|s| !s.is_empty())
-}
 
-fn collect_branch_authors(repo: &Repository) -> Result<Vec<BranchAuthor>, AppError> {
-    let trunk = repo.head().ok().and_then(|h| h.target());
-    let mut out = Vec::new();
-    for (branch, btype) in repo.branches(None).map_err(to_app_err)?.flatten() {
-        let Some(name) = branch.name().ok().flatten().map(str::to_string) else {
-            continue;
-        };
-        if name.ends_with("/HEAD") {
-            continue;
-        }
-        let Some(tip) = branch.get().target() else {
-            continue;
-        };
-        let author = branch_creator(repo, tip, trunk).or_else(|| {
-            repo.find_commit(tip)
-                .ok()
-                .map(|c| c.author().name().unwrap_or("").to_string())
-        });
+    let mut out = Vec::with_capacity(branches.len());
+    for (name, tip, remote) in branches {
+        let author = oldest_unique_author(&info, tip)
+            .or_else(|| {
+                repo.find_commit(tip)
+                    .ok()
+                    .map(|c| c.author().name().unwrap_or("").to_string())
+            })
+            .unwrap_or_default();
         out.push(BranchAuthor {
             name,
-            author: author.unwrap_or_default(),
-            remote: btype == git2::BranchType::Remote,
+            author,
+            remote,
         });
     }
     Ok(out)
 }
 
-/// Branch → creator map for the branch-filter popover's author filter (#376).
+/// Per-repo author cache (#431): keyed by repo path, holding the tip signature
+/// the entry was computed for. A popover reopen with unchanged tips is served
+/// from memory instead of re-walking history.
+type AuthorCache = std::sync::Mutex<std::collections::HashMap<String, (String, Vec<BranchAuthor>)>>;
+fn author_cache() -> &'static AuthorCache {
+    static CACHE: std::sync::OnceLock<AuthorCache> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Branch → creator map for the branch-filter popover's author filter (#376),
+/// cached per repo and invalidated when any branch tip moves (#431).
 #[tauri::command]
 pub async fn git_branch_authors(repo_path: String) -> Result<Vec<BranchAuthor>, AppError> {
     run_blocking(move |_cancelled| {
         let repo = open_repo(Path::new(&repo_path))?;
-        collect_branch_authors(&repo)
+        let branches = gather_branches(&repo);
+        let sig = tips_signature(&branches);
+        if let Ok(cache) = author_cache().lock() {
+            if let Some((cached_sig, authors)) = cache.get(&repo_path) {
+                if *cached_sig == sig {
+                    return Ok(authors.clone());
+                }
+            }
+        }
+        let authors = collect_branch_authors(&repo, branches)?;
+        if let Ok(mut cache) = author_cache().lock() {
+            cache.insert(repo_path.clone(), (sig, authors.clone()));
+        }
+        Ok(authors)
     })
     .await
 }
@@ -795,12 +923,170 @@ mod tests {
         // Trunk: switch HEAD back to main so topic's commits are "unique".
         repo.set_head("refs/heads/main").unwrap();
 
-        let authors = collect_branch_authors(&repo).unwrap();
+        let authors = collect_branch_authors(&repo, gather_branches(&repo)).unwrap();
         let topic = authors.iter().find(|b| b.name == "topic").unwrap();
         assert_eq!(topic.author, "Creator");
         // Fully-merged branch (points at trunk history): falls back to tip author.
         let main = authors.iter().find(|b| b.name == "main").unwrap();
         assert_eq!(main.author, "Test User");
+    }
+
+    #[test]
+    fn branch_authors_cache_invalidates_when_a_tip_moves() {
+        // The single-walk author computation is cached per repo, keyed by the
+        // tip signature. A new commit on a branch moves its tip → the signature
+        // changes → the cache must recompute (not serve the stale author).
+        let (dir, repo) = init_repo();
+        let p = dir.path().to_path_buf();
+        write(&p, "a.txt", "one");
+        let base = commit(&repo, "base", &[]);
+        repo.branch("topic", &repo.find_commit(base).unwrap(), false)
+            .unwrap();
+
+        let branches = gather_branches(&repo);
+        let sig1 = tips_signature(&branches);
+
+        // Advance topic with a commit by a distinct author.
+        repo.set_head("refs/heads/topic").unwrap();
+        let alice = git2::Signature::now("Alice", "a@x").unwrap();
+        let tree = repo.find_commit(base).unwrap().tree().unwrap();
+        repo.commit(
+            Some("HEAD"),
+            &alice,
+            &alice,
+            "topic work",
+            &tree,
+            &[&repo.find_commit(base).unwrap()],
+        )
+        .unwrap();
+        repo.set_head("refs/heads/main").unwrap();
+
+        let sig2 = tips_signature(&gather_branches(&repo));
+        assert_ne!(sig1, sig2, "moving a tip must change the signature");
+
+        let authors = collect_branch_authors(&repo, gather_branches(&repo)).unwrap();
+        let topic = authors.iter().find(|b| b.name == "topic").unwrap();
+        assert_eq!(topic.author, "Alice", "single walk attributes the creator");
+    }
+
+    #[test]
+    fn paging_by_cursor_is_gap_free_and_ignores_skip() {
+        // Cursor resume walks from the tips, discards up to and including the
+        // cursor OID, then collects — gap-free without any numeric skip.
+        let (dir, repo) = init_repo();
+        let p = dir.path().to_path_buf();
+        let mut oids = Vec::new();
+        for i in 0..8 {
+            write(&p, "f.txt", &format!("v{i}"));
+            let parents: Vec<Oid> = oids.last().copied().into_iter().collect();
+            oids.push(commit(&repo, &format!("c{i}"), &parents));
+        }
+
+        let page1 = build_log(
+            &repo,
+            &GitLogOptions {
+                limit: Some(3),
+                ..Default::default()
+            },
+            Vec::new(),
+            &no_cancel(),
+        )
+        .unwrap();
+        assert_eq!(
+            page1.commits.iter().map(|c| c.summary.as_str()).collect::<Vec<_>>(),
+            vec!["c7", "c6", "c5"],
+        );
+        let cursor = page1.next_cursor.clone().unwrap();
+        assert_eq!(cursor, page1.commits[2].oid);
+
+        // Resume from the cursor; `skip` is deliberately a wrong value to prove
+        // the cursor path ignores it.
+        let page2 = build_log(
+            &repo,
+            &GitLogOptions {
+                limit: Some(3),
+                skip: 999,
+                cursor: Some(cursor),
+                ..Default::default()
+            },
+            Vec::new(),
+            &no_cancel(),
+        )
+        .unwrap();
+        assert_eq!(
+            page2.commits.iter().map(|c| c.summary.as_str()).collect::<Vec<_>>(),
+            vec!["c4", "c3", "c2"],
+            "cursor resumes exactly after the cursor OID, gap-free",
+        );
+        assert!(page2.has_more);
+    }
+
+    #[test]
+    fn paging_by_cursor_survives_a_woven_stash() {
+        // The #432 numeric-skip off-by-N: a woven stash row inflates the row
+        // count. The cursor keys on a REAL commit OID, so resume is immune —
+        // no real commit is dropped at the stash page boundary.
+        let (dir, mut repo) = init_repo();
+        let p = dir.path().to_path_buf();
+        let mut oids = Vec::new();
+        for i in 0..6 {
+            write(&p, "f.txt", &format!("v{i}"));
+            let parents: Vec<Oid> = oids.last().copied().into_iter().collect();
+            oids.push(commit(&repo, &format!("c{i}"), &parents));
+        }
+        write(&p, "f.txt", "dirty");
+        let sig = git2::Signature::now("Test User", "test@example.com").unwrap();
+        repo.stash_save(&sig, "wip", None).unwrap();
+
+        fn stashes(repo: &mut Repository) -> Vec<(usize, String, Oid)> {
+            let mut s = Vec::new();
+            repo.stash_foreach(|idx, msg, oid| {
+                s.push((idx, msg.to_string(), *oid));
+                true
+            })
+            .unwrap();
+            s
+        }
+        let real = |page: &GitLogPage| -> Vec<String> {
+            page.commits
+                .iter()
+                .filter(|c| c.stash.is_none())
+                .map(|c| c.summary.clone())
+                .collect()
+        };
+
+        let s = stashes(&mut repo);
+        let page1 = build_log(
+            &repo,
+            &GitLogOptions {
+                limit: Some(3),
+                ..Default::default()
+            },
+            s,
+            &no_cancel(),
+        )
+        .unwrap();
+        assert_eq!(real(&page1), vec!["c5", "c4", "c3"]);
+        // next_cursor is the last REAL commit (c3), not the woven stash row.
+        let cursor = page1.next_cursor.clone().unwrap();
+
+        let s = stashes(&mut repo);
+        let page2 = build_log(
+            &repo,
+            &GitLogOptions {
+                limit: Some(3),
+                cursor: Some(cursor),
+                ..Default::default()
+            },
+            s,
+            &no_cancel(),
+        )
+        .unwrap();
+        assert_eq!(
+            real(&page2),
+            vec!["c2", "c1", "c0"],
+            "cursor resume drops no real commit at the stash boundary",
+        );
     }
 
     #[test]

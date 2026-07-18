@@ -1507,7 +1507,12 @@ const mockCommands: Record<string, CommandHandler> = {
       return { commits: [], refs: {}, has_more: false, next_cursor: null };
     }
     const options =
-      (args.options as { skip?: number; limit?: number; branches?: string[] } | null) ?? {};
+      (args.options as {
+        skip?: number;
+        limit?: number;
+        branches?: string[];
+        cursor?: string;
+      } | null) ?? {};
     const skip = Math.max(0, options.skip ?? 0);
     const limit = Math.max(1, options.limit ?? 500);
 
@@ -1539,13 +1544,29 @@ const mockCommands: Record<string, CommandHandler> = {
         "stash" in c ? reachable.has(c.parents[0]) : reachable.has(c.oid),
       );
     }
-    const page = all.slice(skip, skip + limit);
-    const hasMore = skip + limit < all.length;
+    // Cursor resume (#431): mirror the backend — discard up to and including
+    // the cursor OID (a real commit), then take `limit`. Falls back to `skip`
+    // when no cursor is given (filtered queries).
+    let start = skip;
+    if (options.cursor) {
+      const idx = all.findIndex((c) => !("stash" in c) && c.oid === options.cursor);
+      start = idx >= 0 ? idx + 1 : all.length; // unknown cursor → empty page
+    }
+    const page = all.slice(start, start + limit);
+    const hasMore = start + limit < all.length;
+    // next_cursor is the last REAL commit (never a woven stash row).
+    let nextCursor: string | null = null;
+    for (let i = page.length - 1; i >= 0; i--) {
+      if (!("stash" in page[i])) {
+        nextCursor = page[i].oid;
+        break;
+      }
+    }
     return {
       commits: page,
       refs: MOCK_GRAPH_REFS,
       has_more: hasMore,
-      next_cursor: page.length ? page[page.length - 1].oid : null,
+      next_cursor: nextCursor,
     };
   },
 

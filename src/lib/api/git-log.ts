@@ -250,13 +250,21 @@ export async function gitSyncLocalBranches(
   return invoke<SyncLocalBranchesResult>("git_sync_local_branches", { repoPath });
 }
 
-/** An open GitHub pull request decorating a branch tip (#448). */
+/** An open GitHub pull request decorating a branch tip (#448, #459). The
+ *  three status fields are populated only when the backend had a GitHub token
+ *  (GraphQL path); on the tokenless REST path they arrive as `null`. */
 export interface OpenPr {
   number: number;
   title: string;
   headRef: string;
   htmlUrl: string;
   draft: boolean;
+  /** CI rollup for the PR's head commit; `null` when no checks / no token. */
+  ciStatus: "success" | "failure" | "pending" | null;
+  /** Aggregate review state; `null` when unrequested / no token. */
+  reviewDecision: "approved" | "changes_requested" | "review_required" | null;
+  /** Issue-comment count; `null` on the tokenless REST path. */
+  commentCount: number | null;
 }
 
 /** Open PRs for the repo's GitHub remote. Degrades to `[]` — never

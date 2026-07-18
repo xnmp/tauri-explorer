@@ -5,8 +5,22 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { assignLayout, branchPath, groupRefChips, indexPrsByBranch, GRAPH_PALETTE } from "$lib/domain/git-graph";
-import type { GraphCommitLike, OpenPrLike } from "$lib/domain/git-graph";
+import {
+  assignLayout,
+  branchPath,
+  groupRefChips,
+  indexPrsByBranch,
+  prBadgePresentation,
+  ciStatusLabel,
+  reviewDecisionLabel,
+  GRAPH_PALETTE,
+} from "$lib/domain/git-graph";
+import type {
+  GraphCommitLike,
+  OpenPrLike,
+  CiStatus,
+  ReviewDecision,
+} from "$lib/domain/git-graph";
 
 const c = (oid: string, ...parents: string[]): GraphCommitLike => ({ oid, parents });
 
@@ -385,5 +399,81 @@ describe("indexPrsByBranch (#448)", () => {
     expect(map.size).toBe(2);
     expect(map.get("feature")?.number).toBe(7);
     expect(map.get("experiment")?.number).toBe(12);
+  });
+});
+
+describe("prBadgePresentation (#459)", () => {
+  const CI: CiStatus[] = ["success", "failure", "pending", null];
+  const REVIEW: ReviewDecision[] = [
+    "approved",
+    "changes_requested",
+    "review_required",
+    null,
+  ];
+
+  it("maps each CI status to its color class", () => {
+    expect(prBadgePresentation({ ciStatus: "success" }).ciClass).toBe("ci-success");
+    expect(prBadgePresentation({ ciStatus: "failure" }).ciClass).toBe("ci-failure");
+    expect(prBadgePresentation({ ciStatus: "pending" }).ciClass).toBe("ci-pending");
+    expect(prBadgePresentation({ ciStatus: null }).ciClass).toBeNull();
+    expect(prBadgePresentation({}).ciClass).toBeNull();
+  });
+
+  it("draft always suppresses the CI color class (grey styling wins)", () => {
+    for (const ciStatus of CI) {
+      expect(prBadgePresentation({ draft: true, ciStatus }).ciClass).toBeNull();
+    }
+  });
+
+  it("maps review decision to its glyph", () => {
+    expect(prBadgePresentation({ reviewDecision: "approved" }).reviewGlyph).toBe("✓");
+    expect(prBadgePresentation({ reviewDecision: "changes_requested" }).reviewGlyph).toBe("±");
+    // review_required and unknown carry no glyph (neutral).
+    expect(prBadgePresentation({ reviewDecision: "review_required" }).reviewGlyph).toBeNull();
+    expect(prBadgePresentation({ reviewDecision: null }).reviewGlyph).toBeNull();
+    expect(prBadgePresentation({}).reviewGlyph).toBeNull();
+  });
+
+  it("shows the comment count only when positive", () => {
+    expect(prBadgePresentation({ commentCount: 3 }).commentCount).toBe(3);
+    expect(prBadgePresentation({ commentCount: 1 }).commentCount).toBe(1);
+    expect(prBadgePresentation({ commentCount: 0 }).commentCount).toBeNull();
+    expect(prBadgePresentation({ commentCount: null }).commentCount).toBeNull();
+    expect(prBadgePresentation({}).commentCount).toBeNull();
+  });
+
+  it("is exhaustive and total over every CI × review × draft combination", () => {
+    for (const draft of [false, true]) {
+      for (const ciStatus of CI) {
+        for (const reviewDecision of REVIEW) {
+          const p = prBadgePresentation({ draft, ciStatus, reviewDecision });
+          // ciClass: null unless a real status AND not a draft.
+          const expectClass = !draft && ciStatus !== null;
+          expect(p.ciClass === null).toBe(!expectClass);
+          // Glyph never present for a review state without one.
+          if (reviewDecision === "approved") expect(p.reviewGlyph).toBe("✓");
+          else if (reviewDecision === "changes_requested") expect(p.reviewGlyph).toBe("±");
+          else expect(p.reviewGlyph).toBeNull();
+        }
+      }
+    }
+  });
+});
+
+describe("PR detail labels (#459)", () => {
+  it("labels each CI status, null when unknown", () => {
+    expect(ciStatusLabel("success")).toBe("Checks passing");
+    expect(ciStatusLabel("failure")).toBe("Checks failing");
+    expect(ciStatusLabel("pending")).toBe("Checks pending");
+    expect(ciStatusLabel(null)).toBeNull();
+    expect(ciStatusLabel(undefined)).toBeNull();
+  });
+
+  it("labels each review decision, null when unknown", () => {
+    expect(reviewDecisionLabel("approved")).toBe("Approved");
+    expect(reviewDecisionLabel("changes_requested")).toBe("Changes requested");
+    expect(reviewDecisionLabel("review_required")).toBe("Review required");
+    expect(reviewDecisionLabel(null)).toBeNull();
+    expect(reviewDecisionLabel(undefined)).toBeNull();
   });
 });

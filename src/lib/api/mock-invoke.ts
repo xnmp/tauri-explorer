@@ -1621,9 +1621,11 @@ const mockCommands: Record<string, CommandHandler> = {
     };
   },
 
-  // Open GitHub PRs (#448): two synthetic PRs on branches that exist in
-  // MOCK_GRAPH_REFS — "feature" (open) and "experiment" (draft) — so the
-  // graph's PR badges have something to render against in e2e.
+  // Open GitHub PRs (#448/#459): synthetic PRs on branches that exist in
+  // MOCK_GRAPH_REFS so the graph's PR badges have something to render against
+  // in e2e. #7 exercises a passing/approved/commented PR, #12 a failing draft
+  // (draft styling wins over CI color), #15 the tokenless case (all status
+  // fields null → plain purple badge, pending kept for label coverage).
   git_open_prs: (args: Record<string, unknown>) => {
     const repoRoot = (args.repoRoot as string) ?? "";
     if (!repoRoot.startsWith("/home/user/Documents/project")) return [];
@@ -1634,6 +1636,9 @@ const mockCommands: Record<string, CommandHandler> = {
         headRef: "feature",
         htmlUrl: "https://github.com/mock/project/pull/7",
         draft: false,
+        ciStatus: "success",
+        reviewDecision: "approved",
+        commentCount: 3,
       },
       {
         number: 12,
@@ -1641,6 +1646,19 @@ const mockCommands: Record<string, CommandHandler> = {
         headRef: "experiment",
         htmlUrl: "https://github.com/mock/project/pull/12",
         draft: true,
+        ciStatus: "failure",
+        reviewDecision: "changes_requested",
+        commentCount: 0,
+      },
+      {
+        number: 15,
+        title: "Hotfix login redirect",
+        headRef: "hotfix",
+        htmlUrl: "https://github.com/mock/project/pull/15",
+        draft: false,
+        ciStatus: "pending",
+        reviewDecision: null,
+        commentCount: null,
       },
     ];
   },

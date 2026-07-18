@@ -412,6 +412,99 @@ export interface OpenPrLike {
   headRef: string;
 }
 
+/** CI rollup states surfaced on a PR badge (`null` = unknown / no checks). */
+export type CiStatus = "success" | "failure" | "pending" | null;
+
+/** Aggregate review states surfaced on a PR badge (`null` = unknown). */
+export type ReviewDecision =
+  | "approved"
+  | "changes_requested"
+  | "review_required"
+  | null;
+
+/** The presentation-relevant subset of an open PR (structural; avoids
+ *  importing the API `OpenPr`, keeping domain dependency-free). */
+export interface PrBadgeFields {
+  draft?: boolean;
+  ciStatus?: CiStatus;
+  reviewDecision?: ReviewDecision;
+  commentCount?: number | null;
+}
+
+/** Everything the badge template needs, derived purely from a PR's status
+ *  fields — so the mapping is unit-testable away from the DOM. */
+export interface PrBadgePresentation {
+  /** CI color modifier class, or `null` to keep the default purple. Draft
+   *  PRs always return `null` here so their grey styling wins regardless of
+   *  CI state (a draft is "not real yet"). */
+  ciClass: "ci-success" | "ci-failure" | "ci-pending" | null;
+  /** Review glyph: `"✓"` approved, `"±"` changes requested, else `null`
+   *  (review_required and unknown carry no glyph — absence reads as neutral). */
+  reviewGlyph: "✓" | "±" | null;
+  /** Comment count to show, or `null` to omit (only shown when > 0). */
+  commentCount: number | null;
+}
+
+function ciClassFor(status: CiStatus | undefined): PrBadgePresentation["ciClass"] {
+  switch (status) {
+    case "success":
+      return "ci-success";
+    case "failure":
+      return "ci-failure";
+    case "pending":
+      return "ci-pending";
+    default:
+      return null;
+  }
+}
+
+/** Map a PR's status fields to its badge presentation (color + glyphs). Pure;
+ *  the single source of truth for how CI/review/comment state becomes visual
+ *  decoration on the git-graph PR badge (#459). */
+export function prBadgePresentation(pr: PrBadgeFields): PrBadgePresentation {
+  const ciClass = pr.draft ? null : ciClassFor(pr.ciStatus);
+  const reviewGlyph =
+    pr.reviewDecision === "approved"
+      ? "✓"
+      : pr.reviewDecision === "changes_requested"
+        ? "±"
+        : null;
+  const commentCount =
+    pr.commentCount != null && pr.commentCount > 0 ? pr.commentCount : null;
+  return { ciClass, reviewGlyph, commentCount };
+}
+
+/** Human-readable CI status line for the PR details dropdown, or `null` when
+ *  unknown (no token / no checks) so the caller can omit the line. */
+export function ciStatusLabel(status: CiStatus | undefined): string | null {
+  switch (status) {
+    case "success":
+      return "Checks passing";
+    case "failure":
+      return "Checks failing";
+    case "pending":
+      return "Checks pending";
+    default:
+      return null;
+  }
+}
+
+/** Human-readable review-decision line for the dropdown, or `null` to omit. */
+export function reviewDecisionLabel(
+  decision: ReviewDecision | undefined,
+): string | null {
+  switch (decision) {
+    case "approved":
+      return "Approved";
+    case "changes_requested":
+      return "Changes requested";
+    case "review_required":
+      return "Review required";
+    default:
+      return null;
+  }
+}
+
 /** Index open PRs by their head branch for O(1) badge lookup while
  *  rendering ref chips. When several open PRs share a branch (shouldn't
  *  normally happen, but GitHub doesn't forbid it), the lowest PR number

@@ -74,7 +74,7 @@
     type OpenPr,
   } from "$lib/api/git-log";
   import { fetchGitSummary } from "$lib/state/git-summary-cache";
-  import { assignLayout, branchPath, groupRefChips, indexPrsByBranch, sliceBranchLine, GRAPH_PALETTE, type GraphLayout, type BranchLine, type RefChips, type RemoteRefChip } from "$lib/domain/git-graph";
+  import { assignLayout, branchPath, groupRefChips, indexPrsByBranch, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, sliceBranchLine, GRAPH_PALETTE, type GraphLayout, type BranchLine, type RefChips, type RemoteRefChip } from "$lib/domain/git-graph";
   import { openExternalUrl } from "$lib/api/crash";
   import { registerGraphRefresher } from "$lib/state/git-graph-refresh";
   import { clientToFixed } from "$lib/domain/zoom";
@@ -187,6 +187,18 @@
   // rows below the expansion stay aligned with their vertices.
   let detailsHeight = $state(0);
 
+  // In-app PR details dropdown (#459): the second inline-expansion source
+  // alongside commit details. Anchored to a commit row's oid so it reuses the
+  // same RowExpand stretch. Only one expansion (commit OR PR) is open at a
+  // time, which keeps the RowExpand derivation single-valued.
+  let prDetail = $state<{ oid: string; pr: OpenPr } | null>(null);
+  let prDetailHeight = $state(0);
+
+  function closePrDetail(): void {
+    prDetail = null;
+    prDetailHeight = 0;
+  }
+
   function closeDetails(): void {
     selected = null;
     selectedFiles = [];
@@ -196,6 +208,9 @@
   }
 
   async function selectCommit(commit: CommitInfo): Promise<void> {
+    // Opening commit details closes any open PR dropdown — one expansion at a
+    // time (#459).
+    closePrDetail();
     if (selected?.oid === commit.oid) {
       closeDetails();
       return;
@@ -387,15 +402,21 @@
     document.body.style.cursor = "ew-resize";
     document.body.style.userSelect = "none";
   }
-  /** Row index of the expanded (selected) commit, or -1. */
+  /** Oid of the row with an open inline expansion — commit details OR the PR
+   *  dropdown (#459). Only one is ever open (each opener closes the other), so
+   *  this stays single-valued and the RowExpand math is unchanged. */
+  const expandedOid = $derived(selected?.oid ?? prDetail?.oid ?? null);
+  /** Row index of the expanded commit, or -1. */
   const expandedIndex = $derived(
-    selected ? displayCommits.findIndex((c) => c.oid === selected!.oid) : -1,
+    expandedOid ? displayCommits.findIndex((c) => c.oid === expandedOid) : -1,
   );
-  /** SVG stretch below the inline details block (see domain RowExpand). */
+  /** Height of whichever inline block is open (commit details or PR dropdown). */
+  const expandHeight = $derived(selected ? detailsHeight : prDetail ? prDetailHeight : 0);
+  /** SVG stretch below the inline block (see domain RowExpand). */
   const rowExpand = $derived(
-    expandedIndex >= 0 && detailsHeight > 0
+    expandedIndex >= 0 && expandHeight > 0
       ? // +6: the block's bottom gap (its margin-bottom is outside offsetHeight).
-        { afterRow: expandedIndex, extra: detailsHeight + 6 }
+        { afterRow: expandedIndex, extra: expandHeight + 6 }
       : undefined,
   );
   const graphHeight = $derived(
@@ -694,8 +715,10 @@
   function setBranchFilter(next: string[] | null): void {
     branchFilter = next;
     savePersisted(BRANCH_FILTER_KEY, branchFilter);
-    // The selected commit may not exist in the new subset.
+    // The selected commit (or the PR dropdown's anchor row) may not exist in
+    // the new subset.
     closeDetails();
+    closePrDetail();
   }
 
   function isBranchShown(name: string): boolean {
@@ -803,10 +826,29 @@
     return prsByBranch.get(chip.branch);
   }
 
-  /** Open a PR's page in the default browser; called from a chip inside a
-   *  clickable commit row, so the click must not also select the row. */
-  function openPr(event: MouseEvent, pr: OpenPr): void {
+  /** Toggle the in-app PR details dropdown for `pr`, anchored under `commit`'s
+   *  row (#459). Called from a badge inside a clickable commit row, so the
+   *  click must not also select the row. Clicking the same badge again closes
+   *  it; opening it closes any open commit details (one expansion at a time). */
+  function togglePrDetail(event: MouseEvent, commit: CommitInfo, pr: OpenPr): void {
     event.stopPropagation();
+    if (prDetail?.oid === commit.oid && prDetail.pr.number === pr.number) {
+      closePrDetail();
+      return;
+    }
+    closeDetails();
+    prDetailHeight = 0;
+    prDetail = { oid: commit.oid, pr };
+  }
+
+  /** Whether `pr` under `commit` is the currently open dropdown. */
+  function isPrDetailOpen(commit: CommitInfo, pr: OpenPr): boolean {
+    return prDetail?.oid === commit.oid && prDetail.pr.number === pr.number;
+  }
+
+  /** Open a PR's page in the default browser (host-pinned to github.com);
+   *  the dropdown's "Open on GitHub" action. */
+  function openPrExternal(pr: OpenPr): void {
     void openExternalUrl(pr.htmlUrl);
   }
 
@@ -1134,6 +1176,10 @@
       columnMenu = null;
       return;
     }
+    if (event.key === "Escape" && prDetail) {
+      closePrDetail();
+      return;
+    }
     if (event.key === "Escape" && (menu || prompt)) closeMenu();
   }
 </script>
@@ -1395,6 +1441,29 @@
         </svg>
         </div>
 
+        <!-- PR badge (#448/#459): CI-colored, glyph-decorated, and a toggle for
+             the in-app details dropdown. Shared by both the local-branch and
+             remote-only chip render sites. -->
+        {#snippet prBadge(commit: CommitInfo, pr: OpenPr)}
+          {@const p = prBadgePresentation(pr)}
+          <button
+            type="button"
+            class="ref ref-pr"
+            class:draft={pr.draft}
+            class:ci-success={p.ciClass === "ci-success"}
+            class:ci-failure={p.ciClass === "ci-failure"}
+            class:ci-pending={p.ciClass === "ci-pending"}
+            class:open={isPrDetailOpen(commit, pr)}
+            title={pr.title}
+            aria-expanded={isPrDetailOpen(commit, pr)}
+            onclick={(e) => togglePrDetail(e, commit, pr)}
+          >
+            ⇄ #{pr.number}
+            {#if p.reviewGlyph}<span class="pr-review" aria-hidden="true">{p.reviewGlyph}</span>{/if}
+            {#if p.commentCount !== null}<span class="pr-comments" title="{p.commentCount} comments">🗨 {p.commentCount}</span>{/if}
+          </button>
+        {/snippet}
+
         {#each visibleRows as { commit, index } (commit.oid)}
           {@const chips = chipsFor(commit.oid)}
           {@const synthetic = commit.oid === UNCOMMITTED}
@@ -1438,16 +1507,7 @@
                   {/each}
                 </span>
                 {#if prForHead(head.name)}
-                  {@const pr = prForHead(head.name)!}
-                  <button
-                    type="button"
-                    class="ref ref-pr"
-                    class:draft={pr.draft}
-                    title={pr.title}
-                    onclick={(e) => openPr(e, pr)}
-                  >
-                    ⇄ #{pr.number}
-                  </button>
+                  {@render prBadge(commit, prForHead(head.name)!)}
                 {/if}
               {/each}
               {#each chips.remotes as remote (remote.name)}
@@ -1462,16 +1522,7 @@
                   </svg>{remote.name}
                 </span>
                 {#if prForRemote(remote) && !rowPrNumbers.has(prForRemote(remote)!.number)}
-                  {@const pr = prForRemote(remote)!}
-                  <button
-                    type="button"
-                    class="ref ref-pr"
-                    class:draft={pr.draft}
-                    title={pr.title}
-                    onclick={(e) => openPr(e, pr)}
-                  >
-                    ⇄ #{pr.number}
-                  </button>
+                  {@render prBadge(commit, prForRemote(remote)!)}
                 {/if}
               {/each}
               {#each chips.tags as tag (tag)}
@@ -1566,6 +1617,46 @@
                 {/each}
               </ul>
                 </div>
+              </div>
+            </div>
+          {/if}
+          {#if prDetail?.oid === commit.oid}
+            <!-- In-app PR details dropdown (#459): the second inline-expansion
+                 source. Reuses the RowExpand stretch (prDetailHeight) so lower
+                 rows stay aligned, exactly like the commit-details block. -->
+            {@const pr = prDetail.pr}
+            {@const ciLine = ciStatusLabel(pr.ciStatus)}
+            {@const reviewLine = reviewDecisionLabel(pr.reviewDecision)}
+            <div
+              class="commit-detail-inline pr-detail-inline"
+              data-testid="git-graph-pr-detail"
+              bind:offsetHeight={prDetailHeight}
+              style:margin-left="{effectiveGraphWidth + 12}px"
+              style:top="{rowY(index) + ROW_HEIGHT}px"
+            >
+              <button class="detail-close" onclick={closePrDetail} aria-label="Close PR details">✕</button>
+              <div class="pr-detail-body">
+                <div class="pr-detail-head">
+                  <span class="pr-detail-number">#{pr.number}</span>
+                  <span class="pr-detail-title">{pr.title}</span>
+                  {#if pr.draft}<span class="pr-detail-chip draft">Draft</span>{/if}
+                </div>
+                <div class="pr-detail-line"><span class="pr-detail-label">Branch:</span> <span class="meta-mono">{pr.headRef}</span></div>
+                {#if ciLine}
+                  <div class="pr-detail-line">
+                    <span class="pr-detail-label">CI:</span>
+                    <span class="pr-detail-ci ci-{pr.ciStatus}">{ciLine}</span>
+                  </div>
+                {/if}
+                {#if reviewLine}
+                  <div class="pr-detail-line"><span class="pr-detail-label">Review:</span> {reviewLine}</div>
+                {/if}
+                <div class="pr-detail-line">
+                  <span class="pr-detail-label">Comments:</span> {pr.commentCount ?? "—"}
+                </div>
+                <button type="button" class="pr-detail-open" onclick={() => openPrExternal(pr)}>
+                  Open on GitHub ↗
+                </button>
               </div>
             </div>
           {/if}
@@ -2410,6 +2501,119 @@
 
   .ref-pr.draft:hover {
     background: color-mix(in srgb, #8b949e 25%, transparent);
+  }
+
+  /* CI-status badge colors (#459): the badge text/tint reflects the head
+     commit's check rollup. Draft styling (grey) always wins — a draft never
+     gets a ci-* class (see prBadgePresentation). Colors come from the theme's
+     system tokens so every theme stays coherent. */
+  .ref-pr.ci-success {
+    color: var(--system-success);
+    background: color-mix(in srgb, var(--system-success) 14%, transparent);
+    border-color: color-mix(in srgb, var(--system-success) 32%, transparent);
+  }
+  .ref-pr.ci-success:hover {
+    background: color-mix(in srgb, var(--system-success) 24%, transparent);
+  }
+  .ref-pr.ci-failure {
+    color: var(--system-critical);
+    background: color-mix(in srgb, var(--system-critical) 14%, transparent);
+    border-color: color-mix(in srgb, var(--system-critical) 32%, transparent);
+  }
+  .ref-pr.ci-failure:hover {
+    background: color-mix(in srgb, var(--system-critical) 24%, transparent);
+  }
+  .ref-pr.ci-pending {
+    color: var(--system-caution);
+    background: color-mix(in srgb, var(--system-caution) 14%, transparent);
+    border-color: color-mix(in srgb, var(--system-caution) 32%, transparent);
+  }
+  .ref-pr.ci-pending:hover {
+    background: color-mix(in srgb, var(--system-caution) 24%, transparent);
+  }
+
+  /* Open dropdown: a subtle ring so the toggled badge reads as active. */
+  .ref-pr.open {
+    outline: 1px solid currentColor;
+    outline-offset: 1px;
+  }
+
+  /* Review / comment glyphs appended inside the badge — inherit the badge's
+     CI color (currentColor) so the whole chip stays one visual unit. */
+  .pr-review,
+  .pr-comments {
+    margin-left: 3px;
+    font-weight: 700;
+  }
+
+  /* ----- In-app PR details dropdown (#459) ----- */
+  .pr-detail-body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    padding-right: 20px; /* clear the close button */
+  }
+  .pr-detail-head {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .pr-detail-number {
+    font-weight: 700;
+    color: #a371f7;
+  }
+  .pr-detail-title {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .pr-detail-chip {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 0 5px;
+    border-radius: 6px;
+    line-height: 1.5;
+  }
+  .pr-detail-chip.draft {
+    color: #8b949e;
+    background: color-mix(in srgb, #8b949e 15%, transparent);
+    border: 1px solid color-mix(in srgb, #8b949e 30%, transparent);
+  }
+  .pr-detail-line {
+    color: var(--text-secondary);
+  }
+  .pr-detail-label {
+    color: var(--text-tertiary);
+    margin-right: 2px;
+  }
+  .pr-detail-ci.ci-success {
+    color: var(--system-success);
+    font-weight: 600;
+  }
+  .pr-detail-ci.ci-failure {
+    color: var(--system-critical);
+    font-weight: 600;
+  }
+  .pr-detail-ci.ci-pending {
+    color: var(--system-caution);
+    font-weight: 600;
+  }
+  .pr-detail-open {
+    align-self: flex-start;
+    margin-top: 4px;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    color: #a371f7;
+    background: color-mix(in srgb, #a371f7 12%, transparent);
+    border: 1px solid color-mix(in srgb, #a371f7 30%, transparent);
+    border-radius: 6px;
+    padding: 3px 10px;
+  }
+  .pr-detail-open:hover {
+    background: color-mix(in srgb, #a371f7 22%, transparent);
   }
 
   .summary {

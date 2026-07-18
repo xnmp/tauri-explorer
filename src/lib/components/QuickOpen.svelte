@@ -45,6 +45,10 @@
 
   let query = $state("");
   let results = $state<SearchResult[]>([]);
+  // Raw backend hits from the current search, kept so a downvote can re-run the
+  // ranking pipeline from scratch (re-applying frecency once) instead of
+  // double-counting frecency onto already-boosted scores.
+  let lastRawResults = $state<SearchResult[]>([]);
   let selectedIndex = $state(0);
   let loading = $state(false);
   let inputRef = $state<HTMLInputElement | null>(null);
@@ -264,6 +268,7 @@
 
       // Rank backend results by frecency, then merge in recent/frecent and
       // cwd-listing matches (#385 — cwd entries must always be findable).
+      lastRawResults = payload.results;
       const ranked = rankWithFrecency(payload.results);
       const frecencyMatches = [...matchFrecencyAndRecent(query), ...matchCwdEntries(query)];
       results = mergeResultsByScore(ranked, frecencyMatches);
@@ -290,6 +295,7 @@
     if (!query.trim()) {
       cancelActiveSearch();
       results = [];
+      lastRawResults = [];
       selectedIndex = 0;
       totalScanned = 0;
       loading = false;
@@ -312,6 +318,7 @@
       // Show frecency/recent/cwd-listing matches immediately (before the
       // backend responds) — cwd folders appear instantly (#385).
       const frecencyMatches = [...matchFrecencyAndRecent(query), ...matchCwdEntries(query)];
+      lastRawResults = [];
       results = mergeResultsByScore([], frecencyMatches);
 
       // Search from CWD so immediate directory contents are always found
@@ -345,6 +352,7 @@
         const result = await fuzzySearch(query, cwd, 20);
         if (generation !== searchGeneration) return;
         if (result.ok) {
+          lastRawResults = result.data;
           const ranked = rankWithFrecency(result.data);
           results = mergeResultsByScore(ranked, frecencyMatches);
           pointer.reset();
@@ -365,6 +373,16 @@
     if (event.key === "d" && event.altKey) {
       event.preventDefault();
       settingsStore.toggleQuickOpenDebug();
+      return;
+    }
+    // Ctrl+Delete downvotes the highlighted result (Shift+Delete is reserved
+    // for permanent file deletion elsewhere in the app, so we avoid it here).
+    if (event.key === "Delete" && event.ctrlKey) {
+      const highlighted = displayResults[selectedIndex];
+      if (highlighted) {
+        event.preventDefault();
+        downvoteResult(highlighted);
+      }
       return;
     }
     switch (event.key) {
@@ -436,6 +454,42 @@
     onClose();
   }
 
+  /** The frecency key a result's ranking is driven by. Directories are tracked
+   *  under their own path; a file's frecency lives on its containing folder
+   *  (that's what `recordFileAction` writes), so downvoting a file undoes the
+   *  access it recorded — on its folder. */
+  function frecencyKeyForResult(result: SearchResult): string {
+    return result.kind === "directory" ? result.path : parentDir(result.path);
+  }
+
+  /** Re-run the ranking pipeline over the current raw backend hits so the
+   *  visible list reflects the just-changed frecency/recents state immediately. */
+  function rerankVisible(): void {
+    if (!query.trim()) return; // empty-query view is the reactive `recentResults`
+    const ranked = rankWithFrecency(lastRawResults);
+    const extras = [...matchFrecencyAndRecent(query), ...matchCwdEntries(query)];
+    results = mergeResultsByScore(ranked, extras);
+    if (selectedIndex >= results.length) {
+      selectedIndex = Math.max(0, results.length - 1);
+    }
+  }
+
+  /** Downvote a result: soft-penalise its frecency (as if some accesses were
+   *  forgotten) and drop it from the recents pin. Its ranking falls now but
+   *  recovers if the item is opened again — not a permanent blacklist. */
+  function downvoteResult(result: SearchResult, event?: Event): void {
+    // Don't let a click on the row's downvote button open the result.
+    event?.stopPropagation();
+    frecencyStore.penalize(frecencyKeyForResult(result));
+    recentFilesStore.remove(result.path);
+    rerankVisible();
+    // Empty-query "Recent" view re-derives from recentFilesStore automatically;
+    // just keep the selection in range.
+    if (selectedIndex >= displayResults.length) {
+      selectedIndex = Math.max(0, displayResults.length - 1);
+    }
+  }
+
   // Focus input and prune stale entries when dialog opens.
   // untrack prevents pruneNonExistent's internal $state reads from
   // becoming dependencies of this effect (tauri-explorer-m2x3).
@@ -443,6 +497,7 @@
     if (open && inputRef) {
       query = "";
       results = [];
+      lastRawResults = [];
       selectedIndex = 0;
       pointer.arm();
       tick().then(() => inputRef?.focus());
@@ -558,6 +613,18 @@
                 {:else}
                   <span class="result-score">{Math.round(result.score)}%</span>
                 {/if}
+                <button
+                  type="button"
+                  class="downvote-btn"
+                  aria-label="Downvote this result"
+                  title="Downvote — lowers this result's ranking. Not permanent: it recovers if you open it again. (Ctrl+Delete)"
+                  onclick={(e) => downvoteResult(result, e)}
+                  onmousemove={(e) => e.stopPropagation()}
+                >
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path d="M9.5 2H5.2C4.6 2 4.1 2.4 4 3l-1.3 5c-.1.6.4 1.2 1 1.2H6l-.5 2.4c-.1.6.2 1.2.8 1.3.3.1.6-.1.8-.4L9.8 9.2h2.5c.6 0 1-.5 1-1V3c0-.6-.4-1-1-1z" fill="currentColor"/>
+                  </svg>
+                </button>
               </li>
             {/each}
           </ul>
@@ -585,6 +652,18 @@
                   <span class="result-path">{displayPath(result.path)}</span>
                 </div>
                 <span class="result-kind recent-badge">recent</span>
+                <button
+                  type="button"
+                  class="downvote-btn"
+                  aria-label="Downvote this result"
+                  title="Downvote — lowers this result's ranking. Not permanent: it recovers if you open it again. (Ctrl+Delete)"
+                  onclick={(e) => downvoteResult(result, e)}
+                  onmousemove={(e) => e.stopPropagation()}
+                >
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path d="M9.5 2H5.2C4.6 2 4.1 2.4 4 3l-1.3 5c-.1.6.4 1.2 1 1.2H6l-.5 2.4c-.1.6.2 1.2.8 1.3.3.1.6-.1.8-.4L9.8 9.2h2.5c.6 0 1-.5 1-1V3c0-.6-.4-1-1-1z" fill="currentColor"/>
+                  </svg>
+                </button>
               </li>
             {/each}
           </ul>
@@ -596,6 +675,7 @@
       <div class="footer">
         <span class="shortcut"><kbd>↑</kbd><kbd>↓</kbd> Navigate</span>
         <span class="shortcut"><kbd>Enter</kbd> Open</span>
+        <span class="shortcut"><kbd>Ctrl+Del</kbd> Downvote</span>
         <span class="shortcut"><kbd>Esc</kbd> Close</span>
         <span class="shortcut"><kbd>Alt+D</kbd> {settingsStore.quickOpenDebug ? "Debug ON" : "Debug"}</span>
       </div>
@@ -783,6 +863,45 @@
     color: var(--text-tertiary);
     background: var(--subtle-fill-secondary);
     font-size: 10px;
+  }
+
+  .downvote-btn {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    margin-left: -4px;
+    border: none;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    /* Hidden until the row is hovered or selected — an unobtrusive affordance. */
+    opacity: 0;
+    transition: opacity var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
+  }
+
+  .result-item:hover .downvote-btn,
+  .result-item.selected .downvote-btn {
+    opacity: 0.7;
+  }
+
+  .downvote-btn:hover {
+    opacity: 1;
+    background: var(--subtle-fill-tertiary);
+    color: var(--danger, #e5484d);
+  }
+
+  .result-item.selected .downvote-btn {
+    color: var(--text-on-accent);
+  }
+
+  .result-item.selected .downvote-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+    color: var(--text-on-accent);
   }
 
   .no-results {

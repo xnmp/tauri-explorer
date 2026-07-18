@@ -43,6 +43,25 @@ bun run test      # unit tests
 bun run test:e2e  # browser e2e
 ```
 
+### Nix
+
+On Linux with [Nix](https://nixos.org/download) (flakes enabled), no manual dependency install needed:
+
+```bash
+nix run github:xnmp/tauri-explorer          # build + launch, no install
+nix profile install github:xnmp/tauri-explorer  # install to your profile
+```
+
+`nix build github:xnmp/tauri-explorer` produces the same release binary at `./result/bin/tauri-explorer`, built via nixpkgs' `cargo-tauri.hook` (same `--profile release` + `tauri/custom-protocol` path the Tauri CLI itself uses — not a bare `cargo build --release`, which yields a dev-mode binary).
+
+For local development, `nix develop` (or `.envrc` + [direnv](https://direnv.net/)) drops you into a shell with the Rust toolchain, Bun, Node, and every WebKitGTK/GTK system dependency Tauri v2 needs already on `PKG_CONFIG_PATH` — no distro package install required:
+
+```bash
+nix develop
+bun install
+bun run start
+```
+
 ## Status
 
 Actively developed — see the [changelog](CHANGELOG.md) and [releases](https://github.com/xnmp/tauri-explorer/releases) for what's new. If you hit a bug: Command Palette → "Report a Bug" (it pre-fills an issue with a local log excerpt — nothing is sent automatically), or [open an issue](https://github.com/xnmp/tauri-explorer/issues/new/choose).

@@ -115,3 +115,21 @@
   /* Vibrancy: more transparent islands for light backgrounds */
   --vibrancy-island-card: rgba(255, 255, 255, 0.45);
 }
+/* --- #437: non-premium (flat / high-contrast) fallback --- */
+[data-theme="light"]:not([data-premium="true"]) {
+  --surface-stroke: rgba(0, 0, 0, 0.05);
+  --surface-stroke-flyout: rgba(0, 0, 0, 0.03);
+  --divider: rgba(0, 0, 0, 0.06);
+  --subtle-fill-secondary: rgba(0, 0, 0, 0.035);
+  --subtle-fill-tertiary: rgba(0, 0, 0, 0.022);
+  --control-stroke: rgba(0, 0, 0, 0.05);
+  --control-stroke-secondary: rgba(0, 0, 0, 0.14);
+  --breadcrumb-bg: initial;
+  --breadcrumb-hover-bg: initial;
+  --breadcrumb-active-bg: initial;
+  --breadcrumb-radius: initial;
+  --breadcrumb-gap: initial;
+  --focus-stroke-outer: #000000;
+  --shadow-flyout: 0 8px 24px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.05), 0 0 1px rgba(0, 0, 0, 0.03);
+}

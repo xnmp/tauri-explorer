@@ -479,7 +479,13 @@
     onpointerdown={startResize}
   ></div>
   <div class="terminal-header">
-    <span class="terminal-title">Terminal</span>
+    <span class="terminal-title" role="img" aria-label="Terminal" title="Terminal">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+        <path d="M4 6l2.5 2L4 10" />
+        <path d="M8 10.5h4" />
+      </svg>
+    </span>
     <div class="terminal-actions">
       <button
         class="action-btn"
@@ -550,9 +556,8 @@
   }
 
   .terminal-title {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
+    display: flex;
+    align-items: center;
     color: var(--text-secondary);
   }
 

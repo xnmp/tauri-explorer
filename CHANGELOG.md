@@ -2,6 +2,34 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.5.0 — 2026-07-18
+
+A git-graph correctness and speed overhaul driven by an adversarial architecture review, per-pane SCM, and a batch of quality-of-life features.
+
+### Fixed
+- **Pull (and every graph action) now updates the git graph** — the graph had three competing refresh triggers and silently dropped a refresh that arrived while a load was in flight, so a pull could settle on pre-pull state forever. One generation-counted `reload()` with a dirty-flag re-run replaces them; an action's own change notification no longer double-loads the graph (#432).
+- **F5 refreshes the git graph even when the terminal is focused** — function keys now fall through the terminal's key gate to app bindings, and the graph's F5 is a real registered command scoped to the active pane instead of a hidden window listener (#432).
+- **Remote branches can be checked out as local tracking branches** — right-clicking a remote chip offers "Checkout `branch` (tracking `origin/branch`)" instead of only a detached checkout; ref identity is preserved through the graph's chip model (#432).
+- **Commits are no longer silently skipped when paging past a stash** — paging now keys on a real-commit cursor instead of the returned row count, which over-skipped by the number of woven stash rows (#432, #431).
+- **Only the checked-out branch is highlighted when several branches sit on HEAD**; detached HEAD highlights none (#433).
+- **No more white focus rings on the selected commit and tab titles after F5** — F5's keyboard interaction promoted the click-focused row to `:focus-visible`; transient focus is dropped on refresh while keyboard-Tab rings remain (#433).
+- **Miller columns no longer render twice in island mode without a sidebar** — both render sites now consume one shared `islandMode` derived (#434).
+- **The SCM panel docks flat inside the explorer pane** like the miller bar instead of floating as a hover card; island chrome is opt-in per surface, not implied by vibrancy (#434).
+- **Memory leaks fixed**: per-pane SCM stores are now disposed when panes close (the map previously grew one entry per pane ever opened), panel-resize document listeners survive mid-drag unmounts, plus a window-tabs focus listener and a breadcrumb debounce timer (#439).
+- **Downvoting a Quick Open result no longer kills keyboard input**, and the downvote button stays out of the modal's Tab order (#438).
+
+### Improved
+- **Git graph is much faster** (#431): the author filter went from a per-branch 2000-commit revwalk (re-run on every popover open) to a single cached walk over all tips; a shared per-repo status fetch with in-flight dedup replaces 2–3 full working-tree scans per change event; commit file lists are LRU-cached so re-clicking a commit is instant.
+- **Git graph shows a loading spinner** when scrolling loads more commits (#433).
+
+### Added
+- **New File in the context menu** — create an empty file with inline naming (like New Folder) in all three views, plus a `file.newFile` palette command (#436).
+- **Quick Open downvote** — Ctrl+Delete or the hover button demotes a result by halving its recorded accesses; ranking recovers naturally if you open it again (#438).
+- **Per-pane SCM panel** — in split layouts each pane toggles its own SCM panel; the global setting is now just the default for new panes (#434).
+- **"F5 also syncs local branches" setting** — the graph's refresh can fetch and fast-forward behind local branches, reporting diverged ones in a toast and never touching them (#432).
+- **Premium theme effects are now opt-in** — the aurora-style surface treatment added to all themes in v1.4.2 sits behind a "Premium Theme Effects" toggle, restoring the flatter high-contrast look as the default (#437).
+- **Terminal panel header shows a terminal icon** instead of a text title (#435).
+
 ## v1.4.2 — 2026-07-14
 
 A big WSL/Windows correctness pass, a rebuilt git-graph filter, and a premium surface treatment for every theme.

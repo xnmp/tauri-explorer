@@ -105,10 +105,11 @@ backend for E2E/browser).
 - `composables/use-inline-rename.svelte.ts` — inline edit field lifecycle
 - `components/EntryName.svelte` — name label + inline rename input
 - `components/BulkRenameDialog.svelte` — multi-file pattern rename
-- `components/InlineNewFolder.svelte` — new-folder inline create
+- `components/InlineNewFolder.svelte` — inline new-entry create (folder or file, per `explorer.newEntryKind`; #436)
 - `state/rename-suggestion.svelte.ts`, `domain/ai-rename.ts`, `api/ai-rename.ts` — AI rename suggestions
-- `api/files.ts` (renameEntry, createDirectory), `src-tauri/src/files/file_ops.rs`
+- `api/files.ts` (renameEntry, createDirectory, createEmptyFile), `src-tauri/src/files/file_ops.rs` (`create_directory`, `create_empty_file`)
 - FLOW: inline-rename commits → `renameEntry` → pane-mutations renames entry + `renameThumbnailCache` so thumb doesn't flash.
+- New-entry FLOW: context menu / `file.newFolder`|`file.newFile` command → `explorer.startInlineNewFolder`|`startInlineNewFile` (sets `newEntryKind`) → InlineNewFolder row → `createFolder`|`createFile` → pane-mutations optimistic add + `broadcastFileChange`.
 
 ## Delete / trash / undo
 - `components/DeleteDialog.svelte` — confirm permanent vs trash
@@ -140,6 +141,7 @@ backend for E2E/browser).
 - `state/commands/view-commands.ts` — `view.toggleMillerColumns`, millerLayers0-3
 - reuses `explorer.svelte.ts` per-column listing + `directory-listing.ts`
 - FLOW: each column is a listing of the selected dir in the prior column; layer count is a view command/setting.
+- ISLAND (#434): in island mode with no sidebar the ACTIVE pane's columns are hoisted to a left island in `+page.svelte` (`millerAsLeftIsland`); `ExplorerPane.svelte` suppresses the inline copy via the same `settingsStore.islandMode` derived so they render exactly once (a divergent per-platform check double-mounted them).
 
 ## Git status badges
 - `components/GitStatusBadge.svelte` — per-row M/A/? badge glyph
@@ -150,13 +152,17 @@ backend for E2E/browser).
 
 ## Git SCM panel
 - `components/ScmSidebarView.svelte` — staged/unstaged/untracked tree, commit box
-- `components/ScmPanel.svelte`, `components/ScmDiffView.svelte` — panel shell + inline diff
+- `components/ScmPanel.svelte`, `components/ScmDiffView.svelte` — panel shell + inline diff. ScmPanel renders docked/flat by default (like the miller bar); `island` prop opts into floating-island chrome (#434) — vibrancy alone no longer floats it.
 - `components/GitGraphView.svelte` — commit graph / log
 - `state/scm.svelte.ts` — per-pane stores via `getScmStore(paneId)` (#334): repo state, stage/commit actions; shared summary cache + `warmScmSummary`
-- `domain/scm-tree.ts`, `domain/git-graph.ts`, `domain/git.ts` — tree grouping, graph layout
-- `api/git.ts`, `api/git-log.ts`; `src-tauri/src/git.rs`, `git_actions.rs`, `git_log.rs`, `git_common.rs`
+- `state/git-summary-cache.ts` — shared per-repo `git_status` fetch (in-flight dedup + short TTL, #431): SCM `refreshSummary` (force), GitGraphView `fetchPage0Snapshot` + uncommitted-row selection route through it, so one `git-status-changed` is one working-tree scan, not several
+- panel VISIBILITY is also per-pane (#434): `window-tabs.svelte.ts` `getPaneScmVisible`/`toggleScmInActivePane` on the pane node (falls back to the global `showScmPanel` default); the `view.toggleScmPanel` command (`view-commands.ts`) acts on the active pane only
+- `state/git-graph-refresh.ts` — F5 refresh bus: GitGraphView registers its fetch+reload per pane; `gitGraph.refresh` command dispatches to the active graph pane (#432)
+- `state/git-graph-cache.ts` — per-repo graph snapshot cache + `warmGraphSnapshot`/`fetchPage0Snapshot` (moved out of GitGraphView so `git-warm.ts` imports state, not a component); evicts a repo's snapshots on external (watcher) git changes so a remount never paints stale history (#433, arch Finding 7)
+- `domain/scm-tree.ts`, `domain/git-graph.ts`, `domain/git.ts` — tree grouping, graph layout (`groupRefChips(decorations, headBranch)` keeps remote/branch identity for tracking checkout (#432) and marks only the checked-out branch chip active when several sit on HEAD (#433))
+- `api/git.ts`, `api/git-log.ts` (incl. `gitCheckoutTracking`, `gitSyncLocalBranches`, #432); `src-tauri/src/git.rs`, `git_actions.rs`, `git_log.rs`, `git_common.rs`
 - `domain/git-warm.ts` (pure: when to warm) + `state/git-warm.ts` (wiring) — pre-warm graph/SCM caches once a pane settles on a repo
-- FLOW: scmStore invokes git stage/unstage/commit/diff/log → Rust git2 ops → `git-status-changed` emit refreshes panel + badges. WSL UNC repos: `git_repo_root`/`git_status`/`git_diff` delegate to native git (`wsl.exe --exec`) without a libgit2 open/discovery over 9P first, falling back to libgit2 only on delegation failure (#425); the UNC PollWatcher uses a 15s interval to limit 9P stat load (#426).
+- FLOW: scmStore invokes git stage/unstage/commit/diff/log → Rust git2 ops → `git-status-changed` emit refreshes panel + badges. GitGraphView has ONE generation-counted `reload()` (dirty-flag re-run, never dropped); actions call `reload()` + `notifyLocalGitChange`, and its watcher subscription filters `source:"local"` so an action's echo can't double-reload (#432). F5 fetches then reloads; with the `f5SyncsLocalBranches` setting it also fast-forwards behind-upstream locals (`git_sync_local_branches`), reporting diverged ones in a toast (#432). WSL UNC repos: `git_repo_root`/`git_status`/`git_diff` delegate to native git (`wsl.exe --exec`) without a libgit2 open/discovery over 9P first, falling back to libgit2 only on delegation failure (#425); the UNC PollWatcher uses a 15s interval to limit 9P stat load (#426). PERF (#431): `git_branch_authors` runs ONE revwalk over all tips (was O(branches×2000)) cached per repo by tip-OID signature; the graph caches per-commit file lists in a 50-entry LRU (`gitCommitFiles`, immutable per OID) and resumes deeper pages via `git_log`'s `cursor` (OID-based, gap-free, immune to woven-stash miscount) instead of skip-walking from tips. VISUAL (#433): `git_log` returns `head_branch` (HEAD's symbolic target) so only the checked-out chip highlights; a spinner "Loading more…" row shows while scroll-triggered `loadMore` is in flight; F5's `refreshWithFetch` blurs a mouse-focused commit row / tab so the keypress doesn't paint a `:focus-visible` white ring (keyboard Tab focus is untouched).
 
 ## Quick Open (Ctrl+P fuzzy file finder)
 - `components/QuickOpen.svelte` — modal, streamed results, keyboard nav

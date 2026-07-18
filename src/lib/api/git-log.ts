@@ -44,6 +44,10 @@ export interface GitLogPage {
   has_more: boolean;
   /** OID of the last commit in the page; next page uses `skip + commits.length`. */
   next_cursor: string | null;
+  /** Shorthand of the checked-out branch (HEAD's symbolic target), or null when
+   *  detached / unborn. Lets the graph highlight only the checked-out branch
+   *  chip when several branches decorate the HEAD commit (#433). */
+  head_branch: string | null;
 }
 
 export interface GitLogOptions {
@@ -216,4 +220,32 @@ export async function gitDeleteRemoteBranch(
   name: string,
 ): Promise<void> {
   await invoke("git_delete_remote_branch", { repoPath, remote, name });
+}
+
+/** Checkout a remote-tracking branch (#432): creates a local branch tracking
+ *  `<remote>/<name>`, or plainly checks out an existing local `name`. */
+export async function gitCheckoutTracking(
+  repoPath: string,
+  remote: string,
+  name: string,
+): Promise<void> {
+  await invoke("git_checkout_tracking", { repoPath, remote, name });
+}
+
+/** Outcome of a local-branch sync (#432). */
+export interface SyncLocalBranchesResult {
+  /** Branches fast-forwarded to their upstream. */
+  fast_forwarded: string[];
+  /** Branches diverged (ahead AND behind) — left untouched, reported. */
+  diverged: string[];
+  /** Branches skipped for safety (dirty checked-out tree, refused ff). */
+  skipped: string[];
+}
+
+/** Fetch + fast-forward local branches strictly behind their upstream (#432).
+ *  Diverged branches are reported, never moved. */
+export async function gitSyncLocalBranches(
+  repoPath: string,
+): Promise<SyncLocalBranchesResult> {
+  return invoke<SyncLocalBranchesResult>("git_sync_local_branches", { repoPath });
 }

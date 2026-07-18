@@ -47,6 +47,12 @@ test.describe("Git graph tab", () => {
     const tipRow = rows.nth(2);
     await expect(tipRow.locator(".ref-branch.ref-active")).toContainText("main");
     await expect(tipRow.locator(".ref-branch .ref-remote-sub")).toHaveText("origin");
+    // Only the checked-out branch highlights (#433): `release` also sits on the
+    // HEAD commit but renders as an ordinary chip, so exactly one is active.
+    await expect(tipRow.locator(".ref-branch.ref-active")).toHaveCount(1);
+    await expect(
+      tipRow.locator(".ref-branch", { hasText: "release" }),
+    ).not.toHaveClass(/ref-active/);
     await expect(view.locator(".ref-tag").first()).toHaveText("v1.0");
     // Stash renders as a woven row with its selector chip.
     await expect(view.locator(".ref-stash")).toHaveText("stash@{0}");
@@ -123,6 +129,47 @@ test.describe("Git graph tab", () => {
     await expect(page.locator(".toast", { hasText: "Fetched from remotes" })).toBeVisible();
     // The graph is still painted after the reload.
     await expect(page.locator('[data-testid="git-graph-view"] .commit-row')).toHaveCount(18);
+  });
+
+  test("remote-only branch chip offers a tracking checkout (#432)", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+    const view = page.locator('[data-testid="git-graph-view"]');
+
+    // origin/legacy-import is a remote-only branch (no local tracks it) — it
+    // renders as a .ref-remote chip. Right-clicking it opens the row menu
+    // scoped to a tracking checkout.
+    const remoteChip = view.locator(".ref-remote", { hasText: "origin/legacy-import" });
+    await expect(remoteChip).toBeVisible();
+    await remoteChip.click({ button: "right" });
+
+    const trackingItem = page.locator('[data-testid="git-graph-checkout-tracking"]');
+    await expect(trackingItem).toBeVisible();
+    await expect(trackingItem).toHaveText("Checkout legacy-import (tracking origin/legacy-import)");
+
+    // Invoking it creates the local branch tracking the remote (mock resolves
+    // it and moves HEAD) — a success toast confirms.
+    await trackingItem.click();
+    await expect(
+      page.locator(".toast", { hasText: "Checked out legacy-import (tracking origin/legacy-import)" }),
+    ).toBeVisible();
+  });
+
+  test("F5 with the sync setting reports diverged branches (#432)", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    // Enable "F5 Syncs Local Branches" via the palette toggle.
+    await page.keyboard.press("Control+Shift+p");
+    await page.locator("input:focus").fill("F5 Syncs Local Branches");
+    await page.keyboard.press("Enter");
+
+    await openGraphViaPalette(page);
+    await page.keyboard.press("F5");
+    // The mock reports `experiment` diverged and `hotfix` fast-forwarded.
+    await expect(
+      page.locator(".toast", { hasText: "Diverged (not synced): experiment" }),
+    ).toBeVisible();
   });
 
   test("select-all checkbox and author checkboxes drive the branch filter (#411–#413)", async ({ page }) => {

@@ -100,3 +100,20 @@
   --icon-folder: #f0d060;
   /* --icon-file-tint: unset; when set, overrides all file icon colors */
 }
+
+/* --- #437: non-premium (flat / high-contrast) fallback --- */
+[data-theme="ocean-blue"]:not([data-premium="true"]) {
+  --theme-background-image: initial;
+  --sidebar-opacity: 1;
+  --toolbar-opacity: 1;
+  --content-opacity: 1;
+  --titlebar-opacity: 1;
+  --statusbar-opacity: 1;
+  --breadcrumb-bg: initial;
+  --breadcrumb-hover-bg: initial;
+  --breadcrumb-active-bg: initial;
+  --breadcrumb-radius: initial;
+  --breadcrumb-gap: initial;
+  --shadow-flyout: 0 8px 20px rgba(0, 15, 30, 0.5);
+  --shadow-card: 0 1px 4px rgba(0, 15, 30, 0.25), 0 0 1px rgba(0, 15, 30, 0.2);
+}

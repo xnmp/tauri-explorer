@@ -293,6 +293,142 @@ pub async fn git_delete_remote_branch(
     .await
 }
 
+/// Checkout a remote-tracking branch as a local one (#432). If a local branch
+/// `name` already exists, plainly check it out; otherwise create a local branch
+/// tracking `<remote>/<name>` (`git checkout -b <name> --track <remote>/<name>`).
+#[tauri::command]
+pub async fn git_checkout_tracking(
+    repo_path: String,
+    remote: String,
+    name: String,
+) -> Result<(), AppError> {
+    validate_arg("remote", &remote)?;
+    validate_arg("branch name", &name)?;
+    tokio::task::spawn_blocking(move || {
+        let local_exists = crate::git_common::open_repo(Path::new(&repo_path))
+            .ok()
+            .and_then(|repo| {
+                repo.find_branch(&name, git2::BranchType::Local)
+                    .ok()
+                    .map(|_| ())
+            })
+            .is_some();
+        if local_exists {
+            // A local branch with that name already exists — just switch to it.
+            run_git(&repo_path, &["checkout", &name])
+        } else {
+            let tracking = format!("{remote}/{name}");
+            run_git(&repo_path, &["checkout", "-b", &name, "--track", &tracking])
+        }
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("git action task join: {e}")))?
+}
+
+/// Outcome of a local-branch sync (#432).
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct SyncLocalBranchesResult {
+    /// Branches fast-forwarded to their upstream.
+    pub fast_forwarded: Vec<String>,
+    /// Branches that have diverged (ahead > 0 AND behind > 0) — left untouched.
+    pub diverged: Vec<String>,
+    /// Branches skipped for safety (the checked-out branch with a dirty tree,
+    /// or a fast-forward that git unexpectedly refused).
+    pub skipped: Vec<String>,
+}
+
+/// True when `git status --porcelain` is empty (clean working tree/index).
+fn working_tree_clean(repo_path: &str) -> bool {
+    let mut cmd = Command::new("git");
+    cmd.no_console()
+        .args(["status", "--porcelain"])
+        .current_dir(Path::new(repo_path));
+    cmd.output()
+        .map(|o| o.status.success() && o.stdout.is_empty())
+        .unwrap_or(false)
+}
+
+fn sync_local_branches(repo_path: &str) -> Result<SyncLocalBranchesResult, AppError> {
+    let repo = crate::git_common::open_repo(Path::new(repo_path))?;
+    let mut result = SyncLocalBranchesResult::default();
+
+    let head_branch = repo
+        .head()
+        .ok()
+        .filter(|h| h.is_branch())
+        .and_then(|h| h.shorthand().map(|s| s.to_string()));
+
+    // Collect the plan first — mutating refs while iterating repo.branches()
+    // would invalidate the iterator. Each entry is a branch strictly behind
+    // its upstream with nothing unpushed (a safe fast-forward candidate).
+    let mut plans: Vec<(String, git2::Oid)> = Vec::new();
+    for (branch, _t) in repo
+        .branches(Some(git2::BranchType::Local))
+        .map_err(crate::git_common::to_app_err)?
+        .flatten()
+    {
+        let Some(name) = branch.name().ok().flatten().map(str::to_string) else {
+            continue;
+        };
+        let Ok(upstream) = branch.upstream() else {
+            continue; // no upstream configured — nothing to sync
+        };
+        let (Some(local), Some(remote)) = (branch.get().target(), upstream.get().target()) else {
+            continue;
+        };
+        if local == remote {
+            continue; // already in sync
+        }
+        let (ahead, behind) = repo
+            .graph_ahead_behind(local, remote)
+            .map_err(crate::git_common::to_app_err)?;
+        if behind == 0 {
+            continue; // up to date or purely ahead — nothing to pull down
+        }
+        if ahead > 0 {
+            result.diverged.push(name); // diverged — never touch
+            continue;
+        }
+        plans.push((name, remote));
+    }
+
+    for (name, remote) in plans {
+        if head_branch.as_deref() == Some(name.as_str()) {
+            // The checked-out branch is only advanced via merge --ff-only, and
+            // only with a clean tree; anything uncertain is skipped, not forced.
+            if working_tree_clean(repo_path) && run_git(repo_path, &["merge", "--ff-only"]).is_ok() {
+                result.fast_forwarded.push(name);
+            } else {
+                result.skipped.push(name);
+            }
+        } else {
+            // Non-checked-out branch: advance its ref directly. Safe because the
+            // upstream strictly descends from the current tip (behind, ahead=0).
+            let refname = format!("refs/heads/{name}");
+            if run_git(repo_path, &["update-ref", &refname, &remote.to_string()]).is_ok() {
+                result.fast_forwarded.push(name);
+            } else {
+                result.skipped.push(name);
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+/// Fast-forward every local branch strictly behind its upstream (#432). The
+/// checked-out branch is only advanced via `git merge --ff-only` on a clean
+/// tree (skipped otherwise); diverged branches are reported, never moved.
+/// Assumes the caller already fetched (the graph's F5 does).
+#[tauri::command]
+pub async fn git_sync_local_branches(
+    repo_path: String,
+) -> Result<SyncLocalBranchesResult, AppError> {
+    tokio::task::spawn_blocking(move || sync_local_branches(&repo_path))
+        .await
+        .map_err(|e| AppError::Other(format!("git action task join: {e}")))?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -585,6 +721,145 @@ mod tests {
         assert!(matches!(err, Err(AppError::Other(m))
             if m.to_lowercase().contains("no-such-branch")
                 || m.to_lowercase().contains("did not match")));
+    }
+
+    #[test]
+    fn checkout_tracking_creates_local_branch_tracking_remote() {
+        // Bare "remote" with a `feature` branch; clone-like setup via fetch.
+        let (dir, cs) = linear_repo();
+        let rp = repo_path(&dir);
+        let remote_dir = TempDir::new().unwrap();
+        git(remote_dir.path(), &["init", "--bare"]);
+        git(
+            dir.path(),
+            &["remote", "add", "origin", remote_dir.path().to_str().unwrap()],
+        );
+        git(dir.path(), &["push", "origin", "main:feature"]);
+        // Drop the local `feature` (only the remote ref should exist) & re-fetch.
+        git(dir.path(), &["fetch", "origin"]);
+
+        // No local `feature` yet → tracking checkout creates one at origin/feature.
+        tokio_test_block(git_checkout_tracking(
+            rp.clone(),
+            "origin".into(),
+            "feature".into(),
+        ))
+        .unwrap();
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "--abbrev-ref", "HEAD"]),
+            "feature"
+        );
+        assert_eq!(git_out(dir.path(), &["rev-parse", "feature"]), cs[1]);
+        // Upstream is configured.
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "--abbrev-ref", "feature@{upstream}"]),
+            "origin/feature"
+        );
+
+        // Second call with the local now present → plain checkout, no error.
+        git(dir.path(), &["checkout", "main"]);
+        tokio_test_block(git_checkout_tracking(rp, "origin".into(), "feature".into())).unwrap();
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "--abbrev-ref", "HEAD"]),
+            "feature"
+        );
+    }
+
+    /// Point a configured upstream `refs/remotes/origin/<branch>` at `oid` and
+    /// wire `branch.<branch>.{remote,merge}` so git2's `branch.upstream()` resolves.
+    fn set_upstream(dir: &Path, branch: &str, oid: &str) {
+        git(dir, &["update-ref", &format!("refs/remotes/origin/{branch}"), oid]);
+        git(dir, &["config", &format!("branch.{branch}.remote"), "origin"]);
+        git(
+            dir,
+            &[
+                "config",
+                &format!("branch.{branch}.merge"),
+                &format!("refs/heads/{branch}"),
+            ],
+        );
+    }
+
+    #[test]
+    fn sync_fast_forwards_behind_non_current_branch() {
+        let (dir, cs) = linear_repo(); // main at c2 (HEAD)
+        let rp = repo_path(&dir);
+        git(dir.path(), &["remote", "add", "origin", "."]);
+        // `topic` at c1, upstream origin/topic at c2 → behind 1, ahead 0.
+        git(dir.path(), &["branch", "topic", &cs[0]]);
+        set_upstream(dir.path(), "topic", &cs[1]);
+        // A branch with no upstream must be left completely alone.
+        git(dir.path(), &["branch", "loner", &cs[0]]);
+
+        let res = tokio_test_block(git_sync_local_branches(rp)).unwrap();
+        assert_eq!(res.fast_forwarded, vec!["topic".to_string()]);
+        assert!(res.diverged.is_empty());
+        // topic advanced to c2; loner untouched; HEAD (main) unmoved.
+        assert_eq!(git_out(dir.path(), &["rev-parse", "topic"]), cs[1]);
+        assert_eq!(git_out(dir.path(), &["rev-parse", "loner"]), cs[0]);
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), cs[1]);
+    }
+
+    #[test]
+    fn sync_reports_diverged_and_leaves_it_untouched() {
+        let (dir, cs) = linear_repo();
+        let rp = repo_path(&dir);
+        let p = dir.path();
+        git(p, &["remote", "add", "origin", "."]);
+        // `topic` off c1 with its own unique commit (ahead 1).
+        git(p, &["checkout", "-b", "topic", &cs[0]]);
+        write(p, "t.txt", "topic\n");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-m", "topic work"]);
+        let topic_tip = git_out(p, &["rev-parse", "HEAD"]);
+        // A sibling commit off c1 becomes the remote tip (behind 1 too).
+        git(p, &["checkout", "-b", "tmp", &cs[0]]);
+        write(p, "r.txt", "remote\n");
+        git(p, &["add", "."]);
+        git(p, &["commit", "-m", "remote work"]);
+        let remote_tip = git_out(p, &["rev-parse", "HEAD"]);
+        git(p, &["checkout", "main"]);
+        git(p, &["branch", "-D", "tmp"]);
+        set_upstream(p, "topic", &remote_tip);
+
+        let res = tokio_test_block(git_sync_local_branches(rp)).unwrap();
+        assert_eq!(res.diverged, vec!["topic".to_string()]);
+        assert!(res.fast_forwarded.is_empty());
+        // topic is untouched (still at its own tip).
+        assert_eq!(git_out(p, &["rev-parse", "topic"]), topic_tip);
+    }
+
+    #[test]
+    fn sync_fast_forwards_current_branch_when_clean() {
+        let (dir, cs) = linear_repo(); // main HEAD at c2
+        let rp = repo_path(&dir);
+        let p = dir.path();
+        git(p, &["remote", "add", "origin", "."]);
+        // Move main back to c1, set its upstream to c2 → behind 1 while checked out.
+        git(p, &["reset", "--hard", &cs[0]]);
+        set_upstream(p, "main", &cs[1]);
+
+        let res = tokio_test_block(git_sync_local_branches(rp)).unwrap();
+        assert_eq!(res.fast_forwarded, vec!["main".to_string()]);
+        // Clean tree → merge --ff-only advanced HEAD to c2.
+        assert_eq!(git_out(p, &["rev-parse", "HEAD"]), cs[1]);
+    }
+
+    #[test]
+    fn sync_skips_dirty_current_branch() {
+        let (dir, cs) = linear_repo();
+        let rp = repo_path(&dir);
+        let p = dir.path();
+        git(p, &["remote", "add", "origin", "."]);
+        git(p, &["reset", "--hard", &cs[0]]);
+        set_upstream(p, "main", &cs[1]);
+        // Dirty the tree so the checked-out branch must be skipped, not forced.
+        write(p, "a.txt", "uncommitted edit\n");
+
+        let res = tokio_test_block(git_sync_local_branches(rp)).unwrap();
+        assert!(res.fast_forwarded.is_empty());
+        assert_eq!(res.skipped, vec!["main".to_string()]);
+        assert_eq!(git_out(p, &["rev-parse", "HEAD"]), cs[0]);
     }
 
     /// Minimal single-threaded executor for the few async validation tests —

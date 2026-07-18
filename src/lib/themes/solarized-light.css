@@ -107,3 +107,20 @@
   --icon-folder: #b58900;
   /* --icon-file-tint: unset; when set, overrides all file icon colors */
 }
+/* --- #437: non-premium (flat / high-contrast) fallback --- */
+[data-theme="solarized-light"]:not([data-premium="true"]) {
+  --surface-stroke: rgba(101, 123, 131, 0.1);
+  --surface-stroke-flyout: rgba(101, 123, 131, 0.08);
+  --divider: rgba(101, 123, 131, 0.12);
+  --subtle-fill-secondary: rgba(101, 123, 131, 0.08);
+  --subtle-fill-tertiary: rgba(101, 123, 131, 0.05);
+  --control-stroke: rgba(101, 123, 131, 0.2);
+  --control-stroke-secondary: rgba(101, 123, 131, 0.3);
+  --breadcrumb-bg: initial;
+  --breadcrumb-hover-bg: initial;
+  --breadcrumb-active-bg: initial;
+  --breadcrumb-radius: initial;
+  --breadcrumb-gap: initial;
+  --shadow-flyout: 0 8px 16px rgba(0, 43, 54, 0.12);
+  --shadow-card: 0 1px 3px rgba(0, 43, 54, 0.06), 0 0 1px rgba(0, 43, 54, 0.04);
+}

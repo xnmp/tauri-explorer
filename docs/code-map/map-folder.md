@@ -50,7 +50,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `KeybindingsSettings.svelte` — keybinding customization UI in settings.
 - `ShortcutCheatsheet.svelte` — keyboard shortcut cheatsheet overlay.
 - `ThemePicker.svelte` — theme selection UI.
-- `RenameDialog`? see `dialogs.svelte.ts`; dialogs present: `DeleteDialog.svelte`, `ConflictDialog.svelte` (paste conflict overwrite/skip), `BulkRenameDialog.svelte`, `WorkspaceDialog.svelte` (save/restore workspaces), `ProgressDialog.svelte` (copy/move/extract progress), `InlineNewFolder.svelte` (inline new-folder input), `FilePicker.svelte` (portal file-picker window).
+- `RenameDialog`? see `dialogs.svelte.ts`; dialogs present: `DeleteDialog.svelte`, `ConflictDialog.svelte` (paste conflict overwrite/skip), `BulkRenameDialog.svelte`, `WorkspaceDialog.svelte` (save/restore workspaces), `ProgressDialog.svelte` (copy/move/extract progress), `InlineNewFolder.svelte` (inline new-entry input — folder or file, per `explorer.newEntryKind`), `FilePicker.svelte` (portal file-picker window).
 - `PreviewPane.svelte` — file preview (image/text/markdown/syntax).
 - `TerminalPanel.svelte` — embedded xterm.js terminal panel (#139).
 - `StatusBar.svelte` — bottom status bar (selection count, size, path).
@@ -77,7 +77,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `refresh-manager.ts` — dedupe/debounce/rate-limit directory refresh requests.
 - `pane-refresh.ts` / `pane-watch.ts` (above); `refresh-manager.ts` owns policy layering.
 - `git-refresh.ts` — single `git-status-changed` listener; fans out to badge + SCM subscribers.
+- `git-graph-refresh.ts` — F5 refresh bus: GitGraphView registers its fetch+reload per pane id; the `gitGraph.refresh` command dispatches to the active pane (#432).
+- `git-graph-cache.ts` — per-repo git-graph snapshot cache + `warmGraphSnapshot`/`fetchPage0Snapshot`; extracted from GitGraphView so `git-warm.ts` no longer imports a component; evicts a repo's snapshots on external (watcher) git changes so a remount never paints stale history (#433, arch Finding 7).
 - `git-status.svelte.ts` — per-entry git status cache store.
+- `git-summary-cache.ts` — shared per-repo `git_status` (working-tree summary) fetch: in-flight dedup + short TTL, used by SCM store + git-graph so one change is one scan, not several (#431).
 - `scm.svelte.ts` — Source Control state (staged/unstaged/commit, #54).
 - `file-events.ts` — cross-window file-change broadcast (affected dirs → all windows).
 - `file-transfer.ts` — shared move/copy transfer core: conflict detect, undo, toast, frecency, broadcast.

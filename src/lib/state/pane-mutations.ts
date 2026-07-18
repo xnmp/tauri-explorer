@@ -10,6 +10,7 @@
 
 import {
   createDirectory,
+  createEmptyFile,
   renameEntry as apiRenameEntry,
   deleteEntry,
   deleteMultipleEntries,
@@ -67,6 +68,24 @@ export function createPaneMutations(ctx: PaneMutationContext) {
 
     ctx.markLocalMutation();
     const result = await createDirectory(coreState.currentPath, name);
+
+    if (result.ok) {
+      coreState.entries = [...coreState.entries, result.data];
+      ctx.setSelection([result.data.path]);
+      const idx = ctx.displayEntries().findIndex((e) => e.path === result.data.path);
+      coreState.selectionAnchorIndex = idx >= 0 ? idx : null;
+      ctx.markLocalMutation();
+      broadcastFileChange([coreState.currentPath]);
+      return null;
+    }
+    return result.error;
+  }
+
+  async function createFile(name: string): Promise<string | null> {
+    if (!coreState.currentPath) return "No current directory";
+
+    ctx.markLocalMutation();
+    const result = await createEmptyFile(coreState.currentPath, name);
 
     if (result.ok) {
       coreState.entries = [...coreState.entries, result.data];
@@ -257,6 +276,7 @@ export function createPaneMutations(ctx: PaneMutationContext) {
   return {
     navigateAwayIfNeeded,
     createFolder,
+    createFile,
     rename,
     confirmDelete,
     createSymlinkForEntry,

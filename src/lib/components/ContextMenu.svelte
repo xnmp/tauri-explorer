@@ -139,6 +139,11 @@
     contextMenuStore.close();
   }
 
+  function handleNewFile(): void {
+    explorer.startInlineNewFile();
+    contextMenuStore.close();
+  }
+
   function handleSetViewMode(mode: ViewMode): void {
     explorer.setViewMode(mode);
     contextMenuStore.close();
@@ -501,6 +506,14 @@
           <path d="M8 7.5V10.5M6.5 9H9.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
         </svg>
         <span>New folder</span>
+      </button>
+
+      <button class="menu-item" onclick={handleNewFile} role="menuitem">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M4 2H9L13 6V13C13 13.5523 12.5523 14 12 14H4C3.44772 14 3 13.5523 3 13V3C3 2.44772 3.44772 2 4 2Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+          <path d="M9 2V6H13" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+        </svg>
+        <span>New file</span>
       </button>
 
       <button class="menu-item" onclick={handleOpenInTerminal} role="menuitem">

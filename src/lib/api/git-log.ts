@@ -44,6 +44,10 @@ export interface GitLogPage {
   has_more: boolean;
   /** OID of the last commit in the page; next page uses `skip + commits.length`. */
   next_cursor: string | null;
+  /** Shorthand of the checked-out branch (HEAD's symbolic target), or null when
+   *  detached / unborn. Lets the graph highlight only the checked-out branch
+   *  chip when several branches decorate the HEAD commit (#433). */
+  head_branch: string | null;
 }
 
 export interface GitLogOptions {

@@ -202,13 +202,41 @@ describe("groupRefChips", () => {
     expect(chips.isHead).toBe(false);
   });
 
-  it("marks branches active and sorts the checked-out branch first", () => {
+  it("marks the checked-out branch active and sorts it first", () => {
     const chips = groupRefChips([
       d("Head", "HEAD"),
       d("LocalBranch", "dev"),
-    ]);
+    ], "dev");
     expect(chips.isHead).toBe(true);
     expect(chips.heads[0]).toEqual({ name: "dev", remotes: [], active: true });
+  });
+
+  it("highlights only the checked-out branch when several sit on HEAD (#433)", () => {
+    const chips = groupRefChips([
+      d("Head", "HEAD"),
+      d("LocalBranch", "main"),
+      d("LocalBranch", "release"),
+    ], "main");
+    expect(chips.isHead).toBe(true);
+    // Checked-out branch is active and sorts first; the co-located branch is a
+    // normal chip.
+    expect(chips.heads[0]).toEqual({ name: "main", remotes: [], active: true });
+    expect(chips.heads.find((h) => h.name === "release")).toEqual({
+      name: "release",
+      remotes: [],
+      active: false,
+    });
+    expect(chips.heads.filter((h) => h.active)).toHaveLength(1);
+  });
+
+  it("marks no branch active on a detached HEAD, even sitting on branches", () => {
+    // headBranch = null (detached): the HEAD tint stays, but no chip is "current".
+    const chips = groupRefChips([
+      d("Head", "HEAD"),
+      d("LocalBranch", "main"),
+    ], null);
+    expect(chips.isHead).toBe(true);
+    expect(chips.heads.every((h) => !h.active)).toBe(true);
   });
 
   it("handles empty and remote-only decorations", () => {

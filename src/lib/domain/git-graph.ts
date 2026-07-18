@@ -405,8 +405,16 @@ export function splitRemoteRef(name: string): RemoteRefChip {
 
 /** Combined ref chips (reference behavior): each local branch groups the
  *  remotes tracking it as nested sub-chips; the checked-out branch first;
- *  unmatched remotes and tags stay separate. */
-export function groupRefChips(decorations: readonly RefDecorationLike[]): RefChips {
+ *  unmatched remotes and tags stay separate.
+ *
+ *  `headBranch` is the shorthand of the actually checked-out branch (HEAD's
+ *  symbolic target). Only that chip is marked `active` — when several branches
+ *  sit on the HEAD commit, the others render as ordinary chips (#433). When
+ *  omitted/null (detached HEAD, or callers that don't know), no chip is active. */
+export function groupRefChips(
+  decorations: readonly RefDecorationLike[],
+  headBranch: string | null = null,
+): RefChips {
   const isHead = decorations.some((r) => r.kind === "Head");
   const locals = decorations.filter((r) => r.kind === "LocalBranch").map((r) => r.name);
   const remoteNames = decorations.filter((r) => r.kind === "RemoteBranch").map((r) => r.name);
@@ -418,7 +426,7 @@ export function groupRefChips(decorations: readonly RefDecorationLike[]): RefChi
         usedRemotes.add(rn);
         return rn.slice(0, rn.indexOf("/"));
       });
-    return { name, remotes, active: isHead };
+    return { name, remotes, active: isHead && headBranch !== null && name === headBranch };
   });
   heads.sort((a, b) => Number(b.active) - Number(a.active));
   return {

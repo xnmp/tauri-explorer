@@ -40,8 +40,12 @@ export interface ShellKeyContext {
  * shortcut handling may claim it.
  */
 export function isShellReservedKey(event: KeyEventLike, context?: ShellKeyContext): boolean {
-  // Plain keys and Shift+key are typing.
-  if (!event.ctrlKey && !event.altKey && !event.metaKey) return true;
+  // Function keys (F1–F12) are never text: a modifier-less F5 can only be an
+  // app binding (graph refresh, #432), so it must fall through to the
+  // `appBound` check below rather than being swallowed as shell typing.
+  const isFunctionKey = /^F([1-9]|1[0-2])$/.test(event.key);
+  // Plain keys and Shift+key are typing — except function keys.
+  if (!event.ctrlKey && !event.altKey && !event.metaKey && !isFunctionKey) return true;
   // On mac, ⌘-only clipboard/process combos belong to the terminal (#403):
   // Cmd+C copies the terminal selection, Cmd+V pastes into the shell — the
   // explorer's file clipboard must never fire while a prompt has focus.

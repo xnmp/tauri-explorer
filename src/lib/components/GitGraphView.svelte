@@ -128,12 +128,15 @@
     gitBranchAuthors,
     gitDeleteBranch,
     gitDeleteRemoteBranch,
+    gitCheckoutTracking,
+    gitSyncLocalBranches,
     type CommitInfo,
     type RefInfo,
     type CommitFile,
     type ResetMode,
   } from "$lib/api/git-log";
-  import { assignLayout, branchPath, groupRefChips, sliceBranchLine, GRAPH_PALETTE, type GraphLayout, type BranchLine, type RefChips } from "$lib/domain/git-graph";
+  import { assignLayout, branchPath, groupRefChips, sliceBranchLine, GRAPH_PALETTE, type GraphLayout, type BranchLine, type RefChips, type RemoteRefChip } from "$lib/domain/git-graph";
+  import { registerGraphRefresher } from "$lib/state/git-graph-refresh";
   import { clientToFixed } from "$lib/domain/zoom";
   import { parseUnifiedDiff, type ParsedDiff } from "$lib/domain/diff";
   import { highlightDiffLine } from "$lib/domain/syntax-highlight";
@@ -481,7 +484,28 @@
       : undefined,
   );
 
-  async function loadPage(skip: number): Promise<void> {
+  // ── Unified refresh (#432) ─────────────────────────────────────────────────
+  // The graph has ONE reload entry point. Previously three uncoordinated
+  // triggers (repo/filter effect, watcher subscription, and each mutating
+  // action's own loadPage) raced, and a watcher refresh arriving mid-load was
+  // silently dropped — the structural cause of "pull completes but the graph
+  // doesn't update". Now a generation counter discards stale results and a
+  // dirty flag re-runs a request that arrived while a load was in flight, so a
+  // refresh is never lost. Mirrors scm.svelte.ts's refreshGeneration pattern.
+  let reloadGeneration = 0;
+  let reloading = false;
+  let reloadDirty = false;
+
+  async function reload(): Promise<void> {
+    // A request while a load is in flight isn't dropped — it re-runs on
+    // completion (dirty flag), picking up the latest filter/local-only.
+    if (reloading) {
+      reloadDirty = true;
+      return;
+    }
+    reloading = true;
+    reloadDirty = false;
+    const gen = ++reloadGeneration;
     // Captured once so a mid-flight filter change can't mix pages. Every
     // page-0 load is cached under its own repo+filter key (#416), so
     // re-entering the same view — filtered or not — paints instantly.
@@ -491,40 +515,60 @@
     loading = true;
     error = null;
     try {
-      if (skip === 0) {
-        // Same page-0 fetch used by the background warm (#287), so an open
-        // that follows a warm reuses identical data. The commit list paints
-        // as soon as the log arrives; the working-changes count (a full
-        // status scan, slow on big working trees) fills in after (#367).
-        const snapshot = await fetchPage0Snapshot(repoPath, filter, (partial) => {
-          commits = partial.commits;
-          refs = partial.refs;
-          hasMore = partial.hasMore;
-          headOid = partial.headOid;
-          loading = false;
-        }, local);
-        workingChanges = snapshot.workingChanges;
-        cacheSnapshot(cacheKey, snapshot);
-      } else {
-        const page = await gitLog(repoPath, {
-          skip,
-          limit: PAGE_SIZE,
-          ...(filter ? { branches: filter } : {}),
-          ...(local ? { local_only: true } : {}),
-        });
-        commits = [...commits, ...page.commits];
-        refs = { ...refs, ...page.refs };
-        hasMore = page.has_more;
-        // Snapshot page 0 for instant remount paint (#255) — deliberately not
-        // the full paged history, which can grow unbounded.
-        cacheSnapshot(cacheKey, {
-          commits: commits.slice(0, PAGE_SIZE),
-          refs,
-          hasMore: hasMore || commits.length > PAGE_SIZE,
-          headOid,
-          workingChanges,
-        });
-      }
+      // Same page-0 fetch used by the background warm (#287). The commit list
+      // paints as soon as the log arrives; the working-changes count (a full
+      // status scan, slow on big working trees) fills in after (#367). Every
+      // write is guarded on `gen` so a stale in-flight load can't clobber a
+      // newer one's results.
+      const snapshot = await fetchPage0Snapshot(repoPath, filter, (partial) => {
+        if (gen !== reloadGeneration) return;
+        commits = partial.commits;
+        refs = partial.refs;
+        hasMore = partial.hasMore;
+        headOid = partial.headOid;
+        loading = false;
+      }, local);
+      if (gen !== reloadGeneration) return;
+      workingChanges = snapshot.workingChanges;
+      cacheSnapshot(cacheKey, snapshot);
+    } catch (err) {
+      if (gen === reloadGeneration) error = err instanceof Error ? err.message : String(err);
+    } finally {
+      if (gen === reloadGeneration) loading = false;
+      reloading = false;
+      // A refresh that arrived mid-flight re-runs now — never dropped.
+      if (reloadDirty) void reload();
+    }
+  }
+
+  /** Append the next page of history (incremental scroll). Distinct from
+   *  `reload()`: it never resets the head of the list, so it doesn't race the
+   *  unified refresh. */
+  async function loadMore(skip: number): Promise<void> {
+    const filter = untrack(() => branchFilter);
+    const local = untrack(() => localOnly);
+    const cacheKey = snapshotKey(repoPath, filter, local);
+    loading = true;
+    error = null;
+    try {
+      const page = await gitLog(repoPath, {
+        skip,
+        limit: PAGE_SIZE,
+        ...(filter ? { branches: filter } : {}),
+        ...(local ? { local_only: true } : {}),
+      });
+      commits = [...commits, ...page.commits];
+      refs = { ...refs, ...page.refs };
+      hasMore = page.has_more;
+      // Snapshot page 0 for instant remount paint (#255) — deliberately not
+      // the full paged history, which can grow unbounded.
+      cacheSnapshot(cacheKey, {
+        commits: commits.slice(0, PAGE_SIZE),
+        refs,
+        hasMore: hasMore || commits.length > PAGE_SIZE,
+        headOid,
+        workingChanges,
+      });
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     } finally {
@@ -533,20 +577,22 @@
   }
 
   // Genuine side effect (IPC) keyed on the repo this tab shows and the
-  // active branch filter; loadPage reads the filter via untrack, so the
+  // active branch filter; reload reads the filter via untrack, so the
   // explicit reads here are the only dependencies.
   $effect(() => {
     void repoPath;
     void branchFilter;
     void localOnly;
-    untrack(() => void loadPage(0));
+    untrack(() => void reload());
   });
 
-  // Live refresh (#365): watch the repo and reload page 0 when git state
-  // changes underneath us (pull/commit/checkout from the terminal, another
-  // window, or the SCM panel). Watcher events are coalesced backend-side;
-  // a short debounce here folds the watcher burst a pull produces into one
-  // reload, and reloads are skipped while a load is already in flight.
+  // Live refresh (#365, #432): watch the repo and reload when git state
+  // changes underneath us. Local mutations (this app's own actions) refresh
+  // directly via `reload()` in their handlers and are filtered out here
+  // (mirroring scm.svelte.ts:222) so an action's own notify echo doesn't
+  // trigger a redundant second reload. A short debounce folds the watcher
+  // burst a pull produces into one call; `reload()` itself never drops a
+  // request, so dropping the old skip-while-loading guard is safe.
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
   $effect(() => {
     const repo = repoPath;
@@ -554,11 +600,12 @@
     let unsub: (() => void) | undefined;
     void gitWatchRepo(repo);
     void subscribeGitChanges((change) => {
+      if (change.source === "local") return;
       if (change.repoRoot && directoryKey(change.repoRoot) !== directoryKey(repo)) return;
       if (refreshTimer !== null) clearTimeout(refreshTimer);
       refreshTimer = setTimeout(() => {
         refreshTimer = null;
-        if (!disposed && !untrack(() => loading)) void loadPage(0);
+        if (!disposed) void reload();
       }, 300);
     }).then((u) => {
       if (disposed) u();
@@ -571,6 +618,15 @@
       unsub?.();
       void gitUnwatchRepo(repo);
     };
+  });
+
+  // F5 refresh (#432): register this pane's fetch+reload with the command bus
+  // so the `gitGraph.refresh` keybinding reaches it — only for the active
+  // pane, and visible to the terminal's key-ownership gate (no shadow window
+  // listener). Registered per pane id; a remount replaces the prior handler.
+  $effect(() => {
+    const id = paneId ?? windowTabsManager.activePaneId ?? "default";
+    return registerGraphRefresher(id, () => void refreshWithFetch());
   });
 
   // ----- Branch filter popover (#342) -----
@@ -702,7 +758,12 @@
     const el = event.target as HTMLElement;
     scrollTop = el.scrollTop;
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - ROW_HEIGHT * 20) {
-      if (!loading && hasMore) void loadPage(commits.length);
+      // Skip by the number of REAL commits, not commits.length: weave_stashes
+      // inserts synthetic stash rows into the page (#179), but the backend's
+      // `skip` counts revwalk steps (real commits only). Counting the woven
+      // rows would over-skip and silently drop real commits at every page
+      // boundary after a stash (#432). Stash rows carry a `stash` selector.
+      if (!loading && hasMore) void loadMore(commits.filter((c) => !c.stash).length);
     }
   }
 
@@ -722,6 +783,9 @@
     /** Set when the menu was opened from a specific branch badge (#405):
      *  branch-scoped entries (Delete Branch) show only this branch. */
     scopedBranch: string | null;
+    /** Set when opened from a remote-only branch chip (#432): the menu offers
+     *  a tracking checkout (`git checkout -b <branch> --track <remote>/<branch>`). */
+    remote: RemoteRefChip | null;
   }
   let menu = $state<Menu | null>(null);
   // Inline name prompt for Create Branch / Create Tag.
@@ -757,7 +821,12 @@
     if (x !== m.x || y !== m.y) menu = { ...m, x, y };
   });
 
-  function openMenu(event: MouseEvent, commit: CommitInfo, scopedBranch: string | null = null): void {
+  function openMenu(
+    event: MouseEvent,
+    commit: CommitInfo,
+    scopedBranch: string | null = null,
+    remote: RemoteRefChip | null = null,
+  ): void {
     event.preventDefault();
     prompt = null;
     // clientToFixed: the menu is position:fixed, so cursor coordinates must be
@@ -769,7 +838,25 @@
       commit,
       checkoutBranch: scopedBranch ?? localBranchAt(commit.oid),
       scopedBranch,
+      remote,
     };
+  }
+
+  /** Tracking checkout of a remote-only branch (#432): create/switch to a
+   *  local branch tracking `<remote>/<branch>`. */
+  function checkoutTracking(chip: RemoteRefChip): void {
+    closeMenu();
+    void (async () => {
+      try {
+        await gitCheckoutTracking(repoPath, chip.remote, chip.branch);
+        toastStore.success(`Checked out ${chip.branch} (tracking ${chip.name})`);
+      } catch (err) {
+        toastStore.error(err instanceof Error ? err.message : String(err));
+      } finally {
+        await reload();
+        notifyLocalGitChange(repoPath);
+      }
+    })();
   }
 
   function closeMenu(): void {
@@ -819,7 +906,10 @@
     } catch (err) {
       toastStore.error(err instanceof Error ? err.message : String(err));
     } finally {
-      await loadPage(0);
+      // Reload through the single entry point, then notify OTHER consumers
+      // (SCM panel, badges); the graph's own subscriber filters `local` so
+      // this notify doesn't echo back into a redundant second reload (#432).
+      await reload();
       notifyLocalGitChange(repoPath);
     }
   }
@@ -848,7 +938,7 @@
       } catch (err) {
         toastStore.error(err instanceof Error ? err.message : String(err));
       } finally {
-        await loadPage(0);
+        await reload();
         notifyLocalGitChange(repoPath);
       }
     })();
@@ -887,11 +977,9 @@
   }
 
   /** Delete a remote-only branch chip like "origin/feat/x" (#371). */
-  function deleteRemoteChip(chip: string): void {
-    const i = chip.indexOf("/");
-    if (i <= 0) return;
-    void runAction(`Delete ${chip}`, () =>
-      gitDeleteRemoteBranch(repoPath, chip.slice(0, i), chip.slice(i + 1)),
+  function deleteRemoteChip(chip: RemoteRefChip): void {
+    void runAction(`Delete ${chip.name}`, () =>
+      gitDeleteRemoteBranch(repoPath, chip.remote, chip.branch),
     );
   }
 
@@ -939,22 +1027,46 @@
     toastStore.show("Refreshing graph…", "info");
     try {
       await gitFetch(repoPath);
-      toastStore.success("Fetched from remotes");
+      // Optional local-branch sync (#432): fast-forward every local branch
+      // strictly behind its upstream. Diverged branches are never touched —
+      // they're surfaced in a toast so the user knows a manual merge is due.
+      if (settingsStore.f5SyncsLocalBranches) {
+        try {
+          const sync = await gitSyncLocalBranches(repoPath);
+          if (sync.diverged.length > 0) {
+            toastStore.show(
+              `Diverged (not synced): ${sync.diverged.join(", ")}`,
+              "error",
+              { duration: 6000 },
+            );
+          }
+          if (sync.fast_forwarded.length > 0) {
+            toastStore.success(
+              `Fast-forwarded ${sync.fast_forwarded.length} branch${sync.fast_forwarded.length === 1 ? "" : "es"}`,
+            );
+          } else {
+            toastStore.success("Fetched from remotes");
+          }
+        } catch (err) {
+          toastStore.error(err instanceof Error ? err.message : String(err));
+        }
+      } else {
+        toastStore.success("Fetched from remotes");
+      }
     } catch (err) {
       toastStore.error(err instanceof Error ? err.message : String(err));
     } finally {
       fetching = false;
-      await loadPage(0);
+      await reload();
       notifyLocalGitChange(repoPath);
     }
   }
 
+  // F5 is handled by the `gitGraph.refresh` command (registered above, gated
+  // on the active graph pane) — NOT a raw window listener here (#432). A shadow
+  // window binding was invisible to the keybindings registry and the terminal
+  // key-ownership gate, and fired for every mounted graph tab, active or not.
   function onWindowKeydown(event: KeyboardEvent): void {
-    if (event.key === "F5") {
-      event.preventDefault();
-      void refreshWithFetch();
-      return;
-    }
     if (event.key === "Escape" && branchPopoverOpen) {
       branchPopoverOpen = false;
       return;
@@ -1253,11 +1365,16 @@
                   {/each}
                 </span>
               {/each}
-              {#each chips.remotes as remote (remote)}
-                <span class="ref ref-remote" title="Remote-only branch — no local branch tracks {remote}">
+              {#each chips.remotes as remote (remote.name)}
+                <!-- svelte-ignore a11y_no_static_element_interactions -- right-click scopes the row context menu to this remote branch for a tracking checkout (#432); the row itself stays the keyboard target -->
+                <span
+                  class="ref ref-remote"
+                  title="Remote-only branch — no local branch tracks {remote.name}. Right-click to checkout."
+                  oncontextmenu={(e) => { e.stopPropagation(); openMenu(e, commit, null, remote); }}
+                >
                   <svg class="remote-cloud" width="9" height="9" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                     <path d="M4.5 12.5a3 3 0 0 1-.3-6 4 4 0 0 1 7.8-.9 2.9 2.9 0 0 1-.5 5.9z" />
-                  </svg>{remote}
+                  </svg>{remote.name}
                 </span>
               {/each}
               {#each chips.tags as tag (tag)}
@@ -1391,6 +1508,18 @@
         Create Tag…
       </button>
       <div class="menu-sep"></div>
+      {#if m.remote}
+        <!-- Tracking checkout of a remote-only branch (#432): create/switch to
+             a local branch tracking <remote>/<branch>. -->
+        <button
+          class="menu-item"
+          role="menuitem"
+          data-testid="git-graph-checkout-tracking"
+          onclick={() => checkoutTracking(m.remote!)}
+        >
+          Checkout {m.remote.branch} (tracking {m.remote.name})
+        </button>
+      {/if}
       <button class="menu-item" role="menuitem" onclick={() => checkout(m)}>
         Checkout{m.checkoutBranch ? ` ${m.checkoutBranch}` : " (detached)"}
       </button>
@@ -1426,9 +1555,9 @@
             Delete Branch '{head.name}'…
           </button>
         {/each}
-        {#each menuChips.remotes as remoteChip (remoteChip)}
+        {#each menuChips.remotes as remoteChip (remoteChip.name)}
           <button class="menu-item" role="menuitem" onclick={() => deleteRemoteChip(remoteChip)}>
-            Delete Remote Branch '{remoteChip}'
+            Delete Remote Branch '{remoteChip.name}'
           </button>
         {/each}
       {/if}

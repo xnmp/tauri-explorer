@@ -1471,6 +1471,34 @@ const mockCommands: Record<string, CommandHandler> = {
   git_delete_branch: () => null,
   git_delete_remote_branch: () => null,
 
+  // Tracking checkout (#432): create a local branch tracking <remote>/<name>
+  // at the remote branch's current tip, then move HEAD onto it.
+  git_checkout_tracking: (args: Record<string, unknown>) => {
+    const remote = (args.remote as string) ?? "";
+    const name = ((args.name as string) ?? "").trim();
+    if (name.length === 0) throw new Error("branch name must not be empty");
+    // Already-existing local branch → plain checkout.
+    const existing = mockResolveTarget(name);
+    if (existing) {
+      mockMoveHead(existing);
+      return null;
+    }
+    const oid = mockResolveTarget(`${remote}/${name}`);
+    if (!oid) throw new Error(`no remote branch '${remote}/${name}'`);
+    mockAddRef(name, "LocalBranch", oid);
+    mockMoveHead(oid);
+    return null;
+  },
+
+  // F5-sync (#432): deterministic result so the divergence toast and the
+  // fast-forward path can be exercised in E2E. Pretend `experiment` diverged
+  // and `hotfix` fast-forwarded.
+  git_sync_local_branches: () => ({
+    fast_forwarded: ["hotfix"],
+    diverged: ["experiment"],
+    skipped: [],
+  }),
+
   // ----- Git history / commit graph (#57) -----
 
   git_log: (args: Record<string, unknown>) => {

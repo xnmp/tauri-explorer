@@ -85,7 +85,16 @@ describe("git graph fetch/refresh against real git (#432)", () => {
     git(baseDir, "clone", remoteDir, otherCloneDir);
   });
 
-  after(() => {
+  after(async () => {
+    // Close the commit graph before the session ends so it isn't left as the
+    // active pane view. The per-pane `gitGraph` state persists to localStorage,
+    // which is shared across every tauri-driver session (same origin), so a
+    // graph left open here would relaunch later specs into graph mode and
+    // `.file-list` would never render (#447). navigateTo also resets defensively.
+    await browser.execute(() => {
+      window.dispatchEvent(new CustomEvent("e2e-reset-view"));
+    });
+    await $(".file-list").waitForExist({ timeout: 15_000 });
     fs.rmSync(baseDir, { recursive: true, force: true });
   });
 

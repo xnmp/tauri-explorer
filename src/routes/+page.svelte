@@ -448,6 +448,18 @@
         windowTabsManager.getActiveExplorer()?.navigateTo(e.detail);
       }) as EventListener);
 
+      // Restore the active pane to its file listing by closing any open commit
+      // graph. The per-pane `gitGraph` state persists to localStorage, which is
+      // shared across every tauri-driver session (same http://localhost origin),
+      // so a spec that leaves the graph open (git-graph-pull) would otherwise
+      // relaunch every later spec into graph mode — no `.file-list` ever renders
+      // (#447). Specs call this via navigateTo before waiting for the listing.
+      window.addEventListener("e2e-reset-view", (() => {
+        for (const paneId of windowTabsManager.activePaneIds) {
+          windowTabsManager.setPaneGitGraph(paneId, null);
+        }
+      }) as EventListener);
+
       window.addEventListener("e2e-file-op", ((
         e: CustomEvent<{ op: string; name?: string; path?: string }>,
       ) => {

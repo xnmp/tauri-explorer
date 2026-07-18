@@ -38,8 +38,21 @@ export async function entryNames(): Promise<string[]> {
  * appear in them verbatim.
  */
 export async function navigateTo(dir: string): Promise<void> {
-  // App must be initialized before the hook exists.
-  await $(".file-list").waitForExist({ timeout: 15_000 });
+  // Close any commit graph restored from a prior spec's persisted state before
+  // waiting for the listing. localStorage is shared across every tauri-driver
+  // session (same origin), so a spec that left the graph open would relaunch
+  // this one into graph mode and `.file-list` would never render (#447). The
+  // pane's onMount registers the hook, so re-dispatch on every poll until the
+  // listing appears — a single early dispatch can race listener registration.
+  await browser.waitUntil(
+    async () => {
+      await browser.execute(() => {
+        window.dispatchEvent(new CustomEvent("e2e-reset-view"));
+      });
+      return await $(".file-list").isExisting();
+    },
+    { timeout: 15_000, timeoutMsg: "file listing never rendered (graph stuck open?)" },
+  );
   // Re-dispatch on every poll: a single dispatch can race listener
   // registration in onMount and then nothing would ever navigate.
   await browser.waitUntil(

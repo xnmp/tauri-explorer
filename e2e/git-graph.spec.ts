@@ -47,6 +47,12 @@ test.describe("Git graph tab", () => {
     const tipRow = rows.nth(2);
     await expect(tipRow.locator(".ref-branch.ref-active")).toContainText("main");
     await expect(tipRow.locator(".ref-branch .ref-remote-sub")).toHaveText("origin");
+    // Only the checked-out branch highlights (#433): `release` also sits on the
+    // HEAD commit but renders as an ordinary chip, so exactly one is active.
+    await expect(tipRow.locator(".ref-branch.ref-active")).toHaveCount(1);
+    await expect(
+      tipRow.locator(".ref-branch", { hasText: "release" }),
+    ).not.toHaveClass(/ref-active/);
     await expect(view.locator(".ref-tag").first()).toHaveText("v1.0");
     // Stash renders as a woven row with its selector chip.
     await expect(view.locator(".ref-stash")).toHaveText("stash@{0}");

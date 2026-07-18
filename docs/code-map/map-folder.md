@@ -78,6 +78,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `pane-refresh.ts` / `pane-watch.ts` (above); `refresh-manager.ts` owns policy layering.
 - `git-refresh.ts` — single `git-status-changed` listener; fans out to badge + SCM subscribers.
 - `git-graph-refresh.ts` — F5 refresh bus: GitGraphView registers its fetch+reload per pane id; the `gitGraph.refresh` command dispatches to the active pane (#432).
+- `git-graph-cache.ts` — per-repo git-graph snapshot cache + `warmGraphSnapshot`/`fetchPage0Snapshot`; extracted from GitGraphView so `git-warm.ts` no longer imports a component; evicts a repo's snapshots on external (watcher) git changes so a remount never paints stale history (#433, arch Finding 7).
 - `git-status.svelte.ts` — per-entry git status cache store.
 - `git-summary-cache.ts` — shared per-repo `git_status` (working-tree summary) fetch: in-flight dedup + short TTL, used by SCM store + git-graph so one change is one scan, not several (#431).
 - `scm.svelte.ts` — Source Control state (staged/unstaged/commit, #54).

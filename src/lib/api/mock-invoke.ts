@@ -611,6 +611,10 @@ const MOCK_GRAPH_REFS: Record<
   [fullOid(16)]: [
     { name: "HEAD", kind: "Head" },
     { name: "main", kind: "LocalBranch" },
+    // A second local branch on the HEAD commit: exercises the #433 rule that
+    // only the checked-out branch (main) gets the "current" highlight — this
+    // one renders as an ordinary chip.
+    { name: "release", kind: "LocalBranch" },
     { name: "origin/main", kind: "RemoteBranch" },
   ],
   [fullOid(13)]: [
@@ -1504,7 +1508,7 @@ const mockCommands: Record<string, CommandHandler> = {
   git_log: (args: Record<string, unknown>) => {
     const repoPath = (args.repoPath as string) ?? "";
     if (!repoPath.startsWith("/home/user/Documents/project")) {
-      return { commits: [], refs: {}, has_more: false, next_cursor: null };
+      return { commits: [], refs: {}, has_more: false, next_cursor: null, head_branch: null };
     }
     const options =
       (args.options as {
@@ -1562,11 +1566,21 @@ const mockCommands: Record<string, CommandHandler> = {
         break;
       }
     }
+    // Checked-out branch: the first local branch decorating HEAD's commit —
+    // matches the convention used by the mutating mocks (#433 highlight).
+    const headOid = mockHeadOid();
+    const headBranch =
+      (MOCK_GRAPH_REFS[headOid] ?? []).find((r) => r.kind === "LocalBranch")?.name ?? null;
+    // Test hook (like __MOCK_LATENCY__): force `has_more` so the infinite-
+    // scroll loading row (#433) is reachable/observable with a small history.
+    const forceHasMore =
+      (globalThis as { __mockGraphForceHasMore?: boolean }).__mockGraphForceHasMore === true;
     return {
       commits: page,
       refs: MOCK_GRAPH_REFS,
-      has_more: hasMore,
+      has_more: hasMore || forceHasMore,
       next_cursor: nextCursor,
+      head_branch: headBranch,
     };
   },
 
@@ -1588,6 +1602,7 @@ const mockCommands: Record<string, CommandHandler> = {
     return {
       local_branches: [
         { name: "main", target: tip },
+        { name: "release", target: tip },
         { name: "hotfix", target: fullOid(13) },
         { name: "experiment", target: fullOid(14) },
         { name: "feature", target: fullOid(10) },

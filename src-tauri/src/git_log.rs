@@ -137,6 +137,18 @@ pub struct GitLogPage {
     /// OID of the last commit in this page — pass as a resume hint / for
     /// display; the next page is fetched with `skip + commits.len()`.
     pub next_cursor: Option<String>,
+    /// Shorthand of the checked-out branch (HEAD's symbolic target), or None
+    /// when detached / unborn. Lets the graph highlight *only* the checked-out
+    /// branch chip when several branches sit on the HEAD commit (#433).
+    pub head_branch: Option<String>,
+}
+
+/// Shorthand of the branch HEAD points at, or None when detached / unborn.
+fn head_branch_of(repo: &Repository) -> Option<String> {
+    if repo.head_detached().unwrap_or(false) {
+        return None;
+    }
+    repo.head().ok().and_then(|h| h.shorthand().map(str::to_string))
 }
 
 fn short_oid(oid: Oid) -> String {
@@ -305,6 +317,7 @@ fn build_log(
             refs: std::collections::HashMap::new(),
             has_more: false,
             next_cursor: None,
+            head_branch: head_branch_of(repo),
         });
     }
 
@@ -367,6 +380,7 @@ fn build_log(
         refs,
         has_more,
         next_cursor,
+        head_branch: head_branch_of(repo),
     })
 }
 
@@ -1272,6 +1286,10 @@ mod tests {
         assert!(tip_refs
             .iter()
             .any(|r| r.kind == RefKind::LocalBranch && r.name == "main"));
+
+        // The page reports the checked-out branch so the graph can highlight
+        // only it when several branches share the HEAD commit (#433).
+        assert_eq!(page.head_branch.as_deref(), Some("main"));
 
         // Tag on the middle commit.
         let mid_refs = page.refs.get(&oids[1].to_string()).expect("mid decorated");

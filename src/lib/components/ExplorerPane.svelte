@@ -418,4 +418,24 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     border-color: transparent;
     box-shadow: none;
   }
+
+  /* Vibrancy + split panes: the container island steps aside (PaneContainer)
+     and each pane becomes its own island. */
+  :global([data-vibrancy] .multi-pane) .explorer-pane {
+    border-radius: var(--vibrancy-island-radius);
+    background: var(--vibrancy-island-bg);
+    border: 1px solid var(--vibrancy-island-stroke);
+    box-shadow: var(--vibrancy-island-glow);
+    backdrop-filter: var(--vibrancy-island-filter, blur(12px) brightness(1.08) saturate(1.2));
+    -webkit-backdrop-filter: var(--vibrancy-island-filter, blur(12px) brightness(1.08) saturate(1.2));
+    overflow: hidden;
+  }
+
+  /* Keep the active-pane cue in island mode. */
+  :global([data-vibrancy] .multi-pane) .explorer-pane.active {
+    border-color: var(--accent);
+    box-shadow:
+      var(--vibrancy-island-glow),
+      0 0 6px -2px var(--accent);
+  }
 </style>

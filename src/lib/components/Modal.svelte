@@ -58,9 +58,13 @@
 
   let overlayRef = $state<HTMLElement | null>(null);
 
+  // `:not([tabindex="-1"])` on every clause so an element opted out of the tab
+  // order (e.g. a mouse-only affordance reachable another way) is skipped by the
+  // trap too — matching native Tab behavior instead of just the [tabindex] rule.
   const FOCUSABLE =
-    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
-    'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    'a[href]:not([tabindex="-1"]), button:not([disabled]):not([tabindex="-1"]), ' +
+    'input:not([disabled]):not([tabindex="-1"]), select:not([disabled]):not([tabindex="-1"]), ' +
+    'textarea:not([disabled]):not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])';
 
   function focusables(): HTMLElement[] {
     if (!overlayRef) return [];

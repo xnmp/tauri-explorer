@@ -50,8 +50,11 @@ describe("#431 Claim 4: commit-file LRU cache", () => {
       fileURLToPath(new URL("../../src/lib/components/GitGraphView.svelte", import.meta.url)),
       "utf8",
     );
-    // Full-oid key: `${repoPath} ${oid}` (NOT a short/abbreviated oid).
-    expect(src).toContain("const key = `${repoPath}\0${oid}`;");
+    // Full-oid key: `${repoPath}\0${oid}` (NOT a short/abbreviated oid). The
+    // source spells the NUL as the \0 escape sequence — a literal NUL byte
+    // would make git/grep treat the whole .svelte file as binary (#451) —
+    // so the pin matches the two source characters backslash-zero.
+    expect(src).toContain("const key = `${repoPath}\\0${oid}`;");
     expect(src).toMatch(/COMMIT_FILES_MAX\s*=\s*50/);
     expect(src).toContain("commitFilesCache.size > COMMIT_FILES_MAX");
   });

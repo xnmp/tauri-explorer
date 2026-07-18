@@ -409,9 +409,11 @@ function createScmStore() {
 
 export type ScmStore = ReturnType<typeof createScmStore>;
 
-// One store per pane (#334). Pane ids recur across tab switches, so the map
-// stays small; a pane's store keeps its commit-message draft across panel
-// toggles, and release() (called on panel unmount) drops its watcher.
+// One store per pane (#334). Pane ids are minted unique per pane creation and
+// never reused, so the map would grow one entry per pane ever opened without
+// explicit disposal (#439): disposeScmStore() is called from the pane-close
+// paths in window-tabs. A pane's store keeps its commit-message draft across
+// panel toggles, and release() (called on panel unmount) drops its watcher.
 const paneScmStores = new Map<string, ScmStore>();
 
 export function getScmStore(paneId: string): ScmStore {
@@ -421,6 +423,21 @@ export function getScmStore(paneId: string): ScmStore {
     paneScmStores.set(paneId, store);
   }
   return store;
+}
+
+/** Fully dispose a pane's store when the pane closes (#439): release its
+ *  watcher and drop the map entry so stores don't accumulate one-per-pane
+ *  over a session. Safe to call for a pane that never had a store. */
+export function disposeScmStore(paneId: string): void {
+  const store = paneScmStores.get(paneId);
+  if (!store) return;
+  paneScmStores.delete(paneId);
+  void store.release();
+}
+
+/** Number of live per-pane scm stores (test/introspection aid, #439). */
+export function scmStoreCount(): number {
+  return paneScmStores.size;
 }
 
 /** Close the diff in every pane's store (used when a setting invalidates

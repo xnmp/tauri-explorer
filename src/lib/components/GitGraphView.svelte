@@ -1560,11 +1560,11 @@
                       <div class="meta-line"><span class="meta-label">Author:</span> {commit.author_name} &lt;{commit.author_email}&gt;</div>
                       <div class="meta-line"><span class="meta-label">Date:</span> {formatDate(commit.author_time)}</div>
                     {/if}
-                    <p class="detail-message">{commit.summary}</p>
+                    <p class="detail-message">{commit.summary.trimStart()}</p>
                   </div>
                 {:else}
                   <div class="detail-meta-col">
-                    <p class="detail-message">{commit.summary}</p>
+                    <p class="detail-message">{commit.summary.trimStart()}</p>
                   </div>
                 {/if}
                 <div class="detail-files-col">
@@ -1988,6 +1988,11 @@
     color: var(--text-tertiary);
   }
 
+  /* white-space: pre-wrap renders a leading "\n" as a blank line — the
+     backend already trims commit.summary at its producers (#464), but
+     .trimStart() at the call site is a cheap belt-and-braces guard for any
+     value that reaches here without going through them (e.g. optimistic
+     UI updates). */
   .detail-message {
     margin: 8px 0 0;
     color: var(--text-primary);

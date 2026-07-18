@@ -52,7 +52,11 @@ pub struct CommitInfo {
     pub author_email: String,
     /// Author time, Unix seconds (UTC). Distinct from committer time.
     pub author_time: i64,
-    /// First line of the commit message.
+    /// First line of the commit message, with leading whitespace/newlines
+    /// stripped (#464) — a producer (e.g. `weave_stashes`) may hand this a
+    /// raw, un-prettified message, and the detail panel renders it with
+    /// `white-space: pre-wrap`, which would otherwise preserve a leading
+    /// blank line verbatim.
     pub summary: String,
     /// Stash selector (e.g. `stash@{0}`) when this row is a stash entry
     /// woven into the history (#179). Absent for ordinary commits.
@@ -252,7 +256,7 @@ fn weave_stashes(
                 author_name: author.name().unwrap_or("").to_string(),
                 author_email: author.email().unwrap_or("").to_string(),
                 author_time: author.when().seconds(),
-                summary: message,
+                summary: message.trim_start().to_string(),
                 stash: Some(format!("stash@{{{idx}}}")),
             },
         );
@@ -368,7 +372,7 @@ fn build_log(
             author_name: author.name().unwrap_or("").to_string(),
             author_email: author.email().unwrap_or("").to_string(),
             author_time: author.when().seconds(),
-            summary: commit.summary().unwrap_or("").to_string(),
+            summary: commit.summary().unwrap_or("").trim_start().to_string(),
             stash: None,
         });
     }
@@ -855,6 +859,46 @@ mod tests {
         assert_eq!(stash_row.parents.len(), 1);
         assert_eq!(page.commits[stash_pos + 1].summary, "second");
         assert_eq!(stash_row.parents[0], page.commits[stash_pos + 1].oid);
+    }
+
+    /// #464: a woven stash's `summary` must never carry a leading
+    /// newline/whitespace, even though `stash_foreach`'s reflog-backed
+    /// message can't produce one in practice (reflog entries are
+    /// single-line) — `weave_stashes` is the general seam other producers
+    /// (or a future non-reflog message source) could feed a raw string
+    /// through, and the detail panel's `white-space: pre-wrap` would render
+    /// a leading `\n` as a blank line above the text.
+    #[test]
+    fn woven_stash_summary_has_no_leading_blank_line() {
+        let (dir, repo) = init_repo();
+        write(dir.path(), "a.txt", "one");
+        let c1 = commit(&repo, "first", &[]);
+
+        // Build a stash commit by hand so its message can carry a leading
+        // newline that real `git stash` (reflog-backed) never would.
+        write(dir.path(), "a.txt", "two");
+        let stash_commit = commit(&repo, "stash body", &[c1]);
+        let stashes = vec![(0usize, "\n\nwip stuff".to_string(), stash_commit)];
+
+        let mut commits = vec![CommitInfo {
+            oid: c1.to_string(),
+            short_oid: short_oid(c1),
+            parents: vec![],
+            author_name: "Test User".into(),
+            author_email: "test@example.com".into(),
+            author_time: 0,
+            summary: "first".into(),
+            stash: None,
+        }];
+        weave_stashes(&mut commits, stashes, &repo);
+
+        let stash_row = commits.iter().find(|c| c.stash.is_some()).unwrap();
+        assert_eq!(stash_row.summary, "wip stuff");
+        assert!(
+            !stash_row.summary.starts_with('\n'),
+            "leading newline survived: {:?}",
+            stash_row.summary
+        );
     }
 
     #[test]

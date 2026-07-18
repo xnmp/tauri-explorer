@@ -142,9 +142,7 @@ fn fetch_open_prs(owner: &str, repo: &str) -> Result<Vec<PrInfo>, String> {
     let mut request = ureq::get(&url)
         .header("Accept", "application/vnd.github+json")
         .header("User-Agent", "tauri-explorer-pr-badges");
-    if let Ok(token) =
-        std::env::var("GITHUB_TOKEN").or_else(|_| std::env::var("GH_TOKEN"))
-    {
+    if let Ok(token) = std::env::var("GITHUB_TOKEN").or_else(|_| std::env::var("GH_TOKEN")) {
         request = request.header("Authorization", &format!("Bearer {token}"));
     }
     let pulls: Vec<GhPull> = request
@@ -167,10 +165,7 @@ fn remote_url(repo: &git2::Repository) -> Option<String> {
     } else {
         names.first()?
     };
-    repo.find_remote(chosen)
-        .ok()?
-        .url()
-        .map(|u| u.to_string())
+    repo.find_remote(chosen).ok()?.url().map(|u| u.to_string())
 }
 
 /// Open PRs for the repo at `repo_root`, decorated for the git graph's ref
@@ -220,12 +215,18 @@ mod tests {
             ("https://github.com/owner/repo", Some(("owner", "repo"))),
             ("git@github.com:owner/repo.git", Some(("owner", "repo"))),
             ("git@github.com:owner/repo", Some(("owner", "repo"))),
-            ("ssh://git@github.com/owner/repo.git", Some(("owner", "repo"))),
+            (
+                "ssh://git@github.com/owner/repo.git",
+                Some(("owner", "repo")),
+            ),
             ("ssh://git@github.com/owner/repo", Some(("owner", "repo"))),
             ("http://github.com/owner/repo.git", Some(("owner", "repo"))),
             // Trailing slash.
             ("https://github.com/owner/repo/", Some(("owner", "repo"))),
-            ("https://github.com/owner/repo.git/", Some(("owner", "repo"))),
+            (
+                "https://github.com/owner/repo.git/",
+                Some(("owner", "repo")),
+            ),
             // Hyphenated / underscored / dotted names.
             (
                 "https://github.com/my-org/my_repo.thing.git",

@@ -13,6 +13,9 @@ import {
   prBadgePresentation,
   ciStatusLabel,
   reviewDecisionLabel,
+  prDescription,
+  relativeTimeFrom,
+  prDetailComments,
   GRAPH_PALETTE,
 } from "$lib/domain/git-graph";
 import type {
@@ -475,5 +478,105 @@ describe("PR detail labels (#459)", () => {
     expect(reviewDecisionLabel("review_required")).toBe("Review required");
     expect(reviewDecisionLabel(null)).toBeNull();
     expect(reviewDecisionLabel(undefined)).toBeNull();
+  });
+});
+
+describe("prDescription (#468)", () => {
+  it("returns trimmed non-empty text", () => {
+    expect(prDescription("  Hello world  ")).toBe("Hello world");
+    expect(prDescription("multi\nline")).toBe("multi\nline");
+  });
+
+  it("collapses empty / whitespace-only / missing bodies to null", () => {
+    expect(prDescription("")).toBeNull();
+    expect(prDescription("   \n\t ")).toBeNull();
+    expect(prDescription(null)).toBeNull();
+    expect(prDescription(undefined)).toBeNull();
+  });
+});
+
+describe("relativeTimeFrom (#468)", () => {
+  const now = Date.parse("2024-06-15T12:00:00Z");
+  const ago = (ms: number) => new Date(now - ms).toISOString();
+  const SEC = 1000;
+  const MIN = 60 * SEC;
+  const HOUR = 60 * MIN;
+  const DAY = 24 * HOUR;
+
+  it("reads 'just now' under a minute and for future skew", () => {
+    expect(relativeTimeFrom(ago(30 * SEC), now)).toBe("just now");
+    expect(relativeTimeFrom(ago(0), now)).toBe("just now");
+    // Future timestamp (clock skew) — never negative.
+    expect(relativeTimeFrom(new Date(now + 5 * MIN).toISOString(), now)).toBe("just now");
+  });
+
+  it("scales through minutes, hours, days, months, years with correct pluralization", () => {
+    expect(relativeTimeFrom(ago(1 * MIN), now)).toBe("1 minute ago");
+    expect(relativeTimeFrom(ago(5 * MIN), now)).toBe("5 minutes ago");
+    expect(relativeTimeFrom(ago(1 * HOUR), now)).toBe("1 hour ago");
+    expect(relativeTimeFrom(ago(3 * HOUR), now)).toBe("3 hours ago");
+    expect(relativeTimeFrom(ago(1 * DAY), now)).toBe("1 day ago");
+    expect(relativeTimeFrom(ago(10 * DAY), now)).toBe("10 days ago");
+    expect(relativeTimeFrom(ago(45 * DAY), now)).toBe("1 month ago");
+    expect(relativeTimeFrom(ago(400 * DAY), now)).toBe("1 year ago");
+  });
+
+  it("returns null for missing or unparseable timestamps", () => {
+    expect(relativeTimeFrom(null, now)).toBeNull();
+    expect(relativeTimeFrom(undefined, now)).toBeNull();
+    expect(relativeTimeFrom("not a date", now)).toBeNull();
+  });
+});
+
+describe("prDetailComments (#468)", () => {
+  const now = Date.parse("2024-06-15T12:00:00Z");
+
+  it("maps author, relative time and trimmed body", () => {
+    const out = prDetailComments(
+      [
+        {
+          author: "alice",
+          createdAt: new Date(now - 2 * 60 * 1000).toISOString(),
+          body: "  looks good  ",
+        },
+      ],
+      now,
+    );
+    expect(out).toEqual([
+      { author: "alice", time: "2 minutes ago", body: "looks good" },
+    ]);
+  });
+
+  it("falls back to '(unknown)' for a deleted author", () => {
+    const out = prDetailComments(
+      [{ author: null, createdAt: new Date(now).toISOString(), body: "ghost" }],
+      now,
+    );
+    expect(out[0].author).toBe("(unknown)");
+  });
+
+  it("drops comments whose body is empty after trimming", () => {
+    const out = prDetailComments(
+      [
+        { author: "a", createdAt: new Date(now).toISOString(), body: "   " },
+        { author: "b", createdAt: new Date(now).toISOString(), body: "real" },
+      ],
+      now,
+    );
+    expect(out.map((c) => c.body)).toEqual(["real"]);
+  });
+
+  it("returns [] for null / undefined / empty input", () => {
+    expect(prDetailComments(null, now)).toEqual([]);
+    expect(prDetailComments(undefined, now)).toEqual([]);
+    expect(prDetailComments([], now)).toEqual([]);
+  });
+
+  it("keeps time null when a comment timestamp is unparseable", () => {
+    const out = prDetailComments(
+      [{ author: "a", createdAt: "garbage", body: "hi" }],
+      now,
+    );
+    expect(out[0].time).toBeNull();
   });
 });

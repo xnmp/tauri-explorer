@@ -72,6 +72,7 @@ Anything whose failure mode involves races, watcher timing, git state, or cache 
 
 ## Delegation & Subagent Worktrees
 
+- If the main model is Fable, tokens are very expensive, so whenever possible delegate work to Opus and Sonnet subagents. Use Fable only for high level synthesis and understanding. Do NOT use Fable subagents unless explicitly instructed to. 
 - Agent-tool worktrees are created from **main**, not `dev`: a delegated agent must start by branching from `origin/dev` (or the coordinator's integration branch), and the coordinator verifies `git merge-base` before merging.
 - Agents work **only inside their worktree cwd with relative paths**. Absolute paths leak edits into the main checkout — it has happened; coordinators should spot-check `git -C <main-repo> status` while agents run.
 - Port :1420 belongs to the main session. Agents needing a dev server or E2E run use their own port with a throwaway config.

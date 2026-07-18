@@ -4,7 +4,7 @@ pkgname=tauri-explorer
 # package never drifts from the app (it sat at 0.2.7 while the app was
 # 0.3.0). pkgver() updates it automatically during makepkg; the literal
 # below is just a fallback for tooling that reads it without running pkgver.
-pkgver=1.3.1
+pkgver=1.6.0
 pkgrel=1
 pkgdesc="A minimalistic, high-performance file explorer"
 arch=('x86_64' 'aarch64')

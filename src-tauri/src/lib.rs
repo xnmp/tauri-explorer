@@ -18,6 +18,7 @@ pub mod git;
 pub mod git_actions;
 mod git_common;
 pub mod git_log;
+mod github;
 mod nano_banana;
 mod palette;
 mod plugin_job;
@@ -254,6 +255,7 @@ pub fn run(launch_dir: Option<String>) {
             git_actions::git_pull,
             git_actions::git_branch_behind_upstream,
             git_log::git_branch_authors,
+            github::git_open_prs,
             git_actions::git_delete_branch,
             git_actions::git_delete_remote_branch,
             git_actions::git_checkout_tracking,

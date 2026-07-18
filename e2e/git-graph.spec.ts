@@ -75,6 +75,45 @@ test.describe("Git graph tab", () => {
     await expect(page.locator(".entry-item").first()).toBeVisible();
   });
 
+  test("shows GitHub PR badges, opens the PR on click, and marks drafts (#448)", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+    const view = page.locator('[data-testid="git-graph-view"]');
+
+    // "feature" has a mocked open PR #7 — a badge chip sits beside its
+    // branch chip.
+    const featureRow = view.locator(".commit-row", { hasText: "Add tests for feature X" });
+    const prBadge = featureRow.locator(".ref-pr");
+    await expect(prBadge).toHaveCount(1);
+    await expect(prBadge).toContainText("#7");
+    await expect(prBadge).not.toHaveClass(/draft/);
+
+    // "experiment" has a mocked DRAFT PR #12 — same badge, draft styling.
+    const experimentRow = view.locator(".commit-row", { hasText: "Try alternative parser" });
+    const draftBadge = experimentRow.locator(".ref-pr");
+    await expect(draftBadge).toHaveCount(1);
+    await expect(draftBadge).toContainText("#12");
+    await expect(draftBadge).toHaveClass(/draft/);
+
+    // A branch with no open PR gets no badge at all (no error, no empty chip).
+    const tipRow = view.locator(".commit-row", { hasText: "Merge hotfix into main" });
+    await expect(tipRow.locator(".ref-pr")).toHaveCount(0);
+
+    // Clicking the badge records the PR URL via the mocked
+    // open_external_url — and does NOT select the commit row (the click
+    // must not bubble into the row's own click handler) or navigate away
+    // from the app.
+    await prBadge.click();
+    await expect
+      .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
+      .toBe("https://github.com/mock/project/pull/7");
+    await expect(page).toHaveURL(/\/\?path=/);
+    await expect(view).toBeVisible();
+    await expect(featureRow).not.toHaveClass(/selected/);
+    await expect(page.locator('[data-testid="git-graph-detail"]')).toHaveCount(0);
+  });
+
   test("branch filter shows only the selected branch's history (#342)", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents/project");
     await waitForEntries(page);

@@ -44,7 +44,40 @@ pub struct PrInfo {
     /// Issue-comment count on the PR, or `None` on the REST path.
     #[serde(rename = "commentCount")]
     pub comment_count: Option<u64>,
+    /// PR description text. On the GraphQL path this is `bodyText` (the
+    /// markdown rendered to plain text); on the REST path it's the raw
+    /// markdown `body`. `None`/empty when the PR has no description. Serde
+    /// defaults so an older cached/serialized shape without the field still
+    /// deserializes (the in-process cache is memory-only, but the IPC
+    /// boundary and any future persistence stay forward-compatible).
+    #[serde(default)]
+    pub body: Option<String>,
+    /// The PR's most-recent issue comments (oldest-first within the fetched
+    /// window; capped at the last `COMMENT_FETCH_CAP`). Populated only on the
+    /// GraphQL path — the REST list endpoint can't provide comment bodies
+    /// without a per-PR fan-out, so it stays empty there (documented degrade,
+    /// consistent with the module's best-effort philosophy).
+    #[serde(default)]
+    pub comments: Vec<PrComment>,
 }
+
+/// A single issue comment on a PR, as surfaced to the frontend.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct PrComment {
+    /// Comment author's login, or `None` when the account was deleted
+    /// (GitHub returns a null `author`).
+    pub author: Option<String>,
+    /// ISO-8601 creation timestamp (GraphQL `createdAt`), rendered to a
+    /// relative time by the frontend.
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+    /// Comment text (GraphQL `bodyText` — plain text, no markdown markup).
+    pub body: String,
+}
+
+/// How many trailing comments the single GraphQL query fetches per PR. Kept
+/// small so the one-request design stays cheap; older comments are truncated.
+const COMMENT_FETCH_CAP: usize = 20;
 
 /// Extract `(owner, repo)` from a GitHub remote URL. Only github.com hosts
 /// are recognized (SSH scp-like syntax, `ssh://`, and `https://`); anything
@@ -126,6 +159,9 @@ struct GhPull {
     html_url: String,
     #[serde(default)]
     draft: bool,
+    /// Raw markdown description; the REST list endpoint returns it inline.
+    #[serde(default)]
+    body: Option<String>,
     head: GhHead,
 }
 
@@ -148,6 +184,10 @@ impl From<GhPull> for PrInfo {
             ci_status: None,
             review_decision: None,
             comment_count: None,
+            // REST gives the description inline but not comment bodies (a
+            // separate endpoint), so comments degrade to empty here.
+            body: p.body.filter(|b| !b.is_empty()),
+            comments: Vec::new(),
         }
     }
 }
@@ -207,8 +247,8 @@ fn fetch_open_prs_graphql(owner: &str, repo: &str, token: &str) -> Result<Vec<Pr
     const QUERY: &str = "query($owner:String!,$name:String!){\
 repository(owner:$owner,name:$name){\
 pullRequests(states:OPEN,first:100){nodes{\
-number title url isDraft headRefName reviewDecision \
-comments{totalCount} \
+number title url isDraft headRefName reviewDecision bodyText \
+comments(last:20){totalCount nodes{author{login} createdAt bodyText}} \
 commits(last:1){nodes{commit{statusCheckRollup{state}}}}\
 }}}}";
     let body = serde_json::json!({
@@ -298,6 +338,8 @@ struct GqlPrNode {
     head_ref_name: String,
     #[serde(rename = "reviewDecision", default)]
     review_decision: Option<String>,
+    #[serde(rename = "bodyText", default)]
+    body_text: String,
     #[serde(default)]
     comments: GqlComments,
     #[serde(default)]
@@ -308,6 +350,25 @@ struct GqlPrNode {
 struct GqlComments {
     #[serde(rename = "totalCount", default)]
     total_count: u64,
+    #[serde(default)]
+    nodes: Vec<GqlCommentNode>,
+}
+
+#[derive(Deserialize)]
+struct GqlCommentNode {
+    /// Null when the author's account was deleted.
+    #[serde(default)]
+    author: Option<GqlAuthor>,
+    #[serde(rename = "createdAt", default)]
+    created_at: String,
+    #[serde(rename = "bodyText", default)]
+    body_text: String,
+}
+
+#[derive(Deserialize)]
+struct GqlAuthor {
+    #[serde(default)]
+    login: String,
 }
 
 #[derive(Deserialize, Default)]
@@ -343,6 +404,21 @@ impl From<GqlPrNode> for PrInfo {
             .and_then(|r| r.state.as_deref())
             .and_then(map_ci_state);
         let review_decision = n.review_decision.as_deref().and_then(map_review_decision);
+        // Defensively cap the returned comments even if the API sent more than
+        // requested; keep the most-recent `COMMENT_FETCH_CAP` (they arrive
+        // oldest-first within the `last:N` window).
+        let mut comment_nodes = n.comments.nodes;
+        if comment_nodes.len() > COMMENT_FETCH_CAP {
+            comment_nodes.drain(0..comment_nodes.len() - COMMENT_FETCH_CAP);
+        }
+        let comments = comment_nodes
+            .into_iter()
+            .map(|c| PrComment {
+                author: c.author.map(|a| a.login),
+                created_at: c.created_at,
+                body: c.body_text,
+            })
+            .collect();
         PrInfo {
             number: n.number,
             title: n.title,
@@ -354,6 +430,9 @@ impl From<GqlPrNode> for PrInfo {
             // GraphQL always yields a count (0 when no comments) — distinct
             // from the REST path's `None` ("unknown").
             comment_count: Some(n.comments.total_count),
+            // Empty description reads as "no body"; normalize to None.
+            body: Some(n.body_text).filter(|b| !b.is_empty()),
+            comments,
         }
     }
 }
@@ -623,11 +702,111 @@ mod tests {
             ci_status: None,
             review_decision: None,
             comment_count: None,
+            body: None,
+            comments: Vec::new(),
         };
         let v = serde_json::to_value(&pr).unwrap();
         assert!(v.get("ciStatus").unwrap().is_null());
         assert!(v.get("reviewDecision").unwrap().is_null());
         assert!(v.get("commentCount").unwrap().is_null());
+        assert!(v.get("body").unwrap().is_null());
+        assert!(v.get("comments").unwrap().as_array().unwrap().is_empty());
         assert_eq!(v.get("headRef").unwrap(), "b");
+    }
+
+    // ----- Body + comments parsing (#468) -----
+
+    #[test]
+    fn maps_body_text_and_comments() {
+        let pr = parse_one(
+            r#"{
+                "number": 7, "title": "Add feature", "url": "u",
+                "isDraft": false, "headRefName": "feature", "reviewDecision": null,
+                "bodyText": "This PR adds a feature.\nSecond line.",
+                "comments": { "totalCount": 2, "nodes": [
+                    { "author": { "login": "alice" }, "createdAt": "2024-01-01T10:00:00Z", "bodyText": "Looks good" },
+                    { "author": { "login": "bob" }, "createdAt": "2024-01-02T11:30:00Z", "bodyText": "Nit: rename" }
+                ] },
+                "commits": { "nodes": [] }
+            }"#,
+        );
+        assert_eq!(pr.body.as_deref(), Some("This PR adds a feature.\nSecond line."));
+        assert_eq!(pr.comment_count, Some(2));
+        assert_eq!(pr.comments.len(), 2);
+        assert_eq!(pr.comments[0].author.as_deref(), Some("alice"));
+        assert_eq!(pr.comments[0].created_at, "2024-01-01T10:00:00Z");
+        assert_eq!(pr.comments[0].body, "Looks good");
+        assert_eq!(pr.comments[1].author.as_deref(), Some("bob"));
+    }
+
+    #[test]
+    fn empty_body_maps_to_none_and_no_comments_is_empty_vec() {
+        // A closed-description PR (empty bodyText) and zero comments — common
+        // for freshly opened PRs.
+        let pr = parse_one(
+            r#"{
+                "number": 8, "title": "t", "url": "u", "isDraft": false,
+                "headRefName": "b", "reviewDecision": null, "bodyText": "",
+                "comments": { "totalCount": 0, "nodes": [] },
+                "commits": { "nodes": [] }
+            }"#,
+        );
+        assert_eq!(pr.body, None);
+        assert!(pr.comments.is_empty());
+        assert_eq!(pr.comment_count, Some(0));
+    }
+
+    #[test]
+    fn missing_body_and_comment_keys_default_gracefully() {
+        // Neither bodyText nor comments present at all (defensive against a
+        // trimmed response) — defaults, no deserialize failure.
+        let pr = parse_one(
+            r#"{ "number": 5, "title": "t", "url": "u", "isDraft": false, "headRefName": "b" }"#,
+        );
+        assert_eq!(pr.body, None);
+        assert!(pr.comments.is_empty());
+    }
+
+    #[test]
+    fn comment_with_deleted_author_maps_to_none_login() {
+        // GitHub returns a null `author` for comments whose account is gone.
+        let pr = parse_one(
+            r#"{
+                "number": 9, "title": "t", "url": "u", "isDraft": false,
+                "headRefName": "b", "reviewDecision": null, "bodyText": "desc",
+                "comments": { "totalCount": 1, "nodes": [
+                    { "author": null, "createdAt": "2024-03-01T00:00:00Z", "bodyText": "ghost note" }
+                ] },
+                "commits": { "nodes": [] }
+            }"#,
+        );
+        assert_eq!(pr.comments.len(), 1);
+        assert_eq!(pr.comments[0].author, None);
+        assert_eq!(pr.comments[0].body, "ghost note");
+    }
+
+    #[test]
+    fn rest_pull_carries_body_but_no_comments() {
+        // The REST list shape (GhPull) supplies `body` inline; comment bodies
+        // are a separate endpoint, so they degrade to empty.
+        let pull: GhPull = serde_json::from_value(serde_json::json!({
+            "number": 3, "title": "rest pr", "html_url": "u", "draft": false,
+            "body": "REST description", "head": { "ref": "b" }
+        }))
+        .unwrap();
+        let pr = PrInfo::from(pull);
+        assert_eq!(pr.body.as_deref(), Some("REST description"));
+        assert!(pr.comments.is_empty());
+        assert_eq!(pr.comment_count, None);
+    }
+
+    #[test]
+    fn rest_pull_null_body_maps_to_none() {
+        let pull: GhPull = serde_json::from_value(serde_json::json!({
+            "number": 4, "title": "rest pr", "html_url": "u", "draft": false,
+            "body": null, "head": { "ref": "b" }
+        }))
+        .unwrap();
+        assert_eq!(PrInfo::from(pull).body, None);
     }
 }

@@ -44,6 +44,10 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   // (#272). Toggled per-pane via git.showGraph (Ctrl+Alt+G).
   const paneGitGraph = $derived(windowTabsManager.getPaneGitGraph(paneId));
 
+  // Per-pane SCM panel visibility (#434): explicit per-pane override, else the
+  // global `showScmPanel` default.
+  const paneScmVisible = $derived(windowTabsManager.getPaneScmVisible(paneId));
+
   let paneRef = $state<HTMLElement | null>(null);
 
   // All keyboard navigation is handled at window level so it works regardless
@@ -145,6 +149,14 @@ import { nextRemovableRoot } from "$lib/domain/drives";
 
   const isActive = $derived(windowTabsManager.activePaneId === paneId);
   const dualPaneEnabled = $derived(windowTabsManager.dualPaneEnabled);
+
+  // Miller columns are hoisted to the left island (rendered by +page.svelte)
+  // only in island mode with no sidebar, and only for the active pane (the
+  // island shows the active explorer). When hoisted, suppress the inline copy
+  // so the columns render exactly once (#434). Mirrors `millerAsLeftIsland`.
+  const millerHoistedToIsland = $derived(
+    settingsStore.islandMode && !settingsStore.showSidebar && isActive,
+  );
   const isInactive = $derived(dualPaneEnabled && !isActive);
   const showActiveBorder = $derived(dualPaneEnabled && isActive);
 
@@ -319,8 +331,9 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   {#if paneGitGraph}
     <div class="pane-content">
       <!-- Same gating as the explorer branch below: the SCM panel stays
-           available while the graph has the pane (#333). -->
-      {#if settingsStore.showGitStatus && settingsStore.showScmPanel}
+           available while the graph has the pane (#333). Per-pane visibility
+           (#434). -->
+      {#if settingsStore.showGitStatus && paneScmVisible}
         <ScmPanel />
       {/if}
       <!-- Keyed so switching between graphs of different repos recreates the
@@ -332,13 +345,19 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   {:else if paneExplorer}
     <NavigationBar explorer={paneExplorer} />
     <div class="pane-content">
-      {#if paneExplorer.millerLayers > 0 && !(settingsStore.macOsVibrancy && !settingsStore.showSidebar)}
+      <!-- Miller columns render inline UNLESS they are hoisted to the left
+           island (island mode + no sidebar, active pane only). The hoist
+           condition here must mirror `millerAsLeftIsland` in +page.svelte,
+           keyed off the single `islandMode` derived — not one platform's flag —
+           or the columns double-mount inline AND as the island (#434). -->
+      {#if paneExplorer.millerLayers > 0 && !millerHoistedToIsland}
         <MillerColumns explorer={paneExplorer} />
       {/if}
       <!-- SCM panel sits between the Miller columns and the file list (#227);
-           per pane (#334) — each pane's panel follows its own explorer, so
-           two panes on different repos show independent git panels. -->
-      {#if settingsStore.showGitStatus && settingsStore.showScmPanel}
+           per pane (#334, #434) — each pane's panel follows its own explorer
+           and its own visibility toggle, so two panes show independent git
+           panels and can be opened/closed independently. -->
+      {#if settingsStore.showGitStatus && paneScmVisible}
         <ScmPanel />
       {/if}
       <FileList explorer={paneExplorer} />

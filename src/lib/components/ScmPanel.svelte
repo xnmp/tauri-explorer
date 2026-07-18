@@ -9,6 +9,17 @@
   import ScmSidebarView from "./ScmSidebarView.svelte";
   import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte";
 
+  interface Props {
+    /** When true, render with floating-island chrome (radius/stroke/glow) for
+     *  use as a standalone island surface. Default false: the panel is an
+     *  integrated section of the explorer pane and renders docked & flat, like
+     *  the miller-columns bar — no elevation/overlay chrome even under vibrancy
+     *  (#434). Presentation is a layout decision, not a blanket theme rule. */
+    island?: boolean;
+  }
+
+  let { island = false }: Props = $props();
+
   const resize = usePersistedPanelWidth("explorer-scm-panel-width", {
     min: 200,
     max: 500,
@@ -16,7 +27,12 @@
   });
 </script>
 
-<div class="scm-panel" class:resizing={resize.isResizing} style="width: {resize.width}px">
+<div
+  class="scm-panel"
+  class:island
+  class:resizing={resize.isResizing}
+  style="width: {resize.width}px"
+>
   <ScmSidebarView />
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- mouse-drag resize handle; role=separator conveys the correct semantics to AT, keyboard resize is a separate unimplemented feature -->
   <div
@@ -65,8 +81,15 @@
     background: var(--accent);
   }
 
-  /* Vibrancy: SCM panel as floating island */
+  /* Vibrancy, integrated (default): flatten into the pane like the miller bar
+     — transparent background, no elevation/overlay chrome (#434). */
   :global([data-vibrancy]) .scm-panel {
+    background: transparent;
+  }
+
+  /* Vibrancy, island surface (opt-in via the `island` prop): floating card
+     chrome, matching the other island surfaces. */
+  :global([data-vibrancy]) .scm-panel.island {
     border-radius: var(--vibrancy-island-radius);
     border: 1px solid var(--vibrancy-island-stroke);
     background: var(--vibrancy-island-bg);

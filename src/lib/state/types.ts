@@ -63,6 +63,10 @@ export interface TabPane {
   /** When set, the pane shows the commit graph for this repo root instead
    *  of the file listing (#272). Toggled by `git.showGraph`. */
   gitGraph?: string;
+  /** Per-pane SCM panel visibility override (#434). `undefined` = follow the
+   *  global `showScmPanel` setting; `true`/`false` = an explicit per-pane
+   *  choice made via the toggle command. In-memory only (not persisted). */
+  scmPanel?: boolean;
 }
 
 /** A filesystem explorer tab owning a pane layout tree (#228). Leaf ids of

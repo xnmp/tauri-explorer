@@ -140,6 +140,7 @@ backend for E2E/browser).
 - `state/commands/view-commands.ts` — `view.toggleMillerColumns`, millerLayers0-3
 - reuses `explorer.svelte.ts` per-column listing + `directory-listing.ts`
 - FLOW: each column is a listing of the selected dir in the prior column; layer count is a view command/setting.
+- ISLAND (#434): in island mode with no sidebar the ACTIVE pane's columns are hoisted to a left island in `+page.svelte` (`millerAsLeftIsland`); `ExplorerPane.svelte` suppresses the inline copy via the same `settingsStore.islandMode` derived so they render exactly once (a divergent per-platform check double-mounted them).
 
 ## Git status badges
 - `components/GitStatusBadge.svelte` — per-row M/A/? badge glyph
@@ -150,9 +151,10 @@ backend for E2E/browser).
 
 ## Git SCM panel
 - `components/ScmSidebarView.svelte` — staged/unstaged/untracked tree, commit box
-- `components/ScmPanel.svelte`, `components/ScmDiffView.svelte` — panel shell + inline diff
+- `components/ScmPanel.svelte`, `components/ScmDiffView.svelte` — panel shell + inline diff. ScmPanel renders docked/flat by default (like the miller bar); `island` prop opts into floating-island chrome (#434) — vibrancy alone no longer floats it.
 - `components/GitGraphView.svelte` — commit graph / log
 - `state/scm.svelte.ts` — per-pane stores via `getScmStore(paneId)` (#334): repo state, stage/commit actions; shared summary cache + `warmScmSummary`
+- panel VISIBILITY is also per-pane (#434): `window-tabs.svelte.ts` `getPaneScmVisible`/`toggleScmInActivePane` on the pane node (falls back to the global `showScmPanel` default); the `view.toggleScmPanel` command (`view-commands.ts`) acts on the active pane only
 - `domain/scm-tree.ts`, `domain/git-graph.ts`, `domain/git.ts` — tree grouping, graph layout
 - `api/git.ts`, `api/git-log.ts`; `src-tauri/src/git.rs`, `git_actions.rs`, `git_log.rs`, `git_common.rs`
 - `domain/git-warm.ts` (pure: when to warm) + `state/git-warm.ts` (wiring) — pre-warm graph/SCM caches once a pane settles on a repo

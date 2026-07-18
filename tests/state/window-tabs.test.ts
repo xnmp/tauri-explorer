@@ -17,6 +17,7 @@ import {
 } from "$lib/state/window-tabs.svelte";
 import { persistedLeaves } from "$lib/state/window-tabs-persistence";
 import { workspacesStore } from "$lib/state/workspaces.svelte";
+import { settingsStore } from "$lib/state/settings.svelte";
 
 beforeEach(() => {
   localStorage.clear();
@@ -842,5 +843,61 @@ describe("per-pane miller columns (#229)", () => {
     expect(explorer.millerLayers).toBeGreaterThan(0);
     explorer.toggleMillerColumns();
     expect(explorer.millerLayers).toBe(0);
+  });
+});
+
+describe("per-pane SCM panel visibility (#434)", () => {
+  it("panes follow the global showScmPanel default until they override it", () => {
+    const manager = freshManager();
+    const paneId = manager.activePaneId;
+    // Default global setting is false → panes hidden by default.
+    settingsStore.update({ showScmPanel: false });
+    expect(manager.getPaneScmVisible(paneId)).toBe(false);
+
+    // Flipping the global default is picked up by panes without an override.
+    settingsStore.update({ showScmPanel: true });
+    expect(manager.getPaneScmVisible(paneId)).toBe(true);
+
+    settingsStore.update({ showScmPanel: false });
+  });
+
+  it("toggling one pane's panel leaves sibling panes on the global default", () => {
+    const manager = freshManager();
+    settingsStore.update({ showScmPanel: false });
+    manager.splitPane("right", "/srv/docs");
+    const [firstId, secondId] = manager.activePaneIds;
+
+    // The split focused the second pane; toggle acts on it only.
+    expect(manager.activePaneId).toBe(secondId);
+    const opened = manager.toggleScmInActivePane();
+
+    expect(opened).toBe(true);
+    expect(manager.getPaneScmVisible(secondId)).toBe(true);
+    expect(manager.getPaneScmVisible(firstId)).toBe(false);
+
+    // Toggling again hides just that pane.
+    const closed = manager.toggleScmInActivePane();
+    expect(closed).toBe(false);
+    expect(manager.getPaneScmVisible(secondId)).toBe(false);
+    expect(manager.getPaneScmVisible(firstId)).toBe(false);
+  });
+
+  it("a per-pane override wins over a later change to the global default", () => {
+    const manager = freshManager();
+    settingsStore.update({ showScmPanel: false });
+    const paneId = manager.activePaneId;
+
+    // Explicit per-pane choice: visible.
+    manager.toggleScmInActivePane();
+    expect(manager.getPaneScmVisible(paneId)).toBe(true);
+
+    // Turning the global default on must not disturb the explicit choice, and
+    // turning it off must not hide a pane the user explicitly opened.
+    settingsStore.update({ showScmPanel: true });
+    expect(manager.getPaneScmVisible(paneId)).toBe(true);
+    settingsStore.update({ showScmPanel: false });
+    expect(manager.getPaneScmVisible(paneId)).toBe(true);
+
+    settingsStore.update({ showScmPanel: false });
   });
 });

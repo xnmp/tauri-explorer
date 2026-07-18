@@ -2,6 +2,20 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.6.0 — 2026-07-18
+
+Pane-island polish, GitHub PR badges in the git graph, and a one-command macOS installer.
+
+### Added
+- **Open-PR badges in the git graph** — a branch with an open GitHub pull request gets a purple `⇄ #N` chip beside its ref chips (grey for drafts); clicking it opens the PR in your browser. Works off the repo's GitHub remote with a short-lived cache, respects `GITHUB_TOKEN`/`GH_TOKEN` for higher rate limits, and quietly shows nothing for non-GitHub remotes or offline machines (#449).
+- **One-command macOS install** — `curl -fsSL https://raw.githubusercontent.com/xnmp/tauri-explorer/main/mac_install.sh | bash` downloads the latest DMG, installs to /Applications (sudo only if needed), and clears the quarantine flag that made the un-notarized app report as "damaged" (#453).
+
+### Improved
+- **Each split pane is its own island in island mode** — the container island steps aside and every pane floats separately with the standard inter-island gap; the active pane keeps its accent border. In normal mode the divider between panes is now clearly visible instead of a near-invisible hairline (#448).
+
+### Fixed
+- **Git graph background matches the explorer pane** — the graph no longer paints its own opaque surface over the pane, so it follows the content-opacity setting and island-mode transparency like every other pane view (#450).
+
 ## v1.5.0 — 2026-07-18
 
 A git-graph correctness and speed overhaul driven by an adversarial architecture review, per-pane SCM, and a batch of quality-of-life features.

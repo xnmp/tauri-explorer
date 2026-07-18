@@ -5,8 +5,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { assignLayout, branchPath, groupRefChips, GRAPH_PALETTE } from "$lib/domain/git-graph";
-import type { GraphCommitLike } from "$lib/domain/git-graph";
+import { assignLayout, branchPath, groupRefChips, indexPrsByBranch, GRAPH_PALETTE } from "$lib/domain/git-graph";
+import type { GraphCommitLike, OpenPrLike } from "$lib/domain/git-graph";
 
 const c = (oid: string, ...parents: string[]): GraphCommitLike => ({ oid, parents });
 
@@ -351,5 +351,39 @@ describe("sliceBranchLine (#256, render windowing)", () => {
       { lane: 2, row: 0 },
       { lane: 2, row: 100 },
     ]);
+  });
+});
+
+describe("indexPrsByBranch (#448)", () => {
+  const pr = (number: number, headRef: string): OpenPrLike => ({ number, headRef });
+
+  it("returns an empty map for an empty list", () => {
+    expect(indexPrsByBranch([])).toEqual(new Map());
+  });
+
+  it("indexes a single PR by its head branch", () => {
+    const map = indexPrsByBranch([pr(7, "feature")]);
+    expect(map.get("feature")).toEqual({ number: 7, headRef: "feature" });
+    expect(map.size).toBe(1);
+  });
+
+  it("keeps the lowest PR number when several open PRs share a branch", () => {
+    const map = indexPrsByBranch([pr(9, "feature"), pr(3, "feature"), pr(15, "feature")]);
+    expect(map.get("feature")).toEqual({ number: 3, headRef: "feature" });
+    expect(map.size).toBe(1);
+  });
+
+  it("keeps the lowest number regardless of input order", () => {
+    const ascending = indexPrsByBranch([pr(1, "feature"), pr(5, "feature")]);
+    const descending = indexPrsByBranch([pr(5, "feature"), pr(1, "feature")]);
+    expect(ascending.get("feature")?.number).toBe(1);
+    expect(descending.get("feature")?.number).toBe(1);
+  });
+
+  it("keeps unrelated branches separate", () => {
+    const map = indexPrsByBranch([pr(7, "feature"), pr(12, "experiment")]);
+    expect(map.size).toBe(2);
+    expect(map.get("feature")?.number).toBe(7);
+    expect(map.get("experiment")?.number).toBe(12);
   });
 });

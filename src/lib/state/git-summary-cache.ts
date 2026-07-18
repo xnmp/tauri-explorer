@@ -16,10 +16,25 @@
  *    refresh (the graph's watcher reload is debounced ~300ms after the SCM
  *    store's), so it is deliberately brief.
  *
- * Freshness after a mutation: change-driven callers (the SCM store reacting to
- * a `git-status-changed`) pass `{ force: true }` to bypass the TTL and get a
- * post-change scan, while still joining any in-flight fetch. Passive callers
- * (graph reload, commit-row selection) omit it and share whatever is fresh.
+ * Freshness after a mutation (the staleness fix, #445): change-driven callers
+ * (the SCM store reacting to a `git-status-changed` after a stage/commit) pass
+ * `{ force: true }` to observe a scan that reflects the POST-mutation tree. A
+ * force must therefore NOT adopt a scan that began before it — in particular a
+ * passive scan that started reading the tree BEFORE the mutation would return
+ * stale counts. The `forced` flag on an in-flight scan is its generation
+ * marker: a forced scan belongs to the current post-mutation generation, a
+ * passive scan is pre-mutation and unsafe for a force to adopt.
+ *
+ *  - a passive caller may join whatever scan is currently in flight (forced or
+ *    not), or, failing that, reuse a settled scan within the TTL;
+ *  - a FORCE joins an in-flight scan ONLY if that scan is itself force-
+ *    originated — so genuinely-concurrent forced callers reacting to the same
+ *    mutation share one fresh scan instead of stampeding the backend, while a
+ *    force arriving over a pre-mutation passive scan starts its own fresh scan
+ *    and observes post-mutation state (the passive scan keeps its own result).
+ *
+ * Passive callers (graph reload, commit-row selection) omit `force` and share
+ * whatever is fresh.
  *
  * This shares the FETCH, not any store: the per-pane `getScmStore` semantics
  * are untouched — stores still hold their own state and just route their scan
@@ -36,42 +51,64 @@ interface CacheEntry {
   result: ApiResult<GitStatusSummary>;
 }
 
+interface FlightEntry {
+  promise: Promise<ApiResult<GitStatusSummary>>;
+  /** Whether this scan was started by a `force` call (known post-mutation). */
+  forced: boolean;
+}
+
 const cache = new Map<string, CacheEntry>();
-const inFlight = new Map<string, Promise<ApiResult<GitStatusSummary>>>();
+const inFlight = new Map<string, FlightEntry>();
 
 /**
  * Fetch a repo's working-tree summary, deduped and short-TTL cached.
  *
  * @param repoPath repo root (the same string every consumer passes for a repo)
- * @param opts.force skip the TTL read (still joins an in-flight fetch) — used by
- *   change-driven callers that must observe a post-mutation scan.
+ * @param opts.force observe a POST-mutation scan: bypass the TTL and refuse to
+ *   adopt a pre-mutation (passive) scan already in flight. A fresh scan is
+ *   begun unless a concurrent force is already scanning, in which case that one
+ *   is shared. Used by change-driven callers after a stage/commit.
  */
 export async function fetchGitSummary(
   repoPath: string,
   opts?: { force?: boolean },
 ): Promise<ApiResult<GitStatusSummary>> {
   const key = repoPath;
-
-  // Always share a fetch already in progress, even when forcing: a concurrent
-  // scan started for the same change is exactly what a forcing caller wants.
+  const force = opts?.force ?? false;
   const flight = inFlight.get(key);
-  if (flight) return flight;
 
-  if (!opts?.force) {
-    const cached = cache.get(key);
-    if (cached && Date.now() - cached.at < TTL_MS) return cached.result;
+  if (force) {
+    // Adopt an in-flight scan only if it too is post-mutation (a concurrent
+    // force); never adopt a pre-mutation passive scan.
+    if (flight?.forced) return flight.promise;
+    return startScan(key, true);
   }
 
-  const p = gitSummary(repoPath)
+  // Passive caller: any in-flight scan is good enough to share.
+  if (flight) return flight.promise;
+
+  const cached = cache.get(key);
+  if (cached && Date.now() - cached.at < TTL_MS) return cached.result;
+
+  return startScan(key, false);
+}
+
+function startScan(
+  key: string,
+  forced: boolean,
+): Promise<ApiResult<GitStatusSummary>> {
+  const promise = gitSummary(key)
     .then((result) => {
       cache.set(key, { at: Date.now(), result });
       return result;
     })
     .finally(() => {
-      inFlight.delete(key);
+      // Only clear the slot if it is still ours: a force may have replaced a
+      // pre-mutation passive scan with a newer forced one.
+      if (inFlight.get(key)?.promise === promise) inFlight.delete(key);
     });
-  inFlight.set(key, p);
-  return p;
+  inFlight.set(key, { promise, forced });
+  return promise;
 }
 
 /** Drop a repo's cached scan (or all repos when omitted). */

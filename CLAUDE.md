@@ -16,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | E2E tests (all view modes) | `ALL_VIEW_MODES=1 npx playwright test` |
 | E2E tests (WebKit ≈ WKWebView proxy) | `WEBKIT=1 npx playwright test --project=webkit` (on Arch: prepend `PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true`; Ubuntu-only libs live in the webkit bundle's `sys/lib`) |
 | Single E2E test | `npx playwright test e2e/specific.spec.ts` |
-| Tauri-binary E2E smoke (Linux/Windows only) | `bun run test:e2e:tauri` (needs `cargo install tauri-driver` and a built binary) |
+| Tauri-binary E2E (Linux/Windows only) | `bun run test:e2e:tauri` (needs `cargo install tauri-driver`, `webkit2gtk-driver` on Linux, a debug binary, and a dev server on :1420) |
 | Performance tests | `bun run test:perf` |
 | Rust criterion benches | `bun run bench:rust` (baselines recorded in `src-tauri/benches/*.rs` header comments) |
 | Bundle-size budget check | `bun run check:bundle` (builds frontend, fails if main chunk gzip exceeds budget in `scripts/check-bundle-size.mjs`) |
@@ -26,109 +26,58 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### WSL ↔ Windows: always `git push` after committing
 
-When developing in WSL (e.g. on the `windows` branch), the Windows side builds/tests by pulling from the remote — it does **not** see your WSL working tree. After committing a change you want verified on Windows, **`git push`**. A commit that isn't pushed will not reach the Windows build, so the fix appears to "not work" when it simply never arrived.
+When developing in WSL (e.g. on the `windows` branch), the Windows side builds/tests by pulling from the remote — it does **not** see your WSL working tree. A commit that isn't pushed never reaches the Windows build, so the fix appears to "not work" when it simply never arrived.
 
 ## Architecture Overview
 
 **Stack:** Tauri v2 (Rust backend) + Svelte 5 (runes) + TypeScript + Vite 6. Package manager: `bun`.
 
-### Frontend Layers (`src/lib/`)
+Frontend layers (`src/lib/`): `domain/` (pure logic, no framework deps — put business logic here), `state/` (rune stores), `api/` (IPC wrappers; `mock-invoke.ts` fakes the backend outside Tauri, detected via `__TAURI_INTERNALS__`), `composables/`, `components/`, `themes/`. Backend (`src-tauri/src/`): all Tauri commands must be `async fn` (sync blocks the main thread). Entry point `src/routes/+page.svelte` composes the layout and owns global shortcuts.
 
-- **`domain/`** — Pure functions and types with no framework deps (file types, fuzzy scoring, keyboard handling, syntax highlighting). This is the place for business logic.
-- **`state/`** — Reactive stores using Svelte 5 runes (`$state`, `$derived`). Key stores: `explorer.svelte.ts` (per-pane state), `settings.svelte.ts`, `commands.svelte.ts` (command palette), `window-tabs.svelte.ts` (tab management).
-- **`api/`** — Bridge to Rust backend via Tauri `invoke()`. `files.ts` wraps all IPC calls. `mock-invoke.ts` provides fake data when running outside Tauri (used by E2E tests in browser).
-- **`composables/`** — Reusable behavior modules (drag-and-drop, column resize, marquee selection).
-- **`components/`** — Svelte components. See [docs/code-map/map-folder.md](docs/code-map/map-folder.md) for the full per-file table.
-- **`themes/`** — CSS theme files.
-
-### Backend (`src-tauri/src/`)
-
-All Tauri commands must be `async fn` (sync commands block the main thread). Key modules: `files/` (directory listing, CRUD), `search.rs` (fuzzy search with nucleo), `content_search.rs` (ripgrep-based grep), `thumbnails.rs` (image thumbnail cache), `archive.rs` (zip), `config.rs` (JSON persistence), `task_registry.rs` (cancellable background tasks).
-
-### Entry Point
-
-`src/routes/+page.svelte` — SPA root. Handles global keyboard shortcuts, initializes stores, and composes the layout: TitleBar > SharedToolbar > Sidebar + PaneContainer > StatusBar, plus overlay dialogs.
-
-### Multiple Views
-
-The explorer has three view modes: **Details** (virtual-scrolled table), **List** (CSS grid), **Tiles** (CSS auto-fill grid). `FileList.svelte` dispatches to the correct view component. When adding UI features that affect file display, ensure all three views are updated.
-
-### IPC Pattern
-
-Frontend calls `invoke("command_name", { args })` via `src/lib/api/files.ts`. When not running in Tauri (E2E tests), `mock-invoke.ts` intercepts calls and returns fake data. The detection uses `__TAURI_INTERNALS__` in `window`.
-
-### Testing
-
-- **Unit tests** (`tests/`): Vitest, Node environment, with `tests/setup.ts` providing minimal browser stubs (localStorage). Test domain logic and state behavior.
-- **E2E tests** (`e2e/`): Playwright against Chromium on `localhost:1420`. Uses `bun run dev` as web server (not full Tauri). Mock invoke provides fake filesystem data.
-- **Tauri-binary E2E** (`e2e-tauri/`): WebdriverIO + `tauri-driver` against the actually built Tauri binary. Linux + Windows only (see `e2e-tauri/README.md`); macOS needs ad-hoc coverage via unit tests until a WKWebView driver lands. Runs in CI via `.github/workflows/e2e-tauri.yml` on `ubuntu-latest` + `windows-latest`.
-- `ALL_VIEW_MODES=1` env var runs E2E tests across Details, List, and Tiles views.
+Rules that bite:
+- Three view modes (Details/List/Tiles) dispatched by `FileList.svelte` — display features must land in all three.
+- Refresh policy is split deliberately: WHEN=`refresh-manager`, WHETHER=`pane-watch`, HOW=`pane-refresh`. Don't add a fourth gate, and don't build private refresh stacks inside components — the git graph did, and it produced #431/#432.
+- Keep state machines and caches out of component-local scope (`<script module>` in a `.svelte` file is not a state layer). If it can't be unit-tested through an import, it will eventually be wrong unobserved (#444).
 
 ## Documentation
 
-- **Start at [docs/code-map/](docs/code-map/)** — the code maps are the entry point for finding anything in this codebase. The prose architecture docs that used to live in `docs/architecture/` were deleted (#347): a controlled study ([STUDY.md](docs/code-map/STUDY.md), 240 measured search runs) found them *net-negative* for locating change sites versus no docs at all (+4.6% cost, −4.8% quality, 2.5× more wrong files). They remain in git history if ever needed.
-- Lessons learnt: [docs/lessons_learnt.md](docs/lessons_learnt.md) — gotchas from closed issues.
+- **Start at [docs/code-map/](docs/code-map/)**: [map-feature.md](docs/code-map/map-feature.md) for cross-layer work and bug hunts, [map-playbook.md](docs/code-map/map-playbook.md) recipes for task-shaped changes (new palette command / context-menu action / Tauri command / setting), [map-folder.md](docs/code-map/map-folder.md) as the exhaustive per-file index. For a small localized change you can already name, skip the maps and grep (measured net loss on cheap tasks; prose architecture docs were deleted for the same reason — see [STUDY.md](docs/code-map/STUDY.md)).
+- **Keep the maps current or they turn harmful.** New/moved source file → update `map-folder.md` (+ the `map-feature.md` cluster), then `python3 docs/code-map/validate.py --coverage`. CI runs the same check.
+- [docs/lessons_learnt.md](docs/lessons_learnt.md) — gotchas from closed issues; append to it when you fix a bug, search it when you hunt one.
 
-### Code maps
+## Issues, Branches, Screenshots
 
-- For cross-layer searches and bug hunts, read [map-feature.md](docs/code-map/map-feature.md) first — feature clusters spanning component → store → api → Rust, with the events that connect them.
-- For task-shaped changes (add a palette command / context-menu action / Tauri command / persisted setting), use the recipes in [map-playbook.md](docs/code-map/map-playbook.md).
-- When nothing matches a cluster or recipe, fall back to [map-folder.md](docs/code-map/map-folder.md) — an exhaustive one-line-per-file index.
-- For a small, obviously-localized change (one component you can already name), skip the maps and just grep — they measured as a net loss on cheap tasks.
-- **Keep the maps current or they turn harmful**: an agent that trusts a map naming a moved file searches worse than one with no map. When you add or move a source file, add it to `map-folder.md` (and to the relevant `map-feature.md` cluster if it belongs to a feature), then run `python3 docs/code-map/validate.py --coverage`. CI runs the same check.
+- All development happens off `dev`; feature branches merge back to `dev` with a descriptive squash commit. Don't modify files directly on `dev`. At session start, convert tasks in [@new_todo.md](@new_todo.md) into GitHub issues (plan first; the plan can live in the issue body).
+- Branch ↔ issue convention: branch `feat/my-feature` must match an **open GitHub issue** whose title contains `my-feature`; a hook validates this at branch creation. Prefixes: `feat/`, `fix/`, `refactor/`, `docs/`, `test/`, `chore/`.
+- Relationship tooling (blocking, sub-issues) is the `jwilger/gh-issue-ext` extension (`gh issue-ext …`).
+- Issue bodies need a `## Screenshots` section with checkboxes; files go in `screenshots/<branch>/` and the merge hook verifies they exist. "None required" is only for changes with no user-visible effect; behavioral fixes still need one showing the corrected behavior. Verify a screenshot actually demonstrates the feature before counting it.
+- The merge hook does **not** close issues — close them yourself (`gh issue close N --comment`) when the work lands on dev.
+- Before ending a session that merged UI work: `ALL_VIEW_MODES=1 npx playwright test`.
 
-## Issue Tracking (GitHub Issues)
+## Verification
 
-Key commands:
-- `gh issue create --title "Title" --body "Description"` — create issue
-- `gh issue list` — list open issues
-- `gh issue list --state all` — list all issues
-- `gh issue view <number>` — view issue details (`--json` for machine-readable)
-- `gh issue edit <number> --body "new body"` — update description
-- `gh issue comment <number> --body "notes"` — add notes
-- `gh issue close <number> --comment "why"` — close issue (automated by merge hook)
-- `gh extension install jwilger/gh-issue-ext` — install if missing
-- `gh issue-ext blocking add <blocked> <blocker>` — mark issue as blocked by another
-- `gh issue-ext blocking list <number>` — list blocking relationships
-- `gh issue-ext sub add <parent> <child>` — add sub-issue
-- `gh issue-ext show <number>` — show all relationships
+The three test tiers see different things; pick by what could actually break:
 
-Convention: branch names map to issues by title. Branch `feat/my-feature` matches an issue whose title contains "my-feature". A hook validates that a matching open issue exists before allowing branch creation.
+1. **Vitest (`tests/`)** — domain logic and store behavior. The default home for every fix's regression test.
+2. **Browser Playwright (`e2e/`)** — UI behavior against `mock-invoke.ts` on :1420. Good for interaction/focus/layout. **Structurally blind to backend timing** (watchers, git, IPC latency), and **circular for new backend features**: if you wrote the mock, the test proves the UI agrees with your own assumption, not with the backend.
+3. **Tauri-binary E2E (`e2e-tauri/`)** — WebdriverIO + tauri-driver against the real binary: real Rust, real fs watchers, real git (see `e2e-tauri/README.md`; keep this suite small and reserve it for what genuinely needs the real backend).
 
-### Screenshot Requirements
+Anything whose failure mode involves races, watcher timing, git state, or cache staleness needs tier 3 or a Rust temp-repo test in `src-tauri` — a green mock E2E is not evidence for those.
 
-When creating issues, include a `## Screenshots` section in the issue body with markdown checkboxes (e.g., `- [ ] sidebar`). Screenshots must be saved to `screenshots/<branch>/`. The merge hook verifies they exist. Use 'None required' only for pure backend/refactor changes with no user-visible effect. Behavioral fixes still need a screenshot showing the corrected behavior.
+**Repro-first for bug fixes.** Before changing logic, write the test that fails for the reported reason (or demonstrate the failure at the pre-fix commit). Gold standard: the test passes on your branch and fails with the fix reverted. If the buggy logic has no importable seam, extracting the seam is part of the fix — don't settle for verifying a transcribed copy.
 
-## Subagent Worktrees
+**Adversarial verification for high-risk changes.** Concurrency, caching, perf claims, and anything self-graded by its implementer gets a separate verifier (a subagent with no stake in the claims) that tries to *falsify* each claim — staleness attacks on caches, interleaving attacks on async flows, measured numbers for perf claims — and reports CONFIRMED / PLAUSIBLE / REFUTED per claim. This found real bugs both times it was run; budget for it on any structural change.
 
-Agent-tool worktrees are created from the repo's **default branch (main)**, not `dev`. Any delegated agent that writes code MUST start with `git merge origin/dev --no-ff -m "merge dev"` (or branch from `origin/dev` directly) before working, and the coordinator must verify `git merge-base <agent-branch> dev` is recent before merging. Agents must not run `bun run dev`/Playwright servers on port 1420 (worktree-served apps don't boot; the port belongs to the main session).
+**E2E tests assert outcomes**, not existence — a QuickOpen test verifies results appear for a query, not that the modal opened.
 
-## Branching & Workflow
+## Delegation & Subagent Worktrees
 
-- All development happens on the `dev` branch. Create feature branches off `dev` and merge back to `dev`. Don't modify files directly on `dev`.
-- Branch names must match the Beads issue name, prefixed with `feat/`, `fix/`, `refactor/`, etc. (a hook validates this).
-- At session start, convert tasks in [@new_todo.md](@new_todo.md) into GitHub issues.
-- Create implementation plans before converting into issues.
+- If the main model is Fable, tokens are very expensive, so whenever possible delegate work to Opus and Sonnet subagents. Use Fable only for high level synthesis and understanding. Do NOT use Fable subagents unless explicitly instructed to. 
+- Agent-tool worktrees are created from **main**, not `dev`: a delegated agent must start by branching from `origin/dev` (or the coordinator's integration branch), and the coordinator verifies `git merge-base` before merging.
+- Agents work **only inside their worktree cwd with relative paths**. Absolute paths leak edits into the main checkout — it has happened; coordinators should spot-check `git -C <main-repo> status` while agents run.
+- Port :1420 belongs to the main session. Agents needing a dev server or E2E run use their own port with a throwaway config.
+- Squash-merge conflicts in `lessons_learnt.md` / `map-feature.md` are usually both-append — resolve as a union, checking for line-level supersedes.
 
-### Per-Issue Checklist
+## Debugging
 
-1. Create a GitHub issue (with `## Screenshots` section in the body)
-2. Create a branch (hook validates a matching open issue exists)
-3. Implement, then run `bun run test` and fix failures
-4. Take required screenshots with `agent-browser` CLI; verify they capture working functionality
-5. Create E2E Playwright tests if needed
-6. Update the code maps: add any new/moved source file to `docs/code-map/map-folder.md`, update the relevant `map-feature.md` cluster (and `map-playbook.md` recipe if you changed a task shape), then run `python3 docs/code-map/validate.py --coverage`. Also update `lessons_learnt.md` for bugfixes.
-7. Merge to `dev` with a descriptive squash commit (hooks run E2E tests; fix any regressions)
-8. Before stopping a session, run `ALL_VIEW_MODES=1 npx playwright test`
-
-## Important Operational Principles
-
-### E2E tests must assert on actual feature behavior
-Don't just check that a component renders -- assert on the outcome. E.g., a QuickOpen test must verify that results appear for a query, not just that the modal opened.
-
-### Debugging
-When a bug resists quick diagnosis:
-- Search the knowledge base and commit history for similar issues
-- Add logging before adding more fix attempts
-- Use the `research-scout` subagent for unfamiliar APIs/patterns
-- Use the `architecture-reviewer` subagent periodically for design review
+When a bug resists quick diagnosis: search `lessons_learnt.md` and commit history first, then add targeted logging/instrumentation before another fix attempt. Suite-wide test timeouts (~5 s) under parallel/CPU load are a known flake mode — rerun the failing files in isolation before treating them as regressions.

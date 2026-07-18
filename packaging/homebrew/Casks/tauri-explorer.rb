@@ -1,6 +1,6 @@
 cask "tauri-explorer" do
-  version "1.4.1"
-  sha256 "c795efa771bea18504dfb5b582f600d9724d13e390e7996f365880e67541504e"
+  version "1.5.0"
+  sha256 "1a467aec110407651ad8c4bacf5379cad78e15d885c87b354885ba5101a47c0c"
 
   url "https://github.com/xnmp/tauri-explorer/releases/download/v#{version}/tauri-explorer_#{version}_aarch64.dmg"
   name "Tauri Explorer"

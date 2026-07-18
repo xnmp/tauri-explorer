@@ -611,6 +611,10 @@ const MOCK_GRAPH_REFS: Record<
   [fullOid(16)]: [
     { name: "HEAD", kind: "Head" },
     { name: "main", kind: "LocalBranch" },
+    // A second local branch on the HEAD commit: exercises the #433 rule that
+    // only the checked-out branch (main) gets the "current" highlight — this
+    // one renders as an ordinary chip.
+    { name: "release", kind: "LocalBranch" },
     { name: "origin/main", kind: "RemoteBranch" },
   ],
   [fullOid(13)]: [
@@ -896,6 +900,23 @@ const mockCommands: Record<string, CommandHandler> = {
     if (!mockFiles[parentPath]) mockFiles[parentPath] = [];
     mockFiles[parentPath].push(entry);
     mockFiles[newPath] = [];
+    return entry;
+  },
+
+  create_empty_file: (args) => {
+    const parentPath = args.parentPath as string;
+    const name = args.name as string;
+    const newPath = `${parentPath}/${name}`;
+    if (mockFiles[newPath] !== undefined) {
+      throw new Error(`File already exists: ${newPath}`);
+    }
+    const siblings = mockFiles[parentPath] || [];
+    if (siblings.some((e) => e.path === newPath)) {
+      throw new Error(`File already exists: ${newPath}`);
+    }
+    const entry = file(name, newPath, 0);
+    if (!mockFiles[parentPath]) mockFiles[parentPath] = [];
+    mockFiles[parentPath].push(entry);
     return entry;
   },
 
@@ -1454,15 +1475,48 @@ const mockCommands: Record<string, CommandHandler> = {
   git_delete_branch: () => null,
   git_delete_remote_branch: () => null,
 
+  // Tracking checkout (#432): create a local branch tracking <remote>/<name>
+  // at the remote branch's current tip, then move HEAD onto it.
+  git_checkout_tracking: (args: Record<string, unknown>) => {
+    const remote = (args.remote as string) ?? "";
+    const name = ((args.name as string) ?? "").trim();
+    if (name.length === 0) throw new Error("branch name must not be empty");
+    // Already-existing local branch → plain checkout.
+    const existing = mockResolveTarget(name);
+    if (existing) {
+      mockMoveHead(existing);
+      return null;
+    }
+    const oid = mockResolveTarget(`${remote}/${name}`);
+    if (!oid) throw new Error(`no remote branch '${remote}/${name}'`);
+    mockAddRef(name, "LocalBranch", oid);
+    mockMoveHead(oid);
+    return null;
+  },
+
+  // F5-sync (#432): deterministic result so the divergence toast and the
+  // fast-forward path can be exercised in E2E. Pretend `experiment` diverged
+  // and `hotfix` fast-forwarded.
+  git_sync_local_branches: () => ({
+    fast_forwarded: ["hotfix"],
+    diverged: ["experiment"],
+    skipped: [],
+  }),
+
   // ----- Git history / commit graph (#57) -----
 
   git_log: (args: Record<string, unknown>) => {
     const repoPath = (args.repoPath as string) ?? "";
     if (!repoPath.startsWith("/home/user/Documents/project")) {
-      return { commits: [], refs: {}, has_more: false, next_cursor: null };
+      return { commits: [], refs: {}, has_more: false, next_cursor: null, head_branch: null };
     }
     const options =
-      (args.options as { skip?: number; limit?: number; branches?: string[] } | null) ?? {};
+      (args.options as {
+        skip?: number;
+        limit?: number;
+        branches?: string[];
+        cursor?: string;
+      } | null) ?? {};
     const skip = Math.max(0, options.skip ?? 0);
     const limit = Math.max(1, options.limit ?? 500);
 
@@ -1494,13 +1548,39 @@ const mockCommands: Record<string, CommandHandler> = {
         "stash" in c ? reachable.has(c.parents[0]) : reachable.has(c.oid),
       );
     }
-    const page = all.slice(skip, skip + limit);
-    const hasMore = skip + limit < all.length;
+    // Cursor resume (#431): mirror the backend — discard up to and including
+    // the cursor OID (a real commit), then take `limit`. Falls back to `skip`
+    // when no cursor is given (filtered queries).
+    let start = skip;
+    if (options.cursor) {
+      const idx = all.findIndex((c) => !("stash" in c) && c.oid === options.cursor);
+      start = idx >= 0 ? idx + 1 : all.length; // unknown cursor → empty page
+    }
+    const page = all.slice(start, start + limit);
+    const hasMore = start + limit < all.length;
+    // next_cursor is the last REAL commit (never a woven stash row).
+    let nextCursor: string | null = null;
+    for (let i = page.length - 1; i >= 0; i--) {
+      if (!("stash" in page[i])) {
+        nextCursor = page[i].oid;
+        break;
+      }
+    }
+    // Checked-out branch: the first local branch decorating HEAD's commit —
+    // matches the convention used by the mutating mocks (#433 highlight).
+    const headOid = mockHeadOid();
+    const headBranch =
+      (MOCK_GRAPH_REFS[headOid] ?? []).find((r) => r.kind === "LocalBranch")?.name ?? null;
+    // Test hook (like __MOCK_LATENCY__): force `has_more` so the infinite-
+    // scroll loading row (#433) is reachable/observable with a small history.
+    const forceHasMore =
+      (globalThis as { __mockGraphForceHasMore?: boolean }).__mockGraphForceHasMore === true;
     return {
       commits: page,
       refs: MOCK_GRAPH_REFS,
-      has_more: hasMore,
-      next_cursor: page.length ? page[page.length - 1].oid : null,
+      has_more: hasMore || forceHasMore,
+      next_cursor: nextCursor,
+      head_branch: headBranch,
     };
   },
 
@@ -1522,6 +1602,7 @@ const mockCommands: Record<string, CommandHandler> = {
     return {
       local_branches: [
         { name: "main", target: tip },
+        { name: "release", target: tip },
         { name: "hotfix", target: fullOid(13) },
         { name: "experiment", target: fullOid(14) },
         { name: "feature", target: fullOid(10) },

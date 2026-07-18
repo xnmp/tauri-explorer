@@ -145,6 +145,7 @@
     integratedTitleBar: ["Integrated Title Bar", "Show tabs in the title bar alongside window controls (requires restart)"],
     vibrancy: ["Window Vibrancy", "Native macOS translucent frosted-glass effect (requires restart)"],
     floatingIslands: ["Floating Islands", "Panels float as rounded islands over the backdrop. Works on every platform; pairs with native transparency on macOS/Windows when enabled", "vibrancy", "island", "layout"],
+    premiumTheme: ["Premium Theme Effects", "Aurora-style surface treatment: accent-tinted hairlines, soft glow shadows, breadcrumb pills, translucent panels and a subtle depth backdrop. Off = flatter, higher-contrast look", "aurora", "glow", "gradient", "glass"],
     nativeBlur: ["Native Blur", "Use macOS frosted glass blur (off = theme background, requires restart)"],
     windowsBackdrop: ["Window Backdrop", "Windows translucent Mica/Acrylic frosted-glass effect (enabling from Off requires restart)"],
     windowsBackdropOpacity: ["Backdrop Opacity", "How see-through the app is over the Mica/Acrylic backdrop — islands included (lower = more transparent)"],
@@ -173,6 +174,7 @@
     terminalFollowsExplorer: ["Terminal Follows Explorer", "Auto-cd the embedded terminal when the active pane navigates (queued if a command is running)", "terminal", "cwd", "sync"],
     enableTerminal: ["Integrated Terminal", "Feature flag: the embedded terminal panel and its Ctrl+` shortcut", "experimental", "feature flag"],
     enableGitGraph: ["Git Commit Graph", "Feature flag: the git graph tab and its palette command", "experimental", "feature flag", "git graph"],
+    f5SyncsLocalBranches: ["F5 Syncs Local Branches", "In the git graph, F5 also fetches and fast-forwards any local branch that is strictly behind its upstream. Diverged branches are never touched — they're reported in a toast.", "git graph", "fetch", "fast-forward", "sync"],
     explorerFollowsTerminal: ["Explorer Follows Terminal", "Navigate the active pane when the terminal's shell changes directory (OSC 7)", "terminal", "cwd", "sync"],
     previewFontSize: ["Preview Font Size", "Font size for text, code and markdown previews"],
     ffmpegPath: ["FFmpeg Path", "Path to the ffmpeg binary for video/audio thumbnails (leave empty to auto-detect)", "video", "thumbnail"],
@@ -183,13 +185,13 @@
     rows.theme, rows.iconTheme, rows.thumbnailSize, rows.showSidebar, rows.windowControls,
     ...(isMac ? [rows.integratedTitleBar, rows.vibrancy, rows.nativeBlur] : []),
     ...(isWindows ? [rows.windowsBackdrop, rows.windowsBackdropOpacity] : []),
-    rows.floatingIslands,
+    rows.floatingIslands, rows.premiumTheme,
     rows.addressBar, rows.statusBar,
   ];
   const navBarRows = [rows.navBack, rows.navForward, rows.navUp, rows.navRefresh];
   const behaviorRows = [
     rows.showHidden, rows.millerHideEmpty, rows.yaziNavigation, rows.autoEnterSingleSubdir, rows.tabTitleGitRoot, rows.defaultPaneLayout, rows.showManuallyHidden,
-    rows.gitStatus, rows.recentItems, rows.quickOpenDebug, rows.warmWindow, rows.confirmDelete,
+    rows.gitStatus, rows.f5SyncsLocalBranches, rows.recentItems, rows.quickOpenDebug, rows.warmWindow, rows.confirmDelete,
     rows.backgroundOpacity, rows.backgroundImage, rows.wallpaperBlur, rows.terminalApp,
     rows.previewFontSize, rows.ffmpegPath,
   ];
@@ -430,6 +432,21 @@
             </label>
           </div>
 
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.premiumTheme)}>
+            <div class="setting-info">
+              <span class="setting-label">Premium Theme Effects</span>
+              <span class="setting-description">Aurora-style surface treatment: accent-tinted hairlines, soft glow shadows, breadcrumb pills, translucent panels and a subtle depth backdrop. Off = flatter, higher-contrast look</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                checked={settingsStore.premiumTheme}
+                onchange={() => settingsStore.togglePremiumTheme()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
           <div class="setting-row" class:hidden={!matchesSearch(...rows.addressBar)}>
             <div class="setting-info">
               <span class="setting-label">Show Address Bar</span>
@@ -649,6 +666,22 @@
                 type="checkbox"
                 checked={settingsStore.showGitStatus}
                 onchange={() => settingsStore.toggleGitStatus()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.f5SyncsLocalBranches)}>
+            <div class="setting-info">
+              <span class="setting-label">F5 Syncs Local Branches</span>
+              <span class="setting-description">In the git graph, F5 also fetches and fast-forwards any local branch strictly behind its upstream. Diverged branches are reported in a toast, never touched.</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                data-testid="setting-f5-syncs-local-branches"
+                checked={settingsStore.f5SyncsLocalBranches}
+                onchange={() => settingsStore.toggleF5SyncsLocalBranches()}
               />
               <span class="toggle-slider"></span>
             </label>

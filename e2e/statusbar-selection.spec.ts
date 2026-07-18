@@ -2,7 +2,7 @@
  * E2E test: status bar shows total count/size and selection breakdown.
  * Issue: feat/statusbar-selection-info
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { HOME_URL, waitForEntries } from "./helpers";
 
 test.describe("Status bar selection info", () => {

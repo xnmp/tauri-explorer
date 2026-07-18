@@ -2,7 +2,7 @@
  * E2E test: selecting tile size options from command palette should switch to tiles view.
  * Issue: feat/palette-icon-view-switch
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { HOME_URL, waitForEntries } from "./helpers";
 
 test.describe("Command palette icon view switch", () => {

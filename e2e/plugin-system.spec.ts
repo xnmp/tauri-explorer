@@ -8,7 +8,7 @@
  *   - demo:// virtual folder renders synthetic entries
  *   - disabling removes the command and the context-menu item
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { HOME_URL, waitForEntries } from "./helpers";
 
 async function openSettings(page: Page) {

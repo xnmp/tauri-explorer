@@ -31,6 +31,7 @@ import {
 } from "$lib/api/files";
 import type { GitOpState } from "$lib/domain/git";
 import { subscribeGitChanges, notifyLocalGitChange } from "./git-refresh";
+import { fetchGitSummary } from "./git-summary-cache";
 import { filterEntriesToDir } from "$lib/domain/scm-tree";
 
 function emptySummary(): GitStatusSummary {
@@ -93,6 +94,11 @@ function createScmStore() {
   let repoRoot = $state<string | null>(null);
   let summary = $state<GitStatusSummary>(emptySummary());
   let loading = $state(false);
+  // Repo detection in flight for the current activePath (#426). Explicitly
+  // separate from `loading` (the summary fetch) so the view shows the skeleton
+  // — never "not a git repository" — while a slow WSL detectRepo is pending,
+  // and only settles to a real state once detection lands.
+  let detecting = $state(false);
   let commitMessage = $state("");
   let amend = $state(false);
   let commitError = $state<string | null>(null);
@@ -116,11 +122,26 @@ function createScmStore() {
     }
     const root = repoRoot;
     loading = true;
-    const result = await gitSummary(root);
-    if (gen !== refreshGeneration) return;
+    const start = performance.now();
+    // Route through the shared cache (#431): change-driven, so `force` bypasses
+    // the TTL to observe a post-mutation scan, while still joining any scan
+    // already in flight for this repo (e.g. the other pane's store).
+    const result = await fetchGitSummary(root, { force: true });
+    const elapsedMs = Math.round(performance.now() - start);
+    if (gen !== refreshGeneration) {
+      console.debug(`[scm] discarding stale refreshSummary result for ${root}`);
+      return;
+    }
     loading = false;
     summary = result.ok ? result.data : emptySummary();
-    if (result.ok) summaryCache.set(root, result.data);
+    if (result.ok) {
+      console.info(
+        `[scm] refreshSummary for ${root} completed in ${elapsedMs}ms: is_repo=${result.data.is_repo}`,
+      );
+      summaryCache.set(root, result.data);
+    } else {
+      console.warn(`[scm] refreshSummary for ${root} failed after ${elapsedMs}ms: ${result.error}`);
+    }
   }
 
   /** Refresh the summary and announce the change so other git consumers
@@ -134,11 +155,20 @@ function createScmStore() {
     if (path === activePath) return;
     activePath = path;
     // Repo detection is itself an IPC round-trip; without the flag the view
-    // renders "not a git repository" during it (#271). Every exit path below
-    // ends in refreshSummary (or the competing call's), which clears it.
+    // renders "not a git repository" during it (#271, #426). Every exit path
+    // below ends in refreshSummary (or the competing call's), which clears it.
+    detecting = true;
     loading = true;
+    const start = performance.now();
     const detected = await detectRepo(path);
-    if (activePath !== path) return;
+    const elapsedMs = Math.round(performance.now() - start);
+    console.info(`[scm] detectRepo for ${path} completed in ${elapsedMs}ms: repoRoot=${detected}`);
+    if (activePath !== path) {
+      // Superseded by a newer setActivePath — that call owns detecting/loading.
+      console.debug(`[scm] discarding stale repo detection for ${path}`);
+      return;
+    }
+    detecting = false;
     if (detected === repoRoot) {
       loading = false;
       return;
@@ -171,6 +201,7 @@ function createScmStore() {
   async function release(): Promise<void> {
     activePath = "";
     repoRoot = null;
+    detecting = false;
     if (watcherPath) {
       const p = watcherPath;
       watcherPath = null;
@@ -350,7 +381,7 @@ function createScmStore() {
     /** True while we have nothing to show yet for the active path — repo
      *  detection or the first summary fetch is still in flight. Cached
      *  summaries keep this false, so background refreshes don't flash. */
-    get pending() { return loading && !summary.is_repo; },
+    get pending() { return (loading || detecting) && !summary.is_repo; },
     get commitMessage() { return commitMessage; },
     get amend() { return amend; },
     get commitError() { return commitError; },
@@ -382,9 +413,11 @@ function createScmStore() {
 
 export type ScmStore = ReturnType<typeof createScmStore>;
 
-// One store per pane (#334). Pane ids recur across tab switches, so the map
-// stays small; a pane's store keeps its commit-message draft across panel
-// toggles, and release() (called on panel unmount) drops its watcher.
+// One store per pane (#334). Pane ids are minted unique per pane creation and
+// never reused, so the map would grow one entry per pane ever opened without
+// explicit disposal (#439): disposeScmStore() is called from the pane-close
+// paths in window-tabs. A pane's store keeps its commit-message draft across
+// panel toggles, and release() (called on panel unmount) drops its watcher.
 const paneScmStores = new Map<string, ScmStore>();
 
 export function getScmStore(paneId: string): ScmStore {
@@ -394,6 +427,21 @@ export function getScmStore(paneId: string): ScmStore {
     paneScmStores.set(paneId, store);
   }
   return store;
+}
+
+/** Fully dispose a pane's store when the pane closes (#439): release its
+ *  watcher and drop the map entry so stores don't accumulate one-per-pane
+ *  over a session. Safe to call for a pane that never had a store. */
+export function disposeScmStore(paneId: string): void {
+  const store = paneScmStores.get(paneId);
+  if (!store) return;
+  paneScmStores.delete(paneId);
+  void store.release();
+}
+
+/** Number of live per-pane scm stores (test/introspection aid, #439). */
+export function scmStoreCount(): number {
+  return paneScmStores.size;
 }
 
 /** Close the diff in every pane's store (used when a setting invalidates

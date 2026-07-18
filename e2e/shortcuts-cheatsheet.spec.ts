@@ -3,7 +3,7 @@
  * keyboard-first workflow.
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { waitForEntries } from "./helpers";
 
 test.describe("shortcut cheatsheet", () => {

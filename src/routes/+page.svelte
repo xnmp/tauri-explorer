@@ -52,16 +52,13 @@
   markStartup("bundle-exec");
 
   const leftExplorer = $derived(windowTabsManager.getActiveExplorer());
-  // ONE island-mode condition (#407): macOS vibrancy, a Windows native
-  // backdrop, and the platform-independent Floating Islands setting all
-  // drive the same [data-vibrancy] island CSS — the only real platform
-  // difference is whether frosted-glass transparency backs it. Every
-  // island-layout decision must key off this, never off one platform's flag.
-  const islandMode = $derived(
-    settingsStore.macOsVibrancy ||
-      settingsStore.windowsBackdrop !== "off" ||
-      settingsStore.floatingIslands,
-  );
+  // ONE island-mode condition (#407, #434): macOS vibrancy, a Windows native
+  // backdrop, and the platform-independent Floating Islands setting all drive
+  // the same [data-vibrancy] island CSS. The derived now lives on settingsStore
+  // so the in-pane miller suppression (ExplorerPane) keys off the exact same
+  // condition — a local copy here drifted from ExplorerPane's `macOsVibrancy`
+  // check and double-mounted the columns (#434).
+  const islandMode = $derived(settingsStore.islandMode);
   const millerAsLeftIsland = $derived(
     islandMode && !settingsStore.showSidebar && (leftExplorer?.millerLayers ?? 0) > 0
   );
@@ -290,6 +287,19 @@
   $effect(() => {
     const opacity = settingsStore.backgroundOpacity / 100;
     document.documentElement.style.setProperty("--bg-opacity", String(opacity));
+  });
+
+  // Apply the opt-in "premium" surface treatment (#437). When on, themes
+  // expose their accent-tinted hairlines, glow shadows, breadcrumb pills,
+  // translucent surfaces, and static depth backdrop; when off, a higher-
+  // specificity :not([data-premium="true"]) rule in each theme restores the
+  // prior flatter/high-contrast values.
+  $effect(() => {
+    if (settingsStore.premiumTheme) {
+      document.documentElement.setAttribute("data-premium", "true");
+    } else {
+      document.documentElement.removeAttribute("data-premium");
+    }
   });
 
   // Apply vibrancy mode attribute. It drives the "floating island" CSS shared

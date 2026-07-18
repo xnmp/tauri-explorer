@@ -4,7 +4,7 @@
  * overflow instead (grid uses minmax(0,1fr), not 1fr).
  * Issue: feat/rename-box (list layout stability)
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { HOME_URL, waitForEntries, switchViewMode } from "./helpers";
 
 const LONG_NAME =

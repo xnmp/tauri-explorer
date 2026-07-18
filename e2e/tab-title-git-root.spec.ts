@@ -5,7 +5,7 @@
  * (Mock: /home/user/Documents/project is a git repo root.)
  * Issue: feat/tab-title (git repo root in tab title)
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { waitForEntries } from "./helpers";
 
 const enableGitTitles = (page: import("@playwright/test").Page) =>

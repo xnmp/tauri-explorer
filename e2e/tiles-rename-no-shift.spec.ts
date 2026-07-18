@@ -5,7 +5,7 @@
  * later rows stay put.
  * Issue: feat/rename-box (tiles rename must not shift neighbours)
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { HOME_URL, waitForEntries, switchViewMode } from "./helpers";
 
 test.describe("Tiles rename does not shift other tiles", () => {

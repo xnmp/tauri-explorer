@@ -4,7 +4,7 @@
  * implementation lives behind the same command surface and is covered
  * by Rust unit tests; this spec guards the browser/TS contract.
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 test.describe("git backend (mock-invoke contract)", () => {
   test.beforeEach(async ({ page }) => {

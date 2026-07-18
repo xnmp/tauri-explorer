@@ -197,25 +197,62 @@ describe("groupRefChips", () => {
     expect(chips.heads).toEqual([
       { name: "main", remotes: ["origin", "upstream"], active: false },
     ]);
-    expect(chips.remotes).toEqual(["origin/feature"]);
+    expect(chips.remotes).toEqual([{ name: "origin/feature", remote: "origin", branch: "feature" }]);
     expect(chips.tags).toEqual(["v1.0.0"]);
     expect(chips.isHead).toBe(false);
   });
 
-  it("marks branches active and sorts the checked-out branch first", () => {
+  it("marks the checked-out branch active and sorts it first", () => {
     const chips = groupRefChips([
       d("Head", "HEAD"),
       d("LocalBranch", "dev"),
-    ]);
+    ], "dev");
     expect(chips.isHead).toBe(true);
     expect(chips.heads[0]).toEqual({ name: "dev", remotes: [], active: true });
+  });
+
+  it("highlights only the checked-out branch when several sit on HEAD (#433)", () => {
+    const chips = groupRefChips([
+      d("Head", "HEAD"),
+      d("LocalBranch", "main"),
+      d("LocalBranch", "release"),
+    ], "main");
+    expect(chips.isHead).toBe(true);
+    // Checked-out branch is active and sorts first; the co-located branch is a
+    // normal chip.
+    expect(chips.heads[0]).toEqual({ name: "main", remotes: [], active: true });
+    expect(chips.heads.find((h) => h.name === "release")).toEqual({
+      name: "release",
+      remotes: [],
+      active: false,
+    });
+    expect(chips.heads.filter((h) => h.active)).toHaveLength(1);
+  });
+
+  it("marks no branch active on a detached HEAD, even sitting on branches", () => {
+    // headBranch = null (detached): the HEAD tint stays, but no chip is "current".
+    const chips = groupRefChips([
+      d("Head", "HEAD"),
+      d("LocalBranch", "main"),
+    ], null);
+    expect(chips.isHead).toBe(true);
+    expect(chips.heads.every((h) => !h.active)).toBe(true);
   });
 
   it("handles empty and remote-only decorations", () => {
     expect(groupRefChips([])).toEqual({ isHead: false, heads: [], remotes: [], tags: [] });
     const chips = groupRefChips([d("RemoteBranch", "origin/gh-pages")]);
     expect(chips.heads).toEqual([]);
-    expect(chips.remotes).toEqual(["origin/gh-pages"]);
+    expect(chips.remotes).toEqual([
+      { name: "origin/gh-pages", remote: "origin", branch: "gh-pages" },
+    ]);
+  });
+
+  it("keeps remote/branch identity for tracking checkout, splitting slashed branch names (#432)", () => {
+    const chips = groupRefChips([d("RemoteBranch", "origin/feat/nested/thing")]);
+    expect(chips.remotes).toEqual([
+      { name: "origin/feat/nested/thing", remote: "origin", branch: "feat/nested/thing" },
+    ]);
   });
 });
 

@@ -9,6 +9,7 @@
  * numbers, which JSON-parse to the same numbers, so old widths carry over.
  */
 
+import { onDestroy } from "svelte";
 import { loadPersisted, savePersisted } from "$lib/state/persisted";
 
 export interface PanelResizeOptions {
@@ -38,6 +39,21 @@ export function usePersistedPanelWidth(key: string, opts: PanelResizeOptions): P
   let width = $state(clamp(initial));
   let isResizing = $state(false);
 
+  // Retained so onDestroy can detach a drag still in progress when the owning
+  // component unmounts mid-resize — otherwise the document listeners and the
+  // body cursor/select overrides leak for the rest of the session (#439).
+  let activeMove: ((e: MouseEvent) => void) | null = null;
+  let activeUp: (() => void) | null = null;
+
+  function detachDrag(): void {
+    if (activeMove) document.removeEventListener("mousemove", activeMove);
+    if (activeUp) document.removeEventListener("mouseup", activeUp);
+    activeMove = null;
+    activeUp = null;
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+  }
+
   function startResize(event: MouseEvent): void {
     event.preventDefault();
     isResizing = true;
@@ -53,16 +69,24 @@ export function usePersistedPanelWidth(key: string, opts: PanelResizeOptions): P
     function onMouseUp() {
       isResizing = false;
       savePersisted(key, width);
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
+      detachDrag();
     }
 
+    activeMove = onMouseMove;
+    activeUp = onMouseUp;
     document.addEventListener("mousemove", onMouseMove);
     document.addEventListener("mouseup", onMouseUp);
     document.body.style.cursor = "ew-resize";
     document.body.style.userSelect = "none";
+  }
+
+  // Cleanup if the component unmounts mid-drag (before onMouseUp fires).
+  // Wrapped so callers that use this outside component init (e.g. unit tests)
+  // don't throw, mirroring the sibling drag composables.
+  try {
+    onDestroy(detachDrag);
+  } catch {
+    /* not in component init */
   }
 
   return {

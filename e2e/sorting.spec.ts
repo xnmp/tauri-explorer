@@ -12,7 +12,7 @@
  * The Type column header is not clickable (by design) — type sorting is
  * only reachable via the palette command.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { waitForEntries } from "./helpers";
 
 const DOCS_URL = "/?path=/home/user/Documents";

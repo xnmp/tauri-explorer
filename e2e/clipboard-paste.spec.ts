@@ -11,7 +11,7 @@
  * Both are driven through the real command surface (palette / shortcut) and
  * assert the actual new file entry that results.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { waitForEntries, pressShortcut } from "./helpers";
 
 async function runPaletteCommand(page: Page, label: string) {

@@ -5,7 +5,7 @@
  * just rendering.
  */
 
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 async function readResponse(page: Page): Promise<{ token: string; paths: string[]; cancelled: boolean }> {
   // The mock invoke resolves asynchronously — poll until recorded.

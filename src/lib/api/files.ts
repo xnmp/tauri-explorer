@@ -85,6 +85,29 @@ export async function createDirectory(
 }
 
 /**
+ * Create a new empty file (touch) inside a parent directory.
+ * @param parentPath - Path to parent directory
+ * @param name - Name of new file
+ * @returns Result with created FileEntry or error message
+ */
+export async function createEmptyFile(
+  parentPath: string,
+  name: string
+): Promise<ApiResult<FileEntry>> {
+  const guard = virtualPathGuard(parentPath);
+  if (guard) return guard;
+  try {
+    const data = await invoke<FileEntry>("create_empty_file", {
+      parentPath,
+      name,
+    });
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+/**
  * Rename a file or directory.
  *
  * @param path - Full path to file/directory

@@ -6,7 +6,7 @@
  * Tests: app startup, navigate to folder, scroll through files, search.
  */
 
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 // Perf budgets are measured wall-clock and flake under full-suite parallel
 // worker contention; a genuine regression still fails every retry. CI runs

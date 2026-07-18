@@ -10,7 +10,7 @@
  * the entry's full path so a subsequent Paste in another directory recreates
  * it there. open-with / set-as-wallpaper are native-only and skipped.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { waitForEntries, pressShortcut } from "./helpers";
 
 async function rightClick(page: Page, name: string) {

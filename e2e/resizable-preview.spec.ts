@@ -2,7 +2,7 @@
  * E2E tests for resizable preview pane (tauri-explorer-zden)
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { waitForEntries, pressShortcut } from "./helpers";
 
 test.describe("Resizable Preview Pane", () => {

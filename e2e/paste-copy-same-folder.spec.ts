@@ -2,7 +2,7 @@
  * E2E test: pasting a file into its own parent folder creates a copy
  * ("name - Copy.ext") instead of prompting a conflict or no-op.
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { waitForEntries, pressShortcut } from "./helpers";
 
 test.describe("Same-folder paste makes a copy", () => {

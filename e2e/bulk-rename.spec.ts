@@ -9,7 +9,7 @@
  * Fixtures: /home/user/Pictures contains photo1.jpg, photo2.jpg,
  * screenshot.png and a vacation/ folder.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { waitForEntries, MULTI_SELECT_MODIFIER } from "./helpers";
 
 const PICTURES_URL = "/?path=/home/user/Pictures";

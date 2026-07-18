@@ -18,7 +18,7 @@
  * latency injection (`?mockLatency=copy_entry:MS`) keeps the operation running
  * long enough (past the 1.5s dialog-delay gate) for the dialog to appear.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { waitForEntries, pressShortcut, MULTI_SELECT_MODIFIER } from "./helpers";
 
 /** Select the three Documents files that don't exist in Pictures. */

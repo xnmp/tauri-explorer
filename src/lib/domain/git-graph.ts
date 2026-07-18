@@ -375,17 +375,46 @@ export interface RefDecorationLike {
   name: string;
 }
 
+/** A remote-only branch chip that no local branch tracks. Identity is kept
+ *  (full name + split remote/branch) so the context menu can offer a tracking
+ *  checkout — `git checkout -b <branch> --track <remote>/<branch>` (#432). */
+export interface RemoteRefChip {
+  /** Full shorthand, e.g. `origin/feat/x`. */
+  name: string;
+  /** Remote name (first path segment), e.g. `origin`. */
+  remote: string;
+  /** Branch name (remainder), e.g. `feat/x` — may itself contain slashes. */
+  branch: string;
+}
+
 export interface RefChips {
   isHead: boolean;
   heads: { name: string; remotes: string[]; active: boolean }[];
-  remotes: string[];
+  remotes: RemoteRefChip[];
   tags: string[];
+}
+
+/** Split a remote shorthand (`origin/feat/x`) into remote + branch at the
+ *  first slash. A name with no slash keeps its whole value as both parts. */
+export function splitRemoteRef(name: string): RemoteRefChip {
+  const i = name.indexOf("/");
+  return i > 0
+    ? { name, remote: name.slice(0, i), branch: name.slice(i + 1) }
+    : { name, remote: name, branch: name };
 }
 
 /** Combined ref chips (reference behavior): each local branch groups the
  *  remotes tracking it as nested sub-chips; the checked-out branch first;
- *  unmatched remotes and tags stay separate. */
-export function groupRefChips(decorations: readonly RefDecorationLike[]): RefChips {
+ *  unmatched remotes and tags stay separate.
+ *
+ *  `headBranch` is the shorthand of the actually checked-out branch (HEAD's
+ *  symbolic target). Only that chip is marked `active` — when several branches
+ *  sit on the HEAD commit, the others render as ordinary chips (#433). When
+ *  omitted/null (detached HEAD, or callers that don't know), no chip is active. */
+export function groupRefChips(
+  decorations: readonly RefDecorationLike[],
+  headBranch: string | null = null,
+): RefChips {
   const isHead = decorations.some((r) => r.kind === "Head");
   const locals = decorations.filter((r) => r.kind === "LocalBranch").map((r) => r.name);
   const remoteNames = decorations.filter((r) => r.kind === "RemoteBranch").map((r) => r.name);
@@ -397,13 +426,13 @@ export function groupRefChips(decorations: readonly RefDecorationLike[]): RefChi
         usedRemotes.add(rn);
         return rn.slice(0, rn.indexOf("/"));
       });
-    return { name, remotes, active: isHead };
+    return { name, remotes, active: isHead && headBranch !== null && name === headBranch };
   });
   heads.sort((a, b) => Number(b.active) - Number(a.active));
   return {
     isHead,
     heads,
-    remotes: remoteNames.filter((rn) => !usedRemotes.has(rn)),
+    remotes: remoteNames.filter((rn) => !usedRemotes.has(rn)).map(splitRemoteRef),
     tags: decorations.filter((r) => r.kind === "Tag").map((r) => r.name),
   };
 }

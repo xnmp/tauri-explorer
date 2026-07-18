@@ -73,6 +73,7 @@ export interface Settings {
   // ("Alt+Backspace"). Empty/missing = disabled (native key behavior).
   terminalShortcuts: Record<string, string>;
   theme: string; // active theme id, e.g. "dark", "golden-hour"
+  premiumTheme: boolean; // opt-in "premium/aurora" surface treatment (accent-tinted hairlines, glow shadows, breadcrumb pills, translucent surfaces, static depth backdrop). Off = flatter/high-contrast look (#437)
   thumbnailSize: ThumbnailSize; // tile thumbnail size tier
   showGitStatus: boolean; // show git indicators on files
   recentItemsCount: number; // number of recent locations in sidebar (0 = hidden)
@@ -83,6 +84,7 @@ export interface Settings {
   showScmPanel: boolean; // show SCM panel (independent of sidebar)
   enableTerminal: boolean; // feature flag: integrated terminal panel (Ctrl+`)
   enableGitGraph: boolean; // feature flag: git commit graph tab
+  f5SyncsLocalBranches: boolean; // graph F5 also fetches + fast-forwards local branches behind their upstream (#432)
   scmTreeView: boolean; // group SCM file rows by folder hierarchy
   quickOpenDebug: boolean; // show score breakdown in QuickOpen results
   integratedTitleBar: boolean; // macOS: render tabs in title bar with overlay traffic lights
@@ -140,6 +142,7 @@ const DEFAULT_SETTINGS: Settings = {
   terminalPanelHeight: 240,
   terminalShortcuts: {},
   theme: "light",
+  premiumTheme: false,
   thumbnailSize: "small",
   showGitStatus: false,
   recentItemsCount: 6,
@@ -150,6 +153,7 @@ const DEFAULT_SETTINGS: Settings = {
   showScmPanel: false,
   enableTerminal: true,
   enableGitGraph: true,
+  f5SyncsLocalBranches: false,
   scmTreeView: false,
   quickOpenDebug: false,
   integratedTitleBar: false,
@@ -332,6 +336,12 @@ function createSettingsStore() {
     get theme() {
       return settings.theme;
     },
+    get premiumTheme() {
+      return settings.premiumTheme;
+    },
+    togglePremiumTheme(): void {
+      update({ premiumTheme: !settings.premiumTheme });
+    },
     get thumbnailSize() {
       return settings.thumbnailSize;
     },
@@ -380,12 +390,16 @@ function createSettingsStore() {
     toggleEnableGitGraph(): void {
       update({ enableGitGraph: !settings.enableGitGraph });
     },
+    // Global default new panes fall back to; per-pane visibility (#434) lives
+    // on the pane node (see windowTabsManager.getPaneScmVisible).
+    get f5SyncsLocalBranches() {
+      return settings.f5SyncsLocalBranches;
+    },
+    toggleF5SyncsLocalBranches(): void {
+      update({ f5SyncsLocalBranches: !settings.f5SyncsLocalBranches });
+    },
     get showScmPanel() {
       return settings.showScmPanel;
-    },
-    toggleScmPanel(): void {
-      const opening = !settings.showScmPanel;
-      update({ showScmPanel: opening, ...(opening && !settings.showGitStatus ? { showGitStatus: true } : {}) });
     },
     get scmTreeView() {
       return settings.scmTreeView;
@@ -410,6 +424,18 @@ function createSettingsStore() {
     },
     get floatingIslands() {
       return settings.floatingIslands;
+    },
+    // ONE island-mode condition (#407, #434): macOS vibrancy, a Windows native
+    // backdrop, and the platform-independent Floating Islands setting all drive
+    // the same [data-vibrancy] island layout. Every island-layout decision
+    // (miller-as-island hoist, in-pane suppression) must key off this single
+    // derived, never off one platform's flag.
+    get islandMode() {
+      return (
+        settings.macOsVibrancy ||
+        settings.windowsBackdrop !== "off" ||
+        settings.floatingIslands
+      );
     },
     get windowsBackdrop() {
       return settings.windowsBackdrop;
@@ -573,19 +599,11 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
   { key: "showGitStatus", id: "view.toggleGitStatus", label: "Toggle Git Status Indicators" },
   { key: "millerHideEmpty", id: "view.toggleMillerHideEmpty", label: "Miller Columns: Toggle Hide Empty Folders" },
   { key: "showManuallyHidden", id: "view.toggleManuallyHidden", label: "Toggle Manually Hidden Files" },
-  {
-    key: "showScmPanel",
-    id: "view.toggleScmPanel",
-    label: "Toggle Source Control Panel",
-    shortcut: "Alt+M G",
-    handler: () => {
-      if (settingsStore.showScmPanel) {
-        import("./scm.svelte").then((m) => m.closeAllDiffs());
-      }
-      settingsStore.toggleScmPanel();
-    },
-  },
+  // SCM panel visibility is per-pane (#434); its toggle command lives in
+  // view-commands.ts (acts on the active pane). The `showScmPanel` setting
+  // remains as the default new panes fall back to.
   { key: "scmTreeView", id: "view.toggleScmTreeView", label: "Toggle SCM Tree View" },
+  { key: "f5SyncsLocalBranches", id: "view.toggleF5SyncsLocalBranches", label: "Toggle Git Graph F5 Syncs Local Branches" },
   { key: "confirmDelete", id: "view.toggleConfirmDelete", label: "Toggle Confirm on Delete" },
   { key: "quickOpenDebug", id: "view.toggleQuickOpenDebug", label: "Toggle Quick Open Debug Scores" },
   { key: "yaziNavigation", label: "Toggle Yazi Navigation" },
@@ -595,6 +613,7 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
   { key: "macOsVibrancy", label: "Toggle macOS Vibrancy" },
   { key: "vibrancyBlur", label: "Toggle Vibrancy Blur" },
   { key: "floatingIslands", label: "Toggle Floating Islands" },
+  { key: "premiumTheme", label: "Toggle Premium Theme Effects" },
   { key: "terminalFollowsExplorer", label: "Toggle Terminal Follows Explorer" },
   { key: "explorerFollowsTerminal", label: "Toggle Explorer Follows Terminal" },
 ];

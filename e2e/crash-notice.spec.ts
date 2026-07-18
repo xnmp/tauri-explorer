@@ -3,7 +3,7 @@
  * to report the saved crash on GitHub, exactly once.
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 
 test("crash notice appears after a crash and dismisses", async ({ page }) => {
   // Seed the flag, then reload — addInitScript would re-seed it on every

@@ -7,7 +7,7 @@
  * previous theme, and the integrated terminal — keyed on settings — flipped
  * alone).
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { waitForEntries, HOME_URL } from "./helpers";
 
 async function openThemePicker(page: import("@playwright/test").Page) {

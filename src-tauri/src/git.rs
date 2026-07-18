@@ -375,7 +375,14 @@ fn collect_status_inner(
         .renames_index_to_workdir(true)
         .include_ignored(false);
 
+    let statuses_start = Instant::now();
     let statuses = repo.statuses(Some(&mut opts)).map_err(to_app_err)?;
+    let statuses_ms = statuses_start.elapsed().as_millis();
+    let root_desc = workdir_key(repo).unwrap_or_default();
+    log::info!(
+        "gitstat: libgit2 statuses for {root_desc}: {} entries in {statuses_ms}ms",
+        statuses.len()
+    );
 
     let mut summary = GitStatusSummary {
         is_repo: true,
@@ -632,45 +639,184 @@ fn summary_from_v2(parsed: ParsedV2, repo_root: String, op_state: String) -> Git
     }
 }
 
-/// Delegate `git status` to the distro's native git when `repo` lives under a
-/// WSL UNC path. Returns `None` (caller falls back to libgit2) for any non-WSL
-/// repo or when `wsl.exe`/git fails to run or exits non-zero.
+/// Truncate stderr for logging (matches the quickfind diagnostics pattern in
+/// search.rs): a chatty child can produce arbitrarily large output, so cap
+/// what we log at ~1KB.
 #[cfg(windows)]
-fn wsl_status(repo: &Repository) -> Option<GitStatusSummary> {
+fn truncate_stderr(stderr: &[u8]) -> String {
+    let mut buf = stderr.to_vec();
+    buf.truncate(1024);
+    String::from_utf8_lossy(&buf).trim_end().to_string()
+}
+
+/// Rebuild a `\\wsl.localhost\<distro>\…` UNC path from a distro name and an
+/// absolute Linux path — the inverse of `parse_wsl_unc`. Lets `git_repo_root`
+/// hand the frontend a repo root it can pass back to path-keyed git commands
+/// (#425).
+#[cfg(windows)]
+fn wsl_unc_from_linux(distro: &str, linux_path: &str) -> String {
+    let rel = linux_path.trim_start_matches('/').replace('/', "\\");
+    if rel.is_empty() {
+        format!("\\\\wsl.localhost\\{distro}")
+    } else {
+        format!("\\\\wsl.localhost\\{distro}\\{rel}")
+    }
+}
+
+/// Strip a trailing separator so a UNC repo root matches `workdir_key`'s form
+/// (the frontend keys caches on it, #369).
+#[cfg(windows)]
+fn normalize_root(path: &str) -> String {
+    let mut s = path.to_string();
+    while s.len() > 1 && (s.ends_with('/') || s.ends_with('\\')) {
+        s.pop();
+    }
+    s
+}
+
+/// In-progress op state ("merge"/"rebase"/…) for a WSL repo, read by stat-ing
+/// the marker files in its `.git` dir over the UNC mount. A handful of
+/// single-file stats is cheap over 9P (unlike a tree-wide status), and it lets
+/// `git_status` report op state without a libgit2 open just to read
+/// `repo.state()` (#425). Degrades to "clean" for linked worktrees where
+/// `.git` is a file, not a dir.
+#[cfg(windows)]
+fn wsl_op_state(unc_root: &str) -> &'static str {
+    let git_dir = Path::new(unc_root).join(".git");
+    if git_dir.join("MERGE_HEAD").exists() {
+        "merge"
+    } else if git_dir.join("REVERT_HEAD").exists() {
+        "revert"
+    } else if git_dir.join("CHERRY_PICK_HEAD").exists() {
+        "cherry_pick"
+    } else if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
+        "rebase"
+    } else {
+        "clean"
+    }
+}
+
+#[cfg(windows)]
+enum WslRepoRoot {
+    /// Authoritative repo root (canonical UNC form).
+    Root(String),
+    /// Authoritative "not a git repository".
+    NotRepo,
+    /// Delegation mechanism failed — caller should fall back to libgit2.
+    Fallback,
+}
+
+/// Resolve the repo root for a WSL UNC path via the distro's native git,
+/// avoiding a libgit2 discovery walk over 9P (#425). Uses `--exec` for literal
+/// argv (a login shell would mangle args, #423).
+#[cfg(windows)]
+fn wsl_repo_root(distro: &str, linux_path: &str) -> WslRepoRoot {
     use crate::process_ext::NoConsole;
 
-    let root = workdir_key(repo)?;
-    let (distro, linux_path) = crate::wsl::parse_wsl_unc(&root)?;
-
-    // `-uall` mirrors libgit2's `recurse_untracked_dirs(true)`: individual
-    // untracked files rather than a collapsed directory entry. No filemode
-    // override — native Linux git already reports modes correctly (#398, #392).
+    let start = Instant::now();
     let output = std::process::Command::new("wsl.exe")
         .no_console()
         .args([
             "-d",
-            &distro,
-            "--",
+            distro,
+            "--exec",
             "git",
             "-C",
-            &linux_path,
+            linux_path,
+            "rev-parse",
+            "--show-toplevel",
+        ])
+        .output();
+    let elapsed_ms = start.elapsed().as_millis();
+
+    let output = match output {
+        Ok(o) => o,
+        Err(e) => {
+            log::warn!("gitstat: wsl_repo_root spawn failed for {distro}:{linux_path}: {e}");
+            return WslRepoRoot::Fallback;
+        }
+    };
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let top = stdout.lines().next().unwrap_or("").trim();
+        if top.is_empty() {
+            return WslRepoRoot::Fallback;
+        }
+        let root = wsl_unc_from_linux(distro, top);
+        log::info!("gitstat: wsl_repo_root {distro}:{linux_path} -> {root} in {elapsed_ms}ms");
+        return WslRepoRoot::Root(root);
+    }
+    // Native Linux git has no dubious-ownership issue, so a clean "not a git
+    // repository" is authoritative — no need to re-check over 9P. Anything
+    // else (wsl.exe couldn't launch the distro) is a real failure: fall back.
+    let stderr = truncate_stderr(&output.stderr);
+    let low = stderr.to_ascii_lowercase();
+    if low.contains("not a git repository") || low.contains("not a work tree") {
+        log::debug!("gitstat: wsl_repo_root {distro}:{linux_path} not a repo in {elapsed_ms}ms");
+        return WslRepoRoot::NotRepo;
+    }
+    log::warn!(
+        "gitstat: wsl_repo_root {distro}:{linux_path} exited {:?} in {elapsed_ms}ms, stderr: {stderr}",
+        output.status.code()
+    );
+    WslRepoRoot::Fallback
+}
+
+/// Delegate `git status` to the distro's native git for a repo under a WSL UNC
+/// path (`root`, its canonical UNC form). Returns `None` (caller falls back to
+/// libgit2) when `wsl.exe`/git fails to run or exits non-zero.
+#[cfg(windows)]
+fn wsl_status(distro: &str, linux_path: &str, root: &str) -> Option<GitStatusSummary> {
+    use crate::process_ext::NoConsole;
+
+    let start = Instant::now();
+    // `-uall` mirrors libgit2's `recurse_untracked_dirs(true)`: individual
+    // untracked files rather than a collapsed directory entry. No filemode
+    // override — native Linux git already reports modes correctly (#398, #392).
+    // `--exec` passes literal argv (a login shell would mangle a path with
+    // spaces / metacharacters, #423).
+    let output = std::process::Command::new("wsl.exe")
+        .no_console()
+        .args([
+            "-d",
+            distro,
+            "--exec",
+            "git",
+            "-C",
+            linux_path,
             "status",
             "--porcelain=v2",
             "--branch",
             "-z",
             "-uall",
         ])
-        .output()
-        .ok()?;
+        .output();
+    let elapsed_ms = start.elapsed().as_millis();
+
+    let output = match output {
+        Ok(o) => o,
+        Err(e) => {
+            log::warn!("gitstat: wsl_status spawn failed for {distro}:{linux_path}: {e}");
+            log::warn!("gitstat: falling back to libgit2 over 9P for {root}");
+            return None;
+        }
+    };
     if !output.status.success() {
+        log::warn!(
+            "gitstat: wsl_status delegation to {distro} for {linux_path} exited {:?} in {elapsed_ms}ms, stderr: {}",
+            output.status.code(),
+            truncate_stderr(&output.stderr)
+        );
+        log::warn!("gitstat: falling back to libgit2 over 9P for {root}");
         return None;
     }
 
+    log::info!("gitstat: wsl_status delegated to {distro} for {linux_path}: ok in {elapsed_ms}ms");
     let parsed = parse_status_v2(&output.stdout);
     Some(summary_from_v2(
         parsed,
-        root,
-        repo_op_state(repo).to_string(),
+        root.to_string(),
+        wsl_op_state(root).to_string(),
     ))
 }
 
@@ -680,23 +826,20 @@ fn wsl_status(repo: &Repository) -> Option<GitStatusSummary> {
 /// `None` for a non-WSL repo or any spawn/exit failure so the caller falls back
 /// to libgit2.
 #[cfg(windows)]
-fn wsl_diff(repo: &Repository, path: &str, staged: bool) -> Option<String> {
+fn wsl_diff(distro: &str, linux_path: &str, path: &str, staged: bool) -> Option<String> {
     use crate::process_ext::NoConsole;
-
-    let root = workdir_key(repo)?;
-    let (distro, linux_path) = crate::wsl::parse_wsl_unc(&root)?;
 
     // `--no-color` guards against a user's `color.ui = always`: libgit2's
     // rendered patch carries no ANSI codes, and the frontend's unified-diff
-    // parser would choke on them.
+    // parser would choke on them. `--exec` passes literal argv (#423).
     let mut cmd = std::process::Command::new("wsl.exe");
     cmd.no_console().args([
         "-d",
-        &distro,
-        "--",
+        distro,
+        "--exec",
         "git",
         "-C",
-        &linux_path,
+        linux_path,
         "diff",
         "--no-color",
     ]);
@@ -705,10 +848,29 @@ fn wsl_diff(repo: &Repository, path: &str, staged: bool) -> Option<String> {
     }
     cmd.arg("--").arg(path);
 
-    let output = cmd.output().ok()?;
+    let start = Instant::now();
+    let output = cmd.output();
+    let elapsed_ms = start.elapsed().as_millis();
+
+    let output = match output {
+        Ok(o) => o,
+        Err(e) => {
+            log::warn!("gitstat: wsl_diff spawn failed for {distro}:{linux_path}: {e}");
+            log::warn!("gitstat: falling back to libgit2 over 9P for {distro}:{linux_path}");
+            return None;
+        }
+    };
     if !output.status.success() {
+        log::warn!(
+            "gitstat: wsl_diff delegation to {distro} for {linux_path} exited {:?} in {elapsed_ms}ms, stderr: {}",
+            output.status.code(),
+            truncate_stderr(&output.stderr)
+        );
+        log::warn!("gitstat: falling back to libgit2 over 9P for {distro}:{linux_path}");
         return None;
     }
+
+    log::info!("gitstat: wsl_diff delegated to {distro} for {linux_path}: ok in {elapsed_ms}ms");
     Some(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
@@ -798,6 +960,17 @@ pub async fn git_add_to_gitignore(repo_root: String, entry: String) -> Result<St
 #[tauri::command]
 pub async fn git_repo_root(path: String) -> Result<Option<String>, AppError> {
     run_blocking(move |_cancel| {
+        // WSL UNC: resolve the root with the distro's native git rather than a
+        // libgit2 discovery walk over the 9P mount (#425). Only a delegation
+        // *mechanism* failure falls through to libgit2.
+        #[cfg(windows)]
+        if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc(&path) {
+            match wsl_repo_root(&distro, &linux_path) {
+                WslRepoRoot::Root(root) => return Ok(Some(root)),
+                WslRepoRoot::NotRepo => return Ok(None),
+                WslRepoRoot::Fallback => {}
+            }
+        }
         let p = PathBuf::from(&path);
         match open_repo(&p) {
             Ok(repo) => Ok(workdir_key(&repo)),
@@ -810,20 +983,32 @@ pub async fn git_repo_root(path: String) -> Result<Option<String>, AppError> {
 #[tauri::command]
 pub async fn git_status(repo_path: String) -> Result<GitStatusSummary, AppError> {
     run_blocking(move |_cancel| {
-        let p = PathBuf::from(&repo_path);
-        match open_repo(&p) {
-            Ok(repo) => {
-                // A repo under \\wsl.localhost\… hashes its whole tree over 9P
-                // on every libgit2 status pass; delegate to native WSL git
-                // instead, falling back to libgit2 on any failure (#398).
-                #[cfg(windows)]
-                if let Some(summary) = wsl_status(&repo) {
-                    return Ok(summary);
-                }
-                collect_status(&repo)
+        let start = Instant::now();
+        // A repo under \\wsl.localhost\… hashes its whole tree over 9P on every
+        // libgit2 status pass (157s on a big repo), and `open_repo` is itself a
+        // 9P discovery walk. Delegate to native WSL git WITHOUT opening the repo
+        // first; fall back to libgit2 only if the delegation fails (#398, #425).
+        #[cfg(windows)]
+        if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc(&repo_path) {
+            let root = normalize_root(&repo_path);
+            if let Some(summary) = wsl_status(&distro, &linux_path, &root) {
+                log::info!(
+                    "gitstat: git_status for {repo_path} served by wsl-delegated in {}ms",
+                    start.elapsed().as_millis()
+                );
+                return Ok(summary);
             }
-            Err(_) => map_non_repo(&p),
         }
+        let p = PathBuf::from(&repo_path);
+        let result = match open_repo(&p) {
+            Ok(repo) => collect_status(&repo),
+            Err(_) => map_non_repo(&p),
+        };
+        log::info!(
+            "gitstat: git_status for {repo_path} served by libgit2 in {}ms",
+            start.elapsed().as_millis()
+        );
+        result
     })
     .await
 }
@@ -1008,16 +1193,18 @@ pub async fn git_diff(
 ) -> Result<String, AppError> {
     let opts = options.unwrap_or_default();
     run_blocking(move |_cancel| {
-        let repo = open_repo(Path::new(&repo_path))?;
-
         // Over a \\wsl.localhost\… UNC path, delegate the diff to native WSL
-        // git (same reason as status, #398). Native Linux git needs no
-        // filemode override; on any failure we fall through to libgit2 below.
+        // git WITHOUT a libgit2 open first (same reason as status, #398/#425).
+        // Native Linux git needs no filemode override; on any failure we fall
+        // through to libgit2 below.
         #[cfg(windows)]
-        if let Some(diff) = wsl_diff(&repo, &path, opts.staged) {
-            return Ok(diff);
+        if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc(&repo_path) {
+            if let Some(diff) = wsl_diff(&distro, &linux_path, &path, opts.staged) {
+                return Ok(diff);
+            }
         }
 
+        let repo = open_repo(Path::new(&repo_path))?;
         let mut diff_opts = DiffOptions::new();
         diff_opts.pathspec(&path);
         diff_opts.context_lines(3);
@@ -1198,6 +1385,7 @@ pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), App
                         *last = Instant::now();
                         drop(last);
                         trailing_pending.store(false, Ordering::SeqCst);
+                        log::debug!("gitstat: emitting trailing git-status-changed for {key}");
                         let _ = app.emit("git-status-changed", &key);
                     });
                 }
@@ -1205,6 +1393,7 @@ pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), App
             }
             *last = Instant::now();
             drop(last);
+            log::debug!("gitstat: emitting git-status-changed for {key_for_event}");
             let _ = app_for_watcher.emit("git-status-changed", &key_for_event);
         }
     };
@@ -1214,10 +1403,21 @@ pub async fn git_watch_repo(app: AppHandle, repo_path: String) -> Result<(), App
     // SCM panel looks frozen until reopened (#387). Poll those instead.
     let is_unc = key.starts_with("\\\\") || key.starts_with("//");
     let mut watcher: Box<dyn Watcher + Send> = if is_unc {
+        // Each PollWatcher tick re-stats the entire watched tree; over the 9P
+        // mount that is the same expensive walk the badge/status paths now
+        // delegate away from, so a tight 3s interval reintroduces exactly the
+        // 9P load we're trying to shed (#426). A UNC repo only changes from
+        // inside WSL (the user isn't editing over the mount at high frequency),
+        // so a 15s interval keeps the panel reasonably live at ~1/5th the cost.
+        let poll_interval = Duration::from_secs(15);
+        log::info!(
+            "gitstat: UNC root {key}: native fs events unavailable, using {}s PollWatcher",
+            poll_interval.as_secs()
+        );
         Box::new(
             notify::PollWatcher::new(
                 handler,
-                notify::Config::default().with_poll_interval(Duration::from_secs(3)),
+                notify::Config::default().with_poll_interval(poll_interval),
             )
             .map_err(|e| AppError::Other(format!("git watch: {e}")))?,
         )
@@ -1719,6 +1919,79 @@ mod tests {
         assert!(matches!(res, Err(AppError::Other(m)) if m.contains("unresolved merge conflict")));
         // Critically: the file is still on disk (no data loss).
         assert!(file.exists(), "conflicted file must not be deleted");
+    }
+
+    /// Manual diagnostic for #424: run WSL status delegation directly against
+    /// a live WSL UNC directory and compare with the libgit2 fallback timing.
+    /// `cargo test wsl_diag_scm_status -- --ignored --nocapture` with
+    /// `WSL_GIT_DIAG_PATH` set to e.g. `\\wsl.localhost\Ubuntu\home\me\repo`.
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn wsl_diag_scm_status() {
+        crate::init_test_logger();
+        let Ok(path) = std::env::var("WSL_GIT_DIAG_PATH") else {
+            println!("WSL_GIT_DIAG_PATH not set; skipping. Example:");
+            println!(
+                r"  WSL_GIT_DIAG_PATH=\\wsl.localhost\Ubuntu\home\me\repo cargo test wsl_diag_scm_status -- --ignored --nocapture"
+            );
+            return;
+        };
+        // Repo-root detection via native git (no libgit2 discovery walk).
+        if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc(&path) {
+            let start = Instant::now();
+            let root = wsl_repo_root(&distro, &linux_path);
+            let elapsed = start.elapsed();
+            match root {
+                WslRepoRoot::Root(r) => {
+                    println!("wsl_diag_scm_status: wsl_repo_root -> {r} in {elapsed:?}")
+                }
+                WslRepoRoot::NotRepo => {
+                    println!("wsl_diag_scm_status: wsl_repo_root -> not a repo in {elapsed:?}")
+                }
+                WslRepoRoot::Fallback => {
+                    println!("wsl_diag_scm_status: wsl_repo_root -> fallback in {elapsed:?}")
+                }
+            }
+        }
+
+        // Status delegation by path — no libgit2 open first (#425).
+        let (distro, linux_path) = crate::wsl::parse_wsl_unc(&path)
+            .expect("WSL_GIT_DIAG_PATH must be a \\\\wsl.localhost\\… path");
+        let root = normalize_root(&path);
+        let start = Instant::now();
+        let delegated = wsl_status(&distro, &linux_path, &root);
+        let elapsed = start.elapsed();
+        match &delegated {
+            Some(summary) => println!(
+                "wsl_diag_scm_status: WSL delegation OK in {elapsed:?}: staged={} changes={} untracked={}",
+                summary.staged.len(),
+                summary.changes.len(),
+                summary.untracked.len()
+            ),
+            None => println!("wsl_diag_scm_status: WSL delegation declined/failed in {elapsed:?}"),
+        }
+
+        // For comparison, time the libgit2 open + fallback too.
+        let repo = match open_repo(Path::new(&path)) {
+            Ok(r) => r,
+            Err(e) => {
+                println!("wsl_diag_scm_status: libgit2 open failed for {path}: {e:?}");
+                return;
+            }
+        };
+        let start = Instant::now();
+        let via_libgit2 = collect_status(&repo);
+        let elapsed = start.elapsed();
+        match via_libgit2 {
+            Ok(summary) => println!(
+                "wsl_diag_scm_status: libgit2 fallback OK in {elapsed:?}: staged={} changes={} untracked={}",
+                summary.staged.len(),
+                summary.changes.len(),
+                summary.untracked.len()
+            ),
+            Err(e) => println!("wsl_diag_scm_status: libgit2 fallback ERROR in {elapsed:?}: {e:?}"),
+        }
     }
 
     /// Contract tests mirroring the mock-side vitest suite in

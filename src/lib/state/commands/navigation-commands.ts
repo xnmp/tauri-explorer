@@ -5,6 +5,13 @@
 import type { Command } from "../commands.svelte";
 import { getActiveExplorer } from "./shared";
 import { windowTabsManager } from "../window-tabs.svelte";
+import { refreshGraphPane } from "../git-graph-refresh";
+
+/** True when the active pane is showing a commit graph. */
+function activePaneIsGraph(): boolean {
+  const tab = windowTabsManager.activeTab;
+  return !!(tab?.kind === "explorer" && tab.panes?.[tab.activePaneId]?.gitGraph);
+}
 
 export const navigationCommands: Command[] = [
   {
@@ -49,12 +56,23 @@ export const navigationCommands: Command[] = [
     category: "navigation",
     shortcut: "F5",
     handler: () => getActiveExplorer()?.refresh(),
-    // While the active pane shows the commit graph, F5 belongs to the graph's
-    // own fetch+reload handler (#417) — refreshing the hidden file listing
-    // here would double-handle the key with no visible effect.
-    when: () => {
-      const tab = windowTabsManager.activeTab;
-      return !tab?.panes?.[tab.activePaneId]?.gitGraph;
+    // While the active pane shows the commit graph, F5 belongs to
+    // `gitGraph.refresh` below — refreshing the hidden file listing here would
+    // double-handle the key with no visible effect (#417, #432).
+    when: () => !activePaneIsGraph(),
+  },
+  {
+    id: "gitGraph.refresh",
+    label: "Git Graph: Refresh (fetch from remotes)",
+    category: "navigation",
+    shortcut: "F5",
+    // F5 in the graph fetches from every remote then reloads history (#417).
+    // A real command (not a component window listener) so the terminal's
+    // key-ownership gate can see the graph owns F5, and so it only fires for
+    // the ACTIVE graph pane (#432).
+    handler: () => {
+      refreshGraphPane(windowTabsManager.activeTab?.activePaneId);
     },
+    when: () => activePaneIsGraph(),
   },
 ];

@@ -2,7 +2,7 @@
  * E2E test: macOS vibrancy setting.
  * Issue: feat/macos-vibrancy
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { HOME_URL, waitForEntries } from "./helpers";
 
 test.describe("macOS vibrancy", () => {

@@ -2,7 +2,7 @@
  * E2E test: settings search filter.
  * Issue: feat/settings-search
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { HOME_URL, waitForEntries } from "./helpers";
 
 test.describe("Settings search filter", () => {

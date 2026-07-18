@@ -7,7 +7,7 @@
  * the mock filesystem, so these tests assert actual selection outcomes.
  */
 
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 async function waitForFileList(page: Page) {
   await page.waitForSelector(".file-list");

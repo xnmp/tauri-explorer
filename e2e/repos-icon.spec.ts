@@ -2,7 +2,7 @@
  * E2E test: Repos bookmark shows code icon.
  * Issue: feat/repos-icon
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { HOME_URL, waitForEntries } from "./helpers";
 
 test.describe("Repos bookmark icon", () => {

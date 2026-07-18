@@ -9,7 +9,7 @@
  * Chromium-specific by design — it's the engine the browser E2E suite runs
  * on, and the coordinate conversion (domain/zoom.ts) is engine-aware.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { HOME_URL, waitForEntries, pressShortcut } from "./helpers";
 
 /** Bump the app zoom via the real command; returns the resulting factor. */

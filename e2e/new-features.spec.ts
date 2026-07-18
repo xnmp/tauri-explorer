@@ -8,7 +8,7 @@
  * - Bookmarks config file persistence (tauri-ti0l)
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { MULTI_SELECT_MODIFIER } from "./helpers";
 
 async function waitForFileList(page: import("@playwright/test").Page) {

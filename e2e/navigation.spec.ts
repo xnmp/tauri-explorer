@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { VIEW_MODES, HOME_URL, waitForEntries, switchViewMode, type ViewMode } from "./helpers";
 
 for (const viewMode of VIEW_MODES) {

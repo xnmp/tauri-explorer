@@ -7,7 +7,7 @@
  * show the renamed file. Without an API key the hint never appears and Tab
  * keeps its default behavior.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { HOME_URL, waitForEntries, pressShortcut } from "./helpers";
 
 async function setApiKey(page: Page, key: string) {

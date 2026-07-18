@@ -52,6 +52,28 @@ use system::{
 };
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
+/// Minimal stdout logger for `#[ignore]`d diagnostic tests (git_status.rs,
+/// git.rs) run manually against a live WSL distro: `cargo test` normally has
+/// no `log` sink installed, so `gitstat:` lines would otherwise be silently
+/// dropped. Shared here so both test modules can install it.
+#[cfg(test)]
+pub(crate) fn init_test_logger() {
+    struct StdoutLog;
+    impl log::Log for StdoutLog {
+        fn enabled(&self, _metadata: &log::Metadata) -> bool {
+            true
+        }
+        fn log(&self, record: &log::Record) {
+            println!("[{}] {}", record.level(), record.args());
+        }
+        fn flush(&self) {}
+    }
+    // Multiple diagnostic tests may call this; a second install attempt is
+    // expected to fail and is intentionally ignored.
+    let _ = log::set_boxed_logger(Box::new(StdoutLog));
+    log::set_max_level(log::LevelFilter::Debug);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(launch_dir: Option<String>) {
     let t_start = std::time::Instant::now();
@@ -141,6 +163,7 @@ pub fn run(launch_dir: Option<String>) {
             // File operations — CRUD
             files::file_ops::get_home_directory,
             files::file_ops::create_directory,
+            files::file_ops::create_empty_file,
             files::file_ops::rename_entry,
             files::file_ops::copy_entry,
             files::file_ops::cancel_copy,
@@ -233,6 +256,8 @@ pub fn run(launch_dir: Option<String>) {
             git_log::git_branch_authors,
             git_actions::git_delete_branch,
             git_actions::git_delete_remote_branch,
+            git_actions::git_checkout_tracking,
+            git_actions::git_sync_local_branches,
             // Drives / volumes
             files::drives::list_drives,
             // Wallpaper

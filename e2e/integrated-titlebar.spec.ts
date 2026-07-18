@@ -2,7 +2,7 @@
  * E2E test: integrated title bar setting.
  * Issue: feat/integrated-title-bar
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { HOME_URL, waitForEntries } from "./helpers";
 
 test.describe("Integrated title bar", () => {

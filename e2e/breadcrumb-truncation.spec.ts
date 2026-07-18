@@ -4,7 +4,7 @@
  * and validates pretext-calculated widths against actual DOM measurements.
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { waitForEntries } from "./helpers";
 
 test.describe("Breadcrumb truncation", () => {

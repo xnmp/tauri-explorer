@@ -36,6 +36,26 @@ export function computeFrecencyScore(accesses: number[], now: number): number {
   return score;
 }
 
+/**
+ * Soft-downvote an access history: forget roughly half the recorded accesses,
+ * dropping the most recent (highest-weighted) ones so the frecency score falls
+ * now. Pure — returns a new array, never mutates.
+ *
+ * This is deliberately NOT a blacklist: the entry keeps its older history, and
+ * a fresh access (recorded at `now`) contributes ~1.0 and pushes the score back
+ * up — so ranking recovers naturally if the path is used again. Dropping the
+ * newest accesses maximises the immediate score drop while leaving a trail that
+ * recovery can build on.
+ *
+ * A single-access entry collapses to `[]` (caller should drop the entry).
+ */
+export function penalizeAccesses(accesses: number[]): number[] {
+  if (accesses.length <= 1) return [];
+  const oldestFirst = [...accesses].sort((a, b) => a - b);
+  const keep = Math.floor(oldestFirst.length / 2);
+  return oldestFirst.slice(0, keep); // keep the oldest half, drop the recent (heavy) accesses
+}
+
 function createFrecencyStore() {
   let data = $state<FrecencyData>(loadPersisted(STORAGE_KEY, []));
 
@@ -100,6 +120,25 @@ function createFrecencyStore() {
     return map;
   }
 
+  /**
+   * Downvote a path: reduce its recorded access count as if roughly half of its
+   * accesses were forgotten (see {@link penalizeAccesses}). The score drops now
+   * but recovers when the path is accessed again — this is not a blacklist. If
+   * the entry has no accesses left afterwards it is removed entirely.
+   */
+  function penalize(path: string): void {
+    const key = directoryKey(path);
+    const idx = data.findIndex((e) => directoryKey(e.path) === key);
+    if (idx === -1) return;
+    const reduced = penalizeAccesses(data[idx].accesses);
+    if (reduced.length === 0) {
+      data = data.filter((_, i) => i !== idx);
+    } else {
+      data = data.map((e, i) => (i === idx ? { ...e, accesses: reduced } : e));
+    }
+    save();
+  }
+
   /** Remove a path from tracking. */
   function remove(path: string): void {
     const key = directoryKey(path);
@@ -131,6 +170,7 @@ function createFrecencyStore() {
     recordFileAction,
     getScore,
     getScoreMap,
+    penalize,
     remove,
     clear,
     pruneNonExistent,

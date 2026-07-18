@@ -7,7 +7,7 @@
  * shown in the inactive pane must pick up files created in the active one.
  */
 
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 const leftPane = (page: Page) => page.locator(".explorer-pane").first();
 const rightPane = (page: Page) => page.locator(".explorer-pane").nth(1);

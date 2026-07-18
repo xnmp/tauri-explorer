@@ -4,7 +4,7 @@
  * all dialogs share the same primitive.
  */
 
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 async function openDeleteDialog(page: Page): Promise<void> {
   await page.goto("/?path=/home/user");

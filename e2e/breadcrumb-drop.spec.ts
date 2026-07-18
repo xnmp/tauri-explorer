@@ -2,7 +2,7 @@
  * E2E test: breadcrumb segments accept file drops.
  * Issue: feat/breadcrumb-drop-target
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { HOME_URL, waitForEntries } from "./helpers";
 
 test.describe("Breadcrumb drop target", () => {

@@ -5,7 +5,7 @@
  * notes.md exists in both /home/user and /home/user/Documents in the mock
  * filesystem, so copying it across triggers a real conflict.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { HOME_URL, waitForEntries, pressShortcut, MULTI_SELECT_MODIFIER } from "./helpers";
 
 async function triggerConflict(page: Page): Promise<void> {

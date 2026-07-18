@@ -7,7 +7,7 @@
  * the file via the normal flow (the mock fs persists the rename, so the list
  * reflects the new name), and disabling the plugin removes the menu entry.
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 import { HOME_URL, waitForEntries, pressShortcut } from "./helpers";
 
 async function openSettings(page: Page) {

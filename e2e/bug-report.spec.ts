@@ -4,7 +4,7 @@
  * new-issue URL carrying version and OS diagnostics.
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { waitForEntries } from "./helpers";
 
 async function runPaletteCommand(page: import("@playwright/test").Page, query: string) {

@@ -2,7 +2,7 @@
  * E2E tests for Ctrl+F filter auto-selecting the first matching entry.
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { VIEW_MODES, waitForEntries, switchViewMode, pressShortcut } from "./helpers";
 
 for (const viewMode of VIEW_MODES) {

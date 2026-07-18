@@ -91,6 +91,26 @@ describe("settingsStore.init precedence (#280)", () => {
   });
 });
 
+describe("settingsStore.islandMode (#434)", () => {
+  it("is off by default and turns on for any single island trigger", async () => {
+    readConfigFileMock.mockResolvedValue({ ok: false, error: "not found" });
+    const store = await freshStore();
+    expect(store.islandMode).toBe(false);
+
+    store.update({ floatingIslands: true });
+    expect(store.islandMode).toBe(true);
+
+    store.update({ floatingIslands: false, macOsVibrancy: true });
+    expect(store.islandMode).toBe(true);
+
+    store.update({ macOsVibrancy: false, windowsBackdrop: "mica" });
+    expect(store.islandMode).toBe(true);
+
+    store.update({ windowsBackdrop: "off" });
+    expect(store.islandMode).toBe(false);
+  });
+});
+
 describe("settingsStore.update (#280)", () => {
   it("merges partially and persists to localStorage", async () => {
     readConfigFileMock.mockResolvedValue({ ok: false, error: "not found" });

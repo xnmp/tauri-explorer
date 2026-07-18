@@ -4,7 +4,7 @@
  * rendered entries (the outcome), not just that the pane opened.
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { waitForEntries, pressShortcut } from "./helpers";
 
 test.describe("ZIP preview", () => {

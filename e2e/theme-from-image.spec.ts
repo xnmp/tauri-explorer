@@ -4,7 +4,7 @@
  * the live accent variable, not just a toast.
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures";
 import { waitForEntries } from "./helpers";
 
 test("context menu generates and applies a theme from an image", async ({ page }) => {

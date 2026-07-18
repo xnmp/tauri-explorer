@@ -7,7 +7,7 @@
  * and asserts the rendered surface matches what the backend returns
  * (counts, rows, actions, commit button behaviour).
  */
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures";
 
 async function openScmOnRepo(page: Page): Promise<void> {
   await page.goto("/");

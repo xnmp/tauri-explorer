@@ -155,6 +155,30 @@ describe("streaming ingest", () => {
   });
 });
 
+describe("inline new-entry creation kind (#436)", () => {
+  it("startInlineNewFolder / startInlineNewFile toggle the active kind, cancel clears", () => {
+    const explorer = createExplorerState();
+
+    // Default: not creating.
+    expect(explorer.isCreatingFolder).toBe(false);
+    expect(explorer.newEntryKind).toBe("folder");
+
+    explorer.startInlineNewFolder();
+    expect(explorer.isCreatingFolder).toBe(true);
+    expect(explorer.newEntryKind).toBe("folder");
+
+    // Switching to file creation flips the kind while staying active.
+    explorer.startInlineNewFile();
+    expect(explorer.isCreatingFolder).toBe(true);
+    expect(explorer.newEntryKind).toBe("file");
+
+    explorer.cancelInlineNewFolder();
+    expect(explorer.isCreatingFolder).toBe(false);
+    // Kind sticks at its last value; only the active flag is cleared.
+    expect(explorer.newEntryKind).toBe("file");
+  });
+});
+
 describe("navGeneration race (documented in lessons_learnt)", () => {
   it("discards the slower first navigation so a rapid A->B lands on B", async () => {
     const entriesA = [entry("a-only", "/A")];

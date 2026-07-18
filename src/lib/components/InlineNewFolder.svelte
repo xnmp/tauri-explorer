@@ -34,20 +34,27 @@
     variant: "details" | "list" | "tiles";
   }
 
-  const folderEntry: FileEntry = { name: "New folder", kind: "directory", path: "", size: 0, modified: "" };
-
   let { explorer, variant }: Props = $props();
+
+  const isFile = $derived(explorer.newEntryKind === "file");
+  // Preview entry used solely to pick the correct icon for the inline row.
+  const iconEntry = $derived<FileEntry>(
+    isFile
+      ? { name: "New File", kind: "file", path: "", size: 0, modified: "" }
+      : { name: "New folder", kind: "directory", path: "", size: 0, modified: "" }
+  );
 
   let newFolderName = $state("New folder");
   let newFolderInput = $state<HTMLInputElement | null>(null);
   let newFolderError = $state<string | null>(null);
   let submitting = $state(false);
 
-  function getNextFolderName(): string {
-    const base = "New folder";
+  function getNextName(): string {
+    const base = isFile ? "New File" : "New folder";
+    const kind = isFile ? "file" : "directory";
     const existingNames = new Set(
       explorer.displayEntries
-        .filter((e) => e.kind === "directory")
+        .filter((e) => e.kind === kind)
         .map((e) => e.name.toLowerCase())
     );
     if (!existingNames.has(base.toLowerCase())) return base;
@@ -59,7 +66,7 @@
 
   $effect(() => {
     if (explorer.isCreatingFolder && newFolderInput) {
-      newFolderName = getNextFolderName();
+      newFolderName = getNextName();
       newFolderError = null;
       tick().then(() => {
         newFolderInput?.focus();
@@ -79,7 +86,9 @@
     }
     submitting = true;
     try {
-      const error = await explorer.createFolder(name);
+      const error = isFile
+        ? await explorer.createFile(name)
+        : await explorer.createFolder(name);
       if (error) {
         newFolderError = error;
       }
@@ -102,7 +111,7 @@
 {#if variant === "details"}
   <div class="inline-new-folder">
     <span class="new-folder-icon">
-      <FileIcon entry={folderEntry} size="small" />
+      <FileIcon entry={iconEntry} size="small" />
     </span>
     <input
       type="text"
@@ -120,7 +129,7 @@
 {:else if variant === "list"}
   <div class="inline-new-folder list-inline-new-folder">
     <span class="list-icon">
-      <FileIcon entry={folderEntry} size="small" />
+      <FileIcon entry={iconEntry} size="small" />
     </span>
     <input
       type="text"
@@ -138,7 +147,7 @@
 {:else}
   <div class="tile-item tile-inline-new-folder">
     <div class="tile-icon">
-      <FileIcon entry={folderEntry} size="large" />
+      <FileIcon entry={iconEntry} size="large" />
     </div>
     <input
       type="text"

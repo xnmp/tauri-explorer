@@ -163,6 +163,7 @@ pub fn run(launch_dir: Option<String>) {
             // File operations — CRUD
             files::file_ops::get_home_directory,
             files::file_ops::create_directory,
+            files::file_ops::create_empty_file,
             files::file_ops::rename_entry,
             files::file_ops::copy_entry,
             files::file_ops::cancel_copy,

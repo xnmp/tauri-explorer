@@ -9,6 +9,7 @@ import { folderViewsStore } from "../folder-views.svelte";
 import { sidebarViewsStore } from "../sidebar-views.svelte";
 import { dialogStore } from "../dialogs.svelte";
 import { terminalPanelStore } from "../terminal.svelte";
+import { windowTabsManager } from "../window-tabs.svelte";
 import { getActiveExplorer } from "./shared";
 
 /** View commands */
@@ -72,6 +73,24 @@ export const viewCommands: Command[] = [
     label: "Miller Columns: 3 Layers",
     category: "view",
     handler: () => getActiveExplorer()?.setMillerLayers(3),
+  },
+  // SCM panel visibility is per-pane (#434): the toggle acts on the active
+  // pane only, so panes on different repos (or the same one) open/close their
+  // git panels independently. Opening also enables the global git-status
+  // indicators the panel depends on.
+  {
+    id: "view.toggleScmPanel",
+    label: "Toggle Source Control Panel",
+    category: "view",
+    shortcut: "Alt+M G",
+    handler: () => {
+      const opened = windowTabsManager.toggleScmInActivePane();
+      if (opened) {
+        if (!settingsStore.showGitStatus) settingsStore.update({ showGitStatus: true });
+      } else {
+        import("../scm.svelte").then((m) => m.closeAllDiffs());
+      }
+    },
   },
   {
     id: "view.sortByName",

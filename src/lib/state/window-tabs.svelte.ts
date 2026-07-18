@@ -373,6 +373,29 @@ function createWindowTabsManager() {
     saveState();
   }
 
+  /** Whether a pane's SCM panel is visible (#434). Per-pane override wins;
+   *  when the pane made no explicit choice, fall back to the global
+   *  `showScmPanel` setting so new panes and existing tests track the default. */
+  function getPaneScmVisible(paneId: PaneId): boolean {
+    for (const tab of tabs) {
+      const pane = tab.panes[paneId];
+      if (pane) return pane.scmPanel ?? settingsStore.showScmPanel;
+    }
+    return settingsStore.showScmPanel;
+  }
+
+  /** Toggle the SCM panel in the active pane only (#434). Sets an explicit
+   *  per-pane override so sibling panes are unaffected. */
+  function toggleScmInActivePane(): boolean {
+    const tab = activeTab;
+    const pane = tab?.panes[tab.activePaneId];
+    if (!tab || !pane) return false;
+    const next = !(pane.scmPanel ?? settingsStore.showScmPanel);
+    pane.scmPanel = next;
+    saveState();
+    return next;
+  }
+
   /** Rebuild a live tab from its persisted form (fresh explorers, non-tracking
    *  loads). `regenerateIds` gives the tab and its panes fresh ids (adopting
    *  into a window that may already contain the original ids). */
@@ -989,6 +1012,8 @@ function createWindowTabsManager() {
     getPaneGitGraph,
     setPaneGitGraph,
     toggleGitGraphInActivePane,
+    getPaneScmVisible,
+    toggleScmInActivePane,
     closeTab,
     closeActiveTab,
     closeSurface,

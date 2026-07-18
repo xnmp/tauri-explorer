@@ -52,16 +52,13 @@
   markStartup("bundle-exec");
 
   const leftExplorer = $derived(windowTabsManager.getActiveExplorer());
-  // ONE island-mode condition (#407): macOS vibrancy, a Windows native
-  // backdrop, and the platform-independent Floating Islands setting all
-  // drive the same [data-vibrancy] island CSS — the only real platform
-  // difference is whether frosted-glass transparency backs it. Every
-  // island-layout decision must key off this, never off one platform's flag.
-  const islandMode = $derived(
-    settingsStore.macOsVibrancy ||
-      settingsStore.windowsBackdrop !== "off" ||
-      settingsStore.floatingIslands,
-  );
+  // ONE island-mode condition (#407, #434): macOS vibrancy, a Windows native
+  // backdrop, and the platform-independent Floating Islands setting all drive
+  // the same [data-vibrancy] island CSS. The derived now lives on settingsStore
+  // so the in-pane miller suppression (ExplorerPane) keys off the exact same
+  // condition — a local copy here drifted from ExplorerPane's `macOsVibrancy`
+  // check and double-mounted the columns (#434).
+  const islandMode = $derived(settingsStore.islandMode);
   const millerAsLeftIsland = $derived(
     islandMode && !settingsStore.showSidebar && (leftExplorer?.millerLayers ?? 0) > 0
   );

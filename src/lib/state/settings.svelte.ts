@@ -388,12 +388,10 @@ function createSettingsStore() {
     toggleEnableGitGraph(): void {
       update({ enableGitGraph: !settings.enableGitGraph });
     },
+    // Global default new panes fall back to; per-pane visibility (#434) lives
+    // on the pane node (see windowTabsManager.getPaneScmVisible).
     get showScmPanel() {
       return settings.showScmPanel;
-    },
-    toggleScmPanel(): void {
-      const opening = !settings.showScmPanel;
-      update({ showScmPanel: opening, ...(opening && !settings.showGitStatus ? { showGitStatus: true } : {}) });
     },
     get scmTreeView() {
       return settings.scmTreeView;
@@ -418,6 +416,18 @@ function createSettingsStore() {
     },
     get floatingIslands() {
       return settings.floatingIslands;
+    },
+    // ONE island-mode condition (#407, #434): macOS vibrancy, a Windows native
+    // backdrop, and the platform-independent Floating Islands setting all drive
+    // the same [data-vibrancy] island layout. Every island-layout decision
+    // (miller-as-island hoist, in-pane suppression) must key off this single
+    // derived, never off one platform's flag.
+    get islandMode() {
+      return (
+        settings.macOsVibrancy ||
+        settings.windowsBackdrop !== "off" ||
+        settings.floatingIslands
+      );
     },
     get windowsBackdrop() {
       return settings.windowsBackdrop;
@@ -581,18 +591,9 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
   { key: "showGitStatus", id: "view.toggleGitStatus", label: "Toggle Git Status Indicators" },
   { key: "millerHideEmpty", id: "view.toggleMillerHideEmpty", label: "Miller Columns: Toggle Hide Empty Folders" },
   { key: "showManuallyHidden", id: "view.toggleManuallyHidden", label: "Toggle Manually Hidden Files" },
-  {
-    key: "showScmPanel",
-    id: "view.toggleScmPanel",
-    label: "Toggle Source Control Panel",
-    shortcut: "Alt+M G",
-    handler: () => {
-      if (settingsStore.showScmPanel) {
-        import("./scm.svelte").then((m) => m.closeAllDiffs());
-      }
-      settingsStore.toggleScmPanel();
-    },
-  },
+  // SCM panel visibility is per-pane (#434); its toggle command lives in
+  // view-commands.ts (acts on the active pane). The `showScmPanel` setting
+  // remains as the default new panes fall back to.
   { key: "scmTreeView", id: "view.toggleScmTreeView", label: "Toggle SCM Tree View" },
   { key: "confirmDelete", id: "view.toggleConfirmDelete", label: "Toggle Confirm on Delete" },
   { key: "quickOpenDebug", id: "view.toggleQuickOpenDebug", label: "Toggle Quick Open Debug Scores" },

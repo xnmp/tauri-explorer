@@ -488,6 +488,11 @@
     if (selectedIndex >= displayResults.length) {
       selectedIndex = Math.max(0, displayResults.length - 1);
     }
+    // A click lands focus on the (removed) button, dropping it to <body> outside
+    // the modal — which would break keyboard control (arrows / Enter / Ctrl+Del
+    // all bubble from the input to the overlay). Pull focus back to the input so
+    // the palette stays keyboard-driven after a downvote.
+    inputRef?.focus();
   }
 
   // Focus input and prune stale entries when dialog opens.
@@ -616,6 +621,7 @@
                 <button
                   type="button"
                   class="downvote-btn"
+                  tabindex="-1"
                   aria-label="Downvote this result"
                   title="Downvote — lowers this result's ranking. Not permanent: it recovers if you open it again. (Ctrl+Delete)"
                   onclick={(e) => downvoteResult(result, e)}
@@ -655,6 +661,7 @@
                 <button
                   type="button"
                   class="downvote-btn"
+                  tabindex="-1"
                   aria-label="Downvote this result"
                   title="Downvote — lowers this result's ranking. Not permanent: it recovers if you open it again. (Ctrl+Delete)"
                   onclick={(e) => downvoteResult(result, e)}

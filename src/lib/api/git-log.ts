@@ -265,6 +265,22 @@ export interface OpenPr {
   reviewDecision: "approved" | "changes_requested" | "review_required" | null;
   /** Issue-comment count; `null` on the tokenless REST path. */
   commentCount: number | null;
+  /** PR description text (plain text on the GraphQL path, raw markdown on the
+   *  REST path); `null`/empty when the PR has no description. */
+  body?: string | null;
+  /** Most-recent PR issue comments (capped backend-side). Empty on the
+   *  tokenless REST path, which can't fetch comment bodies. */
+  comments?: PrComment[];
+}
+
+/** A single PR issue comment surfaced in the details dropdown. */
+export interface PrComment {
+  /** Author login, or `null` when the account was deleted. */
+  author: string | null;
+  /** ISO-8601 creation timestamp. */
+  createdAt: string;
+  /** Plain-text comment body. */
+  body: string;
 }
 
 /** Open PRs for the repo's GitHub remote. Degrades to `[]` — never

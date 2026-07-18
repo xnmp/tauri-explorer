@@ -74,7 +74,7 @@
     type OpenPr,
   } from "$lib/api/git-log";
   import { fetchGitSummary } from "$lib/state/git-summary-cache";
-  import { assignLayout, branchPath, groupRefChips, indexPrsByBranch, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, sliceBranchLine, GRAPH_PALETTE, type GraphLayout, type BranchLine, type RefChips, type RemoteRefChip } from "$lib/domain/git-graph";
+  import { assignLayout, branchPath, groupRefChips, indexPrsByBranch, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, sliceBranchLine, GRAPH_PALETTE, type GraphLayout, type BranchLine, type RefChips, type RemoteRefChip } from "$lib/domain/git-graph";
   import { openExternalUrl } from "$lib/api/crash";
   import { registerGraphRefresher } from "$lib/state/git-graph-refresh";
   import { clientToFixed } from "$lib/domain/zoom";
@@ -1627,6 +1627,8 @@
             {@const pr = prDetail.pr}
             {@const ciLine = ciStatusLabel(pr.ciStatus)}
             {@const reviewLine = reviewDecisionLabel(pr.reviewDecision)}
+            {@const description = prDescription(pr.body)}
+            {@const comments = prDetailComments(pr.comments, Date.now())}
             <div
               class="commit-detail-inline pr-detail-inline"
               data-testid="git-graph-pr-detail"
@@ -1640,8 +1642,13 @@
                   <span class="pr-detail-number">#{pr.number}</span>
                   <span class="pr-detail-title">{pr.title}</span>
                   {#if pr.draft}<span class="pr-detail-chip draft">Draft</span>{/if}
+                  <button type="button" class="pr-detail-open" onclick={() => openPrExternal(pr)}>
+                    Open on GitHub ↗
+                  </button>
                 </div>
-                <div class="pr-detail-line"><span class="pr-detail-label">Branch:</span> <span class="meta-mono">{pr.headRef}</span></div>
+                {#if description}
+                  <p class="pr-detail-description" data-testid="git-graph-pr-detail-body">{description}</p>
+                {/if}
                 {#if ciLine}
                   <div class="pr-detail-line">
                     <span class="pr-detail-label">CI:</span>
@@ -1651,12 +1658,23 @@
                 {#if reviewLine}
                   <div class="pr-detail-line"><span class="pr-detail-label">Review:</span> {reviewLine}</div>
                 {/if}
-                <div class="pr-detail-line">
-                  <span class="pr-detail-label">Comments:</span> {pr.commentCount ?? "—"}
-                </div>
-                <button type="button" class="pr-detail-open" onclick={() => openPrExternal(pr)}>
-                  Open on GitHub ↗
-                </button>
+                {#if comments.length > 0}
+                  <ul class="pr-detail-comments" data-testid="git-graph-pr-detail-comments">
+                    {#each comments as comment}
+                      <li class="pr-detail-comment">
+                        <div class="pr-detail-comment-meta">
+                          <span class="pr-detail-comment-author">{comment.author}</span>
+                          {#if comment.time}<span class="pr-detail-comment-time">{comment.time}</span>{/if}
+                        </div>
+                        <div class="pr-detail-comment-body">{comment.body}</div>
+                      </li>
+                    {/each}
+                  </ul>
+                {:else if pr.commentCount != null && pr.commentCount > 0}
+                  <div class="pr-detail-line">
+                    <span class="pr-detail-label">Comments:</span> {pr.commentCount}
+                  </div>
+                {/if}
               </div>
             </div>
           {/if}
@@ -2561,7 +2579,7 @@
   }
   .pr-detail-head {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     gap: 6px;
     flex-wrap: wrap;
   }
@@ -2605,8 +2623,9 @@
     font-weight: 600;
   }
   .pr-detail-open {
-    align-self: flex-start;
-    margin-top: 4px;
+    /* Pushed to the right of the title on the head row (#468). */
+    margin-left: auto;
+    flex-shrink: 0;
     font: inherit;
     font-size: var(--font-size-caption);
     font-weight: 600;
@@ -2619,6 +2638,52 @@
   }
   .pr-detail-open:hover {
     background: color-mix(in srgb, #a371f7 22%, transparent);
+  }
+
+  /* ----- PR description + comments (#468) ----- */
+  .pr-detail-description {
+    margin: 2px 0;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    /* Long descriptions scroll rather than pushing the row expansion huge. */
+    max-height: 140px;
+    overflow-y: auto;
+    line-height: 1.4;
+  }
+  .pr-detail-comments {
+    list-style: none;
+    margin: 2px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 220px;
+    overflow-y: auto;
+  }
+  .pr-detail-comment {
+    border-left: 2px solid color-mix(in srgb, #a371f7 40%, transparent);
+    padding-left: 8px;
+  }
+  .pr-detail-comment-meta {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-bottom: 2px;
+  }
+  .pr-detail-comment-author {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .pr-detail-comment-time {
+    color: var(--text-tertiary);
+    font-size: var(--font-size-caption);
+  }
+  .pr-detail-comment-body {
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.4;
   }
 
   .summary {

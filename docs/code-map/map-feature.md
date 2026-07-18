@@ -129,7 +129,8 @@ backend for E2E/browser).
 - FLOW: ThumbnailImage requests via api/thumbnails → Rust cache lookup/generate → data URL cached in thumbnail-cache.ts keyed by path. Rename preserves cache via `renameThumbnailCache`.
 
 ## Preview pane
-- `components/PreviewPane.svelte` — text/image/diff/archive preview + syntax highlight
+- `components/PreviewPane.svelte` — text/image/diff/archive preview + syntax highlight; hand-rolled resize (width when docked right, height when docked top/bottom, #460)
+- `domain/preview-pane-position.ts` — pure dock-position validate/cycle (right/bottom/top, #460); `+page.svelte` column-stacks the pane for top/bottom
 - `domain/syntax-highlight.ts` — `highlightCode`, `highlightDiffLine` (hljs)
 - `domain/diff.ts`, `domain/markdown.ts` — diff parsing, markdown render
 - `api/files.ts` (readTextFile, readImageAsBlobUrl, listArchiveContents, gitDiff)

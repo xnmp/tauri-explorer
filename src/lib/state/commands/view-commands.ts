@@ -220,6 +220,45 @@ export const viewCommands: Command[] = [
     category: "view",
     handler: () => dialogStore.openThemePicker(),
   },
+  // Preview pane dock position (#460). Cycling (or jumping to any edge) also
+  // reveals the pane when hidden, so the command has a visible effect.
+  {
+    id: "view.cyclePreviewPanePosition",
+    label: "Cycle Preview Pane Position",
+    category: "view",
+    shortcut: "Alt+Shift+P",
+    handler: () => {
+      settingsStore.openPreviewPane();
+      settingsStore.cyclePreviewPanePosition();
+    },
+  },
+  {
+    id: "view.previewPanePositionRight",
+    label: "Dock Preview Pane Right",
+    category: "view",
+    handler: () => {
+      settingsStore.openPreviewPane();
+      settingsStore.setPreviewPanePosition("right");
+    },
+  },
+  {
+    id: "view.previewPanePositionBottom",
+    label: "Dock Preview Pane Bottom",
+    category: "view",
+    handler: () => {
+      settingsStore.openPreviewPane();
+      settingsStore.setPreviewPanePosition("bottom");
+    },
+  },
+  {
+    id: "view.previewPanePositionTop",
+    label: "Dock Preview Pane Top",
+    category: "view",
+    handler: () => {
+      settingsStore.openPreviewPane();
+      settingsStore.setPreviewPanePosition("top");
+    },
+  },
   // Auto-generated toggle commands from TOGGLE_SETTINGS metadata
   ...generateToggleCommands(),
 ];

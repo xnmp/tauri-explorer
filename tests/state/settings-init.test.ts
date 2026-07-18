@@ -111,6 +111,56 @@ describe("settingsStore.islandMode (#434)", () => {
   });
 });
 
+describe("settingsStore preview pane position (#460)", () => {
+  it("defaults to 'right'", async () => {
+    readConfigFileMock.mockResolvedValue({ ok: false, error: "not found" });
+    const store = await freshStore();
+    expect(store.previewPanePosition).toBe("right");
+  });
+
+  it("setPreviewPanePosition validates and coerces unknown values to 'right'", async () => {
+    readConfigFileMock.mockResolvedValue({ ok: false, error: "not found" });
+    const store = await freshStore();
+
+    store.setPreviewPanePosition("bottom");
+    expect(store.previewPanePosition).toBe("bottom");
+
+    store.setPreviewPanePosition("nonsense");
+    expect(store.previewPanePosition).toBe("right");
+  });
+
+  it("cyclePreviewPanePosition steps right -> bottom -> top -> right", async () => {
+    readConfigFileMock.mockResolvedValue({ ok: false, error: "not found" });
+    const store = await freshStore();
+
+    store.cyclePreviewPanePosition();
+    expect(store.previewPanePosition).toBe("bottom");
+    store.cyclePreviewPanePosition();
+    expect(store.previewPanePosition).toBe("top");
+    store.cyclePreviewPanePosition();
+    expect(store.previewPanePosition).toBe("right");
+  });
+
+  it("reading the getter repairs a malformed persisted value without a write", async () => {
+    localStorage.setItem("explorer-settings", JSON.stringify({ previewPanePosition: "sideways" }));
+    readConfigFileMock.mockResolvedValue({ ok: false, error: "not found" });
+    const store = await freshStore();
+    expect(store.previewPanePosition).toBe("right");
+  });
+
+  it("setPreviewPaneHeight clamps to 0..600", async () => {
+    readConfigFileMock.mockResolvedValue({ ok: false, error: "not found" });
+    const store = await freshStore();
+
+    store.setPreviewPaneHeight(-50);
+    expect(store.previewPaneHeight).toBe(0);
+    store.setPreviewPaneHeight(999);
+    expect(store.previewPaneHeight).toBe(600);
+    store.setPreviewPaneHeight(300);
+    expect(store.previewPaneHeight).toBe(300);
+  });
+});
+
 describe("settingsStore.update (#280)", () => {
   it("merges partially and persists to localStorage", async () => {
     readConfigFileMock.mockResolvedValue({ ok: false, error: "not found" });

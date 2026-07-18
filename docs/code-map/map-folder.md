@@ -203,6 +203,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `tab-title.ts` — VS Code-style tab title disambiguation.
 - `titlebar.ts` — title bar / tab strip visibility rules.
 - `folder-preview.ts` — folder preview image selection (#146).
+- `preview-pane-position.ts` — validate/cycle preview dock edge right/bottom/top (#460).
 - `nerd-icons.ts` — nerd-font icon mappings (Material theme).
 - `syntax-highlight.ts` — highlight.js wrapper for preview.
 - `markdown.ts` — safe markdown render for preview.

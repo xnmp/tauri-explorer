@@ -17,8 +17,11 @@ If you've ever opened your editor just to move files faster than your file manag
 Grab the [latest release](https://github.com/xnmp/tauri-explorer/releases/latest) — AppImage/deb/rpm, MSI, or dmg. On Linux it can even [replace your system file picker](https://tauri-explorer.vercel.app) (xdg-desktop-portal FileChooser backend).
 
 ```bash
-# macOS (Apple Silicon) — one command; downloads the latest DMG, installs to
-# /Applications, and clears the quarantine flag (sudo only if needed)
+# macOS (Apple Silicon or Intel) — one command; builds from source (checks
+# for git/rustup/bun/Xcode CLT, clones, builds via the Tauri CLI), installs
+# to /Applications, and clears the quarantine flag (sudo only if needed).
+# Takes a few minutes since it compiles Rust — see #Building below for a
+# manual walkthrough of the same steps.
 curl -fsSL https://raw.githubusercontent.com/xnmp/tauri-explorer/main/mac_install.sh | bash
 
 # macOS via Homebrew — second command needed until the app is notarized

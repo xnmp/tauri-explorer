@@ -862,6 +862,102 @@ mod tests {
         assert_eq!(git_out(p, &["rev-parse", "HEAD"]), cs[0]);
     }
 
+    // ── #432 adversarial verification (verify/432-repro) ────────────────────
+    // Attack git_checkout_tracking's claim that it "behaves" on hard inputs:
+    // slashed branch names, an existing local whose tip differs from the remote
+    // (must NOT be clobbered), and a detached-HEAD starting state.
+
+    /// A tracking checkout of a slash-containing branch name (feat/x/y) must
+    /// create the local branch at the remote tip with the right upstream —
+    /// slashes are legal ref components and must survive `-b`/`--track`.
+    #[test]
+    fn checkout_tracking_handles_slashed_branch_name() {
+        let (dir, cs) = linear_repo();
+        let rp = repo_path(&dir);
+        let remote_dir = TempDir::new().unwrap();
+        git(remote_dir.path(), &["init", "--bare"]);
+        git(
+            dir.path(),
+            &["remote", "add", "origin", remote_dir.path().to_str().unwrap()],
+        );
+        // Remote-only branch with slashes; only refs/remotes/origin/feat/x/y exists locally.
+        git(dir.path(), &["push", "origin", "main:feat/x/y"]);
+        git(dir.path(), &["fetch", "origin"]);
+
+        tokio_test_block(git_checkout_tracking(
+            rp,
+            "origin".into(),
+            "feat/x/y".into(),
+        ))
+        .unwrap();
+
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "--abbrev-ref", "HEAD"]),
+            "feat/x/y"
+        );
+        assert_eq!(git_out(dir.path(), &["rev-parse", "feat/x/y"]), cs[1]);
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "--abbrev-ref", "feat/x/y@{upstream}"]),
+            "origin/feat/x/y"
+        );
+    }
+
+    /// A local branch with the same name but a DIFFERENT tip than the remote
+    /// must be plainly checked out — never fast-forwarded/clobbered to the
+    /// remote's tip. This is the data-loss attack: the fix branches on
+    /// `local_exists` and must take the plain-checkout path.
+    #[test]
+    fn checkout_tracking_does_not_clobber_existing_local_at_different_tip() {
+        let (dir, cs) = linear_repo(); // main @ c2 (HEAD)
+        let rp = repo_path(&dir);
+        let p = dir.path();
+        git(p, &["remote", "add", "origin", "."]);
+        // Local `feature` deliberately at c1 …
+        git(p, &["branch", "feature", &cs[0]]);
+        // … while the remote-tracking ref points at c2 (a different tip).
+        git(p, &["update-ref", "refs/remotes/origin/feature", &cs[1]]);
+
+        tokio_test_block(git_checkout_tracking(rp, "origin".into(), "feature".into())).unwrap();
+
+        // HEAD is on the local branch, and its tip is UNTOUCHED (still c1).
+        assert_eq!(
+            git_out(p, &["rev-parse", "--abbrev-ref", "HEAD"]),
+            "feature"
+        );
+        assert_eq!(
+            git_out(p, &["rev-parse", "feature"]),
+            cs[0],
+            "existing local branch must not be moved to the remote tip"
+        );
+    }
+
+    /// Starting from a detached HEAD, a tracking checkout must still create and
+    /// switch to the local branch (no assumption that HEAD is on a branch).
+    #[test]
+    fn checkout_tracking_from_detached_head() {
+        let (dir, cs) = linear_repo();
+        let rp = repo_path(&dir);
+        let remote_dir = TempDir::new().unwrap();
+        git(remote_dir.path(), &["init", "--bare"]);
+        git(
+            dir.path(),
+            &["remote", "add", "origin", remote_dir.path().to_str().unwrap()],
+        );
+        git(dir.path(), &["push", "origin", "main:feature"]);
+        git(dir.path(), &["fetch", "origin"]);
+        // Detach HEAD onto c1 before the tracking checkout.
+        git(dir.path(), &["checkout", "--detach", &cs[0]]);
+        assert_eq!(git_out(dir.path(), &["rev-parse", "--abbrev-ref", "HEAD"]), "HEAD");
+
+        tokio_test_block(git_checkout_tracking(rp, "origin".into(), "feature".into())).unwrap();
+
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "--abbrev-ref", "HEAD"]),
+            "feature"
+        );
+        assert_eq!(git_out(dir.path(), &["rev-parse", "feature"]), cs[1]);
+    }
+
     /// Minimal single-threaded executor for the few async validation tests —
     /// avoids pulling a runtime macro into the crate's test deps.
     fn tokio_test_block<F: std::future::Future>(fut: F) -> F::Output {

@@ -80,7 +80,7 @@
   import { clientToFixed } from "$lib/domain/zoom";
   import { parseUnifiedDiff, type ParsedDiff } from "$lib/domain/diff";
   import { highlightDiffLine } from "$lib/domain/syntax-highlight";
-  import { gitStatusLetter, relativeTimeToday } from "$lib/domain/git";
+  import { gitStatusLetter, compactRelativeTimeToday } from "$lib/domain/git";
   import { notifyLocalGitChange, subscribeGitChanges } from "$lib/state/git-refresh";
   import { gitWatchRepo, gitUnwatchRepo } from "$lib/api/git";
   import { directoryKey } from "$lib/domain/path";
@@ -349,6 +349,16 @@
   function toggleDetailMeta(): void {
     showDetailMeta = !showDetailMeta;
     savePersisted(DETAIL_META_KEY, showDetailMeta);
+  }
+
+  // Merge commits (parents.length >= 2) are usually noise when skimming
+  // history, so their row text is dimmed by default (#458). Toggle lives in
+  // the header context menu; persisted like the other layout preferences.
+  const MUTE_MERGES_KEY = "git-graph-mute-merges";
+  let muteMerges = $state(loadPersisted<unknown>(MUTE_MERGES_KEY, true) !== false);
+  function toggleMuteMerges(): void {
+    muteMerges = !muteMerges;
+    savePersisted(MUTE_MERGES_KEY, muteMerges);
   }
 
   function openColumnMenu(event: MouseEvent): void {
@@ -744,7 +754,7 @@
     // Today's commits read as an age ("5 minutes ago", #389); older ones
     // keep the date. Recomputed on graph reloads (the repo watcher makes
     // those frequent), so the wording stays fresh enough without a timer.
-    return relativeTimeToday(unixSeconds, Date.now()) ?? dateFormatter.format(new Date(unixSeconds * 1000));
+    return compactRelativeTimeToday(unixSeconds, Date.now()) ?? dateFormatter.format(new Date(unixSeconds * 1000));
   }
 
   function colorOf(index: number): string {
@@ -1309,6 +1319,17 @@
           <span class="col-check">{showDetailMeta ? "✓" : ""}</span>
           Details metadata
         </button>
+        <!-- Dim merge-commit rows to cut history noise (#458). -->
+        <button
+          class="menu-item"
+          role="menuitemcheckbox"
+          aria-checked={muteMerges}
+          onclick={toggleMuteMerges}
+          data-testid="toggle-mute-merges"
+        >
+          <span class="col-check">{muteMerges ? "✓" : ""}</span>
+          Mute merge commits
+        </button>
       </div>
     {/if}
     {#if commits.length === 0 && loading}
@@ -1381,6 +1402,7 @@
             class="commit-row"
             class:selected={selected?.oid === commit.oid}
             class:is-head={chips.isHead}
+            class:is-merge={muteMerges && !synthetic && commit.parents.length >= 2}
             class:uncommitted={synthetic}
             style:padding-left="{effectiveGraphWidth + 20}px"
             style:top="{rowY(index)}px"
@@ -1813,6 +1835,16 @@
   }
   .commit-row.is-head.selected {
     background: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+
+  /* Merge commits are muted (#458): dim only the text spans so the graph
+     vertex and lanes (a separate SVG) stay at full strength. Opacity keeps
+     this theme-agnostic. */
+  .commit-row.is-merge .summary,
+  .commit-row.is-merge .author,
+  .commit-row.is-merge .date,
+  .commit-row.is-merge .oid {
+    opacity: 0.5;
   }
 
   /* Inline details block, expanded directly below the selected row (#221).

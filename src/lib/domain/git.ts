@@ -78,3 +78,27 @@ export function relativeTimeToday(unixSeconds: number, nowMs: number): string | 
   const hours = Math.floor(minutes / 60);
   return `${hours} hour${hours === 1 ? "" : "s"} ago`;
 }
+
+/**
+ * Compact form of {@link relativeTimeToday} for the git graph's narrow date
+ * column (#458): "now", "5m", "2h" for commits made TODAY, else null so the
+ * caller falls back to an absolute date. Same today-only + clock-skew ("now")
+ * semantics; malformed input (NaN) reads as a non-today date and returns null.
+ */
+export function compactRelativeTimeToday(unixSeconds: number, nowMs: number): string | null {
+  const then = new Date(unixSeconds * 1000);
+  const now = new Date(nowMs);
+  if (
+    then.getFullYear() !== now.getFullYear() ||
+    then.getMonth() !== now.getMonth() ||
+    then.getDate() !== now.getDate()
+  ) {
+    return null;
+  }
+  const ageSec = Math.max(0, Math.floor((nowMs - unixSeconds * 1000) / 1000));
+  if (ageSec < 60) return "now";
+  const minutes = Math.floor(ageSec / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h`;
+}

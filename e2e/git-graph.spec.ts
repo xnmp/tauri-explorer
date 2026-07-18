@@ -389,6 +389,35 @@ test("clicking a commit opens the detail panel with its changed files", async ({
   await expect(detail).toHaveCount(0);
 });
 
+test("mutes merge commits and shows compact relative dates (#458)", async ({ page }) => {
+  await page.goto("/?path=/home/user/Documents/project");
+  await waitForEntries(page);
+  await openGraphViaPalette(page);
+
+  const view = page.locator('[data-testid="git-graph-view"]');
+  // nth(2) is the tip merge ("Merge hotfix into main", 2 parents); nth(4) is a
+  // normal commit ("Try alternative parser", 1 parent). Both are dated today.
+  const mergeRow = view.locator(".commit-row").nth(2);
+  const normalRow = view.locator(".commit-row").nth(4);
+  await expect(mergeRow).toContainText("Merge hotfix into main");
+  await expect(normalRow).toContainText("Try alternative parser");
+
+  // Muting is on by default: the merge row is dimmed, the normal row isn't.
+  await expect(mergeRow).toHaveClass(/is-merge/);
+  await expect(normalRow).not.toHaveClass(/is-merge/);
+
+  // Compact relative date for a today-dated commit: "now" / "5m" / "2h".
+  // The tip (seconds old) is reliably today regardless of run time-of-day.
+  await expect(mergeRow.locator(".date")).toHaveText(/^\d+[mh]$|^now$/);
+
+  // Turning "Mute merge commits" off removes the dimming from merge rows.
+  await page.locator(".graph-header").click({ button: "right" });
+  await page.locator('[data-testid="toggle-mute-merges"]').click();
+  await page.keyboard.press("Escape");
+  await expect(mergeRow).not.toHaveClass(/is-merge/);
+  await expect(normalRow).not.toHaveClass(/is-merge/);
+});
+
 test("parent is a viewable column, off by default (#402)", async ({ page }) => {
   await page.goto("/?path=/home/user/Documents/project");
   await waitForEntries(page);

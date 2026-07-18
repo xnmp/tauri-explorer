@@ -74,3 +74,46 @@ describe("relativeTimeToday (#389)", () => {
     expect(relativeTimeToday(lastYear, now)).toBeNull();
   });
 });
+
+describe("compactRelativeTimeToday (#458)", () => {
+  // Fixed "now": 2026-07-14 15:00 local time.
+  const now = new Date(2026, 6, 14, 15, 0, 0).getTime();
+  const nowSec = now / 1000;
+
+  it("renders 'now' at the 0s and 59s boundaries and for future skew", async () => {
+    const { compactRelativeTimeToday } = await import("$lib/domain/git");
+    expect(compactRelativeTimeToday(nowSec, now)).toBe("now");
+    expect(compactRelativeTimeToday(nowSec - 59, now)).toBe("now");
+    // Clock skew: a commit "in the future" reads as now, not a negative age.
+    expect(compactRelativeTimeToday(nowSec + 120, now)).toBe("now");
+  });
+
+  it("switches to minutes at 60s and holds through 59m", async () => {
+    const { compactRelativeTimeToday } = await import("$lib/domain/git");
+    expect(compactRelativeTimeToday(nowSec - 60, now)).toBe("1m");
+    expect(compactRelativeTimeToday(nowSec - 59 * 60, now)).toBe("59m");
+  });
+
+  it("switches to hours at 1h and holds through 23h (same day)", async () => {
+    const { compactRelativeTimeToday } = await import("$lib/domain/git");
+    // 1h ago: 14:00, still today.
+    expect(compactRelativeTimeToday(new Date(2026, 6, 14, 14, 0, 0).getTime() / 1000, now)).toBe("1h");
+    // 15h ago: 00:00, still today's calendar day.
+    expect(compactRelativeTimeToday(new Date(2026, 6, 14, 0, 0, 0).getTime() / 1000, now)).toBe("15h");
+  });
+
+  it("returns null for other calendar days", async () => {
+    const { compactRelativeTimeToday } = await import("$lib/domain/git");
+    // Yesterday 23:59 — under 24h old but a different calendar day.
+    expect(compactRelativeTimeToday(new Date(2026, 6, 13, 23, 59, 0).getTime() / 1000, now)).toBeNull();
+    expect(compactRelativeTimeToday(new Date(2025, 6, 14, 15, 0, 0).getTime() / 1000, now)).toBeNull();
+  });
+
+  it("returns null for malformed / far-past timestamps", async () => {
+    const { compactRelativeTimeToday } = await import("$lib/domain/git");
+    expect(compactRelativeTimeToday(NaN, now)).toBeNull();
+    // Epoch and a large negative timestamp are not today.
+    expect(compactRelativeTimeToday(0, now)).toBeNull();
+    expect(compactRelativeTimeToday(-1_000_000, now)).toBeNull();
+  });
+});

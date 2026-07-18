@@ -17,6 +17,13 @@ export const fileCommands: Command[] = [
     handler: () => getActiveExplorer()?.startInlineNewFolder(),
   },
   {
+    id: "file.newFile",
+    label: "New File",
+    category: "file",
+    shortcut: "Ctrl+Alt+N",
+    handler: () => getActiveExplorer()?.startInlineNewFile(),
+  },
+  {
     id: "file.rename",
     label: "Rename",
     category: "file",

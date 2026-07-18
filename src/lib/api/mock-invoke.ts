@@ -899,6 +899,23 @@ const mockCommands: Record<string, CommandHandler> = {
     return entry;
   },
 
+  create_empty_file: (args) => {
+    const parentPath = args.parentPath as string;
+    const name = args.name as string;
+    const newPath = `${parentPath}/${name}`;
+    if (mockFiles[newPath] !== undefined) {
+      throw new Error(`File already exists: ${newPath}`);
+    }
+    const siblings = mockFiles[parentPath] || [];
+    if (siblings.some((e) => e.path === newPath)) {
+      throw new Error(`File already exists: ${newPath}`);
+    }
+    const entry = file(name, newPath, 0);
+    if (!mockFiles[parentPath]) mockFiles[parentPath] = [];
+    mockFiles[parentPath].push(entry);
+    return entry;
+  },
+
   rename_entry: (args) => {
     const path = args.path as string;
     const newName = args.newName as string;

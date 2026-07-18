@@ -105,10 +105,11 @@ backend for E2E/browser).
 - `composables/use-inline-rename.svelte.ts` — inline edit field lifecycle
 - `components/EntryName.svelte` — name label + inline rename input
 - `components/BulkRenameDialog.svelte` — multi-file pattern rename
-- `components/InlineNewFolder.svelte` — new-folder inline create
+- `components/InlineNewFolder.svelte` — inline new-entry create (folder or file, per `explorer.newEntryKind`; #436)
 - `state/rename-suggestion.svelte.ts`, `domain/ai-rename.ts`, `api/ai-rename.ts` — AI rename suggestions
-- `api/files.ts` (renameEntry, createDirectory), `src-tauri/src/files/file_ops.rs`
+- `api/files.ts` (renameEntry, createDirectory, createEmptyFile), `src-tauri/src/files/file_ops.rs` (`create_directory`, `create_empty_file`)
 - FLOW: inline-rename commits → `renameEntry` → pane-mutations renames entry + `renameThumbnailCache` so thumb doesn't flash.
+- New-entry FLOW: context menu / `file.newFolder`|`file.newFile` command → `explorer.startInlineNewFolder`|`startInlineNewFile` (sets `newEntryKind`) → InlineNewFolder row → `createFolder`|`createFile` → pane-mutations optimistic add + `broadcastFileChange`.
 
 ## Delete / trash / undo
 - `components/DeleteDialog.svelte` — confirm permanent vs trash

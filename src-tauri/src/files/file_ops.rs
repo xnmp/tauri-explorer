@@ -238,6 +238,39 @@ pub async fn create_directory(parent_path: String, name: String) -> Result<FileE
     .await
 }
 
+/// Create a new empty file (touch). Fails if a file/dir already exists there.
+#[tauri::command]
+pub async fn create_empty_file(parent_path: String, name: String) -> Result<FileEntry, AppError> {
+    validate_entry_name(&name)?;
+
+    run_blocking(move || {
+        let parent = PathBuf::from(&parent_path);
+        if !parent.exists() {
+            return Err(AppError::NotFound(format!(
+                "Parent directory does not exist: {}",
+                parent_path
+            )));
+        }
+
+        let new_path = parent.join(&name);
+        if entry_exists(&new_path) {
+            return Err(AppError::AlreadyExists(
+                new_path.to_string_lossy().to_string(),
+            ));
+        }
+
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&new_path)?;
+        log::info!("Created empty file: {:?}", name);
+
+        let metadata = fs::symlink_metadata(&new_path)?;
+        Ok(metadata_to_entry_probed(&new_path, &metadata))
+    })
+    .await
+}
+
 /// True when renaming only changes the filename's case and both paths refer
 /// to the same entry. On case-insensitive filesystems the target appears to
 /// exist even though it is the source itself; such renames must be allowed.
@@ -898,6 +931,35 @@ mod tests {
         assert_eq!(result.name, "new_folder");
         assert!(matches!(result.kind, super::super::FileKind::Directory));
         assert!(dir.path().join("new_folder").exists());
+    }
+
+    #[test]
+    fn test_create_empty_file() {
+        let dir = tempdir().unwrap();
+        let result = block_on(create_empty_file(
+            dir.path().to_string_lossy().to_string(),
+            "notes.txt".to_string(),
+        ))
+        .unwrap();
+
+        assert_eq!(result.name, "notes.txt");
+        assert!(matches!(result.kind, super::super::FileKind::File));
+        let created = dir.path().join("notes.txt");
+        assert!(created.exists());
+        assert_eq!(std::fs::metadata(&created).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_create_empty_file_rejects_existing() {
+        let dir = tempdir().unwrap();
+        File::create(dir.path().join("dup.txt")).unwrap();
+
+        let result = block_on(create_empty_file(
+            dir.path().to_string_lossy().to_string(),
+            "dup.txt".to_string(),
+        ));
+
+        assert!(matches!(result, Err(AppError::AlreadyExists(_))));
     }
 
     #[test]

@@ -87,8 +87,9 @@ function createExplorerState(seed?: ExplorerSeed) {
     }
   }
 
-  // Inline folder creation state
+  // Inline new-entry creation state (folder or file share the same inline row)
   let isCreatingFolder = $state(false);
+  let newEntryKind = $state<"folder" | "file">("folder");
 
   // True when the current path lives on a removable drive that has been
   // ejected/unplugged. Set by ExplorerPane, which watches the drives store.
@@ -555,12 +556,25 @@ function createExplorerState(seed?: ExplorerSeed) {
     return error;
   }
 
+  async function createFile(name: string): Promise<string | null> {
+    const error = await mutations.createFile(name);
+    if (!error) isCreatingFolder = false;
+    return error;
+  }
+
   /** Start inline folder creation (shows editable placeholder in file list) */
   function startInlineNewFolder(): void {
+    newEntryKind = "folder";
     isCreatingFolder = true;
   }
 
-  /** Cancel inline folder creation */
+  /** Start inline file creation (touch — shows editable placeholder in file list) */
+  function startInlineNewFile(): void {
+    newEntryKind = "file";
+    isCreatingFolder = true;
+  }
+
+  /** Cancel inline new-entry creation */
   function cancelInlineNewFolder(): void {
     isCreatingFolder = false;
   }
@@ -826,14 +840,19 @@ function createExplorerState(seed?: ExplorerSeed) {
     setDriveGone(value: boolean) {
       driveGone = value;
     },
-    // Inline folder creation
+    // Inline new-entry creation
     get isCreatingFolder() {
       return isCreatingFolder;
     },
+    get newEntryKind() {
+      return newEntryKind;
+    },
     startInlineNewFolder,
+    startInlineNewFile,
     cancelInlineNewFolder,
     // File operations (pane-mutations.ts)
     createFolder,
+    createFile,
     rename: mutations.rename,
     confirmDelete: mutations.confirmDelete,
     extractArchive: mutations.extractArchive,

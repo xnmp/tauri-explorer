@@ -52,4 +52,15 @@
     -webkit-backdrop-filter: var(--vibrancy-island-filter, blur(12px) brightness(1.08) saturate(1.2));
     position: relative;
   }
+
+  /* Vibrancy + split panes: each pane is its own island (see ExplorerPane),
+     so the container itself paints no island chrome. */
+  :global([data-vibrancy]) .pane-container.multi-pane {
+    border-radius: 0;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 </style>

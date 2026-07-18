@@ -153,16 +153,28 @@
 
   .pane-split.row > .pane-divider {
     width: 6px;
-    border-left: 1px solid var(--divider);
-    border-right: 1px solid var(--divider);
+    border-left: 1px solid var(--pane-divider, color-mix(in srgb, var(--text-primary) 15%, transparent));
+    border-right: 1px solid var(--pane-divider, color-mix(in srgb, var(--text-primary) 15%, transparent));
     cursor: col-resize;
   }
 
   .pane-split.column > .pane-divider {
     height: 6px;
-    border-top: 1px solid var(--divider);
-    border-bottom: 1px solid var(--divider);
+    border-top: 1px solid var(--pane-divider, color-mix(in srgb, var(--text-primary) 15%, transparent));
+    border-bottom: 1px solid var(--pane-divider, color-mix(in srgb, var(--text-primary) 15%, transparent));
     cursor: row-resize;
+  }
+
+  /* Island mode: panes are separate islands (see ExplorerPane), so the
+     divider is a clear gap matching the inter-island gap, not a drawn line. */
+  :global([data-vibrancy]) .pane-split.row > .pane-divider {
+    width: 8px;
+    border-color: transparent;
+  }
+
+  :global([data-vibrancy]) .pane-split.column > .pane-divider {
+    height: 8px;
+    border-color: transparent;
   }
 
   .pane-divider:hover {

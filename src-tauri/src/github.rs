@@ -512,7 +512,11 @@ mod tests {
                      "comments": {{ "totalCount": 0 }},
                      "commits": {{ "nodes": [ {{ "commit": {{ "statusCheckRollup": {{ "state": "{state}" }} }} }} ] }} }}"#
             );
-            assert_eq!(parse_one(&node).ci_status.as_deref(), *expected, "state {state}");
+            assert_eq!(
+                parse_one(&node).ci_status.as_deref(),
+                *expected,
+                "state {state}"
+            );
         }
     }
 

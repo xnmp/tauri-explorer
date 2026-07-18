@@ -403,6 +403,28 @@ export function splitRemoteRef(name: string): RemoteRefChip {
     : { name, remote: name, branch: name };
 }
 
+// ─── PR badges (#448) ────────────────────────────────────────────────────────
+
+/** Structural subset of an open PR; matches `OpenPr` from the API layer
+ *  without importing it (domain stays dependency-free). */
+export interface OpenPrLike {
+  number: number;
+  headRef: string;
+}
+
+/** Index open PRs by their head branch for O(1) badge lookup while
+ *  rendering ref chips. When several open PRs share a branch (shouldn't
+ *  normally happen, but GitHub doesn't forbid it), the lowest PR number
+ *  wins — the oldest/most-likely-canonical one. */
+export function indexPrsByBranch<T extends OpenPrLike>(prs: readonly T[]): Map<string, T> {
+  const byBranch = new Map<string, T>();
+  for (const pr of prs) {
+    const existing = byBranch.get(pr.headRef);
+    if (!existing || pr.number < existing.number) byBranch.set(pr.headRef, pr);
+  }
+  return byBranch;
+}
+
 /** Combined ref chips (reference behavior): each local branch groups the
  *  remotes tracking it as nested sub-chips; the checked-out branch first;
  *  unmatched remotes and tags stay separate.

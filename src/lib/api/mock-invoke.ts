@@ -1621,6 +1621,30 @@ const mockCommands: Record<string, CommandHandler> = {
     };
   },
 
+  // Open GitHub PRs (#448): two synthetic PRs on branches that exist in
+  // MOCK_GRAPH_REFS — "feature" (open) and "experiment" (draft) — so the
+  // graph's PR badges have something to render against in e2e.
+  git_open_prs: (args: Record<string, unknown>) => {
+    const repoRoot = (args.repoRoot as string) ?? "";
+    if (!repoRoot.startsWith("/home/user/Documents/project")) return [];
+    return [
+      {
+        number: 7,
+        title: "Add feature X",
+        headRef: "feature",
+        htmlUrl: "https://github.com/mock/project/pull/7",
+        draft: false,
+      },
+      {
+        number: 12,
+        title: "Experimental parser rewrite",
+        headRef: "experiment",
+        htmlUrl: "https://github.com/mock/project/pull/12",
+        draft: true,
+      },
+    ];
+  },
+
   // ----- Git graph mutating actions (VSCode Git Graph parity) -----
 
   git_checkout: (args: Record<string, unknown>) => {

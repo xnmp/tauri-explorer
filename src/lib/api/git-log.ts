@@ -249,3 +249,19 @@ export async function gitSyncLocalBranches(
 ): Promise<SyncLocalBranchesResult> {
   return invoke<SyncLocalBranchesResult>("git_sync_local_branches", { repoPath });
 }
+
+/** An open GitHub pull request decorating a branch tip (#448). */
+export interface OpenPr {
+  number: number;
+  title: string;
+  headRef: string;
+  htmlUrl: string;
+  draft: boolean;
+}
+
+/** Open PRs for the repo's GitHub remote. Degrades to `[]` — never
+ *  rejects — for repos without a GitHub remote, offline machines, and
+ *  rate-limit errors; the backend caches per-repo results briefly. */
+export async function gitOpenPrs(repoPath: string): Promise<OpenPr[]> {
+  return invoke<OpenPr[]>("git_open_prs", { repoRoot: repoPath });
+}

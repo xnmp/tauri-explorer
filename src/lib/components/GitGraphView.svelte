@@ -66,13 +66,16 @@
     gitCheckoutTracking,
     gitSyncLocalBranches,
     gitLog,
+    gitOpenPrs,
     type CommitInfo,
     type RefInfo,
     type CommitFile,
     type ResetMode,
+    type OpenPr,
   } from "$lib/api/git-log";
   import { fetchGitSummary } from "$lib/state/git-summary-cache";
-  import { assignLayout, branchPath, groupRefChips, sliceBranchLine, GRAPH_PALETTE, type GraphLayout, type BranchLine, type RefChips, type RemoteRefChip } from "$lib/domain/git-graph";
+  import { assignLayout, branchPath, groupRefChips, indexPrsByBranch, sliceBranchLine, GRAPH_PALETTE, type GraphLayout, type BranchLine, type RefChips, type RemoteRefChip } from "$lib/domain/git-graph";
+  import { openExternalUrl } from "$lib/api/crash";
   import { registerGraphRefresher } from "$lib/state/git-graph-refresh";
   import { clientToFixed } from "$lib/domain/zoom";
   import { parseUnifiedDiff, type ParsedDiff } from "$lib/domain/diff";
@@ -105,6 +108,12 @@
 
   let commits = $state<CommitInfo[]>([]);
   let refs = $state<Record<string, RefInfo[]>>({});
+  // Open GitHub PRs keyed by head branch (#448). Fetched alongside every
+  // graph (re)load — piggybacking the existing refresh machine rather than
+  // adding a private timer — and left empty (never surfaced as an error) for
+  // repos without a GitHub remote, offline machines, or rate-limit failures;
+  // the backend does the degrading.
+  let prsByBranch = $state<Map<string, OpenPr>>(new Map());
   let hasMore = $state(false);
   // Resume cursor for the next page (#431). Points at the last real commit
   // loaded; passed to `gitLog` so deeper pages resume instead of skip-walking.
@@ -447,6 +456,20 @@
   let reloading = false;
   let reloadDirty = false;
 
+  /** PR badges (#448): fetched alongside every reload, never blocking the
+   *  commit-list paint. `repo` is captured by the caller so a repoPath
+   *  change mid-flight can't clobber a newer repo's badges with a stale
+   *  response. Errors never surface here — `gitOpenPrs` itself resolves to
+   *  `[]` for every offline/no-remote/rate-limit condition. */
+  async function loadPrs(repo: string): Promise<void> {
+    try {
+      const prs = await gitOpenPrs(repo);
+      if (repo === repoPath) prsByBranch = indexPrsByBranch(prs);
+    } catch {
+      if (repo === repoPath) prsByBranch = new Map();
+    }
+  }
+
   async function reload(): Promise<void> {
     // A request while a load is in flight isn't dropped — it re-runs on
     // completion (dirty flag), picking up the latest filter/local-only.
@@ -465,6 +488,7 @@
     const cacheKey = snapshotKey(repoPath, filter, local);
     loading = true;
     error = null;
+    void loadPrs(repoPath);
     try {
       // Same page-0 fetch used by the background warm (#287). The commit list
       // paints as soon as the log arrives; the working-changes count (a full
@@ -755,6 +779,25 @@
   /** Combined ref chips — grouping math lives in domain/git-graph.ts. */
   function chipsFor(oid: string): RefChips {
     return groupRefChips(refs[oid] ?? [], headBranch);
+  }
+
+  /** Open PR badge for a local-branch chip, if any (#448). */
+  function prForHead(name: string): OpenPr | undefined {
+    return prsByBranch.get(name);
+  }
+
+  /** Open PR badge for a remote-only chip, keyed by its branch (not the
+   *  full `remote/branch` name) so `origin/feature` still matches a PR
+   *  whose head is `feature`. */
+  function prForRemote(chip: RemoteRefChip): OpenPr | undefined {
+    return prsByBranch.get(chip.branch);
+  }
+
+  /** Open a PR's page in the default browser; called from a chip inside a
+   *  clickable commit row, so the click must not also select the row. */
+  function openPr(event: MouseEvent, pr: OpenPr): void {
+    event.stopPropagation();
+    void openExternalUrl(pr.htmlUrl);
   }
 
   // ----- Commit context menu (VSCode "Git Graph"-parity actions) -----
@@ -1354,6 +1397,12 @@
               {#if commit.stash}
                 <span class="ref ref-stash">{commit.stash}</span>
               {/if}
+              <!-- PR numbers already badged by a local-branch chip this row, so the
+                   remote-only loop below can skip them (#448) — a branch with an
+                   in-sync remote never needs the same PR badged twice. -->
+              {@const rowPrNumbers = new Set(
+                chips.heads.map((h) => prForHead(h.name)?.number).filter((n) => n !== undefined),
+              )}
               {#each chips.heads as head (head.name)}
                 <!-- svelte-ignore a11y_no_static_element_interactions -- right-click scopes the row context menu to this badge (#405); the row itself stays the keyboard target -->
                 <span
@@ -1366,6 +1415,18 @@
                     <span class="ref-remote-sub" title="{remote}/{head.name} is at this commit">{remote}</span>
                   {/each}
                 </span>
+                {#if prForHead(head.name)}
+                  {@const pr = prForHead(head.name)!}
+                  <button
+                    type="button"
+                    class="ref ref-pr"
+                    class:draft={pr.draft}
+                    title={pr.title}
+                    onclick={(e) => openPr(e, pr)}
+                  >
+                    ⇄ #{pr.number}
+                  </button>
+                {/if}
               {/each}
               {#each chips.remotes as remote (remote.name)}
                 <!-- svelte-ignore a11y_no_static_element_interactions -- right-click scopes the row context menu to this remote branch for a tracking checkout (#432); the row itself stays the keyboard target -->
@@ -1378,6 +1439,18 @@
                     <path d="M4.5 12.5a3 3 0 0 1-.3-6 4 4 0 0 1 7.8-.9 2.9 2.9 0 0 1-.5 5.9z" />
                   </svg>{remote.name}
                 </span>
+                {#if prForRemote(remote) && !rowPrNumbers.has(prForRemote(remote)!.number)}
+                  {@const pr = prForRemote(remote)!}
+                  <button
+                    type="button"
+                    class="ref ref-pr"
+                    class:draft={pr.draft}
+                    title={pr.title}
+                    onclick={(e) => openPr(e, pr)}
+                  >
+                    ⇄ #{pr.number}
+                  </button>
+                {/if}
               {/each}
               {#each chips.tags as tag (tag)}
                 <span class="ref ref-tag">{tag}</span>
@@ -2278,6 +2351,33 @@
     background: color-mix(in srgb, #f59e0b 15%, transparent);
     color: #d97706;
     border-color: color-mix(in srgb, #f59e0b 40%, transparent);
+  }
+
+  /* Open GitHub PR badge (#448): GitHub's PR purple. A <button>, not a
+     <span> like its neighbours — reset its chrome so it still reads as a
+     pill chip. */
+  .ref-pr {
+    font: inherit;
+    cursor: pointer;
+    background: color-mix(in srgb, #a371f7 15%, transparent);
+    color: #a371f7;
+    border-color: color-mix(in srgb, #a371f7 30%, transparent);
+  }
+
+  .ref-pr:hover {
+    background: color-mix(in srgb, #a371f7 25%, transparent);
+  }
+
+  /* Draft PR: desaturated grey, mirroring .ref-remote's dashed-outline
+     "not fully real yet" treatment. */
+  .ref-pr.draft {
+    background: color-mix(in srgb, #8b949e 15%, transparent);
+    color: #8b949e;
+    border-color: color-mix(in srgb, #8b949e 30%, transparent);
+  }
+
+  .ref-pr.draft:hover {
+    background: color-mix(in srgb, #8b949e 25%, transparent);
   }
 
   .summary {

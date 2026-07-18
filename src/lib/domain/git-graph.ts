@@ -505,6 +505,91 @@ export function reviewDecisionLabel(
   }
 }
 
+/** A single PR issue comment, as delivered over IPC (#468). Structural subset
+ *  of the API `OpenPr`'s comment shape, kept here so the view-model stays
+ *  dependency-free and unit-testable. */
+export interface PrCommentLike {
+  /** Author login, or `null` when the account was deleted. */
+  author?: string | null;
+  /** ISO-8601 creation timestamp. */
+  createdAt?: string | null;
+  /** Plain-text comment body. */
+  body?: string | null;
+}
+
+/** Normalize a PR description for display: trims surrounding whitespace and
+ *  collapses an empty/whitespace-only/missing body to `null` so the caller can
+ *  omit the description block entirely. Pure. */
+export function prDescription(body: string | null | undefined): string | null {
+  if (body == null) return null;
+  const trimmed = body.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/** Relative-time wording for an arbitrary past instant (#468), used for PR
+ *  comment timestamps: "just now", "N minute(s) ago" … up to "N year(s) ago".
+ *  Future timestamps (clock skew) read "just now". Malformed/missing input
+ *  returns `null` so the caller can omit the time. Pure. */
+export function relativeTimeFrom(
+  createdAt: string | null | undefined,
+  nowMs: number,
+): string | null {
+  if (createdAt == null) return null;
+  const thenMs = Date.parse(createdAt);
+  if (Number.isNaN(thenMs)) return null;
+  const ageSec = Math.max(0, Math.floor((nowMs - thenMs) / 1000));
+  if (ageSec < 60) return "just now";
+  const units: [number, string][] = [
+    [60, "minute"],
+    [60, "hour"],
+    [24, "day"],
+    [30, "month"],
+    [12, "year"],
+  ];
+  // Walk up the ladder: minutes → hours → days → months → years.
+  let value = Math.floor(ageSec / 60); // minutes
+  let label = "minute";
+  for (let i = 1; i < units.length; i++) {
+    const [divisor, name] = units[i];
+    if (value < divisor) break;
+    value = Math.floor(value / divisor);
+    label = name;
+  }
+  return `${value} ${label}${value === 1 ? "" : "s"} ago`;
+}
+
+/** A PR comment prepared for display in the details dropdown. */
+export interface PrDetailComment {
+  /** Author login, or `"(unknown)"` when the account was deleted. */
+  author: string;
+  /** Relative time wording, or `null` when the timestamp is unparseable. */
+  time: string | null;
+  /** Trimmed comment body. */
+  body: string;
+}
+
+/** Build the displayable comment list for the PR details dropdown (#468):
+ *  resolves the author fallback, computes each relative time, trims bodies,
+ *  and drops comments whose body is empty after trimming (nothing to show).
+ *  Pure — the DOM template just iterates the result. */
+export function prDetailComments(
+  comments: readonly PrCommentLike[] | null | undefined,
+  nowMs: number,
+): PrDetailComment[] {
+  if (comments == null) return [];
+  const result: PrDetailComment[] = [];
+  for (const c of comments) {
+    const body = (c.body ?? "").trim();
+    if (body.length === 0) continue;
+    result.push({
+      author: c.author?.trim() || "(unknown)",
+      time: relativeTimeFrom(c.createdAt, nowMs),
+      body,
+    });
+  }
+  return result;
+}
+
 /** Index open PRs by their head branch for O(1) badge lookup while
  *  rendering ref chips. When several open PRs share a branch (shouldn't
  *  normally happen, but GitHub doesn't forbid it), the lowest PR number

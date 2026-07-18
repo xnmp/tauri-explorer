@@ -1639,6 +1639,28 @@ const mockCommands: Record<string, CommandHandler> = {
         ciStatus: "success",
         reviewDecision: "approved",
         commentCount: 3,
+        body:
+          "Implements feature X end to end.\n\n" +
+          "- Adds the domain logic and its unit tests\n" +
+          "- Wires the new command through the IPC layer\n" +
+          "- Updates the mock backend so the UI can be exercised offline",
+        comments: [
+          {
+            author: "octocat",
+            createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+            body: "Nice work! Left a couple of small notes on the diff.",
+          },
+          {
+            author: "reviewer-bot",
+            createdAt: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+            body: "CI is green. Approving once the naming nit is addressed.",
+          },
+          {
+            author: null,
+            createdAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+            body: "Thanks for the review — pushed a fixup.",
+          },
+        ],
       },
       {
         number: 12,
@@ -1649,6 +1671,10 @@ const mockCommands: Record<string, CommandHandler> = {
         ciStatus: "failure",
         reviewDecision: "changes_requested",
         commentCount: 0,
+        // Draft PR with no description and no comments yet — exercises the
+        // empty-body / zero-comment path.
+        body: null,
+        comments: [],
       },
       {
         number: 15,
@@ -1658,7 +1684,10 @@ const mockCommands: Record<string, CommandHandler> = {
         draft: false,
         ciStatus: "pending",
         reviewDecision: null,
+        // Tokenless REST path: description present, comments count unknown.
         commentCount: null,
+        body: "Restores the post-login redirect that regressed in 2.3.1.",
+        comments: [],
       },
     ];
   },

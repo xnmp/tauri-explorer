@@ -17,7 +17,11 @@ If you've ever opened your editor just to move files faster than your file manag
 Grab the [latest release](https://github.com/xnmp/tauri-explorer/releases/latest) — AppImage/deb/rpm, MSI, or dmg. On Linux it can even [replace your system file picker](https://tauri-explorer.vercel.app) (xdg-desktop-portal FileChooser backend).
 
 ```bash
-# macOS (Apple Silicon) — second command needed until the app is notarized
+# macOS (Apple Silicon) — one command; downloads the latest DMG, installs to
+# /Applications, and clears the quarantine flag (sudo only if needed)
+curl -fsSL https://raw.githubusercontent.com/xnmp/tauri-explorer/main/mac_install.sh | bash
+
+# macOS via Homebrew — second command needed until the app is notarized
 brew install --cask xnmp/tap/tauri-explorer
 xattr -r -d com.apple.quarantine /Applications/tauri-explorer.app
 

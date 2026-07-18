@@ -109,3 +109,13 @@
   --breadcrumb-chevron-display: none;
   --breadcrumb-powerline-display: flex;
 }
+
+/* --- #437: non-premium (flat / high-contrast) fallback --- */
+[data-theme="hacker"]:not([data-premium="true"]) {
+  --theme-background-image: initial;
+  --sidebar-opacity: 1;
+  --toolbar-opacity: 1;
+  --content-opacity: 1;
+  --titlebar-opacity: 1;
+  --statusbar-opacity: 1;
+}

@@ -61,8 +61,9 @@
 
   const paneWidth = $derived(settingsStore.previewPaneWidth || DEFAULT_WIDTH);
   const paneHeight = $derived(settingsStore.previewPaneHeight || DEFAULT_HEIGHT);
-  // Dock edge — read directly like the other settings this component consumes.
-  const position = $derived(settingsStore.previewPanePosition);
+  // Dock edge — resolved concrete edge (settingsStore already resolves "auto"
+  // via window size, #467), read directly like other settings this consumes.
+  const position = $derived(settingsStore.resolvedPreviewPanePosition);
   const isVertical = $derived(position === "top" || position === "bottom");
 
   // --- Fullscreen preview (double-click to toggle, Esc to exit) ---

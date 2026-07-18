@@ -47,7 +47,7 @@ test.describe("Preview pane dock position", () => {
     await expect(page.locator(".preview-markdown")).toBeVisible();
   });
 
-  test("cycles right -> bottom -> top -> right, positioning the pane correctly", async ({ page }) => {
+  test("cycles right -> bottom -> top -> auto -> right, positioning the pane correctly", async ({ page }) => {
     // Default: docked right — preview sits to the right of the file list.
     {
       const { list, preview } = await boxes(page);
@@ -72,12 +72,45 @@ test.describe("Preview pane dock position", () => {
       await expect(page.locator(".entry-item").first()).toBeVisible();
     }
 
+    // Cycle -> auto (#467): resolves via window geometry — the default test
+    // viewport is wide/landscape, so auto resolves to "right" just like the
+    // explicit right dock.
+    await runPaletteCommand(page, "Cycle Preview Pane Position");
+    {
+      const { list, preview } = await boxes(page);
+      expect(preview.x).toBeGreaterThan(list.x + list.width / 2);
+      await expect(page.locator(".entry-item").first()).toBeVisible();
+      const persisted = await page.evaluate(() => {
+        const raw = localStorage.getItem("explorer-settings");
+        return raw ? JSON.parse(raw) : null;
+      });
+      expect(persisted.previewPanePosition).toBe("auto");
+    }
+
     // Cycle -> right again.
     await runPaletteCommand(page, "Cycle Preview Pane Position");
     {
       const { list, preview } = await boxes(page);
       expect(preview.x).toBeGreaterThan(list.x + list.width / 2);
       await expect(page.locator(".entry-item").first()).toBeVisible();
+    }
+  });
+
+  test("auto mode re-docks from right to bottom when the window narrows and tallens", async ({ page }) => {
+    // Wide viewport: auto resolves right.
+    await page.setViewportSize({ width: 1400, height: 900 });
+    await runPaletteCommand(page, "Dock Preview Pane Auto");
+    {
+      const { list, preview } = await boxes(page);
+      expect(preview.x).toBeGreaterThan(list.x + list.width / 2);
+    }
+
+    // Narrow + tall viewport: auto resolves bottom (near-square/narrow band).
+    await page.setViewportSize({ width: 700, height: 900 });
+    await page.waitForTimeout(150); // let the resize listener + derived layout settle
+    {
+      const { list, preview } = await boxes(page);
+      expect(preview.y).toBeGreaterThan(list.y + list.height / 2);
     }
   });
 

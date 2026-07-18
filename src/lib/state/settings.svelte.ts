@@ -12,10 +12,12 @@ import { readConfigFile } from "$lib/api/files";
 import type { ViewMode } from "./types";
 import type { Command, CommandCategory } from "./commands.svelte";
 import {
-  type PreviewPanePosition,
-  normalizePreviewPanePosition,
-  cyclePreviewPanePosition,
+  type PreviewPanePositionMode,
+  normalizePreviewPanePositionMode,
+  cyclePreviewPanePositionMode,
+  resolveEffectivePreviewPanePosition,
 } from "$lib/domain/preview-pane-position";
+import { windowSizeStore } from "./window-size.svelte";
 
 /** Which navigation bar buttons to display */
 export interface NavBarButtons {
@@ -74,7 +76,7 @@ export interface Settings {
   viewMode: ViewMode; // default view mode for new panes
   previewPaneWidth: number; // width in px when docked right, 0 = default (280px)
   previewPaneHeight: number; // height in px when docked top/bottom, 0 = default (240px)
-  previewPanePosition: PreviewPanePosition; // preview pane dock edge: right (default), bottom, top
+  previewPanePosition: PreviewPanePositionMode; // preview pane dock edge: right (default), bottom, top, or auto (#467, picks the edge from window size)
   terminalPanelHeight: number; // embedded terminal panel height in px
   // Terminal line-editing shortcuts (#375): action id → binding string
   // ("Alt+Backspace"). Empty/missing = disabled (native key behavior).
@@ -340,8 +342,21 @@ function createSettingsStore() {
       return settings.previewPaneHeight;
     },
     // Normalize on read so a malformed persisted value can never break layout.
+    // This is the raw stored *mode* (may be "auto") — for the concrete edge
+    // to actually render at, read `resolvedPreviewPanePosition` instead.
     get previewPanePosition() {
-      return normalizePreviewPanePosition(settings.previewPanePosition);
+      return normalizePreviewPanePositionMode(settings.previewPanePosition);
+    },
+    // Concrete dock edge components render at: "auto" resolves via the
+    // window's current size, everything else passes through unchanged.
+    // A single derived seam so `+page.svelte`/`PreviewPane.svelte` never
+    // have to think about "auto" themselves (#467).
+    get resolvedPreviewPanePosition() {
+      return resolveEffectivePreviewPanePosition(
+        normalizePreviewPanePositionMode(settings.previewPanePosition),
+        windowSizeStore.width,
+        windowSizeStore.height,
+      );
     },
     get terminalPanelHeight() {
       return settings.terminalPanelHeight;
@@ -521,10 +536,10 @@ function createSettingsStore() {
       update({ previewPaneHeight: Math.max(0, Math.min(600, px)) });
     },
     setPreviewPanePosition(position: string): void {
-      update({ previewPanePosition: normalizePreviewPanePosition(position) });
+      update({ previewPanePosition: normalizePreviewPanePositionMode(position) });
     },
     cyclePreviewPanePosition(): void {
-      update({ previewPanePosition: cyclePreviewPanePosition(settings.previewPanePosition) });
+      update({ previewPanePosition: cyclePreviewPanePositionMode(settings.previewPanePosition) });
     },
     setTerminalPanelHeight(px: number): void {
       update({ terminalPanelHeight: Math.max(96, Math.min(800, Math.round(px))) });

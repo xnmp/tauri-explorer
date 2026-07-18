@@ -9,6 +9,7 @@
   import { isMac } from "$lib/domain/platform";
   import { themeStore } from "$lib/state/theme.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+import { windowSizeStore } from "$lib/state/window-size.svelte";
   import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
@@ -511,10 +512,19 @@
     window.addEventListener("keyup", handleKeyup);
     window.addEventListener("blur", handleBlur);
 
+    // Window size tracking (#467): feeds the preview pane's "auto" dock mode
+    // (settingsStore.resolvedPreviewPanePosition derives from this on every
+    // read, no effect-driven sync needed) — sync once now for the initial
+    // size, then on every resize.
+    windowSizeStore.sync();
+    const handleResize = () => windowSizeStore.sync();
+    window.addEventListener("resize", handleResize);
+
     return () => {
       window.removeEventListener("keydown", handleKeydown);
       window.removeEventListener("keyup", handleKeyup);
       window.removeEventListener("blur", handleBlur);
+      window.removeEventListener("resize", handleResize);
       nativeDropHandler.cleanup();
       fileWatchers.cleanup();
       windowLifecycle.cleanup();
@@ -552,19 +562,19 @@
       <PaneContainer />
       {#if settingsStore.showPreviewPane}
         {#await import("$lib/components/PreviewPane.svelte") then { default: PreviewPane }}
-          <div class="preview-island" class:vertical={settingsStore.previewPanePosition !== "right"}>
+          <div class="preview-island" class:vertical={settingsStore.resolvedPreviewPanePosition !== "right"}>
             <PreviewPane />
           </div>
         {/await}
       {/if}
     {/snippet}
-    {#if settingsStore.previewPanePosition === "right"}
+    {#if settingsStore.resolvedPreviewPanePosition === "right"}
       {@render paneAndPreview()}
     {:else}
       <!-- Bottom/top dock: PaneContainer + preview island stack in a column
            (column-reverse puts the island on top). Sidebar/miller stay left
            siblings; the stack owns the center column. -->
-      <div class="pane-preview-stack" class:preview-top={settingsStore.previewPanePosition === "top"}>
+      <div class="pane-preview-stack" class:preview-top={settingsStore.resolvedPreviewPanePosition === "top"}>
         {@render paneAndPreview()}
       </div>
     {/if}

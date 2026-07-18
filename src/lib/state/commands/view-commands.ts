@@ -11,6 +11,8 @@ import { dialogStore } from "../dialogs.svelte";
 import { terminalPanelStore } from "../terminal.svelte";
 import { windowTabsManager } from "../window-tabs.svelte";
 import { getActiveExplorer } from "./shared";
+import { windowSizeStore } from "../window-size.svelte";
+import { resolveAutoDockPosition } from "$lib/domain/preview-pane-position";
 
 /** View commands */
 export const viewCommands: Command[] = [
@@ -257,6 +259,22 @@ export const viewCommands: Command[] = [
     handler: () => {
       settingsStore.openPreviewPane();
       settingsStore.setPreviewPanePosition("top");
+    },
+  },
+  {
+    id: "view.previewPanePositionAuto",
+    // Getter, not a plain string: re-evaluated on every palette render/filter
+    // so the currently-resolved side stays live as the window is resized,
+    // without needing a dynamic-label field on Command (#467).
+    get label() {
+      const resolved = resolveAutoDockPosition(windowSizeStore.width, windowSizeStore.height);
+      return `Dock Preview Pane Auto (currently ${resolved})`;
+    },
+    category: "view",
+    toggleState: () => settingsStore.previewPanePosition === "auto",
+    handler: () => {
+      settingsStore.openPreviewPane();
+      settingsStore.setPreviewPanePosition("auto");
     },
   },
   // Auto-generated toggle commands from TOGGLE_SETTINGS metadata

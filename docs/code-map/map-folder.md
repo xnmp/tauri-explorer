@@ -124,6 +124,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `empty-folders.svelte.ts` — lazy empty-folder resolver (avoids per-subdir read_dir, #129).
 - `manual-hidden.svelte.ts` — per-folder manually-hidden entry registry.
 - `settings.svelte.ts` — global settings store (toggles, defaults). Very hot for feature flags.
+- `window-size.svelte.ts` — reactive `window.innerWidth`/`innerHeight` tracker (`windowSizeStore`); `+page.svelte` syncs on mount/resize. Feeds preview-pane auto-dock (#467).
 - `theme.svelte.ts` — active theme state + CSS var application.
 - `terminal.svelte.ts` — embedded terminal panel state (#139).
 - `jobs.svelte.ts` — background jobs store (Ctrl+J).
@@ -203,7 +204,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `tab-title.ts` — VS Code-style tab title disambiguation.
 - `titlebar.ts` — title bar / tab strip visibility rules.
 - `folder-preview.ts` — folder preview image selection (#146).
-- `preview-pane-position.ts` — validate/cycle preview dock edge right/bottom/top (#460).
+- `preview-pane-position.ts` — validate/cycle preview dock edge right/bottom/top, plus "auto" mode/heuristic (`resolveAutoDockPosition`, #460, #467).
 - `nerd-icons.ts` — nerd-font icon mappings (Material theme).
 - `syntax-highlight.ts` — highlight.js wrapper for preview.
 - `markdown.ts` — safe markdown render for preview.

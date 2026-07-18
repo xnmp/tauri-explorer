@@ -1515,4 +1515,399 @@ mod tests {
         assert_eq!(refs.head.as_deref(), Some(oids[2].to_string().as_str()));
         assert!(!refs.detached);
     }
+
+    // =====================================================================
+    // #431 perf-claim VERIFICATION (adversarial). Added by verify/431-perf.
+    // These MEASURE the claims that the perf commit argued only by
+    // complexity analysis: single-revwalk author scan, tip-keyed author
+    // cache invalidation + no-rewalk, and gap-free cursor paging.
+    // =====================================================================
+
+    use std::process::Command;
+    use std::time::Instant;
+
+    /// Fast commit: constant empty tree, explicit author name + monotonic
+    /// author time, explicit parents, optional ref update. Avoids the
+    /// worktree add_all round-trip so we can build ~10k-commit repos quickly.
+    fn fast_commit(
+        repo: &Repository,
+        author_name: &str,
+        secs: i64,
+        tree: &git2::Tree,
+        parents: &[Oid],
+        update_ref: Option<&str>,
+    ) -> Oid {
+        let when = git2::Time::new(secs, 0);
+        let sig =
+            git2::Signature::new(author_name, &format!("{author_name}@x"), &when).unwrap();
+        let parent_commits: Vec<git2::Commit> =
+            parents.iter().map(|p| repo.find_commit(*p).unwrap()).collect();
+        let parent_refs: Vec<&git2::Commit> = parent_commits.iter().collect();
+        repo.commit(update_ref, &sig, &sig, "c", tree, &parent_refs)
+            .unwrap()
+    }
+
+    /// Synthetic repo: a shared trunk of `trunk_n` commits (HEAD = main), then
+    /// `branches` feature branches each with `per_branch` UNIQUE commits by a
+    /// distinct author, forked off the trunk tip. `feat{i}`'s creator is
+    /// `Author{i}` (author of its first unique commit).
+    fn build_author_repo(
+        trunk_n: usize,
+        branches: usize,
+        per_branch: usize,
+    ) -> (TempDir, Repository) {
+        let (dir, repo) = init_repo();
+        let empty = {
+            let mut idx = repo.index().unwrap();
+            idx.clear().unwrap();
+            repo.find_tree(idx.write_tree().unwrap()).unwrap()
+        };
+        let mut t = 1i64;
+        // Trunk on main.
+        let mut parent: Option<Oid> = None;
+        for _ in 0..trunk_n {
+            t += 1;
+            let ps: Vec<Oid> = parent.into_iter().collect();
+            parent = Some(fast_commit(&repo, "Trunk", t, &empty, &ps, Some("refs/heads/main")));
+        }
+        let trunk_tip = parent.expect("trunk has commits");
+        repo.set_head("refs/heads/main").unwrap();
+        // Feature branches, each with distinct unique commits.
+        for b in 0..branches {
+            let author = format!("Author{b}");
+            let mut p = trunk_tip;
+            for _ in 0..per_branch {
+                t += 1;
+                p = fast_commit(&repo, &author, t, &empty, &[p], None);
+            }
+            repo.reference(&format!("refs/heads/feat{b}"), p, true, "")
+                .unwrap();
+        }
+        drop(empty); // release the borrow of `repo` before moving it out
+        (dir, repo)
+    }
+
+    // ---- Ported PRE-FIX (39317a9) author scan: per-branch revwalk. ----
+    // Kept byte-faithful to the old `branch_creator` / `collect_branch_authors`
+    // so we time the OLD algorithm against the NEW one on the SAME repo (no API
+    // drift: both use the same git2 surface).
+    const OLD_AUTHOR_WALK_CAP: usize = 2000;
+    fn old_branch_creator(repo: &Repository, tip: Oid, trunk: Option<Oid>) -> Option<String> {
+        let mut walk = repo.revwalk().ok()?;
+        walk.push(tip).ok()?;
+        if let Some(t) = trunk {
+            if t != tip {
+                let _ = walk.hide(t);
+            }
+        }
+        let mut last: Option<String> = None;
+        for (i, step) in walk.enumerate() {
+            if i >= OLD_AUTHOR_WALK_CAP {
+                break;
+            }
+            let Ok(oid) = step else { break };
+            if let Ok(commit) = repo.find_commit(oid) {
+                last = Some(commit.author().name().unwrap_or("").to_string());
+            }
+        }
+        last.filter(|s| !s.is_empty())
+    }
+    fn old_collect_branch_authors(repo: &Repository) -> Vec<BranchAuthor> {
+        let trunk = repo.head().ok().and_then(|h| h.target());
+        let mut out = Vec::new();
+        for (branch, btype) in repo.branches(None).unwrap().flatten() {
+            let Some(name) = branch.name().ok().flatten().map(str::to_string) else {
+                continue;
+            };
+            if name.ends_with("/HEAD") {
+                continue;
+            }
+            let Some(tip) = branch.get().target() else {
+                continue;
+            };
+            let author = old_branch_creator(repo, tip, trunk).or_else(|| {
+                repo.find_commit(tip)
+                    .ok()
+                    .map(|c| c.author().name().unwrap_or("").to_string())
+            });
+            out.push(BranchAuthor {
+                name,
+                author: author.unwrap_or_default(),
+                remote: btype == git2::BranchType::Remote,
+            });
+        }
+        out
+    }
+
+    /// CORRECTNESS: the ported-old and new author scans must AGREE on creators
+    /// (so any timing difference is apples-to-apples, not a behavior change).
+    #[test]
+    fn old_and_new_author_scans_agree() {
+        let (_dir, repo) = build_author_repo(40, 6, 12);
+        let mut new = collect_branch_authors(&repo, gather_branches(&repo)).unwrap();
+        let mut old = old_collect_branch_authors(&repo);
+        new.sort_by(|a, b| a.name.cmp(&b.name));
+        old.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(new.len(), old.len());
+        for (n, o) in new.iter().zip(old.iter()) {
+            assert_eq!(n.name, o.name);
+            assert_eq!(n.author, o.author, "creator mismatch for {}", n.name);
+        }
+        // Spot-check a couple of known creators.
+        assert_eq!(new.iter().find(|b| b.name == "feat0").unwrap().author, "Author0");
+        assert_eq!(new.iter().find(|b| b.name == "feat5").unwrap().author, "Author5");
+    }
+
+    /// MEASUREMENT (Claim 1). Times the NEW single-walk scan vs the ported OLD
+    /// per-branch scan on the prescribed topology (30 branches × 300 unique +
+    /// 2000-commit trunk) AND a stacked topology where branches overlap. Run:
+    ///   cargo test --release -p tauri-explorer author_scan_timing \
+    ///     -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn author_scan_timing() {
+        for (label, trunk, branches, per) in
+            [("independent 30x300 / trunk 2000", 2000usize, 30usize, 300usize)]
+        {
+            let (_dir, repo) = build_author_repo(trunk, branches, per);
+            // Warm caches (object db) so both see the same starting state.
+            let _ = collect_branch_authors(&repo, gather_branches(&repo)).unwrap();
+            let _ = old_collect_branch_authors(&repo);
+
+            let reps = 5;
+            let t0 = Instant::now();
+            for _ in 0..reps {
+                let _ = old_collect_branch_authors(&repo);
+            }
+            let old = t0.elapsed() / reps;
+            let t1 = Instant::now();
+            for _ in 0..reps {
+                let _ = collect_branch_authors(&repo, gather_branches(&repo)).unwrap();
+            }
+            let new = t1.elapsed() / reps;
+            eprintln!(
+                "[author_scan/{label}] OLD per-branch = {:?} | NEW single-walk = {:?} | speedup = {:.2}x",
+                old,
+                new,
+                old.as_secs_f64() / new.as_secs_f64().max(1e-9)
+            );
+        }
+
+        // Stacked topology: feat{i} builds on feat{i-1}, so the old per-branch
+        // walk re-decodes lower layers O(n^2); the new single walk decodes each
+        // once. This is where the complexity win actually bites.
+        {
+            let (_dir, repo) = init_repo();
+            let empty = {
+                let mut idx = repo.index().unwrap();
+                idx.clear().unwrap();
+                repo.find_tree(idx.write_tree().unwrap()).unwrap()
+            };
+            let mut t = 1i64;
+            t += 1;
+            let base = fast_commit(&repo, "Trunk", t, &empty, &[], Some("refs/heads/main"));
+            repo.set_head("refs/heads/main").unwrap();
+            let layers = 40usize;
+            let per = 50usize;
+            let mut p = base;
+            for i in 0..layers {
+                for _ in 0..per {
+                    t += 1;
+                    p = fast_commit(&repo, &format!("Author{i}"), t, &empty, &[p], None);
+                }
+                repo.reference(&format!("refs/heads/stack{i}"), p, true, "")
+                    .unwrap();
+            }
+            let _ = collect_branch_authors(&repo, gather_branches(&repo)).unwrap();
+            let _ = old_collect_branch_authors(&repo);
+            let reps = 5;
+            let t0 = Instant::now();
+            for _ in 0..reps {
+                let _ = old_collect_branch_authors(&repo);
+            }
+            let old = t0.elapsed() / reps;
+            let t1 = Instant::now();
+            for _ in 0..reps {
+                let _ = collect_branch_authors(&repo, gather_branches(&repo)).unwrap();
+            }
+            let new = t1.elapsed() / reps;
+            eprintln!(
+                "[author_scan/stacked {layers}x{per}] OLD per-branch = {:?} | NEW single-walk = {:?} | speedup = {:.2}x",
+                old,
+                new,
+                old.as_secs_f64() / new.as_secs_f64().max(1e-9)
+            );
+        }
+    }
+
+    fn current_thread_rt() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+    }
+
+    /// CORRECTNESS (Claim 2, staleness attack) via the REAL `git_branch_authors`
+    /// command + its process-global tip-keyed cache. First call computes; a
+    /// second call with unchanged tips is served from cache (same result);
+    /// moving a branch tip (new commit by a new author) must invalidate and
+    /// yield the FRESH creator — no stale author served.
+    #[test]
+    fn author_cache_end_to_end_invalidates_on_tip_move() {
+        let (dir, repo) = build_author_repo(5, 2, 3);
+        let path = dir.path().to_string_lossy().to_string();
+        let rt = current_thread_rt();
+
+        let first = rt.block_on(git_branch_authors(path.clone())).unwrap();
+        let second = rt.block_on(git_branch_authors(path.clone())).unwrap();
+        assert_eq!(
+            first.iter().map(|b| (&b.name, &b.author)).collect::<Vec<_>>(),
+            second.iter().map(|b| (&b.name, &b.author)).collect::<Vec<_>>(),
+            "unchanged tips → identical (cached) result",
+        );
+        let feat0_before = first.iter().find(|b| b.name == "feat0").unwrap().author.clone();
+        assert_eq!(feat0_before, "Author0");
+
+        // Move feat0's tip forward — but the *creator* (first unique commit) is
+        // unchanged, so instead assert on a NEWLY created branch whose tip did
+        // not exist in the first signature: staleness would hide it entirely.
+        let empty = {
+            let mut idx = repo.index().unwrap();
+            idx.clear().unwrap();
+            repo.find_tree(idx.write_tree().unwrap()).unwrap()
+        };
+        let trunk_tip = repo.head().unwrap().target().unwrap();
+        let newc = fast_commit(&repo, "Zoe", 10_000, &empty, &[trunk_tip], None);
+        repo.reference("refs/heads/fresh", newc, true, "").unwrap();
+
+        let third = rt.block_on(git_branch_authors(path.clone())).unwrap();
+        let fresh = third
+            .iter()
+            .find(|b| b.name == "fresh")
+            .expect("new branch must appear — cache was NOT invalidated (STALE) if this fails");
+        assert_eq!(fresh.author, "Zoe", "fresh branch creator served, not stale");
+    }
+
+    /// MEASUREMENT (Claim 2, no-rewalk): the second `git_branch_authors` call
+    /// with unchanged tips must be dramatically cheaper than the first (cache
+    /// hit skips the revwalk). Run with --ignored --nocapture (timing).
+    #[test]
+    #[ignore]
+    fn author_cache_second_call_skips_revwalk_timing() {
+        let (dir, _repo) = build_author_repo(2000, 30, 300);
+        let path = dir.path().to_string_lossy().to_string();
+        let rt = current_thread_rt();
+        let t0 = Instant::now();
+        let _ = rt.block_on(git_branch_authors(path.clone())).unwrap();
+        let first = t0.elapsed();
+        let t1 = Instant::now();
+        for _ in 0..20 {
+            let _ = rt.block_on(git_branch_authors(path.clone())).unwrap();
+        }
+        let second_avg = t1.elapsed() / 20;
+        eprintln!(
+            "[author_cache] first (cold, walks) = {:?} | second avg (warm, cache hit) = {:?} | ratio = {:.1}x",
+            first,
+            second_avg,
+            first.as_secs_f64() / second_avg.as_secs_f64().max(1e-9)
+        );
+        assert!(
+            second_avg * 5 < first,
+            "cache hit ({second_avg:?}) not materially cheaper than cold walk ({first:?})"
+        );
+    }
+
+    /// CORRECTNESS (Claim 5): exhaustive cursor paging over a repo with >1 page
+    /// (320 commits) and stashes woven in. Walk EVERY page via next_cursor and
+    /// assert the set of real (non-stash) commits equals `git rev-list HEAD`
+    /// exactly — no gaps, no dupes — and ordering matches the full single walk.
+    #[test]
+    fn cursor_paging_covers_every_commit_vs_git_rev_list() {
+        let (dir, mut repo) = init_repo();
+        let p = dir.path().to_path_buf();
+        let mut oids = Vec::new();
+        for i in 0..320 {
+            write(&p, "f.txt", &format!("v{i}"));
+            let parents: Vec<Oid> = oids.last().copied().into_iter().collect();
+            oids.push(commit(&repo, &format!("c{i}"), &parents));
+        }
+        // Weave in a couple of stashes at different depths.
+        write(&p, "f.txt", "dirty-a");
+        let sig = git2::Signature::now("Test User", "test@example.com").unwrap();
+        repo.stash_save(&sig, "wip a", None).unwrap();
+        write(&p, "f.txt", "dirty-b");
+        repo.stash_save(&sig, "wip b", None).unwrap();
+
+        fn stashes(repo: &mut Repository) -> Vec<(usize, String, Oid)> {
+            let mut s = Vec::new();
+            repo.stash_foreach(|idx, msg, oid| {
+                s.push((idx, msg.to_string(), *oid));
+                true
+            })
+            .unwrap();
+            s
+        }
+
+        // Ground truth: git rev-list HEAD (independent of our walk code).
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&p)
+            .args(["rev-list", "HEAD"])
+            .output()
+            .expect("git rev-list");
+        assert!(out.status.success(), "git rev-list failed");
+        let expected: std::collections::HashSet<String> = String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(expected.len(), 320);
+
+        // Page through with the cursor. limit 100 → 4 pages.
+        let mut seen: Vec<String> = Vec::new();
+        let mut cursor: Option<String> = None;
+        let mut pages = 0;
+        loop {
+            pages += 1;
+            assert!(pages < 50, "runaway paging");
+            let s = stashes(&mut repo);
+            let page = build_log(
+                &repo,
+                &GitLogOptions {
+                    limit: Some(100),
+                    cursor: cursor.clone(),
+                    ..Default::default()
+                },
+                s,
+                &no_cancel(),
+            )
+            .unwrap();
+            for c in page.commits.iter().filter(|c| c.stash.is_none()) {
+                seen.push(c.oid.clone());
+            }
+            if !page.has_more {
+                break;
+            }
+            cursor = page.next_cursor.clone();
+            assert!(cursor.is_some(), "has_more but no cursor");
+        }
+
+        // No dupes.
+        let unique: std::collections::HashSet<&String> = seen.iter().collect();
+        assert_eq!(unique.len(), seen.len(), "cursor paging produced duplicate commits");
+        // Exact set equality with git rev-list — no gaps.
+        let seen_set: std::collections::HashSet<String> = seen.iter().cloned().collect();
+        assert_eq!(seen_set, expected, "cursor paging set != git rev-list set");
+        // Ordering matches the single full walk.
+        let full = build_log(
+            &repo,
+            &GitLogOptions { limit: Some(5000), ..Default::default() },
+            Vec::new(),
+            &no_cancel(),
+        )
+        .unwrap();
+        let full_order: Vec<String> =
+            full.commits.iter().filter(|c| c.stash.is_none()).map(|c| c.oid.clone()).collect();
+        assert_eq!(seen, full_order, "cursor page order != full-walk order");
+    }
 }

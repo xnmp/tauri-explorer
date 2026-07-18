@@ -58,7 +58,9 @@ jobs:
   # (no WKWebView WebDriver exists). Catches Safari-family CSS/JS breakage.
   webkit:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # The suite legitimately takes ~25m on a slow runner (#455) — a cap that
+    # close to the real duration cancels passing runs on runner-speed noise.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
 

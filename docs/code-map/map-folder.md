@@ -279,6 +279,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git_log.rs` — git history / commit-graph backend (#57).
 - `git_actions.rs` — mutating git actions for commit-graph tab (VSCode parity).
 - `git_common.rs` — shared git plumbing (used by git/git_log/git_actions).
+- `github.rs` — `git_open_prs`: open GitHub PRs for the repo's remote, for graph PR badges (#449); TTL-cached, silent-degrade.
 
 ### src-tauri/src/files/ — file operations module.
 - `mod.rs` — files module root + re-exports.

@@ -396,7 +396,8 @@ fn sync_local_branches(repo_path: &str) -> Result<SyncLocalBranchesResult, AppEr
         if head_branch.as_deref() == Some(name.as_str()) {
             // The checked-out branch is only advanced via merge --ff-only, and
             // only with a clean tree; anything uncertain is skipped, not forced.
-            if working_tree_clean(repo_path) && run_git(repo_path, &["merge", "--ff-only"]).is_ok() {
+            if working_tree_clean(repo_path) && run_git(repo_path, &["merge", "--ff-only"]).is_ok()
+            {
                 result.fast_forwarded.push(name);
             } else {
                 result.skipped.push(name);
@@ -732,7 +733,12 @@ mod tests {
         git(remote_dir.path(), &["init", "--bare"]);
         git(
             dir.path(),
-            &["remote", "add", "origin", remote_dir.path().to_str().unwrap()],
+            &[
+                "remote",
+                "add",
+                "origin",
+                remote_dir.path().to_str().unwrap(),
+            ],
         );
         git(dir.path(), &["push", "origin", "main:feature"]);
         // Drop the local `feature` (only the remote ref should exist) & re-fetch.
@@ -752,7 +758,10 @@ mod tests {
         assert_eq!(git_out(dir.path(), &["rev-parse", "feature"]), cs[1]);
         // Upstream is configured.
         assert_eq!(
-            git_out(dir.path(), &["rev-parse", "--abbrev-ref", "feature@{upstream}"]),
+            git_out(
+                dir.path(),
+                &["rev-parse", "--abbrev-ref", "feature@{upstream}"]
+            ),
             "origin/feature"
         );
 
@@ -768,8 +777,14 @@ mod tests {
     /// Point a configured upstream `refs/remotes/origin/<branch>` at `oid` and
     /// wire `branch.<branch>.{remote,merge}` so git2's `branch.upstream()` resolves.
     fn set_upstream(dir: &Path, branch: &str, oid: &str) {
-        git(dir, &["update-ref", &format!("refs/remotes/origin/{branch}"), oid]);
-        git(dir, &["config", &format!("branch.{branch}.remote"), "origin"]);
+        git(
+            dir,
+            &["update-ref", &format!("refs/remotes/origin/{branch}"), oid],
+        );
+        git(
+            dir,
+            &["config", &format!("branch.{branch}.remote"), "origin"],
+        );
         git(
             dir,
             &[
@@ -878,7 +893,12 @@ mod tests {
         git(remote_dir.path(), &["init", "--bare"]);
         git(
             dir.path(),
-            &["remote", "add", "origin", remote_dir.path().to_str().unwrap()],
+            &[
+                "remote",
+                "add",
+                "origin",
+                remote_dir.path().to_str().unwrap(),
+            ],
         );
         // Remote-only branch with slashes; only refs/remotes/origin/feat/x/y exists locally.
         git(dir.path(), &["push", "origin", "main:feat/x/y"]);
@@ -897,7 +917,10 @@ mod tests {
         );
         assert_eq!(git_out(dir.path(), &["rev-parse", "feat/x/y"]), cs[1]);
         assert_eq!(
-            git_out(dir.path(), &["rev-parse", "--abbrev-ref", "feat/x/y@{upstream}"]),
+            git_out(
+                dir.path(),
+                &["rev-parse", "--abbrev-ref", "feat/x/y@{upstream}"]
+            ),
             "origin/feat/x/y"
         );
     }
@@ -941,13 +964,21 @@ mod tests {
         git(remote_dir.path(), &["init", "--bare"]);
         git(
             dir.path(),
-            &["remote", "add", "origin", remote_dir.path().to_str().unwrap()],
+            &[
+                "remote",
+                "add",
+                "origin",
+                remote_dir.path().to_str().unwrap(),
+            ],
         );
         git(dir.path(), &["push", "origin", "main:feature"]);
         git(dir.path(), &["fetch", "origin"]);
         // Detach HEAD onto c1 before the tracking checkout.
         git(dir.path(), &["checkout", "--detach", &cs[0]]);
-        assert_eq!(git_out(dir.path(), &["rev-parse", "--abbrev-ref", "HEAD"]), "HEAD");
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "--abbrev-ref", "HEAD"]),
+            "HEAD"
+        );
 
         tokio_test_block(git_checkout_tracking(rp, "origin".into(), "feature".into())).unwrap();
 

@@ -285,7 +285,10 @@ fn windows_volume_info() -> std::collections::HashMap<char, WindowsVolInfo> {
                 label: fields[1].trim().to_string(),
                 provider: fields[2].trim().to_string(),
                 drive_type: fields[3].trim().parse().unwrap_or(0),
-                bus_type: fields.get(4).map(|s| s.trim().to_string()).unwrap_or_default(),
+                bus_type: fields
+                    .get(4)
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default(),
             },
         );
     }

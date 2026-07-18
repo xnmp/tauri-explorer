@@ -148,7 +148,9 @@ fn head_branch_of(repo: &Repository) -> Option<String> {
     if repo.head_detached().unwrap_or(false) {
         return None;
     }
-    repo.head().ok().and_then(|h| h.shorthand().map(str::to_string))
+    repo.head()
+        .ok()
+        .and_then(|h| h.shorthand().map(str::to_string))
 }
 
 fn short_oid(oid: Oid) -> String {
@@ -1007,7 +1009,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            page1.commits.iter().map(|c| c.summary.as_str()).collect::<Vec<_>>(),
+            page1
+                .commits
+                .iter()
+                .map(|c| c.summary.as_str())
+                .collect::<Vec<_>>(),
             vec!["c7", "c6", "c5"],
         );
         let cursor = page1.next_cursor.clone().unwrap();
@@ -1028,7 +1034,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            page2.commits.iter().map(|c| c.summary.as_str()).collect::<Vec<_>>(),
+            page2
+                .commits
+                .iter()
+                .map(|c| c.summary.as_str())
+                .collect::<Vec<_>>(),
             vec!["c4", "c3", "c2"],
             "cursor resumes exactly after the cursor OID, gap-free",
         );
@@ -1538,10 +1548,11 @@ mod tests {
         update_ref: Option<&str>,
     ) -> Oid {
         let when = git2::Time::new(secs, 0);
-        let sig =
-            git2::Signature::new(author_name, &format!("{author_name}@x"), &when).unwrap();
-        let parent_commits: Vec<git2::Commit> =
-            parents.iter().map(|p| repo.find_commit(*p).unwrap()).collect();
+        let sig = git2::Signature::new(author_name, &format!("{author_name}@x"), &when).unwrap();
+        let parent_commits: Vec<git2::Commit> = parents
+            .iter()
+            .map(|p| repo.find_commit(*p).unwrap())
+            .collect();
         let parent_refs: Vec<&git2::Commit> = parent_commits.iter().collect();
         repo.commit(update_ref, &sig, &sig, "c", tree, &parent_refs)
             .unwrap()
@@ -1568,7 +1579,14 @@ mod tests {
         for _ in 0..trunk_n {
             t += 1;
             let ps: Vec<Oid> = parent.into_iter().collect();
-            parent = Some(fast_commit(&repo, "Trunk", t, &empty, &ps, Some("refs/heads/main")));
+            parent = Some(fast_commit(
+                &repo,
+                "Trunk",
+                t,
+                &empty,
+                &ps,
+                Some("refs/heads/main"),
+            ));
         }
         let trunk_tip = parent.expect("trunk has commits");
         repo.set_head("refs/heads/main").unwrap();
@@ -1654,8 +1672,14 @@ mod tests {
             assert_eq!(n.author, o.author, "creator mismatch for {}", n.name);
         }
         // Spot-check a couple of known creators.
-        assert_eq!(new.iter().find(|b| b.name == "feat0").unwrap().author, "Author0");
-        assert_eq!(new.iter().find(|b| b.name == "feat5").unwrap().author, "Author5");
+        assert_eq!(
+            new.iter().find(|b| b.name == "feat0").unwrap().author,
+            "Author0"
+        );
+        assert_eq!(
+            new.iter().find(|b| b.name == "feat5").unwrap().author,
+            "Author5"
+        );
     }
 
     /// MEASUREMENT (Claim 1). Times the NEW single-walk scan vs the ported OLD
@@ -1666,9 +1690,12 @@ mod tests {
     #[test]
     #[ignore]
     fn author_scan_timing() {
-        for (label, trunk, branches, per) in
-            [("independent 30x300 / trunk 2000", 2000usize, 30usize, 300usize)]
-        {
+        for (label, trunk, branches, per) in [(
+            "independent 30x300 / trunk 2000",
+            2000usize,
+            30usize,
+            300usize,
+        )] {
             let (_dir, repo) = build_author_repo(trunk, branches, per);
             // Warm caches (object db) so both see the same starting state.
             let _ = collect_branch_authors(&repo, gather_branches(&repo)).unwrap();
@@ -1761,11 +1788,22 @@ mod tests {
         let first = rt.block_on(git_branch_authors(path.clone())).unwrap();
         let second = rt.block_on(git_branch_authors(path.clone())).unwrap();
         assert_eq!(
-            first.iter().map(|b| (&b.name, &b.author)).collect::<Vec<_>>(),
-            second.iter().map(|b| (&b.name, &b.author)).collect::<Vec<_>>(),
+            first
+                .iter()
+                .map(|b| (&b.name, &b.author))
+                .collect::<Vec<_>>(),
+            second
+                .iter()
+                .map(|b| (&b.name, &b.author))
+                .collect::<Vec<_>>(),
             "unchanged tips → identical (cached) result",
         );
-        let feat0_before = first.iter().find(|b| b.name == "feat0").unwrap().author.clone();
+        let feat0_before = first
+            .iter()
+            .find(|b| b.name == "feat0")
+            .unwrap()
+            .author
+            .clone();
         assert_eq!(feat0_before, "Author0");
 
         // Move feat0's tip forward — but the *creator* (first unique commit) is
@@ -1785,7 +1823,10 @@ mod tests {
             .iter()
             .find(|b| b.name == "fresh")
             .expect("new branch must appear — cache was NOT invalidated (STALE) if this fails");
-        assert_eq!(fresh.author, "Zoe", "fresh branch creator served, not stale");
+        assert_eq!(
+            fresh.author, "Zoe",
+            "fresh branch creator served, not stale"
+        );
     }
 
     /// MEASUREMENT (Claim 2, no-rewalk): the second `git_branch_authors` call
@@ -1894,20 +1935,31 @@ mod tests {
 
         // No dupes.
         let unique: std::collections::HashSet<&String> = seen.iter().collect();
-        assert_eq!(unique.len(), seen.len(), "cursor paging produced duplicate commits");
+        assert_eq!(
+            unique.len(),
+            seen.len(),
+            "cursor paging produced duplicate commits"
+        );
         // Exact set equality with git rev-list — no gaps.
         let seen_set: std::collections::HashSet<String> = seen.iter().cloned().collect();
         assert_eq!(seen_set, expected, "cursor paging set != git rev-list set");
         // Ordering matches the single full walk.
         let full = build_log(
             &repo,
-            &GitLogOptions { limit: Some(5000), ..Default::default() },
+            &GitLogOptions {
+                limit: Some(5000),
+                ..Default::default()
+            },
             Vec::new(),
             &no_cancel(),
         )
         .unwrap();
-        let full_order: Vec<String> =
-            full.commits.iter().filter(|c| c.stash.is_none()).map(|c| c.oid.clone()).collect();
+        let full_order: Vec<String> = full
+            .commits
+            .iter()
+            .filter(|c| c.stash.is_none())
+            .map(|c| c.oid.clone())
+            .collect();
         assert_eq!(seen, full_order, "cursor page order != full-walk order");
     }
 }

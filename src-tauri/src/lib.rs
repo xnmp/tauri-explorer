@@ -255,6 +255,8 @@ pub fn run(launch_dir: Option<String>) {
             git_log::git_branch_authors,
             git_actions::git_delete_branch,
             git_actions::git_delete_remote_branch,
+            git_actions::git_checkout_tracking,
+            git_actions::git_sync_local_branches,
             // Drives / volumes
             files::drives::list_drives,
             // Wallpaper

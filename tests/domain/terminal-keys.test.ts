@@ -56,6 +56,24 @@ describe("isShellReservedKey (#249, #260)", () => {
     expect(isShellReservedKey(key("f", { ctrlKey: true, shiftKey: true }))).toBe(false);
   });
 
+  it("lets modifier-less function keys fall through to the app when bound (F5 graph refresh, #432)", () => {
+    // F5 must reach the graph's refresh command, not be eaten as shell typing.
+    expect(isShellReservedKey(key("F5"), { appBound: true })).toBe(false);
+    // Unbound F-keys still stay with the shell (harmless — nothing claims them).
+    expect(isShellReservedKey(key("F5"), { appBound: false })).toBe(true);
+    expect(isShellReservedKey(key("F5"))).toBe(true);
+    // Other function keys behave the same way.
+    expect(isShellReservedKey(key("F12"), { appBound: true })).toBe(false);
+    expect(isShellReservedKey(key("F1"), { appBound: false })).toBe(true);
+  });
+
+  it("still keeps printable and navigation keys with the shell (not misread as F-keys)", () => {
+    expect(isShellReservedKey(key("f"), { appBound: true })).toBe(true);
+    expect(isShellReservedKey(key("ArrowUp"), { appBound: true })).toBe(true);
+    expect(isShellReservedKey(key("5"), { appBound: true })).toBe(true);
+    expect(isShellReservedKey(key("Enter"), { appBound: true })).toBe(true);
+  });
+
   it("keeps ⌘-only clipboard combos with the terminal on mac (#403)", () => {
     for (const k of ["c", "v", "x", "a", "z"]) {
       expect(isShellReservedKey(key(k, { metaKey: true }), { appBound: true, isMac: true })).toBe(true);

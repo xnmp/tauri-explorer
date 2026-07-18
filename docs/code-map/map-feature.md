@@ -153,10 +153,11 @@ backend for E2E/browser).
 - `components/ScmPanel.svelte`, `components/ScmDiffView.svelte` — panel shell + inline diff
 - `components/GitGraphView.svelte` — commit graph / log
 - `state/scm.svelte.ts` — per-pane stores via `getScmStore(paneId)` (#334): repo state, stage/commit actions; shared summary cache + `warmScmSummary`
-- `domain/scm-tree.ts`, `domain/git-graph.ts`, `domain/git.ts` — tree grouping, graph layout
-- `api/git.ts`, `api/git-log.ts`; `src-tauri/src/git.rs`, `git_actions.rs`, `git_log.rs`, `git_common.rs`
+- `state/git-graph-refresh.ts` — F5 refresh bus: GitGraphView registers its fetch+reload per pane; `gitGraph.refresh` command dispatches to the active graph pane (#432)
+- `domain/scm-tree.ts`, `domain/git-graph.ts`, `domain/git.ts` — tree grouping, graph layout (`groupRefChips` keeps remote/branch identity for tracking checkout, #432)
+- `api/git.ts`, `api/git-log.ts` (incl. `gitCheckoutTracking`, `gitSyncLocalBranches`, #432); `src-tauri/src/git.rs`, `git_actions.rs`, `git_log.rs`, `git_common.rs`
 - `domain/git-warm.ts` (pure: when to warm) + `state/git-warm.ts` (wiring) — pre-warm graph/SCM caches once a pane settles on a repo
-- FLOW: scmStore invokes git stage/unstage/commit/diff/log → Rust git2 ops → `git-status-changed` emit refreshes panel + badges. WSL UNC repos: `git_repo_root`/`git_status`/`git_diff` delegate to native git (`wsl.exe --exec`) without a libgit2 open/discovery over 9P first, falling back to libgit2 only on delegation failure (#425); the UNC PollWatcher uses a 15s interval to limit 9P stat load (#426).
+- FLOW: scmStore invokes git stage/unstage/commit/diff/log → Rust git2 ops → `git-status-changed` emit refreshes panel + badges. GitGraphView has ONE generation-counted `reload()` (dirty-flag re-run, never dropped); actions call `reload()` + `notifyLocalGitChange`, and its watcher subscription filters `source:"local"` so an action's echo can't double-reload (#432). F5 fetches then reloads; with the `f5SyncsLocalBranches` setting it also fast-forwards behind-upstream locals (`git_sync_local_branches`), reporting diverged ones in a toast (#432). WSL UNC repos: `git_repo_root`/`git_status`/`git_diff` delegate to native git (`wsl.exe --exec`) without a libgit2 open/discovery over 9P first, falling back to libgit2 only on delegation failure (#425); the UNC PollWatcher uses a 15s interval to limit 9P stat load (#426).
 
 ## Quick Open (Ctrl+P fuzzy file finder)
 - `components/QuickOpen.svelte` — modal, streamed results, keyboard nav

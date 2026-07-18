@@ -197,7 +197,7 @@ describe("groupRefChips", () => {
     expect(chips.heads).toEqual([
       { name: "main", remotes: ["origin", "upstream"], active: false },
     ]);
-    expect(chips.remotes).toEqual(["origin/feature"]);
+    expect(chips.remotes).toEqual([{ name: "origin/feature", remote: "origin", branch: "feature" }]);
     expect(chips.tags).toEqual(["v1.0.0"]);
     expect(chips.isHead).toBe(false);
   });
@@ -215,7 +215,16 @@ describe("groupRefChips", () => {
     expect(groupRefChips([])).toEqual({ isHead: false, heads: [], remotes: [], tags: [] });
     const chips = groupRefChips([d("RemoteBranch", "origin/gh-pages")]);
     expect(chips.heads).toEqual([]);
-    expect(chips.remotes).toEqual(["origin/gh-pages"]);
+    expect(chips.remotes).toEqual([
+      { name: "origin/gh-pages", remote: "origin", branch: "gh-pages" },
+    ]);
+  });
+
+  it("keeps remote/branch identity for tracking checkout, splitting slashed branch names (#432)", () => {
+    const chips = groupRefChips([d("RemoteBranch", "origin/feat/nested/thing")]);
+    expect(chips.remotes).toEqual([
+      { name: "origin/feat/nested/thing", remote: "origin", branch: "feat/nested/thing" },
+    ]);
   });
 });
 

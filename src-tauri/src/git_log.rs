@@ -1068,6 +1068,103 @@ mod tests {
     }
 
     #[test]
+    fn paging_by_real_commit_count_is_gap_free_with_woven_stash() {
+        // A stash woven into a page adds a synthetic row, so the frontend must
+        // page by the REAL commit count, not the returned row count. Paging by
+        // the row count (the #432 off-by-N bug) silently skips a real commit at
+        // every page boundary after a stash.
+        let (dir, mut repo) = init_repo();
+        let p = dir.path().to_path_buf();
+        let mut oids = Vec::new();
+        for i in 0..6 {
+            write(&p, "f.txt", &format!("v{i}"));
+            let parents: Vec<Oid> = oids.last().copied().into_iter().collect();
+            oids.push(commit(&repo, &format!("c{i}"), &parents));
+        }
+        // Stash on top of HEAD (base = c5, the tip → woven into page 1).
+        write(&p, "f.txt", "dirty");
+        let sig = git2::Signature::now("Test User", "test@example.com").unwrap();
+        repo.stash_save(&sig, "wip", None).unwrap();
+
+        fn stashes(repo: &mut Repository) -> Vec<(usize, String, Oid)> {
+            let mut s = Vec::new();
+            repo.stash_foreach(|idx, msg, oid| {
+                s.push((idx, msg.to_string(), *oid));
+                true
+            })
+            .unwrap();
+            s
+        }
+
+        let real = |page: &GitLogPage| -> Vec<String> {
+            page.commits
+                .iter()
+                .filter(|c| c.stash.is_none())
+                .map(|c| c.summary.clone())
+                .collect()
+        };
+
+        // Page 1: limit 3 → 3 real commits (c5,c4,c3) plus the woven stash row.
+        let s = stashes(&mut repo);
+        let page1 = build_log(
+            &repo,
+            &GitLogOptions {
+                skip: 0,
+                limit: Some(3),
+                ..Default::default()
+            },
+            s,
+            &no_cancel(),
+        )
+        .unwrap();
+        assert_eq!(real(&page1), vec!["c5", "c4", "c3"]);
+        assert!(
+            page1.commits.iter().any(|c| c.stash.is_some()),
+            "stash woven into page 1"
+        );
+        // Row count exceeds the real-commit count by exactly the stash row.
+        assert_eq!(page1.commits.len(), real(&page1).len() + 1);
+
+        // Correct: skip by the REAL commit count (3) → continues at c2, no gap.
+        let s = stashes(&mut repo);
+        let page2 = build_log(
+            &repo,
+            &GitLogOptions {
+                skip: real(&page1).len(),
+                limit: Some(3),
+                ..Default::default()
+            },
+            s,
+            &no_cancel(),
+        )
+        .unwrap();
+        assert_eq!(
+            real(&page2),
+            vec!["c2", "c1", "c0"],
+            "no commit skipped at the stash page boundary"
+        );
+
+        // The bug: skipping by the ROW count (4) drops c2.
+        let s = stashes(&mut repo);
+        let buggy = build_log(
+            &repo,
+            &GitLogOptions {
+                skip: page1.commits.len(),
+                limit: Some(3),
+                ..Default::default()
+            },
+            s,
+            &no_cancel(),
+        )
+        .unwrap();
+        assert_eq!(
+            real(&buggy),
+            vec!["c1", "c0"],
+            "row-count skip drops c2 (documents the off-by-N)"
+        );
+    }
+
+    #[test]
     fn skip_past_end_returns_empty() {
         let (_dir, repo, _oids) = linear_repo();
         let page = build_log(

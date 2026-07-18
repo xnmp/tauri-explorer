@@ -217,3 +217,31 @@ export async function gitDeleteRemoteBranch(
 ): Promise<void> {
   await invoke("git_delete_remote_branch", { repoPath, remote, name });
 }
+
+/** Checkout a remote-tracking branch (#432): creates a local branch tracking
+ *  `<remote>/<name>`, or plainly checks out an existing local `name`. */
+export async function gitCheckoutTracking(
+  repoPath: string,
+  remote: string,
+  name: string,
+): Promise<void> {
+  await invoke("git_checkout_tracking", { repoPath, remote, name });
+}
+
+/** Outcome of a local-branch sync (#432). */
+export interface SyncLocalBranchesResult {
+  /** Branches fast-forwarded to their upstream. */
+  fast_forwarded: string[];
+  /** Branches diverged (ahead AND behind) — left untouched, reported. */
+  diverged: string[];
+  /** Branches skipped for safety (dirty checked-out tree, refused ff). */
+  skipped: string[];
+}
+
+/** Fetch + fast-forward local branches strictly behind their upstream (#432).
+ *  Diverged branches are reported, never moved. */
+export async function gitSyncLocalBranches(
+  repoPath: string,
+): Promise<SyncLocalBranchesResult> {
+  return invoke<SyncLocalBranchesResult>("git_sync_local_branches", { repoPath });
+}

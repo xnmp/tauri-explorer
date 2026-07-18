@@ -83,6 +83,7 @@ export interface Settings {
   showScmPanel: boolean; // show SCM panel (independent of sidebar)
   enableTerminal: boolean; // feature flag: integrated terminal panel (Ctrl+`)
   enableGitGraph: boolean; // feature flag: git commit graph tab
+  f5SyncsLocalBranches: boolean; // graph F5 also fetches + fast-forwards local branches behind their upstream (#432)
   scmTreeView: boolean; // group SCM file rows by folder hierarchy
   quickOpenDebug: boolean; // show score breakdown in QuickOpen results
   integratedTitleBar: boolean; // macOS: render tabs in title bar with overlay traffic lights
@@ -150,6 +151,7 @@ const DEFAULT_SETTINGS: Settings = {
   showScmPanel: false,
   enableTerminal: true,
   enableGitGraph: true,
+  f5SyncsLocalBranches: false,
   scmTreeView: false,
   quickOpenDebug: false,
   integratedTitleBar: false,
@@ -380,6 +382,12 @@ function createSettingsStore() {
     toggleEnableGitGraph(): void {
       update({ enableGitGraph: !settings.enableGitGraph });
     },
+    get f5SyncsLocalBranches() {
+      return settings.f5SyncsLocalBranches;
+    },
+    toggleF5SyncsLocalBranches(): void {
+      update({ f5SyncsLocalBranches: !settings.f5SyncsLocalBranches });
+    },
     get showScmPanel() {
       return settings.showScmPanel;
     },
@@ -586,6 +594,7 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
     },
   },
   { key: "scmTreeView", id: "view.toggleScmTreeView", label: "Toggle SCM Tree View" },
+  { key: "f5SyncsLocalBranches", id: "view.toggleF5SyncsLocalBranches", label: "Toggle Git Graph F5 Syncs Local Branches" },
   { key: "confirmDelete", id: "view.toggleConfirmDelete", label: "Toggle Confirm on Delete" },
   { key: "quickOpenDebug", id: "view.toggleQuickOpenDebug", label: "Toggle Quick Open Debug Scores" },
   { key: "yaziNavigation", label: "Toggle Yazi Navigation" },

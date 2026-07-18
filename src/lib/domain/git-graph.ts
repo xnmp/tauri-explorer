@@ -375,11 +375,32 @@ export interface RefDecorationLike {
   name: string;
 }
 
+/** A remote-only branch chip that no local branch tracks. Identity is kept
+ *  (full name + split remote/branch) so the context menu can offer a tracking
+ *  checkout — `git checkout -b <branch> --track <remote>/<branch>` (#432). */
+export interface RemoteRefChip {
+  /** Full shorthand, e.g. `origin/feat/x`. */
+  name: string;
+  /** Remote name (first path segment), e.g. `origin`. */
+  remote: string;
+  /** Branch name (remainder), e.g. `feat/x` — may itself contain slashes. */
+  branch: string;
+}
+
 export interface RefChips {
   isHead: boolean;
   heads: { name: string; remotes: string[]; active: boolean }[];
-  remotes: string[];
+  remotes: RemoteRefChip[];
   tags: string[];
+}
+
+/** Split a remote shorthand (`origin/feat/x`) into remote + branch at the
+ *  first slash. A name with no slash keeps its whole value as both parts. */
+export function splitRemoteRef(name: string): RemoteRefChip {
+  const i = name.indexOf("/");
+  return i > 0
+    ? { name, remote: name.slice(0, i), branch: name.slice(i + 1) }
+    : { name, remote: name, branch: name };
 }
 
 /** Combined ref chips (reference behavior): each local branch groups the
@@ -403,7 +424,7 @@ export function groupRefChips(decorations: readonly RefDecorationLike[]): RefChi
   return {
     isHead,
     heads,
-    remotes: remoteNames.filter((rn) => !usedRemotes.has(rn)),
+    remotes: remoteNames.filter((rn) => !usedRemotes.has(rn)).map(splitRemoteRef),
     tags: decorations.filter((r) => r.kind === "Tag").map((r) => r.name),
   };
 }

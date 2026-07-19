@@ -18,7 +18,9 @@ __pycache__/
 
 # Playwright
 /playwright-report/
+/playwright-report-load/
 /test-results/
+/test-results-load/
 /test-corpus/
 .vagrant/
 test-screenshots/

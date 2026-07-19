@@ -730,7 +730,10 @@ mod tests {
                 "commits": { "nodes": [] }
             }"#,
         );
-        assert_eq!(pr.body.as_deref(), Some("This PR adds a feature.\nSecond line."));
+        assert_eq!(
+            pr.body.as_deref(),
+            Some("This PR adds a feature.\nSecond line.")
+        );
         assert_eq!(pr.comment_count, Some(2));
         assert_eq!(pr.comments.len(), 2);
         assert_eq!(pr.comments[0].author.as_deref(), Some("alice"));

@@ -1856,7 +1856,10 @@ mod tests {
             .args(["log", "-1", "--format=%s"])
             .output()
             .unwrap();
-        assert_eq!(String::from_utf8_lossy(&head_msg.stdout).trim(), "feat: land a.txt");
+        assert_eq!(
+            String::from_utf8_lossy(&head_msg.stdout).trim(),
+            "feat: land a.txt"
+        );
 
         // The index is empty afterwards (nothing left staged).
         let post = sync_status(dir.path());
@@ -1923,7 +1926,10 @@ mod tests {
             .args(["rev-parse", "HEAD"])
             .output()
             .unwrap();
-        assert_eq!(head_before.stdout, head_after.stdout, "HEAD must be unchanged");
+        assert_eq!(
+            head_before.stdout, head_after.stdout,
+            "HEAD must be unchanged"
+        );
     }
 
     #[test]

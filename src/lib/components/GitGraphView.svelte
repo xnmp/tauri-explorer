@@ -74,18 +74,29 @@
     type OpenPr,
   } from "$lib/api/git-log";
   import { fetchGitSummary } from "$lib/state/git-summary-cache";
-  import { assignLayout, branchPath, groupRefChips, indexPrsByBranch, sliceBranchLine, GRAPH_PALETTE, type GraphLayout, type BranchLine, type RefChips, type RemoteRefChip } from "$lib/domain/git-graph";
+  import { assignLayout, branchPath, groupRefChips, indexPrsByBranch, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, sliceBranchLine, GRAPH_PALETTE, type GraphLayout, type BranchLine, type RefChips, type RemoteRefChip } from "$lib/domain/git-graph";
   import { openExternalUrl } from "$lib/api/crash";
   import { registerGraphRefresher } from "$lib/state/git-graph-refresh";
   import { clientToFixed } from "$lib/domain/zoom";
   import { parseUnifiedDiff, type ParsedDiff } from "$lib/domain/diff";
   import { highlightDiffLine } from "$lib/domain/syntax-highlight";
-  import { gitStatusLetter, relativeTimeToday } from "$lib/domain/git";
+  import { compactRelativeTimeToday } from "$lib/domain/git";
   import { notifyLocalGitChange, subscribeGitChanges } from "$lib/state/git-refresh";
   import { gitWatchRepo, gitUnwatchRepo } from "$lib/api/git";
   import { directoryKey } from "$lib/domain/path";
   import { toastStore } from "$lib/state/toast.svelte";
-  import { gitDiff } from "$lib/api/files";
+  import { gitDiff, gitStage, gitUnstage, gitCommit } from "$lib/api/files";
+  import {
+    buildStageFiles,
+    groupStageFiles,
+    stagedCountOf,
+    conflictCountOf,
+    canCommit,
+    commitButtonLabel,
+    type StageSection,
+    type StageFile,
+  } from "$lib/domain/commit-panel";
+  import { getCommitPanelStore } from "$lib/state/commit-panel.svelte";
   import { untrack } from "svelte";
   import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte";
   import { loadPersisted, savePersisted } from "$lib/state/persisted";
@@ -125,12 +136,22 @@
   let loadingMore = $state(false);
   let error = $state<string | null>(null);
   let selected = $state<CommitInfo | null>(null);
-  /** File rows in the expanded details. `staged` is set only for the
-   *  synthetic uncommitted row, where it picks the right working-tree diff. */
+  /** File rows in the expanded details. `staged`/`section` are set only for
+   *  the synthetic uncommitted row, where they pick the right working-tree
+   *  diff and drive the stage/unstage affordances (#466). */
   interface DetailFile extends CommitFile {
     staged?: boolean;
+    section?: StageSection;
   }
   let selectedFiles = $state<DetailFile[]>([]);
+  /** Ephemeral commit-message editor for the uncommitted node (#466). The
+   *  state machine (transitions) lives in `domain/commit-panel`; the live
+   *  instance lives in a per-pane rune store so its in-flight commit guard
+   *  survives the panel closing and reopening (a second concurrent commit must
+   *  not be startable via Escape + reopen), and stays unit-testable (#444). */
+  const commitPanelStore = $derived(
+    getCommitPanelStore(paneId ?? windowTabsManager.activePaneId ?? "default"),
+  );
   /** Working-tree change count → synthetic top row (reference behavior). */
   let workingChanges = $state(0);
   let headOid = $state<string | null>(null);
@@ -187,15 +208,34 @@
   // rows below the expansion stay aligned with their vertices.
   let detailsHeight = $state(0);
 
+  // In-app PR details dropdown (#459): the second inline-expansion source
+  // alongside commit details. Anchored to a commit row's oid so it reuses the
+  // same RowExpand stretch. Only one expansion (commit OR PR) is open at a
+  // time, which keeps the RowExpand derivation single-valued.
+  let prDetail = $state<{ oid: string; pr: OpenPr } | null>(null);
+  let prDetailHeight = $state(0);
+
+  function closePrDetail(): void {
+    prDetail = null;
+    prDetailHeight = 0;
+  }
+
   function closeDetails(): void {
     selected = null;
     selectedFiles = [];
+    // Ephemeral editor: a fresh open starts blank (mirrors keifu's
+    // commit_editor) — but NOT while a commit is in flight, so close+reopen
+    // can't drop the in-flight guard and let a second commit start (#466).
+    commitPanelStore.resetIfIdle();
     openDiffPath = null;
     openDiff = null;
     detailsHeight = 0;
   }
 
   async function selectCommit(commit: CommitInfo): Promise<void> {
+    // Opening commit details closes any open PR dropdown — one expansion at a
+    // time (#459).
+    closePrDetail();
     if (selected?.oid === commit.oid) {
       closeDetails();
       return;
@@ -204,21 +244,15 @@
     selected = commit;
     try {
       if (commit.oid === UNCOMMITTED) {
-        // Working-tree changes: flatten the SCM summary buckets, remembering
-        // which side of the index each file sits on for the diff below. Served
-        // from the shared summary cache (#431) — the graph's own reload just
-        // scanned this, so selecting the row reuses it instead of re-scanning.
+        // Working-tree changes: group the SCM summary buckets by stage status
+        // (merge / staged / unstaged / untracked), remembering which side of
+        // the index each file sits on for the diff and the stage/unstage
+        // affordance (#466). Served from the shared summary cache (#431) — the
+        // graph's own reload just scanned this, so selecting the row reuses it
+        // instead of re-scanning.
         const res = await fetchGitSummary(repoPath);
         if (!res.ok) throw new Error(res.error);
-        const buckets: Array<[{ path: string; status: string }[], boolean]> = [
-          [res.data.staged, true],
-          [res.data.changes, false],
-          [res.data.merge, false],
-          [res.data.untracked, false],
-        ];
-        selectedFiles = buckets.flatMap(([files, staged]) =>
-          files.map((f) => ({ path: f.path, status: gitStatusLetter(f.status), staged })),
-        );
+        selectedFiles = buildStageFiles(res.data);
       } else {
         // Cached per OID (#431): re-clicking or re-selecting a commit is instant.
         selectedFiles = await cachedCommitFiles(repoPath, commit.oid);
@@ -278,6 +312,108 @@
       }
     } finally {
       diffLoading = false;
+    }
+  }
+
+  // ── Inline commit panel on the uncommitted node (#466) ─────────────────────
+  // Grouped file sections + commit-button enablement are pure derivations
+  // (domain/commit-panel). Stage/unstage/commit orchestrate the existing
+  // backend commands and route refresh through the standard policy — reload()
+  // for the graph, notifyLocalGitChange() for badges + an open SCM panel — so
+  // no private refresh stack lives here (the cause of #431/#432).
+  const stageGroups = $derived(groupStageFiles(selectedFiles as StageFile[]));
+  const uncommittedStagedCount = $derived(stagedCountOf(selectedFiles as StageFile[]));
+  const uncommittedConflictCount = $derived(conflictCountOf(selectedFiles as StageFile[]));
+  const commitEnabled = $derived(
+    canCommit({
+      message: commitPanelStore.message,
+      stagedCount: uncommittedStagedCount,
+      conflictCount: uncommittedConflictCount,
+    }),
+  );
+
+  /** Re-scan the working tree and rebuild the grouped file list in place
+   *  (after a stage/unstage/commit). Forces past the summary-cache TTL so the
+   *  post-mutation state is observed. */
+  async function refreshUncommittedFiles(): Promise<void> {
+    const res = await fetchGitSummary(repoPath, { force: true });
+    selectedFiles = res.ok ? buildStageFiles(res.data) : [];
+  }
+
+  /** After a stage/unstage: rebuild the panel's file list, then reload() so
+   *  the synthetic row's "Uncommitted Changes (N)" count is recomputed from
+   *  the canonical summary. A partially-staged file is double-counted in that
+   *  total (it sits in both `staged` and `changes`), so staging/unstaging it
+   *  flips the count by one — without this reload the header would go stale
+   *  until a watcher event (#466). Routes through the same refresh channels as
+   *  every other graph action; no private refresh machinery. */
+  async function afterStageChange(): Promise<void> {
+    await refreshUncommittedFiles();
+    await reload();
+    notifyLocalGitChange(repoPath);
+  }
+
+  async function stagePaths(paths: string[]): Promise<void> {
+    const unique = [...new Set(paths)];
+    if (unique.length === 0) return;
+    const r = await gitStage(repoPath, unique);
+    if (!r.ok) {
+      toastStore.error(r.error);
+      return;
+    }
+    await afterStageChange();
+  }
+
+  async function unstagePaths(paths: string[]): Promise<void> {
+    const unique = [...new Set(paths)];
+    if (unique.length === 0) return;
+    const r = await gitUnstage(repoPath, unique);
+    if (!r.ok) {
+      toastStore.error(r.error);
+      return;
+    }
+    await afterStageChange();
+  }
+
+  async function commitUncommitted(): Promise<void> {
+    if (!commitEnabled) return;
+    const message = commitPanelStore.message;
+    // Atomic in-flight guard: begin() returns false if a commit is already
+    // running for this pane, so Escape + reopen mid-flight can't start a second
+    // concurrent gitCommit (which, absent the backend guard, could be empty).
+    if (!commitPanelStore.begin()) return;
+    const r = await gitCommit(repoPath, message);
+    if (!r.ok) {
+      // Preserve the typed message so the user can fix and retry (#466).
+      commitPanelStore.fail(r.error);
+      toastStore.error(r.error);
+      return;
+    }
+    commitPanelStore.succeed();
+    toastStore.success("Changes committed");
+    // Standard refresh policy: reload the graph (new commit row + refreshed
+    // working-changes count), rebuild the still-open panel's file list, and
+    // announce the change so badges + an open SCM panel update (#102, #432).
+    await reload();
+    await refreshUncommittedFiles();
+    notifyLocalGitChange(repoPath);
+    if (scmStore.repoRoot && directoryKey(scmStore.repoRoot) === directoryKey(repoPath)) {
+      void scmStore.refresh();
+    }
+    // Working tree now clean → the synthetic row is gone; close the stale panel.
+    if (selectedFiles.length === 0) closeDetails();
+  }
+
+  function onCommitBoxKeydown(event: KeyboardEvent): void {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeDetails();
+      return;
+    }
+    // Ctrl/Cmd+Enter commits; plain Enter inserts a newline (multiline message).
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      event.preventDefault();
+      void commitUncommitted();
     }
   }
 
@@ -351,6 +487,16 @@
     savePersisted(DETAIL_META_KEY, showDetailMeta);
   }
 
+  // Merge commits (parents.length >= 2) are usually noise when skimming
+  // history, so their row text is dimmed by default (#458). Toggle lives in
+  // the header context menu; persisted like the other layout preferences.
+  const MUTE_MERGES_KEY = "git-graph-mute-merges";
+  let muteMerges = $state(loadPersisted<unknown>(MUTE_MERGES_KEY, true) !== false);
+  function toggleMuteMerges(): void {
+    muteMerges = !muteMerges;
+    savePersisted(MUTE_MERGES_KEY, muteMerges);
+  }
+
   function openColumnMenu(event: MouseEvent): void {
     event.preventDefault();
     columnMenu = { x: clientToFixed(event.clientX), y: clientToFixed(event.clientY) };
@@ -377,15 +523,21 @@
     document.body.style.cursor = "ew-resize";
     document.body.style.userSelect = "none";
   }
-  /** Row index of the expanded (selected) commit, or -1. */
+  /** Oid of the row with an open inline expansion — commit details OR the PR
+   *  dropdown (#459). Only one is ever open (each opener closes the other), so
+   *  this stays single-valued and the RowExpand math is unchanged. */
+  const expandedOid = $derived(selected?.oid ?? prDetail?.oid ?? null);
+  /** Row index of the expanded commit, or -1. */
   const expandedIndex = $derived(
-    selected ? displayCommits.findIndex((c) => c.oid === selected!.oid) : -1,
+    expandedOid ? displayCommits.findIndex((c) => c.oid === expandedOid) : -1,
   );
-  /** SVG stretch below the inline details block (see domain RowExpand). */
+  /** Height of whichever inline block is open (commit details or PR dropdown). */
+  const expandHeight = $derived(selected ? detailsHeight : prDetail ? prDetailHeight : 0);
+  /** SVG stretch below the inline block (see domain RowExpand). */
   const rowExpand = $derived(
-    expandedIndex >= 0 && detailsHeight > 0
+    expandedIndex >= 0 && expandHeight > 0
       ? // +6: the block's bottom gap (its margin-bottom is outside offsetHeight).
-        { afterRow: expandedIndex, extra: detailsHeight + 6 }
+        { afterRow: expandedIndex, extra: expandHeight + 6 }
       : undefined,
   );
   const graphHeight = $derived(
@@ -684,8 +836,10 @@
   function setBranchFilter(next: string[] | null): void {
     branchFilter = next;
     savePersisted(BRANCH_FILTER_KEY, branchFilter);
-    // The selected commit may not exist in the new subset.
+    // The selected commit (or the PR dropdown's anchor row) may not exist in
+    // the new subset.
     closeDetails();
+    closePrDetail();
   }
 
   function isBranchShown(name: string): boolean {
@@ -744,7 +898,7 @@
     // Today's commits read as an age ("5 minutes ago", #389); older ones
     // keep the date. Recomputed on graph reloads (the repo watcher makes
     // those frequent), so the wording stays fresh enough without a timer.
-    return relativeTimeToday(unixSeconds, Date.now()) ?? dateFormatter.format(new Date(unixSeconds * 1000));
+    return compactRelativeTimeToday(unixSeconds, Date.now()) ?? dateFormatter.format(new Date(unixSeconds * 1000));
   }
 
   function colorOf(index: number): string {
@@ -793,10 +947,29 @@
     return prsByBranch.get(chip.branch);
   }
 
-  /** Open a PR's page in the default browser; called from a chip inside a
-   *  clickable commit row, so the click must not also select the row. */
-  function openPr(event: MouseEvent, pr: OpenPr): void {
+  /** Toggle the in-app PR details dropdown for `pr`, anchored under `commit`'s
+   *  row (#459). Called from a badge inside a clickable commit row, so the
+   *  click must not also select the row. Clicking the same badge again closes
+   *  it; opening it closes any open commit details (one expansion at a time). */
+  function togglePrDetail(event: MouseEvent, commit: CommitInfo, pr: OpenPr): void {
     event.stopPropagation();
+    if (prDetail?.oid === commit.oid && prDetail.pr.number === pr.number) {
+      closePrDetail();
+      return;
+    }
+    closeDetails();
+    prDetailHeight = 0;
+    prDetail = { oid: commit.oid, pr };
+  }
+
+  /** Whether `pr` under `commit` is the currently open dropdown. */
+  function isPrDetailOpen(commit: CommitInfo, pr: OpenPr): boolean {
+    return prDetail?.oid === commit.oid && prDetail.pr.number === pr.number;
+  }
+
+  /** Open a PR's page in the default browser (host-pinned to github.com);
+   *  the dropdown's "Open on GitHub" action. */
+  function openPrExternal(pr: OpenPr): void {
     void openExternalUrl(pr.htmlUrl);
   }
 
@@ -1124,6 +1297,10 @@
       columnMenu = null;
       return;
     }
+    if (event.key === "Escape" && prDetail) {
+      closePrDetail();
+      return;
+    }
     if (event.key === "Escape" && (menu || prompt)) closeMenu();
   }
 </script>
@@ -1309,6 +1486,17 @@
           <span class="col-check">{showDetailMeta ? "✓" : ""}</span>
           Details metadata
         </button>
+        <!-- Dim merge-commit rows to cut history noise (#458). -->
+        <button
+          class="menu-item"
+          role="menuitemcheckbox"
+          aria-checked={muteMerges}
+          onclick={toggleMuteMerges}
+          data-testid="toggle-mute-merges"
+        >
+          <span class="col-check">{muteMerges ? "✓" : ""}</span>
+          Mute merge commits
+        </button>
       </div>
     {/if}
     {#if commits.length === 0 && loading}
@@ -1374,6 +1562,29 @@
         </svg>
         </div>
 
+        <!-- PR badge (#448/#459): CI-colored, glyph-decorated, and a toggle for
+             the in-app details dropdown. Shared by both the local-branch and
+             remote-only chip render sites. -->
+        {#snippet prBadge(commit: CommitInfo, pr: OpenPr)}
+          {@const p = prBadgePresentation(pr)}
+          <button
+            type="button"
+            class="ref ref-pr"
+            class:draft={pr.draft}
+            class:ci-success={p.ciClass === "ci-success"}
+            class:ci-failure={p.ciClass === "ci-failure"}
+            class:ci-pending={p.ciClass === "ci-pending"}
+            class:open={isPrDetailOpen(commit, pr)}
+            title={pr.title}
+            aria-expanded={isPrDetailOpen(commit, pr)}
+            onclick={(e) => togglePrDetail(e, commit, pr)}
+          >
+            ⇄ #{pr.number}
+            {#if p.reviewGlyph}<span class="pr-review" aria-hidden="true">{p.reviewGlyph}</span>{/if}
+            {#if p.commentCount !== null}<span class="pr-comments" title="{p.commentCount} comments">🗨 {p.commentCount}</span>{/if}
+          </button>
+        {/snippet}
+
         {#each visibleRows as { commit, index } (commit.oid)}
           {@const chips = chipsFor(commit.oid)}
           {@const synthetic = commit.oid === UNCOMMITTED}
@@ -1381,6 +1592,7 @@
             class="commit-row"
             class:selected={selected?.oid === commit.oid}
             class:is-head={chips.isHead}
+            class:is-merge={muteMerges && !synthetic && commit.parents.length >= 2}
             class:uncommitted={synthetic}
             style:padding-left="{effectiveGraphWidth + 20}px"
             style:top="{rowY(index)}px"
@@ -1416,16 +1628,7 @@
                   {/each}
                 </span>
                 {#if prForHead(head.name)}
-                  {@const pr = prForHead(head.name)!}
-                  <button
-                    type="button"
-                    class="ref ref-pr"
-                    class:draft={pr.draft}
-                    title={pr.title}
-                    onclick={(e) => openPr(e, pr)}
-                  >
-                    ⇄ #{pr.number}
-                  </button>
+                  {@render prBadge(commit, prForHead(head.name)!)}
                 {/if}
               {/each}
               {#each chips.remotes as remote (remote.name)}
@@ -1440,16 +1643,7 @@
                   </svg>{remote.name}
                 </span>
                 {#if prForRemote(remote) && !rowPrNumbers.has(prForRemote(remote)!.number)}
-                  {@const pr = prForRemote(remote)!}
-                  <button
-                    type="button"
-                    class="ref ref-pr"
-                    class:draft={pr.draft}
-                    title={pr.title}
-                    onclick={(e) => openPr(e, pr)}
-                  >
-                    ⇄ #{pr.number}
-                  </button>
+                  {@render prBadge(commit, prForRemote(remote)!)}
                 {/if}
               {/each}
               {#each chips.tags as tag (tag)}
@@ -1487,28 +1681,51 @@
                       <div class="meta-line"><span class="meta-label">Author:</span> {commit.author_name} &lt;{commit.author_email}&gt;</div>
                       <div class="meta-line"><span class="meta-label">Date:</span> {formatDate(commit.author_time)}</div>
                     {/if}
-                    <p class="detail-message">{commit.summary}</p>
+                    <p class="detail-message">{commit.summary.trimStart()}</p>
                   </div>
                 {:else}
-                  <div class="detail-meta-col">
-                    <p class="detail-message">{commit.summary}</p>
+                  <!-- Uncommitted node (#466): the message area becomes an
+                       editable commit box; its state machine lives in
+                       domain/commit-panel. Ctrl+Enter commits, Esc closes. -->
+                  <div class="detail-meta-col commit-box" data-testid="git-graph-commit-box">
+                    <textarea
+                      class="commit-box-input"
+                      data-testid="git-graph-commit-message"
+                      rows="2"
+                      placeholder="Message (Ctrl+Enter to commit)"
+                      aria-label="Commit message"
+                      value={commitPanelStore.message}
+                      oninput={(e) => commitPanelStore.setMessage(e.currentTarget.value)}
+                      onkeydown={onCommitBoxKeydown}
+                    ></textarea>
+                    {#if commitPanelStore.error}
+                      <div class="commit-box-error" role="alert">{commitPanelStore.error}</div>
+                    {/if}
+                    <div class="commit-box-actions">
+                      <button
+                        type="button"
+                        class="commit-box-btn"
+                        data-testid="git-graph-commit-btn"
+                        disabled={!commitEnabled || commitPanelStore.committing}
+                        title="Commit staged changes (Ctrl+Enter)"
+                        onclick={() => void commitUncommitted()}
+                      >
+                        {commitButtonLabel(uncommittedStagedCount)}
+                      </button>
+                    </div>
                   </div>
                 {/if}
                 <div class="detail-files-col">
-              <ul class="detail-files">
-                {#each selectedFiles as file (file.path + (file.staged ? ":s" : ""))}
-                  <li>
-                    <button
-                      type="button"
-                      class="detail-file"
-                      class:open={openDiffPath === file.path}
-                      onclick={() => void toggleFileDiff(file)}
-                      title="Show diff"
-                    >
-                      <span class="file-status s-{file.status}">{file.status}</span>
-                      <span class="file-path">{file.path}</span>
-                      {#if file.staged}<span class="file-staged-badge">staged</span>{/if}
-                    </button>
+                  {#snippet stageActionIcon(kind: "stage" | "unstage")}
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      {#if kind === "stage"}
+                        <path d="M8 3.5v9M3.5 8h9" />
+                      {:else}
+                        <path d="M3.5 8h9" />
+                      {/if}
+                    </svg>
+                  {/snippet}
+                  {#snippet fileDiff(file: DetailFile)}
                     {#if openDiffPath === file.path}
                       <div class="file-diff" data-testid="git-graph-file-diff">
                         {#if diffLoading}
@@ -1538,12 +1755,151 @@
                         {/if}
                       </div>
                     {/if}
-                  </li>
-                {:else}
-                  <li class="file-empty">No file changes (or still loading…)</li>
-                {/each}
-              </ul>
+                  {/snippet}
+                  {#if synthetic}
+                    {#if selectedFiles.length === 0}
+                      <p class="file-empty">Working tree clean</p>
+                    {:else}
+                      {#each stageGroups as group (group.section)}
+                        <div class="stage-group" data-section={group.section}>
+                          <div class="stage-group-head">
+                            <span class="stage-group-label">{group.label}</span>
+                            <span class="stage-group-count">{group.files.length}</span>
+                            {#if group.section === "staged"}
+                              <button
+                                type="button"
+                                class="stage-all-btn"
+                                title="Unstage all"
+                                onclick={() => void unstagePaths(group.files.map((f) => f.path))}
+                              >Unstage all</button>
+                            {:else}
+                              <button
+                                type="button"
+                                class="stage-all-btn"
+                                title="Stage all"
+                                onclick={() => void stagePaths(group.files.map((f) => f.path))}
+                              >Stage all</button>
+                            {/if}
+                          </div>
+                          <ul class="detail-files">
+                            {#each group.files as file (group.section + ":" + file.path)}
+                              <li>
+                                <div class="detail-file-row">
+                                  <button
+                                    type="button"
+                                    class="detail-file"
+                                    class:open={openDiffPath === file.path}
+                                    onclick={() => void toggleFileDiff(file)}
+                                    title="Show diff"
+                                  >
+                                    <span class="file-status s-{file.status}">{file.status}</span>
+                                    <span class="file-path">{file.path}</span>
+                                  </button>
+                                  {#if group.section === "staged"}
+                                    <button
+                                      type="button"
+                                      class="stage-btn"
+                                      title="Unstage {file.path}"
+                                      aria-label="Unstage {file.path}"
+                                      onclick={() => void unstagePaths([file.path])}
+                                    >{@render stageActionIcon("unstage")}</button>
+                                  {:else}
+                                    <button
+                                      type="button"
+                                      class="stage-btn"
+                                      title="Stage {file.path}"
+                                      aria-label="Stage {file.path}"
+                                      onclick={() => void stagePaths([file.path])}
+                                    >{@render stageActionIcon("stage")}</button>
+                                  {/if}
+                                </div>
+                                {@render fileDiff(file)}
+                              </li>
+                            {/each}
+                          </ul>
+                        </div>
+                      {/each}
+                    {/if}
+                  {:else}
+                    <ul class="detail-files">
+                      {#each selectedFiles as file (file.path + (file.staged ? ":s" : ""))}
+                        <li>
+                          <button
+                            type="button"
+                            class="detail-file"
+                            class:open={openDiffPath === file.path}
+                            onclick={() => void toggleFileDiff(file)}
+                            title="Show diff"
+                          >
+                            <span class="file-status s-{file.status}">{file.status}</span>
+                            <span class="file-path">{file.path}</span>
+                          </button>
+                          {@render fileDiff(file)}
+                        </li>
+                      {:else}
+                        <li class="file-empty">No file changes (or still loading…)</li>
+                      {/each}
+                    </ul>
+                  {/if}
                 </div>
+              </div>
+            </div>
+          {/if}
+          {#if prDetail?.oid === commit.oid}
+            <!-- In-app PR details dropdown (#459): the second inline-expansion
+                 source. Reuses the RowExpand stretch (prDetailHeight) so lower
+                 rows stay aligned, exactly like the commit-details block. -->
+            {@const pr = prDetail.pr}
+            {@const ciLine = ciStatusLabel(pr.ciStatus)}
+            {@const reviewLine = reviewDecisionLabel(pr.reviewDecision)}
+            {@const description = prDescription(pr.body)}
+            {@const comments = prDetailComments(pr.comments, Date.now())}
+            <div
+              class="commit-detail-inline pr-detail-inline"
+              data-testid="git-graph-pr-detail"
+              bind:offsetHeight={prDetailHeight}
+              style:margin-left="{effectiveGraphWidth + 12}px"
+              style:top="{rowY(index) + ROW_HEIGHT}px"
+            >
+              <button class="detail-close" onclick={closePrDetail} aria-label="Close PR details">✕</button>
+              <div class="pr-detail-body">
+                <div class="pr-detail-head">
+                  <span class="pr-detail-number">#{pr.number}</span>
+                  <span class="pr-detail-title">{pr.title}</span>
+                  {#if pr.draft}<span class="pr-detail-chip draft">Draft</span>{/if}
+                  <button type="button" class="pr-detail-open" onclick={() => openPrExternal(pr)}>
+                    Open on GitHub ↗
+                  </button>
+                </div>
+                {#if description}
+                  <p class="pr-detail-description" data-testid="git-graph-pr-detail-body">{description}</p>
+                {/if}
+                {#if ciLine}
+                  <div class="pr-detail-line">
+                    <span class="pr-detail-label">CI:</span>
+                    <span class="pr-detail-ci ci-{pr.ciStatus}">{ciLine}</span>
+                  </div>
+                {/if}
+                {#if reviewLine}
+                  <div class="pr-detail-line"><span class="pr-detail-label">Review:</span> {reviewLine}</div>
+                {/if}
+                {#if comments.length > 0}
+                  <ul class="pr-detail-comments" data-testid="git-graph-pr-detail-comments">
+                    {#each comments as comment}
+                      <li class="pr-detail-comment">
+                        <div class="pr-detail-comment-meta">
+                          <span class="pr-detail-comment-author">{comment.author}</span>
+                          {#if comment.time}<span class="pr-detail-comment-time">{comment.time}</span>{/if}
+                        </div>
+                        <div class="pr-detail-comment-body">{comment.body}</div>
+                      </li>
+                    {/each}
+                  </ul>
+                {:else if pr.commentCount != null && pr.commentCount > 0}
+                  <div class="pr-detail-line">
+                    <span class="pr-detail-label">Comments:</span> {pr.commentCount}
+                  </div>
+                {/if}
               </div>
             </div>
           {/if}
@@ -1773,7 +2129,7 @@
     align-items: center;
     justify-content: center;
     color: var(--text-tertiary);
-    font-size: 13px;
+    font-size: var(--font-size-body);
   }
 
   .graph-status.error {
@@ -1791,7 +2147,7 @@
     gap: 8px;
     height: 28px;
     padding: 0 14px 0 10px;
-    font-size: 12px;
+    font-size: var(--font-size-body);
     overflow: hidden;
   }
 
@@ -1815,6 +2171,16 @@
     background: color-mix(in srgb, var(--accent) 14%, transparent);
   }
 
+  /* Merge commits are muted (#458): dim only the text spans so the graph
+     vertex and lanes (a separate SVG) stay at full strength. Opacity keeps
+     this theme-agnostic. */
+  .commit-row.is-merge .summary,
+  .commit-row.is-merge .author,
+  .commit-row.is-merge .date,
+  .commit-row.is-merge .oid {
+    opacity: 0.5;
+  }
+
   /* Inline details block, expanded directly below the selected row (#221).
      Margin-left (set inline) clears the graph lanes; opaque card so lanes
      never show through (#227, VSCode layout). */
@@ -1827,7 +2193,7 @@
     margin-right: 12px;
     margin-bottom: 6px;
     padding: 10px 14px;
-    font-size: 12px;
+    font-size: var(--font-size-body);
     background: var(--background-solid);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
   }
@@ -1865,6 +2231,11 @@
     color: var(--text-tertiary);
   }
 
+  /* white-space: pre-wrap renders a leading "\n" as a blank line — the
+     backend already trims commit.summary at its producers (#464), but
+     .trimStart() at the call site is a cheap belt-and-braces guard for any
+     value that reaches here without going through them (e.g. optimistic
+     UI updates). */
   .detail-message {
     margin: 8px 0 0;
     color: var(--text-primary);
@@ -1885,7 +2256,7 @@
     border: none;
     color: var(--text-tertiary);
     cursor: pointer;
-    font-size: 11px;
+    font-size: var(--font-size-caption);
   }
 
     .detail-files {
@@ -1923,13 +2294,126 @@
     background: var(--subtle-fill-secondary);
   }
 
-  .file-staged-badge {
-    margin-left: auto;
-    font-size: 10px;
+  /* Inline commit panel on the uncommitted node (#466). */
+  .commit-box {
+    gap: 6px;
+  }
+
+  .commit-box-input {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    min-height: 44px;
+    padding: 6px 8px;
+    font-family: inherit;
+    font-size: var(--font-size-body);
+    color: var(--text-primary);
+    background: var(--background-solid);
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-sm);
+  }
+
+  .commit-box-input:focus {
+    outline: none;
+    border-color: var(--accent, #3b82f6);
+  }
+
+  .commit-box-error {
+    font-size: var(--font-size-caption);
+    color: #ef4444;
+  }
+
+  .commit-box-actions {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .commit-box-btn {
+    padding: 4px 12px;
+    font: inherit;
+    font-size: var(--font-size-body);
+    color: #fff;
+    background: var(--accent, #3b82f6);
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+
+  .commit-box-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .stage-group {
+    margin-bottom: 8px;
+  }
+
+  .stage-group-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
     color: var(--text-tertiary);
+    font-size: var(--font-size-caption);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .stage-group-count {
+    color: var(--text-tertiary);
+  }
+
+  .stage-all-btn {
+    margin-left: auto;
+    padding: 0 6px;
+    font: inherit;
+    font-size: var(--font-size-caption);
+    color: var(--text-secondary);
+    background: none;
     border: 1px solid var(--divider);
     border-radius: 3px;
-    padding: 0 4px;
+    cursor: pointer;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+
+  .stage-all-btn:hover {
+    background: var(--subtle-fill-secondary);
+  }
+
+  .detail-file-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .detail-file-row .detail-file {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .stage-btn {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    color: var(--text-tertiary);
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    opacity: 0;
+  }
+
+  .detail-file-row:hover .stage-btn,
+  .stage-btn:focus-visible {
+    opacity: 1;
+  }
+
+  .stage-btn:hover {
+    color: var(--text-primary);
+    background: var(--subtle-fill-secondary);
   }
 
   /* Per-file inline diff. */
@@ -1949,7 +2433,7 @@
 
   .diff-lines {
     font-family: var(--font-mono, monospace);
-    font-size: 11px;
+    font-size: var(--font-size-caption);
     line-height: 1.5;
   }
 
@@ -2017,7 +2501,7 @@
     flex-shrink: 0;
     padding: 0 14px 0 10px; /* left is overridden inline to clear the lanes */
     border-bottom: 1px solid var(--divider);
-    font-size: 11px;
+    font-size: var(--font-size-caption);
     font-weight: 600;
     color: var(--text-tertiary);
     user-select: none;
@@ -2107,7 +2591,7 @@
   }
 
   .bf-count {
-    font-size: 10px;
+    font-size: var(--font-size-caption);
     font-weight: 700;
   }
 
@@ -2135,13 +2619,13 @@
     border-radius: var(--radius-sm);
     background: var(--background-card);
     color: var(--text-primary);
-    font-size: 12px;
+    font-size: var(--font-size-body);
   }
 
   /* Section headings inside the filter popover (#412). */
   .bf-heading {
     padding: 6px 6px 2px;
-    font-size: 10px;
+    font-size: var(--font-size-caption);
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--text-tertiary);
@@ -2159,7 +2643,7 @@
     width: 100%;
     padding: 3px 6px;
     border-radius: var(--radius-sm);
-    font-size: 12px;
+    font-size: var(--font-size-body);
     color: var(--text-primary);
     cursor: pointer;
   }
@@ -2182,7 +2666,7 @@
   }
 
   .bf-remote {
-    font-size: 10px;
+    font-size: var(--font-size-caption);
     color: var(--text-tertiary);
     border: 1px solid var(--divider);
     border-radius: 3px;
@@ -2193,7 +2677,7 @@
     visibility: hidden;
     background: none;
     border: none;
-    font-size: 10px;
+    font-size: var(--font-size-caption);
     color: var(--accent);
     cursor: pointer;
     padding: 0 2px;
@@ -2206,7 +2690,7 @@
   .bf-empty {
     padding: 6px 8px;
     color: var(--text-tertiary);
-    font-size: 12px;
+    font-size: var(--font-size-body);
   }
 
   .graph-scroller {
@@ -2239,7 +2723,7 @@
     justify-content: center;
     gap: 8px;
     height: 28px;
-    font-size: 12px;
+    font-size: var(--font-size-body);
     color: var(--text-secondary);
   }
 
@@ -2289,7 +2773,7 @@
     border-radius: 6px;
     background: color-mix(in srgb, #3b82f6 18%, transparent);
     color: #3b82f6;
-    font-size: 9px;
+    font-size: var(--font-size-caption);
   }
 
   .ref-stash {
@@ -2315,7 +2799,7 @@
     flex-shrink: 0;
     padding: 1px 6px;
     border-radius: 8px;
-    font-size: 10px;
+    font-size: var(--font-size-caption);
     font-weight: 600;
     line-height: 1.5;
     border: 1px solid transparent;
@@ -2380,6 +2864,166 @@
     background: color-mix(in srgb, #8b949e 25%, transparent);
   }
 
+  /* CI-status badge colors (#459): the badge text/tint reflects the head
+     commit's check rollup. Draft styling (grey) always wins — a draft never
+     gets a ci-* class (see prBadgePresentation). Colors come from the theme's
+     system tokens so every theme stays coherent. */
+  .ref-pr.ci-success {
+    color: var(--system-success);
+    background: color-mix(in srgb, var(--system-success) 14%, transparent);
+    border-color: color-mix(in srgb, var(--system-success) 32%, transparent);
+  }
+  .ref-pr.ci-success:hover {
+    background: color-mix(in srgb, var(--system-success) 24%, transparent);
+  }
+  .ref-pr.ci-failure {
+    color: var(--system-critical);
+    background: color-mix(in srgb, var(--system-critical) 14%, transparent);
+    border-color: color-mix(in srgb, var(--system-critical) 32%, transparent);
+  }
+  .ref-pr.ci-failure:hover {
+    background: color-mix(in srgb, var(--system-critical) 24%, transparent);
+  }
+  .ref-pr.ci-pending {
+    color: var(--system-caution);
+    background: color-mix(in srgb, var(--system-caution) 14%, transparent);
+    border-color: color-mix(in srgb, var(--system-caution) 32%, transparent);
+  }
+  .ref-pr.ci-pending:hover {
+    background: color-mix(in srgb, var(--system-caution) 24%, transparent);
+  }
+
+  /* Open dropdown: a subtle ring so the toggled badge reads as active. */
+  .ref-pr.open {
+    outline: 1px solid currentColor;
+    outline-offset: 1px;
+  }
+
+  /* Review / comment glyphs appended inside the badge — inherit the badge's
+     CI color (currentColor) so the whole chip stays one visual unit. */
+  .pr-review,
+  .pr-comments {
+    margin-left: 3px;
+    font-weight: 700;
+  }
+
+  /* ----- In-app PR details dropdown (#459) ----- */
+  .pr-detail-body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: var(--font-size-body);
+    padding-right: 20px; /* clear the close button */
+  }
+  .pr-detail-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .pr-detail-number {
+    font-weight: 700;
+    color: #a371f7;
+  }
+  .pr-detail-title {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .pr-detail-chip {
+    font-size: var(--font-size-caption);
+    font-weight: 600;
+    padding: 0 5px;
+    border-radius: 6px;
+    line-height: 1.5;
+  }
+  .pr-detail-chip.draft {
+    color: #8b949e;
+    background: color-mix(in srgb, #8b949e 15%, transparent);
+    border: 1px solid color-mix(in srgb, #8b949e 30%, transparent);
+  }
+  .pr-detail-line {
+    color: var(--text-secondary);
+  }
+  .pr-detail-label {
+    color: var(--text-tertiary);
+    margin-right: 2px;
+  }
+  .pr-detail-ci.ci-success {
+    color: var(--system-success);
+    font-weight: 600;
+  }
+  .pr-detail-ci.ci-failure {
+    color: var(--system-critical);
+    font-weight: 600;
+  }
+  .pr-detail-ci.ci-pending {
+    color: var(--system-caution);
+    font-weight: 600;
+  }
+  .pr-detail-open {
+    /* Pushed to the right of the title on the head row (#468). */
+    margin-left: auto;
+    flex-shrink: 0;
+    font: inherit;
+    font-size: var(--font-size-caption);
+    font-weight: 600;
+    cursor: pointer;
+    color: #a371f7;
+    background: color-mix(in srgb, #a371f7 12%, transparent);
+    border: 1px solid color-mix(in srgb, #a371f7 30%, transparent);
+    border-radius: 6px;
+    padding: 3px 10px;
+  }
+  .pr-detail-open:hover {
+    background: color-mix(in srgb, #a371f7 22%, transparent);
+  }
+
+  /* ----- PR description + comments (#468) ----- */
+  .pr-detail-description {
+    margin: 2px 0;
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    /* Long descriptions scroll rather than pushing the row expansion huge. */
+    max-height: 140px;
+    overflow-y: auto;
+    line-height: 1.4;
+  }
+  .pr-detail-comments {
+    list-style: none;
+    margin: 2px 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 220px;
+    overflow-y: auto;
+  }
+  .pr-detail-comment {
+    border-left: 2px solid color-mix(in srgb, #a371f7 40%, transparent);
+    padding-left: 8px;
+  }
+  .pr-detail-comment-meta {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-bottom: 2px;
+  }
+  .pr-detail-comment-author {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .pr-detail-comment-time {
+    color: var(--text-tertiary);
+    font-size: var(--font-size-caption);
+  }
+  .pr-detail-comment-body {
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    line-height: 1.4;
+  }
+
   .summary {
     flex: 1;
     min-width: 0;
@@ -2430,7 +3074,7 @@
     border: 1px solid var(--divider);
     border-radius: 8px;
     box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
-    font-size: 12px;
+    font-size: var(--font-size-body);
     display: flex;
     flex-direction: column;
   }
@@ -2445,7 +3089,7 @@
     border: none;
     border-radius: 5px;
     color: var(--text-primary);
-    font-size: 12px;
+    font-size: var(--font-size-body);
     text-align: left;
     cursor: pointer;
     white-space: nowrap;
@@ -2494,7 +3138,7 @@
   }
 
   .mo-desc {
-    font-size: 11px;
+    font-size: var(--font-size-caption);
     color: var(--text-tertiary);
   }
 
@@ -2519,7 +3163,7 @@
   }
 
   .prompt-label {
-    font-size: 12px;
+    font-size: var(--font-size-body);
     color: var(--text-secondary);
   }
 
@@ -2530,7 +3174,7 @@
     border: 1px solid var(--divider);
     border-radius: 6px;
     color: var(--text-primary);
-    font-size: 13px;
+    font-size: var(--font-size-body);
     font-family: var(--font-mono, monospace);
   }
 
@@ -2552,7 +3196,7 @@
     border: 1px solid var(--divider);
     border-radius: 6px;
     color: var(--text-primary);
-    font-size: 12px;
+    font-size: var(--font-size-body);
     cursor: pointer;
   }
 

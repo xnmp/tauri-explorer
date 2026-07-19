@@ -1276,6 +1276,25 @@ pub async fn git_commit(
             None => None,
         };
 
+        // Nothing-staged guard (#466): committing an index identical to HEAD's
+        // tree (or an empty tree on an unborn branch) would fabricate a
+        // spurious empty commit. git itself refuses this without --allow-empty,
+        // and the mock backend already throws "nothing to commit"; a real
+        // commit must reject it too rather than silently advancing HEAD. Amend
+        // is exempt — amending with nothing newly staged (message-only, or
+        // --no-edit) is a legitimate operation.
+        if !opts.amend {
+            let nothing_staged = match parent_commit.as_ref() {
+                Some(parent) => tree_oid == parent.tree_id(),
+                None => tree.is_empty(),
+            };
+            if nothing_staged {
+                return Err(AppError::Other(
+                    "nothing to commit — stage some changes first".into(),
+                ));
+            }
+        }
+
         let oid = if opts.amend {
             let parent = parent_commit.ok_or_else(|| AppError::Other("nothing to amend".into()))?;
             let msg = if message.trim().is_empty() {
@@ -1808,6 +1827,122 @@ mod tests {
         assert_eq!(s.staged.len(), 1);
         assert_eq!(s.staged[0].path, "a.txt");
         assert!(s.changes.is_empty());
+    }
+
+    /// End-to-end of the flow the git-graph inline commit panel drives (#466):
+    /// stage a working-tree change through the async command, commit it with a
+    /// message, and assert HEAD advanced with that message while the index
+    /// emptied — then that unstaging a re-modified file returns it to `changes`.
+    #[test]
+    fn stage_commit_advances_head_and_empties_index() {
+        let dir = init_repo();
+        write(dir.path(), "a.txt", "v1\n");
+        commit_all(dir.path(), "init");
+        write(dir.path(), "a.txt", "v2\n");
+        let path = dir.path().to_str().unwrap().to_string();
+
+        // Stage, then commit with a message.
+        tokio_test_block(git_stage(path.clone(), vec!["a.txt".into()])).unwrap();
+        let pre = sync_status(dir.path());
+        assert_eq!(pre.staged.len(), 1, "file should be staged before commit");
+
+        let res =
+            tokio_test_block(git_commit(path.clone(), "feat: land a.txt".into(), None)).unwrap();
+        assert!(!res.commit_id.is_empty());
+
+        // HEAD advanced to a commit carrying the message.
+        let head_msg = Command::new("git")
+            .current_dir(dir.path())
+            .args(["log", "-1", "--format=%s"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&head_msg.stdout).trim(),
+            "feat: land a.txt"
+        );
+
+        // The index is empty afterwards (nothing left staged).
+        let post = sync_status(dir.path());
+        assert!(post.staged.is_empty(), "index should be empty after commit");
+        assert!(post.changes.is_empty() && post.untracked.is_empty());
+    }
+
+    #[test]
+    fn unstage_returns_file_to_changes() {
+        let dir = init_repo();
+        write(dir.path(), "a.txt", "v1\n");
+        commit_all(dir.path(), "init");
+        write(dir.path(), "a.txt", "v2\n");
+        let path = dir.path().to_str().unwrap().to_string();
+
+        tokio_test_block(git_stage(path.clone(), vec!["a.txt".into()])).unwrap();
+        assert_eq!(sync_status(dir.path()).staged.len(), 1);
+
+        tokio_test_block(git_unstage(path.clone(), vec!["a.txt".into()])).unwrap();
+        let s = sync_status(dir.path());
+        assert!(s.staged.is_empty(), "unstaged file must leave the index");
+        assert_eq!(s.changes.len(), 1, "and reappear as a working-tree change");
+        assert_eq!(s.changes[0].path, "a.txt");
+    }
+
+    #[test]
+    fn commit_with_empty_message_is_rejected() {
+        let dir = init_repo();
+        write(dir.path(), "a.txt", "v1\n");
+        commit_all(dir.path(), "init");
+        write(dir.path(), "a.txt", "v2\n");
+        let path = dir.path().to_str().unwrap().to_string();
+        tokio_test_block(git_stage(path.clone(), vec!["a.txt".into()])).unwrap();
+
+        let err = tokio_test_block(git_commit(path, "   ".into(), None));
+        assert!(
+            matches!(err, Err(AppError::Other(m)) if m.contains("empty")),
+            "whitespace-only message must be rejected",
+        );
+    }
+
+    #[test]
+    fn commit_with_nothing_staged_is_rejected_and_head_unchanged() {
+        let dir = init_repo();
+        write(dir.path(), "a.txt", "v1\n");
+        commit_all(dir.path(), "init");
+        // Working tree is clean: nothing is staged relative to HEAD.
+        let head_before = Command::new("git")
+            .current_dir(dir.path())
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        let path = dir.path().to_str().unwrap().to_string();
+
+        let err = tokio_test_block(git_commit(path, "spurious empty commit".into(), None));
+        assert!(
+            matches!(err, Err(AppError::Other(ref m)) if m.contains("nothing to commit")),
+            "an empty index must be rejected, got {err:?}",
+        );
+
+        // HEAD must not have advanced (no empty commit was created).
+        let head_after = Command::new("git")
+            .current_dir(dir.path())
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            head_before.stdout, head_after.stdout,
+            "HEAD must be unchanged"
+        );
+    }
+
+    #[test]
+    fn commit_on_unborn_branch_with_empty_index_is_rejected() {
+        // Fresh repo, no commits, nothing staged: the initial commit would be
+        // an empty tree — also rejected.
+        let dir = init_repo();
+        let path = dir.path().to_str().unwrap().to_string();
+        let err = tokio_test_block(git_commit(path, "empty initial".into(), None));
+        assert!(
+            matches!(err, Err(AppError::Other(ref m)) if m.contains("nothing to commit")),
+            "empty initial commit must be rejected, got {err:?}",
+        );
     }
 
     #[test]

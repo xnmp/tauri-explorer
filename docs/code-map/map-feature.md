@@ -24,7 +24,9 @@ backend for E2E/browser).
 - `composables/use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) behind List + Tiles
 - `state/commands/view-commands.ts` — view.details/list/tiles, sort, columns cmds
 - `state/sort-prefs.ts`, `state/folder-views.svelte.ts` — per-folder view+sort persistence
-- FLOW: view mode lives on explorer store; `FileList` reads it, mounts one view; all three must change together for display features.
+- `components/FileIcon.svelte` — shared icon renderer used by all 3 views (via `FileItem.svelte` for Details/List, `TilesView.svelte` for Tiles); linked-folder and git-repo-folder badge overlays live here so a display feature added once covers all views automatically
+- `domain/file-types.ts` — `isGitRepoFolder` (icon-selection predicate for the git-repo folder badge, #463); backend flag set in `src-tauri/src/files/mod.rs::metadata_to_entry` (`FileEntry.is_git_repo`, one `.git`-exists stat per directory entry)
+- FLOW: view mode lives on explorer store; `FileList` reads it, mounts one view; all three must change together for display features. Since Details/List/Tiles all route icons through `FileIcon.svelte`, icon-only features (like the git-repo badge) don't need per-view changes — the shared component is the single seam.
 
 ## Selection & marquee
 - `composables/use-marquee-selection.svelte.ts` — drag-rect candidate set + hit-testing
@@ -129,7 +131,10 @@ backend for E2E/browser).
 - FLOW: ThumbnailImage requests via api/thumbnails → Rust cache lookup/generate → data URL cached in thumbnail-cache.ts keyed by path. Rename preserves cache via `renameThumbnailCache`.
 
 ## Preview pane
-- `components/PreviewPane.svelte` — text/image/diff/archive preview + syntax highlight
+- `components/PreviewPane.svelte` — text/image/diff/archive preview + syntax highlight; hand-rolled resize (width when docked right, height when docked top/bottom, #460); reads `settingsStore.resolvedPreviewPanePosition` (never the raw mode) for its own dock class
+- `domain/preview-pane-position.ts` — pure dock-position validate/cycle (right/bottom/top, #460); `+page.svelte` column-stacks the pane for top/bottom. Also: `PreviewPanePositionMode` ("auto" | right/bottom/top), `resolveAutoDockPosition(width, height)` (aspect-ratio heuristic: wide → right, narrow-tall → top, else bottom) and `resolveEffectivePreviewPanePosition(mode, width, height)` (#467)
+- `state/window-size.svelte.ts` — reactive `window.innerWidth/innerHeight` (`windowSizeStore`); `+page.svelte` syncs it on mount + `resize`. Feeds `settingsStore.resolvedPreviewPanePosition` for auto-dock (#467)
+- `state/settings.svelte.ts` — `previewPanePosition` (raw stored mode, may be "auto") vs `resolvedPreviewPanePosition` (concrete right/bottom/top, the one layout code reads; #467)
 - `domain/syntax-highlight.ts` — `highlightCode`, `highlightDiffLine` (hljs)
 - `domain/diff.ts`, `domain/markdown.ts` — diff parsing, markdown render
 - `api/files.ts` (readTextFile, readImageAsBlobUrl, listArchiveContents, gitDiff)
@@ -159,6 +164,7 @@ backend for E2E/browser).
 - panel VISIBILITY is also per-pane (#434): `window-tabs.svelte.ts` `getPaneScmVisible`/`toggleScmInActivePane` on the pane node (falls back to the global `showScmPanel` default); the `view.toggleScmPanel` command (`view-commands.ts`) acts on the active pane only
 - `state/git-graph-refresh.ts` — F5 refresh bus: GitGraphView registers its fetch+reload per pane; `gitGraph.refresh` command dispatches to the active graph pane (#432)
 - `state/git-graph-cache.ts` — per-repo graph snapshot cache + `warmGraphSnapshot`/`fetchPage0Snapshot` (moved out of GitGraphView so `git-warm.ts` imports state, not a component); evicts a repo's snapshots on external (watcher) git changes so a remount never paints stale history (#433, arch Finding 7)
+- `domain/commit-panel.ts` — pure state machine + derivations for the git-graph uncommitted-node inline commit panel (#466): `buildStageFiles`/`groupStageFiles` (stage-status grouping, partial-stage handled), `canCommit`/`commitButtonLabel`, and the ephemeral message-editor transitions (idle→committing→idle, message preserved on failure). `state/commit-panel.svelte.ts` wraps these in a per-pane rune store (`getCommitPanelStore`) whose `begin()` guard survives close+reopen (`resetIfIdle()` no-ops while committing) so a second concurrent commit can't start. GitGraphView calls the store; stage/unstage/commit reuse `gitStage`/`gitUnstage`/`gitCommit` and refresh via `reload()` + `notifyLocalGitChange` (no private refresh stack — stage/unstage also `reload()` so the partial-stage double-count in `workingChanges` can't leave the header stale). Backend `git_commit` rejects a nothing-staged index (no spurious empty commit)
 - `domain/scm-tree.ts`, `domain/git-graph.ts`, `domain/git.ts` — tree grouping, graph layout (`groupRefChips(decorations, headBranch)` keeps remote/branch identity for tracking checkout (#432) and marks only the checked-out branch chip active when several sit on HEAD (#433))
 - `api/git.ts`, `api/git-log.ts` (incl. `gitCheckoutTracking`, `gitSyncLocalBranches`, #432; `gitOpenPrs`, #449); `src-tauri/src/git.rs`, `git_actions.rs`, `git_log.rs`, `git_common.rs`
 - `src-tauri/src/github.rs` — `git_open_prs` (#449): origin remote → owner/repo → GitHub REST open PRs (ureq, optional GITHUB_TOKEN/GH_TOKEN), 120s/60s TTL cache, degrades to `[]` for non-GitHub/offline/rate-limit; graph renders `.ref-pr` chips (`indexPrsByBranch` in `domain/git-graph.ts`), click opens via GitHub-pinned `open_external_url`

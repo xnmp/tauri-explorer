@@ -111,6 +111,92 @@ describe("settingsStore.islandMode (#434)", () => {
   });
 });
 
+describe("settingsStore preview pane position (#460)", () => {
+  it("defaults to 'right'", async () => {
+    readConfigFileMock.mockResolvedValue({ ok: false, error: "not found" });
+    const store = await freshStore();
+    expect(store.previewPanePosition).toBe("right");
+  });
+
+  it("setPreviewPanePosition validates and coerces unknown values to 'right'", async () => {
+    readConfigFileMock.mockResolvedValue({ ok: false, error: "not found" });
+    const store = await freshStore();
+
+    store.setPreviewPanePosition("bottom");
+    expect(store.previewPanePosition).toBe("bottom");
+
+    store.setPreviewPanePosition("nonsense");
+    expect(store.previewPanePosition).toBe("right");
+  });
+
+  it("cyclePreviewPanePosition steps right -> bottom -> top -> auto -> right (#467 adds auto)", async () => {
+    readConfigFileMock.mockResolvedValue({ ok: false, error: "not found" });
+    const store = await freshStore();
+
+    store.cyclePreviewPanePosition();
+    expect(store.previewPanePosition).toBe("bottom");
+    store.cyclePreviewPanePosition();
+    expect(store.previewPanePosition).toBe("top");
+    store.cyclePreviewPanePosition();
+    expect(store.previewPanePosition).toBe("auto");
+    store.cyclePreviewPanePosition();
+    expect(store.previewPanePosition).toBe("right");
+  });
+
+  it("reading the getter repairs a malformed persisted value without a write", async () => {
+    localStorage.setItem("explorer-settings", JSON.stringify({ previewPanePosition: "sideways" }));
+    readConfigFileMock.mockResolvedValue({ ok: false, error: "not found" });
+    const store = await freshStore();
+    expect(store.previewPanePosition).toBe("right");
+  });
+});
+
+describe("settingsStore auto dock mode (#467)", () => {
+  it("setPreviewPanePosition accepts 'auto' and stores it as the raw mode", async () => {
+    readConfigFileMock.mockResolvedValue({ ok: false, error: "not found" });
+    const store = await freshStore();
+
+    store.setPreviewPanePosition("auto");
+    expect(store.previewPanePosition).toBe("auto");
+  });
+
+  it("resolvedPreviewPanePosition resolves 'auto' to a concrete edge instead of leaking 'auto' to layout", async () => {
+    readConfigFileMock.mockResolvedValue({ ok: false, error: "not found" });
+    const store = await freshStore();
+
+    store.setPreviewPanePosition("auto");
+    // No `window` global in this suite (node test environment) — the window
+    // geometry inputs are degenerate (0x0), so resolution falls back to the
+    // same safe default as malformed input, and — critically — the result is
+    // always one of the three concrete edges, never "auto" itself.
+    expect(store.resolvedPreviewPanePosition).toBe("right");
+    expect(["right", "bottom", "top"]).toContain(store.resolvedPreviewPanePosition);
+  });
+
+  it("resolvedPreviewPanePosition passes concrete positions through unchanged", async () => {
+    readConfigFileMock.mockResolvedValue({ ok: false, error: "not found" });
+    const store = await freshStore();
+
+    store.setPreviewPanePosition("bottom");
+    expect(store.resolvedPreviewPanePosition).toBe("bottom");
+    expect(store.previewPanePosition).toBe("bottom");
+  });
+});
+
+describe("settingsStore preview pane size", () => {
+  it("setPreviewPaneHeight clamps to 0..600", async () => {
+    readConfigFileMock.mockResolvedValue({ ok: false, error: "not found" });
+    const store = await freshStore();
+
+    store.setPreviewPaneHeight(-50);
+    expect(store.previewPaneHeight).toBe(0);
+    store.setPreviewPaneHeight(999);
+    expect(store.previewPaneHeight).toBe(600);
+    store.setPreviewPaneHeight(300);
+    expect(store.previewPaneHeight).toBe(300);
+  });
+});
+
 describe("settingsStore.update (#280)", () => {
   it("merges partially and persists to localStorage", async () => {
     readConfigFileMock.mockResolvedValue({ ok: false, error: "not found" });

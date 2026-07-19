@@ -8,24 +8,11 @@
  */
 
 import { test, expect, type Page } from "./fixtures";
+import { switchViewMode } from "./helpers";
 
 async function waitForFileList(page: Page) {
   await page.waitForSelector(".file-list");
   await page.locator(".entry-item").first().waitFor({ timeout: 10000 });
-}
-
-async function switchToTilesView(page: Page) {
-  await page.keyboard.press("Escape");
-
-  const content = page.locator(".file-list .content").first();
-  const box = await content.boundingBox();
-  const clickY = box ? Math.round(box.height / 2) : 300;
-  await content.click({ button: "right", position: { x: 10, y: clickY } });
-
-  const contextMenu = page.locator(".context-menu");
-  await contextMenu.waitFor({ state: "visible", timeout: 2000 });
-  await contextMenu.locator('.menu-item:has-text("Tiles")').click();
-  await page.locator(".tiles-view .entry-item").first().waitFor({ timeout: 3000 });
 }
 
 async function setThumbnailSize(page: Page, size: "small" | "medium" | "large" | "xlarge") {
@@ -54,7 +41,7 @@ test.describe("Folder preview thumbnails", () => {
     await page.evaluate(() => localStorage.clear());
     await page.reload();
     await waitForFileList(page);
-    await switchToTilesView(page);
+    await switchViewMode(page, "tiles");
   });
 
   test("folder with images shows composited photo previews at Large size", async ({ page }) => {
@@ -82,7 +69,7 @@ test.describe("Folder preview thumbnails", () => {
   test("imageless folder keeps the plain folder icon at Large size", async ({ page }) => {
     await page.goto("/?path=/home/user");
     await waitForFileList(page);
-    await switchToTilesView(page);
+    await switchViewMode(page, "tiles");
     await setThumbnailSize(page, "large");
 
     // Documents contains no images directly (only a subfolder + docs), so its
@@ -105,7 +92,7 @@ test.describe("Folder preview thumbnails", () => {
     // folder silhouette at the same on-screen size.
     await page.goto("/?path=/home/user");
     await waitForFileList(page);
-    await switchToTilesView(page);
+    await switchViewMode(page, "tiles");
     await setThumbnailSize(page, "large");
 
     // Pictures has images → composited folder glyph (svg.folder-layer).

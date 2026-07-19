@@ -11,6 +11,13 @@ import { loadPersisted, savePersisted, writeConfigQueued } from "./persisted";
 import { readConfigFile } from "$lib/api/files";
 import type { ViewMode } from "./types";
 import type { Command, CommandCategory } from "./commands.svelte";
+import {
+  type PreviewPanePositionMode,
+  normalizePreviewPanePositionMode,
+  cyclePreviewPanePositionMode,
+  resolveEffectivePreviewPanePosition,
+} from "$lib/domain/preview-pane-position";
+import { windowSizeStore } from "./window-size.svelte";
 
 /** Which navigation bar buttons to display */
 export interface NavBarButtons {
@@ -67,7 +74,9 @@ export interface Settings {
   listViewColumns: number; // 0 = auto (based on window width), 1-6 = fixed
   listColumnMaxWidth: number; // max width per column in px (used when listViewColumns=0)
   viewMode: ViewMode; // default view mode for new panes
-  previewPaneWidth: number; // width in px, 0 = default (280px)
+  previewPaneWidth: number; // width in px when docked right, 0 = default (280px)
+  previewPaneHeight: number; // height in px when docked top/bottom, 0 = default (240px)
+  previewPanePosition: PreviewPanePositionMode; // preview pane dock edge: right (default), bottom, top, or auto (#467, picks the edge from window size)
   terminalPanelHeight: number; // embedded terminal panel height in px
   // Terminal line-editing shortcuts (#375): action id → binding string
   // ("Alt+Backspace"). Empty/missing = disabled (native key behavior).
@@ -97,7 +106,7 @@ export interface Settings {
   previewFontSize: number; // base font size (px) for text/code/markdown previews
   autoEnterSingleSubdir: boolean; // when entering a dir with exactly one visible subdir (and nothing else), descend into it recursively
   ffmpegPath: string; // explicit path to ffmpeg binary for video/audio thumbnails (empty = auto-detect)
-  tabTitleGitRoot: boolean; // when the folder is inside a git repo, show the repo root name in the tab title
+  tabTitleGitRoot: boolean; // when the folder is inside a git repo, show the repo root name + git icon in the tab title (default on, #471)
   warmWindow: boolean; // keep a hidden pre-warmed window pooled so Ctrl+N is near-instant
   terminalFollowsExplorer: boolean; // auto-cd the embedded terminal when the active pane navigates (#149)
   explorerFollowsTerminal: boolean; // navigate the active pane when the terminal's shell changes cwd (OSC 7) (#149)
@@ -139,6 +148,8 @@ const DEFAULT_SETTINGS: Settings = {
   listColumnMaxWidth: 250,
   viewMode: "details",
   previewPaneWidth: 0,
+  previewPaneHeight: 0,
+  previewPanePosition: "right",
   terminalPanelHeight: 240,
   terminalShortcuts: {},
   theme: "light",
@@ -166,7 +177,7 @@ const DEFAULT_SETTINGS: Settings = {
   previewFontSize: 12,
   autoEnterSingleSubdir: false,
   ffmpegPath: "",
-  tabTitleGitRoot: false,
+  tabTitleGitRoot: true,
   warmWindow: true,
   terminalFollowsExplorer: true,
   explorerFollowsTerminal: true,
@@ -326,6 +337,26 @@ function createSettingsStore() {
     },
     get previewPaneWidth() {
       return settings.previewPaneWidth;
+    },
+    get previewPaneHeight() {
+      return settings.previewPaneHeight;
+    },
+    // Normalize on read so a malformed persisted value can never break layout.
+    // This is the raw stored *mode* (may be "auto") — for the concrete edge
+    // to actually render at, read `resolvedPreviewPanePosition` instead.
+    get previewPanePosition() {
+      return normalizePreviewPanePositionMode(settings.previewPanePosition);
+    },
+    // Concrete dock edge components render at: "auto" resolves via the
+    // window's current size, everything else passes through unchanged.
+    // A single derived seam so `+page.svelte`/`PreviewPane.svelte` never
+    // have to think about "auto" themselves (#467).
+    get resolvedPreviewPanePosition() {
+      return resolveEffectivePreviewPanePosition(
+        normalizePreviewPanePositionMode(settings.previewPanePosition),
+        windowSizeStore.width,
+        windowSizeStore.height,
+      );
     },
     get terminalPanelHeight() {
       return settings.terminalPanelHeight;
@@ -500,6 +531,15 @@ function createSettingsStore() {
     },
     setPreviewPaneWidth(px: number): void {
       update({ previewPaneWidth: Math.max(0, Math.min(600, px)) });
+    },
+    setPreviewPaneHeight(px: number): void {
+      update({ previewPaneHeight: Math.max(0, Math.min(600, px)) });
+    },
+    setPreviewPanePosition(position: string): void {
+      update({ previewPanePosition: normalizePreviewPanePositionMode(position) });
+    },
+    cyclePreviewPanePosition(): void {
+      update({ previewPanePosition: cyclePreviewPanePositionMode(settings.previewPanePosition) });
     },
     setTerminalPanelHeight(px: number): void {
       update({ terminalPanelHeight: Math.max(96, Math.min(800, Math.round(px))) });

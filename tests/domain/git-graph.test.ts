@@ -5,8 +5,25 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { assignLayout, branchPath, groupRefChips, indexPrsByBranch, GRAPH_PALETTE } from "$lib/domain/git-graph";
-import type { GraphCommitLike, OpenPrLike } from "$lib/domain/git-graph";
+import {
+  assignLayout,
+  branchPath,
+  groupRefChips,
+  indexPrsByBranch,
+  prBadgePresentation,
+  ciStatusLabel,
+  reviewDecisionLabel,
+  prDescription,
+  relativeTimeFrom,
+  prDetailComments,
+  GRAPH_PALETTE,
+} from "$lib/domain/git-graph";
+import type {
+  GraphCommitLike,
+  OpenPrLike,
+  CiStatus,
+  ReviewDecision,
+} from "$lib/domain/git-graph";
 
 const c = (oid: string, ...parents: string[]): GraphCommitLike => ({ oid, parents });
 
@@ -385,5 +402,181 @@ describe("indexPrsByBranch (#448)", () => {
     expect(map.size).toBe(2);
     expect(map.get("feature")?.number).toBe(7);
     expect(map.get("experiment")?.number).toBe(12);
+  });
+});
+
+describe("prBadgePresentation (#459)", () => {
+  const CI: CiStatus[] = ["success", "failure", "pending", null];
+  const REVIEW: ReviewDecision[] = [
+    "approved",
+    "changes_requested",
+    "review_required",
+    null,
+  ];
+
+  it("maps each CI status to its color class", () => {
+    expect(prBadgePresentation({ ciStatus: "success" }).ciClass).toBe("ci-success");
+    expect(prBadgePresentation({ ciStatus: "failure" }).ciClass).toBe("ci-failure");
+    expect(prBadgePresentation({ ciStatus: "pending" }).ciClass).toBe("ci-pending");
+    expect(prBadgePresentation({ ciStatus: null }).ciClass).toBeNull();
+    expect(prBadgePresentation({}).ciClass).toBeNull();
+  });
+
+  it("draft always suppresses the CI color class (grey styling wins)", () => {
+    for (const ciStatus of CI) {
+      expect(prBadgePresentation({ draft: true, ciStatus }).ciClass).toBeNull();
+    }
+  });
+
+  it("maps review decision to its glyph", () => {
+    expect(prBadgePresentation({ reviewDecision: "approved" }).reviewGlyph).toBe("✓");
+    expect(prBadgePresentation({ reviewDecision: "changes_requested" }).reviewGlyph).toBe("±");
+    // review_required and unknown carry no glyph (neutral).
+    expect(prBadgePresentation({ reviewDecision: "review_required" }).reviewGlyph).toBeNull();
+    expect(prBadgePresentation({ reviewDecision: null }).reviewGlyph).toBeNull();
+    expect(prBadgePresentation({}).reviewGlyph).toBeNull();
+  });
+
+  it("shows the comment count only when positive", () => {
+    expect(prBadgePresentation({ commentCount: 3 }).commentCount).toBe(3);
+    expect(prBadgePresentation({ commentCount: 1 }).commentCount).toBe(1);
+    expect(prBadgePresentation({ commentCount: 0 }).commentCount).toBeNull();
+    expect(prBadgePresentation({ commentCount: null }).commentCount).toBeNull();
+    expect(prBadgePresentation({}).commentCount).toBeNull();
+  });
+
+  it("is exhaustive and total over every CI × review × draft combination", () => {
+    for (const draft of [false, true]) {
+      for (const ciStatus of CI) {
+        for (const reviewDecision of REVIEW) {
+          const p = prBadgePresentation({ draft, ciStatus, reviewDecision });
+          // ciClass: null unless a real status AND not a draft.
+          const expectClass = !draft && ciStatus !== null;
+          expect(p.ciClass === null).toBe(!expectClass);
+          // Glyph never present for a review state without one.
+          if (reviewDecision === "approved") expect(p.reviewGlyph).toBe("✓");
+          else if (reviewDecision === "changes_requested") expect(p.reviewGlyph).toBe("±");
+          else expect(p.reviewGlyph).toBeNull();
+        }
+      }
+    }
+  });
+});
+
+describe("PR detail labels (#459)", () => {
+  it("labels each CI status, null when unknown", () => {
+    expect(ciStatusLabel("success")).toBe("Checks passing");
+    expect(ciStatusLabel("failure")).toBe("Checks failing");
+    expect(ciStatusLabel("pending")).toBe("Checks pending");
+    expect(ciStatusLabel(null)).toBeNull();
+    expect(ciStatusLabel(undefined)).toBeNull();
+  });
+
+  it("labels each review decision, null when unknown", () => {
+    expect(reviewDecisionLabel("approved")).toBe("Approved");
+    expect(reviewDecisionLabel("changes_requested")).toBe("Changes requested");
+    expect(reviewDecisionLabel("review_required")).toBe("Review required");
+    expect(reviewDecisionLabel(null)).toBeNull();
+    expect(reviewDecisionLabel(undefined)).toBeNull();
+  });
+});
+
+describe("prDescription (#468)", () => {
+  it("returns trimmed non-empty text", () => {
+    expect(prDescription("  Hello world  ")).toBe("Hello world");
+    expect(prDescription("multi\nline")).toBe("multi\nline");
+  });
+
+  it("collapses empty / whitespace-only / missing bodies to null", () => {
+    expect(prDescription("")).toBeNull();
+    expect(prDescription("   \n\t ")).toBeNull();
+    expect(prDescription(null)).toBeNull();
+    expect(prDescription(undefined)).toBeNull();
+  });
+});
+
+describe("relativeTimeFrom (#468)", () => {
+  const now = Date.parse("2024-06-15T12:00:00Z");
+  const ago = (ms: number) => new Date(now - ms).toISOString();
+  const SEC = 1000;
+  const MIN = 60 * SEC;
+  const HOUR = 60 * MIN;
+  const DAY = 24 * HOUR;
+
+  it("reads 'just now' under a minute and for future skew", () => {
+    expect(relativeTimeFrom(ago(30 * SEC), now)).toBe("just now");
+    expect(relativeTimeFrom(ago(0), now)).toBe("just now");
+    // Future timestamp (clock skew) — never negative.
+    expect(relativeTimeFrom(new Date(now + 5 * MIN).toISOString(), now)).toBe("just now");
+  });
+
+  it("scales through minutes, hours, days, months, years with correct pluralization", () => {
+    expect(relativeTimeFrom(ago(1 * MIN), now)).toBe("1 minute ago");
+    expect(relativeTimeFrom(ago(5 * MIN), now)).toBe("5 minutes ago");
+    expect(relativeTimeFrom(ago(1 * HOUR), now)).toBe("1 hour ago");
+    expect(relativeTimeFrom(ago(3 * HOUR), now)).toBe("3 hours ago");
+    expect(relativeTimeFrom(ago(1 * DAY), now)).toBe("1 day ago");
+    expect(relativeTimeFrom(ago(10 * DAY), now)).toBe("10 days ago");
+    expect(relativeTimeFrom(ago(45 * DAY), now)).toBe("1 month ago");
+    expect(relativeTimeFrom(ago(400 * DAY), now)).toBe("1 year ago");
+  });
+
+  it("returns null for missing or unparseable timestamps", () => {
+    expect(relativeTimeFrom(null, now)).toBeNull();
+    expect(relativeTimeFrom(undefined, now)).toBeNull();
+    expect(relativeTimeFrom("not a date", now)).toBeNull();
+  });
+});
+
+describe("prDetailComments (#468)", () => {
+  const now = Date.parse("2024-06-15T12:00:00Z");
+
+  it("maps author, relative time and trimmed body", () => {
+    const out = prDetailComments(
+      [
+        {
+          author: "alice",
+          createdAt: new Date(now - 2 * 60 * 1000).toISOString(),
+          body: "  looks good  ",
+        },
+      ],
+      now,
+    );
+    expect(out).toEqual([
+      { author: "alice", time: "2 minutes ago", body: "looks good" },
+    ]);
+  });
+
+  it("falls back to '(unknown)' for a deleted author", () => {
+    const out = prDetailComments(
+      [{ author: null, createdAt: new Date(now).toISOString(), body: "ghost" }],
+      now,
+    );
+    expect(out[0].author).toBe("(unknown)");
+  });
+
+  it("drops comments whose body is empty after trimming", () => {
+    const out = prDetailComments(
+      [
+        { author: "a", createdAt: new Date(now).toISOString(), body: "   " },
+        { author: "b", createdAt: new Date(now).toISOString(), body: "real" },
+      ],
+      now,
+    );
+    expect(out.map((c) => c.body)).toEqual(["real"]);
+  });
+
+  it("returns [] for null / undefined / empty input", () => {
+    expect(prDetailComments(null, now)).toEqual([]);
+    expect(prDetailComments(undefined, now)).toEqual([]);
+    expect(prDetailComments([], now)).toEqual([]);
+  });
+
+  it("keeps time null when a comment timestamp is unparseable", () => {
+    const out = prDetailComments(
+      [{ author: "a", createdAt: "garbage", body: "hi" }],
+      now,
+    );
+    expect(out[0].time).toBeNull();
   });
 });

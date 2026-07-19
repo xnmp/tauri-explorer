@@ -75,43 +75,99 @@ test.describe("Git graph tab", () => {
     await expect(page.locator(".entry-item").first()).toBeVisible();
   });
 
-  test("shows GitHub PR badges, opens the PR on click, and marks drafts (#448)", async ({ page }) => {
+  test("PR badges show CI status + review/comment glyphs and mark drafts (#448/#459)", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents/project");
     await waitForEntries(page);
     await openGraphViaPalette(page);
     const view = page.locator('[data-testid="git-graph-view"]');
 
-    // "feature" has a mocked open PR #7 — a badge chip sits beside its
-    // branch chip.
+    // #7 (feature): passing CI (green class), approved (✓ glyph), 3 comments.
     const featureRow = view.locator(".commit-row", { hasText: "Add tests for feature X" });
     const prBadge = featureRow.locator(".ref-pr");
     await expect(prBadge).toHaveCount(1);
     await expect(prBadge).toContainText("#7");
+    await expect(prBadge).toHaveClass(/ci-success/);
     await expect(prBadge).not.toHaveClass(/draft/);
+    await expect(prBadge.locator(".pr-review")).toHaveText("✓");
+    await expect(prBadge.locator(".pr-comments")).toContainText("3");
 
-    // "experiment" has a mocked DRAFT PR #12 — same badge, draft styling.
+    // #12 (experiment): a DRAFT — grey styling wins over its failing CI, so
+    // no ci-failure class; changes-requested shows the ± glyph, 0 comments
+    // means no comment glyph.
     const experimentRow = view.locator(".commit-row", { hasText: "Try alternative parser" });
     const draftBadge = experimentRow.locator(".ref-pr");
     await expect(draftBadge).toHaveCount(1);
     await expect(draftBadge).toContainText("#12");
     await expect(draftBadge).toHaveClass(/draft/);
+    await expect(draftBadge).not.toHaveClass(/ci-failure/);
+    await expect(draftBadge.locator(".pr-review")).toHaveText("±");
+    await expect(draftBadge.locator(".pr-comments")).toHaveCount(0);
+
+    // #15 (hotfix): pending CI (amber class), no review / no comments (the
+    // tokenless-style null fields) — badge still renders, no glyphs.
+    const hotfixRow = view.locator(".commit-row", { hasText: "Hotfix: crash on empty input" });
+    const pendingBadge = hotfixRow.locator(".ref-pr");
+    await expect(pendingBadge).toHaveClass(/ci-pending/);
+    await expect(pendingBadge.locator(".pr-review")).toHaveCount(0);
+    await expect(pendingBadge.locator(".pr-comments")).toHaveCount(0);
 
     // A branch with no open PR gets no badge at all (no error, no empty chip).
     const tipRow = view.locator(".commit-row", { hasText: "Merge hotfix into main" });
     await expect(tipRow.locator(".ref-pr")).toHaveCount(0);
+  });
 
-    // Clicking the badge records the PR URL via the mocked
-    // open_external_url — and does NOT select the commit row (the click
-    // must not bubble into the row's own click handler) or navigate away
-    // from the app.
+  test("PR badge click opens the in-app details dropdown, not the browser (#459)", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+    const view = page.locator('[data-testid="git-graph-view"]');
+
+    const featureRow = view.locator(".commit-row", { hasText: "Add tests for feature X" });
+    const prBadge = featureRow.locator(".ref-pr");
+
+    // Clicking the badge opens the in-app dropdown (NOT the browser) and does
+    // not select the commit row (the click must not bubble into the row).
     await prBadge.click();
+    const detail = page.locator('[data-testid="git-graph-pr-detail"]');
+    await expect(detail).toBeVisible();
+    // Outcome: the dropdown shows the PR's title and its status content.
+    await expect(detail).toContainText("Add feature X");
+    await expect(detail).toContainText("#7");
+    await expect(detail).toContainText("Checks passing");
+    await expect(detail).toContainText("Approved");
+    await expect(detail).toContainText("feature"); // head branch
+    // No browser navigation happened on the plain badge click.
+    await expect
+      .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
+      .toBeNull();
+    await expect(featureRow).not.toHaveClass(/selected/);
+    await expect(page.locator('[data-testid="git-graph-detail"]')).toHaveCount(0);
+
+    // "Open on GitHub" records the PR URL via the mocked open_external_url and
+    // stays in-app.
+    await detail.locator(".pr-detail-open").click();
     await expect
       .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
       .toBe("https://github.com/mock/project/pull/7");
     await expect(page).toHaveURL(/\/\?path=/);
     await expect(view).toBeVisible();
-    await expect(featureRow).not.toHaveClass(/selected/);
-    await expect(page.locator('[data-testid="git-graph-detail"]')).toHaveCount(0);
+
+    // Clicking the badge again toggles the dropdown closed.
+    await prBadge.click();
+    await expect(detail).toHaveCount(0);
+
+    // Reopening then pressing Escape also closes it.
+    await prBadge.click();
+    await expect(detail).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(detail).toHaveCount(0);
+
+    // Opening commit details closes the PR dropdown (one expansion at a time).
+    await prBadge.click();
+    await expect(detail).toBeVisible();
+    await featureRow.click();
+    await expect(detail).toHaveCount(0);
+    await expect(page.locator('[data-testid="git-graph-detail"]')).toBeVisible();
   });
 
   test("branch filter shows only the selected branch's history (#342)", async ({ page }) => {
@@ -389,6 +445,35 @@ test("clicking a commit opens the detail panel with its changed files", async ({
   await expect(detail).toHaveCount(0);
 });
 
+test("mutes merge commits and shows compact relative dates (#458)", async ({ page }) => {
+  await page.goto("/?path=/home/user/Documents/project");
+  await waitForEntries(page);
+  await openGraphViaPalette(page);
+
+  const view = page.locator('[data-testid="git-graph-view"]');
+  // nth(2) is the tip merge ("Merge hotfix into main", 2 parents); nth(4) is a
+  // normal commit ("Try alternative parser", 1 parent). Both are dated today.
+  const mergeRow = view.locator(".commit-row").nth(2);
+  const normalRow = view.locator(".commit-row").nth(4);
+  await expect(mergeRow).toContainText("Merge hotfix into main");
+  await expect(normalRow).toContainText("Try alternative parser");
+
+  // Muting is on by default: the merge row is dimmed, the normal row isn't.
+  await expect(mergeRow).toHaveClass(/is-merge/);
+  await expect(normalRow).not.toHaveClass(/is-merge/);
+
+  // Compact relative date for a today-dated commit: "now" / "5m" / "2h".
+  // The tip (seconds old) is reliably today regardless of run time-of-day.
+  await expect(mergeRow.locator(".date")).toHaveText(/^\d+[mh]$|^now$/);
+
+  // Turning "Mute merge commits" off removes the dimming from merge rows.
+  await page.locator(".graph-header").click({ button: "right" });
+  await page.locator('[data-testid="toggle-mute-merges"]').click();
+  await page.keyboard.press("Escape");
+  await expect(mergeRow).not.toHaveClass(/is-merge/);
+  await expect(normalRow).not.toHaveClass(/is-merge/);
+});
+
 test("parent is a viewable column, off by default (#402)", async ({ page }) => {
   await page.goto("/?path=/home/user/Documents/project");
   await waitForEntries(page);
@@ -462,8 +547,12 @@ test("uncommitted-changes row expands its working-tree files and diffs (#221)", 
   const detail = page.locator('[data-testid="git-graph-detail"]');
   await expect(detail).toBeVisible();
   await expect(detail).toContainText("src/index.css");
-  // Staged files are marked.
-  await expect(detail.locator(".file-staged-badge")).toHaveCount(1);
+  // Files are grouped by stage status (#466): the seed's one staged file sits
+  // under a "Staged Changes" section; unstaged edits under "Changes".
+  await expect(detail.locator('.stage-group[data-section="staged"]')).toHaveCount(1);
+  await expect(
+    detail.locator('.stage-group[data-section="staged"] .detail-file', { hasText: "src/App.tsx" }),
+  ).toBeVisible();
 
   // A working-tree file's diff renders inline.
   await detail.locator(".detail-file", { hasText: "src/index.css" }).click();

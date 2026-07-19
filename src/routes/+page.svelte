@@ -9,6 +9,7 @@
   import { isMac } from "$lib/domain/platform";
   import { themeStore } from "$lib/state/theme.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+import { windowSizeStore } from "$lib/state/window-size.svelte";
   import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
@@ -511,10 +512,19 @@
     window.addEventListener("keyup", handleKeyup);
     window.addEventListener("blur", handleBlur);
 
+    // Window size tracking (#467): feeds the preview pane's "auto" dock mode
+    // (settingsStore.resolvedPreviewPanePosition derives from this on every
+    // read, no effect-driven sync needed) — sync once now for the initial
+    // size, then on every resize.
+    windowSizeStore.sync();
+    const handleResize = () => windowSizeStore.sync();
+    window.addEventListener("resize", handleResize);
+
     return () => {
       window.removeEventListener("keydown", handleKeydown);
       window.removeEventListener("keyup", handleKeyup);
       window.removeEventListener("blur", handleBlur);
+      window.removeEventListener("resize", handleResize);
       nativeDropHandler.cleanup();
       fileWatchers.cleanup();
       windowLifecycle.cleanup();
@@ -548,13 +558,25 @@
         <MillerColumns explorer={leftExplorer} />
       </div>
     {/if}
-    <PaneContainer />
-    {#if settingsStore.showPreviewPane}
-      {#await import("$lib/components/PreviewPane.svelte") then { default: PreviewPane }}
-        <div class="preview-island">
-          <PreviewPane />
-        </div>
-      {/await}
+    {#snippet paneAndPreview()}
+      <PaneContainer />
+      {#if settingsStore.showPreviewPane}
+        {#await import("$lib/components/PreviewPane.svelte") then { default: PreviewPane }}
+          <div class="preview-island" class:vertical={settingsStore.resolvedPreviewPanePosition !== "right"}>
+            <PreviewPane />
+          </div>
+        {/await}
+      {/if}
+    {/snippet}
+    {#if settingsStore.resolvedPreviewPanePosition === "right"}
+      {@render paneAndPreview()}
+    {:else}
+      <!-- Bottom/top dock: PaneContainer + preview island stack in a column
+           (column-reverse puts the island on top). Sidebar/miller stay left
+           siblings; the stack owns the center column. -->
+      <div class="pane-preview-stack" class:preview-top={settingsStore.resolvedPreviewPanePosition === "top"}>
+        {@render paneAndPreview()}
+      </div>
     {/if}
   </div>
   {#if terminalPanelStore.everOpened && settingsStore.enableTerminal}
@@ -1002,12 +1024,39 @@
     min-height: 0;
   }
 
+  /* Bottom/top dock: island is a column so the pane's inline height drives the
+     island height and the pane stretches to full column width. */
+  .preview-island.vertical {
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+  }
+
   :global([data-vibrancy]) .preview-island {
     border-radius: var(--vibrancy-island-radius);
     background: var(--vibrancy-island-bg);
     box-shadow: var(--vibrancy-island-glow);
     border: 1px solid var(--vibrancy-island-stroke);
     overflow: hidden;
+  }
+
+  /* Center column when the preview is docked bottom (default order) or top
+     (column-reverse). min-height:0 keeps the file list scrollable. */
+  .pane-preview-stack {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .pane-preview-stack.preview-top {
+    flex-direction: column-reverse;
+  }
+
+  :global([data-vibrancy]) .pane-preview-stack {
+    gap: 8px;
   }
 
   :global([data-vibrancy]) .theme-background-layer {

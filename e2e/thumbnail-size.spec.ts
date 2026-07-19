@@ -7,6 +7,7 @@
  */
 
 import { test, expect } from "./fixtures";
+import { switchViewMode } from "./helpers";
 
 async function waitForFileList(page: import("@playwright/test").Page) {
   await page.waitForSelector(".file-list");
@@ -18,23 +19,6 @@ async function openSettings(page: import("@playwright/test").Page) {
   const dialog = page.locator(".settings-dialog");
   await expect(dialog).toBeVisible({ timeout: 2000 });
   return dialog;
-}
-
-async function switchToTilesView(page: import("@playwright/test").Page) {
-  // Clear selection, right-click, pick Tiles
-  await page.keyboard.press("Escape");
-
-  const content = page.locator(".file-list .content").first();
-  const box = await content.boundingBox();
-  const clickY = box ? Math.round(box.height / 2) : 300;
-  await content.click({ button: "right", position: { x: 10, y: clickY } });
-
-  const contextMenu = page.locator(".context-menu");
-  await contextMenu.waitFor({ state: "visible", timeout: 2000 });
-
-  const tilesOption = contextMenu.locator('.menu-item:has-text("Tiles")');
-  await tilesOption.click();
-  await page.locator(".tiles-view .entry-item").first().waitFor({ timeout: 3000 });
 }
 
 async function setThumbnailSize(
@@ -82,7 +66,7 @@ test.describe("Thumbnail Size Setting", () => {
   });
 
   test("changing to Medium increases tile icon size", async ({ page }) => {
-    await switchToTilesView(page);
+    await switchViewMode(page, "tiles");
 
     // Get initial tile icon size (should be 48px for small)
     const initialSize = await page.locator(".tile-icon").first().evaluate((el) => {
@@ -100,7 +84,7 @@ test.describe("Thumbnail Size Setting", () => {
   });
 
   test("changing to Large increases tile icon size to 96px", async ({ page }) => {
-    await switchToTilesView(page);
+    await switchViewMode(page, "tiles");
 
     await setThumbnailSize(page, "large");
 
@@ -110,7 +94,7 @@ test.describe("Thumbnail Size Setting", () => {
   });
 
   test("grid column min-width updates with thumbnail size", async ({ page }) => {
-    await switchToTilesView(page);
+    await switchViewMode(page, "tiles");
 
     // Check CSS custom property for small (default)
     const smallMinCol = await page.locator(".tiles-view").evaluate((el) => {
@@ -134,7 +118,7 @@ test.describe("Thumbnail Size Setting", () => {
     // Navigate to Pictures which has image files
     await page.goto("/?path=/home/user/Pictures");
     await waitForFileList(page);
-    await switchToTilesView(page);
+    await switchViewMode(page, "tiles");
 
     // Set to Large
     await setThumbnailSize(page, "large");
@@ -155,7 +139,7 @@ test.describe("Thumbnail Size Setting", () => {
   test("image thumbnails render at Extra Large size in tiles view", async ({ page }) => {
     await page.goto("/?path=/home/user/Pictures");
     await waitForFileList(page);
-    await switchToTilesView(page);
+    await switchViewMode(page, "tiles");
 
     // Set to Extra Large
     await setThumbnailSize(page, "xlarge");

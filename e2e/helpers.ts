@@ -55,12 +55,21 @@ export async function switchViewMode(page: Page, mode: ViewMode) {
   await page.keyboard.press("Escape");
   await page.locator(".entry-item.selected").first().waitFor({ state: "detached", timeout: 2000 }).catch(() => {});
 
-  // Right-click in the middle of the content area so the context menu
-  // has room to render fully (it contains Paste, New folder, Open in
-  // Terminal, and View options). Clicking too low causes viewport clipping.
+  // Right-click on genuinely empty space: just below the LAST entry's box.
+  // A fixed midpoint breaks whenever the mock listing grows enough for rows
+  // to reach it — the click then lands on an entry and opens the entry menu,
+  // which has no View options (see #474; 173 list/tiles tests failed this way).
   const content = page.locator(".file-list .content").first();
   const box = await content.boundingBox();
-  const clickY = box ? Math.round(box.height / 2) : 300;
+  const lastEntry = page.locator(".entry-item").last();
+  const lastBox = await lastEntry.boundingBox();
+  let clickY = box ? Math.round(box.height / 2) : 300;
+  if (box && lastBox) {
+    const below = Math.round(lastBox.y + lastBox.height - box.y) + 12;
+    // Keep enough headroom for the menu to render without viewport clipping;
+    // the empty band below the last row is at least this tall in every mock dir.
+    clickY = Math.min(below, Math.round(box.height) - 8);
+  }
   await content.click({ button: "right", position: { x: 10, y: clickY } });
 
   // Wait for context menu

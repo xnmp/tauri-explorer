@@ -25,14 +25,22 @@ async function runPaletteCommand(page: Page, label: string): Promise<void> {
 async function boxes(page: Page) {
   const listLoc = page.locator(".file-list").first();
   const previewLoc = page.locator(".preview-pane");
-  // boundingBox() has no auto-retry and returns null mid-relayout (the auto-dock
-  // re-render); wait for visibility first so slow runners don't race it.
-  await expect(listLoc).toBeVisible();
-  await expect(previewLoc).toBeVisible();
-  const list = await listLoc.boundingBox();
-  const preview = await previewLoc.boundingBox();
-  expect(list).not.toBeNull();
-  expect(preview).not.toBeNull();
+  // boundingBox() has no auto-retry and returns null when the auto-dock
+  // re-render detaches the resolved node mid-read (visibility alone isn't
+  // enough — the node can detach between the assertion and the box call on
+  // slow runners). Poll the boxes themselves until both resolve.
+  let list: Awaited<ReturnType<typeof listLoc.boundingBox>> = null;
+  let preview: Awaited<ReturnType<typeof previewLoc.boundingBox>> = null;
+  await expect
+    .poll(
+      async () => {
+        list = await listLoc.boundingBox();
+        preview = await previewLoc.boundingBox();
+        return list !== null && preview !== null;
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(true);
   return { list: list!, preview: preview! };
 }
 

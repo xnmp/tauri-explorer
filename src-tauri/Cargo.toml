@@ -55,7 +55,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 icns = "0.4"
 turbojpeg = { version = "1", features = ["image"] }
 lru = "0.12"
-sha2 = "0.10"
+sha2 = "0.11"
 base64 = "0.22"
 hex = "0.4"
 zip = { version = "2", default-features = false, features = ["deflate", "deflate64", "bzip2", "zstd", "lzma"] }

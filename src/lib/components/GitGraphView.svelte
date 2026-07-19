@@ -91,17 +91,12 @@
     groupStageFiles,
     stagedCountOf,
     conflictCountOf,
-    stagedPaths,
     canCommit,
     commitButtonLabel,
-    initialCommitPanelState,
-    setMessage,
-    startCommit,
-    commitSucceeded,
-    commitFailed,
     type StageSection,
     type StageFile,
   } from "$lib/domain/commit-panel";
+  import { getCommitPanelStore } from "$lib/state/commit-panel.svelte";
   import { untrack } from "svelte";
   import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte";
   import { loadPersisted, savePersisted } from "$lib/state/persisted";
@@ -149,10 +144,14 @@
     section?: StageSection;
   }
   let selectedFiles = $state<DetailFile[]>([]);
-  /** Ephemeral commit-message editor for the uncommitted node (#466). Its
-   *  state machine lives in `domain/commit-panel` so it's unit-testable; this
-   *  just holds the current value and is reset when the panel closes. */
-  let commitPanel = $state(initialCommitPanelState());
+  /** Ephemeral commit-message editor for the uncommitted node (#466). The
+   *  state machine (transitions) lives in `domain/commit-panel`; the live
+   *  instance lives in a per-pane rune store so its in-flight commit guard
+   *  survives the panel closing and reopening (a second concurrent commit must
+   *  not be startable via Escape + reopen), and stays unit-testable (#444). */
+  const commitPanelStore = $derived(
+    getCommitPanelStore(paneId ?? windowTabsManager.activePaneId ?? "default"),
+  );
   /** Working-tree change count → synthetic top row (reference behavior). */
   let workingChanges = $state(0);
   let headOid = $state<string | null>(null);
@@ -224,8 +223,10 @@
   function closeDetails(): void {
     selected = null;
     selectedFiles = [];
-    // Ephemeral editor: a fresh open starts blank (mirrors keifu's commit_editor).
-    commitPanel = initialCommitPanelState();
+    // Ephemeral editor: a fresh open starts blank (mirrors keifu's
+    // commit_editor) — but NOT while a commit is in flight, so close+reopen
+    // can't drop the in-flight guard and let a second commit start (#466).
+    commitPanelStore.resetIfIdle();
     openDiffPath = null;
     openDiff = null;
     detailsHeight = 0;
@@ -325,7 +326,7 @@
   const uncommittedConflictCount = $derived(conflictCountOf(selectedFiles as StageFile[]));
   const commitEnabled = $derived(
     canCommit({
-      message: commitPanel.message,
+      message: commitPanelStore.message,
       stagedCount: uncommittedStagedCount,
       conflictCount: uncommittedConflictCount,
     }),
@@ -339,6 +340,19 @@
     selectedFiles = res.ok ? buildStageFiles(res.data) : [];
   }
 
+  /** After a stage/unstage: rebuild the panel's file list, then reload() so
+   *  the synthetic row's "Uncommitted Changes (N)" count is recomputed from
+   *  the canonical summary. A partially-staged file is double-counted in that
+   *  total (it sits in both `staged` and `changes`), so staging/unstaging it
+   *  flips the count by one — without this reload the header would go stale
+   *  until a watcher event (#466). Routes through the same refresh channels as
+   *  every other graph action; no private refresh machinery. */
+  async function afterStageChange(): Promise<void> {
+    await refreshUncommittedFiles();
+    await reload();
+    notifyLocalGitChange(repoPath);
+  }
+
   async function stagePaths(paths: string[]): Promise<void> {
     const unique = [...new Set(paths)];
     if (unique.length === 0) return;
@@ -347,8 +361,7 @@
       toastStore.error(r.error);
       return;
     }
-    await refreshUncommittedFiles();
-    notifyLocalGitChange(repoPath);
+    await afterStageChange();
   }
 
   async function unstagePaths(paths: string[]): Promise<void> {
@@ -359,22 +372,24 @@
       toastStore.error(r.error);
       return;
     }
-    await refreshUncommittedFiles();
-    notifyLocalGitChange(repoPath);
+    await afterStageChange();
   }
 
   async function commitUncommitted(): Promise<void> {
-    if (!commitEnabled || commitPanel.phase === "committing") return;
-    const message = commitPanel.message;
-    commitPanel = startCommit(commitPanel);
+    if (!commitEnabled) return;
+    const message = commitPanelStore.message;
+    // Atomic in-flight guard: begin() returns false if a commit is already
+    // running for this pane, so Escape + reopen mid-flight can't start a second
+    // concurrent gitCommit (which, absent the backend guard, could be empty).
+    if (!commitPanelStore.begin()) return;
     const r = await gitCommit(repoPath, message);
     if (!r.ok) {
       // Preserve the typed message so the user can fix and retry (#466).
-      commitPanel = commitFailed(commitPanel, r.error);
+      commitPanelStore.fail(r.error);
       toastStore.error(r.error);
       return;
     }
-    commitPanel = commitSucceeded(commitPanel);
+    commitPanelStore.succeed();
     toastStore.success("Changes committed");
     // Standard refresh policy: reload the graph (new commit row + refreshed
     // working-changes count), rebuild the still-open panel's file list, and
@@ -1679,19 +1694,19 @@
                       rows="2"
                       placeholder="Message (Ctrl+Enter to commit)"
                       aria-label="Commit message"
-                      value={commitPanel.message}
-                      oninput={(e) => (commitPanel = setMessage(commitPanel, e.currentTarget.value))}
+                      value={commitPanelStore.message}
+                      oninput={(e) => commitPanelStore.setMessage(e.currentTarget.value)}
                       onkeydown={onCommitBoxKeydown}
                     ></textarea>
-                    {#if commitPanel.error}
-                      <div class="commit-box-error" role="alert">{commitPanel.error}</div>
+                    {#if commitPanelStore.error}
+                      <div class="commit-box-error" role="alert">{commitPanelStore.error}</div>
                     {/if}
                     <div class="commit-box-actions">
                       <button
                         type="button"
                         class="commit-box-btn"
                         data-testid="git-graph-commit-btn"
-                        disabled={!commitEnabled || commitPanel.phase === "committing"}
+                        disabled={!commitEnabled || commitPanelStore.committing}
                         title="Commit staged changes (Ctrl+Enter)"
                         onclick={() => void commitUncommitted()}
                       >

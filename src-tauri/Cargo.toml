@@ -54,7 +54,7 @@ thiserror = "2"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
 icns = "0.4"
 turbojpeg = { version = "1", features = ["image"] }
-lru = "0.12"
+lru = "0.18"
 sha2 = "0.10"
 base64 = "0.22"
 hex = "0.4"

@@ -7,7 +7,7 @@ import { waitForEntries, pressShortcut } from "./helpers";
 
 test.describe("Same-folder paste makes a copy", () => {
   test("copy + paste in the same directory yields a ' - Copy' file", async ({ page }) => {
-    await page.goto("http://localhost:1420/?path=/home/user");
+    await page.goto("/?path=/home/user");
     await waitForEntries(page);
 
     // Select a file and copy it

@@ -7,7 +7,7 @@ import { waitForEntries, pressShortcut } from "./helpers";
 
 test.describe("Paste selects pasted files", () => {
   test("cross-dir paste selects the pasted file", async ({ page }) => {
-    await page.goto("http://localhost:1420/?path=/home/user");
+    await page.goto("/?path=/home/user");
     await waitForEntries(page);
 
     // Navigate into Documents

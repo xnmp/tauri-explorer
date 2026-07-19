@@ -51,6 +51,7 @@ import {
 } from "./window-tabs-persistence";
 import { createClosedTabsStore } from "./closed-tabs";
 import { disposeScmStore } from "./scm.svelte";
+import { disposeCommitPanelStore } from "./commit-panel.svelte";
 
 // Re-export persistence & migration helpers so existing importers of this
 // module keep working after the extraction (refactor/audit-tier4-splits #212).
@@ -574,6 +575,7 @@ function createWindowTabsManager() {
       explorers.get(pane.explorerId)?.destroy();
       explorers.delete(pane.explorerId);
       disposeScmStore(paneId);
+      disposeCommitPanelStore(paneId);
     }
   }
 
@@ -891,6 +893,7 @@ function createWindowTabsManager() {
     explorers.get(pane.explorerId)?.destroy();
     explorers.delete(pane.explorerId);
     disposeScmStore(target);
+    disposeCommitPanelStore(target);
 
     const remaining = leafIds(newLayout);
     const oldOrder = leafIds(tab.layout);
@@ -932,6 +935,7 @@ function createWindowTabsManager() {
         explorers.get(pane.explorerId)?.destroy();
         explorers.delete(pane.explorerId);
         disposeScmStore(paneId);
+        disposeCommitPanelStore(paneId);
       }
       updateActiveExplorerTab((t) => ({
         ...t,

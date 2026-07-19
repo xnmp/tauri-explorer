@@ -106,7 +106,7 @@ export interface Settings {
   previewFontSize: number; // base font size (px) for text/code/markdown previews
   autoEnterSingleSubdir: boolean; // when entering a dir with exactly one visible subdir (and nothing else), descend into it recursively
   ffmpegPath: string; // explicit path to ffmpeg binary for video/audio thumbnails (empty = auto-detect)
-  tabTitleGitRoot: boolean; // when the folder is inside a git repo, show the repo root name in the tab title
+  tabTitleGitRoot: boolean; // when the folder is inside a git repo, show the repo root name + git icon in the tab title (default on, #471)
   warmWindow: boolean; // keep a hidden pre-warmed window pooled so Ctrl+N is near-instant
   terminalFollowsExplorer: boolean; // auto-cd the embedded terminal when the active pane navigates (#149)
   explorerFollowsTerminal: boolean; // navigate the active pane when the terminal's shell changes cwd (OSC 7) (#149)
@@ -177,7 +177,7 @@ const DEFAULT_SETTINGS: Settings = {
   previewFontSize: 12,
   autoEnterSingleSubdir: false,
   ffmpegPath: "",
-  tabTitleGitRoot: false,
+  tabTitleGitRoot: true,
   warmWindow: true,
   terminalFollowsExplorer: true,
   explorerFollowsTerminal: true,

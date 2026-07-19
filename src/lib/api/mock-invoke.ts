@@ -1413,14 +1413,17 @@ const mockCommands: Record<string, CommandHandler> = {
       msg.trim().length === 0 && amend
         ? mockGitCommits[mockGitCommits.length - 1]?.message ?? ""
         : msg;
-    const commit_id = (mockGitCommits.length + 1).toString(16).padStart(40, "0");
     if (amend && mockGitCommits.length > 0) {
       const prev = mockGitCommits[mockGitCommits.length - 1];
       prev.message = effectiveMessage;
       prev.files = Array.from(new Set([...prev.files, ...committed]));
-    } else {
-      mockGitCommits.push({ message: effectiveMessage, amend, files: committed, commit_id });
+      return { commit_id: prev.commit_id, summary: effectiveMessage.split("\n")[0] };
     }
+    // A fresh commit advances HEAD/main and weaves a new row onto the graph so
+    // the git-graph view reflects it after its reload (#466) — mirroring the
+    // real backend, which `git_log` re-reads. mockAppendCommit returns the OID.
+    const commit_id = mockAppendCommit(effectiveMessage.split("\n")[0]);
+    mockGitCommits.push({ message: effectiveMessage, amend, files: committed, commit_id });
     return { commit_id, summary: effectiveMessage.split("\n")[0] };
   },
   git_diff: (args: Record<string, unknown>) => {

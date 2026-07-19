@@ -2,6 +2,32 @@
 
 All notable changes to Tauri Explorer.
 
+## v1.7.0 — 2026-07-19
+
+Inline git commit panel, PR details in the git graph, and a dockable preview pane.
+
+### Added
+- **Inline stage/unstage/commit panel** on the uncommitted-changes row in the git graph — stage individual files or groups, edit the commit message, and commit without leaving the graph (#466).
+- **PR details dropdown in the git graph** — clicking a PR badge now opens an in-app dropdown with the PR body and recent comments, CI-status colors, and review/comment-count icons, instead of only linking out to GitHub (#468).
+- **Dockable preview pane** — dock to the right (default), bottom, or top edge via a palette command or hotkey (Alt+Shift+P), plus an auto-dock mode that picks an orientation based on window size (#460, #467).
+- **Git-repo folder icon** in the file list marks directories that are git repositories (#463).
+- **"Mute merge commits" toggle** in the git graph header dims merge-commit rows to cut visual noise when skimming history; today's commits also get compact relative dates ("now"/"5m"/"2h").
+
+### Improved
+- **Git graph font size follows the explorer pane's font size** setting instead of a fixed size (#465).
+- **Git-repo tab-title decoration is on by default** (#471).
+- **Details view no longer renders every row on large directories** — a missing `min-height: 0` defeated virtualization, so a 5000-entry directory rendered all 5000 DOM nodes instead of the ~30 visible ones; fling-scrolling now produces zero long tasks instead of over a second of blocked time (#469).
+
+### Fixed
+- **Leading blank line trimmed from git graph commit messages** (#464).
+- **`mac_install.sh` builds from source** instead of downloading a prebuilt release, fixing a hard failure on Intel Macs (only an arm64 asset ever shipped) (#462).
+- **Committing with nothing staged now errors** instead of silently creating an empty commit, matching real git behavior (#466).
+- **The commit panel's in-flight guard is un-defeatable** — Escape-and-reopen mid-commit could previously start a second concurrent commit; the "Uncommitted Changes (N)" count no longer goes stale on a partial stage (#466).
+- **Mock load-repo fixtures are now opt-in** behind a query param instead of always injected, fixing E2E flakiness in list/tiles view modes (#472).
+
+### Housekeeping
+Nix flake for the dev shell and release builds (#470); fsync-safe test wrapper for slow-flush drives; Windows Tauri E2E leg moved to manual-only after chronic CI hangs; several e2e flake fixes (preview-pane bounding-box race, paste-spec baseURL usage, view-switch helper click targets).
+
 ## v1.6.0 — 2026-07-18
 
 Pane-island polish, GitHub PR badges in the git graph, and a one-command macOS installer.

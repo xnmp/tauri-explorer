@@ -337,6 +337,36 @@ const mockFiles: Record<string, FileEntry[]> = {
   ],
 };
 
+// ----- Synthetic load-test repositories (high-load stress suite) -----
+//
+// A pool of git-repo folders under Documents that the load E2E suite navigates
+// into and opens the commit graph for. They must exist in the mock filesystem
+// so real UI navigation reaches them; their git history is generated on demand
+// by git_log/git_refs below (see the synthetic graph generator). Deterministic:
+// nothing here uses Math.random.
+const LOAD_REPO_PREFIX = "/home/user/Documents/load-repo-";
+const LOAD_REPO_COUNT = 16;
+/** Repo index if `path` is inside a synthetic load-repo, else null. */
+function loadRepoIndex(path: string | undefined | null): number | null {
+  if (!path || !path.startsWith(LOAD_REPO_PREFIX)) return null;
+  const rest = path.slice(LOAD_REPO_PREFIX.length);
+  const m = /^(\d+)(?:\/|$)/.exec(rest);
+  if (!m) return null;
+  const i = parseInt(m[1], 10);
+  return i >= 0 && i < LOAD_REPO_COUNT ? i : null;
+}
+for (let i = 0; i < LOAD_REPO_COUNT; i++) {
+  const root = `${LOAD_REPO_PREFIX}${i}`;
+  // Visible + navigable under Documents, flagged as a git repo (#463 badge).
+  mockFiles["/home/user/Documents"].push(dir(`load-repo-${i}`, root, false, true));
+  mockFiles[root] = [
+    dir("src", `${root}/src`, false),
+    file("README.md", `${root}/README.md`, 2048),
+    file("package.json", `${root}/package.json`, 512),
+  ];
+  mockFiles[`${root}/src`] = [file("index.ts", `${root}/src/index.ts`, 256)];
+}
+
 // Get directory entries with default empty array for unknown paths
 function getDirectoryEntries(path: string): FileEntry[] {
   return mockFiles[path] || [];
@@ -657,6 +687,157 @@ function mockHeadOid(): string {
     if (list.some((r) => r.kind === "Head")) return oid;
   }
   return fullOid(12);
+}
+
+// ----- Synthetic high-load commit graph generator (load stress suite) -----
+//
+// For synthetic load-repos, git_log/git_refs serve a deterministic history of
+// N commits (N from the `mockGitCommits` URL query, default 300). The topology
+// is a main spine with periodic 2-commit feature branches that merge back, so
+// the graph has real branch/merge edges — not a flat line. Everything is
+// derived from index arithmetic (no Math.random), and each repo's tip summary
+// embeds its index so tests can assert the correct repo's graph is shown.
+
+/** Commit count for synthetic repos: `?mockGitCommits=`, default 300, capped. */
+function loadRepoCommitCount(): number {
+  if (typeof location === "undefined") return 300;
+  const raw = new URLSearchParams(location.search).get("mockGitCommits");
+  const n = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 20000) : 300;
+}
+
+/** Deterministic unique 40-char hex OID for synthetic commit number i (>= 1).
+ *  8 hex digits (up to ~4.29e9) repeated to fill 40 chars. */
+function loadOid(i: number): string {
+  return i.toString(16).padStart(8, "0").repeat(5);
+}
+
+const LOAD_AUTHORS = ["Alice Coder", "Bob Dev", "Carol Maintainer"];
+const LOAD_SUBJECTS = [
+  "Refactor module boundaries",
+  "Fix off-by-one in parser",
+  "Add unit tests",
+  "Update dependencies",
+  "Improve error messages",
+  "Tidy up logging",
+  "Optimize hot path",
+  "Document public API",
+];
+
+interface SyntheticGraph {
+  /** Newest-first, topologically ordered (parents always have a lower number). */
+  commits: MockCommit[];
+  refs: Record<string, Array<{ name: string; kind: MockRefKind }>>;
+}
+
+const syntheticGraphCache = new Map<string, SyntheticGraph>();
+
+function buildSyntheticGraph(repoIndex: number, n: number): SyntheticGraph {
+  // Chronological pass (1..n). `mainTip` tracks the current main-branch head;
+  // every 7th step spawns a 2-commit feature branch off it and merges back,
+  // producing commits reachable only via a merge's second parent (real edges).
+  const nodes: Array<{ i: number; parents: number[] }> = [];
+  const featureTips: number[] = [];
+  let mainTip = 0;
+  let i = 1;
+  while (i <= n) {
+    if (i === 1) {
+      nodes.push({ i, parents: [] });
+      mainTip = 1;
+      i++;
+      continue;
+    }
+    if (i % 7 === 0 && i + 2 <= n) {
+      const base = mainTip;
+      nodes.push({ i, parents: [base] }); // feature commit 1
+      nodes.push({ i: i + 1, parents: [i] }); // feature commit 2 (branch tip)
+      nodes.push({ i: i + 2, parents: [base, i + 1] }); // merge back into main
+      featureTips.push(i + 1);
+      mainTip = i + 2;
+      i += 3;
+    } else {
+      nodes.push({ i, parents: [mainTip] });
+      mainTip = i;
+      i++;
+    }
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  // Newest-first: sort by number descending. Parents (lower numbers) then sit
+  // deeper in the array — the topological order git_log/graph layout expects.
+  const commits: MockCommit[] = [...nodes]
+    .sort((a, b) => b.i - a.i)
+    .map((node) => {
+      const isMerge = node.parents.length > 1;
+      const summary =
+        node.i === mainTip
+          ? `Release build ${n} [load-repo-${repoIndex}]`
+          : isMerge
+            ? `Merge feature branch (#${node.i})`
+            : `${LOAD_SUBJECTS[node.i % LOAD_SUBJECTS.length]} (#${node.i})`;
+      const a = node.i % LOAD_AUTHORS.length;
+      return {
+        oid: loadOid(node.i),
+        short_oid: loadOid(node.i).slice(0, 7),
+        parents: node.parents.map(loadOid),
+        author_name: LOAD_AUTHORS[a],
+        author_email: `${LOAD_AUTHORS[a].split(" ")[0].toLowerCase()}@example.com`,
+        // Newest commit ~now, one minute apart going back — deterministic.
+        author_time: nowSec - (n - node.i) * 60,
+        summary,
+      };
+    });
+
+  const refs: SyntheticGraph["refs"] = {};
+  refs[loadOid(mainTip)] = [
+    { name: "HEAD", kind: "Head" },
+    { name: "main", kind: "LocalBranch" },
+    { name: "origin/main", kind: "RemoteBranch" },
+  ];
+  // Decorate the most recent few feature tips so the graph has extra chips.
+  featureTips.slice(-3).forEach((tip, k) => {
+    (refs[loadOid(tip)] ??= []).push({ name: `feature-${k + 1}`, kind: "LocalBranch" });
+  });
+  // A couple of tags on older commits.
+  if (n >= 4) (refs[loadOid(Math.max(1, Math.floor(n / 4)))] ??= []).push({ name: "v1.0", kind: "Tag" });
+  (refs[loadOid(1)] ??= []).push({ name: "v0.1", kind: "Tag" });
+
+  return { commits, refs };
+}
+
+function getSyntheticGraph(repoIndex: number, n: number): SyntheticGraph {
+  const key = `${repoIndex}|${n}`;
+  let g = syntheticGraphCache.get(key);
+  if (!g) {
+    g = buildSyntheticGraph(repoIndex, n);
+    syntheticGraphCache.set(key, g);
+  }
+  return g;
+}
+
+/** git_refs payload for a synthetic repo (mirrors its graph decorations). */
+function syntheticRefs(repoIndex: number, n: number) {
+  const g = getSyntheticGraph(repoIndex, n);
+  const local: Array<{ name: string; target: string }> = [];
+  const remote: Array<{ name: string; target: string }> = [];
+  const tags: Array<{ name: string; target: string }> = [];
+  let head: string | null = null;
+  for (const [oid, list] of Object.entries(g.refs)) {
+    for (const r of list) {
+      if (r.kind === "Head") head = oid;
+      else if (r.kind === "LocalBranch") local.push({ name: r.name, target: oid });
+      else if (r.kind === "RemoteBranch") remote.push({ name: r.name, target: oid });
+      else if (r.kind === "Tag") tags.push({ name: r.name, target: oid });
+    }
+  }
+  return {
+    local_branches: local,
+    remote_branches: remote,
+    tags,
+    head,
+    head_branch: "main",
+    detached: false,
+  };
 }
 
 /** Resolve a checkout/merge target (branch/tag name or full OID) to an OID. */
@@ -1314,6 +1495,8 @@ const mockCommands: Record<string, CommandHandler> = {
     const p = args.path as string;
     // No trailing slash — must stay consistent with git_status.repo_root
     if (p?.startsWith("/home/user/Documents/project")) return "/home/user/Documents/project";
+    const li = loadRepoIndex(p);
+    if (li !== null) return `${LOAD_REPO_PREFIX}${li}`;
     return null;
   },
 
@@ -1327,6 +1510,21 @@ const mockCommands: Record<string, CommandHandler> = {
 
   git_status: (args: Record<string, unknown>) => {
     const repoPath = args.repoPath as string;
+    const li = loadRepoIndex(repoPath);
+    if (li !== null) {
+      // Synthetic repos have a clean working tree (no uncommitted row).
+      return {
+        is_repo: true,
+        repo_root: `${LOAD_REPO_PREFIX}${li}`,
+        branch: "main",
+        detached: false,
+        staged: [],
+        changes: [],
+        untracked: [],
+        merge: [],
+        op_state: "clean",
+      };
+    }
     if (!repoPath?.startsWith(MOCK_REPO_ROOT)) {
       return {
         is_repo: false,
@@ -1529,6 +1727,30 @@ const mockCommands: Record<string, CommandHandler> = {
 
   git_log: (args: Record<string, unknown>) => {
     const repoPath = (args.repoPath as string) ?? "";
+    // Synthetic load-repo: deterministic N-commit history, paginated by
+    // skip/cursor/limit exactly like the real backend.
+    const loadIdx = loadRepoIndex(repoPath);
+    if (loadIdx !== null) {
+      const opts =
+        (args.options as { skip?: number; limit?: number; cursor?: string } | null) ?? {};
+      const all = getSyntheticGraph(loadIdx, loadRepoCommitCount()).commits;
+      const skip = Math.max(0, opts.skip ?? 0);
+      const limit = Math.max(1, opts.limit ?? 500);
+      let start = skip;
+      if (opts.cursor) {
+        const idx = all.findIndex((c) => c.oid === opts.cursor);
+        start = idx >= 0 ? idx + 1 : all.length; // unknown cursor → empty page
+      }
+      const page = all.slice(start, start + limit);
+      const refs = getSyntheticGraph(loadIdx, loadRepoCommitCount()).refs;
+      return {
+        commits: page,
+        refs,
+        has_more: start + limit < all.length,
+        next_cursor: page.length > 0 ? page[page.length - 1].oid : null,
+        head_branch: "main",
+      };
+    }
     if (!repoPath.startsWith("/home/user/Documents/project")) {
       return { commits: [], refs: {}, has_more: false, next_cursor: null, head_branch: null };
     }
@@ -1608,6 +1830,10 @@ const mockCommands: Record<string, CommandHandler> = {
 
   git_refs: (args: Record<string, unknown>) => {
     const repoPath = (args.repoPath as string) ?? "";
+    const loadIdx = loadRepoIndex(repoPath);
+    if (loadIdx !== null) {
+      return syntheticRefs(loadIdx, loadRepoCommitCount());
+    }
     if (!repoPath.startsWith("/home/user/Documents/project")) {
       return {
         local_branches: [],

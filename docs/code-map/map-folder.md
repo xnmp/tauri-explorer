@@ -37,7 +37,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ScmSidebarView.svelte` — Source Control sidebar panel (#54).
 - `ScmPanel.svelte` — standalone SCM panel (stage/unstage/commit lists).
 - `ScmDiffView.svelte` — unified diff viewer replacing FileList for a diff.
-- `GitGraphView.svelte` — commit-graph pane content (#51/#58).
+- `GitGraphView.svelte` — commit-graph pane content (#51/#58); the uncommitted-changes node opens an inline stage/unstage/commit panel (#466, logic in `domain/commit-panel.ts`).
 - `icons/FilesIcon.svelte`, `icons/ScmIcon.svelte` — activity-bar SVG icons.
 - `CommandPalette.svelte` — Ctrl+Shift+P command palette UI.
 - `QuickOpen.svelte` — Ctrl+P fuzzy file finder.
@@ -196,6 +196,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `keybinding-parser.ts` — parse/format keybinding chords.
 - `git.ts` — git status letter/indicator conversion.
 - `git-graph.ts` — commit-graph lane layout (#58/#179).
+- `commit-panel.ts` — pure state machine + derivations for the git-graph uncommitted-node inline commit panel: stage-status grouping, commit-button enablement/label, ephemeral message-editor transitions (#466).
 - `scm-tree.ts` — fold flat repo file list into a tree.
 - `diff.ts` — unified-diff parser (#55).
 - `undo-operations.ts` — pure undo/redo execution logic.

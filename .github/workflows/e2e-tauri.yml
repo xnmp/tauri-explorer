@@ -10,12 +10,16 @@ on:
 # Note: macOS is deliberately omitted. Official `tauri-driver` has no
 # WKWebView support (tauri-apps/tauri#7068). Re-add when a stable driver
 # exists or if macOS regressions justify the CrabNebula subscription.
+# The windows-latest leg hung at the job cap on every recorded push run
+# (builds green, smoke suite never completes — see #478), so it only runs on
+# manual dispatch. Windows coverage is a local run on real hardware instead:
+# pull on the Windows machine and `bun run test:e2e:tauri`.
 jobs:
   smoke:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["ubuntu-latest", "windows-latest"]') || fromJSON('["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:

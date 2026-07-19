@@ -381,16 +381,25 @@ function loadRepoIndex(path: string | undefined | null): number | null {
   const i = parseInt(m[1], 10);
   return i >= 0 && i < LOAD_REPO_COUNT ? i : null;
 }
-for (let i = 0; i < LOAD_REPO_COUNT; i++) {
-  const root = `${LOAD_REPO_PREFIX}${i}`;
-  // Visible + navigable under Documents, flagged as a git repo (#463 badge).
-  mockFiles["/home/user/Documents"].push(dir(`load-repo-${i}`, root, false, true));
-  mockFiles[root] = [
-    dir("src", `${root}/src`, false),
-    file("README.md", `${root}/README.md`, 2048),
-    file("package.json", `${root}/package.json`, 512),
-  ];
-  mockFiles[`${root}/src`] = [file("index.ts", `${root}/src/index.ts`, 256)];
+// Load-repos exist ONLY when the page opts in via ?mockGitCommits=N (set by
+// the e2e-load suite). Injecting them unconditionally changed the baseline
+// Documents listing and broke regular E2E in list/tiles view modes (the
+// view-switch beforeEach right-clicks "empty space", which no longer existed).
+const loadReposEnabled =
+  typeof location !== "undefined" &&
+  new URLSearchParams(location.search).has("mockGitCommits");
+if (loadReposEnabled) {
+  for (let i = 0; i < LOAD_REPO_COUNT; i++) {
+    const root = `${LOAD_REPO_PREFIX}${i}`;
+    // Visible + navigable under Documents, flagged as a git repo (#463 badge).
+    mockFiles["/home/user/Documents"].push(dir(`load-repo-${i}`, root, false, true));
+    mockFiles[root] = [
+      dir("src", `${root}/src`, false),
+      file("README.md", `${root}/README.md`, 2048),
+      file("package.json", `${root}/package.json`, 512),
+    ];
+    mockFiles[`${root}/src`] = [file("index.ts", `${root}/src/index.ts`, 256)];
+  }
 }
 
 // Get directory entries with default empty array for unknown paths

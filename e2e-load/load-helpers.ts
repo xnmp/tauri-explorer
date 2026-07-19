@@ -25,7 +25,9 @@ export async function openApp(
 ): Promise<void> {
   const path = opts.path ?? DOCUMENTS;
   const query = new URLSearchParams({ path });
-  if (opts.commits) query.set("mockGitCommits", String(opts.commits));
+  // Always present: this param is also the opt-in switch that makes the mock
+  // FS inject the load-repo-<i> directories (absent in regular E2E runs).
+  query.set("mockGitCommits", String(opts.commits ?? 300));
   await page.goto(`/?${query.toString()}`);
   await page.waitForSelector(".file-list");
   await page.locator(".entry-item").first().waitFor({ timeout: 15_000 });

@@ -547,8 +547,12 @@ test("uncommitted-changes row expands its working-tree files and diffs (#221)", 
   const detail = page.locator('[data-testid="git-graph-detail"]');
   await expect(detail).toBeVisible();
   await expect(detail).toContainText("src/index.css");
-  // Staged files are marked.
-  await expect(detail.locator(".file-staged-badge")).toHaveCount(1);
+  // Files are grouped by stage status (#466): the seed's one staged file sits
+  // under a "Staged Changes" section; unstaged edits under "Changes".
+  await expect(detail.locator('.stage-group[data-section="staged"]')).toHaveCount(1);
+  await expect(
+    detail.locator('.stage-group[data-section="staged"] .detail-file', { hasText: "src/App.tsx" }),
+  ).toBeVisible();
 
   // A working-tree file's diff renders inline.
   await detail.locator(".detail-file", { hasText: "src/index.css" }).click();

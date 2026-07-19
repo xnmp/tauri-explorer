@@ -80,12 +80,28 @@
   import { clientToFixed } from "$lib/domain/zoom";
   import { parseUnifiedDiff, type ParsedDiff } from "$lib/domain/diff";
   import { highlightDiffLine } from "$lib/domain/syntax-highlight";
-  import { gitStatusLetter, compactRelativeTimeToday } from "$lib/domain/git";
+  import { compactRelativeTimeToday } from "$lib/domain/git";
   import { notifyLocalGitChange, subscribeGitChanges } from "$lib/state/git-refresh";
   import { gitWatchRepo, gitUnwatchRepo } from "$lib/api/git";
   import { directoryKey } from "$lib/domain/path";
   import { toastStore } from "$lib/state/toast.svelte";
-  import { gitDiff } from "$lib/api/files";
+  import { gitDiff, gitStage, gitUnstage, gitCommit } from "$lib/api/files";
+  import {
+    buildStageFiles,
+    groupStageFiles,
+    stagedCountOf,
+    conflictCountOf,
+    stagedPaths,
+    canCommit,
+    commitButtonLabel,
+    initialCommitPanelState,
+    setMessage,
+    startCommit,
+    commitSucceeded,
+    commitFailed,
+    type StageSection,
+    type StageFile,
+  } from "$lib/domain/commit-panel";
   import { untrack } from "svelte";
   import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte";
   import { loadPersisted, savePersisted } from "$lib/state/persisted";
@@ -125,12 +141,18 @@
   let loadingMore = $state(false);
   let error = $state<string | null>(null);
   let selected = $state<CommitInfo | null>(null);
-  /** File rows in the expanded details. `staged` is set only for the
-   *  synthetic uncommitted row, where it picks the right working-tree diff. */
+  /** File rows in the expanded details. `staged`/`section` are set only for
+   *  the synthetic uncommitted row, where they pick the right working-tree
+   *  diff and drive the stage/unstage affordances (#466). */
   interface DetailFile extends CommitFile {
     staged?: boolean;
+    section?: StageSection;
   }
   let selectedFiles = $state<DetailFile[]>([]);
+  /** Ephemeral commit-message editor for the uncommitted node (#466). Its
+   *  state machine lives in `domain/commit-panel` so it's unit-testable; this
+   *  just holds the current value and is reset when the panel closes. */
+  let commitPanel = $state(initialCommitPanelState());
   /** Working-tree change count → synthetic top row (reference behavior). */
   let workingChanges = $state(0);
   let headOid = $state<string | null>(null);
@@ -202,6 +224,8 @@
   function closeDetails(): void {
     selected = null;
     selectedFiles = [];
+    // Ephemeral editor: a fresh open starts blank (mirrors keifu's commit_editor).
+    commitPanel = initialCommitPanelState();
     openDiffPath = null;
     openDiff = null;
     detailsHeight = 0;
@@ -219,21 +243,15 @@
     selected = commit;
     try {
       if (commit.oid === UNCOMMITTED) {
-        // Working-tree changes: flatten the SCM summary buckets, remembering
-        // which side of the index each file sits on for the diff below. Served
-        // from the shared summary cache (#431) — the graph's own reload just
-        // scanned this, so selecting the row reuses it instead of re-scanning.
+        // Working-tree changes: group the SCM summary buckets by stage status
+        // (merge / staged / unstaged / untracked), remembering which side of
+        // the index each file sits on for the diff and the stage/unstage
+        // affordance (#466). Served from the shared summary cache (#431) — the
+        // graph's own reload just scanned this, so selecting the row reuses it
+        // instead of re-scanning.
         const res = await fetchGitSummary(repoPath);
         if (!res.ok) throw new Error(res.error);
-        const buckets: Array<[{ path: string; status: string }[], boolean]> = [
-          [res.data.staged, true],
-          [res.data.changes, false],
-          [res.data.merge, false],
-          [res.data.untracked, false],
-        ];
-        selectedFiles = buckets.flatMap(([files, staged]) =>
-          files.map((f) => ({ path: f.path, status: gitStatusLetter(f.status), staged })),
-        );
+        selectedFiles = buildStageFiles(res.data);
       } else {
         // Cached per OID (#431): re-clicking or re-selecting a commit is instant.
         selectedFiles = await cachedCommitFiles(repoPath, commit.oid);
@@ -293,6 +311,94 @@
       }
     } finally {
       diffLoading = false;
+    }
+  }
+
+  // ── Inline commit panel on the uncommitted node (#466) ─────────────────────
+  // Grouped file sections + commit-button enablement are pure derivations
+  // (domain/commit-panel). Stage/unstage/commit orchestrate the existing
+  // backend commands and route refresh through the standard policy — reload()
+  // for the graph, notifyLocalGitChange() for badges + an open SCM panel — so
+  // no private refresh stack lives here (the cause of #431/#432).
+  const stageGroups = $derived(groupStageFiles(selectedFiles as StageFile[]));
+  const uncommittedStagedCount = $derived(stagedCountOf(selectedFiles as StageFile[]));
+  const uncommittedConflictCount = $derived(conflictCountOf(selectedFiles as StageFile[]));
+  const commitEnabled = $derived(
+    canCommit({
+      message: commitPanel.message,
+      stagedCount: uncommittedStagedCount,
+      conflictCount: uncommittedConflictCount,
+    }),
+  );
+
+  /** Re-scan the working tree and rebuild the grouped file list in place
+   *  (after a stage/unstage/commit). Forces past the summary-cache TTL so the
+   *  post-mutation state is observed. */
+  async function refreshUncommittedFiles(): Promise<void> {
+    const res = await fetchGitSummary(repoPath, { force: true });
+    selectedFiles = res.ok ? buildStageFiles(res.data) : [];
+  }
+
+  async function stagePaths(paths: string[]): Promise<void> {
+    const unique = [...new Set(paths)];
+    if (unique.length === 0) return;
+    const r = await gitStage(repoPath, unique);
+    if (!r.ok) {
+      toastStore.error(r.error);
+      return;
+    }
+    await refreshUncommittedFiles();
+    notifyLocalGitChange(repoPath);
+  }
+
+  async function unstagePaths(paths: string[]): Promise<void> {
+    const unique = [...new Set(paths)];
+    if (unique.length === 0) return;
+    const r = await gitUnstage(repoPath, unique);
+    if (!r.ok) {
+      toastStore.error(r.error);
+      return;
+    }
+    await refreshUncommittedFiles();
+    notifyLocalGitChange(repoPath);
+  }
+
+  async function commitUncommitted(): Promise<void> {
+    if (!commitEnabled || commitPanel.phase === "committing") return;
+    const message = commitPanel.message;
+    commitPanel = startCommit(commitPanel);
+    const r = await gitCommit(repoPath, message);
+    if (!r.ok) {
+      // Preserve the typed message so the user can fix and retry (#466).
+      commitPanel = commitFailed(commitPanel, r.error);
+      toastStore.error(r.error);
+      return;
+    }
+    commitPanel = commitSucceeded(commitPanel);
+    toastStore.success("Changes committed");
+    // Standard refresh policy: reload the graph (new commit row + refreshed
+    // working-changes count), rebuild the still-open panel's file list, and
+    // announce the change so badges + an open SCM panel update (#102, #432).
+    await reload();
+    await refreshUncommittedFiles();
+    notifyLocalGitChange(repoPath);
+    if (scmStore.repoRoot && directoryKey(scmStore.repoRoot) === directoryKey(repoPath)) {
+      void scmStore.refresh();
+    }
+    // Working tree now clean → the synthetic row is gone; close the stale panel.
+    if (selectedFiles.length === 0) closeDetails();
+  }
+
+  function onCommitBoxKeydown(event: KeyboardEvent): void {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeDetails();
+      return;
+    }
+    // Ctrl/Cmd+Enter commits; plain Enter inserts a newline (multiline message).
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      event.preventDefault();
+      void commitUncommitted();
     }
   }
 
@@ -1563,25 +1669,48 @@
                     <p class="detail-message">{commit.summary.trimStart()}</p>
                   </div>
                 {:else}
-                  <div class="detail-meta-col">
-                    <p class="detail-message">{commit.summary.trimStart()}</p>
+                  <!-- Uncommitted node (#466): the message area becomes an
+                       editable commit box; its state machine lives in
+                       domain/commit-panel. Ctrl+Enter commits, Esc closes. -->
+                  <div class="detail-meta-col commit-box" data-testid="git-graph-commit-box">
+                    <textarea
+                      class="commit-box-input"
+                      data-testid="git-graph-commit-message"
+                      rows="2"
+                      placeholder="Message (Ctrl+Enter to commit)"
+                      aria-label="Commit message"
+                      value={commitPanel.message}
+                      oninput={(e) => (commitPanel = setMessage(commitPanel, e.currentTarget.value))}
+                      onkeydown={onCommitBoxKeydown}
+                    ></textarea>
+                    {#if commitPanel.error}
+                      <div class="commit-box-error" role="alert">{commitPanel.error}</div>
+                    {/if}
+                    <div class="commit-box-actions">
+                      <button
+                        type="button"
+                        class="commit-box-btn"
+                        data-testid="git-graph-commit-btn"
+                        disabled={!commitEnabled || commitPanel.phase === "committing"}
+                        title="Commit staged changes (Ctrl+Enter)"
+                        onclick={() => void commitUncommitted()}
+                      >
+                        {commitButtonLabel(uncommittedStagedCount)}
+                      </button>
+                    </div>
                   </div>
                 {/if}
                 <div class="detail-files-col">
-              <ul class="detail-files">
-                {#each selectedFiles as file (file.path + (file.staged ? ":s" : ""))}
-                  <li>
-                    <button
-                      type="button"
-                      class="detail-file"
-                      class:open={openDiffPath === file.path}
-                      onclick={() => void toggleFileDiff(file)}
-                      title="Show diff"
-                    >
-                      <span class="file-status s-{file.status}">{file.status}</span>
-                      <span class="file-path">{file.path}</span>
-                      {#if file.staged}<span class="file-staged-badge">staged</span>{/if}
-                    </button>
+                  {#snippet stageActionIcon(kind: "stage" | "unstage")}
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      {#if kind === "stage"}
+                        <path d="M8 3.5v9M3.5 8h9" />
+                      {:else}
+                        <path d="M3.5 8h9" />
+                      {/if}
+                    </svg>
+                  {/snippet}
+                  {#snippet fileDiff(file: DetailFile)}
                     {#if openDiffPath === file.path}
                       <div class="file-diff" data-testid="git-graph-file-diff">
                         {#if diffLoading}
@@ -1611,11 +1740,92 @@
                         {/if}
                       </div>
                     {/if}
-                  </li>
-                {:else}
-                  <li class="file-empty">No file changes (or still loading…)</li>
-                {/each}
-              </ul>
+                  {/snippet}
+                  {#if synthetic}
+                    {#if selectedFiles.length === 0}
+                      <p class="file-empty">Working tree clean</p>
+                    {:else}
+                      {#each stageGroups as group (group.section)}
+                        <div class="stage-group" data-section={group.section}>
+                          <div class="stage-group-head">
+                            <span class="stage-group-label">{group.label}</span>
+                            <span class="stage-group-count">{group.files.length}</span>
+                            {#if group.section === "staged"}
+                              <button
+                                type="button"
+                                class="stage-all-btn"
+                                title="Unstage all"
+                                onclick={() => void unstagePaths(group.files.map((f) => f.path))}
+                              >Unstage all</button>
+                            {:else}
+                              <button
+                                type="button"
+                                class="stage-all-btn"
+                                title="Stage all"
+                                onclick={() => void stagePaths(group.files.map((f) => f.path))}
+                              >Stage all</button>
+                            {/if}
+                          </div>
+                          <ul class="detail-files">
+                            {#each group.files as file (group.section + ":" + file.path)}
+                              <li>
+                                <div class="detail-file-row">
+                                  <button
+                                    type="button"
+                                    class="detail-file"
+                                    class:open={openDiffPath === file.path}
+                                    onclick={() => void toggleFileDiff(file)}
+                                    title="Show diff"
+                                  >
+                                    <span class="file-status s-{file.status}">{file.status}</span>
+                                    <span class="file-path">{file.path}</span>
+                                  </button>
+                                  {#if group.section === "staged"}
+                                    <button
+                                      type="button"
+                                      class="stage-btn"
+                                      title="Unstage {file.path}"
+                                      aria-label="Unstage {file.path}"
+                                      onclick={() => void unstagePaths([file.path])}
+                                    >{@render stageActionIcon("unstage")}</button>
+                                  {:else}
+                                    <button
+                                      type="button"
+                                      class="stage-btn"
+                                      title="Stage {file.path}"
+                                      aria-label="Stage {file.path}"
+                                      onclick={() => void stagePaths([file.path])}
+                                    >{@render stageActionIcon("stage")}</button>
+                                  {/if}
+                                </div>
+                                {@render fileDiff(file)}
+                              </li>
+                            {/each}
+                          </ul>
+                        </div>
+                      {/each}
+                    {/if}
+                  {:else}
+                    <ul class="detail-files">
+                      {#each selectedFiles as file (file.path + (file.staged ? ":s" : ""))}
+                        <li>
+                          <button
+                            type="button"
+                            class="detail-file"
+                            class:open={openDiffPath === file.path}
+                            onclick={() => void toggleFileDiff(file)}
+                            title="Show diff"
+                          >
+                            <span class="file-status s-{file.status}">{file.status}</span>
+                            <span class="file-path">{file.path}</span>
+                          </button>
+                          {@render fileDiff(file)}
+                        </li>
+                      {:else}
+                        <li class="file-empty">No file changes (or still loading…)</li>
+                      {/each}
+                    </ul>
+                  {/if}
                 </div>
               </div>
             </div>
@@ -2069,13 +2279,126 @@
     background: var(--subtle-fill-secondary);
   }
 
-  .file-staged-badge {
-    margin-left: auto;
+  /* Inline commit panel on the uncommitted node (#466). */
+  .commit-box {
+    gap: 6px;
+  }
+
+  .commit-box-input {
+    width: 100%;
+    box-sizing: border-box;
+    resize: vertical;
+    min-height: 44px;
+    padding: 6px 8px;
+    font-family: inherit;
+    font-size: var(--font-size-body);
+    color: var(--text-primary);
+    background: var(--background-solid);
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-sm);
+  }
+
+  .commit-box-input:focus {
+    outline: none;
+    border-color: var(--accent, #3b82f6);
+  }
+
+  .commit-box-error {
     font-size: var(--font-size-caption);
+    color: #ef4444;
+  }
+
+  .commit-box-actions {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .commit-box-btn {
+    padding: 4px 12px;
+    font: inherit;
+    font-size: var(--font-size-body);
+    color: #fff;
+    background: var(--accent, #3b82f6);
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+
+  .commit-box-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .stage-group {
+    margin-bottom: 8px;
+  }
+
+  .stage-group-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0;
     color: var(--text-tertiary);
+    font-size: var(--font-size-caption);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .stage-group-count {
+    color: var(--text-tertiary);
+  }
+
+  .stage-all-btn {
+    margin-left: auto;
+    padding: 0 6px;
+    font: inherit;
+    font-size: var(--font-size-caption);
+    color: var(--text-secondary);
+    background: none;
     border: 1px solid var(--divider);
     border-radius: 3px;
-    padding: 0 4px;
+    cursor: pointer;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+
+  .stage-all-btn:hover {
+    background: var(--subtle-fill-secondary);
+  }
+
+  .detail-file-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .detail-file-row .detail-file {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .stage-btn {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    color: var(--text-tertiary);
+    background: none;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    opacity: 0;
+  }
+
+  .detail-file-row:hover .stage-btn,
+  .stage-btn:focus-visible {
+    opacity: 1;
+  }
+
+  .stage-btn:hover {
+    color: var(--text-primary);
+    background: var(--subtle-fill-secondary);
   }
 
   /* Per-file inline diff. */

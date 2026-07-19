@@ -23,8 +23,14 @@ async function runPaletteCommand(page: Page, label: string): Promise<void> {
 }
 
 async function boxes(page: Page) {
-  const list = await page.locator(".file-list").first().boundingBox();
-  const preview = await page.locator(".preview-pane").boundingBox();
+  const listLoc = page.locator(".file-list").first();
+  const previewLoc = page.locator(".preview-pane");
+  // boundingBox() has no auto-retry and returns null mid-relayout (the auto-dock
+  // re-render); wait for visibility first so slow runners don't race it.
+  await expect(listLoc).toBeVisible();
+  await expect(previewLoc).toBeVisible();
+  const list = await listLoc.boundingBox();
+  const preview = await previewLoc.boundingBox();
   expect(list).not.toBeNull();
   expect(preview).not.toBeNull();
   return { list: list!, preview: preview! };

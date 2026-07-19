@@ -5,7 +5,7 @@
 -->
 <script lang="ts">
   import type { FileEntry } from "$lib/domain/file";
-  import { getFileIconCategory, getFileExtensionLabel } from "$lib/domain/file-types";
+  import { getFileIconCategory, getFileExtensionLabel, isGitRepoFolder } from "$lib/domain/file-types";
   import { getNerdIcon } from "$lib/domain/nerd-icons";
   import { settingsStore } from "$lib/state/settings.svelte";
 
@@ -66,6 +66,14 @@
   // icon: a folder with a link arrow, so it reads as a folder you can open
   // while staying visibly distinct from a real folder.
   const linkedFolder = $derived(entry.kind === "directory" && entry.is_symlink === true);
+
+  // A folder that is a git repo root (has a `.git` dir or file) gets a small
+  // git-branch badge in the corner, reusing the branch glyph from the window
+  // tab bar's `isGitRoot` decoration (see WindowTabBar.svelte) so the two
+  // git-aware icon surfaces read as the same visual language. Checked after
+  // linkedFolder so a symlinked repo (rare) still shows as a linked folder —
+  // that state is more surprising to lose than the repo badge is.
+  const gitRepoFolder = $derived(isGitRepoFolder(entry) && !linkedFolder);
 </script>
 
 {#if linkedFolder}
@@ -84,6 +92,37 @@
         <path d="M2 10C2 7.2 3.79 5 6 5H14.34C15.4 5 16.42 5.5 17.17 6.5L20 10H42C44.21 10 46 12.2 46 15V38.75C46 41.5 44.21 43.75 42 43.75H6C3.79 43.75 2 41.5 2 38.75V10Z" fill="currentColor" opacity="0.85"/>
         <path d="M2 20C2 17.9 3.34 16.25 5 16.25H43C44.66 16.25 46 17.9 46 20V41.25C46 43.3 44.66 45 43 45H5C3.34 45 2 43.3 2 41.25V20Z" fill="currentColor"/>
         <path d="M18 34L30 22M30 22H21M30 22V31" stroke="var(--icon-link-arrow, #fff)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </span>
+  {/if}
+{:else if gitRepoFolder}
+  <!-- Git repo root: folder with a small git-branch badge (all themes) -->
+  {#if size === "small"}
+    <span class="icon-cat git-repo-folder">
+      <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
+        <path d="M2.5 7.5C2.5 6.94772 2.94772 6.5 3.5 6.5H14.5C15.0523 6.5 15.5 6.94772 15.5 7.5V12.5C15.5 13.6046 14.6046 14.5 13.5 14.5H4.5C3.39543 14.5 2.5 13.6046 2.5 12.5V7.5Z" fill="currentColor"/>
+        <path d="M2 5.5C2 4.67157 2.67157 4 3.5 4H6.17157C6.43679 4 6.69114 4.10536 6.87868 4.29289L8.12132 4.29289C8.30886 4.10536 8.56321 4 8.82843 4H13C13.8284 4 14.5 4.67157 14.5 5.5V6.5H2V5.5Z" fill="currentColor" opacity="0.6"/>
+        <circle cx="13.1" cy="13.1" r="4.1" fill="var(--icon-git-badge, #f05033)"/>
+        <g transform="translate(10.05 9.68) scale(0.42)">
+          <circle cx="4" cy="3.5" r="1.6" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="1.5" />
+          <circle cx="4" cy="12.5" r="1.6" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="1.5" />
+          <circle cx="11.5" cy="3.5" r="1.6" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="1.5" />
+          <path d="M4 5.1V10.9M11.5 5.1V6.5C11.5 8.2 10 9 8 9H6" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="1.5" stroke-linecap="round" />
+        </g>
+      </svg>
+    </span>
+  {:else}
+    <span class="icon-cat git-repo-folder">
+      <svg width="64" height="64" viewBox="0 0 48 48" fill="none">
+        <path d="M2 10C2 7.2 3.79 5 6 5H14.34C15.4 5 16.42 5.5 17.17 6.5L20 10H42C44.21 10 46 12.2 46 15V38.75C46 41.5 44.21 43.75 42 43.75H6C3.79 43.75 2 41.5 2 38.75V10Z" fill="currentColor" opacity="0.85"/>
+        <path d="M2 20C2 17.9 3.34 16.25 5 16.25H43C44.66 16.25 46 17.9 46 20V41.25C46 43.3 44.66 45 43 45H5C3.34 45 2 43.3 2 41.25V20Z" fill="currentColor"/>
+        <circle cx="37.5" cy="37.5" r="10.5" fill="var(--icon-git-badge, #f05033)"/>
+        <g transform="translate(29.9 28.4) scale(1.05)">
+          <circle cx="4" cy="3.5" r="1.6" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="1.5" />
+          <circle cx="4" cy="12.5" r="1.6" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="1.5" />
+          <circle cx="11.5" cy="3.5" r="1.6" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="1.5" />
+          <path d="M4 5.1V10.9M11.5 5.1V6.5C11.5 8.2 10 9 8 9H6" stroke="var(--icon-git-badge-glyph, #fff)" stroke-width="1.5" stroke-linecap="round" />
+        </g>
       </svg>
     </span>
   {/if}
@@ -337,6 +376,8 @@
   .icon-document   { color: var(--icon-file-tint, var(--icon-document)); }
   /* Linked folder uses the folder colour; the arrow is drawn in --icon-link-arrow. */
   .linked-folder   { color: var(--icon-folder, #ffb900); }
+  /* Git-repo folder uses the folder colour; the badge is drawn in --icon-git-badge. */
+  .git-repo-folder { color: var(--icon-folder, #ffb900); }
 
   .folder-large {
     filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.25));

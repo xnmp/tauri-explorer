@@ -43,6 +43,13 @@ pub struct FileEntry {
     pub symlink_target: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub is_empty: Option<bool>,
+    /// True when this directory entry is a git repo root: it contains a
+    /// `.git` entry (a directory for a normal repo, or a *file* for a
+    /// worktree/submodule gitlink). Always `false` for non-directory
+    /// entries. `#[serde(default)]` keeps older callers/fixtures that omit
+    /// the field compatible.
+    #[serde(default)]
+    pub is_git_repo: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +106,13 @@ pub(crate) fn metadata_to_entry(path: &Path, sym_meta: &fs::Metadata) -> FileEnt
         FileKind::File
     };
 
+    // One extra `exists()` stat per *directory* entry — not the `read_dir`
+    // per-subdirectory cost that `is_empty` deliberately avoids (see
+    // `fill_is_empty` below). `.git` is checked as either a directory (a
+    // normal repo) or a file (worktrees/submodules use a `.git` gitlink
+    // file), so both cases are detected. Never probed for file entries.
+    let is_git_repo = matches!(kind, FileKind::Directory) && path.join(".git").exists();
+
     let size = if effective.is_dir() {
         0
     } else {
@@ -132,6 +146,7 @@ pub(crate) fn metadata_to_entry(path: &Path, sym_meta: &fs::Metadata) -> FileEnt
         is_symlink,
         symlink_target,
         is_empty: None,
+        is_git_repo,
     }
 }
 

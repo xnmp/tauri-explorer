@@ -16,6 +16,8 @@ export interface FileEntry {
   readonly is_symlink?: boolean;
   readonly symlink_target?: string;
   readonly is_empty?: boolean;
+  /** True when this directory is a git repo root (has a `.git` dir or file). */
+  readonly is_git_repo?: boolean;
 }
 
 export interface DirectoryListing {

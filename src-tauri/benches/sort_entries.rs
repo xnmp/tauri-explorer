@@ -39,6 +39,7 @@ fn build_fixture(count: usize) -> Vec<FileEntry> {
                 is_symlink: false,
                 symlink_target: None,
                 is_empty: None,
+                is_git_repo: false,
             }
         })
         .collect()

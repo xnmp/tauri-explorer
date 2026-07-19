@@ -256,6 +256,19 @@ export function isShortcut(entry: FileEntry): boolean {
   return entry.kind === "file" && entry.name.toLowerCase().endsWith(".lnk");
 }
 
+/**
+ * Check if a directory entry is a git repo root (backend-flagged `is_git_repo`,
+ * set when the directory has a `.git` dir or gitlink file — see
+ * `src-tauri/src/files/mod.rs::metadata_to_entry`). Never true for files,
+ * even if `is_git_repo` were somehow set on one (defensive: the flag should
+ * only ever appear on directories, but icon selection shouldn't trust that
+ * blindly). A symlinked directory takes priority over the repo badge (#463) —
+ * callers combine this with `is_symlink` when picking the rendered icon.
+ */
+export function isGitRepoFolder(entry: FileEntry): boolean {
+  return entry.kind === "directory" && entry.is_git_repo === true;
+}
+
 /** Check if a file is an image that supports thumbnails */
 export function isImageFile(entry: FileEntry): boolean {
   if (entry.kind === "directory") return false;

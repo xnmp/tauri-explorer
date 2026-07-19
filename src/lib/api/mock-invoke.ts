@@ -35,10 +35,17 @@ function file(name: string, path: string, size: number): FileEntry {
 // which consults this map for such folders.
 const mockDirEmpty: Record<string, boolean> = {};
 
-function dir(name: string, path: string, is_empty?: boolean): FileEntry {
+function dir(name: string, path: string, is_empty?: boolean, is_git_repo?: boolean): FileEntry {
   if (is_empty !== undefined) mockDirEmpty[path] = is_empty;
   // is_empty is intentionally absent from the listing contract (#129).
-  return { name, path, kind: "directory", size: 0, modified: nextTimestamp() };
+  return {
+    name,
+    path,
+    kind: "directory",
+    size: 0,
+    modified: nextTimestamp(),
+    ...(is_git_repo ? { is_git_repo: true } : {}),
+  };
 }
 
 // Mock file system structure
@@ -57,11 +64,23 @@ const mockFiles: Record<string, FileEntry[]> = {
     dir("Music", "/home/user/Music", false),
     dir("Videos", "/home/user/Videos", false),
     dir("Archive", "/home/user/Archive", true),
+    // A git repo root (has a `.git` dir on the real backend) alongside a plain
+    // folder, so the folder-with-git icon is visible in every view mode (#463).
+    dir("my-project", "/home/user/my-project", false, true),
     dir(".config", "/home/user/.config", false),
     file("readme.txt", "/home/user/readme.txt", 1024),
     file("notes.md", "/home/user/notes.md", 2048),
   ],
   "/home/user/Archive": [],
+  "/home/user/my-project": [
+    dir("src", "/home/user/my-project/src", false),
+    file("README.md", "/home/user/my-project/README.md", 2048),
+    file(".gitignore", "/home/user/my-project/.gitignore", 64),
+    file("package.json", "/home/user/my-project/package.json", 512),
+  ],
+  "/home/user/my-project/src": [
+    file("index.ts", "/home/user/my-project/src/index.ts", 256),
+  ],
   // Removable drive contents — lets the browser mock navigate onto a removable
   // drive so the "removable drive removed" state can be exercised.
   "/media/user/USB_DRIVE": [

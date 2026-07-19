@@ -82,6 +82,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-status.svelte.ts` — per-entry git status cache store.
 - `git-summary-cache.ts` — shared per-repo `git_status` (working-tree summary) fetch: in-flight dedup + short TTL, used by SCM store + git-graph so one change is one scan, not several (#431).
 - `scm.svelte.ts` — Source Control state (staged/unstaged/commit, #54).
+- `commit-panel.svelte.ts` — per-pane rune store holding the git-graph uncommitted-node commit editor's live state (#466); wraps `domain/commit-panel` transitions so the in-flight commit guard survives close+reopen (`begin()`/`resetIfIdle()`). Disposed with the pane (like `disposeScmStore`).
 - `file-events.ts` — cross-window file-change broadcast (affected dirs → all windows).
 - `file-transfer.ts` — shared move/copy transfer core: conflict detect, undo, toast, frecency, broadcast.
 - `paste-operations.ts` — batch paste (conflict apply-to-all, progress) over file-transfer.

@@ -409,6 +409,46 @@ mod tests {
         assert!(!full);
     }
 
+    /// Directories are flagged `is_git_repo` when they contain a `.git`
+    /// directory (normal repo) or a `.git` file (worktree/submodule
+    /// gitlink) — plain folders and files are never flagged (#463).
+    #[test]
+    fn scan_detects_git_repo_dir_and_gitlink_file_but_not_plain_folders() {
+        let dir = tempdir().unwrap();
+
+        // Normal repo: `.git` is a directory.
+        fs::create_dir(dir.path().join("repo-dir")).unwrap();
+        fs::create_dir(dir.path().join("repo-dir/.git")).unwrap();
+
+        // Worktree/submodule: `.git` is a file (a gitlink pointing elsewhere).
+        fs::create_dir(dir.path().join("repo-file")).unwrap();
+        fs::write(
+            dir.path().join("repo-file/.git"),
+            "gitdir: ../.git/worktrees/repo-file\n",
+        )
+        .unwrap();
+
+        // Plain folder: no `.git` at all.
+        fs::create_dir(dir.path().join("plain")).unwrap();
+
+        // A file at the top level too, to confirm files are never flagged.
+        File::create(dir.path().join("plain.txt")).unwrap();
+
+        let entries = scan_directory_parallel(&dir.path().to_path_buf());
+        let by_name = |name: &str| entries.iter().find(|e| e.name == name).unwrap();
+
+        assert!(by_name("repo-dir").is_git_repo, "`.git` dir should flag repo");
+        assert!(
+            by_name("repo-file").is_git_repo,
+            "`.git` gitlink file (worktree/submodule) should flag repo"
+        );
+        assert!(!by_name("plain").is_git_repo, "plain folder must not be flagged");
+        assert!(
+            !by_name("plain.txt").is_git_repo,
+            "files are never flagged, even named oddly"
+        );
+    }
+
     /// Contract test mirroring `tests/contract/fs-ops.contract.test.ts`
     /// (mock side). Both build the `listing_order` scenario from the shared
     /// fixture and assert the same ordering contract: directories first, then

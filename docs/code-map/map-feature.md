@@ -24,7 +24,9 @@ backend for E2E/browser).
 - `composables/use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) behind List + Tiles
 - `state/commands/view-commands.ts` — view.details/list/tiles, sort, columns cmds
 - `state/sort-prefs.ts`, `state/folder-views.svelte.ts` — per-folder view+sort persistence
-- FLOW: view mode lives on explorer store; `FileList` reads it, mounts one view; all three must change together for display features.
+- `components/FileIcon.svelte` — shared icon renderer used by all 3 views (via `FileItem.svelte` for Details/List, `TilesView.svelte` for Tiles); linked-folder and git-repo-folder badge overlays live here so a display feature added once covers all views automatically
+- `domain/file-types.ts` — `isGitRepoFolder` (icon-selection predicate for the git-repo folder badge, #463); backend flag set in `src-tauri/src/files/mod.rs::metadata_to_entry` (`FileEntry.is_git_repo`, one `.git`-exists stat per directory entry)
+- FLOW: view mode lives on explorer store; `FileList` reads it, mounts one view; all three must change together for display features. Since Details/List/Tiles all route icons through `FileIcon.svelte`, icon-only features (like the git-repo badge) don't need per-view changes — the shared component is the single seam.
 
 ## Selection & marquee
 - `composables/use-marquee-selection.svelte.ts` — drag-rect candidate set + hit-testing

@@ -337,8 +337,38 @@ const mockFiles: Record<string, FileEntry[]> = {
   ],
 };
 
+// Synthetic large directory for scroll/render profiling (browser-only, mock).
+// Reached at `/perf/huge` (default 5000 entries) or `/perf/huge-N`. Deterministic
+// mix: ~6% directories, ~12% images (exercise Tiles thumbnails), rest files with
+// varied extensions/sizes/dates so sort + column formatting have real work.
+const PERF_EXTS = ["ts", "js", "json", "md", "rs", "svelte", "css", "html", "txt", "log", "yaml", "toml"];
+const perfHugeCache = new Map<string, FileEntry[]>();
+function generateHugeDir(path: string, count: number): FileEntry[] {
+  const cached = perfHugeCache.get(path);
+  if (cached) return cached;
+  const entries: FileEntry[] = [];
+  for (let i = 0; i < count; i++) {
+    const idx = String(i).padStart(5, "0");
+    const bucket = i % 16;
+    if (bucket < 1) {
+      entries.push({ name: `folder-${idx}`, path: `${path}/folder-${idx}`, kind: "directory", size: 0, modified: new Date(TIMESTAMP_BASE + i * 137 * 1000).toISOString() });
+    } else if (bucket < 3) {
+      entries.push({ name: `image-${idx}.png`, path: `${path}/image-${idx}.png`, kind: "file", size: 20000 + ((i * 7919) % 500000), modified: new Date(TIMESTAMP_BASE + i * 211 * 1000).toISOString() });
+    } else {
+      const ext = PERF_EXTS[i % PERF_EXTS.length];
+      entries.push({ name: `file-${idx}.${ext}`, path: `${path}/file-${idx}.${ext}`, kind: "file", size: 100 + ((i * 31337) % 900000), modified: new Date(TIMESTAMP_BASE + i * 89 * 1000).toISOString() });
+    }
+  }
+  perfHugeCache.set(path, entries);
+  return entries;
+}
+
 // Get directory entries with default empty array for unknown paths
 function getDirectoryEntries(path: string): FileEntry[] {
+  if (path === "/perf/huge" || path.startsWith("/perf/huge-")) {
+    const m = path.match(/^\/perf\/huge-(\d+)$/);
+    return generateHugeDir(path, m ? parseInt(m[1], 10) : 5000);
+  }
   return mockFiles[path] || [];
 }
 
@@ -848,7 +878,8 @@ const mockCommands: Record<string, CommandHandler> = {
   list_directory: (args) => {
     const raw = args.path as string;
     const path = raw !== "/" && raw.endsWith("/") ? raw.slice(0, -1) : raw;
-    if (!(path in mockFiles)) {
+    const isPerfHuge = path === "/perf/huge" || path.startsWith("/perf/huge-");
+    if (!isPerfHuge && !(path in mockFiles)) {
       throw new Error(`Path not found: ${path}`);
     }
     const entries = sortListing(getDirectoryEntries(path));
@@ -901,7 +932,8 @@ const mockCommands: Record<string, CommandHandler> = {
   start_streaming_directory: (args) => {
     const raw = args.path as string;
     const path = raw !== "/" && raw.endsWith("/") ? raw.slice(0, -1) : raw;
-    if (!(path in mockFiles)) {
+    const isPerfHuge = path === "/perf/huge" || path.startsWith("/perf/huge-");
+    if (!isPerfHuge && !(path in mockFiles)) {
       throw new Error(`Path not found: ${path}`);
     }
     const entries = sortListing(getDirectoryEntries(path));

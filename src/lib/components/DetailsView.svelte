@@ -178,6 +178,14 @@
     display: flex;
     flex-direction: column;
     flex: 1;
+    /* min-height:0 lets this flex child shrink below its content height so the
+       inner VirtualList `.virtual-viewport` (overflow-y:auto) becomes the bounded
+       vertical scroller. Without it the flex default (min-height:auto) makes this
+       grow to full content height, `.content` scrolls instead, and VirtualList's
+       clientHeight binding reads the full list height — so it renders EVERY row
+       (virtualization defeated → scroll jank on large dirs, #469). ListView and
+       TilesView already set this on their wrappers; Details was missing it. */
+    min-height: 0;
     min-width: fit-content;
   }
 

@@ -1810,6 +1810,75 @@ mod tests {
         assert!(s.changes.is_empty());
     }
 
+    /// End-to-end of the flow the git-graph inline commit panel drives (#466):
+    /// stage a working-tree change through the async command, commit it with a
+    /// message, and assert HEAD advanced with that message while the index
+    /// emptied — then that unstaging a re-modified file returns it to `changes`.
+    #[test]
+    fn stage_commit_advances_head_and_empties_index() {
+        let dir = init_repo();
+        write(dir.path(), "a.txt", "v1\n");
+        commit_all(dir.path(), "init");
+        write(dir.path(), "a.txt", "v2\n");
+        let path = dir.path().to_str().unwrap().to_string();
+
+        // Stage, then commit with a message.
+        tokio_test_block(git_stage(path.clone(), vec!["a.txt".into()])).unwrap();
+        let pre = sync_status(dir.path());
+        assert_eq!(pre.staged.len(), 1, "file should be staged before commit");
+
+        let res =
+            tokio_test_block(git_commit(path.clone(), "feat: land a.txt".into(), None)).unwrap();
+        assert!(!res.commit_id.is_empty());
+
+        // HEAD advanced to a commit carrying the message.
+        let head_msg = Command::new("git")
+            .current_dir(dir.path())
+            .args(["log", "-1", "--format=%s"])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&head_msg.stdout).trim(), "feat: land a.txt");
+
+        // The index is empty afterwards (nothing left staged).
+        let post = sync_status(dir.path());
+        assert!(post.staged.is_empty(), "index should be empty after commit");
+        assert!(post.changes.is_empty() && post.untracked.is_empty());
+    }
+
+    #[test]
+    fn unstage_returns_file_to_changes() {
+        let dir = init_repo();
+        write(dir.path(), "a.txt", "v1\n");
+        commit_all(dir.path(), "init");
+        write(dir.path(), "a.txt", "v2\n");
+        let path = dir.path().to_str().unwrap().to_string();
+
+        tokio_test_block(git_stage(path.clone(), vec!["a.txt".into()])).unwrap();
+        assert_eq!(sync_status(dir.path()).staged.len(), 1);
+
+        tokio_test_block(git_unstage(path.clone(), vec!["a.txt".into()])).unwrap();
+        let s = sync_status(dir.path());
+        assert!(s.staged.is_empty(), "unstaged file must leave the index");
+        assert_eq!(s.changes.len(), 1, "and reappear as a working-tree change");
+        assert_eq!(s.changes[0].path, "a.txt");
+    }
+
+    #[test]
+    fn commit_with_empty_message_is_rejected() {
+        let dir = init_repo();
+        write(dir.path(), "a.txt", "v1\n");
+        commit_all(dir.path(), "init");
+        write(dir.path(), "a.txt", "v2\n");
+        let path = dir.path().to_str().unwrap().to_string();
+        tokio_test_block(git_stage(path.clone(), vec!["a.txt".into()])).unwrap();
+
+        let err = tokio_test_block(git_commit(path, "   ".into(), None));
+        assert!(
+            matches!(err, Err(AppError::Other(m)) if m.contains("empty")),
+            "whitespace-only message must be rejected",
+        );
+    }
+
     #[test]
     fn discard_reverts_worktree_changes() {
         let dir = init_repo();

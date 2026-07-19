@@ -437,12 +437,18 @@ mod tests {
         let entries = scan_directory_parallel(&dir.path().to_path_buf());
         let by_name = |name: &str| entries.iter().find(|e| e.name == name).unwrap();
 
-        assert!(by_name("repo-dir").is_git_repo, "`.git` dir should flag repo");
+        assert!(
+            by_name("repo-dir").is_git_repo,
+            "`.git` dir should flag repo"
+        );
         assert!(
             by_name("repo-file").is_git_repo,
             "`.git` gitlink file (worktree/submodule) should flag repo"
         );
-        assert!(!by_name("plain").is_git_repo, "plain folder must not be flagged");
+        assert!(
+            !by_name("plain").is_git_repo,
+            "plain folder must not be flagged"
+        );
         assert!(
             !by_name("plain.txt").is_git_repo,
             "files are never flagged, even named oddly"

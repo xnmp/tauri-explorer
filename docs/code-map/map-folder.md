@@ -21,7 +21,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `FileItem.svelte` — single entry row/tile (icon, name, badges, selection state).
 - `ItemButton.svelte` — shared entry button wrapper wiring drag-drop + interaction handlers.
 - `EntryName.svelte` — shared inline rename input/display across all views.
-- `FileIcon.svelte` — file/folder icon resolution (Material/nerd-font theme).
+- `FileIcon.svelte` — file/folder icon resolution (Material/nerd-font theme); also renders the linked-folder and git-repo-folder badge overlays (all themes, all 3 view modes since it's the shared icon renderer).
 - `ThumbnailImage.svelte` — lazy image/video thumbnail loader w/ cache + intersection. Hot.
 - `FolderThumbnail.svelte` — Windows-style folder preview tile (up to 3 nested images, #146).
 - `GitStatusBadge.svelte` — per-entry git status letter/color decoration.
@@ -181,8 +181,8 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `use-row-grid-view.svelte.ts` — shared virtualization wiring (rows, DnD, new-folder sentinel, scrollToIndex) for List + Tiles views.
 
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
-- `file.ts` — file entry types + pure ops (sort, filter, format). Hot.
-- `file-types.ts` — extension→type/category detection + display.
+- `file.ts` — file entry types (incl. `is_git_repo`) + pure ops (sort, filter, format). Hot.
+- `file-types.ts` — extension→type/category detection + display; `isGitRepoFolder` (git-repo folder icon selection, #463).
 - `path.ts` — path normalization/join/parent/relative helpers.
 - `platform.ts` — isMac/isWindows/isLinux detection.
 - `wsl.ts` — WSL path recognition.
@@ -286,7 +286,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `github.rs` — `git_open_prs`: open GitHub PRs for the repo's remote, for graph PR badges (#449); TTL-cached, silent-degrade.
 
 ### src-tauri/src/files/ — file operations module.
-- `mod.rs` — files module root + re-exports.
+- `mod.rs` — files module root + re-exports; `FileEntry` incl. `is_git_repo` and `metadata_to_entry`'s one-stat-per-directory git-repo-root detection (#463).
 - `dir_listing.rs` — directory listing with caching + streaming. Hot.
 - `file_ops.rs` — CRUD: create/rename/copy/move/delete/symlink/estimate.
 - `fs_watcher.rs` — filesystem watcher → directory-changed events.

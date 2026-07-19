@@ -11,15 +11,21 @@ import {
   getFileIconColor,
   getFileIconCategory,
   isTextFile,
+  isGitRepoFolder,
 } from "$lib/domain/file-types";
 import type { FileEntry } from "$lib/domain/file";
 
-const entry = (name: string, kind: "file" | "directory" = "file"): FileEntry => ({
+const entry = (
+  name: string,
+  kind: "file" | "directory" = "file",
+  extra: Partial<FileEntry> = {}
+): FileEntry => ({
   name,
   path: `/x/${name}`,
   kind,
   size: 0,
   modified: "",
+  ...extra,
 });
 
 describe("formatDate", () => {
@@ -71,6 +77,21 @@ describe("isZipFile", () => {
     expect(isZipFile(entry("photo.zip.bak"))).toBe(false);
     expect(isZipFile(entry("archive.tar.gz"))).toBe(false);
     expect(isZipFile(entry("archive.zip", "directory"))).toBe(false);
+  });
+});
+
+describe("isGitRepoFolder", () => {
+  it("is true only for directories flagged is_git_repo by the backend", () => {
+    expect(isGitRepoFolder(entry("repo", "directory", { is_git_repo: true }))).toBe(true);
+  });
+
+  it("is false for a plain directory (is_git_repo absent or false)", () => {
+    expect(isGitRepoFolder(entry("plain", "directory"))).toBe(false);
+    expect(isGitRepoFolder(entry("plain", "directory", { is_git_repo: false }))).toBe(false);
+  });
+
+  it("is false for a file even if is_git_repo were somehow set (defensive)", () => {
+    expect(isGitRepoFolder(entry("weird.txt", "file", { is_git_repo: true }))).toBe(false);
   });
 });
 

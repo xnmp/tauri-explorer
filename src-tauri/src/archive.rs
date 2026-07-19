@@ -664,6 +664,7 @@ fn list_archive_contents_sync(archive_path: &str) -> Result<ArchiveListing, AppE
                 is_symlink: false,
                 symlink_target: None,
                 is_empty: None,
+                is_git_repo: false, // synthetic entries inside an archive, not real dirs
                 name,
             }
         })

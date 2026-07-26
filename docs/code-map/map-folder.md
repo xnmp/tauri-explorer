@@ -206,6 +206,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `pane-layout.ts` — pane split-tree pure logic (#228).
 - `tab-title.ts` — VS Code-style tab title disambiguation.
 - `titlebar.ts` — title bar / tab strip visibility rules.
+- `settings-migration.ts` — versioned one-shot migrations for the persisted settings blob; `migrateSettings` + the append-only ledger (#506).
 - `folder-preview.ts` — folder preview image selection (#146).
 - `preview-pane-position.ts` — validate/cycle preview dock edge right/bottom/top, plus "auto" mode/heuristic (`resolveAutoDockPosition`, #460, #467).
 - `nerd-icons.ts` — nerd-font icon mappings (Material theme).

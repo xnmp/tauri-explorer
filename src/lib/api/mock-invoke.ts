@@ -2230,8 +2230,37 @@ const mockCommands: Record<string, CommandHandler> = {
   },
 };
 
-// In-memory config file store for mock mode
-const mockConfigFiles: Record<string, string> = {};
+/**
+ * localStorage key an e2e/unit test can set to pre-seed the mock config store
+ * with `{ [filename]: contents }` before the app boots.
+ *
+ * The mock config store is in-memory and starts empty, so without this there
+ * is no way to present the app with an EXISTING settings.json — every mock
+ * run looks like a fresh install. That blind spot is exactly what hid #506:
+ * a settings migration only runs against the durable store of record, which
+ * the mock could never populate.
+ */
+export const MOCK_CONFIG_SEED_KEY = "mock-config-files";
+
+/** In-memory config file store for mock mode, optionally test-seeded. */
+const mockConfigFiles: Record<string, string> = loadMockConfigSeed();
+
+function loadMockConfigSeed(): Record<string, string> {
+  if (typeof localStorage === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(MOCK_CONFIG_SEED_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).filter(
+        ([, v]) => typeof v === "string",
+      ) as [string, string][],
+    );
+  } catch {
+    return {};
+  }
+}
 
 /**
  * Mock invoke function for browser-based testing.

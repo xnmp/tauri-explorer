@@ -199,6 +199,39 @@ export function basename(path: string): string {
 }
 
 /**
+ * A path split for display in a width-constrained single-line row (#500).
+ *
+ * `dir` is the leading directory portion *including* its trailing separator and
+ * `name` is the final segment. The pair is a partition, never a normalization:
+ * `dir + name === path` holds for every input, so a caller that renders the two
+ * halves as adjacent elements produces exactly the original path as text. That
+ * invariant is what lets the two halves be given different truncation
+ * behaviour (elide `dir`, keep `name`) without the rendered path changing.
+ */
+export interface PathDisplayParts {
+  /** Directory prefix including its trailing separator; `""` when there is none. */
+  dir: string;
+  /** Final path segment — the part worth keeping when space runs out. */
+  name: string;
+}
+
+/**
+ * Split `path` into an elidable directory prefix and its final segment, for
+ * rendering a long path on one line without losing the part that identifies it.
+ *
+ * Unlike `basename`/`parentDir` this does not normalize separators, strip
+ * trailing slashes, or special-case drive/UNC roots — it is a pure partition at
+ * the last separator, chosen so `dir + name` reconstructs the input exactly.
+ *
+ * `"src/lib/app.ts"` → `{ dir: "src/lib/", name: "app.ts" }`
+ * `"app.ts"`         → `{ dir: "", name: "app.ts" }`
+ * `"src/lib/"`       → `{ dir: "src/lib/", name: "" }`
+ */
+export function splitPathForDisplay(_path: string): PathDisplayParts {
+  throw new Error("splitPathForDisplay: not implemented");
+}
+
+/**
  * True if `child` is the same path as, or nested inside, `parent`.
  * Separator-agnostic so it works for both Unix and Windows paths.
  *

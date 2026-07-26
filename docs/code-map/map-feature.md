@@ -207,9 +207,10 @@ backend for E2E/browser).
 - `components/SettingsDialog.svelte` — all settings sections (largest UI file)
 - `state/settings.svelte.ts` — `settingsStore` (persisted flags/values)
 - `state/persisted.ts` — localStorage load/save helpers
+- `domain/settings-migration.ts` — versioned migrations for the persisted blob; add an entry here whenever a DEFAULT flips, or existing installs keep the old value (#471/#506)
 - `api/config.ts`, `src-tauri/src/config.rs` — JSON config file persistence (disk)
 - `plugins/settings-registry.svelte.ts` — plugin-contributed settings rows
-- FLOW: settingsStore is source of truth; components read `settingsStore.<flag>`; changes persist to localStorage + optionally config file. Many features gated here (showGitStatus, thumbnails, etc.).
+- FLOW: settingsStore is source of truth; components read `settingsStore.<flag>`; changes persist to localStorage + optionally config file. Many features gated here (showGitStatus, thumbnails, etc.). The WHOLE object is persisted and load merges `{ ...DEFAULT_SETTINGS, ...saved }`, so a persisted key always beats its default — `settingsStore.init()` runs `migrateSettings` on settings.json (the store of record) to let a flipped default reach existing installs (#506).
 
 ## Sidebar (bookmarks / recent / drives)
 - `components/Sidebar.svelte`, `components/FilesSidebarView.svelte` — sidebar shell + files tree

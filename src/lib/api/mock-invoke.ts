@@ -634,6 +634,15 @@ interface MockCommit {
   summary: string;
 }
 
+/**
+ * A single, unbroken, far-wider-than-the-panel path, used by commit 11's
+ * changed-file list (#500). Deliberately has no separator in its final
+ * segment, so a fix that only relies on breaking at `/` still overflows.
+ */
+export const MOCK_LONG_COMMIT_FILE_PATH =
+  "src/lib/components/experimental/deeply/nested/generated/" +
+  "AnExtremelyLongGeneratedComponentFileNameThatOverflowsThePanel.svelte";
+
 /** Deterministic 40-char hex OID from a small commit number. */
 function fullOid(n: number): string {
   return n.toString(16).padStart(4, "0").repeat(10);
@@ -1592,6 +1601,12 @@ const mockCommands: Record<string, CommandHandler> = {
         { path: "src/feature-x.ts", status: "A" },
         { path: "src/index.ts", status: "M" },
       ];
+    }
+    // Commit 11 carries a deliberately over-long path so the changed-files
+    // list's overflow behaviour is exercisable end-to-end (#500). No other
+    // spec asserts on this commit's file list.
+    if (n === 11) {
+      return [{ path: MOCK_LONG_COMMIT_FILE_PATH, status: "M" }];
     }
     return [{ path: `src/file-${n}.ts`, status: n % 2 === 0 ? "M" : "A" }];
   },

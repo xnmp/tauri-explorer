@@ -26,7 +26,11 @@ import {
   leafSiblingContext,
 } from "$lib/domain/pane-layout";
 import { createExplorerState, type ExplorerInstance } from "./explorer.svelte";
-import { loadPersisted, savePersisted, removePersisted } from "./persisted";
+import {
+  createCoalescedPersister,
+  loadPersisted,
+  removePersisted,
+} from "./persisted";
 import { parentDir } from "$lib/domain/path";
 import { createTabDisplay } from "./tab-display.svelte";
 import { settingsStore } from "./settings.svelte";
@@ -215,9 +219,31 @@ function createWindowTabsManager() {
     return { version: 3, tabs: tabs.map(persistTab), activeTabId };
   }
 
-  /** Save current tab state to localStorage */
+  /** Tab-state writes are coalesced onto a trailing timer (#481): saveState
+   *  runs on every tab open/close/switch/rename/split/pane-focus, and under
+   *  WebKitGTK each localStorage write can stall the UI thread for a disk
+   *  flush. Every write but the last of a burst is redundant, so hold them
+   *  until the user pauses — 150ms is long enough to swallow a burst of
+   *  Ctrl+T/Ctrl+Tab and short enough that state is durable a beat later. */
+  const SAVE_COALESCE_MS = 150;
+  const tabStatePersister = createCoalescedPersister<PersistedTabState>(
+    STORAGE_KEY,
+    SAVE_COALESCE_MS,
+  );
+
+  /** Queue the current tab state for persistence. Coalesced — see above; the
+   *  write lands shortly after the last of a burst of interactions, or
+   *  immediately if the page is hidden/unloaded before then. */
   function saveState(): void {
-    savePersisted(STORAGE_KEY, captureState());
+    tabStatePersister.schedule(captureState());
+  }
+
+  /** Persist the current tab state right now, superseding any queued write.
+   *  For callers whose whole job is durability — the `beforeunload` handler
+   *  and the periodic safety save in use-window-lifecycle — which must not
+   *  hand back control before the state is stored. */
+  function saveStateNow(): void {
+    tabStatePersister.writeNow(captureState());
   }
 
   /** Load tab state from localStorage (migrating older shapes) */
@@ -1068,7 +1094,7 @@ function createWindowTabsManager() {
     setSplitRatio,
 
     // Persistence
-    save: saveState,
+    save: saveStateNow,
     captureState,
     restoreFromState,
 
@@ -1079,6 +1105,9 @@ function createWindowTabsManager() {
       if (typeof window !== "undefined") {
         window.removeEventListener("focus", onWindowFocus);
       }
+      // Flushes a queued write before dropping its page-lifecycle listeners,
+      // so tearing the manager down can't swallow the last interaction.
+      tabStatePersister.dispose();
       destroyAllExplorers();
     },
   };

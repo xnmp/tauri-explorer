@@ -38,7 +38,8 @@ function fakeEventTarget() {
 
 /** setItem calls that targeted `KEY`, newest last. */
 function writes(spy: ReturnType<typeof vi.spyOn>): string[] {
-  return spy.mock.calls.filter((c) => c[0] === KEY).map((c) => c[1] as string);
+  const calls = spy.mock.calls as [string, string][];
+  return calls.filter((c) => c[0] === KEY).map((c) => c[1]);
 }
 
 let setItem: ReturnType<typeof vi.spyOn>;

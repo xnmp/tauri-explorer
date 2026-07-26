@@ -21,7 +21,12 @@
   import Modal from "./Modal.svelte";
 
   import { buildTree, collectPaths, type ScmTreeNode } from "$lib/domain/scm-tree";
-  import { filterScmSummary, isScmFilterActive } from "$lib/domain/scm-filter";
+  import {
+    filterScmSummary,
+    isScmFilterActive,
+    scmEmptyState,
+    showScmFilterInput,
+  } from "$lib/domain/scm-filter";
 
   // Per-pane store (#334): this view tracks the pane it is mounted in, so a
   // second pane on another repo gets its own independent SCM panel. Falls
@@ -46,6 +51,10 @@
       : collapsedByRepo.get(scmStore.repoRoot ?? "") ?? new Set<string>()
   );
   function toggleFolder(dir: string): void {
+    // While filtering, every folder renders expanded — accepting a toggle
+    // here would rewrite the collapse state the user set beforehand, with no
+    // visible effect until they clear the query.
+    if (filterActive) return;
     const repo = scmStore.repoRoot ?? "";
     const next = new Set(collapsedByRepo.get(repo) ?? []);
     if (next.has(dir)) next.delete(dir); else next.add(dir);
@@ -285,6 +294,15 @@
   const untrackedCount = $derived(summary.untracked.length);
   const mergeCount = $derived(summary.merge.length);
 
+  /** Empty-list message: none / clean tree / filtered away (#517). */
+  const emptyState = $derived(
+    scmEmptyState(
+      dirPendingCount,
+      stagedCount + changesCount + untrackedCount + mergeCount,
+      filterQuery
+    )
+  );
+
   const fullStagedCount = $derived(fullSummary.staged.length);
   const fullMergeCount = $derived(fullSummary.merge.length);
 
@@ -452,7 +470,7 @@
       </div>
     </div>
 
-    {#if dirPendingCount > 0}
+    {#if showScmFilterInput(dirPendingCount, filterQuery)}
       <div class="scm-filter">
         <svg width="12" height="12" viewBox="0 0 16 16" fill="none" class="scm-filter-icon" aria-hidden="true">
           <circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.5"/>
@@ -527,14 +545,12 @@
       kind: "untracked",
     })}
 
-    {#if stagedCount + changesCount + untrackedCount + mergeCount === 0}
-      {#if filterActive}
-        <!-- A filtered-to-nothing list is not a clean tree — say so, or the
-             user reads "clean" and forgets the filter is on. -->
-        <div class="scm-no-match">No files match “{filterQuery.trim()}”</div>
-      {:else}
-        <div class="clean-state">Working tree clean</div>
-      {/if}
+    <!-- A filtered-to-nothing list is not a clean tree, and a clean tree under
+         a stale query is not a filter miss — scmEmptyState tells them apart. -->
+    {#if emptyState === "no-match"}
+      <div class="scm-no-match" role="status">No files match “{filterQuery.trim()}”</div>
+    {:else if emptyState === "clean"}
+      <div class="clean-state">Working tree clean</div>
     {/if}
   {/if}
 

@@ -56,17 +56,21 @@ export function scmEmptyState(
   visibleAfterFilter: number,
   query: string,
 ): ScmEmptyState {
-  // Placeholder — current (wrong) behaviour: any active query claims the empty
-  // list is a filter miss, even when there was nothing to filter.
   if (visibleAfterFilter > 0) return "none";
-  return isScmFilterActive(query) ? "no-match" : "clean";
+  // Only call it a filter miss if the filter is what emptied the list. A
+  // query can outlive the rows it was written for — the pane moves into a
+  // folder with no changes, or the tree goes clean under the watcher — and
+  // reporting "no files match" there misdescribes a clean tree.
+  return isScmFilterActive(query) && pendingBeforeFilter > 0 ? "no-match" : "clean";
 }
 
-/** Whether the filter input should be rendered at all. */
+/**
+ * Whether the filter input should be rendered at all. Nothing to filter and
+ * no query means no input; but a live query always keeps its input, otherwise
+ * the query survives with no way to see or clear it.
+ */
 export function showScmFilterInput(pendingBeforeFilter: number, query: string): boolean {
-  // Placeholder — current (wrong) behaviour: the input disappears the moment
-  // the unfiltered list empties, stranding the query it still holds.
-  return pendingBeforeFilter > 0;
+  return pendingBeforeFilter > 0 || isScmFilterActive(query);
 }
 
 /** Apply {@link filterScmEntries} to every section of a status summary. */

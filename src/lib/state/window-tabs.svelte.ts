@@ -14,8 +14,10 @@ import type { PaneId, WindowTab, ExplorerTab, TabPane } from "./types";
 import {
   type PaneNode,
   type SplitPlacement,
+  type FocusDirection,
   leaf,
   leafIds,
+  leafInDirection,
   countLeaves,
   splitLeaf,
   splitNode,
@@ -848,6 +850,16 @@ function createWindowTabsManager() {
     setActivePane(ids[(idx + 1) % ids.length]);
   }
 
+  /** Move focus to the pane adjacent to the focused one in `direction`
+   *  (#501). Unlike `splitPane`, which creates a pane on that side, this
+   *  only ever moves focus — with no pane there it is a no-op. */
+  function focusPaneInDirection(direction: FocusDirection): void {
+    const tab = activeTab;
+    if (tab?.kind !== "explorer") return;
+    const target = leafInDirection(tab.layout, tab.activePaneId, direction);
+    if (target !== null) setActivePane(target);
+  }
+
   /** Split the active pane, placing a new pane on the given side.
    *  The new pane opens at `initialPath` (default: the source pane's
    *  directory, seeded with its entries so it renders instantly). */
@@ -1086,6 +1098,7 @@ function createWindowTabsManager() {
     // Pane operations (active tab)
     setActivePane,
     switchPane,
+    focusPaneInDirection,
     splitPane,
     newPane,
     closePane,

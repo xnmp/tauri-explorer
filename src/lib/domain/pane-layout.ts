@@ -12,6 +12,14 @@ export type SplitDirection = "row" | "column";
 /** Where a new pane lands relative to the target pane (ghostty-style). */
 export type SplitPlacement = "left" | "right" | "up" | "down";
 
+/**
+ * Which way focus travels between existing panes (#501). Same four sides as
+ * `SplitPlacement` — `Cmd+Alt+<key>` creates a pane on a side, plain
+ * `Alt+<key>` moves focus to the pane already there — but named separately so
+ * the two intents stay readable at call sites.
+ */
+export type FocusDirection = SplitPlacement;
+
 export interface PaneLeaf {
   readonly type: "leaf";
   readonly id: string;
@@ -196,6 +204,72 @@ export function leafRects(node: PaneNode): Map<string, LeafRect> {
   }
   walk(node, { x: 0, y: 0, w: 1, h: 1 });
   return out;
+}
+
+/**
+ * The pane adjacent to `fromId` in a direction, or null when there is none
+ * (#501) — the layout edge, an unknown pane, or a single-pane tab.
+ *
+ * Geometric rather than tree-structural: panes are compared by their rendered
+ * rectangles, so focus lands on what the user actually sees in that direction
+ * however the split tree happens to nest. A candidate must lie beyond the
+ * source's edge on the movement axis AND overlap it on the perpendicular axis,
+ * so a pane sitting diagonally across a corner is never picked.
+ */
+export function leafInDirection(
+  root: PaneNode,
+  fromId: string,
+  direction: FocusDirection,
+): string | null {
+  const rects = leafRects(root);
+  const from = rects.get(fromId);
+  if (!from) return null;
+
+  const horizontal = direction === "left" || direction === "right";
+  let best: { id: string; gap: number; overlap: number } | null = null;
+
+  // Map iteration follows leafRects' walk order, i.e. visual order, so equal
+  // candidates resolve to the earlier pane deterministically.
+  for (const [id, rect] of rects) {
+    if (id === fromId) continue;
+    const gap = gapTowards(from, rect, direction);
+    if (gap < -ADJACENCY_EPSILON) continue;
+    const overlap = horizontal
+      ? overlapLength(from.y, from.h, rect.y, rect.h)
+      : overlapLength(from.x, from.w, rect.x, rect.w);
+    if (overlap <= ADJACENCY_EPSILON) continue;
+    if (best === null || gap < best.gap - ADJACENCY_EPSILON) {
+      best = { id, gap, overlap };
+    } else if (gap <= best.gap + ADJACENCY_EPSILON && overlap > best.overlap) {
+      best = { id, gap, overlap };
+    }
+  }
+  return best?.id ?? null;
+}
+
+/** Fractions of a unit square compare cleanly well above float noise. */
+const ADJACENCY_EPSILON = 1e-9;
+
+/**
+ * Distance from `from`'s edge on the movement axis to the near edge of
+ * `other`. Negative when `other` is not beyond that edge at all.
+ */
+function gapTowards(from: LeafRect, other: LeafRect, direction: FocusDirection): number {
+  switch (direction) {
+    case "left":
+      return from.x - (other.x + other.w);
+    case "right":
+      return other.x - (from.x + from.w);
+    case "up":
+      return from.y - (other.y + other.h);
+    case "down":
+      return other.y - (from.y + from.h);
+  }
+}
+
+/** Length of the 1-D overlap between two spans. */
+function overlapLength(aStart: number, aLength: number, bStart: number, bLength: number): number {
+  return Math.min(aStart + aLength, bStart + bLength) - Math.max(aStart, bStart);
 }
 
 /**

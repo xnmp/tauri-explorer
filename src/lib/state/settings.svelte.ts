@@ -20,6 +20,7 @@ import {
 import { windowSizeStore } from "./window-size.svelte";
 import {
   CURRENT_SETTINGS_VERSION,
+  SETTINGS_VERSION_KEY,
   migrateSettings,
 } from "$lib/domain/settings-migration";
 
@@ -238,10 +239,17 @@ function createSettingsStore() {
       // Config file doesn't exist or is invalid - fall through
     }
 
-    // If config file was empty but localStorage has data, migrate
+    // settings.json is missing or unreadable, so promote the localStorage
+    // cache into it. Promote it UNSTAMPED: this blob has never been through
+    // the ledger, and DEFAULT_SETTINGS supplies the current stamp, so writing
+    // it verbatim would mark a legacy blob as already migrated and disarm the
+    // ledger for this install forever. Without a stamp the next launch reads
+    // the file, migrates it, and writes the stamp back (#506).
     const saved = loadPersisted<Partial<Settings>>(STORAGE_KEY, {});
     if (Object.keys(saved).length > 0) {
-      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2));
+      const promoted: Record<string, unknown> = { ...settings };
+      delete promoted[SETTINGS_VERSION_KEY];
+      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(promoted, null, 2));
     }
   }
 

@@ -43,6 +43,32 @@ export function filterScmEntries<T extends { path: string }>(entries: T[], query
     .map(({ entry }) => entry);
 }
 
+/** Which empty-list message the sidebar owes the user, if any. */
+export type ScmEmptyState = "none" | "clean" | "no-match";
+
+/**
+ * Decide the sidebar's empty state from the row counts either side of the
+ * filter. `pendingBeforeFilter` is the dir-scoped pending count, i.e. what the
+ * panel would show with no query.
+ */
+export function scmEmptyState(
+  pendingBeforeFilter: number,
+  visibleAfterFilter: number,
+  query: string,
+): ScmEmptyState {
+  // Placeholder — current (wrong) behaviour: any active query claims the empty
+  // list is a filter miss, even when there was nothing to filter.
+  if (visibleAfterFilter > 0) return "none";
+  return isScmFilterActive(query) ? "no-match" : "clean";
+}
+
+/** Whether the filter input should be rendered at all. */
+export function showScmFilterInput(pendingBeforeFilter: number, query: string): boolean {
+  // Placeholder — current (wrong) behaviour: the input disappears the moment
+  // the unfiltered list empties, stranding the query it still holds.
+  return pendingBeforeFilter > 0;
+}
+
 /** Apply {@link filterScmEntries} to every section of a status summary. */
 export function filterScmSummary<S extends ScmSections>(summary: S, query: string): S {
   if (!isScmFilterActive(query)) return summary;

@@ -77,6 +77,79 @@ test.describe("SCM sidebar fuzzy filter (#517)", () => {
     await expect(view.locator(".row-list .row")).toHaveCount(6);
   });
 
+  test("a folder with no pending changes still reads as clean under a stale filter", async ({ page }) => {
+    await openScmOnRepo(page);
+    const view = page.locator(".scm-panel").first().locator(".scm-view");
+    const input = view.locator(".scm-filter-input");
+
+    await input.fill("logo");
+    await expect(view.locator(".row-list .row")).toHaveCount(1);
+
+    // Walk into a repo subfolder that has no pending changes at all. Zero
+    // rows here is a clean tree, NOT a filter miss — and the filter input
+    // must stay on screen, or the query becomes unclearable.
+    const src = page.locator(".file-list .entry-item.directory", { hasText: "src" }).first();
+    await src.dblclick();
+    const components = page
+      .locator(".file-list .entry-item.directory", { hasText: "components" })
+      .first();
+    await components.dblclick();
+
+    await expect(view.locator(".clean-state")).toBeVisible();
+    await expect(view.locator(".scm-no-match")).toHaveCount(0);
+    await expect(input).toBeVisible();
+    await expect(input).toHaveValue("logo");
+  });
+
+  test("a working tree that goes clean under a stale filter says so", async ({ page }) => {
+    await openScmOnRepo(page);
+    const view = page.locator(".scm-panel").first().locator(".scm-view");
+    const input = view.locator(".scm-filter-input");
+
+    await input.fill("logo");
+    await expect(view.locator(".row-list .row")).toHaveCount(1);
+
+    // Everything committed/discarded elsewhere while the filter is set.
+    await page.evaluate(() => {
+      (window as unknown as { __mockGitSetClean: () => void }).__mockGitSetClean();
+    });
+
+    await expect(view.locator(".clean-state")).toBeVisible();
+    await expect(view.locator(".scm-no-match")).toHaveCount(0);
+    await expect(input).toBeVisible();
+  });
+
+  test("tree view: a filter reveals matches inside collapsed folders without disturbing them", async ({ page }) => {
+    await openScmOnRepo(page);
+    await page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem("explorer-settings") || "{}");
+      s.scmTreeView = true;
+      localStorage.setItem("explorer-settings", JSON.stringify(s));
+    });
+    await page.goto("/?path=/home/user/Documents/project");
+    await page.locator(".entry-item").first().waitFor({ timeout: 5000 });
+
+    const view = page.locator(".scm-panel").first().locator(".scm-view");
+    const changes = view.locator('[data-section="changes"]');
+    const srcFolder = changes.locator(".tree-folder", { hasText: "src" });
+    const indexCss = changes.locator(".tree-file", { hasText: "index.css" });
+
+    await expect(indexCss).toBeVisible();
+    await srcFolder.click();
+    await expect(indexCss).toHaveCount(0);
+
+    // A match inside a collapsed folder must still show while filtering,
+    // otherwise it looks like the filter dropped it.
+    await view.locator(".scm-filter-input").fill("idx");
+    await expect(indexCss).toBeVisible();
+
+    // Clicking the folder while filtering must not quietly rewrite the
+    // collapse state the user set before filtering.
+    await srcFolder.click();
+    await view.locator(".scm-filter-input").fill("");
+    await expect(indexCss).toHaveCount(0);
+  });
+
   test("filtering does not change what a commit acts on", async ({ page }) => {
     await openScmOnRepo(page);
     const view = page.locator(".scm-panel").first().locator(".scm-view");

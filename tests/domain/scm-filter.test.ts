@@ -3,7 +3,12 @@
  * file list. Behaviour only: what comes out for a given query, in what order.
  */
 import { describe, it, expect } from "vitest";
-import { filterScmEntries, filterScmSummary } from "$lib/domain/scm-filter";
+import {
+  filterScmEntries,
+  filterScmSummary,
+  scmEmptyState,
+  showScmFilterInput,
+} from "$lib/domain/scm-filter";
 import type { GitFileEntry } from "$lib/domain/git";
 
 function entry(path: string): GitFileEntry {
@@ -101,6 +106,49 @@ describe("filterScmEntries", () => {
     const rows = [entry("b.ts"), entry("a.ts")];
     filterScmEntries(rows, "ts");
     expect(paths(rows)).toEqual(["b.ts", "a.ts"]);
+  });
+});
+
+describe("scmEmptyState", () => {
+  it("shows no message while rows are visible", () => {
+    expect(scmEmptyState(6, 6, "")).toBe("none");
+    expect(scmEmptyState(6, 1, "idx")).toBe("none");
+  });
+
+  it("calls an unfiltered empty list a clean tree", () => {
+    expect(scmEmptyState(0, 0, "")).toBe("clean");
+  });
+
+  it("calls a filtered-away list a filter miss", () => {
+    expect(scmEmptyState(6, 0, "zzzz")).toBe("no-match");
+  });
+
+  it("still says clean when a stale query outlives the last pending file", () => {
+    // The pane moved into a folder with no changes (or everything was
+    // committed) while a query was set: nothing was filtered away, so
+    // "no files match" would misreport a genuinely clean tree.
+    expect(scmEmptyState(0, 0, "logo")).toBe("clean");
+  });
+
+  it("treats a whitespace-only query as no filter", () => {
+    expect(scmEmptyState(6, 0, "  ")).toBe("clean");
+  });
+});
+
+describe("showScmFilterInput", () => {
+  it("shows the input whenever there is something to filter", () => {
+    expect(showScmFilterInput(6, "")).toBe(true);
+  });
+
+  it("hides the input on a clean tree with no query", () => {
+    expect(showScmFilterInput(0, "")).toBe(false);
+    expect(showScmFilterInput(0, "   ")).toBe(false);
+  });
+
+  it("keeps the input while a query is set, even with nothing left to filter", () => {
+    // Otherwise the query becomes unclearable: no input, no clear button,
+    // and every later file silently filtered out.
+    expect(showScmFilterInput(0, "logo")).toBe(true);
   });
 });
 

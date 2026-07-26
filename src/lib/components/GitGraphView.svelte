@@ -2503,11 +2503,17 @@
      truncates instead, so this one does too.
 
      The path is split into an elidable directory prefix and its final segment
-     so the half that identifies the file is the half that survives. Both
-     halves shrink, but `.file-dir`'s much larger shrink factor means it gives
-     up essentially all of the space first; only once it is exhausted does the
-     name start to elide, which is the only sane outcome when the name alone is
-     wider than the column. */
+     so the half that identifies the file is the half that survives.
+
+     The priority is expressed with `flex-shrink: 0` + `max-width: 100%` on the
+     name rather than by giving the two halves different shrink factors. Shrink
+     factors are *proportional*: however lopsided the weights, the name still
+     gives up its share of any deficit, so it would ellipsise a couple of pixels
+     early while the directory still had room left to yield. `flex-shrink: 0`
+     makes the directory absorb the whole deficit before the name loses
+     anything, and `max-width: 100%` is what still bounds the name to the row
+     when the name alone is wider than the column — there it ellipsises, which
+     is the only sane outcome. */
   .file-path {
     display: flex;
     flex: 1;
@@ -2524,14 +2530,14 @@
   }
 
   .file-dir {
-    flex: 0 200 auto;
+    flex: 0 1 auto;
     min-width: 0;
     color: var(--text-tertiary);
   }
 
   .file-name {
-    flex: 0 1 auto;
-    min-width: 0;
+    flex: 0 0 auto;
+    max-width: 100%;
   }
 
   .file-empty {

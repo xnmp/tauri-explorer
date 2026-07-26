@@ -120,10 +120,10 @@ test.describe("Git graph long file names (#500)", () => {
     // ...and it does not achieve that by spilling out sideways.
     expect(long.pathRight).toBeLessThanOrEqual(long.colRight + 0.5);
 
-    await page
-      .locator('[data-testid="git-graph-view"] .commit-detail-inline')
-      .first()
-      .screenshot({ path: shotPath("ac-1-long-path-one-line-1280.png") });
+    // Full page rather than an element crop: the criterion is about the row
+    // not growing, which is only judgeable next to the graph rows it used to
+    // displace.
+    await page.screenshot({ path: shotPath("ac-1-long-path-one-line-1280.png") });
   });
 
   test("AC 2: at 700px it is still one line and the panel does not grow", async ({ page }) => {
@@ -146,22 +146,19 @@ test.describe("Git graph long file names (#500)", () => {
     // displacing the graph below it; the panel is now path-length independent.
     expect(long.panelHeight).toBeCloseTo(short.panelHeight, 1);
 
-    await page
-      .locator('[data-testid="git-graph-view"] .commit-detail-inline')
-      .first()
-      .screenshot({ path: shotPath("ac-2-long-path-one-line-700.png") });
+    await page.screenshot({ path: shotPath("ac-2-long-path-one-line-700.png") });
   });
 
   test("AC 3: the base name is kept whole and the directory prefix is what elides", async ({
     page,
   }) => {
-    // 1600px, not the 1280px of AC 1: this fixture's base name alone is ~600px
-    // wide and the changed-files column at 1280px is ~588px, so "the base name
-    // is rendered in full" is not achievable there for *any* implementation.
-    // Measuring where it does fit is what isolates the ordering being asserted
-    // — that the directory prefix gives up its space first. The case where the
-    // name itself must elide is covered by AC 2 at 700px.
-    await page.setViewportSize({ width: 1600, height: 800 });
+    // 1280px, where the base name (~520px) fits the ~588px column but the
+    // whole path (~913px) does not — so the directory prefix must give up all
+    // of the deficit and none of it may come out of the name. A proportional
+    // flex-shrink split fails here by ~2px, which is exactly the bug this
+    // width catches. The case where the name itself cannot fit and must
+    // ellipsise is AC 2's job at 700px.
+    await page.setViewportSize({ width: 1280, height: 800 });
     await openGraph(page);
     await measureFileRow(page, LONG_PATH_COMMIT);
 

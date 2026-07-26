@@ -14,6 +14,16 @@ import { waitForEntries, pressShortcut } from "./helpers";
 const PROJECT_URL = "/?path=/home/user/Documents/project";
 const TOGGLE = '[data-testid="setting-show-preview-info"]';
 
+/**
+ * Where the AC screenshots land. `evidence/` is committed, and PNGs are not
+ * byte-reproducible, so an ordinary `bun run test:e2e` would leave binary
+ * churn in the working tree (and a FAILING run would leave a half-updated
+ * evidence set). Default to the gitignored test-results/ dir; regenerate the
+ * committed images deliberately with CAPTURE_EVIDENCE=1.
+ */
+const shot = (name: string) =>
+  process.env.CAPTURE_EVIDENCE ? `evidence/${name}` : `test-results/evidence/${name}`;
+
 /** Open the preview pane (Space) and select a file in it. */
 async function openPreviewFor(page: Page, name: string) {
   const previewPane = page.locator(".preview-pane");
@@ -76,14 +86,14 @@ test.describe("Preview pane auxiliary info (#494)", () => {
     // Wait for the highlighted body too, so AC1 and AC2 show the same file in
     // the same loaded state and differ only by the metadata chrome.
     await expect(page.locator(".preview-pane .preview-code")).toBeVisible();
-    await page.screenshot({ path: "evidence/ac-1-preview-info-shown.png" });
+    await page.screenshot({ path: shot("ac-1-preview-info-shown.png") });
 
     // --- AC3: the setting exists in Settings and is on by default ---
     const setting = await openPreviewInfoSetting(page);
     await expect(setting.row).toBeVisible();
     await expect(setting.input).toBeChecked();
     await setting.row.scrollIntoViewIfNeeded();
-    await page.screenshot({ path: "evidence/ac-3-settings-toggle.png" });
+    await page.screenshot({ path: shot("ac-3-settings-toggle.png") });
 
     await setting.slider.click();
     await expect(setting.input).not.toBeChecked();
@@ -96,7 +106,7 @@ test.describe("Preview pane auxiliary info (#494)", () => {
     await expect(page.locator(".preview-pane .preview-filename")).toHaveCount(0);
     await expect(page.locator(".preview-pane .preview-type-badge")).toHaveCount(0);
     await expect(page.locator(".preview-pane .preview-info")).toHaveCount(0);
-    await page.screenshot({ path: "evidence/ac-2-preview-info-hidden.png" });
+    await page.screenshot({ path: shot("ac-2-preview-info-hidden.png") });
 
     // --- AC3 (second half): turning it back on restores the metadata ---
     const again = await openPreviewInfoSetting(page);

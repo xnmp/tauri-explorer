@@ -14,13 +14,23 @@
  * stylesheet — so that class of silent degradation is caught in CI.
  */
 
-/** Guards against `--a: var(--b)` / `--b: var(--a)` cycles. */
+/**
+ * Bounds how deep a token may reference other tokens, so a `--a: var(--b)` /
+ * `--b: var(--a)` cycle terminates. This is a *nesting* limit, not a budget on
+ * how many references one value may contain — a value with many independent
+ * `var()`s resolves them all.
+ */
 const MAX_RESOLVE_DEPTH = 16;
 
 /**
  * Removes `/* … *\/` comments so prose can't be mistaken for CSS. Comments
  * routinely quote selectors and declarations, and a stray brace or colon in
  * one would otherwise derail the rule and declaration scanners below.
+ *
+ * Deliberately not string-aware: a literal `"/*"` inside a `content:` value
+ * would be treated as a comment opener. That costs nothing on the component
+ * stylesheets this targets, and it fails loudly (a missing declaration) rather
+ * than silently mis-resolving one.
  */
 export function stripComments(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, "");
@@ -89,26 +99,36 @@ export function resolveCssValue(
 ): string {
   if (depth >= MAX_RESOLVE_DEPTH) return value.trim();
 
-  const start = value.indexOf("var(");
-  if (start === -1) return value.trim();
+  // Each pass replaces the leftmost `var()` and rescans from just past the
+  // substitution, so a value may contain any number of independent references;
+  // only *nesting* (a token whose own value references another) spends depth.
+  let out = value;
+  let from = 0;
+  for (;;) {
+    const start = out.indexOf("var(", from);
+    if (start === -1) return out.trim();
 
-  const open = start + "var".length;
-  const close = matchingParen(value, open);
-  if (close === -1) return value.trim();
+    const open = start + "var".length;
+    const close = matchingParen(out, open);
+    if (close === -1) return out.trim();
 
-  const args = splitVarArgs(value.slice(open + 1, close));
-  if (args === null) return value.trim();
+    const args = splitVarArgs(out.slice(open + 1, close));
+    if (args === null) {
+      from = close + 1;
+      continue;
+    }
 
-  const defined = tokens.get(args.name);
-  const replacement =
-    defined !== undefined
-      ? resolveCssValue(defined, tokens, depth + 1)
-      : args.fallback !== null
-        ? resolveCssValue(args.fallback, tokens, depth + 1)
-        : "";
+    const defined = tokens.get(args.name);
+    const replacement =
+      defined !== undefined
+        ? resolveCssValue(defined, tokens, depth + 1)
+        : args.fallback !== null
+          ? resolveCssValue(args.fallback, tokens, depth + 1)
+          : "";
 
-  const rewritten = value.slice(0, start) + replacement + value.slice(close + 1);
-  return resolveCssValue(rewritten, tokens, depth + 1);
+    out = out.slice(0, start) + replacement + out.slice(close + 1);
+    from = start + replacement.length;
+  }
 }
 
 /**
@@ -134,7 +154,8 @@ export function findDeclaredValue(
       .includes(selector);
     if (!targets) continue;
 
-    const declaration = new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*([^;]+)`, "g");
+    const escaped = property.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const declaration = new RegExp(`(?:^|;)\\s*${escaped}\\s*:\\s*([^;]+)`, "g");
     for (const [, value] of body.matchAll(declaration)) found = value.trim();
   }
   return found;

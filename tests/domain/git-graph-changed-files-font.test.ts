@@ -47,21 +47,21 @@ function resolvedFontOf(selector: string): string {
 
 describe("git graph changed-files font (#499)", () => {
   it("the app font is a real named stack, not a generic fallback", () => {
+    // Keeps the equality assertions below from passing vacuously by comparing
+    // two degraded values. The base :root font is proportional; note that
+    // themes/hacker.css overrides --font-family with a mono stack, which is
+    // why the rows are checked for *equality* with it rather than for being
+    // non-monospace — under that theme the rows should be mono too.
     expect(appFont).not.toBe("");
-    expect(appFont).toContain("Inter");
     expect(appFont).not.toMatch(MONOSPACE);
   });
 
   it("file names in the changed-files list resolve to the regular app font", () => {
-    const font = resolvedFontOf(".file-path");
-    expect(font).toBe(appFont);
-    expect(font).not.toMatch(MONOSPACE);
+    expect(resolvedFontOf(".file-path")).toBe(appFont);
   });
 
   it("the status letter beside each file name resolves to the regular app font", () => {
-    const font = resolvedFontOf(".file-status");
-    expect(font).toBe(appFont);
-    expect(font).not.toMatch(MONOSPACE);
+    expect(resolvedFontOf(".file-status")).toBe(appFont);
   });
 
   it("inline diff content stays monospace", () => {
@@ -74,8 +74,11 @@ describe("git graph changed-files font (#499)", () => {
     // The actual defect class. `--font-mono` was referenced 9x and defined 0x;
     // any rule that resolves through a missing token is a silent degradation.
     for (const selector of [".file-path", ".file-status"]) {
-      const declared = findDeclaredValue(graphCss, selector, "font-family") ?? "";
-      for (const [, name] of declared.matchAll(/var\(\s*(--[\w-]+)/g)) {
+      const declared = findDeclaredValue(graphCss, selector, "font-family");
+      // Not `?? ""`: an absent declaration would make the loop below iterate
+      // zero times and pass, turning this guard into a no-op.
+      expect(declared, `${selector} should declare a font-family`).not.toBeNull();
+      for (const [, name] of (declared as string).matchAll(/var\(\s*(--[\w-]+)/g)) {
         expect(tokens.has(name), `${selector} references undefined token ${name}`).toBe(true);
       }
     }

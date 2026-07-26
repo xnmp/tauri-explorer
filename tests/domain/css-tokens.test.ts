@@ -76,6 +76,19 @@ describe("resolveCssValue", () => {
     );
   });
 
+  it("resolves many independent references without exhausting the depth budget", () => {
+    const many = Array.from({ length: 40 }, () => "var(--a)").join(", ");
+    const resolved = resolveCssValue(many, tokensOf({ "--a": "Inter" }));
+    expect(resolved).not.toContain("var(");
+    expect(resolved.split(", ")).toHaveLength(40);
+  });
+
+  it("skips a malformed reference and still resolves later valid ones", () => {
+    expect(resolveCssValue("var(bad), var(--a)", tokensOf({ "--a": "Inter" }))).toBe(
+      "var(bad), Inter",
+    );
+  });
+
   it("passes through values with no var() reference", () => {
     expect(resolveCssValue("  inherit  ", new Map())).toBe("inherit");
   });
@@ -124,6 +137,10 @@ describe("findDeclaredValue", () => {
       .a { font-family: Inter; }
     `;
     expect(findDeclaredValue(commented, ".a", "font-family")).toBe("Inter");
+  });
+
+  it("treats regex metacharacters in the property name literally", () => {
+    expect(findDeclaredValue(".a { fontXfamily: Inter; }", ".a", "font.family")).toBeNull();
   });
 
   it("takes the last declaration when a rule repeats the property", () => {

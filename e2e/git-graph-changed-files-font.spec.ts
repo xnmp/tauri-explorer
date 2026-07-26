@@ -62,15 +62,21 @@ test.describe("Git graph changed-files font (#499)", () => {
     const pathFont = await fontFamilyOf(page, '[data-testid="git-graph-view"] .file-path');
     const statusFont = await fontFamilyOf(page, '[data-testid="git-graph-view"] .file-status');
 
-    // The app font is a real named stack, not the generic monospace fallback.
-    expect(bodyFont).not.toMatch(MONOSPACE);
-
-    // The observable: the changed-files rows are typographically identical to
-    // the rest of the UI. Reverting the fix restores "monospace" here.
+    // The observable, and the whole contract: the changed-files rows are
+    // typographically identical to the rest of the UI. Reverting the fix makes
+    // these "monospace" against the body's Inter stack.
+    //
+    // Note this is deliberately an equality check and NOT "the rows are not
+    // monospace" — themes/hacker.css legitimately sets --font-family to a mono
+    // stack, and there the rows SHOULD follow the body and render mono too.
     expect(pathFont).toBe(bodyFont);
     expect(statusFont).toBe(bodyFont);
+
+    // Sanity check that the equality above is not vacuously comparing two
+    // generic fallbacks: under the default theme the app font is a real
+    // proportional stack.
+    expect(bodyFont).toContain("Inter");
     expect(pathFont).not.toMatch(MONOSPACE);
-    expect(statusFont).not.toMatch(MONOSPACE);
 
     await view.locator(".detail-files-col").first().screenshot({
       path: shotPath("ac-1-changed-files-app-font.png"),

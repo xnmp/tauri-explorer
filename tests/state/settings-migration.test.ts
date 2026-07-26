@@ -100,6 +100,43 @@ describe("git-repo tab decoration on an existing install (#506)", () => {
   });
 });
 
+describe("promoting a localStorage cache into settings.json (#506)", () => {
+  /** Boot with ONLY the localStorage cache populated — the state an install
+   *  lands in when settings.json is missing or unreadable — and return the
+   *  settings.json content that launch promoted. */
+  async function promoteFromCache(blob: Record<string, unknown>) {
+    localStorage.setItem("explorer-settings", JSON.stringify(blob));
+    vi.resetModules();
+    const { settingsStore } = await import("$lib/state/settings.svelte");
+    await settingsStore.init();
+    // writeConfigQueued is fire-and-forget; let its flush land.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const { readConfigFile } = await import("$lib/api/files");
+    const result = await readConfigFile("settings.json");
+    return result.ok ? (result.data ?? "") : "";
+  }
+
+  it("lets the next launch migrate the promoted blob", async () => {
+    // The promoted cache has never been migrated, so it must not be written
+    // as already-migrated: that would disarm the ledger for this install
+    // forever. The observable consequence is on the NEXT launch, which reads
+    // the promoted file and must adopt the flipped default.
+    const promoted = await promoteFromCache({ tabTitleGitRoot: false, previewFontSize: 20 });
+
+    const manager = await bootWith(JSON.parse(promoted));
+    const display = await repoTabDisplay(manager);
+
+    expect(display.isGitRoot).toBe(true);
+    expect(display.repo).toBe("project");
+  });
+
+  it("promotes the cache's unrelated settings untouched", async () => {
+    const promoted = await promoteFromCache({ tabTitleGitRoot: false, previewFontSize: 20 });
+
+    expect(JSON.parse(promoted).previewFontSize).toBe(20);
+  });
+});
+
 describe("a deliberate opt-out survives the migration (#506)", () => {
   it("keeps the plain folder icon when the stamped blob says the user turned it off", async () => {
     const manager = await bootWith({

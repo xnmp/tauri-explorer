@@ -17,6 +17,15 @@ import { waitForEntries } from "./helpers";
 
 const MONOSPACE = /monospace|ui-monospace|Menlo|Consolas|Courier|SFMono/i;
 
+/**
+ * PNGs aren't byte-reproducible, so writing straight to the committed
+ * `evidence/` copy would dirty the tree on every ordinary e2e run (and leave a
+ * half-updated set behind a mid-run failure). Default to gitignored
+ * test-results/; refresh the committed evidence with CAPTURE_EVIDENCE=1.
+ */
+const shotPath = (name: string) =>
+  process.env.CAPTURE_EVIDENCE ? `evidence/${name}` : `test-results/${name}`;
+
 async function openGraphViaPalette(page: import("@playwright/test").Page) {
   await page.keyboard.press("Control+Shift+p");
   await page.locator("input:focus").fill("Toggle Commit Graph");
@@ -64,7 +73,7 @@ test.describe("Git graph changed-files font (#499)", () => {
     expect(statusFont).not.toMatch(MONOSPACE);
 
     await view.locator(".detail-files-col").first().screenshot({
-      path: "evidence/ac-1-changed-files-app-font.png",
+      path: shotPath("ac-1-changed-files-app-font.png"),
     });
   });
 
@@ -89,7 +98,7 @@ test.describe("Git graph changed-files font (#499)", () => {
     expect(diffFont).toMatch(MONOSPACE);
 
     await view.locator('[data-testid="git-graph-file-diff"]').first().screenshot({
-      path: "evidence/ac-2-diff-monospace.png",
+      path: shotPath("ac-2-diff-monospace.png"),
     });
   });
 });

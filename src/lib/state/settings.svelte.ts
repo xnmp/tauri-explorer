@@ -247,10 +247,15 @@ function createSettingsStore() {
     // serialized copy: `saveSettings` is the other writer of it, so a
     // de-stamped write alone would be undone by the first ordinary settings
     // change in this session. Stamp 0 leaves the value alone on this launch
-    // and lets the next one migrate normally (#506).
+    // and lets the next one migrate normally. A cache that carries a real
+    // stamp is NOT a legacy blob, so its own stamp is promoted instead —
+    // otherwise losing settings.json would revive a decoration the user
+    // turned off after the migration had already run (#506).
     const saved = loadPersisted<Partial<Settings>>(STORAGE_KEY, {});
     if (Object.keys(saved).length > 0) {
-      settings = { ...settings, [SETTINGS_VERSION_KEY]: 0 };
+      const cached = (saved as Record<string, unknown>)[SETTINGS_VERSION_KEY];
+      const stamp = typeof cached === "number" && Number.isFinite(cached) ? cached : 0;
+      settings = { ...settings, [SETTINGS_VERSION_KEY]: stamp };
       writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2));
     }
   }

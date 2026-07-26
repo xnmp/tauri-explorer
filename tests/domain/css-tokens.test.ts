@@ -32,6 +32,10 @@ describe("collectCustomProperties", () => {
   it("returns an empty table for empty or token-free input", () => {
     expect(collectCustomProperties("").size).toBe(0);
   });
+
+  it("ignores tokens that only appear inside a comment", () => {
+    expect(collectCustomProperties("/* --a: 1; */ :root { --b: 2; }").has("--a")).toBe(false);
+  });
 });
 
 describe("resolveCssValue", () => {
@@ -112,6 +116,14 @@ describe("findDeclaredValue", () => {
 
   it("does not match a selector that is merely a substring of another", () => {
     expect(findDeclaredValue(".file-path-extra { font-family: serif; }", ".file-path", "font-family")).toBeNull();
+  });
+
+  it("is not derailed by a comment quoting braces or declarations", () => {
+    const commented = `
+      /* .a { font-family: serif } — see the note above */
+      .a { font-family: Inter; }
+    `;
+    expect(findDeclaredValue(commented, ".a", "font-family")).toBe("Inter");
   });
 
   it("takes the last declaration when a rule repeats the property", () => {

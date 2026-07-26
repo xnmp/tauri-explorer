@@ -18,6 +18,15 @@
 const MAX_RESOLVE_DEPTH = 16;
 
 /**
+ * Removes `/* … *\/` comments so prose can't be mistaken for CSS. Comments
+ * routinely quote selectors and declarations, and a stray brace or colon in
+ * one would otherwise derail the rule and declaration scanners below.
+ */
+export function stripComments(css: string): string {
+  return css.replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
+/**
  * Splits a `var()` argument list into its reference and fallback halves,
  * respecting nested parentheses so `var(--a, var(--b, x))` splits correctly.
  * Returns `null` when the arguments are malformed.
@@ -58,7 +67,7 @@ function matchingParen(value: string, open: number): number {
 export function collectCustomProperties(css: string): Map<string, string> {
   const tokens = new Map<string, string>();
   const declaration = /(--[\w-]+)\s*:\s*([^;{}]+)[;}]/g;
-  for (const [, name, value] of css.matchAll(declaration)) {
+  for (const [, name, value] of stripComments(css).matchAll(declaration)) {
     tokens.set(name, value.trim());
   }
   return tokens;
@@ -118,7 +127,7 @@ export function findDeclaredValue(
 ): string | null {
   let found: string | null = null;
   const rule = /([^{}]+)\{([^{}]*)\}/g;
-  for (const [, selectorList, body] of css.matchAll(rule)) {
+  for (const [, selectorList, body] of stripComments(css).matchAll(rule)) {
     const targets = selectorList
       .split(",")
       .map((s) => s.trim())

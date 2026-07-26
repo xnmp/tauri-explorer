@@ -240,16 +240,18 @@ function createSettingsStore() {
     }
 
     // settings.json is missing or unreadable, so promote the localStorage
-    // cache into it. Promote it UNSTAMPED: this blob has never been through
-    // the ledger, and DEFAULT_SETTINGS supplies the current stamp, so writing
-    // it verbatim would mark a legacy blob as already migrated and disarm the
-    // ledger for this install forever. Without a stamp the next launch reads
-    // the file, migrates it, and writes the stamp back (#506).
+    // cache into it. This blob has never been through the ledger, but
+    // DEFAULT_SETTINGS supplies the current stamp, so promoting it as-is would
+    // mark a legacy blob as already migrated and disarm the ledger for this
+    // install forever. Reset the stamp on the LIVE object, not just on the
+    // serialized copy: `saveSettings` is the other writer of it, so a
+    // de-stamped write alone would be undone by the first ordinary settings
+    // change in this session. Stamp 0 leaves the value alone on this launch
+    // and lets the next one migrate normally (#506).
     const saved = loadPersisted<Partial<Settings>>(STORAGE_KEY, {});
     if (Object.keys(saved).length > 0) {
-      const promoted: Record<string, unknown> = { ...settings };
-      delete promoted[SETTINGS_VERSION_KEY];
-      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(promoted, null, 2));
+      settings = { ...settings, [SETTINGS_VERSION_KEY]: 0 };
+      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2));
     }
   }
 

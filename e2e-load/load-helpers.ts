@@ -83,8 +83,9 @@ async function navigateInto(page: Page, repoPath: string): Promise<void> {
  */
 export async function createTabAndOpenGraph(page: Page, repoPath: string): Promise<number> {
   // Return focus to the base (first) tab so the new tab inherits Documents.
-  // The tab strip is hidden while only one tab exists (showWindowTabBar), so
-  // guard the click on the strip actually being present.
+  // The tab strip may be hidden with a single tab (showWindowTabBar hides it
+  // only when window controls are off and the tab is not renameable — #504),
+  // so guard the click on the strip actually being present.
   if ((await page.locator(".tab").count()) > 0) {
     const first = page.locator(".tab").first();
     await first.click();
@@ -99,8 +100,8 @@ export async function createTabAndOpenGraph(page: Page, repoPath: string): Promi
   const before = await page.locator(".tab").count();
   return measureMs(async () => {
     await page.keyboard.press("Control+t");
-    // The strip appears at 2 tabs, so the DOM count jumps 0->2 the first time;
-    // afterwards each Ctrl+T adds one. Wait for strictly more than before.
+    // If the strip was hidden, the DOM count jumps 0->2 the first time;
+    // otherwise each Ctrl+T adds one. Wait for strictly more than before.
     await expect
       .poll(() => page.locator(".tab").count())
       .toBeGreaterThan(Math.max(before, 1));

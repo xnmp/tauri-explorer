@@ -112,7 +112,9 @@ export interface CoalescedPersister<T> {
   flush(): void;
   /** Whether a scheduled write has not landed yet. */
   readonly hasPending: boolean;
-  /** Flush, then detach the page-lifecycle listeners. */
+  /** Flush, then detach the page-lifecycle listeners. Scheduling after this
+   *  writes immediately rather than deferring — there is no flush-on-unload
+   *  left to catch a queued value. */
   dispose(): void;
 }
 
@@ -131,6 +133,7 @@ export function createCoalescedPersister<T>(key: string, delayMs: number): Coale
   // `undefined`, so emptiness has to be tracked separately from the value.
   let pending: { value: T } | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let disposed = false;
 
   // Captured once so add/remove always target the same object even if the
   // globals are swapped out underneath us (tests stub them).
@@ -153,6 +156,13 @@ export function createCoalescedPersister<T>(key: string, delayMs: number): Coale
   }
 
   function schedule(value: T): void {
+    // A disposed persister has no page-lifecycle safety net left, so deferring
+    // would arm a timer that nothing can flush early. Fail safe: write now
+    // rather than risk holding the last value past the page's lifetime.
+    if (disposed) {
+      savePersisted(key, value);
+      return;
+    }
     pending = { value };
     cancelTimer();
     timer = setTimeout(flush, delayMs);
@@ -183,6 +193,7 @@ export function createCoalescedPersister<T>(key: string, delayMs: number): Coale
     },
     dispose() {
       flush();
+      disposed = true;
       doc?.removeEventListener("visibilitychange", onVisibilityChange);
       win?.removeEventListener("pagehide", onPageHide);
       win?.removeEventListener("beforeunload", onPageHide);

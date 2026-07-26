@@ -216,5 +216,21 @@ describe("createCoalescedPersister", () => {
       doc.emit("visibilitychange");
       expect(writes(setItem)).toHaveLength(0);
     });
+
+    it("scheduling after dispose writes immediately instead of queueing behind nothing", () => {
+      const persister = createCoalescedPersister<string>(KEY, 150);
+      persister.dispose();
+
+      persister.schedule("after-dispose");
+
+      // No lifecycle listener is left to flush a queued value, so holding it
+      // would mean losing it — the write must land straight away.
+      expect(localStorage.getItem(KEY)).toBe(JSON.stringify("after-dispose"));
+      expect(persister.hasPending).toBe(false);
+
+      // …and no orphaned timer fires a second write later.
+      vi.advanceTimersByTime(500);
+      expect(writes(setItem)).toHaveLength(1);
+    });
   });
 });

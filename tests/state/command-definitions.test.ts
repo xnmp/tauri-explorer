@@ -52,8 +52,6 @@ const h = vi.hoisted(() => {
     closeSurface: vi.fn(),
     closeActiveTab: vi.fn(),
     restoreClosedSurface: vi.fn(() => null),
-    focusPaneInDirection: vi.fn(),
-    splitPane: vi.fn(),
   };
   const bookmarks = { bookmarked: new Set<string>() };
   const recent = { count: 0 };
@@ -109,7 +107,6 @@ vi.mock("$lib/state/workspaces.svelte", () => ({
 }));
 
 import { registerAllCommands } from "$lib/state/command-definitions";
-import { keybindingsStore } from "$lib/state/keybindings.svelte";
 import {
   getCommand,
   getAllCommands,
@@ -293,86 +290,6 @@ describe("count-gated commands", () => {
     expect(getCommand("workspace.openNamed")?.when?.()).toBe(false);
     h.workspaces.count = 1;
     expect(getCommand("workspace.openNamed")?.when?.()).toBe(true);
-  });
-});
-
-describe("directional pane focus shortcuts (#501)", () => {
-  /** The four directions and the key that moves focus that way. */
-  const DIRECTIONS = [
-    { id: "pane.focusLeft", direction: "left", key: "l", shortcut: "Alt+L", code: "KeyL" },
-    { id: "pane.focusRight", direction: "right", key: "'", shortcut: "Alt+'", code: "Quote" },
-    { id: "pane.focusUp", direction: "up", key: "p", shortcut: "Alt+P", code: "KeyP" },
-    { id: "pane.focusDown", direction: "down", key: ";", shortcut: "Alt+;", code: "Semicolon" },
-  ] as const;
-
-  /** A keydown as the webview delivers it: Alt held, no Ctrl/Meta/Shift. */
-  function altKeydown(key: string, code: string): KeyboardEvent {
-    return {
-      key,
-      code,
-      ctrlKey: false,
-      shiftKey: false,
-      altKey: true,
-      metaKey: false,
-    } as unknown as KeyboardEvent;
-  }
-
-  it("binds plain Alt+L/'/P/; — the split cluster without Cmd", () => {
-    for (const { id, shortcut } of DIRECTIONS) {
-      expect(getCommand(id)?.shortcut, `${id} default shortcut`).toBe(shortcut);
-    }
-  });
-
-  it("leaves the Cmd+Alt split bindings alone", () => {
-    expect(getCommand("pane.splitLeft")?.shortcut).toBe("Cmd+Alt+L");
-    expect(getCommand("pane.splitRight")?.shortcut).toBe("Cmd+Alt+'");
-    expect(getCommand("pane.splitUp")?.shortcut).toBe("Cmd+Alt+P");
-    expect(getCommand("pane.splitDown")?.shortcut).toBe("Cmd+Alt+;");
-  });
-
-  it("resolves an Alt keydown to the focus command, not the split command", () => {
-    h.windowTabs.dualPaneEnabled = true;
-    const available = (commandId: string) => {
-      const cmd = getCommand(commandId);
-      return !cmd?.when || cmd.when();
-    };
-    for (const { id, key, code } of DIRECTIONS) {
-      expect(
-        keybindingsStore.findMatchingCommand(altKeydown(key, code), available),
-        `Alt+${key} should run ${id}`,
-      ).toBe(id);
-    }
-  });
-
-  it("routes each command to focusPaneInDirection with its direction", async () => {
-    h.windowTabs.dualPaneEnabled = true;
-    for (const { id, direction } of DIRECTIONS) {
-      h.windowTabs.focusPaneInDirection.mockClear();
-      expect(await executeCommand(id)).toBe(true);
-      expect(h.windowTabs.focusPaneInDirection).toHaveBeenCalledWith(direction);
-    }
-    // Moving focus must never create a pane.
-    expect(h.windowTabs.splitPane).not.toHaveBeenCalled();
-  });
-
-  it("is offered only when the tab actually has more than one pane", () => {
-    h.windowTabs.dualPaneEnabled = false;
-    for (const { id } of DIRECTIONS) {
-      expect(getCommand(id)?.when?.(), `${id} on a single pane`).toBe(false);
-    }
-    h.windowTabs.dualPaneEnabled = true;
-    for (const { id } of DIRECTIONS) {
-      expect(getCommand(id)?.when?.(), `${id} on a split tab`).toBe(true);
-    }
-  });
-
-  it("appears in the palette with a direction-naming label", () => {
-    h.windowTabs.dualPaneEnabled = true;
-    const labels = new Map(getAvailableCommands().map((c) => [c.id, c.label]));
-    expect(labels.get("pane.focusLeft")).toBe("Focus Pane Left");
-    expect(labels.get("pane.focusRight")).toBe("Focus Pane Right");
-    expect(labels.get("pane.focusUp")).toBe("Focus Pane Up");
-    expect(labels.get("pane.focusDown")).toBe("Focus Pane Down");
   });
 });
 

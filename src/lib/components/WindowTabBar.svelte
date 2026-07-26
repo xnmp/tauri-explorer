@@ -23,7 +23,7 @@
   import { openNewWindow } from "$lib/state/commands/shared";
   import { parentDir } from "$lib/domain/path";
   import { isCopyModifier } from "$lib/domain/platform";
-  import { showWindowTabBar } from "$lib/domain/titlebar";
+  import { showTabStrip } from "$lib/domain/titlebar";
   import type { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
   const tabs = $derived(windowTabsManager.tabs);
@@ -41,10 +41,11 @@
   });
 
   const showTabArea = $derived(
-    showWindowTabBar(
+    showTabStrip(
       tabs.length,
       windowTabsManager.activeTab?.kind === "explorer" &&
         windowTabsManager.canRenameTab(windowTabsManager.activeTab.id),
+      settingsStore.showWindowControls,
     ),
   );
 

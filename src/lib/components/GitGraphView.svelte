@@ -2468,10 +2468,17 @@
     min-width: 0;
   }
 
+  /* Changed-files rows use the regular app font (#499). These declared
+     var(--font-mono, monospace), but --font-mono is defined nowhere, so they
+     always resolved to the generic monospace family and stood out against the
+     rest of the UI. Named explicitly (rather than `inherit` off the enclosing
+     `.detail-file { font: inherit }`) so the intent is legible here and a unit
+     test can resolve it against the :root token table. The fixed-width status
+     column keeps the file names aligned without needing a mono face. */
   .file-status {
     width: 14px;
     font-weight: 700;
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family);
   }
 
   .s-A { color: #22c55e; }
@@ -2481,7 +2488,7 @@
   .s-T { color: #a78bfa; }
 
   .file-path {
-    font-family: var(--font-mono, monospace);
+    font-family: var(--font-family);
     color: var(--text-secondary);
     word-break: break-all;
   }

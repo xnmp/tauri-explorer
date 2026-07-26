@@ -104,6 +104,7 @@ export interface Settings {
   windowsBackdropOpacity: number; // Windows: acrylic tint opacity 0-100 (lower = more see-through)
   yaziNavigation: boolean; // left/right arrows navigate up/into folders in details/list view
   previewFontSize: number; // base font size (px) for text/code/markdown previews
+  showPreviewInfo: boolean; // preview pane chrome: file name, type badge, size and modified rows (off = content only, #494)
   autoEnterSingleSubdir: boolean; // when entering a dir with exactly one visible subdir (and nothing else), descend into it recursively
   ffmpegPath: string; // explicit path to ffmpeg binary for video/audio thumbnails (empty = auto-detect)
   tabTitleGitRoot: boolean; // when the folder is inside a git repo, show the repo root name + git icon in the tab title (default on, #471)
@@ -175,6 +176,7 @@ const DEFAULT_SETTINGS: Settings = {
   windowsBackdropOpacity: 65,
   yaziNavigation: true,
   previewFontSize: 12,
+  showPreviewInfo: true,
   autoEnterSingleSubdir: false,
   ffmpegPath: "",
   tabTitleGitRoot: true,

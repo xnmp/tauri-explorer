@@ -155,7 +155,13 @@ test.describe("Git graph long file names (#500)", () => {
   test("AC 3: the base name is kept whole and the directory prefix is what elides", async ({
     page,
   }) => {
-    await page.setViewportSize({ width: 1280, height: 800 });
+    // 1600px, not the 1280px of AC 1: this fixture's base name alone is ~600px
+    // wide and the changed-files column at 1280px is ~588px, so "the base name
+    // is rendered in full" is not achievable there for *any* implementation.
+    // Measuring where it does fit is what isolates the ordering being asserted
+    // — that the directory prefix gives up its space first. The case where the
+    // name itself must elide is covered by AC 2 at 700px.
+    await page.setViewportSize({ width: 1600, height: 800 });
     await openGraph(page);
     await measureFileRow(page, LONG_PATH_COMMIT);
 

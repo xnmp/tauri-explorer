@@ -227,8 +227,12 @@ export interface PathDisplayParts {
  * `"app.ts"`         → `{ dir: "", name: "app.ts" }`
  * `"src/lib/"`       → `{ dir: "src/lib/", name: "" }`
  */
-export function splitPathForDisplay(_path: string): PathDisplayParts {
-  throw new Error("splitPathForDisplay: not implemented");
+export function splitPathForDisplay(path: string): PathDisplayParts {
+  // `lastIndexOf` + `slice` around the same index is what makes the round-trip
+  // total: every character lands in exactly one half, whatever the input.
+  // `-1` (no separator) slices to `("", path)`, which is the wanted result.
+  const cut = path.lastIndexOf("/") + 1;
+  return { dir: path.slice(0, cut), name: path.slice(cut) };
 }
 
 /**

@@ -6,8 +6,15 @@
  * It renders when window controls are enabled (Windows 11 style), the
  * integrated title bar is on (macOS style), or the tab strip has
  * something to show. The tab strip shows when there are multiple tabs,
- * or when the active tab is renameable (multi-pane) so its rename
- * affordance stays reachable.
+ * when the active tab is renameable (multi-pane) so its rename
+ * affordance stays reachable, or when window controls are enabled — the
+ * bar is already occupying the row to host them, so hiding the tab
+ * leaves the user's current folder unlabelled for no space saving (#504).
+ *
+ * That last clause has been lost once already: it was fixed inline in
+ * WindowTabBar.svelte (5ca49d76), then dropped when #140 extracted these
+ * rules into this module. It lives here, under test, so the next
+ * extraction cannot silently drop it again.
  */
 
 /** Whether the title bar row renders at all. */

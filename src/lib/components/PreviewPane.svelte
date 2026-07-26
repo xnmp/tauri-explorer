@@ -789,10 +789,14 @@
       <span>Select a file to preview</span>
     </div>
   {:else}
-    <div class="preview-header">
-      <span class="preview-filename" title={selectedFile.path}>{selectedFile.name}</span>
-      <span class="preview-type-badge">{getFileType(selectedFile)}</span>
-    </div>
+    <!-- Auxiliary metadata (name + type badge, and the size/modified footer
+         below) is opt-out for a minimal, content-only preview (#494). -->
+    {#if settingsStore.showPreviewInfo}
+      <div class="preview-header">
+        <span class="preview-filename" title={selectedFile.path}>{selectedFile.name}</span>
+        <span class="preview-type-badge">{getFileType(selectedFile)}</span>
+      </div>
+    {/if}
 
     <div class="preview-content">
       {#if previewLoading}
@@ -880,18 +884,20 @@
       {/if}
     </div>
 
-    <div class="preview-info">
-      {#if selectedFile.kind === "file"}
+    {#if settingsStore.showPreviewInfo}
+      <div class="preview-info">
+        {#if selectedFile.kind === "file"}
+          <div class="info-row">
+            <span class="info-label">Size</span>
+            <span class="info-value">{formatSize(selectedFile.size)}</span>
+          </div>
+        {/if}
         <div class="info-row">
-          <span class="info-label">Size</span>
-          <span class="info-value">{formatSize(selectedFile.size)}</span>
+          <span class="info-label">Modified</span>
+          <span class="info-value">{formatDate(selectedFile.modified)}</span>
         </div>
-      {/if}
-      <div class="info-row">
-        <span class="info-label">Modified</span>
-        <span class="info-value">{formatDate(selectedFile.modified)}</span>
       </div>
-    </div>
+    {/if}
   {/if}
 </div>
 

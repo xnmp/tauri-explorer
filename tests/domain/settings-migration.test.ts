@@ -176,4 +176,15 @@ describe("migrateSettings — ledger semantics (#506)", () => {
     expect(settings.tabTitleGitRoot).toBe(false);
     expect(changed).toBe(false);
   });
+
+  it("ignores a ledger key that only exists on Object.prototype", () => {
+    // A typo'd or hostile entry naming an inherited key must not smuggle a
+    // function onto the settings blob and out to settings.json.
+    const { settings } = migrateSettings({ tabTitleGitRoot: false }, DEFAULTS, [
+      { version: 1, resetToDefault: ["toString", "constructor"], reason: "typo" },
+    ]);
+
+    expect(Object.hasOwn(settings, "toString")).toBe(false);
+    expect(Object.hasOwn(settings, "constructor")).toBe(false);
+  });
 });

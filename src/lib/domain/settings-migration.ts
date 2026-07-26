@@ -61,3 +61,53 @@ export interface SettingsMigrationResult<T> {
   readonly settings: T;
   readonly changed: boolean;
 }
+
+/** A usable persisted blob: JSON objects only. Anything else (a string, an
+ *  array, null, a corrupted value) is treated as "nothing persisted". */
+function asRecord(value: unknown): Record<string, unknown> {
+  const usable = typeof value === "object" && value !== null && !Array.isArray(value);
+  return usable ? (value as Record<string, unknown>) : {};
+}
+
+/** The stamp on a persisted blob, or 0 when absent or unusable. An unusable
+ *  stamp reads as 0 rather than as "already migrated": re-running a
+ *  migration is recoverable, skipping one leaves the bug in place. */
+function storedVersion(persisted: Record<string, unknown>): number {
+  const raw = persisted[SETTINGS_VERSION_KEY];
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) return 0;
+  return Math.floor(raw);
+}
+
+/**
+ * Merge a persisted settings blob over the defaults, applying any migration
+ * the blob has not seen yet.
+ *
+ * Persisted values win, as before — except for the keys named by migrations
+ * above the blob's stamp, which fall back to their default. The result
+ * carries the higher of the stored and current stamps, so each migration
+ * runs at most once per install and a blob written by a newer build is never
+ * downgraded.
+ *
+ * Pure: the inputs are not mutated.
+ */
+export function migrateSettings<T extends object>(
+  persisted: Partial<T> | null | undefined,
+  defaults: T,
+  migrations: readonly SettingsMigration[] = SETTINGS_MIGRATIONS,
+): SettingsMigrationResult<T> {
+  const saved = asRecord(persisted);
+  const from = storedVersion(saved);
+  const target = migrations.reduce((max, m) => Math.max(max, m.version), 0);
+  const defaulted = defaults as unknown as Record<string, unknown>;
+  const merged: Record<string, unknown> = { ...defaulted, ...saved };
+
+  for (const migration of migrations) {
+    if (migration.version <= from) continue;
+    for (const key of migration.resetToDefault) {
+      if (key in defaulted) merged[key] = defaulted[key];
+    }
+  }
+
+  merged[SETTINGS_VERSION_KEY] = Math.max(from, target);
+  return { settings: merged as T, changed: from < target };
+}

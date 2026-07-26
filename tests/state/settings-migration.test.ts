@@ -11,22 +11,27 @@
  * instead of the git-branch one.
  *
  * `isGitRoot` — not the setting — is what the template branches on, so that
- * is what these assert. Each test boots a FRESH settings store against a
- * persisted blob (the store reads localStorage once, at construction), which
- * is why they reset the module registry rather than calling
- * `settingsStore.update`.
+ * is what these assert. Each test boots a FRESH store against a settings.json
+ * seeded into the mock backend: that file is the durable store of record and
+ * the only place the migration runs, so seeding localStorage instead would
+ * not exercise it.
  */
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { CURRENT_SETTINGS_VERSION } from "$lib/domain/settings-migration";
+import { MOCK_CONFIG_SEED_KEY } from "$lib/api/mock-invoke";
 
 /** Mirrors mock-invoke.ts's git_repo_root mock. */
 const REPO_ROOT = "/home/user/Documents/project";
-const STORAGE_KEY = "explorer-settings";
 
-/** Boot a tabs manager whose settings store loaded `persisted` from disk. */
-async function bootWith(persisted: Record<string, unknown>) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
+/** Boot a tabs manager whose settings store loaded `config` from settings.json. */
+async function bootWith(config: Record<string, unknown>) {
+  localStorage.setItem(
+    MOCK_CONFIG_SEED_KEY,
+    JSON.stringify({ "settings.json": JSON.stringify(config) }),
+  );
   vi.resetModules();
+  const { settingsStore } = await import("$lib/state/settings.svelte");
+  await settingsStore.init();
   const { createWindowTabsManager } = await import("$lib/state/window-tabs.svelte");
   const manager = createWindowTabsManager();
   manager.init("/home/user", true);
@@ -45,6 +50,10 @@ async function repoTabDisplay(
 }
 
 beforeEach(() => {
+  localStorage.clear();
+});
+
+afterEach(() => {
   localStorage.clear();
 });
 
@@ -71,6 +80,14 @@ describe("git-repo tab decoration on an existing install (#506)", () => {
     });
 
     expect((await repoTabDisplay(manager)).isGitRoot).toBe(true);
+  });
+
+  it("leaves the legacy blob's unrelated settings alone while migrating", async () => {
+    await bootWith({ tabTitleGitRoot: false, previewFontSize: 20, ffmpegPath: "/usr/bin/ffmpeg" });
+    const { settingsStore } = await import("$lib/state/settings.svelte");
+
+    expect(settingsStore.previewFontSize).toBe(20);
+    expect(settingsStore.ffmpegPath).toBe("/usr/bin/ffmpeg");
   });
 
   it("still shows the plain folder for a tab outside any git repo", async () => {

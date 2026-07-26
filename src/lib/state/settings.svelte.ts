@@ -18,6 +18,10 @@ import {
   resolveEffectivePreviewPanePosition,
 } from "$lib/domain/preview-pane-position";
 import { windowSizeStore } from "./window-size.svelte";
+import {
+  CURRENT_SETTINGS_VERSION,
+  migrateSettings,
+} from "$lib/domain/settings-migration";
 
 /** Which navigation bar buttons to display */
 export interface NavBarButtons {
@@ -108,6 +112,7 @@ export interface Settings {
   autoEnterSingleSubdir: boolean; // when entering a dir with exactly one visible subdir (and nothing else), descend into it recursively
   ffmpegPath: string; // explicit path to ffmpeg binary for video/audio thumbnails (empty = auto-detect)
   tabTitleGitRoot: boolean; // when the folder is inside a git repo, show the repo root name + git icon in the tab title (default on, #471)
+  settingsVersion: number; // schema stamp on the persisted blob; drives one-shot migrations when a default flips (#506)
   warmWindow: boolean; // keep a hidden pre-warmed window pooled so Ctrl+N is near-instant
   terminalFollowsExplorer: boolean; // auto-cd the embedded terminal when the active pane navigates (#149)
   explorerFollowsTerminal: boolean; // navigate the active pane when the terminal's shell changes cwd (OSC 7) (#149)
@@ -185,6 +190,7 @@ const DEFAULT_SETTINGS: Settings = {
   explorerFollowsTerminal: true,
   pluginsEnabled: {},
   defaultPaneLayout: "dwindle",
+  settingsVersion: CURRENT_SETTINGS_VERSION,
 };
 
 const STORAGE_KEY = "explorer-settings";
@@ -206,6 +212,11 @@ function createSettingsStore() {
   /**
    * Load settings from config file, migrating from localStorage if needed.
    * Called once during app initialization.
+   *
+   * settings.json is the durable store of record; localStorage is a
+   * synchronous cache of it that this overwrites on every load. Schema
+   * migrations therefore run HERE and only here — on the authoritative blob,
+   * once, with the result written back to both stores (#506).
    */
   async function init() {
     try {
@@ -213,8 +224,13 @@ function createSettingsStore() {
       if (result.ok && result.data) {
         const loaded = JSON.parse(result.data) as Partial<Settings>;
         if (loaded && typeof loaded === "object") {
-          settings = { ...DEFAULT_SETTINGS, ...loaded };
+          const { settings: migrated, changed } = migrateSettings(loaded, DEFAULT_SETTINGS);
+          settings = migrated;
           savePersisted(STORAGE_KEY, settings);
+          // Write the migrated blob (and its version stamp) straight back, so
+          // the migration applies once rather than on every launch — that is
+          // what lets a user switch the setting off again afterwards (#506).
+          if (changed) writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2));
           return;
         }
       }

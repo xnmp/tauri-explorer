@@ -16,19 +16,22 @@ import { waitForEntries } from "./helpers";
 
 const REPO_SUBFOLDER_URL = "/?path=/home/user/Documents/project/src";
 
-/** Write the persisted settings blob before first paint, so the app boots
- *  against it exactly as an upgraded install would. */
-const seedSettings = (page: Page, blob: Record<string, unknown>) =>
+/** Seed the app's DURABLE settings store (settings.json in the mock backend)
+ *  before first paint, so it boots exactly as an upgraded install would.
+ *  Seeding localStorage instead would not do: that is a cache the app
+ *  overwrites from settings.json, and the migration only runs on the latter. */
+const seedSettingsFile = (page: Page, blob: Record<string, unknown>) =>
   page.addInitScript((persisted) => {
+    const settings = {
+      // Hold the title bar row open with a single tab (#504) so the strip
+      // renders; keep the macOS integrated bar out of it.
+      showWindowControls: true,
+      integratedTitleBar: false,
+      ...persisted,
+    };
     localStorage.setItem(
-      "explorer-settings",
-      JSON.stringify({
-        // Hold the title bar row open with a single tab (#504) so the strip
-        // renders; keep the macOS integrated bar out of it.
-        showWindowControls: true,
-        integratedTitleBar: false,
-        ...persisted,
-      }),
+      "mock-config-files",
+      JSON.stringify({ "settings.json": JSON.stringify(settings) }),
     );
   }, blob);
 
@@ -43,7 +46,7 @@ test.describe("Git repo tab icon on an upgraded install (#506)", () => {
     page,
   }) => {
     // A real pre-#471 blob: the key is present and false, no version stamp.
-    await seedSettings(page, { tabTitleGitRoot: false });
+    await seedSettingsFile(page, { tabTitleGitRoot: false });
     await page.goto(REPO_SUBFOLDER_URL);
     await waitForEntries(page);
 
@@ -60,7 +63,7 @@ test.describe("Git repo tab icon on an upgraded install (#506)", () => {
   }) => {
     // settingsVersion 1 = the migration already ran here, so this `false` is
     // the user's own choice and must be honoured.
-    await seedSettings(page, { tabTitleGitRoot: false, settingsVersion: 1 });
+    await seedSettingsFile(page, { tabTitleGitRoot: false, settingsVersion: 1 });
     await page.goto(REPO_SUBFOLDER_URL);
     await waitForEntries(page);
 
@@ -72,7 +75,7 @@ test.describe("Git repo tab icon on an upgraded install (#506)", () => {
   });
 
   test("a legacy blob's other settings survive the migration", async ({ page }) => {
-    await seedSettings(page, {
+    await seedSettingsFile(page, {
       tabTitleGitRoot: false,
       previewFontSize: 20,
       autoEnterSingleSubdir: true,
@@ -82,6 +85,8 @@ test.describe("Git repo tab icon on an upgraded install (#506)", () => {
 
     await expect(page.locator(".tab-icon-git")).toBeVisible();
 
+    // The migration must rewrite only its own key: everything else the
+    // legacy file carried survives into the live settings.
     const kept = await page.evaluate(() => {
       const s = JSON.parse(localStorage.getItem("explorer-settings") || "{}");
       return { previewFontSize: s.previewFontSize, autoEnterSingleSubdir: s.autoEnterSingleSubdir };

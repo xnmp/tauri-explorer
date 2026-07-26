@@ -168,6 +168,20 @@ describe("promoting a localStorage cache into settings.json (#506)", () => {
     expect((await repoTabDisplay(manager)).isGitRoot).toBe(true);
   });
 
+  it("keeps a deliberate opt-out when a STAMPED cache is promoted", async () => {
+    // Losing settings.json must not resurrect a decoration the user turned
+    // off after the migration already ran: a cache carrying a real stamp is
+    // not a legacy blob, so its stamp is promoted rather than zeroed.
+    const promoted = await promoteFromCache({
+      tabTitleGitRoot: false,
+      settingsVersion: CURRENT_SETTINGS_VERSION,
+    });
+
+    const manager = await bootWith(JSON.parse(promoted));
+
+    expect((await repoTabDisplay(manager)).isGitRoot).toBe(false);
+  });
+
   it("promotes the cache's unrelated settings untouched", async () => {
     const promoted = await promoteFromCache({ tabTitleGitRoot: false, previewFontSize: 20 });
 

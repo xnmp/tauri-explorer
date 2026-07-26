@@ -85,6 +85,122 @@ export function savePersistedRaw(key: string, value: string): void {
   }
 }
 
+// --- Coalesced localStorage writer (trailing, latest wins) ---
+
+/**
+ * A coalescing writer for a single localStorage key.
+ *
+ * Under WebKitGTK localStorage is SQLite-backed and fsyncs on the UI thread,
+ * so one `setItem` can stall for a whole disk flush (~70ms on a DRAM-less
+ * SSD). A key rewritten on every user interaction therefore drops a flush
+ * stall right into the interaction path — even though every write but the
+ * last is immediately superseded and never read (#481).
+ *
+ * `schedule` moves those writes off that path: the value is held and written
+ * once the caller stops scheduling for `delayMs`, so a burst of N
+ * interactions costs one write instead of N. Durability is preserved from
+ * three directions — `writeNow` for callers that need the value stored
+ * synchronously, an automatic flush when the page is hidden or unloaded, and
+ * `flush`/`dispose` for explicit teardown.
+ */
+export interface CoalescedPersister<T> {
+  /** Hold `value` for a trailing write, superseding any pending value. */
+  schedule(value: T): void;
+  /** Write `value` now, discarding any pending write. */
+  writeNow(value: T): void;
+  /** Write the pending value now, if there is one. */
+  flush(): void;
+  /** Whether a scheduled write has not landed yet. */
+  readonly hasPending: boolean;
+  /** Flush, then detach the page-lifecycle listeners. Scheduling after this
+   *  writes immediately rather than deferring — there is no flush-on-unload
+   *  left to catch a queued value. */
+  dispose(): void;
+}
+
+/**
+ * Create a {@link CoalescedPersister} for `key`, coalescing writes that
+ * arrive less than `delayMs` apart.
+ *
+ * The window is trailing and restarts on every `schedule`, so the write lands
+ * when the caller pauses — which is exactly when a flush stall is invisible.
+ * The flip side is that sustained scheduling can defer a write indefinitely;
+ * callers that need a bound on staleness pair this with their own periodic
+ * `writeNow` (window-tabs uses the 30s interval save in use-window-lifecycle).
+ */
+export function createCoalescedPersister<T>(key: string, delayMs: number): CoalescedPersister<T> {
+  // Boxed, not a bare `T | undefined`: callers may legitimately persist
+  // `undefined`, so emptiness has to be tracked separately from the value.
+  let pending: { value: T } | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let disposed = false;
+
+  // Captured once so add/remove always target the same object even if the
+  // globals are swapped out underneath us (tests stub them).
+  const doc = typeof document !== "undefined" ? document : null;
+  const win = typeof window !== "undefined" ? window : null;
+
+  function cancelTimer(): void {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+  }
+
+  function flush(): void {
+    cancelTimer();
+    if (!pending) return;
+    const { value } = pending;
+    pending = null;
+    savePersisted(key, value);
+  }
+
+  function schedule(value: T): void {
+    // A disposed persister has no page-lifecycle safety net left, so deferring
+    // would arm a timer that nothing can flush early. Fail safe: write now
+    // rather than risk holding the last value past the page's lifetime.
+    if (disposed) {
+      savePersisted(key, value);
+      return;
+    }
+    pending = { value };
+    cancelTimer();
+    timer = setTimeout(flush, delayMs);
+  }
+
+  function writeNow(value: T): void {
+    cancelTimer();
+    pending = null;
+    savePersisted(key, value);
+  }
+
+  // Only on the way out: a page becoming visible again has nothing to save.
+  const onVisibilityChange = (): void => {
+    if (doc?.visibilityState === "hidden") flush();
+  };
+  const onPageHide = (): void => flush();
+
+  doc?.addEventListener("visibilitychange", onVisibilityChange);
+  win?.addEventListener("pagehide", onPageHide);
+  win?.addEventListener("beforeunload", onPageHide);
+
+  return {
+    schedule,
+    writeNow,
+    flush,
+    get hasPending() {
+      return pending !== null;
+    },
+    dispose() {
+      flush();
+      disposed = true;
+      doc?.removeEventListener("visibilitychange", onVisibilityChange);
+      win?.removeEventListener("pagehide", onPageHide);
+      win?.removeEventListener("beforeunload", onPageHide);
+    },
+  };
+}
+
 // --- Serialized config-file writer (latest wins) ---
 
 const inFlightWrites = new Map<string, Promise<void>>();

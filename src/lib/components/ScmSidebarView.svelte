@@ -21,6 +21,7 @@
   import Modal from "./Modal.svelte";
 
   import { buildTree, collectPaths, type ScmTreeNode } from "$lib/domain/scm-tree";
+  import { filterScmSummary, isScmFilterActive } from "$lib/domain/scm-filter";
 
   // Per-pane store (#334): this view tracks the pane it is mounted in, so a
   // second pane on another repo gets its own independent SCM panel. Falls
@@ -28,11 +29,21 @@
   const paneId = getPaneIdContext() ?? "default";
   const scmStore = getScmStore(paneId);
 
+  // Fuzzy filter over the pending files (#517). Only the query text lives
+  // here; the narrowing rules are pure in $lib/domain/scm-filter.
+  let filterQuery = $state("");
+  const filterActive = $derived(isScmFilterActive(filterQuery));
+  let filterInputEl: HTMLInputElement | undefined = $state();
+
   // Collapsed folder sets, keyed per repo root so toggling between repos
-  // doesn't mix collapse state.
+  // doesn't mix collapse state. While a filter is active every folder is
+  // treated as expanded — a match hidden inside a collapsed folder would
+  // look like the filter had dropped it.
   let collapsedByRepo = $state(new Map<string, Set<string>>());
   const collapsedFolders = $derived(
-    collapsedByRepo.get(scmStore.repoRoot ?? "") ?? new Set<string>()
+    filterActive
+      ? new Set<string>()
+      : collapsedByRepo.get(scmStore.repoRoot ?? "") ?? new Set<string>()
   );
   function toggleFolder(dir: string): void {
     const repo = scmStore.repoRoot ?? "";
@@ -238,8 +249,35 @@
     }
   }
 
-  const summary = $derived(scmStore.filteredSummary);
+  /** Rows the user sees: dir-scoped by the store (#380), then narrowed by the
+   *  sidebar's own fuzzy query (#517). Counts and keyboard navigation follow
+   *  it; commit actions deliberately do not (they use `fullSummary`). */
+  const summary = $derived(filterScmSummary(scmStore.filteredSummary, filterQuery));
   const fullSummary = $derived(scmStore.summary);
+
+  /** Pending rows before the text filter — decides whether there is anything
+   *  to filter at all (no input on a clean tree). */
+  const dirPendingCount = $derived(
+    scmStore.filteredSummary.staged.length +
+      scmStore.filteredSummary.changes.length +
+      scmStore.filteredSummary.untracked.length +
+      scmStore.filteredSummary.merge.length
+  );
+
+  function clearFilter(): void {
+    filterQuery = "";
+    filterInputEl?.focus();
+  }
+
+  function onFilterKeydown(e: KeyboardEvent): void {
+    // Esc clears the query first; an already-empty filter lets the key bubble
+    // so the surrounding UI keeps its own Esc behaviour.
+    if (e.key === "Escape" && filterActive) {
+      e.preventDefault();
+      e.stopPropagation();
+      clearFilter();
+    }
+  }
   const isRepo = $derived(fullSummary.is_repo);
 
   const stagedCount = $derived(summary.staged.length);
@@ -414,6 +452,39 @@
       </div>
     </div>
 
+    {#if dirPendingCount > 0}
+      <div class="scm-filter">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" class="scm-filter-icon" aria-hidden="true">
+          <circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M10.4 10.4L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <input
+          type="text"
+          class="scm-filter-input"
+          placeholder="Filter files"
+          aria-label="Filter files"
+          bind:this={filterInputEl}
+          value={filterQuery}
+          oninput={(e) => (filterQuery = (e.target as HTMLInputElement).value)}
+          onkeydown={onFilterKeydown}
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+          name="scm-filter-nofill"
+        />
+        {#if filterActive}
+          <button
+            type="button"
+            class="scm-filter-clear"
+            title="Clear filter (Esc)"
+            aria-label="Clear filter"
+            onclick={clearFilter}
+          >×</button>
+        {/if}
+      </div>
+    {/if}
+
     {#if mergeCount > 0}
       {@render section({
         id: "merge",
@@ -457,7 +528,13 @@
     })}
 
     {#if stagedCount + changesCount + untrackedCount + mergeCount === 0}
-      <div class="clean-state">Working tree clean</div>
+      {#if filterActive}
+        <!-- A filtered-to-nothing list is not a clean tree — say so, or the
+             user reads "clean" and forgets the filter is on. -->
+        <div class="scm-no-match">No files match “{filterQuery.trim()}”</div>
+      {:else}
+        <div class="clean-state">Working tree clean</div>
+      {/if}
     {/if}
   {/if}
 
@@ -761,6 +838,75 @@
     gap: 6px;
     padding: 8px;
     border-bottom: 1px solid var(--divider);
+  }
+
+  /* Fuzzy filter over the pending files (#517). Sits between the commit panel
+     and the sections, matching the address-bar filter treatment. */
+  .scm-filter {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    box-sizing: border-box;
+    margin: 8px 8px 4px;
+    padding: 0 8px;
+    height: 26px;
+    background: var(--control-fill-secondary);
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-sm);
+  }
+
+  .scm-filter:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 15%, transparent);
+  }
+
+  .scm-filter-icon {
+    flex-shrink: 0;
+    color: var(--text-tertiary);
+  }
+
+  .scm-filter-input {
+    flex: 1;
+    min-width: 0;
+    padding: 2px 0;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 12px;
+  }
+
+  .scm-filter-input::placeholder {
+    color: var(--text-tertiary);
+  }
+
+  .scm-filter-clear {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-tertiary);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .scm-filter-clear:hover {
+    background: var(--subtle-fill-secondary);
+    color: var(--text-primary);
+  }
+
+  .scm-no-match {
+    padding: 16px 12px;
+    color: var(--text-tertiary);
+    font-size: 12px;
+    text-align: center;
   }
 
   .branch-line {

@@ -104,7 +104,9 @@ export function migrateSettings<T extends object>(
   for (const migration of migrations) {
     if (migration.version <= from) continue;
     for (const key of migration.resetToDefault) {
-      if (key in defaulted) merged[key] = defaulted[key];
+      // hasOwn, not `in`: an entry naming an inherited property (a typo like
+      // "toString") must not copy a prototype member onto the blob.
+      if (Object.hasOwn(defaulted, key)) merged[key] = defaulted[key];
     }
   }
 

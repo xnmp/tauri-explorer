@@ -49,6 +49,24 @@ async function repoTabDisplay(
   return manager.getTabDisplay(tab);
 }
 
+/** `writeConfigQueued` is fire-and-forget and coalesces per filename, chaining
+ *  a queued write onto the in-flight one, so no fixed number of turns is
+ *  guaranteed to drain it. Wait for QUIESCENCE — the file content unchanged
+ *  across several consecutive turns — rather than for a wall-clock sleep. */
+async function drainWrites(): Promise<string> {
+  const { readConfigFile } = await import("$lib/api/files");
+  let last = "";
+  let stable = 0;
+  for (let turn = 0; turn < 200 && stable < 5; turn++) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const result = await readConfigFile("settings.json");
+    const now = result.ok ? (result.data ?? "") : "";
+    stable = now === last ? stable + 1 : 0;
+    last = now;
+  }
+  return last;
+}
+
 beforeEach(() => {
   localStorage.clear();
 });
@@ -109,8 +127,7 @@ describe("promoting a localStorage cache into settings.json (#506)", () => {
     vi.resetModules();
     const { settingsStore } = await import("$lib/state/settings.svelte");
     await settingsStore.init();
-    // writeConfigQueued is fire-and-forget; let its flush land.
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await drainWrites();
     const { readConfigFile } = await import("$lib/api/files");
     const result = await readConfigFile("settings.json");
     return result.ok ? (result.data ?? "") : "";
@@ -128,6 +145,27 @@ describe("promoting a localStorage cache into settings.json (#506)", () => {
 
     expect(display.isGitRoot).toBe(true);
     expect(display.repo).toBe("project");
+  });
+
+  it("survives an ordinary settings change made during the promoting launch", async () => {
+    // De-stamping only the promotion write is not enough: the LIVE settings
+    // object still carries DEFAULT_SETTINGS' stamp, and saveSettings is the
+    // other writer of that object. One toggle would re-stamp the file and
+    // disarm the ledger again — which is exactly what a user who just wiped
+    // their config to "reset" is likely to do.
+    localStorage.setItem("explorer-settings", JSON.stringify({ tabTitleGitRoot: false }));
+    vi.resetModules();
+    const { settingsStore } = await import("$lib/state/settings.svelte");
+    await settingsStore.init();
+    settingsStore.toggleSidebar();
+    await drainWrites();
+    const { readConfigFile } = await import("$lib/api/files");
+    const written = await readConfigFile("settings.json");
+    const promoted = written.ok ? (written.data ?? "{}") : "{}";
+
+    const manager = await bootWith(JSON.parse(promoted));
+
+    expect((await repoTabDisplay(manager)).isGitRoot).toBe(true);
   });
 
   it("promotes the cache's unrelated settings untouched", async () => {

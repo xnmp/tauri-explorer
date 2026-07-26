@@ -143,9 +143,11 @@ test.describe("SCM sidebar fuzzy filter (#517)", () => {
     await view.locator(".scm-filter-input").fill("idx");
     await expect(indexCss).toBeVisible();
 
-    // Clicking the folder while filtering must not quietly rewrite the
-    // collapse state the user set before filtering.
-    await srcFolder.click();
+    // Collapsing is off while filtering — the row says so, and a click that
+    // gets through anyway must not quietly rewrite the collapse state the
+    // user set before filtering.
+    await expect(srcFolder).toHaveAttribute("aria-disabled", "true");
+    await srcFolder.click({ force: true });
     await view.locator(".scm-filter-input").fill("");
     await expect(indexCss).toHaveCount(0);
   });

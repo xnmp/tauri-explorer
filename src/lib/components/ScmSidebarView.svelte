@@ -261,16 +261,19 @@
   /** Rows the user sees: dir-scoped by the store (#380), then narrowed by the
    *  sidebar's own fuzzy query (#517). Counts and keyboard navigation follow
    *  it; commit actions deliberately do not (they use `fullSummary`). */
-  const summary = $derived(filterScmSummary(scmStore.filteredSummary, filterQuery));
+  /** Dir-scoped rows, read once: `filteredSummary` is a plain getter that
+   *  re-filters on every access, and both derivations below need it. */
+  const dirScoped = $derived(scmStore.filteredSummary);
+  const summary = $derived(filterScmSummary(dirScoped, filterQuery));
   const fullSummary = $derived(scmStore.summary);
 
   /** Pending rows before the text filter — decides whether there is anything
    *  to filter at all (no input on a clean tree). */
   const dirPendingCount = $derived(
-    scmStore.filteredSummary.staged.length +
-      scmStore.filteredSummary.changes.length +
-      scmStore.filteredSummary.untracked.length +
-      scmStore.filteredSummary.merge.length
+    dirScoped.staged.length +
+      dirScoped.changes.length +
+      dirScoped.untracked.length +
+      dirScoped.merge.length
   );
 
   function clearFilter(): void {
@@ -719,6 +722,7 @@
         role="treeitem"
         aria-expanded={!collapsed}
         aria-selected="false"
+        aria-disabled={filterActive}
       >
         {#each { length: depth } as _, i}
           <span class="depth-guide" style="left: {i * 12 + 10}px"></span>
@@ -916,6 +920,12 @@
   .scm-filter-clear:hover {
     background: var(--subtle-fill-secondary);
     color: var(--text-primary);
+  }
+
+  /* Collapsing is disabled while filtering (every folder renders expanded),
+     so the row should not advertise a click that does nothing. */
+  .row.tree-folder[aria-disabled="true"] {
+    cursor: default;
   }
 
   .scm-no-match {

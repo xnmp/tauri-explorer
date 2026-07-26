@@ -15,6 +15,16 @@ const panes = (page: Page) => page.locator(".explorer-pane");
 const ACTIVE = /(^|\s)active(\s|$)/;
 const INACTIVE = /(^|\s)inactive(\s|$)/;
 
+/**
+ * Acceptance-criterion evidence. The images are committed, so an ordinary
+ * suite run must not overwrite them — capture only on request:
+ * `CAPTURE_EVIDENCE=1 npx playwright test e2e/pane-focus-direction.spec.ts`.
+ * Each call sits directly under the assertion that pins the state it shows.
+ */
+async function capture(page: Page, path: string): Promise<void> {
+  if (process.env.CAPTURE_EVIDENCE) await page.screenshot({ path });
+}
+
 /** left = /home/user, right = /home (Ctrl+\ seeds the parent); right focused. */
 async function sideBySidePanes(page: Page): Promise<void> {
   await page.goto("/?path=/home/user");
@@ -50,7 +60,7 @@ test.describe("directional pane focus", () => {
     await expect(panes(page).nth(1)).toHaveClass(INACTIVE);
     // Focus moved; no pane was created (that is what Cmd+Alt+L does).
     await expect(panes(page)).toHaveCount(2);
-    await page.screenshot({ path: "evidence/ac-1-alt-l-focus-left.png" });
+    await capture(page, "evidence/ac-1-alt-l-focus-left.png");
   });
 
   test("Alt+' moves focus to the pane on the right", async ({ page }) => {
@@ -63,7 +73,7 @@ test.describe("directional pane focus", () => {
     await expect(panes(page).nth(1)).toHaveClass(ACTIVE);
     await expect(panes(page).nth(0)).toHaveClass(INACTIVE);
     await expect(panes(page)).toHaveCount(2);
-    await page.screenshot({ path: "evidence/ac-2-alt-quote-focus-right.png" });
+    await capture(page, "evidence/ac-2-alt-quote-focus-right.png");
   });
 
   test("Alt+P moves focus to the pane above", async ({ page }) => {
@@ -74,7 +84,7 @@ test.describe("directional pane focus", () => {
     await expect(panes(page).nth(0)).toHaveClass(ACTIVE);
     await expect(panes(page).nth(1)).toHaveClass(INACTIVE);
     await expect(panes(page)).toHaveCount(2);
-    await page.screenshot({ path: "evidence/ac-3-alt-p-focus-up.png" });
+    await capture(page, "evidence/ac-3-alt-p-focus-up.png");
   });
 
   test("Alt+; moves focus to the pane below", async ({ page }) => {
@@ -87,7 +97,7 @@ test.describe("directional pane focus", () => {
     await expect(panes(page).nth(1)).toHaveClass(ACTIVE);
     await expect(panes(page).nth(0)).toHaveClass(INACTIVE);
     await expect(panes(page)).toHaveCount(2);
-    await page.screenshot({ path: "evidence/ac-4-alt-semicolon-focus-down.png" });
+    await capture(page, "evidence/ac-4-alt-semicolon-focus-down.png");
   });
 
   test("a direction with no pane in it is a no-op — focus stays, nothing is created", async ({
@@ -104,6 +114,6 @@ test.describe("directional pane focus", () => {
     await expect(panes(page).nth(1)).toHaveClass(ACTIVE);
     await expect(panes(page).nth(0)).toHaveClass(INACTIVE);
     await expect(panes(page)).toHaveCount(2);
-    await page.screenshot({ path: "evidence/ac-5-no-neighbour-noop.png" });
+    await capture(page, "evidence/ac-5-no-neighbour-noop.png");
   });
 });

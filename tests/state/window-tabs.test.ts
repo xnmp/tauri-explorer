@@ -342,9 +342,11 @@ describe("pane splitting (#228)", () => {
     manager.focusPaneInDirection("left");
     expect(manager.activePaneId).toBe(left);
 
-    // And from the left pane, "right" lands on a pane in the right column.
+    // Both right-hand panes share equal edge with the tall left pane, so the
+    // documented tie-break applies: visual order, i.e. the upper one.
     manager.focusPaneInDirection("right");
-    expect([rightTop, rightBottom]).toContain(manager.activePaneId);
+    expect(manager.activePaneId).toBe(rightTop);
+    expect(manager.activePaneId).not.toBe(rightBottom);
   });
 
   it("closePane removes the focused pane and focuses a survivor", () => {

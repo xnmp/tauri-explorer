@@ -485,6 +485,12 @@ function createSettingsStore() {
     get previewFontSize() {
       return settings.previewFontSize;
     },
+    get showPreviewInfo() {
+      return settings.showPreviewInfo;
+    },
+    togglePreviewInfo(): void {
+      update({ showPreviewInfo: !settings.showPreviewInfo });
+    },
     setPreviewFontSize(px: number): void {
       update({ previewFontSize: Math.max(8, Math.min(28, Math.round(px))) });
     },
@@ -637,6 +643,7 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
       return tag !== "INPUT" && tag !== "TEXTAREA" && !(active as HTMLElement)?.isContentEditable;
     },
   },
+  { key: "showPreviewInfo", id: "view.togglePreviewInfo", label: "Toggle Preview Info" },
   { key: "showStatusBar", id: "view.toggleStatusBar", label: "Toggle Status Bar", shortcut: "Alt+M U" },
   { key: "showGitStatus", id: "view.toggleGitStatus", label: "Toggle Git Status Indicators" },
   { key: "millerHideEmpty", id: "view.toggleMillerHideEmpty", label: "Miller Columns: Toggle Hide Empty Folders" },

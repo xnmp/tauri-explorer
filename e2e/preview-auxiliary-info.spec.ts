@@ -73,12 +73,16 @@ test.describe("Preview pane auxiliary info (#494)", () => {
     await expect(info).toBeVisible();
     await expect(info).toContainText("Size");
     await expect(info).toContainText("Modified");
+    // Wait for the highlighted body too, so AC1 and AC2 show the same file in
+    // the same loaded state and differ only by the metadata chrome.
+    await expect(page.locator(".preview-pane .preview-code")).toBeVisible();
     await page.screenshot({ path: "evidence/ac-1-preview-info-shown.png" });
 
     // --- AC3: the setting exists in Settings and is on by default ---
     const setting = await openPreviewInfoSetting(page);
     await expect(setting.row).toBeVisible();
     await expect(setting.input).toBeChecked();
+    await setting.row.scrollIntoViewIfNeeded();
     await page.screenshot({ path: "evidence/ac-3-settings-toggle.png" });
 
     await setting.slider.click();

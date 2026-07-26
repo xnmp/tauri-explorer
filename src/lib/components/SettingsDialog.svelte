@@ -177,6 +177,7 @@
     f5SyncsLocalBranches: ["F5 Syncs Local Branches", "In the git graph, F5 also fetches and fast-forwards any local branch that is strictly behind its upstream. Diverged branches are never touched — they're reported in a toast.", "git graph", "fetch", "fast-forward", "sync"],
     explorerFollowsTerminal: ["Explorer Follows Terminal", "Navigate the active pane when the terminal's shell changes directory (OSC 7)", "terminal", "cwd", "sync"],
     previewFontSize: ["Preview Font Size", "Font size for text, code and markdown previews"],
+    showPreviewInfo: ["Preview Info", "Show the file name, type badge, size and modified date in the preview pane (off = content only)", "preview", "metadata", "auxiliary", "minimal"],
     ffmpegPath: ["FFmpeg Path", "Path to the ffmpeg binary for video/audio thumbnails (leave empty to auto-detect)", "video", "thumbnail"],
     keyboardShortcuts: ["Keyboard Shortcuts", "keybindings", "hotkeys", "Click on a shortcut to change it"],
   };
@@ -193,7 +194,7 @@
     rows.showHidden, rows.millerHideEmpty, rows.yaziNavigation, rows.autoEnterSingleSubdir, rows.tabTitleGitRoot, rows.defaultPaneLayout, rows.showManuallyHidden,
     rows.gitStatus, rows.f5SyncsLocalBranches, rows.recentItems, rows.quickOpenDebug, rows.warmWindow, rows.confirmDelete,
     rows.backgroundOpacity, rows.backgroundImage, rows.wallpaperBlur, rows.terminalApp,
-    rows.previewFontSize, rows.ffmpegPath,
+    rows.previewFontSize, rows.showPreviewInfo, rows.ffmpegPath,
   ];
   const terminalRows = [rows.terminalFollowsExplorer, rows.explorerFollowsTerminal];
 
@@ -816,6 +817,22 @@
               value={settingsStore.previewFontSize}
               oninput={(e) => settingsStore.setPreviewFontSize(Number(e.currentTarget.value))}
             />
+          </div>
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.showPreviewInfo)}>
+            <div class="setting-info">
+              <span class="setting-label">Preview Info</span>
+              <span class="setting-description">Show the file name, type badge, size and modified date in the preview pane (off = content only)</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                data-testid="setting-show-preview-info"
+                checked={settingsStore.showPreviewInfo}
+                onchange={() => settingsStore.togglePreviewInfo()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
           </div>
 
           <div class="setting-row" class:hidden={!matchesSearch(...rows.ffmpegPath)}>

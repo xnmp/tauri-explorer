@@ -27,29 +27,14 @@ describe("showTitleBar", () => {
 
 describe("showWindowTabBar", () => {
   it("hides with a single non-renameable tab", () => {
-    expect(showWindowTabBar(1, false, false)).toBe(false);
+    expect(showWindowTabBar(1, false)).toBe(false);
   });
 
   it("shows with multiple tabs", () => {
-    expect(showWindowTabBar(2, false, false)).toBe(true);
+    expect(showWindowTabBar(2, false)).toBe(true);
   });
 
   it("shows for a single renameable (multi-pane) tab so rename stays reachable", () => {
-    expect(showWindowTabBar(1, true, false)).toBe(true);
-  });
-
-  // #504: the title bar row already renders to host the controls, so hiding
-  // the lone tab saves no space and leaves the current folder unlabelled.
-  it("shows a single non-renameable tab when window controls are enabled (#504)", () => {
-    expect(showWindowTabBar(1, false, true)).toBe(true);
-  });
-
-  it("still hides the lone tab when window controls are disabled (chrome-less layout)", () => {
-    expect(showWindowTabBar(1, false, false)).toBe(false);
-  });
-
-  it("keeps multiple tabs visible regardless of the window-controls setting", () => {
-    expect(showWindowTabBar(2, false, true)).toBe(true);
-    expect(showWindowTabBar(2, false, false)).toBe(true);
+    expect(showWindowTabBar(1, true)).toBe(true);
   });
 });

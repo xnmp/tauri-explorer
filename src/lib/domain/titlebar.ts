@@ -27,6 +27,10 @@ export function showTitleBar(
 }
 
 /** Whether the window's tab strip is visible. */
-export function showWindowTabBar(tabCount: number, activeTabRenameable: boolean): boolean {
-  return tabCount > 1 || activeTabRenameable;
+export function showWindowTabBar(
+  tabCount: number,
+  activeTabRenameable: boolean,
+  showWindowControls: boolean,
+): boolean {
+  return tabCount > 1 || activeTabRenameable || showWindowControls;
 }

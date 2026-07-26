@@ -20,6 +20,7 @@
       windowTabsManager.tabs.length,
       windowTabsManager.activeTab?.kind === "explorer" &&
         windowTabsManager.canRenameTab(windowTabsManager.activeTab.id),
+      settingsStore.showWindowControls,
     ),
   );
   const showTitleBar = $derived(

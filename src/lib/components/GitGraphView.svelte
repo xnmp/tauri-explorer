@@ -83,7 +83,7 @@
   import { compactRelativeTimeToday } from "$lib/domain/git";
   import { notifyLocalGitChange, subscribeGitChanges } from "$lib/state/git-refresh";
   import { gitWatchRepo, gitUnwatchRepo } from "$lib/api/git";
-  import { directoryKey } from "$lib/domain/path";
+  import { directoryKey, splitPathForDisplay } from "$lib/domain/path";
   import { toastStore } from "$lib/state/toast.svelte";
   import { gitDiff, gitStage, gitUnstage, gitCommit } from "$lib/api/files";
   import {
@@ -1725,6 +1725,14 @@
                       {/if}
                     </svg>
                   {/snippet}
+                  <!-- One-line path label (#500). The two halves are emitted with
+                       NO whitespace between the tags on purpose: the row's text
+                       content has to stay byte-identical to the path, since that
+                       is what the user reads and what other specs match on. -->
+                  {#snippet filePathLabel(path: string)}
+                    {@const parts = splitPathForDisplay(path)}
+                    <span class="file-path" title={path}><span class="file-dir">{parts.dir}</span><span class="file-name">{parts.name}</span></span>
+                  {/snippet}
                   {#snippet fileDiff(file: DetailFile)}
                     {#if openDiffPath === file.path}
                       <div class="file-diff" data-testid="git-graph-file-diff">
@@ -1793,7 +1801,7 @@
                                     title="Show diff"
                                   >
                                     <span class="file-status s-{file.status}">{file.status}</span>
-                                    <span class="file-path">{file.path}</span>
+                                    {@render filePathLabel(file.path)}
                                   </button>
                                   {#if group.section === "staged"}
                                     <button
@@ -1832,7 +1840,7 @@
                             title="Show diff"
                           >
                             <span class="file-status s-{file.status}">{file.status}</span>
-                            <span class="file-path">{file.path}</span>
+                            {@render filePathLabel(file.path)}
                           </button>
                           {@render fileDiff(file)}
                         </li>
@@ -2476,6 +2484,7 @@
      test can resolve it against the :root token table. The fixed-width status
      column keeps the file names aligned without needing a mono face. */
   .file-status {
+    flex: none;
     width: 14px;
     font-weight: 700;
     font-family: var(--font-family);
@@ -2487,10 +2496,48 @@
   .s-R, .s-C { color: #60a5fa; }
   .s-T { color: #a78bfa; }
 
+  /* One line, always (#500). This used to be `word-break: break-all` with
+     nothing stopping it wrapping, so a long path reflowed mid-word — two lines
+     at a 1280px window, six at 700px — inflating the inline commit panel and
+     pushing the graph rows below it down. Every other column in the graph
+     truncates instead, so this one does too.
+
+     The path is split into an elidable directory prefix and its final segment
+     so the half that identifies the file is the half that survives.
+
+     The priority is expressed with `flex-shrink: 0` + `max-width: 100%` on the
+     name rather than by giving the two halves different shrink factors. Shrink
+     factors are *proportional*: however lopsided the weights, the name still
+     gives up its share of any deficit, so it would ellipsise a couple of pixels
+     early while the directory still had room left to yield. `flex-shrink: 0`
+     makes the directory absorb the whole deficit before the name loses
+     anything, and `max-width: 100%` is what still bounds the name to the row
+     when the name alone is wider than the column — there it ellipsises, which
+     is the only sane outcome. */
   .file-path {
+    display: flex;
+    flex: 1;
+    min-width: 0;
     font-family: var(--font-family);
     color: var(--text-secondary);
-    word-break: break-all;
+  }
+
+  .file-dir,
+  .file-name {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .file-dir {
+    flex: 0 1 auto;
+    min-width: 0;
+    color: var(--text-tertiary);
+  }
+
+  .file-name {
+    flex: 0 0 auto;
+    max-width: 100%;
   }
 
   .file-empty {

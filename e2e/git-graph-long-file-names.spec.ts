@@ -29,8 +29,13 @@ const LONG_PATH =
 
 /** Commit whose changed-files list is the long path above. */
 const LONG_PATH_COMMIT = "Update README with usage";
-/** Commit whose changed-files list is a short path, used as the baseline. */
-const SHORT_PATH_COMMIT = "Add tests for feature X";
+/**
+ * Commit whose changed-files list is a short path, used as the height
+ * baseline. Deliberately one that carries no ref chip or PR badge: those are
+ * interactive and sit at the left of the message column, so at a 700px window
+ * they can reach past the row's midpoint and swallow a centre-point click.
+ */
+const SHORT_PATH_COMMIT = "Fix bug in argument parser";
 
 /**
  * PNGs aren't byte-reproducible, so writing straight to the committed
@@ -59,7 +64,17 @@ async function openGraph(page: Page) {
  */
 async function measureFileRow(page: Page, summary: string) {
   const view = page.locator('[data-testid="git-graph-view"]');
-  await view.locator(".commit-row", { hasText: summary }).first().click();
+  // Click the message span, not the row. `.click()` targets an element's
+  // centre, and a commit row's centre is not reliably inert: ref chips and PR
+  // badges are interactive children at the left of the message column, and a
+  // PR badge opens the PR dropdown instead of the commit detail. At 700px the
+  // row is short enough that CI's font metrics put the `#7` badge past the
+  // midpoint, which is exactly how this failed there while passing locally.
+  await view.locator(".commit-row", { hasText: summary }).first().locator(".summary").click();
+
+  // Assert the commit detail specifically, so "some other expansion opened"
+  // reports as that rather than as a missing `.file-path`.
+  await expect(view.locator(".commit-detail-inline")).toBeVisible();
 
   const filePath = view.locator(".file-path").first();
   await expect(filePath).toBeVisible();
@@ -83,6 +98,7 @@ async function measureFileRow(page: Page, summary: string) {
       pathRight: path.getBoundingClientRect().right,
       colRight: col.getBoundingClientRect().right,
       colWidth: col.getBoundingClientRect().width,
+      colHeight: col.getBoundingClientRect().height,
       panelHeight: panel.getBoundingClientRect().height,
       text: path.textContent,
     };
@@ -143,8 +159,13 @@ test.describe("Git graph long file names (#500)", () => {
     expect(long.pathRight).toBeLessThanOrEqual(long.colRight + 0.5);
 
     // The user-visible consequence of the wrap was a taller commit panel
-    // displacing the graph below it; the panel is now path-length independent.
-    expect(long.panelHeight).toBeCloseTo(short.panelHeight, 1);
+    // displacing the graph below it. Assert that on the changed-files column,
+    // which is the part the path length actually drives — the panel's other
+    // column holds the commit message, whose own wrapping differs between any
+    // two commits and would otherwise decide this comparison.
+    expect(long.colHeight).toBeCloseTo(short.colHeight, 1);
+    // And the panel itself must not have grown to accommodate the path.
+    expect(long.panelHeight).toBeLessThanOrEqual(short.panelHeight + 0.5);
 
     await page.screenshot({ path: shotPath("ac-2-long-path-one-line-700.png") });
   });

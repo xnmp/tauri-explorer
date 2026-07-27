@@ -65,6 +65,7 @@ backend for E2E/browser).
 - `state/tab-transfer.ts` — drag tab across windows (`sendTabToWindow`, `initTabTransferListener`, screen-pos hit-test)
 - `domain/tab-title.ts` — compute tab label from path
 - `state/tab-display.svelte.ts` — tab title/icon derivation: git-root decoration, VS Code-style disambiguation, multi-pane joining
+- `state/window-title.svelte.ts` — resolves launch-home context and synchronizes the OS window title with the active tab/pane directory
 - `state/warm-window.ts`, `api/warm-pool.ts`, `src-tauri/src/warm_pool.rs` — pre-spawned windows for instant new-tab/window
 - FLOW: each tab owns an `ExplorerInstance`; cross-window tab drag serializes a `TabSnapshot` via `sendTabToWindow` → listener claims it. Persistence via localStorage.
 

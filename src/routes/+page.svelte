@@ -13,7 +13,7 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
   import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { startWindowTitleSync } from "$lib/state/window-title.svelte";
+  import { resolveLaunchHomePath, startWindowTitleSync } from "$lib/state/window-title.svelte";
   import { markStartup, reportFirstPaint } from "$lib/state/startup-timing";
   import { warmMode, runWarmWindow, spawnWarmWindow } from "$lib/state/warm-window";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
@@ -54,12 +54,7 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
   markStartup("bundle-exec");
 
   const leftExplorer = $derived(windowTabsManager.getActiveExplorer());
-  const launchHomePath =
-    typeof window === "undefined"
-      ? undefined
-      : ((window as any).__LAUNCH_DATA__?.home as string | undefined) ??
-        new URLSearchParams(window.location.search).get("home") ??
-        undefined;
+  const launchHomePath = resolveLaunchHomePath();
 
   // ONE island-mode condition (#407, #434): macOS vibrancy, a Windows native
   // backdrop, and the platform-independent Floating Islands setting all drive

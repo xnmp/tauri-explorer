@@ -1,6 +1,27 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { formatWindowTitle } from "$lib/domain/tab-title";
 
+interface LaunchContext {
+  __LAUNCH_DATA__?: { home: string };
+  location: { search: string };
+}
+
+/**
+ * Resolve the home directory consistently in main, child, and warm windows.
+ * Rust injects launch data only into the main window; descendants inherit it
+ * through the `home` query parameter.
+ */
+export function resolveLaunchHomePath(
+  context: LaunchContext | undefined =
+    typeof window === "undefined" ? undefined : window,
+): string | undefined {
+  return (
+    context?.__LAUNCH_DATA__?.home ??
+    (context ? new URLSearchParams(context.location.search).get("home") : null) ??
+    undefined
+  );
+}
+
 /** Set the observable native-window title. Best-effort outside Tauri. */
 export async function syncWindowTitle(path: string, homePath?: string): Promise<void> {
   const title = formatWindowTitle(path, homePath);

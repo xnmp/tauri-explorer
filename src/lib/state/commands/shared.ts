@@ -9,6 +9,7 @@ import { savePersisted } from "../persisted";
 import { consumeWarmWindow } from "../warm-window";
 import { explorerWindowAppearance } from "../window-appearance";
 import { formatWindowTitle } from "../../domain/tab-title";
+import { resolveLaunchHomePath } from "../window-title.svelte";
 import type { ViewMode } from "../types";
 
 /** Open a new explorer window at the given path with optional view mode.
@@ -53,10 +54,7 @@ export async function openNewWindow(
   }
   const baseUrl = window.location.origin + window.location.pathname;
   const params = new URLSearchParams({ path });
-  const homePath =
-    (window as { __LAUNCH_DATA__?: { home: string } }).__LAUNCH_DATA__?.home ??
-    new URLSearchParams(window.location.search).get("home") ??
-    undefined;
+  const homePath = resolveLaunchHomePath();
   if (homePath) params.set("home", homePath);
   if (viewMode) params.set("viewMode", viewMode);
   const url = `${baseUrl}?${params.toString()}`;

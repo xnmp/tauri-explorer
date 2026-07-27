@@ -54,6 +54,7 @@ import { settingsStore } from "./settings.svelte";
 import { themeStore } from "./theme.svelte";
 import type { ViewMode } from "./types";
 import { formatWindowTitle } from "../domain/tab-title";
+import { resolveLaunchHomePath } from "./window-title.svelte";
 
 // Reuse the "explorer-" label prefix so warm windows inherit the same Tauri
 // capability/ACL scope as normal child windows (capabilities/default.json lists
@@ -109,14 +110,8 @@ export async function spawnWarmWindow(): Promise<void> {
   // Park the warm window at the SPAWNER's current path so its boot-time init
   // navigates somewhere valid. Without this it fell back to "/home" (nonexistent
   // on macOS), producing a broken, multi-second list load on activation.
-  const parkPath =
-    windowTabsManager.getActiveExplorer()?.currentPath ||
-    (window as { __LAUNCH_DATA__?: { home: string } }).__LAUNCH_DATA__?.home ||
-    "/";
-  const homePath =
-    (window as { __LAUNCH_DATA__?: { home: string } }).__LAUNCH_DATA__?.home ??
-    new URLSearchParams(window.location.search).get("home") ??
-    undefined;
+  const homePath = resolveLaunchHomePath();
+  const parkPath = windowTabsManager.getActiveExplorer()?.currentPath || homePath || "/";
   const params = new URLSearchParams({ warm: "1", path: parkPath });
   if (homePath) params.set("home", homePath);
 
@@ -208,10 +203,7 @@ export async function runWarmWindow(measure: boolean): Promise<void> {
     activated = true;
     const tActivate = performance.now();
     const { path, viewMode, x, y, width, height } = event.payload;
-    const homePath =
-      (window as { __LAUNCH_DATA__?: { home: string } }).__LAUNCH_DATA__?.home ??
-      new URLSearchParams(window.location.search).get("home") ??
-      undefined;
+    const homePath = resolveLaunchHomePath();
 
     // The window may have been parked for minutes: re-read settings and theme
     // so the revealed window matches one created fresh right now (there is no
@@ -285,7 +277,7 @@ export async function runWarmWindow(measure: boolean): Promise<void> {
 
   if (measure) {
     // Measurement probe: self-fire one activation, never join the pool.
-    const home = (window as { __LAUNCH_DATA__?: { home: string } }).__LAUNCH_DATA__?.home ?? "/";
+    const home = resolveLaunchHomePath() ?? "/";
     await emitTo(self.label, WARM_ACTIVATE_EVENT, {
       path: home,
       x: 100,

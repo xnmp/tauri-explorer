@@ -2108,4 +2108,45 @@ mod tests {
             .collect();
         assert_eq!(seen, full_order, "cursor page order != full-walk order");
     }
+
+    /// #524: the log page reports detached HEAD as its own fact. The standing
+    /// indicator can't infer it from `head_branch == None`, which is also the
+    /// answer on an unborn branch.
+    #[test]
+    fn log_page_reports_detached_head() {
+        let (dir, repo) = init_repo();
+        write(dir.path(), "a.txt", "one\n");
+        let c1 = commit(&repo, "first", &[]);
+        write(dir.path(), "a.txt", "two\n");
+        let c2 = commit(&repo, "second", &[c1]);
+
+        let attached =
+            build_log(&repo, &GitLogOptions::default(), Vec::new(), &no_cancel()).unwrap();
+        assert!(!attached.detached, "on a branch, HEAD is not detached");
+        assert_eq!(attached.head_branch.as_deref(), Some("main"));
+
+        // Detach onto the older commit, exactly as `git checkout <oid>` does.
+        repo.set_head_detached(c1).unwrap();
+        let detached =
+            build_log(&repo, &GitLogOptions::default(), Vec::new(), &no_cancel()).unwrap();
+        assert!(detached.detached, "checked out an oid → detached HEAD");
+        assert_eq!(detached.head_branch, None);
+
+        // Reattaching clears it again (the badge must not stick).
+        repo.set_head("refs/heads/main").unwrap();
+        let reattached =
+            build_log(&repo, &GitLogOptions::default(), Vec::new(), &no_cancel()).unwrap();
+        assert!(!reattached.detached);
+        assert_eq!(reattached.head_branch.as_deref(), Some("main"));
+        assert!(reattached.commits.iter().any(|c| c.oid == c2.to_string()));
+    }
+
+    /// An unborn branch is NOT detached, even though it has no head commit.
+    #[test]
+    fn unborn_branch_is_not_detached() {
+        let (_dir, repo) = init_repo();
+        let page = build_log(&repo, &GitLogOptions::default(), Vec::new(), &no_cancel()).unwrap();
+        assert!(page.commits.is_empty());
+        assert!(!page.detached);
+    }
 }

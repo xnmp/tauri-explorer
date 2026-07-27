@@ -13,6 +13,9 @@ import { warmScmSummary } from "./scm.svelte";
 import { windowTabsManager } from "./window-tabs.svelte";
 import { warmGraphSnapshot } from "$lib/state/git-graph-cache";
 import { createGitWarmer, type GitWarmer } from "$lib/domain/git-warm";
+import { releaseGitSummaryConsumer } from "./git-summary-cache";
+
+const warmConsumerId = (root: string) => `git-warm:${root}`;
 
 /** Resolve a repo root, reusing the tab bar's cached probe when the git-root
  *  tab-title setting is on (avoids a duplicate gitRepoRoot IPC), else one IPC. */
@@ -28,8 +31,9 @@ async function resolveRepoRoot(path: string): Promise<string | null> {
 
 export const gitWarmer: GitWarmer = createGitWarmer({
   resolveRepoRoot,
-  warmGraph: (root) => void warmGraphSnapshot(root),
-  warmScm: (root) => void warmScmSummary(root),
+  warmGraph: (root) => void warmGraphSnapshot(root, warmConsumerId(root)),
+  warmScm: (root) => void warmScmSummary(root, warmConsumerId(root)),
+  cancelWarm: (root) => releaseGitSummaryConsumer(warmConsumerId(root)),
   graphEnabled: () => settingsStore.enableGitGraph,
   scmEnabled: () => settingsStore.showGitStatus,
 });

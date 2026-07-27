@@ -110,8 +110,9 @@ export async function fetchPage0Snapshot(
   localOnly = false,
   excludeBranches: string[] | null = null,
   filePath = "",
+  consumerId?: string,
 ): Promise<GraphSnapshot> {
-  const summaryPromise = fetchGitSummary(repoPath);
+  const summaryPromise = fetchGitSummary(repoPath, { consumerId });
   const page = await gitLog(repoPath, {
     skip: 0,
     limit: PAGE_SIZE,
@@ -153,12 +154,12 @@ const warmInFlight = new Set<string>();
  * repo is already in flight; failures are swallowed (the view still loads
  * normally when actually opened).
  */
-export async function warmGraphSnapshot(repoPath: string): Promise<void> {
+export async function warmGraphSnapshot(repoPath: string, consumerId?: string): Promise<void> {
   const key = snapshotKey(repoPath, null, false);
   if (!repoPath || graphCache.has(key) || warmInFlight.has(repoPath)) return;
   warmInFlight.add(repoPath);
   try {
-    cacheSnapshot(key, await fetchPage0Snapshot(repoPath));
+    cacheSnapshot(key, await fetchPage0Snapshot(repoPath, null, undefined, false, null, "", consumerId));
   } catch {
     /* best-effort warm — ignore failures */
   } finally {

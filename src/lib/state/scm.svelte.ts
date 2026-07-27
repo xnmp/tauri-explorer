@@ -17,7 +17,6 @@ import {
   gitDiscard,
   gitRepoRoot,
   gitStage,
-  gitSummary,
   gitUnstage,
   gitUnwatchRepo,
   gitWatchRepo,
@@ -76,13 +75,13 @@ async function detectRepo(path: string): Promise<string | null> {
  * setActivePath flow. No-op if the repo is already cached or a warm for it
  * is in flight; failures are swallowed (best-effort).
  */
-export async function warmScmSummary(path: string): Promise<void> {
+export async function warmScmSummary(path: string, consumerId?: string): Promise<void> {
   try {
     const root = await detectRepo(path);
     if (!root || summaryCache.has(root) || warmInFlight.has(root)) return;
     warmInFlight.add(root);
     try {
-      const result = await gitSummary(root);
+      const result = await fetchGitSummary(root, { consumerId });
       if (result.ok && !summaryCache.has(root)) summaryCache.set(root, result.data);
     } finally {
       warmInFlight.delete(root);

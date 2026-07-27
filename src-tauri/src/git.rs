@@ -1174,6 +1174,7 @@ pub async fn git_status(
 /// different registry IDs and are unaffected.
 #[tauri::command]
 pub async fn cancel_git_status(task_id: u64) -> Result<(), AppError> {
+    log::info!("gitstat: cancelling SCM status task {task_id}: final consumer released");
     GIT_TASKS.cancel(task_id);
     Ok(())
 }

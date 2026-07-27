@@ -57,6 +57,7 @@ pub fn output_cancellable(
     }
 
     let mut child = command
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

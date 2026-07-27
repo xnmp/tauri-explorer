@@ -441,6 +441,7 @@ pub async fn get_git_status(
 
 #[tauri::command]
 pub async fn cancel_get_git_status(task_id: u64) -> Result<(), AppError> {
+    log::info!("gitstat: cancelling badge status task {task_id}: final pane released");
     BADGE_STATUS_TASKS.cancel(task_id);
     Ok(())
 }

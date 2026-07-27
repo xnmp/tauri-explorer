@@ -33,12 +33,6 @@ function createGitStatusStore() {
    *  distinct from "absent" (never fetched), which reads as no data yet. */
   let loadingDirs = $state<Record<string, boolean>>({});
   let subscribed = false;
-  // Count of in-flight doFetch calls. refresh() fans out concurrently via
-  // Promise.all, so `loading` must stay true until ALL of them settle — a
-  // plain boolean would get cleared by whichever fetch finishes first while
-  // its siblings are still in flight.
-  let pendingFetches = 0;
-
   // Real in-flight dedup (#426): a concurrent request for a path already being
   // fetched awaits the SAME promise instead of firing a second IPC call. At
   // startup two consumers (both panes, watcher warm) raced identical fetches,
@@ -46,15 +40,24 @@ function createGitStatusStore() {
   interface Flight {
     taskId: number;
     promise: Promise<void>;
+    abandoned: boolean;
   }
   const inFlight = new Map<string, Flight>();
   const trackedDirectories = new Map<string, number>();
-  const abandonedTasks = new Set<number>();
+  /** Settled entries retained after their last pane leaves. They remain
+   * displayable, but watcher refreshes skip them until a pane returns. */
+  const staleDirectories = new Set<string>();
   const pendingByDir = new Map<string, number>();
 
   async function fetchForDirectory(path: string): Promise<void> {
     currentPath = path;
     if (byDir[path]) {
+      const flight = inFlight.get(path);
+      if (flight) {
+        console.debug(`[git-status] joining background revalidation for ${path}`);
+        await flight.promise;
+        return;
+      }
       console.debug(`[git-status] cache hit for ${path}`);
       return; // cached; watcher events keep it fresh
     }
@@ -68,26 +71,23 @@ function createGitStatusStore() {
       return existing.promise;
     }
     const taskId = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
-    const flight = {} as Flight;
-    flight.taskId = taskId;
-    flight.promise = performFetch(path, taskId).finally(() => {
+    const flight = { taskId, promise: Promise.resolve(), abandoned: false };
+    flight.promise = performFetch(path, flight).finally(() => {
       if (inFlight.get(path) === flight) inFlight.delete(path);
-      abandonedTasks.delete(taskId);
     });
     inFlight.set(path, flight);
     return flight.promise;
   }
 
-  async function performFetch(path: string, taskId: number): Promise<void> {
-    pendingFetches++;
+  async function performFetch(path: string, flight: Flight): Promise<void> {
     pendingByDir.set(path, (pendingByDir.get(path) ?? 0) + 1);
     loading = true;
     loadingDirs = { ...loadingDirs, [path]: true };
     const start = performance.now();
     try {
-      const result = await getGitStatus(path, taskId);
+      const result = await getGitStatus(path, flight.taskId);
       const elapsedMs = Math.round(performance.now() - start);
-      if (result.ok && !abandonedTasks.has(taskId)) {
+      if (result.ok && !flight.abandoned) {
         console.info(
           `[git-status] fetch for ${path} completed in ${elapsedMs}ms: is_git_repo=${result.data.is_git_repo} entries=${Object.keys(result.data.statuses).length}`,
         );
@@ -111,8 +111,6 @@ function createGitStatusStore() {
         console.warn(`[git-status] fetch for ${path} failed after ${elapsedMs}ms: ${result.error}`);
       }
     } finally {
-      pendingFetches--;
-      loading = pendingFetches > 0;
       const remaining = (pendingByDir.get(path) ?? 1) - 1;
       if (remaining > 0) {
         pendingByDir.set(path, remaining);
@@ -121,6 +119,7 @@ function createGitStatusStore() {
         const { [path]: _done, ...rest } = loadingDirs;
         loadingDirs = rest;
       }
+      loading = pendingByDir.size > 0;
     }
   }
 
@@ -130,7 +129,12 @@ function createGitStatusStore() {
    * pane leaves.
    */
   function trackDirectory(path: string): () => void {
+    const wasUntracked = !trackedDirectories.has(path);
     trackedDirectories.set(path, (trackedDirectories.get(path) ?? 0) + 1);
+    if (wasUntracked && staleDirectories.delete(path) && byDir[path]) {
+      // Keep the settled badges visible while refreshing them underneath.
+      void doFetch(path);
+    }
     let released = false;
     return () => {
       if (released) return;
@@ -141,27 +145,25 @@ function createGitStatusStore() {
         return;
       }
       trackedDirectories.delete(path);
-      // A watcher refresh scans every cached directory. Dropping the final
-      // pane's cache entry prevents it from spawning fresh background work
-      // for a directory nobody displays after this in-flight request ends.
-      if (byDir[path]) {
-        const { [path]: _released, ...rest } = byDir;
-        byDir = rest;
-      }
+      // Preserve settled badges for instant back-navigation, but exclude this
+      // directory from watcher-driven work until a pane tracks it again.
+      if (byDir[path]) staleDirectories.add(path);
       if (currentPath === path) {
         currentPath = Array.from(trackedDirectories.keys()).at(-1) ?? "";
       }
       const flight = inFlight.get(path);
       if (!flight) return;
       inFlight.delete(path);
-      abandonedTasks.add(flight.taskId);
+      flight.abandoned = true;
       void cancelGetGitStatus(flight.taskId);
     };
   }
 
   /** Re-fetch all tracked directories (both panes may show different dirs). */
   async function refresh(): Promise<void> {
-    const dirs = Object.keys(byDir);
+    const dirs = Object.keys(byDir).filter(
+      (path) => trackedDirectories.has(path) || !staleDirectories.has(path),
+    );
     if (dirs.length === 0) {
       if (currentPath) {
         console.info(`[git-status] refresh: refetching 1 dir: ${currentPath}`);
@@ -183,6 +185,8 @@ function createGitStatusStore() {
   function clear(): void {
     currentPath = "";
     byDir = {};
+    staleDirectories.clear();
+    trackedDirectories.clear();
   }
 
   async function initWatcherListener(): Promise<void> {

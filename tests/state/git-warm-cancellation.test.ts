@@ -28,4 +28,27 @@ describe("gitWarmer pane ownership", () => {
     expect(cancelWarm).toHaveBeenCalledOnce();
     expect(cancelWarm).toHaveBeenCalledWith("/repo");
   });
+
+  it("keeps a repo warm while another pane tracks a different child path", async () => {
+    const cancelWarm = vi.fn<(root: string) => void>();
+    const warmer = createGitWarmer({
+      resolveRepoRoot: vi.fn(async () => "/repo"),
+      warmGraph: vi.fn(),
+      warmScm: vi.fn(),
+      cancelWarm,
+      graphEnabled: () => true,
+      scmEnabled: () => true,
+      debounceMs: 1,
+    });
+
+    const releaseFirst = warmer.schedule("/repo/first");
+    const releaseSecond = warmer.schedule("/repo/second");
+    await vi.advanceTimersByTimeAsync(1);
+
+    releaseSecond();
+    expect(cancelWarm).not.toHaveBeenCalled();
+
+    releaseFirst();
+    expect(cancelWarm).toHaveBeenCalledWith("/repo");
+  });
 });

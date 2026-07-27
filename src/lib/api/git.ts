@@ -36,8 +36,10 @@ export async function getGitStatus(
 export async function cancelGetGitStatus(taskId: number): Promise<void> {
   try {
     await invoke<void>("cancel_get_git_status", { taskId });
-  } catch {
-    // Best-effort cancellation: the task may already have settled.
+  } catch (err) {
+    console.debug(
+      `[git-status] badge cancellation for task ${taskId} did not reach an active request: ${extractError(err)}`,
+    );
   }
 }
 
@@ -134,8 +136,10 @@ export async function gitSummary(
 export async function cancelGitStatus(taskId: number): Promise<void> {
   try {
     await invoke<void>("cancel_git_status", { taskId });
-  } catch {
-    // Best-effort cancellation: the task may already have settled.
+  } catch (err) {
+    console.debug(
+      `[git-status] SCM cancellation for task ${taskId} did not reach an active request: ${extractError(err)}`,
+    );
   }
 }
 

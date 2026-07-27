@@ -7,6 +7,7 @@
 use serde::Serialize;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -283,6 +284,14 @@ fn get_git_status_wsl(
 
 /// Blocking implementation of [`get_git_status`].
 fn get_git_status_sync(path: &str, cancelled: &AtomicBool) -> Result<GitStatusResponse, AppError> {
+    get_git_status_sync_with_program(path, cancelled, OsStr::new("git"))
+}
+
+fn get_git_status_sync_with_program(
+    path: &str,
+    cancelled: &AtomicBool,
+    git_program: &OsStr,
+) -> Result<GitStatusResponse, AppError> {
     let total_start = std::time::Instant::now();
     if cancelled.load(Ordering::Relaxed) {
         return Err(AppError::Other("git badge status cancelled".into()));
@@ -310,7 +319,7 @@ fn get_git_status_sync(path: &str, cancelled: &AtomicBool) -> Result<GitStatusRe
     // Check if inside a git repo and resolve the browsed dir's path relative
     // to the repo root in one call: stdout is "true\n<prefix>\n".
     let rev_parse_start = std::time::Instant::now();
-    let mut rev_cmd = Command::new("git");
+    let mut rev_cmd = Command::new(git_program);
     rev_cmd.no_console();
     // `safe.directory=*` per-invocation: a Linux-created repo browsed over a
     // `\\wsl.localhost` UNC path is owned by a different uid to the Windows
@@ -371,7 +380,7 @@ fn get_git_status_sync(path: &str, cancelled: &AtomicBool) -> Result<GitStatusRe
     // every file inside it — the aggregation below collapses children to the
     // top-level name anyway, and enumerating large untracked trees
     // (build output, node_modules) is by far the costliest part of status.
-    let mut cmd = Command::new("git");
+    let mut cmd = Command::new(git_program);
     cmd.no_console();
     // Windows can't read the POSIX exec bit (least of all over a
     // `\\wsl.localhost` UNC path), so a Linux-created repo's `core.filemode =
@@ -592,6 +601,39 @@ mod tests {
             .expect_err("cancelled status must not publish a repository classification");
 
         assert!(error.to_string().contains("cancelled"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancelling_an_active_rev_parse_is_not_reported_as_not_a_repo() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::Arc;
+        use std::time::{Duration, Instant};
+
+        let dir = TempDir::new().unwrap();
+        let fake_git = dir.path().join("blocking-git");
+        fs::write(&fake_git, "#!/bin/sh\nsleep 30\n").unwrap();
+        let mut permissions = fs::metadata(&fake_git).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fake_git, permissions).unwrap();
+
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let trigger = cancelled.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            trigger.store(true, Ordering::Relaxed);
+        });
+
+        let start = Instant::now();
+        let error = get_git_status_sync_with_program(
+            dir.path().to_str().unwrap(),
+            &cancelled,
+            fake_git.as_os_str(),
+        )
+        .expect_err("active cancellation must not publish a repository classification");
+
+        assert!(error.to_string().contains("cancelled"));
+        assert!(start.elapsed() < Duration::from_secs(5));
     }
 
     /// Manual diagnostic for #424: run the badge-status path directly against

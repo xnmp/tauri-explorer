@@ -2294,6 +2294,26 @@ mod tests {
     }
 
     #[test]
+    fn stale_first_hunk_patch_is_rejected_instead_of_applying_at_an_offset() {
+        let dir = init_repo();
+        let original = (1..=12).map(|n| format!("line-{n}\n")).collect::<String>();
+        write(dir.path(), "a.txt", &original);
+        commit_all(dir.path(), "init");
+
+        let changed = original.replace("line-1\n", "first change\n");
+        write(dir.path(), "a.txt", &changed);
+        let patch = git_patch(dir.path(), &["diff", "--", "a.txt"]);
+
+        let shifted = format!("preface-a\npreface-b\npreface-c\n{changed}");
+        write(dir.path(), "a.txt", &shifted);
+        let path = dir.path().to_str().unwrap().to_string();
+        let result = tokio_test_block(git_apply_patch(path, patch, GitPatchAction::Discard));
+
+        assert!(result.is_err(), "a stale line-1 hunk must not apply at a shifted offset");
+        assert_eq!(std::fs::read_to_string(dir.path().join("a.txt")).unwrap(), shifted);
+    }
+
+    #[test]
     fn discard_reverts_worktree_changes() {
         let dir = init_repo();
         write(dir.path(), "a.txt", "original\n");

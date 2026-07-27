@@ -280,6 +280,45 @@ export function assignLayout(commits: readonly GraphCommitLike[]): GraphLayout {
 }
 
 /**
+ * Direction of a jump along a branch line, stated in commit age rather than
+ * screen direction so it stays true however the graph is ordered: `"older"`
+ * follows the first-parent edge toward ancestors, `"newer"` walks back toward
+ * the commit that claims this one as ITS first parent.
+ */
+export type BranchLineDirection = "older" | "newer";
+
+/**
+ * Row of the neighbouring commit on the SAME branch line as `fromRow` (#530),
+ * or -1 when there is none on the loaded page.
+ *
+ * "Branch line" means what `assignLayout` draws as one continuous polyline: an
+ * uninterrupted FIRST-PARENT chain. Following it is what lets a jump skip the
+ * rows physically in between that belong to other lines, which is the whole
+ * point of the shortcut.
+ *
+ * Deliberate edges:
+ * - Only `parents[0]` is followed, so a merge commit steps onto its own line,
+ *   never into the branch it merged in.
+ * - A parent that is not on the loaded page (truncated history, filtered
+ *   branches) is not a target — the jump stops rather than silently landing on
+ *   an unrelated row.
+ * - `"older"` only ever looks DOWN the list and `"newer"` only UP, so a
+ *   non-topological ordering can never produce a backwards jump or a cycle.
+ * - When several commits share one first parent (two branches rooted at the
+ *   same commit) `"newer"` picks the nearest one above, i.e. the closest jump.
+ */
+export function stepOnBranchLine(
+  commits: readonly GraphCommitLike[],
+  fromRow: number,
+  direction: BranchLineDirection,
+): number {
+  void commits;
+  void fromRow;
+  void direction;
+  return -1;
+}
+
+/**
  * SVG path for one branch line. Reference geometry: lane changes are cubic
  * beziers whose control points are PURE VERTICAL offsets (d = 0.8 × row
  * height) from each endpoint — vertical tangents at both ends, so stacked

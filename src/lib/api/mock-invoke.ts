@@ -1731,12 +1731,16 @@ const mockCommands: Record<string, CommandHandler> = {
     const action = args.action as "stage" | "unstage" | "discard";
     const path = patch.match(/^\+\+\+ b\/(.+)$/m)?.[1];
     if (!path) throw new Error("patch is missing its target path");
-    const hunk = patch.includes("@@ -10") ? 2 : 1;
+    const hunkMatch = patch.match(/^@@ -(\d+)/m);
+    if (!hunkMatch) throw new Error("patch is missing its hunk header");
+    const hunk = Number(hunkMatch[1]);
     const state = hunkState(path);
     if (action === "stage") {
       state.staged.add(hunk);
-      // A partially staged file remains in Changes as well as Staged.
       upsert(mockGit.staged, { path, old_path: null, status: "Modified" });
+      // A partially staged file remains in Changes as well as Staged. Once
+      // both mock hunks are staged, its worktree side is exhausted.
+      if (state.staged.size >= 2) removeFrom(mockGit.changes, path);
     } else if (action === "unstage") {
       state.staged.delete(hunk);
       if (state.staged.size === 0) removeFrom(mockGit.staged, path);
@@ -1815,7 +1819,7 @@ const mockCommands: Record<string, CommandHandler> = {
       `+++ b/${p}`,
     ];
     if (visible(1)) lines.push("@@ -1,3 +1,3 @@", " import { useState } from \"react\";", "-export function App() { return null; }", "+export function App() { return <div>first hunk</div>; }");
-    if (visible(2)) lines.push("@@ -10,3 +10,3 @@", " export const VERSION = \"1.0\";", "-export const FLAG = false;", "+export const FLAG = true;");
+    if (visible(10)) lines.push("@@ -10,3 +10,3 @@", " export const VERSION = \"1.0\";", "-export const FLAG = false;", "+export const FLAG = true;");
     return [...lines, ""].join("\n");
   },
   git_watch_repo: () => null,

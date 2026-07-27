@@ -139,7 +139,7 @@ export function parseUnifiedDiff(text: string): ParsedDiff {
  * Each fragment repeats the preamble because `git apply` needs the file names
  * as well as the selected @@ block.
  */
-export function extractDiffHunks(text: string, parsedLines: readonly DiffLine[] = []): DiffHunk[] {
+export function extractDiffHunks(text: string, parsedLines: readonly DiffLine[]): DiffHunk[] {
   const raw = text.length === 0 ? [] : text.split("\n");
   if (raw.at(-1) === "") raw.pop();
   const starts = raw.reduce<number[]>((indices, line, index) => {
@@ -149,10 +149,14 @@ export function extractDiffHunks(text: string, parsedLines: readonly DiffLine[] 
   if (starts.length === 0) return [];
   const preamble = raw.slice(0, starts[0]);
   const hunkLines = parsedLines.filter((line) => line.kind === "hunk");
-  return starts.map((start, index) => ({
-    lineIndex: hunkLines[index]?.index ?? -1,
-    patch: [...preamble, ...raw.slice(start, starts[index + 1])].join("\n") + "\n",
-  }));
+  return starts.map((start, index) => {
+    const renderedLine = hunkLines[index];
+    if (!renderedLine) throw new Error("diff hunk line alignment mismatch");
+    return {
+      lineIndex: renderedLine.index,
+      patch: [...preamble, ...raw.slice(start, starts[index + 1])].join("\n") + "\n",
+    };
+  });
 }
 
 function stripPrefix(p: string): string {

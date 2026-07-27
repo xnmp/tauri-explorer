@@ -273,6 +273,6 @@ describe("extractDiffHunks", () => {
   });
 
   it("returns no fragments when a diff has no hunk headers", () => {
-    expect(extractDiffHunks("diff --git a/image.png b/image.png\nBinary files differ\n")).toEqual([]);
+    expect(extractDiffHunks("diff --git a/image.png b/image.png\nBinary files differ\n", [])).toEqual([]);
   });
 });

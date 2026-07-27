@@ -312,6 +312,32 @@ test.describe("SCM diff view", () => {
     await page.screenshot({ path: evidencePath("ac-1-partially-staged-hunks.png") });
   });
 
+  test("unstaging one hunk leaves another hunk staged", async ({ page }) => {
+    await openScmOnRepo(page, { preview: true });
+    await page.locator('[data-section="changes"] .row', { hasText: "index.css" }).click();
+    const preview = page.locator(".preview-pane");
+
+    // Stage both hunks. Exhausting the unstaged side follows the file to its
+    // staged diff, where both independently actionable hunks are rendered.
+    await preview.getByRole("button", { name: "Stage hunk" }).first().click();
+    await expect(preview.getByRole("button", { name: "Stage hunk" })).toHaveCount(1);
+    await preview.getByRole("button", { name: "Stage hunk" }).click();
+    await expect(preview.locator(".diff-staged")).toBeVisible();
+    await expect(preview.getByRole("button", { name: "Unstage hunk" })).toHaveCount(2);
+
+    await preview.getByRole("button", { name: "Unstage hunk" }).first().click();
+
+    // The selected hunk moved back to Changes while the sibling remains in
+    // the index and visible on the staged side.
+    await expect(page.locator('[data-section="staged"] .row', { hasText: "index.css" })).toBeVisible();
+    await expect(page.locator('[data-section="changes"] .row', { hasText: "index.css" })).toBeVisible();
+    await expect(preview.locator(".diff-staged")).toBeVisible();
+    await expect(preview.getByRole("button", { name: "Unstage hunk" })).toHaveCount(1);
+    await expect(preview.getByText("first hunk")).toHaveCount(0);
+    await expect(preview.getByText("FLAG = true")).toBeVisible();
+    await page.screenshot({ path: evidencePath("ac-2-unstaged-hunk.png") });
+  });
+
   test("discarding one hunk preserves the unrelated working-tree hunk", async ({ page }) => {
     await openScmOnRepo(page, { preview: true });
     await page.locator('[data-section="changes"] .row', { hasText: "index.css" }).click();
@@ -323,6 +349,6 @@ test.describe("SCM diff view", () => {
     await expect(preview.getByText("first hunk")).toHaveCount(0);
     await expect(preview.getByText("FLAG = true")).toBeVisible();
     await expect(preview.getByRole("button", { name: "Discard hunk" })).toHaveCount(1);
-    await page.screenshot({ path: evidencePath("ac-2-discarded-hunk.png") });
+    await page.screenshot({ path: evidencePath("ac-3-discarded-hunk.png") });
   });
 });

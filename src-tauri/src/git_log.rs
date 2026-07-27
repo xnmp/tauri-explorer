@@ -980,6 +980,47 @@ mod tests {
     }
 
     #[test]
+    fn git_log_file_path_filter_returns_only_commits_that_touch_the_path() {
+        let (dir, repo) = init_repo();
+        let p = dir.path().to_path_buf();
+        write(&p, "tracked.txt", "one");
+        let first = commit(&repo, "add tracked file", &[]);
+        write(&p, "other.txt", "unrelated");
+        let second = commit(&repo, "change another file", &[first]);
+        write(&p, "tracked.txt", "two");
+        let _third = commit(&repo, "update tracked file", &[second]);
+
+        let filtered = build_log(
+            &repo,
+            &GitLogOptions {
+                file_path: Some("tracked.txt".into()),
+                ..Default::default()
+            },
+            Vec::new(),
+            &no_cancel(),
+        )
+        .unwrap();
+        let summaries: Vec<_> = filtered
+            .commits
+            .iter()
+            .map(|commit| commit.summary.as_str())
+            .collect();
+        assert_eq!(summaries, vec!["update tracked file", "add tracked file"]);
+
+        let cleared = build_log(
+            &repo,
+            &GitLogOptions {
+                file_path: Some("  ".into()),
+                ..Default::default()
+            },
+            Vec::new(),
+            &no_cancel(),
+        )
+        .unwrap();
+        assert_eq!(cleared.commits.len(), 3, "blank path must restore all commits");
+    }
+
+    #[test]
     fn branch_authors_report_the_branch_creator_not_the_tip_committer() {
         let (dir, repo) = init_repo();
         let p = dir.path().to_path_buf();

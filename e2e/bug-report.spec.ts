@@ -1,8 +1,4 @@
-/**
- * Bug-report + logs palette commands (#197). The mock records
- * open_external_url calls so the test asserts the real outcome: a GitHub
- * new-issue URL carrying version and OS diagnostics.
- */
+/** In-app bug and feature reports (#547). */
 
 import { test, expect } from "./fixtures";
 import { waitForEntries } from "./helpers";
@@ -13,27 +9,51 @@ async function runPaletteCommand(page: import("@playwright/test").Page, query: s
   await page.keyboard.press("Enter");
 }
 
-test("Report a Bug opens a pre-filled GitHub issue with diagnostics", async ({ page }) => {
+for (const command of ["Report a Bug", "Request a Feature"]) {
+  test(`${command} submits in-app and links the created issue`, async ({ page }) => {
+    await page.goto("/");
+    await waitForEntries(page);
+
+    await runPaletteCommand(page, command);
+    const dialog = page.getByRole("dialog", { name: /report|request/i });
+    await dialog.getByLabel("Title").fill(`${command} title`);
+    await dialog.getByLabel("Description").fill("Typed description");
+    await dialog.getByLabel(/How can we reach you/).fill("@playwright-reporter");
+    await page.keyboard.press("Control+Enter");
+
+    await expect(dialog).toBeHidden();
+    const toast = page.locator(".toast.success");
+    await expect(toast).toContainText("Issue #5470");
+    await expect(toast.getByRole("link")).toHaveAttribute(
+      "href",
+      "https://github.com/xnmp/tauri-explorer/issues/5470",
+    );
+  });
+}
+
+test("failed submission preserves the draft in the GitHub fallback", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
+  await page.evaluate(() => localStorage.setItem("mock-report-error", "daily_cap"));
 
-  await runPaletteCommand(page, "Report a Bug");
+  await runPaletteCommand(page, "Request a Feature");
+  const dialog = page.getByRole("dialog", { name: /request/i });
+  await dialog.getByLabel("Title").fill("Keep my feature title");
+  await dialog.getByLabel("Description").fill("Keep my typed description 🐛");
+  await dialog.getByRole("button", { name: "Submit" }).click();
 
+  await expect(page.getByRole("alert")).toContainText(
+    "Reports are temporarily unavailable",
+  );
   await expect
     .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
     .not.toBeNull();
-  const url = (await page.evaluate(() => localStorage.getItem("mock-opened-url")))!;
-  expect(url).toContain("https://github.com/xnmp/tauri-explorer/issues/new");
-  const decoded = decodeURIComponent(url);
-  expect(decoded).toContain("Tauri Explorer: v0.0.0-mock");
-  expect(decoded).toContain("OS: linux (x86_64)");
-  expect(decoded).toContain("What happened?");
-  // #302: the report carries a recent-logs tail so maintainers get context
-  // (the user reviews it in the GitHub form before submitting).
-  expect(decoded).toContain("## Recent logs");
-  expect(decoded).toContain("tauri_explorer");
-  // Stay under the URL length cap even with logs attached.
-  expect(url.length).toBeLessThanOrEqual(6000);
+  const url = new URL(
+    (await page.evaluate(() => localStorage.getItem("mock-opened-url")))!,
+  );
+  expect(url.searchParams.get("title")).toBe("Keep my feature title");
+  expect(url.searchParams.get("body")).toContain("Keep my typed description 🐛");
+  expect(url.searchParams.get("labels")).toBe("enhancement");
 });
 
 test("Open Logs Folder navigates the pane to the log directory", async ({ page }) => {

@@ -28,6 +28,8 @@ mod process_ext;
 mod progress;
 mod update_check;
 mod upscale;
+#[cfg(test)]
+mod user_report;
 /// Non-Linux stub so the command registry stays platform-independent.
 #[cfg(not(target_os = "linux"))]
 mod portal {

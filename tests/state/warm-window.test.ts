@@ -129,7 +129,7 @@ vi.mock("../../src/lib/state/window-tabs.svelte", () => ({
 // behavior (settings refresh runs inside the activation handler, which these
 // tests never fire).
 vi.mock("../../src/lib/state/window-appearance", () => ({
-  explorerWindowAppearance: () => ({}),
+  explorerWindowAppearance: (title: string) => ({ title }),
 }));
 vi.mock("../../src/lib/state/settings.svelte", () => ({
   settingsStore: { init: vi.fn(async () => {}) },

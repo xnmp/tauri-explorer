@@ -53,6 +53,7 @@ import { explorerWindowAppearance } from "./window-appearance";
 import { settingsStore } from "./settings.svelte";
 import { themeStore } from "./theme.svelte";
 import type { ViewMode } from "./types";
+import { formatWindowTitle } from "../domain/tab-title";
 
 // Reuse the "explorer-" label prefix so warm windows inherit the same Tauri
 // capability/ACL scope as normal child windows (capabilities/default.json lists
@@ -112,7 +113,12 @@ export async function spawnWarmWindow(): Promise<void> {
     windowTabsManager.getActiveExplorer()?.currentPath ||
     (window as { __LAUNCH_DATA__?: { home: string } }).__LAUNCH_DATA__?.home ||
     "/";
+  const homePath =
+    (window as { __LAUNCH_DATA__?: { home: string } }).__LAUNCH_DATA__?.home ??
+    new URLSearchParams(window.location.search).get("home") ??
+    undefined;
   const params = new URLSearchParams({ warm: "1", path: parkPath });
+  if (homePath) params.set("home", homePath);
 
   try {
     const win = new WebviewWindow(label, {
@@ -121,7 +127,7 @@ export async function spawnWarmWindow(): Promise<void> {
       height: 800,
       visible: false,
       skipTaskbar: true,
-      ...explorerWindowAppearance(),
+      ...explorerWindowAppearance(formatWindowTitle(parkPath, homePath)),
     });
     win.once("tauri://error", cancelReservation);
   } catch {
@@ -202,6 +208,10 @@ export async function runWarmWindow(measure: boolean): Promise<void> {
     activated = true;
     const tActivate = performance.now();
     const { path, viewMode, x, y, width, height } = event.payload;
+    const homePath =
+      (window as { __LAUNCH_DATA__?: { home: string } }).__LAUNCH_DATA__?.home ??
+      new URLSearchParams(window.location.search).get("home") ??
+      undefined;
 
     // The window may have been parked for minutes: re-read settings and theme
     // so the revealed window matches one created fresh right now (there is no
@@ -233,6 +243,10 @@ export async function runWarmWindow(measure: boolean): Promise<void> {
     } catch {
       // best effort — e.g. Wayland ignores setPosition
     }
+
+    // Set the final title while still hidden; showing first produces a visible
+    // stale-title frame in taskbars/window switchers.
+    await self.setTitle(formatWindowTitle(path, homePath)).catch(() => {});
 
     // The reveal — the one call that must happen.
     try {

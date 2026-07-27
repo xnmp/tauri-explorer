@@ -117,3 +117,21 @@ export function extractFolderName(path: string): string {
   const name = basename(path);
   return name && name !== "/" ? name : path || "Explorer";
 }
+
+const APP_WINDOW_TITLE = "Tauri Explorer";
+
+/**
+ * User-visible OS window title for an explorer directory.
+ *
+ * The same basename logic as tab titles keeps long paths compact. Home is the
+ * one intentional alias, and an empty path represents the short startup state
+ * before a tab exists.
+ */
+export function formatWindowTitle(path: string, homePath?: string): string {
+  if (!path) return APP_WINDOW_TITLE;
+  const folder =
+    homePath && directoryKey(path) === directoryKey(homePath)
+      ? "~"
+      : extractFolderName(path);
+  return `${folder} - ${APP_WINDOW_TITLE}`;
+}

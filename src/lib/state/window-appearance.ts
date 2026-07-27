@@ -20,11 +20,11 @@ function getPersistedBgColor(): Color | undefined {
  *  window's backdrop so new windows match (issue: Windows Mica/Acrylic). A
  *  translucent backdrop needs a transparent window and no opaque background
  *  color; the DWM system backdrop still rounds the corners. */
-export function explorerWindowAppearance() {
+export function explorerWindowAppearance(title: string) {
   const windowEffects = windowsBackdropEffects();
   const winBackdrop = windowEffects !== undefined;
   return {
-    title: "tauri-explorer",
+    title,
     backgroundColor: winBackdrop ? undefined : getPersistedBgColor(),
     decorations: isMac,
     // Windows 11 only rounds corners (and draws the DWM shadow) on opaque

@@ -8,6 +8,7 @@ import { settingsStore } from "../settings.svelte";
 import { savePersisted } from "../persisted";
 import { consumeWarmWindow } from "../warm-window";
 import { explorerWindowAppearance } from "../window-appearance";
+import { formatWindowTitle } from "../../domain/tab-title";
 import type { ViewMode } from "../types";
 
 /** Open a new explorer window at the given path with optional view mode.
@@ -52,6 +53,11 @@ export async function openNewWindow(
   }
   const baseUrl = window.location.origin + window.location.pathname;
   const params = new URLSearchParams({ path });
+  const homePath =
+    (window as { __LAUNCH_DATA__?: { home: string } }).__LAUNCH_DATA__?.home ??
+    new URLSearchParams(window.location.search).get("home") ??
+    undefined;
+  if (homePath) params.set("home", homePath);
   if (viewMode) params.set("viewMode", viewMode);
   const url = `${baseUrl}?${params.toString()}`;
   const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -67,7 +73,7 @@ export async function openNewWindow(
     // otherwise offset slightly from the current window.
     x: at ? Math.round(at.x - 120) : pos.x + 30,
     y: at ? Math.round(at.y - 16) : pos.y + 30,
-    ...explorerWindowAppearance(),
+    ...explorerWindowAppearance(formatWindowTitle(path, homePath)),
   });
 }
 

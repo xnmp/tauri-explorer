@@ -53,6 +53,23 @@ use system::{
 };
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
+fn window_title(path: &std::path::Path, home: &std::path::Path) -> String {
+    if path.as_os_str().is_empty() {
+        return "Tauri Explorer".to_string();
+    }
+    let display = if path == home {
+        "~".to_string()
+    } else if path.parent().is_none() || path == std::path::Path::new("/") {
+        path.to_string_lossy().to_string()
+    } else {
+        path.file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| path.to_string_lossy().to_string())
+    };
+    format!("{display} - Tauri Explorer")
+}
+
 #[cfg(test)]
 mod window_title_tests {
     use super::window_title;
@@ -109,6 +126,10 @@ pub fn run(launch_dir: Option<String>) {
         .to_string_lossy()
         .to_string();
     let launch_cwd = launch_dir.unwrap_or_else(|| home_dir.clone());
+    let initial_window_title = window_title(
+        std::path::Path::new(&launch_cwd),
+        std::path::Path::new(&home_dir),
+    );
 
     // Inject launch data into the webview as a synchronous JS global,
     // so the frontend can read it immediately without IPC roundtrips.
@@ -338,7 +359,7 @@ pub fn run(launch_dir: Option<String>) {
                 "main",
                 tauri::WebviewUrl::App("index.html".into()),
             )
-            .title("tauri-explorer")
+            .title(initial_window_title)
             .inner_size(1200.0, 800.0)
             .decorations(cfg!(target_os = "macos"))
             .accept_first_mouse(true)

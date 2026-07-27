@@ -32,7 +32,7 @@ vi.mock("../../../src/lib/state/warm-window", () => ({
   consumeWarmWindow: vi.fn(async () => false),
 }));
 vi.mock("../../../src/lib/state/window-appearance", () => ({
-  explorerWindowAppearance: () => ({}),
+  explorerWindowAppearance: (title: string) => ({ title }),
 }));
 
 import { openNewWindow } from "../../../src/lib/state/commands/shared";

@@ -314,6 +314,93 @@ test.describe("Git graph tab", () => {
     await expect(view.locator(".commit-row")).toHaveCount(18);
   });
 
+  test("hide remote-only branches bulk-hides untracked remote refs (#515)", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+    const view = page.locator('[data-testid="git-graph-view"]');
+    await expect(view.locator(".commit-row")).toHaveCount(18);
+
+    const filterBtn = page.locator('[data-testid="branch-filter-btn"]');
+    await filterBtn.click();
+    const popover = page.locator('[data-testid="branch-popover"]');
+    // Exact-name row lookup: `main` must not also match `origin/main`.
+    const branchBox = (name: string) =>
+      popover
+        .locator("label.bf-row")
+        .filter({ has: page.getByText(name, { exact: true }) })
+        .locator("input");
+    const hideRemoteOnly = popover.locator('[data-testid="bf-hide-remote-only"] input');
+
+    // AC 1: the toggle exists, is off, and the remote-only branch is shown.
+    await expect(hideRemoteOnly).not.toBeChecked();
+    await expect(branchBox("origin/legacy-import")).toBeChecked();
+    await expect(branchBox("main")).toBeChecked();
+    await page.screenshot({ path: "evidence/ac-1-toggle-off.png" });
+
+    // AC 2: one click hides every remote ref with no local counterpart, and
+    // leaves locals + tracked remotes (origin/main, origin/hotfix) selected.
+    await hideRemoteOnly.click();
+    await expect(branchBox("origin/legacy-import")).not.toBeChecked();
+    await expect(branchBox("main")).toBeChecked();
+    await expect(branchBox("feature")).toBeChecked();
+    await expect(branchBox("origin/main")).toBeChecked();
+    await expect(branchBox("origin/hotfix")).toBeChecked();
+    await expect(filterBtn).toHaveClass(/filtered/);
+    // Local history is untouched: main's tip and the stash are still drawn.
+    await expect(view.locator(".commit-row").filter({ hasText: "Merge hotfix into main" })).toHaveCount(1);
+    await page.screenshot({ path: "evidence/ac-2-toggle-on.png" });
+
+    // AC 3: narrow the per-branch filter to the remote-only branch alone —
+    // the graph reduces to its ancestry (8 commits + the uncommitted row).
+    await hideRemoteOnly.click();
+    await expect(branchBox("origin/legacy-import")).toBeChecked();
+    const legacyRow = popover
+      .locator("label.bf-row")
+      .filter({ has: page.getByText("origin/legacy-import", { exact: true }) });
+    await legacyRow.hover();
+    await legacyRow.locator(".bf-only").click();
+    await expect(view.locator(".commit-row")).toHaveCount(9);
+    await expect(view.locator(".commit-row").filter({ hasText: "Refactor config loader" })).toHaveCount(1);
+    await expect(view.locator(".commit-row").filter({ hasText: "Merge hotfix into main" })).toHaveCount(0);
+    await page.screenshot({ path: "evidence/ac-3-remote-only-history.png" });
+
+    // AC 4: with the toggle on, that history is gone from the graph — the
+    // toggle changes what the graph walks, not just the checkbox UI.
+    await hideRemoteOnly.click();
+    await expect(view.locator(".commit-row")).toHaveCount(0);
+    await expect(view.locator(".commit-row").filter({ hasText: "Refactor config loader" })).toHaveCount(0);
+    await page.screenshot({ path: "evidence/ac-4-history-hidden.png" });
+
+    // Reversible: turning it off restores the same rows.
+    await hideRemoteOnly.click();
+    await expect(view.locator(".commit-row")).toHaveCount(9);
+
+    // Composes with the per-branch filter: a hand-unchecked branch survives a
+    // toggle on → off cycle, and the bulk toggle never clears the selection.
+    await popover.locator(".bf-all").click(); // back to "all branches"
+    await expect(view.locator(".commit-row")).toHaveCount(18);
+    await branchBox("feature").click();
+    await expect(branchBox("feature")).not.toBeChecked();
+    await hideRemoteOnly.click();
+    await expect(branchBox("feature")).not.toBeChecked();
+    await expect(branchBox("origin/legacy-import")).not.toBeChecked();
+    await hideRemoteOnly.click();
+    await expect(branchBox("feature")).not.toBeChecked();
+    await expect(branchBox("origin/legacy-import")).toBeChecked();
+
+    // Persists per repo across closing and reopening the graph.
+    await hideRemoteOnly.click();
+    await expect(hideRemoteOnly).toBeChecked();
+    await page.keyboard.press("Escape");
+    await openGraphViaPalette(page, false);
+    await expect(view).toHaveCount(0);
+    await openGraphViaPalette(page);
+    await filterBtn.click();
+    await expect(popover.locator('[data-testid="bf-hide-remote-only"] input')).toBeChecked();
+    await expect(branchBox("origin/legacy-import")).not.toBeChecked();
+  });
+
   test("graph columns resize by dragging header handles and persist (#341)", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents/project");
     await waitForEntries(page);

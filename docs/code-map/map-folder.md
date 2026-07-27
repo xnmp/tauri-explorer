@@ -46,6 +46,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `OptionPicker.svelte` — generic secondary list picker.
 - `ContextMenu.svelte` — right-click menu renderer (items from context-menu stores).
 - `Modal.svelte` + `modal.css` — base modal shell + shared modal styling.
+- `UserReportDialog.svelte` — in-app bug/feature form; submits through Rust and preserves the draft in the browser fallback.
 - `SettingsDialog.svelte` — settings dialog shell (toggles, sections, plugin sections).
 - `KeybindingsSettings.svelte` — keybinding customization UI in settings.
 - `ShortcutCheatsheet.svelte` — keyboard shortcut cheatsheet overlay.
@@ -155,6 +156,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ai-organize.ts` — AI "where does this file belong" IPC (#158).
 - `ai-rename.ts` — AI rename suggestion IPC (#145).
 - `crash.ts` — crash-report capture bridge (#184).
+- `user-report.ts` — typed `submit_user_report` IPC wrapper.
 - `update.ts` — GitHub-release update check (once/day throttle, #185).
 - `warm-pool.ts` — warm-window pool IPC wrappers.
 - `open.ts` — open files in the default/chosen app, image viewer (with siblings), or a terminal.
@@ -225,6 +227,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `terminal-theme.ts` — map CSS theme vars → xterm.js theme.
 - `content-search.ts` — `ContentMatch`/`ContentSearchResult` types for ripgrep results; re-exported by `api/search.ts`.
 - `crash-report.ts` — pure crash-dedupe + log-tail→markdown helpers behind `api/crash.ts`.
+- `user-report.ts` — report contracts and pure prefilled-GitHub fallback URL builder.
 - `git-warm.ts` — pure scheduler: when (and whether) to warm git-graph/SCM caches after a pane settles.
 - `available-filename.ts` — collision-free output filename (`photo_upscaled_2.png`) for plugin dialogs writing beside the original.
 
@@ -271,6 +274,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `task_registry.rs` — cancellable background task registry.
 - `terminal.rs` — embedded terminal (PTY) backend (#139).
 - `system.rs` — system commands: trash, launch context, window theme, log paths.
+- `user_report.rs` — typed async report relay command, environment/log-tail body assembly, and ureq transport.
 - `process_ext.rs` — suppress console-window flash for spawned children.
 - `portal.rs` — xdg-desktop-portal FileChooser backend (Linux).
 - `crash_report.rs` — local crash capture (#184).
@@ -288,6 +292,11 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git_actions.rs` — mutating git actions for commit-graph tab (VSCode parity).
 - `git_common.rs` — shared git plumbing (used by git/git_log/git_actions).
 - `github.rs` — `git_open_prs`: open GitHub PRs for the repo's remote, for graph PR badges (#449); TTL-cached, silent-degrade.
+
+## website/ — static Vercel site and serverless functions.
+- `api/report.js` — POST-only user-report relay and GitHub Issues client.
+- `api/report-core.js` — pure validation, issue shaping, honeypot, and atomic burst/hour/day limit logic.
+- `vercel.json` — response cache policy; API routes are explicitly `no-store`.
 
 ### src-tauri/src/files/ — file operations module.
 - `mod.rs` — files module root + re-exports; `FileEntry` incl. `is_git_repo` and `metadata_to_entry`'s one-stat-per-directory git-repo-root detection (#463).

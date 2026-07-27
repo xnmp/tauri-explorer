@@ -240,9 +240,11 @@ backend for E2E/browser).
 - `components/ToastOverlay.svelte`, `state/toast.svelte.ts` — `toastStore` transient notices
 - `state/dialogs.svelte.ts` — `dialogStore` generic dialog orchestration
 - `components/Modal.svelte`, `components/modal.css` — modal shell
+- `components/UserReportDialog.svelte`, `domain/user-report.ts`, `api/user-report.ts` — bug/feature draft UI, preserved GitHub fallback, and report IPC
 - `components/CrashNotice.svelte`/`state`+`api/crash.ts`, `UpdateNotice.svelte`+`api/update.ts`
 - `src/hooks.client.ts` — installs global crash/error handlers before mount; `domain/crash-report.ts` — pure dedupe + log-tail→markdown
 - FLOW: any store calls `toastStore.show(...)`; ToastOverlay renders queue.
+- REPORT FLOW: `help.reportBug`/`help.requestFeature` → `dialogStore` → `UserReportDialog` → `submit_user_report` (`src-tauri/src/user_report.rs`, enriches with environment/log tail) → `website/api/report.js` (validation, durable limits, GitHub issue); failures use `userReportFallbackUrl` without discarding the draft.
 
 ## Theming
 - `state/theme.svelte.ts` — `themeStore` (active theme, apply)

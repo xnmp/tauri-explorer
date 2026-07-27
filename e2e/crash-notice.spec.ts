@@ -19,7 +19,7 @@ test("crash notice appears after a crash and dismisses", async ({ page }) => {
   await expect(notice).toContainText("nothing was sent anywhere");
   await expect
     .poll(() => notice.evaluate((element) => getComputedStyle(element).backgroundColor))
-    .toMatch(/rgba?\([^)]*(?:,\s*1|\s*\/\s*1)\)$/);
+    .toMatch(/^rgb\([^)]*\)$|^rgba\([^)]*,\s*1\)$/);
   await notice.screenshot({ path: "evidence/ac-1-crash-report-opaque.png" });
 
   await notice.getByRole("button", { name: "Dismiss" }).click();

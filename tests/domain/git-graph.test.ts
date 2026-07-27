@@ -552,15 +552,8 @@ describe("relativeTimeFrom (#468)", () => {
     expect(relativeTimeFrom(new Date(now + 5 * MIN).toISOString(), now)).toBe("now");
   });
 
-  it("scales through compact minute, hour, day, week, month, and year labels", () => {
-    expect(relativeTimeFrom(ago(1 * MIN), now)).toBe("1m");
-    expect(relativeTimeFrom(ago(5 * MIN), now)).toBe("5m");
-    expect(relativeTimeFrom(ago(1 * HOUR), now)).toBe("1h");
-    expect(relativeTimeFrom(ago(3 * HOUR), now)).toBe("3h");
-    expect(relativeTimeFrom(ago(1 * DAY), now)).toBe("1d");
-    expect(relativeTimeFrom(ago(35 * DAY), now)).toBe("5w");
-    expect(relativeTimeFrom(ago(150 * DAY), now)).toBe("5mo");
-    expect(relativeTimeFrom(ago(400 * DAY), now)).toBe("1y");
+  it("delegates valid timestamps to the compact relative formatter", () => {
+    expect(relativeTimeFrom(ago(5 * DAY), now)).toBe("5d");
   });
 
   it("returns null for missing or unparseable timestamps", () => {

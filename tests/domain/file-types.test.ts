@@ -5,6 +5,7 @@
 import { describe, it, expect } from "vitest";
 import {
   formatDate,
+  formatAbsoluteDate,
   getExtension,
   isZipFile,
   getFileType,
@@ -29,27 +30,9 @@ const entry = (
 });
 
 describe("formatDate", () => {
-  it("renders elapsed days, weeks, and months with compact relative labels", () => {
+  it("delegates valid timestamps to the compact relative formatter", () => {
     const now = new Date("2024-06-15T12:00:00Z");
-
     expect(formatDate("2024-06-10T12:00:00Z", now)).toBe("5d");
-    expect(formatDate("2024-05-11T12:00:00Z", now)).toBe("5w");
-    expect(formatDate("2024-01-15T12:00:00Z", now)).toBe("5mo");
-  });
-
-  it("keeps compact units consistent at day, week, month, and year boundaries", () => {
-    const nowMs = Date.parse("2025-01-01T12:00:00Z");
-    const dayMs = 24 * 60 * 60 * 1000;
-    const atAge = (days: number) =>
-      formatDate(new Date(nowMs - days * dayMs).toISOString(), new Date(nowMs));
-
-    expect(atAge(6)).toBe("6d");
-    expect(atAge(7)).toBe("1w");
-    expect(atAge(59)).toBe("1mo");
-    expect(atAge(60)).toBe("2mo");
-    expect(atAge(359)).toBe("11mo");
-    expect(atAge(360)).toBe("12mo");
-    expect(atAge(365)).toBe("1y");
   });
 
   it("formats a valid ISO timestamp as a compact elapsed interval", () => {
@@ -60,6 +43,11 @@ describe("formatDate", () => {
     expect(formatDate("not-a-date")).toBe("");
     expect(formatDate("")).toBe("");
     expect(formatDate("2024-99-99T99:99:99Z")).toBe("");
+  });
+
+  it("retains the absolute timestamp for date-cell tooltips", () => {
+    expect(formatAbsoluteDate("2024-03-15T14:30:00Z")).toContain("2024");
+    expect(formatAbsoluteDate("not-a-date")).toBe("");
   });
 
   it("handles extreme but valid timestamps", () => {

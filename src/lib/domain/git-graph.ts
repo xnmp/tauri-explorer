@@ -20,6 +20,8 @@
  *   instead of drifting left as lanes free up.
  */
 
+import { compactRelativeTime } from "./relative-time";
+
 export interface GraphCommitLike {
   oid: string;
   parents: string[];
@@ -710,25 +712,7 @@ export function relativeTimeFrom(
   if (createdAt == null) return null;
   const thenMs = Date.parse(createdAt);
   if (Number.isNaN(thenMs)) return null;
-  const ageSec = Math.max(0, Math.floor((nowMs - thenMs) / 1000));
-  if (ageSec < 60) return "now";
-
-  const ageMin = Math.floor(ageSec / 60);
-  if (ageMin < 60) return `${ageMin}m`;
-
-  const ageHours = Math.floor(ageMin / 60);
-  if (ageHours < 24) return `${ageHours}h`;
-
-  const ageDays = Math.floor(ageHours / 24);
-  if (ageDays < 7) return `${ageDays}d`;
-
-  const ageWeeks = Math.floor(ageDays / 7);
-  if (ageWeeks < 8) return `${ageWeeks}w`;
-
-  const ageMonths = Math.floor(ageDays / 30);
-  if (ageMonths < 12) return `${ageMonths}mo`;
-
-  return `${Math.floor(ageDays / 365)}y`;
+  return compactRelativeTime(nowMs - thenMs);
 }
 
 /** A PR comment prepared for display in the details dropdown. */

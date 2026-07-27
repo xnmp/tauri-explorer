@@ -4,6 +4,17 @@
  */
 
 import type { FileEntry } from "./file";
+import { compactRelativeTime } from "./relative-time";
+
+// Constructing Intl state per visible row costs ~100µs of ICU setup. Keep one
+// formatter for the absolute-date tooltip that accompanies relative labels.
+const absoluteDateFormatter = new Intl.DateTimeFormat(undefined, {
+  month: "numeric",
+  day: "numeric",
+  year: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
 
 /** File type descriptive names - Windows 11 style */
 const FILE_TYPE_MAP: Record<string, string> = {
@@ -396,24 +407,12 @@ export function isZipFile(entry: FileEntry): boolean {
 export function formatDate(isoString: string, now = new Date()): string {
   const date = new Date(isoString);
   if (Number.isNaN(date.getTime())) return "";
+  return compactRelativeTime(now.getTime() - date.getTime());
+}
 
-  const elapsedSeconds = Math.max(0, Math.floor((now.getTime() - date.getTime()) / 1000));
-  if (elapsedSeconds < 60) return "now";
-
-  const elapsedMinutes = Math.floor(elapsedSeconds / 60);
-  if (elapsedMinutes < 60) return `${elapsedMinutes}m`;
-
-  const elapsedHours = Math.floor(elapsedMinutes / 60);
-  if (elapsedHours < 24) return `${elapsedHours}h`;
-
-  const elapsedDays = Math.floor(elapsedHours / 24);
-  if (elapsedDays < 7) return `${elapsedDays}d`;
-
-  const elapsedWeeks = Math.floor(elapsedDays / 7);
-  if (elapsedWeeks < 8) return `${elapsedWeeks}w`;
-
-  const elapsedMonths = Math.floor(elapsedDays / 30);
-  if (elapsedMonths < 12) return `${elapsedMonths}mo`;
-
-  return `${Math.floor(elapsedDays / 365)}y`;
+/** Format an absolute timestamp for the file-list relative-date tooltip. */
+export function formatAbsoluteDate(isoString: string): string {
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return "";
+  return absoluteDateFormatter.format(date);
 }

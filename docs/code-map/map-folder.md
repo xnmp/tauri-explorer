@@ -184,6 +184,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src/lib/domain/ — pure logic, no framework deps. Test + reuse here.
 - `file.ts` — file entry types (incl. `is_git_repo`) + pure ops (sort, filter, format). Hot.
 - `file-types.ts` — extension→type/category detection + display; `isGitRepoFolder` (git-repo folder icon selection, #463).
+- `relative-time.ts` — shared compact elapsed-time labels for file metadata, today's git commits, and PR comments.
 - `path.ts` — path normalization/join/parent/relative helpers.
 - `platform.ts` — isMac/isWindows/isLinux detection.
 - `wsl.ts` — WSL path recognition.

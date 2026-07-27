@@ -163,6 +163,21 @@
   // from the log payload, never inferred from `headBranch === null` (also null
   // on an unborn branch).
   let detached = $state(false);
+  // Graph-wide commit filter (#529). Kept ephemeral: unlike branch curation,
+  // a one-off path lookup should not silently survive reopening the graph.
+  let filePathFilter = $state("");
+  let filePathReloadTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function onFilePathFilterInput(event: Event): void {
+    filePathFilter = (event.target as HTMLInputElement).value;
+    closeDetails();
+    closePrDetail();
+    if (filePathReloadTimer !== null) clearTimeout(filePathReloadTimer);
+    filePathReloadTimer = setTimeout(() => {
+      filePathReloadTimer = null;
+      void reload();
+    }, 200);
+  }
 
   const detachedIndicator = $derived(detachedHeadIndicator(detached, headOid));
 
@@ -446,7 +461,7 @@
   /** Rows fed to layout/render: a synthetic uncommitted-changes row on top
    *  (when the working tree is dirty and HEAD is loaded), then the page. */
   const displayCommits: CommitInfo[] = $derived(
-    workingChanges > 0 && headOid
+    workingChanges > 0 && headOid && !filePathFilter.trim()
       ? [
           {
             oid: UNCOMMITTED,
@@ -696,10 +711,11 @@
     const selection = untrack(() => branchFilter);
     const local = untrack(() => localOnly);
     const hideRemotes = untrack(() => hideRemoteOnly);
+    const filePath = untrack(() => filePathFilter.trim());
     // Cache under the RAW selection + toggles: the excluded set below depends
     // on the lazily-loaded branch list, so keying on it would let a pre-load
     // remount paint the unfiltered variant's rows (#416).
-    const cacheKey = snapshotKey(repoPath, selection, local, hideRemotes);
+    const cacheKey = snapshotKey(repoPath, selection, local, hideRemotes, filePath);
     loading = true;
     error = null;
     void loadPrs(repoPath);
@@ -728,7 +744,7 @@
         detached = partial.detached === true;
         nextCursor = partial.nextCursor;
         loading = false;
-      }, local, excludeBranches);
+      }, local, excludeBranches, filePath);
       if (gen !== reloadGeneration) return;
       workingChanges = snapshot.workingChanges;
       cacheSnapshot(cacheKey, snapshot);
@@ -763,13 +779,21 @@
     const selection = untrack(() => branchFilter);
     const local = untrack(() => localOnly);
     const hideRemotes = untrack(() => hideRemoteOnly);
+    const filePath = untrack(() => filePathFilter.trim());
+    const generation = reloadGeneration;
+    const queryIsCurrent = (): boolean =>
+      generation === reloadGeneration &&
+      selection === untrack(() => branchFilter) &&
+      local === untrack(() => localOnly) &&
+      hideRemotes === untrack(() => hideRemoteOnly) &&
+      filePath === untrack(() => filePathFilter.trim());
     // `reload()` refreshed `branchList` already when the toggle is on.
     const { branches: filter, excludeBranches } = branchWalkQuery(
       untrack(() => branchList),
       selection,
       hideRemotes,
     );
-    const cacheKey = snapshotKey(repoPath, selection, local, hideRemotes);
+    const cacheKey = snapshotKey(repoPath, selection, local, hideRemotes, filePath);
     loading = true;
     loadingMore = true;
     error = null;
@@ -781,7 +805,8 @@
       // commits, never commits.length (woven stash rows aren't walk steps).
       // An exclusion changes the walk just like a selection does, so it also
       // rules out the cursor (which is keyed to the unfiltered walk) (#515).
-      const useCursor = filter === null && excludeBranches === null && nextCursor !== null;
+      const useCursor =
+        filter === null && excludeBranches === null && !filePath && nextCursor !== null;
       const page = await gitLog(repoPath, {
         limit: PAGE_SIZE,
         ...(useCursor
@@ -790,7 +815,12 @@
         ...(filter ? { branches: filter } : {}),
         ...(excludeBranches ? { exclude_branches: excludeBranches } : {}),
         ...(local ? { local_only: true } : {}),
+        ...(filePath ? { file_path: filePath } : {}),
       });
+      // A path/branch query can change while a deeper page is in flight. The
+      // page belongs to the captured walk and must never append into the new
+      // result set (or overwrite its cache) after that change.
+      if (!queryIsCurrent()) return;
       commits = [...commits, ...page.commits];
       refs = { ...refs, ...page.refs };
       hasMore = page.has_more;
@@ -812,7 +842,7 @@
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     } finally {
-      loading = false;
+      if (queryIsCurrent()) loading = false;
       loadingMore = false;
     }
   }
@@ -859,6 +889,7 @@
       refreshTimer = null;
       unsub?.();
       void gitUnwatchRepo(repo);
+      if (filePathReloadTimer !== null) clearTimeout(filePathReloadTimer);
     };
   });
 
@@ -1442,7 +1473,7 @@
     <div class="graph-header" role="row" tabindex="-1" style:padding-left="{effectiveGraphWidth + 20}px" oncontextmenu={openColumnMenu}>
       <button
         class="branch-filter-btn"
-        class:filtered={branchFilter !== null || localOnly || hideRemoteOnly}
+        class:filtered={branchFilter !== null || localOnly || hideRemoteOnly || !!filePathFilter.trim()}
         onclick={() => void toggleBranchPopover()}
         title="Filter branches"
         aria-label="Filter branches"
@@ -1463,6 +1494,16 @@
           onclick={() => (branchPopoverOpen = false)}
         ></button>
         <div class="branch-popover" data-testid="branch-popover">
+          <div class="bf-heading">Commits</div>
+          <input
+            class="bf-path-search"
+            placeholder="Filter commits by file path…"
+            aria-label="Filter commits by file path"
+            data-testid="git-graph-file-path-filter"
+            value={filePathFilter}
+            oninput={onFilePathFilterInput}
+          />
+          <div class="bf-heading">Branches</div>
           <!-- svelte-ignore a11y_autofocus -- opened by explicit user action; focus goes where they're about to type -->
           <input
             class="bf-search"
@@ -1560,7 +1601,9 @@
         aria-label="Resize graph column"
         data-testid="handle-graph"
       ></span>
-      <span class="gh-message">Message</span>
+      <span class="gh-message" title={filePathFilter.trim() || "Message"}>
+        {filePathFilter.trim() ? `Path: ${filePathFilter.trim()}` : "Message"}
+      </span>
       {#if shownColumns.author}
         <span class="gh-author" style:width="{authorCol.width}px">
           <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -2836,7 +2879,8 @@
     font-weight: 400;
   }
 
-  .bf-search {
+  .bf-search,
+  .bf-path-search {
     margin: 6px;
     padding: 4px 8px;
     border: 1px solid var(--divider);

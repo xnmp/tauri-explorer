@@ -1882,6 +1882,7 @@ const mockCommands: Record<string, CommandHandler> = {
         branches?: string[];
         exclude_branches?: string[];
         cursor?: string;
+        file_path?: string;
       } | null) ?? {};
     const skip = Math.max(0, options.skip ?? 0);
     const limit = Math.max(1, options.limit ?? 500);
@@ -1922,6 +1923,16 @@ const mockCommands: Record<string, CommandHandler> = {
       all = all.filter((c) =>
         "stash" in c ? reachable.has(c.parents[0]) : reachable.has(c.oid),
       );
+    }
+    if (options.file_path?.trim()) {
+      const path = options.file_path.trim();
+      all = all.filter((commit) => {
+        if ("stash" in commit) return false;
+        const n = parseInt(commit.oid.slice(0, 4), 16);
+        if (n === 12) return path === "src/feature-x.ts" || path === "src/index.ts";
+        if (n === 11) return path === MOCK_LONG_COMMIT_FILE_PATH;
+        return path === `src/file-${n}.ts`;
+      });
     }
     // Cursor resume (#431): mirror the backend — discard up to and including
     // the cursor OID (a real commit), then take `limit`. Falls back to `skip`

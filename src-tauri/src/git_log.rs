@@ -123,6 +123,9 @@ pub struct GitLogOptions {
     /// `branches` is set (an explicit selection wins).
     #[serde(default)]
     pub local_only: bool,
+    /// Repository-relative path whose touching commits should be returned.
+    /// `None` / blank = no path filter (#529).
+    pub file_path: Option<String>,
     /// Resume hint (#431): OID of the last real commit of the previous page
     /// (the previous page's `next_cursor`). When set, the walk seeds from the
     /// same tips but discards every commit up to *and including* this OID, then
@@ -177,6 +180,24 @@ fn short_oid(oid: Oid) -> String {
     // 7 hex chars matches git's default abbreviation.
     let s = oid.to_string();
     s.chars().take(7).collect()
+}
+
+/// Whether `commit` changed the exact repository-relative path compared with
+/// its first parent. Root commits compare against an empty tree, matching the
+/// changed-files detail seam used by the graph.
+fn commit_touches_path(
+    repo: &Repository,
+    commit: &git2::Commit<'_>,
+    file_path: &str,
+) -> Result<bool, AppError> {
+    let tree = commit.tree().map_err(to_app_err)?;
+    let parent_tree = commit.parent(0).ok().and_then(|parent| parent.tree().ok());
+    let mut options = git2::DiffOptions::new();
+    options.pathspec(file_path).disable_pathspec_match(true);
+    let diff = repo
+        .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut options))
+        .map_err(to_app_err)?;
+    Ok(diff.deltas().next().is_some())
 }
 
 /// Build the OID → decorations map for the whole repo. Cheap relative to the
@@ -368,6 +389,11 @@ fn build_log(
     // is treated as "no cursor" (fall back to skip) rather than erroring.
     let cursor_oid = opts.cursor.as_deref().and_then(|s| Oid::from_str(s).ok());
     let mut passed_cursor = cursor_oid.is_none();
+    let file_path = opts
+        .file_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty());
 
     for (i, step) in walk.enumerate() {
         // Cooperative cancellation — check periodically to avoid overhead.
@@ -384,17 +410,23 @@ fn build_log(
                 }
                 continue;
             }
-        } else if skipped < opts.skip {
+        }
+
+        let commit = repo.find_commit(oid).map_err(to_app_err)?;
+        if let Some(path) = file_path {
+            if !commit_touches_path(repo, &commit, path)? {
+                continue;
+            }
+        }
+        if cursor_oid.is_none() && skipped < opts.skip {
             skipped += 1;
             continue;
         }
         if commits.len() == limit {
-            // One extra step proves there is a next page without fetching it.
+            // One extra matching step proves there is a next page.
             has_more = true;
             break;
         }
-
-        let commit = repo.find_commit(oid).map_err(to_app_err)?;
         let author = commit.author();
         commits.push(CommitInfo {
             oid: oid.to_string(),
@@ -409,6 +441,19 @@ fn build_log(
     }
 
     let next_cursor = commits.last().map(|c| c.oid.clone());
+    let stashes = if let Some(path) = file_path {
+        stashes
+            .into_iter()
+            .filter(|(_, _, oid)| {
+                repo.find_commit(*oid)
+                    .ok()
+                    .and_then(|commit| commit_touches_path(repo, &commit, path).ok())
+                    .unwrap_or(false)
+            })
+            .collect()
+    } else {
+        stashes
+    };
     weave_stashes(&mut commits, stashes, repo);
     let refs = collect_decorations(repo)?;
 
@@ -974,6 +1019,77 @@ mod tests {
         };
         let empty = build_log(&repo, &opts, Vec::new(), &no_cancel()).unwrap();
         assert!(empty.commits.is_empty());
+    }
+
+    #[test]
+    fn git_log_file_path_filter_returns_only_commits_that_touch_the_path() {
+        let (dir, repo) = init_repo();
+        let p = dir.path().to_path_buf();
+        write(&p, "tracked.txt", "one");
+        let first = commit(&repo, "add tracked file", &[]);
+        write(&p, "other.txt", "unrelated");
+        let second = commit(&repo, "change another file", &[first]);
+        write(&p, "tracked.txt", "two");
+        let third = commit(&repo, "update tracked file", &[second]);
+
+        let filtered = build_log(
+            &repo,
+            &GitLogOptions {
+                file_path: Some("tracked.txt".into()),
+                ..Default::default()
+            },
+            Vec::new(),
+            &no_cancel(),
+        )
+        .unwrap();
+        let summaries: Vec<_> = filtered
+            .commits
+            .iter()
+            .map(|commit| commit.summary.as_str())
+            .collect();
+        assert_eq!(summaries, vec!["update tracked file", "add tracked file"]);
+
+        // A stash attached to a matching base is not itself a match when its
+        // own first-parent diff only changes another path.
+        write(&p, "other.txt", "stashed change");
+        let unrelated_stash = commit(&repo, "unrelated stash", &[third]);
+        repo.find_reference("refs/heads/main")
+            .unwrap()
+            .set_target(third, "restore branch after synthetic stash")
+            .unwrap();
+        let filtered_with_stash = build_log(
+            &repo,
+            &GitLogOptions {
+                file_path: Some("tracked.txt".into()),
+                ..Default::default()
+            },
+            vec![(0, "unrelated stash".into(), unrelated_stash)],
+            &no_cancel(),
+        )
+        .unwrap();
+        assert!(
+            filtered_with_stash
+                .commits
+                .iter()
+                .all(|commit| commit.stash.is_none()),
+            "a stash that did not touch the path leaked into filtered history"
+        );
+
+        let cleared = build_log(
+            &repo,
+            &GitLogOptions {
+                file_path: Some("  ".into()),
+                ..Default::default()
+            },
+            Vec::new(),
+            &no_cancel(),
+        )
+        .unwrap();
+        assert_eq!(
+            cleared.commits.len(),
+            3,
+            "blank path must restore all commits"
+        );
     }
 
     #[test]

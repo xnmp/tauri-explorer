@@ -70,6 +70,8 @@ export interface GitLogOptions {
   /** Seed from HEAD + local branches only, hiding history reachable solely
    *  from remote-tracking branches (#381). Ignored when `branches` is set. */
   local_only?: boolean;
+  /** Repository-relative path whose touching commits should be returned. */
+  file_path?: string;
 }
 
 export interface GitRef {

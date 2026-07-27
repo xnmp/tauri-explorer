@@ -159,7 +159,10 @@ backend for E2E/browser).
 ## Git SCM panel
 - `components/ScmSidebarView.svelte` — staged/unstaged/untracked tree, commit box
 - `components/ScmPanel.svelte`, `components/ScmDiffView.svelte` — panel shell + inline diff. ScmPanel renders docked/flat by default (like the miller bar); `island` prop opts into floating-island chrome (#434) — vibrancy alone no longer floats it.
-- `components/GitGraphView.svelte` — commit graph / log
+- `components/GitGraphView.svelte` — commit graph / log; its filter popover
+  carries an ephemeral file-path query through `state/git-graph-cache.ts` to
+  `git_log`, so pagination filters the complete history instead of only rows
+  already loaded in the browser (#529)
 - `state/scm.svelte.ts` — per-pane stores via `getScmStore(paneId)` (#334): repo state, stage/commit actions; shared summary cache + `warmScmSummary`
 - `state/git-summary-cache.ts` — shared per-repo `git_status` fetch (in-flight dedup + short TTL, #431): SCM `refreshSummary` (force), GitGraphView `fetchPage0Snapshot` + uncommitted-row selection route through it, so one `git-status-changed` is one working-tree scan, not several
 - panel VISIBILITY is also per-pane (#434): `window-tabs.svelte.ts` `getPaneScmVisible`/`toggleScmInActivePane` on the pane node (falls back to the global `showScmPanel` default); the `view.toggleScmPanel` command (`view-commands.ts`) acts on the active pane only

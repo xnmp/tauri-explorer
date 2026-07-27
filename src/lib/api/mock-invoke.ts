@@ -1914,6 +1914,9 @@ const mockCommands: Record<string, CommandHandler> = {
       remote_branches: [
         { name: "origin/main", target: tip },
         { name: "origin/hotfix", target: fullOid(13) },
+        // Remote-only (no local `legacy-import`): decorates commit 8 in
+        // MOCK_GRAPH_REFS, so the branch list has to list it too (#515).
+        { name: "origin/legacy-import", target: fullOid(8) },
       ],
       tags: [
         { name: "v1.0", target: fullOid(5) },

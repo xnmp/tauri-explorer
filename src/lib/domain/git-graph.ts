@@ -509,7 +509,14 @@ export interface BranchListEntry {
  *  (`origin/feat/x` with no local `feat/x`). Matching is by name, the same
  *  rule `groupRefChips` uses to nest remotes under their local branch. */
 export function remoteOnlyBranchNames(branches: readonly BranchListEntry[]): string[] {
-  throw new Error("remoteOnlyBranchNames: not implemented");
+  const locals = new Set(branches.filter((b) => !b.remote).map((b) => b.name));
+  return [
+    ...new Set(
+      branches
+        .filter((b) => b.remote && !locals.has(splitRemoteRef(b.name).branch))
+        .map((b) => b.name),
+    ),
+  ];
 }
 
 /** Branch names the graph should walk, given the per-branch/author selection
@@ -522,7 +529,13 @@ export function effectiveBranchSelection(
   selected: readonly string[] | null,
   hideRemoteOnly: boolean,
 ): string[] | null {
-  throw new Error("effectiveBranchSelection: not implemented");
+  if (!hideRemoteOnly) return selected === null ? null : [...selected];
+  const hidden = new Set(remoteOnlyBranchNames(branches));
+  // No branch list yet (the popover loads it lazily) or nothing to hide: keep
+  // the caller's selection rather than inventing an empty one.
+  if (hidden.size === 0) return selected === null ? null : [...selected];
+  const base = selected ?? branches.map((b) => b.name);
+  return base.filter((name) => !hidden.has(name));
 }
 
 // ─── PR badges (#448) ────────────────────────────────────────────────────────

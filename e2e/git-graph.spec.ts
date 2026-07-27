@@ -331,25 +331,37 @@ test.describe("Git graph tab", () => {
         .filter({ has: page.getByText(name, { exact: true }) })
         .locator("input");
     const hideRemoteOnly = popover.locator('[data-testid="bf-hide-remote-only"] input');
+    const search = popover.locator(".bf-search");
+    const backdrop = page.locator('[aria-label="Close branch filter"]');
 
-    // AC 1: the toggle exists, is off, and the remote-only branch is shown.
+    // AC 1: the toggle exists, is off, and the remote-only branch is listed
+    // and selected.
     await expect(hideRemoteOnly).not.toBeChecked();
     await expect(branchBox("origin/legacy-import")).toBeChecked();
     await expect(branchBox("main")).toBeChecked();
+    await expect(branchBox("feature")).toBeChecked();
+    // The full list is taller than the 320px popover; narrow it to the remote
+    // refs this criterion is about so they and the toggle fit in one frame.
+    await search.fill("origin");
+    await expect(branchBox("origin/legacy-import")).toBeChecked();
+    await expect(branchBox("origin/main")).toBeChecked();
+    await expect(branchBox("origin/hotfix")).toBeChecked();
     await page.screenshot({ path: "evidence/ac-1-toggle-off.png" });
 
     // AC 2: one click hides every remote ref with no local counterpart, and
     // leaves locals + tracked remotes (origin/main, origin/hotfix) selected.
     await hideRemoteOnly.click();
     await expect(branchBox("origin/legacy-import")).not.toBeChecked();
-    await expect(branchBox("main")).toBeChecked();
-    await expect(branchBox("feature")).toBeChecked();
     await expect(branchBox("origin/main")).toBeChecked();
     await expect(branchBox("origin/hotfix")).toBeChecked();
     await expect(filterBtn).toHaveClass(/filtered/);
-    // Local history is untouched: main's tip and the stash are still drawn.
+    // Local history is untouched: main's tip is still drawn.
     await expect(view.locator(".commit-row").filter({ hasText: "Merge hotfix into main" })).toHaveCount(1);
     await page.screenshot({ path: "evidence/ac-2-toggle-on.png" });
+    // …and the local branches the search box was hiding are still selected.
+    await search.fill("");
+    await expect(branchBox("main")).toBeChecked();
+    await expect(branchBox("feature")).toBeChecked();
 
     // AC 3: narrow the per-branch filter to the remote-only branch alone —
     // the graph reduces to its ancestry (8 commits + the uncommitted row).
@@ -363,16 +375,23 @@ test.describe("Git graph tab", () => {
     await expect(view.locator(".commit-row")).toHaveCount(9);
     await expect(view.locator(".commit-row").filter({ hasText: "Refactor config loader" })).toHaveCount(1);
     await expect(view.locator(".commit-row").filter({ hasText: "Merge hotfix into main" })).toHaveCount(0);
+    // Close the popover so the shot shows the graph it is describing.
+    await backdrop.click();
+    await expect(view.locator(".commit-row")).toHaveCount(9);
     await page.screenshot({ path: "evidence/ac-3-remote-only-history.png" });
 
     // AC 4: with the toggle on, that history is gone from the graph — the
     // toggle changes what the graph walks, not just the checkbox UI.
+    await filterBtn.click();
     await hideRemoteOnly.click();
     await expect(view.locator(".commit-row")).toHaveCount(0);
     await expect(view.locator(".commit-row").filter({ hasText: "Refactor config loader" })).toHaveCount(0);
+    await backdrop.click();
+    await expect(view.locator(".commit-row")).toHaveCount(0);
     await page.screenshot({ path: "evidence/ac-4-history-hidden.png" });
 
     // Reversible: turning it off restores the same rows.
+    await filterBtn.click();
     await hideRemoteOnly.click();
     await expect(view.locator(".commit-row")).toHaveCount(9);
 

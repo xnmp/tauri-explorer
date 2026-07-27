@@ -45,10 +45,18 @@ const GRAPH_CACHE_MAX = 8;
 
 /** Cache key: filtered views are cached too (#416) — keyed by their filter
  *  so a remount with the same filter paints instantly and can never flash
- *  another filter's rows (#342). The repo path is the segment before the first
- *  `|`, which the eviction pass relies on. */
-export function snapshotKey(repoPath: string, branches: string[] | null, localOnly: boolean): string {
-  return `${repoPath}|${localOnly ? "local" : ""}|${branches ? branches.join("\n") : "*"}`;
+ *  another filter's rows (#342). The local-only (#381) and hide-remote-only
+ *  (#515) toggles change what the walk seeds from, so they are part of the key
+ *  too. The repo path is the segment before the first `|`, which the eviction
+ *  pass relies on. */
+export function snapshotKey(
+  repoPath: string,
+  branches: string[] | null,
+  localOnly: boolean,
+  hideRemoteOnly = false,
+): string {
+  const mode = `${localOnly ? "local" : ""}${hideRemoteOnly ? "-noremoteonly" : ""}`;
+  return `${repoPath}|${mode}|${branches ? branches.join("\n") : "*"}`;
 }
 
 /** Repo path portion of a snapshot key (segment before the first `|`). */

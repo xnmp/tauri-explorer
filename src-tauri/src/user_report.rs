@@ -280,8 +280,8 @@ mod tests {
         assemble_issue_body, send_report, validate_draft, Environment, RelayRequest,
         MAX_RELAY_BODY_UNITS,
     };
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::{Shutdown, TcpListener};
 
     #[test]
     fn user_report_body_contains_description_contact_environment_and_log_tail() {
@@ -372,14 +372,30 @@ mod tests {
         let status = status.to_string();
         std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0_u8; 4096];
-            let _ = stream.read(&mut request);
-            write!(
-                stream,
+            let mut reader = BufReader::new(&mut stream);
+            let mut content_length = 0;
+            loop {
+                let mut header = String::new();
+                reader.read_line(&mut header).unwrap();
+                if header == "\r\n" {
+                    break;
+                }
+                if let Some((name, value)) = header.split_once(':') {
+                    if name.eq_ignore_ascii_case("content-length") {
+                        content_length = value.trim().parse().unwrap();
+                    }
+                }
+            }
+            let mut request_body = vec![0_u8; content_length];
+            reader.read_exact(&mut request_body).unwrap();
+            drop(reader);
+
+            let response = format!(
                 "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response_body}",
                 response_body.len()
-            )
-            .unwrap();
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+            stream.shutdown(Shutdown::Write).unwrap();
         });
         endpoint
     }

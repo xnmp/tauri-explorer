@@ -31,6 +31,31 @@ for (const command of ["Report a Bug", "Request a Feature"]) {
   });
 }
 
+test("report dialog footer buttons use the themed control treatment", async ({ page }) => {
+  await page.goto("/");
+  await waitForEntries(page);
+
+  await runPaletteCommand(page, "Report a Bug");
+  const dialog = page.getByRole("dialog", { name: /report a bug/i });
+  const cancel = dialog.getByRole("button", { name: "Cancel" });
+  const submit = dialog.getByRole("button", { name: "Submit" });
+  const styles = await Promise.all([cancel, submit].map((button) => button.evaluate((element) => {
+    const computed = getComputedStyle(element);
+    return {
+      borderRadius: computed.borderRadius,
+      borderStyle: computed.borderStyle,
+      backgroundColor: computed.backgroundColor,
+    };
+  })));
+
+  expect(styles[0].borderRadius).not.toBe("0px");
+  expect(styles[0].borderStyle).toBe("solid");
+  expect(styles[0].backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+  expect(styles[1].borderRadius).not.toBe("0px");
+  expect(styles[1].backgroundColor).not.toBe(styles[0].backgroundColor);
+  await page.screenshot({ path: "evidence/ac-1-report-dialog-buttons.png" });
+});
+
 test("failed submission preserves the draft in the GitHub fallback", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);

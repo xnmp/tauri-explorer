@@ -353,6 +353,9 @@ fn get_git_status_sync(path: &str, cancelled: &AtomicBool) -> Result<GitStatusRe
             None
         }
         Err(e) => {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(e);
+            }
             log::warn!("gitstat: rev-parse spawn failed for {path}: {e}");
             None
         }
@@ -579,6 +582,16 @@ mod tests {
         let resp = status_of(dir.path());
         assert!(!resp.is_git_repo);
         assert!(resp.statuses.is_empty());
+    }
+
+    #[test]
+    fn cancelled_scan_returns_an_error_instead_of_not_a_repo() {
+        let dir = TempDir::new().unwrap();
+        let cancelled = AtomicBool::new(true);
+        let error = get_git_status_sync(dir.path().to_str().unwrap(), &cancelled)
+            .expect_err("cancelled status must not publish a repository classification");
+
+        assert!(error.to_string().contains("cancelled"));
     }
 
     /// Manual diagnostic for #424: run the badge-status path directly against

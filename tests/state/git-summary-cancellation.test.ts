@@ -23,7 +23,7 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function summary(): { ok: true; data: GitStatusSummary } {
+function summary(marker?: string): { ok: true; data: GitStatusSummary } {
   return {
     ok: true,
     data: {
@@ -31,7 +31,9 @@ function summary(): { ok: true; data: GitStatusSummary } {
       repo_root: "/repo",
       branch: "main",
       detached: false,
-      staged: [],
+      staged: marker
+        ? [{ path: marker, status: "Added", old_path: null }]
+        : [],
       changes: [],
       untracked: [],
       merge: [],
@@ -67,5 +69,26 @@ describe("shared SCM status ownership", () => {
 
     response.resolve(summary());
     await Promise.all([first, second]);
+  });
+
+  it("does not let an older passive scan overwrite a newer forced result", async () => {
+    const passiveResponse = deferred<ReturnType<typeof summary>>();
+    const forcedResponse = deferred<ReturnType<typeof summary>>();
+    gitSummaryMock
+      .mockReturnValueOnce(passiveResponse.promise)
+      .mockReturnValueOnce(forcedResponse.promise);
+    const cache = await import("$lib/state/git-summary-cache");
+
+    const passive = cache.fetchGitSummary("/repo");
+    const forced = cache.fetchGitSummary("/repo", { force: true });
+
+    forcedResponse.resolve(summary("POST-MUTATION"));
+    await forced;
+    passiveResponse.resolve(summary("PRE-MUTATION"));
+    await passive;
+
+    const cached = await cache.fetchGitSummary("/repo");
+    expect(gitSummaryMock).toHaveBeenCalledTimes(2);
+    expect(cached.ok && cached.data.staged[0].path).toBe("POST-MUTATION");
   });
 });

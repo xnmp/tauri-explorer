@@ -64,11 +64,13 @@ interface FlightEntry {
   consumers: Set<string>;
   hasUnownedConsumer: boolean;
   cancelled: boolean;
+  generation: number;
 }
 
 const cache = new Map<string, CacheEntry>();
 const inFlight = new Map<string, FlightEntry>();
 const allFlights = new Map<string, Set<FlightEntry>>();
+const latestGeneration = new Map<string, number>();
 
 /**
  * Fetch a repo's working-tree summary, deduped and short-TTL cached.
@@ -115,17 +117,25 @@ function startScan(
   consumerId?: string,
 ): Promise<ApiResult<GitStatusSummary>> {
   const taskId = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
+  const generation = (latestGeneration.get(key) ?? 0) + 1;
+  latestGeneration.set(key, generation);
   const flight = {
     taskId,
     forced,
     consumers: new Set<string>(),
     hasUnownedConsumer: false,
     cancelled: false,
+    generation,
   } as FlightEntry;
   addConsumer(flight, consumerId);
   const promise = gitSummary(key, taskId)
     .then((result) => {
-      if (!flight.cancelled) cache.set(key, { at: Date.now(), result });
+      if (
+        !flight.cancelled
+        && latestGeneration.get(key) === flight.generation
+      ) {
+        cache.set(key, { at: Date.now(), result });
+      }
       return result;
     })
     .finally(() => {
@@ -172,6 +182,13 @@ export function releaseGitSummaryConsumer(consumerId: string): void {
 
 /** Drop a repo's cached scan (or all repos when omitted). */
 export function invalidateGitSummary(repoPath?: string): void {
-  if (repoPath) cache.delete(repoPath);
-  else cache.clear();
+  if (repoPath) {
+    cache.delete(repoPath);
+    latestGeneration.set(repoPath, (latestGeneration.get(repoPath) ?? 0) + 1);
+  } else {
+    cache.clear();
+    for (const key of latestGeneration.keys()) {
+      latestGeneration.set(key, (latestGeneration.get(key) ?? 0) + 1);
+    }
+  }
 }

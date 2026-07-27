@@ -156,6 +156,7 @@ function createScmStore(consumerId: string) {
 
   async function setActivePath(path: string): Promise<void> {
     if (path === activePath) return;
+    const summaryWasLoading = loading && repoRoot !== null;
     refreshGeneration++;
     releaseGitSummaryConsumer(consumerId);
     activePath = path;
@@ -175,7 +176,14 @@ function createScmStore(consumerId: string) {
     }
     detecting = false;
     if (detected === repoRoot) {
-      loading = false;
+      if (summaryWasLoading) {
+        // The old path's owned request was cancelled above. A same-repository
+        // navigation still needs a replacement request; otherwise the store
+        // remains empty/stale until an unrelated watcher event.
+        await refreshSummary();
+      } else {
+        loading = false;
+      }
       return;
     }
 

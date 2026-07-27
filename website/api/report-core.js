@@ -2,11 +2,11 @@
 /** @typedef {{ consume(entries: LimitEntry[], now?: number): Promise<string | undefined> }} RateLimitStore */
 /** @typedef {{ title: string, body: string, kind: "bug" | "feature", contact: string, version: string, os: string, arch: string }} ValidReport */
 
-const LIMITS = [
+const IP_LIMITS = [
   { scope: "burst", limit: 3, windowMs: 60_000 },
   { scope: "hour", limit: 10, windowMs: 60 * 60_000 },
-  { scope: "day", limit: 100, windowMs: 24 * 60 * 60_000, global: true },
 ];
+const DAILY_LIMIT = { scope: "day", limit: 100, windowMs: 24 * 60 * 60_000 };
 
 export class ReportError extends Error {
   /** @param {string} code @param {string} message @param {number} [status] */
@@ -131,15 +131,21 @@ return blocked`;
 /** @param {RateLimitStore} store @param {string} ipKey @param {number} [now] */
 export async function enforceReportLimits(store, ipKey, now = Date.now()) {
   const day = new Date(now).toISOString().slice(0, 10);
-  const entries = LIMITS.map((limit) => ({
+  const ipEntries = IP_LIMITS.map((limit) => ({
     ...limit,
-    key: limit.global ? `reports:global:${day}` : `reports:${limit.scope}:${ipKey}`,
+    key: `reports:${limit.scope}:${ipKey}`,
   }));
-  const blocked = await store.consume(entries, now);
-  if (blocked === "day") {
+  const ipBlocked = await store.consume(ipEntries, now);
+  if (ipBlocked) {
+    throw new ReportError("rate_limited", "Too many reports; please try later", 429);
+  }
+  const globalBlocked = await store.consume([{
+    ...DAILY_LIMIT,
+    key: `reports:global:${day}`,
+  }], now);
+  if (globalBlocked) {
     throw new ReportError("daily_cap", "Reports are temporarily unavailable", 429);
   }
-  if (blocked) throw new ReportError("rate_limited", "Too many reports; please try later", 429);
 }
 
 /** @param {unknown} input @param {string} ipKey @param {RateLimitStore} store @param {(issue: ReturnType<typeof buildGitHubIssue>) => Promise<{url: string, number: number}>} createIssue @param {number} [now] @returns {Promise<{accepted: true, honeypot: true} | {url: string, number: number}>} */

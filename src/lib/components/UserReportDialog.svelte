@@ -56,8 +56,17 @@
         "error",
         { duration: 6000 },
       );
+      const fallbackUrl = userReportFallbackUrl(draft);
+      if (!fallbackUrl) {
+        toastStore.show(
+          "Report is too long for GitHub’s browser form — your report is still here. Copy it and try again.",
+          "error",
+          { duration: 8000 },
+        );
+        return;
+      }
       try {
-        await openExternalUrl(userReportFallbackUrl(draft));
+        await openExternalUrl(fallbackUrl);
         onClose();
       } catch {
         toastStore.show(

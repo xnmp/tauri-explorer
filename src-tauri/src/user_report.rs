@@ -181,19 +181,11 @@ fn validate_draft(
     Ok(())
 }
 
-fn map_relay_error(error: ureq::Error) -> SubmitReportError {
-    match error {
-        ureq::Error::StatusCode(429) => {
-            SubmitReportError::new("rate_limited", "Too many reports; please try later")
-        }
-        ureq::Error::StatusCode(_) => {
-            SubmitReportError::new("server_rejected", "The report service rejected the report")
-        }
-        _ => SubmitReportError::new(
-            "network_unreachable",
-            "The report service could not be reached",
-        ),
-    }
+fn map_transport_error(_error: ureq::Error) -> SubmitReportError {
+    SubmitReportError::new(
+        "network_unreachable",
+        "The report service could not be reached",
+    )
 }
 
 fn send_report(
@@ -206,7 +198,7 @@ fn send_report(
         .http_status_as_error(false)
         .build()
         .send_json(payload)
-        .map_err(map_relay_error)?;
+        .map_err(map_transport_error)?;
     if !response.status().is_success() {
         let fallback_kind = if response.status().as_u16() == 429 {
             "rate_limited"

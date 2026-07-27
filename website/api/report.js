@@ -6,7 +6,8 @@ import {
   processReport,
 } from "./report-core.js";
 
-/** @typedef {{status(code: number): HttpResponse, setHeader(name: string, value: string): HttpResponse, json(payload: unknown): HttpResponse}} HttpResponse */
+/** @typedef {{status(code: number): HttpResponse, setHeader(name: string, value: string): HttpResponse, json(payload: unknown): HttpResponse, end(): HttpResponse}} HttpResponse */
+/** @typedef {Record<string, string | string[] | undefined>} RequestHeaders */
 const localStore = createInMemoryRateLimitStore();
 
 /** @param {HttpResponse} response @param {number} status @param {unknown} payload */
@@ -45,19 +46,34 @@ async function createGitHubIssue(issue) {
   return { url: payload.html_url, number: payload.number };
 }
 
-/** @param {{method?: string, headers: Record<string, string | string[] | undefined>, socket?: {remoteAddress?: string}, body?: unknown}} request @param {HttpResponse} response */
+/** @param {string | string[] | undefined} value */
+function forwardedTail(value) {
+  const combined = Array.isArray(value) ? value.join(",") : value;
+  return combined?.split(",").map((part) => part.trim()).filter(Boolean).at(-1);
+}
+
+/** @param {RequestHeaders} headers @param {string} [remoteAddress] */
+export function reporterIp(headers, remoteAddress) {
+  return forwardedTail(headers["x-vercel-forwarded-for"])
+    ?? forwardedTail(headers["x-forwarded-for"])
+    ?? remoteAddress
+    ?? "unknown";
+}
+
+/** @param {{method?: string, headers: RequestHeaders, socket?: {remoteAddress?: string}, body?: unknown}} request @param {HttpResponse} response */
 export default async function handler(request, response) {
   if (request.method !== "POST") {
     response.setHeader("Allow", "POST");
     return json(response, 405, { error: { code: "method_not_allowed", message: "POST required" } });
   }
   try {
-    const forwarded = request.headers["x-forwarded-for"];
-    const ip = (Array.isArray(forwarded) ? forwarded[0] : forwarded?.split(",")[0])
-      || request.socket?.remoteAddress || "unknown";
+    const ip = reporterIp(request.headers, request.socket?.remoteAddress);
     const ipKey = createHash("sha256").update(ip).digest("hex").slice(0, 24);
     const result = await processReport(request.body, ipKey, rateLimitStore(), createGitHubIssue);
-    if ("honeypot" in result) return json(response, 200, { url: "", number: 0 });
+    if ("honeypot" in result) {
+      response.status(204).setHeader("Cache-Control", "no-store").end();
+      return;
+    }
     return json(response, 200, result);
   } catch (error) {
     const typed = error instanceof ReportError

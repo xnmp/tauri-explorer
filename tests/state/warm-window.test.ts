@@ -25,10 +25,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const evt = vi.hoisted(() => ({
   emitToCalls: [] as Array<{ label: string; event: string; payload: unknown }>,
   emitToFails: false,
+  listener: undefined as ((event: { payload: unknown }) => Promise<void>) | undefined,
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async () => () => {}),
+  listen: vi.fn(async (_event: string, handler: (event: { payload: unknown }) => Promise<void>) => {
+    evt.listener = handler;
+    return () => {};
+  }),
   emit: vi.fn(async () => {}),
   emitTo: vi.fn(async (label: string, event: string, payload: unknown) => {
     if (evt.emitToFails) throw new Error("window gone");
@@ -51,11 +55,32 @@ vi.mock("@tauri-apps/api/webviewWindow", () => ({
 }));
 
 // The claiming window's live geometry, mirrored into the activate payload.
-vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({
+const currentWindow = vi.hoisted(() => ({
+  calls: [] as string[],
+  title: "",
+  api: {
     outerPosition: async () => ({ x: 100, y: 200 }),
     outerSize: async () => ({ width: 1000, height: 700 }),
-  }),
+    setTitle: vi.fn(async (title: string) => {
+      currentWindow.title = title;
+      currentWindow.calls.push(`title:${title}`);
+    }),
+    show: vi.fn(async () => currentWindow.calls.push("show")),
+    setPosition: vi.fn(async () => {}),
+    setSize: vi.fn(async () => {}),
+    setSkipTaskbar: vi.fn(async () => {}),
+    unminimize: vi.fn(async () => {}),
+    setFocus: vi.fn(async () => {}),
+    setAlwaysOnTop: vi.fn(async () => {}),
+    label: "explorer-warm-123",
+  },
+}));
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => currentWindow.api,
+}));
+vi.mock("@tauri-apps/api/dpi", () => ({
+  PhysicalPosition: vi.fn(function (x: number, y: number) { return { x, y }; }),
+  PhysicalSize: vi.fn(function (width: number, height: number) { return { width, height }; }),
 }));
 
 // Fake of the Rust warm_pool registry: single global pool, atomic claim.
@@ -91,7 +116,13 @@ vi.mock(import("$lib/api/common"), async (orig) => {
 
 // window-tabs is heavy; stub the one method warm-window calls.
 vi.mock("../../src/lib/state/window-tabs.svelte", () => ({
-  windowTabsManager: { getActiveExplorer: () => ({ currentPath: "/home/user" }) },
+  windowTabsManager: {
+    getActiveExplorer: () => ({
+      currentPath: "/home/user",
+      navigateTo: vi.fn(async () => {}),
+      setViewMode: vi.fn(),
+    }),
+  },
 }));
 
 // Appearance/settings/theme pull in persisted stores; irrelevant to pool
@@ -109,6 +140,7 @@ vi.mock("../../src/lib/state/theme.svelte", () => ({
 
 import {
   consumeWarmWindow,
+  runWarmWindow,
   spawnWarmWindow,
   WARM_ACTIVATE_EVENT,
   type WarmActivatePayload,
@@ -117,7 +149,10 @@ import {
 beforeEach(() => {
   evt.emitToCalls.length = 0;
   evt.emitToFails = false;
+  evt.listener = undefined;
   created.calls.length = 0;
+  currentWindow.calls.length = 0;
+  currentWindow.title = "";
   pool.ready.length = 0;
   pool.discarded.length = 0;
   pool.spawnAllowed = true;
@@ -191,11 +226,28 @@ describe("warm-window spawn contract", () => {
     expect(created.calls[0].label.startsWith("explorer-warm-")).toBe(true);
     expect(created.calls[0].options.visible).toBe(false);
     expect(String(created.calls[0].options.url)).toContain("warm=1");
+    expect(created.calls[0].options.title).toBe("user - Tauri Explorer");
   });
 
   it("creates nothing when the pool refuses (already full)", async () => {
     pool.spawnAllowed = false;
     await spawnWarmWindow();
     expect(created.calls).toHaveLength(0);
+  });
+});
+
+describe("warm-window reveal contract", () => {
+  it("sets the requested title before a claimed window becomes visible", async () => {
+    await runWarmWindow(false);
+    expect(evt.listener).toBeTypeOf("function");
+
+    await evt.listener!({
+      payload: { path: "/work/beta" } satisfies WarmActivatePayload,
+    });
+
+    expect(currentWindow.calls.slice(0, 2)).toEqual([
+      "title:beta - Tauri Explorer",
+      "show",
+    ]);
   });
 });

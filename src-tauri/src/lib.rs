@@ -53,6 +53,24 @@ use system::{
 };
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
+#[cfg(test)]
+mod window_title_tests {
+    use super::window_title;
+    use std::path::Path;
+
+    #[test]
+    fn window_title_formats_initial_cwd_without_a_generic_flash() {
+        let home = Path::new("/home/alice");
+        assert_eq!(
+            window_title(Path::new("/work/tauri-explorer"), home),
+            "tauri-explorer - Tauri Explorer"
+        );
+        assert_eq!(window_title(home, home), "~ - Tauri Explorer");
+        assert_eq!(window_title(Path::new("/"), home), "/ - Tauri Explorer");
+        assert_eq!(window_title(Path::new(""), home), "Tauri Explorer");
+    }
+}
+
 /// Minimal stdout logger for `#[ignore]`d diagnostic tests (git_status.rs,
 /// git.rs) run manually against a live WSL distro: `cargo test` normally has
 /// no `log` sink installed, so `gitstat:` lines would otherwise be silently

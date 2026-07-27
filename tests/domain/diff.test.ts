@@ -249,27 +249,29 @@ describe("extractDiffHunks", () => {
 
   it("repeats the file preamble and emits one complete trailing-newline patch per hunk", () => {
     const parsed = parseUnifiedDiff(patch);
+    const hunks = extractDiffHunks(patch, parsed.lines);
 
-    expect(parsed.hunks).toHaveLength(2);
-    for (const hunk of parsed.hunks) {
+    expect(hunks).toHaveLength(2);
+    for (const hunk of hunks) {
       expect(hunk.patch).toMatch(/^diff --git a\/example\.txt b\/example\.txt\n/);
       expect(hunk.patch).toContain("--- a/example.txt\n+++ b/example.txt\n");
       expect(hunk.patch.endsWith("\n")).toBe(true);
       expect(hunk.patch.match(/^@@ /gm)).toHaveLength(1);
     }
-    expect(parsed.hunks[0].patch).toContain("@@ -1,4 +1,4 @@");
-    expect(parsed.hunks[0].patch).not.toContain("@@ -20,2 +20,2 @@");
-    expect(parsed.hunks[1].patch).toContain("@@ -20,2 +20,2 @@");
+    expect(hunks[0].patch).toContain("@@ -1,4 +1,4 @@");
+    expect(hunks[0].patch).not.toContain("@@ -20,2 +20,2 @@");
+    expect(hunks[1].patch).toContain("@@ -20,2 +20,2 @@");
   });
 
   it("keeps no-newline markers on the final hunk and aligns patches to rendered headers", () => {
     const parsed = parseUnifiedDiff(patch);
+    const hunks = extractDiffHunks(patch, parsed.lines);
     const renderedHunkIndices = parsed.lines
       .filter((line) => line.kind === "hunk")
       .map((line) => line.index);
 
-    expect(parsed.hunks.map((hunk) => hunk.lineIndex)).toEqual(renderedHunkIndices);
-    expect(parsed.hunks[1].patch.match(/\\ No newline at end of file/g)).toHaveLength(2);
+    expect(hunks.map((hunk) => hunk.lineIndex)).toEqual(renderedHunkIndices);
+    expect(hunks[1].patch.match(/\\ No newline at end of file/g)).toHaveLength(2);
   });
 
   it("returns no fragments when a diff has no hunk headers", () => {

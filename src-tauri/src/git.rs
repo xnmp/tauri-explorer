@@ -925,33 +925,157 @@ pub async fn git_init(path: String) -> Result<String, AppError> {
 /// Append `entry` to `.gitignore` at the repo root, creating the file if
 /// missing. Idempotent — does nothing if the entry is already present.
 /// Returns the relative path that was written.
+fn add_to_gitignore(root: &Path, entry: &str) -> Result<String, AppError> {
+    let normalized = entry
+        .trim_start_matches("./")
+        .trim_start_matches('/')
+        .to_string();
+    if normalized.is_empty() {
+        return Err(AppError::Other("ignore entry is empty".into()));
+    }
+    let gitignore_path = root.join(".gitignore");
+    let existing = std::fs::read_to_string(&gitignore_path).unwrap_or_default();
+    let already_present = existing.lines().map(|l| l.trim()).any(|l| l == normalized);
+    if already_present {
+        return Ok(normalized);
+    }
+    let needs_leading_newline = !existing.is_empty() && !existing.ends_with('\n');
+    let mut next = existing;
+    if needs_leading_newline {
+        next.push('\n');
+    }
+    next.push_str(&normalized);
+    next.push('\n');
+    std::fs::write(&gitignore_path, next.as_bytes())
+        .map_err(|e| AppError::Other(format!("failed to write .gitignore: {}", e)))?;
+    Ok(normalized)
+}
+
 #[tauri::command]
 pub async fn git_add_to_gitignore(repo_root: String, entry: String) -> Result<String, AppError> {
+    run_blocking(move |_cancel| add_to_gitignore(Path::new(&repo_root), &entry)).await
+}
+
+/// Validate that every requested path is a repo-relative, currently-untracked
+/// working-tree entry. SCM archive/trash actions only ever act on this set.
+fn untracked_worktree_paths(
+    repo: &Repository,
+    paths: &[String],
+) -> Result<(PathBuf, Vec<PathBuf>), AppError> {
+    if paths.is_empty() {
+        return Err(AppError::Other("no untracked paths were selected".into()));
+    }
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| AppError::Other("git: bare repository has no working tree".into()))?
+        .to_path_buf();
+    let mut relative_paths = Vec::with_capacity(paths.len());
+    let mut seen = HashSet::with_capacity(paths.len());
+    for path in paths {
+        let relative = Path::new(path);
+        if relative.as_os_str().is_empty()
+            || relative.is_absolute()
+            || relative.components().any(|component| {
+                matches!(
+                    component,
+                    std::path::Component::ParentDir
+                        | std::path::Component::RootDir
+                        | std::path::Component::Prefix(_)
+                )
+            })
+        {
+            return Err(AppError::InvalidPath(format!(
+                "expected a repo-relative path: {path}"
+            )));
+        }
+        let status = repo.status_file(relative).map_err(to_app_err)?;
+        if !status.contains(Status::WT_NEW) {
+            return Err(AppError::Other(format!(
+                "refusing to operate on non-untracked path: {path}"
+            )));
+        }
+        let relative = relative.to_path_buf();
+        if !seen.insert(relative.clone()) {
+            return Err(AppError::InvalidPath(format!(
+                "path was selected more than once: {path}"
+            )));
+        }
+        relative_paths.push(relative);
+    }
+    Ok((workdir, relative_paths))
+}
+
+/// Move selected untracked files into `.archive`, preserving their paths below
+/// the repository root so same-named files from different folders do not clash.
+#[tauri::command]
+pub async fn git_archive_untracked(repo_path: String, paths: Vec<String>) -> Result<(), AppError> {
     run_blocking(move |_cancel| {
-        let root = PathBuf::from(&repo_root);
-        let normalized = entry
-            .trim_start_matches("./")
-            .trim_start_matches('/')
-            .to_string();
-        if normalized.is_empty() {
-            return Err(AppError::Other("ignore entry is empty".into()));
+        let repo = open_repo(Path::new(&repo_path))?;
+        let (workdir, relative_paths) = untracked_worktree_paths(&repo, &paths)?;
+        if relative_paths
+            .iter()
+            .any(|path| path == Path::new(".gitignore"))
+        {
+            return Err(AppError::Other(
+                "refusing to archive .gitignore because .archive must remain ignored".into(),
+            ));
         }
-        let gitignore_path = root.join(".gitignore");
-        let existing = std::fs::read_to_string(&gitignore_path).unwrap_or_default();
-        let already_present = existing.lines().map(|l| l.trim()).any(|l| l == normalized);
-        if already_present {
-            return Ok(normalized);
+        let archive_root = workdir.join(".archive");
+        for relative in &relative_paths {
+            let destination = archive_root.join(relative);
+            if destination.exists() {
+                return Err(AppError::AlreadyExists(destination.display().to_string()));
+            }
         }
-        let needs_leading_newline = !existing.is_empty() && !existing.ends_with('\n');
-        let mut next = existing;
-        if needs_leading_newline {
-            next.push('\n');
+        let mut moved = Vec::with_capacity(relative_paths.len());
+        for relative in relative_paths {
+            let source = workdir.join(&relative);
+            let destination = archive_root.join(&relative);
+            let parent = destination
+                .parent()
+                .expect("archive destination has a parent");
+            if let Err(error) = std::fs::create_dir_all(parent)
+                .and_then(|()| std::fs::rename(&source, &destination))
+            {
+                for (moved_source, moved_destination) in moved.iter().rev() {
+                    let _ = std::fs::rename(moved_destination, moved_source);
+                }
+                return Err(AppError::Io(error));
+            }
+            moved.push((source, destination));
         }
-        next.push_str(&normalized);
-        next.push('\n');
-        std::fs::write(&gitignore_path, next.as_bytes())
-            .map_err(|e| AppError::Other(format!("failed to write .gitignore: {}", e)))?;
-        Ok(normalized)
+        if let Err(error) = add_to_gitignore(&workdir, ".archive") {
+            for (source, destination) in moved.iter().rev() {
+                let _ = std::fs::rename(destination, source);
+            }
+            return Err(error);
+        }
+        Ok(())
+    })
+    .await
+}
+
+/// Move selected untracked files to the operating system trash/recycle bin.
+#[tauri::command]
+pub async fn git_trash_untracked(repo_path: String, paths: Vec<String>) -> Result<(), AppError> {
+    run_blocking(move |_cancel| {
+        let repo = open_repo(Path::new(&repo_path))?;
+        let (workdir, relative_paths) = untracked_worktree_paths(&repo, &paths)?;
+        let mut failures = Vec::new();
+        for relative in relative_paths {
+            let path = workdir.join(relative);
+            if let Err(error) = crate::system::trash_or_remove(&path) {
+                failures.push(format!("{} ({error})", path.display()));
+            }
+        }
+        if !failures.is_empty() {
+            return Err(AppError::Other(format!(
+                "failed to move {} selected item(s) to trash: {}",
+                failures.len(),
+                failures.join(", ")
+            )));
+        }
+        Ok(())
     })
     .await
 }
@@ -1729,6 +1853,77 @@ mod tests {
         assert_eq!(s.untracked.len(), 1);
         assert_eq!(s.untracked[0].path, "new.txt");
         assert!(matches!(s.untracked[0].status, GitStatusCode::Untracked));
+    }
+
+    #[test]
+    fn archive_untracked_moves_files_below_archive_and_removes_them_from_status() {
+        let dir = init_repo();
+        write(dir.path(), ".gitignore", "");
+        commit_all(dir.path(), "ignore file");
+        write(dir.path(), "src/generated.ts", "export {};\n");
+        let path = dir.path().to_str().unwrap().to_string();
+
+        tokio_test_block(git_archive_untracked(path, vec!["src/generated.ts".into()])).unwrap();
+
+        assert!(!dir.path().join("src/generated.ts").exists());
+        assert!(dir.path().join(".archive/src/generated.ts").exists());
+        assert!(std::fs::read_to_string(dir.path().join(".gitignore"))
+            .unwrap()
+            .lines()
+            .any(|line| line == ".archive"));
+        assert!(sync_status(dir.path()).untracked.is_empty());
+    }
+
+    #[test]
+    fn archive_untracked_rejects_duplicate_or_gitignore_paths_without_moving_them() {
+        let dir = init_repo();
+        write(dir.path(), "scratch.txt", "keep me\n");
+        write(dir.path(), ".gitignore", "other\n");
+        let path = dir.path().to_str().unwrap().to_string();
+
+        let duplicate = tokio_test_block(git_archive_untracked(
+            path.clone(),
+            vec!["scratch.txt".into(), "scratch.txt".into()],
+        ));
+        assert!(matches!(duplicate, Err(AppError::InvalidPath(_))));
+        assert!(dir.path().join("scratch.txt").exists());
+
+        let gitignore = tokio_test_block(git_archive_untracked(path, vec![".gitignore".into()]));
+        assert!(
+            matches!(gitignore, Err(AppError::Other(message)) if message.contains(".gitignore"))
+        );
+        assert!(dir.path().join(".gitignore").exists());
+    }
+
+    #[test]
+    fn trash_untracked_moves_file_to_system_trash_and_leaves_worktree_clean() {
+        let dir = init_repo();
+        write(dir.path(), "scratch.txt", "discard me\n");
+        let path = dir.path().to_str().unwrap().to_string();
+
+        tokio_test_block(git_trash_untracked(path, vec!["scratch.txt".into()])).unwrap();
+
+        assert!(!dir.path().join("scratch.txt").exists());
+        assert!(sync_status(dir.path()).untracked.is_empty());
+    }
+
+    #[test]
+    fn trash_untracked_validates_the_whole_batch_before_moving_any_file() {
+        let dir = init_repo();
+        write(dir.path(), "tracked.txt", "tracked\n");
+        commit_all(dir.path(), "tracked");
+        write(dir.path(), "scratch.txt", "keep me\n");
+        let path = dir.path().to_str().unwrap().to_string();
+
+        let result = tokio_test_block(git_trash_untracked(
+            path,
+            vec!["scratch.txt".into(), "tracked.txt".into()],
+        ));
+
+        assert!(
+            matches!(result, Err(AppError::Other(message)) if message.contains("non-untracked"))
+        );
+        assert!(dir.path().join("scratch.txt").exists());
     }
 
     #[test]

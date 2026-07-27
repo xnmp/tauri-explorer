@@ -72,6 +72,9 @@ Anything whose failure mode involves races, watcher timing, git state, or cache 
 
 **E2E tests assert outcomes**, not existence — a QuickOpen test verifies results appear for a query, not that the modal opened.
 
+SCM archive actions preserve each repo-relative path under `.archive/` and add
+`.archive` to `.gitignore`; this keeps archived files out of the Untracked list.
+
 ## Delegation & Subagent Worktrees
 
 - If the main model is Fable, tokens are very expensive, so whenever possible delegate work to Opus and Sonnet subagents. Use Fable only for high level synthesis and understanding. Do NOT use Fable subagents unless explicitly instructed to. 

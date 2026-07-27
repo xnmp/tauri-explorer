@@ -226,6 +226,8 @@ pub fn run(launch_dir: Option<String>) {
             git::git_init,
             git::git_repo_root,
             git::git_add_to_gitignore,
+            git::git_archive_untracked,
+            git::git_trash_untracked,
             git::git_status,
             git::git_stage,
             git::git_unstage,

@@ -433,6 +433,7 @@ type CommandHandler = (args: Record<string, unknown>) => unknown;
 /** Tracks paths added to .gitignore via the mocked git_add_to_gitignore so
  *  the SCM panel can hide newly-ignored entries on next git_status. */
 const mockGitignored = new Set<string>();
+const mockGitArchived = new Set<string>();
 
 // ----- Stateful in-memory git repo (mirrors src-tauri/src/git.rs contract) -----
 //
@@ -572,15 +573,19 @@ if (typeof window !== "undefined") {
     __mockGitSetClean?: () => void;
     __mockGitStartMergeConflict?: () => void;
     __mockGitState?: () => MockGitState;
+    __mockGitArchived?: string[];
   };
   // Reset the repo to its seed state (mock/browser only).
   w.__mockGitReset = () => {
     mockGit = seedGitState();
     mockGitCommits.length = 0;
     mockGitignored.clear();
+    mockGitArchived.clear();
+    w.__mockGitArchived = [];
   };
   // Recorded commits, so tests can assert the message that was committed.
   w.__mockGitCommits = mockGitCommits;
+  w.__mockGitArchived = [];
   // Simulate an edit made outside the app (e.g. another process): add a
   // modified file to the working tree and fire the watcher change so the
   // SCM store re-fetches, exactly as the real filesystem watcher would.
@@ -1579,6 +1584,30 @@ const mockCommands: Record<string, CommandHandler> = {
       mockGitignored.add(entry);
     }
     return entry;
+  },
+
+  git_archive_untracked: (args: Record<string, unknown>) => {
+    const paths = (args.paths as string[]) ?? [];
+    if (paths.length === 0 || new Set(paths).size !== paths.length || paths.some((path) => !mockGit.untracked.some((entry) => entry.path === path))) {
+      throw new Error("refusing to operate on non-untracked path");
+    }
+    for (const path of paths) {
+      removeFrom(mockGit.untracked, path);
+      mockGitArchived.add(`.archive/${path}`);
+    }
+    if (typeof window !== "undefined") {
+      (window as unknown as { __mockGitArchived?: string[] }).__mockGitArchived = [...mockGitArchived];
+    }
+    return null;
+  },
+
+  git_trash_untracked: (args: Record<string, unknown>) => {
+    const paths = (args.paths as string[]) ?? [];
+    if (paths.length === 0 || new Set(paths).size !== paths.length || paths.some((path) => !mockGit.untracked.some((entry) => entry.path === path))) {
+      throw new Error("refusing to operate on non-untracked path");
+    }
+    for (const path of paths) removeFrom(mockGit.untracked, path);
+    return null;
   },
 
   git_status: (args: Record<string, unknown>) => {

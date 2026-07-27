@@ -12,7 +12,7 @@
   import { getScmStore } from "$lib/state/scm.svelte";
   import { getPaneIdContext } from "$lib/state/pane-context";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { gitInit, gitAddToGitignore } from "$lib/api/files";
+  import { gitInit, gitAddToGitignore, gitArchiveUntracked, gitTrashUntracked } from "$lib/api/files";
   import { toastStore } from "$lib/state/toast.svelte";
   import { parentDir, basename } from "$lib/domain/path";
   import { settingsStore } from "$lib/state/settings.svelte";
@@ -198,6 +198,29 @@
       return;
     }
     toastStore.success(`Added ${r.data} to .gitignore`);
+    await scmStore.refresh();
+  }
+
+  async function onArchive(paths: string[]): Promise<void> {
+    if (!scmStore.repoRoot) return;
+    const r = await gitArchiveUntracked(scmStore.repoRoot, paths);
+    if (!r.ok) {
+      toastStore.error(`Archive failed: ${r.error}`);
+      return;
+    }
+    toastStore.success(`Archived ${paths.length} item${paths.length === 1 ? "" : "s"} to .archive`);
+    await scmStore.refresh();
+  }
+
+  async function onTrash(paths: string[]): Promise<void> {
+    if (!scmStore.repoRoot) return;
+    const r = await gitTrashUntracked(scmStore.repoRoot, paths);
+    if (!r.ok) {
+      await scmStore.refresh();
+      toastStore.error(`Move to Trash failed: ${r.error}`);
+      return;
+    }
+    toastStore.success(`Moved ${paths.length} item${paths.length === 1 ? "" : "s"} to Trash`);
     await scmStore.refresh();
   }
 
@@ -661,6 +684,10 @@
                   onclick={(e) => { e.stopPropagation(); onDiscard(row, opts.kind === "untracked"); }}
                 >{@render actionIcon("discard")}</button>
                 {#if opts.kind === "untracked"}
+                  <button type="button" class="row-btn" title="Archive to .archive" aria-label="Archive {row.path} to .archive"
+                    onclick={(e) => { e.stopPropagation(); onArchive([row.path]); }}>{@render actionIcon("archive")}</button>
+                  <button type="button" class="row-btn" title="Move to Trash" aria-label="Move {row.path} to Trash"
+                    onclick={(e) => { e.stopPropagation(); onTrash([row.path]); }}>{@render actionIcon("trash")}</button>
                   <button
                     type="button"
                     class="row-btn"
@@ -692,7 +719,7 @@
 <!-- Row action icons as SVGs: the previous text glyphs (− + ↺ ⊘) rendered at
      inconsistent sizes because their font metrics differ wildly at the same
      font-size — ↺ in particular drew visibly larger than the rest (#270). -->
-{#snippet actionIcon(kind: "stage" | "unstage" | "discard" | "ignore")}
+{#snippet actionIcon(kind: "stage" | "unstage" | "discard" | "ignore" | "archive" | "trash")}
   <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     {#if kind === "stage"}
       <path d="M8 3.5v9M3.5 8h9" />
@@ -701,6 +728,11 @@
     {:else if kind === "discard"}
       <path d="M6.5 3.5L3.5 6l3 2.5" />
       <path d="M3.5 6h5a3.25 3.25 0 0 1 0 6.5H6.5" />
+    {:else if kind === "archive"}
+      <path d="M2.5 5.5h11v7h-11zM4 3.5h8v2H4z" />
+      <path d="M6.25 8.5h3.5" />
+    {:else if kind === "trash"}
+      <path d="M3.5 5h9M6 5V3.5h4V5M5 5l.5 8h5l.5-8M7 7.5v3M9 7.5v3" />
     {:else}
       <circle cx="8" cy="8" r="5" />
       <path d="M4.7 4.7l6.6 6.6" />
@@ -744,6 +776,10 @@
               aria-label={kind === "untracked" ? `Remove ${child.name}` : `Discard ${child.name}`}
               onclick={(e) => { e.stopPropagation(); requestDiscard(folderPaths, kind === "untracked"); }}>{@render actionIcon("discard")}</button>
             {#if kind === "untracked"}
+              <button type="button" class="row-btn" title="Archive to .archive" aria-label="Archive {child.name} to .archive"
+                onclick={(e) => { e.stopPropagation(); onArchive(folderPaths); }}>{@render actionIcon("archive")}</button>
+              <button type="button" class="row-btn" title="Move to Trash" aria-label="Move {child.name} to Trash"
+                onclick={(e) => { e.stopPropagation(); onTrash(folderPaths); }}>{@render actionIcon("trash")}</button>
               <button type="button" class="row-btn" title="Add folder to .gitignore" aria-label="Ignore {child.name}"
                 onclick={(e) => { e.stopPropagation(); onIgnore(child.fullDir); }}>{@render actionIcon("ignore")}</button>
             {/if}
@@ -789,6 +825,10 @@
               aria-label={kind === "untracked" ? `Remove ${row.path}` : `Discard ${row.path}`}
               onclick={(e) => { e.stopPropagation(); onDiscard(row, kind === "untracked"); }}>{@render actionIcon("discard")}</button>
             {#if kind === "untracked"}
+              <button type="button" class="row-btn" title="Archive to .archive" aria-label="Archive {row.path} to .archive"
+                onclick={(e) => { e.stopPropagation(); onArchive([row.path]); }}>{@render actionIcon("archive")}</button>
+              <button type="button" class="row-btn" title="Move to Trash" aria-label="Move {row.path} to Trash"
+                onclick={(e) => { e.stopPropagation(); onTrash([row.path]); }}>{@render actionIcon("trash")}</button>
               <button type="button" class="row-btn" title="Add to .gitignore" aria-label="Ignore {row.path}"
                 onclick={(e) => { e.stopPropagation(); onIgnore(row.path); }}>{@render actionIcon("ignore")}</button>
             {/if}

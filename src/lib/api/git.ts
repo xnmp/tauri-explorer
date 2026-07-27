@@ -82,6 +82,32 @@ export async function gitAddToGitignore(
   }
 }
 
+/** Move untracked working-tree paths into the repository's `.archive` folder. */
+export async function gitArchiveUntracked(
+  repoPath: string,
+  paths: string[],
+): Promise<ApiResult<void>> {
+  try {
+    await invoke<void>("git_archive_untracked", { repoPath, paths });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
+/** Move untracked working-tree paths to the operating system trash. */
+export async function gitTrashUntracked(
+  repoPath: string,
+  paths: string[],
+): Promise<ApiResult<void>> {
+  try {
+    await invoke<void>("git_trash_untracked", { repoPath, paths });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
 export async function gitSummary(repoPath: string): Promise<ApiResult<GitStatusSummary>> {
   try {
     const data = await invoke<GitStatusSummary>("git_status", { repoPath });

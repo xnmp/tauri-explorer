@@ -714,6 +714,8 @@ export {
   gitInit,
   gitRepoRoot,
   gitAddToGitignore,
+  gitArchiveUntracked,
+  gitTrashUntracked,
   gitSummary,
   gitStage,
   gitUnstage,

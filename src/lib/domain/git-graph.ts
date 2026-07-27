@@ -809,3 +809,16 @@ export function groupRefChips(
     tags: decorations.filter((r) => r.kind === "Tag").map((r) => r.name),
   };
 }
+
+/** Standing detached-HEAD indicator (#524).
+ *
+ *  Detached HEAD is a mode, not an event: while it lasts, every commit made
+ *  belongs to no branch. The reference tool (keifu) gives it a permanent
+ *  white-on-red status treatment for exactly that reason, so the graph needs
+ *  a presenter that is independent of the transient checkout menu. */
+export interface DetachedHeadIndicator {
+  /** Badge text, e.g. `DETACHED HEAD @ 1a2b3c4`. */
+  label: string;
+  /** Tooltip: what the state means and how to leave it. */
+  title: string;
+}

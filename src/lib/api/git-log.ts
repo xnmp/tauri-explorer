@@ -48,6 +48,10 @@ export interface GitLogPage {
    *  detached / unborn. Lets the graph highlight only the checked-out branch
    *  chip when several branches decorate the HEAD commit (#433). */
   head_branch: string | null;
+  /** True while HEAD points straight at a commit rather than a branch (#524).
+   *  Distinct from `head_branch === null`, which is also true on an unborn
+   *  branch — the standing detached indicator must not fire on a fresh repo. */
+  detached: boolean;
 }
 
 export interface GitLogOptions {

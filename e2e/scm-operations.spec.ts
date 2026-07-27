@@ -23,6 +23,7 @@ declare global {
     __mockGitExternalModify?: (path: string) => void;
     __mockGitSetClean?: () => void;
     __mockGitReset?: () => void;
+    __mockGitArchived?: string[];
   }
 }
 
@@ -107,6 +108,7 @@ test.describe("SCM panel operations", () => {
     await expect(untracked).toHaveCount(0);
     await expect(badge(page, "untracked")).toHaveText("2");
     await expect(page.getByText("Archived 1 item to .archive")).toBeVisible();
+    expect(await page.evaluate(() => window.__mockGitArchived ?? [])).toContain(".archive/src/router.tsx");
     await page.screenshot({ path: evidencePath("ac-1-untracked-file-archived.png") });
   });
 

@@ -1896,6 +1896,37 @@ mod tests {
     }
 
     #[test]
+    fn trash_untracked_moves_file_to_system_trash_and_leaves_worktree_clean() {
+        let dir = init_repo();
+        write(dir.path(), "scratch.txt", "discard me\n");
+        let path = dir.path().to_str().unwrap().to_string();
+
+        tokio_test_block(git_trash_untracked(path, vec!["scratch.txt".into()])).unwrap();
+
+        assert!(!dir.path().join("scratch.txt").exists());
+        assert!(sync_status(dir.path()).untracked.is_empty());
+    }
+
+    #[test]
+    fn trash_untracked_validates_the_whole_batch_before_moving_any_file() {
+        let dir = init_repo();
+        write(dir.path(), "tracked.txt", "tracked\n");
+        commit_all(dir.path(), "tracked");
+        write(dir.path(), "scratch.txt", "keep me\n");
+        let path = dir.path().to_str().unwrap().to_string();
+
+        let result = tokio_test_block(git_trash_untracked(
+            path,
+            vec!["scratch.txt".into(), "tracked.txt".into()],
+        ));
+
+        assert!(
+            matches!(result, Err(AppError::Other(message)) if message.contains("non-untracked"))
+        );
+        assert!(dir.path().join("scratch.txt").exists());
+    }
+
+    #[test]
     fn staged_and_unstaged_mix() {
         let dir = init_repo();
         write(dir.path(), "a.txt", "v1\n");

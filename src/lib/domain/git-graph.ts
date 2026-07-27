@@ -495,6 +495,36 @@ export function splitRemoteRef(name: string): RemoteRefChip {
     : { name, remote: name, branch: name };
 }
 
+// ─── Bulk "hide remote-only branches" filter (#515) ──────────────────────────
+
+/** Structural subset of the branch-filter popover's list entry: a branch
+ *  shorthand plus which side of `git_refs` it came from. */
+export interface BranchListEntry {
+  /** Shorthand — `main` for locals, `origin/main` for remotes. */
+  name: string;
+  remote: boolean;
+}
+
+/** Remote-tracking branches with no local branch of the same shorthand
+ *  (`origin/feat/x` with no local `feat/x`). Matching is by name, the same
+ *  rule `groupRefChips` uses to nest remotes under their local branch. */
+export function remoteOnlyBranchNames(branches: readonly BranchListEntry[]): string[] {
+  throw new Error("remoteOnlyBranchNames: not implemented");
+}
+
+/** Branch names the graph should walk, given the per-branch/author selection
+ *  (`null` = every branch) and the bulk "hide remote-only" toggle.
+ *
+ *  Returns `null` when nothing is excluded, so an unfiltered view keeps the
+ *  cheaper unseeded walk; `[]` is a real answer ("walk nothing", #413). */
+export function effectiveBranchSelection(
+  branches: readonly BranchListEntry[],
+  selected: readonly string[] | null,
+  hideRemoteOnly: boolean,
+): string[] | null {
+  throw new Error("effectiveBranchSelection: not implemented");
+}
+
 // ─── PR badges (#448) ────────────────────────────────────────────────────────
 
 /** Structural subset of an open PR; matches `OpenPr` from the API layer

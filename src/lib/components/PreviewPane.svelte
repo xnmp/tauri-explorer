@@ -381,6 +381,23 @@
     }
     scmStore.closeDiff();
   }
+  async function applyHunk(patch: string, action: "stage" | "unstage" | "discard"): Promise<void> {
+    if (!activeDiff) return;
+    if (action === "discard" && !window.confirm("Discard this hunk? This cannot be undone.")) return;
+    const path = activeDiff.path;
+    const r = await scmStore.applyPatch(patch, action);
+    if (!r.ok) {
+      toastStore.error(`${action[0].toUpperCase()}${action.slice(1)} hunk failed: ${r.error}`);
+      return;
+    }
+    const stillStaged = scmStore.summary.staged.some((entry) => entry.path === path);
+    const stillUnstaged = scmStore.summary.changes.some((entry) => entry.path === path);
+    // A partially changed file can exist in both buckets. Only switch the
+    // displayed side when the operation exhausted the current side.
+    if (action === "stage" && !stillUnstaged && stillStaged) scmStore.openDiff(path, true);
+    if (action === "unstage" && !stillStaged && stillUnstaged) scmStore.openDiff(path, false);
+    if (action === "discard" && !stillUnstaged) scmStore.closeDiff();
+  }
   async function openDiffFileInEditor(): Promise<void> {
     if (!activeDiff || !scmStore.repoRoot) return;
     const abs = `${scmStore.repoRoot.replace(/\/$/, "")}/${activeDiff.path}`;
@@ -763,7 +780,24 @@
               <span class="diff-gutter old">{line.oldLine ?? ""}</span>
               <span class="diff-gutter new">{line.newLine ?? ""}</span>
               <span class="diff-sigil">{line.kind === "add" ? "+" : line.kind === "remove" ? "−" : line.kind === "hunk" ? "@" : " "}</span>
-              {#if line.kind === "hunk" || line.kind === "meta" || line.kind === "header"}
+              {#if line.kind === "hunk"}
+                {@const hunk = diffParsed?.hunks.find((candidate) => candidate.lineIndex === line.index)}
+                <span class="diff-content hunk-content">
+                  <span>{line.text}</span>
+                  {#if activeDiff && hunk}
+                    <span class="hunk-actions">
+                      {#if activeDiff.staged}
+                        <button type="button" class="hunk-action" onclick={() => applyHunk(hunk.patch, "unstage")}>Unstage hunk</button>
+                      {:else}
+                        <button type="button" class="hunk-action" onclick={() => applyHunk(hunk.patch, "stage")}>Stage hunk</button>
+                        {#if !diffParsed?.added}
+                          <button type="button" class="hunk-action danger" onclick={() => applyHunk(hunk.patch, "discard")}>Discard hunk</button>
+                        {/if}
+                      {/if}
+                    </span>
+                  {/if}
+                </span>
+              {:else if line.kind === "meta" || line.kind === "header"}
                 <span class="diff-content">{line.text}</span>
               {:else}
                 <!-- highlightDiffLine output is hljs-generated/escaped HTML — safe sink (#227). -->
@@ -1528,6 +1562,27 @@
     text-overflow: ellipsis;
     user-select: text;
   }
+
+  .hunk-content, .hunk-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .hunk-content { justify-content: space-between; }
+
+  .hunk-action {
+    padding: 1px 5px;
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-sm);
+    background: var(--background-card);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font: inherit;
+    font-size: 10px;
+  }
+
+  .hunk-action.danger { color: var(--system-critical, #dc2626); }
 
   /* Vibrancy: own island, no left border needed */
   :global([data-vibrancy]) .preview-pane {

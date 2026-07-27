@@ -121,6 +121,7 @@ describe("parseUnifiedDiff", () => {
       oldPath: null,
       newPath: null,
       lines: [],
+      hunks: [],
     });
   });
 

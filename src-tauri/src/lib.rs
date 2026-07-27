@@ -258,6 +258,7 @@ pub fn run(launch_dir: Option<String>) {
             git::cancel_git_status,
             git::git_stage,
             git::git_unstage,
+            git::git_apply_patch,
             git::git_discard,
             git::git_diff,
             git::git_commit,

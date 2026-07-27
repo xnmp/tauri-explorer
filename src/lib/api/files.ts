@@ -721,6 +721,8 @@ export {
   cancelGitStatus,
   gitStage,
   gitUnstage,
+  gitApplyPatch,
+  type GitPatchAction,
   gitDiscard,
   gitDiff,
   gitCommit,

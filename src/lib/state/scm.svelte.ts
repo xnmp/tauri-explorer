@@ -14,6 +14,7 @@
 
 import {
   gitCommit,
+  gitApplyPatch,
   gitDiscard,
   gitRepoRoot,
   gitStage,
@@ -27,6 +28,7 @@ import {
   gitRevertAbort,
   type GitFileEntry,
   type GitStatusSummary,
+  type GitPatchAction,
 } from "$lib/api/files";
 import type { GitOpState } from "$lib/domain/git";
 import { subscribeGitChanges, notifyLocalGitChange } from "./git-refresh";
@@ -273,6 +275,13 @@ function createScmStore(consumerId: string) {
     await refresh();
   }
 
+  async function applyPatch(patch: string, action: GitPatchAction): Promise<{ ok: boolean; error?: string }> {
+    if (!repoRoot || !patch) return { ok: true };
+    const r = await gitApplyPatch(repoRoot, patch, action);
+    await refresh();
+    return r.ok ? { ok: true } : { ok: false, error: r.error };
+  }
+
   async function discard(paths: string[], force = false): Promise<{ ok: boolean; error?: string }> {
     if (!repoRoot || paths.length === 0) return { ok: true };
     const r = await gitDiscard(repoRoot, paths, { force });
@@ -423,6 +432,7 @@ function createScmStore(consumerId: string) {
     refresh,
     stage,
     unstage,
+    applyPatch,
     discard,
     commit,
     abortOperation,

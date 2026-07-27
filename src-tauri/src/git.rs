@@ -1241,6 +1241,54 @@ pub async fn git_unstage(repo_path: String, paths: Vec<String>) -> Result<(), Ap
     .await
 }
 
+fn apply_patch_inner(repo_path: &str, patch: &str, action: GitPatchAction) -> Result<(), AppError> {
+    // Open first so this has the same non-repository and bare-repository
+    // boundary as the other SCM mutations; the workdir is the only safe cwd
+    // for a repo-relative patch.
+    let repo = open_repo(Path::new(repo_path))?;
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| AppError::Other("git: bare repository has no working tree".into()))?;
+    let args: &[&str] = match action {
+        GitPatchAction::Stage => &["apply", "--cached", "--unidiff-zero", "--whitespace=nowarn", "-"],
+        GitPatchAction::Unstage => &["apply", "--cached", "--reverse", "--unidiff-zero", "--whitespace=nowarn", "-"],
+        GitPatchAction::Discard => &["apply", "--reverse", "--unidiff-zero", "--whitespace=nowarn", "-"],
+    };
+    let mut child = std::process::Command::new("git")
+        .current_dir(workdir)
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|err| AppError::Other(format!("failed to start git apply: {err}")))?;
+    use std::io::Write;
+    child
+        .stdin
+        .as_mut()
+        .ok_or_else(|| AppError::Other("failed to open git apply stdin".into()))?
+        .write_all(patch.as_bytes())
+        .map_err(|err| AppError::Other(format!("failed to send patch to git: {err}")))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|err| AppError::Other(format!("failed to wait for git apply: {err}")))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        Err(AppError::Other(format!("could not apply hunk: {message}")))
+    }
+}
+
+/// Apply exactly one unified-diff hunk to the index or working tree.
+#[tauri::command]
+pub async fn git_apply_patch(
+    repo_path: String,
+    patch: String,
+    action: GitPatchAction,
+) -> Result<(), AppError> {
+    run_blocking(move |_cancel| apply_patch_inner(&repo_path, &patch, action)).await
+}
+
 fn has_staged_changes_for(repo: &Repository, path: &str) -> Result<bool, AppError> {
     let mut opts = StatusOptions::new();
     opts.pathspec(path);

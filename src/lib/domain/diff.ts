@@ -21,6 +21,13 @@ export interface DiffLine {
   newLine: number | null;
 }
 
+/** A complete single-hunk patch, including the file preamble required by git apply. */
+export interface DiffHunk {
+  /** The rendered hunk-header line to which this patch belongs. */
+  lineIndex: number;
+  patch: string;
+}
+
 export interface ParsedDiff {
   /** True if the patch consists only of a "Binary files ... differ" marker. */
   binary: boolean;
@@ -33,6 +40,7 @@ export interface ParsedDiff {
   /** New path (after rename/copy), when the patch header gives it. */
   newPath: string | null;
   lines: DiffLine[];
+  hunks: DiffHunk[];
 }
 
 const HUNK_RE = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
@@ -122,7 +130,29 @@ export function parseUnifiedDiff(text: string): ParsedDiff {
     }
   }
 
-  return { binary, added, deleted, oldPath, newPath, lines };
+  const hunks = extractDiffHunks(text, lines);
+  return { binary, added, deleted, oldPath, newPath, lines, hunks };
+}
+
+/**
+ * Split a one-file unified diff into independently applicable patches.
+ * Each fragment repeats the preamble because `git apply` needs the file names
+ * as well as the selected @@ block.
+ */
+export function extractDiffHunks(text: string, parsedLines: readonly DiffLine[] = []): DiffHunk[] {
+  const raw = text.length === 0 ? [] : text.split("\n");
+  if (raw.at(-1) === "") raw.pop();
+  const starts = raw.reduce<number[]>((indices, line, index) => {
+    if (HUNK_RE.test(line)) indices.push(index);
+    return indices;
+  }, []);
+  if (starts.length === 0) return [];
+  const preamble = raw.slice(0, starts[0]);
+  const hunkLines = parsedLines.filter((line) => line.kind === "hunk");
+  return starts.map((start, index) => ({
+    lineIndex: hunkLines[index]?.index ?? -1,
+    patch: [...preamble, ...raw.slice(start, starts[index + 1])].join("\n") + "\n",
+  }));
 }
 
 function stripPrefix(p: string): string {

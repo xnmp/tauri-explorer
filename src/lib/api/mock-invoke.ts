@@ -956,8 +956,11 @@ function mockAppendCommit(summary: string): string {
     summary,
   });
   // Advance whatever local branch HEAD was on (default: main), then HEAD.
-  const headBranch = (MOCK_GRAPH_REFS[head] ?? []).find((r) => r.kind === "LocalBranch");
-  mockMoveRef(headBranch?.name ?? "main", "LocalBranch", oid);
+  // While detached, HEAD moves alone — no branch follows it, like git (#524).
+  if (!mockDetached) {
+    const headBranch = (MOCK_GRAPH_REFS[head] ?? []).find((r) => r.kind === "LocalBranch");
+    mockMoveRef(headBranch?.name ?? "main", "LocalBranch", oid);
+  }
   mockMoveHead(oid);
   return oid;
 }
@@ -2102,9 +2105,12 @@ const mockCommands: Record<string, CommandHandler> = {
       throw new Error(`invalid reset mode: ${mode}`);
     }
     // Move the branch HEAD is on (default main) and HEAD to the target commit.
+    // A detached reset moves HEAD only (#524).
     const head = mockHeadOid();
-    const headBranch = (MOCK_GRAPH_REFS[head] ?? []).find((r) => r.kind === "LocalBranch");
-    mockMoveRef(headBranch?.name ?? "main", "LocalBranch", oid);
+    if (!mockDetached) {
+      const headBranch = (MOCK_GRAPH_REFS[head] ?? []).find((r) => r.kind === "LocalBranch");
+      mockMoveRef(headBranch?.name ?? "main", "LocalBranch", oid);
+    }
     mockMoveHead(oid);
     return null;
   },

@@ -2296,11 +2296,14 @@
      and it is the only element here that outlives every menu. */
   .detached-banner {
     flex-shrink: 0;
-    display: flex;
-    align-items: center;
+    /* Not flex: `text-overflow` needs a block box to elide the label in a
+       narrow pane. */
     height: 20px;
+    line-height: 20px;
     padding: 0 10px;
-    background: var(--danger-strong, #b3261e);
+    /* Deliberately not themed: a warning that changes contrast per theme is a
+       warning that can disappear. This pair is fixed at ~6:1. */
+    background: #b3261e;
     color: #fff;
     font-size: var(--font-size-caption);
     font-weight: 700;

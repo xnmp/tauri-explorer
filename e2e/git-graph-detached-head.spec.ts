@@ -56,17 +56,32 @@ test.describe("git graph detached-HEAD indicator", () => {
     // can only ever depict the state the test proved.
     await view.screenshot({ path: "evidence/ac-1-detached-badge.png" });
 
-    // AC 2: closing and reopening the graph tab remounts the view (painting
-    // from the snapshot cache) — the badge must not blink out.
-    await openGraphViaPalette(page, false);
-    await expect(view).toHaveCount(0);
-    await openGraphViaPalette(page);
-    await expect(badge).toBeVisible();
-    await expect(badge).toContainText("DETACHED HEAD");
     // The checkout toast has long since faded — the badge is what is left.
     await expect(page.locator(".toast")).toHaveCount(0, { timeout: 15_000 });
-    await expect(badge).toBeVisible();
+
+    // AC 2: closing and reopening the graph tab remounts the view. Stall the
+    // log fetch first, so a badge that appears immediately can ONLY have come
+    // from the cached snapshot — otherwise this passes on the refetch and says
+    // nothing about the blink-out the snapshot field exists to prevent.
+    await page.evaluate(() => {
+      (window as unknown as { __MOCK_LATENCY__: Record<string, number> }).__MOCK_LATENCY__ = {
+        git_log: 4000,
+      };
+    });
+    await openGraphViaPalette(page, false);
+    await expect(view).toHaveCount(0);
+    await openGraphViaPalette(page, false);
+    await expect(badge).toBeVisible({ timeout: 1000 });
+    await expect(badge).toContainText("DETACHED HEAD");
+    await expect(view.locator(".commit-row").first()).toBeVisible();
     await view.screenshot({ path: "evidence/ac-2-detached-persists-remount.png" });
+
+    // Let the graph settle again before driving the next checkout.
+    await page.evaluate(() => {
+      (window as unknown as { __MOCK_LATENCY__: Record<string, number> }).__MOCK_LATENCY__ = {};
+    });
+    await expect(view.locator(".commit-row").first()).toContainText("Uncommitted Changes");
+    await expect(badge).toBeVisible();
 
     // Reattaching to a branch clears it.
     const mainRow = view.locator(".commit-row", { hasText: "Merge hotfix into main" });

@@ -1721,6 +1721,16 @@ mod tests {
             .unwrap();
     }
 
+    fn git_patch(dir: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap()
+    }
+
     /// A mode-only change (chmod +x) is what Windows manufactures for every
     /// 0755 file in a Linux-created repo, and it renders as a change with an
     /// empty diff (#392). With the hide-empty-diffs policy on, it must not
@@ -2190,6 +2200,47 @@ mod tests {
             matches!(err, Err(AppError::Other(ref m)) if m.contains("nothing to commit")),
             "empty initial commit must be rejected, got {err:?}",
         );
+    }
+
+    #[test]
+    fn hunk_patch_actions_only_change_the_selected_hunk() {
+        let dir = init_repo();
+        let original = (1..=12).map(|n| format!("line-{n}\n")).collect::<String>();
+        write(dir.path(), "a.txt", &original);
+        commit_all(dir.path(), "init");
+
+        let changed = original
+            .replace("line-1\n", "first change\n")
+            .replace("line-12\n", "last change\n");
+        write(dir.path(), "a.txt", &changed);
+
+        let first_hunk = git_patch(dir.path(), &["diff", "-U0", "--", "a.txt"])
+            .split("@@ -12")
+            .next()
+            .unwrap()
+            .to_string();
+        let path = dir.path().to_str().unwrap().to_string();
+
+        tokio_test_block(git_apply_patch(path.clone(), first_hunk, GitPatchAction::Stage)).unwrap();
+        let staged = git_patch(dir.path(), &["diff", "--cached", "-U0", "--", "a.txt"]);
+        let unstaged = git_patch(dir.path(), &["diff", "-U0", "--", "a.txt"]);
+        assert!(staged.contains("first change"));
+        assert!(!staged.contains("last change"));
+        assert!(unstaged.contains("last change"));
+        assert!(!unstaged.contains("first change"));
+
+        tokio_test_block(git_apply_patch(path.clone(), staged, GitPatchAction::Unstage)).unwrap();
+        assert!(git_patch(dir.path(), &["diff", "--cached", "--", "a.txt"]).is_empty());
+
+        let last_hunk = git_patch(dir.path(), &["diff", "-U0", "--", "a.txt"])
+            .split("@@ -12")
+            .nth(1)
+            .map(|hunk| format!("diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -12{hunk}"))
+            .unwrap();
+        tokio_test_block(git_apply_patch(path, last_hunk, GitPatchAction::Discard)).unwrap();
+        let remaining = std::fs::read_to_string(dir.path().join("a.txt")).unwrap();
+        assert!(remaining.contains("first change"));
+        assert!(remaining.contains("line-12"));
     }
 
     #[test]

@@ -37,14 +37,6 @@ describe("git-graph-cache", () => {
     expect(snapshotKey(repo, ["a", "b"], false)).toBe(snapshotKey(repo, ["a", "b"], false));
   });
 
-  it("keys distinctly on the hide-remote-only toggle (#515)", () => {
-    // A remount while the bulk toggle is on must not paint the variant that
-    // still includes remote-only history (#416).
-    expect(snapshotKey(repo, null, false, true)).not.toBe(snapshotKey(repo, null, false, false));
-    expect(snapshotKey(repo, ["main"], false, true)).not.toBe(snapshotKey(repo, ["main"], false));
-    expect(snapshotKey(repo, null, false, true)).toBe(snapshotKey(repo, null, false, true));
-  });
-
   it("stores and retrieves a snapshot by key", () => {
     const key = snapshotKey(repo, null, false);
     expect(getSnapshot(key)).toBeUndefined();

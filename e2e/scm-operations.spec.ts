@@ -48,6 +48,10 @@ function badge(page: Page, section: string) {
   return page.locator(`[data-section="${section}"] .count-badge`);
 }
 
+function evidencePath(name: string): string {
+  return process.env.CAPTURE_EVIDENCE ? `evidence/${name}` : `test-results/${name}`;
+}
+
 test.describe("SCM panel operations", () => {
   test("staging a changed file moves it into Staged and updates counts @smoke", async ({ page }) => {
     await openScmOnRepo(page);
@@ -91,6 +95,32 @@ test.describe("SCM panel operations", () => {
     ).toBeVisible();
     await expect(badge(page, "untracked")).toHaveText("3");
     await expect(badge(page, "staged")).toHaveText("1");
+  });
+
+  test("archiving an untracked file removes it from Files and confirms its .archive destination", async ({ page }) => {
+    await openScmOnRepo(page);
+
+    const untracked = page.locator('[data-section="untracked"] .row', { hasText: "router.tsx" });
+    await untracked.hover();
+    await untracked.locator('.row-btn[title="Archive to .archive"]').click();
+
+    await expect(untracked).toHaveCount(0);
+    await expect(badge(page, "untracked")).toHaveText("2");
+    await expect(page.getByText("Archived 1 item to .archive")).toBeVisible();
+    await page.screenshot({ path: evidencePath("ac-1-untracked-file-archived.png") });
+  });
+
+  test("trashing an untracked file removes it from Files and confirms it was sent to trash", async ({ page }) => {
+    await openScmOnRepo(page);
+
+    const untracked = page.locator('[data-section="untracked"] .row', { hasText: ".env.example" });
+    await untracked.hover();
+    await untracked.locator('.row-btn[title="Move to Trash"]').click();
+
+    await expect(untracked).toHaveCount(0);
+    await expect(badge(page, "untracked")).toHaveText("2");
+    await expect(page.getByText("Moved 1 item to Trash")).toBeVisible();
+    await page.screenshot({ path: evidencePath("ac-2-untracked-file-trashed.png") });
   });
 
   test("commit clears the input, empties Staged, and records the message @smoke", async ({ page }) => {

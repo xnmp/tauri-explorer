@@ -60,9 +60,10 @@ export function snapshotKey(
   branches: string[] | null,
   localOnly: boolean,
   hideRemoteOnly = false,
+  filePath = "",
 ): string {
   const mode = `${localOnly ? "local" : ""}${hideRemoteOnly ? "-noremoteonly" : ""}`;
-  return `${repoPath}|${mode}|${branches ? branches.join("\n") : "*"}`;
+  return `${repoPath}|${mode}|${branches ? branches.join("\n") : "*"}|${filePath.trim()}`;
 }
 
 /** Repo path portion of a snapshot key (segment before the first `|`). */
@@ -108,6 +109,7 @@ export async function fetchPage0Snapshot(
   onLog?: (partial: Omit<GraphSnapshot, "workingChanges">) => void,
   localOnly = false,
   excludeBranches: string[] | null = null,
+  filePath = "",
 ): Promise<GraphSnapshot> {
   const summaryPromise = fetchGitSummary(repoPath);
   const page = await gitLog(repoPath, {
@@ -116,6 +118,7 @@ export async function fetchPage0Snapshot(
     ...(branches ? { branches } : {}),
     ...(excludeBranches ? { exclude_branches: excludeBranches } : {}),
     ...(localOnly ? { local_only: true } : {}),
+    ...(filePath.trim() ? { file_path: filePath.trim() } : {}),
   });
   const headOid =
     Object.entries(page.refs).find(([, rs]) => rs.some((r) => r.kind === "Head"))?.[0] ?? null;

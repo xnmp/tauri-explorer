@@ -11,6 +11,7 @@ test("filters the commit graph to commits touching a file path (#529)", async ({
   const view = page.locator('[data-testid="git-graph-view"]');
   await expect(view.locator(".commit-row").first()).toContainText("Uncommitted Changes");
 
+  await view.getByTestId("branch-filter-btn").click();
   const filter = view.getByTestId("git-graph-file-path-filter");
   await filter.fill("src/file-9.ts");
 
@@ -18,8 +19,11 @@ test("filters the commit graph to commits touching a file path (#529)", async ({
   await expect(rows).toHaveCount(1);
   await expect(rows.first()).toContainText("Implement feature X");
   await expect(rows.filter({ hasText: "Refactor config loader" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Close branch filter" }).click();
+  await expect(view.locator(".gh-message")).toHaveText("Path: src/file-9.ts");
   await page.screenshot({ path: "evidence/ac-1-file-path-filter.png" });
 
+  await view.getByTestId("branch-filter-btn").click();
   await filter.fill("");
   await expect(rows).toHaveCount(18);
   await expect(rows.filter({ hasText: "Refactor config loader" })).toHaveCount(1);

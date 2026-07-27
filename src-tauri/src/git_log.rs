@@ -182,6 +182,29 @@ fn short_oid(oid: Oid) -> String {
     s.chars().take(7).collect()
 }
 
+/// Whether `commit` changed the exact repository-relative path compared with
+/// its first parent. Root commits compare against an empty tree, matching the
+/// changed-files detail seam used by the graph.
+fn commit_touches_path(
+    repo: &Repository,
+    commit: &git2::Commit<'_>,
+    file_path: &str,
+) -> Result<bool, AppError> {
+    let tree = commit.tree().map_err(to_app_err)?;
+    let parent_tree = commit
+        .parent(0)
+        .ok()
+        .and_then(|parent| parent.tree().ok());
+    let mut options = git2::DiffOptions::new();
+    options
+        .pathspec(file_path)
+        .disable_pathspec_match(true);
+    let diff = repo
+        .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut options))
+        .map_err(to_app_err)?;
+    Ok(diff.deltas().next().is_some())
+}
+
 /// Build the OID → decorations map for the whole repo. Cheap relative to the
 /// walk and keeps the UI from issuing a second call.
 fn collect_decorations(
@@ -371,6 +394,11 @@ fn build_log(
     // is treated as "no cursor" (fall back to skip) rather than erroring.
     let cursor_oid = opts.cursor.as_deref().and_then(|s| Oid::from_str(s).ok());
     let mut passed_cursor = cursor_oid.is_none();
+    let file_path = opts
+        .file_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty());
 
     for (i, step) in walk.enumerate() {
         // Cooperative cancellation — check periodically to avoid overhead.
@@ -387,17 +415,23 @@ fn build_log(
                 }
                 continue;
             }
-        } else if skipped < opts.skip {
+        }
+
+        let commit = repo.find_commit(oid).map_err(to_app_err)?;
+        if let Some(path) = file_path {
+            if !commit_touches_path(repo, &commit, path)? {
+                continue;
+            }
+        }
+        if cursor_oid.is_none() && skipped < opts.skip {
             skipped += 1;
             continue;
         }
         if commits.len() == limit {
-            // One extra step proves there is a next page without fetching it.
+            // One extra matching step proves there is a next page.
             has_more = true;
             break;
         }
-
-        let commit = repo.find_commit(oid).map_err(to_app_err)?;
         let author = commit.author();
         commits.push(CommitInfo {
             oid: oid.to_string(),

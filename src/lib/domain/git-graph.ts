@@ -699,10 +699,10 @@ export function prDescription(body: string | null | undefined): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-/** Relative-time wording for an arbitrary past instant (#468), used for PR
- *  comment timestamps: "just now", "N minute(s) ago" … up to "N year(s) ago".
- *  Future timestamps (clock skew) read "just now". Malformed/missing input
- *  returns `null` so the caller can omit the time. Pure. */
+/** Compact relative time for an arbitrary past instant (#468), used for PR
+ *  comment timestamps: "now", "5d", "5w", "5mo", and so on. Future
+ *  timestamps (clock skew) read "now". Malformed/missing input returns `null`
+ *  so the caller can omit the time. Pure. */
 export function relativeTimeFrom(
   createdAt: string | null | undefined,
   nowMs: number,
@@ -711,24 +711,24 @@ export function relativeTimeFrom(
   const thenMs = Date.parse(createdAt);
   if (Number.isNaN(thenMs)) return null;
   const ageSec = Math.max(0, Math.floor((nowMs - thenMs) / 1000));
-  if (ageSec < 60) return "just now";
-  const units: [number, string][] = [
-    [60, "minute"],
-    [60, "hour"],
-    [24, "day"],
-    [30, "month"],
-    [12, "year"],
-  ];
-  // Walk up the ladder: minutes → hours → days → months → years.
-  let value = Math.floor(ageSec / 60); // minutes
-  let label = "minute";
-  for (let i = 1; i < units.length; i++) {
-    const [divisor, name] = units[i];
-    if (value < divisor) break;
-    value = Math.floor(value / divisor);
-    label = name;
-  }
-  return `${value} ${label}${value === 1 ? "" : "s"} ago`;
+  if (ageSec < 60) return "now";
+
+  const ageMin = Math.floor(ageSec / 60);
+  if (ageMin < 60) return `${ageMin}m`;
+
+  const ageHours = Math.floor(ageMin / 60);
+  if (ageHours < 24) return `${ageHours}h`;
+
+  const ageDays = Math.floor(ageHours / 24);
+  if (ageDays < 7) return `${ageDays}d`;
+
+  const ageWeeks = Math.floor(ageDays / 7);
+  if (ageWeeks < 8) return `${ageWeeks}w`;
+
+  const ageMonths = Math.floor(ageDays / 30);
+  if (ageMonths < 12) return `${ageMonths}mo`;
+
+  return `${Math.floor(ageDays / 365)}y`;
 }
 
 /** A PR comment prepared for display in the details dropdown. */

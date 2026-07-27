@@ -585,7 +585,7 @@ describe("prDetailComments (#468)", () => {
       now,
     );
     expect(out).toEqual([
-      { author: "alice", time: "2 minutes ago", body: "looks good" },
+      { author: "alice", time: "2m", body: "looks good" },
     ]);
   });
 

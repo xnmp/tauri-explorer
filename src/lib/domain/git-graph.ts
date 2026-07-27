@@ -809,3 +809,38 @@ export function groupRefChips(
     tags: decorations.filter((r) => r.kind === "Tag").map((r) => r.name),
   };
 }
+
+/** Standing detached-HEAD indicator (#524).
+ *
+ *  Detached HEAD is a mode, not an event: while it lasts, every commit made
+ *  belongs to no branch. The reference tool (keifu) gives it a permanent
+ *  white-on-red status treatment for exactly that reason, so the graph needs
+ *  a presenter that is independent of the transient checkout menu. */
+export interface DetachedHeadIndicator {
+  /** Badge text, e.g. `DETACHED HEAD @ 1a2b3c4`. */
+  label: string;
+  /** Tooltip: what the state means and how to leave it. */
+  title: string;
+}
+
+/** Abbreviated OID length — 7 hex chars, matching git's default. */
+const SHORT_OID_LEN = 7;
+
+/** Present the detached-HEAD state, or `null` when HEAD is on a branch.
+ *
+ *  `detached` comes from the repository (`git_log`'s payload), never from
+ *  `headBranch === null`: that is also true on an unborn branch, where the
+ *  warning would be wrong. A missing/blank `headOid` still yields a badge —
+ *  the state is what matters, the commit is only ever detail. */
+export function detachedHeadIndicator(
+  detached: boolean,
+  headOid: string | null,
+): DetachedHeadIndicator | null {
+  if (!detached) return null;
+  const short = (headOid ?? "").trim().slice(0, SHORT_OID_LEN);
+  const at = short ? ` at ${short}` : "";
+  return {
+    label: short ? `DETACHED HEAD @ ${short}` : "DETACHED HEAD",
+    title: `HEAD is detached${at} — new commits belong to no branch and can be lost. Check out a branch to reattach.`,
+  };
+}

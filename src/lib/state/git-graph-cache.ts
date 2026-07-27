@@ -33,6 +33,12 @@ export interface GraphSnapshot {
   /** Shorthand of the checked-out branch (HEAD's symbolic target), or null
    *  when detached / unborn — highlights only that branch chip (#433). */
   headBranch: string | null;
+  /** True while HEAD is detached (#524). Carried through the snapshot so a
+   *  remount repaints the standing indicator from cache instead of dropping
+   *  it until the background refetch lands. Not derivable from `headBranch`,
+   *  which is also null on an unborn branch. Optional so callers that build a
+   *  snapshot by hand needn't care; absent reads as attached. */
+  detached?: boolean;
   workingChanges: number;
   /** Resume cursor for the commit AFTER this snapshot's page (#431); passed
    *  to the next `gitLog` so deeper pages don't re-walk from the tips. Always
@@ -119,6 +125,9 @@ export async function fetchPage0Snapshot(
     hasMore: page.has_more,
     headOid,
     headBranch: page.head_branch,
+    // Normalized so the snapshot always holds a real boolean, even if an
+    // older backend binary omits the field entirely (#524).
+    detached: page.detached === true,
     nextCursor: page.next_cursor,
   };
   onLog?.(partial);

@@ -9,6 +9,10 @@ async function runPaletteCommand(page: import("@playwright/test").Page, query: s
   await page.keyboard.press("Enter");
 }
 
+function evidencePath(name: string): string {
+  return process.env.CAPTURE_EVIDENCE ? `evidence/${name}` : `test-results/${name}`;
+}
+
 for (const command of ["Report a Bug", "Request a Feature"]) {
   test(`${command} submits in-app and links the created issue`, async ({ page }) => {
     await page.goto("/");
@@ -30,6 +34,50 @@ for (const command of ["Report a Bug", "Request a Feature"]) {
     );
   });
 }
+
+test("report dialog footer buttons use the themed control treatment", async ({ page }) => {
+  for (const [command, name, screenshot] of [
+    ["Report a Bug", /report a bug/i, "ac-1-report-dialog-buttons.png"],
+    ["Request a Feature", /request a feature/i, "ac-1-feature-dialog-buttons.png"],
+  ] as const) {
+    await page.goto("/");
+    await waitForEntries(page);
+    await runPaletteCommand(page, command);
+
+    const dialog = page.getByRole("dialog", { name });
+    const cancel = dialog.getByRole("button", { name: "Cancel" });
+    const submit = dialog.getByRole("button", { name: "Submit" });
+    const styles = await Promise.all([cancel, submit].map((button) => button.evaluate((element) => {
+      const computed = getComputedStyle(element);
+      return {
+        borderRadius: computed.borderRadius,
+        borderStyle: computed.borderStyle,
+        backgroundColor: computed.backgroundColor,
+      };
+    })));
+
+    expect(styles[0].borderRadius).not.toBe("0px");
+    expect(styles[0].borderStyle).toBe("solid");
+    expect(styles[0].backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+    expect(styles[1].borderRadius).not.toBe("0px");
+    expect(styles[1].backgroundColor).not.toBe(styles[0].backgroundColor);
+
+    await cancel.hover();
+    await expect.poll(() => cancel.evaluate((element) => getComputedStyle(element).backgroundColor))
+      .not.toBe(styles[0].backgroundColor);
+
+    await dialog.getByLabel("Title").fill("Keyboard focus styling");
+    await dialog.getByLabel("Description").fill("Keyboard focus styling");
+    await submit.focus();
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Shift+Tab");
+    await expect(submit).toBeFocused();
+    await expect.poll(() => submit.evaluate((element) => getComputedStyle(element).outlineStyle))
+      .toBe("solid");
+
+    await page.screenshot({ path: evidencePath(screenshot) });
+  }
+});
 
 test("failed submission preserves the draft in the GitHub fallback", async ({ page }) => {
   await page.goto("/");

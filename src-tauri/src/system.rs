@@ -18,7 +18,7 @@ fn is_unc_path(path: &str) -> bool {
 
 /// Trash a single path, falling back to a permanent delete on UNC locations
 /// where the Recycle Bin is unavailable.
-fn trash_or_remove(pathbuf: &std::path::Path) -> Result<(), AppError> {
+pub(crate) fn trash_or_remove(pathbuf: &std::path::Path) -> Result<(), AppError> {
     if is_unc_path(&pathbuf.to_string_lossy()) {
         return files::file_ops::remove_entry_at(pathbuf);
     }

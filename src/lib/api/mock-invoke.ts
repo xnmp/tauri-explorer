@@ -1581,6 +1581,18 @@ const mockCommands: Record<string, CommandHandler> = {
     return entry;
   },
 
+  git_archive_untracked: (args: Record<string, unknown>) => {
+    const paths = (args.paths as string[]) ?? [];
+    for (const path of paths) removeFrom(mockGit.untracked, path);
+    return null;
+  },
+
+  git_trash_untracked: (args: Record<string, unknown>) => {
+    const paths = (args.paths as string[]) ?? [];
+    for (const path of paths) removeFrom(mockGit.untracked, path);
+    return null;
+  },
+
   git_status: (args: Record<string, unknown>) => {
     const repoPath = args.repoPath as string;
     const li = loadRepoIndex(repoPath);

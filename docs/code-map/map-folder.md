@@ -78,7 +78,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `refresh-manager.ts` — dedupe/debounce/rate-limit directory refresh requests.
 - `pane-refresh.ts` / `pane-watch.ts` (above); `refresh-manager.ts` owns policy layering.
 - `git-refresh.ts` — single `git-status-changed` listener; fans out to badge + SCM subscribers.
-- `git-graph-refresh.ts` — F5 refresh bus: GitGraphView registers its fetch+reload per pane id; the `gitGraph.refresh` command dispatches to the active pane (#432).
+- `git-graph-refresh.ts` — F5 refresh bus plus importable graph refresh machinery: `createReloader` serializes fetches with generation/dirty guards, `shouldReloadGraphForChange` filters local-action echoes, and `countGraphWalkCommits` excludes woven stash rows from numeric paging (#432, #444). GitGraphView registers its fetch+reload per pane id; the `gitGraph.refresh` command dispatches to the active pane.
 - `git-graph-nav.ts` — branch-line jump bus: GitGraphView registers its selection stepper per pane id; the `gitGraph.selectOlderOnLine`/`selectNewerOnLine` commands (Ctrl+Down/Up) dispatch to the active pane (#530). Same shape as `git-graph-refresh.ts`, same reason.
 - `git-graph-cache.ts` — per-repo git-graph snapshot cache + `warmGraphSnapshot`/`fetchPage0Snapshot`; extracted from GitGraphView so `git-warm.ts` no longer imports a component; evicts a repo's snapshots on external (watcher) git changes so a remount never paints stale history (#433, arch Finding 7).
 - `git-status.svelte.ts` — per-entry git status cache store.

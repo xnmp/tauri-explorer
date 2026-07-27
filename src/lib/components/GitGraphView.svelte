@@ -79,7 +79,12 @@
   } from "$lib/state/git-summary-cache";
   import { assignLayout, branchPath, detachedHeadIndicator, groupRefChips, indexPrsByBranch, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, sliceBranchLine, stepOnBranchLine, scrollTopToReveal, remoteOnlyBranchNames, branchWalkQuery, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip, type BranchListEntry } from "$lib/domain/git-graph";
   import { openExternalUrl } from "$lib/api/crash";
-  import { registerGraphRefresher } from "$lib/state/git-graph-refresh";
+  import {
+    countGraphWalkCommits,
+    createReloader,
+    registerGraphRefresher,
+    shouldReloadGraphForChange,
+  } from "$lib/state/git-graph-refresh";
   import { registerGraphSelectionStepper } from "$lib/state/git-graph-nav";
   import { clientToFixed } from "$lib/domain/zoom";
   import { parseUnifiedDiff, type ParsedDiff } from "$lib/domain/diff";
@@ -686,10 +691,8 @@
   // silently dropped — the structural cause of "pull completes but the graph
   // doesn't update". Now a generation counter discards stale results and a
   // dirty flag re-runs a request that arrived while a load was in flight, so a
-  // refresh is never lost. Mirrors scm.svelte.ts's refreshGeneration pattern.
-  let reloadGeneration = 0;
-  let reloading = false;
-  let reloadDirty = false;
+  // refresh is never lost. The state-layer reloader owns the generation and
+  // dirty-flag machine so its concurrency contract is directly testable.
 
   /** PR badges (#448): fetched alongside every reload, never blocking the
    *  commit-list paint. `repo` is captured by the caller so a repoPath
@@ -705,16 +708,7 @@
     }
   }
 
-  async function reload(): Promise<void> {
-    // A request while a load is in flight isn't dropped — it re-runs on
-    // completion (dirty flag), picking up the latest filter/local-only.
-    if (reloading) {
-      reloadDirty = true;
-      return;
-    }
-    reloading = true;
-    reloadDirty = false;
-    const gen = ++reloadGeneration;
+  const reloader = createReloader(async ({ isCurrent }) => {
     // Captured once so a mid-flight filter change can't mix pages. Every
     // page-0 load is cached under its own repo+filter key (#416), so
     // re-entering the same view — filtered or not — paints instantly.
@@ -745,7 +739,7 @@
       // write is guarded on `gen` so a stale in-flight load can't clobber a
       // newer one's results.
       const snapshot = await fetchPage0Snapshot(repoPath, filter, (partial) => {
-        if (gen !== reloadGeneration) return;
+        if (!isCurrent()) return;
         commits = partial.commits;
         refs = partial.refs;
         hasMore = partial.hasMore;
@@ -755,7 +749,7 @@
         nextCursor = partial.nextCursor;
         loading = false;
       }, local, excludeBranches, filePath, summaryConsumerId);
-      if (gen !== reloadGeneration) return;
+      if (!isCurrent()) return;
       workingChanges = snapshot.workingChanges;
       cacheSnapshot(cacheKey, snapshot);
       // Branch list / author map may be stale after a reload (refs moved on a
@@ -763,14 +757,13 @@
       // refetches lazily (#431); keep the current values visible until then.
       branchDataLoaded = false;
     } catch (err) {
-      if (gen === reloadGeneration) error = err instanceof Error ? err.message : String(err);
+      if (isCurrent()) error = err instanceof Error ? err.message : String(err);
     } finally {
-      if (gen === reloadGeneration) loading = false;
-      reloading = false;
-      // A refresh that arrived mid-flight re-runs now — never dropped.
-      if (reloadDirty) void reload();
+      if (isCurrent()) loading = false;
     }
-  }
+  });
+
+  const reload = reloader.reload;
 
   /** Append the next page of history (incremental scroll). Distinct from
    *  `reload()`: it never resets the head of the list, so it doesn't race the
@@ -790,9 +783,9 @@
     const local = untrack(() => localOnly);
     const hideRemotes = untrack(() => hideRemoteOnly);
     const filePath = untrack(() => filePathFilter.trim());
-    const generation = reloadGeneration;
+    const generation = reloader.generation;
     const queryIsCurrent = (): boolean =>
-      generation === reloadGeneration &&
+      generation === reloader.generation &&
       selection === untrack(() => branchFilter) &&
       local === untrack(() => localOnly) &&
       hideRemotes === untrack(() => hideRemoteOnly) &&
@@ -821,7 +814,7 @@
         limit: PAGE_SIZE,
         ...(useCursor
           ? { cursor: nextCursor as string }
-          : { skip: commits.filter((c) => !c.stash).length }),
+          : { skip: countGraphWalkCommits(commits) }),
         ...(filter ? { branches: filter } : {}),
         ...(excludeBranches ? { exclude_branches: excludeBranches } : {}),
         ...(local ? { local_only: true } : {}),
@@ -882,7 +875,7 @@
     let unsub: (() => void) | undefined;
     void gitWatchRepo(repo);
     void subscribeGitChanges((change) => {
-      if (change.source === "local") return;
+      if (!shouldReloadGraphForChange(change)) return;
       if (change.repoRoot && directoryKey(change.repoRoot) !== directoryKey(repo)) return;
       if (refreshTimer !== null) clearTimeout(refreshTimer);
       refreshTimer = setTimeout(() => {

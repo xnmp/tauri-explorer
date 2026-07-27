@@ -14,6 +14,66 @@
 
 type RefreshFn = () => void;
 
+export interface ReloaderContext {
+  generation: number;
+  isCurrent(): boolean;
+}
+
+export interface Reloader {
+  readonly generation: number;
+  reload(): Promise<void>;
+}
+
+/**
+ * Serializes graph reloads without dropping a request made during an active
+ * fetch. Consumers use `isCurrent` before applying asynchronous results and
+ * use `generation` to reject a page appended by an older graph query.
+ */
+export function createReloader(fetchFn: (context: ReloaderContext) => Promise<void>): Reloader {
+  let generation = 0;
+  let reloading = false;
+  let reloadDirty = false;
+
+  const reload = async (): Promise<void> => {
+    if (reloading) {
+      reloadDirty = true;
+      return;
+    }
+
+    reloading = true;
+    reloadDirty = false;
+    const currentGeneration = ++generation;
+    try {
+      await fetchFn({
+        generation: currentGeneration,
+        isCurrent: () => currentGeneration === generation,
+      });
+    } finally {
+      reloading = false;
+      if (reloadDirty) void reload();
+    }
+  };
+
+  return {
+    get generation() {
+      return generation;
+    },
+    reload,
+  };
+}
+
+/** A graph action reloads itself, so it ignores its matching local event. */
+export function shouldReloadGraphForChange(change: { source: "watcher" | "local" }): boolean {
+  return change.source !== "local";
+}
+
+/** Stash rows are woven into the graph but are not git-walk pagination steps. */
+export function countGraphWalkCommits<T extends { stash?: unknown }>(
+  commits: ReadonlyArray<T>,
+): number {
+  return commits.filter((commit) => !commit.stash).length;
+}
+
 const refreshers = new Map<string, RefreshFn>();
 
 /** Register a pane's graph refresh handler. Returns an unregister fn; call it

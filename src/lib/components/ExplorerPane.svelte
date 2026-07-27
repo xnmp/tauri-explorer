@@ -212,6 +212,14 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     // Don't process keyboard shortcuts when a dialog is open
     if (dialogStore.activeDialog) return;
 
+    // While the pane shows the commit graph the file listing isn't rendered at
+    // all, so none of this navigation has a visible target — but it still ran,
+    // silently drifting the pane's file selection and stealing DOM focus onto
+    // whatever `.selected` matched (the graph's own selected commit row). It
+    // also double-handled Ctrl+Up/Down with the graph's branch-line jump
+    // (#530). The graph owns the keyboard while it is on screen.
+    if (paneGitGraph) return;
+
     // Ignore events from interactive elements (e.g. path input, rename input)
     const tag = (event.target as HTMLElement)?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA") return;

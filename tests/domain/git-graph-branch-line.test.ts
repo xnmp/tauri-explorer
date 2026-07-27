@@ -8,10 +8,16 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { stepOnBranchLine } from "$lib/domain/git-graph";
-import type { GraphCommitLike } from "$lib/domain/git-graph";
+import { stepOnBranchLine, scrollTopToReveal } from "$lib/domain/git-graph";
+import type { BranchLineCommitLike, GraphCommitLike } from "$lib/domain/git-graph";
 
 const c = (oid: string, ...parents: string[]): GraphCommitLike => ({ oid, parents });
+/** A woven stash row: its first parent is the commit it was taken from. */
+const stashRow = (oid: string, base: string): BranchLineCommitLike => ({
+  oid,
+  parents: [base],
+  stash: "stash@{0}",
+});
 
 /**
  * The mock repo's real shape (`MOCK_GRAPH_SPEC`), newest-first, as the graph
@@ -19,9 +25,9 @@ const c = (oid: string, ...parents: string[]): GraphCommitLike => ({ oid, parent
  * The tip's first-parent line is 16 → 15 → 12 → 11 → 8 → 7 … ; commits 14, 13,
  * 10 and 9 sit physically between those rows on other lines.
  */
-const MOCK_ROWS: GraphCommitLike[] = [
+const MOCK_ROWS: BranchLineCommitLike[] = [
   c("*", "16"), // 0  synthetic uncommitted changes
-  c("stash", "16"), // 1  woven stash entry
+  stashRow("stash", "16"), // 1  woven stash entry
   c("16", "15", "13"), // 2  Merge hotfix into main
   c("15", "12", "14"), // 3  Merge experiment
   c("14", "9"), // 4  Try alternative parser
@@ -97,6 +103,17 @@ describe("stepOnBranchLine — newer (back up the first-parent line)", () => {
     expect(stepOnBranchLine(MOCK_ROWS, 0, "newer")).toBe(-1);
   });
 
+  it("steps over a woven stash row to the trunk row above it", () => {
+    // The stash's first parent IS commit 16, so it looks like an on-line
+    // neighbour — but it is drawn on its own lane. Jumping onto it would be a
+    // dead end AND would hide the uncommitted row directly above.
+    expect(stepOnBranchLine(MOCK_ROWS, 2, "newer")).toBe(0);
+  });
+
+  it("still steps OFF a stash row down to its base commit", () => {
+    expect(stepOnBranchLine(MOCK_ROWS, 1, "older")).toBe(2);
+  });
+
   it("picks the NEAREST commit above when two branches share a first parent", () => {
     // Both b and d claim a as their first parent; d is closer to a.
     const rows = [c("b", "a"), c("d", "a"), c("a")];
@@ -134,6 +151,36 @@ describe("stepOnBranchLine — hostile input", () => {
         expect(stepOnBranchLine(malformed, row, dir)).toBe(-1);
       }
     }
+  });
+});
+
+describe("scrollTopToReveal — bringing a jump target into the render window", () => {
+  const ROW = 28;
+  const VIEW = 280; // 10 rows
+
+  it("leaves a fully visible row alone", () => {
+    expect(scrollTopToReveal(0, ROW, 0, VIEW)).toBe(0);
+    expect(scrollTopToReveal(140, ROW, 0, VIEW)).toBe(0);
+    // Exactly flush with the bottom edge still counts as visible.
+    expect(scrollTopToReveal(VIEW - ROW, ROW, 0, VIEW)).toBe(0);
+  });
+
+  it("scrolls the minimum distance to reveal a row above the window", () => {
+    expect(scrollTopToReveal(280, ROW, 560, VIEW)).toBe(280);
+  });
+
+  it("scrolls the minimum distance to reveal a row below the window", () => {
+    // Row 40 of a page far below the window: its bottom lands on the viewport
+    // bottom, so the jump target sits at the last visible row, not the first.
+    expect(scrollTopToReveal(40 * ROW, ROW, 0, VIEW)).toBe(41 * ROW - VIEW);
+  });
+
+  it("never scrolls to a negative offset", () => {
+    expect(scrollTopToReveal(-50, ROW, 100, VIEW)).toBe(0);
+  });
+
+  it("leaves an unmeasured viewport untouched", () => {
+    expect(scrollTopToReveal(9999, ROW, 42, 0)).toBe(42);
   });
 });
 

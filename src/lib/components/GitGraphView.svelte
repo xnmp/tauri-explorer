@@ -74,7 +74,7 @@
     type OpenPr,
   } from "$lib/api/git-log";
   import { fetchGitSummary } from "$lib/state/git-summary-cache";
-  import { assignLayout, branchPath, groupRefChips, indexPrsByBranch, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, sliceBranchLine, stepOnBranchLine, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip } from "$lib/domain/git-graph";
+  import { assignLayout, branchPath, groupRefChips, indexPrsByBranch, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, sliceBranchLine, stepOnBranchLine, scrollTopToReveal, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip } from "$lib/domain/git-graph";
   import { openExternalUrl } from "$lib/api/crash";
   import { registerGraphRefresher } from "$lib/state/git-graph-refresh";
   import { registerGraphSelectionStepper } from "$lib/state/git-graph-nav";
@@ -575,11 +575,7 @@
   function scrollRowIntoView(index: number): void {
     const el = scrollerEl;
     if (!el) return;
-    const top = rowY(index);
-    if (top < el.scrollTop) el.scrollTop = top;
-    else if (top + ROW_HEIGHT > el.scrollTop + el.clientHeight) {
-      el.scrollTop = top + ROW_HEIGHT - el.clientHeight;
-    }
+    el.scrollTop = scrollTopToReveal(rowY(index), ROW_HEIGHT, el.scrollTop, el.clientHeight);
   }
 
   /** Move the selection one commit along its branch line (#530). The row math
@@ -592,11 +588,15 @@
     const fromRow = displayCommits.findIndex((c) => c.oid === current.oid);
     const targetRow = stepOnBranchLine(displayCommits, fromRow, direction);
     if (targetRow < 0) return;
-    await selectCommit(displayCommits[targetRow]);
+    const target = displayCommits[targetRow];
+    await selectCommit(target);
     // The inline details block reflows the rows below it, so wait for the
     // derived offsets to settle before measuring where the target landed.
     await tick();
-    scrollRowIntoView(targetRow);
+    // Key repeat can land a newer jump while this one is still awaiting; only
+    // the invocation that still owns the selection gets to scroll.
+    if (selected?.oid !== target.oid) return;
+    scrollRowIntoView(displayCommits.findIndex((c) => c.oid === target.oid));
   }
 
   const startRow = $derived(Math.max(0, rowAtY(scrollTop) - OVERSCAN));

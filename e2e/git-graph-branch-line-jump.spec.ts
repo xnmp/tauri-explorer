@@ -19,11 +19,17 @@ const MERGE_FEATURE = "000c000"; // 12 — first parent of 15
 const ALT_PARSER = "000e000"; // 14 — 15's SECOND parent, drawn between them
 const HOTFIX = "000d000"; // 13 — on the hotfix line, drawn between them
 const INITIAL_COMMIT = "0001000"; // 1 — root of the loaded page
+const HEAD_MERGE = "0010001"; // 16 — HEAD; the woven stash row sits above it
+const UNCOMMITTED = "*"; // synthetic working-changes row, above the stash
 
-async function openGraph(page: Page) {
+async function toggleGraph(page: Page) {
   await page.keyboard.press("Control+Shift+p");
   await page.locator("input:focus").fill("Toggle Commit Graph");
   await page.keyboard.press("Enter");
+}
+
+async function openGraph(page: Page) {
+  await toggleGraph(page);
   // The synthetic uncommitted row lands with the async git summary and shifts
   // every row; anchor on it before addressing rows.
   await expect(
@@ -83,6 +89,39 @@ test.describe("git graph branch-line jump (#530)", () => {
     await expect(selected).toHaveAttribute("data-oid", MERGE_EXPERIMENT);
 
     await page.screenshot({ path: "evidence/ac-3-ctrl-up-jump.png" });
+  });
+
+  test("Ctrl+Up from HEAD steps over the woven stash row", async ({ page }) => {
+    await selectRow(page, HEAD_MERGE);
+
+    await page.keyboard.press("Control+ArrowUp");
+
+    // The stash's first parent is HEAD, so it LOOKS like an on-line neighbour,
+    // but it is drawn on its own lane — landing there would be a dead end and
+    // would make the uncommitted row directly above unreachable.
+    const selected = selectedOid(page);
+    await expect(selected).toHaveCount(1);
+    await expect(selected).toHaveAttribute("data-oid", UNCOMMITTED);
+    await expect(selected).toContainText("Uncommitted Changes");
+  });
+
+  test("Ctrl+Arrow in the graph leaves the pane's file selection alone", async ({ page }) => {
+    // The graph replaces the file listing, but ExplorerPane's window-level
+    // arrow navigation used to keep running underneath and drift the hidden
+    // selection one entry per keypress (#530 review finding).
+    await toggleGraph(page); // back to the listing
+    await expect(page.locator(".file-list")).toBeVisible();
+    await page.locator(".entry-item").first().click();
+    const selectedName = await page.locator(".entry-item.selected").first().innerText();
+
+    await toggleGraph(page); // …and back into the graph
+    await selectRow(page, MERGE_EXPERIMENT);
+    await page.keyboard.press("Control+ArrowDown");
+    await expect(selectedOid(page)).toHaveAttribute("data-oid", MERGE_FEATURE);
+
+    await toggleGraph(page);
+    await expect(page.locator(".file-list")).toBeVisible();
+    await expect(page.locator(".entry-item.selected").first()).toHaveText(selectedName);
   });
 
   test("Ctrl+Down at the end of the line leaves the selection alone", async ({ page }) => {

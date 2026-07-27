@@ -287,28 +287,45 @@ export function assignLayout(commits: readonly GraphCommitLike[]): GraphLayout {
  */
 export type BranchLineDirection = "older" | "newer";
 
+/** Row shape the branch-line walk needs: the layout inputs plus the stash
+ *  marker, because a woven stash entry is drawn on a line of its own. */
+export interface BranchLineCommitLike extends GraphCommitLike {
+  /** Set (e.g. `stash@{0}`) on rows woven in from the stash list. */
+  stash?: string;
+}
+
 /**
- * Row of the neighbouring commit on the SAME branch line as `fromRow` (#530),
- * or -1 when there is none on the loaded page.
+ * Row of the neighbouring commit along `fromRow`'s FIRST-PARENT line (#530),
+ * or -1 when there is none on the loaded page. Following that line is what
+ * lets a jump skip the rows physically in between that belong to other lines,
+ * which is the whole point of the shortcut.
  *
- * "Branch line" means what `assignLayout` draws as one continuous polyline: an
- * uninterrupted FIRST-PARENT chain. Following it is what lets a jump skip the
- * rows physically in between that belong to other lines, which is the whole
- * point of the shortcut.
+ * Not identical to "the polyline `assignLayout` drew", and deliberately so —
+ * the layout assigns a commit to whichever chain REACHES it first walking rows
+ * top-down, which is not recoverable from `{oid, parents}` alone:
+ * - `"older"` is exact either way: `parents[0]` is always a drawn edge.
+ * - `"newer"` is ambiguous when two commits share one first parent (two
+ *   branches rooted at the same commit). The layout continues the topmost
+ *   chain through the parent; this picks the NEAREST candidate above instead,
+ *   i.e. the shortest jump. Both are defensible; nearest never skips over
+ *   another commit that also sits on a first-parent edge into the target.
  *
- * Deliberate edges:
+ * Other deliberate edges:
  * - Only `parents[0]` is followed, so a merge commit steps onto its own line,
  *   never into the branch it merged in.
  * - A parent that is not on the loaded page (truncated history, filtered
  *   branches) is not a target — the jump stops rather than silently landing on
  *   an unrelated row.
+ * - Stash rows are never a target: their `parents[0]` is the commit they were
+ *   taken from, so they LOOK like on-line neighbours, but the layout draws
+ *   each on its own lane and colour, and jumping onto one is a dead end that
+ *   also hides the trunk row above it. Stepping OFF a stash still follows its
+ *   edge down to its base commit.
  * - `"older"` only ever looks DOWN the list and `"newer"` only UP, so a
  *   non-topological ordering can never produce a backwards jump or a cycle.
- * - When several commits share one first parent (two branches rooted at the
- *   same commit) `"newer"` picks the nearest one above, i.e. the closest jump.
  */
 export function stepOnBranchLine(
-  commits: readonly GraphCommitLike[],
+  commits: readonly BranchLineCommitLike[],
   fromRow: number,
   direction: BranchLineDirection,
 ): number {
@@ -320,15 +337,38 @@ export function stepOnBranchLine(
     const firstParent = from.parents?.[0];
     if (!firstParent) return -1;
     for (let row = fromRow + 1; row < commits.length; row++) {
+      if (commits[row]?.stash) continue;
       if (commits[row]?.oid === firstParent) return row;
     }
     return -1;
   }
 
   for (let row = fromRow - 1; row >= 0; row--) {
+    if (commits[row]?.stash) continue;
     if (commits[row]?.parents?.[0] === from.oid) return row;
   }
   return -1;
+}
+
+/**
+ * Scroll offset that brings the row occupying `[rowTop, rowTop + rowHeight)`
+ * fully into view, moving the minimum distance (#530) — a jump target can land
+ * outside the virtualized render window entirely. A row already fully visible
+ * leaves `scrollTop` untouched, so a jump never nudges the view for nothing.
+ * An unmeasured viewport (height 0) is also left alone rather than scrolled to
+ * a meaningless offset.
+ */
+export function scrollTopToReveal(
+  rowTop: number,
+  rowHeight: number,
+  scrollTop: number,
+  viewportHeight: number,
+): number {
+  if (!(viewportHeight > 0)) return scrollTop;
+  if (rowTop < scrollTop) return Math.max(0, rowTop);
+  const rowBottom = rowTop + rowHeight;
+  if (rowBottom > scrollTop + viewportHeight) return Math.max(0, rowBottom - viewportHeight);
+  return scrollTop;
 }
 
 /**

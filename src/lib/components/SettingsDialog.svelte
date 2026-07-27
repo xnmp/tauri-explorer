@@ -1235,6 +1235,7 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
+    min-width: 0;
   }
 
   .setting-label {
@@ -1358,7 +1359,7 @@
   .toggle {
     position: relative;
     display: inline-block;
-    width: 44px;
+    flex: 0 0 44px;
     height: 24px;
     cursor: pointer;
   }

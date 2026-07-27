@@ -112,6 +112,12 @@ pub struct GitLogOptions {
     /// every branch. Names that don't resolve are ignored; if none resolve
     /// the page is empty. `None` = no filter (#342).
     pub branches: Option<Vec<String>>,
+    /// Branch shorthands to drop from the seed set, whichever way it was
+    /// built (#515). Unlike `branches` this is subtractive, so "every branch
+    /// except these" keeps HEAD seeded and keeps honouring `local_only` —
+    /// spelling the same thing as an explicit `branches` list would silently
+    /// lose both. `None` / empty = drop nothing.
+    pub exclude_branches: Option<Vec<String>>,
     /// Seed the walk from HEAD + LOCAL branch tips only, hiding history that
     /// is reachable solely from remote-tracking branches (#381). Ignored when
     /// `branches` is set (an explicit selection wins).
@@ -284,8 +290,19 @@ fn build_log(
     // back gracefully on an empty / unborn repo (push_head errors → no
     // commits).
     let mut seeded = false;
+    // Subtractive filter (#515): applies to both seeding paths, so hiding
+    // remote-only branches never turns "everything" into an explicit list.
+    let excluded: std::collections::HashSet<&str> = opts
+        .exclude_branches
+        .iter()
+        .flatten()
+        .map(String::as_str)
+        .collect();
     if let Some(names) = &opts.branches {
         for name in names {
+            if excluded.contains(name.as_str()) {
+                continue;
+            }
             let branch = repo
                 .find_branch(name, git2::BranchType::Local)
                 .or_else(|_| repo.find_branch(name, git2::BranchType::Remote));
@@ -309,6 +326,9 @@ fn build_log(
         };
         if let Ok(branches) = repo.branches(branch_type) {
             for b in branches.flatten() {
+                if matches!(b.0.name(), Ok(Some(n)) if excluded.contains(n)) {
+                    continue;
+                }
                 if let Some(oid) = b.0.get().target() {
                     if walk.push(oid).is_ok() {
                         seeded = true;
@@ -1155,6 +1175,81 @@ mod tests {
             vec!["c2", "c1", "c0"],
             "cursor resume drops no real commit at the stash boundary",
         );
+    }
+
+    #[test]
+    fn exclude_branches_drops_a_tip_without_unseeding_head_or_local_only() {
+        let (dir, repo) = init_repo();
+        let p = dir.path().to_path_buf();
+        write(&p, "a.txt", "one");
+        let base = commit(&repo, "base", &[]);
+        write(&p, "a.txt", "two");
+        let _tip = commit(&repo, "main tip", &[base]);
+
+        // origin/legacy: a remote-only branch with a commit of its own.
+        // origin/main: a remote that local `main` tracks, ALSO ahead by one —
+        // local_only is what hides that, and it must keep working.
+        let sig = git2::Signature::now("Test User", "test@example.com").unwrap();
+        let base_commit = repo.find_commit(base).unwrap();
+        let tree = base_commit.tree().unwrap();
+        let legacy_tip = repo
+            .commit(None, &sig, &sig, "remote only", &tree, &[&base_commit])
+            .unwrap();
+        repo.reference("refs/remotes/origin/legacy", legacy_tip, true, "sim")
+            .unwrap();
+        let ahead = repo
+            .commit(None, &sig, &sig, "origin/main ahead", &tree, &[&base_commit])
+            .unwrap();
+        repo.reference("refs/remotes/origin/main", ahead, true, "sim")
+            .unwrap();
+
+        let summaries = |o: &GitLogOptions| -> Vec<String> {
+            build_log(&repo, o, Vec::new(), &no_cancel())
+                .unwrap()
+                .commits
+                .into_iter()
+                .map(|c| c.summary)
+                .collect()
+        };
+
+        // Subtracting the remote-only tip hides its commit and nothing else:
+        // HEAD's history and the tracked remote's are still walked.
+        let excluded = GitLogOptions {
+            exclude_branches: Some(vec!["origin/legacy".into()]),
+            ..Default::default()
+        };
+        let sums = summaries(&excluded);
+        assert!(!sums.contains(&"remote only".to_string()), "{sums:?}");
+        assert!(sums.contains(&"main tip".to_string()), "{sums:?}");
+        assert!(sums.contains(&"origin/main ahead".to_string()), "{sums:?}");
+
+        // Composes with local_only instead of overriding it: an explicit
+        // `branches` list would have made "origin/main ahead" reappear.
+        let both = GitLogOptions {
+            exclude_branches: Some(vec!["origin/legacy".into()]),
+            local_only: true,
+            ..Default::default()
+        };
+        let sums = summaries(&both);
+        assert!(!sums.contains(&"remote only".to_string()), "{sums:?}");
+        assert!(!sums.contains(&"origin/main ahead".to_string()), "{sums:?}");
+        assert!(sums.contains(&"main tip".to_string()), "{sums:?}");
+
+        // Subtracts from an explicit selection too (#342 + #515 composed):
+        // selecting only the excluded branch walks nothing.
+        let selected = GitLogOptions {
+            branches: Some(vec!["origin/legacy".into()]),
+            exclude_branches: Some(vec!["origin/legacy".into()]),
+            ..Default::default()
+        };
+        assert!(summaries(&selected).is_empty());
+
+        // Excluding an unknown name changes nothing.
+        let noop = GitLogOptions {
+            exclude_branches: Some(vec!["does/not/exist".into()]),
+            ..Default::default()
+        };
+        assert_eq!(summaries(&noop), summaries(&GitLogOptions::default()));
     }
 
     #[test]

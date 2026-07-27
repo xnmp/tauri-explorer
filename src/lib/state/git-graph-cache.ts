@@ -101,12 +101,14 @@ export async function fetchPage0Snapshot(
   branches: string[] | null = null,
   onLog?: (partial: Omit<GraphSnapshot, "workingChanges">) => void,
   localOnly = false,
+  excludeBranches: string[] | null = null,
 ): Promise<GraphSnapshot> {
   const summaryPromise = fetchGitSummary(repoPath);
   const page = await gitLog(repoPath, {
     skip: 0,
     limit: PAGE_SIZE,
     ...(branches ? { branches } : {}),
+    ...(excludeBranches ? { exclude_branches: excludeBranches } : {}),
     ...(localOnly ? { local_only: true } : {}),
   });
   const headOid =

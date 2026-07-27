@@ -74,7 +74,7 @@
     type OpenPr,
   } from "$lib/api/git-log";
   import { fetchGitSummary } from "$lib/state/git-summary-cache";
-  import { assignLayout, branchPath, groupRefChips, indexPrsByBranch, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, sliceBranchLine, stepOnBranchLine, scrollTopToReveal, remoteOnlyBranchNames, effectiveBranchSelection, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip, type BranchListEntry } from "$lib/domain/git-graph";
+  import { assignLayout, branchPath, groupRefChips, indexPrsByBranch, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, sliceBranchLine, stepOnBranchLine, scrollTopToReveal, remoteOnlyBranchNames, branchWalkQuery, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip, type BranchListEntry } from "$lib/domain/git-graph";
   import { openExternalUrl } from "$lib/api/crash";
   import { registerGraphRefresher } from "$lib/state/git-graph-refresh";
   import { registerGraphSelectionStepper } from "$lib/state/git-graph-nav";
@@ -688,9 +688,9 @@
     const selection = untrack(() => branchFilter);
     const local = untrack(() => localOnly);
     const hideRemotes = untrack(() => hideRemoteOnly);
-    // Cache under the RAW selection + toggles: the effective branch set below
-    // depends on the lazily-loaded branch list, so keying on it would let a
-    // pre-load remount paint the unfiltered variant's rows (#416).
+    // Cache under the RAW selection + toggles: the excluded set below depends
+    // on the lazily-loaded branch list, so keying on it would let a pre-load
+    // remount paint the unfiltered variant's rows (#416).
     const cacheKey = snapshotKey(repoPath, selection, local, hideRemotes);
     loading = true;
     error = null;
@@ -699,7 +699,11 @@
     // the popover loads lazily — refresh it here so a persisted toggle applies
     // on the first paint too, and stays right after refs move (#515).
     if (hideRemotes) await loadBranchList();
-    const filter = effectiveBranchSelection(untrack(() => branchList), selection, hideRemotes);
+    const { branches: filter, excludeBranches } = branchWalkQuery(
+      untrack(() => branchList),
+      selection,
+      hideRemotes,
+    );
     try {
       // Same page-0 fetch used by the background warm (#287). The commit list
       // paints as soon as the log arrives; the working-changes count (a full
@@ -715,7 +719,7 @@
         headBranch = partial.headBranch;
         nextCursor = partial.nextCursor;
         loading = false;
-      }, local);
+      }, local, excludeBranches);
       if (gen !== reloadGeneration) return;
       workingChanges = snapshot.workingChanges;
       cacheSnapshot(cacheKey, snapshot);
@@ -751,7 +755,11 @@
     const local = untrack(() => localOnly);
     const hideRemotes = untrack(() => hideRemoteOnly);
     // `reload()` refreshed `branchList` already when the toggle is on.
-    const filter = effectiveBranchSelection(untrack(() => branchList), selection, hideRemotes);
+    const { branches: filter, excludeBranches } = branchWalkQuery(
+      untrack(() => branchList),
+      selection,
+      hideRemotes,
+    );
     const cacheKey = snapshotKey(repoPath, selection, local, hideRemotes);
     loading = true;
     loadingMore = true;
@@ -762,13 +770,16 @@
       // Filtered queries keep the numeric skip (real-commit count) path — the
       // cursor is keyed to the unfiltered walk. Skip by the number of REAL
       // commits, never commits.length (woven stash rows aren't walk steps).
-      const useCursor = filter === null && nextCursor !== null;
+      // An exclusion changes the walk just like a selection does, so it also
+      // rules out the cursor (which is keyed to the unfiltered walk) (#515).
+      const useCursor = filter === null && excludeBranches === null && nextCursor !== null;
       const page = await gitLog(repoPath, {
         limit: PAGE_SIZE,
         ...(useCursor
           ? { cursor: nextCursor as string }
           : { skip: commits.filter((c) => !c.stash).length }),
         ...(filter ? { branches: filter } : {}),
+        ...(excludeBranches ? { exclude_branches: excludeBranches } : {}),
         ...(local ? { local_only: true } : {}),
       });
       commits = [...commits, ...page.commits];
@@ -1498,6 +1509,7 @@
                 <button
                   class="bf-only"
                   title="Show only {b.name}"
+                  disabled={isHiddenAsRemoteOnly(b.name)}
                   onclick={(e) => {
                     e.preventDefault();
                     setBranchFilter([b.name]);

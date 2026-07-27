@@ -519,23 +519,32 @@ export function remoteOnlyBranchNames(branches: readonly BranchListEntry[]): str
   ];
 }
 
-/** Branch names the graph should walk, given the per-branch/author selection
- *  (`null` = every branch) and the bulk "hide remote-only" toggle.
+/** The seed spec for a `git_log` walk. */
+export interface BranchQuery {
+  /** Explicit tips to walk; `null` = HEAD + every branch (#342). */
+  branches: string[] | null;
+  /** Shorthands subtracted from whichever seed set is used; `null` = none. */
+  excludeBranches: string[] | null;
+}
+
+/** Build the walk's seed spec from the per-branch/author selection (`null` =
+ *  every branch) and the bulk "hide remote-only" toggle.
  *
- *  Returns `null` when nothing is excluded, so an unfiltered view keeps the
- *  cheaper unseeded walk; `[]` is a real answer ("walk nothing", #413). */
-export function effectiveBranchSelection(
+ *  The toggle is deliberately expressed as a SUBTRACTION rather than folded
+ *  into `branches`: spelling "every branch except these" as an explicit list
+ *  would stop the backend seeding HEAD and would override `local_only`, so a
+ *  hide toggle could make history appear (#515). An empty branch list — the
+ *  popover loads it lazily — subtracts nothing rather than everything. */
+export function branchWalkQuery(
   branches: readonly BranchListEntry[],
   selected: readonly string[] | null,
   hideRemoteOnly: boolean,
-): string[] | null {
-  if (!hideRemoteOnly) return selected === null ? null : [...selected];
-  const hidden = new Set(remoteOnlyBranchNames(branches));
-  // No branch list yet (the popover loads it lazily) or nothing to hide: keep
-  // the caller's selection rather than inventing an empty one.
-  if (hidden.size === 0) return selected === null ? null : [...selected];
-  const base = selected ?? branches.map((b) => b.name);
-  return base.filter((name) => !hidden.has(name));
+): BranchQuery {
+  const hidden = hideRemoteOnly ? remoteOnlyBranchNames(branches) : [];
+  return {
+    branches: selected === null ? null : [...selected],
+    excludeBranches: hidden.length > 0 ? hidden : null,
+  };
 }
 
 // ─── PR badges (#448) ────────────────────────────────────────────────────────

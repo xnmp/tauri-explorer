@@ -59,6 +59,10 @@ export interface GitLogOptions {
    *  `main` or remote like `origin/main`). Omitted = all branches + HEAD.
    *  Unresolvable names are ignored; none resolving → empty page (#342). */
   branches?: string[];
+  /** Branch shorthands subtracted from whichever seed set is used — "every
+   *  branch except these" (#515). Unlike `branches` this keeps HEAD seeded
+   *  and keeps `local_only` in force. */
+  exclude_branches?: string[];
   /** Seed from HEAD + local branches only, hiding history reachable solely
    *  from remote-tracking branches (#381). Ignored when `branches` is set. */
   local_only?: boolean;

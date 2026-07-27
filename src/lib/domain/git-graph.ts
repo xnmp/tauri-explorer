@@ -178,7 +178,7 @@ export function assignLayout(
     const parentIdx = start.nextParent;
     const parentRow = start.parents[parentIdx] ?? -1;
     const isFirstParent = parentIdx === 0;
-    const followsHeadLine = isFirstParent && headLineRows.has(startRow);
+    let followsHeadLine = isFirstParent && headLineRows.has(startRow);
     start.nextParent++;
 
     const startLane = placeDot(startRow);
@@ -264,6 +264,10 @@ export function assignLayout(
       prevLane = lane;
 
       if (!isTarget) continue;
+      // A synthetic working-tree row (or another first-parent child) can
+      // reach HEAD before the layout driver reaches HEAD itself. From that
+      // join onward, its continuation is the reserved HEAD line.
+      if (headLineRows.has(row)) followsHeadLine = true;
       if (v.onBranch !== null) break; // joined an existing line — terminate
 
       // The parent joins this chain; continue through ITS first parent.

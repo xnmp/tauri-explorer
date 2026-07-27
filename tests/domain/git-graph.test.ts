@@ -74,6 +74,22 @@ describe("assignLayout", () => {
     expect(layout.vertices.map((v) => v.lane)).toEqual([1, 0, 0, 0]);
   });
 
+  it("keeps lane zero reserved after a working-tree row joins HEAD", () => {
+    const layout = assignLayout([
+      c("uncommitted", "head"),
+      c("otherTip", "base"),
+      c("head", "parent"),
+      c("otherMiddle", "base"),
+      c("parent", "base"),
+      c("base"),
+    ], "head");
+
+    const lineThroughHead = layout.branches.find(
+      (line) => line.points[0]?.row === 0 && line.points.at(-1)?.row === 5,
+    );
+    expect(lineThroughHead?.points.slice(2).map((point) => point.lane)).toEqual([0, 0, 0, 0]);
+  });
+
   it("routes a merge as an edge into a second lane and joins at the fork", () => {
     // m3 = merge of m2 (main) and f2 (feature); both descend from base.
     const layout = assignLayout([c("m3", "m2", "f2"), c("f2", "base"), c("m2", "base"), c("base")]);

@@ -124,8 +124,8 @@
 
     <footer>
       <span class="hint">Ctrl+Enter to submit</span>
-      <button type="button" onclick={onClose} disabled={submitting}>Cancel</button>
-      <button type="submit" class="primary" disabled={!canSubmit}>
+      <button type="button" class="btn secondary" onclick={onClose} disabled={submitting}>Cancel</button>
+      <button type="submit" class="btn primary" disabled={!canSubmit}>
         {submitting ? "Submitting…" : "Submit"}
       </button>
     </footer>
@@ -175,6 +175,4 @@
   textarea { resize: vertical; min-height: 130px; }
   footer { gap: 8px; }
   .hint { margin-right: auto; color: var(--text-secondary); font-size: 12px; }
-  footer button { padding: 7px 16px; }
-  footer .primary { background: var(--accent); color: var(--text-on-accent, white); }
 </style>

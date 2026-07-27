@@ -24,6 +24,11 @@ function nextTimestamp(): string {
   return new Date(TIMESTAMP_BASE + timestampSeq++ * TIMESTAMP_STEP_MS).toISOString();
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+function daysAgo(days: number): string {
+  return new Date(Date.now() - days * DAY_MS).toISOString();
+}
+
 // Helper to create mock file entry
 function file(name: string, path: string, size: number): FileEntry {
   return { name, path, kind: "file", size, modified: nextTimestamp() };
@@ -100,11 +105,11 @@ const mockFiles: Record<string, FileEntry[]> = {
     file("doc.gdoc", "/media/user/GoogleDrive/My Drive/doc.gdoc", 1024),
   ],
   "/home/user/Documents": [
-    dir("project", "/home/user/Documents/project"),
-    file("report.pdf", "/home/user/Documents/report.pdf", 102400),
-    file("budget.xlsx", "/home/user/Documents/budget.xlsx", 51200),
-    file("presentation.pptx", "/home/user/Documents/presentation.pptx", 204800),
-    file("notes.md", "/home/user/Documents/notes.md", 4096),
+    { ...dir("project", "/home/user/Documents/project"), modified: daysAgo(150) },
+    { ...file("report.pdf", "/home/user/Documents/report.pdf", 102400), modified: daysAgo(35) },
+    { ...file("budget.xlsx", "/home/user/Documents/budget.xlsx", 51200), modified: daysAgo(5) },
+    { ...file("presentation.pptx", "/home/user/Documents/presentation.pptx", 204800), modified: daysAgo(1) },
+    { ...file("notes.md", "/home/user/Documents/notes.md", 4096), modified: daysAgo(0) },
   ],
   "/home/user/Downloads": [
     dir("wrapper", "/home/user/Downloads/wrapper", false),
@@ -2033,17 +2038,17 @@ const mockCommands: Record<string, CommandHandler> = {
         comments: [
           {
             author: "octocat",
-            createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+            createdAt: daysAgo(150),
             body: "Nice work! Left a couple of small notes on the diff.",
           },
           {
             author: "reviewer-bot",
-            createdAt: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+            createdAt: daysAgo(35),
             body: "CI is green. Approving once the naming nit is addressed.",
           },
           {
             author: null,
-            createdAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+            createdAt: daysAgo(5),
             body: "Thanks for the review — pushed a fixup.",
           },
         ],

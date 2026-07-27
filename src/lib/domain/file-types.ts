@@ -4,6 +4,17 @@
  */
 
 import type { FileEntry } from "./file";
+import { compactRelativeTime } from "./relative-time";
+
+// Constructing Intl state per visible row costs ~100µs of ICU setup. Keep one
+// formatter for the absolute-date tooltip that accompanies relative labels.
+const absoluteDateFormatter = new Intl.DateTimeFormat(undefined, {
+  month: "numeric",
+  day: "numeric",
+  year: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
 
 /** File type descriptive names - Windows 11 style */
 const FILE_TYPE_MAP: Record<string, string> = {
@@ -389,21 +400,19 @@ export function isZipFile(entry: FileEntry): boolean {
   return getExtension(entry.name) === "zip";
 }
 
-// toLocaleString(options) constructs a fresh Intl.DateTimeFormat on every
-// call (~100µs of ICU setup) — ruinous when formatting a date per visible row.
-// A single cached formatter makes .format() a few microseconds.
-const dateFormatter = new Intl.DateTimeFormat(undefined, {
-  month: "numeric",
-  day: "numeric",
-  year: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-});
-
-/** Format modified date - Windows 11 style: M/D/YYYY h:mm AM/PM.
- *  Returns "" for unparseable input instead of "Invalid Date". */
-export function formatDate(isoString: string): string {
+/**
+ * Format a timestamp as a compact elapsed interval for file-list and metadata
+ * displays. Returns "" for unparseable input instead of "Invalid Date".
+ */
+export function formatDate(isoString: string, now = new Date()): string {
   const date = new Date(isoString);
   if (Number.isNaN(date.getTime())) return "";
-  return dateFormatter.format(date);
+  return compactRelativeTime(now.getTime() - date.getTime());
+}
+
+/** Format an absolute timestamp for the file-list relative-date tooltip. */
+export function formatAbsoluteDate(isoString: string): string {
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return "";
+  return absoluteDateFormatter.format(date);
 }

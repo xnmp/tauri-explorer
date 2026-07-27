@@ -40,6 +40,7 @@ test("Premium Theme Effects toggle renders a complete, clearly selected switch",
       thumbWidth: thumb.width,
       thumbHeight: thumb.height,
       thumbTop: thumb.top,
+      thumbOffsetX: new DOMMatrixReadOnly(thumb.transform).m41,
       thumbColor: thumb.backgroundColor,
     };
   });
@@ -56,12 +57,25 @@ test("Premium Theme Effects toggle renders a complete, clearly selected switch",
   await expect(input).toBeChecked();
   await expect
     .poll(() =>
-      slider.evaluate((element) => {
+      slider.evaluate((element, previous) => {
         const track = getComputedStyle(element);
         const thumb = getComputedStyle(element, "::before");
-        return { trackColor: track.backgroundColor, thumbColor: thumb.backgroundColor };
-      }),
+        return {
+          colorsChanged:
+            track.backgroundColor !== previous.trackColor && thumb.backgroundColor !== previous.thumbColor,
+          thumbWidth: thumb.width,
+          thumbHeight: thumb.height,
+          thumbTop: thumb.top,
+          thumbOffsetX: new DOMMatrixReadOnly(thumb.transform).m41,
+        };
+      }, offStyle),
     )
-    .not.toEqual({ trackColor: offStyle.trackColor, thumbColor: offStyle.thumbColor });
+    .toEqual({
+      colorsChanged: true,
+      thumbWidth: "18px",
+      thumbHeight: "18px",
+      thumbTop: "2px",
+      thumbOffsetX: 20,
+    });
   await page.screenshot({ path: shot("ac-1-settings-toggle-styling.png") });
 });

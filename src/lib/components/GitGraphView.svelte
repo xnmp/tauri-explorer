@@ -74,7 +74,7 @@
     type OpenPr,
   } from "$lib/api/git-log";
   import { fetchGitSummary } from "$lib/state/git-summary-cache";
-  import { assignLayout, branchPath, groupRefChips, indexPrsByBranch, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, sliceBranchLine, stepOnBranchLine, scrollTopToReveal, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip } from "$lib/domain/git-graph";
+  import { assignLayout, branchPath, groupRefChips, indexPrsByBranch, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, sliceBranchLine, stepOnBranchLine, scrollTopToReveal, remoteOnlyBranchNames, branchWalkQuery, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip, type BranchListEntry } from "$lib/domain/git-graph";
   import { openExternalUrl } from "$lib/api/crash";
   import { registerGraphRefresher } from "$lib/state/git-graph-refresh";
   import { registerGraphSelectionStepper } from "$lib/state/git-graph-nav";
@@ -180,6 +180,23 @@
     savePersisted(LOCAL_ONLY_KEY, localOnly);
   }
 
+  // Bulk hide of remote-only branches (#515): drop every remote ref that no
+  // local branch tracks (`origin/legacy-import` with no local `legacy-import`)
+  // from the walked set in one action. A separate axis from the per-branch /
+  // author selection — like `localOnly` — so toggling it never destroys a
+  // curated selection. Persisted per repo.
+  const HIDE_REMOTE_ONLY_KEY = `git-graph-hide-remote-only:${untrack(() => repoPath)}`;
+  let hideRemoteOnly = $state(loadPersisted<unknown>(HIDE_REMOTE_ONLY_KEY, false) === true);
+
+  function toggleHideRemoteOnly(): void {
+    hideRemoteOnly = !hideRemoteOnly;
+    savePersisted(HIDE_REMOTE_ONLY_KEY, hideRemoteOnly);
+    // The selected commit may not exist in the new subset (mirrors
+    // setBranchFilter).
+    closeDetails();
+    closePrDetail();
+  }
+
   // Paint the last-known graph immediately on remount (#255); the load
   // effect below still refreshes from git in the background. The cache is
   // keyed by repo + filter + local-only (#416), so a filtered remount paints
@@ -188,7 +205,7 @@
     // untrack: the view is {#key}ed on repoPath, so the initial values are
     // the right ones for this instance's lifetime.
     const cached = getSnapshot(
-      untrack(() => snapshotKey(repoPath, branchFilter, localOnly)),
+      untrack(() => snapshotKey(repoPath, branchFilter, localOnly, hideRemoteOnly)),
     );
     if (cached) {
       commits = cached.commits;
@@ -668,12 +685,25 @@
     // Captured once so a mid-flight filter change can't mix pages. Every
     // page-0 load is cached under its own repo+filter key (#416), so
     // re-entering the same view — filtered or not — paints instantly.
-    const filter = untrack(() => branchFilter);
+    const selection = untrack(() => branchFilter);
     const local = untrack(() => localOnly);
-    const cacheKey = snapshotKey(repoPath, filter, local);
+    const hideRemotes = untrack(() => hideRemoteOnly);
+    // Cache under the RAW selection + toggles: the excluded set below depends
+    // on the lazily-loaded branch list, so keying on it would let a pre-load
+    // remount paint the unfiltered variant's rows (#416).
+    const cacheKey = snapshotKey(repoPath, selection, local, hideRemotes);
     loading = true;
     error = null;
     void loadPrs(repoPath);
+    // Which refs are remote-only is only knowable from the branch list, which
+    // the popover loads lazily — refresh it here so a persisted toggle applies
+    // on the first paint too, and stays right after refs move (#515).
+    if (hideRemotes) await loadBranchList();
+    const { branches: filter, excludeBranches } = branchWalkQuery(
+      untrack(() => branchList),
+      selection,
+      hideRemotes,
+    );
     try {
       // Same page-0 fetch used by the background warm (#287). The commit list
       // paints as soon as the log arrives; the working-changes count (a full
@@ -689,7 +719,7 @@
         headBranch = partial.headBranch;
         nextCursor = partial.nextCursor;
         loading = false;
-      }, local);
+      }, local, excludeBranches);
       if (gen !== reloadGeneration) return;
       workingChanges = snapshot.workingChanges;
       cacheSnapshot(cacheKey, snapshot);
@@ -721,9 +751,16 @@
   }
 
   async function loadMore(): Promise<void> {
-    const filter = untrack(() => branchFilter);
+    const selection = untrack(() => branchFilter);
     const local = untrack(() => localOnly);
-    const cacheKey = snapshotKey(repoPath, filter, local);
+    const hideRemotes = untrack(() => hideRemoteOnly);
+    // `reload()` refreshed `branchList` already when the toggle is on.
+    const { branches: filter, excludeBranches } = branchWalkQuery(
+      untrack(() => branchList),
+      selection,
+      hideRemotes,
+    );
+    const cacheKey = snapshotKey(repoPath, selection, local, hideRemotes);
     loading = true;
     loadingMore = true;
     error = null;
@@ -733,13 +770,16 @@
       // Filtered queries keep the numeric skip (real-commit count) path — the
       // cursor is keyed to the unfiltered walk. Skip by the number of REAL
       // commits, never commits.length (woven stash rows aren't walk steps).
-      const useCursor = filter === null && nextCursor !== null;
+      // An exclusion changes the walk just like a selection does, so it also
+      // rules out the cursor (which is keyed to the unfiltered walk) (#515).
+      const useCursor = filter === null && excludeBranches === null && nextCursor !== null;
       const page = await gitLog(repoPath, {
         limit: PAGE_SIZE,
         ...(useCursor
           ? { cursor: nextCursor as string }
           : { skip: commits.filter((c) => !c.stash).length }),
         ...(filter ? { branches: filter } : {}),
+        ...(excludeBranches ? { exclude_branches: excludeBranches } : {}),
         ...(local ? { local_only: true } : {}),
       });
       commits = [...commits, ...page.commits];
@@ -774,6 +814,7 @@
     void repoPath;
     void branchFilter;
     void localOnly;
+    void hideRemoteOnly;
     untrack(() => void reload());
   });
 
@@ -843,19 +884,28 @@
   let branchAuthors = $state<Record<string, string>>({});
   let branchDataLoaded = false;
 
+  /** Refresh the popover's branch list. Also driven by `reload()` while the
+   *  hide-remote-only toggle is on — that filter is computed from this list,
+   *  so it can't wait for the popover to be opened (#515). */
+  async function loadBranchList(): Promise<void> {
+    try {
+      const r = await gitRefs(repoPath);
+      branchList = [
+        ...r.local_branches.map((b) => ({ name: b.name, remote: false })),
+        ...r.remote_branches.map((b) => ({ name: b.name, remote: true })),
+      ];
+    } catch {
+      // Keep the last known list. Blanking it would make the hide toggle
+      // subtract nothing while still reading as on — and cache those
+      // unexcluded rows under the toggle's snapshot key (#416).
+    }
+  }
+
   async function toggleBranchPopover(): Promise<void> {
     branchPopoverOpen = !branchPopoverOpen;
     if (branchPopoverOpen && !branchDataLoaded) {
       branchDataLoaded = true;
-      try {
-        const r = await gitRefs(repoPath);
-        branchList = [
-          ...r.local_branches.map((b) => ({ name: b.name, remote: false })),
-          ...r.remote_branches.map((b) => ({ name: b.name, remote: true })),
-        ];
-      } catch {
-        branchList = [];
-      }
+      await loadBranchList();
       try {
         const authors = await gitBranchAuthors(repoPath);
         branchAuthors = Object.fromEntries(authors.map((a) => [a.name, a.author]));
@@ -883,7 +933,15 @@
     closePrDetail();
   }
 
+  /** Remote refs no local branch tracks — the set the bulk toggle hides. */
+  const remoteOnlySet = $derived(new Set(remoteOnlyBranchNames(branchList as BranchListEntry[])));
+
+  function isHiddenAsRemoteOnly(name: string): boolean {
+    return hideRemoteOnly && remoteOnlySet.has(name);
+  }
+
   function isBranchShown(name: string): boolean {
+    if (isHiddenAsRemoteOnly(name)) return false;
     return branchFilter === null || branchFilter.includes(name);
   }
 
@@ -904,8 +962,13 @@
 
   // ----- Author checkboxes (#411, #412): batch-toggle an author's branches -----
 
+  /** Branches the author checkbox governs. Branches the bulk remote-only
+   *  toggle is hiding (#515) are out of play on the per-branch axis, so they
+   *  neither uncheck their author nor get (de)selected by clicking them. */
   function branchesByAuthor(author: string): string[] {
-    return branchList.filter((b) => branchAuthors[b.name] === author).map((b) => b.name);
+    return branchList
+      .filter((b) => branchAuthors[b.name] === author && !isHiddenAsRemoteOnly(b.name))
+      .map((b) => b.name);
   }
 
   /** An author reads as checked when every branch they created is shown. */
@@ -1356,7 +1419,7 @@
     <div class="graph-header" role="row" tabindex="-1" style:padding-left="{effectiveGraphWidth + 20}px" oncontextmenu={openColumnMenu}>
       <button
         class="branch-filter-btn"
-        class:filtered={branchFilter !== null || localOnly}
+        class:filtered={branchFilter !== null || localOnly || hideRemoteOnly}
         onclick={() => void toggleBranchPopover()}
         title="Filter branches"
         aria-label="Filter branches"
@@ -1389,6 +1452,17 @@
               <input type="checkbox" checked={localOnly} onchange={toggleLocalOnly} />
               <span class="bf-name">Local branches only</span>
             </label>
+            <!-- Bulk hide of remote refs no local branch tracks (#515). Not a
+                 `.bf-row`: the branch-row selectors below (and in e2e) address
+                 real branches only. -->
+            <label
+              class="bf-opt"
+              title="Hide every remote branch that has no local counterpart"
+              data-testid="bf-hide-remote-only"
+            >
+              <input type="checkbox" checked={hideRemoteOnly} onchange={toggleHideRemoteOnly} />
+              <span class="bf-name">Hide remote-only branches</span>
+            </label>
             <!-- Select/deselect all (#413). -->
             <label class="bf-row bf-all" title="Select or deselect every branch">
               <input
@@ -1419,10 +1493,17 @@
               <div class="bf-heading">Branches</div>
             {/if}
             {#each filteredBranchList as b (b.name)}
-              <label class="bf-row" title="Show or hide {b.name}">
+              <label
+                class="bf-row"
+                class:bf-bulk-hidden={isHiddenAsRemoteOnly(b.name)}
+                title={isHiddenAsRemoteOnly(b.name)
+                  ? `${b.name} is hidden by "Hide remote-only branches"`
+                  : `Show or hide ${b.name}`}
+              >
                 <input
                   type="checkbox"
                   checked={isBranchShown(b.name)}
+                  disabled={isHiddenAsRemoteOnly(b.name)}
                   onchange={() => toggleBranch(b.name)}
                 />
                 <span class="bf-name">{b.name}</span>
@@ -1430,6 +1511,7 @@
                 <button
                   class="bf-only"
                   title="Show only {b.name}"
+                  disabled={isHiddenAsRemoteOnly(b.name)}
                   onclick={(e) => {
                     e.preventDefault();
                     setBranchFilter([b.name]);
@@ -2731,7 +2813,10 @@
     padding: 0 4px 6px;
   }
 
-  .bf-row {
+  .bf-row,
+  /* Bulk option rows (#515) share the row styling but are deliberately not
+     `.bf-row` — that class addresses real branches. */
+  .bf-opt {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -2743,8 +2828,16 @@
     cursor: pointer;
   }
 
-  .bf-row:hover {
+  .bf-row:hover,
+  .bf-opt:hover {
     background: var(--subtle-fill-secondary);
+  }
+
+  /* A branch the bulk toggle is hiding: still listed (so it's clear what the
+     toggle covers), but visibly out of play and not individually selectable. */
+  .bf-bulk-hidden {
+    color: var(--text-tertiary);
+    cursor: default;
   }
 
   .bf-all {

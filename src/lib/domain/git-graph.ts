@@ -495,6 +495,58 @@ export function splitRemoteRef(name: string): RemoteRefChip {
     : { name, remote: name, branch: name };
 }
 
+// ─── Bulk "hide remote-only branches" filter (#515) ──────────────────────────
+
+/** Structural subset of the branch-filter popover's list entry: a branch
+ *  shorthand plus which side of `git_refs` it came from. */
+export interface BranchListEntry {
+  /** Shorthand — `main` for locals, `origin/main` for remotes. */
+  name: string;
+  remote: boolean;
+}
+
+/** Remote-tracking branches with no local branch of the same shorthand
+ *  (`origin/feat/x` with no local `feat/x`). Matching is by name, the same
+ *  rule `groupRefChips` uses to nest remotes under their local branch. */
+export function remoteOnlyBranchNames(branches: readonly BranchListEntry[]): string[] {
+  const locals = new Set(branches.filter((b) => !b.remote).map((b) => b.name));
+  return [
+    ...new Set(
+      branches
+        .filter((b) => b.remote && !locals.has(splitRemoteRef(b.name).branch))
+        .map((b) => b.name),
+    ),
+  ];
+}
+
+/** The seed spec for a `git_log` walk. */
+export interface BranchQuery {
+  /** Explicit tips to walk; `null` = HEAD + every branch (#342). */
+  branches: string[] | null;
+  /** Shorthands subtracted from whichever seed set is used; `null` = none. */
+  excludeBranches: string[] | null;
+}
+
+/** Build the walk's seed spec from the per-branch/author selection (`null` =
+ *  every branch) and the bulk "hide remote-only" toggle.
+ *
+ *  The toggle is deliberately expressed as a SUBTRACTION rather than folded
+ *  into `branches`: spelling "every branch except these" as an explicit list
+ *  would stop the backend seeding HEAD and would override `local_only`, so a
+ *  hide toggle could make history appear (#515). An empty branch list — the
+ *  popover loads it lazily — subtracts nothing rather than everything. */
+export function branchWalkQuery(
+  branches: readonly BranchListEntry[],
+  selected: readonly string[] | null,
+  hideRemoteOnly: boolean,
+): BranchQuery {
+  const hidden = hideRemoteOnly ? remoteOnlyBranchNames(branches) : [];
+  return {
+    branches: selected === null ? null : [...selected],
+    excludeBranches: hidden.length > 0 ? hidden : null,
+  };
+}
+
 // ─── PR badges (#448) ────────────────────────────────────────────────────────
 
 /** Structural subset of an open PR; matches `OpenPr` from the API layer

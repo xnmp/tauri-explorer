@@ -1815,6 +1815,7 @@ const mockCommands: Record<string, CommandHandler> = {
         skip?: number;
         limit?: number;
         branches?: string[];
+        exclude_branches?: string[];
         cursor?: string;
       } | null) ?? {};
     const skip = Math.max(0, options.skip ?? 0);
@@ -1825,18 +1826,27 @@ const mockCommands: Record<string, CommandHandler> = {
     // commits reachable from the selected branch tips; stash rows survive
     // only when their base commit does. An EMPTY selection seeds nothing and
     // yields no commits (#413), exactly like the backend.
-    if (options.branches) {
+    //
+    // `exclude_branches` (#515) is subtractive and applies to BOTH seed sets:
+    // with no selection the seeds are HEAD + every branch minus the excluded
+    // ones, so dropping a remote-only branch never unseeds HEAD.
+    const excluded = new Set(options.exclude_branches ?? []);
+    if (options.branches || excluded.size > 0) {
       const tips = new Map<string, string>();
       for (const [oid, refList] of Object.entries(MOCK_GRAPH_REFS)) {
         for (const r of refList) {
           if (r.kind === "LocalBranch" || r.kind === "RemoteBranch") tips.set(r.name, oid);
         }
       }
+      const seeds = options.branches ?? [...tips.keys()];
       const byOid = new Map(all.filter((c) => !("stash" in c)).map((c) => [c.oid, c]));
       const reachable = new Set<string>();
-      const queue = options.branches
+      const queue = seeds
+        .filter((n) => !excluded.has(n))
         .map((n) => tips.get(n))
         .filter((o): o is string => o !== undefined);
+      // HEAD is always seeded when there is no explicit selection.
+      if (!options.branches) queue.push(mockHeadOid());
       while (queue.length > 0) {
         const oid = queue.pop()!;
         if (reachable.has(oid)) continue;
@@ -1914,6 +1924,9 @@ const mockCommands: Record<string, CommandHandler> = {
       remote_branches: [
         { name: "origin/main", target: tip },
         { name: "origin/hotfix", target: fullOid(13) },
+        // Remote-only (no local `legacy-import`): decorates commit 8 in
+        // MOCK_GRAPH_REFS, so the branch list has to list it too (#515).
+        { name: "origin/legacy-import", target: fullOid(8) },
       ],
       tags: [
         { name: "v1.0", target: fullOid(5) },

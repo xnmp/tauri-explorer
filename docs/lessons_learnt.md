@@ -1,6 +1,9 @@
-# Lessons Learnt
+# Lessons Learnt (FROZEN archive — do not append)
 
-Gotchas, non-obvious behaviors, and key takeaways from closed issues.
+Gotchas, non-obvious behaviors, and key takeaways from closed issues, up to
+2026-07-27. **New lessons go in [`lessons/<issue>-<slug>.md`](lessons/) — one
+file per issue** (#544: shared-file appends conflicted every open PR on every
+merge). Keep searching this file; it stays as the archive.
 
 ---
 

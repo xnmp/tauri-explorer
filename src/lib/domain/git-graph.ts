@@ -312,9 +312,22 @@ export function stepOnBranchLine(
   fromRow: number,
   direction: BranchLineDirection,
 ): number {
-  void commits;
-  void fromRow;
-  void direction;
+  if (!Number.isInteger(fromRow) || fromRow < 0 || fromRow >= commits.length) return -1;
+  const from = commits[fromRow];
+  if (!from?.oid) return -1;
+
+  if (direction === "older") {
+    const firstParent = from.parents?.[0];
+    if (!firstParent) return -1;
+    for (let row = fromRow + 1; row < commits.length; row++) {
+      if (commits[row]?.oid === firstParent) return row;
+    }
+    return -1;
+  }
+
+  for (let row = fromRow - 1; row >= 0; row--) {
+    if (commits[row]?.parents?.[0] === from.oid) return row;
+  }
   return -1;
 }
 

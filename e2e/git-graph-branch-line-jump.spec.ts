@@ -52,6 +52,8 @@ test.describe("git graph branch-line jump (#530)", () => {
 
   test("Ctrl+Down jumps to the first parent, skipping other branch lines", async ({ page }) => {
     await selectRow(page, MERGE_EXPERIMENT);
+    // Baseline for the jump shot below: this is where the selection starts.
+    await page.screenshot({ path: "evidence/ac-1-selection-before-jump.png" });
 
     await page.keyboard.press("Control+ArrowDown");
 
@@ -68,7 +70,7 @@ test.describe("git graph branch-line jump (#530)", () => {
     );
     await expect(view.locator(`.commit-row[data-oid="${HOTFIX}"]`)).not.toHaveClass(/selected/);
 
-    await page.screenshot({ path: "evidence/ac-1-ctrl-down-jump.png" });
+    await page.screenshot({ path: "evidence/ac-2-ctrl-down-jump.png" });
   });
 
   test("Ctrl+Up jumps back up the same line", async ({ page }) => {
@@ -80,7 +82,7 @@ test.describe("git graph branch-line jump (#530)", () => {
     await expect(selected).toHaveCount(1);
     await expect(selected).toHaveAttribute("data-oid", MERGE_EXPERIMENT);
 
-    await page.screenshot({ path: "evidence/ac-2-ctrl-up-jump.png" });
+    await page.screenshot({ path: "evidence/ac-3-ctrl-up-jump.png" });
   });
 
   test("Ctrl+Down at the end of the line leaves the selection alone", async ({ page }) => {
@@ -94,7 +96,7 @@ test.describe("git graph branch-line jump (#530)", () => {
     await expect(selected).toHaveCount(1);
     await expect(selected).toHaveAttribute("data-oid", INITIAL_COMMIT);
 
-    await page.screenshot({ path: "evidence/ac-3-root-noop.png" });
+    await page.screenshot({ path: "evidence/ac-4-root-noop.png" });
   });
 
   test("both jumps are palette commands while a graph pane is active", async ({ page }) => {
@@ -114,6 +116,6 @@ test.describe("git graph branch-line jump (#530)", () => {
     await expect(older.locator(".command-shortcut")).toHaveText(/Ctrl\s*\+\s*↓/);
     await expect(newer.locator(".command-shortcut")).toHaveText(/Ctrl\s*\+\s*↑/);
 
-    await page.screenshot({ path: "evidence/ac-4-palette-commands.png" });
+    await page.screenshot({ path: "evidence/ac-5-palette-commands.png" });
   });
 });

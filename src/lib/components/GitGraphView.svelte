@@ -74,9 +74,10 @@
     type OpenPr,
   } from "$lib/api/git-log";
   import { fetchGitSummary } from "$lib/state/git-summary-cache";
-  import { assignLayout, branchPath, groupRefChips, indexPrsByBranch, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, sliceBranchLine, GRAPH_PALETTE, type GraphLayout, type BranchLine, type RefChips, type RemoteRefChip } from "$lib/domain/git-graph";
+  import { assignLayout, branchPath, groupRefChips, indexPrsByBranch, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, sliceBranchLine, stepOnBranchLine, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip } from "$lib/domain/git-graph";
   import { openExternalUrl } from "$lib/api/crash";
   import { registerGraphRefresher } from "$lib/state/git-graph-refresh";
+  import { registerGraphSelectionStepper } from "$lib/state/git-graph-nav";
   import { clientToFixed } from "$lib/domain/zoom";
   import { parseUnifiedDiff, type ParsedDiff } from "$lib/domain/diff";
   import { highlightDiffLine } from "$lib/domain/syntax-highlight";
@@ -97,7 +98,7 @@
     type StageFile,
   } from "$lib/domain/commit-panel";
   import { getCommitPanelStore } from "$lib/state/commit-panel.svelte";
-  import { untrack } from "svelte";
+  import { untrack, tick } from "svelte";
   import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte";
   import { loadPersisted, savePersisted } from "$lib/state/persisted";
   import { getScmStore } from "$lib/state/scm.svelte";
@@ -566,6 +567,38 @@
     return index * ROW_HEIGHT + (rowExpand && index > rowExpand.afterRow ? rowExpand.extra : 0);
   }
 
+  /** The scroll viewport, so a jumped-to row can be brought into view — it may
+   *  be outside the render window entirely (#530). */
+  let scrollerEl = $state<HTMLElement | null>(null);
+
+  /** Scroll the minimum distance that puts `index` fully in the viewport. */
+  function scrollRowIntoView(index: number): void {
+    const el = scrollerEl;
+    if (!el) return;
+    const top = rowY(index);
+    if (top < el.scrollTop) el.scrollTop = top;
+    else if (top + ROW_HEIGHT > el.scrollTop + el.clientHeight) {
+      el.scrollTop = top + ROW_HEIGHT - el.clientHeight;
+    }
+  }
+
+  /** Move the selection one commit along its branch line (#530). The row math
+   *  is the pure `stepOnBranchLine`; this only maps rows back onto the
+   *  selection. No selection means nothing to move — the shortcut moves the
+   *  selection, it never creates one. */
+  async function stepSelectionOnBranchLine(direction: BranchLineDirection): Promise<void> {
+    const current = selected;
+    if (!current) return;
+    const fromRow = displayCommits.findIndex((c) => c.oid === current.oid);
+    const targetRow = stepOnBranchLine(displayCommits, fromRow, direction);
+    if (targetRow < 0) return;
+    await selectCommit(displayCommits[targetRow]);
+    // The inline details block reflows the rows below it, so wait for the
+    // derived offsets to settle before measuring where the target landed.
+    await tick();
+    scrollRowIntoView(targetRow);
+  }
+
   const startRow = $derived(Math.max(0, rowAtY(scrollTop) - OVERSCAN));
   const endRow = $derived(
     Math.min(displayCommits.length - 1, rowAtY(scrollTop + viewportHeight) + OVERSCAN),
@@ -785,6 +818,14 @@
   $effect(() => {
     const id = paneId ?? windowTabsManager.activePaneId ?? "default";
     return registerGraphRefresher(id, () => void refreshWithFetch());
+  });
+
+  // Ctrl+Up/Down branch-line jumps (#530): same per-pane bus shape as F5, for
+  // the same reason — a window listener here would be unrebindable and would
+  // fire for every mounted graph tab, active or not.
+  $effect(() => {
+    const id = paneId ?? windowTabsManager.activePaneId ?? "default";
+    return registerGraphSelectionStepper(id, (dir) => void stepSelectionOnBranchLine(dir));
   });
 
   // ----- Branch filter popover (#342) -----
@@ -1504,7 +1545,7 @@
     {:else if commits.length === 0}
       <div class="graph-status">No commits.</div>
     {:else}
-    <div class="graph-scroller" onscroll={handleScroll} bind:clientHeight={viewportHeight}>
+    <div class="graph-scroller" onscroll={handleScroll} bind:this={scrollerEl} bind:clientHeight={viewportHeight}>
       <div class="graph-body" style:height="{graphHeight}px">
         <!-- Clip window for the lane SVG: when the user narrows the graph
              column below the lane-derived width, overflow is cut (#341). -->

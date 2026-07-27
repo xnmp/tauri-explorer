@@ -176,10 +176,11 @@ describe("stepOnBranchLine — invariants over 300 rows of randomized topology",
       const older = stepOnBranchLine(commits, row, "older");
       if (older === -1) continue;
       const back = stepOnBranchLine(commits, older, "newer");
-      // `row` is itself a candidate, and the nearest candidate above wins, so
-      // the return jump can never overshoot past where it started.
-      expect(back).toBeGreaterThanOrEqual(0);
-      expect(back).toBeLessThanOrEqual(row);
+      // `row` is itself a candidate, so a return jump always exists; and since
+      // the NEAREST candidate above wins, it can never overshoot past `row`
+      // into unrelated history — it lands somewhere in [row, older).
+      expect(back).toBeGreaterThanOrEqual(row);
+      expect(back).toBeLessThan(older);
       expect(commits[back].parents[0]).toBe(commits[older].oid);
     }
   });

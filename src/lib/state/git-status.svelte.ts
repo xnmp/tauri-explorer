@@ -95,14 +95,17 @@ function createGitStatusStore() {
           ...byDir,
           [path]: { isGitRepo: result.data.is_git_repo, statuses: result.data.statuses },
         };
-        // Bound the cache: evict oldest entries that aren't the active dir.
+        // Bound recent history without evicting any directory a pane still
+        // displays. More than eight concurrently tracked panes may exceed the
+        // soft bound; correctness wins until a pane releases.
         const keys = Object.keys(next);
         if (keys.length > MAX_TRACKED_DIRS) {
           for (const key of keys) {
             if (Object.keys(next).length <= MAX_TRACKED_DIRS) break;
-            if (key !== path && key !== currentPath) {
+            if (key !== path && !trackedDirectories.has(key)) {
               console.debug(`[git-status] evicting tracked dir ${key}`);
               delete next[key];
+              staleDirectories.delete(key);
             }
           }
         }

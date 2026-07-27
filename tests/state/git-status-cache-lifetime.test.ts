@@ -62,4 +62,23 @@ describe("gitStatusStore recently visited cache", () => {
 
     expect(gitStatusStore.getStatus("/repo", "a.ts")).toBe("Added");
   });
+
+  it("never evicts a directory that a pane still tracks", async () => {
+    getGitStatusMock.mockImplementation(async (path: string) => ({
+      ok: true,
+      data: { is_git_repo: true, statuses: { [`${path}.ts`]: "Modified" } },
+    }));
+
+    gitStatusStore.trackDirectory("/pinned");
+    await gitStatusStore.fetchForDirectory("/pinned");
+
+    for (let index = 0; index < 9; index++) {
+      const path = `/visited-${index}`;
+      const release = gitStatusStore.trackDirectory(path);
+      await gitStatusStore.fetchForDirectory(path);
+      release();
+    }
+
+    expect(gitStatusStore.getStatus("/pinned", "/pinned.ts")).toBe("Modified");
+  });
 });

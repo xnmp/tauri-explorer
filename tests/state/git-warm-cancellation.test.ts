@@ -51,4 +51,24 @@ describe("gitWarmer pane ownership", () => {
     releaseFirst();
     expect(cancelWarm).toHaveBeenCalledWith("/repo");
   });
+
+  it("debounces each pane independently so one pane cannot suppress another", async () => {
+    const warmScm = vi.fn<(root: string) => void>();
+    const warmer = createGitWarmer({
+      resolveRepoRoot: vi.fn(async (path) => path.startsWith("/one") ? "/one" : "/two"),
+      warmGraph: vi.fn(),
+      warmScm,
+      graphEnabled: () => false,
+      scmEnabled: () => true,
+      debounceMs: 1,
+    });
+
+    warmer.schedule("/one/src", "left");
+    warmer.schedule("/two/src", "right");
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(warmScm).toHaveBeenCalledTimes(2);
+    expect(warmScm).toHaveBeenCalledWith("/one");
+    expect(warmScm).toHaveBeenCalledWith("/two");
+  });
 });

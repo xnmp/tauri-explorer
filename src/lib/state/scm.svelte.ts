@@ -78,16 +78,30 @@ async function detectRepo(path: string): Promise<string | null> {
 export async function warmScmSummary(path: string, consumerId?: string): Promise<void> {
   try {
     const root = await detectRepo(path);
-    if (!root || summaryCache.has(root) || warmInFlight.has(root)) return;
-    warmInFlight.add(root);
-    try {
-      const result = await fetchGitSummary(root, { consumerId });
-      if (result.ok && !summaryCache.has(root)) summaryCache.set(root, result.data);
-    } finally {
-      warmInFlight.delete(root);
-    }
+    if (root) await warmScmSummaryForRoot(root, consumerId);
   } catch {
     /* best-effort warm — ignore failures */
+  }
+}
+
+/**
+ * Warm a root already resolved by the pane warmer. Unlike the path helper,
+ * this registers the summary consumer synchronously before its first await,
+ * so pane cleanup cannot race a second repo-root probe and miss cancellation.
+ */
+export async function warmScmSummaryForRoot(
+  root: string,
+  consumerId?: string,
+): Promise<void> {
+  if (!root || summaryCache.has(root) || warmInFlight.has(root)) return;
+  warmInFlight.add(root);
+  try {
+    const result = await fetchGitSummary(root, { consumerId });
+    if (result.ok && !summaryCache.has(root)) summaryCache.set(root, result.data);
+  } catch {
+    /* best-effort warm — ignore failures */
+  } finally {
+    warmInFlight.delete(root);
   }
 }
 

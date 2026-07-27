@@ -32,7 +32,7 @@ export interface GitWarmDeps {
 
 export interface GitWarmer {
   /** Track a pane settled on `path`; release it when the pane navigates away. */
-  schedule: (path: string) => () => void;
+  schedule: (path: string, ownerId?: string) => () => void;
 }
 
 export function createGitWarmer(deps: GitWarmDeps): GitWarmer {
@@ -40,8 +40,8 @@ export function createGitWarmer(deps: GitWarmDeps): GitWarmer {
   const setT = deps.setTimeoutFn ?? ((fn, ms) => setTimeout(fn, ms));
   const clearT = deps.clearTimeoutFn ?? ((h) => clearTimeout(h));
 
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  let pendingPath = "";
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  const pendingPaths = new Map<string, string>();
   // Roots already warmed this session — skips redundant warms on repeat
   // navigation into the same repo.
   const warmedRoots = new Set<string>();
@@ -50,21 +50,31 @@ export function createGitWarmer(deps: GitWarmDeps): GitWarmer {
   const resolvedRoots = new Map<string, string | null>();
   const trackedPaths = new Map<string, number>();
 
-  function schedule(path: string): () => void {
+  function schedule(path: string, ownerId = "default"): () => void {
     if (!path) return () => {};
     // Non-git users (both features off) pay zero extra IPC.
     if (!deps.graphEnabled() && !deps.scmEnabled()) return () => {};
     trackedPaths.set(path, (trackedPaths.get(path) ?? 0) + 1);
-    pendingPath = path;
-    if (timer !== null) clearT(timer);
-    timer = setT(() => {
-      timer = null;
-      void run(pendingPath);
+    pendingPaths.set(ownerId, path);
+    const existingTimer = timers.get(ownerId);
+    if (existingTimer !== undefined) clearT(existingTimer);
+    const timer = setT(() => {
+      timers.delete(ownerId);
+      const pendingPath = pendingPaths.get(ownerId);
+      pendingPaths.delete(ownerId);
+      if (pendingPath) void run(pendingPath);
     }, debounceMs);
+    timers.set(ownerId, timer);
     let released = false;
     return () => {
       if (released) return;
       released = true;
+      if (pendingPaths.get(ownerId) === path) {
+        const pendingTimer = timers.get(ownerId);
+        if (pendingTimer !== undefined) clearT(pendingTimer);
+        timers.delete(ownerId);
+        pendingPaths.delete(ownerId);
+      }
       const remaining = (trackedPaths.get(path) ?? 1) - 1;
       if (remaining > 0) {
         trackedPaths.set(path, remaining);

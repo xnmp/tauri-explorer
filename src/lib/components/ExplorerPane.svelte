@@ -107,7 +107,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
       // After (not blocking) the badge fetch, warm the git-graph + SCM caches
       // in the background (#287). Debounce + per-feature gating live in the
       // warmer; non-git users pay zero extra IPC.
-      const releaseWarm = untrack(() => gitWarmer.schedule(path));
+      const releaseWarm = untrack(() => gitWarmer.schedule(path, paneId));
       return () => {
         release?.();
         releaseWarm();

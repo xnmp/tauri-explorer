@@ -175,6 +175,29 @@
   textarea { resize: vertical; min-height: 130px; }
   footer { gap: 8px; }
   .hint { margin-right: auto; color: var(--text-secondary); font-size: 12px; }
-  footer button { padding: 7px 16px; }
-  footer .primary { background: var(--accent); color: var(--text-on-accent, white); }
+  footer button {
+    padding: 7px 16px;
+    border: 1px solid var(--control-stroke);
+    border-radius: var(--radius-sm);
+    background: var(--control-fill);
+    color: var(--text-primary);
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  footer button:hover:not(:disabled) {
+    background: var(--control-fill-secondary);
+    border-color: var(--accent);
+  }
+  footer button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  footer button:disabled { opacity: 0.6; }
+  footer .primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--text-on-accent, white);
+  }
+  footer .primary:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--accent) 85%, black);
+  }
 </style>

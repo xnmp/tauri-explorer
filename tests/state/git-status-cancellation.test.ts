@@ -66,4 +66,18 @@ describe("gitStatusStore pane ownership", () => {
     expect(gitStatusStore.isDirLoading("/repo")).toBe(false);
     expect(gitStatusStore.getStatus("/repo", "late.ts")).toBeNull();
   });
+
+  it("does not refresh a settled directory after its final pane leaves", async () => {
+    getGitStatusMock.mockResolvedValue({
+      ok: true,
+      data: { is_git_repo: true, statuses: {} },
+    });
+
+    const release = gitStatusStore.trackDirectory("/repo");
+    await gitStatusStore.fetchForDirectory("/repo");
+    release();
+    await gitStatusStore.refresh();
+
+    expect(getGitStatusMock).toHaveBeenCalledOnce();
+  });
 });

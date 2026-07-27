@@ -141,6 +141,16 @@ function createGitStatusStore() {
         return;
       }
       trackedDirectories.delete(path);
+      // A watcher refresh scans every cached directory. Dropping the final
+      // pane's cache entry prevents it from spawning fresh background work
+      // for a directory nobody displays after this in-flight request ends.
+      if (byDir[path]) {
+        const { [path]: _released, ...rest } = byDir;
+        byDir = rest;
+      }
+      if (currentPath === path) {
+        currentPath = Array.from(trackedDirectories.keys()).at(-1) ?? "";
+      }
       const flight = inFlight.get(path);
       if (!flight) return;
       inFlight.delete(path);

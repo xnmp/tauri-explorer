@@ -235,3 +235,25 @@ describe("branch-line jump shortcuts (#530)", () => {
     expect(conflicts).toEqual([]);
   });
 });
+
+describe("terminal key ownership of the new shortcut (#530)", () => {
+  it("does not claim Ctrl+Arrow from the shell while no graph pane is active", () => {
+    // The terminal gate asks matchesAnyBinding whether the app owns a key. If
+    // it ignored `when` guards, a graph-only binding would swallow Ctrl+Up/Down
+    // in every shell — nothing runs, and readline never sees the key.
+    h.windowTabs.activeTab = fileListTab();
+    expect(keybindingsStore.matchesAnyBinding(ctrlArrow("ArrowUp"), available)).toBe(false);
+    expect(keybindingsStore.matchesAnyBinding(ctrlArrow("ArrowDown"), available)).toBe(false);
+  });
+
+  it("does claim it while a graph pane is active", () => {
+    h.windowTabs.activeTab = graphTab();
+    expect(keybindingsStore.matchesAnyBinding(ctrlArrow("ArrowUp"), available)).toBe(true);
+    expect(keybindingsStore.matchesAnyBinding(ctrlArrow("ArrowDown"), available)).toBe(true);
+  });
+
+  it("still claims an unguarded shortcut without an availability predicate", () => {
+    // Existing callers that pass no predicate keep the old, guard-blind answer.
+    expect(keybindingsStore.matchesAnyBinding(ctrlArrow("ArrowDown"))).toBe(true);
+  });
+});

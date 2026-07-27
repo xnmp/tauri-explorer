@@ -213,7 +213,11 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     // combos the app has bound — plus Alt/Meta/Ctrl+Shift combos and pending
     // chord suffixes — fall through to command matching (#249, #260).
     if (isTerminalFocus && !keybindingsStore.isChordActive) {
-      const appBound = keybindingsStore.matchesAnyBinding(event) || isHardcodedAppShortcut(event);
+      const appBound =
+        keybindingsStore.matchesAnyBinding(event, (id) => {
+          const cmd = getCommand(id);
+          return !cmd?.when || cmd.when();
+        }) || isHardcodedAppShortcut(event);
       if (isShellReservedKey(event, { appBound, isMac })) return;
     }
 

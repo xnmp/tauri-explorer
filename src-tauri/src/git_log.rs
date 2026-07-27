@@ -191,14 +191,9 @@ fn commit_touches_path(
     file_path: &str,
 ) -> Result<bool, AppError> {
     let tree = commit.tree().map_err(to_app_err)?;
-    let parent_tree = commit
-        .parent(0)
-        .ok()
-        .and_then(|parent| parent.tree().ok());
+    let parent_tree = commit.parent(0).ok().and_then(|parent| parent.tree().ok());
     let mut options = git2::DiffOptions::new();
-    options
-        .pathspec(file_path)
-        .disable_pathspec_match(true);
+    options.pathspec(file_path).disable_pathspec_match(true);
     let diff = repo
         .diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut options))
         .map_err(to_app_err)?;
@@ -1051,7 +1046,11 @@ mod tests {
             &no_cancel(),
         )
         .unwrap();
-        assert_eq!(cleared.commits.len(), 3, "blank path must restore all commits");
+        assert_eq!(
+            cleared.commits.len(),
+            3,
+            "blank path must restore all commits"
+        );
     }
 
     #[test]

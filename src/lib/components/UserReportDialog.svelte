@@ -56,8 +56,16 @@
         "error",
         { duration: 6000 },
       );
-      await openExternalUrl(userReportFallbackUrl(draft)).catch(() => {});
-      onClose();
+      try {
+        await openExternalUrl(userReportFallbackUrl(draft));
+        onClose();
+      } catch {
+        toastStore.show(
+          "Could not open GitHub — your report is still here. Copy it and try again.",
+          "error",
+          { duration: 8000 },
+        );
+      }
     } finally {
       submitting = false;
     }

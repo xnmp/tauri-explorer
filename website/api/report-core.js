@@ -105,7 +105,7 @@ local blocked = ""
 for i, key in ipairs(KEYS) do
   local count = redis.call("INCR", key)
   if count == 1 then redis.call("PEXPIRE", key, ARGV[(i - 1) * 2 + 2]) end
-  if count > tonumber(ARGV[(i - 1) * 2 + 1]) and blocked == "" then blocked = ARGV[#ARGV - #KEYS + i] end
+  if count > tonumber(ARGV[(i - 1) * 2 + 1]) and blocked == "" then blocked = ARGV[#KEYS * 2 + i] end
 end
 return blocked`;
   return {

@@ -56,6 +56,29 @@ test("failed submission preserves the draft in the GitHub fallback", async ({ pa
   expect(url.searchParams.get("labels")).toBe("enhancement");
 });
 
+test("draft stays editable when both relay and browser fallback fail", async ({ page }) => {
+  await page.goto("/");
+  await waitForEntries(page);
+  await page.evaluate(() => {
+    localStorage.setItem("mock-report-error", "network_unreachable");
+    localStorage.setItem("mock-open-url-error", "1");
+  });
+
+  await runPaletteCommand(page, "Report a Bug");
+  const dialog = page.getByRole("dialog", { name: /report a bug/i });
+  await dialog.getByLabel("Title").fill("Do not lose this title");
+  await dialog.getByLabel("Description").fill("Do not lose this description");
+  await dialog.getByRole("button", { name: "Submit" }).click();
+
+  await expect(page.getByRole("alert")).toContainText("your report is still here");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel("Title")).toHaveValue("Do not lose this title");
+  await expect(dialog.getByLabel("Description")).toHaveValue(
+    "Do not lose this description",
+  );
+  await expect(dialog.getByRole("button", { name: "Submit" })).toBeEnabled();
+});
+
 test("Open Logs Folder navigates the pane to the log directory", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);

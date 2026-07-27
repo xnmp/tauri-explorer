@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildGitHubIssue,
   createInMemoryRateLimitStore,
+  createRestRateLimitStore,
   enforceReportLimits,
   processReport,
   validateReport,
@@ -59,6 +60,27 @@ describe("report relay validation", () => {
 });
 
 describe("report relay rate limits", () => {
+  it.each(["burst", "hour", "day"])(
+    "preserves the %s scope returned by the atomic REST store",
+    async (scope) => {
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(JSON.stringify({ result: scope }), { status: 200 }),
+      );
+      const store = createRestRateLimitStore("https://kv.example", "token");
+      const entries = [
+        { scope: "burst", key: "burst-key", limit: 3, windowMs: 60_000 },
+        { scope: "hour", key: "hour-key", limit: 10, windowMs: 3_600_000 },
+        { scope: "day", key: "day-key", limit: 100, windowMs: 86_400_000 },
+      ];
+      await expect(store.consume(entries)).resolves.toBe(scope);
+      const request = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+      expect(request.slice(2, 6)).toEqual([3, "burst-key", "hour-key", "day-key"]);
+      expect(request.slice(-3)).toEqual(["burst", "hour", "day"]);
+      expect(request[1]).toContain("ARGV[#KEYS * 2 + i]");
+      fetchMock.mockRestore();
+    },
+  );
+
   it("allows a small burst then blocks the IP", async () => {
     const store = createInMemoryRateLimitStore();
     const now = 1_900_000_000_000;

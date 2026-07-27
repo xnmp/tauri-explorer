@@ -67,24 +67,78 @@ pub struct Environment<'a> {
     pub arch: &'a str,
 }
 
+const MAX_RELAY_BODY_UNITS: usize = 8000;
+
+fn sanitize(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| !character.is_control() || *character == '\n' || *character == '\r')
+        .collect()
+}
+
+fn truncate_utf16(value: &str, max_units: usize) -> String {
+    let mut units = 0;
+    value
+        .chars()
+        .take_while(|character| {
+            let next = units + character.len_utf16();
+            if next > max_units {
+                false
+            } else {
+                units = next;
+                true
+            }
+        })
+        .collect()
+}
+
 pub fn assemble_issue_body(
     description: &str,
     contact: Option<&str>,
     environment: &Environment<'_>,
     log_tail: Option<&str>,
 ) -> String {
-    let mut sections = vec![description.trim().to_string()];
-    if let Some(contact) = contact.map(str::trim).filter(|value| !value.is_empty()) {
-        sections.push(format!("How to reach the reporter: {contact}"));
-    }
-    sections.push(format!(
+    let description = sanitize(description);
+    let contact = contact
+        .map(sanitize)
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("How to reach the reporter: {value}"));
+    let environment = format!(
         "---\n- Tauri Explorer: v{}\n- OS: {} ({})",
-        environment.version, environment.os, environment.arch
-    ));
-    if let Some(logs) = log_tail.map(str::trim).filter(|value| !value.is_empty()) {
-        sections.push(format!("## Recent logs\n\n```text\n{logs}\n```"));
+        sanitize(environment.version),
+        sanitize(environment.os),
+        sanitize(environment.arch)
+    );
+    let required_suffix = contact
+        .as_ref()
+        .map(|value| format!("\n\n{value}\n\n{environment}"))
+        .unwrap_or_else(|| format!("\n\n{environment}"));
+    let suffix_units = required_suffix.encode_utf16().count();
+    let mut body = truncate_utf16(
+        description.trim(),
+        MAX_RELAY_BODY_UNITS.saturating_sub(suffix_units),
+    );
+    body.push_str(&required_suffix);
+
+    if let Some(logs) = log_tail
+        .map(sanitize)
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        const LOG_PREFIX: &str = "\n\n## Recent logs\n\n```text\n";
+        const LOG_SUFFIX: &str = "\n```";
+        let remaining = MAX_RELAY_BODY_UNITS.saturating_sub(body.encode_utf16().count());
+        let framing = LOG_PREFIX.encode_utf16().count() + LOG_SUFFIX.encode_utf16().count();
+        if remaining > framing {
+            body.push_str(LOG_PREFIX);
+            body.push_str(&truncate_utf16(logs, remaining - framing));
+            body.push_str(LOG_SUFFIX);
+        }
     }
-    sections.join("\n\n")
+    body
 }
 
 fn validate_draft(
@@ -98,13 +152,19 @@ fn validate_draft(
             .chars()
             .any(|character| character.is_control() && character != '\n' && character != '\r')
     };
-    if title.trim().is_empty() || title.trim().chars().count() > 120 || invalid_control(title) {
+    if title.trim().is_empty()
+        || title.trim().encode_utf16().count() > 120
+        || invalid_control(title)
+    {
         return Err(SubmitReportError::new(
             "malformed_input",
             "Title must be 1–120 characters",
         ));
     }
-    if body.trim().is_empty() || body.chars().count() > 8000 || invalid_control(body) {
+    if body.trim().is_empty()
+        || body.encode_utf16().count() > MAX_RELAY_BODY_UNITS
+        || invalid_control(body)
+    {
         return Err(SubmitReportError::new(
             "malformed_input",
             "Description must be 1–8000 characters",
@@ -116,7 +176,7 @@ fn validate_draft(
             "Unknown report kind",
         ));
     }
-    if contact.unwrap_or_default().chars().count() > 100 {
+    if contact.unwrap_or_default().encode_utf16().count() > 100 {
         return Err(SubmitReportError::new(
             "malformed_input",
             "Contact must be at most 100 characters",
@@ -228,7 +288,10 @@ pub async fn submit_user_report(
 
 #[cfg(test)]
 mod tests {
-    use super::{assemble_issue_body, send_report, validate_draft, Environment, RelayRequest};
+    use super::{
+        assemble_issue_body, send_report, validate_draft, Environment, RelayRequest,
+        MAX_RELAY_BODY_UNITS,
+    };
     use std::io::{Read, Write};
     use std::net::TcpListener;
 
@@ -266,6 +329,26 @@ mod tests {
         assert!(!body.contains("How to reach"));
         assert!(!body.contains("Recent logs"));
         assert!(body.contains("Description only"));
+    }
+
+    #[test]
+    fn assembled_body_obeys_relay_units_and_sanitizes_log_controls() {
+        let body = assemble_issue_body(
+            &"🐛".repeat(4000),
+            Some("@reporter"),
+            &Environment {
+                version: "1.7.0",
+                os: "linux",
+                arch: "x86_64",
+            },
+            Some("safe\u{0}log\u{7}\nlast line"),
+        );
+        assert!(body.encode_utf16().count() <= MAX_RELAY_BODY_UNITS);
+        assert!(!body.contains('\u{0}'));
+        assert!(!body.contains('\u{7}'));
+        assert!(body.starts_with("🐛"));
+        assert!(body.contains("How to reach the reporter: @reporter"));
+        assert!(body.contains("Tauri Explorer: v1.7.0"));
     }
 
     fn payload() -> RelayRequest {

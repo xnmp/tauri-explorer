@@ -1082,6 +1082,9 @@ const mockCommands: Record<string, CommandHandler> = {
       "[2024-01-01][12:00:02][ERROR] tauri_explorer::files: permission denied",
     ].join("\n"),
   open_external_url: (args) => {
+    if (localStorage.getItem("mock-open-url-error") === "1") {
+      throw new Error("Mock browser handoff failed");
+    }
     localStorage.setItem("mock-opened-url", args.url as string);
     return undefined;
   },

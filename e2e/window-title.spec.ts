@@ -4,14 +4,16 @@ import { waitForEntries } from "./helpers";
 test("window title follows navigation without an empty startup overwrite", async ({ page }) => {
   await page.addInitScript(() => {
     (window as unknown as { __titleHistory: string[] }).__titleHistory = [];
-    window.addEventListener("DOMContentLoaded", () => {
-      const history = (window as unknown as { __titleHistory: string[] }).__titleHistory;
-      history.push(document.title);
-      new MutationObserver(() => history.push(document.title)).observe(document.head, {
-        subtree: true,
-        childList: true,
-        characterData: true,
-      });
+    const descriptor = Object.getOwnPropertyDescriptor(Document.prototype, "title");
+    if (!descriptor?.get || !descriptor.set) throw new Error("Document.title is not interceptable");
+    Object.defineProperty(Document.prototype, "title", {
+      configurable: descriptor.configurable,
+      enumerable: descriptor.enumerable,
+      get: descriptor.get,
+      set(value: string) {
+        (window as unknown as { __titleHistory: string[] }).__titleHistory.push(value);
+        descriptor.set!.call(this, value);
+      },
     });
   });
   await page.goto("/?path=/home/user&home=/home/user");

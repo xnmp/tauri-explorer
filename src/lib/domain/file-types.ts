@@ -389,21 +389,31 @@ export function isZipFile(entry: FileEntry): boolean {
   return getExtension(entry.name) === "zip";
 }
 
-// toLocaleString(options) constructs a fresh Intl.DateTimeFormat on every
-// call (~100µs of ICU setup) — ruinous when formatting a date per visible row.
-// A single cached formatter makes .format() a few microseconds.
-const dateFormatter = new Intl.DateTimeFormat(undefined, {
-  month: "numeric",
-  day: "numeric",
-  year: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-});
-
-/** Format modified date - Windows 11 style: M/D/YYYY h:mm AM/PM.
- *  Returns "" for unparseable input instead of "Invalid Date". */
-export function formatDate(isoString: string): string {
+/**
+ * Format a timestamp as a compact elapsed interval for file-list and metadata
+ * displays. Returns "" for unparseable input instead of "Invalid Date".
+ */
+export function formatDate(isoString: string, now = new Date()): string {
   const date = new Date(isoString);
   if (Number.isNaN(date.getTime())) return "";
-  return dateFormatter.format(date);
+
+  const elapsedSeconds = Math.max(0, Math.floor((now.getTime() - date.getTime()) / 1000));
+  if (elapsedSeconds < 60) return "now";
+
+  const elapsedMinutes = Math.floor(elapsedSeconds / 60);
+  if (elapsedMinutes < 60) return `${elapsedMinutes}m`;
+
+  const elapsedHours = Math.floor(elapsedMinutes / 60);
+  if (elapsedHours < 24) return `${elapsedHours}h`;
+
+  const elapsedDays = Math.floor(elapsedHours / 24);
+  if (elapsedDays < 7) return `${elapsedDays}d`;
+
+  const elapsedWeeks = Math.floor(elapsedDays / 7);
+  if (elapsedWeeks < 8) return `${elapsedWeeks}w`;
+
+  const elapsedMonths = Math.floor(elapsedDays / 30);
+  if (elapsedMonths < 12) return `${elapsedMonths}mo`;
+
+  return `${Math.floor(elapsedDays / 365)}y`;
 }

@@ -37,11 +37,8 @@ describe("formatDate", () => {
     expect(formatDate("2024-01-15T12:00:00Z", now)).toBe("5mo");
   });
 
-  it("formats a valid ISO timestamp", () => {
-    const out = formatDate("2024-03-15T14:30:00Z");
-    expect(out).not.toBe("");
-    expect(out).not.toContain("Invalid");
-    expect(out).toContain("2024");
+  it("formats a valid ISO timestamp as a compact elapsed interval", () => {
+    expect(formatDate("2024-03-15T14:30:00Z", new Date("2024-03-15T15:30:00Z"))).toBe("1h");
   });
 
   it("returns empty string for malformed input instead of 'Invalid Date'", () => {
@@ -52,8 +49,7 @@ describe("formatDate", () => {
 
   it("handles extreme but valid timestamps", () => {
     expect(formatDate("1970-01-01T00:00:00Z")).not.toContain("Invalid");
-    // Mid-year noon UTC stays in 2999 in every timezone.
-    expect(formatDate("2999-06-15T12:00:00Z")).toContain("2999");
+    expect(formatDate("2999-06-15T12:00:00Z")).toBe("now");
   });
 });
 

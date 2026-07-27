@@ -1496,7 +1496,7 @@
         <div class="branch-popover" data-testid="branch-popover">
           <div class="bf-heading">Commits</div>
           <input
-            class="bf-search"
+            class="bf-path-search"
             placeholder="Filter commits by file path…"
             aria-label="Filter commits by file path"
             data-testid="git-graph-file-path-filter"
@@ -2879,7 +2879,8 @@
     font-weight: 400;
   }
 
-  .bf-search {
+  .bf-search,
+  .bf-path-search {
     margin: 6px;
     padding: 4px 8px;
     border: 1px solid var(--divider);

@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GitStatusSummary } from "$lib/api/files";
 
 const gitSummaryMock = vi.fn();
-const cancelGitStatusMock = vi.fn(async () => {});
+const cancelGitStatusMock = vi.fn(async (_taskId: number) => {});
 
 vi.mock("$lib/api/files", () => ({
   gitSummary: (root: string, taskId: number) => gitSummaryMock(root, taskId),

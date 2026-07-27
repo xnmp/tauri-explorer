@@ -1585,6 +1585,7 @@ const mockCommands: Record<string, CommandHandler> = {
     }
     return { is_git_repo: false, statuses: {} };
   },
+  cancel_get_git_status: () => {},
 
   // ----- SCM git backend (#53) mock -----
 
@@ -1665,6 +1666,7 @@ const mockCommands: Record<string, CommandHandler> = {
     }
     return mockGitSummary();
   },
+  cancel_git_status: () => {},
 
   git_commit_files: (args) => {
     const oid = args.oid as string;

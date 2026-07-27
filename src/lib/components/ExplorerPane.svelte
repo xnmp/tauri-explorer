@@ -97,11 +97,18 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     const enabled = settingsStore.showGitStatus;
     // Virtual (`scheme://…`) paths aren't real repos — skip git.
     if (path && !isVirtualPath(path)) {
-      if (enabled) untrack(() => gitStatusStore.fetchForDirectory(path));
+      const release = enabled
+        ? untrack(() => {
+            const release = gitStatusStore.trackDirectory(path);
+            void gitStatusStore.fetchForDirectory(path);
+            return release;
+          })
+        : null;
       // After (not blocking) the badge fetch, warm the git-graph + SCM caches
       // in the background (#287). Debounce + per-feature gating live in the
       // warmer; non-git users pay zero extra IPC.
       untrack(() => gitWarmer.schedule(path));
+      return () => release?.();
     }
   });
 

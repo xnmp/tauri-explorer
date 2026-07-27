@@ -26,6 +26,8 @@ use tauri::{AppHandle, Emitter};
 
 use crate::error::AppError;
 use crate::git_common::{open_repo, to_app_err, workdir_key};
+#[cfg(windows)]
+use crate::process_ext::output_cancellable;
 use crate::task_registry::TaskRegistry;
 
 static GIT_TASKS: TaskRegistry = TaskRegistry::new();
@@ -766,7 +768,12 @@ fn wsl_repo_root(distro: &str, linux_path: &str) -> WslRepoRoot {
 /// path (`root`, its canonical UNC form). Returns `None` (caller falls back to
 /// libgit2) when `wsl.exe`/git fails to run or exits non-zero.
 #[cfg(windows)]
-fn wsl_status(distro: &str, linux_path: &str, root: &str) -> Option<GitStatusSummary> {
+fn wsl_status(
+    distro: &str,
+    linux_path: &str,
+    root: &str,
+    cancelled: &AtomicBool,
+) -> Result<Option<GitStatusSummary>, AppError> {
     use crate::process_ext::NoConsole;
 
     let start = Instant::now();
@@ -775,30 +782,32 @@ fn wsl_status(distro: &str, linux_path: &str, root: &str) -> Option<GitStatusSum
     // override — native Linux git already reports modes correctly (#398, #392).
     // `--exec` passes literal argv (a login shell would mangle a path with
     // spaces / metacharacters, #423).
-    let output = std::process::Command::new("wsl.exe")
-        .no_console()
-        .args([
-            "-d",
-            distro,
-            "--exec",
-            "git",
-            "-C",
-            linux_path,
-            "status",
-            "--porcelain=v2",
-            "--branch",
-            "-z",
-            "-uall",
-        ])
-        .output();
+    let mut command = std::process::Command::new("wsl.exe");
+    command.no_console().args([
+        "-d",
+        distro,
+        "--exec",
+        "git",
+        "-C",
+        linux_path,
+        "status",
+        "--porcelain=v2",
+        "--branch",
+        "-z",
+        "-uall",
+    ]);
+    let output = output_cancellable(&mut command, cancelled, "git status cancelled");
     let elapsed_ms = start.elapsed().as_millis();
 
     let output = match output {
         Ok(o) => o,
         Err(e) => {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(e);
+            }
             log::warn!("gitstat: wsl_status spawn failed for {distro}:{linux_path}: {e}");
             log::warn!("gitstat: falling back to libgit2 over 9P for {root}");
-            return None;
+            return Ok(None);
         }
     };
     if !output.status.success() {
@@ -808,16 +817,16 @@ fn wsl_status(distro: &str, linux_path: &str, root: &str) -> Option<GitStatusSum
             truncate_stderr(&output.stderr)
         );
         log::warn!("gitstat: falling back to libgit2 over 9P for {root}");
-        return None;
+        return Ok(None);
     }
 
     log::info!("gitstat: wsl_status delegated to {distro} for {linux_path}: ok in {elapsed_ms}ms");
     let parsed = parse_status_v2(&output.stdout);
-    Some(summary_from_v2(
+    Ok(Some(summary_from_v2(
         parsed,
         root.to_string(),
         wsl_op_state(root).to_string(),
-    ))
+    )))
 }
 
 /// Delegate `git diff [--cached] -- <path>` to the distro's native git when
@@ -897,6 +906,21 @@ where
     F: FnOnce(Arc<AtomicBool>) -> Result<T, AppError> + Send + 'static,
 {
     let (id, cancelled) = GIT_TASKS.start();
+    let handle = tokio::task::spawn_blocking(move || f(cancelled));
+    let result = handle.await;
+    GIT_TASKS.cleanup(id);
+    result.map_err(|e| AppError::Other(format!("git task join: {e}")))?
+}
+
+async fn run_blocking_with_id<T, F>(task_id: Option<u64>, f: F) -> Result<T, AppError>
+where
+    T: Send + 'static,
+    F: FnOnce(Arc<AtomicBool>) -> Result<T, AppError> + Send + 'static,
+{
+    let (id, cancelled) = match task_id {
+        Some(id) => (id, GIT_TASKS.start_with_id(id)),
+        None => GIT_TASKS.start(),
+    };
     let handle = tokio::task::spawn_blocking(move || f(cancelled));
     let result = handle.await;
     GIT_TASKS.cleanup(id);
@@ -1105,8 +1129,11 @@ pub async fn git_repo_root(path: String) -> Result<Option<String>, AppError> {
 }
 
 #[tauri::command]
-pub async fn git_status(repo_path: String) -> Result<GitStatusSummary, AppError> {
-    run_blocking(move |_cancel| {
+pub async fn git_status(
+    repo_path: String,
+    task_id: Option<u64>,
+) -> Result<GitStatusSummary, AppError> {
+    run_blocking_with_id(task_id, move |cancelled| {
         let start = Instant::now();
         // A repo under \\wsl.localhost\… hashes its whole tree over 9P on every
         // libgit2 status pass (157s on a big repo), and `open_repo` is itself a
@@ -1115,7 +1142,7 @@ pub async fn git_status(repo_path: String) -> Result<GitStatusSummary, AppError>
         #[cfg(windows)]
         if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc(&repo_path) {
             let root = normalize_root(&repo_path);
-            if let Some(summary) = wsl_status(&distro, &linux_path, &root) {
+            if let Some(summary) = wsl_status(&distro, &linux_path, &root, &cancelled)? {
                 log::info!(
                     "gitstat: git_status for {repo_path} served by wsl-delegated in {}ms",
                     start.elapsed().as_millis()
@@ -1123,11 +1150,17 @@ pub async fn git_status(repo_path: String) -> Result<GitStatusSummary, AppError>
                 return Ok(summary);
             }
         }
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(AppError::Other("git status cancelled".into()));
+        }
         let p = PathBuf::from(&repo_path);
         let result = match open_repo(&p) {
             Ok(repo) => collect_status(&repo),
             Err(_) => map_non_repo(&p),
         };
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(AppError::Other("git status cancelled".into()));
+        }
         log::info!(
             "gitstat: git_status for {repo_path} served by libgit2 in {}ms",
             start.elapsed().as_millis()
@@ -1135,6 +1168,14 @@ pub async fn git_status(repo_path: String) -> Result<GitStatusSummary, AppError>
         result
     })
     .await
+}
+
+/// Cancel one caller-identified SCM status request. Other Git operations use
+/// different registry IDs and are unaffected.
+#[tauri::command]
+pub async fn cancel_git_status(task_id: u64) -> Result<(), AppError> {
+    GIT_TASKS.cancel(task_id);
+    Ok(())
 }
 
 fn stage_paths_inner(repo: &Repository, paths: &[String]) -> Result<(), AppError> {
@@ -2290,16 +2331,17 @@ mod tests {
             .expect("WSL_GIT_DIAG_PATH must be a \\\\wsl.localhost\\… path");
         let root = normalize_root(&path);
         let start = Instant::now();
-        let delegated = wsl_status(&distro, &linux_path, &root);
+        let delegated = wsl_status(&distro, &linux_path, &root, &AtomicBool::new(false));
         let elapsed = start.elapsed();
         match &delegated {
-            Some(summary) => println!(
+            Ok(Some(summary)) => println!(
                 "wsl_diag_scm_status: WSL delegation OK in {elapsed:?}: staged={} changes={} untracked={}",
                 summary.staged.len(),
                 summary.changes.len(),
                 summary.untracked.len()
             ),
-            None => println!("wsl_diag_scm_status: WSL delegation declined/failed in {elapsed:?}"),
+            Ok(None) => println!("wsl_diag_scm_status: WSL delegation declined/failed in {elapsed:?}"),
+            Err(error) => println!("wsl_diag_scm_status: WSL delegation errored in {elapsed:?}: {error}"),
         }
 
         // For comparison, time the libgit2 open + fallback too.

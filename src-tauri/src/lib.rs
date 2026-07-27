@@ -247,6 +247,7 @@ pub fn run(launch_dir: Option<String>) {
             config::list_user_themes,
             // Git status (legacy: per-file indicators for file list)
             files::git_status::get_git_status,
+            files::git_status::cancel_get_git_status,
             // Git source-control backend (#53, #54)
             git::git_init,
             git::git_repo_root,
@@ -254,6 +255,7 @@ pub fn run(launch_dir: Option<String>) {
             git::git_archive_untracked,
             git::git_trash_untracked,
             git::git_status,
+            git::cancel_git_status,
             git::git_stage,
             git::git_unstage,
             git::git_discard,

@@ -31,7 +31,10 @@ import {
 } from "$lib/api/files";
 import type { GitOpState } from "$lib/domain/git";
 import { subscribeGitChanges, notifyLocalGitChange } from "./git-refresh";
-import { fetchGitSummary } from "./git-summary-cache";
+import {
+  fetchGitSummary,
+  releaseGitSummaryConsumer,
+} from "./git-summary-cache";
 import { filterEntriesToDir } from "$lib/domain/scm-tree";
 
 function emptySummary(): GitStatusSummary {
@@ -89,7 +92,7 @@ export async function warmScmSummary(path: string): Promise<void> {
   }
 }
 
-function createScmStore() {
+function createScmStore(consumerId: string) {
   let activePath = $state<string>("");
   let repoRoot = $state<string | null>(null);
   let summary = $state<GitStatusSummary>(emptySummary());
@@ -126,7 +129,7 @@ function createScmStore() {
     // Route through the shared cache (#431): change-driven, so `force` bypasses
     // the TTL to observe a post-mutation scan, while still joining any scan
     // already in flight for this repo (e.g. the other pane's store).
-    const result = await fetchGitSummary(root, { force: true });
+    const result = await fetchGitSummary(root, { force: true, consumerId });
     const elapsedMs = Math.round(performance.now() - start);
     if (gen !== refreshGeneration) {
       console.debug(`[scm] discarding stale refreshSummary result for ${root}`);
@@ -153,6 +156,8 @@ function createScmStore() {
 
   async function setActivePath(path: string): Promise<void> {
     if (path === activePath) return;
+    refreshGeneration++;
+    releaseGitSummaryConsumer(consumerId);
     activePath = path;
     // Repo detection is itself an IPC round-trip; without the flag the view
     // renders "not a git repository" during it (#271, #426). Every exit path
@@ -199,6 +204,8 @@ function createScmStore() {
    * summaryCache keeps the last summary for an instant repaint.
    */
   async function release(): Promise<void> {
+    refreshGeneration++;
+    releaseGitSummaryConsumer(consumerId);
     activePath = "";
     repoRoot = null;
     detecting = false;
@@ -423,7 +430,7 @@ const paneScmStores = new Map<string, ScmStore>();
 export function getScmStore(paneId: string): ScmStore {
   let store = paneScmStores.get(paneId);
   if (!store) {
-    store = createScmStore();
+    store = createScmStore(paneId);
     paneScmStores.set(paneId, store);
   }
   return store;

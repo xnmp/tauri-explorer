@@ -9,9 +9,13 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::error::AppError;
-use crate::process_ext::NoConsole;
+use crate::process_ext::{output_cancellable, NoConsole};
+use crate::task_registry::TaskRegistry;
+
+static BADGE_STATUS_TASKS: TaskRegistry = TaskRegistry::new();
 
 /// Git status for a single file.
 #[derive(Debug, Clone, Serialize)]
@@ -164,22 +168,26 @@ fn aggregate_statuses(status_stdout: &[u8], prefix: &str) -> HashMap<String, Git
 /// literal argv — `--` would route through the distro's login shell and a
 /// shell like zsh mangles paths/args (#423).
 #[cfg(windows)]
-fn get_git_status_wsl(distro: &str, linux_path: &str, path: &str) -> Option<GitStatusResponse> {
+fn get_git_status_wsl(
+    distro: &str,
+    linux_path: &str,
+    path: &str,
+    cancelled: &AtomicBool,
+) -> Result<Option<GitStatusResponse>, AppError> {
     let rev_parse_start = std::time::Instant::now();
-    let output = Command::new("wsl.exe")
-        .no_console()
-        .args([
-            "-d",
-            distro,
-            "--exec",
-            "git",
-            "-C",
-            linux_path,
-            "rev-parse",
-            "--is-inside-work-tree",
-            "--show-prefix",
-        ])
-        .output();
+    let mut rev_parse = Command::new("wsl.exe");
+    rev_parse.no_console().args([
+        "-d",
+        distro,
+        "--exec",
+        "git",
+        "-C",
+        linux_path,
+        "rev-parse",
+        "--is-inside-work-tree",
+        "--show-prefix",
+    ]);
+    let output = output_cancellable(&mut rev_parse, cancelled, "git badge status cancelled");
     let rev_parse_ms = rev_parse_start.elapsed().as_millis();
 
     let prefix = match output {
@@ -190,7 +198,7 @@ fn get_git_status_wsl(distro: &str, linux_path: &str, path: &str) -> Option<GitS
                 log::debug!(
                     "gitstat: {path} (wsl {distro}:{linux_path}) is inside a .git dir, not the work tree"
                 );
-                return Some(not_a_repo());
+                return Ok(Some(not_a_repo()));
             }
             lines.next().unwrap_or("").to_string()
         }
@@ -207,17 +215,20 @@ fn get_git_status_wsl(distro: &str, linux_path: &str, path: &str) -> Option<GitS
                     "gitstat: {path} (wsl {distro}:{linux_path}) not a repo: rev-parse exit {:?} in {rev_parse_ms}ms",
                     o.status.code()
                 );
-                return Some(not_a_repo());
+                return Ok(Some(not_a_repo()));
             }
             log::warn!(
                 "gitstat: wsl rev-parse for {distro}:{linux_path} exited {:?} in {rev_parse_ms}ms, stderr: {stderr}",
                 o.status.code()
             );
-            return None;
+            return Ok(None);
         }
         Err(e) => {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(e);
+            }
             log::warn!("gitstat: wsl rev-parse spawn failed for {distro}:{linux_path}: {e}");
-            return None;
+            return Ok(None);
         }
     };
 
@@ -225,27 +236,28 @@ fn get_git_status_wsl(distro: &str, linux_path: &str, path: &str) -> Option<GitS
     // unlike Git-for-Windows over 9P (#392/#398). `-unormal` collapses fully
     // untracked subtrees to one entry (aggregation folds children anyway).
     let status_start = std::time::Instant::now();
-    let output = match Command::new("wsl.exe")
-        .no_console()
-        .args([
-            "-d",
-            distro,
-            "--exec",
-            "git",
-            "-C",
-            linux_path,
-            "status",
-            "--porcelain",
-            "-z",
-            "-unormal",
-            ".",
-        ])
-        .output()
-    {
+    let mut status = Command::new("wsl.exe");
+    status.no_console().args([
+        "-d",
+        distro,
+        "--exec",
+        "git",
+        "-C",
+        linux_path,
+        "status",
+        "--porcelain",
+        "-z",
+        "-unormal",
+        ".",
+    ]);
+    let output = match output_cancellable(&mut status, cancelled, "git badge status cancelled") {
         Ok(o) => o,
         Err(e) => {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(e);
+            }
             log::warn!("gitstat: wsl status spawn failed for {distro}:{linux_path}: {e}");
-            return None;
+            return Ok(None);
         }
     };
     let status_ms = status_start.elapsed().as_millis();
@@ -255,7 +267,7 @@ fn get_git_status_wsl(distro: &str, linux_path: &str, path: &str) -> Option<GitS
             output.status.code(),
             truncate_stderr(&output.stderr)
         );
-        return None;
+        return Ok(None);
     }
 
     let statuses = aggregate_statuses(&output.stdout, &prefix);
@@ -263,15 +275,18 @@ fn get_git_status_wsl(distro: &str, linux_path: &str, path: &str) -> Option<GitS
         "gitstat: badge status for {path} via wsl {distro}:{linux_path}: {} entries (rev-parse {rev_parse_ms}ms, status {status_ms}ms)",
         statuses.len()
     );
-    Some(GitStatusResponse {
+    Ok(Some(GitStatusResponse {
         is_git_repo: true,
         statuses,
-    })
+    }))
 }
 
 /// Blocking implementation of [`get_git_status`].
-fn get_git_status_sync(path: &str) -> Result<GitStatusResponse, AppError> {
+fn get_git_status_sync(path: &str, cancelled: &AtomicBool) -> Result<GitStatusResponse, AppError> {
     let total_start = std::time::Instant::now();
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(AppError::Other("git badge status cancelled".into()));
+    }
     let dir = Path::new(path);
     if !dir.exists() || !dir.is_dir() {
         return Ok(not_a_repo());
@@ -282,7 +297,7 @@ fn get_git_status_sync(path: &str) -> Result<GitStatusResponse, AppError> {
     // only when the delegation mechanism itself fails.
     #[cfg(windows)]
     if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc(path) {
-        if let Some(resp) = get_git_status_wsl(&distro, &linux_path, path) {
+        if let Some(resp) = get_git_status_wsl(&distro, &linux_path, path, cancelled)? {
             log::info!(
                 "gitstat: badge status for {path} served by wsl-delegated in {}ms",
                 total_start.elapsed().as_millis()
@@ -305,10 +320,10 @@ fn get_git_status_sync(path: &str) -> Result<GitStatusResponse, AppError> {
     if cfg!(windows) {
         rev_cmd.args(["-c", "safe.directory=*"]);
     }
-    let output = rev_cmd
+    rev_cmd
         .args(["rev-parse", "--is-inside-work-tree", "--show-prefix"])
-        .current_dir(dir)
-        .output();
+        .current_dir(dir);
+    let output = output_cancellable(&mut rev_cmd, cancelled, "git badge status cancelled");
     let rev_parse_ms = rev_parse_start.elapsed().as_millis();
 
     let prefix = match output {
@@ -365,13 +380,12 @@ fn get_git_status_sync(path: &str) -> Result<GitStatusResponse, AppError> {
         cmd.args(["-c", "core.filemode=false", "-c", "safe.directory=*"]);
     }
     let status_start = std::time::Instant::now();
-    let output = cmd
-        .args(["status", "--porcelain", "-z", "-unormal", "."])
-        .current_dir(dir)
-        .output()
-        .map_err(|e| {
+    cmd.args(["status", "--porcelain", "-z", "-unormal", "."])
+        .current_dir(dir);
+    let output =
+        output_cancellable(&mut cmd, cancelled, "git badge status cancelled").map_err(|e| {
             log::warn!("gitstat: status spawn failed for {path}: {e}");
-            AppError::from(e)
+            e
         })?;
     let status_ms = status_start.elapsed().as_millis();
     // Preserve prior behavior: a non-zero exit still falls through to parsing
@@ -400,10 +414,23 @@ fn get_git_status_sync(path: &str) -> Result<GitStatusResponse, AppError> {
 
 /// Get git status for all files in the given directory.
 #[tauri::command]
-pub async fn get_git_status(path: String) -> Result<GitStatusResponse, AppError> {
-    tokio::task::spawn_blocking(move || get_git_status_sync(&path))
-        .await
-        .map_err(|e| AppError::Other(format!("git status task join: {e}")))?
+pub async fn get_git_status(
+    path: String,
+    task_id: Option<u64>,
+) -> Result<GitStatusResponse, AppError> {
+    let (id, cancelled) = match task_id {
+        Some(id) => (id, BADGE_STATUS_TASKS.start_with_id(id)),
+        None => BADGE_STATUS_TASKS.start(),
+    };
+    let result = tokio::task::spawn_blocking(move || get_git_status_sync(&path, &cancelled)).await;
+    BADGE_STATUS_TASKS.cleanup(id);
+    result.map_err(|e| AppError::Other(format!("git status task join: {e}")))?
+}
+
+#[tauri::command]
+pub async fn cancel_get_git_status(task_id: u64) -> Result<(), AppError> {
+    BADGE_STATUS_TASKS.cancel(task_id);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -441,7 +468,7 @@ mod tests {
     }
 
     fn status_of(path: &Path) -> GitStatusResponse {
-        get_git_status_sync(path.to_str().unwrap()).unwrap()
+        get_git_status_sync(path.to_str().unwrap(), &AtomicBool::new(false)).unwrap()
     }
 
     #[test]
@@ -570,7 +597,7 @@ mod tests {
             return;
         };
         let start = std::time::Instant::now();
-        let result = get_git_status_sync(&path);
+        let result = get_git_status_sync(&path, &AtomicBool::new(false));
         let elapsed = start.elapsed();
         match result {
             Ok(resp) => println!(

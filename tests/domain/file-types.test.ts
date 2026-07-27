@@ -29,6 +29,14 @@ const entry = (
 });
 
 describe("formatDate", () => {
+  it("renders elapsed days, weeks, and months with compact relative labels", () => {
+    const now = new Date("2024-06-15T12:00:00Z");
+
+    expect(formatDate("2024-06-10T12:00:00Z", now)).toBe("5d");
+    expect(formatDate("2024-05-11T12:00:00Z", now)).toBe("5w");
+    expect(formatDate("2024-01-15T12:00:00Z", now)).toBe("5mo");
+  });
+
   it("formats a valid ISO timestamp", () => {
     const out = formatDate("2024-03-15T14:30:00Z");
     expect(out).not.toBe("");

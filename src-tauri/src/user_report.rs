@@ -99,28 +99,24 @@ pub fn assemble_issue_body(
     log_tail: Option<&str>,
 ) -> String {
     let description = sanitize(description);
+    let mut body = truncate_utf16(description.trim(), MAX_RELAY_BODY_UNITS);
     let contact = contact
         .map(sanitize)
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(|value| format!("How to reach the reporter: {value}"));
+        .map(|value| format!("\n\nHow to reach the reporter: {value}"));
     let environment = format!(
-        "---\n- Tauri Explorer: v{}\n- OS: {} ({})",
+        "\n\n---\n- Tauri Explorer: v{}\n- OS: {} ({})",
         sanitize(environment.version),
         sanitize(environment.os),
         sanitize(environment.arch)
     );
-    let required_suffix = contact
-        .as_ref()
-        .map(|value| format!("\n\n{value}\n\n{environment}"))
-        .unwrap_or_else(|| format!("\n\n{environment}"));
-    let suffix_units = required_suffix.encode_utf16().count();
-    let mut body = truncate_utf16(
-        description.trim(),
-        MAX_RELAY_BODY_UNITS.saturating_sub(suffix_units),
-    );
-    body.push_str(&required_suffix);
+    for section in contact.iter().chain(std::iter::once(&environment)) {
+        if body.encode_utf16().count() + section.encode_utf16().count() <= MAX_RELAY_BODY_UNITS {
+            body.push_str(section);
+        }
+    }
 
     if let Some(logs) = log_tail
         .map(sanitize)
@@ -333,8 +329,9 @@ mod tests {
 
     #[test]
     fn assembled_body_obeys_relay_units_and_sanitizes_log_controls() {
+        let description = "🐛".repeat(4000);
         let body = assemble_issue_body(
-            &"🐛".repeat(4000),
+            &description,
             Some("@reporter"),
             &Environment {
                 version: "1.7.0",
@@ -346,9 +343,21 @@ mod tests {
         assert!(body.encode_utf16().count() <= MAX_RELAY_BODY_UNITS);
         assert!(!body.contains('\u{0}'));
         assert!(!body.contains('\u{7}'));
-        assert!(body.starts_with("🐛"));
-        assert!(body.contains("How to reach the reporter: @reporter"));
-        assert!(body.contains("Tauri Explorer: v1.7.0"));
+        assert_eq!(body, description);
+
+        let with_logs = assemble_issue_body(
+            "Short description",
+            None,
+            &Environment {
+                version: "1.7.0",
+                os: "linux",
+                arch: "x86_64",
+            },
+            Some("safe\u{0}log\u{7}\nlast line"),
+        );
+        assert!(with_logs.contains("safelog\nlast line"));
+        assert!(!with_logs.contains('\u{0}'));
+        assert!(!with_logs.contains('\u{7}'));
     }
 
     fn payload() -> RelayRequest {

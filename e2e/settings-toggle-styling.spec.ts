@@ -10,7 +10,7 @@ import { waitForEntries } from "./helpers";
 const shot = (name: string) =>
   process.env.CAPTURE_EVIDENCE ? `evidence/${name}` : `test-results/evidence/${name}`;
 
-test("Premium Theme Effects toggle keeps its thumb vertically centered", async ({ page }) => {
+test("Premium Theme Effects toggle renders a complete, clearly selected switch", async ({ page }) => {
   await page.goto("/?path=/home/user/Documents/project");
   await page.evaluate(() => localStorage.clear());
   await page.reload();
@@ -29,12 +29,39 @@ test("Premium Theme Effects toggle keeps its thumb vertically centered", async (
   await expect(slider).toBeVisible();
   await expect(input).not.toBeChecked();
 
-  const toggleWidth = await slider.evaluate((element) => element.getBoundingClientRect().width);
+  const offStyle = await slider.evaluate((element) => {
+    const track = getComputedStyle(element);
+    const thumb = getComputedStyle(element, "::before");
+    return {
+      trackWidth: element.getBoundingClientRect().width,
+      trackHeight: element.getBoundingClientRect().height,
+      trackRadius: track.borderTopLeftRadius,
+      trackColor: track.backgroundColor,
+      thumbWidth: thumb.width,
+      thumbHeight: thumb.height,
+      thumbTop: thumb.top,
+      thumbColor: thumb.backgroundColor,
+    };
+  });
   // Chromium can apply a fractional effective zoom in the test viewport;
   // accept that rounding while rejecting the pre-fix ~24px collapsed control.
-  expect(toggleWidth).toBeGreaterThanOrEqual(43);
+  expect(offStyle.trackWidth).toBeGreaterThanOrEqual(43);
+  expect(offStyle.trackHeight).toBeGreaterThanOrEqual(23);
+  expect(offStyle.trackRadius).toBe("12px");
+  expect(offStyle.thumbWidth).toBe("18px");
+  expect(offStyle.thumbHeight).toBe("18px");
+  expect(offStyle.thumbTop).toBe("2px");
 
   await row.locator("label.toggle").click();
   await expect(input).toBeChecked();
+  await expect
+    .poll(() =>
+      slider.evaluate((element) => {
+        const track = getComputedStyle(element);
+        const thumb = getComputedStyle(element, "::before");
+        return { trackColor: track.backgroundColor, thumbColor: thumb.backgroundColor };
+      }),
+    )
+    .not.toEqual({ trackColor: offStyle.trackColor, thumbColor: offStyle.thumbColor });
   await page.screenshot({ path: shot("ac-1-settings-toggle-styling.png") });
 });

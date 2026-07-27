@@ -9,6 +9,8 @@
  * the timing/dedup rules can be unit-tested directly.
  */
 
+import { directoryKey } from "./path";
+
 export interface GitWarmDeps {
   /** Resolve the git repo root for a folder, or null when it isn't in a repo. */
   resolveRepoRoot: (path: string) => Promise<string | null>;
@@ -16,6 +18,8 @@ export interface GitWarmDeps {
   warmGraph: (repoRoot: string) => void;
   /** Warm the SCM summary cache for a repo root (fire-and-forget). */
   warmScm: (repoRoot: string) => void;
+  /** Release owner-scoped warm work once no pane remains in the repo. */
+  cancelWarm?: (repoRoot: string) => void;
   /** Whether the git-graph feature is enabled (gates graph warming). */
   graphEnabled: () => boolean;
   /** Whether the git-status/SCM feature is enabled (gates SCM warming). */
@@ -27,8 +31,8 @@ export interface GitWarmDeps {
 }
 
 export interface GitWarmer {
-  /** Note that a pane settled on `path`; warms after the debounce elapses. */
-  schedule: (path: string) => void;
+  /** Track a pane settled on `path`; release it when the pane navigates away. */
+  schedule: (path: string, ownerId?: string) => () => void;
 }
 
 export function createGitWarmer(deps: GitWarmDeps): GitWarmer {
@@ -36,28 +40,75 @@ export function createGitWarmer(deps: GitWarmDeps): GitWarmer {
   const setT = deps.setTimeoutFn ?? ((fn, ms) => setTimeout(fn, ms));
   const clearT = deps.clearTimeoutFn ?? ((h) => clearTimeout(h));
 
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  let pendingPath = "";
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+  const pendingPaths = new Map<string, string>();
   // Roots already warmed this session — skips redundant warms on repeat
   // navigation into the same repo.
   const warmedRoots = new Set<string>();
   // Resolved roots per path (null = known non-repo) — avoids re-probing the
   // same folder, so a second navigation into it costs no extra IPC.
   const resolvedRoots = new Map<string, string | null>();
+  const trackedPaths = new Map<string, number>();
 
-  function schedule(path: string): void {
-    if (!path) return;
+  function schedule(path: string, ownerId = "default"): () => void {
+    if (!path) return () => {};
     // Non-git users (both features off) pay zero extra IPC.
-    if (!deps.graphEnabled() && !deps.scmEnabled()) return;
-    pendingPath = path;
-    if (timer !== null) clearT(timer);
-    timer = setT(() => {
-      timer = null;
-      void run(pendingPath);
+    if (!deps.graphEnabled() && !deps.scmEnabled()) return () => {};
+    trackedPaths.set(path, (trackedPaths.get(path) ?? 0) + 1);
+    pendingPaths.set(ownerId, path);
+    const existingTimer = timers.get(ownerId);
+    if (existingTimer !== undefined) clearT(existingTimer);
+    const timer = setT(() => {
+      timers.delete(ownerId);
+      const pendingPath = pendingPaths.get(ownerId);
+      pendingPaths.delete(ownerId);
+      if (pendingPath) void run(pendingPath);
     }, debounceMs);
+    timers.set(ownerId, timer);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (pendingPaths.get(ownerId) === path) {
+        const pendingTimer = timers.get(ownerId);
+        if (pendingTimer !== undefined) clearT(pendingTimer);
+        timers.delete(ownerId);
+        pendingPaths.delete(ownerId);
+      }
+      const remaining = (trackedPaths.get(path) ?? 1) - 1;
+      if (remaining > 0) {
+        trackedPaths.set(path, remaining);
+        return;
+      }
+      trackedPaths.delete(path);
+      const pathKey = directoryKey(path);
+      const root = resolvedRoots.get(path)
+        ?? Array.from(warmedRoots).find((candidate) => {
+          const candidateKey = directoryKey(candidate);
+          return pathKey === candidateKey || pathKey.startsWith(`${candidateKey}/`);
+        });
+      if (!root) return;
+      const rootKey = directoryKey(root);
+      const rootStillTracked = Array.from(trackedPaths).some(
+        ([trackedPath, refs]) => {
+          if (refs <= 0) return false;
+          const resolved = resolvedRoots.get(trackedPath);
+          if (resolved) return directoryKey(resolved) === rootKey;
+          const trackedKey = directoryKey(trackedPath);
+          const insideRoot = trackedKey === rootKey || trackedKey.startsWith(`${rootKey}/`);
+          if (insideRoot) resolvedRoots.set(trackedPath, root);
+          return insideRoot;
+        },
+      );
+      if (!rootStillTracked) {
+        warmedRoots.delete(root);
+        deps.cancelWarm?.(root);
+      }
+    };
   }
 
   async function run(path: string): Promise<void> {
+    if (!trackedPaths.has(path)) return;
     if (!resolvedRoots.has(path)) {
       try {
         resolvedRoots.set(path, await deps.resolveRepoRoot(path));
@@ -65,6 +116,7 @@ export function createGitWarmer(deps: GitWarmDeps): GitWarmer {
         return; // best-effort; a later navigation can retry
       }
     }
+    if (!trackedPaths.has(path)) return;
     const root = resolvedRoots.get(path) ?? null;
     if (!root || warmedRoots.has(root)) return;
     warmedRoots.add(root);

@@ -1,0 +1,31 @@
+# Issue 426: cancelling abandoned Git status scans
+
+Git status requests are shared work, not component-local work. A pane leaving a
+directory cannot cancel by path: another pane, the graph, or the SCM view may
+still await the same scan. Give each backend scan a caller-generated task ID,
+track frontend consumers explicitly, and cancel only after the final owned
+consumer releases it.
+
+Setting a cancellation flag does not interrupt `std::process::Command::output`.
+Long-running Git children must be spawned with piped output drained
+concurrently, polled for cancellation, and terminated as a process tree. The
+result must also be discarded after cancellation so a late completion cannot
+overwrite settled data. Cancellation should drop the work, not the display
+cache: retain settled badges for instant back-navigation, exclude released
+directories from watcher refreshes, and revalidate them in the background when
+a pane returns.
+
+Keep cancellation request-specific. The SCM task registry also serves other Git
+operations, so cancel-all or cancel-by-path can terminate unrelated mutations.
+Libgit2 status collection has no comparable child process to kill; check its
+flag before and after collection so a cancelled scan never publishes a result.
+
+Two ordering edges need explicit generations. Cancellation may reach Rust
+before the async command registers its caller-generated ID, so the registry
+must preserve a bounded pre-cancellation tombstone. A forced post-mutation scan
+may also finish before an older passive scan; only the newest scan generation
+may publish into the short-lived summary cache.
+
+Background warmers and graph views are consumers too. Give their shared summary
+scans stable owner IDs and release those IDs with pane lifetime; otherwise an
+ownerless warm can keep the slowest startup scan alive after every pane leaves.

@@ -21,12 +21,25 @@ export interface GitStatusResponse {
 /**
  * Get git status for files in a directory.
  */
-export async function getGitStatus(path: string): Promise<ApiResult<GitStatusResponse>> {
+export async function getGitStatus(
+  path: string,
+  taskId?: number,
+): Promise<ApiResult<GitStatusResponse>> {
   try {
-    const data = await invoke<GitStatusResponse>("get_git_status", { path });
+    const data = await invoke<GitStatusResponse>("get_git_status", { path, taskId });
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: extractError(err) };
+  }
+}
+
+export async function cancelGetGitStatus(taskId: number): Promise<void> {
+  try {
+    await invoke<void>("cancel_get_git_status", { taskId });
+  } catch (err) {
+    console.debug(
+      `[git-status] badge cancellation for task ${taskId} did not reach an active request: ${extractError(err)}`,
+    );
   }
 }
 
@@ -108,12 +121,25 @@ export async function gitTrashUntracked(
   }
 }
 
-export async function gitSummary(repoPath: string): Promise<ApiResult<GitStatusSummary>> {
+export async function gitSummary(
+  repoPath: string,
+  taskId?: number,
+): Promise<ApiResult<GitStatusSummary>> {
   try {
-    const data = await invoke<GitStatusSummary>("git_status", { repoPath });
+    const data = await invoke<GitStatusSummary>("git_status", { repoPath, taskId });
     return { ok: true, data };
   } catch (err) {
     return { ok: false, error: extractError(err) };
+  }
+}
+
+export async function cancelGitStatus(taskId: number): Promise<void> {
+  try {
+    await invoke<void>("cancel_git_status", { taskId });
+  } catch (err) {
+    console.debug(
+      `[git-status] SCM cancellation for task ${taskId} did not reach an active request: ${extractError(err)}`,
+    );
   }
 }
 

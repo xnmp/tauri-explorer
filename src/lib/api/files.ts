@@ -710,6 +710,7 @@ export {
 
 export {
   getGitStatus,
+  cancelGetGitStatus,
   type GitFileStatus,
   gitInit,
   gitRepoRoot,
@@ -717,6 +718,7 @@ export {
   gitArchiveUntracked,
   gitTrashUntracked,
   gitSummary,
+  cancelGitStatus,
   gitStage,
   gitUnstage,
   gitDiscard,

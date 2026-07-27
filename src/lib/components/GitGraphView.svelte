@@ -73,7 +73,10 @@
     type ResetMode,
     type OpenPr,
   } from "$lib/api/git-log";
-  import { fetchGitSummary } from "$lib/state/git-summary-cache";
+  import {
+    fetchGitSummary,
+    releaseGitSummaryConsumer,
+  } from "$lib/state/git-summary-cache";
   import { assignLayout, branchPath, detachedHeadIndicator, groupRefChips, indexPrsByBranch, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, sliceBranchLine, stepOnBranchLine, scrollTopToReveal, remoteOnlyBranchNames, branchWalkQuery, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip, type BranchListEntry } from "$lib/domain/git-graph";
   import { openExternalUrl } from "$lib/api/crash";
   import { registerGraphRefresher } from "$lib/state/git-graph-refresh";
@@ -98,7 +101,7 @@
     type StageFile,
   } from "$lib/domain/commit-panel";
   import { getCommitPanelStore } from "$lib/state/commit-panel.svelte";
-  import { untrack, tick } from "svelte";
+  import { onDestroy, untrack, tick } from "svelte";
   import { usePersistedPanelWidth } from "$lib/composables/use-panel-resize.svelte";
   import { loadPersisted, savePersisted } from "$lib/state/persisted";
   import { getScmStore } from "$lib/state/scm.svelte";
@@ -111,6 +114,10 @@
   // This pane's SCM store — the preview pane reads the ACTIVE pane's store,
   // and clicking in the graph focuses its pane, so the two line up (#366).
   const paneId = getPaneIdContext();
+  // The component is keyed on repoPath, so this owner id is intentionally
+  // fixed for its lifetime.
+  const summaryConsumerId = `git-graph:${paneId ?? "default"}:${untrack(() => repoPath)}`;
+  onDestroy(() => releaseGitSummaryConsumer(summaryConsumerId));
   const scmStore = $derived(getScmStore(paneId ?? windowTabsManager.activePaneId ?? "default"));
 
   const ROW_HEIGHT = 28;
@@ -291,7 +298,7 @@
         // affordance (#466). Served from the shared summary cache (#431) — the
         // graph's own reload just scanned this, so selecting the row reuses it
         // instead of re-scanning.
-        const res = await fetchGitSummary(repoPath);
+        const res = await fetchGitSummary(repoPath, { consumerId: summaryConsumerId });
         if (!res.ok) throw new Error(res.error);
         selectedFiles = buildStageFiles(res.data);
       } else {
@@ -377,7 +384,10 @@
    *  (after a stage/unstage/commit). Forces past the summary-cache TTL so the
    *  post-mutation state is observed. */
   async function refreshUncommittedFiles(): Promise<void> {
-    const res = await fetchGitSummary(repoPath, { force: true });
+    const res = await fetchGitSummary(repoPath, {
+      force: true,
+      consumerId: summaryConsumerId,
+    });
     selectedFiles = res.ok ? buildStageFiles(res.data) : [];
   }
 
@@ -744,7 +754,7 @@
         detached = partial.detached === true;
         nextCursor = partial.nextCursor;
         loading = false;
-      }, local, excludeBranches, filePath);
+      }, local, excludeBranches, filePath, summaryConsumerId);
       if (gen !== reloadGeneration) return;
       workingChanges = snapshot.workingChanges;
       cacheSnapshot(cacheKey, snapshot);

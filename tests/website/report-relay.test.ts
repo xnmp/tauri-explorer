@@ -6,6 +6,7 @@ import {
   processReport,
   validateReport,
 } from "../../website/api/report-core.js";
+import reportHandler from "../../website/api/report.js";
 
 const valid = {
   title: "Explorer freezes 🧊",
@@ -97,5 +98,38 @@ describe("report relay rate limits", () => {
       createIssue,
     )).resolves.toEqual({ accepted: true, honeypot: true });
     expect(createIssue).not.toHaveBeenCalled();
+  });
+});
+
+describe("report relay HTTP contract", () => {
+  function response() {
+    const state = { status: 0, headers: new Map<string, string>(), body: undefined as unknown };
+    return {
+      state,
+      status(code: number) { state.status = code; return this; },
+      setHeader(name: string, value: string) { state.headers.set(name, value); return this; },
+      json(body: unknown) { state.body = body; return this; },
+    };
+  }
+
+  it("rejects non-POST methods and marks the typed response no-store", async () => {
+    const res = response();
+    await reportHandler({ method: "GET", headers: {}, socket: {} }, res);
+    expect(res.state.status).toBe(405);
+    expect(res.state.headers.get("Allow")).toBe("POST");
+    expect(res.state.headers.get("Cache-Control")).toBe("no-store");
+    expect(res.state.body).toMatchObject({ error: { code: "method_not_allowed" } });
+  });
+
+  it("quietly accepts a filled honeypot without a GitHub token", async () => {
+    const res = response();
+    await reportHandler({
+      method: "POST",
+      headers: { "x-forwarded-for": "198.51.100.50" },
+      socket: {},
+      body: { website: "spam-bot" },
+    }, res);
+    expect(res.state.status).toBe(200);
+    expect(res.state.body).toEqual({ url: "", number: 0 });
   });
 });

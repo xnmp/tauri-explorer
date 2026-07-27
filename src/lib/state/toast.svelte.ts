@@ -13,6 +13,7 @@ export interface Toast {
   message: string;
   type: ToastType;
   isCut?: boolean; // for clipboard toasts
+  link?: { url: string; label: string };
 }
 
 const DEFAULT_DURATIONS: Record<ToastType, number> = {
@@ -37,9 +38,9 @@ function createToastStore() {
     };
   }
 
-  function show(message: string, type: ToastType = "info", options?: { isCut?: boolean; duration?: number }): number {
+  function show(message: string, type: ToastType = "info", options?: { isCut?: boolean; duration?: number; link?: { url: string; label: string } }): number {
     const id = nextId++;
-    const toast: Toast = { id, message, type, isCut: options?.isCut };
+    const toast: Toast = { id, message, type, isCut: options?.isCut, link: options?.link };
 
     // Replace existing toast of the same type (only one clipboard toast at a time, etc.)
     toasts = [...toasts.filter((t) => t.type !== type), toast];

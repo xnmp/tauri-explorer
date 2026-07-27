@@ -1085,6 +1085,21 @@ const mockCommands: Record<string, CommandHandler> = {
     localStorage.setItem("mock-opened-url", args.url as string);
     return undefined;
   },
+  submit_user_report: () => {
+    const error = localStorage.getItem("mock-report-error");
+    if (error) {
+      throw {
+        kind: error,
+        message: error === "daily_cap"
+          ? "Reports are temporarily unavailable"
+          : "Unable to submit report",
+      };
+    }
+    return {
+      url: "https://github.com/xnmp/tauri-explorer/issues/5470",
+      number: 5470,
+    };
+  },
 
   // Update check (#185): a newer release is simulated when the e2e test
   // sets localStorage.mockUpdateAvailable before load.

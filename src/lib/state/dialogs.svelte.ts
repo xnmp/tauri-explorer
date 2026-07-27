@@ -9,6 +9,7 @@
  */
 
 import type { FileEntry } from "$lib/domain/file";
+import type { UserReportKind } from "$lib/domain/user-report";
 
 export type DialogType = "rename" | "delete" | null;
 
@@ -43,6 +44,7 @@ function createDialogStore() {
   let themePickerOpen = $state(false);
   let shortcutsOpen = $state(false);
   let pickerConfig = $state<PickerConfig | null>(null);
+  let userReportKind = $state<UserReportKind | null>(null);
 
   function closeIfActive(dialogType: DialogType): void {
     if (activeDialog === dialogType) {
@@ -116,6 +118,12 @@ function createDialogStore() {
     get pickerConfig() {
       return pickerConfig;
     },
+    get isUserReportOpen() {
+      return userReportKind !== null;
+    },
+    get userReportKind(): UserReportKind {
+      return userReportKind ?? "bug";
+    },
 
     // File operation actions
     startRename(entry: FileEntry): void {
@@ -141,7 +149,7 @@ function createDialogStore() {
 
     /** True when any modal dialog is open (file ops or overlays). */
     get hasModalOpen(): boolean {
-      return activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null;
+      return activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportKind !== null;
     },
 
     // Overlay dialog actions
@@ -227,6 +235,15 @@ function createDialogStore() {
       pickerConfig = null;
     },
 
+    openUserReport(kind: UserReportKind): void {
+      commandPaletteOpen = false;
+      userReportKind = kind;
+    },
+
+    closeUserReport(): void {
+      userReportKind = null;
+    },
+
     closeAll(): void {
       activeDialog = null;
       targetEntry = null;
@@ -241,6 +258,7 @@ function createDialogStore() {
       jobsPanelOpen = false;
       themePickerOpen = false;
       pickerConfig = null;
+      userReportKind = null;
     },
   };
 }

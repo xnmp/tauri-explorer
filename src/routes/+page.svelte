@@ -94,6 +94,7 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
   let ConflictDialog = $state<Component<any> | null>(null);
   let JobsPanel = $state<Component<{ open: boolean; onClose: () => void }> | null>(null);
   let OptionPicker = $state<Component<any> | null>(null);
+  let UserReportDialog = $state<Component<any> | null>(null);
 
   $effect(() => {
     if (dialogStore.isThemePickerOpen && !ThemePicker) {
@@ -128,6 +129,9 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     }
     if (dialogStore.isPickerOpen && !OptionPicker) {
       void import("$lib/components/OptionPicker.svelte").then((m) => (OptionPicker = m.default));
+    }
+    if (dialogStore.isUserReportOpen && !UserReportDialog) {
+      void import("$lib/components/UserReportDialog.svelte").then((m) => (UserReportDialog = m.default));
     }
   });
 
@@ -609,6 +613,13 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
 {/if}
 {#if OptionPicker}
   <OptionPicker />
+{/if}
+{#if UserReportDialog}
+  <UserReportDialog
+    open={dialogStore.isUserReportOpen}
+    initialKind={dialogStore.userReportKind}
+    onClose={() => dialogStore.closeUserReport()}
+  />
 {/if}
 {#if ContentSearchDialog}
   <ContentSearchDialog open={dialogStore.isContentSearchOpen} onClose={() => dialogStore.closeContentSearch()} />

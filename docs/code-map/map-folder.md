@@ -199,6 +199,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-graph.ts` — commit-graph lane layout (#58/#179).
 - `commit-panel.ts` — pure state machine + derivations for the git-graph uncommitted-node inline commit panel: stage-status grouping, commit-button enablement/label, ephemeral message-editor transitions (#466).
 - `scm-tree.ts` — fold flat repo file list into a tree.
+- `scm-filter.ts` — fuzzy filter for the SCM sidebar's pending files (#517); `filterScmEntries`/`filterScmSummary` over `fuzzyScorePath`.
 - `diff.ts` — unified-diff parser (#55).
 - `css-tokens.ts` — parse a stylesheet's `--token` table and resolve `var()` the way the browser would, so a unit test can catch a `var(--undefined, fallback)` silently degrading (#499).
 - `undo-operations.ts` — pure undo/redo execution logic.

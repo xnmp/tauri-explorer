@@ -21,6 +21,12 @@
   import Modal from "./Modal.svelte";
 
   import { buildTree, collectPaths, type ScmTreeNode } from "$lib/domain/scm-tree";
+  import {
+    filterScmSummary,
+    isScmFilterActive,
+    scmEmptyState,
+    showScmFilterInput,
+  } from "$lib/domain/scm-filter";
 
   // Per-pane store (#334): this view tracks the pane it is mounted in, so a
   // second pane on another repo gets its own independent SCM panel. Falls
@@ -28,13 +34,27 @@
   const paneId = getPaneIdContext() ?? "default";
   const scmStore = getScmStore(paneId);
 
+  // Fuzzy filter over the pending files (#517). Only the query text lives
+  // here; the narrowing rules are pure in $lib/domain/scm-filter.
+  let filterQuery = $state("");
+  const filterActive = $derived(isScmFilterActive(filterQuery));
+  let filterInputEl: HTMLInputElement | undefined = $state();
+
   // Collapsed folder sets, keyed per repo root so toggling between repos
-  // doesn't mix collapse state.
+  // doesn't mix collapse state. While a filter is active every folder is
+  // treated as expanded — a match hidden inside a collapsed folder would
+  // look like the filter had dropped it.
   let collapsedByRepo = $state(new Map<string, Set<string>>());
   const collapsedFolders = $derived(
-    collapsedByRepo.get(scmStore.repoRoot ?? "") ?? new Set<string>()
+    filterActive
+      ? new Set<string>()
+      : collapsedByRepo.get(scmStore.repoRoot ?? "") ?? new Set<string>()
   );
   function toggleFolder(dir: string): void {
+    // While filtering, every folder renders expanded — accepting a toggle
+    // here would rewrite the collapse state the user set beforehand, with no
+    // visible effect until they clear the query.
+    if (filterActive) return;
     const repo = scmStore.repoRoot ?? "";
     const next = new Set(collapsedByRepo.get(repo) ?? []);
     if (next.has(dir)) next.delete(dir); else next.add(dir);
@@ -238,14 +258,53 @@
     }
   }
 
-  const summary = $derived(scmStore.filteredSummary);
+  /** Rows the user sees: dir-scoped by the store (#380), then narrowed by the
+   *  sidebar's own fuzzy query (#517). Counts and keyboard navigation follow
+   *  it; commit actions deliberately do not (they use `fullSummary`). */
+  /** Dir-scoped rows, read once: `filteredSummary` is a plain getter that
+   *  re-filters on every access, and both derivations below need it. */
+  const dirScoped = $derived(scmStore.filteredSummary);
+  const summary = $derived(filterScmSummary(dirScoped, filterQuery));
   const fullSummary = $derived(scmStore.summary);
+
+  /** Pending rows before the text filter — decides whether there is anything
+   *  to filter at all (no input on a clean tree). */
+  const dirPendingCount = $derived(
+    dirScoped.staged.length +
+      dirScoped.changes.length +
+      dirScoped.untracked.length +
+      dirScoped.merge.length
+  );
+
+  function clearFilter(): void {
+    filterQuery = "";
+    filterInputEl?.focus();
+  }
+
+  function onFilterKeydown(e: KeyboardEvent): void {
+    // Esc clears the query first; an already-empty filter lets the key bubble
+    // so the surrounding UI keeps its own Esc behaviour.
+    if (e.key === "Escape" && filterActive) {
+      e.preventDefault();
+      e.stopPropagation();
+      clearFilter();
+    }
+  }
   const isRepo = $derived(fullSummary.is_repo);
 
   const stagedCount = $derived(summary.staged.length);
   const changesCount = $derived(summary.changes.length);
   const untrackedCount = $derived(summary.untracked.length);
   const mergeCount = $derived(summary.merge.length);
+
+  /** Empty-list message: none / clean tree / filtered away (#517). */
+  const emptyState = $derived(
+    scmEmptyState(
+      dirPendingCount,
+      stagedCount + changesCount + untrackedCount + mergeCount,
+      filterQuery
+    )
+  );
 
   const fullStagedCount = $derived(fullSummary.staged.length);
   const fullMergeCount = $derived(fullSummary.merge.length);
@@ -414,6 +473,39 @@
       </div>
     </div>
 
+    {#if showScmFilterInput(dirPendingCount, filterQuery)}
+      <div class="scm-filter">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" class="scm-filter-icon" aria-hidden="true">
+          <circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M10.4 10.4L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <input
+          type="text"
+          class="scm-filter-input"
+          placeholder="Filter files"
+          aria-label="Filter files"
+          bind:this={filterInputEl}
+          value={filterQuery}
+          oninput={(e) => (filterQuery = (e.target as HTMLInputElement).value)}
+          onkeydown={onFilterKeydown}
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="none"
+          spellcheck="false"
+          name="scm-filter-nofill"
+        />
+        {#if filterActive}
+          <button
+            type="button"
+            class="scm-filter-clear"
+            title="Clear filter (Esc)"
+            aria-label="Clear filter"
+            onclick={clearFilter}
+          >×</button>
+        {/if}
+      </div>
+    {/if}
+
     {#if mergeCount > 0}
       {@render section({
         id: "merge",
@@ -456,7 +548,11 @@
       kind: "untracked",
     })}
 
-    {#if stagedCount + changesCount + untrackedCount + mergeCount === 0}
+    <!-- A filtered-to-nothing list is not a clean tree, and a clean tree under
+         a stale query is not a filter miss — scmEmptyState tells them apart. -->
+    {#if emptyState === "no-match"}
+      <div class="scm-no-match" role="status">No files match “{filterQuery.trim()}”</div>
+    {:else if emptyState === "clean"}
       <div class="clean-state">Working tree clean</div>
     {/if}
   {/if}
@@ -626,6 +722,7 @@
         role="treeitem"
         aria-expanded={!collapsed}
         aria-selected="false"
+        aria-disabled={filterActive}
       >
         {#each { length: depth } as _, i}
           <span class="depth-guide" style="left: {i * 12 + 10}px"></span>
@@ -761,6 +858,81 @@
     gap: 6px;
     padding: 8px;
     border-bottom: 1px solid var(--divider);
+  }
+
+  /* Fuzzy filter over the pending files (#517). Sits between the commit panel
+     and the sections, matching the address-bar filter treatment. */
+  .scm-filter {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    box-sizing: border-box;
+    margin: 8px 8px 4px;
+    padding: 0 8px;
+    height: 26px;
+    background: var(--control-fill-secondary);
+    border: 1px solid var(--divider);
+    border-radius: var(--radius-sm);
+  }
+
+  .scm-filter:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 15%, transparent);
+  }
+
+  .scm-filter-icon {
+    flex-shrink: 0;
+    color: var(--text-tertiary);
+  }
+
+  .scm-filter-input {
+    flex: 1;
+    min-width: 0;
+    padding: 2px 0;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 12px;
+  }
+
+  .scm-filter-input::placeholder {
+    color: var(--text-tertiary);
+  }
+
+  .scm-filter-clear {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-tertiary);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .scm-filter-clear:hover {
+    background: var(--subtle-fill-secondary);
+    color: var(--text-primary);
+  }
+
+  /* Collapsing is disabled while filtering (every folder renders expanded),
+     so the row should not advertise a click that does nothing. */
+  .row.tree-folder[aria-disabled="true"] {
+    cursor: default;
+  }
+
+  .scm-no-match {
+    padding: 16px 12px;
+    color: var(--text-tertiary);
+    font-size: 12px;
+    text-align: center;
   }
 
   .branch-line {

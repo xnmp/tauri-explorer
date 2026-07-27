@@ -914,9 +914,29 @@ function mockAddRef(name: string, kind: MockRefKind, oid: string): void {
   (MOCK_GRAPH_REFS[oid] ??= []).push({ name, kind });
 }
 
-/** Point HEAD (and, when checking out a branch, follow it) at `oid`. */
+/** Point HEAD (and, when checking out a branch, follow it) at `oid`. Leaves
+ *  the attached/detached mode alone — committing or resetting while detached
+ *  keeps HEAD detached, exactly like git. */
 function mockMoveHead(oid: string): void {
   mockMoveRef("HEAD", "Head", oid);
+}
+
+/** True while the mock repo's HEAD points straight at a commit rather than a
+ *  branch (#524). Flipped only by the checkout mocks, mirroring git. */
+let mockDetached = false;
+
+/** Check out `oid`. `branch` is the local branch HEAD follows, or null for a
+ *  detached checkout (a raw OID, a tag, or a remote-tracking branch). */
+function mockCheckout(oid: string, branch: string | null): void {
+  mockDetached = branch === null;
+  mockMoveHead(oid);
+}
+
+/** Is `name` a local branch in the mock graph? */
+function mockIsLocalBranch(name: string): boolean {
+  return Object.values(MOCK_GRAPH_REFS).some((list) =>
+    list.some((r) => r.name === name && r.kind === "LocalBranch"),
+  );
 }
 
 /** Append a synthetic commit onto the current HEAD and advance main + HEAD to
@@ -1760,13 +1780,13 @@ const mockCommands: Record<string, CommandHandler> = {
     // Already-existing local branch → plain checkout.
     const existing = mockResolveTarget(name);
     if (existing) {
-      mockMoveHead(existing);
+      mockCheckout(existing, name);
       return null;
     }
     const oid = mockResolveTarget(`${remote}/${name}`);
     if (!oid) throw new Error(`no remote branch '${remote}/${name}'`);
     mockAddRef(name, "LocalBranch", oid);
-    mockMoveHead(oid);
+    mockCheckout(oid, name);
     return null;
   },
 
@@ -1805,10 +1825,18 @@ const mockCommands: Record<string, CommandHandler> = {
         has_more: start + limit < all.length,
         next_cursor: page.length > 0 ? page[page.length - 1].oid : null,
         head_branch: "main",
+        detached: false,
       };
     }
     if (!repoPath.startsWith("/home/user/Documents/project")) {
-      return { commits: [], refs: {}, has_more: false, next_cursor: null, head_branch: null };
+      return {
+        commits: [],
+        refs: {},
+        has_more: false,
+        next_cursor: null,
+        head_branch: null,
+        detached: false,
+      };
     }
     const options =
       (args.options as {
@@ -1879,8 +1907,11 @@ const mockCommands: Record<string, CommandHandler> = {
     // Checked-out branch: the first local branch decorating HEAD's commit —
     // matches the convention used by the mutating mocks (#433 highlight).
     const headOid = mockHeadOid();
-    const headBranch =
-      (MOCK_GRAPH_REFS[headOid] ?? []).find((r) => r.kind === "LocalBranch")?.name ?? null;
+    // Detached HEAD has no symbolic target even when branches decorate the
+    // same commit (#524).
+    const headBranch = mockDetached
+      ? null
+      : ((MOCK_GRAPH_REFS[headOid] ?? []).find((r) => r.kind === "LocalBranch")?.name ?? null);
     // Test hook (like __MOCK_LATENCY__): force `has_more` so the infinite-
     // scroll loading row (#433) is reachable/observable with a small history.
     const forceHasMore =
@@ -1891,6 +1922,7 @@ const mockCommands: Record<string, CommandHandler> = {
       has_more: hasMore || forceHasMore,
       next_cursor: nextCursor,
       head_branch: headBranch,
+      detached: mockDetached,
     };
   },
 
@@ -1932,9 +1964,14 @@ const mockCommands: Record<string, CommandHandler> = {
         { name: "v1.0", target: fullOid(5) },
         { name: "v0.9", target: fullOid(1) },
       ],
-      head: tip,
-      head_branch: "main",
-      detached: false,
+      // HEAD tracks the mutating checkout mocks, so the refs payload agrees
+      // with git_log's about the detached state (#524).
+      head: mockHeadOid(),
+      head_branch: mockDetached
+        ? null
+        : ((MOCK_GRAPH_REFS[mockHeadOid()] ?? []).find((r) => r.kind === "LocalBranch")?.name ??
+          null),
+      detached: mockDetached,
     };
   },
 
@@ -2015,7 +2052,9 @@ const mockCommands: Record<string, CommandHandler> = {
     const target = (args.target as string) ?? "";
     const oid = mockResolveTarget(target);
     if (!oid) throw new Error(`pathspec '${target}' did not match any file(s) known to git`);
-    mockMoveHead(oid);
+    // Only a local branch name reattaches HEAD; an OID, a tag or a remote
+    // branch detaches it, like git (#524).
+    mockCheckout(oid, mockIsLocalBranch(target) ? target : null);
     return null;
   },
   git_create_branch: (args: Record<string, unknown>) => {
@@ -2024,7 +2063,7 @@ const mockCommands: Record<string, CommandHandler> = {
     const checkout = Boolean(args.checkout);
     if (name.length === 0) throw new Error("branch name must not be empty");
     mockAddRef(name, "LocalBranch", oid);
-    if (checkout) mockMoveHead(oid);
+    if (checkout) mockCheckout(oid, name);
     return null;
   },
   git_create_tag: (args: Record<string, unknown>) => {

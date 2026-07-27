@@ -151,11 +151,21 @@ pub struct GitLogPage {
     /// when detached / unborn. Lets the graph highlight *only* the checked-out
     /// branch chip when several branches sit on the HEAD commit (#433).
     pub head_branch: Option<String>,
+    /// True while HEAD points straight at a commit instead of a branch (#524).
+    /// Reported separately from `head_branch` because that is also None on an
+    /// unborn branch — the graph's standing detached badge must not fire there.
+    pub detached: bool,
+}
+
+/// True while HEAD points at a commit rather than a branch. An unborn branch
+/// (no commits yet) is attached, not detached.
+fn head_detached_in(repo: &Repository) -> bool {
+    repo.head_detached().unwrap_or(false)
 }
 
 /// Shorthand of the branch HEAD points at, or None when detached / unborn.
 fn head_branch_of(repo: &Repository) -> Option<String> {
-    if repo.head_detached().unwrap_or(false) {
+    if head_detached_in(repo) {
         return None;
     }
     repo.head()
@@ -344,6 +354,7 @@ fn build_log(
             has_more: false,
             next_cursor: None,
             head_branch: head_branch_of(repo),
+            detached: head_detached_in(repo),
         });
     }
 
@@ -407,6 +418,7 @@ fn build_log(
         has_more,
         next_cursor,
         head_branch: head_branch_of(repo),
+        detached: head_detached_in(repo),
     })
 }
 
@@ -632,7 +644,7 @@ fn collect_refs(repo: &Repository) -> Result<GitRefs, AppError> {
 
     match repo.head() {
         Ok(head) => {
-            out.detached = repo.head_detached().unwrap_or(false);
+            out.detached = head_detached_in(repo);
             if head.is_branch() && !out.detached {
                 out.head_branch = head.shorthand().map(|s| s.to_string());
             }

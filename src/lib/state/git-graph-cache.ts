@@ -124,6 +124,9 @@ export async function fetchPage0Snapshot(
     hasMore: page.has_more,
     headOid,
     headBranch: page.head_branch,
+    // Normalized so the snapshot always holds a real boolean, even if an
+    // older backend binary omits the field entirely (#524).
+    detached: page.detached === true,
     nextCursor: page.next_cursor,
   };
   onLog?.(partial);

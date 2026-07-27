@@ -74,7 +74,7 @@
     type OpenPr,
   } from "$lib/api/git-log";
   import { fetchGitSummary } from "$lib/state/git-summary-cache";
-  import { assignLayout, branchPath, groupRefChips, indexPrsByBranch, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, sliceBranchLine, stepOnBranchLine, scrollTopToReveal, remoteOnlyBranchNames, branchWalkQuery, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip, type BranchListEntry } from "$lib/domain/git-graph";
+  import { assignLayout, branchPath, detachedHeadIndicator, groupRefChips, indexPrsByBranch, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, sliceBranchLine, stepOnBranchLine, scrollTopToReveal, remoteOnlyBranchNames, branchWalkQuery, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip, type BranchListEntry } from "$lib/domain/git-graph";
   import { openExternalUrl } from "$lib/api/crash";
   import { registerGraphRefresher } from "$lib/state/git-graph-refresh";
   import { registerGraphSelectionStepper } from "$lib/state/git-graph-nav";
@@ -158,6 +158,13 @@
   let headOid = $state<string | null>(null);
   // Checked-out branch (HEAD's symbolic target); highlights only that chip (#433).
   let headBranch = $state<string | null>(null);
+  // Detached HEAD (#524): a MODE, not an event — surfaced as a standing badge
+  // for as long as it lasts, so it survives the checkout menu closing. Read
+  // from the log payload, never inferred from `headBranch === null` (also null
+  // on an unborn branch).
+  let detached = $state(false);
+
+  const detachedIndicator = $derived(detachedHeadIndicator(detached, headOid));
 
   // Branch subset filter (#342): null = all branches. Persisted per repo so a
   // curated view (e.g. just dev + main) survives reopening the graph.
@@ -213,6 +220,7 @@
       hasMore = cached.hasMore;
       headOid = cached.headOid;
       headBranch = cached.headBranch;
+      detached = cached.detached;
       workingChanges = cached.workingChanges;
       nextCursor = cached.nextCursor;
     }
@@ -717,6 +725,7 @@
         hasMore = partial.hasMore;
         headOid = partial.headOid;
         headBranch = partial.headBranch;
+        detached = partial.detached;
         nextCursor = partial.nextCursor;
         loading = false;
       }, local, excludeBranches);
@@ -796,6 +805,7 @@
         hasMore: hasMore || commits.length > PAGE_SIZE,
         headOid,
         headBranch,
+        detached,
         workingChanges,
         nextCursor: cursorForSlice(slice),
       });
@@ -1415,6 +1425,19 @@
   {#if error}
     <div class="graph-status error">{error}</div>
   {:else}
+    {#if detachedIndicator}
+      <!-- Standing detached-HEAD banner (#524): outside the header row so it
+           never disturbs column layout, and outside every menu so it lasts as
+           long as the state does. -->
+      <div
+        class="detached-banner"
+        data-testid="git-graph-detached-badge"
+        role="status"
+        title={detachedIndicator.title}
+      >
+        {detachedIndicator.label}
+      </div>
+    {/if}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- right-click opens the column-visibility menu; not reachable by keyboard by design (parity with the row context menu) -->
     <div class="graph-header" role="row" tabindex="-1" style:padding-left="{effectiveGraphWidth + 20}px" oncontextmenu={openColumnMenu}>
       <button
@@ -2265,6 +2288,27 @@
 
   .graph-status.error {
     color: var(--danger, #ef4444);
+  }
+
+  /* Standing detached-HEAD banner (#524). Deliberately louder than the rest of
+     the graph chrome (white on a deep red, like the reference tool's permanent
+     status treatment): this is a MODE the user must not forget they are in,
+     and it is the only element here that outlives every menu. */
+  .detached-banner {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    height: 20px;
+    padding: 0 10px;
+    background: var(--danger-strong, #b3261e);
+    color: #fff;
+    font-size: var(--font-size-caption);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    user-select: none;
   }
 
   .commit-row {

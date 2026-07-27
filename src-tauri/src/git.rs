@@ -2262,14 +2262,16 @@ mod tests {
             .replace("line-12\n", "last change\n");
         write(dir.path(), "a.txt", &changed);
 
-        let first_hunk = git_patch(dir.path(), &["diff", "-U0", "--", "a.txt"])
+        let initial_patch = git_patch(dir.path(), &["diff", "-U0", "--", "a.txt"]);
+        let first_hunk = initial_patch.split("@@ -12").next().unwrap().to_string();
+        let last_hunk = initial_patch
             .split("@@ -12")
-            .next()
-            .unwrap()
-            .to_string();
+            .nth(1)
+            .map(|hunk| format!("diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -12{hunk}"))
+            .unwrap();
         let path = dir.path().to_str().unwrap().to_string();
 
-        tokio_test_block(git_apply_patch(path.clone(), first_hunk, GitPatchAction::Stage)).unwrap();
+        tokio_test_block(git_apply_patch(path.clone(), first_hunk.clone(), GitPatchAction::Stage)).unwrap();
         let staged = git_patch(dir.path(), &["diff", "--cached", "-U0", "--", "a.txt"]);
         let unstaged = git_patch(dir.path(), &["diff", "-U0", "--", "a.txt"]);
         assert!(staged.contains("first change"));
@@ -2277,18 +2279,18 @@ mod tests {
         assert!(unstaged.contains("last change"));
         assert!(!unstaged.contains("first change"));
 
-        tokio_test_block(git_apply_patch(path.clone(), staged, GitPatchAction::Unstage)).unwrap();
-        assert!(git_patch(dir.path(), &["diff", "--cached", "--", "a.txt"]).is_empty());
+        // Stage both, then unstage only the first. The second must remain in
+        // the index; this is the isolation guarantee a whole-file reset lacks.
+        tokio_test_block(git_apply_patch(path.clone(), last_hunk, GitPatchAction::Stage)).unwrap();
+        tokio_test_block(git_apply_patch(path.clone(), first_hunk.clone(), GitPatchAction::Unstage)).unwrap();
+        let staged_after_unstage = git_patch(dir.path(), &["diff", "--cached", "-U0", "--", "a.txt"]);
+        assert!(!staged_after_unstage.contains("first change"));
+        assert!(staged_after_unstage.contains("last change"));
 
-        let last_hunk = git_patch(dir.path(), &["diff", "-U0", "--", "a.txt"])
-            .split("@@ -12")
-            .nth(1)
-            .map(|hunk| format!("diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -12{hunk}"))
-            .unwrap();
-        tokio_test_block(git_apply_patch(path, last_hunk, GitPatchAction::Discard)).unwrap();
+        tokio_test_block(git_apply_patch(path, first_hunk, GitPatchAction::Discard)).unwrap();
         let remaining = std::fs::read_to_string(dir.path().join("a.txt")).unwrap();
-        assert!(remaining.contains("first change"));
-        assert!(remaining.contains("line-12"));
+        assert!(remaining.contains("line-1"));
+        assert!(remaining.contains("last change"));
     }
 
     #[test]

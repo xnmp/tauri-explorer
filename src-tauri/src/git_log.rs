@@ -123,6 +123,9 @@ pub struct GitLogOptions {
     /// `branches` is set (an explicit selection wins).
     #[serde(default)]
     pub local_only: bool,
+    /// Repository-relative path whose touching commits should be returned.
+    /// `None` / blank = no path filter (#529).
+    pub file_path: Option<String>,
     /// Resume hint (#431): OID of the last real commit of the previous page
     /// (the previous page's `next_cursor`). When set, the walk seeds from the
     /// same tips but discards every commit up to *and including* this OID, then

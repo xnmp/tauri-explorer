@@ -114,6 +114,16 @@ pub struct GitDiffOptions {
     pub staged: bool,
 }
 
+/// The three safe directions in which an exact unified patch may be applied.
+/// Patch text is always supplied over stdin, never interpreted as an argument.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPatchAction {
+    Stage,
+    Unstage,
+    Discard,
+}
+
 #[derive(Debug, Deserialize, Default)]
 pub struct GitCommitOptions {
     #[serde(default)]

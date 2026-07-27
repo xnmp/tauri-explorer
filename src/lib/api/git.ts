@@ -161,6 +161,9 @@ export async function gitUnstage(repoPath: string, paths: string[]): Promise<Api
   }
 }
 
+/** The index/worktree target to which a unified patch is applied. */
+export type GitPatchAction = "stage" | "unstage" | "discard";
+
 export async function gitDiscard(
   repoPath: string,
   paths: string[],

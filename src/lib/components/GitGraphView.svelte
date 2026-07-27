@@ -436,7 +436,7 @@
         ]
       : commits,
   );
-  const layout: GraphLayout = $derived(assignLayout(displayCommits));
+  const layout: GraphLayout = $derived(assignLayout(displayCommits, headOid));
   const graphWidth = $derived(Math.max(2, layout.laneCount) * LANE_WIDTH);
 
   // Column widths (#341): author/date are drag-resizable via header handles

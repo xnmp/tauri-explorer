@@ -9,6 +9,10 @@ async function runPaletteCommand(page: import("@playwright/test").Page, query: s
   await page.keyboard.press("Enter");
 }
 
+function evidencePath(name: string): string {
+  return process.env.CAPTURE_EVIDENCE ? `evidence/${name}` : `test-results/${name}`;
+}
+
 for (const command of ["Report a Bug", "Request a Feature"]) {
   test(`${command} submits in-app and links the created issue`, async ({ page }) => {
     await page.goto("/");
@@ -33,8 +37,8 @@ for (const command of ["Report a Bug", "Request a Feature"]) {
 
 test("report dialog footer buttons use the themed control treatment", async ({ page }) => {
   for (const [command, name, screenshot] of [
-    ["Report a Bug", /report a bug/i, "evidence/ac-1-report-dialog-buttons.png"],
-    ["Request a Feature", /request a feature/i, "evidence/ac-1-feature-dialog-buttons.png"],
+    ["Report a Bug", /report a bug/i, "ac-1-report-dialog-buttons.png"],
+    ["Request a Feature", /request a feature/i, "ac-1-feature-dialog-buttons.png"],
   ] as const) {
     await page.goto("/");
     await waitForEntries(page);
@@ -71,7 +75,7 @@ test("report dialog footer buttons use the themed control treatment", async ({ p
     await expect.poll(() => submit.evaluate((element) => getComputedStyle(element).outlineStyle))
       .toBe("solid");
 
-    await page.screenshot({ path: screenshot });
+    await page.screenshot({ path: evidencePath(screenshot) });
   }
 });
 

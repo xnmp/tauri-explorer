@@ -1583,12 +1583,18 @@ const mockCommands: Record<string, CommandHandler> = {
 
   git_archive_untracked: (args: Record<string, unknown>) => {
     const paths = (args.paths as string[]) ?? [];
+    if (paths.length === 0 || paths.some((path) => !mockGit.untracked.some((entry) => entry.path === path))) {
+      throw new Error("refusing to operate on non-untracked path");
+    }
     for (const path of paths) removeFrom(mockGit.untracked, path);
     return null;
   },
 
   git_trash_untracked: (args: Record<string, unknown>) => {
     const paths = (args.paths as string[]) ?? [];
+    if (paths.length === 0 || paths.some((path) => !mockGit.untracked.some((entry) => entry.path === path))) {
+      throw new Error("refusing to operate on non-untracked path");
+    }
     for (const path of paths) removeFrom(mockGit.untracked, path);
     return null;
   },

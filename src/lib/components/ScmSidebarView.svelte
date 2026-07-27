@@ -216,6 +216,7 @@
     if (!scmStore.repoRoot) return;
     const r = await gitTrashUntracked(scmStore.repoRoot, paths);
     if (!r.ok) {
+      await scmStore.refresh();
       toastStore.error(`Move to Trash failed: ${r.error}`);
       return;
     }

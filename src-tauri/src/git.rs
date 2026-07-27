@@ -970,6 +970,7 @@ fn untracked_worktree_paths(
         .ok_or_else(|| AppError::Other("git: bare repository has no working tree".into()))?
         .to_path_buf();
     let mut relative_paths = Vec::with_capacity(paths.len());
+    let mut seen = HashSet::with_capacity(paths.len());
     for path in paths {
         let relative = Path::new(path);
         if relative.as_os_str().is_empty()
@@ -993,7 +994,13 @@ fn untracked_worktree_paths(
                 "refusing to operate on non-untracked path: {path}"
             )));
         }
-        relative_paths.push(relative.to_path_buf());
+        let relative = relative.to_path_buf();
+        if !seen.insert(relative.clone()) {
+            return Err(AppError::InvalidPath(format!(
+                "path was selected more than once: {path}"
+            )));
+        }
+        relative_paths.push(relative);
     }
     Ok((workdir, relative_paths))
 }
@@ -1005,6 +1012,14 @@ pub async fn git_archive_untracked(repo_path: String, paths: Vec<String>) -> Res
     run_blocking(move |_cancel| {
         let repo = open_repo(Path::new(&repo_path))?;
         let (workdir, relative_paths) = untracked_worktree_paths(&repo, &paths)?;
+        if relative_paths
+            .iter()
+            .any(|path| path == Path::new(".gitignore"))
+        {
+            return Err(AppError::Other(
+                "refusing to archive .gitignore because .archive must remain ignored".into(),
+            ));
+        }
         let archive_root = workdir.join(".archive");
         for relative in &relative_paths {
             let destination = archive_root.join(relative);
@@ -1012,15 +1027,28 @@ pub async fn git_archive_untracked(repo_path: String, paths: Vec<String>) -> Res
                 return Err(AppError::AlreadyExists(destination.display().to_string()));
             }
         }
-        add_to_gitignore(&workdir, ".archive")?;
+        let mut moved = Vec::with_capacity(relative_paths.len());
         for relative in relative_paths {
             let source = workdir.join(&relative);
             let destination = archive_root.join(&relative);
             let parent = destination
                 .parent()
                 .expect("archive destination has a parent");
-            std::fs::create_dir_all(parent)?;
-            std::fs::rename(source, destination)?;
+            if let Err(error) = std::fs::create_dir_all(parent)
+                .and_then(|()| std::fs::rename(&source, &destination))
+            {
+                for (moved_source, moved_destination) in moved.iter().rev() {
+                    let _ = std::fs::rename(moved_destination, moved_source);
+                }
+                return Err(AppError::Io(error));
+            }
+            moved.push((source, destination));
+        }
+        if let Err(error) = add_to_gitignore(&workdir, ".archive") {
+            for (source, destination) in moved.iter().rev() {
+                let _ = std::fs::rename(destination, source);
+            }
+            return Err(error);
         }
         Ok(())
     })
@@ -1033,8 +1061,19 @@ pub async fn git_trash_untracked(repo_path: String, paths: Vec<String>) -> Resul
     run_blocking(move |_cancel| {
         let repo = open_repo(Path::new(&repo_path))?;
         let (workdir, relative_paths) = untracked_worktree_paths(&repo, &paths)?;
+        let mut failures = Vec::new();
         for relative in relative_paths {
-            crate::system::trash_or_remove(&workdir.join(relative))?;
+            let path = workdir.join(relative);
+            if let Err(error) = crate::system::trash_or_remove(&path) {
+                failures.push(format!("{} ({error})", path.display()));
+            }
+        }
+        if !failures.is_empty() {
+            return Err(AppError::Other(format!(
+                "failed to move {} selected item(s) to trash: {}",
+                failures.len(),
+                failures.join(", ")
+            )));
         }
         Ok(())
     })
@@ -1833,6 +1872,27 @@ mod tests {
             .lines()
             .any(|line| line == ".archive"));
         assert!(sync_status(dir.path()).untracked.is_empty());
+    }
+
+    #[test]
+    fn archive_untracked_rejects_duplicate_or_gitignore_paths_without_moving_them() {
+        let dir = init_repo();
+        write(dir.path(), "scratch.txt", "keep me\n");
+        write(dir.path(), ".gitignore", "other\n");
+        let path = dir.path().to_str().unwrap().to_string();
+
+        let duplicate = tokio_test_block(git_archive_untracked(
+            path.clone(),
+            vec!["scratch.txt".into(), "scratch.txt".into()],
+        ));
+        assert!(matches!(duplicate, Err(AppError::InvalidPath(_))));
+        assert!(dir.path().join("scratch.txt").exists());
+
+        let gitignore = tokio_test_block(git_archive_untracked(path, vec![".gitignore".into()]));
+        assert!(
+            matches!(gitignore, Err(AppError::Other(message)) if message.contains(".gitignore"))
+        );
+        assert!(dir.path().join(".gitignore").exists());
     }
 
     #[test]

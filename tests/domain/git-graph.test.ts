@@ -545,22 +545,22 @@ describe("relativeTimeFrom (#468)", () => {
   const HOUR = 60 * MIN;
   const DAY = 24 * HOUR;
 
-  it("reads 'just now' under a minute and for future skew", () => {
-    expect(relativeTimeFrom(ago(30 * SEC), now)).toBe("just now");
-    expect(relativeTimeFrom(ago(0), now)).toBe("just now");
+  it("reads 'now' under a minute and for future skew", () => {
+    expect(relativeTimeFrom(ago(30 * SEC), now)).toBe("now");
+    expect(relativeTimeFrom(ago(0), now)).toBe("now");
     // Future timestamp (clock skew) — never negative.
-    expect(relativeTimeFrom(new Date(now + 5 * MIN).toISOString(), now)).toBe("just now");
+    expect(relativeTimeFrom(new Date(now + 5 * MIN).toISOString(), now)).toBe("now");
   });
 
-  it("scales through minutes, hours, days, months, years with correct pluralization", () => {
-    expect(relativeTimeFrom(ago(1 * MIN), now)).toBe("1 minute ago");
-    expect(relativeTimeFrom(ago(5 * MIN), now)).toBe("5 minutes ago");
-    expect(relativeTimeFrom(ago(1 * HOUR), now)).toBe("1 hour ago");
-    expect(relativeTimeFrom(ago(3 * HOUR), now)).toBe("3 hours ago");
-    expect(relativeTimeFrom(ago(1 * DAY), now)).toBe("1 day ago");
-    expect(relativeTimeFrom(ago(10 * DAY), now)).toBe("10 days ago");
-    expect(relativeTimeFrom(ago(45 * DAY), now)).toBe("1 month ago");
-    expect(relativeTimeFrom(ago(400 * DAY), now)).toBe("1 year ago");
+  it("scales through compact minute, hour, day, week, month, and year labels", () => {
+    expect(relativeTimeFrom(ago(1 * MIN), now)).toBe("1m");
+    expect(relativeTimeFrom(ago(5 * MIN), now)).toBe("5m");
+    expect(relativeTimeFrom(ago(1 * HOUR), now)).toBe("1h");
+    expect(relativeTimeFrom(ago(3 * HOUR), now)).toBe("3h");
+    expect(relativeTimeFrom(ago(1 * DAY), now)).toBe("1d");
+    expect(relativeTimeFrom(ago(35 * DAY), now)).toBe("5w");
+    expect(relativeTimeFrom(ago(150 * DAY), now)).toBe("5mo");
+    expect(relativeTimeFrom(ago(400 * DAY), now)).toBe("1y");
   });
 
   it("returns null for missing or unparseable timestamps", () => {

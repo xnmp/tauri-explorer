@@ -13,7 +13,7 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
   import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
-  import { syncWindowTitle } from "$lib/state/window-title";
+  import { startWindowTitleSync } from "$lib/state/window-title.svelte";
   import { markStartup, reportFirstPaint } from "$lib/state/startup-timing";
   import { warmMode, runWarmWindow, spawnWarmWindow } from "$lib/state/warm-window";
   import type { ExplorerInstance } from "$lib/state/explorer.svelte";
@@ -61,11 +61,6 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
         new URLSearchParams(window.location.search).get("home") ??
         undefined;
 
-  // currentPath is reactive, as are active tab/pane selections in the manager,
-  // so this single native boundary follows navigation and focus changes.
-  $effect(() => {
-    void syncWindowTitle(leftExplorer?.currentPath ?? "", launchHomePath);
-  });
   // ONE island-mode condition (#407, #434): macOS vibrancy, a Windows native
   // backdrop, and the platform-independent Floating Islands setting all drive
   // the same [data-vibrancy] island CSS. The derived now lives on settingsStore
@@ -432,6 +427,13 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     const isGenericCwd = !launchCwd || launchCwd === homePath || launchCwd === "/";
     const overridePath = (!isChildWindow && !isGenericCwd) ? launchCwd! : undefined;
     const tab = windowTabsManager.init(defaultPath, isChildWindow, overridePath);
+    // Start only after tab initialization: creation paths already seed the
+    // correct native title, and an eager empty-path write causes a visible
+    // "Tauri Explorer" flash before the first explorer exists.
+    const stopWindowTitleSync = startWindowTitleSync(
+      () => windowTabsManager.getActiveExplorer()?.currentPath,
+      homePath,
+    );
     // Apply inherited view mode from parent window
     if (urlViewMode && tab) {
       const explorer = windowTabsManager.getActiveExplorer();
@@ -545,6 +547,7 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
       nativeDropHandler.cleanup();
       fileWatchers.cleanup();
       windowLifecycle.cleanup();
+      stopWindowTitleSync();
       stopTabTransfer();
     };
   });

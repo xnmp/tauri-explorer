@@ -8,7 +8,9 @@ vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => windowApi,
 }));
 
-import { syncWindowTitle } from "../../src/lib/state/window-title";
+import {
+  syncWindowTitle,
+} from "../../src/lib/state/window-title.svelte";
 
 describe("syncWindowTitle", () => {
   beforeEach(() => windowApi.setTitle.mockClear());

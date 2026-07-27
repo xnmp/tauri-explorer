@@ -114,6 +114,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `focused-window.ts` — last-focused window path/viewMode for Ctrl+N inheritance.
 - `warm-window.ts` — pre-warmed hidden window pool logic (fast Ctrl+N).
 - `window-appearance.ts` — shared window creation options (parity across code paths).
+- `window-title.svelte.ts` — resolves launch-home context and keeps the native OS title synchronized with the active pane directory.
 - `window-backdrop.ts` — Windows Mica/Acrylic translucent backdrop (CSS strength).
 - `workspaces.svelte.ts` — save/restore named workspaces.
 - `bookmarks.svelte.ts` — sidebar bookmarks store.

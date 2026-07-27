@@ -53,6 +53,25 @@ use system::{
 };
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
+// Keep this pre-webview seed aligned with the domain source of truth:
+// src/lib/domain/tab-title.ts::formatWindowTitle.
+fn window_title(path: &std::path::Path, home: &std::path::Path) -> String {
+    if path.as_os_str().is_empty() {
+        return "Tauri Explorer".to_string();
+    }
+    let display = if path == home {
+        "~".to_string()
+    } else if path.parent().is_none() || path == std::path::Path::new("/") {
+        path.to_string_lossy().to_string()
+    } else {
+        path.file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| path.to_string_lossy().to_string())
+    };
+    format!("{display} - Tauri Explorer")
+}
+
 /// Minimal stdout logger for `#[ignore]`d diagnostic tests (git_status.rs,
 /// git.rs) run manually against a live WSL distro: `cargo test` normally has
 /// no `log` sink installed, so `gitstat:` lines would otherwise be silently
@@ -91,6 +110,10 @@ pub fn run(launch_dir: Option<String>) {
         .to_string_lossy()
         .to_string();
     let launch_cwd = launch_dir.unwrap_or_else(|| home_dir.clone());
+    let initial_window_title = window_title(
+        std::path::Path::new(&launch_cwd),
+        std::path::Path::new(&home_dir),
+    );
 
     // Inject launch data into the webview as a synchronous JS global,
     // so the frontend can read it immediately without IPC roundtrips.
@@ -322,7 +345,7 @@ pub fn run(launch_dir: Option<String>) {
                 "main",
                 tauri::WebviewUrl::App("index.html".into()),
             )
-            .title("tauri-explorer")
+            .title(initial_window_title)
             .inner_size(1200.0, 800.0)
             .decorations(cfg!(target_os = "macos"))
             .accept_first_mouse(true)
@@ -465,4 +488,22 @@ pub fn run(launch_dir: Option<String>) {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod window_title_tests {
+    use super::window_title;
+    use std::path::Path;
+
+    #[test]
+    fn window_title_formats_initial_cwd_without_a_generic_flash() {
+        let home = Path::new("/home/alice");
+        assert_eq!(
+            window_title(Path::new("/work/tauri-explorer"), home),
+            "tauri-explorer - Tauri Explorer"
+        );
+        assert_eq!(window_title(home, home), "~ - Tauri Explorer");
+        assert_eq!(window_title(Path::new("/"), home), "/ - Tauri Explorer");
+        assert_eq!(window_title(Path::new(""), home), "Tauri Explorer");
+    }
 }

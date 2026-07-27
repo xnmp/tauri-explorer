@@ -18,7 +18,6 @@ const snap = (): GraphSnapshot => ({
   hasMore: false,
   headOid: null,
   headBranch: null,
-  detached: false,
   workingChanges: 0,
   nextCursor: null,
 });

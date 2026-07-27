@@ -220,7 +220,7 @@
       hasMore = cached.hasMore;
       headOid = cached.headOid;
       headBranch = cached.headBranch;
-      detached = cached.detached;
+      detached = cached.detached === true;
       workingChanges = cached.workingChanges;
       nextCursor = cached.nextCursor;
     }
@@ -725,7 +725,7 @@
         hasMore = partial.hasMore;
         headOid = partial.headOid;
         headBranch = partial.headBranch;
-        detached = partial.detached;
+        detached = partial.detached === true;
         nextCursor = partial.nextCursor;
         loading = false;
       }, local, excludeBranches);

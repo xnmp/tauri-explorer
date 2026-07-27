@@ -36,8 +36,9 @@ export interface GraphSnapshot {
   /** True while HEAD is detached (#524). Carried through the snapshot so a
    *  remount repaints the standing indicator from cache instead of dropping
    *  it until the background refetch lands. Not derivable from `headBranch`,
-   *  which is also null on an unborn branch. */
-  detached: boolean;
+   *  which is also null on an unborn branch. Optional so callers that build a
+   *  snapshot by hand needn't care; absent reads as attached. */
+  detached?: boolean;
   workingChanges: number;
   /** Resume cursor for the commit AFTER this snapshot's page (#431); passed
    *  to the next `gitLog` so deeper pages don't re-walk from the tips. Always

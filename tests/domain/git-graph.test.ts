@@ -48,6 +48,32 @@ describe("assignLayout", () => {
     expectContinuous(layout);
   });
 
+  it("pins the checked-out branch first-parent line to lane zero after checkout", () => {
+    const commits = [
+      c("feature2", "base"),
+      c("main2", "main1"),
+      c("main1", "base"),
+      c("base"),
+    ];
+
+    const mainLayout = assignLayout(commits, "main2");
+    expect(mainLayout.vertices.map((v) => v.lane)).toEqual([1, 0, 0, 0]);
+
+    const featureLayout = assignLayout(commits, "feature2");
+    expect(featureLayout.vertices.map((v) => v.lane)).toEqual([0, 1, 1, 0]);
+  });
+
+  it("pins a detached HEAD first-parent line to lane zero", () => {
+    const layout = assignLayout([
+      c("branchTip", "base"),
+      c("detached", "detachedParent"),
+      c("detachedParent", "base"),
+      c("base"),
+    ], "detached");
+
+    expect(layout.vertices.map((v) => v.lane)).toEqual([1, 0, 0, 0]);
+  });
+
   it("routes a merge as an edge into a second lane and joins at the fork", () => {
     // m3 = merge of m2 (main) and f2 (feature); both descend from base.
     const layout = assignLayout([c("m3", "m2", "f2"), c("f2", "base"), c("m2", "base"), c("base")]);

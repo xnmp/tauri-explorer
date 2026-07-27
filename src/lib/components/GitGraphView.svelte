@@ -780,6 +780,13 @@
     const local = untrack(() => localOnly);
     const hideRemotes = untrack(() => hideRemoteOnly);
     const filePath = untrack(() => filePathFilter.trim());
+    const generation = reloadGeneration;
+    const queryIsCurrent = (): boolean =>
+      generation === reloadGeneration &&
+      selection === untrack(() => branchFilter) &&
+      local === untrack(() => localOnly) &&
+      hideRemotes === untrack(() => hideRemoteOnly) &&
+      filePath === untrack(() => filePathFilter.trim());
     // `reload()` refreshed `branchList` already when the toggle is on.
     const { branches: filter, excludeBranches } = branchWalkQuery(
       untrack(() => branchList),
@@ -810,6 +817,10 @@
         ...(local ? { local_only: true } : {}),
         ...(filePath ? { file_path: filePath } : {}),
       });
+      // A path/branch query can change while a deeper page is in flight. The
+      // page belongs to the captured walk and must never append into the new
+      // result set (or overwrite its cache) after that change.
+      if (!queryIsCurrent()) return;
       commits = [...commits, ...page.commits];
       refs = { ...refs, ...page.refs };
       hasMore = page.has_more;
@@ -831,7 +842,7 @@
     } catch (err) {
       error = err instanceof Error ? err.message : String(err);
     } finally {
-      loading = false;
+      if (queryIsCurrent()) loading = false;
       loadingMore = false;
     }
   }

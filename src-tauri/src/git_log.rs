@@ -441,6 +441,19 @@ fn build_log(
     }
 
     let next_cursor = commits.last().map(|c| c.oid.clone());
+    let stashes = if let Some(path) = file_path {
+        stashes
+            .into_iter()
+            .filter(|(_, _, oid)| {
+                repo.find_commit(*oid)
+                    .ok()
+                    .and_then(|commit| commit_touches_path(repo, &commit, path).ok())
+                    .unwrap_or(false)
+            })
+            .collect()
+    } else {
+        stashes
+    };
     weave_stashes(&mut commits, stashes, repo);
     let refs = collect_decorations(repo)?;
 
@@ -1017,7 +1030,7 @@ mod tests {
         write(&p, "other.txt", "unrelated");
         let second = commit(&repo, "change another file", &[first]);
         write(&p, "tracked.txt", "two");
-        let _third = commit(&repo, "update tracked file", &[second]);
+        let third = commit(&repo, "update tracked file", &[second]);
 
         let filtered = build_log(
             &repo,
@@ -1035,6 +1048,32 @@ mod tests {
             .map(|commit| commit.summary.as_str())
             .collect();
         assert_eq!(summaries, vec!["update tracked file", "add tracked file"]);
+
+        // A stash attached to a matching base is not itself a match when its
+        // own first-parent diff only changes another path.
+        write(&p, "other.txt", "stashed change");
+        let unrelated_stash = commit(&repo, "unrelated stash", &[third]);
+        repo.find_reference("refs/heads/main")
+            .unwrap()
+            .set_target(third, "restore branch after synthetic stash")
+            .unwrap();
+        let filtered_with_stash = build_log(
+            &repo,
+            &GitLogOptions {
+                file_path: Some("tracked.txt".into()),
+                ..Default::default()
+            },
+            vec![(0, "unrelated stash".into(), unrelated_stash)],
+            &no_cancel(),
+        )
+        .unwrap();
+        assert!(
+            filtered_with_stash
+                .commits
+                .iter()
+                .all(|commit| commit.stash.is_none()),
+            "a stash that did not touch the path leaked into filtered history"
+        );
 
         let cleared = build_log(
             &repo,

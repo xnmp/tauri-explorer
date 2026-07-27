@@ -7,7 +7,7 @@ import {
   processReport,
   validateReport,
 } from "../../website/api/report-core.js";
-import reportHandler from "../../website/api/report.js";
+import reportHandler, { reporterIp } from "../../website/api/report.js";
 
 const valid = {
   title: "Explorer freezes 🧊",
@@ -76,7 +76,6 @@ describe("report relay rate limits", () => {
       const request = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
       expect(request.slice(2, 6)).toEqual([3, "burst-key", "hour-key", "day-key"]);
       expect(request.slice(-3)).toEqual(["burst", "hour", "day"]);
-      expect(request[1]).toContain("ARGV[#KEYS * 2 + i]");
       fetchMock.mockRestore();
     },
   );
@@ -111,6 +110,23 @@ describe("report relay rate limits", () => {
       .rejects.toMatchObject({ code: "daily_cap" });
   });
 
+  it("does not spend the global cap on burst-blocked attempts", async () => {
+    const store = createInMemoryRateLimitStore();
+    const now = 1_900_000_000_000;
+    for (let count = 0; count < 3; count++) {
+      await enforceReportLimits(store, "198.51.100.9", now);
+    }
+    for (let count = 0; count < 150; count++) {
+      await expect(enforceReportLimits(store, "198.51.100.9", now))
+        .rejects.toMatchObject({ code: "rate_limited" });
+    }
+    for (let count = 0; count < 97; count++) {
+      await enforceReportLimits(store, `203.0.113.${count}`, now + count * 100);
+    }
+    await expect(enforceReportLimits(store, "192.0.2.99", now + 20_000))
+      .rejects.toMatchObject({ code: "daily_cap" });
+  });
+
   it("does not call downstream work for a honeypot submission", async () => {
     const createIssue = vi.fn();
     await expect(processReport(
@@ -125,14 +141,30 @@ describe("report relay rate limits", () => {
 
 describe("report relay HTTP contract", () => {
   function response() {
-    const state = { status: 0, headers: new Map<string, string>(), body: undefined as unknown };
+    const state = {
+      status: 0,
+      headers: new Map<string, string>(),
+      body: undefined as unknown,
+      ended: false,
+    };
     return {
       state,
       status(code: number) { state.status = code; return this; },
       setHeader(name: string, value: string) { state.headers.set(name, value); return this; },
       json(body: unknown) { state.body = body; return this; },
+      end() { state.ended = true; return this; },
     };
   }
+
+  it("prefers Vercel's trusted IP and otherwise uses the proxy-appended XFF tail", () => {
+    expect(reporterIp({
+      "x-vercel-forwarded-for": "203.0.113.40",
+      "x-forwarded-for": "198.51.100.1, 192.0.2.10",
+    })).toBe("203.0.113.40");
+    expect(reporterIp({
+      "x-forwarded-for": "client-controlled, 192.0.2.10",
+    })).toBe("192.0.2.10");
+  });
 
   it("rejects non-POST methods and marks the typed response no-store", async () => {
     const res = response();
@@ -151,7 +183,8 @@ describe("report relay HTTP contract", () => {
       socket: {},
       body: { website: "spam-bot" },
     }, res);
-    expect(res.state.status).toBe(200);
-    expect(res.state.body).toEqual({ url: "", number: 0 });
+    expect(res.state.status).toBe(204);
+    expect(res.state.ended).toBe(true);
+    expect(res.state.body).toBeUndefined();
   });
 });

@@ -79,6 +79,26 @@ test("draft stays editable when both relay and browser fallback fail", async ({ 
   await expect(dialog.getByRole("button", { name: "Submit" })).toBeEnabled();
 });
 
+test("unicode draft stays editable when it cannot fit in a fallback URL", async ({ page }) => {
+  await page.goto("/");
+  await waitForEntries(page);
+  await page.evaluate(() => localStorage.setItem("mock-report-error", "network_unreachable"));
+
+  await runPaletteCommand(page, "Report a Bug");
+  const dialog = page.getByRole("dialog", { name: /report a bug/i });
+  const description = "🐛".repeat(4000);
+  await dialog.getByLabel("Title").fill("Keep the complete unicode draft");
+  await dialog.getByLabel("Description").fill(description);
+  await dialog.getByRole("button", { name: "Submit" }).click();
+
+  await expect(page.getByRole("alert")).toContainText("too long for GitHub");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel("Description")).toHaveValue(description);
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
+    .toBeNull();
+});
+
 test("Open Logs Folder navigates the pane to the log directory", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);

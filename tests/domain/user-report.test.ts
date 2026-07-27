@@ -6,13 +6,15 @@ describe("userReportFallbackUrl", () => {
     ["bug" as const, "bug"],
     ["feature" as const, "enhancement"],
   ])("preserves a %s report in the matching GitHub form", (kind, label) => {
+    const fallback = userReportFallbackUrl({
+      kind,
+      title: "Emoji 🐛\nignored",
+      body: "It breaks with café paths.",
+      contact: "@reporter",
+    });
+    expect(fallback).not.toBeNull();
     const url = new URL(
-      userReportFallbackUrl({
-        kind,
-        title: "Emoji 🐛\nignored",
-        body: "It breaks with café paths.",
-        contact: "@reporter",
-      }),
+      fallback!,
     );
 
     expect(url.origin + url.pathname).toBe(
@@ -25,16 +27,40 @@ describe("userReportFallbackUrl", () => {
   });
 
   it("omits contact when none was provided and strips control characters", () => {
+    const fallback = userReportFallbackUrl({
+      kind: "bug",
+      title: "Broken\u0000 title",
+      body: "A\u0007 description",
+    });
+    expect(fallback).not.toBeNull();
     const url = new URL(
-      userReportFallbackUrl({
-        kind: "bug",
-        title: "Broken\u0000 title",
-        body: "A\u0007 description",
-      }),
+      fallback!,
     );
 
     expect(url.searchParams.get("title")).toBe("Broken title");
     expect(url.searchParams.get("body")).toBe("A description");
     expect(url.searchParams.get("body")).not.toContain("How to reach me");
+  });
+
+  it("refuses a max-length unicode draft that cannot fit without data loss", () => {
+    const fallback = userReportFallbackUrl({
+      kind: "bug",
+      title: "Unicode report 🐛",
+      body: "🐛".repeat(4000),
+      contact: "@reporter",
+    });
+
+    expect(fallback).toBeNull();
+  });
+
+  it("keeps every generated fallback URL under the browser-safe ceiling", () => {
+    const fallback = userReportFallbackUrl({
+      kind: "feature",
+      title: "Unicode feature",
+      body: "🐛".repeat(450),
+    });
+
+    expect(fallback).not.toBeNull();
+    expect(fallback!.length).toBeLessThanOrEqual(6000);
   });
 });

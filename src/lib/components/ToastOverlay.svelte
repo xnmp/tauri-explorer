@@ -4,6 +4,12 @@
 -->
 <script lang="ts">
   import { toastStore } from "$lib/state/toast.svelte";
+  import { openExternalUrl } from "$lib/api/crash";
+
+  function openLink(event: MouseEvent, url: string): void {
+    event.preventDefault();
+    void openExternalUrl(url);
+  }
 </script>
 
 {#if toastStore.toasts.length > 0}
@@ -24,6 +30,11 @@
           {/if}
         </svg>
         <span>{toast.message}{#if toast.type === "clipboard"} — Ctrl+V to paste{/if}</span>
+        {#if toast.link}
+          <a href={toast.link.url} onclick={(event) => openLink(event, toast.link!.url)}>
+            {toast.link.label}
+          </a>
+        {/if}
       </div>
     {/each}
   </div>
@@ -85,5 +96,11 @@
     background: linear-gradient(135deg, rgba(15, 123, 15, 0.1), rgba(15, 123, 15, 0.05));
     border-color: rgba(15, 123, 15, 0.2);
     color: var(--system-success);
+  }
+
+  .toast a {
+    color: inherit;
+    font-weight: 600;
+    text-decoration: underline;
   }
 </style>

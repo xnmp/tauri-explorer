@@ -28,6 +28,7 @@ mod process_ext;
 mod progress;
 mod update_check;
 mod upscale;
+mod user_report;
 /// Non-Linux stub so the command registry stays platform-independent.
 #[cfg(not(target_os = "linux"))]
 mod portal {
@@ -166,6 +167,7 @@ pub fn run(launch_dir: Option<String>) {
             get_log_dir,
             read_log_tail,
             system::get_app_info,
+            user_report::submit_user_report,
             crash_report::take_crash_report,
             crash_report::log_frontend_error,
             crash_report::record_frontend_crash,

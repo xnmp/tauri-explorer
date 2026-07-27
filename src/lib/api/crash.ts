@@ -9,6 +9,7 @@
 
 import { invoke } from "./files";
 import { dedupeFrontendCrash, recentLogsSection } from "$lib/domain/crash-report";
+import { boundedGitHubIssueUrl } from "$lib/domain/user-report";
 
 export interface CrashReport {
   fileName: string;
@@ -71,9 +72,6 @@ export function getAppInfo(): Promise<AppInfo> {
   return invoke<AppInfo>("get_app_info");
 }
 
-/** GitHub rejects very long URLs; keep the whole issue URL comfortably under. */
-const MAX_BUG_REPORT_URL_CHARS = 6000;
-
 /**
  * Pre-filled GitHub issue URL for a user-initiated bug report (#197, #302).
  *
@@ -101,19 +99,17 @@ export function bugReportUrl(info: AppInfo, logTail = ""): string {
     "",
   ].join("\n");
 
-  const prefix = `${REPO_ISSUES_URL}?title=${encodeURIComponent("Bug: ")}&body=`;
-  // encodeURIComponent can expand characters up to ~3x, so shrink the log
-  // budget until the *encoded* URL fits rather than guessing an upfront cap.
   let logBudget = 3500;
-  let url = `${prefix}${encodeURIComponent(baseBody)}`;
+  let url = boundedGitHubIssueUrl("Bug: ", baseBody);
   while (logBudget > 0) {
     const section = recentLogsSection(logTail, logBudget);
     const body = section ? `${baseBody}\n${section}` : baseBody;
-    url = `${prefix}${encodeURIComponent(body)}`;
-    if (url.length <= MAX_BUG_REPORT_URL_CHARS || !section) break;
+    url = boundedGitHubIssueUrl("Bug: ", body);
+    if (url || !section) break;
     logBudget -= 400;
   }
-  return url;
+  // The fixed template itself is well below the shared bound.
+  return url ?? boundedGitHubIssueUrl("Bug: ", baseBody)!;
 }
 
 /** Open an https URL in the system browser. */

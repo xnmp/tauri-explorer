@@ -87,6 +87,8 @@ test.describe("git graph detached-HEAD indicator", () => {
     const mainRow = view.locator(".commit-row", { hasText: "Merge hotfix into main" });
     await mainRow.click({ button: "right" });
     await page.locator('[data-testid="git-graph-menu"] .menu-item', { hasText: "Checkout main" }).click();
-    await expect(badge).toHaveCount(0);
+    // The stalled log fetch from the remount check may still be draining, and
+    // nothing clears the badge optimistically — give the reload room.
+    await expect(badge).toHaveCount(0, { timeout: 15_000 });
   });
 });

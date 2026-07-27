@@ -689,6 +689,7 @@ test.describe("Git graph commit context actions", () => {
     // HEAD chip now decorates the feature commit, not the old tip.
     await expect(featureRow).toHaveClass(/is-head/);
     await expect(view.locator(".commit-row").nth(2)).not.toHaveClass(/is-head/);
+    await page.screenshot({ path: "evidence/ac-1-checked-out-branch-lane.png" });
   });
 
   test("copy commit hash writes the full OID to the clipboard", async ({ page, context, browserName }) => {
@@ -925,5 +926,6 @@ test.describe("Git graph commit context actions", () => {
       view.locator(".commit-row").filter({ hasText: "Add core module" }),
     ).toHaveClass(/is-head/);
     await expect(view.locator(".commit-row").nth(2)).not.toHaveClass(/is-head/);
+    await page.screenshot({ path: "evidence/ac-2-detached-head-lane.png" });
   });
 });

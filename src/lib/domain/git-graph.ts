@@ -13,7 +13,8 @@
  *   branch that held it has ended above the row where the next branch starts.
  * - Merge edges snap to a point already reserved for the same parent where
  *   possible instead of claiming fresh lanes, which keeps busy graphs tight.
- * - Lanes are claimed greedily left-to-right per row, first come first served.
+ * - The checked-out commit's first-parent line reserves lane 0; all other
+ *   lines claim the remaining lanes greedily left-to-right per row.
  * - Once a line occupies a lane it stays there while the lane is free, so
  *   lines run parallel and cross over in a single row at their destination
  *   instead of drifting left as lanes free up.
@@ -93,7 +94,10 @@ interface VertexState {
   reserved: Map<number, string>;
 }
 
-export function assignLayout(commits: readonly GraphCommitLike[]): GraphLayout {
+export function assignLayout(
+  commits: readonly GraphCommitLike[],
+  headOid: string | null = null,
+): GraphLayout {
   const index = new Map<string, number>();
   commits.forEach((c, i) => index.set(c.oid, i));
 
@@ -105,6 +109,21 @@ export function assignLayout(commits: readonly GraphCommitLike[]): GraphLayout {
     nextFreeLane: 0,
     reserved: new Map(),
   }));
+
+  // Reserve the leftmost lane before any greedy allocation happens. This is
+  // deliberately based on the checked-out commit OID rather than its symbolic
+  // branch name, so detached HEAD follows the same stable first-parent line.
+  const headReservationKey = "head-line";
+  const headLineRows = new Set<number>();
+  let headRow = headOid === null ? undefined : index.get(headOid);
+  while (headRow !== undefined && !headLineRows.has(headRow)) {
+    headLineRows.add(headRow);
+    const parentRow = vertices[headRow].parents[0];
+    headRow = parentRow === undefined || parentRow === -1 ? undefined : parentRow;
+  }
+  if (headLineRows.size > 0) {
+    for (const vertex of vertices) vertex.reserved.set(0, headReservationKey);
+  }
 
   const branches: BranchLine[] = [];
   /** colorEnds[i] = row where the branch last using color slot i ended. */
@@ -146,8 +165,9 @@ export function assignLayout(commits: readonly GraphCommitLike[]): GraphLayout {
   function placeDot(row: number): number {
     const v = vertices[row];
     if (v.lane === null) {
-      v.lane = claimPoint(row, null);
-      reserve(row, v.lane, `dot:${row}`);
+      const onHeadLine = headLineRows.has(row);
+      v.lane = claimPoint(row, onHeadLine ? headReservationKey : null);
+      if (!onHeadLine) reserve(row, v.lane, `dot:${row}`);
     }
     return v.lane;
   }
@@ -158,6 +178,7 @@ export function assignLayout(commits: readonly GraphCommitLike[]): GraphLayout {
     const parentIdx = start.nextParent;
     const parentRow = start.parents[parentIdx] ?? -1;
     const isFirstParent = parentIdx === 0;
+    let followsHeadLine = isFirstParent && headLineRows.has(startRow);
     start.nextParent++;
 
     const startLane = placeDot(startRow);
@@ -201,10 +222,12 @@ export function assignLayout(commits: readonly GraphCommitLike[]): GraphLayout {
       for (let row = startRow + 1; row <= parentRow; row++) {
         let lane: number;
         if (row === parentRow) {
-          lane = placeDot(row);
+          lane = followsHeadLine ? claimPoint(row, headReservationKey) : placeDot(row);
         } else {
-          lane = claimPoint(row, id, prevLane);
-          reserve(row, lane, id);
+          lane = followsHeadLine
+            ? claimPoint(row, headReservationKey)
+            : claimPoint(row, id, prevLane);
+          if (!followsHeadLine) reserve(row, lane, id);
         }
         line.points.push({ lane, row });
         prevLane = lane;
@@ -230,15 +253,21 @@ export function assignLayout(commits: readonly GraphCommitLike[]): GraphLayout {
       const isTarget = row === targetRow;
       let lane: number;
       if (isTarget) {
-        lane = placeDot(row);
+        lane = followsHeadLine ? claimPoint(row, headReservationKey) : placeDot(row);
       } else {
-        lane = claimPoint(row, id, prevLane);
-        reserve(row, lane, id);
+        lane = followsHeadLine
+          ? claimPoint(row, headReservationKey)
+          : claimPoint(row, id, prevLane);
+        if (!followsHeadLine) reserve(row, lane, id);
       }
       line.points.push({ lane, row });
       prevLane = lane;
 
       if (!isTarget) continue;
+      // A synthetic working-tree row (or another first-parent child) can
+      // reach HEAD before the layout driver reaches HEAD itself. From that
+      // join onward, its continuation is the reserved HEAD line.
+      if (headLineRows.has(row)) followsHeadLine = true;
       if (v.onBranch !== null) break; // joined an existing line — terminate
 
       // The parent joins this chain; continue through ITS first parent.

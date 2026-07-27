@@ -895,7 +895,9 @@
         ...r.remote_branches.map((b) => ({ name: b.name, remote: true })),
       ];
     } catch {
-      branchList = [];
+      // Keep the last known list. Blanking it would make the hide toggle
+      // subtract nothing while still reading as on — and cache those
+      // unexcluded rows under the toggle's snapshot key (#416).
     }
   }
 

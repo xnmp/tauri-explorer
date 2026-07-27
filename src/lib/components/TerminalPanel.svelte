@@ -29,6 +29,7 @@
   import { isWindows, isMac } from "$lib/domain/platform";
   import { isShellReservedKey, isHardcodedAppShortcut, resolveTerminalShortcut, effectiveTerminalShortcuts } from "$lib/domain/terminal-keys";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
+  import { getCommand } from "$lib/state/commands.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
   import { themeStore } from "$lib/state/theme.svelte";
   import { terminalPanelStore } from "$lib/state/terminal.svelte";
@@ -333,7 +334,14 @@
         event.preventDefault();
         return false;
       }
-      const appBound = keybindingsStore.matchesAnyBinding(event) || isHardcodedAppShortcut(event);
+      // Availability-aware (#530): a command whose `when` guard is false does
+      // not own its shortcut, so the shell keeps the key instead of it being
+      // swallowed by a binding that can't fire.
+      const appBound =
+        keybindingsStore.matchesAnyBinding(event, (id) => {
+          const cmd = getCommand(id);
+          return !cmd?.when || cmd.when();
+        }) || isHardcodedAppShortcut(event);
       return isShellReservedKey(event, { appBound, isMac });
     });
 

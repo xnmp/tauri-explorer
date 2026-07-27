@@ -6,6 +6,7 @@ import type { Command } from "../commands.svelte";
 import { getActiveExplorer } from "./shared";
 import { windowTabsManager } from "../window-tabs.svelte";
 import { refreshGraphPane } from "../git-graph-refresh";
+import { stepGraphSelection } from "../git-graph-nav";
 
 /** True when the active pane is showing a commit graph. */
 function activePaneIsGraph(): boolean {
@@ -72,6 +73,31 @@ export const navigationCommands: Command[] = [
     // the ACTIVE graph pane (#432).
     handler: () => {
       refreshGraphPane(windowTabsManager.activeTab?.activePaneId);
+    },
+    when: () => activePaneIsGraph(),
+  },
+  // Jump the selection along the branch line the commit sits on, skipping the
+  // rows drawn in between that belong to other lines (#530). Down = older
+  // (toward parents), up = newer, matching the graph's newest-first order.
+  // Real commands, like F5 above: rebindable, palette-discoverable, gated on
+  // the active graph pane, and visible to the terminal key-ownership gate.
+  {
+    id: "gitGraph.selectOlderOnLine",
+    label: "Git Graph: Select Older Commit on Branch Line",
+    category: "navigation",
+    shortcut: "Ctrl+Down",
+    handler: () => {
+      stepGraphSelection(windowTabsManager.activeTab?.activePaneId, "older");
+    },
+    when: () => activePaneIsGraph(),
+  },
+  {
+    id: "gitGraph.selectNewerOnLine",
+    label: "Git Graph: Select Newer Commit on Branch Line",
+    category: "navigation",
+    shortcut: "Ctrl+Up",
+    handler: () => {
+      stepGraphSelection(windowTabsManager.activeTab?.activePaneId, "newer");
     },
     when: () => activePaneIsGraph(),
   },

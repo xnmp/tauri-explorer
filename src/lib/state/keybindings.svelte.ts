@@ -245,19 +245,33 @@ function createKeybindingsStore() {
   /**
    * Side-effect-free variant of findMatchingCommand: does this event match
    * any bound shortcut or chord prefix? Used by the terminal gates (#260) to
-   * decide key ownership WITHOUT entering chord-waiting mode or running
-   * availability guards.
+   * decide key ownership WITHOUT entering chord-waiting mode.
+   *
+   * `isAvailable` (optional) applies the same `when` guards `findMatchingCommand`
+   * uses. Pass it wherever the answer decides whether the SHELL gets the key:
+   * a command that can't run right now doesn't own its shortcut, and claiming
+   * it anyway swallows the keystroke — nothing runs and the shell never sees
+   * it. Ctrl+Up/Down (#530, graph-pane-gated) is the case that exposed this:
+   * unguarded, it would silently kill readline history-substring-search in the
+   * terminal for every user whose active pane isn't a commit graph.
    */
-  function matchesAnyBinding(event: KeyboardEvent): boolean {
+  function matchesAnyBinding(
+    event: KeyboardEvent,
+    isAvailable?: (commandId: string) => boolean,
+  ): boolean {
     const matchOpts = superKeyHeld && !event.metaKey ? { metaHeld: true } : undefined;
     for (const commandId of Object.keys(defaultShortcuts)) {
       const chord = getChordForCommand(commandId);
       if (chord) {
-        if (matchesShortcut(event, chord.prefix, matchOpts)) return true;
+        if (matchesShortcut(event, chord.prefix, matchOpts)) {
+          if (!isAvailable || isAvailable(commandId)) return true;
+        }
         continue;
       }
       const shortcut = getShortcut(commandId);
-      if (shortcut && matchesShortcutString(event, shortcut, matchOpts)) return true;
+      if (shortcut && matchesShortcutString(event, shortcut, matchOpts)) {
+        if (!isAvailable || isAvailable(commandId)) return true;
+      }
     }
     return false;
   }

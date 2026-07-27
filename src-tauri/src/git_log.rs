@@ -1198,7 +1198,14 @@ mod tests {
         repo.reference("refs/remotes/origin/legacy", legacy_tip, true, "sim")
             .unwrap();
         let ahead = repo
-            .commit(None, &sig, &sig, "origin/main ahead", &tree, &[&base_commit])
+            .commit(
+                None,
+                &sig,
+                &sig,
+                "origin/main ahead",
+                &tree,
+                &[&base_commit],
+            )
             .unwrap();
         repo.reference("refs/remotes/origin/main", ahead, true, "sim")
             .unwrap();

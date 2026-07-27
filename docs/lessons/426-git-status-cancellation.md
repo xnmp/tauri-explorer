@@ -16,3 +16,9 @@ Keep cancellation request-specific. The SCM task registry also serves other Git
 operations, so cancel-all or cancel-by-path can terminate unrelated mutations.
 Libgit2 status collection has no comparable child process to kill; check its
 flag before and after collection so a cancelled scan never publishes a result.
+
+Two ordering edges need explicit generations. Cancellation may reach Rust
+before the async command registers its caller-generated ID, so the registry
+must preserve a bounded pre-cancellation tombstone. A forced post-mutation scan
+may also finish before an older passive scan; only the newest scan generation
+may publish into the short-lived summary cache.

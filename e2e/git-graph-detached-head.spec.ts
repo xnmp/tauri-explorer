@@ -31,6 +31,7 @@ test.describe("git graph detached-HEAD indicator", () => {
 
     // AC 3: HEAD is on `main` — nothing to warn about.
     await expect(badge).toHaveCount(0);
+    await view.screenshot({ path: "evidence/ac-3-attached-no-badge.png" });
 
     // "Update README with usage" carries no branch, so checking it out
     // detaches HEAD (the menu item spells that out).
@@ -51,6 +52,9 @@ test.describe("git graph detached-HEAD indicator", () => {
     await expect(badge).toBeVisible();
     await expect(badge).toContainText("DETACHED HEAD");
     await expect(badge).toContainText(shortOid!);
+    // Screenshot taken as a side effect of the assertions above, so the image
+    // can only ever depict the state the test proved.
+    await view.screenshot({ path: "evidence/ac-1-detached-badge.png" });
 
     // AC 2: closing and reopening the graph tab remounts the view (painting
     // from the snapshot cache) — the badge must not blink out.
@@ -59,6 +63,10 @@ test.describe("git graph detached-HEAD indicator", () => {
     await openGraphViaPalette(page);
     await expect(badge).toBeVisible();
     await expect(badge).toContainText("DETACHED HEAD");
+    // The checkout toast has long since faded — the badge is what is left.
+    await expect(page.locator(".toast")).toHaveCount(0, { timeout: 15_000 });
+    await expect(badge).toBeVisible();
+    await view.screenshot({ path: "evidence/ac-2-detached-persists-remount.png" });
 
     // Reattaching to a branch clears it.
     const mainRow = view.locator(".commit-row", { hasText: "Merge hotfix into main" });

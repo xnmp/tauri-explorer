@@ -4,13 +4,13 @@
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 use tauri::{AppHandle, Emitter};
 
-use super::{metadata_to_entry, DirectoryListing, FileEntry, FileKind};
+use super::{metadata_to_entry_with_git_repo_probe, DirectoryListing, FileEntry, FileKind};
 use crate::error::AppError;
 
 // ===================
@@ -200,6 +200,22 @@ static LISTINGS: crate::task_registry::TaskRegistry = crate::task_registry::Task
 // pub: exercised directly by the `scan_directory_parallel` criterion bench
 // (src-tauri/benches/scan_directory_parallel.rs).
 pub fn scan_directory_parallel(dir_path: &PathBuf) -> Vec<FileEntry> {
+    scan_directory_parallel_for_listing(dir_path, dir_path)
+}
+
+/// Network and WSL UNC paths may turn each file stat into a remote round trip.
+/// `is_git_repo` only decorates folder icons, so listings skip that optional
+/// per-entry probe there while preserving it for local directories.
+fn should_probe_git_repos(dir_path: &Path) -> bool {
+    let path = dir_path.to_string_lossy();
+    !(path.starts_with("\\\\") || path.starts_with("//"))
+}
+
+/// Scan a readable directory using the policy for its user-visible listing
+/// root. Keeping the root separate makes the UNC policy testable without a
+/// live network share while production passes the same path for both values.
+fn scan_directory_parallel_for_listing(dir_path: &PathBuf, listing_root: &Path) -> Vec<FileEntry> {
+    let probe_git_repos = should_probe_git_repos(listing_root);
     use rayon::prelude::*;
 
     // jwalk parallelizes readdir, but the per-entry symlink_metadata stat would
@@ -224,7 +240,11 @@ pub fn scan_directory_parallel(dir_path: &PathBuf) -> Vec<FileEntry> {
         .into_par_iter()
         .filter_map(|path| {
             let metadata = fs::symlink_metadata(&path).ok()?;
-            Some(metadata_to_entry(&path, &metadata))
+            Some(metadata_to_entry_with_git_repo_probe(
+                &path,
+                &metadata,
+                probe_git_repos,
+            ))
         })
         .collect();
 
@@ -452,6 +472,47 @@ mod tests {
         assert!(
             !by_name("plain.txt").is_git_repo,
             "files are never flagged, even named oddly"
+        );
+    }
+
+    /// UNC roots cover both Windows network shares and WSL's 9P share. A
+    /// directory listing must not add one `.git` stat per child there (#480).
+    #[test]
+    fn git_repo_detection_policy_skips_unc_listing_roots() {
+        assert!(should_probe_git_repos(&PathBuf::from(
+            "C:\\Users\\me\\repos"
+        )));
+        assert!(!should_probe_git_repos(&PathBuf::from(
+            r"\\server\share\large-directory"
+        )));
+        assert!(!should_probe_git_repos(&PathBuf::from(
+            r"\\wsl.localhost\Ubuntu\home\me\large-directory"
+        )));
+    }
+
+    /// On Unix, backslashes are ordinary filename characters, which lets this
+    /// exercise the public scan entry point with a synthetic UNC root instead
+    /// of depending on a live network share (#480).
+    #[cfg(not(windows))]
+    #[test]
+    fn unc_listing_path_skips_child_git_repo_detection() {
+        let listing_root = PathBuf::from(format!(
+            r"\\server\share\tauri-explorer-test-{}",
+            std::process::id()
+        ));
+        fs::create_dir(&listing_root).unwrap();
+        fs::create_dir(listing_root.join("repo")).unwrap();
+        fs::create_dir(listing_root.join("repo/.git")).unwrap();
+
+        let entries = scan_directory_parallel(&listing_root);
+        fs::remove_dir_all(&listing_root).unwrap();
+        assert!(
+            !entries
+                .iter()
+                .find(|entry| entry.name == "repo")
+                .unwrap()
+                .is_git_repo,
+            "slow-mount listings must leave is_git_repo false rather than stat each child .git"
         );
     }
 

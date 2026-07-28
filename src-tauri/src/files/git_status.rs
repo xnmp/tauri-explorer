@@ -245,6 +245,7 @@ fn get_git_status_wsl(
         "git",
         "-C",
         linux_path,
+        "--no-optional-locks",
         "status",
         "--porcelain",
         "-z",
@@ -392,8 +393,15 @@ fn get_git_status_sync_with_program(
         cmd.args(["-c", "core.filemode=false", "-c", "safe.directory=*"]);
     }
     let status_start = std::time::Instant::now();
-    cmd.args(["status", "--porcelain", "-z", "-unormal", "."])
-        .current_dir(dir);
+    cmd.args([
+        "--no-optional-locks",
+        "status",
+        "--porcelain",
+        "-z",
+        "-unormal",
+        ".",
+    ])
+    .current_dir(dir);
     let output =
         output_cancellable(&mut cmd, cancelled, "git badge status cancelled").map_err(|e| {
             log::warn!("gitstat: status spawn failed for {path}: {e}");
@@ -630,9 +638,11 @@ mod tests {
 
         assert!(response.is_git_repo);
         let args = fs::read_to_string(capture).unwrap();
+        let args: Vec<_> = args.lines().collect();
         assert!(
-            args.lines().any(|arg| arg == "--no-optional-locks"),
-            "badge status args did not disable optional locks: {args}"
+            args.windows(2)
+                .any(|pair| pair == ["--no-optional-locks", "status"]),
+            "badge status args did not disable optional locks: {args:?}"
         );
     }
 

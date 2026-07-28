@@ -606,6 +606,38 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn badge_status_disables_optional_locks() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = init_repo();
+        let capture = dir.path().join("git-args");
+        let fake_git = dir.path().join("fake-git");
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{}'\ncase \" $* \" in\n  *' rev-parse '*) printf 'true\\n\\n' ;;\n  *' status '*) ;;\nesac\n",
+            capture.display()
+        );
+        fs::write(&fake_git, script).unwrap();
+        let mut permissions = fs::metadata(&fake_git).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fake_git, permissions).unwrap();
+
+        let response = get_git_status_sync_with_program(
+            dir.path().to_str().unwrap(),
+            &AtomicBool::new(false),
+            fake_git.as_os_str(),
+        )
+        .unwrap();
+
+        assert!(response.is_git_repo);
+        let args = fs::read_to_string(capture).unwrap();
+        assert!(
+            args.lines().any(|arg| arg == "--no-optional-locks"),
+            "badge status args did not disable optional locks: {args}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn cancelling_an_active_rev_parse_is_not_reported_as_not_a_repo() {
         use std::os::unix::fs::PermissionsExt;
         use std::sync::Arc;

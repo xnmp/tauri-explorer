@@ -68,11 +68,29 @@ describe("git command-palette targets (#520)", () => {
       ]));
 
       await executeCommand("git.palette.left.checkout.branch.feature%2Fpalette");
+      await executeCommand("git.palette.left.merge.feature%2Fpalette");
+      await executeCommand("git.palette.left.cherry-pick.a1b2c3d4e5f6");
+      await executeCommand("git.palette.left.rebase.a1b2c3d4e5f6");
       await executeCommand("git.palette.left.jump.a1b2c3d4e5f6");
+      await executeCommand("git.palette.left.stash-apply.stash%40%7B0%7D");
       await executeCommand("git.palette.left.stash-pop.stash%40%7B0%7D");
       expect(actions.checkout).toHaveBeenCalledWith("feature/palette");
+      expect(actions.merge).toHaveBeenCalledWith("feature/palette");
+      expect(actions.cherryPick).toHaveBeenCalledWith(commit.oid);
+      expect(actions.rebase).toHaveBeenCalledWith(commit.oid);
       expect(actions.jumpToCommit).toHaveBeenCalledWith(commit.oid);
+      expect(actions.stashApply).toHaveBeenCalledWith("stash@{0}");
       expect(actions.stashPop).toHaveBeenCalledWith("stash@{0}");
+
+      const replace = registerGitPaletteTargets("left", {
+        branches: ["release"],
+        commits: [],
+        stashes: [],
+        actions,
+      });
+      expect(getCommand("git.palette.left.checkout.branch.feature%2Fpalette")).toBeUndefined();
+      expect(getCommand("git.palette.left.checkout.branch.release")).toBeDefined();
+      replace();
 
       h.activeTab.activePaneId = "right";
       expect(getAvailableCommands().map((command) => command.id)).not.toContain(

@@ -10,6 +10,8 @@
 import { registerCommands, unregisterCommand, type Command } from "./commands.svelte";
 import { windowTabsManager } from "./window-tabs.svelte";
 
+const registeredIdsByPane = new Map<string, Set<string>>();
+
 export interface GitPaletteTarget {
   oid: string;
   shortOid: string;
@@ -84,8 +86,17 @@ export function registerGitPaletteTargets(paneId: string, targets: GitPaletteTar
     add(`stash-pop.${key}`, `Git: Pop Stash ${stash}`, () => targets.actions.stashPop(stash));
   }
 
+  const ids = new Set(commands.map((command) => command.id));
+  // A graph reload replaces its target snapshot. Remove the old snapshot
+  // first so branches/commits that disappeared cannot remain actionable.
+  for (const id of registeredIdsByPane.get(paneId) ?? []) unregisterCommand(id);
+  registeredIdsByPane.set(paneId, ids);
   registerCommands(commands);
   return () => {
-    for (const command of commands) unregisterCommand(command.id);
+    // An older Svelte effect cleanup must not remove the snapshot installed by
+    // a newer reload of this same pane.
+    if (registeredIdsByPane.get(paneId) !== ids) return;
+    registeredIdsByPane.delete(paneId);
+    for (const id of ids) unregisterCommand(id);
   };
 }

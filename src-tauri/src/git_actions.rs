@@ -220,6 +220,89 @@ fn update_ref_cas(
     )
 }
 
+fn undo_head_move(
+    repo_path: &str,
+    branch: Option<&str>,
+    before_oid: &str,
+    after_oid: &str,
+    after_ref_move: impl FnOnce(),
+) -> Result<(), AppError> {
+    let (actual_oid, actual_branch) = head_snapshot(repo_path)?;
+    if actual_oid != after_oid || actual_branch.as_deref() != branch {
+        return Err(AppError::Other(
+            "HEAD moved since the operation; undo is no longer safe".into(),
+        ));
+    }
+    if !working_tree_is_clean(repo_path)? {
+        return Err(AppError::Other(
+            "working tree is not clean; undo was refused".into(),
+        ));
+    }
+
+    // Move the checked-out ref with an expected-old compare-and-swap. A
+    // concurrent commit between the snapshot and this point makes update-ref
+    // fail instead of rewinding that commit.
+    let head_ref = match branch {
+        Some(name) => {
+            validate_arg("branch name", name)?;
+            format!("refs/heads/{name}")
+        }
+        None => "HEAD".to_string(),
+    };
+    update_ref_cas(repo_path, &head_ref, before_oid, after_oid).map_err(|_| {
+        AppError::Other("HEAD moved since the safety check; undo was refused".into())
+    })?;
+    after_ref_move();
+
+    // Catch worktree changes that landed while the ref CAS ran. HEAD now
+    // names `before_oid`, so compare the index/worktree directly with the
+    // captured post-operation tree instead of `git status`. Every exit after
+    // the CAS first tries an expected-old rollback, including inspection
+    // errors, so a failed undo cannot leave HEAD partially rewound.
+    match working_tree_matches_commit(repo_path, after_oid) {
+        Ok(true) => {}
+        Ok(false) => {
+            let _ = update_ref_cas(repo_path, &head_ref, after_oid, before_oid);
+            return Err(AppError::Other(
+                "working tree changed during undo; undo was refused".into(),
+            ));
+        }
+        Err(error) => {
+            let rollback = update_ref_cas(repo_path, &head_ref, after_oid, before_oid);
+            return match rollback {
+                Ok(()) => Err(AppError::Other(format!(
+                    "could not verify the working tree; undo was rolled back: {error}"
+                ))),
+                Err(rollback_error) => Err(AppError::Other(format!(
+                    "could not verify the working tree and the ref changed concurrently: {error}; {rollback_error}"
+                ))),
+            };
+        }
+    }
+
+    // Two-tree read-tree is the worktree/index counterpart to the ref CAS: it
+    // transitions only paths matching the old tree and refuses to overwrite
+    // a racing local edit. It does not move HEAD.
+    if let Err(error) = run_git(repo_path, &["read-tree", "-u", "-m", after_oid, before_oid]) {
+        let rollback = update_ref_cas(repo_path, &head_ref, after_oid, before_oid);
+        return match rollback {
+            Ok(()) => Err(AppError::Other(format!(
+                "working tree changed during undo; undo was rolled back: {error}"
+            ))),
+            Err(rollback_error) => Err(AppError::Other(format!(
+                "undo could not update the worktree and the ref changed concurrently: {error}; {rollback_error}"
+            ))),
+        };
+    }
+    let (final_oid, final_branch) = head_snapshot(repo_path)?;
+    if final_oid != before_oid || final_branch.as_deref() != branch {
+        return Err(AppError::Other(
+            "HEAD changed concurrently while finishing undo".into(),
+        ));
+    }
+    Ok(())
+}
+
 async fn run_head_move(
     repo_path: String,
     operation: HeadMoveOperation,
@@ -584,67 +667,13 @@ pub async fn git_undo(repo_path: String, action: GitUndoAction) -> Result<(), Ap
         } => {
             validate_arg("previous commit", &before_oid)?;
             validate_arg("current commit", &after_oid)?;
-            let (actual_oid, actual_branch) = head_snapshot(&repo_path)?;
-            if actual_oid != after_oid || actual_branch != branch {
-                return Err(AppError::Other(
-                    "HEAD moved since the operation; undo is no longer safe".into(),
-                ));
-            }
-            if !working_tree_is_clean(&repo_path)? {
-                return Err(AppError::Other(
-                    "working tree is not clean; undo was refused".into(),
-                ));
-            }
-
-            // Move the checked-out ref with an expected-old compare-and-swap.
-            // A concurrent commit between the snapshot and this point makes
-            // update-ref fail instead of rewinding that commit.
-            let head_ref = match branch.as_deref() {
-                Some(name) => {
-                    validate_arg("branch name", name)?;
-                    format!("refs/heads/{name}")
-                }
-                None => "HEAD".to_string(),
-            };
-            update_ref_cas(&repo_path, &head_ref, &before_oid, &after_oid).map_err(|_| {
-                AppError::Other("HEAD moved since the safety check; undo was refused".into())
-            })?;
-
-            // Catch worktree changes that landed while the ref CAS ran. HEAD
-            // now names `before_oid`, so compare the index/worktree directly
-            // with the captured post-operation tree instead of `git status`.
-            // Roll the ref back only if it is still ours; never overwrite a
-            // newer concurrent move.
-            if !working_tree_matches_commit(&repo_path, &after_oid)? {
-                let _ = update_ref_cas(&repo_path, &head_ref, &after_oid, &before_oid);
-                return Err(AppError::Other(
-                    "working tree changed during undo; undo was refused".into(),
-                ));
-            }
-            // Two-tree read-tree is the worktree/index counterpart to the ref
-            // CAS: it transitions only paths matching the old tree and
-            // refuses to overwrite a racing local edit. It does not move HEAD.
-            if let Err(error) = run_git(
+            undo_head_move(
                 &repo_path,
-                &["read-tree", "-u", "-m", &after_oid, &before_oid],
-            ) {
-                let rollback = update_ref_cas(&repo_path, &head_ref, &after_oid, &before_oid);
-                return match rollback {
-                    Ok(()) => Err(AppError::Other(format!(
-                        "working tree changed during undo; undo was rolled back: {error}"
-                    ))),
-                    Err(rollback_error) => Err(AppError::Other(format!(
-                        "undo could not update the worktree and the ref changed concurrently: {error}; {rollback_error}"
-                    ))),
-                };
-            }
-            let (final_oid, final_branch) = head_snapshot(&repo_path)?;
-            if final_oid != before_oid || final_branch != branch {
-                return Err(AppError::Other(
-                    "HEAD changed concurrently while finishing undo".into(),
-                ));
-            }
-            Ok(())
+                branch.as_deref(),
+                &before_oid,
+                &after_oid,
+                || {},
+            )
         }
     })
     .await
@@ -1018,24 +1047,22 @@ mod tests {
         git(dir.path(), &["commit", "-m", "newer"]);
         let newer = git_out(dir.path(), &["rev-parse", "HEAD"]);
 
-        let stale_ref = update_ref_cas(&rp, "refs/heads/main", &cs[0], &cs[1]);
-        assert!(
-            stale_ref.is_err(),
-            "expected-old CAS must reject newer HEAD"
-        );
+        let stale_ref = undo_head_move(&rp, Some("main"), &cs[0], &cs[1], || {});
+        assert!(stale_ref.is_err(), "composed undo must reject a newer HEAD");
         assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), newer);
 
-        // Rewind the fixture to the captured post-operation commit and perform
-        // the same CAS as undo. A file write racing immediately afterward must
-        // make the two-tree transition fail without losing its contents.
+        // Rewind the fixture to the captured post-operation commit. Inject a
+        // write at the transaction seam immediately after its ref CAS: the
+        // composed undo must refuse, restore HEAD, and preserve the racing edit.
         git(dir.path(), &["reset", "--hard", &cs[1]]);
-        update_ref_cas(&rp, "refs/heads/main", &cs[0], &cs[1]).unwrap();
-        write(dir.path(), "a.txt", "racing local edit\n");
-        let transition = run_git(&rp, &["read-tree", "-u", "-m", &cs[1], &cs[0]]);
+        let transition = undo_head_move(&rp, Some("main"), &cs[0], &cs[1], || {
+            write(dir.path(), "a.txt", "racing local edit\n");
+        });
         assert!(
             transition.is_err(),
-            "two-tree update must refuse a racing worktree edit"
+            "composed undo must refuse a racing worktree edit"
         );
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), cs[1]);
         assert_eq!(
             fs::read_to_string(dir.path().join("a.txt")).unwrap(),
             "racing local edit\n"

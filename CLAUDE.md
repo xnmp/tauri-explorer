@@ -41,6 +41,10 @@ Rules that bite:
 - Pane focus is **state, not DOM focus**: `ExplorerPane` gates its window-level keydown listener on `windowTabsManager.activePaneId === paneId`, so moving focus between panes is `setActivePane` alone — calling `.focus()` on the pane element is neither necessary nor sufficient. Assert on `.explorer-pane.active`, not on `document.activeElement`.
 - Native window titles have two phases: every creation path (Rust main, fresh child, parked warm window) must seed the requested title before visibility, then the page's reactive `window-title` sync follows the active explorer path across navigation/tab/pane changes.
 - Keep state machines and caches out of component-local scope (`<script module>` in a `.svelte` file is not a state layer). If it can't be unit-tested through an import, it will eventually be wrong unobserved (#444).
+- User-report images are hosted as public Vercel Blobs before the relay creates
+  the GitHub issue. Production therefore needs `BLOB_READ_WRITE_TOKEN` as well
+  as `GITHUB_ISSUE_TOKEN`. Keep the raw attachment total at or below 3 MiB so
+  its base64 JSON request stays below Vercel's 4.5 MiB function-body limit.
 
 ## Documentation
 

@@ -7,12 +7,7 @@ import { getActiveExplorer } from "./shared";
 import { windowTabsManager } from "../window-tabs.svelte";
 import { refreshGraphPane } from "../git-graph-refresh";
 import { stepGraphSelection } from "../git-graph-nav";
-
-/** True when the active pane is showing a commit graph. */
-function activePaneIsGraph(): boolean {
-  const tab = windowTabsManager.activeTab;
-  return !!(tab?.kind === "explorer" && tab.panes?.[tab.activePaneId]?.gitGraph);
-}
+import { activePaneIsGraph } from "./active-pane";
 
 export const navigationCommands: Command[] = [
   {

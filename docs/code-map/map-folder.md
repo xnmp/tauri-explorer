@@ -37,7 +37,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ScmSidebarView.svelte` — Source Control sidebar panel (#54).
 - `ScmPanel.svelte` — standalone SCM panel (stage/unstage/commit lists).
 - `ScmDiffView.svelte` — unified diff viewer replacing FileList for a diff.
-- `GitGraphView.svelte` — commit-graph pane content (#51/#58); the uncommitted-changes node opens an inline stage/unstage/commit panel (#466, logic in `domain/commit-panel.ts`), and failed GitHub Actions checks can expose their failed `gh` log inline from an open-PR badge (#521).
+- `GitGraphView.svelte` — commit-graph pane content (#51/#58); the uncommitted-changes node opens an inline stage/unstage/commit panel (#466, logic in `domain/commit-panel.ts`), failed GitHub Actions checks can expose their failed `gh` log inline from an open-PR badge (#521), and branch/tag delete, branch rename, merge, and pull record session undo snapshots with a confirmed Ctrl+Z inverse (#513).
 - `icons/FilesIcon.svelte`, `icons/ScmIcon.svelte` — activity-bar SVG icons.
 - `CommandPalette.svelte` — Ctrl+Shift+P command palette UI.
 - `QuickOpen.svelte` — Ctrl+P fuzzy file finder.
@@ -81,6 +81,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-graph-refresh.ts` — F5 refresh bus plus importable graph refresh machinery: `createReloader` serializes fetches with generation/dirty guards, `shouldReloadGraphForChange` filters local-action echoes, and `countGraphWalkCommits` excludes woven stash rows from numeric paging (#432, #444). GitGraphView registers its fetch+reload per pane id; the `gitGraph.refresh` command dispatches to the active pane.
 - `git-graph-nav.ts` — branch-line jump bus: GitGraphView registers its selection stepper per pane id; the `gitGraph.selectOlderOnLine`/`selectNewerOnLine` commands (Ctrl+Down/Up) dispatch to the active pane (#530). Same shape as `git-graph-refresh.ts`, same reason.
 - `git-palette.ts` — pane-scoped Git Graph branch, commit, and stash targets registered in the window-global command palette; commands are available only for the active graph pane (#520).
+- `git-graph-undo.ts` — bounded session ledger + active-pane request bus for confirmed graph-operation undo (#513); entries are repository-scoped and contain backend-produced expected-state snapshots.
 - `git-graph-file-history.ts` — per-pane SCM-to-graph handoff: buffers a repository-relative file path through a keyed graph remount, delivers directly to an already matching graph, and drops closed-pane requests (#518).
 - `git-graph-cache.ts` — per-repo git-graph snapshot cache + `warmGraphSnapshot`/`fetchPage0Snapshot`; extracted from GitGraphView so `git-warm.ts` no longer imports a component; evicts a repo's snapshots on external (watcher) git changes so a remount never paints stale history (#433, arch Finding 7).
 - `git-status.svelte.ts` — per-entry git status cache store.
@@ -105,6 +106,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `commands/shared.ts` — shared helpers for command modules.
 - `commands/file-commands.ts` — file ops commands (new/rename/delete/copy...).
 - `commands/navigation-commands.ts` — navigation commands (back/fwd/up/goto).
+- `commands/active-pane.ts` — shared active-git-graph predicate that makes duplicate shortcuts such as F5 and Ctrl+Z mutually exclusive between file and graph commands.
 - `commands/pane-commands.ts` — split/close/focus pane commands.
 - `commands/view-commands.ts` — view-mode/sort/show-hidden toggle commands. Hot.
 - `commands/general-commands.ts` — misc app commands (settings, palette, etc).
@@ -150,7 +152,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `mock-invoke.ts` — fake filesystem data for browser/E2E (no Tauri). Open when E2E data wrong.
 - `search.ts` — fuzzy file search + content search IPC + streaming. Hot.
 - `git.ts` — git status decoration + SCM (stage/commit/diff) IPC.
-- `git-log.ts` — git history / commit-graph IPC (#57).
+- `git-log.ts` — git history / commit-graph IPC (#57), including mutation snapshots and authoritative graph undo (#513).
 - `thumbnails.ts` — image/video thumbnail, folder preview, palette-extract IPC.
 - `archive.ts` — zip compress/extract/preview IPC.
 - `config.ts` — JSON config persistence + user theme CSS file IPC.
@@ -205,6 +207,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `keybinding-parser.ts` — parse/format keybinding chords.
 - `git.ts` — git status letter/indicator conversion.
 - `git-graph.ts` — commit-graph lane layout (#58/#179).
+- `git-graph-undo.ts` — immutable undo snapshot union, pure bounded per-repository ledger, confirmation labels, and structural action comparison (#513).
 - `commit-panel.ts` — pure state machine + derivations for the git-graph uncommitted-node inline commit panel: stage-status grouping, commit-button enablement/label, ephemeral message-editor transitions (#466).
 - `scm-tree.ts` — fold flat repo file list into a tree.
 - `scm-filter.ts` — fuzzy filter for the SCM sidebar's pending files (#517); `filterScmEntries`/`filterScmSummary` over `fuzzyScorePath`.
@@ -294,7 +297,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `plugin_job.rs` — shared plugin-job scaffolding: job-id alloc, output-path validation, timeout wrapper, complete/error events.
 - `git.rs` — SCM panel git backend: status/stage/commit/diff (#53). Status/diff delegate to native `wsl.exe git` (porcelain=v2 parser) for `\\wsl.localhost\…` repos, falling back to libgit2 (#398).
 - `git_log.rs` — git history / commit-graph backend (#57).
-- `git_actions.rs` — mutating git actions for commit-graph tab (VSCode parity).
+- `git_actions.rs` — mutating git actions for commit-graph tab (VSCode parity); returns undo snapshots for branch/tag delete, branch rename, merge, and pull, and re-verifies refs/HEAD/clean-tree state before inverses (#513).
 - `git_common.rs` — shared git plumbing (used by git/git_log/git_actions).
 - `github.rs` — `git_open_prs`: open GitHub PRs for the repo's remote, for graph PR badges (#449); TTL-cached, silent-degrade.
 

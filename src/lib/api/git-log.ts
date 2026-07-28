@@ -9,6 +9,7 @@
  */
 
 import { invoke } from "./files";
+import type { GitUndoAction } from "$lib/domain/git-graph-undo";
 
 export type RefKind = "LocalBranch" | "RemoteBranch" | "Tag" | "Head";
 
@@ -168,8 +169,8 @@ export async function gitRevert(repoPath: string, oid: string): Promise<void> {
 }
 
 /** Merge `target` (branch or OID) into the current branch. */
-export async function gitMerge(repoPath: string, target: string): Promise<void> {
-  await invoke("git_merge", { repoPath, target });
+export async function gitMerge(repoPath: string, target: string): Promise<GitUndoAction | null> {
+  return invoke<GitUndoAction | null>("git_merge", { repoPath, target });
 }
 
 /** Rebase the current branch onto `oid`. */
@@ -211,8 +212,8 @@ export async function gitFetch(repoPath: string): Promise<void> {
 }
 
 /** Fast-forward pull on the current branch (#377). */
-export async function gitPull(repoPath: string): Promise<void> {
-  await invoke("git_pull", { repoPath });
+export async function gitPull(repoPath: string): Promise<GitUndoAction | null> {
+  return invoke<GitUndoAction | null>("git_pull", { repoPath });
 }
 
 /** Commits `name`'s upstream has that the local branch lacks; null when no
@@ -229,8 +230,27 @@ export async function gitDeleteBranch(
   repoPath: string,
   name: string,
   force: boolean,
-): Promise<void> {
-  await invoke("git_delete_branch", { repoPath, name, force });
+): Promise<GitUndoAction> {
+  return invoke<GitUndoAction>("git_delete_branch", { repoPath, name, force });
+}
+
+/** Delete a local tag and capture the commit needed to recreate it. */
+export async function gitDeleteTag(repoPath: string, name: string): Promise<GitUndoAction> {
+  return invoke<GitUndoAction>("git_delete_tag", { repoPath, name });
+}
+
+/** Rename a local branch and capture the state required to rename it back. */
+export async function gitRenameBranch(
+  repoPath: string,
+  oldName: string,
+  newName: string,
+): Promise<GitUndoAction> {
+  return invoke<GitUndoAction>("git_rename_branch", { repoPath, oldName, newName });
+}
+
+/** Authoritatively recheck and reverse one recorded graph operation. */
+export async function gitUndo(repoPath: string, action: GitUndoAction): Promise<void> {
+  await invoke("git_undo", { repoPath, action });
 }
 
 /** Delete `name` on `remote` (git push <remote> --delete <name>) (#371). */

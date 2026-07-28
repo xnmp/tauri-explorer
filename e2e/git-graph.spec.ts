@@ -938,8 +938,8 @@ test.describe("Git graph commit context actions", () => {
     await expect(modal).toBeVisible();
     await expect(modal).toContainText("Delete branch 'hotfix'");
     await expect(modal).toContainText("Force delete");
-    // Confirm the safe delete: the modal closes and the action reports done
-    // (the mock's git_delete_branch is a no-op, so the chip itself persists).
+    // Confirm the safe delete: the modal closes and the action reports done.
+    // The dedicated undo spec asserts the mock's visible ref removal/restoration.
     await modal.getByText("Delete", { exact: true }).click();
     await expect(modal).toHaveCount(0);
     await expect(page.locator(".toast", { hasText: "Delete branch 'hotfix' done" })).toBeVisible();

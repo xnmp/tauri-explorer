@@ -961,6 +961,23 @@ function mockAddRef(name: string, kind: MockRefKind, oid: string): void {
   (MOCK_GRAPH_REFS[oid] ??= []).push({ name, kind });
 }
 
+function mockFindRef(name: string, kind: MockRefKind): string | null {
+  for (const [oid, refs] of Object.entries(MOCK_GRAPH_REFS)) {
+    if (refs.some((ref) => ref.name === name && ref.kind === kind)) return oid;
+  }
+  return null;
+}
+
+function mockRemoveRef(name: string, kind: MockRefKind): string | null {
+  const oid = mockFindRef(name, kind);
+  if (!oid) return null;
+  MOCK_GRAPH_REFS[oid] = MOCK_GRAPH_REFS[oid].filter(
+    (ref) => ref.name !== name || ref.kind !== kind,
+  );
+  if (MOCK_GRAPH_REFS[oid].length === 0) delete MOCK_GRAPH_REFS[oid];
+  return oid;
+}
+
 /** Point HEAD (and, when checking out a branch, follow it) at `oid`. Leaves
  *  the attached/detached mode alone — committing or resetting while detached
  *  keeps HEAD detached, exactly like git. */
@@ -1884,7 +1901,16 @@ const mockCommands: Record<string, CommandHandler> = {
     return null;
   },
   git_fetch: () => null,
-  git_pull: () => null,
+  git_pull: () => {
+    const before_oid = mockHeadOid();
+    const branch =
+      mockDetached
+        ? null
+        : (MOCK_GRAPH_REFS[before_oid] ?? []).find((ref) => ref.kind === "LocalBranch")?.name ??
+          null;
+    const after_oid = mockAppendCommit("Pull from upstream");
+    return { kind: "head_move", operation: "pull", branch, before_oid, after_oid };
+  },
   // Mock: pretend 'hotfix' is 2 behind its remote so the pull offer shows.
   git_branch_behind_upstream: (args: Record<string, unknown>) =>
     args.name === "hotfix" ? 2 : args.name === "main" ? 0 : null,
@@ -1897,7 +1923,76 @@ const mockCommands: Record<string, CommandHandler> = {
     { name: "origin/hotfix", author: "Alice Coder", remote: true },
     { name: "origin/legacy-import", author: "Bob Dev", remote: true },
   ],
-  git_delete_branch: () => null,
+  git_delete_branch: (args: Record<string, unknown>) => {
+    const name = (args.name as string) ?? "";
+    const target = mockRemoveRef(name, "LocalBranch");
+    if (!target) throw new Error(`branch '${name}' does not exist`);
+    return { kind: "branch_delete", name, target };
+  },
+  git_delete_tag: (args: Record<string, unknown>) => {
+    const name = (args.name as string) ?? "";
+    const target = mockRemoveRef(name, "Tag");
+    if (!target) throw new Error(`tag '${name}' does not exist`);
+    return { kind: "tag_delete", name, target };
+  },
+  git_rename_branch: (args: Record<string, unknown>) => {
+    const old_name = (args.oldName as string) ?? "";
+    const new_name = (args.newName as string) ?? "";
+    const target = mockRemoveRef(old_name, "LocalBranch");
+    if (!target) throw new Error(`branch '${old_name}' does not exist`);
+    if (mockFindRef(new_name, "LocalBranch")) {
+      mockAddRef(old_name, "LocalBranch", target);
+      throw new Error(`branch '${new_name}' already exists`);
+    }
+    mockAddRef(new_name, "LocalBranch", target);
+    return { kind: "branch_rename", old_name, new_name, target };
+  },
+  git_undo: (args: Record<string, unknown>) => {
+    const action = args.action as {
+      kind: string;
+      name?: string;
+      target?: string;
+      old_name?: string;
+      new_name?: string;
+      branch?: string | null;
+      before_oid?: string;
+      after_oid?: string;
+    };
+    if (action.kind === "branch_delete") {
+      if (mockFindRef(action.name!, "LocalBranch")) {
+        throw new Error(`branch '${action.name}' already exists; undo is no longer safe`);
+      }
+      mockAddRef(action.name!, "LocalBranch", action.target!);
+      return null;
+    }
+    if (action.kind === "tag_delete") {
+      if (mockFindRef(action.name!, "Tag")) {
+        throw new Error(`tag '${action.name}' already exists; undo is no longer safe`);
+      }
+      mockAddRef(action.name!, "Tag", action.target!);
+      return null;
+    }
+    if (action.kind === "branch_rename") {
+      if (
+        mockFindRef(action.old_name!, "LocalBranch") ||
+        mockFindRef(action.new_name!, "LocalBranch") !== action.target
+      ) {
+        throw new Error("branch state changed; undo is no longer safe");
+      }
+      mockRemoveRef(action.new_name!, "LocalBranch");
+      mockAddRef(action.old_name!, "LocalBranch", action.target!);
+      return null;
+    }
+    if (action.kind === "head_move") {
+      if (mockHeadOid() !== action.after_oid) {
+        throw new Error("HEAD moved since the operation; undo is no longer safe");
+      }
+      if (action.branch) mockMoveRef(action.branch, "LocalBranch", action.before_oid!);
+      mockMoveHead(action.before_oid!);
+      return null;
+    }
+    throw new Error("unknown git undo action");
+  },
   git_delete_remote_branch: () => null,
 
   // Tracking checkout (#432): create a local branch tracking <remote>/<name>
@@ -2084,26 +2179,20 @@ const mockCommands: Record<string, CommandHandler> = {
     }
     // Tips mirror MOCK_GRAPH_REFS (the git_log decorations) so the branch
     // filter's list and the graph's chips can't drift (#342).
-    const tip = fullOid(16);
+    const local_branches: Array<{ name: string; target: string }> = [];
+    const remote_branches: Array<{ name: string; target: string }> = [];
+    const tags: Array<{ name: string; target: string }> = [];
+    for (const [target, refList] of Object.entries(MOCK_GRAPH_REFS)) {
+      for (const ref of refList) {
+        if (ref.kind === "LocalBranch") local_branches.push({ name: ref.name, target });
+        else if (ref.kind === "RemoteBranch") remote_branches.push({ name: ref.name, target });
+        else if (ref.kind === "Tag") tags.push({ name: ref.name, target });
+      }
+    }
     return {
-      local_branches: [
-        { name: "main", target: tip },
-        { name: "release", target: tip },
-        { name: "hotfix", target: fullOid(13) },
-        { name: "experiment", target: fullOid(14) },
-        { name: "feature", target: fullOid(10) },
-      ],
-      remote_branches: [
-        { name: "origin/main", target: tip },
-        { name: "origin/hotfix", target: fullOid(13) },
-        // Remote-only (no local `legacy-import`): decorates commit 8 in
-        // MOCK_GRAPH_REFS, so the branch list has to list it too (#515).
-        { name: "origin/legacy-import", target: fullOid(8) },
-      ],
-      tags: [
-        { name: "v1.0", target: fullOid(5) },
-        { name: "v0.9", target: fullOid(1) },
-      ],
+      local_branches,
+      remote_branches,
+      tags,
       // HEAD tracks the mutating checkout mocks, so the refs payload agrees
       // with git_log's about the detached state (#524).
       head: mockHeadOid(),
@@ -2241,8 +2330,14 @@ const mockCommands: Record<string, CommandHandler> = {
   },
   git_merge: (args: Record<string, unknown>) => {
     const target = (args.target as string) ?? "";
-    mockAppendCommit(`Merge ${target} into current branch`);
-    return null;
+    const before_oid = mockHeadOid();
+    const branch =
+      mockDetached
+        ? null
+        : (MOCK_GRAPH_REFS[before_oid] ?? []).find((ref) => ref.kind === "LocalBranch")?.name ??
+          null;
+    const after_oid = mockAppendCommit(`Merge ${target} into current branch`);
+    return { kind: "head_move", operation: "merge", branch, before_oid, after_oid };
   },
   git_rebase: (args: Record<string, unknown>) => {
     const oid = (args.oid as string) ?? "";

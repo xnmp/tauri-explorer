@@ -16,7 +16,10 @@
   import { toastStore } from "$lib/state/toast.svelte";
   import { parentDir, basename } from "$lib/domain/path";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import { requestGraphFileHistory } from "$lib/state/git-graph-file-history";
+  import {
+    queueGraphFileHistory,
+    requestGraphFileHistory,
+  } from "$lib/state/git-graph-file-history";
   import type { GitFileEntry, GitStatusCode } from "$lib/api/files";
   import { gitOpStateLabel } from "$lib/domain/git";
   import Modal from "./Modal.svelte";
@@ -196,6 +199,14 @@
   function onShowFileHistory(path: string): void {
     const repoRoot = scmStore.repoRoot;
     if (!repoRoot || !path.trim()) return;
+    // If this pane holds a graph for another repo, its outgoing component is
+    // still registered until Svelte remounts it. Queue instead of delivering
+    // to that soon-to-be-destroyed handler.
+    if (windowTabsManager.getPaneGitGraph(paneId) !== repoRoot) {
+      queueGraphFileHistory(paneId, path);
+      windowTabsManager.showGitGraphInPane(paneId, repoRoot);
+      return;
+    }
     windowTabsManager.showGitGraphInPane(paneId, repoRoot);
     requestGraphFileHistory(paneId, path);
   }

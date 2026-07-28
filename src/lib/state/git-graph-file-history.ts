@@ -11,6 +11,11 @@ type FileHistoryHandler = (filePath: string) => void;
 const pendingPaths = new Map<string, string>();
 const handlers = new Map<string, FileHistoryHandler>();
 
+/** Queue a request for the graph instance that next mounts in `paneId`. */
+export function queueGraphFileHistory(paneId: string, filePath: string): void {
+  if (filePath.trim()) pendingPaths.set(paneId, filePath);
+}
+
 /** Request a graph view limited to `filePath` for a pane. */
 export function requestGraphFileHistory(paneId: string, filePath: string): void {
   if (!filePath.trim()) return;
@@ -19,7 +24,7 @@ export function requestGraphFileHistory(paneId: string, filePath: string): void 
     handler(filePath);
     return;
   }
-  pendingPaths.set(paneId, filePath);
+  queueGraphFileHistory(paneId, filePath);
 }
 
 /** Register the mounted graph's path-filter handler for one pane. */

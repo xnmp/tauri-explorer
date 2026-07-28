@@ -16,6 +16,7 @@ import {
   type ApiResult,
 } from "./common";
 import { providerFor } from "$lib/plugins/fs-providers";
+import { logFrontendDiagnostic } from "./frontend-log";
 
 /**
  * Fetch directory listing from Tauri backend.
@@ -289,11 +290,31 @@ export async function writeTextFile(path: string, content: string): Promise<ApiR
 export async function readTextFile(path: string, maxBytes?: number): Promise<ApiResult<string>> {
   const guard = virtualPathGuard(path);
   if (guard) return guard;
+  const startedAt = Date.now();
   try {
     const content = await invoke<string>("read_text_file", { path, maxBytes: maxBytes ?? null });
+    console.debug("[preview] read_text_file completed", {
+      path,
+      maxBytes: maxBytes ?? null,
+      bytes: content.length,
+      elapsedMs: Date.now() - startedAt,
+    });
     return { ok: true, data: content };
   } catch (err) {
-    return { ok: false, error: extractError(err) };
+    const error = extractError(err);
+    console.warn("[preview] read_text_file failed", {
+      path,
+      maxBytes: maxBytes ?? null,
+      error,
+      elapsedMs: Date.now() - startedAt,
+    });
+    logFrontendDiagnostic("preview read_text_file failed", {
+      path,
+      maxBytes: maxBytes ?? null,
+      error,
+      elapsedMs: Date.now() - startedAt,
+    });
+    return { ok: false, error };
   }
 }
 
@@ -313,14 +334,34 @@ export async function readImageAsBlobUrl(
   path: string,
   maxBytes?: number
 ): Promise<ApiResult<string>> {
+  const startedAt = Date.now();
   try {
     const dataUri = await invoke<string>("read_image_data_url", {
       path,
       maxBytes: maxBytes ?? null,
     });
+    console.debug("[preview] read_image_data_url completed", {
+      path,
+      maxBytes: maxBytes ?? null,
+      dataUriBytes: dataUri.length,
+      elapsedMs: Date.now() - startedAt,
+    });
     return { ok: true, data: dataUriToBlobUrl(dataUri) };
   } catch (err) {
-    return { ok: false, error: extractError(err) };
+    const error = extractError(err);
+    console.warn("[preview] read_image_data_url failed", {
+      path,
+      maxBytes: maxBytes ?? null,
+      error,
+      elapsedMs: Date.now() - startedAt,
+    });
+    logFrontendDiagnostic("preview read_image_data_url failed", {
+      path,
+      maxBytes: maxBytes ?? null,
+      error,
+      elapsedMs: Date.now() - startedAt,
+    });
+    return { ok: false, error };
   }
 }
 
@@ -441,22 +482,57 @@ export interface DirectoryEntriesEvent {
 export async function startStreamingDirectory(
   path: string
 ): Promise<ApiResult<DirectoryListing>> {
+  const startedAt = Date.now();
+  console.debug("[navigation] start_streaming_directory requested", { path });
   // Virtual paths never stream: the provider returns the full listing inline
   // (listing_id null), which the caller treats as a non-streaming result.
   const provider = providerFor(path);
   if (provider) {
     try {
       const data = await provider.list(path);
+      console.debug("[navigation] virtual directory listing completed", {
+        path,
+        entries: data.entries.length,
+        elapsedMs: Date.now() - startedAt,
+      });
       return { ok: true, data: { ...data, listing_id: null } };
     } catch (err) {
-      return { ok: false, error: extractError(err) };
+      const error = extractError(err);
+      console.warn("[navigation] virtual directory listing failed", {
+        path,
+        error,
+        elapsedMs: Date.now() - startedAt,
+      });
+      logFrontendDiagnostic("navigation virtual directory listing failed", {
+        path,
+        error,
+        elapsedMs: Date.now() - startedAt,
+      });
+      return { ok: false, error };
     }
   }
   try {
     const data = await invoke<DirectoryListing>("start_streaming_directory", { path });
+    console.debug("[navigation] start_streaming_directory completed", {
+      path,
+      listingId: data.listing_id,
+      entries: data.entries.length,
+      elapsedMs: Date.now() - startedAt,
+    });
     return { ok: true, data };
   } catch (err) {
-    return { ok: false, error: extractError(err) };
+    const error = extractError(err);
+    console.warn("[navigation] start_streaming_directory failed", {
+      path,
+      error,
+      elapsedMs: Date.now() - startedAt,
+    });
+    logFrontendDiagnostic("navigation start_streaming_directory failed", {
+      path,
+      error,
+      elapsedMs: Date.now() - startedAt,
+    });
+    return { ok: false, error };
   }
 }
 

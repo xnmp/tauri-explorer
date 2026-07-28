@@ -16,6 +16,7 @@
   import { getFileIconColor } from "$lib/domain/file-types";
   import { getScmStore } from "$lib/state/scm.svelte";
   import { gitCommitFileDiff } from "$lib/api/git-log";
+  import { logFrontendDiagnostic } from "$lib/api/frontend-log";
 
   // Window-global surface: the preview's SCM diff follows the ACTIVE pane's
   // store (#334) — reactive through windowTabsManager.activePaneId.
@@ -622,7 +623,12 @@
         try {
           const { convertFileSrc } = await import("@tauri-apps/api/core");
           previewPdfUrl = `${convertFileSrc(file.path)}?v=${bust}`;
-        } catch {
+        } catch (error) {
+          console.warn("[preview] PDF asset URL creation failed", { path: file.path, error });
+          logFrontendDiagnostic("preview PDF asset URL creation failed", {
+            path: file.path,
+            error: error instanceof Error ? error.message : String(error),
+          });
           previewError = "Cannot preview PDF";
         }
       } else {
@@ -646,10 +652,20 @@
             await decodeImage(fallback.data);
             if (file.path !== lastPreviewPath) return; // Stale after decode
             previewImageUrl = fallback.data;
-          } catch {
+          } catch (error) {
+            console.warn("[preview] backend image decode failed", { path: file.path, error });
+            logFrontendDiagnostic("preview backend image decode failed", {
+              path: file.path,
+              error: error instanceof Error ? error.message : String(error),
+            });
             previewError = "Cannot preview image";
           }
         } else {
+          console.warn("[preview] backend image read failed", { path: file.path, error: fallback.error });
+          logFrontendDiagnostic("preview backend image read failed", {
+            path: file.path,
+            error: fallback.error,
+          });
           previewError = "Cannot preview image";
         }
       };
@@ -664,7 +680,14 @@
           if (file.path !== lastPreviewPath) return; // Stale after decode
           previewImageUrl = url;
         } catch (assetErr) {
-          console.warn("asset:// image preview failed, falling back to backend read:", assetErr);
+          console.warn("[preview] asset image decode failed; using backend fallback", {
+            path: file.path,
+            error: assetErr,
+          });
+          logFrontendDiagnostic("preview asset image decode failed", {
+            path: file.path,
+            error: assetErr instanceof Error ? assetErr.message : String(assetErr),
+          });
           await loadViaBackend();
         }
       } else {

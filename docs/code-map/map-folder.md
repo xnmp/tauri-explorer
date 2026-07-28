@@ -146,6 +146,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 ## src/lib/api/ — invoke() bridge to Rust. Thin IPC wrappers; grep here for Tauri command names.
 - `common.ts` — mock-aware `invoke`, error extraction, Result types. Base of every api call.
 - `files.ts` — all file-op IPC (list, create, rename, copy, move, delete, estimate). Hot.
+- `frontend-log.ts` — forwards diagnosable webview failures to the native rotating log.
 - `mock-invoke.ts` — fake filesystem data for browser/E2E (no Tauri). Open when E2E data wrong.
 - `search.ts` — fuzzy file search + content search IPC + streaming. Hot.
 - `git.ts` — git status decoration + SCM (stage/commit/diff) IPC.

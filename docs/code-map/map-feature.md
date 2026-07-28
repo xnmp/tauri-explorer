@@ -14,6 +14,7 @@ backend for E2E/browser).
 ---
 
 ## View modes & virtualization
+
 - `components/FileList.svelte` — dispatches to Details/List/Tiles by view mode
 - `components/DetailsView.svelte` — virtual-scrolled table (columns, sort headers)
 - `components/ListView.svelte` — CSS-grid columns view
@@ -30,6 +31,7 @@ backend for E2E/browser).
 - FLOW: view mode lives on explorer store; `FileList` reads it, mounts one view; all three must change together for display features. Since Details/List/Tiles all route icons through `FileIcon.svelte`, icon-only features (like the git-repo badge) don't need per-view changes — the shared component is the single seam.
 
 ## Selection & marquee
+
 - `composables/use-marquee-selection.svelte.ts` — drag-rect candidate set + hit-testing
 - `composables/use-item-interactions.svelte.ts` — click/ctrl/shift selection, focus
 - `state/selection.ts` — pure selection-set helpers (range, toggle)
@@ -38,6 +40,7 @@ backend for E2E/browser).
 - FLOW: pointer events in item-interactions/marquee → mutate explorer selection set → views highlight via `selectedPaths`.
 
 ## Directory listing & refresh/watcher events
+
 - `state/directory-listing.ts` — `createDirectoryListing`: invoke + streamed-chunk accumulation, cancellation
 - `state/pane-refresh.ts` — `createPaneRefresh`: re-list without UI flash (fingerprint diff)
 - `state/refresh-manager.ts` — global debounce/dedup/rate-limit (`requestRefresh`)
@@ -49,6 +52,7 @@ backend for E2E/browser).
 - FLOW: `directory-changed` (fs_watcher.rs → use-file-watchers.ts) and cross-window `broadcastFileChange` both funnel through `requestRefresh` → pane `refresh()`. Refresh policy split across 3 layers — read header of `refresh-manager.ts` before touching.
 
 ## Navigation, address bar, breadcrumb, autocomplete
+
 - `components/NavigationBar.svelte` — back/fwd/up/refresh + breadcrumbs per pane
 - `components/BreadcrumbAutocomplete.svelte` — path-typing dropdown
 - `components/NavigationHistoryMenu.svelte` — back/fwd history dropdown
@@ -59,6 +63,7 @@ backend for E2E/browser).
 - FLOW: navigate mutates explorer.currentPath + history; breadcrumbs derived from currentPath; autocomplete lists dirs via `listDirectory`.
 
 ## Window tabs
+
 - `components/WindowTabBar.svelte` — tab strip UI, drag-reorder, tear-off
 - `state/window-tabs.svelte.ts` — `windowTabsManager`: tab list, active tab, per-tab explorer
 - `state/window-tabs-persistence.ts` — save/restore tab sessions
@@ -71,6 +76,7 @@ backend for E2E/browser).
 - FLOW: each tab owns an `ExplorerInstance`; cross-window tab drag serializes a `TabSnapshot` via `sendTabToWindow` → listener claims it. Persistence via localStorage.
 
 ## Workspaces & split panes
+
 - `components/PaneContainer.svelte`, `components/PaneLayoutView.svelte`, `components/ExplorerPane.svelte` — pane tree render + focus
 - `domain/pane-layout.ts` — binary split-tree ops (`splitLeaf`, `removeLeaf`, `leafSiblingContext`, `leafInDirection`)
 - `state/workspaces.svelte.ts` — saved workspace layouts (`workspacesStore`)
@@ -79,6 +85,7 @@ backend for E2E/browser).
 - FLOW: pane layout tree in explorer/window-tabs; split/close mutate the `PaneNode` tree; each leaf = one ExplorerInstance.
 
 ## Internal drag & drop (move/copy within app)
+
 - `composables/use-pointer-drag.svelte.ts` — pointer-based drag, `createDragGhost`, multi-select ghost
 - `composables/use-pointer-intent.svelte.ts` — distinguish click vs drag start
 - `state/drag.svelte.ts` — `dragState` shared store (localStorage cross-window fallback)
@@ -89,12 +96,14 @@ backend for E2E/browser).
 - FLOW: pointer-drag sets `dragState` → drop-target computes destination → `performFileTransfer` → `moveEntry`/`copyEntry` (files.ts → file_ops.rs). Branch: `fix/multi-file-drag-ghost-opacity`.
 
 ## External drag/drop (OS ↔ app)
+
 - `composables/use-external-drag.svelte.ts` — start OS drag-out of files
 - `composables/use-external-drop.svelte.ts`, `use-native-drop-target.svelte.ts`, `use-native-drop-handler.ts` — accept OS file drops
 - `api/activate.ts` — window focus/activate on drop
 - FLOW: Tauri `dragDropEnabled: false` (in-webview HTML5 DnD); native drop handlers translate OS payload → file transfer. See MEMORY.md DnD notes.
 
 ## Copy / paste / file-ops & progress
+
 - `state/clipboard.svelte.ts` — in-app cut/copy path set
 - `state/paste-operations.ts` — paste orchestration (conflict, dest)
 - `state/pane-mutations.ts` — `createPaneMutations`: optimistic add/remove/rename on entries
@@ -106,6 +115,7 @@ backend for E2E/browser).
 - FLOW: paste → estimate → conflict check → invoke copy with progress events → operationsManager updates ProgressDialog; on done `broadcastFileChange` + refresh.
 
 ## Rename flows
+
 - `composables/use-inline-rename.svelte.ts` — inline edit field lifecycle
 - `components/EntryName.svelte` — name label + inline rename input
 - `components/BulkRenameDialog.svelte` — multi-file pattern rename
@@ -116,6 +126,7 @@ backend for E2E/browser).
 - New-entry FLOW: context menu / `file.newFolder`|`file.newFile` command → `explorer.startInlineNewFolder`|`startInlineNewFile` (sets `newEntryKind`) → InlineNewFolder row → `createFolder`|`createFile` → pane-mutations optimistic add + `broadcastFileChange`.
 
 ## Delete / trash / undo
+
 - `components/DeleteDialog.svelte` — confirm permanent vs trash
 - `state/undo.svelte.ts` — `undoStore` op-history stack
 - `state/undo-helpers.ts`, `domain/undo-operations.ts` — invertible op descriptors
@@ -124,6 +135,7 @@ backend for E2E/browser).
 - FLOW: delete → trash → push inverse (restore) onto undoStore → Ctrl+Z pops and re-invokes.
 
 ## Thumbnails
+
 - `components/ThumbnailImage.svelte` — img element + load/error/placeholder states
 - `components/FolderThumbnail.svelte` — folder collage from children
 - `state/thumbnail-cache.ts` — in-memory cache (`getThumbnailCache`, `renameThumbnailCache`)
@@ -133,6 +145,7 @@ backend for E2E/browser).
 - FLOW: ThumbnailImage requests via api/thumbnails → Rust cache lookup/generate → data URL cached in thumbnail-cache.ts keyed by path. Rename preserves cache via `renameThumbnailCache`.
 
 ## Preview pane
+
 - `components/PreviewPane.svelte` — text/image/diff/archive preview + syntax highlight; hand-rolled resize (width when docked right, height when docked top/bottom, #460); reads `settingsStore.resolvedPreviewPanePosition` (never the raw mode) for its own dock class
 - `domain/preview-pane-position.ts` — pure dock-position validate/cycle (right/bottom/top, #460); `+page.svelte` column-stacks the pane for top/bottom. Also: `PreviewPanePositionMode` ("auto" | right/bottom/top), `resolveAutoDockPosition(width, height)` (aspect-ratio heuristic: wide → right, narrow-tall → top, else bottom) and `resolveEffectivePreviewPanePosition(mode, width, height)` (#467)
 - `state/window-size.svelte.ts` — reactive `window.innerWidth/innerHeight` (`windowSizeStore`); `+page.svelte` syncs it on mount + `resize`. Feeds `settingsStore.resolvedPreviewPanePosition` for auto-dock (#467)
@@ -144,6 +157,7 @@ backend for E2E/browser).
 - FLOW: selection change → PreviewPane fetches content by type → highlights → renders. 512KB read cap, 50KB highlight cap.
 
 ## Miller columns
+
 - `components/MillerColumns.svelte` — multi-column cascading browser
 - `state/commands/view-commands.ts` — `view.toggleMillerColumns`, millerLayers0-3
 - reuses `explorer.svelte.ts` per-column listing + `directory-listing.ts`
@@ -151,6 +165,7 @@ backend for E2E/browser).
 - ISLAND (#434): in island mode with no sidebar the ACTIVE pane's columns are hoisted to a left island in `+page.svelte` (`millerAsLeftIsland`); `ExplorerPane.svelte` suppresses the inline copy via the same `settingsStore.islandMode` derived so they render exactly once (a divergent per-platform check double-mounted them).
 
 ## Git status badges
+
 - `components/GitStatusBadge.svelte` — per-row M/A/? badge glyph
 - `state/git-status.svelte.ts` — `gitStatusStore`: path→status map, `refresh()`
 - `state/git-refresh.ts` — debounced git-status refresh
@@ -158,6 +173,7 @@ backend for E2E/browser).
 - FLOW: `git-status-changed` (git.rs emit) + `directory-changed` → gitStatusStore.refresh → badges re-derive; gated on `settings.showGitStatus`. For `\\wsl.localhost\…` dirs the badge path (`get_git_status`) delegates rev-parse+status to the distro's native git via `wsl.exe --exec` instead of shelling Git-for-Windows over 9P (#425); `gitStatusStore` dedups concurrent identical fetches (#426).
 
 ## Git SCM panel
+
 - `components/ScmSidebarView.svelte` — staged/unstaged/untracked tree, commit box
 - `components/ScmPanel.svelte`, `components/ScmDiffView.svelte` — panel shell + inline diff. ScmPanel renders docked/flat by default (like the miller bar); `island` prop opts into floating-island chrome (#434) — vibrancy alone no longer floats it.
 - `components/GitGraphView.svelte` — commit graph / log; its filter popover
@@ -169,6 +185,7 @@ backend for E2E/browser).
 - panel VISIBILITY is also per-pane (#434): `window-tabs.svelte.ts` `getPaneScmVisible`/`toggleScmInActivePane` on the pane node (falls back to the global `showScmPanel` default); the `view.toggleScmPanel` command (`view-commands.ts`) acts on the active pane only
 - `state/git-graph-refresh.ts` — F5 refresh bus plus importable `createReloader` concurrency state machine, local-change filter, and real-commit paging counter: GitGraphView registers its fetch+reload per pane; `gitGraph.refresh` command dispatches to the active graph pane (#432, #444)
 - `state/git-graph-nav.ts` — branch-line jump bus (#530): GitGraphView registers a per-pane selection stepper; `gitGraph.selectOlderOnLine` (Ctrl+Down) / `gitGraph.selectNewerOnLine` (Ctrl+Up) dispatch to the active graph pane. Row math is pure: `stepOnBranchLine` in `domain/git-graph.ts` follows `parents[0]` down and the nearest first-parent child up, so a jump steps over interleaved rows from other branch lines
+- `state/git-palette.ts` — active-pane bridge from GitGraphView's current local branches, commits, and stashes to fuzzy command-palette targets (#520); checkout/merge/cherry-pick/rebase/stash actions reuse the graph action seam and a commit target selects/reveals its row. Commit targets are capped at the 50 most-recent loaded rows because CommandPalette is unvirtualized; ephemeral targets do not enter frecency.
 - `state/git-graph-file-history.ts` — SCM file-history handoff (#518): opens the owning pane's graph and sends its repository-relative file path straight to a matching mounted graph or buffers it through a keyed repo remount; pending paths are dropped when panes close
 - `state/git-graph-cache.ts` — per-repo graph snapshot cache + `warmGraphSnapshot`/`fetchPage0Snapshot` (moved out of GitGraphView so `git-warm.ts` imports state, not a component); evicts a repo's snapshots on external (watcher) git changes so a remount never paints stale history (#433, arch Finding 7)
 - `domain/commit-panel.ts` — pure state machine + derivations for the git-graph uncommitted-node inline commit panel (#466): `buildStageFiles`/`groupStageFiles` (stage-status grouping, partial-stage handled), `canCommit`/`commitButtonLabel`, and the ephemeral message-editor transitions (idle→committing→idle, message preserved on failure). `state/commit-panel.svelte.ts` wraps these in a per-pane rune store (`getCommitPanelStore`) whose `begin()` guard survives close+reopen (`resetIfIdle()` no-ops while committing) so a second concurrent commit can't start. GitGraphView calls the store; stage/unstage/commit reuse `gitStage`/`gitUnstage`/`gitCommit` and refresh via `reload()` + `notifyLocalGitChange` (no private refresh stack — stage/unstage also `reload()` so the partial-stage double-count in `workingChanges` can't leave the header stale). Backend `git_commit` rejects a nothing-staged index (no spurious empty commit)
@@ -180,6 +197,7 @@ backend for E2E/browser).
 - FLOW: scmStore invokes git stage/unstage/commit/diff/log → Rust git2 ops → `git-status-changed` emit refreshes panel + badges. GitGraphView has ONE generation-counted `reload()` (dirty-flag re-run, never dropped); actions call `reload()` + `notifyLocalGitChange`, and its watcher subscription filters `source:"local"` so an action's echo can't double-reload (#432). F5 fetches then reloads; with the `f5SyncsLocalBranches` setting it also fast-forwards behind-upstream locals (`git_sync_local_branches`), reporting diverged ones in a toast (#432). WSL UNC repos: `git_repo_root`/`git_status`/`git_diff` delegate to native git (`wsl.exe --exec`) without a libgit2 open/discovery over 9P first, falling back to libgit2 only on delegation failure (#425); the UNC PollWatcher uses a 15s interval to limit 9P stat load (#426). PERF (#431): `git_branch_authors` runs ONE revwalk over all tips (was O(branches×2000)) cached per repo by tip-OID signature; the graph caches per-commit file lists in a 50-entry LRU (`gitCommitFiles`, immutable per OID) and resumes deeper pages via `git_log`'s `cursor` (OID-based, gap-free, immune to woven-stash miscount) instead of skip-walking from tips. VISUAL (#433): `git_log` returns `head_branch` (HEAD's symbolic target) so only the checked-out chip highlights; a spinner "Loading more…" row shows while scroll-triggered `loadMore` is in flight; F5's `refreshWithFetch` blurs a mouse-focused commit row / tab so the keypress doesn't paint a `:focus-visible` white ring (keyboard Tab focus is untouched).
 
 ## Quick Open (Ctrl+P fuzzy file finder)
+
 - `components/QuickOpen.svelte` — modal, streamed results, keyboard nav
 - `components/PickerQuickOpen.svelte` — variant used inside file picker
 - `domain/fuzzy-score.ts` — match scoring/ranking
@@ -188,6 +206,7 @@ backend for E2E/browser).
 - FLOW: query → startStreamingSearch → backend emits result chunks (race-safe: listener before invoke) → sorted by fuzzy-score → Enter navigates/opens.
 
 ## Content search (grep, Ctrl+Shift+F)
+
 - `components/ContentSearchDialog.svelte` — query/results UI
 - `composables/use-content-search.svelte.ts` — search lifecycle, streamed hits
 - `domain/content-search-flatten.ts` — file→line-hit flattening for list
@@ -196,14 +215,16 @@ backend for E2E/browser).
 - FLOW: query → startContentSearch → backend emits per-file matches → flattened → click opens `openFileAtLine`.
 
 ## Command palette
+
 - `components/CommandPalette.svelte` — searchable command list
 - `state/commands.svelte.ts` — registry (`registerCommand`, `executeCommand`, frecency)
 - `state/command-definitions.ts` — command type/category defs
 - `state/commands/` — `file-commands.ts`, `view-commands.ts`, `navigation-commands.ts`, `pane-commands.ts`, `general-commands.ts`, `system-actions.ts`, `shared.ts`
 - `state/frecency.svelte.ts` — recency+frequency ranking
-- FLOW: commands registered at startup from `commands/*` modules → palette filters via fuzzy-score + frecency → `executeCommand(id)` runs action.
+- FLOW: commands registered at startup from `commands/*` modules plus active Git Graph targets from `git-palette.ts` → palette filters via fuzzy-score + frecency → `executeCommand(id)` runs action.
 
 ## Keyboard shortcuts
+
 - `+page.svelte` — global keydown dispatch
 - `state/keybindings.svelte.ts` — `keybindingsStore`: binding map, resolve
 - `domain/keybinding-parser.ts` — parse "Ctrl+Shift+P" ↔ event
@@ -212,6 +233,7 @@ backend for E2E/browser).
 - FLOW: keydown → keybindingsStore resolves binding → runs command id via `executeCommand`. Bindings persisted (localStorage).
 
 ## Settings
+
 - `components/SettingsDialog.svelte` — all settings sections (largest UI file)
 - `state/settings.svelte.ts` — `settingsStore` (persisted flags/values)
 - `state/persisted.ts` — localStorage load/save helpers
@@ -221,6 +243,7 @@ backend for E2E/browser).
 - FLOW: settingsStore is source of truth; components read `settingsStore.<flag>`; changes persist to localStorage + optionally config file. Many features gated here (showGitStatus, thumbnails, etc.). The WHOLE object is persisted and load merges `{ ...DEFAULT_SETTINGS, ...saved }`, so a persisted key always beats its default — `settingsStore.init()` runs `migrateSettings` on settings.json (the store of record) to let a flipped default reach existing installs (#506).
 
 ## Sidebar (bookmarks / recent / drives)
+
 - `components/Sidebar.svelte`, `components/FilesSidebarView.svelte` — sidebar shell + files tree
 - `state/bookmarks.svelte.ts` — `bookmarksStore` (pinned folders)
 - `state/recent-files.svelte.ts` — `recentFilesStore`
@@ -232,17 +255,20 @@ backend for E2E/browser).
 - FLOW: sidebar sections read their stores; drives polled from `listDrives` (drives.rs); bookmarks/recent persisted in localStorage; drop-onto-sidebar adds bookmark.
 
 ## Context menu
+
 - `components/ContextMenu.svelte` — right-click menu (largest component; all actions)
 - `state/context-menu.svelte.ts` — open/close + position
 - `state/context-menu-items.svelte.ts` — menu item list per context
 - FLOW: right-click → context-menu store opens with items for the target → item runs command/op.
 
 ## Status bar
+
 - `components/StatusBar.svelte` — selection count, item count, size totals
 - reads `explorer.svelte.ts` (entries/selection) + `operations.svelte.ts` (formatBytes)
 - FLOW: derived from active pane's entries + selectedPaths; live op status from operationsManager.
 
 ## Toasts & dialogs
+
 - `components/ToastOverlay.svelte`, `state/toast.svelte.ts` — `toastStore` transient notices
 - `state/dialogs.svelte.ts` — `dialogStore` generic dialog orchestration
 - `components/Modal.svelte`, `components/modal.css` — modal shell
@@ -253,6 +279,7 @@ backend for E2E/browser).
 - REPORT FLOW: `help.reportBug`/`help.requestFeature` → `dialogStore` → `UserReportDialog` (picker + clipboard-image previews) → `submit_user_report` (`src-tauri/src/user_report.rs`, validates attachments and enriches with environment/log tail) → `website/api/report.js` (validation, durable limits, public Vercel Blob upload, GitHub issue Markdown); failures with attachments preserve the dialog, while text-only failures use `userReportFallbackUrl`.
 
 ## Theming
+
 - `state/theme.svelte.ts` — `themeStore` (active theme, apply)
 - `themes/*.css` — theme variable sets (dark, light, ocean-blue, tahoe, …); `themes/index.css` aggregates
 - `components/ThemePicker.svelte` — theme selection UI
@@ -261,6 +288,7 @@ backend for E2E/browser).
 - FLOW: themeStore sets CSS vars / `data-theme`; `set_window_theme`/`set_window_backdrop` for native chrome.
 
 ## Plugins
+
 - `plugins/registry.svelte.ts` — `pluginRegistry` (register/enable)
 - `plugins/api.ts` — `Plugin`/`PluginContext` contract (storage, jobs, toast, settings)
 - `plugins/dialog-registry.svelte.ts`, `settings-registry.svelte.ts`, `fs-providers.ts` — extension points
@@ -270,12 +298,14 @@ backend for E2E/browser).
 - FLOW: plugins register commands/settings/dialogs via PluginContext at startup; AI actions invoke Gemini-backed Rust commands (upscale invokes fal.ai's SeedVR2 queue API via `fal.rs`).
 
 ## Terminal panel
+
 - `components/TerminalPanel.svelte` — embedded terminal UI
 - `state/terminal.svelte.ts`; `domain/terminal-*.ts` (command, cwd-sync, keys, shell dialect/WSL path translation, theme)
 - `api/terminal.ts`; `src-tauri/src/terminal.rs` — PTY spawn/write/resize/kill
 - FLOW: terminal_spawn/write/resize (terminal.rs) ↔ TerminalPanel; cwd synced to active pane via terminal-cwd-sync.
 
 ## Archives, external apps, wallpaper, system
+
 - `api/archive.ts`, `src-tauri/src/archive.rs` — zip compress/extract, list contents
 - `src-tauri/src/files/external_apps.rs`, `api/files.ts` (openFileWith, openImageWithSiblings) — open-with
 - `src-tauri/src/wallpaper.rs` (setAsWallpaper), `system.rs` (get_app_info, dirs), `portal.rs` (Linux portals)

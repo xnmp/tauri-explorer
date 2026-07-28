@@ -55,6 +55,8 @@
     gitRevert,
     gitMerge,
     gitRebase,
+    gitStashApply,
+    gitStashPop,
     gitReset,
     gitRefs,
     gitFetch,
@@ -90,6 +92,7 @@
     shouldReloadGraphForChange,
   } from "$lib/state/git-graph-refresh";
   import { registerGraphSelectionStepper } from "$lib/state/git-graph-nav";
+  import { MAX_GIT_PALETTE_COMMIT_TARGETS, registerGitPaletteTargets } from "$lib/state/git-palette";
   import { registerGraphFileHistoryHandler } from "$lib/state/git-graph-file-history";
   import { clientToFixed } from "$lib/domain/zoom";
   import { parseUnifiedDiff, type ParsedDiff } from "$lib/domain/diff";
@@ -716,6 +719,15 @@
     scrollRowIntoView(displayCommits.findIndex((c) => c.oid === target.oid));
   }
 
+  /** Select and reveal a fuzzy commit target supplied to the command palette. */
+  async function jumpToCommit(oid: string): Promise<void> {
+    const index = displayCommits.findIndex((commit) => commit.oid === oid);
+    if (index < 0) return;
+    await selectCommit(displayCommits[index]);
+    await tick();
+    if (selected?.oid === oid) scrollRowIntoView(index);
+  }
+
   const startRow = $derived(Math.max(0, rowAtY(scrollTop) - OVERSCAN));
   const endRow = $derived(
     Math.min(displayCommits.length - 1, rowAtY(scrollTop + viewportHeight) + OVERSCAN),
@@ -998,6 +1010,36 @@
   $effect(() => {
     const id = paneId ?? windowTabsManager.activePaneId ?? "default";
     return registerGraphSelectionStepper(id, (dir) => void stepSelectionOnBranchLine(dir));
+  });
+
+  // The palette is window-global but its Git targets belong to this pane.
+  // Keep registration in the state-layer bridge so only the active graph pane
+  // can expose or execute its branch/commit actions (#520).
+  $effect(() => {
+    const id = paneId ?? windowTabsManager.activePaneId ?? "default";
+    const branches = Object.values(refs)
+      .flat()
+      .filter((ref) => ref.kind === "LocalBranch")
+      .map((ref) => ref.name);
+    return registerGitPaletteTargets(id, {
+      branches,
+      commits: commits
+        .slice(0, MAX_GIT_PALETTE_COMMIT_TARGETS)
+        .filter((commit) => !commit.stash)
+        .map((commit) => ({ oid: commit.oid, shortOid: commit.short_oid, summary: commit.summary })),
+      stashes: commits.flatMap((commit) => (
+        commit.stash ? [{ selector: commit.stash, summary: commit.summary }] : []
+      )),
+      actions: {
+        checkout: (target) => runAction("Checkout", () => gitCheckout(repoPath, target)),
+        cherryPick: (oid) => runAction("Cherry-pick", () => gitCherryPick(repoPath, oid)),
+        rebase: (oid) => runAction("Rebase", () => gitRebase(repoPath, oid)),
+        merge: (branch) => runAction("Merge", () => gitMerge(repoPath, branch)),
+        stashApply: (stash) => runAction("Apply stash", () => gitStashApply(repoPath, stash)),
+        stashPop: (stash) => runAction("Pop stash", () => gitStashPop(repoPath, stash)),
+        jumpToCommit,
+      },
+    });
   });
 
   // ----- Branch filter popover (#342) -----

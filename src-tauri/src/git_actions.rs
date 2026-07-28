@@ -160,6 +160,20 @@ pub async fn git_rebase(repo_path: String, oid: String) -> Result<(), AppError> 
     run_git_async(repo_path, vec!["rebase".into(), oid]).await
 }
 
+/// Apply a named stash without dropping it from the stash list.
+#[tauri::command]
+pub async fn git_stash_apply(repo_path: String, stash: String) -> Result<(), AppError> {
+    validate_arg("stash", &stash)?;
+    run_git_async(repo_path, vec!["stash".into(), "apply".into(), stash]).await
+}
+
+/// Apply a named stash and remove it only after a successful apply.
+#[tauri::command]
+pub async fn git_stash_pop(repo_path: String, stash: String) -> Result<(), AppError> {
+    validate_arg("stash", &stash)?;
+    run_git_async(repo_path, vec!["stash".into(), "pop".into(), stash]).await
+}
+
 /// Reset the current branch to `oid`. `mode` is `soft` | `mixed` | `hard`.
 #[tauri::command]
 pub async fn git_reset(repo_path: String, oid: String, mode: String) -> Result<(), AppError> {
@@ -600,6 +614,33 @@ mod tests {
         // Back to the branch tip.
         run_git(&path, &["checkout", "main"]).unwrap();
         assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), cs[1]);
+    }
+
+    #[test]
+    fn stash_apply_keeps_entry_pop_restores_and_drops_it() {
+        let (dir, _cs) = linear_repo();
+        let rp = repo_path(&dir);
+        write(dir.path(), "a.txt", "stashed work\n");
+        git(dir.path(), &["stash", "push", "-m", "palette test"]);
+        assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "2\n");
+        assert!(git_out(dir.path(), &["stash", "list"]).contains("palette test"));
+
+        tokio_test_block(git_stash_apply(rp.clone(), "stash@{0}".into())).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+            "stashed work\n"
+        );
+        assert!(git_out(dir.path(), &["stash", "list"]).contains("palette test"));
+
+        git(dir.path(), &["reset", "--hard"]);
+        tokio_test_block(git_stash_pop(rp.clone(), "stash@{0}".into())).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+            "stashed work\n"
+        );
+        assert!(git_out(dir.path(), &["stash", "list"]).is_empty());
+
+        assert!(tokio_test_block(git_stash_apply(rp, "stash@{99}".into())).is_err());
     }
 
     #[test]

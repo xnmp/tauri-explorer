@@ -20,6 +20,8 @@ export interface Command {
   when?: () => boolean;
   /** Hide from command palette (shortcut still works) */
   hidden?: boolean;
+  /** Dynamic/ephemeral targets must not evict durable commands from frecency. */
+  trackFrecency?: boolean;
   /** For toggle commands: returns the current on/off state so the palette can
    *  show an ON/OFF badge. Omit for non-toggle commands. */
   toggleState?: () => boolean;
@@ -70,7 +72,9 @@ interface CommandFrecencyEntry {
   accesses: number[];
 }
 
-let frecencyData = $state<CommandFrecencyEntry[]>(loadPersisted(FRECENCY_KEY, []));
+let frecencyData = $state<CommandFrecencyEntry[]>(
+  loadPersisted(FRECENCY_KEY, []),
+);
 
 function trackCommandUsage(id: string): void {
   const now = Date.now();
@@ -81,7 +85,10 @@ function trackCommandUsage(id: string): void {
     frecencyData = [...frecencyData, { id, accesses: [now] }];
   }
   if (frecencyData.length > MAX_COMMAND_ENTRIES) {
-    const scored = frecencyData.map((e) => ({ entry: e, score: computeFrecencyScore(e.accesses, now) }));
+    const scored = frecencyData.map((e) => ({
+      entry: e,
+      score: computeFrecencyScore(e.accesses, now),
+    }));
     scored.sort((a, b) => b.score - a.score);
     frecencyData = scored.slice(0, MAX_COMMAND_ENTRIES).map((s) => s.entry);
   }
@@ -96,7 +103,10 @@ export function getCommandsByFrecency(): Command[] {
     .filter((e) => e.score > 0)
     .sort((a, b) => b.score - a.score)
     .map((e) => commands.get(e.id))
-    .filter((cmd): cmd is Command => cmd !== undefined && !cmd.hidden && (!cmd.when || cmd.when()));
+    .filter(
+      (cmd): cmd is Command =>
+        cmd !== undefined && !cmd.hidden && (!cmd.when || cmd.when()),
+    );
 }
 
 /** Get the frecency score for a single command. */
@@ -142,7 +152,9 @@ export function getAllCommands(): Command[] {
 
 /** Get commands filtered by enabled state (excludes hidden commands) */
 export function getAvailableCommands(): Command[] {
-  return getAllCommands().filter((cmd) => !cmd.hidden && (!cmd.when || cmd.when()));
+  return getAllCommands().filter(
+    (cmd) => !cmd.hidden && (!cmd.when || cmd.when()),
+  );
 }
 
 /** Execute a command by ID */
@@ -160,7 +172,7 @@ export async function executeCommand(id: string): Promise<boolean> {
 
   try {
     await command.handler();
-    trackCommandUsage(id);
+    if (command.trackFrecency !== false) trackCommandUsage(id);
     return true;
   } catch (err) {
     console.error(`Command failed: ${id}`, err);

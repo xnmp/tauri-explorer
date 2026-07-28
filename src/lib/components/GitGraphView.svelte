@@ -77,7 +77,7 @@
     fetchGitSummary,
     releaseGitSummaryConsumer,
   } from "$lib/state/git-summary-cache";
-  import { assignLayout, branchPath, detachedHeadIndicator, groupRefChips, indexPrsByBranch, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, sliceBranchLine, stepOnBranchLine, scrollTopToReveal, remoteOnlyBranchNames, branchWalkQuery, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip, type BranchListEntry } from "$lib/domain/git-graph";
+  import { assignLayout, branchPath, detachedHeadIndicator, groupRefChips, indexPrsByBranch, prBadgePresentation, ciStatusLabel, reviewDecisionLabel, prDescription, prDetailComments, sliceBranchLine, stepOnBranchLine, scrollTopToReveal, traceGraphLineage, remoteOnlyBranchNames, branchWalkQuery, GRAPH_PALETTE, type GraphLayout, type BranchLine, type BranchLineDirection, type RefChips, type RemoteRefChip, type BranchListEntry } from "$lib/domain/git-graph";
   import { openExternalUrl } from "$lib/api/crash";
   import {
     countGraphWalkCommits,
@@ -150,6 +150,7 @@
   let loadingMore = $state(false);
   let error = $state<string | null>(null);
   let selected = $state<CommitInfo | null>(null);
+  let hoveredTraceOid = $state<string | null>(null);
   /** File rows in the expanded details. `staged`/`section` are set only for
    *  the synthetic uncommitted row, where they pick the right working-tree
    *  diff and drive the stage/unstage affordances (#466). */
@@ -554,6 +555,22 @@
     savePersisted(MUTE_MERGES_KEY, muteMerges);
   }
 
+  // Branch tracing follows the hovered row, falling back to the persistent
+  // selection after the pointer leaves. It is on by default; a linear history
+  // naturally stays fully lit because every row belongs to the same lineage.
+  const BRANCH_TRACING_KEY = "git-graph-branch-tracing";
+  let branchTracing = $state(loadPersisted<unknown>(BRANCH_TRACING_KEY, true) !== false);
+  function toggleBranchTracing(): void {
+    branchTracing = !branchTracing;
+    savePersisted(BRANCH_TRACING_KEY, branchTracing);
+  }
+  const traceOid = $derived(branchTracing ? (hoveredTraceOid ?? selected?.oid ?? null) : null);
+  const graphTrace = $derived.by(() => {
+    if (traceOid === null) return null;
+    const row = displayCommits.findIndex((commit) => commit.oid === traceOid);
+    return row < 0 ? null : traceGraphLineage(displayCommits, layout, row);
+  });
+
   function openColumnMenu(event: MouseEvent): void {
     event.preventDefault();
     columnMenu = { x: clientToFixed(event.clientX), y: clientToFixed(event.clientY) };
@@ -670,6 +687,13 @@
         line === uncommittedBranch ? line : sliceBranchLine(line, startRow - 2, endRow + 2),
       )
       .filter((line): line is BranchLine => line !== null),
+  );
+  const visibleTraceSegments = $derived(
+    graphTrace === null
+      ? []
+      : graphTrace.segments
+          .map((line) => sliceBranchLine(line, startRow - 2, endRow + 2))
+          .filter((line): line is BranchLine => line !== null),
   );
   const visibleVertices = $derived(
     layout.vertices
@@ -1474,7 +1498,7 @@
 
 <svelte:window onkeydown={onWindowKeydown} />
 
-<div class="git-graph-view" data-testid="git-graph-view">
+<div class="git-graph-view" data-testid="git-graph-view" data-lane-count={layout.laneCount}>
   {#if error}
     <div class="graph-status error">{error}</div>
   {:else}
@@ -1708,6 +1732,16 @@
           <span class="col-check">{muteMerges ? "✓" : ""}</span>
           Mute merge commits
         </button>
+        <button
+          class="menu-item"
+          role="menuitemcheckbox"
+          aria-checked={branchTracing}
+          onclick={toggleBranchTracing}
+          data-testid="toggle-branch-tracing"
+        >
+          <span class="col-check">{branchTracing ? "✓" : ""}</span>
+          Trace branches
+        </button>
       </div>
     {/if}
     {#if commits.length === 0 && loading}
@@ -1729,8 +1763,9 @@
           {#each visibleBranches as line, li (li)}
             {#if line === uncommittedBranch}
               {@const parts = splitUncommitted(line)}
-              <path class="branch-halo" d={branchPath(parts.dirty, LANE_WIDTH, ROW_HEIGHT, rowExpand)} />
+              <path class="branch-halo" data-trace={graphTrace ? "dim" : undefined} d={branchPath(parts.dirty, LANE_WIDTH, ROW_HEIGHT, rowExpand)} />
               <path
+                data-trace={graphTrace ? "dim" : undefined}
                 d={branchPath(parts.dirty, LANE_WIDTH, ROW_HEIGHT, rowExpand)}
                 stroke="#808080"
                 stroke-dasharray="4 3"
@@ -1738,8 +1773,9 @@
                 fill="none"
               />
               {#if parts.rest.points.length > 1}
-                <path class="branch-halo" d={branchPath(parts.rest, LANE_WIDTH, ROW_HEIGHT, rowExpand)} />
+                <path class="branch-halo" data-trace={graphTrace ? "dim" : undefined} d={branchPath(parts.rest, LANE_WIDTH, ROW_HEIGHT, rowExpand)} />
                 <path
+                  data-trace={graphTrace ? "dim" : undefined}
                   d={branchPath(parts.rest, LANE_WIDTH, ROW_HEIGHT, rowExpand)}
                   stroke={colorOf(line.colorIndex)}
                   stroke-width="2"
@@ -1747,8 +1783,9 @@
                 />
               {/if}
             {:else}
-              <path class="branch-halo" d={branchPath(line, LANE_WIDTH, ROW_HEIGHT, rowExpand)} />
+              <path class="branch-halo" data-trace={graphTrace ? "dim" : undefined} d={branchPath(line, LANE_WIDTH, ROW_HEIGHT, rowExpand)} />
               <path
+                data-trace={graphTrace ? "dim" : undefined}
                 d={branchPath(line, LANE_WIDTH, ROW_HEIGHT, rowExpand)}
                 stroke={colorOf(line.colorIndex)}
                 stroke-width="2"
@@ -1756,18 +1793,33 @@
               />
             {/if}
           {/each}
+          {#each visibleTraceSegments as line, li (`trace-${li}`)}
+            <path
+              class="branch-halo trace-lit"
+              data-trace="lit"
+              d={branchPath(line, LANE_WIDTH, ROW_HEIGHT, rowExpand)}
+            />
+            <path
+              class="trace-lit"
+              data-trace="lit"
+              d={branchPath(line, LANE_WIDTH, ROW_HEIGHT, rowExpand)}
+              stroke={colorOf(line.colorIndex)}
+              stroke-width="2"
+              fill="none"
+            />
+          {/each}
           {#each visibleVertices as { vertex, vi } (vi)}
             {@const cx = vertex.lane * LANE_WIDTH + LANE_WIDTH / 2}
             {@const cy = vi * ROW_HEIGHT + ROW_HEIGHT / 2 + (rowExpand && vi > rowExpand.afterRow ? rowExpand.extra : 0)}
             {#if displayCommits[vi]?.oid === UNCOMMITTED}
               <!-- Open circle at the uncommitted-changes row (reference default). -->
-              <circle {cx} {cy} r="4" fill="var(--background-card)" stroke="#808080" stroke-width="2" />
+              <circle data-trace={graphTrace ? (graphTrace.rows.has(vi) ? "lit" : "dim") : undefined} {cx} {cy} r="4" fill="var(--background-card)" stroke="#808080" stroke-width="2" />
             {:else if displayCommits[vi]?.stash}
               <!-- Stash: ring marker. -->
-              <circle {cx} {cy} r="4.5" fill="none" stroke={colorOf(vertex.colorIndex)} stroke-width="2" />
-              <circle {cx} {cy} r="2" fill={colorOf(vertex.colorIndex)} />
+              <circle data-trace={graphTrace ? (graphTrace.rows.has(vi) ? "lit" : "dim") : undefined} {cx} {cy} r="4.5" fill="none" stroke={colorOf(vertex.colorIndex)} stroke-width="2" />
+              <circle data-trace={graphTrace ? (graphTrace.rows.has(vi) ? "lit" : "dim") : undefined} {cx} {cy} r="2" fill={colorOf(vertex.colorIndex)} />
             {:else}
-              <circle {cx} {cy} r="4" fill={colorOf(vertex.colorIndex)} />
+              <circle data-trace={graphTrace ? (graphTrace.rows.has(vi) ? "lit" : "dim") : undefined} {cx} {cy} r="4" fill={colorOf(vertex.colorIndex)} />
             {/if}
           {/each}
         </svg>
@@ -1808,9 +1860,12 @@
             style:padding-left="{effectiveGraphWidth + 20}px"
             style:top="{rowY(index)}px"
             data-oid={commit.short_oid}
+            data-trace={graphTrace ? (graphTrace.rows.has(index) ? "lit" : "dim") : undefined}
             role="button"
             tabindex="0"
             onclick={() => void selectCommit(commit)}
+            onpointerenter={() => { hoveredTraceOid = commit.oid; }}
+            onpointerleave={() => { if (hoveredTraceOid === commit.oid) hoveredTraceOid = null; }}
             onkeydown={(e) => { if (e.key === "Enter") void selectCommit(commit); }}
             oncontextmenu={(e) => { if (!synthetic) openMenu(e, commit); else e.preventDefault(); }}
           >
@@ -2400,6 +2455,11 @@
 
   .commit-row {
     cursor: pointer;
+    transition: opacity 100ms ease;
+  }
+
+  .commit-row[data-trace="dim"] {
+    opacity: 0.2;
   }
 
   .commit-row.selected {
@@ -3054,6 +3114,18 @@
     top: 0;
     left: 0;
     pointer-events: none;
+  }
+
+  .graph-underlay [data-trace] {
+    transition: opacity 100ms ease;
+  }
+
+  .graph-underlay [data-trace="dim"] {
+    opacity: 0.16;
+  }
+
+  .graph-underlay .trace-lit {
+    opacity: 1;
   }
 
   /* Subtle halo under each line so crossings stay legible (reference uses a

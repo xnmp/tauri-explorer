@@ -494,11 +494,21 @@ let mockGit: MockGitState = seedGitState();
 // outcome as the real `git apply` command rather than pretending a hunk is a
 // whole-file operation.
 const mockHunkState = new Map<string, { staged: Set<number>; discarded: Set<number> }>();
+const MOCK_HUNK_STARTS = [1, 10] as const;
 
 function hunkState(path: string): { staged: Set<number>; discarded: Set<number> } {
   let state = mockHunkState.get(path);
   if (!state) {
-    state = { staged: new Set(), discarded: new Set() };
+    // Seeded/whole-file staged entries already live entirely in the index.
+    // Their diff must therefore expose every mock hunk on the staged side,
+    // even before any hunk-level action has initialized this state.
+    const fullyStaged =
+      mockGit.staged.some((entry) => entry.path === path) &&
+      !mockGit.changes.some((entry) => entry.path === path);
+    state = {
+      staged: new Set(fullyStaged ? MOCK_HUNK_STARTS : []),
+      discarded: new Set(),
+    };
     mockHunkState.set(path, state);
   }
   return state;
@@ -519,12 +529,18 @@ function mockStagePath(path: string): void {
   const fromUntracked = removeFrom(mockGit.untracked, path);
   if (fromUntracked) {
     upsert(mockGit.staged, { path, old_path: null, status: "Added" });
+    const state = hunkState(path);
+    state.staged = new Set(MOCK_HUNK_STARTS);
+    state.discarded.clear();
     return;
   }
   const fromMerge = removeFrom(mockGit.merge, path);
   const fromChanges = removeFrom(mockGit.changes, path);
   if (fromChanges || fromMerge) {
     upsert(mockGit.staged, { path, old_path: null, status: "Modified" });
+    const state = hunkState(path);
+    state.staged = new Set(MOCK_HUNK_STARTS);
+    state.discarded.clear();
   }
 }
 
@@ -532,6 +548,9 @@ function mockStagePath(path: string): void {
 function mockUnstagePath(path: string): void {
   const staged = removeFrom(mockGit.staged, path);
   if (!staged) return;
+  const state = hunkState(path);
+  state.staged.clear();
+  state.discarded.clear();
   if (staged.status === "Added") {
     upsert(mockGit.untracked, { path, old_path: null, status: "Untracked" });
   } else {
@@ -560,6 +579,8 @@ function mockDiscardPath(path: string, force: boolean): void {
   removeFrom(mockGit.changes, path);
   removeFrom(mockGit.untracked, path);
   removeFrom(mockGit.merge, path);
+  const state = hunkState(path);
+  state.discarded = new Set(MOCK_HUNK_STARTS);
 }
 
 function mockGitSummary(): GitStatusSummary {

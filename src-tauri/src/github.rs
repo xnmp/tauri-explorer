@@ -529,6 +529,29 @@ fn run_gh(repo_root: &str, args: &[String]) -> Result<String, AppError> {
     }))
 }
 
+/// `gh pr checks` uses exit code 8 to say that some checks are still pending,
+/// while still writing the complete JSON check list to stdout. A failed PR can
+/// legitimately have both a failed job and a pending job, so that output must
+/// remain usable for the failed-check viewer.
+fn gh_pr_checks_output(repo_root: &str, args: &[String]) -> Result<String, AppError> {
+    let mut command = Command::new("gh");
+    command.no_console().args(args).current_dir(repo_root);
+    let output = command.output().map_err(AppError::from)?;
+    if accepts_gh_pr_checks_exit(output.status.success(), output.status.code()) {
+        return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(AppError::Other(if stderr.is_empty() {
+        "GitHub CLI could not list CI checks".to_string()
+    } else {
+        stderr
+    }))
+}
+
+fn accepts_gh_pr_checks_exit(success: bool, code: Option<i32>) -> bool {
+    success || code == Some(8)
+}
+
 fn github_repo_slug(repo_root: &str) -> Result<String, AppError> {
     let repo = open_repo(Path::new(repo_root))?;
     let url = remote_url(&repo)
@@ -558,7 +581,7 @@ pub async fn git_failed_ci_checks(
             "--json".to_string(),
             "name,state,link".to_string(),
         ];
-        failed_actions_checks(&run_gh(&repo_root, &args)?)
+        failed_actions_checks(&gh_pr_checks_output(&repo_root, &args)?)
     })
     .await
     .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
@@ -683,6 +706,7 @@ mod tests {
             r#"[
                 {"name":"Unit tests","state":"FAILURE","link":"https://github.com/o/r/actions/runs/12/job/34"},
                 {"name":"Lint","state":"SUCCESS","link":"https://github.com/o/r/actions/runs/12/job/35"},
+                {"name":"Deploy preview","state":"PENDING","link":"https://github.com/o/r/actions/runs/13/job/36"},
                 {"name":"External CI","state":"ERROR","link":"https://ci.example.test/build/7"}
             ]"#,
         )
@@ -691,6 +715,13 @@ mod tests {
         assert_eq!(checks[0].name, "Unit tests");
         assert_eq!(checks[0].run_id, 12);
         assert_eq!(checks[0].job_id, 34);
+    }
+
+    #[test]
+    fn accepts_gh_pending_checks_exit_code_with_json_output() {
+        assert!(accepts_gh_pr_checks_exit(false, Some(8)));
+        assert!(accepts_gh_pr_checks_exit(true, Some(0)));
+        assert!(!accepts_gh_pr_checks_exit(false, Some(1)));
     }
 
     // ----- GraphQL response → PrInfo mapping (#459) -----

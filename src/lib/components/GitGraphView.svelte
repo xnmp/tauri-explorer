@@ -276,12 +276,14 @@
   let failedCiChecks = $state<{ prNumber: number; checks: FailedCiCheck[]; error: string | null } | null>(null);
   let failedCiChecksLoading = $state(false);
   let ciCheckLog = $state<{ check: FailedCiCheck; result: FailedCiCheckLog | null; error: string | null } | null>(null);
+  let ciCheckLogRequest = 0;
 
   function closePrDetail(): void {
     prDetail = null;
     prDetailHeight = 0;
     failedCiChecks = null;
     failedCiChecksLoading = false;
+    ciCheckLogRequest += 1;
     ciCheckLog = null;
   }
 
@@ -301,12 +303,13 @@
   }
 
   async function openFailedCiCheckLog(check: FailedCiCheck): Promise<void> {
+    const request = ++ciCheckLogRequest;
     ciCheckLog = { check, result: null, error: null };
     try {
       const result = await gitFailedCiCheckLog(repoPath, check);
-      if (ciCheckLog?.check.runId === check.runId && ciCheckLog.check.jobId === check.jobId) ciCheckLog = { check, result, error: null };
+      if (ciCheckLogRequest === request) ciCheckLog = { check, result, error: null };
     } catch (error) {
-      if (ciCheckLog?.check.runId === check.runId && ciCheckLog.check.jobId === check.jobId) {
+      if (ciCheckLogRequest === request) {
         ciCheckLog = { check, result: null, error: error instanceof Error ? error.message : "Could not load CI check log" };
       }
     }
@@ -2209,7 +2212,7 @@
                   <div class="pr-detail-ci-log" data-testid="git-graph-ci-check-log">
                     <div class="pr-detail-ci-log-head">
                       <strong>{ciCheckLog.check.name}</strong>
-                      <button type="button" class="detail-close" onclick={() => { ciCheckLog = null; }} aria-label="Close CI check log">✕</button>
+                      <button type="button" class="detail-close" onclick={() => { ciCheckLogRequest += 1; ciCheckLog = null; }} aria-label="Close CI check log">✕</button>
                     </div>
                     {#if ciCheckLog.error}
                       <div class="pr-detail-error">Could not load CI check log: {ciCheckLog.error}</div>

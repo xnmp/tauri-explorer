@@ -292,7 +292,10 @@ pub fn run(launch_dir: Option<String>) {
             github::git_failed_ci_checks,
             github::git_failed_ci_check_log,
             git_actions::git_delete_branch,
+            git_actions::git_delete_tag,
+            git_actions::git_rename_branch,
             git_actions::git_delete_remote_branch,
+            git_actions::git_undo,
             git_actions::git_checkout_tracking,
             git_actions::git_sync_local_branches,
             // Drives / volumes

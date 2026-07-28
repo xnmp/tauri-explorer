@@ -64,7 +64,10 @@
     gitBranchBehindUpstream,
     gitBranchAuthors,
     gitDeleteBranch,
+    gitDeleteTag,
+    gitRenameBranch,
     gitDeleteRemoteBranch,
+    gitUndo,
     gitCheckoutTracking,
     gitSyncLocalBranches,
     gitLog,
@@ -121,6 +124,16 @@
   import { getPaneIdContext } from "$lib/state/pane-context";
   import { windowTabsManager } from "$lib/state/window-tabs.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import Modal from "./Modal.svelte";
+  import {
+    gitUndoDescription,
+    sameGitUndoAction,
+    type GitUndoAction,
+  } from "$lib/domain/git-graph-undo";
+  import {
+    gitUndoLedger,
+    registerGraphUndoRequester,
+  } from "$lib/state/git-graph-undo";
 
   const { repoPath }: { repoPath: string } = $props();
 
@@ -1268,16 +1281,21 @@
     /** Set when opened from a remote-only branch chip (#432): the menu offers
      *  a tracking checkout (`git checkout -b <branch> --track <remote>/<branch>`). */
     remote: RemoteRefChip | null;
+    /** Set when opened directly from a tag chip. */
+    scopedTag: string | null;
   }
   let menu = $state<Menu | null>(null);
   // Inline name prompt for Create Branch / Create Tag.
   let prompt = $state<{ kind: "branch" | "tag"; oid: string; value: string } | null>(null);
+  let renamePrompt = $state<{ oldName: string; value: string } | null>(null);
   // Suboption dialogs (#406): reset modes and delete-branch variants open as
   // a modal instead of a cascading submenu.
   type ActionModal =
     | { kind: "reset"; oid: string; summary: string }
-    | { kind: "deleteBranch"; name: string; remotes: string[] };
+    | { kind: "deleteBranch"; name: string; remotes: string[] }
+    | { kind: "deleteTag"; name: string };
   let actionModal = $state<ActionModal | null>(null);
+  let undoConfirmation = $state<GitUndoAction | null>(null);
 
   function localBranchAt(oid: string): string | null {
     const ref = (refs[oid] ?? []).find((r) => r.kind === "LocalBranch");
@@ -1308,6 +1326,7 @@
     commit: CommitInfo,
     scopedBranch: string | null = null,
     remote: RemoteRefChip | null = null,
+    scopedTag: string | null = null,
   ): void {
     event.preventDefault();
     prompt = null;
@@ -1321,6 +1340,7 @@
       checkoutBranch: scopedBranch ?? localBranchAt(commit.oid),
       scopedBranch,
       remote,
+      scopedTag,
     };
   }
 
@@ -1380,10 +1400,14 @@
 
   /** Run a mutating action, then reload the graph and refresh the SCM panel
    *  (always — a conflicting op still mutates the repo). */
-  async function runAction(label: string, fn: () => Promise<void>): Promise<void> {
+  async function runAction(
+    label: string,
+    fn: () => Promise<void | GitUndoAction | null>,
+  ): Promise<void> {
     closeMenu();
     try {
-      await fn();
+      const undoAction = await fn();
+      if (undoAction) gitUndoLedger.record(repoPath, undoAction);
       toastStore.success(`${label} done`);
     } catch (err) {
       toastStore.error(err instanceof Error ? err.message : String(err));
@@ -1451,11 +1475,35 @@
    *  checked out) surface as the toast. */
   function deleteBranch(name: string, force: boolean, remotes: string[]): void {
     void runAction(`Delete branch '${name}'`, async () => {
-      await gitDeleteBranch(repoPath, name, force);
+      const undoAction = await gitDeleteBranch(repoPath, name, force);
+      // Record the completed local mutation before touching remotes: a remote
+      // push failure must not strand the already-deleted local branch.
+      gitUndoLedger.record(repoPath, undoAction);
       for (const remote of remotes) {
         await gitDeleteRemoteBranch(repoPath, remote, name);
       }
+      return null;
     });
+  }
+
+  function deleteTag(name: string): void {
+    void runAction(`Delete tag '${name}'`, () => gitDeleteTag(repoPath, name));
+  }
+
+  function startRenameBranch(name: string): void {
+    renamePrompt = { oldName: name, value: name };
+    menu = null;
+  }
+
+  function confirmRenameBranch(): void {
+    if (!renamePrompt) return;
+    const { oldName } = renamePrompt;
+    const newName = renamePrompt.value.trim();
+    renamePrompt = null;
+    if (!newName || newName === oldName) return;
+    void runAction(`Rename branch '${oldName}' to '${newName}'`, () =>
+      gitRenameBranch(repoPath, oldName, newName),
+    );
   }
 
   /** Delete a remote-only branch chip like "origin/feat/x" (#371). */
@@ -1483,6 +1531,46 @@
     } else {
       void runAction("Create tag", () => gitCreateTag(repoPath, name, oid));
     }
+  }
+
+  function requestUndo(): void {
+    closeMenu();
+    const entry = gitUndoLedger.peek(repoPath);
+    if (!entry) {
+      toastStore.show("Nothing to undo in this git graph", "info");
+      return;
+    }
+    undoConfirmation = entry.action;
+  }
+
+  async function confirmUndo(): Promise<void> {
+    const pending = undoConfirmation;
+    undoConfirmation = null;
+    if (!pending) return;
+    // Remove before invoking: a stale/refused action must not repeatedly offer
+    // a now-impossible inverse. Cancellation never reaches this path.
+    const latest = gitUndoLedger.peek(repoPath);
+    if (!latest || !sameGitUndoAction(latest.action, pending)) {
+      toastStore.error("Git undo history changed while confirmation was open");
+      return;
+    }
+    const entry = gitUndoLedger.take(repoPath);
+    if (!entry) return;
+    const description = gitUndoDescription(entry.action);
+    try {
+      await gitUndo(repoPath, entry.action);
+      toastStore.show(`Undo: ${description}`, "info");
+    } catch (err) {
+      toastStore.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      await reload();
+      notifyLocalGitChange(repoPath);
+    }
+  }
+
+  if (paneId) {
+    const unregisterUndoRequester = registerGraphUndoRequester(paneId, requestUndo);
+    onDestroy(unregisterUndoRequester);
   }
 
   async function copyToClipboard(text: string, what: string): Promise<void> {
@@ -2003,7 +2091,11 @@
                 {/if}
               {/each}
               {#each chips.tags as tag (tag)}
-                <span class="ref ref-tag">{tag}</span>
+                <!-- svelte-ignore a11y_no_static_element_interactions -- right-click scopes tag actions to this ref -->
+                <span
+                  class="ref ref-tag"
+                  oncontextmenu={(e) => { e.stopPropagation(); openMenu(e, commit, null, null, tag); }}
+                >{tag}</span>
               {/each}
               <span class="summary" title={commit.summary}>{commit.summary}</span>
               {#if shownColumns.author}<span class="author" style:width="{authorCol.width}px">{commit.author_name}</span>{/if}
@@ -2376,7 +2468,12 @@
       >
         Reset current branch to this Commit…
       </button>
-      {#if deletableHeads.length > 0 || menuChips.remotes.length > 0}
+      {#if m.scopedBranch}
+        <button class="menu-item" role="menuitem" onclick={() => startRenameBranch(m.scopedBranch!)}>
+          Rename Branch '{m.scopedBranch}'…
+        </button>
+      {/if}
+      {#if deletableHeads.length > 0 || menuChips.remotes.length > 0 || m.scopedTag}
         <div class="menu-sep"></div>
         {#each deletableHeads as head (head.name)}
           <button
@@ -2392,6 +2489,15 @@
             Delete Remote Branch '{remoteChip.name}'
           </button>
         {/each}
+        {#if m.scopedTag}
+          <button
+            class="menu-item"
+            role="menuitem"
+            onclick={() => openActionModal({ kind: "deleteTag", name: m.scopedTag! })}
+          >
+            Delete Tag '{m.scopedTag}'…
+          </button>
+        {/if}
       {/if}
       <div class="menu-sep"></div>
       <button class="menu-item" role="menuitem" onclick={() => copyToClipboard(m.commit.oid, "commit hash")}>
@@ -2400,6 +2506,31 @@
       <button class="menu-item" role="menuitem" onclick={() => copyToClipboard(m.commit.summary, "commit subject")}>
         Copy Commit Subject
       </button>
+    </div>
+  {/if}
+
+  {#if renamePrompt}
+    <button
+      class="menu-backdrop"
+      aria-label="Cancel rename"
+      onclick={() => (renamePrompt = null)}
+      oncontextmenu={(e) => { e.preventDefault(); renamePrompt = null; }}
+    ></button>
+    <div class="name-prompt" data-testid="git-graph-rename-prompt" role="dialog" aria-label="Rename branch">
+      <label class="prompt-label" for="git-graph-rename-input">Rename branch '{renamePrompt.oldName}'</label>
+      <!-- svelte-ignore a11y_autofocus -->
+      <input
+        id="git-graph-rename-input"
+        class="prompt-input"
+        type="text"
+        autofocus
+        bind:value={renamePrompt.value}
+        onkeydown={(e) => { if (e.key === "Enter") confirmRenameBranch(); }}
+      />
+      <div class="prompt-actions">
+        <button class="prompt-btn" onclick={() => (renamePrompt = null)}>Cancel</button>
+        <button class="prompt-btn primary" onclick={confirmRenameBranch}>Rename</button>
+      </div>
     </div>
   {/if}
 
@@ -2479,7 +2610,7 @@
           <button class="prompt-btn" onclick={() => (actionModal = null)}>Cancel</button>
         </div>
       </div>
-    {:else}
+    {:else if actionModal.kind === "deleteBranch"}
       {@const modal = actionModal}
       <div class="name-prompt action-modal" data-testid="git-graph-action-modal" role="dialog" aria-label="Delete branch">
         <span class="prompt-label">Delete branch '{modal.name}'</span>
@@ -2500,8 +2631,40 @@
           <button class="prompt-btn" onclick={() => (actionModal = null)}>Cancel</button>
         </div>
       </div>
+    {:else}
+      {@const modal = actionModal}
+      <div class="name-prompt action-modal" data-testid="git-graph-action-modal" role="dialog" aria-label="Delete tag">
+        <span class="prompt-label">Delete tag '{modal.name}'?</span>
+        <p class="modal-warning">The tag can be restored with Ctrl+Z while this session remains open.</p>
+        <div class="prompt-actions">
+          <button class="prompt-btn" onclick={() => (actionModal = null)}>Cancel</button>
+          <button class="prompt-btn danger" onclick={() => confirmModalAction(() => deleteTag(modal.name))}>Delete</button>
+        </div>
+      </div>
     {/if}
   {/if}
+
+  <Modal
+    open={undoConfirmation !== null}
+    onClose={() => (undoConfirmation = null)}
+    role="alertdialog"
+    label="Undo git graph operation"
+    overlayClass="git-graph-undo-overlay"
+  >
+    {#if undoConfirmation}
+      <div class="name-prompt action-modal" data-testid="git-graph-undo-modal">
+        <span class="prompt-label">Undo {gitUndoDescription(undoConfirmation)}?</span>
+        <p class="modal-warning">
+          The repository will be checked again before anything changes. Undo is refused if refs,
+          HEAD, or the working tree no longer match the completed operation.
+        </p>
+        <div class="prompt-actions">
+          <button class="prompt-btn" data-autofocus onclick={() => (undoConfirmation = null)}>Cancel</button>
+          <button class="prompt-btn primary" onclick={() => void confirmUndo()}>Undo</button>
+        </div>
+      </div>
+    {/if}
+  </Modal>
 </div>
 
 <style>
@@ -3699,6 +3862,13 @@
   .prompt-label {
     font-size: var(--font-size-body);
     color: var(--text-secondary);
+  }
+
+  .modal-warning {
+    margin: 0;
+    color: var(--text-tertiary);
+    font-size: var(--font-size-caption);
+    line-height: 1.4;
   }
 
   .prompt-input {

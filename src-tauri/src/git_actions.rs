@@ -23,6 +23,42 @@ use std::process::Command;
 use crate::error::AppError;
 use crate::process_ext::NoConsole;
 
+/// A successful graph mutation's immutable inverse + expected post-state.
+///
+/// `git_undo` treats every captured field as a precondition. The frontend
+/// stores these values only for the current session; it never manufactures
+/// them from display state.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum GitUndoAction {
+    BranchDelete {
+        name: String,
+        target: String,
+    },
+    TagDelete {
+        name: String,
+        target: String,
+    },
+    BranchRename {
+        old_name: String,
+        new_name: String,
+        target: String,
+    },
+    HeadMove {
+        operation: HeadMoveOperation,
+        branch: Option<String>,
+        before_oid: String,
+        after_oid: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeadMoveOperation {
+    Merge,
+    Pull,
+}
+
 /// Reject a ref/name/oid that would be parsed by git as an option (leading
 /// `-`) or is empty. Prevents an argument like `--force` from being smuggled in
 /// as a "branch name". Not a shell-injection guard (we never invoke a shell),
@@ -99,6 +135,70 @@ async fn run_git_env_async(
     .map_err(|e| AppError::Other(format!("git action task join: {e}")))?
 }
 
+fn ref_target(repo_path: &str, ref_name: &str, label: &str) -> Result<String, AppError> {
+    let repo = crate::git_common::open_repo(Path::new(repo_path))?;
+    let reference = repo
+        .find_reference(ref_name)
+        .map_err(|_| AppError::Other(format!("{label} does not exist")))?;
+    let object = reference
+        .peel(git2::ObjectType::Commit)
+        .map_err(crate::git_common::to_app_err)?;
+    Ok(object.id().to_string())
+}
+
+fn raw_ref_target(repo_path: &str, ref_name: &str, label: &str) -> Result<String, AppError> {
+    let repo = crate::git_common::open_repo(Path::new(repo_path))?;
+    let reference = repo
+        .find_reference(ref_name)
+        .map_err(|_| AppError::Other(format!("{label} does not exist")))?;
+    reference
+        .target()
+        .map(|oid| oid.to_string())
+        .ok_or_else(|| AppError::Other(format!("{label} has no direct target")))
+}
+
+fn head_snapshot(repo_path: &str) -> Result<(String, Option<String>), AppError> {
+    let repo = crate::git_common::open_repo(Path::new(repo_path))?;
+    let head = repo.head().map_err(crate::git_common::to_app_err)?;
+    let oid = head
+        .target()
+        .ok_or_else(|| AppError::Other("HEAD has no target commit".into()))?;
+    let branch = if head.is_branch() {
+        head.shorthand().map(str::to_owned)
+    } else {
+        None
+    };
+    Ok((oid.to_string(), branch))
+}
+
+async fn run_head_move(
+    repo_path: String,
+    operation: HeadMoveOperation,
+    args: Vec<String>,
+) -> Result<Option<GitUndoAction>, AppError> {
+    tokio::task::spawn_blocking(move || {
+        let (before_oid, branch) = head_snapshot(&repo_path)?;
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        run_git(&repo_path, &refs)?;
+        let (after_oid, after_branch) = head_snapshot(&repo_path)?;
+        if branch != after_branch {
+            return Err(AppError::Other(
+                "git operation unexpectedly changed the checked-out branch".into(),
+            ));
+        }
+        Ok(
+            (before_oid != after_oid).then_some(GitUndoAction::HeadMove {
+                operation,
+                branch,
+                before_oid,
+                after_oid,
+            }),
+        )
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("git action task join: {e}")))?
+}
+
 /// Checkout a branch (attached HEAD) or a commit OID (detached HEAD).
 #[tauri::command]
 pub async fn git_checkout(repo_path: String, target: String) -> Result<(), AppError> {
@@ -148,9 +248,17 @@ pub async fn git_revert(repo_path: String, oid: String) -> Result<(), AppError> 
 
 /// Merge `target` (branch or OID) into the current branch (no editor).
 #[tauri::command]
-pub async fn git_merge(repo_path: String, target: String) -> Result<(), AppError> {
+pub async fn git_merge(
+    repo_path: String,
+    target: String,
+) -> Result<Option<GitUndoAction>, AppError> {
     validate_arg("target", &target)?;
-    run_git_async(repo_path, vec!["merge".into(), "--no-edit".into(), target]).await
+    run_head_move(
+        repo_path,
+        HeadMoveOperation::Merge,
+        vec!["merge".into(), "--no-edit".into(), target],
+    )
+    .await
 }
 
 /// Rebase the current branch onto `oid`.
@@ -244,8 +352,13 @@ pub async fn git_fetch(repo_path: String) -> Result<(), AppError> {
 /// Fast-forward pull on the current branch (#377). `--ff-only` so a diverged
 /// branch errors (surfaced verbatim) instead of creating a surprise merge.
 #[tauri::command]
-pub async fn git_pull(repo_path: String) -> Result<(), AppError> {
-    run_git_async(repo_path, vec!["pull".into(), "--ff-only".into()]).await
+pub async fn git_pull(repo_path: String) -> Result<Option<GitUndoAction>, AppError> {
+    run_head_move(
+        repo_path,
+        HeadMoveOperation::Pull,
+        vec!["pull".into(), "--ff-only".into()],
+    )
+    .await
 }
 
 /// How many commits `name`'s upstream has that the local branch lacks
@@ -284,10 +397,169 @@ pub async fn git_delete_branch(
     repo_path: String,
     name: String,
     force: bool,
-) -> Result<(), AppError> {
+) -> Result<GitUndoAction, AppError> {
     validate_arg("branch name", &name)?;
     let flag = if force { "-D" } else { "-d" };
-    run_git_async(repo_path, vec!["branch".into(), flag.into(), name]).await
+    tokio::task::spawn_blocking(move || {
+        let target = ref_target(
+            &repo_path,
+            &format!("refs/heads/{name}"),
+            &format!("branch '{name}'"),
+        )?;
+        run_git(&repo_path, &["branch", flag, &name])?;
+        Ok(GitUndoAction::BranchDelete { name, target })
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("git action task join: {e}")))?
+}
+
+/// Delete a local tag and return the exact commit needed to recreate it.
+#[tauri::command]
+pub async fn git_delete_tag(repo_path: String, name: String) -> Result<GitUndoAction, AppError> {
+    validate_arg("tag name", &name)?;
+    tokio::task::spawn_blocking(move || {
+        // Keep the raw tag-object OID rather than peeling to its commit so an
+        // annotated tag is restored byte-for-byte, not downgraded to a
+        // lightweight tag.
+        let target = raw_ref_target(
+            &repo_path,
+            &format!("refs/tags/{name}"),
+            &format!("tag '{name}'"),
+        )?;
+        run_git(&repo_path, &["tag", "-d", &name])?;
+        Ok(GitUndoAction::TagDelete { name, target })
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("git action task join: {e}")))?
+}
+
+/// Rename a local branch and capture the ref state required to rename it back.
+#[tauri::command]
+pub async fn git_rename_branch(
+    repo_path: String,
+    old_name: String,
+    new_name: String,
+) -> Result<GitUndoAction, AppError> {
+    validate_arg("old branch name", &old_name)?;
+    validate_arg("new branch name", &new_name)?;
+    tokio::task::spawn_blocking(move || {
+        let target = ref_target(
+            &repo_path,
+            &format!("refs/heads/{old_name}"),
+            &format!("branch '{old_name}'"),
+        )?;
+        run_git(&repo_path, &["branch", "-m", &old_name, &new_name])?;
+        Ok(GitUndoAction::BranchRename {
+            old_name,
+            new_name,
+            target,
+        })
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("git action task join: {e}")))?
+}
+
+/// Re-verify a recorded mutation and apply its inverse as one backend action.
+///
+/// The checks happen immediately before the inverse in the same blocking task,
+/// closing the frontend check-to-command race. A stale action is refused
+/// without changing the repository.
+#[tauri::command]
+pub async fn git_undo(repo_path: String, action: GitUndoAction) -> Result<(), AppError> {
+    tokio::task::spawn_blocking(move || match action {
+        GitUndoAction::BranchDelete { name, target } => {
+            validate_arg("branch name", &name)?;
+            validate_arg("commit", &target)?;
+            let repo = crate::git_common::open_repo(Path::new(&repo_path))?;
+            if repo.find_reference(&format!("refs/heads/{name}")).is_ok() {
+                return Err(AppError::Other(format!(
+                    "branch '{name}' already exists; undo is no longer safe"
+                )));
+            }
+            run_git(&repo_path, &["branch", &name, &target])
+        }
+        GitUndoAction::TagDelete { name, target } => {
+            validate_arg("tag name", &name)?;
+            validate_arg("commit", &target)?;
+            let repo = crate::git_common::open_repo(Path::new(&repo_path))?;
+            if repo.find_reference(&format!("refs/tags/{name}")).is_ok() {
+                return Err(AppError::Other(format!(
+                    "tag '{name}' already exists; undo is no longer safe"
+                )));
+            }
+            let ref_name = format!("refs/tags/{name}");
+            run_git(
+                &repo_path,
+                &[
+                    "update-ref",
+                    &ref_name,
+                    &target,
+                    "0000000000000000000000000000000000000000",
+                ],
+            )
+        }
+        GitUndoAction::BranchRename {
+            old_name,
+            new_name,
+            target,
+        } => {
+            validate_arg("old branch name", &old_name)?;
+            validate_arg("new branch name", &new_name)?;
+            validate_arg("commit", &target)?;
+            let repo = crate::git_common::open_repo(Path::new(&repo_path))?;
+            if repo
+                .find_reference(&format!("refs/heads/{old_name}"))
+                .is_ok()
+            {
+                return Err(AppError::Other(format!(
+                    "branch '{old_name}' already exists; undo is no longer safe"
+                )));
+            }
+            let actual = ref_target(
+                &repo_path,
+                &format!("refs/heads/{new_name}"),
+                &format!("branch '{new_name}'"),
+            )?;
+            if actual != target {
+                return Err(AppError::Other(format!(
+                    "branch '{new_name}' moved; undo is no longer safe"
+                )));
+            }
+            run_git(&repo_path, &["branch", "-m", &new_name, &old_name])
+        }
+        GitUndoAction::HeadMove {
+            operation: _,
+            branch,
+            before_oid,
+            after_oid,
+        } => {
+            validate_arg("previous commit", &before_oid)?;
+            validate_arg("current commit", &after_oid)?;
+            let (actual_oid, actual_branch) = head_snapshot(&repo_path)?;
+            if actual_oid != after_oid || actual_branch != branch {
+                return Err(AppError::Other(
+                    "HEAD moved since the operation; undo is no longer safe".into(),
+                ));
+            }
+            let status = Command::new("git")
+                .no_console()
+                .args(["status", "--porcelain", "--untracked-files=normal"])
+                .current_dir(&repo_path)
+                .output()
+                .map_err(AppError::from)?;
+            if !status.status.success() {
+                return Err(AppError::Other("could not inspect working tree".into()));
+            }
+            if !status.stdout.is_empty() {
+                return Err(AppError::Other(
+                    "working tree is not clean; undo was refused".into(),
+                ));
+            }
+            run_git(&repo_path, &["reset", "--hard", &before_oid])
+        }
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("git action task join: {e}")))?
 }
 
 /// Delete a branch on a remote (#371): `git push <remote> --delete <name>`.
@@ -562,8 +834,7 @@ mod tests {
         let (dir, cs) = linear_repo();
         let rp = repo_path(&dir);
         git(dir.path(), &["branch", "topic", &cs[0]]);
-        let action =
-            tokio_test_block(git_delete_branch(rp.clone(), "topic".into(), true)).unwrap();
+        let action = tokio_test_block(git_delete_branch(rp.clone(), "topic".into(), true)).unwrap();
         assert!(git_out(dir.path(), &["branch", "--list", "topic"]).is_empty());
 
         tokio_test_block(git_undo(rp.clone(), action.clone())).unwrap();
@@ -600,6 +871,31 @@ mod tests {
     }
 
     #[test]
+    fn git_undo_restores_the_exact_annotated_tag_object() {
+        let (dir, cs) = linear_repo();
+        let rp = repo_path(&dir);
+        git(dir.path(), &["config", "user.name", "Test"]);
+        git(dir.path(), &["config", "user.email", "t@x"]);
+        git(
+            dir.path(),
+            &["tag", "-a", "release", "-m", "release", &cs[0]],
+        );
+        let tag_object = git_out(dir.path(), &["rev-parse", "refs/tags/release"]);
+
+        let action = tokio_test_block(git_delete_tag(rp.clone(), "release".into())).unwrap();
+        tokio_test_block(git_undo(rp, action)).unwrap();
+
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/tags/release"]),
+            tag_object
+        );
+        assert_eq!(
+            git_out(dir.path(), &["cat-file", "-t", "refs/tags/release"]),
+            "tag"
+        );
+    }
+
+    #[test]
     fn git_undo_head_move_requires_unchanged_head_and_clean_tree() {
         let (dir, cs) = linear_repo();
         let rp = repo_path(&dir);
@@ -622,6 +918,59 @@ mod tests {
         let error = tokio_test_block(git_undo(rp, action)).unwrap_err();
         assert!(error.to_string().contains("HEAD moved"));
         assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), cs[1]);
+    }
+
+    #[test]
+    fn git_undo_merge_restores_the_pre_merge_head() {
+        let (dir, cs) = linear_repo();
+        let rp = repo_path(&dir);
+        git(dir.path(), &["branch", "feature", &cs[0]]);
+        git(dir.path(), &["checkout", "feature"]);
+        write(dir.path(), "feature.txt", "feature\n");
+        git(dir.path(), &["add", "."]);
+        git(dir.path(), &["commit", "-m", "feature"]);
+        git(dir.path(), &["checkout", "main"]);
+        let before = git_out(dir.path(), &["rev-parse", "HEAD"]);
+
+        let action = tokio_test_block(git_merge(rp.clone(), "feature".into()))
+            .unwrap()
+            .expect("merge should move HEAD");
+        assert_ne!(git_out(dir.path(), &["rev-parse", "HEAD"]), before);
+        tokio_test_block(git_undo(rp, action)).unwrap();
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), before);
+    }
+
+    #[test]
+    fn git_undo_pull_restores_the_pre_pull_head() {
+        let (dir, _cs) = linear_repo();
+        let rp = repo_path(&dir);
+        let remote = TempDir::new().unwrap();
+        git(remote.path(), &["init", "--bare"]);
+        git(
+            dir.path(),
+            &["remote", "add", "origin", remote.path().to_str().unwrap()],
+        );
+        git(dir.path(), &["push", "-u", "origin", "main"]);
+        git(remote.path(), &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        let before = git_out(dir.path(), &["rev-parse", "HEAD"]);
+
+        let other = TempDir::new().unwrap();
+        git(
+            other.path(),
+            &["clone", remote.path().to_str().unwrap(), "."],
+        );
+        write(other.path(), "remote.txt", "remote\n");
+        git(other.path(), &["add", "."]);
+        git(other.path(), &["commit", "-m", "remote advance"]);
+        git(other.path(), &["push", "origin", "main"]);
+        let remote_tip = git_out(other.path(), &["rev-parse", "HEAD"]);
+
+        let action = tokio_test_block(git_pull(rp.clone()))
+            .unwrap()
+            .expect("pull should move HEAD");
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), remote_tip);
+        tokio_test_block(git_undo(rp, action)).unwrap();
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), before);
     }
 
     #[test]

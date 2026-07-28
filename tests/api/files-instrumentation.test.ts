@@ -74,4 +74,24 @@ describe("preview and directory IPC instrumentation (#497)", () => {
     );
     warning.mockRestore();
   });
+
+  it("records completed preview and directory requests with their paths and outcomes", async () => {
+    const debug = vi.spyOn(console, "debug").mockImplementation(() => undefined);
+    invokeMock
+      .mockResolvedValueOnce("preview text")
+      .mockResolvedValueOnce({ path: "/tmp/folder", entries: [], listing_id: null });
+
+    await expect(readTextFile("/tmp/note.md")).resolves.toEqual({ ok: true, data: "preview text" });
+    await expect(startStreamingDirectory("/tmp/folder")).resolves.toMatchObject({ ok: true });
+
+    expect(debug).toHaveBeenCalledWith(
+      "[preview] read_text_file completed",
+      expect.objectContaining({ path: "/tmp/note.md", bytes: 12 }),
+    );
+    expect(debug).toHaveBeenCalledWith(
+      "[navigation] start_streaming_directory completed",
+      expect.objectContaining({ path: "/tmp/folder", listingId: null, entries: 0 }),
+    );
+    debug.mockRestore();
+  });
 });

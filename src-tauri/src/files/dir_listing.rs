@@ -116,11 +116,19 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
     // directories) purely to dim empty-folder icons. The frontend resolves
     // emptiness lazily for visible directories via `is_directory_empty` (#129);
     // Miller columns already do their own on-demand probing.
-    let entries =
-        Arc::new(super::run_blocking(move || Ok(scan_directory_parallel(&dir_path))).await?);
+    let (entries, scan_diagnostics) =
+        super::run_blocking(move || Ok(scan_directory_with_diagnostics(&dir_path))).await?;
+    let entries = Arc::new(entries);
 
     let elapsed = t_start.elapsed();
-    if elapsed.as_millis() > 100 {
+    if scan_diagnostics.error_count > 0 {
+        log::warn!(
+            "preview list_directory completed with scan errors: path={path:?}, entries={}, scan_errors={}, samples={:?}, elapsed={elapsed:?}",
+            entries.len(),
+            scan_diagnostics.error_count,
+            scan_diagnostics.samples,
+        );
+    } else if elapsed.as_millis() > 100 {
         log::warn!(
             "preview list_directory slow: path={path:?}, entries={}, elapsed={:?}",
             entries.len(),
@@ -207,6 +215,30 @@ static LISTINGS: crate::task_registry::TaskRegistry = crate::task_registry::Task
 // pub: exercised directly by the `scan_directory_parallel` criterion bench
 // (src-tauri/benches/scan_directory_parallel.rs).
 pub fn scan_directory_parallel(dir_path: &PathBuf) -> Vec<FileEntry> {
+    scan_directory_with_diagnostics(dir_path).0
+}
+
+const MAX_SCAN_ERROR_SAMPLES: usize = 3;
+
+#[derive(Default)]
+struct ScanDiagnostics {
+    error_count: usize,
+    samples: Vec<String>,
+}
+
+impl ScanDiagnostics {
+    fn record(&mut self, error: impl std::fmt::Display) {
+        self.error_count += 1;
+        if self.samples.len() < MAX_SCAN_ERROR_SAMPLES {
+            self.samples.push(error.to_string());
+        }
+    }
+}
+
+/// Scan a directory while retaining bounded details for entries that could not
+/// be read or statted. A partial listing remains usable, but callers can log
+/// why it may be incomplete instead of reporting a misleading clean success.
+fn scan_directory_with_diagnostics(dir_path: &PathBuf) -> (Vec<FileEntry>, ScanDiagnostics) {
     scan_directory_parallel_for_listing(dir_path, dir_path)
 }
 
@@ -221,33 +253,37 @@ fn should_probe_git_repos(dir_path: &Path) -> bool {
 /// Scan a readable directory using the policy for its user-visible listing
 /// root. Keeping the root separate makes the UNC policy testable without a
 /// live network share while production passes the same path for both values.
-fn scan_directory_parallel_for_listing(dir_path: &PathBuf, listing_root: &Path) -> Vec<FileEntry> {
+fn scan_directory_parallel_for_listing(
+    dir_path: &PathBuf,
+    listing_root: &Path,
+) -> (Vec<FileEntry>, ScanDiagnostics) {
     let probe_git_repos = should_probe_git_repos(listing_root);
     use rayon::prelude::*;
+    let mut diagnostics = ScanDiagnostics::default();
 
     // jwalk parallelizes readdir, but the per-entry symlink_metadata stat would
     // otherwise serialize on the consuming thread. Collect the child paths first,
     // then fan the stat + metadata_to_entry work out across rayon's thread pool so
     // a flat 10k-entry dir doesn't stat on a single core.
-    let paths: Vec<PathBuf> = jwalk::WalkDir::new(dir_path)
+    let mut paths: Vec<PathBuf> = Vec::new();
+    for result in jwalk::WalkDir::new(dir_path)
         .max_depth(1)
         .skip_hidden(false)
         .into_iter()
-        .filter_map(|result| {
-            let dir_entry = result.ok()?;
-            // Skip the root directory itself
-            if dir_entry.depth() == 0 {
-                return None;
-            }
-            Some(dir_entry.path())
-        })
-        .collect();
+    {
+        match result {
+            Ok(dir_entry) if dir_entry.depth() != 0 => paths.push(dir_entry.path()),
+            Ok(_) => {}
+            Err(error) => diagnostics.record(format!("walk error: {error}")),
+        }
+    }
 
-    let mut entries: Vec<FileEntry> = paths
+    let scanned: Vec<Result<FileEntry, String>> = paths
         .into_par_iter()
-        .filter_map(|path| {
-            let metadata = fs::symlink_metadata(&path).ok()?;
-            Some(metadata_to_entry_with_git_repo_probe(
+        .map(|path| {
+            let metadata = fs::symlink_metadata(&path)
+                .map_err(|error| format!("metadata error for {}: {error}", path.display()))?;
+            Ok(metadata_to_entry_with_git_repo_probe(
                 &path,
                 &metadata,
                 probe_git_repos,
@@ -255,8 +291,16 @@ fn scan_directory_parallel_for_listing(dir_path: &PathBuf, listing_root: &Path) 
         })
         .collect();
 
+    let mut entries = Vec::with_capacity(scanned.len());
+    for entry in scanned {
+        match entry {
+            Ok(entry) => entries.push(entry),
+            Err(error) => diagnostics.record(error),
+        }
+    }
+
     sort_entries(&mut entries);
-    entries
+    (entries, diagnostics)
 }
 
 /// Start streaming directory listing.
@@ -286,8 +330,8 @@ pub async fn start_streaming_directory(
 
     let t_scan_start = std::time::Instant::now();
     // jwalk + per-entry stat calls are blocking work; keep them off the async executor.
-    let mut all_entries =
-        super::run_blocking(move || Ok(scan_directory_parallel(&dir_path))).await?;
+    let (mut all_entries, scan_diagnostics) =
+        super::run_blocking(move || Ok(scan_directory_with_diagnostics(&dir_path))).await?;
     let t_scan_end = std::time::Instant::now();
 
     let total_count = all_entries.len();
@@ -303,6 +347,15 @@ pub async fn start_streaming_directory(
     // subdirectory, so a 10k-dir scan would pay 10k read_dirs. The frontend
     // resolves emptiness lazily for visible directories via `is_directory_empty`
     // (#129), so neither the first batch nor the streamed chunks probe it here.
+    if scan_diagnostics.error_count > 0 {
+        log::warn!(
+            "navigation start_streaming_directory completed with scan errors: path={path:?}, entries={total_count}, scan_errors={}, samples={:?}, elapsed={:?}",
+            scan_diagnostics.error_count,
+            scan_diagnostics.samples,
+            started_at.elapsed()
+        );
+    }
+
     if total_count <= batch_size {
         log::debug!(
             "navigation start_streaming_directory completed: path={path:?}, entries={total_count}, streaming=false, elapsed={:?}",
@@ -401,6 +454,18 @@ mod tests {
         assert_eq!(result.entries.len(), 2);
         assert!(matches!(result.entries[0].kind, FileKind::Directory));
         assert!(matches!(result.entries[1].kind, FileKind::File));
+    }
+
+    #[test]
+    fn scan_records_a_bounded_sample_when_the_listing_root_cannot_be_read() {
+        let missing = tempdir().unwrap().path().join("missing");
+
+        let (entries, diagnostics) = scan_directory_with_diagnostics(&missing);
+
+        assert!(entries.is_empty());
+        assert!(diagnostics.error_count >= 1);
+        assert!(!diagnostics.samples.is_empty());
+        assert!(diagnostics.samples.len() <= MAX_SCAN_ERROR_SAMPLES);
     }
 
     /// The parallel scan never pays the per-subdirectory is_empty probe (its

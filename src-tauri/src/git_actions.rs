@@ -558,6 +558,73 @@ mod tests {
     }
 
     #[test]
+    fn git_undo_recreates_deleted_branch_at_exact_tip_and_refuses_recreation() {
+        let (dir, cs) = linear_repo();
+        let rp = repo_path(&dir);
+        git(dir.path(), &["branch", "topic", &cs[0]]);
+        let action =
+            tokio_test_block(git_delete_branch(rp.clone(), "topic".into(), true)).unwrap();
+        assert!(git_out(dir.path(), &["branch", "--list", "topic"]).is_empty());
+
+        tokio_test_block(git_undo(rp.clone(), action.clone())).unwrap();
+        assert_eq!(git_out(dir.path(), &["rev-parse", "topic"]), cs[0]);
+
+        git(dir.path(), &["branch", "-D", "topic"]);
+        git(dir.path(), &["branch", "topic", &cs[1]]);
+        let before = git_out(dir.path(), &["rev-parse", "topic"]);
+        let error = tokio_test_block(git_undo(rp, action)).unwrap_err();
+        assert!(error.to_string().contains("branch 'topic' already exists"));
+        assert_eq!(git_out(dir.path(), &["rev-parse", "topic"]), before);
+    }
+
+    #[test]
+    fn git_undo_restores_deleted_tag_and_renamed_branch() {
+        let (dir, cs) = linear_repo();
+        let rp = repo_path(&dir);
+        git(dir.path(), &["tag", "v1", &cs[0]]);
+        let tag_action = tokio_test_block(git_delete_tag(rp.clone(), "v1".into())).unwrap();
+        tokio_test_block(git_undo(rp.clone(), tag_action)).unwrap();
+        assert_eq!(git_out(dir.path(), &["rev-parse", "v1"]), cs[0]);
+
+        git(dir.path(), &["branch", "before", &cs[0]]);
+        let rename_action = tokio_test_block(git_rename_branch(
+            rp.clone(),
+            "before".into(),
+            "after".into(),
+        ))
+        .unwrap();
+        assert!(git_out(dir.path(), &["branch", "--list", "before"]).is_empty());
+        tokio_test_block(git_undo(rp, rename_action)).unwrap();
+        assert_eq!(git_out(dir.path(), &["rev-parse", "before"]), cs[0]);
+        assert!(git_out(dir.path(), &["branch", "--list", "after"]).is_empty());
+    }
+
+    #[test]
+    fn git_undo_head_move_requires_unchanged_head_and_clean_tree() {
+        let (dir, cs) = linear_repo();
+        let rp = repo_path(&dir);
+        git(dir.path(), &["branch", "topic", &cs[0]]);
+        git(dir.path(), &["checkout", "topic"]);
+        let action = GitUndoAction::HeadMove {
+            operation: HeadMoveOperation::Merge,
+            branch: Some("topic".into()),
+            before_oid: cs[0].clone(),
+            after_oid: cs[0].clone(),
+        };
+
+        write(dir.path(), "dirty.txt", "do not lose\n");
+        let error = tokio_test_block(git_undo(rp.clone(), action.clone())).unwrap_err();
+        assert!(error.to_string().contains("working tree is not clean"));
+        assert!(dir.path().join("dirty.txt").exists());
+        fs::remove_file(dir.path().join("dirty.txt")).unwrap();
+
+        git(dir.path(), &["checkout", "main"]);
+        let error = tokio_test_block(git_undo(rp, action)).unwrap_err();
+        assert!(error.to_string().contains("HEAD moved"));
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), cs[1]);
+    }
+
+    #[test]
     fn delete_remote_branch_via_push() {
         // "Remote" is a local bare repo; push --delete must remove the ref there.
         let (dir, _cs) = linear_repo();

@@ -85,6 +85,13 @@
       mediaType: file.type as UserReportAttachment["mediaType"],
       data: bytesToBase64(new Uint8Array(await file.arrayBuffer())),
     })));
+    // A second picker change can complete while these reads are in flight.
+    // Revalidate against the latest immutable selection before committing.
+    const currentError = validateUserReportAttachmentFiles(selected, attachmentUsage());
+    if (currentError) {
+      attachmentError = currentError;
+      return;
+    }
     attachments = [...attachments, ...next];
     attachmentError = "";
   }

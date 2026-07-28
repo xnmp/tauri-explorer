@@ -70,6 +70,12 @@ fn valid_image_magic(media_type: &str, bytes: &[u8]) -> bool {
     }
 }
 
+pub(crate) fn report_image_media_type(bytes: &[u8]) -> Option<&'static str> {
+    ["image/png", "image/jpeg", "image/gif"]
+        .into_iter()
+        .find(|media_type| valid_image_magic(media_type, bytes))
+}
+
 pub(crate) fn validate_attachments(
     attachments: &[ReportAttachment],
 ) -> Result<(), SubmitReportError> {
@@ -365,9 +371,9 @@ pub async fn submit_user_report(
 #[cfg(test)]
 mod tests {
     use super::{
-        assemble_issue_body, attachment_from_image_bytes, send_report, validate_attachments,
-        validate_draft, Environment, RelayRequest, ReportAttachment, MAX_RELAY_BODY_UNITS,
-        report_image_media_type,
+        assemble_issue_body, attachment_from_image_bytes, report_image_media_type, send_report,
+        validate_attachments, validate_draft, Environment, RelayRequest, ReportAttachment,
+        MAX_RELAY_BODY_UNITS,
     };
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::{Shutdown, TcpListener};

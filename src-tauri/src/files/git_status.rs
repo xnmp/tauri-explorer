@@ -245,6 +245,7 @@ fn get_git_status_wsl(
         "git",
         "-C",
         linux_path,
+        "--no-optional-locks",
         "status",
         "--porcelain",
         "-z",
@@ -392,8 +393,15 @@ fn get_git_status_sync_with_program(
         cmd.args(["-c", "core.filemode=false", "-c", "safe.directory=*"]);
     }
     let status_start = std::time::Instant::now();
-    cmd.args(["status", "--porcelain", "-z", "-unormal", "."])
-        .current_dir(dir);
+    cmd.args([
+        "--no-optional-locks",
+        "status",
+        "--porcelain",
+        "-z",
+        "-unormal",
+        ".",
+    ])
+    .current_dir(dir);
     let output =
         output_cancellable(&mut cmd, cancelled, "git badge status cancelled").map_err(|e| {
             log::warn!("gitstat: status spawn failed for {path}: {e}");
@@ -602,6 +610,40 @@ mod tests {
             .expect_err("cancelled status must not publish a repository classification");
 
         assert!(error.to_string().contains("cancelled"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn badge_status_disables_optional_locks() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = init_repo();
+        let capture = dir.path().join("git-args");
+        let fake_git = dir.path().join("fake-git");
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{}'\ncase \" $* \" in\n  *' rev-parse '*) printf 'true\\n\\n' ;;\n  *' status '*) ;;\nesac\n",
+            capture.display()
+        );
+        fs::write(&fake_git, script).unwrap();
+        let mut permissions = fs::metadata(&fake_git).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&fake_git, permissions).unwrap();
+
+        let response = get_git_status_sync_with_program(
+            dir.path().to_str().unwrap(),
+            &AtomicBool::new(false),
+            fake_git.as_os_str(),
+        )
+        .unwrap();
+
+        assert!(response.is_git_repo);
+        let args = fs::read_to_string(capture).unwrap();
+        let args: Vec<_> = args.lines().collect();
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--no-optional-locks", "status"]),
+            "badge status args did not disable optional locks: {args:?}"
+        );
     }
 
     #[cfg(unix)]

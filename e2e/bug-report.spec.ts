@@ -13,6 +13,11 @@ function evidencePath(name: string): string {
   return process.env.CAPTURE_EVIDENCE ? `evidence/${name}` : `test-results/${name}`;
 }
 
+const png = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64",
+);
+
 for (const command of ["Report a Bug", "Request a Feature"]) {
   test(`${command} submits in-app and links the created issue`, async ({ page }) => {
     await page.goto("/");
@@ -103,6 +108,228 @@ test("failed submission preserves the draft in the GitHub fallback", async ({ pa
   expect(url.searchParams.get("body")).toContain("Keep my typed description 🐛");
   expect(url.searchParams.get("labels")).toBe("enhancement");
 });
+
+test("image picker shows named previews and lets the user remove an attachment", async ({ page }) => {
+  await page.goto("/");
+  await waitForEntries(page);
+  await runPaletteCommand(page, "Report a Bug");
+  const dialog = page.getByRole("dialog", { name: /report a bug/i });
+
+  await dialog.getByLabel("Add images").setInputFiles([
+    { name: "first-screenshot.png", mimeType: "image/png", buffer: png },
+    { name: "second-screenshot.jpg", mimeType: "image/jpeg", buffer: Buffer.from([0xff, 0xd8, 0xff, 1]) },
+  ]);
+
+  await expect(dialog.getByText("first-screenshot.png")).toBeVisible();
+  await expect(dialog.getByText("second-screenshot.jpg")).toBeVisible();
+  await expect(dialog.getByRole("img", { name: "first-screenshot.png" })).toBeVisible();
+  await dialog.getByRole("button", { name: "Remove second-screenshot.jpg" }).click();
+  await expect(dialog.getByText("second-screenshot.jpg")).toBeHidden();
+  await expect(dialog.getByText("first-screenshot.png")).toBeVisible();
+  await page.screenshot({ path: evidencePath("ac-1-image-picker-previews.png") });
+});
+
+test("feature dialog also accepts multiple image files", async ({ page }) => {
+  await page.goto("/");
+  await waitForEntries(page);
+  await runPaletteCommand(page, "Request a Feature");
+  const dialog = page.getByRole("dialog", { name: /request a feature/i });
+
+  await dialog.getByLabel("Add images").setInputFiles([
+    { name: "feature-first.png", mimeType: "image/png", buffer: png },
+    { name: "feature-second.png", mimeType: "image/png", buffer: png },
+  ]);
+
+  await expect(dialog.getByText("feature-first.png")).toBeVisible();
+  await expect(dialog.getByText("feature-second.png")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: /^Remove / })).toHaveCount(2);
+});
+
+test("clipboard image is offered and attached without creating a file", async ({ page }) => {
+  await page.goto("/");
+  await waitForEntries(page);
+  await page.evaluate(() => localStorage.setItem("mock-report-clipboard-image", "1"));
+  await runPaletteCommand(page, "Request a Feature");
+  const dialog = page.getByRole("dialog", { name: /request a feature/i });
+
+  await dialog.getByRole("button", { name: "Attach from clipboard" }).click();
+
+  await expect(dialog.getByText("Clipboard screenshot.png")).toBeVisible();
+  await expect(dialog.getByRole("img", { name: "Clipboard screenshot.png" })).toBeVisible();
+  await dialog.getByRole("button", { name: "Remove Clipboard screenshot.png" }).click();
+  await expect(dialog.getByRole("button", { name: "Attach from clipboard" })).toBeVisible();
+  await dialog.getByRole("button", { name: "Attach from clipboard" }).click();
+  await expect(dialog.getByText("Clipboard screenshot.png")).toBeVisible();
+  await page.screenshot({ path: evidencePath("ac-2-clipboard-image.png") });
+});
+
+test("clipboard action is absent when the clipboard has no image", async ({ page }) => {
+  await page.goto("/");
+  await waitForEntries(page);
+  await runPaletteCommand(page, "Report a Bug");
+
+  await expect(page.getByRole("button", { name: "Attach from clipboard" })).toHaveCount(0);
+});
+
+test("invalid image keeps the report draft and existing attachments", async ({ page }) => {
+  await page.goto("/");
+  await waitForEntries(page);
+  await runPaletteCommand(page, "Report a Bug");
+  const dialog = page.getByRole("dialog", { name: /report a bug/i });
+  await dialog.getByLabel("Title").fill("Keep this title");
+  await dialog.getByLabel("Description").fill("Keep this description");
+  await dialog.getByLabel("Add images").setInputFiles({
+    name: "valid.png", mimeType: "image/png", buffer: png,
+  });
+  await dialog.getByLabel("Add images").setInputFiles({
+    name: "not-an-image.txt", mimeType: "text/plain", buffer: Buffer.from("text"),
+  });
+
+  await expect(dialog.getByRole("alert")).toContainText("PNG, JPEG, or GIF");
+  await expect(dialog.getByLabel("Title")).toHaveValue("Keep this title");
+  await expect(dialog.getByLabel("Description")).toHaveValue("Keep this description");
+  await expect(dialog.getByText("valid.png")).toBeVisible();
+  await page.screenshot({ path: evidencePath("ac-4-invalid-image-preserves-draft.png") });
+});
+
+test("empty, excessive, per-image, and total image limits are visible without draft loss", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await waitForEntries(page);
+  await runPaletteCommand(page, "Report a Bug");
+  const dialog = page.getByRole("dialog", { name: /report a bug/i });
+  await dialog.getByLabel("Title").fill("Keep every limit draft");
+  await dialog.getByLabel("Description").fill("Limits must not discard this.");
+  const input = dialog.getByLabel("Add images");
+
+  await input.setInputFiles({ name: "empty.png", mimeType: "image/png", buffer: Buffer.alloc(0) });
+  await expect(dialog.getByRole("alert")).toContainText("empty");
+
+  await input.setInputFiles(Array.from({ length: 4 }, (_, index) => ({
+    name: `${index}.png`,
+    mimeType: "image/png",
+    buffer: png,
+  })));
+  await expect(dialog.getByRole("alert")).toContainText("up to 3");
+
+  await input.setInputFiles({
+    name: "too-large.png",
+    mimeType: "image/png",
+    buffer: Buffer.concat([png, Buffer.alloc(2 * 1024 * 1024)]),
+  });
+  await expect(dialog.getByRole("alert")).toContainText("2 MiB");
+
+  const underTwoMiB = Buffer.concat([png, Buffer.alloc(1600 * 1024)]);
+  await input.setInputFiles({
+    name: "valid-large.png", mimeType: "image/png", buffer: underTwoMiB,
+  });
+  await expect(dialog.getByText("valid-large.png")).toBeVisible();
+  await input.setInputFiles({
+    name: "total-overflow.png", mimeType: "image/png", buffer: underTwoMiB,
+  });
+  await expect(dialog.getByRole("alert")).toContainText("3 MiB");
+
+  await expect(dialog.getByLabel("Title")).toHaveValue("Keep every limit draft");
+  await expect(dialog.getByLabel("Description")).toHaveValue("Limits must not discard this.");
+  await expect(dialog.getByText("valid-large.png")).toBeVisible();
+  await expect(dialog.getByText("total-overflow.png")).toBeHidden();
+});
+
+test("overlapping picker reads cannot bypass attachment limits", async ({ page }) => {
+  await page.goto("/");
+  await waitForEntries(page);
+  await runPaletteCommand(page, "Report a Bug");
+  const dialog = page.getByRole("dialog", { name: /report a bug/i });
+
+  await dialog.getByLabel("Add images").evaluate((element) => {
+    const input = element as HTMLInputElement;
+    const select = (prefix: string) => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File(["first"], `${prefix}-first.png`, { type: "image/png" }));
+      transfer.items.add(new File(["second"], `${prefix}-second.png`, { type: "image/png" }));
+      input.files = transfer.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    select("one");
+    select("two");
+  });
+
+  await expect(dialog.getByRole("button", { name: /^Remove / })).toHaveCount(2);
+  await expect(dialog.getByRole("alert")).toContainText("up to 3");
+});
+
+test("successful submission forwards selected images to the native report command", async ({ page }) => {
+  await page.goto("/");
+  await waitForEntries(page);
+  await runPaletteCommand(page, "Report a Bug");
+  const dialog = page.getByRole("dialog", { name: /report a bug/i });
+  await dialog.getByLabel("Title").fill("Attachment contract");
+  await dialog.getByLabel("Description").fill("The screenshot must reach the relay.");
+  await dialog.getByLabel("Add images").setInputFiles({
+    name: "contract.png", mimeType: "image/png", buffer: png,
+  });
+  await dialog.getByRole("button", { name: "Submit" }).click();
+
+  await expect(dialog).toBeHidden();
+  await expect(page.locator(".toast.success")).toContainText("Issue #5470");
+  const submitted = await page.evaluate(() => localStorage.getItem("mock-submitted-report"));
+  expect(JSON.parse(submitted!).attachments).toEqual([
+    expect.objectContaining({ name: "contract.png", mediaType: "image/png" }),
+  ]);
+});
+
+test("failed report with an attachment preserves both instead of opening a lossy fallback", async ({ page }) => {
+  await page.goto("/");
+  await waitForEntries(page);
+  await page.evaluate(() => localStorage.setItem("mock-report-error", "network_unreachable"));
+  await runPaletteCommand(page, "Report a Bug");
+  const dialog = page.getByRole("dialog", { name: /report a bug/i });
+  await dialog.getByLabel("Title").fill("Keep attachment title");
+  await dialog.getByLabel("Description").fill("Keep attachment description");
+  await dialog.getByLabel("Add images").setInputFiles({
+    name: "keep.png", mimeType: "image/png", buffer: png,
+  });
+  await dialog.getByRole("button", { name: "Submit" }).click();
+
+  await expect(dialog.getByRole("alert")).toContainText("attachments");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel("Title")).toHaveValue("Keep attachment title");
+  await expect(dialog.getByText("keep.png")).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
+    .toBeNull();
+  await page.screenshot({ path: evidencePath("ac-5-failure-preserves-attachments.png") });
+});
+
+for (const [kind, message] of [
+  ["daily_cap", "Reports are temporarily unavailable"],
+  ["rate_limited", "Too many reports"],
+  ["malformed_input", "not a valid image"],
+] as const) {
+  test(`${kind} attachment failure explains the next action and preserves the draft`, async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await waitForEntries(page);
+    await page.evaluate((errorKind) => {
+      localStorage.setItem("mock-report-error", errorKind);
+    }, kind);
+    await runPaletteCommand(page, "Report a Bug");
+    const dialog = page.getByRole("dialog", { name: /report a bug/i });
+    await dialog.getByLabel("Title").fill(`Keep ${kind} title`);
+    await dialog.getByLabel("Description").fill(`Keep ${kind} description`);
+    await dialog.getByLabel("Add images").setInputFiles({
+      name: `${kind}.png`, mimeType: "image/png", buffer: png,
+    });
+
+    await dialog.getByRole("button", { name: "Submit" }).click();
+
+    await expect(dialog.getByRole("alert")).toContainText(message);
+    await expect(dialog.getByLabel("Title")).toHaveValue(`Keep ${kind} title`);
+    await expect(dialog.getByText(`${kind}.png`)).toBeVisible();
+  });
+}
 
 test("draft stays editable when both relay and browser fallback fail", async ({ page }) => {
   await page.goto("/");

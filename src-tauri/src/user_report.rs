@@ -1,7 +1,19 @@
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
 const DEFAULT_REPORT_URL: &str = "https://tauri-explorer.vercel.app/api/report";
+const MAX_ATTACHMENTS: usize = 3;
+const MAX_ATTACHMENT_BYTES: usize = 2 * 1024 * 1024;
+const MAX_ATTACHMENTS_BYTES: usize = 3 * 1024 * 1024;
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportAttachment {
+    pub name: String,
+    pub media_type: String,
+    pub data: String,
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -14,6 +26,7 @@ struct RelayRequest {
     os: String,
     arch: String,
     website: String,
+    attachments: Vec<ReportAttachment>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,12 +53,89 @@ pub struct SubmitReportError {
 }
 
 impl SubmitReportError {
-    fn new(kind: &'static str, message: impl Into<String>) -> Self {
+    pub(crate) fn new(kind: &'static str, message: impl Into<String>) -> Self {
         Self {
             kind,
             message: message.into(),
         }
     }
+}
+
+fn valid_image_magic(media_type: &str, bytes: &[u8]) -> bool {
+    match media_type {
+        "image/png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "image/jpeg" => bytes.starts_with(b"\xff\xd8\xff"),
+        "image/gif" => bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"),
+        _ => false,
+    }
+}
+
+pub(crate) fn report_image_media_type(bytes: &[u8]) -> Option<&'static str> {
+    ["image/png", "image/jpeg", "image/gif"]
+        .into_iter()
+        .find(|media_type| valid_image_magic(media_type, bytes))
+}
+
+pub(crate) fn validate_attachments(
+    attachments: &[ReportAttachment],
+) -> Result<(), SubmitReportError> {
+    if attachments.len() > MAX_ATTACHMENTS {
+        return Err(SubmitReportError::new(
+            "malformed_input",
+            "Attach up to 3 images",
+        ));
+    }
+    let mut total = 0;
+    for attachment in attachments {
+        let name = attachment.name.trim();
+        if name.is_empty()
+            || name.encode_utf16().count() > 120
+            || name.chars().any(char::is_control)
+            || !matches!(
+                attachment.media_type.as_str(),
+                "image/png" | "image/jpeg" | "image/gif"
+            )
+        {
+            return Err(SubmitReportError::new(
+                "malformed_input",
+                "Attachment name or type is invalid",
+            ));
+        }
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&attachment.data)
+            .map_err(|_| SubmitReportError::new("malformed_input", "Attachment data is invalid"))?;
+        if bytes.is_empty()
+            || bytes.len() > MAX_ATTACHMENT_BYTES
+            || !valid_image_magic(&attachment.media_type, &bytes)
+        {
+            return Err(SubmitReportError::new(
+                "malformed_input",
+                "Attachment data is invalid",
+            ));
+        }
+        total += bytes.len();
+        if total > MAX_ATTACHMENTS_BYTES {
+            return Err(SubmitReportError::new(
+                "malformed_input",
+                "Attachments must total 3 MiB or less",
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn attachment_from_image_bytes(
+    name: String,
+    media_type: &str,
+    bytes: Vec<u8>,
+) -> Result<ReportAttachment, SubmitReportError> {
+    let attachment = ReportAttachment {
+        name,
+        media_type: media_type.to_string(),
+        data: base64::engine::general_purpose::STANDARD.encode(bytes),
+    };
+    validate_attachments(std::slice::from_ref(&attachment))?;
+    Ok(attachment)
 }
 
 impl Serialize for SubmitReportError {
@@ -241,8 +331,11 @@ pub async fn submit_user_report(
     body: String,
     kind: String,
     contact: Option<String>,
+    attachments: Option<Vec<ReportAttachment>>,
 ) -> Result<SubmittedUserReport, SubmitReportError> {
     validate_draft(&title, &body, &kind, contact.as_deref())?;
+    let attachments = attachments.unwrap_or_default();
+    validate_attachments(&attachments)?;
     let info = crate::system::get_app_info().await;
     let log_tail = crate::system::read_log_tail(app, 50)
         .await
@@ -268,6 +361,7 @@ pub async fn submit_user_report(
         os: info.os,
         arch: info.arch,
         website: String::new(),
+        attachments,
     };
     tauri::async_runtime::spawn_blocking(move || send_report(&endpoint, payload))
         .await
@@ -277,7 +371,8 @@ pub async fn submit_user_report(
 #[cfg(test)]
 mod tests {
     use super::{
-        assemble_issue_body, send_report, validate_draft, Environment, RelayRequest,
+        assemble_issue_body, attachment_from_image_bytes, report_image_media_type, send_report,
+        validate_attachments, validate_draft, Environment, RelayRequest, ReportAttachment,
         MAX_RELAY_BODY_UNITS,
     };
     use std::io::{BufRead, BufReader, Read, Write};
@@ -362,7 +457,84 @@ mod tests {
             os: "linux".to_string(),
             arch: "x86_64".to_string(),
             website: String::new(),
+            attachments: Vec::new(),
         }
+    }
+
+    fn png_attachment() -> ReportAttachment {
+        attachment_from_image_bytes(
+            "Clipboard screenshot.png".to_string(),
+            "image/png",
+            vec![0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn image_attachment_is_base64_encoded_for_the_relay_without_writing_a_file() {
+        let attachment = png_attachment();
+        assert_eq!(attachment.name, "Clipboard screenshot.png");
+        assert_eq!(attachment.media_type, "image/png");
+        assert_eq!(attachment.data, "iVBORw0KGgoBAgM=");
+        validate_attachments(std::slice::from_ref(&attachment)).unwrap();
+    }
+
+    #[test]
+    fn native_boundary_rejects_unsupported_empty_excessive_and_oversized_images() {
+        let unsupported = ReportAttachment {
+            name: "vector.svg".to_string(),
+            media_type: "image/svg+xml".to_string(),
+            data: "PHN2Zz4=".to_string(),
+        };
+        assert_eq!(
+            validate_attachments(&[unsupported]).unwrap_err().kind,
+            "malformed_input"
+        );
+        assert_eq!(
+            attachment_from_image_bytes("empty.png".to_string(), "image/png", Vec::new())
+                .unwrap_err()
+                .kind,
+            "malformed_input"
+        );
+        assert_eq!(
+            validate_attachments(&vec![png_attachment(); 4])
+                .unwrap_err()
+                .kind,
+            "malformed_input"
+        );
+        assert_eq!(
+            attachment_from_image_bytes(
+                "huge.png".to_string(),
+                "image/png",
+                vec![0; 2 * 1024 * 1024 + 1],
+            )
+            .unwrap_err()
+            .kind,
+            "malformed_input"
+        );
+    }
+
+    #[test]
+    fn relay_payload_serializes_the_attachment_contract() {
+        let mut request = payload();
+        request.attachments.push(png_attachment());
+        let json = serde_json::to_value(request).unwrap();
+        assert_eq!(json["attachments"][0]["name"], "Clipboard screenshot.png");
+        assert_eq!(json["attachments"][0]["mediaType"], "image/png");
+        assert_eq!(json["attachments"][0]["data"], "iVBORw0KGgoBAgM=");
+    }
+
+    #[test]
+    fn clipboard_report_media_type_recognizes_png_and_jpeg_bytes() {
+        assert_eq!(
+            report_image_media_type(b"\x89PNG\r\n\x1a\npayload"),
+            Some("image/png")
+        );
+        assert_eq!(
+            report_image_media_type(b"\xff\xd8\xffpayload"),
+            Some("image/jpeg")
+        );
+        assert_eq!(report_image_media_type(b"not an image"), None);
     }
 
     fn stub_response(status: &str, response_body: &str) -> String {

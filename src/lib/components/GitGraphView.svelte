@@ -86,6 +86,7 @@
     shouldReloadGraphForChange,
   } from "$lib/state/git-graph-refresh";
   import { registerGraphSelectionStepper } from "$lib/state/git-graph-nav";
+  import { registerGraphFileHistoryHandler } from "$lib/state/git-graph-file-history";
   import { clientToFixed } from "$lib/domain/zoom";
   import { parseUnifiedDiff, type ParsedDiff } from "$lib/domain/diff";
   import { highlightDiffLine } from "$lib/domain/syntax-highlight";
@@ -764,6 +765,24 @@
   });
 
   const reload = reloader.reload;
+
+  /** Apply a file-history request from the SCM panel. Keeping the filter
+   *  component-local preserves #529's ephemeral graph-search behaviour. */
+  function showFileHistory(filePath: string): void {
+    if (filePathReloadTimer !== null) {
+      clearTimeout(filePathReloadTimer);
+      filePathReloadTimer = null;
+    }
+    closeDetails();
+    closePrDetail();
+    filePathFilter = filePath;
+    void reload();
+  }
+
+  $effect(() => {
+    if (!paneId) return;
+    return registerGraphFileHistoryHandler(paneId, showFileHistory);
+  });
 
   /** Append the next page of history (incremental scroll). Distinct from
    *  `reload()`: it never resets the head of the list, so it doesn't race the

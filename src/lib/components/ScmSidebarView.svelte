@@ -16,6 +16,7 @@
   import { toastStore } from "$lib/state/toast.svelte";
   import { parentDir, basename } from "$lib/domain/path";
   import { settingsStore } from "$lib/state/settings.svelte";
+  import { requestGraphFileHistory } from "$lib/state/git-graph-file-history";
   import type { GitFileEntry, GitStatusCode } from "$lib/api/files";
   import { gitOpStateLabel } from "$lib/domain/git";
   import Modal from "./Modal.svelte";
@@ -188,6 +189,15 @@
 
   function onDiscard(row: GitFileEntry, isUntracked: boolean): void {
     requestDiscard([row.path], isUntracked);
+  }
+
+  /** Open this pane's graph and hand its repository-relative SCM path to the
+   *  graph filter. The handoff is buffered until the view mounts (#518). */
+  function onShowFileHistory(path: string): void {
+    const repoRoot = scmStore.repoRoot;
+    if (!repoRoot || !path.trim()) return;
+    windowTabsManager.showGitGraphInPane(paneId, repoRoot);
+    requestGraphFileHistory(paneId, path);
   }
 
   async function onIgnore(path: string): Promise<void> {
@@ -659,6 +669,13 @@
               <span class="file-dir">{parts.dir}</span>
             {/if}
             <span class="row-actions">
+              <button
+                type="button"
+                class="row-btn"
+                title="Show history for this file"
+                aria-label="Show history for {row.path}"
+                onclick={(e) => { e.stopPropagation(); onShowFileHistory(row.path); }}
+              >{@render actionIcon("history")}</button>
               {#if opts.kind === "staged"}
                 <button
                   type="button"
@@ -719,7 +736,7 @@
 <!-- Row action icons as SVGs: the previous text glyphs (− + ↺ ⊘) rendered at
      inconsistent sizes because their font metrics differ wildly at the same
      font-size — ↺ in particular drew visibly larger than the rest (#270). -->
-{#snippet actionIcon(kind: "stage" | "unstage" | "discard" | "ignore" | "archive" | "trash")}
+{#snippet actionIcon(kind: "stage" | "unstage" | "discard" | "ignore" | "archive" | "trash" | "history")}
   <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
     {#if kind === "stage"}
       <path d="M8 3.5v9M3.5 8h9" />
@@ -733,6 +750,9 @@
       <path d="M6.25 8.5h3.5" />
     {:else if kind === "trash"}
       <path d="M3.5 5h9M6 5V3.5h4V5M5 5l.5 8h5l.5-8M7 7.5v3M9 7.5v3" />
+    {:else if kind === "history"}
+      <circle cx="8" cy="8" r="5" />
+      <path d="M8 5v3l2 1.5" />
     {:else}
       <circle cx="8" cy="8" r="5" />
       <path d="M4.7 4.7l6.6 6.6" />
@@ -813,6 +833,8 @@
         {/each}
         <span class="file-name">{fileName}</span>
         <span class="row-actions">
+          <button type="button" class="row-btn" title="Show history for this file" aria-label="Show history for {row.path}"
+            onclick={(e) => { e.stopPropagation(); onShowFileHistory(row.path); }}>{@render actionIcon("history")}</button>
           {#if kind === "staged"}
             <button type="button" class="row-btn" title="Unstage" aria-label="Unstage {row.path}"
               onclick={(e) => { e.stopPropagation(); scmStore.unstage([row.path]); }}>{@render actionIcon("unstage")}</button>

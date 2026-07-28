@@ -388,6 +388,18 @@ function createWindowTabsManager() {
     }
   }
 
+  /** Show the graph for one specific pane. Unlike the active-pane toggle,
+   *  this is idempotent so SCM row actions can safely target their owner. */
+  function showGitGraphInPane(paneId: PaneId, repoPath: string): void {
+    for (const tab of tabs) {
+      const pane = tab.panes[paneId];
+      if (!pane) continue;
+      pane.gitGraph = repoPath;
+      saveState();
+      return;
+    }
+  }
+
   /** Toggle the commit graph in the active pane (#272): showing → back to
    *  the file listing; hidden → the graph for `repoPath`. */
   function toggleGitGraphInActivePane(repoPath: string | null): void {
@@ -1053,6 +1065,7 @@ function createWindowTabsManager() {
     createTab,
     getPaneGitGraph,
     setPaneGitGraph,
+    showGitGraphInPane,
     toggleGitGraphInActivePane,
     getPaneScmVisible,
     toggleScmInActivePane,

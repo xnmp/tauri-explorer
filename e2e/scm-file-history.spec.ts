@@ -30,6 +30,7 @@ test.describe("SCM per-file commit history (#518)", () => {
     const scm = page.locator(".scm-panel").first();
     const fileRow = scm.locator('.row[data-path="src/index.css"]');
     await expect(fileRow).toBeVisible();
+    await fileRow.hover();
 
     await fileRow.getByRole("button", { name: "Show history for src/index.css" }).click();
 
@@ -37,7 +38,8 @@ test.describe("SCM per-file commit history (#518)", () => {
     await expect(graph).toBeVisible();
     await expect(graph.locator(".gh-message")).toHaveText("Path: src/index.css");
     await expect(graph.locator(".commit-row")).toHaveCount(1);
-    await expect(graph.locator(".commit-row")).toContainText("Merge hotfix into main");
+    await expect(graph.locator(".commit-row")).toContainText("Merge branch 'feature'");
     await expect(graph).not.toContainText("Add tests for feature X");
+    await page.screenshot({ path: "evidence/ac-1-scm-file-history.png" });
   });
 });

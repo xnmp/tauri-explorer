@@ -265,49 +265,31 @@ describe("traceGraphLineage — observable branch trace", () => {
     ).toEqual({ rows: new Set(), segments: [] });
   });
 
-  it("classifies a deep two-lane history within an interactive hover budget", () => {
-    const size = 3_001;
+  it("classifies a deep, many-branch history within an interactive hover budget", () => {
+    const groups = 750;
     const rows: GraphCommitLike[] = [];
-    const vertices: ReturnType<typeof assignLayout>["vertices"] = [];
-    for (let row = 0; row < size; row++) {
-      if (row === size - 1) {
-        rows.push(c("root"));
-        vertices.push({ lane: 0, colorIndex: 0 });
-      } else if (row % 2 === 0) {
-        rows.push(c(`main-${row}`, row + 2 < size - 1 ? `main-${row + 2}` : "root"));
-        vertices.push({ lane: 0, colorIndex: 0 });
-      } else {
-        rows.push(c(`feature-${row}`, row + 2 < size - 1 ? `feature-${row + 2}` : "root"));
-        vertices.push({ lane: 1, colorIndex: 1 });
-      }
+    for (let group = 0; group < groups; group++) {
+      const next = group + 1 < groups ? `merge-${group + 1}` : "root";
+      rows.push(c(`merge-${group}`, `main-${group}`, `feature-${group}`, `extra-${group}`));
+      rows.push(c(`main-${group}`, next));
+      rows.push(c(`feature-${group}`, next));
+      rows.push(c(`extra-${group}`, next));
     }
-    const layout = {
-      vertices,
-      branches: [
-        {
-          colorIndex: 0,
-          points: Array.from({ length: size }, (_, row) => ({ row, lane: 0 })),
-        },
-        {
-          colorIndex: 1,
-          points: Array.from({ length: size - 1 }, (_, index) => ({
-            row: index + 1,
-            lane: index === size - 2 ? 0 : 1,
-          })),
-        },
-      ],
-      laneCount: 2,
-    };
+    rows.push(c("root"));
+    const layout = assignLayout(rows, "merge-0");
+    expect(layout.laneCount).toBeGreaterThanOrEqual(3);
+    expect(layout.branches.length).toBeGreaterThan(groups);
 
     const started = performance.now();
-    const trace = traceGraphLineage(rows, layout, 1_500);
+    const trace = traceGraphLineage(rows, layout, 0);
     const elapsed = performance.now() - started;
 
     expect(trace.rows.has(0)).toBe(true);
-    expect(trace.rows.has(1)).toBe(false);
-    expect(trace.rows.has(size - 1)).toBe(true);
+    expect(trace.rows.has(2)).toBe(false);
+    expect(trace.rows.has(rows.length - 1)).toBe(true);
     expect(trace.segments.length).toBeGreaterThan(0);
-    // The prior repeated branch/point scan took ~800 ms at this size.
+    // The prior repeated branch×point scans are superlinear on this valid
+    // three-lane layout; the indexed classifier remains comfortably bounded.
     expect(elapsed).toBeLessThan(150);
   });
 });

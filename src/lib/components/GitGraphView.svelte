@@ -1498,7 +1498,7 @@
 
 <svelte:window onkeydown={onWindowKeydown} />
 
-<div class="git-graph-view" data-testid="git-graph-view">
+<div class="git-graph-view" data-testid="git-graph-view" data-lane-count={layout.laneCount}>
   {#if error}
     <div class="graph-status error">{error}</div>
   {:else}

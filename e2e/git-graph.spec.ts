@@ -531,6 +531,34 @@ test("traces a hovered or selected branch lineage and can restore the undimmed g
   await expect(view.locator("[data-trace]")).toHaveCount(0);
 });
 
+test("traces hover in a two-lane branchy graph", async ({ page }) => {
+  await page.goto("/?path=/home/user/Documents/project");
+  await waitForEntries(page);
+  await openGraphViaPalette(page);
+
+  const view = page.locator('[data-testid="git-graph-view"]');
+  await page.locator('[data-testid="branch-filter-btn"]').click();
+  const popover = page.locator('[data-testid="branch-popover"]');
+  await popover.locator('[data-testid="bf-select-all"]').click();
+  for (const name of ["feature", "hotfix"]) {
+    await popover
+      .locator("label.bf-row:not(.bf-author-row):not(.bf-all):not(.bf-local-only)")
+      .filter({ has: page.getByText(name, { exact: true }) })
+      .locator("input")
+      .click();
+  }
+  await page.keyboard.press("Escape");
+  await expect(view).toHaveAttribute("data-lane-count", "2");
+  const feature = view.locator(".commit-row", { hasText: "Add tests for feature X" });
+  const ancestor = view.locator(".commit-row", { hasText: "Implement feature X" });
+  const unrelated = view.locator(".commit-row", { hasText: "Hotfix: crash on empty input" });
+
+  await feature.hover();
+  await expect(feature).toHaveAttribute("data-trace", "lit");
+  await expect(ancestor).toHaveAttribute("data-trace", "lit");
+  await expect(unrelated).toHaveAttribute("data-trace", "dim");
+});
+
 test("parent is a viewable column, off by default (#402)", async ({ page }) => {
   await page.goto("/?path=/home/user/Documents/project");
   await waitForEntries(page);

@@ -44,7 +44,7 @@ Rules that bite:
 - User-report images are hosted as public Vercel Blobs before the relay creates
   the GitHub issue. Production therefore needs `BLOB_READ_WRITE_TOKEN` as well
   as `GITHUB_ISSUE_TOKEN`. Keep the raw attachment total at or below 3 MiB so
-  its base64 JSON request stays below Vercel's 4.5 MiB function-body limit.
+  its base64 JSON request stays below Vercel's 4.5 MB function-body limit.
 
 ## Documentation
 

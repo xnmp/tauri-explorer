@@ -16,10 +16,7 @@
   import { toastStore } from "$lib/state/toast.svelte";
   import { parentDir, basename } from "$lib/domain/path";
   import { settingsStore } from "$lib/state/settings.svelte";
-  import {
-    queueGraphFileHistory,
-    requestGraphFileHistory,
-  } from "$lib/state/git-graph-file-history";
+  import { showFileHistoryInPane } from "$lib/state/git-graph-file-history";
   import type { GitFileEntry, GitStatusCode } from "$lib/api/files";
   import { gitOpStateLabel } from "$lib/domain/git";
   import Modal from "./Modal.svelte";
@@ -199,16 +196,10 @@
   function onShowFileHistory(path: string): void {
     const repoRoot = scmStore.repoRoot;
     if (!repoRoot || !path.trim()) return;
-    // If this pane holds a graph for another repo, its outgoing component is
-    // still registered until Svelte remounts it. Queue instead of delivering
-    // to that soon-to-be-destroyed handler.
-    if (windowTabsManager.getPaneGitGraph(paneId) !== repoRoot) {
-      queueGraphFileHistory(paneId, path);
-      windowTabsManager.showGitGraphInPane(paneId, repoRoot);
-      return;
-    }
-    windowTabsManager.showGitGraphInPane(paneId, repoRoot);
-    requestGraphFileHistory(paneId, path);
+    showFileHistoryInPane(paneId, repoRoot, path, {
+      currentRepoPath: windowTabsManager.getPaneGitGraph(paneId),
+      showGraph: (root) => windowTabsManager.showGitGraphInPane(paneId, root),
+    });
   }
 
   async function onIgnore(path: string): Promise<void> {
@@ -680,13 +671,15 @@
               <span class="file-dir">{parts.dir}</span>
             {/if}
             <span class="row-actions">
-              <button
-                type="button"
-                class="row-btn"
-                title="Show history for this file"
-                aria-label="Show history for {row.path}"
-                onclick={(e) => { e.stopPropagation(); onShowFileHistory(row.path); }}
-              >{@render actionIcon("history")}</button>
+              {#if opts.kind !== "untracked"}
+                <button
+                  type="button"
+                  class="row-btn"
+                  title="Show history for this file"
+                  aria-label="Show history for {row.path}"
+                  onclick={(e) => { e.stopPropagation(); onShowFileHistory(row.path); }}
+                >{@render actionIcon("history")}</button>
+              {/if}
               {#if opts.kind === "staged"}
                 <button
                   type="button"
@@ -844,8 +837,10 @@
         {/each}
         <span class="file-name">{fileName}</span>
         <span class="row-actions">
-          <button type="button" class="row-btn" title="Show history for this file" aria-label="Show history for {row.path}"
-            onclick={(e) => { e.stopPropagation(); onShowFileHistory(row.path); }}>{@render actionIcon("history")}</button>
+          {#if kind !== "untracked"}
+            <button type="button" class="row-btn" title="Show history for this file" aria-label="Show history for {row.path}"
+              onclick={(e) => { e.stopPropagation(); onShowFileHistory(row.path); }}>{@render actionIcon("history")}</button>
+          {/if}
           {#if kind === "staged"}
             <button type="button" class="row-btn" title="Unstage" aria-label="Unstage {row.path}"
               onclick={(e) => { e.stopPropagation(); scmStore.unstage([row.path]); }}>{@render actionIcon("unstage")}</button>

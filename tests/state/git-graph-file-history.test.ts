@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  dropGraphFileHistory,
   queueGraphFileHistory,
   registerGraphFileHistoryHandler,
+  showFileHistoryInPane,
 } from "$lib/state/git-graph-file-history";
 
 describe("per-pane Git Graph file-history handoff", () => {
@@ -18,5 +20,32 @@ describe("per-pane Git Graph file-history handoff", () => {
     expect(outgoing).toEqual([]);
     expect(incoming).toEqual(["src/index.css"]);
     removeIncoming();
+  });
+
+  it("delivers a second file immediately when the graph already shows its repository", () => {
+    const pane = "open-graph-pane";
+    const received: string[] = [];
+    const remove = registerGraphFileHistoryHandler(pane, (path) => received.push(path));
+    const opened: string[] = [];
+
+    showFileHistoryInPane(pane, "/repo", "src/next.ts", {
+      currentRepoPath: "/repo",
+      showGraph: (repo) => opened.push(repo),
+    });
+
+    expect(received).toEqual(["src/next.ts"]);
+    expect(opened).toEqual([]);
+    remove();
+  });
+
+  it("drops a pending request when its pane closes", () => {
+    const pane = "closed-graph-pane";
+    queueGraphFileHistory(pane, "src/abandoned.ts");
+    dropGraphFileHistory(pane);
+    const received: string[] = [];
+    const remove = registerGraphFileHistoryHandler(pane, (path) => received.push(path));
+
+    expect(received).toEqual([]);
+    remove();
   });
 });

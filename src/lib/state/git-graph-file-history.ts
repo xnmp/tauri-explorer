@@ -8,12 +8,35 @@
 
 type FileHistoryHandler = (filePath: string) => void;
 
+interface GraphPaneTarget {
+  currentRepoPath: string | undefined;
+  showGraph(repoPath: string): void;
+}
+
 const pendingPaths = new Map<string, string>();
 const handlers = new Map<string, FileHistoryHandler>();
 
 /** Queue a request for the graph instance that next mounts in `paneId`. */
 export function queueGraphFileHistory(paneId: string, filePath: string): void {
   if (filePath.trim()) pendingPaths.set(paneId, filePath);
+}
+
+/** Open a pane's graph at a file's history. A graph for another repository is
+ * still registered until Svelte completes its keyed remount, so queue before
+ * replacing it; an already-correct graph receives the path immediately. */
+export function showFileHistoryInPane(
+  paneId: string,
+  repoPath: string,
+  filePath: string,
+  target: GraphPaneTarget,
+): void {
+  if (!repoPath || !filePath.trim()) return;
+  if (target.currentRepoPath !== repoPath) {
+    queueGraphFileHistory(paneId, filePath);
+    target.showGraph(repoPath);
+    return;
+  }
+  requestGraphFileHistory(paneId, filePath);
 }
 
 /** Request a graph view limited to `filePath` for a pane. */
@@ -41,4 +64,10 @@ export function registerGraphFileHistoryHandler(
   return () => {
     if (handlers.get(paneId) === handler) handlers.delete(paneId);
   };
+}
+
+/** Drop a closed pane's pending request and mounted handler. */
+export function dropGraphFileHistory(paneId: string): void {
+  pendingPaths.delete(paneId);
+  handlers.delete(paneId);
 }

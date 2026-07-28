@@ -58,6 +58,7 @@ import {
 import { createClosedTabsStore } from "./closed-tabs";
 import { disposeScmStore } from "./scm.svelte";
 import { disposeCommitPanelStore } from "./commit-panel.svelte";
+import { dropGraphFileHistory } from "./git-graph-file-history";
 
 // Re-export persistence & migration helpers so existing importers of this
 // module keep working after the extraction (refactor/audit-tier4-splits #212).
@@ -616,6 +617,7 @@ function createWindowTabsManager() {
       explorers.delete(pane.explorerId);
       disposeScmStore(paneId);
       disposeCommitPanelStore(paneId);
+      dropGraphFileHistory(paneId);
     }
   }
 
@@ -944,6 +946,7 @@ function createWindowTabsManager() {
     explorers.delete(pane.explorerId);
     disposeScmStore(target);
     disposeCommitPanelStore(target);
+    dropGraphFileHistory(target);
 
     const remaining = leafIds(newLayout);
     const oldOrder = leafIds(tab.layout);
@@ -986,6 +989,7 @@ function createWindowTabsManager() {
         explorers.delete(pane.explorerId);
         disposeScmStore(paneId);
         disposeCommitPanelStore(paneId);
+        dropGraphFileHistory(paneId);
       }
       updateActiveExplorerTab((t) => ({
         ...t,

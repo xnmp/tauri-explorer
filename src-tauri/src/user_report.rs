@@ -367,6 +367,7 @@ mod tests {
     use super::{
         assemble_issue_body, attachment_from_image_bytes, send_report, validate_attachments,
         validate_draft, Environment, RelayRequest, ReportAttachment, MAX_RELAY_BODY_UNITS,
+        report_image_media_type,
     };
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::{Shutdown, TcpListener};
@@ -515,6 +516,19 @@ mod tests {
         assert_eq!(json["attachments"][0]["name"], "Clipboard screenshot.png");
         assert_eq!(json["attachments"][0]["mediaType"], "image/png");
         assert_eq!(json["attachments"][0]["data"], "iVBORw0KGgoBAgM=");
+    }
+
+    #[test]
+    fn clipboard_report_media_type_recognizes_png_and_jpeg_bytes() {
+        assert_eq!(
+            report_image_media_type(b"\x89PNG\r\n\x1a\npayload"),
+            Some("image/png")
+        );
+        assert_eq!(
+            report_image_media_type(b"\xff\xd8\xffpayload"),
+            Some("image/jpeg")
+        );
+        assert_eq!(report_image_media_type(b"not an image"), None);
     }
 
     fn stub_response(status: &str, response_body: &str) -> String {

@@ -129,6 +129,22 @@ test("image picker shows named previews and lets the user remove an attachment",
   await page.screenshot({ path: evidencePath("ac-1-image-picker-previews.png") });
 });
 
+test("feature dialog also accepts multiple image files", async ({ page }) => {
+  await page.goto("/");
+  await waitForEntries(page);
+  await runPaletteCommand(page, "Request a Feature");
+  const dialog = page.getByRole("dialog", { name: /request a feature/i });
+
+  await dialog.getByLabel("Add images").setInputFiles([
+    { name: "feature-first.png", mimeType: "image/png", buffer: png },
+    { name: "feature-second.png", mimeType: "image/png", buffer: png },
+  ]);
+
+  await expect(dialog.getByText("feature-first.png")).toBeVisible();
+  await expect(dialog.getByText("feature-second.png")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: /^Remove / })).toHaveCount(2);
+});
+
 test("clipboard image is offered and attached without creating a file", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
@@ -170,6 +186,73 @@ test("invalid image keeps the report draft and existing attachments", async ({ p
   await expect(dialog.getByLabel("Description")).toHaveValue("Keep this description");
   await expect(dialog.getByText("valid.png")).toBeVisible();
   await page.screenshot({ path: evidencePath("ac-4-invalid-image-preserves-draft.png") });
+});
+
+test("empty, excessive, per-image, and total image limits are visible without draft loss", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await waitForEntries(page);
+  await runPaletteCommand(page, "Report a Bug");
+  const dialog = page.getByRole("dialog", { name: /report a bug/i });
+  await dialog.getByLabel("Title").fill("Keep every limit draft");
+  await dialog.getByLabel("Description").fill("Limits must not discard this.");
+  const input = dialog.getByLabel("Add images");
+
+  await input.setInputFiles({ name: "empty.png", mimeType: "image/png", buffer: Buffer.alloc(0) });
+  await expect(dialog.getByRole("alert")).toContainText("empty");
+
+  await input.setInputFiles(Array.from({ length: 4 }, (_, index) => ({
+    name: `${index}.png`,
+    mimeType: "image/png",
+    buffer: png,
+  })));
+  await expect(dialog.getByRole("alert")).toContainText("up to 3");
+
+  await input.setInputFiles({
+    name: "too-large.png",
+    mimeType: "image/png",
+    buffer: Buffer.concat([png, Buffer.alloc(2 * 1024 * 1024)]),
+  });
+  await expect(dialog.getByRole("alert")).toContainText("2 MiB");
+
+  const underTwoMiB = Buffer.concat([png, Buffer.alloc(1600 * 1024)]);
+  await input.setInputFiles({
+    name: "valid-large.png", mimeType: "image/png", buffer: underTwoMiB,
+  });
+  await expect(dialog.getByText("valid-large.png")).toBeVisible();
+  await input.setInputFiles({
+    name: "total-overflow.png", mimeType: "image/png", buffer: underTwoMiB,
+  });
+  await expect(dialog.getByRole("alert")).toContainText("3 MiB");
+
+  await expect(dialog.getByLabel("Title")).toHaveValue("Keep every limit draft");
+  await expect(dialog.getByLabel("Description")).toHaveValue("Limits must not discard this.");
+  await expect(dialog.getByText("valid-large.png")).toBeVisible();
+  await expect(dialog.getByText("total-overflow.png")).toBeHidden();
+});
+
+test("overlapping picker reads cannot bypass attachment limits", async ({ page }) => {
+  await page.goto("/");
+  await waitForEntries(page);
+  await runPaletteCommand(page, "Report a Bug");
+  const dialog = page.getByRole("dialog", { name: /report a bug/i });
+
+  await dialog.getByLabel("Add images").evaluate((element) => {
+    const input = element as HTMLInputElement;
+    const select = (prefix: string) => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File(["first"], `${prefix}-first.png`, { type: "image/png" }));
+      transfer.items.add(new File(["second"], `${prefix}-second.png`, { type: "image/png" }));
+      input.files = transfer.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    select("one");
+    select("two");
+  });
+
+  await expect(dialog.getByRole("button", { name: /^Remove / })).toHaveCount(2);
+  await expect(dialog.getByRole("alert")).toContainText("up to 3");
 });
 
 test("successful submission forwards selected images to the native report command", async ({ page }) => {

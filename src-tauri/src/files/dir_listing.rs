@@ -4,7 +4,7 @@
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
@@ -206,7 +206,7 @@ pub fn scan_directory_parallel(dir_path: &PathBuf) -> Vec<FileEntry> {
 /// Network and WSL UNC paths may turn each file stat into a remote round trip.
 /// `is_git_repo` only decorates folder icons, so listings skip that optional
 /// per-entry probe there while preserving it for local directories.
-fn should_probe_git_repos(dir_path: &PathBuf) -> bool {
+fn should_probe_git_repos(dir_path: &Path) -> bool {
     let path = dir_path.to_string_lossy();
     !(path.starts_with("\\\\") || path.starts_with("//"))
 }

@@ -490,18 +490,22 @@ mod tests {
         )));
     }
 
-    /// The listing seam returns a compatible `false` flag without touching a
-    /// child `.git` path when its root uses the slow-mount policy (#480).
+    /// On Unix, backslashes are ordinary filename characters, which lets this
+    /// exercise the public scan entry point with a synthetic UNC root instead
+    /// of depending on a live network share (#480).
+    #[cfg(not(windows))]
     #[test]
-    fn unc_listing_root_skips_child_git_repo_detection() {
-        let dir = tempdir().unwrap();
-        fs::create_dir(dir.path().join("repo")).unwrap();
-        fs::create_dir(dir.path().join("repo/.git")).unwrap();
+    fn unc_listing_path_skips_child_git_repo_detection() {
+        let listing_root = PathBuf::from(format!(
+            r"\\server\share\tauri-explorer-test-{}",
+            std::process::id()
+        ));
+        fs::create_dir(&listing_root).unwrap();
+        fs::create_dir(listing_root.join("repo")).unwrap();
+        fs::create_dir(listing_root.join("repo/.git")).unwrap();
 
-        let entries = scan_directory_parallel_for_listing(
-            &dir.path().to_path_buf(),
-            Path::new(r"\\server\share\large-directory"),
-        );
+        let entries = scan_directory_parallel(&listing_root);
+        fs::remove_dir_all(&listing_root).unwrap();
         assert!(
             !entries
                 .iter()

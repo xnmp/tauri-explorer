@@ -88,7 +88,7 @@
     shouldReloadGraphForChange,
   } from "$lib/state/git-graph-refresh";
   import { registerGraphSelectionStepper } from "$lib/state/git-graph-nav";
-  import { registerGitPaletteTargets } from "$lib/state/git-palette";
+  import { MAX_GIT_PALETTE_COMMIT_TARGETS, registerGitPaletteTargets } from "$lib/state/git-palette";
   import { registerGraphFileHistoryHandler } from "$lib/state/git-graph-file-history";
   import { clientToFixed } from "$lib/domain/zoom";
   import { parseUnifiedDiff, type ParsedDiff } from "$lib/domain/diff";
@@ -980,9 +980,12 @@
     return registerGitPaletteTargets(id, {
       branches,
       commits: commits
+        .slice(0, MAX_GIT_PALETTE_COMMIT_TARGETS)
         .filter((commit) => !commit.stash)
         .map((commit) => ({ oid: commit.oid, shortOid: commit.short_oid, summary: commit.summary })),
-      stashes: commits.flatMap((commit) => (commit.stash ? [commit.stash] : [])),
+      stashes: commits.flatMap((commit) => (
+        commit.stash ? [{ selector: commit.stash, summary: commit.summary }] : []
+      )),
       actions: {
         checkout: (target) => runAction("Checkout", () => gitCheckout(repoPath, target)),
         cherryPick: (oid) => runAction("Cherry-pick", () => gitCherryPick(repoPath, oid)),

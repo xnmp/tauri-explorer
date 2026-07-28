@@ -617,6 +617,27 @@ mod tests {
     }
 
     #[test]
+    fn stash_apply_keeps_entry_pop_restores_and_drops_it() {
+        let (dir, _cs) = linear_repo();
+        let rp = repo_path(&dir);
+        write(dir.path(), "a.txt", "stashed work\n");
+        git(dir.path(), &["stash", "push", "-m", "palette test"]);
+        assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "2\n");
+        assert!(git_out(dir.path(), &["stash", "list"]).contains("palette test"));
+
+        tokio_test_block(git_stash_apply(rp.clone(), "stash@{0}".into())).unwrap();
+        assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "stashed work\n");
+        assert!(git_out(dir.path(), &["stash", "list"]).contains("palette test"));
+
+        git(dir.path(), &["reset", "--hard"]);
+        tokio_test_block(git_stash_pop(rp.clone(), "stash@{0}".into())).unwrap();
+        assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "stashed work\n");
+        assert!(git_out(dir.path(), &["stash", "list"]).is_empty());
+
+        assert!(tokio_test_block(git_stash_apply(rp, "stash@{99}".into())).is_err());
+    }
+
+    #[test]
     fn create_tag_at_commit() {
         let (dir, cs) = linear_repo();
         run_git(&repo_path(&dir), &["tag", "v1", &cs[0]]).unwrap();

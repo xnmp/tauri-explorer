@@ -7,14 +7,25 @@
  * only the active graph pane exposes them to the registry.
  */
 
-import { registerCommands, unregisterCommand, type Command } from "./commands.svelte";
+import {
+  registerCommands,
+  unregisterCommand,
+  type Command,
+} from "./commands.svelte";
 import { windowTabsManager } from "./window-tabs.svelte";
 
 const registeredIdsByPane = new Map<string, Set<string>>();
+/** Recent hash targets stay useful without flooding the unvirtualized palette. */
+export const MAX_GIT_PALETTE_COMMIT_TARGETS = 50;
 
 export interface GitPaletteTarget {
   oid: string;
   shortOid: string;
+  summary: string;
+}
+
+export interface GitPaletteStash {
+  selector: string;
   summary: string;
 }
 
@@ -31,7 +42,7 @@ export interface GitPaletteActions {
 export interface GitPaletteTargets {
   branches: readonly string[];
   commits: readonly GitPaletteTarget[];
-  stashes: readonly string[];
+  stashes: readonly GitPaletteStash[];
   actions: GitPaletteActions;
 }
 
@@ -41,7 +52,7 @@ function idPart(value: string): string {
 
 function activeGraphPane(paneId: string): boolean {
   const tab = windowTabsManager.activeTab;
-  return tab?.activePaneId === paneId && tab.panes[paneId]?.gitGraph !== null;
+  return tab?.activePaneId === paneId && tab.panes[paneId]?.gitGraph != null;
 }
 
 function unique(values: readonly string[]): string[] {
@@ -51,39 +62,70 @@ function unique(values: readonly string[]): string[] {
 /**
  * Register the current graph's fuzzy-searchable targets. Re-registering a
  * pane replaces stale refs/commits; disposing removes its commands entirely.
+ * Commit actions are intentionally capped to the 50 most-recent loaded rows:
+ * the palette is unvirtualized, while full-history navigation remains in the
+ * graph itself.
  */
-export function registerGitPaletteTargets(paneId: string, targets: GitPaletteTargets): () => void {
+export function registerGitPaletteTargets(
+  paneId: string,
+  targets: GitPaletteTargets,
+): () => void {
   const when = () => activeGraphPane(paneId);
   const commands: Command[] = [];
-  const add = (suffix: string, label: string, handler: () => Promise<void>): void => {
+  const add = (
+    suffix: string,
+    label: string,
+    handler: () => Promise<void>,
+  ): void => {
     commands.push({
       id: `git.palette.${paneId}.${suffix}`,
       label,
       category: "general",
       when,
+      trackFrecency: false,
       handler,
     });
   };
 
   for (const branch of unique(targets.branches)) {
     const key = idPart(branch);
-    add(`checkout.branch.${key}`, `Git: Checkout Branch ${branch}`, () => targets.actions.checkout(branch));
-    add(`merge.${key}`, `Git: Merge Branch ${branch}`, () => targets.actions.merge(branch));
+    add(`checkout.branch.${key}`, `Git: Checkout Branch ${branch}`, () =>
+      targets.actions.checkout(branch),
+    );
+    add(`merge.${key}`, `Git: Merge Branch ${branch}`, () =>
+      targets.actions.merge(branch),
+    );
   }
 
-  for (const commit of targets.commits) {
+  for (const commit of targets.commits.slice(
+    0,
+    MAX_GIT_PALETTE_COMMIT_TARGETS,
+  )) {
     const label = `${commit.shortOid} — ${commit.summary}`;
     const key = idPart(commit.oid);
-    add(`checkout.commit.${key}`, `Git: Checkout Commit ${label}`, () => targets.actions.checkout(commit.oid));
-    add(`cherry-pick.${key}`, `Git: Cherry-pick ${label}`, () => targets.actions.cherryPick(commit.oid));
-    add(`rebase.${key}`, `Git: Rebase onto ${label}`, () => targets.actions.rebase(commit.oid));
-    add(`jump.${key}`, `Git: Jump to Commit ${label}`, () => targets.actions.jumpToCommit(commit.oid));
+    add(`checkout.commit.${key}`, `Git: Checkout Commit ${label}`, () =>
+      targets.actions.checkout(commit.oid),
+    );
+    add(`cherry-pick.${key}`, `Git: Cherry-pick ${label}`, () =>
+      targets.actions.cherryPick(commit.oid),
+    );
+    add(`rebase.${key}`, `Git: Rebase onto ${label}`, () =>
+      targets.actions.rebase(commit.oid),
+    );
+    add(`jump.${key}`, `Git: Jump to Commit ${label}`, () =>
+      targets.actions.jumpToCommit(commit.oid),
+    );
   }
 
-  for (const stash of unique(targets.stashes)) {
-    const key = idPart(stash);
-    add(`stash-apply.${key}`, `Git: Apply Stash ${stash}`, () => targets.actions.stashApply(stash));
-    add(`stash-pop.${key}`, `Git: Pop Stash ${stash}`, () => targets.actions.stashPop(stash));
+  for (const stash of targets.stashes) {
+    const key = idPart(stash.selector);
+    const label = `${stash.selector} — ${stash.summary}`;
+    add(`stash-apply.${key}`, `Git: Apply Stash ${label}`, () =>
+      targets.actions.stashApply(stash.selector),
+    );
+    add(`stash-pop.${key}`, `Git: Pop Stash ${label}`, () =>
+      targets.actions.stashPop(stash.selector),
+    );
   }
 
   const ids = new Set(commands.map((command) => command.id));

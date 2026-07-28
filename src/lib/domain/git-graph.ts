@@ -336,6 +336,10 @@ export function traceGraphLineage(
 ): GraphTrace {
   const empty = (): GraphTrace => ({ rows: new Set<number>(), segments: [] });
   if (
+    !Array.isArray(commits) ||
+    !layout ||
+    !Array.isArray(layout.vertices) ||
+    !Array.isArray(layout.branches) ||
     !Number.isInteger(fromRow) ||
     fromRow < 0 ||
     fromRow >= commits.length ||
@@ -345,27 +349,57 @@ export function traceGraphLineage(
     return empty();
   }
 
-  const rows = new Set<number>([fromRow]);
+  const pointKey = (row: number, lane: number) => `${row}:${lane}`;
   const vertexKey = (row: number) => {
     const vertex = layout.vertices[row];
-    return vertex ? `${row}:${vertex.lane}` : null;
+    return vertex && Number.isFinite(vertex.lane) ? pointKey(row, vertex.lane) : null;
   };
+
+  // Index the already-computed layout once. Hover changes the selected row,
+  // but a single classification must stay linear in the displayed geometry;
+  // repeatedly scanning every branch for every ancestor caused deep-history
+  // hover stalls.
+  const ordinaryLinesByPoint = new Map<string, number[]>();
+  const branchPointIndices = layout.branches.map((line, lineIndex) => {
+    const indices = new Map<string, number>();
+    if (!line || !Array.isArray(line.points)) return indices;
+    line.points.forEach((point, pointIndex) => {
+      if (!point || !Number.isFinite(point.row) || !Number.isFinite(point.lane)) return;
+      const key = pointKey(point.row, point.lane);
+      indices.set(key, pointIndex);
+      if (!line.mergeEdge) {
+        const memberships = ordinaryLinesByPoint.get(key) ?? [];
+        memberships.push(lineIndex);
+        ordinaryLinesByPoint.set(key, memberships);
+      }
+    });
+    return indices;
+  });
+  const rowByOid = new Map<string, number>();
+  const firstParentChildren = new Map<string, number[]>();
+  commits.forEach((commit, row) => {
+    if (!commit?.stash && commit?.oid) rowByOid.set(commit.oid, row);
+    const parentOid = commit?.parents?.[0];
+    if (commit?.oid && parentOid) {
+      const children = firstParentChildren.get(parentOid) ?? [];
+      children.push(row);
+      firstParentChildren.set(parentOid, children);
+    }
+  });
+
   const sharesBranchEdge = (childRow: number, parentRow: number): boolean => {
     const childKey = vertexKey(childRow);
     const parentKey = vertexKey(parentRow);
     if (childKey === null || parentKey === null) return false;
-    return layout.branches.some((line) => {
-      if (line.mergeEdge) return false;
-      let childPoint = -1;
-      let parentPoint = -1;
-      line.points.forEach((point, index) => {
-        const key = `${point.row}:${point.lane}`;
-        if (key === childKey) childPoint = index;
-        if (key === parentKey) parentPoint = index;
-      });
-      return childPoint >= 0 && parentPoint > childPoint;
+    const parentLines = new Set(ordinaryLinesByPoint.get(parentKey) ?? []);
+    return (ordinaryLinesByPoint.get(childKey) ?? []).some((lineIndex) => {
+      if (!parentLines.has(lineIndex)) return false;
+      const indices = branchPointIndices[lineIndex];
+      return (indices.get(childKey) ?? -1) < (indices.get(parentKey) ?? -1);
     });
   };
+
+  const rows = new Set<number>([fromRow]);
 
   // Older ancestry is exact: resolve each first parent strictly below the
   // current row so malformed/non-topological input cannot create a cycle.
@@ -373,14 +407,8 @@ export function traceGraphLineage(
   while (true) {
     const parentOid = commits[currentRow]?.parents?.[0];
     if (!parentOid) break;
-    let parentRow = -1;
-    for (let row = currentRow + 1; row < commits.length; row++) {
-      if (!commits[row]?.stash && commits[row]?.oid === parentOid) {
-        parentRow = row;
-        break;
-      }
-    }
-    if (parentRow < 0 || rows.has(parentRow)) break;
+    const parentRow = rowByOid.get(parentOid) ?? -1;
+    if (parentRow <= currentRow || rows.has(parentRow)) break;
     rows.add(parentRow);
     currentRow = parentRow;
   }
@@ -389,13 +417,15 @@ export function traceGraphLineage(
   // parent. The drawn branch resolves that ambiguity without relying on color.
   currentRow = fromRow;
   while (true) {
-    const current = commits[currentRow];
+    const current: BranchLineCommitLike | undefined = commits[currentRow];
     if (!current?.oid || !layout.vertices[currentRow]) break;
     let childRow = -1;
-    for (let row = currentRow - 1; row >= 0; row--) {
+    const children: number[] = firstParentChildren.get(current.oid) ?? [];
+    for (let i = children.length - 1; i >= 0; i--) {
+      const row = children[i];
       if (
+        row < currentRow &&
         !commits[row]?.stash &&
-        commits[row]?.parents?.[0] === current.oid &&
         sharesBranchEdge(row, currentRow)
       ) {
         childRow = row;
@@ -411,21 +441,33 @@ export function traceGraphLineage(
   for (const childRow of rows) {
     const parentOid = commits[childRow]?.parents?.[0];
     if (!parentOid) continue;
-    for (let parentRow = childRow + 1; parentRow < commits.length; parentRow++) {
-      if (
-        rows.has(parentRow) &&
-        !commits[parentRow]?.stash &&
-        commits[parentRow]?.oid === parentOid
-      ) {
-        firstParentEdges.push([childRow, parentRow]);
-        break;
-      }
+    const parentRow = rowByOid.get(parentOid);
+    if (parentRow !== undefined && parentRow > childRow && rows.has(parentRow)) {
+      firstParentEdges.push([childRow, parentRow]);
     }
   }
 
-  const pointKey = (row: number, lane: number) => `${row}:${lane}`;
+  const intervalsByLine = new Map<number, Array<[number, number]>>();
+  for (const [childRow, parentRow] of firstParentEdges) {
+    const childKey = vertexKey(childRow);
+    const parentKey = vertexKey(parentRow);
+    if (childKey === null || parentKey === null) continue;
+    const parentLines = new Set(ordinaryLinesByPoint.get(parentKey) ?? []);
+    for (const lineIndex of ordinaryLinesByPoint.get(childKey) ?? []) {
+      if (!parentLines.has(lineIndex)) continue;
+      const indices = branchPointIndices[lineIndex];
+      const start = indices.get(childKey);
+      const end = indices.get(parentKey);
+      if (start === undefined || end === undefined || start >= end) continue;
+      const intervals = intervalsByLine.get(lineIndex) ?? [];
+      intervals.push([start, end]);
+      intervalsByLine.set(lineIndex, intervals);
+    }
+  }
+
   const segments: BranchLine[] = [];
-  for (const line of layout.branches) {
+  layout.branches.forEach((line, lineIndex) => {
+    if (!line || !Array.isArray(line.points)) return;
     const lastRow = line.points.at(-1)?.row;
     // A non-first-parent merge into the traced lineage completes the visual
     // absorption arc even though its child commit belongs to another line.
@@ -433,48 +475,24 @@ export function traceGraphLineage(
       if (lastRow !== undefined && rows.has(lastRow)) {
         segments.push({ ...line, points: [...line.points] });
       }
-      continue;
+      return;
     }
 
-    const pointIndices = new Map<string, number>();
-    line.points.forEach((point, index) => {
-      pointIndices.set(pointKey(point.row, point.lane), index);
-    });
-    const intervals: Array<[number, number]> = [];
-    for (const [childRow, parentRow] of firstParentEdges) {
-      const child = layout.vertices[childRow];
-      const parent = layout.vertices[parentRow];
-      if (!child || !parent) continue;
-      const start = pointIndices.get(pointKey(childRow, child.lane));
-      const end = pointIndices.get(pointKey(parentRow, parent.lane));
-      if (start !== undefined && end !== undefined && start < end) {
-        intervals.push([start, end]);
-      }
-    }
+    const intervals = intervalsByLine.get(lineIndex) ?? [];
     intervals.sort((a, b) => a[0] - b[0]);
-
-    const firstSegment = segments.length;
+    const merged: Array<[number, number]> = [];
     for (const interval of intervals) {
-      const previous = segments.at(-1);
-      const previousPoints = previous?.points;
-      const previousEnd = previousPoints?.at(-1);
-      const intervalStart = line.points[interval[0]];
-      if (
-        segments.length > firstSegment &&
-        previous?.colorIndex === line.colorIndex &&
-        !previous.mergeEdge &&
-        previousEnd?.row === intervalStart?.row &&
-        previousEnd?.lane === intervalStart?.lane
-      ) {
-        previous.points.push(...line.points.slice(interval[0] + 1, interval[1] + 1));
+      const previous = merged.at(-1);
+      if (previous && interval[0] <= previous[1]) {
+        previous[1] = Math.max(previous[1], interval[1]);
       } else {
-        segments.push({
-          colorIndex: line.colorIndex,
-          points: line.points.slice(interval[0], interval[1] + 1),
-        });
+        merged.push([...interval]);
       }
     }
-  }
+    for (const [start, end] of merged) {
+      segments.push({ ...line, points: line.points.slice(start, end + 1) });
+    }
+  });
 
   return { rows, segments };
 }

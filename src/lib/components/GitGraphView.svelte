@@ -556,18 +556,15 @@
   }
 
   // Branch tracing follows the hovered row, falling back to the persistent
-  // selection after the pointer leaves. It is on by default for branchy
-  // graphs, matching the reference behavior; linear/two-lane histories keep
-  // their normal density because tracing adds no useful disambiguation there.
+  // selection after the pointer leaves. It is on by default; a linear history
+  // naturally stays fully lit because every row belongs to the same lineage.
   const BRANCH_TRACING_KEY = "git-graph-branch-tracing";
   let branchTracing = $state(loadPersisted<unknown>(BRANCH_TRACING_KEY, true) !== false);
   function toggleBranchTracing(): void {
     branchTracing = !branchTracing;
     savePersisted(BRANCH_TRACING_KEY, branchTracing);
   }
-  const traceOid = $derived(
-    branchTracing && layout.laneCount >= 3 ? (hoveredTraceOid ?? selected?.oid ?? null) : null,
-  );
+  const traceOid = $derived(branchTracing ? (hoveredTraceOid ?? selected?.oid ?? null) : null);
   const graphTrace = $derived.by(() => {
     if (traceOid === null) return null;
     const row = displayCommits.findIndex((commit) => commit.oid === traceOid);

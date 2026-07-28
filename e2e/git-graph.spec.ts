@@ -526,6 +526,9 @@ test("traces a hovered or selected branch lineage and can restore the undimmed g
     "false",
   );
   await page.screenshot({ path: "evidence/ac-3-trace-disabled.png" });
+  await page.keyboard.press("Escape");
+  await feature.hover();
+  await expect(view.locator("[data-trace]")).toHaveCount(0);
 });
 
 test("parent is a viewable column, off by default (#402)", async ({ page }) => {

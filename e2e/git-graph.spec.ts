@@ -197,6 +197,24 @@ test.describe("Git graph tab", () => {
     await expect(detail).toBeVisible();
   });
 
+  test("clears a failed CI log when switching PR badges (#521)", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+
+    const failedPrRow = page.locator(".commit-row", { hasText: "Try alternative parser" });
+    const pendingPrRow = page.locator(".commit-row", { hasText: "Hotfix: crash on empty input" });
+    await failedPrRow.locator(".ref-pr").click();
+    const detail = page.locator('[data-testid="git-graph-pr-detail"]');
+    await detail.getByRole("button", { name: "Unit tests" }).click();
+    await expect(detail.locator('[data-testid="git-graph-ci-check-log"]')).toBeVisible();
+
+    // Switching badges must not show PR #12's failure beneath the pending PR.
+    await pendingPrRow.locator(".ref-pr").click();
+    await expect(detail).toContainText("Hotfix login redirect");
+    await expect(detail.locator('[data-testid="git-graph-ci-check-log"]')).toHaveCount(0);
+  });
+
   test("branch filter shows only the selected branch's history (#342)", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents/project");
     await waitForEntries(page);

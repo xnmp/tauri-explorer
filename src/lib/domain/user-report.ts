@@ -1,10 +1,29 @@
 export type UserReportKind = "bug" | "feature";
 
+export const USER_REPORT_IMAGE_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+] as const;
+export type UserReportImageType = (typeof USER_REPORT_IMAGE_TYPES)[number];
+
+export const MAX_USER_REPORT_ATTACHMENTS = 3;
+export const MAX_USER_REPORT_ATTACHMENT_BYTES = 2 * 1024 * 1024;
+export const MAX_USER_REPORT_ATTACHMENTS_BYTES = 3 * 1024 * 1024;
+
+export interface UserReportAttachment {
+  name: string;
+  mediaType: UserReportImageType;
+  /** Base64-encoded image bytes without a data-URL prefix. */
+  data: string;
+}
+
 export interface UserReportDraft {
   title: string;
   body: string;
   kind: UserReportKind;
   contact?: string;
+  attachments?: UserReportAttachment[];
 }
 
 export interface SubmittedUserReport {

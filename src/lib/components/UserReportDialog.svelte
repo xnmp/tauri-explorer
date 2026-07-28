@@ -288,6 +288,8 @@
 <style>
   .user-report-dialog {
     width: min(560px, calc(100vw - 32px));
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 16px;

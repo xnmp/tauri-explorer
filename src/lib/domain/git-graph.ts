@@ -86,6 +86,16 @@ export interface GraphLayout {
   laneCount: number;
 }
 
+/** Observable trace result for one selected/hovered commit. `rows` identifies
+ * the lineage's commit dots and list rows; `segments` is the exact graph
+ * geometry connecting them, including the merge edge that absorbs the line.
+ * Keeping both in the domain prevents renderers from guessing topology from
+ * recycled lane colors. */
+export interface GraphTrace {
+  rows: ReadonlySet<number>;
+  segments: readonly BranchLine[];
+}
+
 interface VertexState {
   parents: number[]; // indices into commits (-1 when parent not in page)
   nextParent: number; // next parent edge to route

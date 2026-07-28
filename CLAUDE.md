@@ -45,6 +45,7 @@ Rules that bite:
   `assignLayout`, never a lane number or color: paths can curve between lanes
   and color slots are recycled. Compute trace/jump semantics in the domain
   layer, then pass the classified rows and path segments to the renderer.
+- Git-graph undo snapshots come from the Rust mutation command, stay session/repository-scoped in `state/git-graph-undo.ts`, and are re-verified by `git_undo` before the inverse. Merge/pull undo requires unchanged HEAD + a clean tree; tag deletion records the raw tag-object OID so annotated tags restore exactly (#513).
 - User-report images are hosted as public Vercel Blobs before the relay creates
   the GitHub issue. Production therefore needs `BLOB_READ_WRITE_TOKEN` as well
   as `GITHUB_ISSUE_TOKEN`. Keep the raw attachment total at or below 3 MiB so

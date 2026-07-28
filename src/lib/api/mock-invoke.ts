@@ -1721,6 +1721,15 @@ const mockCommands: Record<string, CommandHandler> = {
     if (n === 11) {
       return [{ path: MOCK_LONG_COMMIT_FILE_PATH, status: "M" }];
     }
+    // A deliberately long list for the changed-files overflow contract (#510).
+    // Keep the paths distinct and ordered so browser tests can scroll to the
+    // final row rather than merely asserting an implementation detail.
+    if (n === 10) {
+      return Array.from({ length: 24 }, (_, index) => ({
+        path: `src/generated/many-files/file-${String(index + 1).padStart(2, "0")}.ts`,
+        status: index % 2 === 0 ? "M" : "A",
+      }));
+    }
     return [{ path: `src/file-${n}.ts`, status: n % 2 === 0 ? "M" : "A" }];
   },
   git_commit_file_diff: (args) => {

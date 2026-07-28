@@ -170,6 +170,32 @@ test.describe("Git graph tab", () => {
     await expect(page.locator('[data-testid="git-graph-detail"]')).toBeVisible();
   });
 
+  test("opens a failed CI check log inline from its PR badge (#521)", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+    await openGraphViaPalette(page);
+
+    // The experiment PR has a failed check. Its badge is the entry point; the
+    // log must remain in the graph instead of opening GitHub in a browser.
+    const failedPrRow = page.locator(".commit-row", { hasText: "Try alternative parser" });
+    await failedPrRow.locator(".ref-pr").click();
+    const detail = page.locator('[data-testid="git-graph-pr-detail"]');
+    await expect(detail).toBeVisible();
+
+    await detail.getByRole("button", { name: "Unit tests" }).click();
+    const log = page.locator('[data-testid="git-graph-ci-check-log"]');
+    await expect(log).toBeVisible();
+    await expect(log).toContainText("Unit tests");
+    await expect(log).toContainText("AssertionError: expected true to be false");
+    await expect
+      .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
+      .toBeNull();
+
+    await log.getByRole("button", { name: "Close CI check log" }).click();
+    await expect(log).toHaveCount(0);
+    await expect(detail).toBeVisible();
+  });
+
   test("branch filter shows only the selected branch's history (#342)", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents/project");
     await waitForEntries(page);

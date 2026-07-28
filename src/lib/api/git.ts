@@ -161,6 +161,22 @@ export async function gitUnstage(repoPath: string, paths: string[]): Promise<Api
   }
 }
 
+/** The index/worktree target to which a unified patch is applied. */
+export type GitPatchAction = "stage" | "unstage" | "discard";
+
+export async function gitApplyPatch(
+  repoPath: string,
+  patch: string,
+  action: GitPatchAction,
+): Promise<ApiResult<void>> {
+  try {
+    await invoke<void>("git_apply_patch", { repoPath, patch, action });
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
 export async function gitDiscard(
   repoPath: string,
   paths: string[],

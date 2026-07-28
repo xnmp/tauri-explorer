@@ -490,6 +490,30 @@ function seedGitState(): MockGitState {
 
 let mockGit: MockGitState = seedGitState();
 
+// Per-file hunk state lets browser tests exercise the same partial staging
+// outcome as the real `git apply` command rather than pretending a hunk is a
+// whole-file operation.
+const mockHunkState = new Map<string, { staged: Set<number>; discarded: Set<number> }>();
+const MOCK_HUNK_STARTS = [1, 10] as const;
+
+function hunkState(path: string): { staged: Set<number>; discarded: Set<number> } {
+  let state = mockHunkState.get(path);
+  if (!state) {
+    // Seeded/whole-file staged entries already live entirely in the index.
+    // Their diff must therefore expose every mock hunk on the staged side,
+    // even before any hunk-level action has initialized this state.
+    const fullyStaged =
+      mockGit.staged.some((entry) => entry.path === path) &&
+      !mockGit.changes.some((entry) => entry.path === path);
+    state = {
+      staged: new Set(fullyStaged ? MOCK_HUNK_STARTS : []),
+      discarded: new Set(),
+    };
+    mockHunkState.set(path, state);
+  }
+  return state;
+}
+
 function removeFrom(list: GitFileEntry[], path: string): GitFileEntry | undefined {
   const idx = list.findIndex((e) => e.path === path);
   if (idx < 0) return undefined;
@@ -505,12 +529,18 @@ function mockStagePath(path: string): void {
   const fromUntracked = removeFrom(mockGit.untracked, path);
   if (fromUntracked) {
     upsert(mockGit.staged, { path, old_path: null, status: "Added" });
+    const state = hunkState(path);
+    state.staged = new Set(MOCK_HUNK_STARTS);
+    state.discarded.clear();
     return;
   }
   const fromMerge = removeFrom(mockGit.merge, path);
   const fromChanges = removeFrom(mockGit.changes, path);
   if (fromChanges || fromMerge) {
     upsert(mockGit.staged, { path, old_path: null, status: "Modified" });
+    const state = hunkState(path);
+    state.staged = new Set(MOCK_HUNK_STARTS);
+    state.discarded.clear();
   }
 }
 
@@ -518,6 +548,9 @@ function mockStagePath(path: string): void {
 function mockUnstagePath(path: string): void {
   const staged = removeFrom(mockGit.staged, path);
   if (!staged) return;
+  const state = hunkState(path);
+  state.staged.clear();
+  state.discarded.clear();
   if (staged.status === "Added") {
     upsert(mockGit.untracked, { path, old_path: null, status: "Untracked" });
   } else {
@@ -546,6 +579,8 @@ function mockDiscardPath(path: string, force: boolean): void {
   removeFrom(mockGit.changes, path);
   removeFrom(mockGit.untracked, path);
   removeFrom(mockGit.merge, path);
+  const state = hunkState(path);
+  state.discarded = new Set(MOCK_HUNK_STARTS);
 }
 
 function mockGitSummary(): GitStatusSummary {
@@ -583,6 +618,7 @@ if (typeof window !== "undefined") {
   // Reset the repo to its seed state (mock/browser only).
   w.__mockGitReset = () => {
     mockGit = seedGitState();
+    mockHunkState.clear();
     mockGitCommits.length = 0;
     mockGitignored.clear();
     mockGitArchived.clear();
@@ -1711,6 +1747,30 @@ const mockCommands: Record<string, CommandHandler> = {
     for (const p of paths) mockUnstagePath(p);
     return null;
   },
+  git_apply_patch: (args: Record<string, unknown>) => {
+    const patch = String(args.patch ?? "");
+    const action = args.action as "stage" | "unstage" | "discard";
+    const path = patch.match(/^\+\+\+ b\/(.+)$/m)?.[1];
+    if (!path) throw new Error("patch is missing its target path");
+    const hunkMatch = patch.match(/^@@ -(\d+)/m);
+    if (!hunkMatch) throw new Error("patch is missing its hunk header");
+    const hunk = Number(hunkMatch[1]);
+    const state = hunkState(path);
+    if (action === "stage") {
+      state.staged.add(hunk);
+      upsert(mockGit.staged, { path, old_path: null, status: "Modified" });
+      // A partially staged file remains in Changes as well as Staged. Once
+      // both mock hunks are staged, its worktree side is exhausted.
+      if (state.staged.size >= 2) removeFrom(mockGit.changes, path);
+    } else if (action === "unstage") {
+      state.staged.delete(hunk);
+      if (state.staged.size === 0) removeFrom(mockGit.staged, path);
+      upsert(mockGit.changes, { path, old_path: null, status: "Modified" });
+    } else {
+      state.discarded.add(hunk);
+    }
+    return null;
+  },
   git_discard: (args: Record<string, unknown>) => {
     const paths = (args.paths as string[]) ?? [];
     const options = (args.options as { force?: boolean } | null) ?? null;
@@ -1759,6 +1819,7 @@ const mockCommands: Record<string, CommandHandler> = {
   },
   git_diff: (args: Record<string, unknown>) => {
     const p = args.path as string;
+    const staged = !!((args.options as { staged?: boolean } | null)?.staged);
     // Binary files show a marker rather than a textual hunk.
     if (/\.(png|jpg|jpeg|gif|webp|ico|bin|exe|zip|pdf)$/i.test(p)) {
       return [
@@ -1768,19 +1829,19 @@ const mockCommands: Record<string, CommandHandler> = {
         "",
       ].join("\n");
     }
-    // Real code lines so diff syntax highlighting is exercised (#246).
-    return [
+    // Two distant hunks make partial stage/unstage/discard observable in the
+    // running browser, matching the real patch command's semantics.
+    const state = hunkState(p);
+    const visible = (hunk: number) => staged ? state.staged.has(hunk) : !state.staged.has(hunk) && !state.discarded.has(hunk);
+    const lines = [
       `diff --git a/${p} b/${p}`,
       "index 1111111..2222222 100644",
       `--- a/${p}`,
       `+++ b/${p}`,
-      "@@ -1,4 +1,4 @@",
-      ' import { useState } from "react";',
-      "-export function App() { return null; }",
-      "+export function App() { return <div>hello</div>; }",
-      ' const VERSION = "1.0";',
-      "",
-    ].join("\n");
+    ];
+    if (visible(1)) lines.push("@@ -1,3 +1,3 @@", " import { useState } from \"react\";", "-export function App() { return null; }", "+export function App() { return <div>first hunk</div>; }");
+    if (visible(10)) lines.push("@@ -10,3 +10,3 @@", " export const VERSION = \"1.0\";", "-export const FLAG = false;", "+export const FLAG = true;");
+    return [...lines, ""].join("\n");
   },
   git_watch_repo: () => null,
   git_unwatch_repo: () => null,

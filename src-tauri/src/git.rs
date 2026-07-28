@@ -114,6 +114,16 @@ pub struct GitDiffOptions {
     pub staged: bool,
 }
 
+/// The three safe directions in which an exact unified patch may be applied.
+/// Patch text is always supplied over stdin, never interpreted as an argument.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPatchAction {
+    Stage,
+    Unstage,
+    Discard,
+}
+
 #[derive(Debug, Deserialize, Default)]
 pub struct GitCommitOptions {
     #[serde(default)]
@@ -1231,6 +1241,77 @@ pub async fn git_unstage(repo_path: String, paths: Vec<String>) -> Result<(), Ap
     .await
 }
 
+fn apply_patch_inner(repo_path: &str, patch: &str, action: GitPatchAction) -> Result<(), AppError> {
+    // Open first so this has the same non-repository and bare-repository
+    // boundary as the other SCM mutations; the workdir is the only safe cwd
+    // for a repo-relative patch.
+    let repo = open_repo(Path::new(repo_path))?;
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| AppError::Other("git: bare repository has no working tree".into()))?;
+    let args: &[&str] = match action {
+        GitPatchAction::Stage => &["apply", "--cached", "--whitespace=nowarn", "-"],
+        GitPatchAction::Unstage => &["apply", "--cached", "--reverse", "--whitespace=nowarn", "-"],
+        GitPatchAction::Discard => &["apply", "--reverse", "--whitespace=nowarn", "-"],
+    };
+
+    use crate::process_ext::NoConsole;
+    let mut command = {
+        #[cfg(windows)]
+        {
+            if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc(repo_path) {
+                let mut command = std::process::Command::new("wsl.exe");
+                command
+                    .no_console()
+                    .args(["-d", &distro, "--exec", "git", "-C", &linux_path])
+                    .args(args);
+                command
+            } else {
+                let mut command = std::process::Command::new("git");
+                command.no_console().current_dir(workdir).args(args);
+                command
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let mut command = std::process::Command::new("git");
+            command.no_console().current_dir(workdir).args(args);
+            command
+        }
+    };
+    let mut child = command
+        .stdin(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|err| AppError::Other(format!("failed to start git apply: {err}")))?;
+    use std::io::Write;
+    child
+        .stdin
+        .as_mut()
+        .ok_or_else(|| AppError::Other("failed to open git apply stdin".into()))?
+        .write_all(patch.as_bytes())
+        .map_err(|err| AppError::Other(format!("failed to send patch to git: {err}")))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|err| AppError::Other(format!("failed to wait for git apply: {err}")))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        Err(AppError::Other(format!("could not apply hunk: {message}")))
+    }
+}
+
+/// Apply exactly one unified-diff hunk to the index or working tree.
+#[tauri::command]
+pub async fn git_apply_patch(
+    repo_path: String,
+    patch: String,
+    action: GitPatchAction,
+) -> Result<(), AppError> {
+    run_blocking(move |_cancel| apply_patch_inner(&repo_path, &patch, action)).await
+}
+
 fn has_staged_changes_for(repo: &Repository, path: &str) -> Result<bool, AppError> {
     let mut opts = StatusOptions::new();
     opts.pathspec(path);
@@ -1711,6 +1792,46 @@ mod tests {
             .unwrap();
     }
 
+    fn git_patch(dir: &Path, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .current_dir(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap()
+    }
+
+    /// Match the frontend's `extractDiffHunks`: repeat the complete file
+    /// preamble and retain exactly one 3-context @@ block per patch.
+    fn production_shaped_hunks(patch: &str) -> Vec<String> {
+        let lines: Vec<&str> = patch.lines().collect();
+        let starts: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter_map(|(index, line)| line.starts_with("@@ ").then_some(index))
+            .collect();
+        if starts.is_empty() {
+            return Vec::new();
+        }
+        let preamble = &lines[..starts[0]];
+        starts
+            .iter()
+            .enumerate()
+            .map(|(index, start)| {
+                preamble
+                    .iter()
+                    .chain(
+                        lines[*start..starts.get(index + 1).copied().unwrap_or(lines.len())].iter(),
+                    )
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    + "\n"
+            })
+            .collect()
+    }
+
     /// A mode-only change (chmod +x) is what Windows manufactures for every
     /// 0755 file in a Linux-created repo, and it renders as a change with an
     /// empty diff (#392). With the hide-empty-diffs policy on, it must not
@@ -2179,6 +2300,88 @@ mod tests {
         assert!(
             matches!(err, Err(AppError::Other(ref m)) if m.contains("nothing to commit")),
             "empty initial commit must be rejected, got {err:?}",
+        );
+    }
+
+    #[test]
+    fn hunk_patch_actions_only_change_the_selected_hunk() {
+        let dir = init_repo();
+        let original = (1..=12).map(|n| format!("line-{n}\n")).collect::<String>();
+        write(dir.path(), "a.txt", &original);
+        commit_all(dir.path(), "init");
+
+        let changed = original
+            .replace("line-1\n", "first change\n")
+            .replace("line-12\n", "last change\n");
+        write(dir.path(), "a.txt", &changed);
+
+        let initial_patch = git_patch(dir.path(), &["diff", "--", "a.txt"]);
+        let hunks = production_shaped_hunks(&initial_patch);
+        assert_eq!(hunks.len(), 2);
+        let first_hunk = hunks[0].clone();
+        let last_hunk = hunks[1].clone();
+        let path = dir.path().to_str().unwrap().to_string();
+
+        tokio_test_block(git_apply_patch(
+            path.clone(),
+            first_hunk.clone(),
+            GitPatchAction::Stage,
+        ))
+        .unwrap();
+        let staged = git_patch(dir.path(), &["diff", "--cached", "--", "a.txt"]);
+        let unstaged = git_patch(dir.path(), &["diff", "--", "a.txt"]);
+        assert!(staged.contains("first change"));
+        assert!(!staged.contains("last change"));
+        assert!(unstaged.contains("last change"));
+        assert!(!unstaged.contains("first change"));
+
+        // Stage both, then unstage only the first. The second must remain in
+        // the index; this is the isolation guarantee a whole-file reset lacks.
+        tokio_test_block(git_apply_patch(
+            path.clone(),
+            last_hunk,
+            GitPatchAction::Stage,
+        ))
+        .unwrap();
+        tokio_test_block(git_apply_patch(
+            path.clone(),
+            first_hunk.clone(),
+            GitPatchAction::Unstage,
+        ))
+        .unwrap();
+        let staged_after_unstage = git_patch(dir.path(), &["diff", "--cached", "--", "a.txt"]);
+        assert!(!staged_after_unstage.contains("first change"));
+        assert!(staged_after_unstage.contains("last change"));
+
+        tokio_test_block(git_apply_patch(path, first_hunk, GitPatchAction::Discard)).unwrap();
+        let remaining = std::fs::read_to_string(dir.path().join("a.txt")).unwrap();
+        assert!(remaining.contains("line-1"));
+        assert!(remaining.contains("last change"));
+    }
+
+    #[test]
+    fn stale_first_hunk_patch_is_rejected_instead_of_applying_at_an_offset() {
+        let dir = init_repo();
+        let original = (1..=12).map(|n| format!("line-{n}\n")).collect::<String>();
+        write(dir.path(), "a.txt", &original);
+        commit_all(dir.path(), "init");
+
+        let changed = original.replace("line-1\n", "first change\n");
+        write(dir.path(), "a.txt", &changed);
+        let patch = git_patch(dir.path(), &["diff", "--", "a.txt"]);
+
+        let shifted = format!("preface-a\npreface-b\npreface-c\n{changed}");
+        write(dir.path(), "a.txt", &shifted);
+        let path = dir.path().to_str().unwrap().to_string();
+        let result = tokio_test_block(git_apply_patch(path, patch, GitPatchAction::Discard));
+
+        assert!(
+            result.is_err(),
+            "a stale line-1 hunk must not apply at a shifted offset"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+            shifted
         );
     }
 

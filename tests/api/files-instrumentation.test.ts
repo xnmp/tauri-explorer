@@ -18,6 +18,7 @@ import { readImageAsBlobUrl, readTextFile, startStreamingDirectory } from "$lib/
 describe("preview and directory IPC instrumentation (#497)", () => {
   beforeEach(() => {
     invokeMock.mockReset();
+    invokeMock.mockResolvedValue(undefined);
   });
 
   it("records a failed text preview request with its path and backend error", async () => {
@@ -36,6 +37,10 @@ describe("preview and directory IPC instrumentation (#497)", () => {
         maxBytes: 512,
         error: "WSL file unavailable",
       }),
+    );
+    expect(invokeMock).toHaveBeenCalledWith(
+      "log_frontend_error",
+      expect.objectContaining({ message: expect.stringContaining("preview read_text_file failed") }),
     );
     warning.mockRestore();
   });
@@ -56,6 +61,10 @@ describe("preview and directory IPC instrumentation (#497)", () => {
         error: "cloud file is offline",
       }),
     );
+    expect(invokeMock).toHaveBeenCalledWith(
+      "log_frontend_error",
+      expect.objectContaining({ message: expect.stringContaining("preview read_image_data_url failed") }),
+    );
     warning.mockRestore();
   });
 
@@ -71,6 +80,10 @@ describe("preview and directory IPC instrumentation (#497)", () => {
     expect(warning).toHaveBeenCalledWith(
       "[navigation] start_streaming_directory failed",
       expect.objectContaining({ path: "/mnt/wsl/project", error: "permission denied" }),
+    );
+    expect(invokeMock).toHaveBeenCalledWith(
+      "log_frontend_error",
+      expect.objectContaining({ message: expect.stringContaining("navigation start_streaming_directory failed") }),
     );
     warning.mockRestore();
   });

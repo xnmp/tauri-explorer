@@ -16,6 +16,7 @@ import {
   type ApiResult,
 } from "./common";
 import { providerFor } from "$lib/plugins/fs-providers";
+import { logFrontendDiagnostic } from "./frontend-log";
 
 /**
  * Fetch directory listing from Tauri backend.
@@ -307,6 +308,12 @@ export async function readTextFile(path: string, maxBytes?: number): Promise<Api
       error,
       elapsedMs: Date.now() - startedAt,
     });
+    logFrontendDiagnostic("preview read_text_file failed", {
+      path,
+      maxBytes: maxBytes ?? null,
+      error,
+      elapsedMs: Date.now() - startedAt,
+    });
     return { ok: false, error };
   }
 }
@@ -343,6 +350,12 @@ export async function readImageAsBlobUrl(
   } catch (err) {
     const error = extractError(err);
     console.warn("[preview] read_image_data_url failed", {
+      path,
+      maxBytes: maxBytes ?? null,
+      error,
+      elapsedMs: Date.now() - startedAt,
+    });
+    logFrontendDiagnostic("preview read_image_data_url failed", {
       path,
       maxBytes: maxBytes ?? null,
       error,
@@ -490,6 +503,11 @@ export async function startStreamingDirectory(
         error,
         elapsedMs: Date.now() - startedAt,
       });
+      logFrontendDiagnostic("navigation virtual directory listing failed", {
+        path,
+        error,
+        elapsedMs: Date.now() - startedAt,
+      });
       return { ok: false, error };
     }
   }
@@ -505,6 +523,11 @@ export async function startStreamingDirectory(
   } catch (err) {
     const error = extractError(err);
     console.warn("[navigation] start_streaming_directory failed", {
+      path,
+      error,
+      elapsedMs: Date.now() - startedAt,
+    });
+    logFrontendDiagnostic("navigation start_streaming_directory failed", {
       path,
       error,
       elapsedMs: Date.now() - startedAt,

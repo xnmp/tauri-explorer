@@ -16,6 +16,7 @@
   import { getFileIconColor } from "$lib/domain/file-types";
   import { getScmStore } from "$lib/state/scm.svelte";
   import { gitCommitFileDiff } from "$lib/api/git-log";
+  import { logFrontendDiagnostic } from "$lib/api/frontend-log";
 
   // Window-global surface: the preview's SCM diff follows the ACTIVE pane's
   // store (#334) — reactive through windowTabsManager.activePaneId.
@@ -624,6 +625,10 @@
           previewPdfUrl = `${convertFileSrc(file.path)}?v=${bust}`;
         } catch (error) {
           console.warn("[preview] PDF asset URL creation failed", { path: file.path, error });
+          logFrontendDiagnostic("preview PDF asset URL creation failed", {
+            path: file.path,
+            error: error instanceof Error ? error.message : String(error),
+          });
           previewError = "Cannot preview PDF";
         }
       } else {
@@ -649,10 +654,18 @@
             previewImageUrl = fallback.data;
           } catch (error) {
             console.warn("[preview] backend image decode failed", { path: file.path, error });
+            logFrontendDiagnostic("preview backend image decode failed", {
+              path: file.path,
+              error: error instanceof Error ? error.message : String(error),
+            });
             previewError = "Cannot preview image";
           }
         } else {
           console.warn("[preview] backend image read failed", { path: file.path, error: fallback.error });
+          logFrontendDiagnostic("preview backend image read failed", {
+            path: file.path,
+            error: fallback.error,
+          });
           previewError = "Cannot preview image";
         }
       };
@@ -670,6 +683,10 @@
           console.warn("[preview] asset image decode failed; using backend fallback", {
             path: file.path,
             error: assetErr,
+          });
+          logFrontendDiagnostic("preview asset image decode failed", {
+            path: file.path,
+            error: assetErr instanceof Error ? assetErr.message : String(assetErr),
           });
           await loadViaBackend();
         }

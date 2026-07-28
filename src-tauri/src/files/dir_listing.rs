@@ -76,7 +76,7 @@ pub async fn is_directory_empty(path: String, include_hidden: bool) -> Result<bo
 #[tauri::command]
 pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> {
     let t_start = std::time::Instant::now();
-    log::debug!("preview list_directory requested: path={path:?}");
+    log::debug!("directory list_directory requested: path={path:?}");
 
     // Check cache first
     {
@@ -86,7 +86,7 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
         if let Some(cached) = cache.get(&path) {
             if cached.cached_at.elapsed().as_secs() < CACHE_TTL_SECS {
                 log::debug!(
-                    "preview list_directory cache hit: path={path:?}, entries={}",
+                    "directory list_directory cache hit: path={path:?}, entries={}",
                     cached.entries.len(),
                 );
                 return Ok(DirectoryListing {
@@ -101,12 +101,12 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
     let dir_path = PathBuf::from(&path);
 
     if !dir_path.exists() {
-        log::warn!("preview list_directory failed: path={path:?}, error=not found");
+        log::warn!("directory list_directory failed: path={path:?}, error=not found");
         return Err(AppError::NotFound(path.clone()));
     }
 
     if !dir_path.is_dir() {
-        log::warn!("preview list_directory failed: path={path:?}, error=not a directory");
+        log::warn!("directory list_directory failed: path={path:?}, error=not a directory");
         return Err(AppError::InvalidPath(format!("Not a directory: {}", path)));
     }
 
@@ -123,20 +123,20 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
     let elapsed = t_start.elapsed();
     if scan_diagnostics.error_count > 0 {
         log::warn!(
-            "preview list_directory completed with scan errors: path={path:?}, entries={}, scan_errors={}, samples={:?}, elapsed={elapsed:?}",
+            "directory list_directory completed with scan errors: path={path:?}, entries={}, scan_errors={}, samples={:?}, elapsed={elapsed:?}",
             entries.len(),
             scan_diagnostics.error_count,
             scan_diagnostics.samples,
         );
     } else if elapsed.as_millis() > 100 {
         log::warn!(
-            "preview list_directory slow: path={path:?}, entries={}, elapsed={:?}",
+            "directory list_directory slow: path={path:?}, entries={}, elapsed={:?}",
             entries.len(),
             elapsed
         );
     } else {
         log::debug!(
-            "preview list_directory completed: path={path:?}, entries={}, elapsed={:?}",
+            "directory list_directory completed: path={path:?}, entries={}, elapsed={:?}",
             entries.len(),
             elapsed
         );
@@ -233,12 +233,24 @@ impl ScanDiagnostics {
             self.samples.push(error.to_string());
         }
     }
+
+    fn merge(&mut self, mut other: Self) {
+        self.error_count += other.error_count;
+        let capacity = MAX_SCAN_ERROR_SAMPLES.saturating_sub(self.samples.len());
+        let take = capacity.min(other.samples.len());
+        self.samples.extend(other.samples.drain(..take));
+    }
 }
 
 /// Scan a directory while retaining bounded details for entries that could not
 /// be read or statted. A partial listing remains usable, but callers can log
 /// why it may be incomplete instead of reporting a misleading clean success.
 fn scan_directory_with_diagnostics(dir_path: &PathBuf) -> (Vec<FileEntry>, ScanDiagnostics) {
+    if !dir_path.exists() {
+        let mut diagnostics = ScanDiagnostics::default();
+        diagnostics.record(format!("listing root not found: {}", dir_path.display()));
+        return (Vec::new(), diagnostics);
+    }
     scan_directory_parallel_for_listing(dir_path, dir_path)
 }
 
@@ -278,26 +290,33 @@ fn scan_directory_parallel_for_listing(
         }
     }
 
-    let scanned: Vec<Result<FileEntry, String>> = paths
+    let (mut entries, diagnostics) = paths
         .into_par_iter()
-        .map(|path| {
-            let metadata = fs::symlink_metadata(&path)
-                .map_err(|error| format!("metadata error for {}: {error}", path.display()))?;
-            Ok(metadata_to_entry_with_git_repo_probe(
-                &path,
-                &metadata,
-                probe_git_repos,
-            ))
-        })
-        .collect();
-
-    let mut entries = Vec::with_capacity(scanned.len());
-    for entry in scanned {
-        match entry {
-            Ok(entry) => entries.push(entry),
-            Err(error) => diagnostics.record(error),
-        }
-    }
+        .fold(
+            || (Vec::new(), ScanDiagnostics::default()),
+            |(mut entries, mut diagnostics), path| {
+                match fs::symlink_metadata(&path) {
+                    Ok(metadata) => entries.push(metadata_to_entry_with_git_repo_probe(
+                        &path,
+                        &metadata,
+                        probe_git_repos,
+                    )),
+                    Err(error) => {
+                        diagnostics
+                            .record(format!("metadata error for {}: {error}", path.display()));
+                    }
+                }
+                (entries, diagnostics)
+            },
+        )
+        .reduce(
+            || (Vec::new(), ScanDiagnostics::default()),
+            |(mut entries, mut diagnostics), (other_entries, other_diagnostics)| {
+                entries.extend(other_entries);
+                diagnostics.merge(other_diagnostics);
+                (entries, diagnostics)
+            },
+        );
 
     sort_entries(&mut entries);
     (entries, diagnostics)
@@ -312,7 +331,7 @@ pub async fn start_streaming_directory(
     path: String,
 ) -> Result<DirectoryListing, AppError> {
     let started_at = Instant::now();
-    log::debug!("navigation start_streaming_directory requested: path={path:?}");
+    log::info!("navigation start_streaming_directory requested: path={path:?}");
     let dir_path = PathBuf::from(&path);
     let batch_size = 100;
 
@@ -357,7 +376,7 @@ pub async fn start_streaming_directory(
     }
 
     if total_count <= batch_size {
-        log::debug!(
+        log::info!(
             "navigation start_streaming_directory completed: path={path:?}, entries={total_count}, streaming=false, elapsed={:?}",
             started_at.elapsed()
         );
@@ -407,14 +426,14 @@ pub async fn start_streaming_directory(
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
 
-        log::debug!(
+        log::info!(
             "navigation directory listing stream ended: path={path_clone:?}, listing_id={listing_id}, emitted_entries={}, cancelled={was_cancelled}",
             offset.saturating_sub(batch_size)
         );
         LISTINGS.cleanup(listing_id);
     });
 
-    log::debug!(
+    log::info!(
         "navigation start_streaming_directory completed: path={path:?}, entries={total_count}, listing_id={listing_id}, streaming=true, elapsed={:?}",
         started_at.elapsed()
     );
@@ -429,7 +448,7 @@ pub async fn start_streaming_directory(
 /// Cancel an active directory listing.
 #[tauri::command]
 pub async fn cancel_directory_listing(listing_id: u64) -> Result<(), AppError> {
-    log::debug!("navigation cancel_directory_listing requested: listing_id={listing_id}");
+    log::info!("navigation cancel_directory_listing requested: listing_id={listing_id}");
     LISTINGS.cancel(listing_id);
     Ok(())
 }

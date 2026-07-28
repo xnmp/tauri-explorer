@@ -2,7 +2,7 @@
  * Per-file commit history from the SCM Files pane (#518).
  *
  * The test drives the visible SCM action through to the graph query seam.
- * The mock graph assigns `src/feature-x.ts` to one commit only, so it proves
+ * The mock graph assigns `src/index.css` to one commit only, so it proves
  * the graph is filtered rather than merely opened.
  */
 import { test, expect, type Page } from "./fixtures";
@@ -28,14 +28,14 @@ test.describe("SCM per-file commit history (#518)", () => {
     await openScmOnRepo(page);
 
     const scm = page.locator(".scm-panel").first();
-    const fileRow = scm.locator('.row[data-path="src/feature-x.ts"]');
+    const fileRow = scm.locator('.row[data-path="src/index.css"]');
     await expect(fileRow).toBeVisible();
 
-    await fileRow.getByRole("button", { name: "Show history for src/feature-x.ts" }).click();
+    await fileRow.getByRole("button", { name: "Show history for src/index.css" }).click();
 
     const graph = page.locator('[data-testid="git-graph-view"]');
     await expect(graph).toBeVisible();
-    await expect(graph.getByTestId("git-graph-file-path-filter")).toHaveValue("src/feature-x.ts");
+    await expect(graph.locator(".gh-message")).toHaveText("Path: src/index.css");
     await expect(graph.locator(".commit-row")).toHaveCount(1);
     await expect(graph.locator(".commit-row")).toContainText("Merge hotfix into main");
     await expect(graph).not.toContainText("Add tests for feature X");

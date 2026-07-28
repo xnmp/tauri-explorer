@@ -1,7 +1,19 @@
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
 const DEFAULT_REPORT_URL: &str = "https://tauri-explorer.vercel.app/api/report";
+const MAX_ATTACHMENTS: usize = 3;
+const MAX_ATTACHMENT_BYTES: usize = 2 * 1024 * 1024;
+const MAX_ATTACHMENTS_BYTES: usize = 3 * 1024 * 1024;
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportAttachment {
+    pub name: String,
+    pub media_type: String,
+    pub data: String,
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -14,6 +26,7 @@ struct RelayRequest {
     os: String,
     arch: String,
     website: String,
+    attachments: Vec<ReportAttachment>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,12 +53,83 @@ pub struct SubmitReportError {
 }
 
 impl SubmitReportError {
-    fn new(kind: &'static str, message: impl Into<String>) -> Self {
+    pub(crate) fn new(kind: &'static str, message: impl Into<String>) -> Self {
         Self {
             kind,
             message: message.into(),
         }
     }
+}
+
+fn valid_image_magic(media_type: &str, bytes: &[u8]) -> bool {
+    match media_type {
+        "image/png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "image/jpeg" => bytes.starts_with(b"\xff\xd8\xff"),
+        "image/gif" => bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"),
+        _ => false,
+    }
+}
+
+pub(crate) fn validate_attachments(
+    attachments: &[ReportAttachment],
+) -> Result<(), SubmitReportError> {
+    if attachments.len() > MAX_ATTACHMENTS {
+        return Err(SubmitReportError::new(
+            "malformed_input",
+            "Attach up to 3 images",
+        ));
+    }
+    let mut total = 0;
+    for attachment in attachments {
+        let name = attachment.name.trim();
+        if name.is_empty()
+            || name.encode_utf16().count() > 120
+            || name.chars().any(char::is_control)
+            || !matches!(
+                attachment.media_type.as_str(),
+                "image/png" | "image/jpeg" | "image/gif"
+            )
+        {
+            return Err(SubmitReportError::new(
+                "malformed_input",
+                "Attachment name or type is invalid",
+            ));
+        }
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&attachment.data)
+            .map_err(|_| SubmitReportError::new("malformed_input", "Attachment data is invalid"))?;
+        if bytes.is_empty()
+            || bytes.len() > MAX_ATTACHMENT_BYTES
+            || !valid_image_magic(&attachment.media_type, &bytes)
+        {
+            return Err(SubmitReportError::new(
+                "malformed_input",
+                "Attachment data is invalid",
+            ));
+        }
+        total += bytes.len();
+        if total > MAX_ATTACHMENTS_BYTES {
+            return Err(SubmitReportError::new(
+                "malformed_input",
+                "Attachments must total 3 MiB or less",
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn attachment_from_image_bytes(
+    name: String,
+    media_type: &str,
+    bytes: Vec<u8>,
+) -> Result<ReportAttachment, SubmitReportError> {
+    let attachment = ReportAttachment {
+        name,
+        media_type: media_type.to_string(),
+        data: base64::engine::general_purpose::STANDARD.encode(bytes),
+    };
+    validate_attachments(std::slice::from_ref(&attachment))?;
+    Ok(attachment)
 }
 
 impl Serialize for SubmitReportError {
@@ -241,8 +325,11 @@ pub async fn submit_user_report(
     body: String,
     kind: String,
     contact: Option<String>,
+    attachments: Option<Vec<ReportAttachment>>,
 ) -> Result<SubmittedUserReport, SubmitReportError> {
     validate_draft(&title, &body, &kind, contact.as_deref())?;
+    let attachments = attachments.unwrap_or_default();
+    validate_attachments(&attachments)?;
     let info = crate::system::get_app_info().await;
     let log_tail = crate::system::read_log_tail(app, 50)
         .await
@@ -268,6 +355,7 @@ pub async fn submit_user_report(
         os: info.os,
         arch: info.arch,
         website: String::new(),
+        attachments,
     };
     tauri::async_runtime::spawn_blocking(move || send_report(&endpoint, payload))
         .await
@@ -380,10 +468,7 @@ mod tests {
         let attachment = png_attachment();
         assert_eq!(attachment.name, "Clipboard screenshot.png");
         assert_eq!(attachment.media_type, "image/png");
-        assert_eq!(
-            attachment.data,
-            "iVBORw0KGgoBAgM="
-        );
+        assert_eq!(attachment.data, "iVBORw0KGgoBAgM=");
         validate_attachments(std::slice::from_ref(&attachment)).unwrap();
     }
 

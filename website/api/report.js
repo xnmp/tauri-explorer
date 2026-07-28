@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { del, put } from "@vercel/blob";
 import {
   ReportError,
   createInMemoryRateLimitStore,
@@ -46,6 +47,31 @@ async function createGitHubIssue(issue) {
   return { url: payload.html_url, number: payload.number };
 }
 
+function attachmentStore() {
+  const token = process.env.BLOB_READ_WRITE_TOKEN;
+  return {
+    /** @param {{name: string, mediaType: string, bytes: Uint8Array}} attachment */
+    async upload(attachment) {
+      if (!token) {
+        throw new ReportError("server_rejected", "Image hosting is not configured", 503);
+      }
+      const safeName = attachment.name.replace(/[^A-Za-z0-9._-]+/gu, "-").slice(-80)
+        || "screenshot";
+      const blob = await put(`user-reports/${safeName}`, Buffer.from(attachment.bytes), {
+        access: "public",
+        addRandomSuffix: true,
+        contentType: attachment.mediaType,
+        token,
+      });
+      return blob.url;
+    },
+    /** @param {string[]} urls */
+    async remove(urls) {
+      if (token && urls.length > 0) await del(urls, { token });
+    },
+  };
+}
+
 /** @param {string | string[] | undefined} value */
 function forwardedTail(value) {
   const combined = Array.isArray(value) ? value.join(",") : value;
@@ -69,7 +95,13 @@ export default async function handler(request, response) {
   try {
     const ip = reporterIp(request.headers, request.socket?.remoteAddress);
     const ipKey = createHash("sha256").update(ip).digest("hex").slice(0, 24);
-    const result = await processReport(request.body, ipKey, rateLimitStore(), createGitHubIssue);
+    const result = await processReport(
+      request.body,
+      ipKey,
+      rateLimitStore(),
+      createGitHubIssue,
+      attachmentStore(),
+    );
     if ("honeypot" in result) {
       response.status(204).setHeader("Cache-Control", "no-store").end();
       return;

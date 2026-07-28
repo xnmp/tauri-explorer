@@ -224,6 +224,7 @@ pub fn run(launch_dir: Option<String>) {
             clipboard::clipboard_read_files,
             clipboard::clipboard_write_files,
             clipboard::clipboard_has_image,
+            clipboard::clipboard_read_report_image,
             clipboard::clipboard_paste_image,
             // Thumbnails
             thumbnails::get_thumbnail,

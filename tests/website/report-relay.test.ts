@@ -29,7 +29,12 @@ describe("report relay validation", () => {
       title: "  Explorer\nfreezes 🧊  ",
       contact: "  @reporter  ",
     });
-    expect(report).toEqual({ ...valid, title: "Explorer freezes 🧊", contact: "@reporter" });
+    expect(report).toEqual({
+      ...valid,
+      title: "Explorer freezes 🧊",
+      contact: "@reporter",
+      attachments: [],
+    });
     expect(buildGitHubIssue(report)).toMatchObject({
       title: "Explorer freezes 🧊",
       labels: ["user-report", "bug"],

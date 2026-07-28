@@ -1129,7 +1129,8 @@ const mockCommands: Record<string, CommandHandler> = {
     localStorage.setItem("mock-opened-url", args.url as string);
     return undefined;
   },
-  submit_user_report: () => {
+  submit_user_report: (args) => {
+    localStorage.setItem("mock-submitted-report", JSON.stringify(args));
     const error = localStorage.getItem("mock-report-error");
     if (error) {
       throw {
@@ -2373,7 +2374,14 @@ const mockCommands: Record<string, CommandHandler> = {
     return true;
   },
 
-  clipboard_has_image: () => false,
+  clipboard_has_image: () =>
+    localStorage.getItem("mock-report-clipboard-image") === "1",
+
+  clipboard_read_report_image: () => ({
+    name: "Clipboard screenshot.png",
+    mediaType: "image/png",
+    data: "iVBORw0KGgoBAgM=",
+  }),
 
   // ----- Commands that launch external processes (no-op in mock) -----
 

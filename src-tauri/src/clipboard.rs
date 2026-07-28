@@ -265,6 +265,32 @@ pub async fn clipboard_has_image() -> bool {
         .unwrap_or(false)
 }
 
+/// Read a clipboard screenshot for a user report without creating a file in
+/// the current directory.
+#[tauri::command]
+pub async fn clipboard_read_report_image(
+) -> Result<crate::user_report::ReportAttachment, crate::user_report::SubmitReportError> {
+    let bytes = tokio::task::spawn_blocking(read_clipboard_image)
+        .await
+        .map_err(|error| {
+            crate::user_report::SubmitReportError::new(
+                "clipboard_unavailable",
+                format!("Clipboard task failed: {error}"),
+            )
+        })?
+        .ok_or_else(|| {
+            crate::user_report::SubmitReportError::new(
+                "clipboard_unavailable",
+                "No image data in clipboard",
+            )
+        })?;
+    crate::user_report::attachment_from_image_bytes(
+        "Clipboard screenshot.png".to_string(),
+        "image/png",
+        bytes,
+    )
+}
+
 #[cfg(all(not(windows), not(target_os = "macos")))]
 fn clipboard_has_image_sync() -> bool {
     let output = if is_wayland() {

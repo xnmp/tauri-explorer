@@ -18,6 +18,46 @@ export interface UserReportAttachment {
   data: string;
 }
 
+export interface UserReportAttachmentFile {
+  name: string;
+  type: string;
+  size: number;
+}
+
+export interface UserReportAttachmentUsage {
+  count: number;
+  bytes: number;
+}
+
+export function userReportAttachmentBytes(data: string): number {
+  const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor(data.length * 3 / 4) - padding);
+}
+
+export function validateUserReportAttachmentFiles(
+  files: readonly UserReportAttachmentFile[],
+  existing: UserReportAttachmentUsage = { count: 0, bytes: 0 },
+): string | null {
+  if (existing.count + files.length > MAX_USER_REPORT_ATTACHMENTS) {
+    return `Attach up to ${MAX_USER_REPORT_ATTACHMENTS} images.`;
+  }
+  let addedBytes = 0;
+  for (const file of files) {
+    if (!(USER_REPORT_IMAGE_TYPES as readonly string[]).includes(file.type)) {
+      return "Attachments must be PNG, JPEG, or GIF images.";
+    }
+    if (file.size === 0) return `${file.name || "The selected image"} is empty.`;
+    if (file.size > MAX_USER_REPORT_ATTACHMENT_BYTES) {
+      return `${file.name || "Each image"} must be 2 MiB or smaller.`;
+    }
+    addedBytes += file.size;
+  }
+  if (existing.bytes + addedBytes > MAX_USER_REPORT_ATTACHMENTS_BYTES) {
+    return "Attachments must total 3 MiB or less.";
+  }
+  return null;
+}
+
 export interface UserReportDraft {
   title: string;
   body: string;

@@ -879,6 +879,11 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let p = dir.path();
         git(p, &["init", "-b", "main"]);
+        // Application commands run in separate subprocesses from this test
+        // helper, so identity must live in the temporary repository rather
+        // than only in `git`'s per-command environment.
+        git(p, &["config", "user.name", "Test"]);
+        git(p, &["config", "user.email", "t@x"]);
         git(p, &["config", "commit.gpgsign", "false"]);
         write(p, "a.txt", "1\n");
         git(p, &["add", "."]);

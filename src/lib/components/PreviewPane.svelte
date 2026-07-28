@@ -1563,10 +1563,6 @@
     user-select: text;
   }
 
-  .diff-content > :global([class*="hljs-"]) {
-    display: inline-block;
-  }
-
   .hunk-content, .hunk-actions {
     display: flex;
     align-items: center;

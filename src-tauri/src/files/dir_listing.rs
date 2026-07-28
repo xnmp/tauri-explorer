@@ -455,6 +455,34 @@ mod tests {
         );
     }
 
+    /// UNC roots cover both Windows network shares and WSL's 9P share. A
+    /// directory listing must not add one `.git` stat per child there (#480).
+    #[test]
+    fn git_repo_detection_policy_skips_unc_listing_roots() {
+        assert!(should_probe_git_repos(&PathBuf::from("C:\\Users\\me\\repos")));
+        assert!(!should_probe_git_repos(&PathBuf::from(
+            r"\\server\share\large-directory"
+        )));
+        assert!(!should_probe_git_repos(&PathBuf::from(
+            r"\\wsl.localhost\Ubuntu\home\me\large-directory"
+        )));
+    }
+
+    /// The listing seam returns a compatible `false` flag without touching a
+    /// child `.git` path when its root uses the slow-mount policy (#480).
+    #[test]
+    fn slow_mount_scan_does_not_detect_child_git_repositories() {
+        let dir = tempdir().unwrap();
+        fs::create_dir(dir.path().join("repo")) .unwrap();
+        fs::create_dir(dir.path().join("repo/.git")).unwrap();
+
+        let entries = scan_directory_parallel_with_git_repo_probe(&dir.path().to_path_buf(), false);
+        assert!(
+            !entries.iter().find(|entry| entry.name == "repo").unwrap().is_git_repo,
+            "slow-mount listings must leave is_git_repo false rather than stat each child .git"
+        );
+    }
+
     /// Contract test mirroring `tests/contract/fs-ops.contract.test.ts`
     /// (mock side). Both build the `listing_order` scenario from the shared
     /// fixture and assert the same ordering contract: directories first, then

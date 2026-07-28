@@ -171,6 +171,55 @@ fn head_snapshot(repo_path: &str) -> Result<(String, Option<String>), AppError> 
     Ok((oid.to_string(), branch))
 }
 
+fn working_tree_is_clean(repo_path: &str) -> Result<bool, AppError> {
+    let status = Command::new("git")
+        .no_console()
+        .args(["status", "--porcelain", "--untracked-files=normal"])
+        .current_dir(repo_path)
+        .output()
+        .map_err(AppError::from)?;
+    if !status.status.success() {
+        return Err(AppError::Other("could not inspect working tree".into()));
+    }
+    Ok(status.stdout.is_empty())
+}
+
+fn working_tree_matches_commit(repo_path: &str, oid: &str) -> Result<bool, AppError> {
+    let diff = Command::new("git")
+        .no_console()
+        .args(["diff", "--quiet", oid, "--"])
+        .current_dir(repo_path)
+        .status()
+        .map_err(AppError::from)?;
+    if !matches!(diff.code(), Some(0 | 1)) {
+        return Err(AppError::Other("could not compare working tree".into()));
+    }
+    let untracked = Command::new("git")
+        .no_console()
+        .args(["ls-files", "--others", "--exclude-standard"])
+        .current_dir(repo_path)
+        .output()
+        .map_err(AppError::from)?;
+    if !untracked.status.success() {
+        return Err(AppError::Other(
+            "could not inspect untracked working-tree files".into(),
+        ));
+    }
+    Ok(diff.success() && untracked.stdout.is_empty())
+}
+
+fn update_ref_cas(
+    repo_path: &str,
+    ref_name: &str,
+    new_oid: &str,
+    expected_old_oid: &str,
+) -> Result<(), AppError> {
+    run_git(
+        repo_path,
+        &["update-ref", ref_name, new_oid, expected_old_oid],
+    )
+}
+
 async fn run_head_move(
     repo_path: String,
     operation: HeadMoveOperation,
@@ -541,21 +590,61 @@ pub async fn git_undo(repo_path: String, action: GitUndoAction) -> Result<(), Ap
                     "HEAD moved since the operation; undo is no longer safe".into(),
                 ));
             }
-            let status = Command::new("git")
-                .no_console()
-                .args(["status", "--porcelain", "--untracked-files=normal"])
-                .current_dir(&repo_path)
-                .output()
-                .map_err(AppError::from)?;
-            if !status.status.success() {
-                return Err(AppError::Other("could not inspect working tree".into()));
-            }
-            if !status.stdout.is_empty() {
+            if !working_tree_is_clean(&repo_path)? {
                 return Err(AppError::Other(
                     "working tree is not clean; undo was refused".into(),
                 ));
             }
-            run_git(&repo_path, &["reset", "--hard", &before_oid])
+
+            // Move the checked-out ref with an expected-old compare-and-swap.
+            // A concurrent commit between the snapshot and this point makes
+            // update-ref fail instead of rewinding that commit.
+            let head_ref = match branch.as_deref() {
+                Some(name) => {
+                    validate_arg("branch name", name)?;
+                    format!("refs/heads/{name}")
+                }
+                None => "HEAD".to_string(),
+            };
+            update_ref_cas(&repo_path, &head_ref, &before_oid, &after_oid).map_err(|_| {
+                AppError::Other("HEAD moved since the safety check; undo was refused".into())
+            })?;
+
+            // Catch worktree changes that landed while the ref CAS ran. HEAD
+            // now names `before_oid`, so compare the index/worktree directly
+            // with the captured post-operation tree instead of `git status`.
+            // Roll the ref back only if it is still ours; never overwrite a
+            // newer concurrent move.
+            if !working_tree_matches_commit(&repo_path, &after_oid)? {
+                let _ = update_ref_cas(&repo_path, &head_ref, &after_oid, &before_oid);
+                return Err(AppError::Other(
+                    "working tree changed during undo; undo was refused".into(),
+                ));
+            }
+            // Two-tree read-tree is the worktree/index counterpart to the ref
+            // CAS: it transitions only paths matching the old tree and
+            // refuses to overwrite a racing local edit. It does not move HEAD.
+            if let Err(error) = run_git(
+                &repo_path,
+                &["read-tree", "-u", "-m", &after_oid, &before_oid],
+            ) {
+                let rollback = update_ref_cas(&repo_path, &head_ref, &after_oid, &before_oid);
+                return match rollback {
+                    Ok(()) => Err(AppError::Other(format!(
+                        "working tree changed during undo; undo was rolled back: {error}"
+                    ))),
+                    Err(rollback_error) => Err(AppError::Other(format!(
+                        "undo could not update the worktree and the ref changed concurrently: {error}; {rollback_error}"
+                    ))),
+                };
+            }
+            let (final_oid, final_branch) = head_snapshot(&repo_path)?;
+            if final_oid != before_oid || final_branch != branch {
+                return Err(AppError::Other(
+                    "HEAD changed concurrently while finishing undo".into(),
+                ));
+            }
+            Ok(())
         }
     })
     .await
@@ -918,6 +1007,39 @@ mod tests {
         let error = tokio_test_block(git_undo(rp, action)).unwrap_err();
         assert!(error.to_string().contains("HEAD moved"));
         assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), cs[1]);
+    }
+
+    #[test]
+    fn git_undo_head_transition_refuses_concurrent_ref_and_file_changes() {
+        let (dir, cs) = linear_repo();
+        let rp = repo_path(&dir);
+        write(dir.path(), "newer.txt", "newer\n");
+        git(dir.path(), &["add", "."]);
+        git(dir.path(), &["commit", "-m", "newer"]);
+        let newer = git_out(dir.path(), &["rev-parse", "HEAD"]);
+
+        let stale_ref = update_ref_cas(&rp, "refs/heads/main", &cs[0], &cs[1]);
+        assert!(
+            stale_ref.is_err(),
+            "expected-old CAS must reject newer HEAD"
+        );
+        assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), newer);
+
+        // Rewind the fixture to the captured post-operation commit and perform
+        // the same CAS as undo. A file write racing immediately afterward must
+        // make the two-tree transition fail without losing its contents.
+        git(dir.path(), &["reset", "--hard", &cs[1]]);
+        update_ref_cas(&rp, "refs/heads/main", &cs[0], &cs[1]).unwrap();
+        write(dir.path(), "a.txt", "racing local edit\n");
+        let transition = run_git(&rp, &["read-tree", "-u", "-m", &cs[1], &cs[0]]);
+        assert!(
+            transition.is_err(),
+            "two-tree update must refuse a racing worktree edit"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+            "racing local edit\n"
+        );
     }
 
     #[test]

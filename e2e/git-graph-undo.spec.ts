@@ -1,13 +1,35 @@
 import { test, expect } from "./fixtures";
 import { waitForEntries } from "./helpers";
 
-async function openGraph(page: import("@playwright/test").Page): Promise<void> {
+async function openGraph(
+  page: import("@playwright/test").Page,
+  expectUncommitted = true,
+): Promise<void> {
   await page.keyboard.press("Control+Shift+p");
   await page.locator("input:focus").fill("Toggle Commit Graph");
   await page.keyboard.press("Enter");
-  await expect(
-    page.locator('[data-testid="git-graph-view"] .commit-row').first(),
-  ).toContainText("Uncommitted Changes");
+  const view = page.locator('[data-testid="git-graph-view"]');
+  await expect(view).toBeVisible();
+  if (expectUncommitted) {
+    await expect(view.locator(".commit-row").first()).toContainText("Uncommitted Changes");
+  }
+}
+
+async function navigateToPath(
+  page: import("@playwright/test").Page,
+  path: string,
+): Promise<void> {
+  const breadcrumbs = page.locator(".breadcrumbs-container");
+  const box = await breadcrumbs.boundingBox();
+  await breadcrumbs.click({
+    position: { x: (box?.width ?? 200) - 8, y: (box?.height ?? 30) / 2 },
+  });
+  const input = page.locator(".path-input");
+  await input.fill(path);
+  const suggestions = page.locator(".suggestions-dropdown");
+  if (await suggestions.isVisible()) await input.press("Escape");
+  await input.press("Enter");
+  await waitForEntries(page);
 }
 
 test("Ctrl+Z confirms and visibly restores a deleted branch at its original commit", async ({
@@ -214,4 +236,45 @@ test("Ctrl+Z outside the graph retains file-operation undo", async ({ page }) =>
   await expect(page.locator(".entry-name", { hasText: originalName })).toBeVisible();
   await expect(page.locator(".toast", { hasText: "Undo: Rename" })).toBeVisible();
   await page.screenshot({ path: "evidence/ac-5-file-undo-outside-graph.png", animations: "disabled" });
+});
+
+test("undo history stays with its repository and is not persisted across reload", async ({
+  page,
+}) => {
+  await page.goto("/?path=/home/user/Documents/project&mockGitCommits=30");
+  await waitForEntries(page);
+  await openGraph(page);
+  const projectGraph = page.locator('[data-testid="git-graph-view"]');
+  const hotfix = projectGraph.locator(".ref-branch", { hasText: "hotfix" }).first();
+  await hotfix.click({ button: "right" });
+  await page
+    .locator('[data-testid="git-graph-menu"]')
+    .getByText("Delete Branch 'hotfix'…")
+    .click();
+  await page
+    .locator('[data-testid="git-graph-action-modal"]')
+    .getByText("Delete", { exact: true })
+    .click();
+  await expect(hotfix).toHaveCount(0);
+
+  await page.keyboard.press("Control+Alt+g");
+  await expect(projectGraph).toHaveCount(0);
+  await navigateToPath(page, "/home/user/Documents/load-repo-0");
+  await openGraph(page, false);
+  await page.keyboard.press("Control+z");
+  await expect(page.locator(".toast", { hasText: "Nothing to undo in this git graph" })).toBeVisible();
+
+  await page.keyboard.press("Control+Alt+g");
+  await navigateToPath(page, "/home/user/Documents/project");
+  await openGraph(page);
+  await page.keyboard.press("Control+z");
+  const confirmation = page.locator('[data-testid="git-graph-undo-modal"]');
+  await expect(confirmation).toContainText("delete branch 'hotfix'");
+  await confirmation.getByText("Cancel", { exact: true }).click();
+
+  await page.reload();
+  await waitForEntries(page);
+  await openGraph(page);
+  await page.keyboard.press("Control+z");
+  await expect(page.locator(".toast", { hasText: "Nothing to undo in this git graph" })).toBeVisible();
 });

@@ -18,6 +18,9 @@ const valid = {
   os: "linux",
   arch: "x86_64",
 };
+const pngData = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3,
+]).toString("base64");
 
 describe("report relay validation", () => {
   it("normalizes a valid report and selects observable GitHub labels", () => {
@@ -56,6 +59,158 @@ describe("report relay validation", () => {
 
   it("accepts an 8000-character unicode body", () => {
     expect(validateReport({ ...valid, body: "🐛".repeat(4000) }).body).toHaveLength(8000);
+  });
+
+  it("decodes supported image attachments for the hosting boundary", () => {
+    const report = validateReport({
+      ...valid,
+      attachments: [{ name: " screenshot (1).png ", mediaType: "image/png", data: pngData }],
+    });
+
+    expect(report.attachments).toHaveLength(1);
+    expect(report.attachments[0]).toMatchObject({
+      name: "screenshot (1).png",
+      mediaType: "image/png",
+    });
+    expect([...report.attachments[0].bytes]).toEqual([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3,
+    ]);
+  });
+
+  it.each([
+    [{ name: "vector.svg", mediaType: "image/svg+xml", data: pngData }],
+    [{ name: "empty.png", mediaType: "image/png", data: "" }],
+    [{ name: "fake.png", mediaType: "image/png", data: Buffer.from("not png").toString("base64") }],
+    [{ name: "bad.png", mediaType: "image/png", data: "%%%not-base64%%%" }],
+  ])("rejects malformed image attachments before downstream work", (attachment) => {
+    expect(() => validateReport({ ...valid, attachments: [attachment] })).toThrow(
+      expect.objectContaining({ code: "malformed_input" }),
+    );
+  });
+
+  it("rejects excessive attachment counts and decoded bytes", () => {
+    expect(() => validateReport({
+      ...valid,
+      attachments: Array.from({ length: 4 }, (_, index) => ({
+        name: `${index}.png`,
+        mediaType: "image/png",
+        data: pngData,
+      })),
+    })).toThrow(expect.objectContaining({ code: "malformed_input" }));
+    expect(() => validateReport({
+      ...valid,
+      attachments: [{
+        name: "huge.png",
+        mediaType: "image/png",
+        data: Buffer.concat([
+          Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+          Buffer.alloc(2 * 1024 * 1024),
+        ]).toString("base64"),
+      }],
+    })).toThrow(expect.objectContaining({ code: "malformed_input" }));
+  });
+});
+
+describe("report attachment delivery", () => {
+  it("hosts each image and creates an issue that renders the returned public URLs", async () => {
+    const createIssue = vi.fn().mockResolvedValue({ url: "https://github.test/issues/1", number: 1 });
+    const attachmentStore = {
+      upload: vi.fn()
+        .mockResolvedValueOnce("https://blob.test/first.png")
+        .mockResolvedValueOnce("https://blob.test/second.jpg"),
+      remove: vi.fn(),
+    };
+
+    await expect(processReport(
+      {
+        ...valid,
+        attachments: [
+          { name: "first [shot].png", mediaType: "image/png", data: pngData },
+          {
+            name: "second.jpg",
+            mediaType: "image/jpeg",
+            data: Buffer.from([0xff, 0xd8, 0xff, 1]).toString("base64"),
+          },
+        ],
+      },
+      "198.51.100.8",
+      createInMemoryRateLimitStore(),
+      createIssue,
+      attachmentStore,
+    )).resolves.toEqual({ url: "https://github.test/issues/1", number: 1 });
+
+    expect(attachmentStore.upload).toHaveBeenCalledTimes(2);
+    expect(attachmentStore.upload.mock.calls[0][0]).toMatchObject({
+      name: "first [shot].png",
+      mediaType: "image/png",
+    });
+    expect(createIssue).toHaveBeenCalledWith(expect.objectContaining({
+      body: expect.stringContaining(
+        "## Attachments\n\n![first \\[shot\\].png](https://blob.test/first.png)"
+      ),
+    }));
+    expect(createIssue.mock.calls[0][0].body).toContain(
+      "![second.jpg](https://blob.test/second.jpg)",
+    );
+  });
+
+  it("keeps the existing issue body and skips hosting when no images were attached", async () => {
+    const createIssue = vi.fn().mockResolvedValue({ url: "https://github.test/issues/2", number: 2 });
+    const attachmentStore = { upload: vi.fn(), remove: vi.fn() };
+
+    await processReport(
+      valid,
+      "198.51.100.9",
+      createInMemoryRateLimitStore(),
+      createIssue,
+      attachmentStore,
+    );
+
+    expect(attachmentStore.upload).not.toHaveBeenCalled();
+    expect(createIssue.mock.calls[0][0].body).toBe(valid.body);
+  });
+
+  it("removes hosted blobs and does not leave a text-only issue when delivery fails", async () => {
+    const createIssue = vi.fn().mockRejectedValue(new Error("GitHub unavailable"));
+    const attachmentStore = {
+      upload: vi.fn().mockResolvedValue("https://blob.test/orphan.png"),
+      remove: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await expect(processReport(
+      { ...valid, attachments: [{ name: "shot.png", mediaType: "image/png", data: pngData }] },
+      "198.51.100.10",
+      createInMemoryRateLimitStore(),
+      createIssue,
+      attachmentStore,
+    )).rejects.toThrow("GitHub unavailable");
+    expect(attachmentStore.remove).toHaveBeenCalledWith(["https://blob.test/orphan.png"]);
+  });
+
+  it("cleans up earlier blobs when a later image upload fails", async () => {
+    const createIssue = vi.fn();
+    const attachmentStore = {
+      upload: vi.fn()
+        .mockResolvedValueOnce("https://blob.test/first.png")
+        .mockRejectedValueOnce(new Error("Blob unavailable")),
+      remove: vi.fn().mockResolvedValue(undefined),
+    };
+
+    await expect(processReport(
+      {
+        ...valid,
+        attachments: [
+          { name: "first.png", mediaType: "image/png", data: pngData },
+          { name: "second.png", mediaType: "image/png", data: pngData },
+        ],
+      },
+      "198.51.100.11",
+      createInMemoryRateLimitStore(),
+      createIssue,
+      attachmentStore,
+    )).rejects.toThrow("Blob unavailable");
+    expect(createIssue).not.toHaveBeenCalled();
+    expect(attachmentStore.remove).toHaveBeenCalledWith(["https://blob.test/first.png"]);
   });
 });
 

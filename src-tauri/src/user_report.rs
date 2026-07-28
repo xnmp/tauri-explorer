@@ -277,8 +277,8 @@ pub async fn submit_user_report(
 #[cfg(test)]
 mod tests {
     use super::{
-        assemble_issue_body, send_report, validate_draft, Environment, RelayRequest,
-        MAX_RELAY_BODY_UNITS,
+        assemble_issue_body, attachment_from_image_bytes, send_report, validate_attachments,
+        validate_draft, Environment, RelayRequest, ReportAttachment, MAX_RELAY_BODY_UNITS,
     };
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::{Shutdown, TcpListener};
@@ -362,7 +362,74 @@ mod tests {
             os: "linux".to_string(),
             arch: "x86_64".to_string(),
             website: String::new(),
+            attachments: Vec::new(),
         }
+    }
+
+    fn png_attachment() -> ReportAttachment {
+        attachment_from_image_bytes(
+            "Clipboard screenshot.png".to_string(),
+            "image/png",
+            vec![0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn image_attachment_is_base64_encoded_for_the_relay_without_writing_a_file() {
+        let attachment = png_attachment();
+        assert_eq!(attachment.name, "Clipboard screenshot.png");
+        assert_eq!(attachment.media_type, "image/png");
+        assert_eq!(
+            attachment.data,
+            "iVBORw0KGgoBAgM="
+        );
+        validate_attachments(std::slice::from_ref(&attachment)).unwrap();
+    }
+
+    #[test]
+    fn native_boundary_rejects_unsupported_empty_excessive_and_oversized_images() {
+        let unsupported = ReportAttachment {
+            name: "vector.svg".to_string(),
+            media_type: "image/svg+xml".to_string(),
+            data: "PHN2Zz4=".to_string(),
+        };
+        assert_eq!(
+            validate_attachments(&[unsupported]).unwrap_err().kind,
+            "malformed_input"
+        );
+        assert_eq!(
+            attachment_from_image_bytes("empty.png".to_string(), "image/png", Vec::new())
+                .unwrap_err()
+                .kind,
+            "malformed_input"
+        );
+        assert_eq!(
+            validate_attachments(&vec![png_attachment(); 4])
+                .unwrap_err()
+                .kind,
+            "malformed_input"
+        );
+        assert_eq!(
+            attachment_from_image_bytes(
+                "huge.png".to_string(),
+                "image/png",
+                vec![0; 2 * 1024 * 1024 + 1],
+            )
+            .unwrap_err()
+            .kind,
+            "malformed_input"
+        );
+    }
+
+    #[test]
+    fn relay_payload_serializes_the_attachment_contract() {
+        let mut request = payload();
+        request.attachments.push(png_attachment());
+        let json = serde_json::to_value(request).unwrap();
+        assert_eq!(json["attachments"][0]["name"], "Clipboard screenshot.png");
+        assert_eq!(json["attachments"][0]["mediaType"], "image/png");
+        assert_eq!(json["attachments"][0]["data"], "iVBORw0KGgoBAgM=");
     }
 
     fn stub_response(status: &str, response_body: &str) -> String {

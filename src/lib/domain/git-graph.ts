@@ -70,7 +70,7 @@ export function sliceBranchLine(
   while (last - 1 > first && pts[last - 1].row >= endRow) last--;
 
   if (first === 0 && last === pts.length - 1) return line;
-  return { colorIndex: line.colorIndex, points: pts.slice(first, last + 1) };
+  return { ...line, points: pts.slice(first, last + 1) };
 }
 
 export interface GraphVertex {
@@ -318,6 +318,165 @@ export function assignLayout(
     branches,
     laneCount,
   };
+}
+
+/**
+ * Classify the first-parent lineage and its exact drawable geometry.
+ *
+ * Walking toward older commits follows `parents[0]`. Walking toward newer
+ * commits follows the nearest first-parent child whose edge belongs to the
+ * same drawn branch. A branch can curve between physical lanes, so comparing
+ * vertex lane numbers alone would incorrectly stop at those bends. Lane color
+ * is deliberately irrelevant: colors are recycled after a branch ends.
+ */
+export function traceGraphLineage(
+  commits: readonly BranchLineCommitLike[],
+  layout: GraphLayout,
+  fromRow: number,
+): GraphTrace {
+  const empty = (): GraphTrace => ({ rows: new Set<number>(), segments: [] });
+  if (
+    !Number.isInteger(fromRow) ||
+    fromRow < 0 ||
+    fromRow >= commits.length ||
+    fromRow >= layout.vertices.length ||
+    !commits[fromRow]?.oid
+  ) {
+    return empty();
+  }
+
+  const rows = new Set<number>([fromRow]);
+  const vertexKey = (row: number) => {
+    const vertex = layout.vertices[row];
+    return vertex ? `${row}:${vertex.lane}` : null;
+  };
+  const sharesBranchEdge = (childRow: number, parentRow: number): boolean => {
+    const childKey = vertexKey(childRow);
+    const parentKey = vertexKey(parentRow);
+    if (childKey === null || parentKey === null) return false;
+    return layout.branches.some((line) => {
+      if (line.mergeEdge) return false;
+      let childPoint = -1;
+      let parentPoint = -1;
+      line.points.forEach((point, index) => {
+        const key = `${point.row}:${point.lane}`;
+        if (key === childKey) childPoint = index;
+        if (key === parentKey) parentPoint = index;
+      });
+      return childPoint >= 0 && parentPoint > childPoint;
+    });
+  };
+
+  // Older ancestry is exact: resolve each first parent strictly below the
+  // current row so malformed/non-topological input cannot create a cycle.
+  let currentRow = fromRow;
+  while (true) {
+    const parentOid = commits[currentRow]?.parents?.[0];
+    if (!parentOid) break;
+    let parentRow = -1;
+    for (let row = currentRow + 1; row < commits.length; row++) {
+      if (!commits[row]?.stash && commits[row]?.oid === parentOid) {
+        parentRow = row;
+        break;
+      }
+    }
+    if (parentRow < 0 || rows.has(parentRow)) break;
+    rows.add(parentRow);
+    currentRow = parentRow;
+  }
+
+  // Newer ancestry is ambiguous when several children claim one first
+  // parent. The drawn branch resolves that ambiguity without relying on color.
+  currentRow = fromRow;
+  while (true) {
+    const current = commits[currentRow];
+    if (!current?.oid || !layout.vertices[currentRow]) break;
+    let childRow = -1;
+    for (let row = currentRow - 1; row >= 0; row--) {
+      if (
+        !commits[row]?.stash &&
+        commits[row]?.parents?.[0] === current.oid &&
+        sharesBranchEdge(row, currentRow)
+      ) {
+        childRow = row;
+        break;
+      }
+    }
+    if (childRow < 0 || rows.has(childRow)) break;
+    rows.add(childRow);
+    currentRow = childRow;
+  }
+
+  const firstParentEdges: Array<readonly [number, number]> = [];
+  for (const childRow of rows) {
+    const parentOid = commits[childRow]?.parents?.[0];
+    if (!parentOid) continue;
+    for (let parentRow = childRow + 1; parentRow < commits.length; parentRow++) {
+      if (
+        rows.has(parentRow) &&
+        !commits[parentRow]?.stash &&
+        commits[parentRow]?.oid === parentOid
+      ) {
+        firstParentEdges.push([childRow, parentRow]);
+        break;
+      }
+    }
+  }
+
+  const pointKey = (row: number, lane: number) => `${row}:${lane}`;
+  const segments: BranchLine[] = [];
+  for (const line of layout.branches) {
+    const lastRow = line.points.at(-1)?.row;
+    // A non-first-parent merge into the traced lineage completes the visual
+    // absorption arc even though its child commit belongs to another line.
+    if (line.mergeEdge) {
+      if (lastRow !== undefined && rows.has(lastRow)) {
+        segments.push({ ...line, points: [...line.points] });
+      }
+      continue;
+    }
+
+    const pointIndices = new Map<string, number>();
+    line.points.forEach((point, index) => {
+      pointIndices.set(pointKey(point.row, point.lane), index);
+    });
+    const intervals: Array<[number, number]> = [];
+    for (const [childRow, parentRow] of firstParentEdges) {
+      const child = layout.vertices[childRow];
+      const parent = layout.vertices[parentRow];
+      if (!child || !parent) continue;
+      const start = pointIndices.get(pointKey(childRow, child.lane));
+      const end = pointIndices.get(pointKey(parentRow, parent.lane));
+      if (start !== undefined && end !== undefined && start < end) {
+        intervals.push([start, end]);
+      }
+    }
+    intervals.sort((a, b) => a[0] - b[0]);
+
+    const firstSegment = segments.length;
+    for (const interval of intervals) {
+      const previous = segments.at(-1);
+      const previousPoints = previous?.points;
+      const previousEnd = previousPoints?.at(-1);
+      const intervalStart = line.points[interval[0]];
+      if (
+        segments.length > firstSegment &&
+        previous?.colorIndex === line.colorIndex &&
+        !previous.mergeEdge &&
+        previousEnd?.row === intervalStart?.row &&
+        previousEnd?.lane === intervalStart?.lane
+      ) {
+        previous.points.push(...line.points.slice(interval[0] + 1, interval[1] + 1));
+      } else {
+        segments.push({
+          colorIndex: line.colorIndex,
+          points: line.points.slice(interval[0], interval[1] + 1),
+        });
+      }
+    }
+  }
+
+  return { rows, segments };
 }
 
 /**

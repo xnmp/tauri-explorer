@@ -7,6 +7,9 @@ import { waitForEntries } from "./helpers";
 
 const MANY_FILES_COMMIT = "Add tests for feature X";
 const LAST_FILE = "src/generated/many-files/file-24.ts";
+const evidencePath = process.env.CAPTURE_EVIDENCE
+  ? "evidence/ac-1-bounded-scrollable-changed-files.png"
+  : "test-results/ac-1-bounded-scrollable-changed-files.png";
 
 test.describe("Git graph changed-files overflow (#510)", () => {
   test("AC 1: a many-file commit uses a bounded list that scrolls to its last file", async ({ page }) => {
@@ -35,5 +38,9 @@ test.describe("Git graph changed-files overflow (#510)", () => {
     await files.evaluate((list) => { list.scrollTop = list.scrollHeight; });
     await expect(files.locator(".detail-file").last()).toContainText(LAST_FILE);
     await expect(files.locator(".detail-file").last()).toBeInViewport();
+
+    // Captured from the asserted scrolled state, so the visual proof and the
+    // contract above cannot drift apart.
+    await view.screenshot({ path: evidencePath });
   });
 });

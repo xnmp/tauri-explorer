@@ -2483,13 +2483,18 @@
     font-size: var(--font-size-caption);
   }
 
-    .detail-files {
+  /* A large commit must not make its inline detail panel taller than the
+     graph. Keep the list itself as the scrolling region so the commit message
+     and close button stay put while every changed file remains reachable. */
+  .detail-files {
     list-style: none;
     margin: 0;
     padding: 0;
     display: flex;
     flex-direction: column;
     gap: 3px;
+    max-height: 320px;
+    overflow-y: auto;
   }
 
   .detail-files li {

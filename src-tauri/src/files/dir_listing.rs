@@ -200,7 +200,7 @@ static LISTINGS: crate::task_registry::TaskRegistry = crate::task_registry::Task
 // pub: exercised directly by the `scan_directory_parallel` criterion bench
 // (src-tauri/benches/scan_directory_parallel.rs).
 pub fn scan_directory_parallel(dir_path: &PathBuf) -> Vec<FileEntry> {
-    scan_directory_parallel_with_git_repo_probe(dir_path, should_probe_git_repos(dir_path))
+    scan_directory_parallel_for_listing(dir_path, dir_path)
 }
 
 /// Network and WSL UNC paths may turn each file stat into a remote round trip.
@@ -211,13 +211,11 @@ fn should_probe_git_repos(dir_path: &Path) -> bool {
     !(path.starts_with("\\\\") || path.starts_with("//"))
 }
 
-/// Scan with an explicit Git-repository probe policy. Kept separate from the
-/// public benchmark entry point so the slow-mount policy is testable without a
-/// live network share.
-fn scan_directory_parallel_with_git_repo_probe(
-    dir_path: &PathBuf,
-    probe_git_repos: bool,
-) -> Vec<FileEntry> {
+/// Scan a readable directory using the policy for its user-visible listing
+/// root. Keeping the root separate makes the UNC policy testable without a
+/// live network share while production passes the same path for both values.
+fn scan_directory_parallel_for_listing(dir_path: &PathBuf, listing_root: &Path) -> Vec<FileEntry> {
+    let probe_git_repos = should_probe_git_repos(listing_root);
     use rayon::prelude::*;
 
     // jwalk parallelizes readdir, but the per-entry symlink_metadata stat would
@@ -495,12 +493,15 @@ mod tests {
     /// The listing seam returns a compatible `false` flag without touching a
     /// child `.git` path when its root uses the slow-mount policy (#480).
     #[test]
-    fn slow_mount_scan_does_not_detect_child_git_repositories() {
+    fn unc_listing_root_skips_child_git_repo_detection() {
         let dir = tempdir().unwrap();
         fs::create_dir(dir.path().join("repo")).unwrap();
         fs::create_dir(dir.path().join("repo/.git")).unwrap();
 
-        let entries = scan_directory_parallel_with_git_repo_probe(&dir.path().to_path_buf(), false);
+        let entries = scan_directory_parallel_for_listing(
+            &dir.path().to_path_buf(),
+            Path::new(r"\\server\share\large-directory"),
+        );
         assert!(
             !entries
                 .iter()

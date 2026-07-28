@@ -6,11 +6,14 @@
 //! nice-to-have decoration, not something that should ever block or error
 //! the graph.
 //!
-//! `git_open_prs` is the only Tauri command here; `parse_github_remote` is
-//! pure and unit-tested directly (no network in tests, per project policy).
+//! `git_open_prs` decorates graph badges, while `git_failed_ci_checks` and
+//! `git_failed_ci_check_log` retrieve a selected failed Actions job via `gh`.
+//! `parse_github_remote` and the `gh` response mappings are pure and tested
+//! directly (no network in tests, per project policy).
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::process::Command;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
@@ -18,6 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 use crate::git_common::open_repo;
+use crate::process_ext::NoConsole;
 
 /// One open pull request, as surfaced to the frontend. camelCase over IPC
 /// for the multi-word fields, matching the codebase's existing IPC structs.
@@ -73,6 +77,26 @@ pub struct PrComment {
     pub created_at: String,
     /// Comment text (GraphQL `bodyText` — plain text, no markdown markup).
     pub body: String,
+}
+
+/// A failed GitHub Actions job associated with an open PR. The opaque IDs are
+/// produced by `gh pr checks`; callers only pass them back to retrieve the
+/// corresponding log, never construct shell arguments from free-form text.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FailedCiCheck {
+    pub name: String,
+    #[serde(rename = "runId")]
+    pub run_id: u64,
+    #[serde(rename = "jobId")]
+    pub job_id: u64,
+}
+
+/// The selected failed check and the text emitted by `gh run view --log-failed`.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FailedCiCheckLog {
+    #[serde(rename = "checkName")]
+    pub check_name: String,
+    pub log: String,
 }
 
 /// How many trailing comments the single GraphQL query fetches per PR. Kept
@@ -451,6 +475,169 @@ fn remote_url(repo: &git2::Repository) -> Option<String> {
     repo.find_remote(chosen).ok()?.url().map(|u| u.to_string())
 }
 
+#[derive(Deserialize)]
+struct GhPrCheck {
+    name: String,
+    state: String,
+    link: String,
+}
+
+/// Extract Actions run/job IDs from the URL `gh pr checks` returns. External
+/// check providers do not expose an Actions job log, so they are deliberately
+/// omitted rather than presenting a button that cannot fulfil its promise.
+fn actions_job_ids(link: &str) -> Option<(u64, u64)> {
+    let (_, suffix) = link.split_once("/actions/runs/")?;
+    let (run, job) = suffix.split_once("/job/")?;
+    Some((
+        run.parse().ok()?,
+        job.split(['/', '?', '#']).next()?.parse().ok()?,
+    ))
+}
+
+fn failed_actions_checks(json: &str) -> Result<Vec<FailedCiCheck>, AppError> {
+    let checks: Vec<GhPrCheck> = serde_json::from_str(json)
+        .map_err(|e| AppError::Other(format!("Could not read GitHub check list: {e}")))?;
+    Ok(checks
+        .into_iter()
+        .filter(|check| {
+            matches!(
+                check.state.as_str(),
+                "FAILURE" | "ERROR" | "failure" | "error"
+            )
+        })
+        .filter_map(|check| {
+            let (run_id, job_id) = actions_job_ids(&check.link)?;
+            Some(FailedCiCheck {
+                name: check.name,
+                run_id,
+                job_id,
+            })
+        })
+        .collect())
+}
+
+fn gh_command_error(error: std::io::Error) -> AppError {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        AppError::Other("GitHub CLI (`gh`) is not installed".to_string())
+    } else {
+        AppError::from(error)
+    }
+}
+
+fn run_gh_with_accepted_exit(
+    repo_root: &str,
+    args: &[String],
+    accepts_exit: fn(bool, Option<i32>) -> bool,
+    fallback_error: &str,
+) -> Result<String, AppError> {
+    let mut command = Command::new("gh");
+    command.no_console().args(args).current_dir(repo_root);
+    let output = command.output().map_err(gh_command_error)?;
+    if accepts_exit(output.status.success(), output.status.code()) {
+        return Ok(String::from_utf8_lossy(&output.stdout).to_string());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(AppError::Other(if stderr.is_empty() {
+        fallback_error.to_string()
+    } else {
+        stderr
+    }))
+}
+
+fn accepts_success(success: bool, _code: Option<i32>) -> bool {
+    success
+}
+
+fn run_gh(repo_root: &str, args: &[String]) -> Result<String, AppError> {
+    run_gh_with_accepted_exit(
+        repo_root,
+        args,
+        accepts_success,
+        "GitHub CLI could not retrieve the CI check log",
+    )
+}
+
+/// `gh pr checks` uses exit code 8 to say that some checks are still pending,
+/// while still writing the complete JSON check list to stdout. A failed PR can
+/// legitimately have both a failed job and a pending job, so that output must
+/// remain usable for the failed-check viewer.
+fn gh_pr_checks_output(repo_root: &str, args: &[String]) -> Result<String, AppError> {
+    run_gh_with_accepted_exit(
+        repo_root,
+        args,
+        accepts_gh_pr_checks_exit,
+        "GitHub CLI could not list CI checks",
+    )
+}
+
+fn accepts_gh_pr_checks_exit(success: bool, code: Option<i32>) -> bool {
+    success || code == Some(8)
+}
+
+fn github_repo_slug(repo_root: &str) -> Result<String, AppError> {
+    let repo = open_repo(Path::new(repo_root))?;
+    let url = remote_url(&repo)
+        .ok_or_else(|| AppError::Other("This repository has no GitHub remote".to_string()))?;
+    let (owner, name) = parse_github_remote(&url).ok_or_else(|| {
+        AppError::Other("This repository remote is not hosted on github.com".to_string())
+    })?;
+    Ok(format!("{owner}/{name}"))
+}
+
+/// List failed GitHub Actions checks on an open PR with `gh`. The `link`
+/// metadata identifies each Actions job, allowing the next command to request
+/// exactly that job's failed output rather than opening a browser.
+#[tauri::command]
+pub async fn git_failed_ci_checks(
+    repo_root: String,
+    pr_number: u64,
+) -> Result<Vec<FailedCiCheck>, AppError> {
+    tokio::task::spawn_blocking(move || {
+        let slug = github_repo_slug(&repo_root)?;
+        let args = vec![
+            "pr".to_string(),
+            "checks".to_string(),
+            pr_number.to_string(),
+            "--repo".to_string(),
+            slug,
+            "--json".to_string(),
+            "name,state,link".to_string(),
+        ];
+        failed_actions_checks(&gh_pr_checks_output(&repo_root, &args)?)
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
+}
+
+/// Return the failed output for one Actions job via the GitHub CLI. IDs were
+/// originally emitted by `git_failed_ci_checks`; their numeric type prevents
+/// option injection at this IPC boundary.
+#[tauri::command]
+pub async fn git_failed_ci_check_log(
+    repo_root: String,
+    check: FailedCiCheck,
+) -> Result<FailedCiCheckLog, AppError> {
+    tokio::task::spawn_blocking(move || {
+        let slug = github_repo_slug(&repo_root)?;
+        let args = vec![
+            "run".to_string(),
+            "view".to_string(),
+            check.run_id.to_string(),
+            "--repo".to_string(),
+            slug,
+            "--job".to_string(),
+            check.job_id.to_string(),
+            "--log-failed".to_string(),
+        ];
+        Ok(FailedCiCheckLog {
+            check_name: check.name,
+            log: run_gh(&repo_root, &args)?,
+        })
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("Task join error: {e}")))?
+}
+
 /// Open PRs for the repo at `repo_root`, decorated for the git graph's ref
 /// chips. Degrades to `Ok(vec![])` — never `Err` — for every condition that
 /// isn't a caller bug: no GitHub remote, offline, rate-limited, or a
@@ -533,6 +720,30 @@ mod tests {
             let expected = expected.map(|(o, r)| (o.to_string(), r.to_string()));
             assert_eq!(actual, expected, "input: {input:?}");
         }
+    }
+
+    #[test]
+    fn keeps_only_failed_github_actions_jobs_from_gh_checks() {
+        let checks = failed_actions_checks(
+            r#"[
+                {"name":"Unit tests","state":"FAILURE","link":"https://github.com/o/r/actions/runs/12/job/34"},
+                {"name":"Lint","state":"SUCCESS","link":"https://github.com/o/r/actions/runs/12/job/35"},
+                {"name":"Deploy preview","state":"PENDING","link":"https://github.com/o/r/actions/runs/13/job/36"},
+                {"name":"External CI","state":"ERROR","link":"https://ci.example.test/build/7"}
+            ]"#,
+        )
+        .unwrap();
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].name, "Unit tests");
+        assert_eq!(checks[0].run_id, 12);
+        assert_eq!(checks[0].job_id, 34);
+    }
+
+    #[test]
+    fn accepts_gh_pending_checks_exit_code_with_json_output() {
+        assert!(accepts_gh_pr_checks_exit(false, Some(8)));
+        assert!(accepts_gh_pr_checks_exit(true, Some(0)));
+        assert!(!accepts_gh_pr_checks_exit(false, Some(1)));
     }
 
     // ----- GraphQL response → PrInfo mapping (#459) -----

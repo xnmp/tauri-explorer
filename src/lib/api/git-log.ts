@@ -177,6 +177,16 @@ export async function gitRebase(repoPath: string, oid: string): Promise<void> {
   await invoke("git_rebase", { repoPath, oid });
 }
 
+/** Apply a stash while keeping it in the stash list. */
+export async function gitStashApply(repoPath: string, stash: string): Promise<void> {
+  await invoke("git_stash_apply", { repoPath, stash });
+}
+
+/** Apply a stash and remove it from the stash list after success. */
+export async function gitStashPop(repoPath: string, stash: string): Promise<void> {
+  await invoke("git_stash_pop", { repoPath, stash });
+}
+
 /** Reset the current branch to `oid` with the given mode. */
 export async function gitReset(repoPath: string, oid: string, mode: ResetMode): Promise<void> {
   await invoke("git_reset", { repoPath, oid, mode });

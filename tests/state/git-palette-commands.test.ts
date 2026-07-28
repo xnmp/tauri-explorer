@@ -67,7 +67,7 @@ describe("git command-palette targets (#520)", () => {
         "Git: Pop Stash stash@{0}",
       ]));
 
-      await executeCommand("git.palette.left.checkout.feature%2Fpalette");
+      await executeCommand("git.palette.left.checkout.branch.feature%2Fpalette");
       await executeCommand("git.palette.left.jump.a1b2c3d4e5f6");
       await executeCommand("git.palette.left.stash-pop.stash%40%7B0%7D");
       expect(actions.checkout).toHaveBeenCalledWith("feature/palette");
@@ -76,13 +76,13 @@ describe("git command-palette targets (#520)", () => {
 
       h.activeTab.activePaneId = "right";
       expect(getAvailableCommands().map((command) => command.id)).not.toContain(
-        "git.palette.left.checkout.feature%2Fpalette",
+        "git.palette.left.checkout.branch.feature%2Fpalette",
       );
-      await expect(executeCommand("git.palette.left.checkout.feature%2Fpalette")).resolves.toBe(false);
+      await expect(executeCommand("git.palette.left.checkout.branch.feature%2Fpalette")).resolves.toBe(false);
     } finally {
       stop();
     }
 
-    expect(getCommand("git.palette.left.checkout.feature%2Fpalette")).toBeUndefined();
+    expect(getCommand("git.palette.left.checkout.branch.feature%2Fpalette")).toBeUndefined();
   });
 });

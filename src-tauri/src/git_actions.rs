@@ -160,6 +160,20 @@ pub async fn git_rebase(repo_path: String, oid: String) -> Result<(), AppError> 
     run_git_async(repo_path, vec!["rebase".into(), oid]).await
 }
 
+/// Apply a named stash without dropping it from the stash list.
+#[tauri::command]
+pub async fn git_stash_apply(repo_path: String, stash: String) -> Result<(), AppError> {
+    validate_arg("stash", &stash)?;
+    run_git_async(repo_path, vec!["stash".into(), "apply".into(), stash]).await
+}
+
+/// Apply a named stash and remove it only after a successful apply.
+#[tauri::command]
+pub async fn git_stash_pop(repo_path: String, stash: String) -> Result<(), AppError> {
+    validate_arg("stash", &stash)?;
+    run_git_async(repo_path, vec!["stash".into(), "pop".into(), stash]).await
+}
+
 /// Reset the current branch to `oid`. `mode` is `soft` | `mixed` | `hard`.
 #[tauri::command]
 pub async fn git_reset(repo_path: String, oid: String, mode: String) -> Result<(), AppError> {

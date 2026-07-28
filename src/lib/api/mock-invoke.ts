@@ -678,6 +678,7 @@ interface MockCommit {
   author_email: string;
   author_time: number;
   summary: string;
+  stash?: string;
 }
 
 /**
@@ -2232,6 +2233,21 @@ const mockCommands: Record<string, CommandHandler> = {
   git_rebase: (args: Record<string, unknown>) => {
     const oid = (args.oid as string) ?? "";
     mockAppendCommit(`Rebased onto ${oid.slice(0, 7)}`);
+    return null;
+  },
+  git_stash_apply: (args: Record<string, unknown>) => {
+    const stash = (args.stash as string) ?? "";
+    if (!mockCommitGraph().some((commit) => commit.stash === stash)) {
+      throw new Error(`stash '${stash}' not found`);
+    }
+    return null;
+  },
+  git_stash_pop: (args: Record<string, unknown>) => {
+    const stash = (args.stash as string) ?? "";
+    const graph = mockCommitGraph();
+    const index = graph.findIndex((commit) => commit.stash === stash);
+    if (index < 0) throw new Error(`stash '${stash}' not found`);
+    graph.splice(index, 1);
     return null;
   },
   git_reset: (args: Record<string, unknown>) => {

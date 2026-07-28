@@ -76,6 +76,7 @@ pub async fn is_directory_empty(path: String, include_hidden: bool) -> Result<bo
 #[tauri::command]
 pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> {
     let t_start = std::time::Instant::now();
+    log::debug!("preview list_directory requested: path={path:?}");
 
     // Check cache first
     {
@@ -85,8 +86,8 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
         if let Some(cached) = cache.get(&path) {
             if cached.cached_at.elapsed().as_secs() < CACHE_TTL_SECS {
                 log::debug!(
-                    "list_directory: cache hit ({} entries)",
-                    cached.entries.len()
+                    "preview list_directory cache hit: path={path:?}, entries={}",
+                    cached.entries.len(),
                 );
                 return Ok(DirectoryListing {
                     path: path.clone(),
@@ -100,10 +101,12 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
     let dir_path = PathBuf::from(&path);
 
     if !dir_path.exists() {
+        log::warn!("preview list_directory failed: path={path:?}, error=not found");
         return Err(AppError::NotFound(path.clone()));
     }
 
     if !dir_path.is_dir() {
+        log::warn!("preview list_directory failed: path={path:?}, error=not a directory");
         return Err(AppError::InvalidPath(format!("Not a directory: {}", path)));
     }
 
@@ -119,12 +122,16 @@ pub async fn list_directory(path: String) -> Result<DirectoryListing, AppError> 
     let elapsed = t_start.elapsed();
     if elapsed.as_millis() > 100 {
         log::warn!(
-            "Slow directory listing: {} entries in {:?}",
+            "preview list_directory slow: path={path:?}, entries={}, elapsed={:?}",
             entries.len(),
             elapsed
         );
     } else {
-        log::debug!("list_directory: {} entries in {:?}", entries.len(), elapsed);
+        log::debug!(
+            "preview list_directory completed: path={path:?}, entries={}, elapsed={:?}",
+            entries.len(),
+            elapsed
+        );
     }
 
     // Update cache
@@ -260,14 +267,20 @@ pub async fn start_streaming_directory(
     app: AppHandle,
     path: String,
 ) -> Result<DirectoryListing, AppError> {
+    let started_at = Instant::now();
+    log::debug!("navigation start_streaming_directory requested: path={path:?}");
     let dir_path = PathBuf::from(&path);
     let batch_size = 100;
 
     if !dir_path.exists() {
+        log::warn!("navigation start_streaming_directory failed: path={path:?}, error=not found");
         return Err(AppError::NotFound(path));
     }
 
     if !dir_path.is_dir() {
+        log::warn!(
+            "navigation start_streaming_directory failed: path={path:?}, error=not a directory"
+        );
         return Err(AppError::InvalidPath(format!("Not a directory: {}", path)));
     }
 
@@ -291,6 +304,10 @@ pub async fn start_streaming_directory(
     // resolves emptiness lazily for visible directories via `is_directory_empty`
     // (#129), so neither the first batch nor the streamed chunks probe it here.
     if total_count <= batch_size {
+        log::debug!(
+            "navigation start_streaming_directory completed: path={path:?}, entries={total_count}, streaming=false, elapsed={:?}",
+            started_at.elapsed()
+        );
         return Ok(DirectoryListing {
             path,
             entries: Arc::new(all_entries),
@@ -306,13 +323,15 @@ pub async fn start_streaming_directory(
     let path_clone = path.clone();
     std::thread::spawn(move || {
         let mut offset = batch_size;
+        let mut was_cancelled = false;
 
         for chunk in remaining.chunks(batch_size) {
             if cancelled.load(Ordering::Relaxed) {
+                was_cancelled = true;
                 break;
             }
 
-            let _ = app.emit(
+            if let Err(error) = app.emit(
                 "directory-entries",
                 DirectoryEntriesEvent {
                     listing_id,
@@ -321,7 +340,11 @@ pub async fn start_streaming_directory(
                     done: offset + chunk.len() >= total_count,
                     total_count,
                 },
-            );
+            ) {
+                log::warn!(
+                    "navigation directory-entries emit failed: path={path_clone:?}, listing_id={listing_id}, error={error}"
+                );
+            }
 
             offset += chunk.len();
             // Brief pacing so batched emits don't flood the IPC channel. The
@@ -331,8 +354,17 @@ pub async fn start_streaming_directory(
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
 
+        log::debug!(
+            "navigation directory listing stream ended: path={path_clone:?}, listing_id={listing_id}, emitted_entries={}, cancelled={was_cancelled}",
+            offset.saturating_sub(batch_size)
+        );
         LISTINGS.cleanup(listing_id);
     });
+
+    log::debug!(
+        "navigation start_streaming_directory completed: path={path:?}, entries={total_count}, listing_id={listing_id}, streaming=true, elapsed={:?}",
+        started_at.elapsed()
+    );
 
     Ok(DirectoryListing {
         path,
@@ -344,6 +376,7 @@ pub async fn start_streaming_directory(
 /// Cancel an active directory listing.
 #[tauri::command]
 pub async fn cancel_directory_listing(listing_id: u64) -> Result<(), AppError> {
+    log::debug!("navigation cancel_directory_listing requested: listing_id={listing_id}");
     LISTINGS.cancel(listing_id);
     Ok(())
 }

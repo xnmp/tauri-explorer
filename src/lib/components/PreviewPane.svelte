@@ -622,7 +622,8 @@
         try {
           const { convertFileSrc } = await import("@tauri-apps/api/core");
           previewPdfUrl = `${convertFileSrc(file.path)}?v=${bust}`;
-        } catch {
+        } catch (error) {
+          console.warn("[preview] PDF asset URL creation failed", { path: file.path, error });
           previewError = "Cannot preview PDF";
         }
       } else {
@@ -646,10 +647,12 @@
             await decodeImage(fallback.data);
             if (file.path !== lastPreviewPath) return; // Stale after decode
             previewImageUrl = fallback.data;
-          } catch {
+          } catch (error) {
+            console.warn("[preview] backend image decode failed", { path: file.path, error });
             previewError = "Cannot preview image";
           }
         } else {
+          console.warn("[preview] backend image read failed", { path: file.path, error: fallback.error });
           previewError = "Cannot preview image";
         }
       };
@@ -664,7 +667,10 @@
           if (file.path !== lastPreviewPath) return; // Stale after decode
           previewImageUrl = url;
         } catch (assetErr) {
-          console.warn("asset:// image preview failed, falling back to backend read:", assetErr);
+          console.warn("[preview] asset image decode failed; using backend fallback", {
+            path: file.path,
+            error: assetErr,
+          });
           await loadViaBackend();
         }
       } else {

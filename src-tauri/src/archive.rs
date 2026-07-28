@@ -538,9 +538,28 @@ pub struct ArchiveListing {
 /// `root_folder`. Directories sort first, then alphabetically.
 #[tauri::command]
 pub async fn list_archive_contents(archive_path: String) -> Result<ArchiveListing, AppError> {
-    tokio::task::spawn_blocking(move || list_archive_contents_sync(&archive_path))
+    let started_at = std::time::Instant::now();
+    let log_path = archive_path.clone();
+    let result = tokio::task::spawn_blocking(move || list_archive_contents_sync(&archive_path))
         .await
-        .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?
+        .map_err(|e| AppError::Other(format!("Task join error: {}", e)))?;
+    match result {
+        Ok(listing) => {
+            log::debug!(
+                "preview list_archive_contents completed: path={log_path:?}, entries={}, elapsed={:?}",
+                listing.entries.len(),
+                started_at.elapsed()
+            );
+            Ok(listing)
+        }
+        Err(error) => {
+            log::warn!(
+                "preview list_archive_contents failed: path={log_path:?}, elapsed={:?}, error={error}",
+                started_at.elapsed()
+            );
+            Err(error)
+        }
+    }
 }
 
 /// One zip entry reduced to its path components + classification.

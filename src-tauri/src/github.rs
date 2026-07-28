@@ -6,8 +6,10 @@
 //! nice-to-have decoration, not something that should ever block or error
 //! the graph.
 //!
-//! `git_open_prs` is the only Tauri command here; `parse_github_remote` is
-//! pure and unit-tested directly (no network in tests, per project policy).
+//! `git_open_prs` decorates graph badges, while `git_failed_ci_checks` and
+//! `git_failed_ci_check_log` retrieve a selected failed Actions job via `gh`.
+//! `parse_github_remote` and the `gh` response mappings are pure and tested
+//! directly (no network in tests, per project policy).
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -514,19 +516,45 @@ fn failed_actions_checks(json: &str) -> Result<Vec<FailedCiCheck>, AppError> {
         .collect())
 }
 
-fn run_gh(repo_root: &str, args: &[String]) -> Result<String, AppError> {
+fn gh_command_error(error: std::io::Error) -> AppError {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        AppError::Other("GitHub CLI (`gh`) is not installed".to_string())
+    } else {
+        AppError::from(error)
+    }
+}
+
+fn run_gh_with_accepted_exit(
+    repo_root: &str,
+    args: &[String],
+    accepts_exit: fn(bool, Option<i32>) -> bool,
+    fallback_error: &str,
+) -> Result<String, AppError> {
     let mut command = Command::new("gh");
     command.no_console().args(args).current_dir(repo_root);
-    let output = command.output().map_err(AppError::from)?;
-    if output.status.success() {
+    let output = command.output().map_err(gh_command_error)?;
+    if accepts_exit(output.status.success(), output.status.code()) {
         return Ok(String::from_utf8_lossy(&output.stdout).to_string());
     }
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     Err(AppError::Other(if stderr.is_empty() {
-        "GitHub CLI could not retrieve the CI check log".to_string()
+        fallback_error.to_string()
     } else {
         stderr
     }))
+}
+
+fn accepts_success(success: bool, _code: Option<i32>) -> bool {
+    success
+}
+
+fn run_gh(repo_root: &str, args: &[String]) -> Result<String, AppError> {
+    run_gh_with_accepted_exit(
+        repo_root,
+        args,
+        accepts_success,
+        "GitHub CLI could not retrieve the CI check log",
+    )
 }
 
 /// `gh pr checks` uses exit code 8 to say that some checks are still pending,
@@ -534,18 +562,12 @@ fn run_gh(repo_root: &str, args: &[String]) -> Result<String, AppError> {
 /// legitimately have both a failed job and a pending job, so that output must
 /// remain usable for the failed-check viewer.
 fn gh_pr_checks_output(repo_root: &str, args: &[String]) -> Result<String, AppError> {
-    let mut command = Command::new("gh");
-    command.no_console().args(args).current_dir(repo_root);
-    let output = command.output().map_err(AppError::from)?;
-    if accepts_gh_pr_checks_exit(output.status.success(), output.status.code()) {
-        return Ok(String::from_utf8_lossy(&output.stdout).to_string());
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    Err(AppError::Other(if stderr.is_empty() {
-        "GitHub CLI could not list CI checks".to_string()
-    } else {
-        stderr
-    }))
+    run_gh_with_accepted_exit(
+        repo_root,
+        args,
+        accepts_gh_pr_checks_exit,
+        "GitHub CLI could not list CI checks",
+    )
 }
 
 fn accepts_gh_pr_checks_exit(success: bool, code: Option<i32>) -> bool {

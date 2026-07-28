@@ -275,16 +275,20 @@
   let prDetailHeight = $state(0);
   let failedCiChecks = $state<{ prNumber: number; checks: FailedCiCheck[]; error: string | null } | null>(null);
   let failedCiChecksLoading = $state(false);
-  let ciCheckLog = $state<{ check: FailedCiCheck; result: FailedCiCheckLog | null; error: string | null } | null>(null);
+  let ciCheckLog = $state<{ prNumber: number; check: FailedCiCheck; result: FailedCiCheckLog | null; error: string | null } | null>(null);
   let ciCheckLogRequest = 0;
 
-  function closePrDetail(): void {
-    prDetail = null;
-    prDetailHeight = 0;
+  function resetCiDetail(): void {
     failedCiChecks = null;
     failedCiChecksLoading = false;
     ciCheckLogRequest += 1;
     ciCheckLog = null;
+  }
+
+  function closePrDetail(): void {
+    prDetail = null;
+    prDetailHeight = 0;
+    resetCiDetail();
   }
 
   async function loadFailedCiChecks(pr: OpenPr): Promise<void> {
@@ -302,15 +306,15 @@
     }
   }
 
-  async function openFailedCiCheckLog(check: FailedCiCheck): Promise<void> {
+  async function openFailedCiCheckLog(pr: OpenPr, check: FailedCiCheck): Promise<void> {
     const request = ++ciCheckLogRequest;
-    ciCheckLog = { check, result: null, error: null };
+    ciCheckLog = { prNumber: pr.number, check, result: null, error: null };
     try {
       const result = await gitFailedCiCheckLog(repoPath, check);
-      if (ciCheckLogRequest === request) ciCheckLog = { check, result, error: null };
+      if (ciCheckLogRequest === request) ciCheckLog = { prNumber: pr.number, check, result, error: null };
     } catch (error) {
       if (ciCheckLogRequest === request) {
-        ciCheckLog = { check, result: null, error: error instanceof Error ? error.message : "Could not load CI check log" };
+        ciCheckLog = { prNumber: pr.number, check, result: null, error: error instanceof Error ? error.message : "Could not load CI check log" };
       }
     }
   }
@@ -1189,6 +1193,9 @@
       return;
     }
     closeDetails();
+    // Switching directly from one badge to another must not attach the prior
+    // PR's checks or log to this expansion while either request is in flight.
+    resetCiDetail();
     prDetailHeight = 0;
     prDetail = { oid: commit.oid, pr };
     if (pr.ciStatus === "failure") void loadFailedCiChecks(pr);
@@ -2203,12 +2210,12 @@
                   {:else if failedCiChecks?.prNumber === pr.number && failedCiChecks.checks.length > 0}
                     <div class="pr-detail-ci-checks" aria-label="Failed CI checks">
                       {#each failedCiChecks.checks as check (check.jobId)}
-                        <button type="button" class="pr-detail-ci-check" onclick={() => void openFailedCiCheckLog(check)}>{check.name}</button>
+                        <button type="button" class="pr-detail-ci-check" onclick={() => void openFailedCiCheckLog(pr, check)}>{check.name}</button>
                       {/each}
                     </div>
                   {/if}
                 {/if}
-                {#if ciCheckLog}
+                {#if ciCheckLog?.prNumber === pr.number}
                   <div class="pr-detail-ci-log" data-testid="git-graph-ci-check-log">
                     <div class="pr-detail-ci-log-head">
                       <strong>{ciCheckLog.check.name}</strong>

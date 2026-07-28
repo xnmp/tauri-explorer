@@ -2652,7 +2652,7 @@
     overlayClass="git-graph-undo-overlay"
   >
     {#if undoConfirmation}
-      <div class="name-prompt action-modal" data-testid="git-graph-undo-modal">
+      <div class="name-prompt action-modal undo-card" data-testid="git-graph-undo-modal">
         <span class="prompt-label">Undo {gitUndoDescription(undoConfirmation)}?</span>
         <p class="modal-warning">
           The repository will be checked again before anything changes. Undo is refused if refs,
@@ -3869,6 +3869,17 @@
     color: var(--text-tertiary);
     font-size: var(--font-size-caption);
     line-height: 1.4;
+  }
+
+  .undo-card {
+    position: static;
+    transform: none;
+    width: 460px;
+  }
+
+  .undo-card .prompt-label {
+    color: var(--text-primary);
+    font-weight: 600;
   }
 
   .prompt-input {

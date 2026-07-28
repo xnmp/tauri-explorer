@@ -41,10 +41,12 @@ test("Ctrl+Z confirms and visibly restores a deleted branch at its original comm
   await expect(undo).toBeVisible();
   await expect(undo).toContainText("delete branch 'hotfix'");
   await expect(undo).toContainText(originalOid!.slice(0, 7));
+  await page.screenshot({ path: "evidence/ac-1-undo-confirmation.png", animations: "disabled" });
 
   await undo.getByText("Cancel", { exact: true }).click();
   await expect(undo).toHaveCount(0);
   await expect(hotfixChip).toHaveCount(0);
+  await page.screenshot({ path: "evidence/ac-3-cancel-keeps-deletion.png", animations: "disabled" });
 
   await page.keyboard.press("Control+z");
   await page
@@ -58,6 +60,7 @@ test("Ctrl+Z confirms and visibly restores a deleted branch at its original comm
     .first();
   await expect(restoredRow).toHaveAttribute("data-oid", originalOid!);
   await expect(page.locator(".toast", { hasText: "Undo: delete branch 'hotfix'" })).toBeVisible();
+  await page.screenshot({ path: "evidence/ac-2-branch-restored.png", animations: "disabled" });
 });
 
 test("tag delete and branch rename join the same confirmed undo history", async ({ page }) => {
@@ -150,4 +153,65 @@ test("merge and pull undo restore the prior checked-out tip", async ({ page }) =
   await expect(
     view.locator(".commit-row").filter({ has: page.locator(".ref-branch.ref-active", { hasText: "hotfix" }) }),
   ).toHaveAttribute("data-oid", "000d000");
+});
+
+test("a recreated ref makes the confirmed undo fail safely without moving it", async ({ page }) => {
+  await page.goto("/?path=/home/user/Documents/project");
+  await waitForEntries(page);
+  await openGraph(page);
+  const view = page.locator('[data-testid="git-graph-view"]');
+
+  const experiment = view.locator(".ref-branch", { hasText: "experiment" });
+  await experiment.click({ button: "right" });
+  await page
+    .locator('[data-testid="git-graph-menu"]')
+    .getByText("Delete Branch 'experiment'…")
+    .click();
+  await page
+    .locator('[data-testid="git-graph-action-modal"]')
+    .getByText("Delete", { exact: true })
+    .click();
+  await expect(experiment).toHaveCount(0);
+
+  const initial = view.locator(".commit-row").filter({ hasText: "Initial commit" });
+  const recreatedOid = await initial.getAttribute("data-oid");
+  await initial.click({ button: "right" });
+  await page.locator('[data-testid="git-graph-menu"]').getByText("Create Branch…").click();
+  const create = page.locator('[data-testid="git-graph-prompt"]');
+  await create.locator("input").fill("experiment");
+  await create.getByText("Create branch", { exact: true }).click();
+  await expect(initial.locator(".ref-branch", { hasText: "experiment" })).toBeVisible();
+  await expect(page.locator(".toast", { hasText: "Create branch done" })).toHaveCount(0);
+
+  await page.keyboard.press("Control+z");
+  await page
+    .locator('[data-testid="git-graph-undo-modal"]')
+    .getByText("Undo", { exact: true })
+    .click();
+  await expect(page.locator(".toast", { hasText: "already exists" })).toBeVisible();
+  await expect(
+    view.locator(".commit-row").filter({
+      has: page.locator(".ref-branch", { hasText: "experiment" }),
+    }),
+  ).toHaveAttribute("data-oid", recreatedOid!);
+  await page.screenshot({ path: "evidence/ac-4-stale-ref-refused.png", animations: "disabled" });
+});
+
+test("Ctrl+Z outside the graph retains file-operation undo", async ({ page }) => {
+  await page.goto("/?path=/home/user/Documents/project");
+  await waitForEntries(page);
+  const file = page.locator(".entry-item:not(.directory)").first();
+  const originalName = await file.locator(".entry-name").innerText();
+  await file.click();
+  await page.keyboard.press("F2");
+  const input = page.locator(".rename-input");
+  await input.fill("undo-routing.txt");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".entry-name", { hasText: "undo-routing.txt" })).toBeVisible();
+
+  await page.locator(".explorer-pane").focus();
+  await page.keyboard.press("Control+z");
+  await expect(page.locator(".entry-name", { hasText: originalName })).toBeVisible();
+  await expect(page.locator(".toast", { hasText: "Undo: Rename" })).toBeVisible();
+  await page.screenshot({ path: "evidence/ac-5-file-undo-outside-graph.png", animations: "disabled" });
 });

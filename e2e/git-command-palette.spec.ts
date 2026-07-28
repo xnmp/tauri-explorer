@@ -24,9 +24,22 @@ test("fuzzy palette exposes Git actions and branch checkout targets", async ({ p
   await expect(palette.getByText(/Git: Rebase onto 0010001/)).toBeVisible();
   await expect(palette.getByText("Git: Apply Stash stash@{0}", { exact: true })).toBeVisible();
   await expect(palette.getByText("Git: Pop Stash stash@{0}", { exact: true })).toBeVisible();
-  await page.screenshot({ path: "evidence/ac-4-git-command-palette.png" });
+  await page.screenshot({ path: "evidence/ac-1-git-actions.png" });
 
   await page.locator("input:focus").fill("Checkout Branch feature");
+  await page.screenshot({ path: "evidence/ac-2-branch-checkout.png" });
   await page.keyboard.press("Enter");
   await expect(page.locator(".commit-row .ref-branch.ref-active")).toHaveText("feature");
+
+  await page.keyboard.press("Control+Shift+p");
+  await page.locator("input:focus").fill("0010001");
+  const jump = palette.getByText("Git: Jump to Commit 0010001 — Merge hotfix into main", { exact: true });
+  await expect(jump).toBeVisible();
+  await page.screenshot({ path: "evidence/ac-3-commit-jump.png" });
+  await jump.click();
+  await expect(page.locator('.commit-row.selected[data-oid="0010001"]')).toBeVisible();
+
+  await page.keyboard.press("Control+Shift+p");
+  await page.locator("input:focus").fill("Git:");
+  await page.screenshot({ path: "evidence/ac-4-git-command-palette.png" });
 });

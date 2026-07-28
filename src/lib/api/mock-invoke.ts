@@ -2380,7 +2380,7 @@ const mockCommands: Record<string, CommandHandler> = {
   clipboard_read_report_image: () => ({
     name: "Clipboard screenshot.png",
     mediaType: "image/png",
-    data: "iVBORw0KGgoBAgM=",
+    data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   }),
 
   // ----- Commands that launch external processes (no-op in mock) -----

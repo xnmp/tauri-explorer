@@ -135,6 +135,8 @@
     } catch (unknownError) {
       const error = unknownError as Partial<UserReportError>;
       if (attachments.length > 0) {
+        attachmentError =
+          "Could not submit the report with its attachments. Your report and images are still here.";
         toastStore.show(
           "Could not submit the report with its attachments — your report is still here.",
           "error",

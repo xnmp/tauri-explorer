@@ -13,9 +13,10 @@ function evidencePath(name: string): string {
   return process.env.CAPTURE_EVIDENCE ? `evidence/${name}` : `test-results/${name}`;
 }
 
-const png = Buffer.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3,
-]);
+const png = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64",
+);
 
 for (const command of ["Report a Bug", "Request a Feature"]) {
   test(`${command} submits in-app and links the created issue`, async ({ page }) => {
@@ -122,8 +123,9 @@ test("image picker shows named previews and lets the user remove an attachment",
   await expect(dialog.getByText("first-screenshot.png")).toBeVisible();
   await expect(dialog.getByText("second-screenshot.jpg")).toBeVisible();
   await expect(dialog.getByRole("img", { name: "first-screenshot.png" })).toBeVisible();
-  await dialog.getByRole("button", { name: "Remove first-screenshot.png" }).click();
-  await expect(dialog.getByText("first-screenshot.png")).toBeHidden();
+  await dialog.getByRole("button", { name: "Remove second-screenshot.jpg" }).click();
+  await expect(dialog.getByText("second-screenshot.jpg")).toBeHidden();
+  await expect(dialog.getByText("first-screenshot.png")).toBeVisible();
   await page.screenshot({ path: evidencePath("ac-1-image-picker-previews.png") });
 });
 
@@ -202,7 +204,7 @@ test("failed report with an attachment preserves both instead of opening a lossy
   });
   await dialog.getByRole("button", { name: "Submit" }).click();
 
-  await expect(page.getByRole("alert")).toContainText("attachment");
+  await expect(dialog.getByRole("alert")).toContainText("attachments");
   await expect(dialog).toBeVisible();
   await expect(dialog.getByLabel("Title")).toHaveValue("Keep attachment title");
   await expect(dialog.getByText("keep.png")).toBeVisible();

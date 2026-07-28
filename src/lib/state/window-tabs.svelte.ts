@@ -58,6 +58,7 @@ import {
 import { createClosedTabsStore } from "./closed-tabs";
 import { disposeScmStore } from "./scm.svelte";
 import { disposeCommitPanelStore } from "./commit-panel.svelte";
+import { dropGraphFileHistory } from "./git-graph-file-history";
 
 // Re-export persistence & migration helpers so existing importers of this
 // module keep working after the extraction (refactor/audit-tier4-splits #212).
@@ -388,6 +389,18 @@ function createWindowTabsManager() {
     }
   }
 
+  /** Show the graph for one specific pane. Unlike the active-pane toggle,
+   *  this is idempotent so SCM row actions can safely target their owner. */
+  function showGitGraphInPane(paneId: PaneId, repoPath: string): void {
+    for (const tab of tabs) {
+      const pane = tab.panes[paneId];
+      if (!pane) continue;
+      pane.gitGraph = repoPath;
+      saveState();
+      return;
+    }
+  }
+
   /** Toggle the commit graph in the active pane (#272): showing → back to
    *  the file listing; hidden → the graph for `repoPath`. */
   function toggleGitGraphInActivePane(repoPath: string | null): void {
@@ -604,6 +617,7 @@ function createWindowTabsManager() {
       explorers.delete(pane.explorerId);
       disposeScmStore(paneId);
       disposeCommitPanelStore(paneId);
+      dropGraphFileHistory(paneId);
     }
   }
 
@@ -932,6 +946,7 @@ function createWindowTabsManager() {
     explorers.delete(pane.explorerId);
     disposeScmStore(target);
     disposeCommitPanelStore(target);
+    dropGraphFileHistory(target);
 
     const remaining = leafIds(newLayout);
     const oldOrder = leafIds(tab.layout);
@@ -974,6 +989,7 @@ function createWindowTabsManager() {
         explorers.delete(pane.explorerId);
         disposeScmStore(paneId);
         disposeCommitPanelStore(paneId);
+        dropGraphFileHistory(paneId);
       }
       updateActiveExplorerTab((t) => ({
         ...t,
@@ -1053,6 +1069,7 @@ function createWindowTabsManager() {
     createTab,
     getPaneGitGraph,
     setPaneGitGraph,
+    showGitGraphInPane,
     toggleGitGraphInActivePane,
     getPaneScmVisible,
     toggleScmInActivePane,

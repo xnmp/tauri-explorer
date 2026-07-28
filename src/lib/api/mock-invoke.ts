@@ -2019,7 +2019,7 @@ const mockCommands: Record<string, CommandHandler> = {
       all = all.filter((commit) => {
         if ("stash" in commit) return false;
         const n = parseInt(commit.oid.slice(0, 4), 16);
-        if (n === 12) return path === "src/feature-x.ts" || path === "src/index.ts";
+        if (n === 12) return path === "src/feature-x.ts" || path === "src/index.ts" || path === "src/index.css";
         if (n === 11) return path === MOCK_LONG_COMMIT_FILE_PATH;
         return path === `src/file-${n}.ts`;
       });

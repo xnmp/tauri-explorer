@@ -268,6 +268,8 @@ test("successful submission forwards selected images to the native report comman
   await dialog.getByRole("button", { name: "Submit" }).click();
 
   await expect(dialog).toBeHidden();
+  await expect(page.locator(".toast.success")).toContainText("Issue #5470");
+  await page.screenshot({ path: evidencePath("ac-3-submitted-issue-link.png") });
   const submitted = await page.evaluate(() => localStorage.getItem("mock-submitted-report"));
   expect(JSON.parse(submitted!).attachments).toEqual([
     expect.objectContaining({ name: "contract.png", mediaType: "image/png" }),

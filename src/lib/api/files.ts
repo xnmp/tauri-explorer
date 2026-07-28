@@ -470,6 +470,7 @@ export async function startStreamingDirectory(
   path: string
 ): Promise<ApiResult<DirectoryListing>> {
   const startedAt = Date.now();
+  console.debug("[navigation] start_streaming_directory requested", { path });
   // Virtual paths never stream: the provider returns the full listing inline
   // (listing_id null), which the caller treats as a non-streaming result.
   const provider = providerFor(path);

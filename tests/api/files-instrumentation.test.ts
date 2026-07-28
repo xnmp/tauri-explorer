@@ -92,6 +92,10 @@ describe("preview and directory IPC instrumentation (#497)", () => {
       "[navigation] start_streaming_directory completed",
       expect.objectContaining({ path: "/tmp/folder", listingId: null, entries: 0 }),
     );
+    expect(debug).toHaveBeenCalledWith(
+      "[navigation] start_streaming_directory requested",
+      { path: "/tmp/folder" },
+    );
     debug.mockRestore();
   });
 });

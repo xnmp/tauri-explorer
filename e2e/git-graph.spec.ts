@@ -474,6 +474,60 @@ test("mutes merge commits and shows compact relative dates (#458)", async ({ pag
   await expect(normalRow).not.toHaveClass(/is-merge/);
 });
 
+test("traces a hovered or selected branch lineage and can restore the undimmed graph", async ({
+  page,
+}) => {
+  await page.goto("/?path=/home/user/Documents/project");
+  await waitForEntries(page);
+  await openGraphViaPalette(page);
+
+  const view = page.locator('[data-testid="git-graph-view"]');
+  const feature = view.locator(".commit-row", { hasText: "Add tests for feature X" });
+  const featureParent = view.locator(".commit-row", { hasText: "Implement feature X" });
+  const sharedAncestor = view.locator(".commit-row", { hasText: "Refactor config loader" });
+  const unrelated = view.locator(".commit-row", { hasText: "Hotfix: crash on empty input" });
+
+  await feature.hover();
+  await expect(feature).toHaveAttribute("data-trace", "lit");
+  await expect(featureParent).toHaveAttribute("data-trace", "lit");
+  await expect(sharedAncestor).toHaveAttribute("data-trace", "lit");
+  await expect(unrelated).toHaveAttribute("data-trace", "dim");
+  await expect(view.locator('.graph-underlay path[data-trace="lit"]').first()).toHaveCSS(
+    "opacity",
+    "1",
+  );
+  await expect(view.locator('.graph-underlay path[data-trace="dim"]').first()).toHaveCSS(
+    "opacity",
+    "0.16",
+  );
+  await page.screenshot({ path: "evidence/ac-1-hover-lineage.png" });
+
+  await feature.click();
+  await view.locator(".graph-header").hover();
+  await expect(feature).toHaveAttribute("data-trace", "lit");
+  await expect(unrelated).toHaveAttribute("data-trace", "dim");
+  await page.screenshot({ path: "evidence/ac-2-selected-lineage.png" });
+
+  const experiment = view.locator(".commit-row", { hasText: "Try alternative parser" });
+  await experiment.click();
+  await view.locator(".graph-header").hover();
+  await expect(experiment).toHaveAttribute("data-trace", "lit");
+  await expect(feature).toHaveAttribute("data-trace", "dim");
+
+  await page.locator(".graph-header").click({ button: "right" });
+  const toggle = page.locator('[data-testid="toggle-branch-tracing"]');
+  await expect(toggle).toHaveAttribute("aria-checked", "true");
+  await toggle.click();
+  await page.keyboard.press("Escape");
+  await expect(view.locator("[data-trace]")).toHaveCount(0);
+  await page.locator(".graph-header").click({ button: "right" });
+  await expect(page.locator('[data-testid="toggle-branch-tracing"]')).toHaveAttribute(
+    "aria-checked",
+    "false",
+  );
+  await page.screenshot({ path: "evidence/ac-3-trace-disabled.png" });
+});
+
 test("parent is a viewable column, off by default (#402)", async ({ page }) => {
   await page.goto("/?path=/home/user/Documents/project");
   await waitForEntries(page);

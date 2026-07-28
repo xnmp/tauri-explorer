@@ -8,7 +8,12 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { stepOnBranchLine, scrollTopToReveal } from "$lib/domain/git-graph";
+import {
+  assignLayout,
+  stepOnBranchLine,
+  scrollTopToReveal,
+  traceGraphLineage,
+} from "$lib/domain/git-graph";
 import type { BranchLineCommitLike, GraphCommitLike } from "$lib/domain/git-graph";
 
 const c = (oid: string, ...parents: string[]): GraphCommitLike => ({ oid, parents });
@@ -151,6 +156,84 @@ describe("stepOnBranchLine — hostile input", () => {
         expect(stepOnBranchLine(malformed, row, dir)).toBe(-1);
       }
     }
+  });
+});
+
+describe("traceGraphLineage — observable branch trace", () => {
+  it("includes first-parent ancestry and same-lane descendants, but not unrelated rows", () => {
+    const layout = assignLayout(MOCK_ROWS, "16");
+    const trace = traceGraphLineage(MOCK_ROWS, layout, 8); // feature tip #10
+
+    expect([...trace.rows].sort((a, b) => a - b)).toEqual([8, 9, 10, 11, 12]);
+    expect(trace.rows.has(5)).toBe(false); // hotfix
+    expect(trace.rows.has(6)).toBe(false); // trunk merge that absorbs #10
+    expect(trace.rows.has(7)).toBe(false); // unrelated trunk child of #8
+  });
+
+  it("returns exact lineage geometry, including shared ancestry and the absorbing merge edge", () => {
+    const layout = assignLayout(MOCK_ROWS, "16");
+    const trace = traceGraphLineage(MOCK_ROWS, layout, 8);
+
+    const containsVertex = (segment: (typeof trace.segments)[number], row: number) => {
+      const vertex = layout.vertices[row];
+      return segment.points.some((point) => point.row === row && point.lane === vertex.lane);
+    };
+
+    const hasConnection = (childRow: number, parentRow: number) =>
+      trace.segments.some(
+        (segment) => containsVertex(segment, childRow) && containsVertex(segment, parentRow),
+      );
+    // Feature edges #10 → #9 → #8 and shared-trunk ancestry #8 → #7 → #6.
+    expect(hasConnection(8, 9)).toBe(true);
+    expect(hasConnection(9, 10)).toBe(true);
+    expect(hasConnection(10, 11)).toBe(true);
+    expect(hasConnection(11, 12)).toBe(true);
+    // The merge arc #12 → #10 completes the visual absorption of the feature line.
+    expect(
+      trace.segments.some(
+        (segment) =>
+          segment.mergeEdge === true &&
+          segment.points[0]?.row === 6 &&
+          segment.points.at(-1)?.row === 8,
+      ),
+    ).toBe(true);
+    // The hotfix branch remains outside the highlighted geometry.
+    expect(trace.segments.some((segment) => containsVertex(segment, 5))).toBe(false);
+  });
+
+  it("walks newer commits only while they remain on the selected layout lane", () => {
+    const rows = [
+      c("merge", "main", "feature-tip"),
+      c("feature-tip", "feature-base"),
+      c("main", "base"),
+      c("feature-base", "base"),
+      c("base"),
+    ];
+    const layout = assignLayout(rows, "main");
+    const trace = traceGraphLineage(rows, layout, 3);
+
+    expect([...trace.rows].sort((a, b) => a - b)).toEqual([1, 3, 4]);
+    expect(trace.rows.has(0)).toBe(false); // merge reaches feature-tip only as parent[1]
+    expect(trace.rows.has(2)).toBe(false); // parallel main lane
+  });
+
+  it("returns no trace for missing, malformed, or truncated selections", () => {
+    const layout = assignLayout(MOCK_ROWS, "16");
+    expect(traceGraphLineage(MOCK_ROWS, layout, -1)).toEqual({
+      rows: new Set(),
+      segments: [],
+    });
+    expect(traceGraphLineage(MOCK_ROWS, layout, 9999)).toEqual({
+      rows: new Set(),
+      segments: [],
+    });
+    expect(
+      traceGraphLineage(
+        [{ oid: "", parents: [] }],
+        { vertices: [{ lane: 0, colorIndex: 0 }], branches: [], laneCount: 1 },
+        0,
+      ),
+    ).toEqual({ rows: new Set(), segments: [] });
   });
 });
 

@@ -159,6 +159,20 @@ describe("report attachment delivery", () => {
     );
   });
 
+  it("keeps hosted image names structurally paired with their URLs", () => {
+    const report = validateReport({
+      ...valid,
+      attachments: [{ name: "original.png", mediaType: "image/png", data: pngData }],
+    });
+
+    expect(buildGitHubIssue(report, [{
+      name: "hosted-name.png",
+      url: "https://blob.test/hosted.png",
+    }]).body).toContain(
+      "![hosted-name.png](https://blob.test/hosted.png)",
+    );
+  });
+
   it("keeps the existing issue body and skips hosting when no images were attached", async () => {
     const createIssue = vi.fn().mockResolvedValue({ url: "https://github.test/issues/2", number: 2 });
     const attachmentStore = { upload: vi.fn(), remove: vi.fn() };
@@ -175,12 +189,13 @@ describe("report attachment delivery", () => {
     expect(createIssue.mock.calls[0][0].body).toBe(valid.body);
   });
 
-  it("removes hosted blobs and does not leave a text-only issue when delivery fails", async () => {
+  it("reports failed blob cleanup while preserving the delivery error", async () => {
     const createIssue = vi.fn().mockRejectedValue(new Error("GitHub unavailable"));
     const attachmentStore = {
       upload: vi.fn().mockResolvedValue("https://blob.test/orphan.png"),
-      remove: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn().mockRejectedValue(new Error("Blob cleanup unavailable")),
     };
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     await expect(processReport(
       { ...valid, attachments: [{ name: "shot.png", mediaType: "image/png", data: pngData }] },
@@ -190,6 +205,11 @@ describe("report attachment delivery", () => {
       attachmentStore,
     )).rejects.toThrow("GitHub unavailable");
     expect(attachmentStore.remove).toHaveBeenCalledWith(["https://blob.test/orphan.png"]);
+    expect(consoleError).toHaveBeenCalledWith(
+      "Failed to remove report attachment blobs",
+      expect.any(Error),
+    );
+    consoleError.mockRestore();
   });
 
   it("cleans up earlier blobs when a later image upload fails", async () => {
@@ -346,5 +366,48 @@ describe("report relay HTTP contract", () => {
     expect(res.state.status).toBe(204);
     expect(res.state.ended).toBe(true);
     expect(res.state.body).toBeUndefined();
+  });
+
+  it("logs unexpected relay failures and returns a sanitized error", async () => {
+    const previous = {
+      vercel: process.env.VERCEL,
+      url: process.env.KV_REST_API_URL,
+      token: process.env.KV_REST_API_TOKEN,
+    };
+    process.env.VERCEL = "1";
+    process.env.KV_REST_API_URL = "https://kv.test";
+    process.env.KV_REST_API_TOKEN = "test-token";
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      new Error("private upstream detail"),
+    );
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const res = response();
+
+    try {
+      await reportHandler({
+        method: "POST",
+        headers: { "x-forwarded-for": "198.51.100.51" },
+        socket: {},
+        body: valid,
+      }, res);
+    } finally {
+      fetchMock.mockRestore();
+      if (previous.vercel === undefined) delete process.env.VERCEL;
+      else process.env.VERCEL = previous.vercel;
+      if (previous.url === undefined) delete process.env.KV_REST_API_URL;
+      else process.env.KV_REST_API_URL = previous.url;
+      if (previous.token === undefined) delete process.env.KV_REST_API_TOKEN;
+      else process.env.KV_REST_API_TOKEN = previous.token;
+    }
+
+    expect(consoleError).toHaveBeenCalledWith(
+      "Unexpected user report relay failure",
+      expect.any(Error),
+    );
+    expect(res.state.status).toBe(500);
+    expect(res.state.body).toEqual({
+      error: { code: "server_rejected", message: "Unable to submit report" },
+    });
+    consoleError.mockRestore();
   });
 });

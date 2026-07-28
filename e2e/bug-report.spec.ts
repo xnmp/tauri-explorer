@@ -156,6 +156,10 @@ test("clipboard image is offered and attached without creating a file", async ({
 
   await expect(dialog.getByText("Clipboard screenshot.png")).toBeVisible();
   await expect(dialog.getByRole("img", { name: "Clipboard screenshot.png" })).toBeVisible();
+  await dialog.getByRole("button", { name: "Remove Clipboard screenshot.png" }).click();
+  await expect(dialog.getByRole("button", { name: "Attach from clipboard" })).toBeVisible();
+  await dialog.getByRole("button", { name: "Attach from clipboard" }).click();
+  await expect(dialog.getByText("Clipboard screenshot.png")).toBeVisible();
   await page.screenshot({ path: evidencePath("ac-2-clipboard-image.png") });
 });
 
@@ -269,7 +273,6 @@ test("successful submission forwards selected images to the native report comman
 
   await expect(dialog).toBeHidden();
   await expect(page.locator(".toast.success")).toContainText("Issue #5470");
-  await page.screenshot({ path: evidencePath("ac-3-submitted-issue-link.png") });
   const submitted = await page.evaluate(() => localStorage.getItem("mock-submitted-report"));
   expect(JSON.parse(submitted!).attachments).toEqual([
     expect.objectContaining({ name: "contract.png", mediaType: "image/png" }),
@@ -298,6 +301,35 @@ test("failed report with an attachment preserves both instead of opening a lossy
     .toBeNull();
   await page.screenshot({ path: evidencePath("ac-5-failure-preserves-attachments.png") });
 });
+
+for (const [kind, message] of [
+  ["daily_cap", "Reports are temporarily unavailable"],
+  ["rate_limited", "Too many reports"],
+  ["malformed_input", "not a valid image"],
+] as const) {
+  test(`${kind} attachment failure explains the next action and preserves the draft`, async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await waitForEntries(page);
+    await page.evaluate((errorKind) => {
+      localStorage.setItem("mock-report-error", errorKind);
+    }, kind);
+    await runPaletteCommand(page, "Report a Bug");
+    const dialog = page.getByRole("dialog", { name: /report a bug/i });
+    await dialog.getByLabel("Title").fill(`Keep ${kind} title`);
+    await dialog.getByLabel("Description").fill(`Keep ${kind} description`);
+    await dialog.getByLabel("Add images").setInputFiles({
+      name: `${kind}.png`, mimeType: "image/png", buffer: png,
+    });
+
+    await dialog.getByRole("button", { name: "Submit" }).click();
+
+    await expect(dialog.getByRole("alert")).toContainText(message);
+    await expect(dialog.getByLabel("Title")).toHaveValue(`Keep ${kind} title`);
+    await expect(dialog.getByText(`${kind}.png`)).toBeVisible();
+  });
+}
 
 test("draft stays editable when both relay and browser fallback fail", async ({ page }) => {
   await page.goto("/");

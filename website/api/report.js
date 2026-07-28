@@ -108,6 +108,9 @@ export default async function handler(request, response) {
     }
     return json(response, 200, result);
   } catch (error) {
+    if (!(error instanceof ReportError)) {
+      console.error("Unexpected user report relay failure", error);
+    }
     const typed = error instanceof ReportError
       ? error
       : new ReportError("server_rejected", "Unable to submit report", 500);

@@ -76,11 +76,27 @@ export type UserReportErrorKind =
   | "network_unreachable"
   | "rate_limited"
   | "daily_cap"
-  | "server_rejected";
+  | "server_rejected"
+  | "clipboard_unavailable";
 
 export interface UserReportError {
   kind: UserReportErrorKind;
   message: string;
+}
+
+export function userReportAttachmentFailureMessage(
+  kind: UserReportErrorKind | undefined,
+): string {
+  if (kind === "malformed_input") {
+    return "One of your attached images is not a valid image. Remove it and try again.";
+  }
+  if (kind === "daily_cap") {
+    return "Reports are temporarily unavailable. Your report and images are still here.";
+  }
+  if (kind === "rate_limited") {
+    return "Too many reports were submitted. Try again later; your report and images are still here.";
+  }
+  return "Could not submit the report with its attachments. Your report and images are still here.";
 }
 
 const REPO_ISSUES_URL = "https://github.com/xnmp/tauri-explorer/issues/new";

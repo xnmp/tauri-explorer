@@ -139,12 +139,14 @@ function escapeMarkdownAlt(value) {
   return value.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
 }
 
-/** @param {ValidReport} report @param {string[]} [attachmentUrls] */
-export function buildGitHubIssue(report, attachmentUrls = []) {
-  const attachments = attachmentUrls.length === 0
+/** @typedef {{ name: string, url: string }} HostedAttachment */
+
+/** @param {ValidReport} report @param {HostedAttachment[]} [hostedAttachments] */
+export function buildGitHubIssue(report, hostedAttachments = []) {
+  const attachments = hostedAttachments.length === 0
     ? ""
-    : `\n\n## Attachments\n\n${attachmentUrls.map((url, index) =>
-      `![${escapeMarkdownAlt(report.attachments[index].name)}](${url})`
+    : `\n\n## Attachments\n\n${hostedAttachments.map(({ name, url }) =>
+      `![${escapeMarkdownAlt(name)}](${url})`
     ).join("\n\n")}`;
   return {
     title: report.title,
@@ -247,15 +249,23 @@ export async function processReport(
   if (!attachmentStore) {
     throw new ReportError("server_rejected", "Image hosting is not configured", 503);
   }
-  const urls = [];
+  const hostedAttachments = [];
   try {
     for (const attachment of report.attachments) {
-      urls.push(await attachmentStore.upload(attachment));
+      hostedAttachments.push({
+        name: attachment.name,
+        url: await attachmentStore.upload(attachment),
+      });
     }
-    return await createIssue(buildGitHubIssue(report, urls));
+    return await createIssue(buildGitHubIssue(report, hostedAttachments));
   } catch (error) {
-    if (urls.length > 0) {
-      await attachmentStore.remove(urls).catch(() => undefined);
+    if (hostedAttachments.length > 0) {
+      const urls = hostedAttachments.map(({ url }) => url);
+      try {
+        await attachmentStore.remove(urls);
+      } catch (cleanupError) {
+        console.error("Failed to remove report attachment blobs", cleanupError);
+      }
     }
     throw error;
   }

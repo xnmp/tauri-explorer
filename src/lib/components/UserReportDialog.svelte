@@ -7,6 +7,7 @@
   import { clipboardHasImage } from "$lib/api/files";
   import {
     userReportAttachmentBytes,
+    userReportAttachmentFailureMessage,
     userReportFallbackUrl,
     validateUserReportAttachmentFiles,
     type UserReportAttachment,
@@ -31,10 +32,15 @@
   let attachments = $state<UserReportAttachment[]>([]);
   let attachmentError = $state("");
   let clipboardImageAvailable = $state(false);
+  let clipboardAttachmentData = $state<string | null>(null);
   let readingClipboard = $state(false);
   let submitting = $state(false);
   const canSubmit = $derived(
     title.trim().length > 0 && body.trim().length > 0 && !submitting,
+  );
+  const clipboardImageAttached = $derived(
+    clipboardAttachmentData !== null
+      && attachments.some((attachment) => attachment.data === clipboardAttachmentData),
   );
 
   $effect(() => {
@@ -46,6 +52,7 @@
     attachments = [];
     attachmentError = "";
     clipboardImageAvailable = false;
+    clipboardAttachmentData = null;
     readingClipboard = false;
     submitting = false;
     void probeClipboardImage();
@@ -114,8 +121,8 @@
         return;
       }
       attachments = [...attachments, image];
+      clipboardAttachmentData = image.data;
       attachmentError = "";
-      clipboardImageAvailable = false;
     } catch {
       attachmentError = "Could not read the clipboard image. Try saving it and selecting the file.";
     } finally {
@@ -142,10 +149,9 @@
     } catch (unknownError) {
       const error = unknownError as Partial<UserReportError>;
       if (attachments.length > 0) {
-        attachmentError =
-          "Could not submit the report with its attachments. Your report and images are still here.";
+        attachmentError = userReportAttachmentFailureMessage(error.kind);
         toastStore.show(
-          "Could not submit the report with its attachments — your report is still here.",
+          attachmentError,
           "error",
           { duration: 8000 },
         );
@@ -229,7 +235,7 @@
       <div class="attachment-heading">
         <span>Images (optional)</span>
         <div class="attachment-actions">
-          {#if clipboardImageAvailable}
+          {#if clipboardImageAvailable && !clipboardImageAttached}
             <button
               type="button"
               class="btn secondary compact"

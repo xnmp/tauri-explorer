@@ -187,6 +187,7 @@ test.describe("Git graph tab", () => {
     await expect(log).toBeVisible();
     await expect(log).toContainText("Unit tests");
     await expect(log).toContainText("AssertionError: expected true to be false");
+    await page.screenshot({ path: "evidence/ac-1-failed-ci-check-log.png" });
     await expect
       .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
       .toBeNull();

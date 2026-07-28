@@ -287,6 +287,8 @@ pub fn run(launch_dir: Option<String>) {
             git_actions::git_branch_behind_upstream,
             git_log::git_branch_authors,
             github::git_open_prs,
+            github::git_failed_ci_checks,
+            github::git_failed_ci_check_log,
             git_actions::git_delete_branch,
             git_actions::git_delete_remote_branch,
             git_actions::git_checkout_tracking,

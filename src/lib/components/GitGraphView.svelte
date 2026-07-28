@@ -67,11 +67,15 @@
     gitSyncLocalBranches,
     gitLog,
     gitOpenPrs,
+    gitFailedCiChecks,
+    gitFailedCiCheckLog,
     type CommitInfo,
     type RefInfo,
     type CommitFile,
     type ResetMode,
     type OpenPr,
+    type FailedCiCheck,
+    type FailedCiCheckLog,
   } from "$lib/api/git-log";
   import {
     fetchGitSummary,
@@ -269,10 +273,43 @@
   // time, which keeps the RowExpand derivation single-valued.
   let prDetail = $state<{ oid: string; pr: OpenPr } | null>(null);
   let prDetailHeight = $state(0);
+  let failedCiChecks = $state<{ prNumber: number; checks: FailedCiCheck[]; error: string | null } | null>(null);
+  let failedCiChecksLoading = $state(false);
+  let ciCheckLog = $state<{ check: FailedCiCheck; result: FailedCiCheckLog | null; error: string | null } | null>(null);
 
   function closePrDetail(): void {
     prDetail = null;
     prDetailHeight = 0;
+    failedCiChecks = null;
+    failedCiChecksLoading = false;
+    ciCheckLog = null;
+  }
+
+  async function loadFailedCiChecks(pr: OpenPr): Promise<void> {
+    failedCiChecksLoading = true;
+    failedCiChecks = null;
+    try {
+      const checks = await gitFailedCiChecks(repoPath, pr.number);
+      if (prDetail?.pr.number === pr.number) failedCiChecks = { prNumber: pr.number, checks, error: null };
+    } catch (error) {
+      if (prDetail?.pr.number === pr.number) {
+        failedCiChecks = { prNumber: pr.number, checks: [], error: error instanceof Error ? error.message : "Could not load failed checks" };
+      }
+    } finally {
+      if (prDetail?.pr.number === pr.number) failedCiChecksLoading = false;
+    }
+  }
+
+  async function openFailedCiCheckLog(check: FailedCiCheck): Promise<void> {
+    ciCheckLog = { check, result: null, error: null };
+    try {
+      const result = await gitFailedCiCheckLog(repoPath, check);
+      if (ciCheckLog?.check.runId === check.runId && ciCheckLog.check.jobId === check.jobId) ciCheckLog = { check, result, error: null };
+    } catch (error) {
+      if (ciCheckLog?.check.runId === check.runId && ciCheckLog.check.jobId === check.jobId) {
+        ciCheckLog = { check, result: null, error: error instanceof Error ? error.message : "Could not load CI check log" };
+      }
+    }
   }
 
   function closeDetails(): void {
@@ -1151,6 +1188,7 @@
     closeDetails();
     prDetailHeight = 0;
     prDetail = { oid: commit.oid, pr };
+    if (pr.ciStatus === "failure") void loadFailedCiChecks(pr);
   }
 
   /** Whether `pr` under `commit` is the currently open dropdown. */
@@ -2152,6 +2190,34 @@
                   <div class="pr-detail-line">
                     <span class="pr-detail-label">CI:</span>
                     <span class="pr-detail-ci ci-{pr.ciStatus}">{ciLine}</span>
+                  </div>
+                {/if}
+                {#if pr.ciStatus === "failure"}
+                  {#if failedCiChecksLoading}
+                    <div class="pr-detail-line">Loading failed checks…</div>
+                  {:else if failedCiChecks?.prNumber === pr.number && failedCiChecks.error}
+                    <div class="pr-detail-error">Could not load failed checks: {failedCiChecks.error}</div>
+                  {:else if failedCiChecks?.prNumber === pr.number && failedCiChecks.checks.length > 0}
+                    <div class="pr-detail-ci-checks" aria-label="Failed CI checks">
+                      {#each failedCiChecks.checks as check (check.jobId)}
+                        <button type="button" class="pr-detail-ci-check" onclick={() => void openFailedCiCheckLog(check)}>{check.name}</button>
+                      {/each}
+                    </div>
+                  {/if}
+                {/if}
+                {#if ciCheckLog}
+                  <div class="pr-detail-ci-log" data-testid="git-graph-ci-check-log">
+                    <div class="pr-detail-ci-log-head">
+                      <strong>{ciCheckLog.check.name}</strong>
+                      <button type="button" class="detail-close" onclick={() => { ciCheckLog = null; }} aria-label="Close CI check log">✕</button>
+                    </div>
+                    {#if ciCheckLog.error}
+                      <div class="pr-detail-error">Could not load CI check log: {ciCheckLog.error}</div>
+                    {:else if ciCheckLog.result}
+                      <pre>{ciCheckLog.result.log}</pre>
+                    {:else}
+                      <div class="pr-detail-line">Loading failed check log…</div>
+                    {/if}
                   </div>
                 {/if}
                 {#if reviewLine}
@@ -3322,6 +3388,44 @@
   .pr-detail-line {
     color: var(--text-secondary);
   }
+  .pr-detail-ci-checks {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .pr-detail-ci-check {
+    font: inherit;
+    color: var(--system-critical);
+    background: color-mix(in srgb, var(--system-critical) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--system-critical) 35%, transparent);
+    border-radius: 5px;
+    cursor: pointer;
+    padding: 2px 7px;
+  }
+  .pr-detail-ci-check:hover { background: color-mix(in srgb, var(--system-critical) 22%, transparent); }
+  .pr-detail-ci-log {
+    border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .pr-detail-ci-log-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 8px;
+    color: var(--text-primary);
+    background: var(--background-card);
+  }
+  .pr-detail-ci-log pre {
+    margin: 0;
+    max-height: 300px;
+    overflow: auto;
+    padding: 8px;
+    white-space: pre-wrap;
+    color: var(--text-secondary);
+    background: var(--background-base);
+  }
+  .pr-detail-error { color: var(--system-critical); }
   .pr-detail-label {
     color: var(--text-tertiary);
     margin-right: 2px;

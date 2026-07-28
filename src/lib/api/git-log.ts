@@ -299,3 +299,29 @@ export interface PrComment {
 export async function gitOpenPrs(repoPath: string): Promise<OpenPr[]> {
   return invoke<OpenPr[]>("git_open_prs", { repoRoot: repoPath });
 }
+
+/** A failed GitHub Actions check that has an inline log available. */
+export interface FailedCiCheck {
+  name: string;
+  runId: number;
+  jobId: number;
+}
+
+/** Fetch failed Actions checks for an open PR through the desktop backend. */
+export async function gitFailedCiChecks(repoPath: string, prNumber: number): Promise<FailedCiCheck[]> {
+  return invoke<FailedCiCheck[]>("git_failed_ci_checks", { repoRoot: repoPath, prNumber });
+}
+
+/** The failed output for one selected GitHub Actions check. */
+export interface FailedCiCheckLog {
+  checkName: string;
+  log: string;
+}
+
+/** Fetch a selected failed Actions job's log through `gh run view --log-failed`. */
+export async function gitFailedCiCheckLog(
+  repoPath: string,
+  check: FailedCiCheck,
+): Promise<FailedCiCheckLog> {
+  return invoke<FailedCiCheckLog>("git_failed_ci_check_log", { repoRoot: repoPath, check });
+}

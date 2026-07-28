@@ -2185,6 +2185,20 @@ const mockCommands: Record<string, CommandHandler> = {
     ];
   },
 
+  git_failed_ci_checks: (args: Record<string, unknown>) => {
+    if (args.prNumber !== 12) return [];
+    return [{ name: "Unit tests", runId: 1201, jobId: 9001 }];
+  },
+
+  git_failed_ci_check_log: (args: Record<string, unknown>) => {
+    const check = args.check as { name?: string; runId?: number; jobId?: number };
+    if (check.runId !== 1201 || check.jobId !== 9001) throw new Error("Unknown CI check");
+    return {
+      checkName: check.name ?? "Unit tests",
+      log: "tests/unit/parser.test.ts > parser rejects invalid input\nAssertionError: expected true to be false",
+    };
+  },
+
   // ----- Git graph mutating actions (VSCode Git Graph parity) -----
 
   git_checkout: (args: Record<string, unknown>) => {

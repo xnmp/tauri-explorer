@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 use tauri::{AppHandle, Emitter};
 
-use super::{metadata_to_entry, DirectoryListing, FileEntry, FileKind};
+use super::{metadata_to_entry_with_git_repo_probe, DirectoryListing, FileEntry, FileKind};
 use crate::error::AppError;
 
 // ===================
@@ -200,6 +200,24 @@ static LISTINGS: crate::task_registry::TaskRegistry = crate::task_registry::Task
 // pub: exercised directly by the `scan_directory_parallel` criterion bench
 // (src-tauri/benches/scan_directory_parallel.rs).
 pub fn scan_directory_parallel(dir_path: &PathBuf) -> Vec<FileEntry> {
+    scan_directory_parallel_with_git_repo_probe(dir_path, should_probe_git_repos(dir_path))
+}
+
+/// Network and WSL UNC paths may turn each file stat into a remote round trip.
+/// `is_git_repo` only decorates folder icons, so listings skip that optional
+/// per-entry probe there while preserving it for local directories.
+fn should_probe_git_repos(dir_path: &PathBuf) -> bool {
+    let path = dir_path.to_string_lossy();
+    !(path.starts_with("\\\\") || path.starts_with("//"))
+}
+
+/// Scan with an explicit Git-repository probe policy. Kept separate from the
+/// public benchmark entry point so the slow-mount policy is testable without a
+/// live network share.
+fn scan_directory_parallel_with_git_repo_probe(
+    dir_path: &PathBuf,
+    probe_git_repos: bool,
+) -> Vec<FileEntry> {
     use rayon::prelude::*;
 
     // jwalk parallelizes readdir, but the per-entry symlink_metadata stat would
@@ -224,7 +242,11 @@ pub fn scan_directory_parallel(dir_path: &PathBuf) -> Vec<FileEntry> {
         .into_par_iter()
         .filter_map(|path| {
             let metadata = fs::symlink_metadata(&path).ok()?;
-            Some(metadata_to_entry(&path, &metadata))
+            Some(metadata_to_entry_with_git_repo_probe(
+                &path,
+                &metadata,
+                probe_git_repos,
+            ))
         })
         .collect();
 
@@ -459,7 +481,9 @@ mod tests {
     /// directory listing must not add one `.git` stat per child there (#480).
     #[test]
     fn git_repo_detection_policy_skips_unc_listing_roots() {
-        assert!(should_probe_git_repos(&PathBuf::from("C:\\Users\\me\\repos")));
+        assert!(should_probe_git_repos(&PathBuf::from(
+            "C:\\Users\\me\\repos"
+        )));
         assert!(!should_probe_git_repos(&PathBuf::from(
             r"\\server\share\large-directory"
         )));
@@ -473,12 +497,16 @@ mod tests {
     #[test]
     fn slow_mount_scan_does_not_detect_child_git_repositories() {
         let dir = tempdir().unwrap();
-        fs::create_dir(dir.path().join("repo")) .unwrap();
+        fs::create_dir(dir.path().join("repo")).unwrap();
         fs::create_dir(dir.path().join("repo/.git")).unwrap();
 
         let entries = scan_directory_parallel_with_git_repo_probe(&dir.path().to_path_buf(), false);
         assert!(
-            !entries.iter().find(|entry| entry.name == "repo").unwrap().is_git_repo,
+            !entries
+                .iter()
+                .find(|entry| entry.name == "repo")
+                .unwrap()
+                .is_git_repo,
             "slow-mount listings must leave is_git_repo false rather than stat each child .git"
         );
     }

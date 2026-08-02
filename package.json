@@ -57,7 +57,7 @@
     "@wdio/mocha-framework": "^9.27.0",
     "@wdio/spec-reporter": "^9.27.0",
     "svelte": "^5.53.11",
-    "svelte-check": "4.7.2",
+    "svelte-check": "4.7.4",
     "typescript": "~5.9.3",
     "vite": "^8.1.4",
     "vitest": "^4.1.10",

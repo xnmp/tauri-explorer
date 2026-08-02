@@ -1,6 +1,7 @@
 //! Enumerate drives and volumes across platforms.
 //!
-//! Linux: scans `/run/media/$USER` and `/media/$USER` for user mounts, `/media` as fallback.
+//! Linux: scans the conventional removable-media directories, GVFS mounts,
+//! and `/proc/self/mountinfo` for rclone cloud mounts.
 //! macOS: scans `/Volumes/`, skipping the root-mapped system volume.
 //! Windows: iterates drive letters that exist; volume label + provider + type
 //! are read via PowerShell `Win32_LogicalDisk` (no winapi dependency, and unlike
@@ -95,7 +96,147 @@ fn enumerate_drives() -> Vec<Drive> {
         }
     }
 
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            // SAFETY: geteuid has no preconditions and does not mutate memory.
+            let uid = unsafe { libc::geteuid() };
+            std::path::PathBuf::from(format!("/run/user/{uid}"))
+        });
+    for drive in linux_gvfs_google_drives(&runtime_dir.join("gvfs"))
+        .into_iter()
+        .chain(linux_rclone_drives())
+    {
+        if seen.insert(drive.path.clone()) {
+            drives.push(drive);
+        }
+    }
+
     drives
+}
+
+/// GVFS exposes each connected account as a child of its FUSE mount rather
+/// than as a separate entry in `/proc/self/mountinfo`. A Google account looks
+/// like `google-drive:host=user@example.com` below `$XDG_RUNTIME_DIR/gvfs`.
+#[cfg(target_os = "linux")]
+fn linux_gvfs_google_drives(base: &std::path::Path) -> Vec<Drive> {
+    let Ok(entries) = std::fs::read_dir(base) else {
+        return Vec::new();
+    };
+
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            if !entry.file_type().ok()?.is_dir() {
+                return None;
+            }
+            let mount_name = entry.file_name().to_string_lossy().to_string();
+            let spec = mount_name.strip_prefix("google-drive:")?;
+            let account = spec
+                .split(',')
+                .find_map(|field| field.strip_prefix("host="))
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned);
+
+            Some(Drive {
+                name: "Google Drive".into(),
+                path: entry.path().to_string_lossy().to_string(),
+                kind: DriveKind::Cloud,
+                detail: account,
+                provider: Some(CloudProvider::GoogleDrive),
+            })
+        })
+        .collect()
+}
+
+/// Find rclone FUSE mounts regardless of where the user mounted them. Unlike
+/// removable media, rclone mounts commonly live directly under `$HOME`.
+#[cfg(target_os = "linux")]
+fn linux_rclone_drives() -> Vec<Drive> {
+    std::fs::read_to_string("/proc/self/mountinfo")
+        .map(|mountinfo| parse_linux_rclone_mounts(&mountinfo))
+        .unwrap_or_default()
+}
+
+#[cfg(target_os = "linux")]
+fn parse_linux_rclone_mounts(mountinfo: &str) -> Vec<Drive> {
+    mountinfo
+        .lines()
+        .filter_map(parse_linux_rclone_mount)
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn parse_linux_rclone_mount(line: &str) -> Option<Drive> {
+    let (mount_fields, filesystem_fields) = line.split_once(" - ")?;
+    let encoded_path = mount_fields.split_whitespace().nth(4)?;
+    let mut filesystem_fields = filesystem_fields.split_whitespace();
+    let filesystem = filesystem_fields.next()?;
+    let encoded_source = filesystem_fields.next()?;
+    if filesystem != "fuse.rclone" {
+        return None;
+    }
+
+    let path = decode_mountinfo_field(encoded_path);
+    let source = decode_mountinfo_field(encoded_source);
+    let mount_name = std::path::Path::new(&path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("Cloud");
+    let remote_name = source.trim_end_matches(':');
+    let is_google = [remote_name, mount_name]
+        .iter()
+        .any(|value| looks_like_google_drive(value));
+
+    Some(Drive {
+        name: if is_google {
+            "Google Drive".into()
+        } else {
+            mount_name.to_string()
+        },
+        path,
+        kind: DriveKind::Cloud,
+        detail: (!remote_name.is_empty()).then(|| remote_name.to_string()),
+        provider: is_google.then_some(CloudProvider::GoogleDrive),
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn looks_like_google_drive(value: &str) -> bool {
+    let normalised = value.to_ascii_lowercase().replace([' ', '-', '_'], "");
+    normalised.contains("googledrive") || normalised.contains("gdrive")
+}
+
+/// `/proc/*/mountinfo` represents whitespace and backslashes as octal escape
+/// sequences. Decode one field without corrupting a literal string such as
+/// `\\134040` (an escaped backslash followed by ordinary digits).
+#[cfg(target_os = "linux")]
+fn decode_mountinfo_field(field: &str) -> String {
+    let bytes = field.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        let escape = bytes
+            .get(index..index + 4)
+            .and_then(|sequence| match sequence {
+                br"\040" => Some(b' '),
+                br"\011" => Some(b'\t'),
+                br"\012" => Some(b'\n'),
+                br"\134" => Some(b'\\'),
+                _ => None,
+            });
+        if let Some(value) = escape {
+            decoded.push(value);
+            index += 4;
+            continue;
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+
+    String::from_utf8_lossy(&decoded).into_owned()
 }
 
 #[cfg(target_os = "macos")]
@@ -403,5 +544,76 @@ mod tests {
         assert!(is_usb_bus("usb"));
         assert!(is_usb_bus("USB"));
         assert!(!is_usb_bus("SATA"));
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_tests {
+    use super::*;
+
+    #[test]
+    fn discovers_gvfs_google_account_with_account_detail() {
+        let gvfs = tempfile::tempdir().expect("temporary GVFS directory");
+        let mount = gvfs.path().join("google-drive:host=user@example.com");
+        std::fs::create_dir(&mount).expect("mock Google Drive mount");
+
+        let drives = linux_gvfs_google_drives(gvfs.path());
+
+        assert_eq!(drives.len(), 1);
+        assert_eq!(drives[0].name, "Google Drive");
+        assert_eq!(drives[0].path, mount.to_string_lossy());
+        assert_eq!(drives[0].detail.as_deref(), Some("user@example.com"));
+        assert_eq!(drives[0].provider, Some(CloudProvider::GoogleDrive));
+    }
+
+    #[test]
+    fn parses_google_drive_rclone_mount() {
+        let mountinfo = "123 45 0:99 / /home/chong/GDrive rw,nosuid,nodev - fuse.rclone gdrive: rw,user_id=1000";
+
+        let drives = parse_linux_rclone_mounts(mountinfo);
+
+        assert_eq!(drives.len(), 1);
+        assert_eq!(drives[0].name, "Google Drive");
+        assert_eq!(drives[0].path, "/home/chong/GDrive");
+        assert_eq!(drives[0].detail.as_deref(), Some("gdrive"));
+        assert_eq!(drives[0].provider, Some(CloudProvider::GoogleDrive));
+        assert!(matches!(drives[0].kind, DriveKind::Cloud));
+    }
+
+    #[test]
+    fn parses_non_google_rclone_mount_as_generic_cloud_storage() {
+        let mountinfo = "123 45 0:99 / /home/user/Dropbox rw - fuse.rclone dropbox: rw";
+
+        let drives = parse_linux_rclone_mounts(mountinfo);
+
+        assert_eq!(drives.len(), 1);
+        assert_eq!(drives[0].name, "Dropbox");
+        assert_eq!(drives[0].detail.as_deref(), Some("dropbox"));
+        assert_eq!(drives[0].provider, None);
+    }
+
+    #[test]
+    fn decodes_escaped_mount_path_and_ignores_unrelated_or_malformed_lines() {
+        let mountinfo = concat!(
+            "broken\n",
+            "123 45 0:99 / /home/user/Google\\040Drive rw - fuse.rclone remote: rw\n",
+            "124 45 8:1 / /mnt/disk rw - ext4 /dev/sda1 rw\n",
+        );
+
+        let drives = parse_linux_rclone_mounts(mountinfo);
+
+        assert_eq!(drives.len(), 1);
+        assert_eq!(drives[0].path, "/home/user/Google Drive");
+        assert_eq!(drives[0].provider, Some(CloudProvider::GoogleDrive));
+    }
+
+    #[test]
+    fn decodes_mountinfo_backslash_without_reinterpreting_following_digits() {
+        assert_eq!(decode_mountinfo_field(r"/mnt/a\134040b"), r"/mnt/a\040b");
+    }
+
+    #[test]
+    fn leaves_unknown_mountinfo_escape_literal_instead_of_panicking() {
+        assert_eq!(decode_mountinfo_field(r"/mnt/a\777b"), r"/mnt/a\777b");
     }
 }

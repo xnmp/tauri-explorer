@@ -6,6 +6,7 @@
           "allow": [
             "$HOME/**/*",
             "/run/media/**/*",
+            "/run/user/*/gvfs/**/*",
             "/media/**/*",
             "/mnt/**/*",
             "/tmp/**/*"

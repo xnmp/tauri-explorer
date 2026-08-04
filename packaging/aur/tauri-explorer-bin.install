@@ -4,7 +4,8 @@ tauri-explorer provides an xdg-desktop-portal FileChooser backend.
 To use it as your system file picker, configure:
   ~/.config/xdg-desktop-portal/portals.conf
 with:
-  org.freedesktop.impl.portal.FileChooser=tauri-explorer
+[preferred]
+org.freedesktop.impl.portal.FileChooser=tauri-explorer
 
 See the setup instructions in README.md:
   https://github.com/xnmp/tauri-explorer/blob/main/README.md#use-as-system-file-picker

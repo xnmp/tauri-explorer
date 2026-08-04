@@ -109,6 +109,24 @@ test("failed submission preserves the draft in the GitHub fallback", async ({ pa
   expect(url.searchParams.get("labels")).toBe("enhancement");
 });
 
+test("report fallback error toast has an opaque surface", async ({ page }) => {
+  await page.goto("/");
+  await waitForEntries(page);
+  await page.evaluate(() => localStorage.setItem("mock-report-error", "network_unreachable"));
+
+  await runPaletteCommand(page, "Report a Bug");
+  const dialog = page.getByRole("dialog", { name: /report a bug/i });
+  await dialog.getByLabel("Title").fill("Opaque fallback toast");
+  await dialog.getByLabel("Description").fill("Keep this report in GitHub.");
+  await dialog.getByRole("button", { name: "Submit" }).click();
+
+  const toast = page.locator(".toast.error");
+  await expect(toast).toContainText("Could not submit in-app — opening GitHub instead");
+  await expect
+    .poll(() => toast.evaluate((element) => getComputedStyle(element).backgroundColor))
+    .not.toBe("rgba(0, 0, 0, 0)");
+});
+
 test("image picker shows named previews and lets the user remove an attachment", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);

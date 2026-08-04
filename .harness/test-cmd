@@ -1,0 +1,1 @@
+npx playwright test e2e/bug-report.spec.ts

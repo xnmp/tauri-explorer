@@ -57,8 +57,8 @@
     display: flex;
     align-items: center;
     gap: var(--spacing-sm);
-    background: var(--background-acrylic);
-    backdrop-filter: blur(20px);
+    /* Notifications must remain legible over any pane or vibrancy backdrop. */
+    background: var(--background-solid);
     border: 1px solid var(--surface-stroke);
     border-radius: var(--radius-pill);
     font-size: var(--font-size-caption);
@@ -87,13 +87,11 @@
   }
 
   .toast.error {
-    background: linear-gradient(135deg, rgba(196, 43, 28, 0.1), rgba(196, 43, 28, 0.05));
     border-color: rgba(196, 43, 28, 0.2);
     color: var(--system-critical);
   }
 
   .toast.success {
-    background: linear-gradient(135deg, rgba(15, 123, 15, 0.1), rgba(15, 123, 15, 0.05));
     border-color: rgba(15, 123, 15, 0.2);
     color: var(--system-success);
   }

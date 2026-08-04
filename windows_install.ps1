@@ -36,7 +36,10 @@ if (-not (Get-Command bun -ErrorAction SilentlyContinue)) {
 }
 
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-$buildTools = if (Test-Path $vswhere) {
+$buildTools = if ($env:VSINSTALLDIR) {
+    # A Developer PowerShell prompt already exposes the selected C++ toolchain.
+    $env:VSINSTALLDIR
+} elseif (Test-Path $vswhere) {
     & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 } else {
     $null
@@ -101,7 +104,12 @@ try {
     }
 
     Write-Host "Installing $($installer.Name)..."
-    $process = Start-Process msiexec.exe -ArgumentList @('/i', $installer.FullName, '/passive', '/norestart') -Wait -PassThru
+    # Start-Process joins ArgumentList into a command line. Keep the MSI as one
+    # msiexec argument when the checkout or temporary directory contains spaces.
+    $quotedMsiPath = '"{0}"' -f $installer.FullName
+    # RunAs makes the UAC consent boundary explicit before a machine installer
+    # changes system state.
+    $process = Start-Process msiexec.exe -ArgumentList @('/i', $quotedMsiPath, '/passive', '/norestart') -Verb RunAs -Wait -PassThru
     if ($process.ExitCode -ne 0) {
         Fail "MSI installation failed with exit code $($process.ExitCode)"
     }

@@ -88,6 +88,7 @@ test.describe("Terminal panel", () => {
     await panel.locator("textarea.xterm-helper-textarea").focus();
     await page.keyboard.press("Control+Shift+p");
     await expect(page.locator(".command-palette-dialog input.search-input")).toBeVisible();
+    await page.screenshot({ path: "evidence/ac-3-command-palette-from-terminal.png" });
     await page.keyboard.press("Escape");
 
     // Ctrl+PageUp switches to the previous tab while terminal focus is active.

@@ -84,6 +84,10 @@ The public report relay under `website/api/` uses `GITHUB_ISSUE_TOKEN` only for 
 
 **E2E tests assert outcomes**, not existence — a QuickOpen test verifies results appear for a query, not that the modal opened.
 
+The Linux FileChooser portal is selected through the user's
+`~/.config/xdg-desktop-portal/portals.conf`; do not add deprecated `UseIn`
+desktop matching to `packaging/tauri-explorer.portal`.
+
 SCM archive actions preserve each repo-relative path under `.archive/` and add
 `.archive` to `.gitignore`; this keeps archived files out of the Untracked list.
 

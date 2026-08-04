@@ -107,6 +107,7 @@ test("failed submission preserves the draft in the GitHub fallback", async ({ pa
   expect(url.searchParams.get("title")).toBe("Keep my feature title");
   expect(url.searchParams.get("body")).toContain("Keep my typed description 🐛");
   expect(url.searchParams.get("labels")).toBe("enhancement");
+  await page.locator(".toast.error").screenshot({ path: evidencePath("ac-1-github-fallback.png") });
 });
 
 test("report fallback error toast has an opaque surface", async ({ page }) => {
@@ -125,6 +126,7 @@ test("report fallback error toast has an opaque surface", async ({ page }) => {
   await expect
     .poll(() => toast.evaluate((element) => getComputedStyle(element).backgroundColor))
     .not.toBe("rgba(0, 0, 0, 0)");
+  await toast.screenshot({ path: evidencePath("ac-2-report-fallback-toast.png") });
 });
 
 test("image picker shows named previews and lets the user remove an attachment", async ({ page }) => {

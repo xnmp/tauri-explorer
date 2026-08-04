@@ -43,6 +43,10 @@ describe("isShellReservedKey (#249, #260)", () => {
     expect(isShellReservedKey(key("p", { ctrlKey: true, shiftKey: true }), { coreCommandAvailable: true })).toBe(false);
     expect(isShellReservedKey(key("PageUp", { ctrlKey: true }), { coreCommandAvailable: true })).toBe(false);
     expect(isShellReservedKey(key("PageDown", { ctrlKey: true }), { coreCommandAvailable: true })).toBe(false);
+
+    // A disabled core command must not consume the terminal application's
+    // key, even though its shortcut is normally always active.
+    expect(isShellReservedKey(key("p", { ctrlKey: true }), { coreCommandAvailable: false })).toBe(true);
   });
 
   it("shell-critical Ctrl combos stay with the shell even when app-bound", () => {

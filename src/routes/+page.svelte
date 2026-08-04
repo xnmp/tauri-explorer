@@ -5,7 +5,7 @@
 <script lang="ts">
   import "@fontsource-variable/inter";
   import { onMount } from "svelte";
-  import { isShellReservedKey } from "$lib/domain/terminal-keys";
+  import { getAlwaysActiveTerminalCommandId, isShellReservedKey } from "$lib/domain/terminal-keys";
   import { themeStore } from "$lib/state/theme.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
 import { windowSizeStore } from "$lib/state/window-size.svelte";
@@ -164,12 +164,14 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     // Escape, and Ctrl+`) so a new global shortcut cannot accidentally steal
     // input from a focused terminal application.
     if (isTerminalFocus) {
-      const appBound =
-        keybindingsStore.matchesAnyBinding(event, (id) => {
+      const coreCommandId = getAlwaysActiveTerminalCommandId(event);
+      const coreCommandAvailable =
+        coreCommandId !== undefined && keybindingsStore.matchesAnyBinding(event, (id) => {
+          if (id !== coreCommandId) return false;
           const cmd = getCommand(id);
           return !cmd?.when || cmd.when();
         });
-      if (isShellReservedKey(event, { appBound })) return;
+      if (isShellReservedKey(event, { coreCommandAvailable })) return;
     }
 
     // Escape closes any open modal dialog

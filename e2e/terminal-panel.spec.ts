@@ -55,17 +55,17 @@ test.describe("Terminal panel", () => {
     await expect(panel).toBeAttached();
   });
 
-  test("app shortcuts fire while the terminal is focused (#249)", async ({ page }) => {
+  test("non-core app shortcuts stay with the terminal while it is focused (#496)", async ({ page }) => {
     await page.keyboard.press("Control+`");
     const panel = page.locator(".terminal-panel");
     await expect(panel).toBeVisible();
 
-    // Focus the shell's hidden textarea explicitly — app chords must still
-    // reach the window handler instead of being swallowed as terminal input.
+    // The terminal application's Alt+M/T input must not invoke Explorer's
+    // matching global chord.
     await panel.locator("textarea.xterm-helper-textarea").focus();
     await page.keyboard.press("Alt+m");
     await page.keyboard.press("t");
-    await expect(panel).toBeHidden();
+    await expect(panel).toBeVisible();
     await expect(panel).toBeAttached();
   });
 

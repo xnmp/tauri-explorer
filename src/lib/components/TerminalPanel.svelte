@@ -27,7 +27,7 @@
   import { defaultShellProfile, fromShellCwd, type ShellProfile } from "$lib/domain/terminal-shell";
   import { decideCdSync, createInjectedCdTracker } from "$lib/domain/terminal-cwd-sync";
   import { isWindows, isMac } from "$lib/domain/platform";
-  import { isShellReservedKey, resolveTerminalShortcut, effectiveTerminalShortcuts } from "$lib/domain/terminal-keys";
+  import { getAlwaysActiveTerminalCommandId, isShellReservedKey, resolveTerminalShortcut, effectiveTerminalShortcuts } from "$lib/domain/terminal-keys";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { getCommand } from "$lib/state/commands.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
@@ -332,12 +332,14 @@
       }
       // Availability-aware: an unavailable core command does not claim the
       // key, so the terminal application still receives it.
-      const appBound =
-        keybindingsStore.matchesAnyBinding(event, (id) => {
+      const coreCommandId = getAlwaysActiveTerminalCommandId(event);
+      const coreCommandAvailable =
+        coreCommandId !== undefined && keybindingsStore.matchesAnyBinding(event, (id) => {
+          if (id !== coreCommandId) return false;
           const cmd = getCommand(id);
           return !cmd?.when || cmd.when();
         });
-      return isShellReservedKey(event, { appBound });
+      return isShellReservedKey(event, { coreCommandAvailable });
     });
 
     term.open(termEl!);

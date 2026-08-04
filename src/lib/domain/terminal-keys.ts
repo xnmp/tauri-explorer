@@ -17,22 +17,45 @@ type KeyEventLike = Pick<KeyboardEvent, "key" | "ctrlKey" | "altKey" | "metaKey"
  * bindings on these keys make no sense while a shell prompt has focus.
  */
 export interface ShellKeyContext {
-  /** The event matches an available registered Explorer command. */
+  /**
+   * Retained for callers that previously supplied generic Explorer binding
+   * availability. Terminal ownership now deliberately ignores that broad
+   * signal in favour of the explicit core-command allowlist below.
+   */
   appBound?: boolean;
+  /** The event matches its specific available core-navigation command. */
+  coreCommandAvailable?: boolean;
 }
+
+export type AlwaysActiveTerminalCommandId =
+  | "general.openQuickOpen"
+  | "general.openCommandPalette"
+  | "tabs.prevTabAlt"
+  | "tabs.nextTabAlt";
 
 /**
  * The only Explorer shortcuts that may claim keyboard input from a focused
  * terminal. Keep this list intentionally small: terminal applications own all
  * other app-level bindings, including custom bindings and chords.
  */
-export function isAlwaysActiveTerminalShortcut(event: KeyEventLike): boolean {
+export function getAlwaysActiveTerminalCommandId(
+  event: KeyEventLike,
+): AlwaysActiveTerminalCommandId | undefined {
   const hasExactlyOnePrimaryModifier = event.ctrlKey !== event.metaKey;
-  if (!hasExactlyOnePrimaryModifier || event.altKey) return false;
+  if (!hasExactlyOnePrimaryModifier || event.altKey) return undefined;
 
   const key = event.key.toLowerCase();
-  if (key === "p") return true;
-  return !event.shiftKey && (event.key === "PageUp" || event.key === "PageDown");
+  if (key === "p") {
+    return event.shiftKey ? "general.openCommandPalette" : "general.openQuickOpen";
+  }
+  if (event.shiftKey) return undefined;
+  if (event.key === "PageUp") return "tabs.prevTabAlt";
+  if (event.key === "PageDown") return "tabs.nextTabAlt";
+  return undefined;
+}
+
+export function isAlwaysActiveTerminalShortcut(event: KeyEventLike): boolean {
+  return getAlwaysActiveTerminalCommandId(event) !== undefined;
 }
 
 /**
@@ -40,7 +63,7 @@ export function isAlwaysActiveTerminalShortcut(event: KeyEventLike): boolean {
  * shortcut handling may claim it.
  */
 export function isShellReservedKey(event: KeyEventLike, context?: ShellKeyContext): boolean {
-  return !(context?.appBound && isAlwaysActiveTerminalShortcut(event));
+  return !(context?.coreCommandAvailable && isAlwaysActiveTerminalShortcut(event));
 }
 
 // ─── Configurable line-editing shortcuts (#375) ─────────────────────────────

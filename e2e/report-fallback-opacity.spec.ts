@@ -14,8 +14,21 @@ async function runPaletteCommand(page: import("@playwright/test").Page, query: s
 }
 
 test("report fallback keeps a solid toast over contrasting app content", async ({ page }) => {
-  await page.goto("/");
+  // A short real app window lets a selected details row sit behind the fixed
+  // toast, placing its blue selection surface and metadata directly under it.
+  await page.setViewportSize({ width: 1280, height: 420 });
+  await page.goto("/?path=/home/user/Documents/project");
   await waitForEntries(page);
+  const rows = page.locator(".entry-item");
+  const selectedIndex = await rows.evaluateAll((elements) => elements.findIndex((element) => {
+    const row = element.getBoundingClientRect();
+    return row.top < 405 && row.bottom > 385;
+  }));
+  expect(selectedIndex).toBeGreaterThanOrEqual(0);
+  const selectedRow = rows.nth(selectedIndex);
+  await selectedRow.click();
+  await expect(selectedRow).toHaveClass(/selected/);
+
   await page.evaluate(() => localStorage.setItem("mock-report-error", "network_unreachable"));
 
   await runPaletteCommand(page, "Report a Bug");
@@ -35,10 +48,9 @@ test("report fallback keeps a solid toast over contrasting app content", async (
     };
   })).toEqual({ alpha: 1, backgroundImage: "none" });
 
-  // The theme picker puts a real dimmed modal backdrop behind the still-visible
-  // fallback toast, making translucency visually observable in the capture.
-  await runPaletteCommand(page, "Switch Theme");
-  await expect(page.locator(".theme-picker-dialog")).toBeVisible();
+  await expect(selectedRow).toHaveClass(/selected/);
+  await expect(toast).toBeVisible();
+  await page.waitForTimeout(300); // let the toast entrance animation finish before capture
   await page.screenshot({ path: evidencePath("ac-2-report-fallback-toast.png") });
 
   if (!process.env.CAPTURE_EVIDENCE) return;

@@ -118,9 +118,11 @@ test.describe("Terminal panel", () => {
     await page.keyboard.press("Control+f");
     await expect(page.locator(".filter-bar")).toBeHidden();
 
+    // Ctrl+` is terminal-surface control rather than an Explorer app command:
+    // it must always hide a focused terminal so the user can dismiss it.
     await panel.locator("textarea.xterm-helper-textarea").focus();
     await page.keyboard.press("Control+`");
-    await expect(panel).toBeVisible();
+    await expect(panel).toBeHidden();
   });
 
   test("shell-critical Ctrl combos stay with the shell while focused (#260)", async ({ page }) => {

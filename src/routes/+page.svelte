@@ -158,11 +158,21 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     const isInputField = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
     const isTerminalFocus = !!target.closest?.(".terminal-panel");
 
+    // Ctrl+` owns the terminal surface itself, rather than being an Explorer
+    // app-level shortcut. Keep it ahead of terminal key ownership so it can
+    // hide a focused terminal while leaving every terminal-app binding alone.
+    if ((event.key === "`" || event.code === "Backquote") && isModifier && !dialogStore.hasModalOpen) {
+      if (!settingsStore.enableTerminal) return; // feature flag (#175)
+      event.preventDefault();
+      terminalPanelStore.toggle();
+      return;
+    }
+
     // A terminal-hosted application owns every key except the small,
     // availability-aware core-navigation allowlist in isShellReservedKey.
-    // This must run before every page-level special case (including Ctrl+F,
-    // Escape, and Ctrl+`) so a new global shortcut cannot accidentally steal
-    // input from a focused terminal application.
+    // This must run before every page-level app shortcut (including Ctrl+F
+    // and Escape) so a new global shortcut cannot accidentally steal input
+    // from a focused terminal application.
     if (isTerminalFocus) {
       const coreCommandId = getAlwaysActiveTerminalCommandId(event);
       const coreCommandAvailable =
@@ -208,16 +218,6 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
         explorer.closeFilter();
         return;
       }
-    }
-
-    // Ctrl+`: toggle the embedded terminal. Handled before the input-field
-    // early-return so it also closes the panel while the terminal (a
-    // <textarea> under the hood) has focus — mirroring VS Code.
-    if ((event.key === "`" || event.code === "Backquote") && isModifier && !dialogStore.hasModalOpen) {
-      if (!settingsStore.enableTerminal) return; // feature flag (#175)
-      event.preventDefault();
-      terminalPanelStore.toggle();
-      return;
     }
 
     // Skip shortcut handling (including hardcoded shortcuts below) if in an

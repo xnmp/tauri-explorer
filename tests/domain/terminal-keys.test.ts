@@ -31,9 +31,18 @@ describe("isShellReservedKey (#249, #260)", () => {
     expect(isShellReservedKey(key("e", { ctrlKey: true }), { appBound: false })).toBe(true);
   });
 
-  it("gives app-bound single-Ctrl combos to the app (Ctrl+P quick open, #260)", () => {
+  it("keeps non-core app bindings with the focused terminal while preserving core navigation", () => {
+    // A terminal application must receive app-level bindings such as Ctrl+Q
+    // (micro quit) and Ctrl+T (new tab) even when Explorer binds them too.
+    expect(isShellReservedKey(key("q", { ctrlKey: true }), { appBound: true })).toBe(true);
+    expect(isShellReservedKey(key("t", { ctrlKey: true }), { appBound: true })).toBe(true);
+
+    // The explicit core-navigation allowlist remains available from the
+    // terminal: Quick Open, Command Palette, and previous/next tab.
     expect(isShellReservedKey(key("p", { ctrlKey: true }), { appBound: true })).toBe(false);
-    expect(isShellReservedKey(key("t", { ctrlKey: true }), { appBound: true })).toBe(false);
+    expect(isShellReservedKey(key("p", { ctrlKey: true, shiftKey: true }), { appBound: true })).toBe(false);
+    expect(isShellReservedKey(key("PageUp", { ctrlKey: true }), { appBound: true })).toBe(false);
+    expect(isShellReservedKey(key("PageDown", { ctrlKey: true }), { appBound: true })).toBe(false);
   });
 
   it("shell-critical Ctrl combos stay with the shell even when app-bound", () => {

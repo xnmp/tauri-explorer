@@ -50,6 +50,16 @@ org.freedesktop.impl.portal.FileChooser=tauri-explorer
 
 Restart `xdg-desktop-portal` or sign out and back in after changing the file.
 
+### Windows: build and install from source
+
+In PowerShell, one command downloads, builds, and installs the latest source:
+
+```powershell
+irm https://raw.githubusercontent.com/xnmp/tauri-explorer/main/windows_install.ps1 | Invoke-Expression
+```
+
+The script identifies any missing Git, Rust, Bun, or Visual Studio C++ Build Tools and prints the corresponding `winget` command. To build an existing checkout instead, run `./windows_install.ps1` from its root.
+
 ## Building
 
 Requires [Rust](https://rustup.rs/), [Bun](https://bun.sh/), and [Tauri v2 prerequisites](https://v2.tauri.app/start/prerequisites/).

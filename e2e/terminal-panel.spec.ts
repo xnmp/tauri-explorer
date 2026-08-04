@@ -69,22 +69,24 @@ test.describe("Terminal panel", () => {
     await expect(panel).toBeAttached();
   });
 
-  test("app-bound Ctrl shortcuts fire while the terminal is focused (#260)", async ({ page }) => {
+  test("only core navigation shortcuts fire while the terminal is focused (#496)", async ({ page }) => {
     await page.keyboard.press("Control+`");
     const panel = page.locator(".terminal-panel");
     await expect(panel).toBeVisible();
     await panel.locator("textarea.xterm-helper-textarea").focus();
 
-    // Ctrl+P (quick open, an app binding) must win over readline history.
+    // Ctrl+P is one of the explicit core-navigation exceptions.
     await page.keyboard.press("Control+p");
     await expect(page.locator(".quick-open-dialog input.search-input")).toBeVisible();
+    await page.screenshot({ path: "evidence/ac-2-quick-open-from-terminal.png" });
     await page.keyboard.press("Escape");
 
-    // Ctrl+J (hardcoded jobs panel) must fire too.
+    // Ctrl+Q belongs to the terminal application; it must not invoke an
+    // Explorer action or close the terminal panel.
     await panel.locator("textarea.xterm-helper-textarea").focus();
-    await page.keyboard.press("Control+j");
-    await expect(page.getByRole("heading", { name: "Background Jobs" })).toBeVisible();
-    await page.keyboard.press("Escape");
+    await page.keyboard.press("Control+q");
+    await expect(panel).toBeVisible();
+    await page.screenshot({ path: "evidence/ac-1-terminal-owns-ctrl-q.png" });
   });
 
   test("shell-critical Ctrl combos stay with the shell while focused (#260)", async ({ page }) => {

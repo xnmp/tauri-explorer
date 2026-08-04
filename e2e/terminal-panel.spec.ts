@@ -82,13 +82,11 @@ test.describe("Terminal panel", () => {
     // Ctrl+P is one of the explicit core-navigation exceptions.
     await page.keyboard.press("Control+p");
     await expect(page.locator(".quick-open-dialog input.search-input")).toBeVisible();
-    await page.screenshot({ path: "evidence/ac-2-quick-open-from-terminal.png" });
     await page.keyboard.press("Escape");
 
     await panel.locator("textarea.xterm-helper-textarea").focus();
     await page.keyboard.press("Control+Shift+p");
     await expect(page.locator(".command-palette-dialog input.search-input")).toBeVisible();
-    await page.screenshot({ path: "evidence/ac-3-command-palette-from-terminal.png" });
     await page.keyboard.press("Escape");
 
     // Ctrl+PageUp switches to the previous tab while terminal focus is active.
@@ -109,7 +107,6 @@ test.describe("Terminal panel", () => {
     await panel.locator("textarea.xterm-helper-textarea").focus();
     await page.keyboard.press("Control+q");
     await expect(panel).toBeVisible();
-    await page.screenshot({ path: "evidence/ac-1-terminal-owns-ctrl-q.png" });
   });
 
   test("non-core Explorer shortcuts stay with the focused terminal (#496)", async ({ page }) => {

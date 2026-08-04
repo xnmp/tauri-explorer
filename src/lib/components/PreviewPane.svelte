@@ -1213,6 +1213,9 @@
     align-items: center;
     justify-content: center;
     flex: 1;
+    /* Let the image shrink to the content area's available height instead of
+       expanding this flex item and forcing the preview pane to scroll. */
+    min-height: 0;
     padding: 20px;
     /* Click toggles front-and-center (#219). */
     cursor: zoom-in;

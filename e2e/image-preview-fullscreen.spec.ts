@@ -38,7 +38,7 @@ test.describe("Image preview click-to-fullscreen", () => {
     // sizing path as a tall photo received from the backend.
     await image.evaluate((element) => {
       (element as HTMLImageElement).style.height = "2000px";
-      (element as HTMLImageElement).style.width = "auto";
+      (element as HTMLImageElement).style.width = "100px";
     });
 
     await expect.poll(async () => content.evaluate((element) => element.scrollHeight)).toBe(
@@ -50,6 +50,10 @@ test.describe("Image preview click-to-fullscreen", () => {
     expect(imageBox).not.toBeNull();
     expect(imageBox!.y).toBeGreaterThanOrEqual(contentBox!.y);
     expect(imageBox!.y + imageBox!.height).toBeLessThanOrEqual(contentBox!.y + contentBox!.height);
+
+    // The capture shares the asserted browser state, keeping visual proof and
+    // the regression test aligned.
+    await page.screenshot({ path: "evidence/ac-1-full-image-no-scroll.png" });
   });
 
   test("click enters fullscreen, arrows scroll siblings, click reverts", async ({ page }) => {

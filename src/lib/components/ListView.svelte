@@ -93,6 +93,7 @@
     display: flex;
     flex-direction: column;
     flex: 1;
+    min-height: 0;
   }
 
   /* Each virtualized row is an equal-width grid. minmax(0, 1fr), not 1fr: a

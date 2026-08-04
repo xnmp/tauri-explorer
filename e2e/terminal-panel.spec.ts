@@ -70,6 +70,10 @@ test.describe("Terminal panel", () => {
   });
 
   test("only core navigation shortcuts fire while the terminal is focused (#496)", async ({ page }) => {
+    // Make previous/next tab commands available before focusing the terminal.
+    await page.locator(".new-tab-btn").click();
+    await expect(page.locator(".tab")).toHaveCount(2);
+
     await page.keyboard.press("Control+`");
     const panel = page.locator(".terminal-panel");
     await expect(panel).toBeVisible();
@@ -81,12 +85,44 @@ test.describe("Terminal panel", () => {
     await page.screenshot({ path: "evidence/ac-2-quick-open-from-terminal.png" });
     await page.keyboard.press("Escape");
 
+    await panel.locator("textarea.xterm-helper-textarea").focus();
+    await page.keyboard.press("Control+Shift+p");
+    await expect(page.locator(".command-palette-dialog input.search-input")).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    // Ctrl+PageUp switches to the previous tab while terminal focus is active.
+    await panel.locator("textarea.xterm-helper-textarea").focus();
+    const activeTabId = await page.locator(".tab.active").getAttribute("data-tab-id");
+    await page.keyboard.press("Control+PageUp");
+    await expect(page.locator(".tab.active")).not.toHaveAttribute("data-tab-id", activeTabId!);
+
+    // Returning to the tab with the focused terminal makes Ctrl+PageDown
+    // switch forward again.
+    await page.locator(`.tab[data-tab-id="${activeTabId}"]`).click();
+    await panel.locator("textarea.xterm-helper-textarea").focus();
+    await page.keyboard.press("Control+PageDown");
+    await expect(page.locator(".tab.active")).not.toHaveAttribute("data-tab-id", activeTabId!);
+
     // Ctrl+Q belongs to the terminal application; it must not invoke an
     // Explorer action or close the terminal panel.
     await panel.locator("textarea.xterm-helper-textarea").focus();
     await page.keyboard.press("Control+q");
     await expect(panel).toBeVisible();
     await page.screenshot({ path: "evidence/ac-1-terminal-owns-ctrl-q.png" });
+  });
+
+  test("non-core Explorer shortcuts stay with the focused terminal (#496)", async ({ page }) => {
+    await page.keyboard.press("Control+`");
+    const panel = page.locator(".terminal-panel");
+    await expect(panel).toBeVisible();
+    await panel.locator("textarea.xterm-helper-textarea").focus();
+
+    await page.keyboard.press("Control+f");
+    await expect(page.locator(".filter-bar")).toBeHidden();
+
+    await panel.locator("textarea.xterm-helper-textarea").focus();
+    await page.keyboard.press("Control+`");
+    await expect(panel).toBeVisible();
   });
 
   test("shell-critical Ctrl combos stay with the shell while focused (#260)", async ({ page }) => {

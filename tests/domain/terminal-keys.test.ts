@@ -81,12 +81,12 @@ describe("isShellReservedKey (#249, #260)", () => {
 
   it("keeps non-core ⌘ combos with the terminal while allowing Cmd+P", () => {
     for (const k of ["c", "v", "x", "a", "z"]) {
-      expect(isShellReservedKey(key(k, { metaKey: true }), { appBound: true, isMac: true })).toBe(true);
+      expect(isShellReservedKey(key(k, { metaKey: true }), { appBound: true })).toBe(true);
     }
     expect(isShellReservedKey(key("c", { metaKey: true }), { appBound: true })).toBe(true);
-    expect(isShellReservedKey(key("p", { metaKey: true }), { appBound: true, isMac: true })).toBe(false);
-    expect(isShellReservedKey(key("c", { metaKey: true, shiftKey: true }), { isMac: true })).toBe(true);
-    expect(isShellReservedKey(key("c", { metaKey: true, altKey: true }), { isMac: true })).toBe(true);
+    expect(isShellReservedKey(key("p", { metaKey: true }), { appBound: true })).toBe(false);
+    expect(isShellReservedKey(key("c", { metaKey: true, shiftKey: true }))).toBe(true);
+    expect(isShellReservedKey(key("c", { metaKey: true, altKey: true }))).toBe(true);
   });
 });
 

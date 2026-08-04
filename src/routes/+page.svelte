@@ -5,8 +5,7 @@
 <script lang="ts">
   import "@fontsource-variable/inter";
   import { onMount } from "svelte";
-  import { isShellReservedKey, isHardcodedAppShortcut } from "$lib/domain/terminal-keys";
-  import { isMac } from "$lib/domain/platform";
+  import { isShellReservedKey } from "$lib/domain/terminal-keys";
   import { themeStore } from "$lib/state/theme.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
 import { windowSizeStore } from "$lib/state/window-size.svelte";
@@ -207,25 +206,22 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     // Skip shortcut handling (including hardcoded shortcuts below) if in an
     // input field or a modal dialog is open — e.g. Ctrl+J while typing in a
     // rename input must not open the jobs panel. The embedded terminal is an
-    // exception: xterm focuses a hidden textarea, but app shortcuts must keep
-    // working there (#249) — the shell keeps its own keys via the
-    // isShellReservedKey gate below.
+    // exception: xterm focuses a hidden textarea, and the focused-terminal
+    // allowlist below decides which core navigation keys Explorer may handle.
     const isTerminalFocus = !!target.closest?.(".terminal-panel");
     if ((isInputField && !isTerminalFocus) || dialogStore.hasModalOpen) {
       return;
     }
 
-    // While the terminal is focused the shell owns typing, shell-critical
-    // Ctrl combos (Ctrl+C interrupt…) and UNBOUND Ctrl combos (readline);
-    // combos the app has bound — plus Alt/Meta/Ctrl+Shift combos and pending
-    // chord suffixes — fall through to command matching (#249, #260).
-    if (isTerminalFocus && !keybindingsStore.isChordActive) {
+    // A terminal-hosted application owns every key except the small,
+    // availability-aware core-navigation allowlist in isShellReservedKey.
+    if (isTerminalFocus) {
       const appBound =
         keybindingsStore.matchesAnyBinding(event, (id) => {
           const cmd = getCommand(id);
           return !cmd?.when || cmd.when();
-        }) || isHardcodedAppShortcut(event);
-      if (isShellReservedKey(event, { appBound, isMac })) return;
+        });
+      if (isShellReservedKey(event, { appBound })) return;
     }
 
     // Ctrl+J: Open jobs panel (hardcoded)

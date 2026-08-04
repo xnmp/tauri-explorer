@@ -27,7 +27,7 @@
   import { defaultShellProfile, fromShellCwd, type ShellProfile } from "$lib/domain/terminal-shell";
   import { decideCdSync, createInjectedCdTracker } from "$lib/domain/terminal-cwd-sync";
   import { isWindows, isMac } from "$lib/domain/platform";
-  import { isShellReservedKey, isHardcodedAppShortcut, resolveTerminalShortcut, effectiveTerminalShortcuts } from "$lib/domain/terminal-keys";
+  import { getAlwaysActiveTerminalCommandId, isShellReservedKey, resolveTerminalShortcut, effectiveTerminalShortcuts } from "$lib/domain/terminal-keys";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { getCommand } from "$lib/state/commands.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
@@ -280,15 +280,11 @@
     fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
 
-    // App shortcuts win over the shell for Alt/Meta/Ctrl+Shift combos, chord
-    // suffixes AND any Ctrl combo the app has bound (#249, #260): returning
-    // false makes xterm ignore the key, and the event still bubbles to the
-    // window handler in +page.svelte, which runs the matching command.
-    // Shell-reserved keys (typing, shell-critical Ctrl combos like Ctrl+C,
-    // unbound readline combos) never reach the app handler.
+    // The focused terminal keeps every key except the explicit core-navigation
+    // allowlist. Returning false makes xterm ignore one of those keys so the
+    // window handler in +page.svelte can run its matching Explorer command.
     term.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") return true;
-      if (keybindingsStore.isChordActive) return false;
       // The platform's primary clipboard modifier: Ctrl, but ⌘ on mac (#403)
       // — Cmd+C/V while the terminal is focused must copy/paste terminal
       // text, never fall through to the explorer's file clipboard.
@@ -334,15 +330,16 @@
         event.preventDefault();
         return false;
       }
-      // Availability-aware (#530): a command whose `when` guard is false does
-      // not own its shortcut, so the shell keeps the key instead of it being
-      // swallowed by a binding that can't fire.
-      const appBound =
-        keybindingsStore.matchesAnyBinding(event, (id) => {
+      // Availability-aware: an unavailable core command does not claim the
+      // key, so the terminal application still receives it.
+      const coreCommandId = getAlwaysActiveTerminalCommandId(event);
+      const coreCommandAvailable =
+        coreCommandId !== undefined && keybindingsStore.matchesAnyBinding(event, (id) => {
+          if (id !== coreCommandId) return false;
           const cmd = getCommand(id);
           return !cmd?.when || cmd.when();
-        }) || isHardcodedAppShortcut(event);
-      return isShellReservedKey(event, { appBound, isMac });
+        });
+      return isShellReservedKey(event, { coreCommandAvailable });
     });
 
     term.open(termEl!);

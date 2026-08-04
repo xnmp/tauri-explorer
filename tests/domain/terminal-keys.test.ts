@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
+  getAlwaysActiveTerminalCommandId,
   isShellReservedKey,
-  isHardcodedAppShortcut,
   resolveTerminalShortcut,
   defaultTerminalShortcuts,
   effectiveTerminalShortcuts,
@@ -28,78 +28,81 @@ describe("isShellReservedKey (#249, #260)", () => {
 
   it("keeps unbound single-Ctrl readline combos with the shell (Ctrl+R, Ctrl+E…)", () => {
     expect(isShellReservedKey(key("r", { ctrlKey: true }))).toBe(true);
-    expect(isShellReservedKey(key("e", { ctrlKey: true }), { appBound: false })).toBe(true);
+    expect(isShellReservedKey(key("e", { ctrlKey: true }), { coreCommandAvailable: false })).toBe(true);
   });
 
-  it("gives app-bound single-Ctrl combos to the app (Ctrl+P quick open, #260)", () => {
-    expect(isShellReservedKey(key("p", { ctrlKey: true }), { appBound: true })).toBe(false);
-    expect(isShellReservedKey(key("t", { ctrlKey: true }), { appBound: true })).toBe(false);
+  it("keeps non-core app bindings with the focused terminal while preserving core navigation", () => {
+    // A terminal application must receive app-level bindings such as Ctrl+Q
+    // (micro quit) and Ctrl+T (new tab) even when Explorer binds them too.
+    expect(isShellReservedKey(key("q", { ctrlKey: true }), { coreCommandAvailable: true })).toBe(true);
+    expect(isShellReservedKey(key("t", { ctrlKey: true }), { coreCommandAvailable: true })).toBe(true);
+
+    // The explicit core-navigation allowlist remains available from the
+    // terminal: Quick Open, Command Palette, and previous/next tab.
+    expect(isShellReservedKey(key("p", { ctrlKey: true }), { coreCommandAvailable: true })).toBe(false);
+    expect(isShellReservedKey(key("p", { ctrlKey: true, shiftKey: true }), { coreCommandAvailable: true })).toBe(false);
+    expect(isShellReservedKey(key("PageUp", { ctrlKey: true }), { coreCommandAvailable: true })).toBe(false);
+    expect(isShellReservedKey(key("PageDown", { ctrlKey: true }), { coreCommandAvailable: true })).toBe(false);
+
+    // A disabled core command must not consume the terminal application's
+    // key, even though its shortcut is normally always active.
+    expect(isShellReservedKey(key("p", { ctrlKey: true }), { coreCommandAvailable: false })).toBe(true);
   });
 
   it("shell-critical Ctrl combos stay with the shell even when app-bound", () => {
     for (const k of ["c", "d", "v", "x", "z", "a"]) {
-      expect(isShellReservedKey(key(k, { ctrlKey: true }), { appBound: true })).toBe(true);
+      expect(isShellReservedKey(key(k, { ctrlKey: true }), { coreCommandAvailable: true })).toBe(true);
     }
   });
 
-  it("gives Alt combos to the app (Alt+M chord prefix)", () => {
-    expect(isShellReservedKey(key("m", { altKey: true }))).toBe(false);
-    expect(isShellReservedKey(key("m", { ctrlKey: true, altKey: true }))).toBe(false);
+  it("keeps Alt combos with the terminal", () => {
+    expect(isShellReservedKey(key("m", { altKey: true }))).toBe(true);
+    expect(isShellReservedKey(key("m", { ctrlKey: true, altKey: true }))).toBe(true);
   });
 
-  it("gives Meta/Super combos to the app (Super+Alt pane splits)", () => {
-    expect(isShellReservedKey(key("p", { metaKey: true }))).toBe(false);
-    expect(isShellReservedKey(key("p", { metaKey: true, altKey: true }))).toBe(false);
+  it("keeps non-core Meta/Super combos with the terminal", () => {
+    expect(isShellReservedKey(key("q", { metaKey: true }))).toBe(true);
+    expect(isShellReservedKey(key("p", { metaKey: true, altKey: true }))).toBe(true);
   });
 
-  it("gives Ctrl+Shift combos to the app (terminal-emulator convention)", () => {
-    expect(isShellReservedKey(key("f", { ctrlKey: true, shiftKey: true }))).toBe(false);
+  it("keeps non-core Ctrl+Shift combos with the terminal", () => {
+    expect(isShellReservedKey(key("f", { ctrlKey: true, shiftKey: true }))).toBe(true);
   });
 
-  it("lets modifier-less function keys fall through to the app when bound (F5 graph refresh, #432)", () => {
-    // F5 must reach the graph's refresh command, not be eaten as shell typing.
-    expect(isShellReservedKey(key("F5"), { appBound: true })).toBe(false);
-    // Unbound F-keys still stay with the shell (harmless — nothing claims them).
-    expect(isShellReservedKey(key("F5"), { appBound: false })).toBe(true);
+  it("keeps function keys with the terminal even when Explorer binds them", () => {
+    expect(isShellReservedKey(key("F5"), { coreCommandAvailable: true })).toBe(true);
+    expect(isShellReservedKey(key("F5"), { coreCommandAvailable: false })).toBe(true);
     expect(isShellReservedKey(key("F5"))).toBe(true);
-    // Other function keys behave the same way.
-    expect(isShellReservedKey(key("F12"), { appBound: true })).toBe(false);
-    expect(isShellReservedKey(key("F1"), { appBound: false })).toBe(true);
+    expect(isShellReservedKey(key("F12"), { coreCommandAvailable: true })).toBe(true);
+    expect(isShellReservedKey(key("F1"), { coreCommandAvailable: false })).toBe(true);
   });
 
   it("still keeps printable and navigation keys with the shell (not misread as F-keys)", () => {
-    expect(isShellReservedKey(key("f"), { appBound: true })).toBe(true);
-    expect(isShellReservedKey(key("ArrowUp"), { appBound: true })).toBe(true);
-    expect(isShellReservedKey(key("5"), { appBound: true })).toBe(true);
-    expect(isShellReservedKey(key("Enter"), { appBound: true })).toBe(true);
+    expect(isShellReservedKey(key("f"), { coreCommandAvailable: true })).toBe(true);
+    expect(isShellReservedKey(key("ArrowUp"), { coreCommandAvailable: true })).toBe(true);
+    expect(isShellReservedKey(key("5"), { coreCommandAvailable: true })).toBe(true);
+    expect(isShellReservedKey(key("Enter"), { coreCommandAvailable: true })).toBe(true);
   });
 
-  it("keeps ⌘-only clipboard combos with the terminal on mac (#403)", () => {
+  it("keeps non-core ⌘ combos with the terminal while allowing Cmd+P", () => {
     for (const k of ["c", "v", "x", "a", "z"]) {
-      expect(isShellReservedKey(key(k, { metaKey: true }), { appBound: true, isMac: true })).toBe(true);
+      expect(isShellReservedKey(key(k, { metaKey: true }), { coreCommandAvailable: true })).toBe(true);
     }
-    // Same combos still belong to the app off-mac (Super bindings)…
-    expect(isShellReservedKey(key("c", { metaKey: true }), { appBound: true })).toBe(false);
-    // …and mac ⌘ combos outside the critical set stay app territory.
-    expect(isShellReservedKey(key("p", { metaKey: true }), { appBound: true, isMac: true })).toBe(false);
-    // Cmd+Shift / Cmd+Alt are app shortcut territory even on mac.
-    expect(isShellReservedKey(key("c", { metaKey: true, shiftKey: true }), { isMac: true })).toBe(false);
-    expect(isShellReservedKey(key("c", { metaKey: true, altKey: true }), { isMac: true })).toBe(false);
+    expect(isShellReservedKey(key("c", { metaKey: true }), { coreCommandAvailable: true })).toBe(true);
+    expect(isShellReservedKey(key("p", { metaKey: true }), { coreCommandAvailable: true })).toBe(false);
+    expect(isShellReservedKey(key("c", { metaKey: true, shiftKey: true }))).toBe(true);
+    expect(isShellReservedKey(key("c", { metaKey: true, altKey: true }))).toBe(true);
   });
 });
 
-describe("isHardcodedAppShortcut (#260)", () => {
-  it("recognizes the +page.svelte hardcoded shortcuts", () => {
-    expect(isHardcodedAppShortcut(key("j", { ctrlKey: true }))).toBe(true);
-    expect(isHardcodedAppShortcut(key(",", { ctrlKey: true }))).toBe(true);
-    expect(isHardcodedAppShortcut(key("\\", { ctrlKey: true }))).toBe(true);
-    expect(isHardcodedAppShortcut(key("Unidentified", { ctrlKey: true, code: "Backslash" }))).toBe(true);
-  });
-
-  it("rejects unmodified keys and Alt combos", () => {
-    expect(isHardcodedAppShortcut(key("j"))).toBe(false);
-    expect(isHardcodedAppShortcut(key("j", { ctrlKey: true, altKey: true }))).toBe(false);
-    expect(isHardcodedAppShortcut(key("p", { ctrlKey: true }))).toBe(false);
+describe("getAlwaysActiveTerminalCommandId (#496)", () => {
+  it("maps only the explicit terminal-navigation allowlist to its intended commands", () => {
+    expect(getAlwaysActiveTerminalCommandId(key("p", { ctrlKey: true }))).toBe("general.openQuickOpen");
+    expect(getAlwaysActiveTerminalCommandId(key("p", { ctrlKey: true, shiftKey: true }))).toBe("general.openCommandPalette");
+    expect(getAlwaysActiveTerminalCommandId(key("PageUp", { ctrlKey: true }))).toBe("tabs.prevTabAlt");
+    expect(getAlwaysActiveTerminalCommandId(key("PageDown", { ctrlKey: true }))).toBe("tabs.nextTabAlt");
+    expect(getAlwaysActiveTerminalCommandId(key("q", { ctrlKey: true }))).toBeUndefined();
+    expect(getAlwaysActiveTerminalCommandId(key("p", { ctrlKey: true, altKey: true }))).toBeUndefined();
   });
 });
 

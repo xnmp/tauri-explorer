@@ -5,8 +5,7 @@
 <script lang="ts">
   import "@fontsource-variable/inter";
   import { onMount } from "svelte";
-  import { isShellReservedKey, isHardcodedAppShortcut } from "$lib/domain/terminal-keys";
-  import { isMac } from "$lib/domain/platform";
+  import { getAlwaysActiveTerminalCommandId, isShellReservedKey } from "$lib/domain/terminal-keys";
   import { themeStore } from "$lib/state/theme.svelte";
   import { settingsStore } from "$lib/state/settings.svelte";
 import { windowSizeStore } from "$lib/state/window-size.svelte";
@@ -157,6 +156,33 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     // Skip if focus is in an input field (except for special cases)
     const target = event.target as HTMLElement;
     const isInputField = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+    const isTerminalFocus = !!target.closest?.(".terminal-panel");
+
+    // Ctrl+` owns the terminal surface itself, rather than being an Explorer
+    // app-level shortcut. Keep it ahead of terminal key ownership so it can
+    // hide a focused terminal while leaving every terminal-app binding alone.
+    if ((event.key === "`" || event.code === "Backquote") && isModifier && !dialogStore.hasModalOpen) {
+      if (!settingsStore.enableTerminal) return; // feature flag (#175)
+      event.preventDefault();
+      terminalPanelStore.toggle();
+      return;
+    }
+
+    // A terminal-hosted application owns every key except the small,
+    // availability-aware core-navigation allowlist in isShellReservedKey.
+    // This must run before every page-level app shortcut (including Ctrl+F
+    // and Escape) so a new global shortcut cannot accidentally steal input
+    // from a focused terminal application.
+    if (isTerminalFocus) {
+      const coreCommandId = getAlwaysActiveTerminalCommandId(event);
+      const coreCommandAvailable =
+        coreCommandId !== undefined && keybindingsStore.matchesAnyBinding(event, (id) => {
+          if (id !== coreCommandId) return false;
+          const cmd = getCommand(id);
+          return !cmd?.when || cmd.when();
+        });
+      if (isShellReservedKey(event, { coreCommandAvailable })) return;
+    }
 
     // Escape closes any open modal dialog
     if (event.key === "Escape" && dialogStore.hasModalOpen) {
@@ -194,38 +220,12 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
       }
     }
 
-    // Ctrl+`: toggle the embedded terminal. Handled before the input-field
-    // early-return so it also closes the panel while the terminal (a
-    // <textarea> under the hood) has focus — mirroring VS Code.
-    if ((event.key === "`" || event.code === "Backquote") && isModifier && !dialogStore.hasModalOpen) {
-      if (!settingsStore.enableTerminal) return; // feature flag (#175)
-      event.preventDefault();
-      terminalPanelStore.toggle();
-      return;
-    }
-
     // Skip shortcut handling (including hardcoded shortcuts below) if in an
     // input field or a modal dialog is open — e.g. Ctrl+J while typing in a
-    // rename input must not open the jobs panel. The embedded terminal is an
-    // exception: xterm focuses a hidden textarea, but app shortcuts must keep
-    // working there (#249) — the shell keeps its own keys via the
-    // isShellReservedKey gate below.
-    const isTerminalFocus = !!target.closest?.(".terminal-panel");
+    // rename input must not open the jobs panel. Terminal focus has already
+    // been filtered through the ownership gate above.
     if ((isInputField && !isTerminalFocus) || dialogStore.hasModalOpen) {
       return;
-    }
-
-    // While the terminal is focused the shell owns typing, shell-critical
-    // Ctrl combos (Ctrl+C interrupt…) and UNBOUND Ctrl combos (readline);
-    // combos the app has bound — plus Alt/Meta/Ctrl+Shift combos and pending
-    // chord suffixes — fall through to command matching (#249, #260).
-    if (isTerminalFocus && !keybindingsStore.isChordActive) {
-      const appBound =
-        keybindingsStore.matchesAnyBinding(event, (id) => {
-          const cmd = getCommand(id);
-          return !cmd?.when || cmd.when();
-        }) || isHardcodedAppShortcut(event);
-      if (isShellReservedKey(event, { appBound, isMac })) return;
     }
 
     // Ctrl+J: Open jobs panel (hardcoded)

@@ -1,1 +1,1 @@
-npx playwright test e2e/bug-report.spec.ts
+PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/run/current-system/sw/bin/google-chrome npx playwright test e2e/bug-report.spec.ts --workers=1

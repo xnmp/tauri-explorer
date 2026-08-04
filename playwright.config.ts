@@ -9,18 +9,20 @@ export default defineConfig({
   reporter: "html",
   use: {
     baseURL: "http://localhost:1420",
-    // Nix hosts can supply their wrapped browser when Playwright's downloaded
-    // Chromium cannot load the host's shared libraries. CI leaves this unset.
-    launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
-      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
-      : undefined,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      // Nix hosts can supply their wrapped browser when Playwright's downloaded
+      // Chromium cannot load the host's shared libraries. CI leaves this unset.
+      use: {
+        ...devices["Desktop Chrome"],
+        launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+          ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+          : undefined,
+      },
     },
     // WebKit ≈ WKWebView: the closest automated proxy for the macOS webview
     // (no WKWebView WebDriver exists). Opt-in: WEBKIT=1 locally, or

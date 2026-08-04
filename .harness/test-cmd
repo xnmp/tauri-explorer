@@ -1,0 +1,1 @@
+bunx vitest run tests/windows-install-script.test.ts

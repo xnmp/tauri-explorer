@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   isShellReservedKey,
-  isHardcodedAppShortcut,
   resolveTerminalShortcut,
   defaultTerminalShortcuts,
   effectiveTerminalShortcuts,
@@ -51,28 +50,25 @@ describe("isShellReservedKey (#249, #260)", () => {
     }
   });
 
-  it("gives Alt combos to the app (Alt+M chord prefix)", () => {
-    expect(isShellReservedKey(key("m", { altKey: true }))).toBe(false);
-    expect(isShellReservedKey(key("m", { ctrlKey: true, altKey: true }))).toBe(false);
+  it("keeps Alt combos with the terminal", () => {
+    expect(isShellReservedKey(key("m", { altKey: true }))).toBe(true);
+    expect(isShellReservedKey(key("m", { ctrlKey: true, altKey: true }))).toBe(true);
   });
 
-  it("gives Meta/Super combos to the app (Super+Alt pane splits)", () => {
-    expect(isShellReservedKey(key("p", { metaKey: true }))).toBe(false);
-    expect(isShellReservedKey(key("p", { metaKey: true, altKey: true }))).toBe(false);
+  it("keeps non-core Meta/Super combos with the terminal", () => {
+    expect(isShellReservedKey(key("q", { metaKey: true }))).toBe(true);
+    expect(isShellReservedKey(key("p", { metaKey: true, altKey: true }))).toBe(true);
   });
 
-  it("gives Ctrl+Shift combos to the app (terminal-emulator convention)", () => {
-    expect(isShellReservedKey(key("f", { ctrlKey: true, shiftKey: true }))).toBe(false);
+  it("keeps non-core Ctrl+Shift combos with the terminal", () => {
+    expect(isShellReservedKey(key("f", { ctrlKey: true, shiftKey: true }))).toBe(true);
   });
 
-  it("lets modifier-less function keys fall through to the app when bound (F5 graph refresh, #432)", () => {
-    // F5 must reach the graph's refresh command, not be eaten as shell typing.
-    expect(isShellReservedKey(key("F5"), { appBound: true })).toBe(false);
-    // Unbound F-keys still stay with the shell (harmless — nothing claims them).
+  it("keeps function keys with the terminal even when Explorer binds them", () => {
+    expect(isShellReservedKey(key("F5"), { appBound: true })).toBe(true);
     expect(isShellReservedKey(key("F5"), { appBound: false })).toBe(true);
     expect(isShellReservedKey(key("F5"))).toBe(true);
-    // Other function keys behave the same way.
-    expect(isShellReservedKey(key("F12"), { appBound: true })).toBe(false);
+    expect(isShellReservedKey(key("F12"), { appBound: true })).toBe(true);
     expect(isShellReservedKey(key("F1"), { appBound: false })).toBe(true);
   });
 
@@ -83,32 +79,14 @@ describe("isShellReservedKey (#249, #260)", () => {
     expect(isShellReservedKey(key("Enter"), { appBound: true })).toBe(true);
   });
 
-  it("keeps ⌘-only clipboard combos with the terminal on mac (#403)", () => {
+  it("keeps non-core ⌘ combos with the terminal while allowing Cmd+P", () => {
     for (const k of ["c", "v", "x", "a", "z"]) {
       expect(isShellReservedKey(key(k, { metaKey: true }), { appBound: true, isMac: true })).toBe(true);
     }
-    // Same combos still belong to the app off-mac (Super bindings)…
-    expect(isShellReservedKey(key("c", { metaKey: true }), { appBound: true })).toBe(false);
-    // …and mac ⌘ combos outside the critical set stay app territory.
+    expect(isShellReservedKey(key("c", { metaKey: true }), { appBound: true })).toBe(true);
     expect(isShellReservedKey(key("p", { metaKey: true }), { appBound: true, isMac: true })).toBe(false);
-    // Cmd+Shift / Cmd+Alt are app shortcut territory even on mac.
-    expect(isShellReservedKey(key("c", { metaKey: true, shiftKey: true }), { isMac: true })).toBe(false);
-    expect(isShellReservedKey(key("c", { metaKey: true, altKey: true }), { isMac: true })).toBe(false);
-  });
-});
-
-describe("isHardcodedAppShortcut (#260)", () => {
-  it("recognizes the +page.svelte hardcoded shortcuts", () => {
-    expect(isHardcodedAppShortcut(key("j", { ctrlKey: true }))).toBe(true);
-    expect(isHardcodedAppShortcut(key(",", { ctrlKey: true }))).toBe(true);
-    expect(isHardcodedAppShortcut(key("\\", { ctrlKey: true }))).toBe(true);
-    expect(isHardcodedAppShortcut(key("Unidentified", { ctrlKey: true, code: "Backslash" }))).toBe(true);
-  });
-
-  it("rejects unmodified keys and Alt combos", () => {
-    expect(isHardcodedAppShortcut(key("j"))).toBe(false);
-    expect(isHardcodedAppShortcut(key("j", { ctrlKey: true, altKey: true }))).toBe(false);
-    expect(isHardcodedAppShortcut(key("p", { ctrlKey: true }))).toBe(false);
+    expect(isShellReservedKey(key("c", { metaKey: true, shiftKey: true }), { isMac: true })).toBe(true);
+    expect(isShellReservedKey(key("c", { metaKey: true, altKey: true }), { isMac: true })).toBe(true);
   });
 });
 

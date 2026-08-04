@@ -34,6 +34,22 @@ git clone https://github.com/xnmp/tauri-explorer && cd tauri-explorer/packaging/
 
 Binaries aren't code-signed yet. Windows shows a SmartScreen warning on first launch. macOS reports un-notarized downloads as "damaged" and blocks them — the `xattr` command above clears the quarantine flag (Homebrew removed its `--no-quarantine` option, so this manual step is the only way until the app is notarized).
 
+## Use as system file picker
+
+On Linux, Tauri Explorer provides an `xdg-desktop-portal` FileChooser backend.
+Portal backends are selected by your desktop portal configuration; installing the
+package alone does not replace an existing GTK or desktop-specific file picker.
+
+To select Tauri Explorer for file-picker requests, create
+`~/.config/xdg-desktop-portal/portals.conf` with:
+
+```ini
+[preferred]
+org.freedesktop.impl.portal.FileChooser=tauri-explorer
+```
+
+Restart `xdg-desktop-portal` or sign out and back in after changing the file.
+
 ## Building
 
 Requires [Rust](https://rustup.rs/), [Bun](https://bun.sh/), and [Tauri v2 prerequisites](https://v2.tauri.app/start/prerequisites/).

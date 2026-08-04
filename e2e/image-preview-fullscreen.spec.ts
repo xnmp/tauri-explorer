@@ -28,6 +28,30 @@ async function selectAndWaitForImage(page: Page, filename: string) {
 }
 
 test.describe("Image preview click-to-fullscreen", () => {
+  test("a tall image fits the normal preview pane without vertical scrolling", async ({ page }) => {
+    await openPicturesWithPreview(page);
+    const image = await selectAndWaitForImage(page, "photo1.jpg");
+    const content = page.locator(".preview-content");
+
+    // The browser mock's image is intentionally small. Give the real rendered
+    // image a tall intrinsic presentation so this exercises the same flex
+    // sizing path as a tall photo received from the backend.
+    await image.evaluate((element) => {
+      (element as HTMLImageElement).style.height = "2000px";
+      (element as HTMLImageElement).style.width = "auto";
+    });
+
+    await expect.poll(async () => content.evaluate((element) => element.scrollHeight)).toBe(
+      await content.evaluate((element) => element.clientHeight),
+    );
+
+    const [contentBox, imageBox] = await Promise.all([content.boundingBox(), image.boundingBox()]);
+    expect(contentBox).not.toBeNull();
+    expect(imageBox).not.toBeNull();
+    expect(imageBox!.y).toBeGreaterThanOrEqual(contentBox!.y);
+    expect(imageBox!.y + imageBox!.height).toBeLessThanOrEqual(contentBox!.y + contentBox!.height);
+  });
+
   test("click enters fullscreen, arrows scroll siblings, click reverts", async ({ page }) => {
     await openPicturesWithPreview(page);
     const img = await selectAndWaitForImage(page, "photo1.jpg");

@@ -2,11 +2,13 @@ import { execFile } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
 
 const execFileAsync = promisify(execFile);
 const installerPath = new URL('../windows_install.ps1', import.meta.url);
+const installerFilePath = fileURLToPath(installerPath);
 const readmePath = new URL('../README.md', import.meta.url);
 const powershell = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 const downloadCommand =
@@ -22,9 +24,10 @@ describe.skipIf(process.platform !== 'win32')('Windows installer invocation', ()
 	it('reports missing prerequisites before it starts a build', async () => {
 		const sandbox = await mkdtemp(join(tmpdir(), 'tauri-explorer installer missing '));
 		try {
-			const result = await powershellResult(['-File', installerPath.pathname], {
+			const result = await powershellResult(['-File', installerFilePath], {
 				PATH: sandbox,
 				'ProgramFiles(x86)': sandbox,
+				VSINSTALLDIR: sandbox,
 			});
 
 			expect(result.code).toBe(1);
@@ -43,7 +46,7 @@ describe.skipIf(process.platform !== 'win32')('Windows installer invocation', ()
 		const harnessPath = join(sandbox, 'invoke-installer.ps1');
 		try {
 			await writeFile(harnessPath, powershellHarness, 'utf8');
-			const { stdout } = await execFileAsync(powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', harnessPath, installerPath.pathname]);
+			const { stdout } = await execFileAsync(powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', harnessPath, installerFilePath]);
 			const result = JSON.parse(stdout.trim().split(/\r?\n/).findLast((line) => line.startsWith('RESULT:'))!.slice(7));
 
 			expect(result.existingBuilds).toEqual(['bun install', 'bunx tauri build']);
@@ -75,7 +78,6 @@ const powershellHarness = String.raw`
 param([string]$Installer)
 $ErrorActionPreference = 'Stop'
 $env:OS = 'Windows_NT'
-$env:VSINSTALLDIR = 'C:\fake-build-tools'
 $script:buildCalls = @()
 $script:gitCommands = @()
 $script:msiArguments = @()
@@ -92,6 +94,10 @@ function git {
     $global:LASTEXITCODE = 0
 }
 function cargo { $global:LASTEXITCODE = 0 }
+function vswhere {
+    'C:\fake-build-tools'
+    $global:LASTEXITCODE = 0
+}
 function bun {
     $script:buildCalls += "bun $args"
     $global:LASTEXITCODE = 0

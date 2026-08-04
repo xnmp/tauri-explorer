@@ -156,6 +156,21 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     // Skip if focus is in an input field (except for special cases)
     const target = event.target as HTMLElement;
     const isInputField = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+    const isTerminalFocus = !!target.closest?.(".terminal-panel");
+
+    // A terminal-hosted application owns every key except the small,
+    // availability-aware core-navigation allowlist in isShellReservedKey.
+    // This must run before every page-level special case (including Ctrl+F,
+    // Escape, and Ctrl+`) so a new global shortcut cannot accidentally steal
+    // input from a focused terminal application.
+    if (isTerminalFocus) {
+      const appBound =
+        keybindingsStore.matchesAnyBinding(event, (id) => {
+          const cmd = getCommand(id);
+          return !cmd?.when || cmd.when();
+        });
+      if (isShellReservedKey(event, { appBound })) return;
+    }
 
     // Escape closes any open modal dialog
     if (event.key === "Escape" && dialogStore.hasModalOpen) {
@@ -205,23 +220,10 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
 
     // Skip shortcut handling (including hardcoded shortcuts below) if in an
     // input field or a modal dialog is open — e.g. Ctrl+J while typing in a
-    // rename input must not open the jobs panel. The embedded terminal is an
-    // exception: xterm focuses a hidden textarea, and the focused-terminal
-    // allowlist below decides which core navigation keys Explorer may handle.
-    const isTerminalFocus = !!target.closest?.(".terminal-panel");
+    // rename input must not open the jobs panel. Terminal focus has already
+    // been filtered through the ownership gate above.
     if ((isInputField && !isTerminalFocus) || dialogStore.hasModalOpen) {
       return;
-    }
-
-    // A terminal-hosted application owns every key except the small,
-    // availability-aware core-navigation allowlist in isShellReservedKey.
-    if (isTerminalFocus) {
-      const appBound =
-        keybindingsStore.matchesAnyBinding(event, (id) => {
-          const cmd = getCommand(id);
-          return !cmd?.when || cmd.when();
-        });
-      if (isShellReservedKey(event, { appBound })) return;
     }
 
     // Ctrl+J: Open jobs panel (hardcoded)

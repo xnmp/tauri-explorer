@@ -165,10 +165,11 @@ function createWindowTabsManager() {
   );
 
   /** Destroy all registered explorers (unwatch dirs, drop listeners) and clear the registry. */
-  function destroyAllExplorers(): Promise<void> {
-    const destroying = Array.from(explorers.values(), (explorer) => explorer.destroy());
+  function destroyAllExplorers(): void {
+    for (const explorer of explorers.values()) {
+      explorer.destroy();
+    }
     explorers.clear();
-    return Promise.all(destroying).then(() => undefined);
   }
 
   function findTab(tabId: string): WindowTab | null {
@@ -512,7 +513,7 @@ function createWindowTabsManager() {
 
     // Destroy before clearing — otherwise backend watch refcounts and
     // streaming listeners leak for every replaced explorer.
-    void destroyAllExplorers();
+    destroyAllExplorers();
 
     tabs = normalized.tabs.map((pt) =>
       reviveTab(pt, {
@@ -540,7 +541,7 @@ function createWindowTabsManager() {
     }
 
     // No saved state or child window — create a fresh tab
-    void destroyAllExplorers();
+    destroyAllExplorers();
     tabs = [];
     activeTabId = null;
 
@@ -1130,14 +1131,14 @@ function createWindowTabsManager() {
     /** Tear down this manager: remove the window focus listener and destroy
      *  all explorers. The app singleton lives for the whole session, but the
      *  factory is used in tests where undisposed managers would leak (#439). */
-    async dispose() {
+    dispose() {
       if (typeof window !== "undefined") {
         window.removeEventListener("focus", onWindowFocus);
       }
       // Flushes a queued write before dropping its page-lifecycle listeners,
       // so tearing the manager down can't swallow the last interaction.
       tabStatePersister.dispose();
-      await destroyAllExplorers();
+      destroyAllExplorers();
     },
   };
 }

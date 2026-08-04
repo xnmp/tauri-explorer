@@ -877,7 +877,7 @@ function createExplorerState(seed?: ExplorerSeed) {
       watch.destroy();
       // Tear down the streaming listener and any in-flight listing,
       // otherwise each closed tab leaks a Tauri event listener.
-      return dirListing.cleanup();
+      void dirListing.cleanup();
     },
   };
 }

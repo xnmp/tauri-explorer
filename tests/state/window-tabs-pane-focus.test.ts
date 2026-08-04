@@ -5,22 +5,15 @@
  * so the active-pane border and arrow-key ownership) from.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { createWindowTabsManager } from "$lib/state/window-tabs.svelte";
-
-const managers: ReturnType<typeof createWindowTabsManager>[] = [];
 
 beforeEach(() => {
   localStorage.clear();
 });
 
-afterEach(async () => {
-  await Promise.all(managers.splice(0).map((manager) => manager.dispose()));
-});
-
 function freshManager() {
   const manager = createWindowTabsManager();
-  managers.push(manager);
   manager.init("/home/user", true);
   return manager;
 }

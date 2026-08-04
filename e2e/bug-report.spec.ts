@@ -107,7 +107,12 @@ test("failed submission preserves the draft in the GitHub fallback", async ({ pa
   expect(url.searchParams.get("title")).toBe("Keep my feature title");
   expect(url.searchParams.get("body")).toContain("Keep my typed description 🐛");
   expect(url.searchParams.get("labels")).toBe("enhancement");
-  await page.locator(".toast.error").screenshot({ path: evidencePath("ac-1-github-fallback.png") });
+
+  const github = await page.context().newPage();
+  await github.goto(url.toString(), { waitUntil: "domcontentloaded" });
+  await expect(github).toHaveURL(/github\.com\/(?:login|xnmp\/tauri-explorer\/issues\/new)/);
+  await github.screenshot({ path: evidencePath("ac-1-github-fallback.png") });
+  await github.close();
 });
 
 test("report fallback error toast has an opaque surface", async ({ page }) => {
@@ -123,9 +128,14 @@ test("report fallback error toast has an opaque surface", async ({ page }) => {
 
   const toast = page.locator(".toast.error");
   await expect(toast).toContainText("Could not submit in-app — opening GitHub instead");
-  await expect
-    .poll(() => toast.evaluate((element) => getComputedStyle(element).backgroundColor))
-    .not.toBe("rgba(0, 0, 0, 0)");
+  await expect.poll(() => toast.evaluate((element) => {
+    const style = getComputedStyle(element);
+    const channels = style.backgroundColor.match(/[\d.]+/g) ?? [];
+    return {
+      alpha: style.backgroundColor.startsWith("rgba") ? Number(channels[3]) : 1,
+      backgroundImage: style.backgroundImage,
+    };
+  })).toEqual({ alpha: 1, backgroundImage: "none" });
   await toast.screenshot({ path: evidencePath("ac-2-report-fallback-toast.png") });
 });
 

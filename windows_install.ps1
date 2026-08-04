@@ -36,11 +36,13 @@ if (-not (Get-Command bun -ErrorAction SilentlyContinue)) {
 }
 
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-$buildTools = if ($env:VSINSTALLDIR) {
-    # A Developer PowerShell prompt already exposes the selected C++ toolchain.
-    $env:VSINSTALLDIR
-} elseif (Test-Path $vswhere) {
-    & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+$vswhereCommand = if (Test-Path $vswhere) {
+    $vswhere
+} else {
+    Get-Command vswhere -ErrorAction SilentlyContinue
+}
+$buildTools = if ($vswhereCommand) {
+    & $vswhereCommand -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 } else {
     $null
 }

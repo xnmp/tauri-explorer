@@ -9,6 +9,11 @@ export default defineConfig({
   reporter: "html",
   use: {
     baseURL: "http://localhost:1420",
+    // Nix hosts can supply their wrapped browser when Playwright's downloaded
+    // Chromium cannot load the host's shared libraries. CI leaves this unset.
+    launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH }
+      : undefined,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },

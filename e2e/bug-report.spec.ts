@@ -59,6 +59,24 @@ for (const kind of ["bug", "feature"] as const) {
   });
 }
 
+test("report submission closes before the native command completes", async ({ page }) => {
+  await page.goto("/");
+  await waitForEntries(page);
+  await page.evaluate(() => {
+    (globalThis as typeof globalThis & {
+      __MOCK_LATENCY__?: Record<string, number>;
+    }).__MOCK_LATENCY__ = { submit_user_report: 800 };
+  });
+
+  const dialog = await openReportDialog(page);
+  await dialog.getByLabel("Title").fill("Optimistic report");
+  await dialog.getByRole("button", { name: "Submit" }).click();
+
+  await expect(dialog).toBeHidden({ timeout: 300 });
+  expect(await page.evaluate(() => localStorage.getItem("mock-submitted-report"))).toBeNull();
+  await expect(page.locator(".toast.success")).toContainText("Issue #5470");
+});
+
 test("the single Report Issue command defaults to bug and accepts a blank description", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
@@ -72,6 +90,9 @@ test("the single Report Issue command defaults to bug and accepts a blank descri
   await dialog.getByRole("button", { name: "Submit" }).click();
 
   await expect(dialog).toBeHidden();
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("mock-submitted-report")))
+    .not.toBeNull();
   const submitted = await page.evaluate(() => localStorage.getItem("mock-submitted-report"));
   expect(JSON.parse(submitted!)).toMatchObject({
     title: "Title-only bug",
@@ -318,36 +339,56 @@ test("successful submission forwards selected images to the native report comman
   ]);
 });
 
-test("failed report with an attachment preserves both instead of opening a lossy fallback", async ({ page }) => {
+test("failed optimistic attachment submission restores the complete draft on reopen", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
-  await page.evaluate(() => localStorage.setItem("mock-report-error", "network_unreachable"));
-  const dialog = await openReportDialog(page);
+  await page.evaluate(() => {
+    localStorage.setItem("mock-report-error", "network_unreachable");
+    localStorage.setItem("mock-report-clipboard-image", "1");
+  });
+  const dialog = await openReportDialog(page, "feature");
   await dialog.getByLabel("Title").fill("Keep attachment title");
   await dialog.getByLabel("Description").fill("Keep attachment description");
-  await dialog.getByLabel("Add images").setInputFiles({
-    name: "keep.png", mimeType: "image/png", buffer: png,
-  });
+  await dialog.getByLabel(/How can we reach you/).fill("@retry-reporter");
+  await dialog.getByRole("button", { name: "Attach from clipboard" }).click();
   await dialog.getByRole("button", { name: "Submit" }).click();
 
-  await expect(dialog.getByRole("alert")).toContainText("attachments");
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByLabel("Title")).toHaveValue("Keep attachment title");
-  await expect(dialog.getByText("keep.png")).toBeVisible();
+  await expect(dialog).toBeHidden();
+  await expect(page.locator(".toast.error")).toContainText("saved for retry");
   await expect
     .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
     .toBeNull();
-  await page.screenshot({ path: evidencePath("ac-5-failure-preserves-attachments.png") });
+
+  const restoredDialog = await openReportDialog(page);
+  await expect(restoredDialog.getByLabel("Title")).toHaveValue("Keep attachment title");
+  await expect(restoredDialog.getByLabel("Description")).toHaveValue(
+    "Keep attachment description",
+  );
+  await expect(restoredDialog.getByLabel(/How can we reach you/)).toHaveValue(
+    "@retry-reporter",
+  );
+  await expect(restoredDialog.getByRole("button", { name: "Feature" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(restoredDialog.getByText("Clipboard screenshot.png")).toBeVisible();
+  await expect(
+    restoredDialog.getByRole("button", { name: "Attach from clipboard" }),
+  ).toHaveCount(0);
+  await page.screenshot({
+    path: evidencePath("issue-587-optimistic-failure-retry.png"),
+    animations: "disabled",
+  });
 });
 
 for (const [kind, message] of [
   ["daily_cap", "Reports are temporarily unavailable"],
   ["rate_limited", "Too many reports"],
-  ["malformed_input", "not a valid image"],
+  ["malformed_input", "not valid"],
   ["attachment_uploader_unavailable", "Install GitHub CLI"],
   ["attachment_upload_failed", "Could not upload the image through gh-image"],
 ] as const) {
-  test(`${kind} attachment failure explains the next action and preserves the draft`, async ({
+  test(`${kind} optimistic attachment failure is explained by a toast`, async ({
     page,
   }) => {
     await page.goto("/");
@@ -364,13 +405,12 @@ for (const [kind, message] of [
 
     await dialog.getByRole("button", { name: "Submit" }).click();
 
-    await expect(dialog.getByRole("alert")).toContainText(message);
-    await expect(dialog.getByLabel("Title")).toHaveValue(`Keep ${kind} title`);
-    await expect(dialog.getByText(`${kind}.png`)).toBeVisible();
+    await expect(dialog).toBeHidden();
+    await expect(page.locator(".toast.error")).toContainText(message);
   });
 }
 
-test("draft stays editable when both relay and browser fallback fail", async ({ page }) => {
+test("draft is restored when both relay and browser fallback fail", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
   await page.evaluate(() => {
@@ -383,16 +423,18 @@ test("draft stays editable when both relay and browser fallback fail", async ({ 
   await dialog.getByLabel("Description").fill("Do not lose this description");
   await dialog.getByRole("button", { name: "Submit" }).click();
 
-  await expect(page.getByRole("alert")).toContainText("your report is still here");
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByLabel("Title")).toHaveValue("Do not lose this title");
-  await expect(dialog.getByLabel("Description")).toHaveValue(
+  await expect(dialog).toBeHidden();
+  await expect(page.locator(".toast.error")).toContainText("draft is saved");
+
+  const restoredDialog = await openReportDialog(page);
+  await expect(restoredDialog.getByLabel("Title")).toHaveValue("Do not lose this title");
+  await expect(restoredDialog.getByLabel("Description")).toHaveValue(
     "Do not lose this description",
   );
-  await expect(dialog.getByRole("button", { name: "Submit" })).toBeEnabled();
+  await expect(restoredDialog.getByRole("button", { name: "Submit" })).toBeEnabled();
 });
 
-test("unicode draft stays editable when it cannot fit in a fallback URL", async ({ page }) => {
+test("unicode draft is restored when it cannot fit in a fallback URL", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
   await page.evaluate(() => localStorage.setItem("mock-report-error", "network_unreachable"));
@@ -403,12 +445,14 @@ test("unicode draft stays editable when it cannot fit in a fallback URL", async 
   await dialog.getByLabel("Description").fill(description);
   await dialog.getByRole("button", { name: "Submit" }).click();
 
-  await expect(page.getByRole("alert")).toContainText("too long for GitHub");
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByLabel("Description")).toHaveValue(description);
+  await expect(dialog).toBeHidden();
+  await expect(page.locator(".toast.error")).toContainText("draft is saved");
   await expect
     .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
     .toBeNull();
+
+  const restoredDialog = await openReportDialog(page);
+  await expect(restoredDialog.getByLabel("Description")).toHaveValue(description);
 });
 
 test("Open Logs Folder navigates the pane to the log directory", async ({ page }) => {

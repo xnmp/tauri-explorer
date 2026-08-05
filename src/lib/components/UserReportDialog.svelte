@@ -34,6 +34,8 @@
   let clipboardAttachmentData = $state<string | null>(null);
   let readingClipboard = $state(false);
   let submitting = $state(false);
+  let retryDraft: UserReportDraft | null = null;
+  let retryClipboardAttachmentData: string | null = null;
   const canSubmit = $derived(
     title.trim().length > 0 && !submitting,
   );
@@ -44,14 +46,18 @@
 
   $effect(() => {
     if (!open) return;
-    kind = "bug";
-    title = "";
-    body = "";
-    contact = "";
-    attachments = [];
+    const restoredDraft = retryDraft;
+    const restoredClipboardAttachmentData = retryClipboardAttachmentData;
+    retryDraft = null;
+    retryClipboardAttachmentData = null;
+    kind = restoredDraft?.kind ?? "bug";
+    title = restoredDraft?.title ?? "";
+    body = restoredDraft?.body ?? "";
+    contact = restoredDraft?.contact ?? "";
+    attachments = [...(restoredDraft?.attachments ?? [])];
     attachmentError = "";
     clipboardImageAvailable = false;
-    clipboardAttachmentData = null;
+    clipboardAttachmentData = restoredClipboardAttachmentData;
     readingClipboard = false;
     submitting = false;
     void probeClipboardImage();
@@ -134,23 +140,46 @@
     attachmentError = "";
   }
 
+  function retainDraftForRetry(
+    draft: UserReportDraft,
+    submittedClipboardAttachmentData: string | null,
+  ): void {
+    retryDraft = {
+      ...draft,
+      attachments: [...(draft.attachments ?? [])],
+    };
+    retryClipboardAttachmentData = submittedClipboardAttachmentData !== null
+      && draft.attachments?.some(
+        (attachment) => attachment.data === submittedClipboardAttachmentData,
+      )
+      ? submittedClipboardAttachmentData
+      : null;
+  }
+
   async function submit(): Promise<void> {
     if (!canSubmit) return;
     submitting = true;
-    const draft: UserReportDraft = { title, body, kind, contact, attachments };
+    const draft: UserReportDraft = {
+      title,
+      body,
+      kind,
+      contact,
+      attachments: [...attachments],
+    };
+    const submittedClipboardAttachmentData = clipboardAttachmentData;
+    onClose();
     try {
       const issue = await submitUserReport(draft);
-      onClose();
       toastStore.show("Report submitted", "success", {
         duration: 6000,
         link: { url: issue.url, label: `Issue #${issue.number}` },
       });
     } catch (unknownError) {
       const error = unknownError as Partial<UserReportError>;
-      if (attachments.length > 0) {
-        attachmentError = userReportAttachmentFailureMessage(error.kind);
+      if ((draft.attachments?.length ?? 0) > 0) {
+        retainDraftForRetry(draft, submittedClipboardAttachmentData);
         toastStore.show(
-          attachmentError,
+          userReportAttachmentFailureMessage(error.kind),
           "error",
           { duration: 8000 },
         );
@@ -166,8 +195,9 @@
       );
       const fallbackUrl = userReportFallbackUrl(draft);
       if (!fallbackUrl) {
+        retainDraftForRetry(draft, submittedClipboardAttachmentData);
         toastStore.show(
-          "Report is too long for GitHub’s browser form — your report is still here. Copy it and try again.",
+          "Report is too long for GitHub’s browser form. Your draft is saved; reopen Report Issue to retry.",
           "error",
           { duration: 8000 },
         );
@@ -175,10 +205,10 @@
       }
       try {
         await openExternalUrl(fallbackUrl);
-        onClose();
       } catch {
+        retainDraftForRetry(draft, submittedClipboardAttachmentData);
         toastStore.show(
-          "Could not open GitHub — your report is still here. Copy it and try again.",
+          "Could not open GitHub. Your draft is saved; reopen Report Issue to retry.",
           "error",
           { duration: 8000 },
         );

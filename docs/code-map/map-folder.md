@@ -46,7 +46,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `OptionPicker.svelte` — generic secondary list picker.
 - `ContextMenu.svelte` — right-click menu renderer (items from context-menu stores).
 - `Modal.svelte` + `modal.css` — base modal shell + shared modal styling.
-- `UserReportDialog.svelte` — in-app issue form; submits through Rust and preserves the draft when attachment upload or browser fallback fails.
+- `UserReportDialog.svelte` — in-app issue form; closes optimistically, submits through Rust, toasts background failures, and restores saved failed drafts when reopened.
 - `SettingsDialog.svelte` — settings dialog shell (toggles, sections, plugin sections).
 - `KeybindingsSettings.svelte` — keybinding customization UI in settings.
 - `ShortcutCheatsheet.svelte` — keyboard shortcut cheatsheet overlay.

@@ -90,21 +90,21 @@ export function userReportAttachmentFailureMessage(
   kind: UserReportErrorKind | undefined,
 ): string {
   if (kind === "attachment_uploader_unavailable") {
-    return "Install GitHub CLI and the gh-image extension to submit images: gh extension install drogers0/gh-image. Your report and images are still here.";
+    return "Install GitHub CLI and the gh-image extension to submit images: gh extension install drogers0/gh-image. Your draft is saved for retry.";
   }
   if (kind === "attachment_upload_failed") {
-    return "Could not upload the image through gh-image. Install or configure the extension, then try again; your report and images are still here.";
+    return "Could not upload the image through gh-image. Install or configure the extension, then reopen Report Issue to retry; your draft is saved.";
   }
   if (kind === "malformed_input") {
-    return "One of your attached images is not a valid image. Remove it and try again.";
+    return "One of your attached images is not valid. Your draft is saved; reopen Report Issue, remove it, and try again.";
   }
   if (kind === "daily_cap") {
-    return "Reports are temporarily unavailable. Your report and images are still here.";
+    return "Reports are temporarily unavailable. Your draft is saved for retry.";
   }
   if (kind === "rate_limited") {
-    return "Too many reports were submitted. Try again later; your report and images are still here.";
+    return "Too many reports were submitted. Your draft is saved; try again later.";
   }
-  return "Could not submit the report with its attachments. Your report and images are still here.";
+  return "Could not submit the report with its attachments. Your draft is saved for retry.";
 }
 
 const REPO_ISSUES_URL = "https://github.com/xnmp/tauri-explorer/issues/new";

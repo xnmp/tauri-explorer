@@ -83,4 +83,4 @@ bun run start
 
 ## Status
 
-Actively developed — see the [changelog](CHANGELOG.md) and [releases](https://github.com/xnmp/tauri-explorer/releases) for what's new. If you hit a bug: Command Palette → "Report Issue", or [open an issue](https://github.com/xnmp/tauri-explorer/issues/new/choose). Image attachments require authenticated [GitHub CLI](https://cli.github.com/) plus the optional [`gh-image`](https://github.com/drogers0/gh-image) extension (`gh extension install drogers0/gh-image`); attachment upload failures keep the report draft open for retry.
+Actively developed — see the [changelog](CHANGELOG.md) and [releases](https://github.com/xnmp/tauri-explorer/releases) for what's new. If you hit a bug: Command Palette → "Report Issue", or [open an issue](https://github.com/xnmp/tauri-explorer/issues/new/choose). Image attachments require authenticated [GitHub CLI](https://cli.github.com/) plus the optional [`gh-image`](https://github.com/drogers0/gh-image) extension (`gh extension install drogers0/gh-image`); background submission failures save the report draft for retry.

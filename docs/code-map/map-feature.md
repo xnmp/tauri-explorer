@@ -272,6 +272,7 @@ backend for E2E/browser).
 
 - `components/ToastOverlay.svelte`, `state/toast.svelte.ts` — `toastStore` transient notices
 - `state/dialogs.svelte.ts` — `dialogStore` generic dialog orchestration
+- `domain/lazy-dialog.ts` — failure-safe dialog chunk loading (`loadDialogComponent`); `+page.svelte`'s lazy-dialog `$effect` routes all 12 code-split dialogs through it so a failed import resets the open-flag and toasts instead of soft-locking hotkeys (#584)
 - `components/Modal.svelte`, `components/modal.css` — modal shell
 - `components/UserReportDialog.svelte`, `domain/user-report.ts`, `api/user-report.ts` — bug/feature draft UI, preserved GitHub fallback, and report IPC
 - `components/CrashNotice.svelte`/`state`+`api/crash.ts`, `UpdateNotice.svelte`+`api/update.ts`

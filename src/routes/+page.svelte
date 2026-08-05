@@ -22,6 +22,8 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
   import { executeCommand, getCommand } from "$lib/state/commands.svelte";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
+  import { toastStore } from "$lib/state/toast.svelte";
+  import { loadDialogComponent, type LazyDialogRequest } from "$lib/domain/lazy-dialog";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { saveFocusedWindowState } from "$lib/state/focused-window";
@@ -98,42 +100,49 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
   let OptionPicker = $state<Component<any> | null>(null);
   let UserReportDialog = $state<Component<any> | null>(null);
 
+  // A failed chunk load must roll back the dialog's open-state (otherwise
+  // dialogStore.hasModalOpen soft-locks every shortcut with nothing visible
+  // to close — #584) and tell the user. loadDialogComponent enforces both.
+  const loadDialog = <T,>(request: LazyDialogRequest<T>): void => void loadDialogComponent(request, (message) => toastStore.error(message));
+
   $effect(() => {
     if (dialogStore.isThemePickerOpen && !ThemePicker) {
-      void import("$lib/components/ThemePicker.svelte").then((m) => (ThemePicker = m.default));
+      loadDialog({ label: "Theme Picker", load: () => import("$lib/components/ThemePicker.svelte"), onLoaded: (c) => (ThemePicker = c), onFailure: () => dialogStore.closeThemePicker() });
     }
     if (dialogStore.isSettingsOpen && !SettingsDialog) {
-      void import("$lib/components/SettingsDialog.svelte").then((m) => (SettingsDialog = m.default));
+      loadDialog({ label: "Settings", load: () => import("$lib/components/SettingsDialog.svelte"), onLoaded: (c) => (SettingsDialog = c), onFailure: () => dialogStore.closeSettings() });
     }
     if (dialogStore.isWorkspaceOpen && !WorkspaceDialog) {
-      void import("$lib/components/WorkspaceDialog.svelte").then((m) => (WorkspaceDialog = m.default));
+      loadDialog({ label: "Workspaces", load: () => import("$lib/components/WorkspaceDialog.svelte"), onLoaded: (c) => (WorkspaceDialog = c), onFailure: () => dialogStore.closeWorkspace() });
     }
     if (dialogStore.isBulkRenameOpen && !BulkRenameDialog) {
-      void import("$lib/components/BulkRenameDialog.svelte").then((m) => (BulkRenameDialog = m.default));
+      loadDialog({ label: "Bulk Rename", load: () => import("$lib/components/BulkRenameDialog.svelte"), onLoaded: (c) => (BulkRenameDialog = c), onFailure: () => dialogStore.closeBulkRename() });
     }
     if (dialogStore.isQuickOpenOpen && !QuickOpen) {
-      void import("$lib/components/QuickOpen.svelte").then((m) => (QuickOpen = m.default));
+      loadDialog({ label: "Quick Open", load: () => import("$lib/components/QuickOpen.svelte"), onLoaded: (c) => (QuickOpen = c), onFailure: () => dialogStore.closeQuickOpen() });
     }
     if (dialogStore.isCommandPaletteOpen && !CommandPalette) {
-      void import("$lib/components/CommandPalette.svelte").then((m) => (CommandPalette = m.default));
+      loadDialog({ label: "Command Palette", load: () => import("$lib/components/CommandPalette.svelte"), onLoaded: (c) => (CommandPalette = c), onFailure: () => dialogStore.closeCommandPalette() });
     }
     if (dialogStore.isContentSearchOpen && !ContentSearchDialog) {
-      void import("$lib/components/ContentSearchDialog.svelte").then((m) => (ContentSearchDialog = m.default));
+      loadDialog({ label: "Content Search", load: () => import("$lib/components/ContentSearchDialog.svelte"), onLoaded: (c) => (ContentSearchDialog = c), onFailure: () => dialogStore.closeContentSearch() });
     }
     if (pickerInfo && !FilePicker) {
-      void import("$lib/components/FilePicker.svelte").then((m) => (FilePicker = m.default));
+      // Portal picker windows render nothing but FilePicker; there is no
+      // open-flag to roll back — the toast is the only recovery available.
+      loadDialog({ label: "File Picker", load: () => import("$lib/components/FilePicker.svelte"), onLoaded: (c) => (FilePicker = c) });
     }
     if (conflictResolver.isActive && !ConflictDialog) {
-      void import("$lib/components/ConflictDialog.svelte").then((m) => (ConflictDialog = m.default));
+      loadDialog({ label: "Conflict dialog", load: () => import("$lib/components/ConflictDialog.svelte"), onLoaded: (c) => (ConflictDialog = c), onFailure: () => conflictResolver.resolve("cancel", true) });
     }
     if (dialogStore.isJobsPanelOpen && !JobsPanel) {
-      void import("$lib/components/JobsPanel.svelte").then((m) => (JobsPanel = m.default));
+      loadDialog({ label: "Jobs Panel", load: () => import("$lib/components/JobsPanel.svelte"), onLoaded: (c) => (JobsPanel = c), onFailure: () => dialogStore.closeJobsPanel() });
     }
     if (dialogStore.isPickerOpen && !OptionPicker) {
-      void import("$lib/components/OptionPicker.svelte").then((m) => (OptionPicker = m.default));
+      loadDialog({ label: "Option Picker", load: () => import("$lib/components/OptionPicker.svelte"), onLoaded: (c) => (OptionPicker = c), onFailure: () => dialogStore.closePicker() });
     }
     if (dialogStore.isUserReportOpen && !UserReportDialog) {
-      void import("$lib/components/UserReportDialog.svelte").then((m) => (UserReportDialog = m.default));
+      loadDialog({ label: "Report dialog", load: () => import("$lib/components/UserReportDialog.svelte"), onLoaded: (c) => (UserReportDialog = c), onFailure: () => dialogStore.closeUserReport() });
     }
   });
 

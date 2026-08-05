@@ -272,7 +272,8 @@ backend for E2E/browser).
 
 - `components/ToastOverlay.svelte`, `state/toast.svelte.ts` — `toastStore` transient notices
 - `state/dialogs.svelte.ts` — `dialogStore` generic dialog orchestration
-- `domain/lazy-dialog.ts` — failure-safe dialog chunk loading (`loadDialogComponent`); `+page.svelte`'s lazy-dialog `$effect` routes all 12 code-split dialogs through it so a failed import resets the open-flag and toasts instead of soft-locking hotkeys (#584)
+- `domain/lazy-dialog.ts` — failure-safe dialog chunk loading (`loadDialogComponent`) + mount-crash recovery (`createDialogCrashHandler`); `+page.svelte` routes all 12 code-split dialogs through the loader and wraps each in `<svelte:boundary>` so a failed import (#584) or a component that throws while mounting (#585) resets the open-flag and toasts instead of soft-locking hotkeys
+- `domain/theme-list.ts` — `dedupeThemesById`, last occurrence wins; applied in `theme.svelte.ts` `discoverThemes()` so a user theme reusing a built-in id overrides it instead of crashing ThemePicker's keyed each (#585)
 - `components/Modal.svelte`, `components/modal.css` — modal shell
 - `components/UserReportDialog.svelte`, `domain/user-report.ts`, `api/user-report.ts` — bug/feature draft UI, preserved GitHub fallback, and report IPC
 - `components/CrashNotice.svelte`/`state`+`api/crash.ts`, `UpdateNotice.svelte`+`api/update.ts`

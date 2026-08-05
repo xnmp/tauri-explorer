@@ -10,6 +10,7 @@
  * All themes are auto-discovered from CSS at runtime.
  */
 
+import { dedupeThemesById } from "$lib/domain/theme-list";
 import { listUserThemes, setWindowTheme } from "$lib/api/files";
 import { EXPLORER_BG_RGBA_KEY, loadPersisted, removePersisted, savePersisted, savePersistedRaw } from "./persisted";
 import { settingsStore } from "./settings.svelte";
@@ -103,7 +104,9 @@ function discoverThemes(): ThemeInfo[] {
     }
   }
 
-  return themes.sort((a, b) => a.order - b.order);
+  // Last occurrence wins: user themes are injected after built-ins, so a
+  // reused id resolves to the rules that actually paint (#585).
+  return dedupeThemesById(themes).sort((a, b) => a.order - b.order);
 }
 
 function createThemeState() {

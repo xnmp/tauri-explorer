@@ -31,21 +31,36 @@ export interface LazyDialogRequest<T> {
  * notification callback that itself throws is contained so one bad handler
  * cannot resurrect the soft-lock this exists to prevent.
  */
+function failSafe(label: string, message: string, rollback: (() => void) | undefined, notifyError: (message: string) => void, error: unknown): void {
+  console.error(`${label} dialog failed`, error);
+  try {
+    rollback?.();
+  } catch (rollbackError) {
+    console.error(`Rollback for ${label} dialog failed`, rollbackError);
+  }
+  try {
+    notifyError(message);
+  } catch {
+    // Notification is best-effort; the state rollback above is what matters.
+  }
+}
+
 export async function loadDialogComponent<T>(request: LazyDialogRequest<T>, notifyError: (message: string) => void): Promise<void> {
   try {
     const loadedModule = await request.load();
     request.onLoaded(loadedModule.default);
   } catch (error) {
-    console.error(`Failed to load ${request.label} dialog`, error);
-    try {
-      request.onFailure?.();
-    } catch (rollbackError) {
-      console.error(`Rollback for ${request.label} dialog failed`, rollbackError);
-    }
-    try {
-      notifyError(`Could not load ${request.label}. Restart the app and try again.`);
-    } catch {
-      // Notification is best-effort; the state rollback above is what matters.
-    }
+    failSafe(request.label, `Could not load ${request.label}. Restart the app and try again.`, request.onFailure, notifyError, error);
   }
+}
+
+/**
+ * Recovery handler for a dialog that throws while MOUNTING (after its chunk
+ * loaded fine) — the failure mode loadDialogComponent cannot see. Returned
+ * function is shaped for `<svelte:boundary onerror>`: it rolls back the
+ * dialog's open state and notifies, so a render crash degrades to a toast
+ * instead of a stuck invisible modal blocking every shortcut (#585).
+ */
+export function createDialogCrashHandler(label: string, rollback: (() => void) | undefined, notifyError: (message: string) => void): (error: unknown) => void {
+  return (error) => failSafe(label, `${label} crashed and was closed. See the app log for details.`, rollback, notifyError, error);
 }

@@ -23,7 +23,7 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
   import { keybindingsStore } from "$lib/state/keybindings.svelte";
   import { dialogStore } from "$lib/state/dialogs.svelte";
   import { toastStore } from "$lib/state/toast.svelte";
-  import { loadDialogComponent, type LazyDialogRequest } from "$lib/domain/lazy-dialog";
+  import { createDialogCrashHandler, loadDialogComponent, type LazyDialogRequest } from "$lib/domain/lazy-dialog";
   import { bookmarksStore } from "$lib/state/bookmarks.svelte";
   import { manualHiddenStore } from "$lib/state/manual-hidden.svelte";
   import { saveFocusedWindowState } from "$lib/state/focused-window";
@@ -104,6 +104,10 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
   // dialogStore.hasModalOpen soft-locks every shortcut with nothing visible
   // to close — #584) and tell the user. loadDialogComponent enforces both.
   const loadDialog = <T,>(request: LazyDialogRequest<T>): void => void loadDialogComponent(request, (message) => toastStore.error(message));
+  // Same rollback contract for the failure loadDialog can't see: a dialog
+  // that throws while mounting (e.g. #585's duplicate theme id crashing the
+  // picker's keyed each). Used as <svelte:boundary onerror>.
+  const dialogCrash = (label: string, rollback?: () => void) => createDialogCrashHandler(label, rollback, (message) => toastStore.error(message));
 
   $effect(() => {
     if (dialogStore.isThemePickerOpen && !ThemePicker) {
@@ -572,7 +576,9 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
 
 {#if pickerInfo}
   {#if FilePicker}
-    <FilePicker info={pickerInfo} />
+    <svelte:boundary onerror={dialogCrash("File Picker")}>
+      <FilePicker info={pickerInfo} />
+    </svelte:boundary>
   {/if}
 {:else}
 <main class="explorer">
@@ -623,57 +629,81 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
 <UpdateNotice />
 <ShortcutCheatsheet open={dialogStore.isShortcutsOpen} onClose={() => dialogStore.closeShortcuts()} />
 {#if QuickOpen}
-  <QuickOpen open={dialogStore.isQuickOpenOpen} onClose={() => dialogStore.closeQuickOpen()} />
+  <svelte:boundary onerror={dialogCrash("Quick Open", () => dialogStore.closeQuickOpen())}>
+    <QuickOpen open={dialogStore.isQuickOpenOpen} onClose={() => dialogStore.closeQuickOpen()} />
+  </svelte:boundary>
 {/if}
 {#if CommandPalette}
-  <CommandPalette open={dialogStore.isCommandPaletteOpen} onClose={() => dialogStore.closeCommandPalette()} />
+  <svelte:boundary onerror={dialogCrash("Command Palette", () => dialogStore.closeCommandPalette())}>
+    <CommandPalette open={dialogStore.isCommandPaletteOpen} onClose={() => dialogStore.closeCommandPalette()} />
+  </svelte:boundary>
 {/if}
 {#if ThemePicker}
-  <ThemePicker open={dialogStore.isThemePickerOpen} onClose={() => dialogStore.closeThemePicker()} />
+  <svelte:boundary onerror={dialogCrash("Theme Picker", () => dialogStore.closeThemePicker())}>
+    <ThemePicker open={dialogStore.isThemePickerOpen} onClose={() => dialogStore.closeThemePicker()} />
+  </svelte:boundary>
 {/if}
 {#if OptionPicker}
-  <OptionPicker />
+  <svelte:boundary onerror={dialogCrash("Option Picker", () => dialogStore.closePicker())}>
+    <OptionPicker />
+  </svelte:boundary>
 {/if}
 {#if UserReportDialog}
-  <UserReportDialog
-    open={dialogStore.isUserReportOpen}
-    initialKind={dialogStore.userReportKind}
-    onClose={() => dialogStore.closeUserReport()}
-  />
+  <svelte:boundary onerror={dialogCrash("Report dialog", () => dialogStore.closeUserReport())}>
+    <UserReportDialog
+      open={dialogStore.isUserReportOpen}
+      initialKind={dialogStore.userReportKind}
+      onClose={() => dialogStore.closeUserReport()}
+    />
+  </svelte:boundary>
 {/if}
 {#if ContentSearchDialog}
-  <ContentSearchDialog open={dialogStore.isContentSearchOpen} onClose={() => dialogStore.closeContentSearch()} />
+  <svelte:boundary onerror={dialogCrash("Content Search", () => dialogStore.closeContentSearch())}>
+    <ContentSearchDialog open={dialogStore.isContentSearchOpen} onClose={() => dialogStore.closeContentSearch()} />
+  </svelte:boundary>
 {/if}
 {#if SettingsDialog}
-  <SettingsDialog open={dialogStore.isSettingsOpen} onClose={() => dialogStore.closeSettings()} />
+  <svelte:boundary onerror={dialogCrash("Settings", () => dialogStore.closeSettings())}>
+    <SettingsDialog open={dialogStore.isSettingsOpen} onClose={() => dialogStore.closeSettings()} />
+  </svelte:boundary>
 {/if}
 {#if WorkspaceDialog}
-  <WorkspaceDialog open={dialogStore.isWorkspaceOpen} onClose={() => dialogStore.closeWorkspace()} />
+  <svelte:boundary onerror={dialogCrash("Workspaces", () => dialogStore.closeWorkspace())}>
+    <WorkspaceDialog open={dialogStore.isWorkspaceOpen} onClose={() => dialogStore.closeWorkspace()} />
+  </svelte:boundary>
 {/if}
 {#if BulkRenameDialog}
-  <BulkRenameDialog
-    open={dialogStore.isBulkRenameOpen}
-    entries={dialogStore.bulkRenameEntries}
-    onClose={() => dialogStore.closeBulkRename()}
-    onComplete={() => refreshAllPanes()}
-  />
+  <svelte:boundary onerror={dialogCrash("Bulk Rename", () => dialogStore.closeBulkRename())}>
+    <BulkRenameDialog
+      open={dialogStore.isBulkRenameOpen}
+      entries={dialogStore.bulkRenameEntries}
+      onClose={() => dialogStore.closeBulkRename()}
+      onComplete={() => refreshAllPanes()}
+    />
+  </svelte:boundary>
 {/if}
 {#each dialogRegistry.openDialogs as d (d.id)}
   {@const DialogComponent = d.component}
-  <DialogComponent open={true} {...d.props} onClose={() => dialogRegistry.close(d.id)} />
+  <svelte:boundary onerror={dialogCrash(d.id, () => dialogRegistry.close(d.id))}>
+    <DialogComponent open={true} {...d.props} onClose={() => dialogRegistry.close(d.id)} />
+  </svelte:boundary>
 {/each}
 {#if JobsPanel}
-  <JobsPanel
-    open={dialogStore.isJobsPanelOpen}
-    onClose={() => dialogStore.closeJobsPanel()}
-  />
+  <svelte:boundary onerror={dialogCrash("Jobs Panel", () => dialogStore.closeJobsPanel())}>
+    <JobsPanel
+      open={dialogStore.isJobsPanelOpen}
+      onClose={() => dialogStore.closeJobsPanel()}
+    />
+  </svelte:boundary>
 {/if}
 <ProgressDialog />
 <!-- Toasts live at the app root (#417): mounted per-FileList they vanished in
      any pane mode without a file list (git graph), silently eating feedback. -->
 <ToastOverlay />
 {#if ConflictDialog}
-  <ConflictDialog />
+  <svelte:boundary onerror={dialogCrash("Conflict dialog", () => conflictResolver.resolve("cancel", true))}>
+    <ConflictDialog />
+  </svelte:boundary>
 {/if}
 {/if}
 

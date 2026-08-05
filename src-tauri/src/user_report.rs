@@ -7,8 +7,9 @@ use tauri::AppHandle;
 use crate::process_ext::NoConsole;
 
 const DEFAULT_REPORT_URL: &str = "https://tauri-explorer.vercel.app/api/report";
-const GITHUB_REPO: &str = "github.com/xnmp/tauri-explorer";
+const GITHUB_REPO: &str = "xnmp/tauri-explorer";
 const GITHUB_ISSUE_URL_PREFIX: &str = "https://github.com/xnmp/tauri-explorer/issues/";
+const GITHUB_ATTACHMENT_URL_PREFIX: &str = "https://github.com/user-attachments/";
 const MAX_ATTACHMENTS: usize = 3;
 const MAX_ATTACHMENT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_ATTACHMENTS_BYTES: usize = 3 * 1024 * 1024;
@@ -295,8 +296,26 @@ fn map_transport_error(_error: ureq::Error) -> SubmitReportError {
 #[derive(Debug, PartialEq)]
 enum GitHubCliError {
     Unavailable,
+    AttachmentUpload(String),
     Rejected,
     InvalidResponse,
+}
+
+impl GitHubCliError {
+    fn into_submit_error(self) -> SubmitReportError {
+        match self {
+            Self::Unavailable => SubmitReportError::new(
+                "attachment_uploader_unavailable",
+                "GitHub CLI or the gh-image extension is unavailable",
+            ),
+            Self::AttachmentUpload(message) => {
+                SubmitReportError::new("attachment_upload_failed", message)
+            }
+            Self::Rejected | Self::InvalidResponse => {
+                SubmitReportError::new("server_rejected", "GitHub rejected the report")
+            }
+        }
+    }
 }
 
 fn github_issue_args(payload: &RelayRequest) -> Vec<String> {
@@ -320,6 +339,94 @@ fn github_issue_args(payload: &RelayRequest) -> Vec<String> {
     ]
 }
 
+fn parse_github_attachment_output(stdout: &[u8]) -> Result<String, GitHubCliError> {
+    let stdout = std::str::from_utf8(stdout).map_err(|_| GitHubCliError::InvalidResponse)?;
+    stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| line.contains(GITHUB_ATTACHMENT_URL_PREFIX))
+        .map(str::to_string)
+        .ok_or(GitHubCliError::InvalidResponse)
+}
+
+fn attachment_extension(media_type: &str) -> Result<&'static str, GitHubCliError> {
+    match media_type {
+        "image/png" => Ok("png"),
+        "image/jpeg" => Ok("jpg"),
+        "image/gif" => Ok("gif"),
+        _ => Err(GitHubCliError::AttachmentUpload(
+            "Attachment type is not supported".to_string(),
+        )),
+    }
+}
+
+fn github_attachment_args(path: &std::path::Path) -> Vec<std::ffi::OsString> {
+    vec![
+        "image".into(),
+        path.as_os_str().to_owned(),
+        "--repo".into(),
+        GITHUB_REPO.into(),
+    ]
+}
+
+fn upload_github_attachments(
+    attachments: &[ReportAttachment],
+) -> Result<Vec<String>, GitHubCliError> {
+    let directory = tempfile::Builder::new()
+        .prefix("tauri-explorer-report-")
+        .tempdir()
+        .map_err(|error| GitHubCliError::AttachmentUpload(error.to_string()))?;
+    let mut markdown = Vec::with_capacity(attachments.len());
+
+    for (index, attachment) in attachments.iter().enumerate() {
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&attachment.data)
+            .map_err(|_| {
+                GitHubCliError::AttachmentUpload("Attachment data is invalid".to_string())
+            })?;
+        let path = directory.path().join(format!(
+            "attachment-{}.{}",
+            index + 1,
+            attachment_extension(&attachment.media_type)?,
+        ));
+        std::fs::write(&path, bytes)
+            .map_err(|error| GitHubCliError::AttachmentUpload(error.to_string()))?;
+
+        let output = Command::new("gh")
+            .no_console()
+            .args(github_attachment_args(&path))
+            .env("GH_PROMPT_DISABLED", "true")
+            .env("GH_NO_UPDATE_NOTIFIER", "true")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|_| GitHubCliError::Unavailable)?;
+        if !output.status.success() {
+            let detail = String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .next()
+                .unwrap_or("gh image failed")
+                .to_string();
+            return Err(GitHubCliError::AttachmentUpload(detail));
+        }
+        markdown.push(parse_github_attachment_output(&output.stdout)?);
+    }
+
+    Ok(markdown)
+}
+
+fn body_with_github_attachments(body: &str, attachments: &[String]) -> String {
+    if attachments.is_empty() {
+        return body.to_string();
+    }
+    let separator = if body.is_empty() { "" } else { "\n\n" };
+    format!(
+        "{body}{separator}## Attachments\n\n{}",
+        attachments.join("\n\n"),
+    )
+}
+
 fn parse_github_issue_output(stdout: &[u8]) -> Result<SubmittedUserReport, GitHubCliError> {
     let stdout = std::str::from_utf8(stdout).map_err(|_| GitHubCliError::InvalidResponse)?;
     let url = stdout
@@ -339,6 +446,8 @@ fn parse_github_issue_output(stdout: &[u8]) -> Result<SubmittedUserReport, GitHu
 }
 
 fn submit_via_github_cli(payload: &RelayRequest) -> Result<SubmittedUserReport, GitHubCliError> {
+    let attachment_markdown = upload_github_attachments(&payload.attachments)?;
+    let issue_body = body_with_github_attachments(&payload.body, &attachment_markdown);
     let mut command = Command::new("gh");
     command
         .no_console()
@@ -354,7 +463,7 @@ fn submit_via_github_cli(payload: &RelayRequest) -> Result<SubmittedUserReport, 
         let _ = child.wait();
         return Err(GitHubCliError::Unavailable);
     };
-    if stdin.write_all(payload.body.as_bytes()).is_err() {
+    if stdin.write_all(issue_body.as_bytes()).is_err() {
         drop(stdin);
         let _ = child.kill();
         let _ = child.wait();
@@ -379,12 +488,12 @@ where
     G: FnOnce(&RelayRequest) -> Result<SubmittedUserReport, GitHubCliError>,
     R: FnOnce(RelayRequest) -> Result<SubmittedUserReport, SubmitReportError>,
 {
-    if payload.attachments.is_empty() {
-        match submit_to_github(&payload) {
-            Ok(issue) => return Ok(issue),
-            Err(error) => {
-                log::debug!("GitHub CLI report submission unavailable: {error:?}");
-            }
+    let has_attachments = !payload.attachments.is_empty();
+    match submit_to_github(&payload) {
+        Ok(issue) => return Ok(issue),
+        Err(error) if has_attachments => return Err(error.into_submit_error()),
+        Err(error) => {
+            log::debug!("GitHub CLI report submission unavailable: {error:?}");
         }
     }
     submit_to_relay(payload)
@@ -492,10 +601,11 @@ pub async fn submit_user_report(
 #[cfg(test)]
 mod tests {
     use super::{
-        assemble_issue_body, attachment_from_image_bytes, deliver_report_with, github_issue_args,
-        parse_github_issue_output, report_image_media_type, send_report, validate_attachments,
-        validate_draft, Environment, GitHubCliError, RelayRequest, ReportAttachment,
-        SubmittedUserReport, MAX_RELAY_BODY_UNITS,
+        assemble_issue_body, attachment_from_image_bytes, body_with_github_attachments,
+        deliver_report_with, github_attachment_args, github_issue_args,
+        parse_github_attachment_output, parse_github_issue_output, report_image_media_type,
+        send_report, validate_attachments, validate_draft, Environment, GitHubCliError,
+        RelayRequest, ReportAttachment, SubmittedUserReport, MAX_RELAY_BODY_UNITS,
     };
     use std::cell::Cell;
     use std::io::{BufRead, BufReader, Read, Write};
@@ -611,7 +721,7 @@ mod tests {
     }
 
     #[test]
-    fn image_attachment_is_base64_encoded_for_the_relay_without_writing_a_file() {
+    fn image_attachment_is_base64_encoded_at_the_native_boundary() {
         let attachment = png_attachment();
         assert_eq!(attachment.name, "Clipboard screenshot.png");
         assert_eq!(attachment.media_type, "image/png");
@@ -673,7 +783,7 @@ mod tests {
                 "issue",
                 "create",
                 "--repo",
-                "github.com/xnmp/tauri-explorer",
+                "xnmp/tauri-explorer",
                 "--title",
                 "Title",
                 "--body-file",
@@ -688,6 +798,39 @@ mod tests {
         let mut feature = payload();
         feature.kind = "feature".to_string();
         assert_eq!(github_issue_args(&feature).last().unwrap(), "enhancement");
+    }
+
+    #[test]
+    fn github_image_output_is_appended_to_the_issue_body() {
+        assert_eq!(
+            github_attachment_args(std::path::Path::new("/tmp/report image.png")),
+            [
+                "image",
+                "/tmp/report image.png",
+                "--repo",
+                "xnmp/tauri-explorer",
+            ]
+            .map(std::ffi::OsString::from),
+        );
+        let markdown = parse_github_attachment_output(
+            b"![attachment-1.png](https://github.com/user-attachments/assets/abc123)\n",
+        )
+        .unwrap();
+        assert_eq!(
+            body_with_github_attachments("Description", &[markdown]),
+            "Description\n\n## Attachments\n\n![attachment-1.png](https://github.com/user-attachments/assets/abc123)",
+        );
+        assert_eq!(
+            body_with_github_attachments(
+                "",
+                &["![shot](https://github.com/user-attachments/assets/123)".to_string()],
+            ),
+            "## Attachments\n\n![shot](https://github.com/user-attachments/assets/123)",
+        );
+        assert_eq!(
+            parse_github_attachment_output(b"not an attachment").unwrap_err(),
+            GitHubCliError::InvalidResponse,
+        );
     }
 
     #[test]
@@ -744,27 +887,44 @@ mod tests {
     }
 
     #[test]
-    fn reports_with_images_skip_the_cli_that_cannot_upload_them() {
+    fn reports_with_images_require_the_cli_upload_to_succeed() {
         let mut report = payload();
         report.attachments.push(png_attachment());
         let github_called = Cell::new(false);
         let delivered = deliver_report_with(
             report,
-            |_| {
-                github_called.set(true);
-                unreachable!("gh issue create cannot upload image attachments")
-            },
             |payload| {
+                github_called.set(true);
                 assert_eq!(payload.attachments.len(), 1);
                 Ok(SubmittedUserReport {
                     url: "https://github.com/xnmp/tauri-explorer/issues/593".to_string(),
                     number: 593,
                 })
             },
+            |_| unreachable!("relay must not run after a successful attachment upload"),
         )
         .unwrap();
         assert_eq!(delivered.number, 593);
-        assert!(!github_called.get());
+        assert!(github_called.get());
+
+        let mut report = payload();
+        report.attachments.push(png_attachment());
+        let relay_called = Cell::new(false);
+        let error = deliver_report_with(
+            report,
+            |_| {
+                Err(GitHubCliError::AttachmentUpload(
+                    "upload failed".to_string(),
+                ))
+            },
+            |_| {
+                relay_called.set(true);
+                unreachable!("selected images must never be silently dropped")
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.kind, "attachment_upload_failed");
+        assert!(!relay_called.get());
     }
 
     #[test]

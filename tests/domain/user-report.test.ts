@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_USER_REPORT_ATTACHMENT_BYTES,
   MAX_USER_REPORT_ATTACHMENTS_BYTES,
+  userReportAttachmentFailureMessage,
   userReportFallbackUrl,
   validateUserReportAttachmentFiles,
 } from "$lib/domain/user-report";
@@ -78,6 +79,16 @@ describe("userReportFallbackUrl", () => {
 
     expect(fallback).not.toBeNull();
     expect(fallback!.length).toBeLessThanOrEqual(6000);
+  });
+});
+
+describe("userReportAttachmentFailureMessage", () => {
+  it.each([
+    ["attachment_uploader_unavailable" as const, "Install GitHub CLI"],
+    ["attachment_upload_failed" as const, "Could not upload the image through gh-image"],
+  ])("explains how to recover from %s", (kind, expected) => {
+    expect(userReportAttachmentFailureMessage(kind)).toContain(expected);
+    expect(userReportAttachmentFailureMessage(kind)).toContain("still here");
   });
 });
 

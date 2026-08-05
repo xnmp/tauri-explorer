@@ -244,11 +244,12 @@
       <div class="attachment-heading">
         <span>Images (optional)</span>
         <div class="attachment-actions">
-          {#if clipboardImageAvailable && !clipboardImageAttached}
+          {#if !clipboardImageAttached}
             <button
               type="button"
               class="btn secondary compact"
-              disabled={submitting || readingClipboard}
+              disabled={submitting || readingClipboard || !clipboardImageAvailable}
+              title={clipboardImageAvailable ? undefined : "No image in clipboard"}
               onclick={() => void attachClipboardImage()}
             >
               {readingClipboard ? "Reading clipboard…" : "Attach from clipboard"}

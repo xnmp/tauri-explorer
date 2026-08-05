@@ -77,6 +77,8 @@ export type UserReportErrorKind =
   | "rate_limited"
   | "daily_cap"
   | "server_rejected"
+  | "attachment_uploader_unavailable"
+  | "attachment_upload_failed"
   | "clipboard_unavailable";
 
 export interface UserReportError {
@@ -87,6 +89,12 @@ export interface UserReportError {
 export function userReportAttachmentFailureMessage(
   kind: UserReportErrorKind | undefined,
 ): string {
+  if (kind === "attachment_uploader_unavailable") {
+    return "Install GitHub CLI and the gh-image extension to submit images: gh extension install drogers0/gh-image. Your report and images are still here.";
+  }
+  if (kind === "attachment_upload_failed") {
+    return "Could not upload the image through gh-image. Install or configure the extension, then try again; your report and images are still here.";
+  }
   if (kind === "malformed_input") {
     return "One of your attached images is not a valid image. Remove it and try again.";
   }

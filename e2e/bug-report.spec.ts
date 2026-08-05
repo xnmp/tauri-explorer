@@ -186,7 +186,9 @@ test("clipboard image is offered and attached without creating a file", async ({
   await page.evaluate(() => localStorage.setItem("mock-report-clipboard-image", "1"));
   const dialog = await openReportDialog(page, "feature");
 
-  await dialog.getByRole("button", { name: "Attach from clipboard" }).click();
+  const clipboardButton = dialog.getByRole("button", { name: "Attach from clipboard" });
+  await expect(clipboardButton).toBeEnabled();
+  await clipboardButton.click();
 
   await expect(dialog.getByText("Clipboard screenshot.png")).toBeVisible();
   await expect(dialog.getByRole("img", { name: "Clipboard screenshot.png" })).toBeVisible();
@@ -197,12 +199,19 @@ test("clipboard image is offered and attached without creating a file", async ({
   await page.screenshot({ path: evidencePath("ac-2-clipboard-image.png") });
 });
 
-test("clipboard action is absent when the clipboard has no image", async ({ page }) => {
+test("clipboard action stays visible but disabled when the clipboard has no image", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
-  await openReportDialog(page);
+  const dialog = await openReportDialog(page);
 
-  await expect(page.getByRole("button", { name: "Attach from clipboard" })).toHaveCount(0);
+  const clipboardButton = dialog.getByRole("button", { name: "Attach from clipboard" });
+  await expect(clipboardButton).toBeVisible();
+  await expect(clipboardButton).toBeDisabled();
+  await expect(clipboardButton).toHaveAttribute("title", "No image in clipboard");
+  await page.screenshot({
+    path: evidencePath("issue-587-disabled-clipboard-action.png"),
+    animations: "disabled",
+  });
 });
 
 test("invalid image keeps the report draft and existing attachments", async ({ page }) => {
@@ -295,7 +304,7 @@ test("successful submission forwards selected images to the native report comman
   await waitForEntries(page);
   const dialog = await openReportDialog(page);
   await dialog.getByLabel("Title").fill("Attachment contract");
-  await dialog.getByLabel("Description").fill("The screenshot must reach the relay.");
+  await dialog.getByLabel("Description").fill("The screenshot must reach GitHub.");
   await dialog.getByLabel("Add images").setInputFiles({
     name: "contract.png", mimeType: "image/png", buffer: png,
   });
@@ -335,6 +344,8 @@ for (const [kind, message] of [
   ["daily_cap", "Reports are temporarily unavailable"],
   ["rate_limited", "Too many reports"],
   ["malformed_input", "not a valid image"],
+  ["attachment_uploader_unavailable", "Install GitHub CLI"],
+  ["attachment_upload_failed", "Could not upload the image through gh-image"],
 ] as const) {
   test(`${kind} attachment failure explains the next action and preserves the draft`, async ({
     page,

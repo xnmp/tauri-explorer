@@ -279,7 +279,7 @@ backend for E2E/browser).
 - `components/CrashNotice.svelte`/`state`+`api/crash.ts`, `UpdateNotice.svelte`+`api/update.ts`
 - `src/hooks.client.ts` — installs global crash/error handlers before mount; `domain/crash-report.ts` — pure dedupe + log-tail→markdown
 - FLOW: any store calls `toastStore.show(...)`; ToastOverlay renders queue.
-- REPORT FLOW: `help.reportBug`/`help.requestFeature` → `dialogStore` → `UserReportDialog` (picker + clipboard-image previews) → `submit_user_report` (`src-tauri/src/user_report.rs`, validates attachments and enriches with environment/log tail) → `website/api/report.js` (validation, durable limits, public Vercel Blob upload, GitHub issue Markdown); failures with attachments preserve the dialog, while text-only failures use `userReportFallbackUrl`.
+- REPORT FLOW: `help.reportIssue` → `dialogStore` → `UserReportDialog` (picker + clipboard-image previews) → `submit_user_report` (`src-tauri/src/user_report.rs`, validates attachments, enriches with environment/log tail, uploads selected images through `gh image`, appends the returned GitHub `user-attachments` Markdown, then runs `gh issue create`); attachment failures preserve the dialog, while text-only CLI/relay failures use `userReportFallbackUrl`.
 
 ## Theming
 

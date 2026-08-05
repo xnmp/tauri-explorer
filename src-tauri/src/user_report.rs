@@ -1,8 +1,14 @@
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
+use std::io::Write;
+use std::process::{Command, Stdio};
 use tauri::AppHandle;
 
+use crate::process_ext::NoConsole;
+
 const DEFAULT_REPORT_URL: &str = "https://tauri-explorer.vercel.app/api/report";
+const GITHUB_REPO: &str = "github.com/xnmp/tauri-explorer";
+const GITHUB_ISSUE_URL_PREFIX: &str = "https://github.com/xnmp/tauri-explorer/issues/";
 const MAX_ATTACHMENTS: usize = 3;
 const MAX_ATTACHMENT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_ATTACHMENTS_BYTES: usize = 3 * 1024 * 1024;
@@ -182,6 +188,15 @@ fn truncate_utf16(value: &str, max_units: usize) -> String {
         .collect()
 }
 
+fn append_issue_section(body: &mut String, section: &str) {
+    let separator = if body.is_empty() { "" } else { "\n\n" };
+    let added_units = separator.encode_utf16().count() + section.encode_utf16().count();
+    if body.encode_utf16().count() + added_units <= MAX_RELAY_BODY_UNITS {
+        body.push_str(separator);
+        body.push_str(section);
+    }
+}
+
 pub fn assemble_issue_body(
     description: &str,
     contact: Option<&str>,
@@ -195,17 +210,15 @@ pub fn assemble_issue_body(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(|value| format!("\n\nHow to reach the reporter: {value}"));
+        .map(|value| format!("How to reach the reporter: {value}"));
     let environment = format!(
-        "\n\n---\n- Tauri Explorer: v{}\n- OS: {} ({})",
+        "---\n- Tauri Explorer: v{}\n- OS: {} ({})",
         sanitize(environment.version),
         sanitize(environment.os),
         sanitize(environment.arch)
     );
     for section in contact.iter().chain(std::iter::once(&environment)) {
-        if body.encode_utf16().count() + section.encode_utf16().count() <= MAX_RELAY_BODY_UNITS {
-            body.push_str(section);
-        }
+        append_issue_section(&mut body, section);
     }
 
     if let Some(logs) = log_tail
@@ -214,11 +227,15 @@ pub fn assemble_issue_body(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        const LOG_PREFIX: &str = "\n\n## Recent logs\n\n```text\n";
+        const LOG_PREFIX: &str = "## Recent logs\n\n```text\n";
         const LOG_SUFFIX: &str = "\n```";
+        let separator = if body.is_empty() { "" } else { "\n\n" };
         let remaining = MAX_RELAY_BODY_UNITS.saturating_sub(body.encode_utf16().count());
-        let framing = LOG_PREFIX.encode_utf16().count() + LOG_SUFFIX.encode_utf16().count();
+        let framing = separator.encode_utf16().count()
+            + LOG_PREFIX.encode_utf16().count()
+            + LOG_SUFFIX.encode_utf16().count();
         if remaining > framing {
+            body.push_str(separator);
             body.push_str(LOG_PREFIX);
             body.push_str(&truncate_utf16(logs, remaining - framing));
             body.push_str(LOG_SUFFIX);
@@ -247,13 +264,10 @@ fn validate_draft(
             "Title must be 1–120 characters",
         ));
     }
-    if body.trim().is_empty()
-        || body.encode_utf16().count() > MAX_RELAY_BODY_UNITS
-        || invalid_control(body)
-    {
+    if body.encode_utf16().count() > MAX_RELAY_BODY_UNITS || invalid_control(body) {
         return Err(SubmitReportError::new(
             "malformed_input",
-            "Description must be 1–8000 characters",
+            "Description must be at most 8000 characters",
         ));
     }
     if kind != "bug" && kind != "feature" {
@@ -276,6 +290,113 @@ fn map_transport_error(_error: ureq::Error) -> SubmitReportError {
         "network_unreachable",
         "The report service could not be reached",
     )
+}
+
+#[derive(Debug, PartialEq)]
+enum GitHubCliError {
+    Unavailable,
+    Rejected,
+    InvalidResponse,
+}
+
+fn github_issue_args(payload: &RelayRequest) -> Vec<String> {
+    vec![
+        "issue".to_string(),
+        "create".to_string(),
+        "--repo".to_string(),
+        GITHUB_REPO.to_string(),
+        "--title".to_string(),
+        payload.title.clone(),
+        "--body-file".to_string(),
+        "-".to_string(),
+        "--label".to_string(),
+        "user-report".to_string(),
+        "--label".to_string(),
+        if payload.kind == "bug" {
+            "bug".to_string()
+        } else {
+            "enhancement".to_string()
+        },
+    ]
+}
+
+fn parse_github_issue_output(stdout: &[u8]) -> Result<SubmittedUserReport, GitHubCliError> {
+    let stdout = std::str::from_utf8(stdout).map_err(|_| GitHubCliError::InvalidResponse)?;
+    let url = stdout
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| line.starts_with(GITHUB_ISSUE_URL_PREFIX))
+        .ok_or(GitHubCliError::InvalidResponse)?;
+    let number = url
+        .strip_prefix(GITHUB_ISSUE_URL_PREFIX)
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or(GitHubCliError::InvalidResponse)?;
+    Ok(SubmittedUserReport {
+        url: url.to_string(),
+        number,
+    })
+}
+
+fn submit_via_github_cli(payload: &RelayRequest) -> Result<SubmittedUserReport, GitHubCliError> {
+    let mut command = Command::new("gh");
+    command
+        .no_console()
+        .args(github_issue_args(payload))
+        .env("GH_PROMPT_DISABLED", "true")
+        .env("GH_NO_UPDATE_NOTIFIER", "true")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(|_| GitHubCliError::Unavailable)?;
+    let Some(mut stdin) = child.stdin.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(GitHubCliError::Unavailable);
+    };
+    if stdin.write_all(payload.body.as_bytes()).is_err() {
+        drop(stdin);
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(GitHubCliError::Rejected);
+    }
+    drop(stdin);
+    let output = child
+        .wait_with_output()
+        .map_err(|_| GitHubCliError::Rejected)?;
+    if !output.status.success() {
+        return Err(GitHubCliError::Rejected);
+    }
+    parse_github_issue_output(&output.stdout)
+}
+
+fn deliver_report_with<G, R>(
+    payload: RelayRequest,
+    submit_to_github: G,
+    submit_to_relay: R,
+) -> Result<SubmittedUserReport, SubmitReportError>
+where
+    G: FnOnce(&RelayRequest) -> Result<SubmittedUserReport, GitHubCliError>,
+    R: FnOnce(RelayRequest) -> Result<SubmittedUserReport, SubmitReportError>,
+{
+    if payload.attachments.is_empty() {
+        match submit_to_github(&payload) {
+            Ok(issue) => return Ok(issue),
+            Err(error) => {
+                log::debug!("GitHub CLI report submission unavailable: {error:?}");
+            }
+        }
+    }
+    submit_to_relay(payload)
+}
+
+fn deliver_report(
+    endpoint: &str,
+    payload: RelayRequest,
+) -> Result<SubmittedUserReport, SubmitReportError> {
+    deliver_report_with(payload, submit_via_github_cli, |payload| {
+        send_report(endpoint, payload)
+    })
 }
 
 fn send_report(
@@ -363,7 +484,7 @@ pub async fn submit_user_report(
         website: String::new(),
         attachments,
     };
-    tauri::async_runtime::spawn_blocking(move || send_report(&endpoint, payload))
+    tauri::async_runtime::spawn_blocking(move || deliver_report(&endpoint, payload))
         .await
         .map_err(|error| SubmitReportError::new("server_rejected", error.to_string()))?
 }
@@ -371,10 +492,12 @@ pub async fn submit_user_report(
 #[cfg(test)]
 mod tests {
     use super::{
-        assemble_issue_body, attachment_from_image_bytes, report_image_media_type, send_report,
-        validate_attachments, validate_draft, Environment, RelayRequest, ReportAttachment,
-        MAX_RELAY_BODY_UNITS,
+        assemble_issue_body, attachment_from_image_bytes, deliver_report_with, github_issue_args,
+        parse_github_issue_output, report_image_media_type, send_report, validate_attachments,
+        validate_draft, Environment, GitHubCliError, RelayRequest, ReportAttachment,
+        SubmittedUserReport, MAX_RELAY_BODY_UNITS,
     };
+    use std::cell::Cell;
     use std::io::{BufRead, BufReader, Read, Write};
     use std::net::{Shutdown, TcpListener};
 
@@ -412,6 +535,23 @@ mod tests {
         assert!(!body.contains("How to reach"));
         assert!(!body.contains("Recent logs"));
         assert!(body.contains("Description only"));
+    }
+
+    #[test]
+    fn blank_description_still_adds_environment_without_leading_whitespace() {
+        let body = assemble_issue_body(
+            "   ",
+            None,
+            &Environment {
+                version: "1.7.0",
+                os: "linux",
+                arch: "x86_64",
+            },
+            None,
+        );
+
+        assert!(body.starts_with("---\n- Tauri Explorer: v1.7.0"));
+        validate_draft("Title-only report", "", "bug", None).unwrap();
     }
 
     #[test]
@@ -525,6 +665,109 @@ mod tests {
     }
 
     #[test]
+    fn github_cli_submission_uses_stdin_and_the_matching_report_label() {
+        let args = github_issue_args(&payload());
+        assert_eq!(
+            args,
+            [
+                "issue",
+                "create",
+                "--repo",
+                "github.com/xnmp/tauri-explorer",
+                "--title",
+                "Title",
+                "--body-file",
+                "-",
+                "--label",
+                "user-report",
+                "--label",
+                "bug",
+            ]
+        );
+
+        let mut feature = payload();
+        feature.kind = "feature".to_string();
+        assert_eq!(github_issue_args(&feature).last().unwrap(), "enhancement");
+    }
+
+    #[test]
+    fn github_cli_output_returns_the_created_issue_contract() {
+        let issue =
+            parse_github_issue_output(b"https://github.com/xnmp/tauri-explorer/issues/591\n")
+                .unwrap();
+        assert_eq!(issue.number, 591);
+        assert_eq!(
+            issue.url,
+            "https://github.com/xnmp/tauri-explorer/issues/591"
+        );
+        assert_eq!(
+            parse_github_issue_output(b"not an issue url").unwrap_err(),
+            GitHubCliError::InvalidResponse
+        );
+    }
+
+    #[test]
+    fn text_reports_prefer_github_cli_and_fall_back_to_the_relay() {
+        let relay_called = Cell::new(false);
+        let issue = deliver_report_with(
+            payload(),
+            |_| {
+                Ok(SubmittedUserReport {
+                    url: "https://github.com/xnmp/tauri-explorer/issues/591".to_string(),
+                    number: 591,
+                })
+            },
+            |_| {
+                relay_called.set(true);
+                unreachable!("relay must not run after a successful gh submission")
+            },
+        )
+        .unwrap();
+        assert_eq!(issue.number, 591);
+        assert!(!relay_called.get());
+
+        let relay_called = Cell::new(false);
+        let issue = deliver_report_with(
+            payload(),
+            |_| Err(GitHubCliError::Unavailable),
+            |_| {
+                relay_called.set(true);
+                Ok(SubmittedUserReport {
+                    url: "https://github.com/xnmp/tauri-explorer/issues/592".to_string(),
+                    number: 592,
+                })
+            },
+        )
+        .unwrap();
+        assert_eq!(issue.number, 592);
+        assert!(relay_called.get());
+    }
+
+    #[test]
+    fn reports_with_images_skip_the_cli_that_cannot_upload_them() {
+        let mut report = payload();
+        report.attachments.push(png_attachment());
+        let github_called = Cell::new(false);
+        let delivered = deliver_report_with(
+            report,
+            |_| {
+                github_called.set(true);
+                unreachable!("gh issue create cannot upload image attachments")
+            },
+            |payload| {
+                assert_eq!(payload.attachments.len(), 1);
+                Ok(SubmittedUserReport {
+                    url: "https://github.com/xnmp/tauri-explorer/issues/593".to_string(),
+                    number: 593,
+                })
+            },
+        )
+        .unwrap();
+        assert_eq!(delivered.number, 593);
+        assert!(!github_called.get());
+    }
+
+    #[test]
     fn clipboard_report_media_type_recognizes_png_and_jpeg_bytes() {
         assert_eq!(
             report_image_media_type(b"\x89PNG\r\n\x1a\npayload"),
@@ -602,12 +845,7 @@ mod tests {
                 .kind,
             "malformed_input"
         );
-        assert_eq!(
-            validate_draft("Title", " ", "feature", None)
-                .unwrap_err()
-                .kind,
-            "malformed_input"
-        );
+        validate_draft("Title", " ", "feature", None).unwrap();
         assert_eq!(
             validate_draft("Title", &"x".repeat(8001), "bug", None)
                 .unwrap_err()

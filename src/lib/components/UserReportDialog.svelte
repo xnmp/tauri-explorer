@@ -20,11 +20,10 @@
 
   interface Props {
     open: boolean;
-    initialKind: UserReportKind;
     onClose: () => void;
   }
 
-  let { open, initialKind, onClose }: Props = $props();
+  let { open, onClose }: Props = $props();
   let kind = $state<UserReportKind>("bug");
   let title = $state("");
   let body = $state("");
@@ -36,7 +35,7 @@
   let readingClipboard = $state(false);
   let submitting = $state(false);
   const canSubmit = $derived(
-    title.trim().length > 0 && body.trim().length > 0 && !submitting,
+    title.trim().length > 0 && !submitting,
   );
   const clipboardImageAttached = $derived(
     clipboardAttachmentData !== null
@@ -45,7 +44,7 @@
 
   $effect(() => {
     if (!open) return;
-    kind = initialKind;
+    kind = "bug";
     title = "";
     body = "";
     contact = "";
@@ -201,20 +200,30 @@
   {open}
   {onClose}
   overlayClass="dialog-backdrop user-report-backdrop"
-  label={kind === "bug" ? "Report a Bug" : "Request a Feature"}
+  label="Report Issue"
   onkeydown={handleKeydown}
   closeOnBackdrop={!submitting}
   closeOnEscape={!submitting}
 >
   <form class="modal-card user-report-dialog" onsubmit={(event) => { event.preventDefault(); void submit(); }}>
     <header>
-      <h2>{kind === "bug" ? "Report a Bug" : "Request a Feature"}</h2>
+      <h2>Report Issue</h2>
       <button type="button" class="close" aria-label="Close" onclick={onClose} disabled={submitting}>×</button>
     </header>
 
-    <div class="kind-toggle" aria-label="Report type">
-      <button type="button" class:active={kind === "bug"} onclick={() => (kind = "bug")}>Bug</button>
-      <button type="button" class:active={kind === "feature"} onclick={() => (kind = "feature")}>Feature</button>
+    <div class="kind-toggle" role="group" aria-label="Report type">
+      <button
+        type="button"
+        class:active={kind === "bug"}
+        aria-pressed={kind === "bug"}
+        onclick={() => (kind = "bug")}
+      >Bug</button>
+      <button
+        type="button"
+        class:active={kind === "feature"}
+        aria-pressed={kind === "feature"}
+        onclick={() => (kind = "feature")}
+      >Feature</button>
     </div>
 
     <label>
@@ -223,8 +232,8 @@
       <input bind:value={title} maxlength="120" required autofocus />
     </label>
     <label>
-      <span>Description</span>
-      <textarea bind:value={body} maxlength="8000" rows="8" required></textarea>
+      <span>Description (optional)</span>
+      <textarea bind:value={body} maxlength="8000" rows="8"></textarea>
     </label>
     <label>
       <span>How can we reach you? (GitHub handle, email — optional)</span>

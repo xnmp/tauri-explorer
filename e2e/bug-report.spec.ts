@@ -9,6 +9,18 @@ async function runPaletteCommand(page: import("@playwright/test").Page, query: s
   await page.keyboard.press("Enter");
 }
 
+async function openReportDialog(
+  page: import("@playwright/test").Page,
+  kind: "bug" | "feature" = "bug",
+) {
+  await runPaletteCommand(page, "Report Issue");
+  const dialog = page.getByRole("dialog", { name: "Report Issue" });
+  if (kind === "feature") {
+    await dialog.getByRole("button", { name: "Feature" }).click();
+  }
+  return dialog;
+}
+
 function evidencePath(name: string): string {
   return process.env.CAPTURE_EVIDENCE ? `evidence/${name}` : `test-results/${name}`;
 }
@@ -18,14 +30,21 @@ const png = Buffer.from(
   "base64",
 );
 
-for (const command of ["Report a Bug", "Request a Feature"]) {
-  test(`${command} submits in-app and links the created issue`, async ({ page }) => {
+for (const kind of ["bug", "feature"] as const) {
+  test(`${kind} reports submit in-app and link the created issue`, async ({ page }) => {
     await page.goto("/");
     await waitForEntries(page);
 
-    await runPaletteCommand(page, command);
-    const dialog = page.getByRole("dialog", { name: /report|request/i });
-    await dialog.getByLabel("Title").fill(`${command} title`);
+    const dialog = await openReportDialog(page, kind);
+    await expect(dialog.getByRole("button", { name: "Bug" })).toHaveAttribute(
+      "aria-pressed",
+      String(kind === "bug"),
+    );
+    await expect(dialog.getByRole("button", { name: "Feature" })).toHaveAttribute(
+      "aria-pressed",
+      String(kind === "feature"),
+    );
+    await dialog.getByLabel("Title").fill(`${kind} report title`);
     await dialog.getByLabel("Description").fill("Typed description");
     await dialog.getByLabel(/How can we reach you/).fill("@playwright-reporter");
     await page.keyboard.press("Control+Enter");
@@ -40,16 +59,35 @@ for (const command of ["Report a Bug", "Request a Feature"]) {
   });
 }
 
+test("the single Report Issue command defaults to bug and accepts a blank description", async ({ page }) => {
+  await page.goto("/");
+  await waitForEntries(page);
+  await page.evaluate(() => localStorage.setItem("mock-report-clipboard-image", "1"));
+
+  const dialog = await openReportDialog(page);
+  await expect(dialog.getByLabel("Description")).not.toHaveAttribute("required", "");
+  await expect(dialog.getByRole("button", { name: "Attach from clipboard" })).toBeVisible();
+  await dialog.getByLabel("Title").fill("Title-only bug");
+  await page.screenshot({ path: evidencePath("issues-587-588-report-issue.png") });
+  await dialog.getByRole("button", { name: "Submit" }).click();
+
+  await expect(dialog).toBeHidden();
+  const submitted = await page.evaluate(() => localStorage.getItem("mock-submitted-report"));
+  expect(JSON.parse(submitted!)).toMatchObject({
+    title: "Title-only bug",
+    body: "",
+    kind: "bug",
+  });
+});
+
 test("report dialog footer buttons use the themed control treatment", async ({ page }) => {
-  for (const [command, name, screenshot] of [
-    ["Report a Bug", /report a bug/i, "ac-1-report-dialog-buttons.png"],
-    ["Request a Feature", /request a feature/i, "ac-1-feature-dialog-buttons.png"],
+  for (const [kind, screenshot] of [
+    ["bug", "ac-1-report-dialog-buttons.png"],
+    ["feature", "ac-1-feature-dialog-buttons.png"],
   ] as const) {
     await page.goto("/");
     await waitForEntries(page);
-    await runPaletteCommand(page, command);
-
-    const dialog = page.getByRole("dialog", { name });
+    const dialog = await openReportDialog(page, kind);
     const cancel = dialog.getByRole("button", { name: "Cancel" });
     const submit = dialog.getByRole("button", { name: "Submit" });
     const styles = await Promise.all([cancel, submit].map((button) => button.evaluate((element) => {
@@ -89,8 +127,7 @@ test("failed submission preserves the draft in the GitHub fallback", async ({ pa
   await waitForEntries(page);
   await page.evaluate(() => localStorage.setItem("mock-report-error", "daily_cap"));
 
-  await runPaletteCommand(page, "Request a Feature");
-  const dialog = page.getByRole("dialog", { name: /request/i });
+  const dialog = await openReportDialog(page, "feature");
   await dialog.getByLabel("Title").fill("Keep my feature title");
   await dialog.getByLabel("Description").fill("Keep my typed description 🐛");
   await dialog.getByRole("button", { name: "Submit" }).click();
@@ -112,8 +149,7 @@ test("failed submission preserves the draft in the GitHub fallback", async ({ pa
 test("image picker shows named previews and lets the user remove an attachment", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
-  await runPaletteCommand(page, "Report a Bug");
-  const dialog = page.getByRole("dialog", { name: /report a bug/i });
+  const dialog = await openReportDialog(page);
 
   await dialog.getByLabel("Add images").setInputFiles([
     { name: "first-screenshot.png", mimeType: "image/png", buffer: png },
@@ -132,8 +168,7 @@ test("image picker shows named previews and lets the user remove an attachment",
 test("feature dialog also accepts multiple image files", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
-  await runPaletteCommand(page, "Request a Feature");
-  const dialog = page.getByRole("dialog", { name: /request a feature/i });
+  const dialog = await openReportDialog(page, "feature");
 
   await dialog.getByLabel("Add images").setInputFiles([
     { name: "feature-first.png", mimeType: "image/png", buffer: png },
@@ -149,8 +184,7 @@ test("clipboard image is offered and attached without creating a file", async ({
   await page.goto("/");
   await waitForEntries(page);
   await page.evaluate(() => localStorage.setItem("mock-report-clipboard-image", "1"));
-  await runPaletteCommand(page, "Request a Feature");
-  const dialog = page.getByRole("dialog", { name: /request a feature/i });
+  const dialog = await openReportDialog(page, "feature");
 
   await dialog.getByRole("button", { name: "Attach from clipboard" }).click();
 
@@ -166,7 +200,7 @@ test("clipboard image is offered and attached without creating a file", async ({
 test("clipboard action is absent when the clipboard has no image", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
-  await runPaletteCommand(page, "Report a Bug");
+  await openReportDialog(page);
 
   await expect(page.getByRole("button", { name: "Attach from clipboard" })).toHaveCount(0);
 });
@@ -174,8 +208,7 @@ test("clipboard action is absent when the clipboard has no image", async ({ page
 test("invalid image keeps the report draft and existing attachments", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
-  await runPaletteCommand(page, "Report a Bug");
-  const dialog = page.getByRole("dialog", { name: /report a bug/i });
+  const dialog = await openReportDialog(page);
   await dialog.getByLabel("Title").fill("Keep this title");
   await dialog.getByLabel("Description").fill("Keep this description");
   await dialog.getByLabel("Add images").setInputFiles({
@@ -197,8 +230,7 @@ test("empty, excessive, per-image, and total image limits are visible without dr
 }) => {
   await page.goto("/");
   await waitForEntries(page);
-  await runPaletteCommand(page, "Report a Bug");
-  const dialog = page.getByRole("dialog", { name: /report a bug/i });
+  const dialog = await openReportDialog(page);
   await dialog.getByLabel("Title").fill("Keep every limit draft");
   await dialog.getByLabel("Description").fill("Limits must not discard this.");
   const input = dialog.getByLabel("Add images");
@@ -239,8 +271,7 @@ test("empty, excessive, per-image, and total image limits are visible without dr
 test("overlapping picker reads cannot bypass attachment limits", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
-  await runPaletteCommand(page, "Report a Bug");
-  const dialog = page.getByRole("dialog", { name: /report a bug/i });
+  const dialog = await openReportDialog(page);
 
   await dialog.getByLabel("Add images").evaluate((element) => {
     const input = element as HTMLInputElement;
@@ -262,8 +293,7 @@ test("overlapping picker reads cannot bypass attachment limits", async ({ page }
 test("successful submission forwards selected images to the native report command", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);
-  await runPaletteCommand(page, "Report a Bug");
-  const dialog = page.getByRole("dialog", { name: /report a bug/i });
+  const dialog = await openReportDialog(page);
   await dialog.getByLabel("Title").fill("Attachment contract");
   await dialog.getByLabel("Description").fill("The screenshot must reach the relay.");
   await dialog.getByLabel("Add images").setInputFiles({
@@ -283,8 +313,7 @@ test("failed report with an attachment preserves both instead of opening a lossy
   await page.goto("/");
   await waitForEntries(page);
   await page.evaluate(() => localStorage.setItem("mock-report-error", "network_unreachable"));
-  await runPaletteCommand(page, "Report a Bug");
-  const dialog = page.getByRole("dialog", { name: /report a bug/i });
+  const dialog = await openReportDialog(page);
   await dialog.getByLabel("Title").fill("Keep attachment title");
   await dialog.getByLabel("Description").fill("Keep attachment description");
   await dialog.getByLabel("Add images").setInputFiles({
@@ -315,8 +344,7 @@ for (const [kind, message] of [
     await page.evaluate((errorKind) => {
       localStorage.setItem("mock-report-error", errorKind);
     }, kind);
-    await runPaletteCommand(page, "Report a Bug");
-    const dialog = page.getByRole("dialog", { name: /report a bug/i });
+    const dialog = await openReportDialog(page);
     await dialog.getByLabel("Title").fill(`Keep ${kind} title`);
     await dialog.getByLabel("Description").fill(`Keep ${kind} description`);
     await dialog.getByLabel("Add images").setInputFiles({
@@ -339,8 +367,7 @@ test("draft stays editable when both relay and browser fallback fail", async ({ 
     localStorage.setItem("mock-open-url-error", "1");
   });
 
-  await runPaletteCommand(page, "Report a Bug");
-  const dialog = page.getByRole("dialog", { name: /report a bug/i });
+  const dialog = await openReportDialog(page);
   await dialog.getByLabel("Title").fill("Do not lose this title");
   await dialog.getByLabel("Description").fill("Do not lose this description");
   await dialog.getByRole("button", { name: "Submit" }).click();
@@ -359,8 +386,7 @@ test("unicode draft stays editable when it cannot fit in a fallback URL", async 
   await waitForEntries(page);
   await page.evaluate(() => localStorage.setItem("mock-report-error", "network_unreachable"));
 
-  await runPaletteCommand(page, "Report a Bug");
-  const dialog = page.getByRole("dialog", { name: /report a bug/i });
+  const dialog = await openReportDialog(page);
   const description = "🐛".repeat(4000);
   await dialog.getByLabel("Title").fill("Keep the complete unicode draft");
   await dialog.getByLabel("Description").fill(description);

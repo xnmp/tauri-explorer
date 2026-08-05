@@ -294,19 +294,11 @@ export const terminalCommands: Command[] = [
 /** General dialog commands */
 export const generalDialogCommands: Command[] = [
   {
-    id: "help.reportBug",
-    label: "Report a Bug",
+    id: "help.reportIssue",
+    label: "Report Issue",
     category: "general",
     handler: () => {
-      dialogStore.openUserReport("bug");
-    },
-  },
-  {
-    id: "help.requestFeature",
-    label: "Request a Feature",
-    category: "general",
-    handler: () => {
-      dialogStore.openUserReport("feature");
+      dialogStore.openUserReport();
     },
   },
   {

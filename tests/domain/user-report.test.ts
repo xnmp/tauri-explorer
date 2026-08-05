@@ -47,6 +47,17 @@ describe("userReportFallbackUrl", () => {
     expect(url.searchParams.get("body")).not.toContain("How to reach me");
   });
 
+  it("keeps a blank optional description blank", () => {
+    const fallback = userReportFallbackUrl({
+      kind: "bug",
+      title: "Title-only report",
+      body: "   ",
+    });
+
+    expect(fallback).not.toBeNull();
+    expect(new URL(fallback!).searchParams.get("body")).toBe("");
+  });
+
   it("refuses a max-length unicode draft that cannot fit without data loss", () => {
     const fallback = userReportFallbackUrl({
       kind: "bug",

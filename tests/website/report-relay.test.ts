@@ -50,7 +50,6 @@ describe("report relay validation", () => {
     [{ ...valid, title: "" }],
     [{ ...valid, title: "   " }],
     [{ ...valid, title: "x".repeat(121) }],
-    [{ ...valid, body: "   " }],
     [{ ...valid, body: "x".repeat(10_000) }],
     [{ ...valid, body: "https://spam.example/path" }],
     [{ ...valid, kind: "question" }],
@@ -60,6 +59,10 @@ describe("report relay validation", () => {
     expect(() => validateReport(input)).toThrow(
       expect.objectContaining({ code: "malformed_input" }),
     );
+  });
+
+  it("accepts a blank optional description", () => {
+    expect(validateReport({ ...valid, body: "   " }).body).toBe("");
   });
 
   it("accepts an 8000-character unicode body", () => {
@@ -170,6 +173,21 @@ describe("report attachment delivery", () => {
       url: "https://blob.test/hosted.png",
     }]).body).toContain(
       "![hosted-name.png](https://blob.test/hosted.png)",
+    );
+  });
+
+  it("renders an attachment cleanly when the description is blank", () => {
+    const report = validateReport({
+      ...valid,
+      body: "",
+      attachments: [{ name: "clipboard.png", mediaType: "image/png", data: pngData }],
+    });
+
+    expect(buildGitHubIssue(report, [{
+      name: "clipboard.png",
+      url: "https://blob.test/clipboard.png",
+    }]).body).toBe(
+      "## Attachments\n\n![clipboard.png](https://blob.test/clipboard.png)",
     );
   });
 

@@ -31,8 +31,8 @@ test("report fallback keeps a solid toast over contrasting app content", async (
 
   await page.evaluate(() => localStorage.setItem("mock-report-error", "network_unreachable"));
 
-  await runPaletteCommand(page, "Report a Bug");
-  const dialog = page.getByRole("dialog", { name: /report a bug/i });
+  await runPaletteCommand(page, "Report Issue");
+  const dialog = page.getByRole("dialog", { name: "Report Issue" });
   await dialog.getByLabel("Title").fill("Opaque fallback toast");
   await dialog.getByLabel("Description").fill("Keep this report in GitHub.");
   await dialog.getByRole("button", { name: "Submit" }).click();

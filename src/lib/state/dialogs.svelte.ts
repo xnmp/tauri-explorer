@@ -9,7 +9,6 @@
  */
 
 import type { FileEntry } from "$lib/domain/file";
-import type { UserReportKind } from "$lib/domain/user-report";
 
 export type DialogType = "rename" | "delete" | null;
 
@@ -44,7 +43,7 @@ function createDialogStore() {
   let themePickerOpen = $state(false);
   let shortcutsOpen = $state(false);
   let pickerConfig = $state<PickerConfig | null>(null);
-  let userReportKind = $state<UserReportKind | null>(null);
+  let userReportOpen = $state(false);
 
   function closeIfActive(dialogType: DialogType): void {
     if (activeDialog === dialogType) {
@@ -119,10 +118,7 @@ function createDialogStore() {
       return pickerConfig;
     },
     get isUserReportOpen() {
-      return userReportKind !== null;
-    },
-    get userReportKind(): UserReportKind {
-      return userReportKind ?? "bug";
+      return userReportOpen;
     },
 
     // File operation actions
@@ -149,7 +145,7 @@ function createDialogStore() {
 
     /** True when any modal dialog is open (file ops or overlays). */
     get hasModalOpen(): boolean {
-      return activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportKind !== null;
+      return activeDialog !== null || quickOpenOpen || commandPaletteOpen || settingsOpen || contentSearchOpen || workspaceOpen || bulkRenameOpen || jobsPanelOpen || themePickerOpen || pickerConfig !== null || userReportOpen;
     },
 
     // Overlay dialog actions
@@ -235,13 +231,13 @@ function createDialogStore() {
       pickerConfig = null;
     },
 
-    openUserReport(kind: UserReportKind): void {
+    openUserReport(): void {
       commandPaletteOpen = false;
-      userReportKind = kind;
+      userReportOpen = true;
     },
 
     closeUserReport(): void {
-      userReportKind = null;
+      userReportOpen = false;
     },
 
     closeAll(): void {
@@ -258,7 +254,7 @@ function createDialogStore() {
       jobsPanelOpen = false;
       themePickerOpen = false;
       pickerConfig = null;
-      userReportKind = null;
+      userReportOpen = false;
     },
   };
 }

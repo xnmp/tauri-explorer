@@ -48,6 +48,18 @@ function optionalString(input, field, max) {
   return value;
 }
 
+/** @param {unknown} input @param {string} field @param {number} max */
+function optionalMultilineString(input, field, max) {
+  if (typeof input !== "string") {
+    throw new ReportError("malformed_input", `${field} is invalid`);
+  }
+  const value = input.trim();
+  if (value.length > max || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value)) {
+    throw new ReportError("malformed_input", `${field} is invalid`);
+  }
+  return value;
+}
+
 /** @param {string} mediaType @param {Uint8Array} bytes */
 function hasImageMagic(mediaType, bytes) {
   /** @param {number[]} signature */
@@ -115,7 +127,7 @@ export function validateReport(input) {
   }
   const record = /** @type {Record<string, unknown>} */ (input);
   const title = requiredString(record.title, "title", 120);
-  const body = requiredString(record.body, "body", 8000);
+  const body = optionalMultilineString(record.body, "body", 8000);
   if (/^(?:https?:\/\/|www\.)\S+$/iu.test(body)) {
     throw new ReportError("malformed_input", "Description cannot be only a link");
   }
@@ -145,7 +157,7 @@ function escapeMarkdownAlt(value) {
 export function buildGitHubIssue(report, hostedAttachments = []) {
   const attachments = hostedAttachments.length === 0
     ? ""
-    : `\n\n## Attachments\n\n${hostedAttachments.map(({ name, url }) =>
+    : `${report.body ? "\n\n" : ""}## Attachments\n\n${hostedAttachments.map(({ name, url }) =>
       `![${escapeMarkdownAlt(name)}](${url})`
     ).join("\n\n")}`;
   return {

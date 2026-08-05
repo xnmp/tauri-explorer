@@ -126,9 +126,10 @@ export function userReportFallbackUrl(draft: UserReportDraft): string | null {
   const title = stripControls(draft.title).replace(/\s*\r?\n\s*/g, " ").trim();
   const description = stripControls(draft.body).trim();
   const contact = stripControls(draft.contact ?? "").trim();
-  const body = contact
-    ? `${description}\n\nHow to reach me: ${contact}`
-    : description;
+  const body = [
+    description,
+    contact ? `How to reach me: ${contact}` : "",
+  ].filter(Boolean).join("\n\n");
   return boundedGitHubIssueUrl(
     title,
     body,

@@ -652,7 +652,6 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
   <svelte:boundary onerror={dialogCrash("Report dialog", () => dialogStore.closeUserReport())}>
     <UserReportDialog
       open={dialogStore.isUserReportOpen}
-      initialKind={dialogStore.userReportKind}
       onClose={() => dialogStore.closeUserReport()}
     />
   </svelte:boundary>

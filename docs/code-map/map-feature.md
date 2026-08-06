@@ -136,13 +136,15 @@ backend for E2E/browser).
 
 ## Thumbnails
 
-- `components/ThumbnailImage.svelte` — img element + load/error/placeholder states
+- `components/ThumbnailImage.svelte` — img element + load/error/placeholder states; `decoding="async"` on both micro and full `<img>`s, no animated loading spinner (static SVG placeholder instead — a continuous CSS animation across many concurrently-loading tiles doubled the long-frame rate on WebKitGTK, #593)
 - `components/FolderThumbnail.svelte` — folder collage from children
+- `components/TilesView.svelte` — runs `domain/scroll-jank-monitor.ts` while scrolling and logs a `tiles-scroll-jank` diagnostic event only when a sampled window actually had long frames (#593)
+- `domain/scroll-jank-monitor.ts` — pure rAF-gap sampler (long-frame count, worst gap, duration); rAF/cancel injected so it's unit-testable with synthetic frame timelines
 - `state/thumbnail-cache.ts` — in-memory cache (`getThumbnailCache`, `renameThumbnailCache`)
-- `api/thumbnails.ts` — getThumbnail/getThumbnailData/getMicroThumbnail/getVideoThumbnailData/getFolderPreview
+- `api/thumbnails.ts` — getThumbnail/getThumbnailData/getMicroThumbnail/getVideoThumbnailData/getFolderPreview — per-item requests, deliberately not batched (a batched-IPC scheduler was tried and removed twice: it clumps responses into one main-thread burst and measures worse for scroll pacing than per-item dispatch even though it wins on raw throughput, #593)
 - `domain/folder-preview.ts` — folder-preview shaping
-- `src-tauri/src/thumbnails.rs` — disk cache, image/video decode; `files/dir_listing.rs` folder preview
-- FLOW: ThumbnailImage requests via api/thumbnails → Rust cache lookup/generate → data URL cached in thumbnail-cache.ts keyed by path. Rename preserves cache via `renameThumbnailCache`.
+- `src-tauri/src/thumbnails.rs` — disk cache, image/video decode; `with_decode_gate` bounds concurrent decodes to `cores/4` (2-8, `TAURI_EXPLORER_DECODE_PERMITS` override) and lowers decode-thread priority so decodes don't starve the webview compositor; `diag` module logs slow (>100ms) requests + rolling aggregates (#593); `files/dir_listing.rs` folder preview
+- FLOW: ThumbnailImage requests via api/thumbnails → Rust cache lookup/generate (decode gated + priority-lowered) → data URL cached in thumbnail-cache.ts keyed by path. Rename preserves cache via `renameThumbnailCache`.
 
 ## Preview pane
 

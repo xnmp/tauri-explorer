@@ -5,9 +5,13 @@ on:
     paths:
       - 'src/lib/state/**'
       - 'src/lib/domain/**'
+      - 'src/lib/components/**'
+      - 'src/lib/api/**'
+      - 'src/lib/composables/**'
       - 'tests/perf/**'
       - 'scripts/perf-check.ts'
       - 'perf-baseline.json'
+      - 'e2e/tiles-scroll-perf.spec.ts'
   workflow_dispatch:
 
 jobs:
@@ -33,4 +37,31 @@ jobs:
         with:
           name: perf-results
           path: perf-baseline.json
+          if-no-files-found: ignore
+
+  tiles-scroll-perf:
+    name: Tiles Scroll Perf (#593 regression guard)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Tiles scroll perf spec
+        run: npx playwright test e2e/tiles-scroll-perf.spec.ts --project=chromium
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-tiles-scroll-perf
+          path: playwright-report/
           if-no-files-found: ignore

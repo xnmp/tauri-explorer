@@ -15,14 +15,14 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `FileList.svelte` — dispatches to Details/List/Tiles by view mode; hosts marquee, drop, empty-state. Central view entry.
 - `DetailsView.svelte` — virtual-scrolled table view (columns, resize, sort headers).
 - `ListView.svelte` — CSS-grid compact list view.
-- `TilesView.svelte` — CSS auto-fill grid tile view with thumbnails.
+- `TilesView.svelte` — CSS auto-fill grid tile view with thumbnails; runs `scroll-jank-monitor.ts` during scroll and logs `tiles-scroll-jank` events only when jank occurred (#593).
 - `VirtualList.svelte` — variable-height windowed scroller used by views. Perf-critical.
 - `MillerColumns.svelte` — column/Miller-columns browsing mode.
 - `FileItem.svelte` — single entry row/tile (icon, name, badges, selection state).
 - `ItemButton.svelte` — shared entry button wrapper wiring drag-drop + interaction handlers.
 - `EntryName.svelte` — shared inline rename input/display across all views.
 - `FileIcon.svelte` — file/folder icon resolution (Material/nerd-font theme); also renders the linked-folder and git-repo-folder badge overlays (all themes, all 3 view modes since it's the shared icon renderer).
-- `ThumbnailImage.svelte` — lazy image/video thumbnail loader w/ cache + intersection. Hot.
+- `ThumbnailImage.svelte` — lazy image/video thumbnail loader w/ cache + intersection. `decoding="async"` on both `<img>`s; no loading spinner (a continuous CSS animation on many concurrently-loading tiles cost a doubled long-frame rate on WebKitGTK, #593 — static SVG placeholder instead). Hot.
 - `FolderThumbnail.svelte` — Windows-style folder preview tile (up to 3 nested images, #146).
 - `GitStatusBadge.svelte` — per-entry git status letter/color decoration.
 - `ExplorerPane.svelte` — one pane: navigation bar + FileList + preview; owns pane-scoped context.
@@ -228,6 +228,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `markdown.ts` — safe markdown render for preview.
 - `zoom.ts` — CSS zoom level utils.
 - `raf-coalesce.ts` — coalesce high-freq value streams via rAF.
+- `scroll-jank-monitor.ts` — pure rAF-gap sampler (rAF/cancel injected) reporting long-frame counts for scroll-jank diagnostics; wired into `TilesView.svelte` (#593).
 - `theme-from-palette.ts` — build theme from extracted image palette (#203).
 - `ai-rename.ts` — pure AI-rename suggestion logic (#145).
 - `terminal-command.ts` — shell command construction/quoting for terminal.
@@ -275,7 +276,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `search.rs` — fuzzy search (nucleo). Two-pass walk: fast pass, then build-output trees (`target`, `node_modules`, …) deferred + score-penalized (#393); WSL UNC roots delegate the walk to the distro's `find` (#414).
 - `wsl.rs` — WSL UNC path parsing (`\\wsl.localhost\<distro>\…` → distro + Linux path), shared by terminal/search/git delegation.
 - `content_search.rs` — grep-across-files (ripgrep/grep crate).
-- `thumbnails.rs` — image/video thumbnail generation + cache. Hot.
+- `thumbnails.rs` — image/video thumbnail generation + cache; `with_decode_gate` clamps concurrent decodes to `cores/4` (2-8, override `TAURI_EXPLORER_DECODE_PERMITS`, 0=off) and lowers decode-thread priority to avoid starving the webview compositor; `diag` module logs slow (`>100ms`) requests + rolling aggregates (#593). Hot.
 - `palette.rs` — dominant-color extraction for themes (#203).
 - `wallpaper.rs` — set desktop wallpaper (mac/Linux/Windows).
 - `archive.rs` — zip compress/extract.

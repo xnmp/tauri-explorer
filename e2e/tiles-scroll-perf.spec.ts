@@ -149,24 +149,33 @@ test("Tiles view scrolls a large image directory without long-frame jank (#593)"
 
   // (b) No scroll/rAF starvation: the sweep runs ~3.3s of scripted scrolling
   // plus settle time — a wedged main thread would starve rAF far below this.
-  // Observed baseline is ~110-116 frames; 60 leaves headroom for slower CI
-  // runners while still catching a main thread that's actually stuck.
-  expect(report.frames).toBeGreaterThanOrEqual(60);
+  // Observed baselines: ~110-116 frames locally, 60-68 on 2-core CI runners;
+  // the floors sit below each with margin while still catching a main thread
+  // that's actually stuck.
+  expect(report.frames).toBeGreaterThanOrEqual(process.env.CI ? 40 : 60);
 
-  // (a) Long-frame fraction stays under a lenient, headless-safe bound.
-  // Calibrated (3 local runs, chromium headless) against the >64ms threshold
-  // above: 0/111-114 frames exceeded it in every run, worst gap topped out at
-  // 50ms. 0.1 leaves an order of magnitude of headroom over that observed
-  // baseline while still catching a regression like #593's per-tile animated
-  // overlay, which compounds the existing ~30fps decode-load baseline into
-  // materially worse (15fps-or-lower) stretches.
+  // (a) Long-frame fraction and worst-gap bounds are hardware-sensitive:
+  // calibrated on a real workstation (0/111-114 frames over 64ms, worst gap
+  // 50ms), but GitHub's 2-core runners measured 0.22-0.58 fractions with the
+  // fix in place — on that hardware the timing signal is CPU-contention
+  // noise, not a regression detector (the #469 lesson about headless frame
+  // times, one tier worse). So: strict ratio gate on real hardware, where it
+  // has an order of magnitude of headroom; starvation-only gate on CI, where
+  // the structural asserts below (virtualization bound, resolved blob
+  // thumbnails, zero spinner sightings) remain the regression trip-wires.
   const longFrameFraction = report.longFrames / Math.max(1, report.frames);
-  expect(longFrameFraction).toBeLessThan(0.1);
-
-  // Worst single-frame gap: observed baseline topped out at 50ms across 3
-  // runs (a plain double-miss from the ~30fps decode-load baseline); 120ms
-  // gives ~2x headroom while still catching a genuinely stalled frame.
-  expect(report.worstFrameMs).toBeLessThan(120);
+  if (process.env.CI) {
+    // Catch total main-thread seizure (e.g. a synchronous decode loop or an
+    // event-loop stall), not ordinary 2-core contention.
+    expect(longFrameFraction).toBeLessThan(0.9);
+    expect(report.worstFrameMs).toBeLessThan(1000);
+  } else {
+    expect(longFrameFraction).toBeLessThan(0.1);
+    // Worst single-frame gap: observed baseline topped out at 50ms across 3
+    // runs (a plain double-miss from the ~30fps decode-load baseline); 120ms
+    // gives ~2x headroom while still catching a genuinely stalled frame.
+    expect(report.worstFrameMs).toBeLessThan(120);
+  }
 
   // (c) Virtualization not defeated: even a big scroll sweep over 500 xlarge
   // tiles keeps the live DOM to a small windowed slice, never anywhere near

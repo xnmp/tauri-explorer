@@ -312,6 +312,18 @@ instant." None of it is search.
   return, later chunks in the streaming thread, `list_directory` (miller/pickers) still
   returns it resolved. Single-entry ops (create/rename/copy) use
   `metadata_to_entry_probed`.
+- **2026-08-06: #8's remnant (thumbnail scroll jank, #593) resolved**
+  (`perf/image-thumbnails`): Tiles view with large thumbnails was dropping to
+  ~33ms/frame on WebKitGTK. Three causes: missing `decoding="async"`, an
+  animated loading spinner forcing per-frame software rasterization on every
+  loading tile (doubled the long-frame rate — same family as #104), and
+  unbounded parallel decodes contending with the webview for CPU. Fixed with
+  async decoding, a static placeholder instead of the spinner, and a global
+  decode gate (`with_decode_gate` in `thumbnails.rs`, cores/4 clamped 2-8,
+  thread priority lowered during decode). A re-tried batched-thumbnail-IPC
+  scheduler measured *worse* for scroll pacing than per-item requests despite
+  better raw throughput and was deliberately removed again; see
+  `docs/lessons/593-thumbnail-scroll-jank.md`.
 
 ---
 

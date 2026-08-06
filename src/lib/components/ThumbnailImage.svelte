@@ -15,7 +15,14 @@
     getVideoThumbnailData,
   } from "$lib/api/files";
 
-  // Dual concurrency pools: micro is fast (small payload), full is heavier
+  // Dual concurrency pools: micro is fast (small payload), full is heavier.
+  // The pools are the cancellation seam (#136): queued work re-checks
+  // visibility when its slot frees, so a fast scroll-past doesn't decode every
+  // tile it crossed. Keep requests per-item — batching them into one IPC call
+  // was measured in #593 to make scroll pacing WORSE (responses arrive as one
+  // clump that blocks the main thread) even though it improves throughput.
+  // The backend additionally bounds decode concurrency globally (decode gate
+  // in thumbnails.rs), so pool width here is about response pacing, not CPU.
   function createPool(max: number) {
     let active = 0;
     const queue: Array<() => void> = [];
@@ -283,17 +290,18 @@
   {#if (!microUrl && !fullUrl && !error) || (loading && !microUrl)}
     <!-- Placeholder only while nothing is loaded yet — a loaded thumbnail
          stays visible through IntersectionObserver flickers (layout shifts,
-         fullscreen-preview exit) instead of flashing back to the SVG (#247). -->
-    <!-- SVG placeholder while waiting for first thumbnail -->
+         fullscreen-preview exit) instead of flashing back to the SVG (#247).
+         No loading spinner on purpose (#593): an animated overlay per loading
+         tile forces WebKitGTK into per-frame software rasterization across
+         the whole grid during a cold scroll — measured to halve the frame
+         rate. The static placeholder communicates "loading" well enough for
+         the ~100-300ms a micro thumbnail takes. -->
     <svg width={size} height={size} viewBox="0 0 48 48" fill="none" class="thumbnail-placeholder">
       <rect x="6" y="6" width="36" height="36" rx="4" fill={fallbackColor} fill-opacity="0.1"/>
       <rect x="6" y="6" width="36" height="36" rx="4" stroke={fallbackColor} stroke-width="1.5" stroke-opacity="0.3"/>
       <circle cx="16" cy="16" r="4" fill={fallbackColor} fill-opacity="0.3"/>
       <path d="M6 33L15 24L22 31L30 21L42 33V38C42 40.2091 40.2091 42 38 42H10C7.79086 42 6 40.2091 6 38V33Z" fill={fallbackColor} fill-opacity="0.2"/>
     </svg>
-    {#if loading}
-      <div class="loading-overlay"><div class="spinner"></div></div>
-    {/if}
   {:else if error && !microUrl}
     <!-- Fallback to image icon SVG -->
     <svg width={size} height={size} viewBox="0 0 48 48" fill="none" class="thumbnail-fallback">
@@ -311,6 +319,7 @@
         class="thumbnail-micro"
         width={size}
         height={size}
+        decoding="async"
         draggable="false"
       />
     {/if}
@@ -323,6 +332,7 @@
         onload={() => { fullLoaded = true; }}
         width={size}
         height={size}
+        decoding="async"
         draggable="false"
       />
     {/if}
@@ -345,27 +355,6 @@
 
   .thumbnail-placeholder {
     opacity: 0.6;
-  }
-
-  .loading-overlay {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .spinner {
-    width: 16px;
-    height: 16px;
-    border: 2px solid var(--divider, #e0e0e0);
-    border-top-color: var(--accent, #0078d4);
-    border-radius: 50%;
-    animation: spin 600ms linear infinite;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
   }
 
   .thumbnail-fallback {

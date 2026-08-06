@@ -547,7 +547,9 @@ fn decode_gate_permits() -> usize {
         .map(|n| n.get())
         .unwrap_or(8);
     permits_from(
-        std::env::var("TAURI_EXPLORER_DECODE_PERMITS").ok().as_deref(),
+        std::env::var("TAURI_EXPLORER_DECODE_PERMITS")
+            .ok()
+            .as_deref(),
         cores,
     )
 }
@@ -634,10 +636,7 @@ fn with_decode_gate<T>(work: impl FnOnce() -> T) -> (T, std::time::Duration) {
     let permit = {
         let mut count = gate.count.lock().unwrap_or_else(|p| p.into_inner());
         while *count >= max {
-            count = gate
-                .cond
-                .wait(count)
-                .unwrap_or_else(|p| p.into_inner());
+            count = gate.cond.wait(count).unwrap_or_else(|p| p.into_inner());
         }
         *count += 1;
         GatePermit { gate }
@@ -764,21 +763,45 @@ fn get_thumbnail_data_sync(
 
     // Check in-memory LRU first (fastest)
     if let Some(uri) = lru_get(&cache_key) {
-        diag::record("full", diag::Source::MemoryHit, started.elapsed(), None, std::time::Duration::ZERO, &source_path, size);
+        diag::record(
+            "full",
+            diag::Source::MemoryHit,
+            started.elapsed(),
+            None,
+            std::time::Duration::ZERO,
+            &source_path,
+            size,
+        );
         return Ok(uri);
     }
 
     with_inflight_lock(&cache_key.clone(), || {
         // Re-check caches: another request may have generated while we waited
         if let Some(uri) = lru_get(&cache_key) {
-            diag::record("full", diag::Source::MemoryHit, started.elapsed(), None, std::time::Duration::ZERO, &source_path, size);
+            diag::record(
+                "full",
+                diag::Source::MemoryHit,
+                started.elapsed(),
+                None,
+                std::time::Duration::ZERO,
+                &source_path,
+                size,
+            );
             return Ok(uri);
         }
         if let Some(cached_path) = get_cached_thumbnail(&cache_key) {
             let data = fs::read(&cached_path)?;
             let uri = to_data_uri(&data);
             lru_put(cache_key.clone(), uri.clone());
-            diag::record("full", diag::Source::DiskHit, started.elapsed(), None, std::time::Duration::ZERO, &source_path, size);
+            diag::record(
+                "full",
+                diag::Source::DiskHit,
+                started.elapsed(),
+                None,
+                std::time::Duration::ZERO,
+                &source_path,
+                size,
+            );
             return Ok(uri);
         }
 
@@ -793,7 +816,15 @@ fn get_thumbnail_data_sync(
 
         let uri = to_data_uri(&data);
         lru_put(cache_key.clone(), uri.clone());
-        diag::record("full", diag::Source::Decoded, started.elapsed(), Some(decode_elapsed), gate_wait, &source_path, size);
+        diag::record(
+            "full",
+            diag::Source::Decoded,
+            started.elapsed(),
+            Some(decode_elapsed),
+            gate_wait,
+            &source_path,
+            size,
+        );
         Ok(uri)
     })
 }
@@ -816,21 +847,45 @@ fn get_micro_thumbnail_sync(
 
     // Check in-memory LRU first
     if let Some(uri) = lru_get(&micro_cache_key) {
-        diag::record("micro", diag::Source::MemoryHit, started.elapsed(), None, std::time::Duration::ZERO, &source_path, MICRO_SIZE);
+        diag::record(
+            "micro",
+            diag::Source::MemoryHit,
+            started.elapsed(),
+            None,
+            std::time::Duration::ZERO,
+            &source_path,
+            MICRO_SIZE,
+        );
         return Ok(uri);
     }
 
     with_inflight_lock(&micro_cache_key.clone(), || {
         // Re-check caches: another request may have generated while we waited
         if let Some(uri) = lru_get(&micro_cache_key) {
-            diag::record("micro", diag::Source::MemoryHit, started.elapsed(), None, std::time::Duration::ZERO, &source_path, MICRO_SIZE);
+            diag::record(
+                "micro",
+                diag::Source::MemoryHit,
+                started.elapsed(),
+                None,
+                std::time::Duration::ZERO,
+                &source_path,
+                MICRO_SIZE,
+            );
             return Ok(uri);
         }
         if let Some(cached_path) = get_cached_thumbnail(&micro_cache_key) {
             let data = fs::read(&cached_path)?;
             let uri = to_data_uri(&data);
             lru_put(micro_cache_key.clone(), uri.clone());
-            diag::record("micro", diag::Source::DiskHit, started.elapsed(), None, std::time::Duration::ZERO, &source_path, MICRO_SIZE);
+            diag::record(
+                "micro",
+                diag::Source::DiskHit,
+                started.elapsed(),
+                None,
+                std::time::Duration::ZERO,
+                &source_path,
+                MICRO_SIZE,
+            );
             return Ok(uri);
         }
 
@@ -861,7 +916,15 @@ fn get_micro_thumbnail_sync(
 
         let uri = to_data_uri(&micro_data);
         lru_put(micro_cache_key.clone(), uri.clone());
-        diag::record("micro", diag::Source::Decoded, started.elapsed(), Some(decode_elapsed), gate_wait, &source_path, MICRO_SIZE);
+        diag::record(
+            "micro",
+            diag::Source::Decoded,
+            started.elapsed(),
+            Some(decode_elapsed),
+            gate_wait,
+            &source_path,
+            MICRO_SIZE,
+        );
         Ok(uri)
     })
 }

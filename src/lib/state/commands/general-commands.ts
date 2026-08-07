@@ -297,6 +297,7 @@ export const generalDialogCommands: Command[] = [
     id: "help.reportIssue",
     label: "Report Issue",
     category: "general",
+    shortcut: "Alt+I",
     handler: () => {
       dialogStore.openUserReport();
     },

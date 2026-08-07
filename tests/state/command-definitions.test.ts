@@ -115,6 +115,7 @@ import {
   getCommandShortcut,
   type Command,
 } from "$lib/state/commands.svelte";
+import { keybindingsStore } from "$lib/state/keybindings.svelte";
 
 beforeEach(() => {
   // Reset the controllable world to a neutral baseline.
@@ -163,6 +164,30 @@ describe("registerAllCommands", () => {
     // default lives on the command object.
     expect(getCommand("navigation.goBack")?.shortcut).toBe("Ctrl+Alt+Left");
     expect(getCommandShortcut("navigation.goBack")).toBeTruthy();
+  });
+
+  it("resolves an Alt+I keystroke to Report Issue (#597)", () => {
+    // The binding is only useful if the window-level dispatcher actually
+    // resolves the keystroke to it, so drive the real matcher rather than
+    // asserting the string on the command object alone.
+    expect(getCommandShortcut("help.reportIssue")).toBe("Alt+I");
+    const altI = {
+      key: "i",
+      code: "KeyI",
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: true,
+      metaKey: false,
+    } as KeyboardEvent;
+    expect(keybindingsStore.findMatchingCommand(altI)).toBe("help.reportIssue");
+
+    // Alt alone, or Alt+I with another modifier, must not claim it.
+    expect(
+      keybindingsStore.findMatchingCommand({ ...altI, altKey: false } as KeyboardEvent),
+    ).not.toBe("help.reportIssue");
+    expect(
+      keybindingsStore.findMatchingCommand({ ...altI, ctrlKey: true } as KeyboardEvent),
+    ).not.toBe("help.reportIssue");
   });
 
   it("has no two palette commands sharing a shortcut without a `when` guard", () => {

@@ -6,6 +6,7 @@ mod ai_rename;
 mod archive;
 mod clipboard;
 mod config;
+mod config_watch;
 mod content_search;
 mod crash_report;
 pub mod error;
@@ -345,6 +346,11 @@ pub fn run(launch_dir: Option<String>) {
                 portal::start_portal_service(app.handle());
                 return Ok(());
             }
+
+            // Apply external edits to settings.json / user themes live (#599).
+            // After the portal branch: picker windows never start the frontend
+            // listener, so a watcher there would be a thread with no audience.
+            config_watch::init_config_watcher(app.handle());
 
             // Create window programmatically so we can inject initialization_script.
             // This replaces the static window definition in tauri.conf.json.

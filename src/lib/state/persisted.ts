@@ -205,6 +205,59 @@ export function createCoalescedPersister<T>(key: string, delayMs: number): Coale
 
 const inFlightWrites = new Map<string, Promise<void>>();
 const pendingWrites = new Map<string, string>();
+const lastWrittenContent = new Map<string, string>();
+const writeGenerations = new Map<string, number>();
+
+/**
+ * A snapshot of this process's write activity for `filename`.
+ *
+ * Config autoreload (#599) samples this on both sides of its read. A boolean
+ * "is a write pending" is not enough: a write that *starts and finishes
+ * entirely inside* the read window leaves the flag false at both ends while
+ * the bytes that came back are already stale. The generation counter closes
+ * that hole — it changes for every write issued, so "did any write of ours
+ * overlap this read" is answerable no matter how the timing lands.
+ */
+export interface ConfigWriteActivity {
+  /** A write is queued or in flight right now. */
+  pending: boolean;
+  /** Monotonic count of writes issued for this file in this process. */
+  generation: number;
+}
+
+export function configWriteActivity(filename: string): ConfigWriteActivity {
+  return {
+    pending: inFlightWrites.has(filename),
+    generation: writeGenerations.get(filename) ?? 0,
+  };
+}
+
+/**
+ * Whether one of this process's writes overlapped the window between `before`
+ * and now — either straddling it, or beginning and completing inside it.
+ *
+ * When true, whatever was read in that window may predate a write we have
+ * already issued, so adopting it would revert the change that write carries.
+ */
+export function configWriteRaced(
+  filename: string,
+  before: ConfigWriteActivity,
+): boolean {
+  const now = configWriteActivity(filename);
+  return before.pending || now.pending || now.generation !== before.generation;
+}
+
+/**
+ * The content this process most recently sent to disk for `filename`, or null
+ * if it has never written it.
+ *
+ * Filesystem watchers cannot tell our own write from an external edit — both
+ * arrive as "the file changed". Comparing against this is what makes a
+ * self-write a no-op instead of a reload loop.
+ */
+export function lastWrittenConfig(filename: string): string | null {
+  return lastWrittenContent.get(filename) ?? null;
+}
 
 /**
  * Write a config file, serializing writes per filename.
@@ -223,6 +276,11 @@ export function writeConfigQueued(filename: string, data: string): Promise<void>
   }
 
   const flush = async (content: string): Promise<void> => {
+    // Both recorded before the await, not after: the watcher can report the
+    // change before `writeConfigFile` resolves, and an echo that arrives early
+    // must still be recognisable as ours.
+    lastWrittenContent.set(filename, content);
+    writeGenerations.set(filename, (writeGenerations.get(filename) ?? 0) + 1);
     const result = await writeConfigFile(filename, content);
     if (!result.ok) {
       console.warn(`Failed to write config file "${filename}":`, result.error);

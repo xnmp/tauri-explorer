@@ -76,6 +76,19 @@ describe("settingsStore.init precedence (#280)", () => {
     expect(store.showHidden).toBe(true);
   });
 
+  it("a config file holding a JSON array falls back to localStorage, not to bare defaults", async () => {
+    // Valid JSON but not a settings object. It parses, so a `typeof === "object"`
+    // check alone lets it through and the merge yields pure defaults — silently
+    // discarding the localStorage cache that still holds the user's settings.
+    localStorage.setItem("explorer-settings", JSON.stringify({ showHidden: true }));
+    readConfigFileMock.mockResolvedValue({ ok: true, data: "[1,2,3]" });
+    const store = await freshStore();
+
+    await store.init();
+
+    expect(store.showHidden).toBe(true);
+  });
+
   it("unknown keys in the config file don't clobber defaults for known ones", async () => {
     readConfigFileMock.mockResolvedValue({
       ok: true,

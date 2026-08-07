@@ -7,6 +7,7 @@
   import { onMount } from "svelte";
   import { getAlwaysActiveTerminalCommandId, isShellReservedKey } from "$lib/domain/terminal-keys";
   import { themeStore } from "$lib/state/theme.svelte";
+  import { startConfigWatch } from "$lib/state/config-watch";
   import { settingsStore } from "$lib/state/settings.svelte";
 import { windowSizeStore } from "$lib/state/window-size.svelte";
   import { applyWindowsBackdrop } from "$lib/state/window-backdrop";
@@ -469,6 +470,9 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     // tab dragged out of this one.
     const stopTabTransfer = initTabTransferListener();
 
+    // Apply edits made to settings.json / user themes outside the app (#599).
+    const stopConfigWatch = startConfigWatch();
+
     // Dev-only e2e hooks: the tauri-driver suite runs against the vite dev
     // server under Xvfb with no window manager, where autofocused inline
     // inputs (address bar, new-folder, rename) blur — and cancel — the
@@ -561,6 +565,7 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
       windowLifecycle.cleanup();
       stopWindowTitleSync();
       stopTabTransfer();
+      stopConfigWatch();
     };
   });
 </script>

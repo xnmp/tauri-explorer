@@ -7,7 +7,15 @@
  * localStorage as synchronous fallback for immediate state.
  */
 
-import { loadPersisted, savePersisted, writeConfigQueued } from "./persisted";
+import {
+  configWriteActivity,
+  configWriteRaced,
+  lastWrittenConfig,
+  loadPersisted,
+  savePersisted,
+  writeConfigQueued,
+} from "./persisted";
+import { decideConfigReload, type ConfigReloadReason } from "$lib/domain/config-reload";
 import { readConfigFile } from "$lib/api/files";
 import type { ViewMode } from "./types";
 import type { Command, CommandCategory } from "./commands.svelte";
@@ -219,24 +227,42 @@ function createSettingsStore() {
    * migrations therefore run HERE and only here — on the authoritative blob,
    * once, with the result written back to both stores (#506).
    */
-  async function init() {
+  /**
+   * Parse and migrate a settings.json blob. Returns null when the text is not
+   * a usable settings object, so callers can distinguish "nothing to adopt"
+   * from "adopted".
+   */
+  function parseSettingsBlob(
+    raw: string,
+  ): { settings: Settings; migrationChanged: boolean } | null {
     try {
-      const result = await readConfigFile(CONFIG_FILENAME);
-      if (result.ok && result.data) {
-        const loaded = JSON.parse(result.data) as Partial<Settings>;
-        if (loaded && typeof loaded === "object") {
-          const { settings: migrated, changed } = migrateSettings(loaded, DEFAULT_SETTINGS);
-          settings = migrated;
-          savePersisted(STORAGE_KEY, settings);
-          // Write the migrated blob (and its version stamp) straight back, so
-          // the migration applies once rather than on every launch — that is
-          // what lets a user switch the setting off again afterwards (#506).
-          if (changed) writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2));
-          return;
-        }
-      }
+      const loaded = JSON.parse(raw) as Partial<Settings>;
+      if (!loaded || typeof loaded !== "object" || Array.isArray(loaded)) return null;
+      const { settings: migrated, changed } = migrateSettings(loaded, DEFAULT_SETTINGS);
+      return { settings: migrated, migrationChanged: changed };
     } catch {
-      // Config file doesn't exist or is invalid - fall through
+      return null;
+    }
+  }
+
+  /** Adopt a parsed blob as the live settings and refresh the localStorage cache. */
+  function adoptSettings(next: Settings, migrationChanged: boolean): void {
+    settings = next;
+    savePersisted(STORAGE_KEY, settings);
+    // Write the migrated blob (and its version stamp) straight back, so
+    // the migration applies once rather than on every launch — that is
+    // what lets a user switch the setting off again afterwards (#506).
+    if (migrationChanged) {
+      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2));
+    }
+  }
+
+  async function init() {
+    const result = await readConfigFile(CONFIG_FILENAME);
+    const loaded = result.ok && result.data ? parseSettingsBlob(result.data) : null;
+    if (loaded) {
+      adoptSettings(loaded.settings, loaded.migrationChanged);
+      return;
     }
 
     // settings.json is missing or unreadable, so promote the localStorage
@@ -258,6 +284,37 @@ function createSettingsStore() {
       settings = { ...settings, [SETTINGS_VERSION_KEY]: stamp };
       writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2));
     }
+  }
+
+  /**
+   * Re-read settings.json after it changed on disk and adopt the result if it
+   * is a genuine external edit (#599).
+   *
+   * Returns true only when in-memory settings actually moved, so callers can
+   * skip the imperative follow-up work (re-applying the theme) on a no-op.
+   * See `decideConfigReload` for why our own writes must be filtered out here
+   * rather than at the watcher.
+   */
+  async function reloadFromDisk(): Promise<ConfigReloadReason> {
+    // Sampled on both sides of the read: a settings change made while the file
+    // was in flight would otherwise be clobbered by the older disk contents,
+    // and a write that both starts and finishes inside the read window leaves
+    // no trace in a simple "is a write pending" flag.
+    const beforeRead = configWriteActivity(CONFIG_FILENAME);
+    const result = await readConfigFile(CONFIG_FILENAME);
+    if (!result.ok) return "unusable";
+    const raw = result.data;
+    const parsed = parseSettingsBlob(raw);
+    const decision = decideConfigReload({
+      raw,
+      normalized: parsed ? JSON.stringify(parsed.settings) : null,
+      currentNormalized: JSON.stringify(settings),
+      lastWritten: lastWrittenConfig(CONFIG_FILENAME),
+      selfWriteRaced: configWriteRaced(CONFIG_FILENAME, beforeRead),
+    });
+    if (!decision.apply || !parsed) return decision.reason;
+    adoptSettings(parsed.settings, parsed.migrationChanged);
+    return decision.reason;
   }
 
   function update(partial: Partial<Settings>): void {
@@ -629,6 +686,7 @@ function createSettingsStore() {
       });
     },
     init,
+    reloadFromDisk,
     update,
     toggleSidebar,
     toggleHidden,

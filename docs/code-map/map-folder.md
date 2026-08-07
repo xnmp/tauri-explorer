@@ -131,15 +131,16 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `folder-views.svelte.ts` — per-folder view overrides (e.g. thumbnail size, #8762).
 - `empty-folders.svelte.ts` — lazy empty-folder resolver (avoids per-subdir read_dir, #129).
 - `manual-hidden.svelte.ts` — per-folder manually-hidden entry registry.
-- `settings.svelte.ts` — global settings store (toggles, defaults). Very hot for feature flags.
+- `settings.svelte.ts` — global settings store (toggles, defaults). Very hot for feature flags. `reloadFromDisk()` adopts external settings.json edits (#599).
 - `window-size.svelte.ts` — reactive `window.innerWidth`/`innerHeight` tracker (`windowSizeStore`); `+page.svelte` syncs on mount/resize. Feeds preview-pane auto-dock (#467).
 - `theme.svelte.ts` — active theme state + CSS var application.
+- `config-watch.ts` — applies `config-file-changed` to the settings/theme stores; `handleConfigFileChanged` is the routing seam (#599).
 - `terminal.svelte.ts` — embedded terminal panel state (#139).
 - `jobs.svelte.ts` — background jobs store (Ctrl+J).
 - `toast.svelte.ts` — toast notification store.
 - `rename-suggestion.svelte.ts` — inline-rename autocomplete providers (#215).
 - `thumbnail-cache.ts` — client-side thumbnail cache + in-flight dedupe. Hot for preview perf.
-- `persisted.ts` — localStorage-backed persistent-state utility (SSR/test guards).
+- `persisted.ts` — localStorage-backed persistent-state utility (SSR/test guards); serialized config-file writer plus `isConfigWritePending`/`lastWrittenConfig`, the echo-suppression facts config autoreload reads (#599).
 - `startup-timing.ts` — cold-start boot milestone instrumentation.
 - `tab-display.svelte.ts` — computes tab titles/icons: git-root decoration, VS Code-style disambiguation, multi-pane title joining.
 - `git-warm.ts` — wires the pure git-warm scheduler to the repo-root probe + git-graph/SCM cache warmers.
@@ -220,6 +221,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `pane-layout.ts` — pane split-tree pure logic (#228).
 - `tab-title.ts` — VS Code-style tab title disambiguation.
 - `titlebar.ts` — title bar / tab strip visibility rules.
+- `config-reload.ts` — pure decision for whether an observed config-file change is an external edit or our own write echoing back (#599).
 - `settings-migration.ts` — versioned one-shot migrations for the persisted settings blob; `migrateSettings` + the append-only ledger (#506).
 - `folder-preview.ts` — folder preview image selection (#146).
 - `preview-pane-position.ts` — validate/cycle preview dock edge right/bottom/top, plus "auto" mode/heuristic (`resolveAutoDockPosition`, #460, #467).
@@ -273,6 +275,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `lib.rs` — app entry: builder, command registration, plugin setup. Grep here to find where a command is wired.
 - `error.rs` — unified command error type.
 - `config.rs` — JSON config file persistence.
+- `config_watch.rs` — watches the config dir and emits `config-file-changed` for `settings.json` / `themes/*.css` so external edits apply live (#599); `watched_config_name` is the allowlist.
 - `search.rs` — fuzzy search (nucleo). Two-pass walk: fast pass, then build-output trees (`target`, `node_modules`, …) deferred + score-penalized (#393); WSL UNC roots delegate the walk to the distro's `find` (#414).
 - `wsl.rs` — WSL UNC path parsing (`\\wsl.localhost\<distro>\…` → distro + Linux path), shared by terminal/search/git delegation.
 - `content_search.rs` — grep-across-files (ripgrep/grep crate).

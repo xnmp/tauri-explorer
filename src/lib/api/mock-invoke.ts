@@ -1228,8 +1228,8 @@ const mockCommands: Record<string, CommandHandler> = {
     );
     return undefined;
   },
-  // Log tail (#302): fake recent log lines so the bug-report URL carries a
-  // populated "Recent logs" section in e2e.
+  // Log tail (#302): fake recent log lines for any caller of `read_log_tail`.
+  // No longer feeds report bodies — user reports carry no log section (#595).
   read_log_tail: () =>
     [
       "[2024-01-01][12:00:00][INFO] tauri_explorer: started",

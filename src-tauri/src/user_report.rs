@@ -2,7 +2,6 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::process::{Command, Stdio};
-use tauri::AppHandle;
 
 use crate::process_ext::NoConsole;
 
@@ -198,11 +197,17 @@ fn append_issue_section(body: &mut String, section: &str) {
     }
 }
 
+/// Assemble the GitHub issue body from the reporter's draft.
+///
+/// Deliberately carries no log tail (#595): the last 50 log lines are almost
+/// always unrelated background chatter (git-status probes, thumbnail decodes)
+/// captured at submit time rather than at failure time, so they buried the
+/// reporter's own words under noise without ever aiding triage. Logs are still
+/// available on demand through Command Palette → "Open Logs Folder".
 pub fn assemble_issue_body(
     description: &str,
     contact: Option<&str>,
     environment: &Environment<'_>,
-    log_tail: Option<&str>,
 ) -> String {
     let description = sanitize(description);
     let mut body = truncate_utf16(description.trim(), MAX_RELAY_BODY_UNITS);
@@ -220,27 +225,6 @@ pub fn assemble_issue_body(
     );
     for section in contact.iter().chain(std::iter::once(&environment)) {
         append_issue_section(&mut body, section);
-    }
-
-    if let Some(logs) = log_tail
-        .map(sanitize)
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        const LOG_PREFIX: &str = "## Recent logs\n\n```text\n";
-        const LOG_SUFFIX: &str = "\n```";
-        let separator = if body.is_empty() { "" } else { "\n\n" };
-        let remaining = MAX_RELAY_BODY_UNITS.saturating_sub(body.encode_utf16().count());
-        let framing = separator.encode_utf16().count()
-            + LOG_PREFIX.encode_utf16().count()
-            + LOG_SUFFIX.encode_utf16().count();
-        if remaining > framing {
-            body.push_str(separator);
-            body.push_str(LOG_PREFIX);
-            body.push_str(&truncate_utf16(logs, remaining - framing));
-            body.push_str(LOG_SUFFIX);
-        }
     }
     body
 }
@@ -556,7 +540,6 @@ fn send_report(
 
 #[tauri::command]
 pub async fn submit_user_report(
-    app: AppHandle,
     title: String,
     body: String,
     kind: String,
@@ -567,9 +550,6 @@ pub async fn submit_user_report(
     let attachments = attachments.unwrap_or_default();
     validate_attachments(&attachments)?;
     let info = crate::system::get_app_info().await;
-    let log_tail = crate::system::read_log_tail(app, 50)
-        .await
-        .unwrap_or_default();
     let assembled = assemble_issue_body(
         &body,
         contact.as_deref(),
@@ -578,7 +558,6 @@ pub async fn submit_user_report(
             os: &info.os,
             arch: &info.arch,
         },
-        (!log_tail.is_empty()).then_some(log_tail.as_str()),
     );
     let endpoint = std::env::var("TAURI_EXPLORER_REPORT_URL")
         .unwrap_or_else(|_| DEFAULT_REPORT_URL.to_string());
@@ -612,7 +591,7 @@ mod tests {
     use std::net::{Shutdown, TcpListener};
 
     #[test]
-    fn user_report_body_contains_description_contact_environment_and_log_tail() {
+    fn user_report_body_contains_description_contact_and_environment() {
         let body = assemble_issue_body(
             "It freezes on café/🐛 paths.",
             Some("@reporter"),
@@ -621,13 +600,31 @@ mod tests {
                 os: "linux",
                 arch: "x86_64",
             },
-            Some("line one\nline two"),
         );
         assert!(body.contains("It freezes on café/🐛 paths."));
         assert!(body.contains("How to reach the reporter: @reporter"));
         assert!(body.contains("Tauri Explorer: v1.7.0"));
         assert!(body.contains("OS: linux (x86_64)"));
-        assert!(body.contains("line one\nline two"));
+    }
+
+    /// #595: the log tail was pure noise in every report it appeared in.
+    /// The body must end at the environment block — no log section, no fence,
+    /// and none of the log text that used to be spliced in.
+    #[test]
+    fn user_report_body_never_carries_a_log_tail() {
+        let body = assemble_issue_body(
+            "Short description",
+            Some("@reporter"),
+            &Environment {
+                version: "1.7.0",
+                os: "linux",
+                arch: "x86_64",
+            },
+        );
+        assert!(!body.contains("Recent logs"));
+        assert!(!body.contains("```"));
+        assert!(!body.contains("gitstat"));
+        assert!(body.ends_with("---\n- Tauri Explorer: v1.7.0\n- OS: linux (x86_64)"));
     }
 
     #[test]
@@ -640,7 +637,6 @@ mod tests {
                 os: "macos",
                 arch: "aarch64",
             },
-            None,
         );
         assert!(!body.contains("How to reach"));
         assert!(!body.contains("Recent logs"));
@@ -657,7 +653,6 @@ mod tests {
                 os: "linux",
                 arch: "x86_64",
             },
-            None,
         );
 
         assert!(body.starts_with("---\n- Tauri Explorer: v1.7.0"));
@@ -665,7 +660,7 @@ mod tests {
     }
 
     #[test]
-    fn assembled_body_obeys_relay_units_and_sanitizes_log_controls() {
+    fn assembled_body_obeys_relay_units_and_sanitizes_controls() {
         let description = "🐛".repeat(4000);
         let body = assemble_issue_body(
             &description,
@@ -675,26 +670,22 @@ mod tests {
                 os: "linux",
                 arch: "x86_64",
             },
-            Some("safe\u{0}log\u{7}\nlast line"),
         );
         assert!(body.encode_utf16().count() <= MAX_RELAY_BODY_UNITS);
-        assert!(!body.contains('\u{0}'));
-        assert!(!body.contains('\u{7}'));
         assert_eq!(body, description);
 
-        let with_logs = assemble_issue_body(
-            "Short description",
+        let sanitized = assemble_issue_body(
+            "safe\u{0}text\u{7}\nsecond line",
             None,
             &Environment {
                 version: "1.7.0",
                 os: "linux",
                 arch: "x86_64",
             },
-            Some("safe\u{0}log\u{7}\nlast line"),
         );
-        assert!(with_logs.contains("safelog\nlast line"));
-        assert!(!with_logs.contains('\u{0}'));
-        assert!(!with_logs.contains('\u{7}'));
+        assert!(sanitized.contains("safetext\nsecond line"));
+        assert!(!sanitized.contains('\u{0}'));
+        assert!(!sanitized.contains('\u{7}'));
     }
 
     fn payload() -> RelayRequest {

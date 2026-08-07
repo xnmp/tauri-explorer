@@ -6,6 +6,7 @@ mod ai_rename;
 mod archive;
 mod clipboard;
 mod config;
+mod config_watch;
 mod content_search;
 mod crash_report;
 pub mod error;
@@ -338,6 +339,9 @@ pub fn run(launch_dir: Option<String>) {
 
             // Initialize filesystem watcher for auto-refresh
             files::fs_watcher::init_watcher(app.handle());
+
+            // Apply external edits to settings.json / user themes live (#599).
+            config_watch::init_config_watcher(app.handle());
 
             // Portal-backend mode: no main window — serve the FileChooser
             // D-Bus interface and open picker windows on demand.

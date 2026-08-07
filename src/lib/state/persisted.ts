@@ -205,6 +205,30 @@ export function createCoalescedPersister<T>(key: string, delayMs: number): Coale
 
 const inFlightWrites = new Map<string, Promise<void>>();
 const pendingWrites = new Map<string, string>();
+const lastWrittenContent = new Map<string, string>();
+
+/**
+ * Whether a write to `filename` is queued or in flight right now.
+ *
+ * Config autoreload (#599) reads this: while our own write is outstanding,
+ * whatever is on disk is a stale snapshot we are about to replace, so a change
+ * notification arriving in that window must not be adopted back into memory.
+ */
+export function isConfigWritePending(filename: string): boolean {
+  return inFlightWrites.has(filename);
+}
+
+/**
+ * The content this process most recently sent to disk for `filename`, or null
+ * if it has never written it.
+ *
+ * Filesystem watchers cannot tell our own write from an external edit — both
+ * arrive as "the file changed". Comparing against this is what makes a
+ * self-write a no-op instead of a reload loop.
+ */
+export function lastWrittenConfig(filename: string): string | null {
+  return lastWrittenContent.get(filename) ?? null;
+}
 
 /**
  * Write a config file, serializing writes per filename.
@@ -223,6 +247,10 @@ export function writeConfigQueued(filename: string, data: string): Promise<void>
   }
 
   const flush = async (content: string): Promise<void> => {
+    // Recorded before the await, not after: the watcher can report the change
+    // before `writeConfigFile` resolves, and an echo that arrives early must
+    // still be recognisable as ours.
+    lastWrittenContent.set(filename, content);
     const result = await writeConfigFile(filename, content);
     if (!result.ok) {
       console.warn(`Failed to write config file "${filename}":`, result.error);

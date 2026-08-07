@@ -242,6 +242,7 @@ backend for E2E/browser).
 - `state/persisted.ts` — localStorage load/save helpers
 - `domain/settings-migration.ts` — versioned migrations for the persisted blob; add an entry here whenever a DEFAULT flips, or existing installs keep the old value (#471/#506)
 - `api/config.ts`, `src-tauri/src/config.rs` — JSON config file persistence (disk)
+- `src-tauri/src/config_watch.rs`, `state/config-watch.ts`, `domain/config-reload.ts` — config autoreload (#599): the Rust watcher emits `config-file-changed`, `handleConfigFileChanged` routes it, `settingsStore.reloadFromDisk` adopts it, `decideConfigReload` rejects our own writes
 - `plugins/settings-registry.svelte.ts` — plugin-contributed settings rows
 - FLOW: settingsStore is source of truth; components read `settingsStore.<flag>`; changes persist to localStorage + optionally config file. Many features gated here (showGitStatus, thumbnails, etc.). The WHOLE object is persisted and load merges `{ ...DEFAULT_SETTINGS, ...saved }`, so a persisted key always beats its default — `settingsStore.init()` runs `migrateSettings` on settings.json (the store of record) to let a flipped default reach existing installs (#506).
 
@@ -290,7 +291,7 @@ backend for E2E/browser).
 - `components/ThemePicker.svelte` — theme selection UI
 - `domain/theme-from-palette.ts`, `src-tauri/src/palette.rs`, `plugins/theme-from-image/` — generate theme from image palette
 - `state/window-backdrop.ts`, `state/window-appearance.ts`, `components/AnimatedBackground.svelte`, `background-animations/` (particles, starfield, registry) — window backdrop + animated bg
-- FLOW: themeStore sets CSS vars / `data-theme`; `set_window_theme`/`set_window_backdrop` for native chrome.
+- FLOW: themeStore sets CSS vars / `data-theme`; `set_window_theme`/`set_window_backdrop` for native chrome. Theme application is imperative, not reactive, so anything that changes `settings.theme` behind the store's back must call `themeStore.syncFromSettings()` — config autoreload does (#599), as does `settingsStore.init()`. A `themes/*.css` edit re-runs `initTheme()` to re-inject and re-discover.
 
 ## Plugins
 

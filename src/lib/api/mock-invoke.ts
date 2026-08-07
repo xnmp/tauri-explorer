@@ -1228,14 +1228,6 @@ const mockCommands: Record<string, CommandHandler> = {
     );
     return undefined;
   },
-  // Log tail (#302): fake recent log lines so the bug-report URL carries a
-  // populated "Recent logs" section in e2e.
-  read_log_tail: () =>
-    [
-      "[2024-01-01][12:00:00][INFO] tauri_explorer: started",
-      "[2024-01-01][12:00:01][WARN] tauri_explorer: slow directory listing",
-      "[2024-01-01][12:00:02][ERROR] tauri_explorer::files: permission denied",
-    ].join("\n"),
   open_external_url: (args) => {
     if (localStorage.getItem("mock-open-url-error") === "1") {
       throw new Error("Mock browser handoff failed");

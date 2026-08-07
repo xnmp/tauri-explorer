@@ -6,7 +6,15 @@
  * timers and visibility flags for temporary notifications.
  */
 
-export type ToastType = "info" | "success" | "error" | "clipboard";
+/**
+ * `progress` is for work that is still running and whose outcome arrives as a
+ * separate toast later. It exists as its own type because `show` replaces the
+ * existing toast of the SAME type: an in-flight indicator sharing "info" with
+ * ordinary chatter ("Refreshed", a copy finishing in another window via
+ * `broadcast`) gets silently deleted mid-operation, leaving the user with no
+ * sign the work is still happening (#596).
+ */
+export type ToastType = "info" | "success" | "error" | "clipboard" | "progress";
 
 export interface Toast {
   id: number;
@@ -21,6 +29,9 @@ const DEFAULT_DURATIONS: Record<ToastType, number> = {
   success: 1500,
   error: 3000,
   clipboard: 3000,
+  // Retired explicitly when the work finishes; this is only the backstop for
+  // an operation that never settles, so it outlasts a slow round-trip.
+  progress: 30000,
 };
 
 const TOAST_CHANNEL = "explorer-toasts";

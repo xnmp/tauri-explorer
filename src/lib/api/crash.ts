@@ -8,8 +8,7 @@
  */
 
 import { invoke } from "./files";
-import { dedupeFrontendCrash, recentLogsSection } from "$lib/domain/crash-report";
-import { boundedGitHubIssueUrl } from "$lib/domain/user-report";
+import { dedupeFrontendCrash } from "$lib/domain/crash-report";
 
 export interface CrashReport {
   fileName: string;
@@ -38,14 +37,6 @@ export function recordFrontendCrash(message: string, stack?: string): Promise<vo
   return invoke<void>("record_frontend_crash", { message, stack: stack ?? null });
 }
 
-/**
- * Read the tail of the rotating log file (~50 lines by default) for embedding
- * in a bug report. Reads a local file only — never transmitted by the app.
- */
-export function readLogTail(maxLines = 50): Promise<string> {
-  return invoke<string>("read_log_tail", { maxLines }).catch(() => "");
-}
-
 /** Build the pre-filled GitHub issue URL for a crash report. */
 export function crashIssueUrl(report: CrashReport): string {
   const firstPanicLine =
@@ -70,46 +61,6 @@ export interface AppInfo {
 
 export function getAppInfo(): Promise<AppInfo> {
   return invoke<AppInfo>("get_app_info");
-}
-
-/**
- * Pre-filled GitHub issue URL for a user-initiated bug report (#197, #302).
- *
- * When a `logTail` is supplied it is appended as a "Recent logs" section,
- * trimmed oldest-line-first so the whole URL stays under the length cap.
- *
- * Consent/privacy: the logs are placed into the GitHub *new issue form*, which
- * the user reviews and must click "Submit" on before anything is sent. The app
- * itself performs no network call — it only opens the pre-filled form.
- */
-export function bugReportUrl(info: AppInfo, logTail = ""): string {
-  const baseBody = [
-    "## What happened?",
-    "",
-    "<!-- What did you do, what did you expect, what happened instead? -->",
-    "",
-    "## Steps to reproduce",
-    "",
-    "1. ",
-    "",
-    "---",
-    `- Tauri Explorer: v${info.version}`,
-    `- OS: ${info.os} (${info.arch})`,
-    "- Logs: Command Palette → \"Open Logs Folder\" (attach the latest file if relevant)",
-    "",
-  ].join("\n");
-
-  let logBudget = 3500;
-  let url = boundedGitHubIssueUrl("Bug: ", baseBody);
-  while (logBudget > 0) {
-    const section = recentLogsSection(logTail, logBudget);
-    const body = section ? `${baseBody}\n${section}` : baseBody;
-    url = boundedGitHubIssueUrl("Bug: ", body);
-    if (url || !section) break;
-    logBudget -= 400;
-  }
-  // The fixed template itself is well below the shared bound.
-  return url ?? boundedGitHubIssueUrl("Bug: ", baseBody)!;
 }
 
 /** Open an https URL in the system browser. */

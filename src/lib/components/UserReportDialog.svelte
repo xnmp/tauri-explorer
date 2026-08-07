@@ -23,10 +23,6 @@
     onClose: () => void;
   }
 
-  /** Safety net for the in-flight toast: long enough to cover a slow relay
-   *  round-trip, short enough that a request that never settles doesn't leave
-   *  the toast on screen for the rest of the session. */
-  const SUBMITTING_TOAST_MAX_MS = 30_000;
 
   let { open, onClose }: Props = $props();
   let kind = $state<UserReportKind>("bug");
@@ -175,21 +171,24 @@
     onClose();
     // The dialog closes the moment Submit is pressed, so until the relay
     // answers this toast is the ONLY sign the report went anywhere (#596).
-    // Its duration only has to outlive a slow round-trip — the `finally`
-    // below retires it as soon as the outcome toast is ready, so the two are
-    // never on screen together and a stuck request can't pin it forever.
-    const pendingToastId = toastStore.show(
-      "Submitting report…",
-      "info",
-      { duration: SUBMITTING_TOAST_MAX_MS },
-    );
+    // The "progress" type matters: `show` replaces same-type toasts, so an
+    // "info" indicator would be deleted by an ordinary "Refreshed" — or by a
+    // copy finishing in another window, which broadcasts one.
+    const pendingToastId = toastStore.show("Submitting report…", "progress");
+    // Retire it BEFORE each outcome toast, not after: the GitHub-fallback path
+    // awaits a browser launch between the two, which is long enough for both
+    // to be on screen at once. The `finally` is the backstop for any path that
+    // returns without reaching one of these.
+    const retirePendingToast = () => toastStore.dismiss(pendingToastId);
     try {
       const issue = await submitUserReport(draft);
+      retirePendingToast();
       toastStore.show("Report submitted", "success", {
         duration: 6000,
         link: { url: issue.url, label: `Issue #${issue.number}` },
       });
     } catch (unknownError) {
+      retirePendingToast();
       const error = unknownError as Partial<UserReportError>;
       if ((draft.attachments?.length ?? 0) > 0) {
         retainDraftForRetry(draft, submittedClipboardAttachmentData);
@@ -229,7 +228,7 @@
         );
       }
     } finally {
-      toastStore.dismiss(pendingToastId);
+      retirePendingToast();
       submitting = false;
     }
   }

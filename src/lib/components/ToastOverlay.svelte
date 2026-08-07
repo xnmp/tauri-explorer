@@ -24,6 +24,11 @@
           {:else if toast.type === "error"}
             <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.25"/>
             <path d="M8 5V8.5M8 11V10.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          {:else if toast.type === "progress"}
+            <!-- An in-flight indicator must not wear the success checkmark the
+                 default branch draws: a spinning arc reads as "still working". -->
+            <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.25" opacity="0.25"/>
+            <path class="spinner-arc" d="M8 1.5A6.5 6.5 0 0 1 14.5 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
           {:else}
             <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.25"/>
             <path d="M5.5 8L7 9.5L10.5 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -80,6 +85,25 @@
 
   .toast.clipboard {
     color: var(--accent);
+  }
+
+  .toast.progress {
+    color: var(--text-secondary);
+  }
+
+  .spinner-arc {
+    transform-origin: 8px 8px;
+    animation: toastSpin 900ms linear infinite;
+  }
+
+  @keyframes toastSpin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* Respect a reduced-motion preference: the arc still reads as "in progress"
+     against the faint full circle without rotating. */
+  @media (prefers-reduced-motion: reduce) {
+    .spinner-arc { animation: none; }
   }
 
   .toast.clipboard.cut {

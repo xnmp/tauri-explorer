@@ -50,7 +50,7 @@ mod wsl;
 
 use system::{
     get_launch_cwd, get_log_dir, log_startup_timing, move_multiple_to_trash, move_to_trash,
-    read_log_tail, restore_from_trash, set_window_theme, LaunchCwd,
+    restore_from_trash, set_window_theme, LaunchCwd,
 };
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
@@ -165,7 +165,6 @@ pub fn run(launch_dir: Option<String>) {
             // Launch info
             get_launch_cwd,
             get_log_dir,
-            read_log_tail,
             system::get_app_info,
             user_report::submit_user_report,
             crash_report::take_crash_report,

@@ -77,6 +77,108 @@ test("report submission closes before the native command completes", async ({ pa
   await expect(page.locator(".toast.success")).toContainText("Issue #5470");
 });
 
+/**
+ * #596: the dialog closes on Submit, so a slow relay used to leave the user
+ * with no evidence the report went anywhere until the success toast landed.
+ * The in-flight toast must be up while the request is still outstanding, and
+ * must be gone once the outcome toast replaces it.
+ */
+test("an in-flight report announces itself before the outcome toast", async ({ page }) => {
+  await page.goto("/");
+  await waitForEntries(page);
+  await page.evaluate(() => {
+    (globalThis as typeof globalThis & {
+      __MOCK_LATENCY__?: Record<string, number>;
+    }).__MOCK_LATENCY__ = { submit_user_report: 2000 };
+  });
+
+  const dialog = await openReportDialog(page);
+  await dialog.getByLabel("Title").fill("Slow relay report");
+  await dialog.getByRole("button", { name: "Submit" }).click();
+
+  const pending = page.locator(".toast.progress");
+  await expect(pending).toContainText("Submitting report…", { timeout: 500 });
+  await expect(dialog).toBeHidden();
+  // Fully faded in, not a mid-animation frame.
+  await expect
+    .poll(() => pending.evaluate((el) => getComputedStyle(el).opacity))
+    .toBe("1");
+  // Still outstanding: the mock has not recorded the submission yet.
+  expect(await page.evaluate(() => localStorage.getItem("mock-submitted-report"))).toBeNull();
+  await page.screenshot({ path: evidencePath("issue-596-submitting-toast.png") });
+
+  await expect(page.locator(".toast.success")).toContainText("Issue #5470");
+  await expect(pending).toBeHidden();
+  await page.screenshot({ path: evidencePath("issue-596-submitted-toast.png") });
+});
+
+/**
+ * The in-flight toast must not share a toast type with ordinary chatter:
+ * `toastStore.show` replaces the existing toast of the same type, so an
+ * unrelated "info" toast (an F5 refresh here; a copy finishing in another
+ * window via `broadcast` in the wild) would silently delete the only sign the
+ * report is still in flight — reinstating #596 mid-operation.
+ */
+test("an unrelated info toast does not delete the in-flight indicator", async ({ page }) => {
+  await page.goto("/");
+  await waitForEntries(page);
+  await page.evaluate(() => {
+    (globalThis as typeof globalThis & {
+      __MOCK_LATENCY__?: Record<string, number>;
+    }).__MOCK_LATENCY__ = { submit_user_report: 3000 };
+  });
+
+  const dialog = await openReportDialog(page);
+  await dialog.getByLabel("Title").fill("Interrupted report");
+  await dialog.getByRole("button", { name: "Submit" }).click();
+
+  const pending = page.locator(".toast.progress");
+  await expect(pending).toContainText("Submitting report…");
+
+  await page.keyboard.press("F5");
+  await expect(page.locator(".toast.info")).toBeVisible();
+
+  // Still there, and still the report's indicator.
+  await expect(pending).toContainText("Submitting report…");
+  await expect(page.locator(".toast.success")).toContainText("Issue #5470");
+});
+
+/**
+ * The fallback path awaits a browser launch between the error toast and the
+ * end of `submit()`, so retiring the in-flight toast in `finally` alone leaves
+ * both on screen for that whole window. Latency on `open_external_url` holds
+ * the gap open long enough to assert the ordering rather than the end state.
+ */
+test("a failed report retires the in-flight toast before the error toast", async ({ page }) => {
+  await page.goto("/");
+  await waitForEntries(page);
+  await page.evaluate(() => {
+    localStorage.setItem("mock-report-error", "daily_cap");
+    (globalThis as typeof globalThis & {
+      __MOCK_LATENCY__?: Record<string, number>;
+    }).__MOCK_LATENCY__ = { open_external_url: 3000 };
+  });
+
+  const dialog = await openReportDialog(page);
+  await dialog.getByLabel("Title").fill("Doomed report");
+  await dialog.getByRole("button", { name: "Submit" }).click();
+
+  await expect(page.getByRole("alert")).toContainText("Reports are temporarily unavailable");
+  // Snapshot both facts in one evaluate, with no auto-retry: `toBeHidden()`
+  // would keep polling until the browser launch resolved and `finally` ran,
+  // which is exactly the interval this test exists to inspect.
+  const duringHandoff = await page.evaluate(() => ({
+    progressToasts: document.querySelectorAll(".toast.progress").length,
+    errorToasts: document.querySelectorAll(".toast.error").length,
+    browserLaunched: localStorage.getItem("mock-opened-url") !== null,
+  }));
+  expect(duringHandoff).toEqual({
+    progressToasts: 0,
+    errorToasts: 1,
+    browserLaunched: false,
+  });
+});
+
 test("the single Report Issue command defaults to bug and accepts a blank description", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);

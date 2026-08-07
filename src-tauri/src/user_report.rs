@@ -621,10 +621,18 @@ mod tests {
                 arch: "x86_64",
             },
         );
-        assert!(!body.contains("Recent logs"));
-        assert!(!body.contains("```"));
-        assert!(!body.contains("gitstat"));
-        assert!(body.ends_with("---\n- Tauri Explorer: v1.7.0\n- OS: linux (x86_64)"));
+        // The real guard is structural: `assemble_issue_body` has no log-tail
+        // parameter, so a log section cannot be reintroduced without changing
+        // the signature. This pins the whole rendered shape so any new
+        // machine-collected section shows up as a diff here.
+        assert_eq!(
+            body,
+            "Short description\n\n\
+             How to reach the reporter: @reporter\n\n\
+             ---\n\
+             - Tauri Explorer: v1.7.0\n\
+             - OS: linux (x86_64)"
+        );
     }
 
     #[test]

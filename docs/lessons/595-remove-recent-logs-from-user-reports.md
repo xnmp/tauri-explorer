@@ -25,7 +25,29 @@ with it (it existed only to reach `read_log_tail`).
 
 Logs remain reachable deliberately: Command Palette → "Open Logs Folder".
 
-## Guard
+## The second implementation had to go too
 
-`user_report_body_never_carries_a_log_tail` asserts the assembled body ends at
-the environment block, with no fence and no log text.
+Removing the parameter from the *relay* path left a complete parallel path still
+armed: the pre-#575 "open a pre-filled GitHub issue" flow (`bugReportUrl` in
+`src/lib/api/crash.ts`) built its own body with a `## Recent logs` fence via
+`recentLogsSection`, fed by `readLogTail` → the Rust `read_log_tail` command.
+After #575 that flow had no production callers, only tests — so it read as
+"still supported" while being unreachable and unguarded.
+
+A dead second implementation of exactly the behaviour you just removed is worse
+than no cleanup: the next person wiring a report path finds a working helper
+that reintroduces the reported bug with nothing failing. All of it is deleted —
+`readLogTail`, `bugReportUrl`, `recentLogsSection`, `RECENT_LOGS_HEADING`, the
+`read_log_tail` Tauri command and its registration, and the mock-invoke handler.
+
+**Lesson:** when a fix is "stop collecting X", grep for every producer of X, not
+just the one on the call path you edited.
+
+## What actually guards this
+
+The guard is structural, not assertional: `assemble_issue_body` has no log-tail
+parameter and there is no longer any code in either language that reads a log
+tail. `user_report_body_never_carries_a_log_tail` pins the full rendered body
+with `assert_eq!`, so any newly added machine-collected section shows up as a
+diff — but a `!contains("```")`-style assertion would prove nothing, since a
+reporter's own description may legitimately contain a fence.

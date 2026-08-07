@@ -23,6 +23,11 @@
     onClose: () => void;
   }
 
+  /** Safety net for the in-flight toast: long enough to cover a slow relay
+   *  round-trip, short enough that a request that never settles doesn't leave
+   *  the toast on screen for the rest of the session. */
+  const SUBMITTING_TOAST_MAX_MS = 30_000;
+
   let { open, onClose }: Props = $props();
   let kind = $state<UserReportKind>("bug");
   let title = $state("");
@@ -168,6 +173,16 @@
     };
     const submittedClipboardAttachmentData = clipboardAttachmentData;
     onClose();
+    // The dialog closes the moment Submit is pressed, so until the relay
+    // answers this toast is the ONLY sign the report went anywhere (#596).
+    // Its duration only has to outlive a slow round-trip — the `finally`
+    // below retires it as soon as the outcome toast is ready, so the two are
+    // never on screen together and a stuck request can't pin it forever.
+    const pendingToastId = toastStore.show(
+      "Submitting report…",
+      "info",
+      { duration: SUBMITTING_TOAST_MAX_MS },
+    );
     try {
       const issue = await submitUserReport(draft);
       toastStore.show("Report submitted", "success", {
@@ -214,6 +229,7 @@
         );
       }
     } finally {
+      toastStore.dismiss(pendingToastId);
       submitting = false;
     }
   }

@@ -77,6 +77,54 @@ test("report submission closes before the native command completes", async ({ pa
   await expect(page.locator(".toast.success")).toContainText("Issue #5470");
 });
 
+/**
+ * #596: the dialog closes on Submit, so a slow relay used to leave the user
+ * with no evidence the report went anywhere until the success toast landed.
+ * The in-flight toast must be up while the request is still outstanding, and
+ * must be gone once the outcome toast replaces it.
+ */
+test("an in-flight report announces itself before the outcome toast", async ({ page }) => {
+  await page.goto("/");
+  await waitForEntries(page);
+  await page.evaluate(() => {
+    (globalThis as typeof globalThis & {
+      __MOCK_LATENCY__?: Record<string, number>;
+    }).__MOCK_LATENCY__ = { submit_user_report: 2000 };
+  });
+
+  const dialog = await openReportDialog(page);
+  await dialog.getByLabel("Title").fill("Slow relay report");
+  await dialog.getByRole("button", { name: "Submit" }).click();
+
+  const pending = page.locator(".toast.info");
+  await expect(pending).toContainText("Submitting report…", { timeout: 500 });
+  await expect(dialog).toBeHidden();
+  // Fully faded in, not a mid-animation frame.
+  await expect
+    .poll(() => pending.evaluate((el) => getComputedStyle(el).opacity))
+    .toBe("1");
+  // Still outstanding: the mock has not recorded the submission yet.
+  expect(await page.evaluate(() => localStorage.getItem("mock-submitted-report"))).toBeNull();
+  await page.screenshot({ path: evidencePath("issue-596-submitting-toast.png") });
+
+  await expect(page.locator(".toast.success")).toContainText("Issue #5470");
+  await expect(pending).toBeHidden();
+  await page.screenshot({ path: evidencePath("issue-596-submitted-toast.png") });
+});
+
+test("a failed report retires the in-flight toast before the error toast", async ({ page }) => {
+  await page.goto("/");
+  await waitForEntries(page);
+  await page.evaluate(() => localStorage.setItem("mock-report-error", "daily_cap"));
+
+  const dialog = await openReportDialog(page);
+  await dialog.getByLabel("Title").fill("Doomed report");
+  await dialog.getByRole("button", { name: "Submit" }).click();
+
+  await expect(page.getByRole("alert")).toContainText("Reports are temporarily unavailable");
+  await expect(page.locator(".toast.info")).toBeHidden();
+});
+
 test("the single Report Issue command defaults to bug and accepts a blank description", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);

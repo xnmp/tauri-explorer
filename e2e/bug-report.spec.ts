@@ -77,6 +77,28 @@ test("report submission closes before the native command completes", async ({ pa
   await expect(page.locator(".toast.success")).toContainText("Issue #5470");
 });
 
+/** #597: Report Issue is reachable without going through the palette. */
+test("Alt+I opens the report dialog and the palette advertises the shortcut", async ({ page }) => {
+  await page.goto("/");
+  await waitForEntries(page);
+
+  await page.keyboard.press("Alt+i");
+  const dialog = page.getByRole("dialog", { name: "Report Issue" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel("Title")).toBeFocused();
+  await page.screenshot({ path: evidencePath("issue-597-alt-i-dialog.png") });
+
+  // The binding is discoverable: the palette entry shows it.
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await page.keyboard.press("Control+Shift+p");
+  await page.locator("input:focus").fill("Report Issue");
+  const entry = page.locator(".command-item", { hasText: "Report Issue" }).first();
+  // Rendered as separate <kbd> elements, so match across the inter-key gaps.
+  await expect(entry.locator(".command-shortcut")).toHaveText(/^\s*Alt\s*\+\s*I\s*$/);
+  await page.screenshot({ path: evidencePath("issue-597-palette-shortcut.png") });
+});
+
 test("the single Report Issue command defaults to bug and accepts a blank description", async ({ page }) => {
   await page.goto("/");
   await waitForEntries(page);

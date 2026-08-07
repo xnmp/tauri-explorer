@@ -8,13 +8,14 @@
  */
 
 import {
-  isConfigWritePending,
+  configWriteActivity,
+  configWriteRaced,
   lastWrittenConfig,
   loadPersisted,
   savePersisted,
   writeConfigQueued,
 } from "./persisted";
-import { decideConfigReload } from "$lib/domain/config-reload";
+import { decideConfigReload, type ConfigReloadReason } from "$lib/domain/config-reload";
 import { readConfigFile } from "$lib/api/files";
 import type { ViewMode } from "./types";
 import type { Command, CommandCategory } from "./commands.svelte";
@@ -294,10 +295,14 @@ function createSettingsStore() {
    * See `decideConfigReload` for why our own writes must be filtered out here
    * rather than at the watcher.
    */
-  async function reloadFromDisk(): Promise<boolean> {
-    if (isConfigWritePending(CONFIG_FILENAME)) return false;
+  async function reloadFromDisk(): Promise<ConfigReloadReason> {
+    // Sampled on both sides of the read: a settings change made while the file
+    // was in flight would otherwise be clobbered by the older disk contents,
+    // and a write that both starts and finishes inside the read window leaves
+    // no trace in a simple "is a write pending" flag.
+    const beforeRead = configWriteActivity(CONFIG_FILENAME);
     const result = await readConfigFile(CONFIG_FILENAME);
-    if (!result.ok) return false;
+    if (!result.ok) return "unusable";
     const raw = result.data;
     const parsed = parseSettingsBlob(raw);
     const decision = decideConfigReload({
@@ -305,13 +310,11 @@ function createSettingsStore() {
       normalized: parsed ? JSON.stringify(parsed.settings) : null,
       currentNormalized: JSON.stringify(settings),
       lastWritten: lastWrittenConfig(CONFIG_FILENAME),
-      // Re-checked after the read: a settings change made while the file was
-      // being read would otherwise be clobbered by the older disk contents.
-      writePending: isConfigWritePending(CONFIG_FILENAME),
+      selfWriteRaced: configWriteRaced(CONFIG_FILENAME, beforeRead),
     });
-    if (!decision.apply || !parsed) return false;
+    if (!decision.apply || !parsed) return decision.reason;
     adoptSettings(parsed.settings, parsed.migrationChanged);
-    return true;
+    return decision.reason;
   }
 
   function update(partial: Partial<Settings>): void {

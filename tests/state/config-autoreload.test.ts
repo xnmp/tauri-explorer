@@ -33,7 +33,18 @@ vi.mock("$lib/api/files", async (importOriginal) => {
 
 async function freshSettings() {
   vi.resetModules();
-  return await import("$lib/state/settings.svelte");
+  const persisted = await import("$lib/state/persisted");
+  const settings = await import("$lib/state/settings.svelte");
+  return {
+    ...settings,
+    /** Wait until no config write is outstanding, so a later reload is not
+     *  rejected as racing one. `writeConfigFile` being *called* is not enough
+     *  — the queue clears a microtask after it resolves. */
+    settleWrites: () =>
+      vi.waitFor(() =>
+        expect(persisted.configWriteActivity("settings.json").pending).toBe(false),
+      ),
+  };
 }
 
 function blob(settings: Record<string, unknown>): string {
@@ -54,7 +65,7 @@ describe("settingsStore.reloadFromDisk", () => {
     expect(settingsStore.theme).toBe("light");
 
     readConfigFileMock.mockResolvedValue({ ok: true, data: blob({ theme: "nord" }) });
-    expect(await settingsStore.reloadFromDisk()).toBe(true);
+    expect(await settingsStore.reloadFromDisk()).toBe("external-change");
     expect(settingsStore.theme).toBe("nord");
   });
 
@@ -67,7 +78,7 @@ describe("settingsStore.reloadFromDisk", () => {
       ok: true,
       data: blob({ showHidden: true, showSidebar: false }),
     });
-    expect(await settingsStore.reloadFromDisk()).toBe(true);
+    expect(await settingsStore.reloadFromDisk()).toBe("external-change");
     expect(settingsStore.showHidden).toBe(true);
     expect(settingsStore.showSidebar).toBe(false);
   });
@@ -83,15 +94,15 @@ describe("settingsStore.reloadFromDisk", () => {
   });
 
   it("ignores the app's own save coming back through the watcher", async () => {
-    const { settingsStore } = await freshSettings();
+    const { settingsStore, settleWrites } = await freshSettings();
     await settingsStore.init();
     settingsStore.setTheme("nord");
     // Let the queued write land so it is recorded as ours.
-    await vi.waitFor(() => expect(writeConfigFileMock).toHaveBeenCalled());
+    await settleWrites();
     const written = writeConfigFileMock.mock.calls.at(-1)![1] as string;
 
     readConfigFileMock.mockResolvedValue({ ok: true, data: written });
-    expect(await settingsStore.reloadFromDisk()).toBe(false);
+    expect(await settingsStore.reloadFromDisk()).toBe("own-write-echo");
     expect(settingsStore.theme).toBe("nord");
   });
 
@@ -110,9 +121,34 @@ describe("settingsStore.reloadFromDisk", () => {
     settingsStore.setTheme("nord");
     readConfigFileMock.mockResolvedValue({ ok: true, data: blob({ theme: "light" }) });
 
-    expect(await settingsStore.reloadFromDisk()).toBe(false);
+    expect(await settingsStore.reloadFromDisk()).toBe("self-write-overlap");
     expect(settingsStore.theme).toBe("nord");
     releaseWrite();
+  });
+
+  /**
+   * Regression, found by adversarial review: a write that both STARTS and
+   * FINISHES inside the read window leaves "is a write pending" false at both
+   * ends, so a pending-flag-only guard adopts the pre-write bytes and silently
+   * reverts the user's change — durably, since memory and disk then disagree.
+   */
+  it("does not revert a change made entirely within the read window", async () => {
+    const { settingsStore } = await freshSettings();
+    await settingsStore.init();
+
+    let issueWrite: (() => void) | null = () => {};
+    readConfigFileMock.mockImplementation(async () => {
+      // The change lands while this read is in flight, and settles before it
+      // resolves — the exact window a pending flag cannot see.
+      issueWrite?.();
+      issueWrite = null;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return { ok: true, data: blob({ theme: "light" }) };
+    });
+    issueWrite = () => settingsStore.setTheme("nord");
+
+    expect(await settingsStore.reloadFromDisk()).toBe("self-write-overlap");
+    expect(settingsStore.theme).toBe("nord");
   });
 
   it("keeps the current settings when the file is unreadable or corrupt", async () => {
@@ -120,13 +156,16 @@ describe("settingsStore.reloadFromDisk", () => {
     await settingsStore.init();
     settingsStore.setTheme("nord");
 
+    // Let the setTheme write settle so it cannot be mistaken for a race.
+    await vi.waitFor(() => expect(writeConfigFileMock).toHaveBeenCalled());
+
     readConfigFileMock.mockResolvedValue({ ok: false, error: "EACCES" });
-    expect(await settingsStore.reloadFromDisk()).toBe(false);
+    expect(await settingsStore.reloadFromDisk()).toBe("unusable");
     expect(settingsStore.theme).toBe("nord");
 
     for (const data of ["", "{ truncated", "null", "[1,2,3]"]) {
       readConfigFileMock.mockResolvedValue({ ok: true, data });
-      expect(await settingsStore.reloadFromDisk()).toBe(false);
+      expect(await settingsStore.reloadFromDisk()).toBe("unusable");
       expect(settingsStore.theme).toBe("nord");
     }
   });
@@ -136,18 +175,17 @@ describe("settingsStore.reloadFromDisk", () => {
     await settingsStore.init();
 
     readConfigFileMock.mockResolvedValue({ ok: true, data: blob({ theme: "light" }) });
-    expect(await settingsStore.reloadFromDisk()).toBe(false);
+    expect(await settingsStore.reloadFromDisk()).toBe("unchanged");
   });
 });
 
 describe("handleConfigFileChanged", () => {
-  async function wired(options: {
-    reloadResult: boolean;
-  }) {
+  async function wired(options: { reloadResult: string }) {
     vi.resetModules();
     const syncFromSettings = vi.fn();
     const initTheme = vi.fn(async () => {});
     const reloadFromDisk = vi.fn(async () => options.reloadResult);
+    const showToast = vi.fn();
 
     vi.doMock("$lib/state/settings.svelte", () => ({
       settingsStore: { reloadFromDisk },
@@ -155,13 +193,16 @@ describe("handleConfigFileChanged", () => {
     vi.doMock("$lib/state/theme.svelte", () => ({
       themeStore: { syncFromSettings, initTheme },
     }));
+    vi.doMock("$lib/state/toast.svelte", () => ({
+      toastStore: { show: showToast },
+    }));
 
     const { handleConfigFileChanged } = await import("$lib/state/config-watch");
-    return { handleConfigFileChanged, reloadFromDisk, syncFromSettings, initTheme };
+    return { handleConfigFileChanged, reloadFromDisk, syncFromSettings, initTheme, showToast };
   }
 
   it("re-applies the theme after settings.json really changed", async () => {
-    const w = await wired({ reloadResult: true });
+    const w = await wired({ reloadResult: "external-change" });
     await w.handleConfigFileChanged("settings.json");
     expect(w.reloadFromDisk).toHaveBeenCalledOnce();
     expect(w.syncFromSettings).toHaveBeenCalledOnce();
@@ -169,21 +210,35 @@ describe("handleConfigFileChanged", () => {
   });
 
   it("does not repaint the theme when the reload was a no-op", async () => {
-    const w = await wired({ reloadResult: false });
+    for (const reason of ["own-write-echo", "self-write-overlap", "unchanged"]) {
+      const w = await wired({ reloadResult: reason });
+      await w.handleConfigFileChanged("settings.json");
+      expect(w.reloadFromDisk).toHaveBeenCalledOnce();
+      expect(w.syncFromSettings).not.toHaveBeenCalled();
+      expect(w.showToast).not.toHaveBeenCalled();
+    }
+  });
+
+  it("tells the user when their hand-edited settings.json cannot be read", async () => {
+    // Silence here reads as "autoreload is broken" rather than "your JSON has
+    // a typo", while the visible settings are no longer the ones they wrote.
+    const w = await wired({ reloadResult: "unusable" });
     await w.handleConfigFileChanged("settings.json");
-    expect(w.reloadFromDisk).toHaveBeenCalledOnce();
     expect(w.syncFromSettings).not.toHaveBeenCalled();
+    expect(w.showToast).toHaveBeenCalledOnce();
+    expect(w.showToast.mock.calls[0][0]).toMatch(/settings\.json/);
+    expect(w.showToast.mock.calls[0][1]).toBe("error");
   });
 
   it("re-injects user theme CSS when a themes/*.css file changes", async () => {
-    const w = await wired({ reloadResult: false });
+    const w = await wired({ reloadResult: "unchanged" });
     await w.handleConfigFileChanged("themes/midnight.css");
     expect(w.initTheme).toHaveBeenCalledOnce();
     expect(w.reloadFromDisk).not.toHaveBeenCalled();
   });
 
   it("ignores config files nothing reacts to", async () => {
-    const w = await wired({ reloadResult: true });
+    const w = await wired({ reloadResult: "external-change" });
     await w.handleConfigFileChanged("bookmarks.json");
     expect(w.reloadFromDisk).not.toHaveBeenCalled();
     expect(w.initTheme).not.toHaveBeenCalled();

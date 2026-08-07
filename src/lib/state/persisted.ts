@@ -206,16 +206,45 @@ export function createCoalescedPersister<T>(key: string, delayMs: number): Coale
 const inFlightWrites = new Map<string, Promise<void>>();
 const pendingWrites = new Map<string, string>();
 const lastWrittenContent = new Map<string, string>();
+const writeGenerations = new Map<string, number>();
 
 /**
- * Whether a write to `filename` is queued or in flight right now.
+ * A snapshot of this process's write activity for `filename`.
  *
- * Config autoreload (#599) reads this: while our own write is outstanding,
- * whatever is on disk is a stale snapshot we are about to replace, so a change
- * notification arriving in that window must not be adopted back into memory.
+ * Config autoreload (#599) samples this on both sides of its read. A boolean
+ * "is a write pending" is not enough: a write that *starts and finishes
+ * entirely inside* the read window leaves the flag false at both ends while
+ * the bytes that came back are already stale. The generation counter closes
+ * that hole — it changes for every write issued, so "did any write of ours
+ * overlap this read" is answerable no matter how the timing lands.
  */
-export function isConfigWritePending(filename: string): boolean {
-  return inFlightWrites.has(filename);
+export interface ConfigWriteActivity {
+  /** A write is queued or in flight right now. */
+  pending: boolean;
+  /** Monotonic count of writes issued for this file in this process. */
+  generation: number;
+}
+
+export function configWriteActivity(filename: string): ConfigWriteActivity {
+  return {
+    pending: inFlightWrites.has(filename),
+    generation: writeGenerations.get(filename) ?? 0,
+  };
+}
+
+/**
+ * Whether one of this process's writes overlapped the window between `before`
+ * and now — either straddling it, or beginning and completing inside it.
+ *
+ * When true, whatever was read in that window may predate a write we have
+ * already issued, so adopting it would revert the change that write carries.
+ */
+export function configWriteRaced(
+  filename: string,
+  before: ConfigWriteActivity,
+): boolean {
+  const now = configWriteActivity(filename);
+  return before.pending || now.pending || now.generation !== before.generation;
 }
 
 /**
@@ -247,10 +276,11 @@ export function writeConfigQueued(filename: string, data: string): Promise<void>
   }
 
   const flush = async (content: string): Promise<void> => {
-    // Recorded before the await, not after: the watcher can report the change
-    // before `writeConfigFile` resolves, and an echo that arrives early must
-    // still be recognisable as ours.
+    // Both recorded before the await, not after: the watcher can report the
+    // change before `writeConfigFile` resolves, and an echo that arrives early
+    // must still be recognisable as ours.
     lastWrittenContent.set(filename, content);
+    writeGenerations.set(filename, (writeGenerations.get(filename) ?? 0) + 1);
     const result = await writeConfigFile(filename, content);
     if (!result.ok) {
       console.warn(`Failed to write config file "${filename}":`, result.error);

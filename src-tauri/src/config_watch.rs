@@ -89,6 +89,13 @@ pub fn init_config_watcher(app: &AppHandle) {
             return;
         }
     };
+    // Canonicalize before watching. Dotfile managers routinely symlink the
+    // whole config directory into a repo, and a watch on the link reports
+    // nothing; macOS FSEvents additionally reports canonical paths, which
+    // would make every `strip_prefix` below fail. Watching the resolved
+    // directory fixes both. (A symlinked *individual file* inside a real
+    // config dir is still not covered — see #604.)
+    let config_dir = std::fs::canonicalize(&config_dir).unwrap_or(config_dir);
 
     let watch_root = config_dir.clone();
     let watcher = notify::recommended_watcher(move |result: Result<Event, notify::Error>| {

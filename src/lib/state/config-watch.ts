@@ -15,6 +15,7 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { settingsStore } from "./settings.svelte";
 import { themeStore } from "./theme.svelte";
+import { toastStore } from "./toast.svelte";
 
 export const CONFIG_CHANGED_EVENT = "config-file-changed";
 const SETTINGS_FILE = "settings.json";
@@ -27,11 +28,26 @@ const THEME_PREFIX = "themes/";
  */
 export async function handleConfigFileChanged(filename: string): Promise<void> {
   if (filename === SETTINGS_FILE) {
+    const reason = await settingsStore.reloadFromDisk();
     // Only when the reload actually moved settings — re-applying the theme
     // rewrites DOM attributes and repaints, so a no-op notification (our own
     // save echoing back) must stay a no-op all the way through.
-    if (await settingsStore.reloadFromDisk()) {
+    if (reason === "external-change") {
       themeStore.syncFromSettings();
+      return;
+    }
+    // Someone hand-edited the file into invalid JSON. Silence here reads as
+    // "autoreload is broken" rather than "your edit has a typo", and the
+    // settings they can see are no longer the ones they just wrote — so this
+    // is the one rejection worth surfacing. A truncated mid-save read lands
+    // here too, but the trailing debounce makes that rare and the follow-up
+    // notification corrects it.
+    if (reason === "unusable") {
+      toastStore.show(
+        "settings.json could not be read — keeping the current settings",
+        "error",
+        { duration: 6000 },
+      );
     }
     return;
   }

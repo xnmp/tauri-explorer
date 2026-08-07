@@ -20,3 +20,24 @@ export function dedupeThemesById<T extends { id: string }>(themes: readonly T[])
   }
   return [...byId.values()];
 }
+
+/**
+ * Resolve a requested theme id against the themes actually loaded, falling
+ * back to the first available one.
+ *
+ * Applying an unknown id is not a no-op: it sets `data-theme="whatever"` on
+ * the document, nothing styles that, and the app repaints into an unstyled
+ * palette. That was only reachable at startup until config autoreload (#599)
+ * made hand-editing `"theme"` in settings.json a live path, so every entry
+ * point resolves through here.
+ *
+ * An empty list means discovery has not run yet — there is nothing to
+ * validate against, so the request is trusted rather than clobbered.
+ */
+export function resolveThemeId(
+  themes: readonly { id: string }[],
+  requested: string,
+): string {
+  if (themes.length === 0) return requested;
+  return themes.some((theme) => theme.id === requested) ? requested : themes[0].id;
+}

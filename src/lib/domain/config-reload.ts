@@ -15,9 +15,11 @@
 
 /** Why a change notification was or wasn't adopted. */
 export type ConfigReloadReason =
-  /** A write from this process is queued or in flight — disk is about to be
-   *  overwritten by us, so nothing on it can be authoritative right now. */
-  | "self-write-pending"
+  /** One of this process's writes overlapped the read — it may still be in
+   *  flight, or it may have started and finished inside the read window. The
+   *  bytes we got back can predate it either way, so they are not
+   *  authoritative. */
+  | "self-write-overlap"
   /** Byte-identical to what we last wrote: our own save coming back. */
   | "own-write-echo"
   /** Not parseable as config (mid-write truncation, hand-edit typo, deleted
@@ -43,8 +45,9 @@ export interface ConfigReloadInput {
   currentNormalized: string;
   /** Content this process most recently sent to disk, if any. */
   lastWritten: string | null;
-  /** Whether a write from this process is queued or in flight. */
-  writePending: boolean;
+  /** Whether a write from this process overlapped the read that produced
+   *  `raw` — see `configWriteRaced` in state/persisted.ts. */
+  selfWriteRaced: boolean;
 }
 
 /**
@@ -56,7 +59,7 @@ export interface ConfigReloadInput {
  * observed mid-save is never mistaken for a corrupt external edit.
  */
 export function decideConfigReload(input: ConfigReloadInput): ConfigReloadDecision {
-  if (input.writePending) return { apply: false, reason: "self-write-pending" };
+  if (input.selfWriteRaced) return { apply: false, reason: "self-write-overlap" };
   if (input.lastWritten !== null && input.raw === input.lastWritten) {
     return { apply: false, reason: "own-write-echo" };
   }

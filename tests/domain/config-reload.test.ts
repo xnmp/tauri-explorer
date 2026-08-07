@@ -13,7 +13,7 @@ const base = {
   normalized: '{"theme":"nord"}',
   currentNormalized: '{"theme":"light"}',
   lastWritten: null as string | null,
-  writePending: false,
+  selfWriteRaced: false,
 };
 
 describe("decideConfigReload", () => {
@@ -21,12 +21,12 @@ describe("decideConfigReload", () => {
     expect(decideConfigReload(base)).toEqual({ apply: true, reason: "external-change" });
   });
 
-  it("refuses while one of our own writes is outstanding", () => {
-    // The disk is a stale snapshot we are about to overwrite; adopting it
-    // would revert whatever the user just changed.
-    expect(decideConfigReload({ ...base, writePending: true })).toEqual({
+  it("refuses when one of our own writes overlapped the read", () => {
+    // The disk snapshot may predate a write we have already issued; adopting
+    // it would revert whatever the user just changed.
+    expect(decideConfigReload({ ...base, selfWriteRaced: true })).toEqual({
       apply: false,
-      reason: "self-write-pending",
+      reason: "self-write-overlap",
     });
   });
 
@@ -67,8 +67,8 @@ describe("decideConfigReload", () => {
     // Order matters: a file observed mid-save can be truncated, and calling
     // that "corrupt external edit" would be a misleading diagnosis.
     expect(
-      decideConfigReload({ ...base, writePending: true, normalized: null }),
-    ).toEqual({ apply: false, reason: "self-write-pending" });
+      decideConfigReload({ ...base, selfWriteRaced: true, normalized: null }),
+    ).toEqual({ apply: false, reason: "self-write-overlap" });
     expect(
       decideConfigReload({
         ...base,

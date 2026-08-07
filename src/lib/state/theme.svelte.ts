@@ -10,7 +10,7 @@
  * All themes are auto-discovered from CSS at runtime.
  */
 
-import { dedupeThemesById } from "$lib/domain/theme-list";
+import { dedupeThemesById, resolveThemeId } from "$lib/domain/theme-list";
 import { listUserThemes, setWindowTheme } from "$lib/api/files";
 import { EXPLORER_BG_RGBA_KEY, loadPersisted, removePersisted, savePersisted, savePersistedRaw } from "./persisted";
 import { settingsStore } from "./settings.svelte";
@@ -187,6 +187,24 @@ function createThemeState() {
     applyTheme(themeId);
   }
 
+  /**
+   * Apply the resolved form of `requested`.
+   *
+   * The fallback is deliberately NOT written back to settings. A user theme
+   * can be missing for a boring, temporary reason — the CSS file was moved, or
+   * `listUserThemes` failed once — and persisting the fallback would turn that
+   * into a permanent loss of the user's choice. Settings keeps naming the
+   * theme they picked; restoring the file restores it.
+   *
+   * That is only safe because every reader resolves: `syncFromSettings` below
+   * compares the *resolved* id, so an unpersisted fallback is not undone by
+   * the next reload re-applying the missing name.
+   */
+  function applyResolvedTheme(requested: string): void {
+    currentThemeId = resolveThemeId(themes, requested);
+    applyTheme(currentThemeId);
+  }
+
   async function initTheme() {
     // Load user themes from config dir and inject into DOM
     const result = await listUserThemes();
@@ -196,21 +214,19 @@ function createThemeState() {
 
     themes = discoverThemes();
 
-    // If saved theme no longer exists, fall back to first available
-    if (themes.length > 0 && !themes.some((t) => t.id === currentThemeId)) {
-      currentThemeId = themes[0].id;
-    }
-
-    applyTheme(currentThemeId);
+    // Resolve from settings, not from `currentThemeId`: after a fallback, the
+    // live id is the substitute, and re-running this (a themes/*.css file
+    // reappearing, #599) must be able to return to the theme the user chose.
+    applyResolvedTheme(settingsStore.theme || currentThemeId);
   }
 
-  /** Re-sync theme from settings after settings.init() loads the config file. */
+  /** Re-sync theme from settings after settings.init() loads the config file,
+   *  and after an external settings.json edit (#599). */
   function syncFromSettings() {
     const fileTheme = settingsStore.theme;
-    if (fileTheme && fileTheme !== currentThemeId) {
-      currentThemeId = fileTheme;
-      applyTheme(fileTheme);
-    }
+    if (!fileTheme) return;
+    if (resolveThemeId(themes, fileTheme) === currentThemeId) return;
+    applyResolvedTheme(fileTheme);
   }
 
   return {

@@ -55,7 +55,7 @@ describe("live external config edits", () => {
   });
 
   it("shows a bookmark written outside the running app without a restart", async () => {
-    await $(".file-list").waitForExist({ timeout: 15_000 });
+    await navigateTo(scratchDir);
     fs.writeFileSync(bookmarksPath, JSON.stringify([
       { name: "External edit 605", path: scratchDir, icon: "folder" },
     ], null, 2));

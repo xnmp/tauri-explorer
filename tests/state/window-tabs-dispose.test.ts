@@ -12,8 +12,8 @@ const cleanup = vi.hoisted(() => ({
 vi.mock("$lib/state/explorer.svelte", () => ({
   createExplorerState: vi.fn(() => ({
     state: { currentPath: "" },
-    initialLoad: vi.fn(),
-    navigateTo: vi.fn(),
+    initialLoad: vi.fn(async () => {}),
+    navigateTo: vi.fn(async () => {}),
     destroy: () =>
       new Promise<void>((resolve) => {
         cleanup.started();

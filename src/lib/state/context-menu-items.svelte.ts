@@ -9,13 +9,15 @@
 
 import type { FileEntry } from "$lib/domain/file";
 
+export type ContextMenuItemGroup = "ai";
+
 export interface ContextMenuItem {
   id: string;
   label: string;
   /** Optional inline SVG path `d` attribute for a 16×16 icon. */
   icon?: string;
-  /** Optional top-level submenu for related plugin actions. */
-  group?: "ai";
+  /** Optional submenu group used to keep related contributed actions together. */
+  group?: ContextMenuItemGroup;
   /** Predicate: shown only when it returns true for the current selection. */
   when: (entries: FileEntry[]) => boolean;
   handler: (entries: FileEntry[]) => void | Promise<void>;

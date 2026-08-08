@@ -19,14 +19,19 @@ async function rightClickImage(page: Page) {
   return menu;
 }
 
+async function aiMenuItem(menu: ReturnType<Page["locator"]>, label: string) {
+  const aiGroup = menu.locator(":scope > .submenu-wrapper").filter({ hasText: "AI" });
+  await aiGroup.hover();
+  return aiGroup.locator(`.submenu .menu-item:has-text("${label}")`);
+}
+
 test.describe("Upscale plugin", () => {
   test("context-menu item opens the upscale dialog with a prefilled output name", async ({ page }) => {
     await page.goto("/?path=/home/user/Downloads");
     await waitForEntries(page);
 
     const menu = await rightClickImage(page);
-    await menu.getByRole("menuitem", { name: "AI", exact: true }).hover();
-    const upscaleItem = menu.locator('.menu-item:has-text("Upscale Image")');
+    const upscaleItem = await aiMenuItem(menu, "Upscale Image");
     await expect(upscaleItem).toBeVisible();
 
     await upscaleItem.click();

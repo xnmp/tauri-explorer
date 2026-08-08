@@ -28,7 +28,7 @@
   let { explorer }: Props = $props();
 
   // Plugin-contributed context-menu items whose `when` predicate passes for the
-  // current selection. Rendered in a divider-separated section below.
+  // current selection. AI contributions are grouped into their own submenu.
   const pluginMenuItems = $derived(contextMenuItems.itemsFor(explorer.getSelectedEntries()));
   const aiPluginMenuItems = $derived(pluginMenuItems.filter((item) => item.group === "ai"));
   const ungroupedPluginMenuItems = $derived(pluginMenuItems.filter((item) => item.group !== "ai"));
@@ -709,12 +709,12 @@
               <path d="M8 2.5L9.5 5.5L12.5 7L9.5 8.5L8 11.5L6.5 8.5L3.5 7L6.5 5.5L8 2.5Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
             </svg>
             <span>AI</span>
-            <svg class="submenu-arrow" width="8" height="8" viewBox="0 0 8 8" fill="none">
+            <svg class="submenu-arrow" width="8" height="8" viewBox="0 0 8 8" fill="none" aria-hidden="true">
               <path d="M3 1.5L6 4L3 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
           </button>
           {#if aiSubmenuOpen}
-            <div class="submenu ai-submenu" role="menu">
+            <div class="submenu ai-submenu" role="menu" aria-label="AI actions">
               {#each aiPluginMenuItems as item (item.id)}
                 <button class="menu-item" onclick={() => runPluginItem(item)} role="menuitem">
                   {#if item.icon}

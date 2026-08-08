@@ -54,6 +54,12 @@ async function rightClickNotes(page: Page) {
   return menu;
 }
 
+async function aiMenuItem(menu: ReturnType<Page["locator"]>, label: string) {
+  const aiGroup = menu.locator(":scope > .submenu-wrapper").filter({ hasText: "AI" });
+  await aiGroup.hover();
+  return aiGroup.locator(`.submenu .menu-item:has-text("${label}")`);
+}
+
 test.describe("AI Rename plugin", () => {
   test("context menu → picker → choosing a name renames the file", async ({ page }) => {
     await page.goto(HOME_URL);
@@ -62,8 +68,7 @@ test.describe("AI Rename plugin", () => {
     await setApiKey(page, "test-key-123");
 
     const menu = await rightClickNotes(page);
-    await menu.getByRole("menuitem", { name: "AI", exact: true }).hover();
-    const item = menu.locator('.menu-item:has-text("Suggest rename")');
+    const item = await aiMenuItem(menu, "Suggest rename");
     await expect(item).toBeVisible();
     await item.click();
 
@@ -93,8 +98,7 @@ test.describe("AI Rename plugin", () => {
     await waitForEntries(page);
 
     const menu = await rightClickNotes(page);
-    await menu.getByRole("menuitem", { name: "AI", exact: true }).hover();
-    await menu.locator('.menu-item:has-text("Suggest rename")').click();
+    await (await aiMenuItem(menu, "Suggest rename")).click();
 
     const dialog = page.locator('[aria-labelledby="ai-rename-title"]');
     await expect(dialog).toBeVisible();
@@ -116,7 +120,6 @@ test.describe("AI Rename plugin", () => {
     await page.keyboard.press("Escape");
     await setAiRenameEnabled(page, true);
     const menu2 = await rightClickNotes(page);
-    await menu2.getByRole("menuitem", { name: "AI", exact: true }).hover();
-    await expect(menu2.locator('.menu-item:has-text("Suggest rename")')).toBeVisible();
+    await expect(await aiMenuItem(menu2, "Suggest rename")).toBeVisible();
   });
 });

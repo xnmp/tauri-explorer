@@ -41,36 +41,39 @@ describe("Quick Open recursive-search scheduling", () => {
   });
 
   it("keeps the replacement stream listener when earlier cancellation resolves late", async () => {
-    let releaseCancellation: (() => void) | null = null;
+    let releaseCancellation = () => {};
     const cancellationGate = new Promise<void>((resolve) => {
       releaseCancellation = resolve;
     });
     const cancelSearch = vi.fn(async () => cancellationGate);
     const resources = createQuickOpenStreamResources(cancelSearch);
     const delivered: string[] = [];
-    let emit: ((searchId: number, result: string) => void) | null = null;
+    const listeners = new Map<number, (searchId: number, result: string) => void>();
+    let nextListenerId = 0;
 
     const installListener = () => {
-      emit = (searchId, result) => {
+      const listenerId = ++nextListenerId;
+      listeners.set(listenerId, (searchId, result) => {
         if (resources.matchesOrAdopts(searchId)) delivered.push(result);
-      };
-      resources.replaceListener(() => {
-        emit = null;
       });
+      resources.replaceListener(() => {
+        listeners.delete(listenerId);
+      });
+      return listenerId;
     };
 
     resources.setSearchId(1);
     installListener();
     const cancellingFirstSearch = resources.cancel();
     expect(cancelSearch).toHaveBeenCalledWith(1);
-    expect(emit).toBeNull();
 
     resources.setSearchId(2);
-    installListener();
-    releaseCancellation?.();
+    const replacementListenerId = installListener();
+    expect(listeners.has(replacementListenerId)).toBe(true);
+    releaseCancellation();
     await cancellingFirstSearch;
 
-    emit?.(2, "final recursive result");
+    listeners.get(replacementListenerId)?.(2, "final recursive result");
     expect(resources.searchId).toBe(2);
     expect(delivered).toEqual(["final recursive result"]);
   });

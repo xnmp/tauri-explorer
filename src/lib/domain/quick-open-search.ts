@@ -18,6 +18,57 @@ export interface QuickOpenSearchController<T> {
   dispose(): void;
 }
 
+export interface QuickOpenStreamResources {
+  readonly searchId: number | null;
+  setSearchId(searchId: number): void;
+  matchesOrAdopts(searchId: number): boolean;
+  replaceListener(unlisten: () => void): void;
+  cancel(): Promise<void>;
+}
+
+/**
+ * Owns the active backend search and its event listener as one lifecycle.
+ * Listener teardown is deliberately synchronous: an IPC cancellation may be
+ * slow, and its eventual completion must never detach a replacement stream.
+ */
+export function createQuickOpenStreamResources(
+  cancelSearch: (searchId: number) => Promise<unknown>,
+): QuickOpenStreamResources {
+  let searchId: number | null = null;
+  let unlisten: (() => void) | null = null;
+
+  return {
+    get searchId() {
+      return searchId;
+    },
+    setSearchId(nextSearchId) {
+      searchId = nextSearchId;
+    },
+    matchesOrAdopts(eventSearchId) {
+      if (searchId === null) {
+        searchId = eventSearchId;
+        return true;
+      }
+      return eventSearchId === searchId;
+    },
+    replaceListener(nextUnlisten) {
+      unlisten?.();
+      unlisten = nextUnlisten;
+    },
+    async cancel() {
+      const searchIdToCancel = searchId;
+      searchId = null;
+      const listenerToRemove = unlisten;
+      unlisten = null;
+      listenerToRemove?.();
+
+      if (searchIdToCancel !== null) {
+        await cancelSearch(searchIdToCancel);
+      }
+    },
+  };
+}
+
 /**
  * A trailing pause keeps normal typing from launching a full directory walk
  * for every intermediate character while still feeling immediate in the UI.

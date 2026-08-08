@@ -24,7 +24,10 @@
   import Modal from "./Modal.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { frecencyStore } from "$lib/state/frecency.svelte";
-  import { createQuickOpenSearchController } from "$lib/domain/quick-open-search";
+  import {
+    createQuickOpenSearchController,
+    createQuickOpenStreamResources,
+  } from "$lib/domain/quick-open-search";
 
   // Helper to convert SearchResult to FileEntry-like object for icon functions
   function toFileEntry(result: SearchResult): FileEntry {
@@ -69,8 +72,7 @@
   }
 
   // Streaming search state
-  let activeSearchId: number | null = null;
-  let unlisten: UnlistenFn | null = null;
+  const streamResources = createQuickOpenStreamResources(cancelSearch);
   let totalScanned = $state(0);
 
   // Frecency weight relative to fuzzy score (how much frecency influences ranking)
@@ -224,16 +226,7 @@
 
   // Cancel active search and cleanup listener
   async function cancelActiveSearch(): Promise<void> {
-    const searchId = activeSearchId;
-    activeSearchId = null;
-    if (searchId !== null) {
-      await cancelSearch(searchId);
-    }
-    const listener = unlisten;
-    unlisten = null;
-    if (listener) {
-      listener();
-    }
+    await streamResources.cancel();
   }
 
   // Monotonically increasing search generation counter.
@@ -244,12 +237,7 @@
   // Must be called BEFORE starting the search to avoid missing events
   // from fast-completing searches (e.g. small directories).
   async function setupSearchListener(generation: number): Promise<void> {
-    // Clean up any existing listener
-    if (unlisten) {
-      unlisten();
-    }
-
-    unlisten = await listen<SearchResultsEvent>("search-results", (event) => {
+    const listener: UnlistenFn = await listen<SearchResultsEvent>("search-results", (event) => {
       const payload = event.payload;
 
       // Discard events from stale searches (user typed again)
@@ -260,9 +248,7 @@
       // Accept events that match our search ID, OR if we haven't received
       // the search ID yet (race: backend thread emits before invoke returns).
       // Once we learn the ID from the first event, lock to it.
-      if (activeSearchId === null) {
-        activeSearchId = payload.searchId;
-      } else if (payload.searchId !== activeSearchId) {
+      if (!streamResources.matchesOrAdopts(payload.searchId)) {
         return;
       }
 
@@ -285,6 +271,14 @@
         loading = false;
       }
     });
+
+    // If input changed while listener registration was in flight, never let
+    // this stale generation replace the current stream's listener.
+    if (generation !== searchGeneration) {
+      listener();
+      return;
+    }
+    streamResources.replaceListener(listener);
   }
 
   async function startSearch(queryToSearch: string, generation: number): Promise<void> {
@@ -321,7 +315,7 @@
           return;
         }
         if (result.ok) {
-          activeSearchId = result.data;
+          streamResources.setSearchId(result.data);
         } else {
           loading = false;
         }

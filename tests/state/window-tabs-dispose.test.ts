@@ -150,6 +150,27 @@ describe("window-tabs disposal (#611)", () => {
     await expect(disposed).resolves.toBeUndefined();
   });
 
+  it("reports a rejected cleanup started by closing a pane", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const manager = createWindowTabsManager();
+    manager.init("/home/user", true);
+    manager.splitPane("right");
+    cleanup.rejectFirst = true;
+    manager.closePane();
+
+    try {
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(error).toHaveBeenCalledWith(
+        "Failed to clean up removed explorer:",
+        expect.objectContaining({ message: "first cleanup failed" }),
+      );
+    } finally {
+      const disposed = manager.dispose();
+      cleanup.resolve?.();
+      await expect(disposed).resolves.toBeUndefined();
+    }
+  });
+
   it("reports replaced-explorer cleanup failures instead of leaking a rejection", async () => {
     cleanup.rejectFirst = true;
     const error = vi.spyOn(console, "error").mockImplementation(() => {});

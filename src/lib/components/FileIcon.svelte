@@ -67,7 +67,7 @@
   // while staying visibly distinct from a real folder.
   const linkedFolder = $derived(entry.kind === "directory" && entry.is_symlink === true);
 
-  // A folder that is a git repo root (has a `.git` dir or file) gets a small
+  // A folder that is a valid git repo root gets a small
   // git-branch badge in the corner, reusing the branch glyph from the window
   // tab bar's `isGitRoot` decoration (see WindowTabBar.svelte) so the two
   // git-aware icon surfaces read as the same visual language. Checked after

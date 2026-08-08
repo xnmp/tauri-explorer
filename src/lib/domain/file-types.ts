@@ -269,7 +269,7 @@ export function isShortcut(entry: FileEntry): boolean {
 
 /**
  * Check if a directory entry is a git repo root (backend-flagged `is_git_repo`,
- * set when the directory has a `.git` dir or gitlink file — see
+ * set after the backend validates the directory as a Git repository — see
  * `src-tauri/src/files/mod.rs::metadata_to_entry`). Never true for files,
  * even if `is_git_repo` were somehow set on one (defensive: the flag should
  * only ever appear on directories, but icon selection shouldn't trust that

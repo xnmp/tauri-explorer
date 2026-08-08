@@ -32,8 +32,10 @@ test.describe("Recycle Bin sidebar entry (#603)", () => {
     await page.getByRole("button", { name: "Close settings" }).click();
     await expect(page.locator(".settings-dialog")).toHaveCount(0);
     await page.reload();
+
+    await expect(page.locator(".sidebar")).toBeVisible();
     await page.locator(".entry-item").first().waitFor();
     await expect(page.getByRole("button", { name: "Open Recycle Bin" })).toHaveCount(0);
-    await page.locator(".sidebar").screenshot({ path: "evidence/ac-2-recycle-bin-hidden.png" });
+    await page.screenshot({ path: "evidence/ac-2-recycle-bin-hidden.png" });
   });
 });

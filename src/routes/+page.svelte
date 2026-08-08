@@ -203,7 +203,9 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
         isShellReservedKey(event, {
           coreCommandAvailable,
           terminalToggleChordPrefix,
-          terminalToggleChordActive: keybindingsStore.isChordActive,
+          terminalToggleChordActive: keybindingsStore.isChordActiveForCommand(
+            "general.openTerminal",
+          ),
         })
       ) return;
     }

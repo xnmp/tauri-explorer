@@ -289,6 +289,14 @@ function createKeybindingsStore() {
     return matchesShortcut(event, chord.prefix, matchOpts);
   }
 
+  /** Whether the active chord belongs to one specific command. */
+  function isChordActiveForCommand(commandId: string): boolean {
+    const shortcut = getShortcut(commandId);
+    if (!shortcut || !isChordShortcut(shortcut) || activeChordPrefix === null) return false;
+    const prefix = shortcut.substring(0, shortcut.indexOf(" ")).trim();
+    return prefix.toLowerCase() === activeChordPrefix.toLowerCase();
+  }
+
   /**
    * Check for shortcut conflicts.
    * Returns command IDs that would conflict with the given shortcut.
@@ -344,6 +352,7 @@ function createKeybindingsStore() {
     findMatchingCommand,
     matchesAnyBinding,
     matchesChordPrefixForCommand,
+    isChordActiveForCommand,
     findConflicts,
     cancelChord,
     _clearForTesting,

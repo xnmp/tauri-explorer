@@ -5,7 +5,7 @@
  * selected entry's filesystem path to the text clipboard.
  */
 import { test, expect, type Page } from "./fixtures";
-import { waitForEntries, pressShortcut } from "./helpers";
+import { VIEW_MODES, waitForEntries, switchViewMode, pressShortcut } from "./helpers";
 
 async function rightClick(page: Page, name: string) {
   const item = page.locator(".entry-item", { hasText: name }).first();
@@ -91,26 +91,34 @@ test.describe("Copy → Paste round-trips the full path", () => {
   });
 });
 
-test.describe("Copy Path", () => {
-  test("writes the selected file's full path to the text clipboard", async ({
-    page,
-    context,
-    browserName,
-  }) => {
-    test.skip(browserName === "webkit", "WebKit does not support Playwright clipboard permissions");
-    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-    await page.goto("/?path=/home/user/Documents");
-    await waitForEntries(page);
+for (const viewMode of VIEW_MODES) {
+  test.describe(`Copy Path [${viewMode}]`, () => {
+    for (const [name, expectedPath] of [
+      ["report.pdf", "/home/user/Documents/report.pdf"],
+      ["project", "/home/user/Documents/project"],
+    ]) {
+      test(`writes ${name}'s full path to the text clipboard`, async ({
+        page,
+        context,
+        browserName,
+      }) => {
+        test.skip(browserName === "webkit", "WebKit does not support Playwright clipboard permissions");
+        await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+        await page.goto("/?path=/home/user/Documents");
+        await waitForEntries(page);
+        if (viewMode !== "details") await switchViewMode(page, viewMode);
 
-    const menu = await rightClick(page, "report.pdf");
-    await expect(menu.getByText("Copy Path", { exact: true })).toBeVisible();
-    await page.screenshot({ path: "evidence/ac-1-copy-path-menu.png" });
-    await page.screenshot({ path: "evidence/ac-2-existing-context-menu-actions.png" });
-    await menu.getByText("Copy Path", { exact: true }).click();
+        const menu = await rightClick(page, name);
+        await expect(menu.getByText("Copy Path", { exact: true })).toBeVisible();
+        if (viewMode === "details" && name === "report.pdf") {
+          await page.screenshot({ path: "evidence/ac-1-copy-path-menu.png" });
+          await page.screenshot({ path: "evidence/ac-2-existing-context-menu-actions.png" });
+        }
+        await menu.getByText("Copy Path", { exact: true }).click();
 
-    await expect(page.locator(".toast.clipboard")).toBeVisible();
-    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(
-      "/home/user/Documents/report.pdf",
-    );
+        await expect(page.locator(".toast.clipboard")).toBeVisible();
+        await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(expectedPath);
+      });
+    }
   });
-});
+}

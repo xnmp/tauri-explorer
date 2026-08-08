@@ -23,6 +23,16 @@ async function openAddressBar(page: Page) {
 }
 
 test.describe("Address bar path entry", () => {
+  test("a new explorer window opens with its address bar ready for typing", async ({ page }) => {
+    // `focusAddressBar=1` is attached only by the new-window creation flow.
+    // Loading that URL exercises the child window's actual startup seam.
+    await page.goto("/?path=/home/user&focusAddressBar=1");
+
+    const input = page.locator(".path-input");
+    await expect(input).toBeFocused();
+    await expect(input).toHaveValue("/home/user");
+  });
+
   test("typing a path and pressing Enter navigates the pane there", async ({ page }) => {
     await page.goto("/?path=/home/user");
     await waitForEntries(page);

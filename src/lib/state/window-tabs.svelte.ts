@@ -1147,10 +1147,11 @@ function createWindowTabsManager() {
       // Flushes a queued write before dropping its page-lifecycle listeners,
       // so tearing the manager down can't swallow the last interaction.
       tabStatePersister.dispose();
-      await Promise.all([
+      const [destroyed] = await Promise.allSettled([
         destroyAllExplorers(),
         Promise.allSettled(pendingInitialLoads),
       ]);
+      if (destroyed.status === "rejected") throw destroyed.reason;
     },
   };
 }

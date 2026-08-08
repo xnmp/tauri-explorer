@@ -300,7 +300,13 @@ export function writeConfigQueued(
   activeConfigWriters.add(writerKey);
   if (inFlightWrites.has(filename)) {
     const replaced = pendingWrites.get(filename);
-    if (replaced) activeConfigWriters.delete(configWriterKey(filename, replaced.writer));
+    // A replacement from the same writer shares its activity key with the
+    // write already in flight. Removing that key would create a window where
+    // a watcher can adopt stale bytes between the first write and the latest
+    // queued replacement.
+    if (replaced && replaced.writer !== writer) {
+      activeConfigWriters.delete(configWriterKey(filename, replaced.writer));
+    }
     pendingWrites.set(filename, { data, writer });
     return inFlightWrites.get(filename)!;
   }

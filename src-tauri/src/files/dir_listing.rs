@@ -559,11 +559,7 @@ mod tests {
 
         // An Inbox-like folder with a stray `.git` file is not a repository.
         fs::create_dir(dir.path().join("Inbox")).unwrap();
-        fs::write(
-            dir.path().join("Inbox/.git"),
-            "not a gitdir file\n",
-        )
-        .unwrap();
+        fs::write(dir.path().join("Inbox/.git"), "not a gitdir file\n").unwrap();
 
         // Plain folder: no `.git` at all.
         fs::create_dir(dir.path().join("plain")).unwrap();

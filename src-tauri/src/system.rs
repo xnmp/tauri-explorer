@@ -14,8 +14,50 @@ pub struct LaunchCwd(pub String);
 fn reap_in_background(child: std::process::Child) {
     std::thread::spawn(move || {
         let mut child = child;
-        let _ = child.wait();
+        let child_id = child.id();
+        match child.wait() {
+            Ok(status) if status.success() => {
+                log::debug!("Recycle Bin launcher process {child_id} exited successfully");
+            }
+            Ok(status) => {
+                log::warn!("Recycle Bin launcher process {child_id} exited with {status}");
+            }
+            Err(error) => {
+                log::warn!("Failed to reap Recycle Bin launcher process {child_id}: {error}");
+            }
+        }
     });
+}
+
+/// Construct the platform launcher separately from spawning it so the native
+/// command contract can be regression-tested without opening the user's bin.
+fn recycle_bin_command() -> std::process::Command {
+    #[cfg(target_os = "windows")]
+    let command = {
+        let mut command = std::process::Command::new("explorer.exe");
+        command.arg("shell:RecycleBinFolder");
+        command
+    };
+
+    #[cfg(target_os = "macos")]
+    let command = {
+        let mut command = std::process::Command::new("open");
+        command.arg(
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("/"))
+                .join(".Trash"),
+        );
+        command
+    };
+
+    #[cfg(target_os = "linux")]
+    let command = {
+        let mut command = std::process::Command::new("gio");
+        command.args(["open", "trash:///"]);
+        command
+    };
+
+    command
 }
 
 /// True for UNC paths (`\\server\share`, `\\wsl.localhost\Distro\...`). Windows
@@ -95,35 +137,20 @@ pub async fn move_multiple_to_trash(paths: Vec<String>) -> Result<(), AppError> 
 #[tauri::command]
 pub async fn open_recycle_bin() -> Result<(), AppError> {
     files::run_blocking(|| {
-        #[cfg(target_os = "windows")]
-        let mut command = {
-            let mut command = std::process::Command::new("explorer.exe");
-            command.arg("shell:RecycleBinFolder");
-            command
-        };
+        let mut command = recycle_bin_command();
+        log::info!("Opening Recycle Bin with native launcher: {command:?}");
 
-        #[cfg(target_os = "macos")]
-        let mut command = {
-            let mut command = std::process::Command::new("open");
-            command.arg(
-                dirs::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("/"))
-                    .join(".Trash"),
-            );
-            command
-        };
-
-        #[cfg(target_os = "linux")]
-        let mut command = {
-            let mut command = std::process::Command::new("gio");
-            command.args(["open", "trash:///"]);
-            command
-        };
-
-        command
-            .spawn()
-            .map(reap_in_background)
-            .map_err(AppError::Io)
+        match command.spawn() {
+            Ok(child) => {
+                log::info!("Spawned Recycle Bin launcher process {}", child.id());
+                reap_in_background(child);
+                Ok(())
+            }
+            Err(error) => {
+                log::error!("Failed to spawn Recycle Bin launcher {command:?}: {error}");
+                Err(AppError::Io(error))
+            }
+        }
     })
     .await
 }

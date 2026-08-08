@@ -7,6 +7,8 @@ mod archive;
 mod clipboard;
 mod config;
 mod config_watch;
+#[cfg(test)]
+mod config_watch_symlink_test;
 mod content_search;
 mod crash_report;
 pub mod error;

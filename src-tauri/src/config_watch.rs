@@ -54,15 +54,15 @@ struct ConfigChangedPayload {
 ///
 /// `config_dir` is always watched recursively. Symlink targets outside it are
 /// added to `external_roots` by the implementation that resolves this plan.
-struct WatchPlan {
+pub(crate) struct WatchPlan {
     config_dir: PathBuf,
-    external_roots: Vec<(PathBuf, RecursiveMode)>,
+    pub(crate) external_roots: Vec<(PathBuf, RecursiveMode)>,
     external_files: HashMap<PathBuf, String>,
     external_themes_dir: Option<PathBuf>,
 }
 
 impl WatchPlan {
-    fn watched_config_name(&self, changed: &Path) -> Option<String> {
+    pub(crate) fn watched_config_name(&self, changed: &Path) -> Option<String> {
         watched_config_name(&self.config_dir, changed).or_else(|| {
             let changed = std::fs::canonicalize(changed).ok()?;
             if let Some(filename) = self.external_files.get(&changed) {
@@ -81,7 +81,7 @@ impl WatchPlan {
     }
 }
 
-fn config_watch_plan(config_dir: &Path) -> WatchPlan {
+pub(crate) fn config_watch_plan(config_dir: &Path) -> WatchPlan {
     let mut external_roots = Vec::new();
     let mut external_files = HashMap::new();
     for filename in [SETTINGS_FILE, BOOKMARKS_FILE, FOLDER_VIEWS_FILE] {
@@ -302,7 +302,7 @@ fn refresh_watch_plan(config_dir: &Path, watch_plan: &Arc<Mutex<WatchPlan>>) {
 /// Register newly resolved external roots while holding the plan lock. The
 /// callback takes the same lock before mapping an event, so it cannot see a
 /// new root with the old plan in the small interval after `watch` succeeds.
-fn apply_watch_plan_update(
+pub(crate) fn apply_watch_plan_update(
     config_dir: &Path,
     watch_plan: &Arc<Mutex<WatchPlan>>,
     watcher: &mut RecommendedWatcher,

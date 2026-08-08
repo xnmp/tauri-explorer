@@ -12,21 +12,25 @@ test.describe("Recycle Bin sidebar entry (#603)", () => {
       const button = section.querySelector(".recycle-bin-item");
       return button !== null && button.previousElementSibling !== null;
     })).toBe(true);
+    await recycleBin.click();
     await page.screenshot({ path: "evidence/ac-1-recycle-bin-visible.png" });
   });
 
   test("hides the Recycle Bin after its persisted sidebar option is disabled", async ({ page }) => {
     await page.goto("/");
-
-    await page.evaluate(() => {
-      const raw = localStorage.getItem("explorer-settings");
-      const settings = raw ? JSON.parse(raw) : {};
-      settings.showRecycleBin = false;
-      localStorage.setItem("explorer-settings", JSON.stringify(settings));
-    });
+    await page.locator(".entry-item").first().waitFor();
+    await page.evaluate(() => window.dispatchEvent(new KeyboardEvent("keydown", {
+      key: ",", ctrlKey: true, bubbles: true, cancelable: true,
+    })));
+    await expect(page.locator(".settings-search")).toBeVisible();
+    await page.locator("label.toggle", { has: page.getByTestId("setting-show-recycle-bin") }).click();
+    await expect(page.getByRole("button", { name: "Open Recycle Bin" })).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() =>
+      JSON.parse(localStorage.getItem("explorer-settings") ?? "{}").showRecycleBin,
+    )).toBe(false);
+    await page.locator(".settings-dialog").screenshot({ path: "evidence/ac-2-recycle-bin-hidden.png" });
     await page.reload();
 
     await expect(page.getByRole("button", { name: "Open Recycle Bin" })).toHaveCount(0);
-    await page.locator(".sidebar").screenshot({ path: "evidence/ac-2-recycle-bin-hidden.png" });
   });
 });

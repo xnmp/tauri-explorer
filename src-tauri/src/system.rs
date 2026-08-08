@@ -9,6 +9,15 @@ use crate::files;
 /// Stores the working directory from which the app was launched.
 pub struct LaunchCwd(pub String);
 
+/// Reap a launcher child asynchronously so opening a native surface does not
+/// accumulate zombies on Unix.
+fn reap_in_background(child: std::process::Child) {
+    std::thread::spawn(move || {
+        let mut child = child;
+        let _ = child.wait();
+    });
+}
+
 /// True for UNC paths (`\\server\share`, `\\wsl.localhost\Distro\...`). Windows
 /// has no Recycle Bin for network/WSL locations: the `trash` crate's shell APIs
 /// fail on them, so these must be removed directly instead of trashed.
@@ -111,7 +120,10 @@ pub async fn open_recycle_bin() -> Result<(), AppError> {
             command
         };
 
-        command.spawn().map(|_| ()).map_err(AppError::Io)
+        command
+            .spawn()
+            .map(reap_in_background)
+            .map_err(AppError::Io)
     })
     .await
 }

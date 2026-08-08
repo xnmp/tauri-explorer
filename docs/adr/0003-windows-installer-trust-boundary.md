@@ -23,7 +23,9 @@ cleanup rules.
   `xnmp/tauri-explorer` over HTTPS, optionally at the requested ref.
 - The generated MSI is passed to `msiexec` as one quoted argument. `RunAs`
   makes Windows' UAC consent prompt explicit, the script waits for completion,
-  and it surfaces a non-zero installer exit code.
+  and it surfaces failed installer exit codes. Windows Installer's `3010`
+  success-with-reboot-required result is reported as a successful install with
+  an explicit restart notice.
 - Temporary clones are removed in `finally`, including after clone, build, or
   MSI failures. Existing checkouts are never removed.
 

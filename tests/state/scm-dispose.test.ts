@@ -7,7 +7,19 @@
  * contract: `disposeScmStore` frees a store, and the window-tabs close/collapse
  * paths keep the map bounded as panes and tabs come and go.
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+const directoryApi = vi.hoisted(() => ({
+  startStreamingDirectory: vi.fn(),
+}));
+
+vi.mock("$lib/api/files", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("$lib/api/files")>();
+  return {
+    ...actual,
+    startStreamingDirectory: directoryApi.startStreamingDirectory,
+  };
+});
 import {
   getScmStore,
   disposeScmStore,
@@ -17,7 +29,23 @@ import { createWindowTabsManager } from "$lib/state/window-tabs.svelte";
 
 beforeEach(() => {
   localStorage.clear();
+  directoryApi.startStreamingDirectory.mockResolvedValue({
+    ok: true,
+    data: { path: "/home/user", entries: [], listing_id: null },
+  });
 });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+async function flush(times = 10) {
+  for (let i = 0; i < times; i++) await Promise.resolve();
+}
 
 describe("disposeScmStore", () => {
   it("frees the store and drops the map entry", () => {
@@ -51,7 +79,30 @@ describe("window-tabs pane close disposes scm stores (#439)", () => {
     return manager;
   }
 
-  it("closePane disposes the closed pane's scm store", () => {
+  it("waits for a pane's initial directory load before teardown", async () => {
+    const load = deferred<{
+      ok: true;
+      data: { path: string; entries: []; listing_id: null };
+    }>();
+    directoryApi.startStreamingDirectory.mockReturnValueOnce(load.promise);
+    const manager = createWindowTabsManager();
+    manager.init("/home/user", true);
+    await flush();
+
+    const disposal = manager.dispose();
+    let settled = false;
+    void Promise.resolve(disposal).then(() => { settled = true; });
+    await flush();
+    expect(settled).toBe(false);
+
+    load.resolve({
+      ok: true,
+      data: { path: "/home/user", entries: [], listing_id: null },
+    });
+    await expect(disposal).resolves.toBeUndefined();
+  });
+
+  it("closePane disposes the closed pane's scm store", async () => {
     const manager = freshManager();
     manager.splitPane("right");
     const [p0, p1] = manager.activePaneIds;
@@ -65,10 +116,10 @@ describe("window-tabs pane close disposes scm stores (#439)", () => {
 
     // Clean up the survivor so the module map returns to its prior size.
     for (const id of manager.activePaneIds) disposeScmStore(id);
-    manager.dispose();
+    await manager.dispose();
   });
 
-  it("collapsing dual pane disposes the removed panes' stores", () => {
+  it("collapsing dual pane disposes the removed panes' stores", async () => {
     const manager = freshManager();
     manager.splitPane("right");
     manager.splitPane("down");
@@ -81,10 +132,10 @@ describe("window-tabs pane close disposes scm stores (#439)", () => {
     expect(scmStoreCount()).toBe(baseline - 2);
 
     for (const id of manager.activePaneIds) disposeScmStore(id);
-    manager.dispose();
+    await manager.dispose();
   });
 
-  it("keeps the store map bounded across repeated open/close churn", () => {
+  it("keeps the store map bounded across repeated open/close churn", async () => {
     const manager = freshManager();
     const baseline = scmStoreCount();
 
@@ -98,6 +149,6 @@ describe("window-tabs pane close disposes scm stores (#439)", () => {
     expect(scmStoreCount()).toBeLessThanOrEqual(baseline + 1);
 
     for (const id of manager.activePaneIds) disposeScmStore(id);
-    manager.dispose();
+    await manager.dispose();
   });
 });

@@ -1,3 +1,5 @@
 # Architecture Decision Records
 
-- [ADR 0001 — Window-tab teardown settlement](0001-window-tab-teardown.md)
+| ADR | Decision | Governs |
+| --- | --- | --- |
+| [0001](0001-window-tabs-teardown.md) | Window-tab teardown owns async pane work | `src/lib/state/window-tabs.svelte.ts` |

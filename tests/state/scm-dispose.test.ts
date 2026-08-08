@@ -101,7 +101,6 @@ describe("window-tabs pane close disposes scm stores (#439)", () => {
     });
     await expect(disposal).resolves.toBeUndefined();
   });
-
   it("closePane disposes the closed pane's scm store", async () => {
     const manager = freshManager();
     manager.splitPane("right");

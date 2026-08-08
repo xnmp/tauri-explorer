@@ -18,8 +18,10 @@ The window-tab manager owns asynchronous pane work that it starts or destroys:
 
 - It retains each initial `initialLoad` or `navigateTo` promise started while
   registering an explorer.
-- `dispose()` waits for all registered explorer cleanup promises and for the
-  initial-load promises pending when disposal begins to settle.
+- It retains cleanup promises for explorers removed by pane close, tab removal,
+  or pane collapse until those promises settle.
+- `dispose()` waits for all registered and removed-explorer cleanup promises
+  and for the initial-load promises pending when disposal begins to settle.
 - Cleanup failures are propagated only after both groups have settled. The
   first rejected explorer cleanup is rethrown; initial-load failures remain
   settled because their own navigation path owns their user-facing handling.
@@ -35,4 +37,5 @@ cannot leave sibling cleanup or load work running after a cleanup failure has
 already been observed.
 
 The regression tests must hold cleanup and load promises independently, proving
-that one rejected cleanup does not make disposal settle before the other work.
+that one rejected cleanup does not make disposal settle before the other work,
+including cleanup started by a pane-removal operation.

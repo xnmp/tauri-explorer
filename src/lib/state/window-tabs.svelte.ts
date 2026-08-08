@@ -131,6 +131,10 @@ function createWindowTabsManager() {
   // render immediately. Retain their promises so an explicit manager teardown
   // can wait for their diagnostics and IPC work before its environment closes.
   const pendingInitialLoads = new Set<Promise<void>>();
+  // Pane close/collapse removes an explorer from the live registry before its
+  // asynchronous listener cleanup completes. Retain that cleanup separately
+  // so a later manager disposal still owns the in-flight work.
+  const pendingRemovedExplorerCleanups = new Set<Promise<void>>();
 
   // Window-level tab strip
   let tabs = $state<WindowTab[]>([]);
@@ -186,6 +190,16 @@ function createWindowTabsManager() {
       (result): result is PromiseRejectedResult => result.status === "rejected",
     );
     if (failure) throw failure.reason;
+  }
+
+  function destroyRemovedExplorer(explorer: ExplorerInstance | undefined): void {
+    if (!explorer) return;
+    const cleanup = explorer.destroy();
+    pendingRemovedExplorerCleanups.add(cleanup);
+    void cleanup.then(
+      () => pendingRemovedExplorerCleanups.delete(cleanup),
+      () => pendingRemovedExplorerCleanups.delete(cleanup),
+    );
   }
 
   // Restoration and initialization remain synchronous APIs. Report cleanup
@@ -641,7 +655,7 @@ function createWindowTabsManager() {
   function destroyTabExplorers(tab: WindowTab): void {
     if (tab.kind !== "explorer") return;
     for (const [paneId, pane] of Object.entries(tab.panes)) {
-      explorers.get(pane.explorerId)?.destroy();
+      destroyRemovedExplorer(explorers.get(pane.explorerId));
       explorers.delete(pane.explorerId);
       disposeScmStore(paneId);
       disposeCommitPanelStore(paneId);
@@ -970,7 +984,7 @@ function createWindowTabsManager() {
       if (closedPanes.length > MAX_CLOSED_PANES) closedPanes.shift();
     }
 
-    explorers.get(pane.explorerId)?.destroy();
+    destroyRemovedExplorer(explorers.get(pane.explorerId));
     explorers.delete(pane.explorerId);
     disposeScmStore(target);
     disposeCommitPanelStore(target);
@@ -1013,7 +1027,7 @@ function createWindowTabsManager() {
       for (const paneId of leafIds(tab.layout)) {
         if (paneId === tab.activePaneId) continue;
         const pane = tab.panes[paneId];
-        explorers.get(pane.explorerId)?.destroy();
+        destroyRemovedExplorer(explorers.get(pane.explorerId));
         explorers.delete(pane.explorerId);
         disposeScmStore(paneId);
         disposeCommitPanelStore(paneId);
@@ -1168,11 +1182,18 @@ function createWindowTabsManager() {
         // Flushes a queued write before dropping its page-lifecycle listeners,
         // so tearing the manager down can't swallow the last interaction.
         tabStatePersister.dispose();
-        const [destroyed] = await Promise.allSettled([
+        const [destroyed, , removedCleanups] = await Promise.allSettled([
           destroyAllExplorers(),
           Promise.allSettled(pendingInitialLoads),
+          Promise.allSettled(pendingRemovedExplorerCleanups),
         ]);
         if (destroyed.status === "rejected") throw destroyed.reason;
+        if (removedCleanups.status === "fulfilled") {
+          const failure = removedCleanups.value.find(
+            (result): result is PromiseRejectedResult => result.status === "rejected",
+          );
+          if (failure) throw failure.reason;
+        }
       } finally {
         testManagerRegistry()?.delete(manager);
       }

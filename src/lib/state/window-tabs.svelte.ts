@@ -119,6 +119,10 @@ type ExternalSeed = {
 function createWindowTabsManager() {
   // Explorer instances registry (keyed by explorerId)
   const explorers = new Map<string, ExplorerInstance>();
+  // Initial directory loads are started when a pane is created so the UI can
+  // render immediately. Retain their promises so an explicit manager teardown
+  // can wait for their diagnostics and IPC work before its environment closes.
+  const pendingInitialLoads = new Set<Promise<void>>();
 
   // Window-level tab strip
   let tabs = $state<WindowTab[]>([]);
@@ -311,11 +315,11 @@ function createWindowTabsManager() {
     explorers.set(explorerId, explorer);
     // Seeded/restored panes use a non-tracking initial load so restoring
     // tabs doesn't double-record frecency/recent-files visits.
-    if (seed || !track) {
-      explorer.initialLoad(path);
-    } else {
-      explorer.navigateTo(path);
-    }
+    const initialLoad = seed || !track
+      ? explorer.initialLoad(path)
+      : explorer.navigateTo(path);
+    pendingInitialLoads.add(initialLoad);
+    void initialLoad.finally(() => pendingInitialLoads.delete(initialLoad));
     return { explorerId, explorer };
   }
 
@@ -1131,7 +1135,7 @@ function createWindowTabsManager() {
     /** Tear down this manager: remove the window focus listener and destroy
      *  all explorers. The app singleton lives for the whole session, but the
      *  factory is used in tests where undisposed managers would leak (#439). */
-    dispose() {
+    async dispose(): Promise<void> {
       if (typeof window !== "undefined") {
         window.removeEventListener("focus", onWindowFocus);
       }
@@ -1139,6 +1143,7 @@ function createWindowTabsManager() {
       // so tearing the manager down can't swallow the last interaction.
       tabStatePersister.dispose();
       destroyAllExplorers();
+      await Promise.allSettled(pendingInitialLoads);
     },
   };
 }

@@ -11,6 +11,7 @@
   import { settingsStore, type ThumbnailSize } from "$lib/state/settings.svelte";
   import { folderViewsStore } from "$lib/state/folder-views.svelte";
   import { frecencyStore } from "$lib/state/frecency.svelte";
+  import { toastStore } from "$lib/state/toast.svelte";
   import { openFile } from "$lib/api/open";
   import { setWallpaper, openTerminal } from "$lib/state/commands/system-actions";
   import type { FileEntry } from "$lib/domain/file";
@@ -113,6 +114,20 @@
       explorer.copyToClipboard(selected);
     }
     contextMenuStore.close();
+  }
+
+  async function handleCopyPath(): Promise<void> {
+    const [entry] = explorer.getSelectedEntries();
+    contextMenuStore.close();
+    if (!entry) return;
+
+    recordActioned();
+    try {
+      await navigator.clipboard.writeText(entry.path);
+      toastStore.clipboard("Copied path", false);
+    } catch {
+      toastStore.error("Could not copy path");
+    }
   }
 
   async function handlePaste(): Promise<void> {
@@ -391,6 +406,16 @@
         <span>Copy</span>
         <span class="shortcut">Ctrl+C</span>
       </button>
+
+      {#if explorer.getSelectedEntries().length === 1}
+        <button class="menu-item" onclick={handleCopyPath} role="menuitem">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M6 3H3V13H11V10M7 3H13V9H7V3Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+            <path d="M9 6H11" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+          </svg>
+          <span>Copy Path</span>
+        </button>
+      {/if}
 
       <div class="menu-divider"></div>
 

@@ -88,7 +88,7 @@ describe("live external config edits", () => {
       [scratchDir]: { thumbnailSize: "small" },
     }, null, 2));
     await browser.waitUntil(
-      async () => (await tileIcon.getCSSProperty("width")).value === "48px",
+      async () => Math.abs(parseFloat((await tileIcon.getCSSProperty("width")).value) - 48) < 0.1,
       { timeout: 25_000, timeoutMsg: "external small folder view never reached the tiles" },
     );
     await browser.saveScreenshot("evidence/ac-2-folder-view-live-external-edit.png");

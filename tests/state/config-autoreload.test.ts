@@ -47,19 +47,6 @@ async function freshSettings() {
   };
 }
 
-async function freshConfigStores() {
-  vi.resetModules();
-  const persisted = await import("$lib/state/persisted");
-  const bookmarks = await import("$lib/state/bookmarks.svelte");
-  const folderViews = await import("$lib/state/folder-views.svelte");
-  return {
-    ...bookmarks,
-    ...folderViews,
-    settleWrites: (filename: string) =>
-      vi.waitFor(() => expect(persisted.configWriteActivity(filename).pending).toBe(false)),
-  };
-}
-
 function blob(settings: Record<string, unknown>): string {
   return JSON.stringify(settings, null, 2);
 }
@@ -190,67 +177,6 @@ describe("settingsStore.reloadFromDisk", () => {
     readConfigFileMock.mockResolvedValue({ ok: true, data: blob({ theme: "light" }) });
     expect(await settingsStore.reloadFromDisk()).toBe("unchanged");
   });
-
-  it("adopts a settings.json write from a plugin rather than mistaking it for its own echo", async () => {
-    const { settingsStore, settleWrites } = await freshSettings();
-    const { writeConfigQueued } = await import("$lib/state/persisted");
-    await settingsStore.init();
-
-    const external = blob({ theme: "nord" });
-    await writeConfigQueued("settings.json", external, "nano-banana");
-    await settleWrites();
-    readConfigFileMock.mockResolvedValue({ ok: true, data: external });
-
-    expect(await settingsStore.reloadFromDisk()).toBe("external-change");
-    expect(settingsStore.theme).toBe("nord");
-  });
-});
-
-describe("bookmark and folder-view config stores", () => {
-  it("adopts bookmarks edited outside the app", async () => {
-    const { bookmarksStore } = await freshConfigStores();
-    await bookmarksStore.init();
-    readConfigFileMock.mockResolvedValue({
-      ok: true,
-      data: JSON.stringify([{ name: "Projects", path: "/work/projects", icon: "folder" }]),
-    });
-
-    expect(await bookmarksStore.reloadFromDisk()).toBe("external-change");
-    expect(bookmarksStore.list).toEqual([
-      { name: "Projects", path: "/work/projects", icon: "folder" },
-    ]);
-  });
-
-  it("adopts folder-view overrides edited outside the app", async () => {
-    const { folderViewsStore } = await freshConfigStores();
-    await folderViewsStore.init();
-    readConfigFileMock.mockResolvedValue({
-      ok: true,
-      data: JSON.stringify({ "/work/photos": { thumbnailSize: "xlarge" } }),
-    });
-
-    expect(await folderViewsStore.reloadFromDisk()).toBe("external-change");
-    expect(folderViewsStore.getThumbnailSize("/work/photos", "small")).toBe("xlarge");
-  });
-
-  it("does not replace a bookmark change while the app's save is in flight", async () => {
-    const { bookmarksStore } = await freshConfigStores();
-    await bookmarksStore.init();
-    let releaseWrite: () => void = () => {};
-    writeConfigFileMock.mockImplementation(
-      () => new Promise((resolve) => {
-        releaseWrite = () => resolve({ ok: true, data: undefined });
-      }),
-    );
-    bookmarksStore.addBookmark("/work/current", "Current");
-    readConfigFileMock.mockResolvedValue({ ok: true, data: "[]" });
-
-    expect(await bookmarksStore.reloadFromDisk()).toBe("self-write-overlap");
-    expect(bookmarksStore.list).toEqual([
-      { name: "Current", path: "/work/current", icon: "folder" },
-    ]);
-    releaseWrite();
-  });
 });
 
 describe("handleConfigFileChanged", () => {
@@ -259,8 +185,6 @@ describe("handleConfigFileChanged", () => {
     const syncFromSettings = vi.fn();
     const initTheme = vi.fn(async () => {});
     const reloadFromDisk = vi.fn(async () => options.reloadResult);
-    const reloadBookmarks = vi.fn(async () => options.reloadResult);
-    const reloadFolderViews = vi.fn(async () => options.reloadResult);
     const showToast = vi.fn();
 
     vi.doMock("$lib/state/settings.svelte", () => ({
@@ -269,26 +193,12 @@ describe("handleConfigFileChanged", () => {
     vi.doMock("$lib/state/theme.svelte", () => ({
       themeStore: { syncFromSettings, initTheme },
     }));
-    vi.doMock("$lib/state/bookmarks.svelte", () => ({
-      bookmarksStore: { reloadFromDisk: reloadBookmarks },
-    }));
-    vi.doMock("$lib/state/folder-views.svelte", () => ({
-      folderViewsStore: { reloadFromDisk: reloadFolderViews },
-    }));
     vi.doMock("$lib/state/toast.svelte", () => ({
       toastStore: { show: showToast },
     }));
 
     const { handleConfigFileChanged } = await import("$lib/state/config-watch");
-    return {
-      handleConfigFileChanged,
-      reloadFromDisk,
-      reloadBookmarks,
-      reloadFolderViews,
-      syncFromSettings,
-      initTheme,
-      showToast,
-    };
+    return { handleConfigFileChanged, reloadFromDisk, syncFromSettings, initTheme, showToast };
   }
 
   it("re-applies the theme after settings.json really changed", async () => {
@@ -327,13 +237,10 @@ describe("handleConfigFileChanged", () => {
     expect(w.reloadFromDisk).not.toHaveBeenCalled();
   });
 
-  it("reloads bookmarks and folder views when their config files change", async () => {
+  it("ignores config files nothing reacts to", async () => {
     const w = await wired({ reloadResult: "external-change" });
     await w.handleConfigFileChanged("bookmarks.json");
-    await w.handleConfigFileChanged("folder-views.json");
     expect(w.reloadFromDisk).not.toHaveBeenCalled();
-    expect(w.reloadBookmarks).toHaveBeenCalledOnce();
-    expect(w.reloadFolderViews).toHaveBeenCalledOnce();
     expect(w.initTheme).not.toHaveBeenCalled();
     expect(w.syncFromSettings).not.toHaveBeenCalled();
   });

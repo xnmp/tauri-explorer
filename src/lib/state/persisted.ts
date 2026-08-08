@@ -308,7 +308,10 @@ export function writeConfigQueued(
     const next = pendingWrites.get(filename);
     if (next !== undefined) {
       pendingWrites.delete(filename);
-      activeConfigWriters.delete(contentWriterKey);
+      // A same-writer queued save hands off directly to the next disk write.
+      // Keep it active throughout that handoff: otherwise a watcher read in
+      // the second write's window can adopt stale bytes from the first.
+      if (next.writer !== contentWriter) activeConfigWriters.delete(contentWriterKey);
       return flush(next.data, next.writer);
     }
     activeConfigWriters.delete(contentWriterKey);

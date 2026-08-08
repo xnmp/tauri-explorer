@@ -218,11 +218,65 @@ fn settings_path(config_dir: &Path) -> std::path::PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{pending, settings_path, watched_config_name, BOOKMARKS_FILE, FOLDER_VIEWS_FILE};
+    use super::{
+        config_watch_plan, pending, settings_path, watched_config_name, BOOKMARKS_FILE,
+        FOLDER_VIEWS_FILE,
+    };
     use notify::{RecommendedWatcher, RecursiveMode, Watcher};
     use std::path::Path;
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
+
+    #[cfg(unix)]
+    fn reported_name_after_external_write(config_dir: &Path, changed: &Path) -> Option<String> {
+        let plan = config_watch_plan(config_dir);
+        let (sent, received) = mpsc::channel();
+        let mut watcher: RecommendedWatcher =
+            notify::recommended_watcher(move |event: Result<notify::Event, notify::Error>| {
+                if let Ok(event) = event {
+                    for path in event.paths {
+                        if let Some(filename) = plan.watched_config_name(&path) {
+                            let _ = sent.send(filename);
+                        }
+                    }
+                }
+            })
+            .expect("watcher");
+        watcher
+            .watch(config_dir, RecursiveMode::Recursive)
+            .expect("watch config directory");
+        for (root, mode) in &config_watch_plan(config_dir).external_roots {
+            watcher.watch(root, *mode).expect("watch external target");
+        }
+
+        std::fs::write(changed, "external edit").expect("write symlink target");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline {
+            if let Ok(filename) = received.recv_timeout(Duration::from_millis(100)) {
+                return Some(filename);
+            }
+        }
+        None
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reports_writes_to_symlinked_settings_targets() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let config_dir = temp.path().join("config");
+        let external_dir = temp.path().join("dotfiles");
+        std::fs::create_dir_all(&config_dir).expect("config directory");
+        std::fs::create_dir_all(&external_dir).expect("external directory");
+        let target = external_dir.join("settings.json");
+        std::fs::write(&target, "{}").expect("initial settings");
+        std::os::unix::fs::symlink(&target, config_dir.join("settings.json"))
+            .expect("symlinked settings");
+
+        assert_eq!(
+            reported_name_after_external_write(&config_dir, &target),
+            Some("settings.json".to_string())
+        );
+    }
 
     #[test]
     fn reports_reloadable_json_blobs_and_user_theme_css() {

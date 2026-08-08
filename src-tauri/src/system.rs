@@ -252,7 +252,7 @@ pub async fn restore_from_trash(_paths: Vec<String>) -> Result<(), AppError> {
 
 #[cfg(test)]
 mod tests {
-    use super::is_launcher_artifact_cwd;
+    use super::{is_launcher_artifact_cwd, recycle_bin_launcher};
     use std::path::Path;
 
     #[test]
@@ -273,5 +273,14 @@ mod tests {
         assert!(!is_launcher_artifact_cwd(&home, Some(&exe_dir)));
         // Unknown exe dir: only "/" is rejected.
         assert!(!is_launcher_artifact_cwd(&home, None));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn recycle_bin_launcher_uses_the_freedesktop_trash_uri() {
+        let launcher = recycle_bin_launcher();
+
+        assert_eq!(launcher.program, "gio");
+        assert_eq!(launcher.arguments, ["open", "trash:///"]);
     }
 }

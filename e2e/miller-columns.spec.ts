@@ -6,7 +6,6 @@ import { test, expect } from "./fixtures";
 import { HOME_URL, waitForEntries } from "./helpers";
 
 test.describe("Miller columns panel", () => {
-
   test("miller columns appear when millerLayers > 0", async ({ page }) => {
     await page.goto(HOME_URL);
     await waitForEntries(page);

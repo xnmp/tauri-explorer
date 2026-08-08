@@ -1,12 +1,8 @@
 /**
- * E2E: Copy Path context-menu action (#606).
- *
- * Covers the observable text-clipboard result for files and folders in every
- * supported view mode while keeping the pre-existing context-menu suite
- * immutable.
+ * Observable clipboard coverage for the Copy Path context-menu action (#606).
  */
 import { test, expect, type Page } from "./fixtures";
-import { VIEW_MODES, waitForEntries, switchViewMode } from "./helpers";
+import { VIEW_MODES, waitForEntries, switchViewMode, pressShortcut } from "./helpers";
 
 async function rightClick(page: Page, name: string) {
   const item = page.locator(".entry-item", { hasText: name }).first();
@@ -29,10 +25,7 @@ for (const viewMode of VIEW_MODES) {
         context,
         browserName,
       }) => {
-        test.skip(
-          browserName === "webkit",
-          "WebKit does not support Playwright clipboard permissions",
-        );
+        test.skip(browserName === "webkit", "WebKit does not support Playwright clipboard permissions");
         await context.grantPermissions(["clipboard-read", "clipboard-write"]);
         await page.goto("/?path=/home/user/Documents");
         await waitForEntries(page);
@@ -40,28 +33,33 @@ for (const viewMode of VIEW_MODES) {
 
         const menu = await rightClick(page, name);
         await expect(menu.getByText("Copy Path", { exact: true })).toBeVisible();
+        if (viewMode === "details" && name === "report.pdf") {
+          await page.screenshot({ path: "evidence/ac-1-copy-path-menu.png" });
+        }
         await menu.getByText("Copy Path", { exact: true }).click();
 
         await expect(page.locator(".toast.clipboard")).toBeVisible();
-        await expect
-          .poll(() => page.evaluate(() => navigator.clipboard.readText()))
-          .toBe(expectedPath);
+        await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(expectedPath);
       });
     }
   });
 }
 
-test("existing folder actions remain available and Rename still starts editing", async ({ page }) => {
+test("existing Copy action still pastes a selected file into another folder", async ({ page }) => {
   await page.goto("/?path=/home/user/Documents");
   await waitForEntries(page);
-  await switchViewMode(page, "tiles");
 
-  const menu = await rightClick(page, "project");
-  for (const action of ["Cut", "Copy", "Rename", "Delete", "Add to Bookmarks"]) {
-    await expect(menu.getByText(action, { exact: true })).toBeVisible();
-  }
-  await page.screenshot({ path: "evidence/ac-2-existing-context-menu-actions.png" });
+  const menu = await rightClick(page, "report.pdf");
+  await menu.getByText("Copy", { exact: true }).click();
+  await expect(page.locator(".toast.clipboard")).toBeVisible();
 
-  await menu.getByText("Rename", { exact: true }).click();
-  await expect(page.locator(".rename-input")).toHaveValue("project");
+  await page.keyboard.press("Control+Alt+ArrowUp");
+  await waitForEntries(page);
+  await page.locator(".entry-item", { hasText: "Pictures" }).first().dblclick();
+  await waitForEntries(page);
+  await pressShortcut(page, "v", { ctrlKey: true });
+  await expect
+    .poll(() => page.locator(".entry-item .entry-name").allTextContents(), { timeout: 5000 })
+    .toContain("report.pdf");
+  await page.screenshot({ path: "evidence/ac-2-copy-paste-existing-action.png" });
 });

@@ -170,13 +170,14 @@ function createWindowTabsManager() {
 
   /** Destroy all registered explorers (unwatch dirs, drop listeners) and clear the registry.
    *  Settlement and error propagation are defined by ADR 0002. */
-  function destroyAllExplorers(): Promise<void> {
-    const destroying = Array.from(explorers.values(), (explorer) => explorer.destroy());
+  async function destroyAllExplorers(): Promise<void> {
+    const destructions = [...explorers.values()].map((explorer) => explorer.destroy());
     explorers.clear();
-    return Promise.allSettled(destroying).then((results) => {
-      const rejected = results.find((result) => result.status === "rejected");
-      if (rejected?.status === "rejected") throw rejected.reason;
-    });
+    const results = await Promise.allSettled(destructions);
+    const failure = results.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (failure) throw failure.reason;
   }
 
   function findTab(tabId: string): WindowTab | null {
@@ -523,7 +524,7 @@ function createWindowTabsManager() {
 
     // Destroy before clearing — otherwise backend watch refcounts and
     // streaming listeners leak for every replaced explorer.
-    destroyAllExplorers();
+    void destroyAllExplorers();
 
     tabs = normalized.tabs.map((pt) =>
       reviveTab(pt, {
@@ -551,7 +552,7 @@ function createWindowTabsManager() {
     }
 
     // No saved state or child window — create a fresh tab
-    destroyAllExplorers();
+    void destroyAllExplorers();
     tabs = [];
     activeTabId = null;
 

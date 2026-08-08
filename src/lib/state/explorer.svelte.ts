@@ -873,11 +873,11 @@ function createExplorerState(seed?: ExplorerSeed) {
       onNavigateCallback = cb;
     },
     // Cleanup
-    destroy: () => {
+    destroy: async (): Promise<void> => {
       watch.destroy();
       // Tear down the streaming listener and any in-flight listing,
       // otherwise each closed tab leaks a Tauri event listener.
-      return dirListing.cleanup();
+      await dirListing.cleanup();
     },
   };
 }

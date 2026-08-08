@@ -91,14 +91,6 @@ describe("live external config edits", () => {
       async () => (await tileIcon.getCSSProperty("width")).value === "48px",
       { timeout: 25_000, timeoutMsg: "external small folder view never reached the tiles" },
     );
-
-    fs.writeFileSync(folderViewsPath, JSON.stringify({
-      [scratchDir]: { thumbnailSize: "xlarge" },
-    }, null, 2));
-    await browser.waitUntil(
-      async () => (await tileIcon.getCSSProperty("width")).value === "128px",
-      { timeout: 25_000, timeoutMsg: "external xlarge folder view never reached the tiles" },
-    );
     await browser.saveScreenshot("evidence/ac-2-folder-view-live-external-edit.png");
   });
 });

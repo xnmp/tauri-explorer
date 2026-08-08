@@ -209,6 +209,14 @@ const lastWrittenContent = new Map<string, string>();
 const writeGenerations = new Map<string, number>();
 const activeConfigWriters = new Set<string>();
 
+// Store-owned files retain a stable writer identity without forcing every
+// pre-existing two-argument write call (and its public seam) to change.
+const configStoreWriter: Record<string, string> = {
+  "settings.json": "settings-store",
+  "bookmarks.json": "bookmarks-store",
+  "folder-views.json": "folder-views-store",
+};
+
 /** The file serializes disk writes; the writer identifies ownership of an echo. */
 function configWriterKey(filename: string, writer: string): string {
   return `${filename}\u0000${writer}`;
@@ -233,7 +241,7 @@ export interface ConfigWriteActivity {
 
 export function configWriteActivity(
   filename: string,
-  writer = filename,
+  writer = configStoreWriter[filename] ?? filename,
 ): ConfigWriteActivity {
   const key = configWriterKey(filename, writer);
   return {
@@ -252,7 +260,7 @@ export function configWriteActivity(
 export function configWriteRaced(
   filename: string,
   before: ConfigWriteActivity,
-  writer = filename,
+  writer = configStoreWriter[filename] ?? filename,
 ): boolean {
   const now = configWriteActivity(filename, writer);
   return before.pending || now.pending || now.generation !== before.generation;
@@ -266,7 +274,10 @@ export function configWriteRaced(
  * arrive as "the file changed". Comparing against this is what makes a
  * self-write a no-op instead of a reload loop.
  */
-export function lastWrittenConfig(filename: string, writer = filename): string | null {
+export function lastWrittenConfig(
+  filename: string,
+  writer = configStoreWriter[filename] ?? filename,
+): string | null {
   return lastWrittenContent.get(configWriterKey(filename, writer)) ?? null;
 }
 
@@ -283,7 +294,7 @@ export function lastWrittenConfig(filename: string, writer = filename): string |
 export function writeConfigQueued(
   filename: string,
   data: string,
-  writer = filename,
+  writer = configStoreWriter[filename] ?? filename,
 ): Promise<void> {
   const writerKey = configWriterKey(filename, writer);
   activeConfigWriters.add(writerKey);

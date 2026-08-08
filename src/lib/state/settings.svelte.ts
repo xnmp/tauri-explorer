@@ -213,7 +213,7 @@ function loadSettings(): Settings {
 
 function saveSettings(settings: Settings): void {
   savePersisted(STORAGE_KEY, settings);
-  writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2), CONFIG_WRITER);
+  writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2));
 }
 
 function createSettingsStore() {
@@ -254,7 +254,7 @@ function createSettingsStore() {
     // the migration applies once rather than on every launch — that is
     // what lets a user switch the setting off again afterwards (#506).
     if (migrationChanged) {
-      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2), CONFIG_WRITER);
+      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2));
     }
   }
 
@@ -283,7 +283,7 @@ function createSettingsStore() {
       const cached = (saved as Record<string, unknown>)[SETTINGS_VERSION_KEY];
       const stamp = typeof cached === "number" && Number.isFinite(cached) ? cached : 0;
       settings = { ...settings, [SETTINGS_VERSION_KEY]: stamp };
-      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2), CONFIG_WRITER);
+      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2));
     }
   }
 

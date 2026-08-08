@@ -64,11 +64,7 @@ describe("settingsStore.init precedence (#280)", () => {
     await store.init();
 
     expect(store.showHidden).toBe(true);
-    expect(writeConfigQueuedMock).toHaveBeenCalledWith(
-      "settings.json",
-      expect.any(String),
-      "settings-store",
-    );
+    expect(writeConfigQueuedMock).toHaveBeenCalledWith("settings.json", expect.any(String));
   });
 
   it("a corrupt config file falls back to localStorage instead of throwing", async () => {

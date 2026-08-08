@@ -7,8 +7,16 @@
  * localStorage as synchronous fallback for immediate state.
  */
 
-import { loadPersisted, savePersisted, writeConfigQueued } from "./persisted";
+import {
+  configWriteActivity,
+  configWriteRaced,
+  lastWrittenConfig,
+  loadPersisted,
+  savePersisted,
+  writeConfigQueued,
+} from "./persisted";
 import { basename } from "$lib/domain/path";
+import { decideConfigReload, type ConfigReloadReason } from "$lib/domain/config-reload";
 import { readConfigFile } from "$lib/api/files";
 
 export interface Bookmark {
@@ -20,6 +28,7 @@ export interface Bookmark {
 
 const STORAGE_KEY = "explorer-bookmarks";
 const CONFIG_FILENAME = "bookmarks.json";
+const CONFIG_WRITER = "bookmarks-store";
 
 function createBookmarksState() {
   let bookmarks = $state<Bookmark[]>(loadPersisted(STORAGE_KEY, []));
@@ -27,7 +36,7 @@ function createBookmarksState() {
   function save() {
     // Write-through: save to both localStorage (sync) and config file (async)
     savePersisted(STORAGE_KEY, bookmarks);
-    writeConfigQueued(CONFIG_FILENAME, JSON.stringify(bookmarks, null, 2));
+    writeConfigQueued(CONFIG_FILENAME, JSON.stringify(bookmarks, null, 2), CONFIG_WRITER);
   }
 
   /**
@@ -51,8 +60,33 @@ function createBookmarksState() {
 
     // If config file was empty but localStorage has data, migrate
     if (bookmarks.length > 0) {
-      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(bookmarks, null, 2));
+      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(bookmarks, null, 2), CONFIG_WRITER);
     }
+  }
+
+  /** Re-read external bookmark edits without treating this store's writes as edits. */
+  async function reloadFromDisk(): Promise<ConfigReloadReason> {
+    const beforeRead = configWriteActivity(CONFIG_FILENAME, CONFIG_WRITER);
+    const result = await readConfigFile(CONFIG_FILENAME);
+    if (!result.ok) return "unusable";
+    let loaded: Bookmark[] | null = null;
+    try {
+      const parsed = JSON.parse(result.data);
+      if (Array.isArray(parsed)) loaded = parsed as Bookmark[];
+    } catch {
+      // `decideConfigReload` reports invalid external files consistently.
+    }
+    const decision = decideConfigReload({
+      raw: result.data,
+      normalized: loaded ? JSON.stringify(loaded) : null,
+      currentNormalized: JSON.stringify(bookmarks),
+      lastWritten: lastWrittenConfig(CONFIG_FILENAME, CONFIG_WRITER),
+      selfWriteRaced: configWriteRaced(CONFIG_FILENAME, beforeRead, CONFIG_WRITER),
+    });
+    if (!decision.apply || !loaded) return decision.reason;
+    bookmarks = loaded;
+    savePersisted(STORAGE_KEY, bookmarks);
+    return decision.reason;
   }
 
   function addBookmark(path: string, name?: string) {
@@ -101,6 +135,7 @@ function createBookmarksState() {
       return bookmarks;
     },
     init,
+    reloadFromDisk,
     addBookmark,
     removeBookmark,
     hasBookmark,

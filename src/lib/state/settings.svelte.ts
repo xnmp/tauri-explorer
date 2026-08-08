@@ -204,6 +204,7 @@ const DEFAULT_SETTINGS: Settings = {
 
 const STORAGE_KEY = "explorer-settings";
 const CONFIG_FILENAME = "settings.json";
+const CONFIG_WRITER = "settings-store";
 
 function loadSettings(): Settings {
   const saved = loadPersisted<Partial<Settings>>(STORAGE_KEY, {});
@@ -212,7 +213,7 @@ function loadSettings(): Settings {
 
 function saveSettings(settings: Settings): void {
   savePersisted(STORAGE_KEY, settings);
-  writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2));
+  writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2), CONFIG_WRITER);
 }
 
 function createSettingsStore() {
@@ -253,7 +254,7 @@ function createSettingsStore() {
     // the migration applies once rather than on every launch — that is
     // what lets a user switch the setting off again afterwards (#506).
     if (migrationChanged) {
-      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2));
+      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2), CONFIG_WRITER);
     }
   }
 
@@ -282,7 +283,7 @@ function createSettingsStore() {
       const cached = (saved as Record<string, unknown>)[SETTINGS_VERSION_KEY];
       const stamp = typeof cached === "number" && Number.isFinite(cached) ? cached : 0;
       settings = { ...settings, [SETTINGS_VERSION_KEY]: stamp };
-      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2));
+      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(settings, null, 2), CONFIG_WRITER);
     }
   }
 
@@ -300,7 +301,7 @@ function createSettingsStore() {
     // was in flight would otherwise be clobbered by the older disk contents,
     // and a write that both starts and finishes inside the read window leaves
     // no trace in a simple "is a write pending" flag.
-    const beforeRead = configWriteActivity(CONFIG_FILENAME);
+    const beforeRead = configWriteActivity(CONFIG_FILENAME, CONFIG_WRITER);
     const result = await readConfigFile(CONFIG_FILENAME);
     if (!result.ok) return "unusable";
     const raw = result.data;
@@ -309,8 +310,8 @@ function createSettingsStore() {
       raw,
       normalized: parsed ? JSON.stringify(parsed.settings) : null,
       currentNormalized: JSON.stringify(settings),
-      lastWritten: lastWrittenConfig(CONFIG_FILENAME),
-      selfWriteRaced: configWriteRaced(CONFIG_FILENAME, beforeRead),
+      lastWritten: lastWrittenConfig(CONFIG_FILENAME, CONFIG_WRITER),
+      selfWriteRaced: configWriteRaced(CONFIG_FILENAME, beforeRead, CONFIG_WRITER),
     });
     if (!decision.apply || !parsed) return decision.reason;
     adoptSettings(parsed.settings, parsed.migrationChanged);

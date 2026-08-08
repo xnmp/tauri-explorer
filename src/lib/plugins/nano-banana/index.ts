@@ -62,7 +62,7 @@ async function migrateLegacyApiKey(ctx: PluginContext): Promise<void> {
       // Remove the migrated secret from settings.json so it can't linger
       // (or be re-imported by a future migration run).
       delete parsed.geminiApiKey;
-      await writeConfigQueued("settings.json", JSON.stringify(parsed, null, 2));
+      await writeConfigQueued("settings.json", JSON.stringify(parsed, null, 2), PLUGIN_ID);
     }
   } catch {
     // Corrupt settings file — nothing to migrate.

@@ -73,7 +73,7 @@ impl WatchPlan {
                 .ok()?;
             match theme.components().collect::<Vec<_>>().as_slice() {
                 [std::path::Component::Normal(name)] if name.to_str()?.ends_with(".css") => {
-                    Some(format!("{THEMES_DIR}/{}", name.to_string_lossy()))
+                    Some(format!("{THEMES_DIR}/{}", name.to_str()?))
                 }
                 _ => None,
             }
@@ -384,6 +384,53 @@ mod tests {
             reported_name_after_external_write(&config_dir, &target),
             Some("settings.json".to_string())
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn re_resolves_retargeted_settings_and_theme_symlinks() {
+        let temp = tempfile::tempdir().expect("temporary directory");
+        let config_dir = temp.path().join("config");
+        let first_target_dir = temp.path().join("first");
+        let replacement_target_dir = temp.path().join("replacement");
+        std::fs::create_dir_all(&config_dir).expect("config directory");
+        std::fs::create_dir_all(&first_target_dir).expect("first target directory");
+        std::fs::create_dir_all(&replacement_target_dir).expect("replacement target directory");
+
+        let first_settings = first_target_dir.join("settings.json");
+        let replacement_settings = replacement_target_dir.join("settings.json");
+        std::fs::write(&first_settings, "{}").expect("first settings");
+        std::fs::write(&replacement_settings, "{}").expect("replacement settings");
+        std::os::unix::fs::symlink(&first_settings, config_dir.join("settings.json"))
+            .expect("first settings symlink");
+        std::fs::remove_file(config_dir.join("settings.json")).expect("replace settings symlink");
+        std::os::unix::fs::symlink(&replacement_settings, config_dir.join("settings.json"))
+            .expect("replacement settings symlink");
+
+        let replacement_themes = replacement_target_dir.join("themes");
+        std::fs::create_dir_all(&replacement_themes).expect("replacement themes directory");
+        let replacement_theme = replacement_themes.join("midnight.css");
+        std::fs::write(&replacement_theme, "body {}").expect("replacement theme");
+        std::os::unix::fs::symlink(&replacement_themes, config_dir.join("themes"))
+            .expect("themes symlink");
+
+        let plan = config_watch_plan(&config_dir);
+        assert_eq!(
+            plan.watched_config_name(&replacement_settings),
+            Some("settings.json".to_string())
+        );
+        assert_eq!(
+            plan.watched_config_name(&replacement_theme),
+            Some("themes/midnight.css".to_string())
+        );
+        assert!(plan
+            .external_roots
+            .iter()
+            .any(|(root, _)| root == &replacement_target_dir));
+        assert!(plan
+            .external_roots
+            .iter()
+            .any(|(root, _)| root == &replacement_themes));
     }
 
     #[test]

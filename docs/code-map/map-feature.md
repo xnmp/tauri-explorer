@@ -202,11 +202,12 @@ backend for E2E/browser).
 ## Quick Open (Ctrl+P fuzzy file finder)
 
 - `components/QuickOpen.svelte` — modal, streamed results, keyboard nav
+- `domain/quick-open-search.ts` — trailing debounce at the recursive backend-search boundary; active-pane/recent/frecency matches remain local and synchronous (#600)
 - `components/PickerQuickOpen.svelte` — variant used inside file picker
 - `domain/fuzzy-score.ts` — match scoring/ranking
 - `api/search.ts` — `startStreamingSearch`, `fuzzySearch`, `cancelSearch`
 - `src-tauri/src/search.rs` — nucleo fuzzy engine, streaming emits
-- FLOW: query → startStreamingSearch → backend emits result chunks (race-safe: listener before invoke) → sorted by fuzzy-score → Enter navigates/opens.
+- FLOW: query → local matches render immediately; trailing `quick-open-search` scheduler → startStreamingSearch → backend emits result chunks (race-safe: listener before invoke) → sorted by fuzzy-score → Enter navigates/opens.
 
 ## Content search (grep, Ctrl+Shift+F)
 
@@ -322,7 +323,7 @@ backend for E2E/browser).
 - `README.md` — documented one-command PowerShell invocation.
 - `windows_install.ps1` — trusted Windows source-install entry point: prerequisite checks → existing checkout or temporary HTTPS clone → Tauri MSI build → explicit-UAC `msiexec`; reports `3010` as reboot-required success and removes temporary clones in `finally`.
 - `tests/windows-install-script.test.ts` — Windows-only PowerShell invocation harness; exercises missing tools, existing and cloned checkouts, quoted MSI paths, UAC, cleanup, and reboot-required success without building or installing software.
-- `docs/adr/0001-windows-installer-trust-boundary.md` — governs the installer download/trust, elevation, failure, reboot, and cleanup boundary.
+- `docs/adr/0002-windows-installer-trust-boundary.md` — governs the installer download/trust, elevation, failure, reboot, and cleanup boundary.
 - FLOW: README command or local `windows_install.ps1` → prerequisite/toolchain checks → checkout resolution → `bunx tauri build` → elevated `msiexec`; the Windows CI job runs the invocation harness against this seam.
 
 ---

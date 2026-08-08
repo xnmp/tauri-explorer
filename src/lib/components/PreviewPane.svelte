@@ -1281,7 +1281,7 @@
   .preview-markdown :global(h4),
   .preview-markdown :global(h5),
   .preview-markdown :global(h6) {
-    color: var(--text-primary);
+    color: var(--accent-light);
     font-weight: 600;
     line-height: 1.3;
     margin: 14px 0 6px;

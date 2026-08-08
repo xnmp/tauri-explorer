@@ -1,0 +1,27 @@
+name: Windows installer
+
+on:
+  pull_request:
+    paths:
+      - windows_install.ps1
+      - tests/windows-install-script.test.ts
+      - README.md
+      - .github/workflows/windows-installer.yml
+  push:
+    branches: [dev]
+    paths:
+      - windows_install.ps1
+      - tests/windows-install-script.test.ts
+      - README.md
+      - .github/workflows/windows-installer.yml
+
+jobs:
+  invocation:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bunx vitest run tests/windows-install-script.test.ts

@@ -164,6 +164,7 @@
     showManuallyHidden: ["Show Manually Hidden Items", "Reveal items hidden via the right-click Hide action (shown dimmed)"],
     gitStatus: ["Git Status Indicators", "Show modified/untracked indicators for files in git repositories"],
     recentItems: ["Recent Items in Sidebar", "Number of recent locations to show (0 to hide)"],
+    recycleBin: ["Recycle Bin in Sidebar", "Show a shortcut to the system recycle bin below Bookmarks"],
     quickOpenDebug: ["QuickOpen Debug Scores", "Show score breakdown (name, frecency, dir bonus) in Ctrl+P results"],
     warmWindow: ["Pre-warm New Windows", "Keep a hidden window ready so opening a new window (Ctrl+N) is near-instant. Uses extra memory for one background window. The first new window after enabling still opens cold.", "performance", "speed"],
     confirmDelete: ["Confirm before deleting", "Show confirmation dialog when moving files to trash"],
@@ -192,7 +193,7 @@
   const navBarRows = [rows.navBack, rows.navForward, rows.navUp, rows.navRefresh];
   const behaviorRows = [
     rows.showHidden, rows.millerHideEmpty, rows.yaziNavigation, rows.autoEnterSingleSubdir, rows.tabTitleGitRoot, rows.defaultPaneLayout, rows.showManuallyHidden,
-    rows.gitStatus, rows.f5SyncsLocalBranches, rows.recentItems, rows.quickOpenDebug, rows.warmWindow, rows.confirmDelete,
+    rows.gitStatus, rows.f5SyncsLocalBranches, rows.recentItems, rows.recycleBin, rows.quickOpenDebug, rows.warmWindow, rows.confirmDelete,
     rows.backgroundOpacity, rows.backgroundImage, rows.wallpaperBlur, rows.terminalApp,
     rows.previewFontSize, rows.showPreviewInfo, rows.ffmpegPath,
   ];
@@ -701,6 +702,22 @@
               value={settingsStore.recentItemsCount}
               onchange={(e) => settingsStore.setRecentItemsCount(parseInt((e.target as HTMLInputElement).value) || 0)}
             />
+          </div>
+
+          <div class="setting-row" class:hidden={!matchesSearch(...rows.recycleBin)}>
+            <div class="setting-info">
+              <span class="setting-label">Recycle Bin in Sidebar</span>
+              <span class="setting-description">Show a shortcut to the system recycle bin below Bookmarks</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                data-testid="setting-show-recycle-bin"
+                checked={settingsStore.showRecycleBin}
+                onchange={() => settingsStore.toggleRecycleBin()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
           </div>
 
           <div class="setting-row" class:hidden={!matchesSearch(...rows.quickOpenDebug)}>

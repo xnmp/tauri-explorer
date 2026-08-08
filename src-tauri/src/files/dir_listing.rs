@@ -546,24 +546,20 @@ mod tests {
         assert!(!full);
     }
 
-    /// Directories are flagged `is_git_repo` when they contain a `.git`
-    /// directory (normal repo) or a `.git` file (worktree/submodule
-    /// gitlink) — plain folders and files are never flagged (#463).
+    /// Directories are flagged `is_git_repo` only when Git can open them as
+    /// repositories. A stray `.git` entry must not decorate an ordinary
+    /// folder as a repository (#609).
     #[test]
-    fn scan_detects_git_repo_dir_and_gitlink_file_but_not_plain_folders() {
+    fn scan_marks_only_valid_git_repositories() {
         let dir = tempdir().unwrap();
 
-        // Normal repo: `.git` is a directory.
+        // A valid normal repository.
         fs::create_dir(dir.path().join("repo-dir")).unwrap();
-        fs::create_dir(dir.path().join("repo-dir/.git")).unwrap();
+        git2::Repository::init(dir.path().join("repo-dir")).unwrap();
 
-        // Worktree/submodule: `.git` is a file (a gitlink pointing elsewhere).
-        fs::create_dir(dir.path().join("repo-file")).unwrap();
-        fs::write(
-            dir.path().join("repo-file/.git"),
-            "gitdir: ../.git/worktrees/repo-file\n",
-        )
-        .unwrap();
+        // An Inbox-like folder with a stray `.git` file is not a repository.
+        fs::create_dir(dir.path().join("Inbox")).unwrap();
+        fs::write(dir.path().join("Inbox/.git"), "not a gitdir file\n").unwrap();
 
         // Plain folder: no `.git` at all.
         fs::create_dir(dir.path().join("plain")).unwrap();
@@ -576,11 +572,11 @@ mod tests {
 
         assert!(
             by_name("repo-dir").is_git_repo,
-            "`.git` dir should flag repo"
+            "a valid repository should be flagged"
         );
         assert!(
-            by_name("repo-file").is_git_repo,
-            "`.git` gitlink file (worktree/submodule) should flag repo"
+            !by_name("Inbox").is_git_repo,
+            "an invalid `.git` entry must not flag Inbox as a repository"
         );
         assert!(
             !by_name("plain").is_git_repo,
@@ -589,6 +585,23 @@ mod tests {
         assert!(
             !by_name("plain.txt").is_git_repo,
             "files are never flagged, even named oddly"
+        );
+    }
+
+    /// A malformed gitdir marker is not enough to apply the repository badge.
+    #[test]
+    fn scan_rejects_malformed_gitdir_file() {
+        let dir = tempdir().unwrap();
+        let inbox = dir.path().join("Inbox");
+        fs::create_dir(&inbox).unwrap();
+        fs::write(inbox.join(".git"), "not a gitdir file\n").unwrap();
+
+        let entries = scan_directory_parallel(&dir.path().to_path_buf());
+        let inbox = entries.iter().find(|entry| entry.name == "Inbox").unwrap();
+
+        assert!(
+            !inbox.is_git_repo,
+            "a malformed `.git` marker must not decorate Inbox as a repository"
         );
     }
 

@@ -99,6 +99,7 @@ export interface Settings {
   thumbnailSize: ThumbnailSize; // tile thumbnail size tier
   showGitStatus: boolean; // show git indicators on files
   recentItemsCount: number; // number of recent locations in sidebar (0 = hidden)
+  showRecycleBin: boolean; // show the native recycle-bin launcher in the sidebar
   millerLayers: number; // 0-3, number of ancestor columns in miller view
   millerLayersPreferred: number; // 1-3, remembered layer count for toggle
   millerHideEmpty: boolean; // hide folders containing no visible entries from miller columns
@@ -172,6 +173,7 @@ const DEFAULT_SETTINGS: Settings = {
   thumbnailSize: "small",
   showGitStatus: false,
   recentItemsCount: 6,
+  showRecycleBin: true,
   millerLayers: 0,
   millerLayersPreferred: 2,
   millerHideEmpty: false,
@@ -478,6 +480,12 @@ function createSettingsStore() {
     setRecentItemsCount(count: number): void {
       update({ recentItemsCount: Math.max(0, Math.min(20, count)) });
     },
+    get showRecycleBin() {
+      return settings.showRecycleBin;
+    },
+    toggleRecycleBin(): void {
+      update({ showRecycleBin: !settings.showRecycleBin });
+    },
     get millerLayers() {
       return settings.millerLayers;
     },
@@ -743,6 +751,7 @@ export const TOGGLE_SETTINGS: ToggleSettingMeta[] = [
   { key: "scmTreeView", id: "view.toggleScmTreeView", label: "Toggle SCM Tree View" },
   { key: "f5SyncsLocalBranches", id: "view.toggleF5SyncsLocalBranches", label: "Toggle Git Graph F5 Syncs Local Branches" },
   { key: "confirmDelete", id: "view.toggleConfirmDelete", label: "Toggle Confirm on Delete" },
+  { key: "showRecycleBin", label: "Toggle Recycle Bin in Sidebar" },
   { key: "quickOpenDebug", id: "view.toggleQuickOpenDebug", label: "Toggle Quick Open Debug Scores" },
   { key: "yaziNavigation", label: "Toggle Yazi Navigation" },
   { key: "autoEnterSingleSubdir", label: "Toggle Auto-Enter Single Subfolder" },

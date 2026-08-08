@@ -1,33 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const harness = vi.hoisted(() => ({
+  listener: undefined as ((event: { payload: { path: string } }) => Promise<void>) | undefined,
+  dispatchEvent: vi.fn(),
+  navigateTo: vi.fn<() => Promise<void>>(),
+}));
+
 (globalThis as { window?: unknown }).window = {
   location: { origin: "http://localhost", pathname: "/", search: "" },
-  dispatchEvent: vi.fn(),
+  dispatchEvent: harness.dispatchEvent,
 } as unknown as Window & typeof globalThis;
 
-const activation = vi.hoisted(() => ({
-  listener: undefined as ((event: { payload: unknown }) => Promise<void>) | undefined,
-}));
-const navigation = vi.hoisted(() => {
-  let resolve = () => {};
-  return {
-    navigateTo: vi.fn(() => new Promise<void>((done) => { resolve = done; })),
-    resolve: () => resolve(),
-  };
-});
-
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async (_name: string, handler: (event: { payload: unknown }) => Promise<void>) => {
-    activation.listener = handler;
+  listen: vi.fn(async (_event: string, listener: typeof harness.listener) => {
+    harness.listener = listener;
     return () => {};
   }),
+  emit: vi.fn(async () => {}),
   emitTo: vi.fn(async () => {}),
 }));
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
-    label: "explorer-warm-123",
-    setPosition: vi.fn(async () => {}),
-    setSize: vi.fn(async () => {}),
+    label: "explorer-warm-test",
     setTitle: vi.fn(async () => {}),
     show: vi.fn(async () => {}),
     setSkipTaskbar: vi.fn(async () => {}),
@@ -37,28 +31,17 @@ vi.mock("@tauri-apps/api/window", () => ({
   }),
 }));
 vi.mock("@tauri-apps/api/dpi", () => ({
-  PhysicalPosition: vi.fn(function (x: number, y: number) { return { x, y }; }),
-  PhysicalSize: vi.fn(function (width: number, height: number) { return { width, height }; }),
-}));
-vi.mock("../../src/lib/api/files", () => ({ logStartupTiming: vi.fn(async () => {}) }));
-vi.mock("../../src/lib/api/warm-pool", () => ({
-  warmPoolBeginSpawn: vi.fn(),
-  warmPoolCancelSpawn: vi.fn(),
-  warmPoolClaim: vi.fn(),
-  warmPoolDiscard: vi.fn(),
-  warmPoolRegister: vi.fn(async () => {}),
+  PhysicalPosition: vi.fn(),
+  PhysicalSize: vi.fn(),
 }));
 vi.mock("../../src/lib/state/window-tabs.svelte", () => ({
   windowTabsManager: {
     getActiveExplorer: () => ({
-      currentPath: "/parked/path",
-      navigateTo: navigation.navigateTo,
+      currentPath: "/parked",
+      navigateTo: harness.navigateTo,
       setViewMode: vi.fn(),
     }),
   },
-}));
-vi.mock("../../src/lib/state/window-appearance", () => ({
-  explorerWindowAppearance: vi.fn(() => ({})),
 }));
 vi.mock("../../src/lib/state/settings.svelte", () => ({
   settingsStore: { init: vi.fn(async () => {}) },
@@ -66,32 +49,36 @@ vi.mock("../../src/lib/state/settings.svelte", () => ({
 vi.mock("../../src/lib/state/theme.svelte", () => ({
   themeStore: { syncFromSettings: vi.fn() },
 }));
-vi.mock("../../src/lib/state/window-title.svelte", () => ({
-  resolveLaunchHomePath: () => "/home/user",
-}));
+vi.mock("../../src/lib/api/common", () => ({ invoke: vi.fn(async () => {}) }));
+vi.mock("../../src/lib/api/files", () => ({ logStartupTiming: vi.fn(async () => {}) }));
 
 import { runWarmWindow, type WarmActivatePayload } from "../../src/lib/state/warm-window";
 
-describe("warm child address-bar focus request", () => {
+describe("warm-window address-bar focus", () => {
   beforeEach(() => {
-    activation.listener = undefined;
-    navigation.navigateTo.mockClear();
-    window.dispatchEvent = vi.fn();
+    harness.listener = undefined;
+    harness.dispatchEvent.mockClear();
+    harness.navigateTo.mockReset();
   });
 
-  it("waits for the requested directory before focusing the address bar", async () => {
+  it("waits for delayed navigation before requesting address-bar focus", async () => {
+    let finishNavigation!: () => void;
+    harness.navigateTo.mockImplementation(() => new Promise<void>((resolve) => {
+      finishNavigation = resolve;
+    }));
+
     await runWarmWindow(false);
-    const reveal = activation.listener!({
-      payload: { path: "/requested/path" } satisfies WarmActivatePayload,
+    const activation = harness.listener!({
+      payload: { path: "/requested" } satisfies WarmActivatePayload,
     });
 
-    await vi.waitFor(() => expect(navigation.navigateTo).toHaveBeenCalledWith("/requested/path"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(window.dispatchEvent).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(harness.navigateTo).toHaveBeenCalledWith("/requested"));
+    expect(harness.dispatchEvent).not.toHaveBeenCalled();
 
-    navigation.resolve();
-    await reveal;
-    expect(window.dispatchEvent).toHaveBeenCalledWith(
+    finishNavigation();
+    await activation;
+
+    expect(harness.dispatchEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: "explorer:focus-address-bar" }),
     );
   });

@@ -98,7 +98,6 @@ $global:installerBuildCalls = @()
 $global:installerGitCommands = @()
 $global:installerMsiArguments = @()
 $global:installerMsiVerbs = @()
-$global:installerMessages = @()
 $global:installerTemporaryCheckout = $null
 $global:installerMsiExitCode = $MsiExitCode
 
@@ -133,10 +132,6 @@ function global:Start-Process {
     $global:installerMsiVerbs += $Verb
     [pscustomobject]@{ ExitCode = $global:installerMsiExitCode }
 }
-function global:Write-Host {
-    $global:installerMessages += ($args -join ' ')
-    Microsoft.PowerShell.Utility\Write-Host @args
-}
 
 $existing = Join-Path ([System.IO.Path]::GetTempPath()) 'tauri explorer existing checkout'
 New-Item -ItemType Directory -Force -Path $existing, (Join-Path $existing 'src-tauri') | Out-Null
@@ -161,7 +156,6 @@ $temporaryCheckoutRemoved = -not (Test-Path (Split-Path $global:installerTempora
     temporaryCheckoutRemoved = $temporaryCheckoutRemoved
     msiArguments = @($global:installerMsiArguments)
     msiVerbs = @($global:installerMsiVerbs)
-    rebootMessage = $global:installerMessages | Where-Object { $_ -match 'restart is required' } | Select-Object -First 1
 } | ConvertTo-Json -Compress -Depth 4 | ForEach-Object { "RESULT:$_" }
 Remove-Item -Recurse -Force $existing, $downloaded
 `;

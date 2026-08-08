@@ -1,9 +1,37 @@
-import { afterEach } from "vitest";
-
 /**
  * Vitest global setup.
  * Provides minimal browser-like globals for tests running in Node environment.
  */
+import { afterEach, vi } from "vitest";
+
+type TestManager = {
+  dispose(): Promise<void>;
+};
+
+const managerRegistry = new Set<TestManager>();
+
+// Managers register when initialized, so every test gets the same awaited
+// lifecycle drain even when its local teardown forgets to call dispose().
+(globalThis as typeof globalThis & {
+  __tauriExplorerTestManagerRegistry?: Set<TestManager>;
+}).__tauriExplorerTestManagerRegistry = managerRegistry;
+
+export async function drainWindowTabsManagers(): Promise<void> {
+  // A few legacy suites use fake timers. Directory-listing cleanup uses async
+  // work started while those timers are installed; flush it before restoring
+  // real timers and draining managers at the common environment boundary.
+  if (vi.isFakeTimers()) await vi.runAllTimersAsync();
+  vi.useRealTimers();
+  const managers = [...managerRegistry];
+  managerRegistry.clear();
+  const results = await Promise.allSettled(managers.map((manager) => manager.dispose()));
+  const failure = results.find(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  );
+  if (failure) throw failure.reason;
+}
+
+afterEach(drainWindowTabsManagers);
 
 // Pin navigator.platform to a fixed, non-Windows/non-Mac value.
 //
@@ -52,22 +80,3 @@ if (!existing || typeof existing.setItem !== "function") {
     key: (index: number) => [...store.keys()][index] ?? null,
   } as Storage;
 }
-
-type TestManager = { dispose(): Promise<void> };
-
-const managerRegistry = new Set<TestManager>();
-(globalThis as typeof globalThis & {
-  __tauriExplorerTestManagerRegistry?: Set<TestManager>;
-}).__tauriExplorerTestManagerRegistry = managerRegistry;
-
-// Managers register when initialized, so every test gets the same awaited
-// lifecycle drain even when its local teardown forgets to call dispose().
-afterEach(async () => {
-  const managers = [...managerRegistry];
-  managerRegistry.clear();
-  const results = await Promise.allSettled(managers.map((manager) => manager.dispose()));
-  const failure = results.find(
-    (result): result is PromiseRejectedResult => result.status === "rejected",
-  );
-  if (failure) throw failure.reason;
-});

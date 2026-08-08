@@ -131,6 +131,10 @@ function createWindowTabsManager() {
   // render immediately. Retain their promises so an explicit manager teardown
   // can wait for their diagnostics and IPC work before its environment closes.
   const pendingInitialLoads = new Set<Promise<void>>();
+  // Restore and initialization replace explorers through synchronous public
+  // APIs. Retain their asynchronous cleanup so a later dispose still drains it.
+  const pendingBackgroundDestructions = new Set<Promise<void>>();
+  let disposal: Promise<void> | null = null;
   // Pane close/collapse removes an explorer from the live registry before its
   // asynchronous listener cleanup completes. Retain that cleanup separately
   // so a later manager disposal still owns the in-flight work.
@@ -205,14 +209,19 @@ function createWindowTabsManager() {
     );
   }
 
-  // Restoration and initialization remain synchronous APIs. Report cleanup
-  // failures there instead of letting their detached promise reject globally.
+  // Restore and initialization are synchronous APIs, so retain replacement
+  // cleanup for a later disposal and report its failures at the app boundary.
   function destroyExplorersInBackground(): void {
-    void destroyAllExplorers().catch((error) => {
-      console.error("Failed to clean up previous explorers:", error);
-    });
+    const destruction = destroyAllExplorers();
+    pendingBackgroundDestructions.add(destruction);
+    void destruction.then(
+      () => pendingBackgroundDestructions.delete(destruction),
+      (error) => {
+        pendingBackgroundDestructions.delete(destruction);
+        console.error("Failed to clean up previous explorers:", error);
+      },
+    );
   }
-
   function findTab(tabId: string): WindowTab | null {
     return tabs.find((t) => t.id === tabId) ?? null;
   }
@@ -1177,18 +1186,23 @@ function createWindowTabsManager() {
      *  all explorers. The app singleton lives for the whole session, but the
      *  factory is used in tests where undisposed managers would leak (#439).
      *  Ordering and failure propagation are defined by ADR 0002. */
-    async dispose(): Promise<void> {
-      try {
-        if (typeof window !== "undefined") {
-          window.removeEventListener("focus", onWindowFocus);
-        }
-        // Flushes a queued write before dropping its page-lifecycle listeners,
-        // so tearing the manager down can't swallow the last interaction.
-        tabStatePersister.dispose();
+    dispose(): Promise<void> {
+      // Test teardown may call dispose after a legacy test has already started
+      // it without awaiting. Share the same promise so every caller drains the
+      // original explorer cleanup rather than observing its cleared registry.
+      if (disposal) return disposal;
+      if (typeof window !== "undefined") {
+        window.removeEventListener("focus", onWindowFocus);
+      }
+      // Flushes a queued write before dropping its page-lifecycle listeners,
+      // so tearing the manager down can't swallow the last interaction.
+      tabStatePersister.dispose();
+      disposal = (async () => {
         const [destroyed, , removedCleanups] = await Promise.allSettled([
           destroyAllExplorers(),
           Promise.allSettled(pendingInitialLoads),
           Promise.allSettled(pendingRemovedExplorerCleanups),
+          Promise.allSettled(pendingBackgroundDestructions),
         ]);
         if (destroyed.status === "rejected") throw destroyed.reason;
         if (removedCleanups.status === "fulfilled") {
@@ -1197,12 +1211,14 @@ function createWindowTabsManager() {
           );
           if (failure) throw failure.reason;
         }
-      } finally {
-        testManagerRegistry()?.delete(manager);
-      }
+      })();
+      void disposal.then(
+        () => testManagerRegistry()?.delete(manager),
+        () => testManagerRegistry()?.delete(manager),
+      );
+      return disposal;
     },
   };
-
   return manager;
 }
 

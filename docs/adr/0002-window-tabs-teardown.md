@@ -22,6 +22,8 @@ The window-tab manager owns asynchronous pane work that it starts or destroys:
   or pane collapse until those promises settle.
 - `dispose()` waits for all registered and removed-explorer cleanup promises
   and for the initial-load promises pending when disposal begins to settle.
+- Repeated `dispose()` calls share the first in-flight teardown, including
+  cleanup started by synchronous restore or initialization paths.
 - Cleanup failures are propagated only after both groups have settled. The
   first rejected explorer cleanup is rethrown; initial-load failures remain
   settled because their own navigation path owns their user-facing handling.
@@ -33,10 +35,12 @@ The window-tab manager owns asynchronous pane work that it starts or destroys:
 
 ## Consequences
 
-Callers that need deterministic teardown, particularly tests, must await
-`manager.dispose()`. Disposal may therefore complete later than before, but it
-cannot leave sibling cleanup or load work running after a cleanup failure has
-already been observed.
+Callers that need deterministic teardown must await `manager.dispose()`.
+Vitest registers factory-created managers and drains them after each test, so
+legacy tests cannot leave asynchronous explorer work alive when their worker
+closes. Disposal may therefore complete later than before, but it cannot leave
+sibling cleanup or load work running after a cleanup failure has already been
+observed.
 
 The regression tests must hold cleanup and load promises independently, proving
 that one rejected cleanup does not make disposal settle before the other work,

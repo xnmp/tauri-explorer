@@ -1,3 +1,5 @@
+import { afterEach } from "vitest";
+
 /**
  * Vitest global setup.
  * Provides minimal browser-like globals for tests running in Node environment.
@@ -50,3 +52,22 @@ if (!existing || typeof existing.setItem !== "function") {
     key: (index: number) => [...store.keys()][index] ?? null,
   } as Storage;
 }
+
+type TestManager = { dispose(): Promise<void> };
+
+const managerRegistry = new Set<TestManager>();
+(globalThis as typeof globalThis & {
+  __tauriExplorerTestManagerRegistry?: Set<TestManager>;
+}).__tauriExplorerTestManagerRegistry = managerRegistry;
+
+// Managers register when initialized, so every test gets the same awaited
+// lifecycle drain even when its local teardown forgets to call dispose().
+afterEach(async () => {
+  const managers = [...managerRegistry];
+  managerRegistry.clear();
+  const results = await Promise.allSettled(managers.map((manager) => manager.dispose()));
+  const failure = results.find(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  );
+  if (failure) throw failure.reason;
+});

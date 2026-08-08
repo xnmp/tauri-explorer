@@ -116,6 +116,14 @@ type ExternalSeed = {
   viewMode: string;
 };
 
+type TestManagerRegistry = Set<{ dispose(): Promise<void> }>;
+
+function testManagerRegistry(): TestManagerRegistry | undefined {
+  return (globalThis as typeof globalThis & {
+    __tauriExplorerTestManagerRegistry?: TestManagerRegistry;
+  }).__tauriExplorerTestManagerRegistry;
+}
+
 function createWindowTabsManager() {
   // Explorer instances registry (keyed by explorerId)
   const explorers = new Map<string, ExplorerInstance>();
@@ -178,6 +186,14 @@ function createWindowTabsManager() {
       (result): result is PromiseRejectedResult => result.status === "rejected",
     );
     if (failure) throw failure.reason;
+  }
+
+  // Restoration and initialization remain synchronous APIs. Report cleanup
+  // failures there instead of letting their detached promise reject globally.
+  function destroyExplorersInBackground(): void {
+    void destroyAllExplorers().catch((error) => {
+      console.error("Failed to clean up previous explorers:", error);
+    });
   }
 
   function findTab(tabId: string): WindowTab | null {
@@ -524,7 +540,7 @@ function createWindowTabsManager() {
 
     // Destroy before clearing — otherwise backend watch refcounts and
     // streaming listeners leak for every replaced explorer.
-    void destroyAllExplorers();
+    destroyExplorersInBackground();
 
     tabs = normalized.tabs.map((pt) =>
       reviveTab(pt, {
@@ -541,6 +557,7 @@ function createWindowTabsManager() {
    *  @param overridePath - When set, the active tab navigates here instead
    *    of its saved path. Used for CLI cwd so we don't race two navigations. */
   function init(initialPath: string, skipRestore = false, overridePath?: string): WindowTab | null {
+    testManagerRegistry()?.add(manager);
     if (!skipRestore) {
       // Try to restore from localStorage (cold start / app relaunch)
       const savedState = loadState();
@@ -552,7 +569,7 @@ function createWindowTabsManager() {
     }
 
     // No saved state or child window — create a fresh tab
-    void destroyAllExplorers();
+    destroyExplorersInBackground();
     tabs = [];
     activeTabId = null;
 
@@ -1042,7 +1059,7 @@ function createWindowTabsManager() {
     saveState();
   }
 
-  return {
+  const manager = {
     // Tab state getters
     get tabs() {
       return tabs;
@@ -1144,19 +1161,25 @@ function createWindowTabsManager() {
      *  factory is used in tests where undisposed managers would leak (#439).
      *  Ordering and failure propagation are defined by ADR 0002. */
     async dispose(): Promise<void> {
-      if (typeof window !== "undefined") {
-        window.removeEventListener("focus", onWindowFocus);
+      try {
+        if (typeof window !== "undefined") {
+          window.removeEventListener("focus", onWindowFocus);
+        }
+        // Flushes a queued write before dropping its page-lifecycle listeners,
+        // so tearing the manager down can't swallow the last interaction.
+        tabStatePersister.dispose();
+        const [destroyed] = await Promise.allSettled([
+          destroyAllExplorers(),
+          Promise.allSettled(pendingInitialLoads),
+        ]);
+        if (destroyed.status === "rejected") throw destroyed.reason;
+      } finally {
+        testManagerRegistry()?.delete(manager);
       }
-      // Flushes a queued write before dropping its page-lifecycle listeners,
-      // so tearing the manager down can't swallow the last interaction.
-      tabStatePersister.dispose();
-      const [destroyed] = await Promise.allSettled([
-        destroyAllExplorers(),
-        Promise.allSettled(pendingInitialLoads),
-      ]);
-      if (destroyed.status === "rejected") throw destroyed.reason;
     },
   };
+
+  return manager;
 }
 
 /** Factory for creating window tabs managers - exported for testing */

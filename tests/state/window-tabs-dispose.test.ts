@@ -100,4 +100,36 @@ describe("window-tabs disposal (#611)", () => {
     await expect(disposed).rejects.toThrow("first cleanup failed");
     expect(settled).toBe(true);
   });
+
+  it("reports replaced-explorer cleanup failures instead of leaking a rejection", async () => {
+    cleanup.rejectFirst = true;
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const manager = createWindowTabsManager();
+    manager.init("/home/user", true);
+    manager.init("/home/user", true);
+
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(error).toHaveBeenCalledWith(
+      "Failed to clean up previous explorers:",
+      expect.objectContaining({ message: "first cleanup failed" }),
+    );
+
+    const disposed = manager.dispose();
+    cleanup.resolve?.();
+    await expect(disposed).resolves.toBeUndefined();
+  });
+
+  it("registers initialized managers for the shared test teardown drain", async () => {
+    const manager = createWindowTabsManager();
+    manager.init("/home/user", true);
+    const registry = (globalThis as typeof globalThis & {
+      __tauriExplorerTestManagerRegistry?: Set<{ dispose(): Promise<void> }>;
+    }).__tauriExplorerTestManagerRegistry;
+    expect(registry).toContain(manager);
+
+    const disposed = manager.dispose();
+    cleanup.resolve?.();
+    await disposed;
+    expect(registry).not.toContain(manager);
+  });
 });

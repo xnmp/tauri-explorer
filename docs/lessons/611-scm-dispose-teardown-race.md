@@ -10,6 +10,8 @@ The manager retains initial-load promises and collects every explorer cleanup.
 Its `dispose()` waits for both groups to settle before propagating a cleanup
 failure, so one rejected cleanup cannot let a sibling cleanup or initial load
 continue after test teardown. Tests that create a manager must await
-`manager.dispose()`.
+`manager.dispose()`. The Vitest setup also centrally drains every initialized
+manager, preventing a newly added test from reintroducing the race by omitting
+local teardown.
 
 The ordering and cleanup-failure contract is governed by [ADR 0002](../adr/0002-window-tabs-teardown.md).

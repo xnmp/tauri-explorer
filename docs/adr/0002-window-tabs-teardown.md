@@ -23,6 +23,9 @@ The window-tab manager owns asynchronous pane work that it starts or destroys:
 - Cleanup failures are propagated only after both groups have settled. The
   first rejected explorer cleanup is rethrown; initial-load failures remain
   settled because their own navigation path owns their user-facing handling.
+- Synchronous restore and initialization paths cannot await replaced explorer
+  cleanup. They catch and report that failure through the application console
+  boundary, so it cannot become an unhandled rejection.
 
 ## Consequences
 

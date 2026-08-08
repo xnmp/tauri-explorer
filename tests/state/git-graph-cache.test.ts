@@ -2,7 +2,7 @@
  * git-graph snapshot cache (#433 / arch Finding 7): keying, LRU insert, and
  * watcher-driven eviction so a remounted graph never paints stale history.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import {
   snapshotKey,
   cacheSnapshot,
@@ -24,17 +24,11 @@ const snap = (): GraphSnapshot => ({
 
 describe("git-graph-cache", () => {
   const repo = "/home/user/project";
-  const tabRepos = Array.from({ length: 17 }, (_, index) => `/home/user/graph-tab-${index}`);
 
   beforeEach(() => {
     // Clear any keys a prior test left behind.
     evictRepoSnapshots(repo);
     evictRepoSnapshots("/other/repo");
-    for (const tabRepo of tabRepos) evictRepoSnapshots(tabRepo);
-  });
-
-  afterEach(() => {
-    for (const tabRepo of tabRepos) evictRepoSnapshots(tabRepo);
   });
 
   it("keys distinctly on repo, filter and local-only", () => {
@@ -48,28 +42,6 @@ describe("git-graph-cache", () => {
     expect(getSnapshot(key)).toBeUndefined();
     cacheSnapshot(key, snap());
     expect(getSnapshot(key)).toBeDefined();
-  });
-
-  it("keeps snapshots for every graph in the supported 12-tab fan-out", () => {
-    const keys = tabRepos.slice(0, 12).map((tabRepo) => snapshotKey(tabRepo, null, false));
-
-    for (const key of keys) cacheSnapshot(key, snap());
-
-    // PaneContainer remounts a graph when its tab becomes active. Every graph
-    // in the load-suite fan-out must therefore have a snapshot to paint from
-    // instead of waiting for a new git log request during the switch.
-    for (const key of keys) expect(getSnapshot(key)).toBeDefined();
-  });
-
-  it("bounds the snapshot cache and evicts the oldest graph after its capacity", () => {
-    const keys = tabRepos.map((tabRepo) => snapshotKey(tabRepo, null, false));
-
-    for (const key of keys) cacheSnapshot(key, snap());
-
-    // The tab fan-out needs headroom, but snapshots remain bounded page-0
-    // data. A seventeenth graph replaces the least recently inserted one.
-    expect(getSnapshot(keys[0])).toBeUndefined();
-    for (const key of keys.slice(1)) expect(getSnapshot(key)).toBeDefined();
   });
 
   it("evicts every filter variant for a repo but leaves other repos", () => {

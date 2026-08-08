@@ -47,7 +47,10 @@ export interface GraphSnapshot {
 }
 
 const graphCache = new Map<string, GraphSnapshot>();
-const GRAPH_CACHE_MAX = 8;
+// The high-load tab fan-out opens 12 distinct graphs. Keep modest headroom so
+// returning to any of those tabs paints its last snapshot synchronously rather
+// than forcing a fresh git log during the switch.
+const GRAPH_CACHE_MAX = 16;
 
 /** Cache key: filtered views are cached too (#416) — keyed by their filter
  *  so a remount with the same filter paints instantly and can never flash

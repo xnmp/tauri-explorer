@@ -169,11 +169,10 @@ function createWindowTabsManager() {
   );
 
   /** Destroy all registered explorers (unwatch dirs, drop listeners) and clear the registry. */
-  function destroyAllExplorers(): void {
-    for (const explorer of explorers.values()) {
-      explorer.destroy();
-    }
+  function destroyAllExplorers(): Promise<void> {
+    const destroying = Array.from(explorers.values(), (explorer) => explorer.destroy());
     explorers.clear();
+    return Promise.all(destroying).then(() => undefined);
   }
 
   function findTab(tabId: string): WindowTab | null {
@@ -1145,8 +1144,10 @@ function createWindowTabsManager() {
       // Flushes a queued write before dropping its page-lifecycle listeners,
       // so tearing the manager down can't swallow the last interaction.
       tabStatePersister.dispose();
-      destroyAllExplorers();
-      await Promise.allSettled(pendingInitialLoads);
+      await Promise.all([
+        destroyAllExplorers(),
+        Promise.allSettled(pendingInitialLoads),
+      ]);
     },
   };
 }

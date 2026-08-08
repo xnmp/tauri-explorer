@@ -40,6 +40,39 @@ test.describe("Markdown preview", () => {
     await expect(markdown).not.toContainText("**bold**");
   });
 
+  test("renders Markdown headings and links with theme accent colours", async ({ page }) => {
+    await page.locator(".entry-item", { hasText: "notes.md" }).first().click();
+
+    const markdown = page.locator(".preview-markdown");
+    await expect(markdown).toBeVisible();
+
+    const colours = await markdown.evaluate((element) => {
+      const heading = element.querySelector("h1");
+      const link = element.querySelector('a[href="https://example.com"]');
+      const themeColour = (variable: "--accent" | "--accent-light") => {
+        const swatch = document.createElement("span");
+        swatch.style.color = `var(${variable})`;
+        element.append(swatch);
+        const colour = getComputedStyle(swatch).color;
+        swatch.remove();
+        return colour;
+      };
+
+      return {
+        heading: heading ? getComputedStyle(heading).color : null,
+        link: link ? getComputedStyle(link).color : null,
+        headingAccent: themeColour("--accent-light"),
+        linkAccent: themeColour("--accent"),
+      };
+    });
+
+    expect(colours.heading).toBe(colours.headingAccent);
+    expect(colours.link).toBe(colours.linkAccent);
+
+    await markdown.locator("h1").screenshot({ path: "evidence/ac-1-markdown-heading-colour.png" });
+    await markdown.locator('a[href="https://example.com"]').screenshot({ path: "evidence/ac-2-markdown-link-colour.png" });
+  });
+
   test("non-markdown text files still use the plain highlighted preview", async ({ page }) => {
     await page.locator(".entry-item", { hasText: "readme.txt" }).first().click();
 

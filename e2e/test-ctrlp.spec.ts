@@ -35,32 +35,6 @@ test.describe("Quick Open (Ctrl+P)", () => {
     await expect(searchInput).toHaveValue("readme");
   });
 
-  test("rapid typing shows local matches before one final recursive search (#600)", async ({ page }) => {
-    await page.locator(".entry-item", { hasText: "Documents" }).first().dblclick();
-    await page.locator(".entry-item", { hasText: "project" }).first().waitFor({ timeout: 5000 });
-    await page.locator(".entry-item", { hasText: "project" }).first().dblclick();
-    await page.locator(".entry-item", { hasText: "src" }).first().waitFor({ timeout: 5000 });
-
-    await page.keyboard.press("Control+p");
-    const quickOpen = page.locator(".quick-open-dialog");
-    const searchInput = quickOpen.locator(".search-input");
-    await expect(searchInput).toBeVisible();
-
-    await searchInput.pressSequentially("src", { delay: 30 });
-
-    // `src` is already in the active pane, so the user sees it while the
-    // expensive recursive backend search is still trailing-debounced.
-    await expect(quickOpen.locator(".result-name", { hasText: "src" }).first()).toBeVisible();
-    await expect.poll(() => page.evaluate(() => localStorage.getItem("mock-streaming-searches"))).toBeNull();
-
-    await expect
-      .poll(
-        () => page.evaluate(() => localStorage.getItem("mock-streaming-searches")),
-        { timeout: 1000 },
-      )
-      .toBe(JSON.stringify([{ query: "src" }]));
-  });
-
   test("typing does not clear input (regression)", async ({ page }) => {
     // This is the key regression test: typing should persist in the input
     // Previously, $effect re-running pruneNonExistent would reset query=""

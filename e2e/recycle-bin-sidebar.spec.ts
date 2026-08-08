@@ -16,12 +16,9 @@ test.describe("Recycle Bin sidebar entry (#603)", () => {
 
   test("hides the Recycle Bin after its persisted sidebar option is disabled", async ({ page }) => {
     await page.goto("/");
-    await page.evaluate(() => {
-      const raw = localStorage.getItem("explorer-settings");
-      const settings = raw ? JSON.parse(raw) : {};
-      settings.showRecycleBin = false;
-      localStorage.setItem("explorer-settings", JSON.stringify(settings));
-    });
+
+    await page.keyboard.press("Control+,");
+    await page.getByTestId("setting-show-recycle-bin").click();
     await page.reload();
 
     await expect(page.getByRole("button", { name: "Open Recycle Bin" })).toHaveCount(0);

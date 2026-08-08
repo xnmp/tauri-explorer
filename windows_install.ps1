@@ -1,4 +1,4 @@
-# windows_install.ps1 — build and install tauri-explorer on Windows from source.
+﻿# windows_install.ps1 — build and install tauri-explorer on Windows from source.
 #
 # Usage (PowerShell):
 #   irm https://raw.githubusercontent.com/xnmp/tauri-explorer/main/windows_install.ps1 | Invoke-Expression

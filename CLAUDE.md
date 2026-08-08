@@ -85,6 +85,8 @@ The public report relay under `website/api/` uses `GITHUB_ISSUE_TOKEN` only for 
 
 **E2E tests assert outcomes**, not existence — a QuickOpen test verifies results appear for a query, not that the modal opened.
 
+Markdown preview content is inserted with `{@html}` in `PreviewPane.svelte`, so its element styles require `:global(...)`; keep heading and link colours on the existing theme variables and verify their computed colours in the browser.
+
 The Linux FileChooser portal is selected through the user's
 `~/.config/xdg-desktop-portal/portals.conf`; do not add deprecated `UseIn`
 desktop matching to `packaging/tauri-explorer.portal`.

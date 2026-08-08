@@ -199,16 +199,23 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
         event,
         "general.openTerminal",
       );
+      const terminalToggleChordActive = keybindingsStore.isChordActiveForCommand(
+        event,
+        "general.openTerminal",
+      );
       if (
         isShellReservedKey(event, {
           coreCommandAvailable,
           terminalToggleChordPrefix,
-          terminalToggleChordActive: keybindingsStore.isChordActiveForCommand(
-            event,
-            "general.openTerminal",
-          ),
+          terminalToggleChordActive,
         })
-      ) return;
+      ) {
+        // A terminal-owned key still consumes any pending Explorer chord,
+        // just as findMatchingCommand does for a non-matching suffix. Without
+        // this, a later terminal key could complete the stale chord (#608).
+        if (keybindingsStore.isChordActive) keybindingsStore.cancelChord();
+        return;
+      }
     }
 
     // Escape closes any open modal dialog

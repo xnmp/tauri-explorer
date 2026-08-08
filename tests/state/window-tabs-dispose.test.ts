@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const cleanup = vi.hoisted(() => ({
   resolve: null as (() => void) | null,
-  initialLoadResolve: null as (() => void) | null,
+  resolveInitialLoad: null as (() => void) | null,
   started: vi.fn(),
   rejectFirst: false,
   deferFirstInitialLoad: false,
@@ -14,17 +14,17 @@ const cleanup = vi.hoisted(() => ({
   initialLoadCalls: 0,
 }));
 
-vi.mock("$lib/state/explorer.svelte", () => ({
-  createExplorerState: vi.fn(() => {
-    const startInitialLoad = () => {
-      if (cleanup.deferFirstInitialLoad && cleanup.initialLoadCalls++ === 0) {
-        return new Promise<void>((resolve) => {
-          cleanup.initialLoadResolve = resolve;
-        });
-      }
-      return Promise.resolve();
-    };
-    return {
+vi.mock("$lib/state/explorer.svelte", () => {
+  const startInitialLoad = () => {
+    if (cleanup.deferFirstInitialLoad && cleanup.initialLoadCalls++ === 0) {
+      return new Promise<void>((resolve) => {
+        cleanup.resolveInitialLoad = resolve;
+      });
+    }
+    return Promise.resolve();
+  };
+  return {
+    createExplorerState: vi.fn(() => ({
       state: { currentPath: "" },
       initialLoad: vi.fn(startInitialLoad),
       navigateTo: vi.fn(startInitialLoad),
@@ -37,16 +37,16 @@ vi.mock("$lib/state/explorer.svelte", () => ({
           cleanup.resolve = resolve;
         });
       },
-    };
-  }),
-}));
+    })),
+  };
+});
 
 import { createWindowTabsManager } from "$lib/state/window-tabs.svelte";
 
 describe("window-tabs disposal (#611)", () => {
   beforeEach(() => {
     cleanup.resolve = null;
-    cleanup.initialLoadResolve = null;
+    cleanup.resolveInitialLoad = null;
     cleanup.started.mockClear();
     cleanup.rejectFirst = false;
     cleanup.deferFirstInitialLoad = false;
@@ -74,12 +74,13 @@ describe("window-tabs disposal (#611)", () => {
     expect(settled).toBe(true);
   });
 
-  it("waits for pending cleanup and initial loads before propagating a cleanup failure", async () => {
+  it("waits for pending cleanup and initial load before propagating a cleanup failure", async () => {
     cleanup.rejectFirst = true;
     cleanup.deferFirstInitialLoad = true;
     const manager = createWindowTabsManager();
     manager.init("/home/user", true);
     manager.splitPane("right");
+    expect(cleanup.resolveInitialLoad).not.toBeNull();
 
     const disposed = manager.dispose() as unknown as Promise<void>;
     expect(cleanup.started).toHaveBeenCalledTimes(2);
@@ -95,7 +96,7 @@ describe("window-tabs disposal (#611)", () => {
     for (let i = 0; i < 10; i++) await Promise.resolve();
     expect(settled).toBe(false);
 
-    cleanup.initialLoadResolve?.();
+    cleanup.resolveInitialLoad?.();
     await expect(disposed).rejects.toThrow("first cleanup failed");
     expect(settled).toBe(true);
   });

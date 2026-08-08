@@ -7,8 +7,16 @@
  * file with localStorage as synchronous fallback.
  */
 
-import { loadPersisted, savePersisted, writeConfigQueued } from "./persisted";
+import {
+  configWriteActivity,
+  configWriteRaced,
+  lastWrittenConfig,
+  loadPersisted,
+  savePersisted,
+  writeConfigQueued,
+} from "./persisted";
 import { readConfigFile } from "$lib/api/files";
+import { decideConfigReload, type ConfigReloadReason } from "$lib/domain/config-reload";
 import type { ThumbnailSize } from "./settings.svelte";
 
 /** View properties that can be overridden per folder */
@@ -20,6 +28,7 @@ type FolderViewMap = Record<string, FolderViewOverride>;
 
 const STORAGE_KEY = "explorer-folder-views";
 const CONFIG_FILENAME = "folder-views.json";
+const CONFIG_WRITER = "folder-views-store";
 
 function createFolderViewsStore() {
   let views = $state<FolderViewMap>(loadPersisted<FolderViewMap>(STORAGE_KEY, {}));
@@ -51,6 +60,33 @@ function createFolderViewsStore() {
     }
   }
 
+  /** Re-read external folder-view edits without replaying this store's writes. */
+  async function reloadFromDisk(): Promise<ConfigReloadReason> {
+    const beforeRead = configWriteActivity(CONFIG_FILENAME, CONFIG_WRITER);
+    const result = await readConfigFile(CONFIG_FILENAME);
+    if (!result.ok) return "unusable";
+    let loaded: FolderViewMap | null = null;
+    try {
+      const parsed = JSON.parse(result.data);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        loaded = parsed as FolderViewMap;
+      }
+    } catch {
+      // `decideConfigReload` reports invalid external files consistently.
+    }
+    const decision = decideConfigReload({
+      raw: result.data,
+      normalized: loaded ? JSON.stringify(loaded) : null,
+      currentNormalized: JSON.stringify(views),
+      lastWritten: lastWrittenConfig(CONFIG_FILENAME, CONFIG_WRITER),
+      selfWriteRaced: configWriteRaced(CONFIG_FILENAME, beforeRead, CONFIG_WRITER),
+    });
+    if (!decision.apply || !loaded) return decision.reason;
+    views = loaded;
+    savePersisted(STORAGE_KEY, views);
+    return decision.reason;
+  }
+
   /** Get the override for a folder, or undefined if none set */
   function get(path: string): FolderViewOverride | undefined {
     return views[path];
@@ -78,6 +114,7 @@ function createFolderViewsStore() {
 
   return {
     init,
+    reloadFromDisk,
     get,
     set,
     remove,

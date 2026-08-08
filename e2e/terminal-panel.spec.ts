@@ -70,6 +70,30 @@ test.describe("Terminal panel", () => {
     await page.screenshot({ path: "evidence/ac-1-terminal-toggle-from-focus.png" });
   });
 
+  test("an unrelated active chord does not steal focused-terminal input (#608)", async ({ page }) => {
+    // Bind an unrelated chord so this test exercises a prefix that could
+    // otherwise leak through the generic active-chord state.
+    await page.evaluate(() => {
+      localStorage.setItem(
+        "explorer-keybindings",
+        JSON.stringify({ "view.focusFilesSidebar": "Ctrl+K T" }),
+      );
+    });
+    await page.reload();
+    await waitForEntries(page);
+    await expect(page.locator(".sidebar")).toBeVisible();
+
+    await page.keyboard.press("Control+`");
+    const panel = page.locator(".terminal-panel");
+    await expect(panel).toBeVisible();
+    await page.locator(".file-list").first().click();
+    await page.keyboard.press("Control+k");
+
+    await panel.locator("textarea.xterm-helper-textarea").focus();
+    await page.keyboard.press("t");
+    await expect(page.locator(".sidebar")).toBeVisible();
+  });
+
   test("only core navigation shortcuts fire while the terminal is focused (#496)", async ({ page }) => {
     // Make previous/next tab commands available before focusing the terminal.
     await page.locator(".new-tab-btn").click();

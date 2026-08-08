@@ -273,7 +273,7 @@
     const vh = clientToFixed(window.innerHeight);
     const menuW = menuEl.offsetWidth;
     const menuH = menuEl.offsetHeight;
-    const submenuW = 140; // generous estimate for submenu width
+    const submenuW = 180; // width of the widest submenu (AI actions)
     const submenuH = 280; // generous estimate for tallest submenu (List: 8 items)
     return {
       flipLeft: clampedX + menuW + submenuW > vw - 8,
@@ -713,22 +713,24 @@
               <path d="M3 1.5L6 4L3 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
           </button>
-          <div class="submenu ai-submenu" class:open={aiSubmenuOpen} role="menu" aria-hidden={!aiSubmenuOpen}>
-            {#each aiPluginMenuItems as item (item.id)}
-              <button class="menu-item" onclick={() => runPluginItem(item)} role="menuitem">
-                {#if item.icon}
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                    <path d={item.icon} stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
-                  </svg>
-                {:else}
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                    <circle cx="8" cy="8" r="5" stroke="currentColor" stroke-width="1.25"/>
-                  </svg>
-                {/if}
-                <span>{item.label}</span>
-              </button>
-            {/each}
-          </div>
+          {#if aiSubmenuOpen}
+            <div class="submenu ai-submenu" role="menu">
+              {#each aiPluginMenuItems as item (item.id)}
+                <button class="menu-item" onclick={() => runPluginItem(item)} role="menuitem">
+                  {#if item.icon}
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                      <path d={item.icon} stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+                    </svg>
+                  {:else}
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                      <circle cx="8" cy="8" r="5" stroke="currentColor" stroke-width="1.25"/>
+                    </svg>
+                  {/if}
+                  <span>{item.label}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
         </div>
       {/if}
       {#each ungroupedPluginMenuItems as item (item.id)}
@@ -879,13 +881,6 @@
 
   .ai-submenu {
     min-width: 180px;
-    animation: none;
-    opacity: 0;
-  }
-
-  .ai-submenu.open {
-    animation: menuIn 100ms cubic-bezier(0, 0, 0, 1);
-    opacity: 1;
   }
 
   /* Flip submenu to the left when it would overflow the viewport */

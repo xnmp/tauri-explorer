@@ -35,6 +35,7 @@ test.describe("AI destination suggestions", () => {
     await entry.click();
     await entry.click({ button: "right" });
     await page.locator(".context-menu").waitFor({ state: "visible", timeout: 3000 });
+    await page.locator(".context-menu").getByRole("menuitem", { name: "AI", exact: true }).hover();
     await page.locator('.context-menu .menu-item:has-text("Suggest destination")').click();
 
     // The picker shows ranked destinations (mock returns the first
@@ -70,6 +71,7 @@ test.describe("AI destination suggestions", () => {
     await entry.click();
     await entry.click({ button: "right" });
     await page.locator(".context-menu").waitFor({ state: "visible", timeout: 3000 });
+    await page.locator(".context-menu").getByRole("menuitem", { name: "AI", exact: true }).hover();
     await page.locator('.context-menu .menu-item:has-text("Suggest destination")').click();
 
     const dialog = page.locator('[aria-labelledby="ai-organize-title"]');

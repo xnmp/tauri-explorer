@@ -21,8 +21,7 @@ test("groups applicable AI actions in a submenu and keeps destination suggestion
   const aiTrigger = menu.getByRole("menuitem", { name: "AI", exact: true });
   const aiMenu = menu.locator(".ai-submenu");
   await expect(aiTrigger).toBeVisible();
-  await page.mouse.move(0, 0);
-  await expect(aiMenu).toHaveAttribute("aria-hidden", "true");
+  await expect(aiMenu).toHaveCount(0);
   await page.screenshot({ path: "evidence/ac-1-ai-submenu-entry.png" });
 
   await aiTrigger.hover();
@@ -34,4 +33,24 @@ test("groups applicable AI actions in a submenu and keeps destination suggestion
   const dialog = page.locator('[aria-labelledby="ai-organize-title"]');
   await expect(dialog).toBeVisible();
   await page.screenshot({ path: "evidence/ac-3-destination-dialog.png" });
+});
+
+test("keeps image AI actions grouped while non-AI plugin actions stay top-level", async ({ page }) => {
+  await page.goto("/?path=/home/user/Downloads");
+  await waitForEntries(page);
+
+  const entry = page.locator(".entry-item").filter({ hasText: "image.png" }).first();
+  await entry.click();
+  await entry.click({ button: "right" });
+
+  const menu = page.locator(".context-menu");
+  await expect(menu).toBeVisible();
+  await expect(menu.locator(":scope > .menu-item").filter({ hasText: "Edit with Nano Banana" })).toHaveCount(0);
+  await expect(menu.getByText("Create Theme from Image", { exact: true })).toBeVisible();
+
+  const aiTrigger = menu.getByRole("menuitem", { name: "AI", exact: true });
+  await aiTrigger.hover();
+  const aiMenu = menu.locator(".ai-submenu");
+  await expect(aiMenu.getByText("Edit with Nano Banana", { exact: true })).toBeVisible();
+  await expect(aiMenu.getByText("Upscale Image", { exact: true })).toBeVisible();
 });

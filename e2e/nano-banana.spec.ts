@@ -49,6 +49,7 @@ test.describe("Nano Banana plugin", () => {
     await waitForEntries(page);
 
     const menu = await rightClickImage(page);
+    await menu.getByRole("menuitem", { name: "AI", exact: true }).hover();
 
     // Contributed by the plugin (enabled by default).
     const nanoBananaItem = menu.locator('.menu-item:has-text("Edit with Nano Banana")');
@@ -80,6 +81,7 @@ test.describe("Nano Banana plugin", () => {
     await page.keyboard.press("Escape");
     await setNanoBananaEnabled(page, true);
     const menu2 = await rightClickImage(page);
+    await menu2.getByRole("menuitem", { name: "AI", exact: true }).hover();
     await expect(menu2.locator('.menu-item:has-text("Edit with Nano Banana")')).toBeVisible();
   });
 

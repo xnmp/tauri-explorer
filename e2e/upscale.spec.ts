@@ -25,6 +25,7 @@ test.describe("Upscale plugin", () => {
     await waitForEntries(page);
 
     const menu = await rightClickImage(page);
+    await menu.getByRole("menuitem", { name: "AI", exact: true }).hover();
     const upscaleItem = menu.locator('.menu-item:has-text("Upscale Image")');
     await expect(upscaleItem).toBeVisible();
 

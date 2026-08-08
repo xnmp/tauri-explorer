@@ -62,6 +62,7 @@ test.describe("AI Rename plugin", () => {
     await setApiKey(page, "test-key-123");
 
     const menu = await rightClickNotes(page);
+    await menu.getByRole("menuitem", { name: "AI", exact: true }).hover();
     const item = menu.locator('.menu-item:has-text("Suggest rename")');
     await expect(item).toBeVisible();
     await item.click();
@@ -92,6 +93,7 @@ test.describe("AI Rename plugin", () => {
     await waitForEntries(page);
 
     const menu = await rightClickNotes(page);
+    await menu.getByRole("menuitem", { name: "AI", exact: true }).hover();
     await menu.locator('.menu-item:has-text("Suggest rename")').click();
 
     const dialog = page.locator('[aria-labelledby="ai-rename-title"]');
@@ -114,6 +116,7 @@ test.describe("AI Rename plugin", () => {
     await page.keyboard.press("Escape");
     await setAiRenameEnabled(page, true);
     const menu2 = await rightClickNotes(page);
+    await menu2.getByRole("menuitem", { name: "AI", exact: true }).hover();
     await expect(menu2.locator('.menu-item:has-text("Suggest rename")')).toBeVisible();
   });
 });

@@ -198,6 +198,51 @@ pub async fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
     Ok(log_dir.to_string_lossy().to_string())
 }
 
+#[cfg(test)]
+mod recycle_bin_launcher_tests {
+    use super::recycle_bin_command;
+    use std::ffi::OsStr;
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn recycle_bin_launcher_uses_the_windows_shell_namespace() {
+        let command = recycle_bin_command();
+
+        assert_eq!(command.get_program(), OsStr::new("explorer.exe"));
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            vec![OsStr::new("shell:RecycleBinFolder")]
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn recycle_bin_launcher_uses_the_freedesktop_trash_uri() {
+        let command = recycle_bin_command();
+
+        assert_eq!(command.get_program(), OsStr::new("gio"));
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            vec![OsStr::new("open"), OsStr::new("trash:///")]
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn recycle_bin_launcher_uses_the_user_trash_directory() {
+        let command = recycle_bin_command();
+        let expected_trash = dirs::home_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("/"))
+            .join(".Trash");
+
+        assert_eq!(command.get_program(), OsStr::new("open"));
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            vec![expected_trash.as_os_str()]
+        );
+    }
+}
+
 /// Restore files from the system trash by their original paths.
 /// Finds the most recently deleted item matching each path and restores it.
 /// Note: trash::os_limited is only available on Linux/Windows (not macOS).

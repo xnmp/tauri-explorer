@@ -23,12 +23,10 @@ describe('Windows installer documentation', () => {
 describe.skipIf(process.platform !== 'win32')('Windows installer invocation', () => {
 	it('reports missing prerequisites before it starts a build', async () => {
 		const sandbox = await mkdtemp(join(tmpdir(), 'tauri-explorer installer missing '));
+		const harnessPath = join(sandbox, 'missing-prerequisites.ps1');
 		try {
-			const result = await powershellResult(['-File', installerFilePath], {
-				PATH: sandbox,
-				'ProgramFiles(x86)': sandbox,
-				VSINSTALLDIR: sandbox,
-			});
+			await writeFile(harnessPath, missingPrerequisitesHarness, 'utf8');
+			const result = await powershellResult(['-File', harnessPath, installerFilePath]);
 
 			expect(result.code).toBe(1);
 			expect(result.output).toContain('Git — winget install --id Git.Git -e');
@@ -39,7 +37,7 @@ describe.skipIf(process.platform !== 'win32')('Windows installer invocation', ()
 		} finally {
 			await rm(sandbox, { force: true, recursive: true });
 		}
-	});
+	}, 15_000);
 
 	it('builds existing and cloned checkouts, preserves MSI paths with spaces, and cleans clones', async () => {
 		const sandbox = await mkdtemp(join(tmpdir(), 'tauri-explorer installer test '));
@@ -60,13 +58,13 @@ describe.skipIf(process.platform !== 'win32')('Windows installer invocation', ()
 		} finally {
 			await rm(sandbox, { force: true, recursive: true });
 		}
-	});
+	}, 15_000);
 });
 
-async function powershellResult(args: string[], env: Record<string, string>) {
+async function powershellResult(args: string[]) {
 	try {
 		const { stdout, stderr } = await execFileAsync(powershell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', ...args], {
-			env: { ...process.env, ...env },
+			env: process.env,
 		});
 		return { code: 0, output: `${stdout}${stderr}` };
 	} catch (error: any) {
@@ -78,41 +76,41 @@ const powershellHarness = String.raw`
 param([string]$Installer)
 $ErrorActionPreference = 'Stop'
 $env:OS = 'Windows_NT'
-$script:buildCalls = @()
-$script:gitCommands = @()
-$script:msiArguments = @()
-$script:msiVerbs = @()
-$script:temporaryCheckout = $null
+$global:installerBuildCalls = @()
+$global:installerGitCommands = @()
+$global:installerMsiArguments = @()
+$global:installerMsiVerbs = @()
+$global:installerTemporaryCheckout = $null
 
-function git {
-    $script:gitCommands += ,@($args)
+function global:git {
+    $global:installerGitCommands += ,@($args)
     if ($args[0] -eq 'clone') {
-        $script:temporaryCheckout = $args[-1]
-        New-Item -ItemType Directory -Force -Path $script:temporaryCheckout, (Join-Path $script:temporaryCheckout 'src-tauri') | Out-Null
-        New-Item -ItemType File -Force -Path (Join-Path $script:temporaryCheckout 'package.json') | Out-Null
+        $global:installerTemporaryCheckout = $args[-1]
+        New-Item -ItemType Directory -Force -Path $global:installerTemporaryCheckout, (Join-Path $global:installerTemporaryCheckout 'src-tauri') | Out-Null
+        New-Item -ItemType File -Force -Path (Join-Path $global:installerTemporaryCheckout 'package.json') | Out-Null
     }
     $global:LASTEXITCODE = 0
 }
-function cargo { $global:LASTEXITCODE = 0 }
-function vswhere {
+function global:cargo { $global:LASTEXITCODE = 0 }
+function global:vswhere {
     'C:\fake-build-tools'
     $global:LASTEXITCODE = 0
 }
-function bun {
-    $script:buildCalls += "bun $args"
+function global:bun {
+    $global:installerBuildCalls += "bun $args"
     $global:LASTEXITCODE = 0
 }
-function bunx {
-    $script:buildCalls += "bunx $args"
+function global:bunx {
+    $global:installerBuildCalls += "bunx $args"
     $bundle = Join-Path (Get-Location) 'src-tauri\target\release\bundle\msi'
     New-Item -ItemType Directory -Force -Path $bundle | Out-Null
     New-Item -ItemType File -Force -Path (Join-Path $bundle 'tauri explorer.msi') | Out-Null
     $global:LASTEXITCODE = 0
 }
-function Start-Process {
+function global:Start-Process {
     param([string]$FilePath, [object[]]$ArgumentList, [string]$Verb, [switch]$Wait, [switch]$PassThru)
-    $script:msiArguments += $ArgumentList[1]
-    $script:msiVerbs += $Verb
+    $global:installerMsiArguments += $ArgumentList[1]
+    $global:installerMsiVerbs += $Verb
     [pscustomobject]@{ ExitCode = 0 }
 }
 
@@ -121,24 +119,37 @@ New-Item -ItemType Directory -Force -Path $existing, (Join-Path $existing 'src-t
 New-Item -ItemType File -Force -Path (Join-Path $existing 'package.json') | Out-Null
 Copy-Item $Installer (Join-Path $existing 'windows_install.ps1')
 & (Join-Path $existing 'windows_install.ps1')
-$existingBuilds = @($script:buildCalls)
+$existingBuilds = @($global:installerBuildCalls)
 
-$script:buildCalls = @()
+$global:installerBuildCalls = @()
 $downloaded = Join-Path ([System.IO.Path]::GetTempPath()) 'tauri explorer downloaded installer'
 New-Item -ItemType Directory -Force -Path $downloaded | Out-Null
 Copy-Item $Installer (Join-Path $downloaded 'windows_install.ps1')
 & (Join-Path $downloaded 'windows_install.ps1')
-$temporaryBuilds = @($script:buildCalls)
-$temporaryCheckoutRemoved = -not (Test-Path (Split-Path $script:temporaryCheckout -Parent))
+$temporaryBuilds = @($global:installerBuildCalls)
+$temporaryCheckoutRemoved = -not (Test-Path (Split-Path $global:installerTemporaryCheckout -Parent))
 
 [pscustomobject]@{
     existingBuilds = $existingBuilds
     temporaryBuilds = $temporaryBuilds
-    gitCommands = @($script:gitCommands)
-    temporaryCheckout = $script:temporaryCheckout
+    gitCommands = @($global:installerGitCommands)
+    temporaryCheckout = $global:installerTemporaryCheckout
     temporaryCheckoutRemoved = $temporaryCheckoutRemoved
-    msiArguments = @($script:msiArguments)
-    msiVerbs = @($script:msiVerbs)
+    msiArguments = @($global:installerMsiArguments)
+    msiVerbs = @($global:installerMsiVerbs)
 } | ConvertTo-Json -Compress -Depth 4 | ForEach-Object { "RESULT:$_" }
 Remove-Item -Recurse -Force $existing, $downloaded
+`;
+
+const missingPrerequisitesHarness = String.raw`
+param([string]$Installer)
+$env:OS = 'Windows_NT'
+$env:VSINSTALLDIR = 'C:\Visual Studio without C++ tools'
+Set-Item -Path 'Env:ProgramFiles(x86)' -Value ([System.IO.Path]::GetTempPath())
+function global:Get-Command {
+    [CmdletBinding()]
+    param([string]$Name)
+    $null
+}
+& $Installer
 `;

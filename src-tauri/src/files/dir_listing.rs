@@ -588,6 +588,23 @@ mod tests {
         );
     }
 
+    /// A malformed gitdir marker is not enough to apply the repository badge.
+    #[test]
+    fn scan_rejects_malformed_gitdir_file() {
+        let dir = tempdir().unwrap();
+        let inbox = dir.path().join("Inbox");
+        fs::create_dir(&inbox).unwrap();
+        fs::write(inbox.join(".git"), "not a gitdir file\n").unwrap();
+
+        let entries = scan_directory_parallel(&dir.path().to_path_buf());
+        let inbox = entries.iter().find(|entry| entry.name == "Inbox").unwrap();
+
+        assert!(
+            !inbox.is_git_repo,
+            "a malformed `.git` marker must not decorate Inbox as a repository"
+        );
+    }
+
     /// UNC roots cover both Windows network shares and WSL's 9P share. A
     /// directory listing must not add one `.git` stat per child there (#480).
     #[test]

@@ -202,11 +202,12 @@ backend for E2E/browser).
 ## Quick Open (Ctrl+P fuzzy file finder)
 
 - `components/QuickOpen.svelte` — modal, streamed results, keyboard nav
+- `domain/quick-open-search.ts` — trailing debounce at the recursive backend-search boundary; active-pane/recent/frecency matches remain local and synchronous (#600)
 - `components/PickerQuickOpen.svelte` — variant used inside file picker
 - `domain/fuzzy-score.ts` — match scoring/ranking
 - `api/search.ts` — `startStreamingSearch`, `fuzzySearch`, `cancelSearch`
 - `src-tauri/src/search.rs` — nucleo fuzzy engine, streaming emits
-- FLOW: query → startStreamingSearch → backend emits result chunks (race-safe: listener before invoke) → sorted by fuzzy-score → Enter navigates/opens.
+- FLOW: query → local matches render immediately; trailing `quick-open-search` scheduler → startStreamingSearch → backend emits result chunks (race-safe: listener before invoke) → sorted by fuzzy-score → Enter navigates/opens.
 
 ## Content search (grep, Ctrl+Shift+F)
 

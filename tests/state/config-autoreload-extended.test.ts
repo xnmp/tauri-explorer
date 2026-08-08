@@ -64,7 +64,7 @@ describe("externally edited config stores (#605)", () => {
     expect(settingsStore.theme).toBe("nord");
   });
 
-  it("keeps a same-writer replacement save active while its first write is in flight", async () => {
+  it("keeps a same-writer queued bookmark save active when its pending write is replaced", async () => {
     const { bookmarksStore } = await freshStores();
     await bookmarksStore.init();
     const completions: Array<() => void> = [];
@@ -74,13 +74,15 @@ describe("externally edited config stores (#605)", () => {
     bookmarksStore.addBookmark("/work/one", "One");
     bookmarksStore.addBookmark("/work/two", "Two");
     bookmarksStore.addBookmark("/work/three", "Three");
+    // A is in flight; B is queued, then C replaces B. The stale on-disk
+    // bytes must still be rejected before A hands off to C.
     readConfigFileMock.mockResolvedValue({ ok: true, data: "[]" });
 
     expect(await bookmarksStore.reloadFromDisk()).toBe("self-write-overlap");
+    expect(bookmarksStore.list.map((bookmark) => bookmark.name)).toEqual(["One", "Two", "Three"]);
     completions.shift()?.();
     await vi.waitFor(() => expect(writeConfigFileMock).toHaveBeenCalledTimes(2));
     completions.shift()?.();
-    expect(bookmarksStore.list.map((bookmark) => bookmark.name)).toEqual(["One", "Two", "Three"]);
   });
 });
 

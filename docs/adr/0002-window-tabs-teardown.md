@@ -20,6 +20,8 @@ The window-tab manager owns asynchronous pane work that it starts or destroys:
   registering an explorer.
 - `dispose()` waits for all registered explorer cleanup promises and for the
   initial-load promises pending when disposal begins to settle.
+- Repeated `dispose()` calls share the first in-flight teardown, including
+  cleanup started by synchronous restore or initialization paths.
 - Cleanup failures are propagated only after both groups have settled. The
   first rejected explorer cleanup is rethrown; initial-load failures remain
   settled because their own navigation path owns their user-facing handling.

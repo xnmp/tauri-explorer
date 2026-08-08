@@ -122,6 +122,7 @@ type TestManagedWindowTabsManager = {
 
 type TestManagerRegistry = {
   register(manager: TestManagedWindowTabsManager): void;
+  unregister(manager: TestManagedWindowTabsManager): void;
 };
 
 type GlobalWithTestManagerRegistry = typeof globalThis & {
@@ -135,6 +136,10 @@ function createWindowTabsManager(registerForTestTeardown = true) {
   // render immediately. Retain their promises so an explicit manager teardown
   // can wait for their diagnostics and IPC work before its environment closes.
   const pendingInitialLoads = new Set<Promise<void>>();
+  // Restore and initialization replace explorers through synchronous public
+  // APIs. Retain their asynchronous cleanup so a later dispose still drains it.
+  const pendingBackgroundDestructions = new Set<Promise<void>>();
+  let disposal: Promise<void> | null = null;
 
   // Window-level tab strip
   let tabs = $state<WindowTab[]>([]);
@@ -196,9 +201,15 @@ function createWindowTabsManager(registerForTestTeardown = true) {
   // explorers cannot be awaited by the caller. Keep cleanup failures visible at
   // the application's logging boundary instead of creating unhandled rejections.
   function destroyExplorersInBackground(operation: string): void {
-    void destroyAllExplorers().catch((error) => {
-      console.error(`Failed to clean up explorers during ${operation}:`, error);
-    });
+    const destruction = destroyAllExplorers();
+    pendingBackgroundDestructions.add(destruction);
+    void destruction.then(
+      () => pendingBackgroundDestructions.delete(destruction),
+      (error) => {
+        pendingBackgroundDestructions.delete(destruction);
+        console.error(`Failed to clean up explorers during ${operation}:`, error);
+      },
+    );
   }
 
   function findTab(tabId: string): WindowTab | null {
@@ -1164,18 +1175,31 @@ function createWindowTabsManager(registerForTestTeardown = true) {
      *  all explorers. The app singleton lives for the whole session, but the
      *  factory is used in tests where undisposed managers would leak (#439).
      *  Ordering and failure propagation are defined by ADR 0002. */
-    async dispose(): Promise<void> {
+    dispose(): Promise<void> {
+      // Test teardown may call dispose after a legacy test has already started
+      // it without awaiting. Share the same promise so every caller drains the
+      // original explorer cleanup rather than observing its cleared registry.
+      if (disposal) return disposal;
       if (typeof window !== "undefined") {
         window.removeEventListener("focus", onWindowFocus);
       }
       // Flushes a queued write before dropping its page-lifecycle listeners,
       // so tearing the manager down can't swallow the last interaction.
       tabStatePersister.dispose();
-      const [destroyed] = await Promise.allSettled([
-        destroyAllExplorers(),
-        Promise.allSettled(pendingInitialLoads),
-      ]);
-      if (destroyed.status === "rejected") throw destroyed.reason;
+      disposal = (async () => {
+        const [destroyed] = await Promise.allSettled([
+          destroyAllExplorers(),
+          Promise.allSettled(pendingInitialLoads),
+          Promise.allSettled(pendingBackgroundDestructions),
+        ]);
+        if (destroyed.status === "rejected") throw destroyed.reason;
+      })();
+      const registry = (globalThis as GlobalWithTestManagerRegistry).__tauriExplorerTestManagerRegistry;
+      void disposal.then(
+        () => registry?.unregister(manager),
+        () => registry?.unregister(manager),
+      );
+      return disposal;
     },
   };
 

@@ -15,10 +15,14 @@ const testManagers = new Set<TestManagedWindowTabsManager>();
 (globalThis as typeof globalThis & {
   __tauriExplorerTestManagerRegistry?: {
     register(manager: TestManagedWindowTabsManager): void;
+    unregister(manager: TestManagedWindowTabsManager): void;
   };
 }).__tauriExplorerTestManagerRegistry = {
   register(manager) {
     testManagers.add(manager);
+  },
+  unregister(manager) {
+    testManagers.delete(manager);
   },
 };
 

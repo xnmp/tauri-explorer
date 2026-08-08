@@ -74,6 +74,27 @@ describe("window-tabs disposal (#611)", () => {
     expect(settled).toBe(true);
   });
 
+  it("shares teardown started without awaiting with a later test drain", async () => {
+    const manager = createWindowTabsManager();
+    manager.init("/home/user", true);
+    // Let the initial load settle so only the deferred explorer cleanup can
+    // keep the second disposal pending.
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    void manager.dispose();
+    const drained = manager.dispose();
+    let settled = false;
+    void drained.then(() => {
+      settled = true;
+    });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(settled).toBe(false);
+
+    cleanup.resolve?.();
+    await expect(drained).resolves.toBeUndefined();
+    expect(settled).toBe(true);
+  });
+
   it("waits for pending cleanup and initial load before propagating a cleanup failure", async () => {
     cleanup.rejectFirst = true;
     cleanup.deferFirstInitialLoad = true;

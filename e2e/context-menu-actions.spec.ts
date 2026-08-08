@@ -105,6 +105,7 @@ test.describe("Copy Path", () => {
     const menu = await rightClick(page, "report.pdf");
     await expect(menu.getByText("Copy Path", { exact: true })).toBeVisible();
     await page.screenshot({ path: "evidence/ac-1-copy-path-menu.png" });
+    await page.screenshot({ path: "evidence/ac-2-existing-context-menu-actions.png" });
     await menu.getByText("Copy Path", { exact: true }).click();
 
     await expect(page.locator(".toast.clipboard")).toBeVisible();

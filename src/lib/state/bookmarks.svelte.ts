@@ -36,7 +36,7 @@ function createBookmarksState() {
   function save() {
     // Write-through: save to both localStorage (sync) and config file (async)
     savePersisted(STORAGE_KEY, bookmarks);
-    writeConfigQueued(CONFIG_FILENAME, JSON.stringify(bookmarks, null, 2), CONFIG_WRITER);
+    writeConfigQueued(CONFIG_FILENAME, JSON.stringify(bookmarks, null, 2));
   }
 
   /**
@@ -60,7 +60,7 @@ function createBookmarksState() {
 
     // If config file was empty but localStorage has data, migrate
     if (bookmarks.length > 0) {
-      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(bookmarks, null, 2), CONFIG_WRITER);
+      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(bookmarks, null, 2));
     }
   }
 

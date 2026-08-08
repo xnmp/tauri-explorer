@@ -35,7 +35,7 @@ function createFolderViewsStore() {
 
   function save(): void {
     savePersisted(STORAGE_KEY, views);
-    writeConfigQueued(CONFIG_FILENAME, JSON.stringify(views, null, 2), CONFIG_WRITER);
+    writeConfigQueued(CONFIG_FILENAME, JSON.stringify(views, null, 2));
   }
 
   async function init(): Promise<void> {
@@ -56,7 +56,7 @@ function createFolderViewsStore() {
     // Migrate from localStorage if config file was empty
     const saved = loadPersisted<FolderViewMap>(STORAGE_KEY, {});
     if (Object.keys(saved).length > 0) {
-      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(saved, null, 2), CONFIG_WRITER);
+      writeConfigQueued(CONFIG_FILENAME, JSON.stringify(saved, null, 2));
     }
   }
 

@@ -196,8 +196,13 @@ fn settings_path(config_dir: &Path) -> std::path::PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{settings_path, watched_config_name};
+    use super::{
+        pending, settings_path, watched_config_name, BOOKMARKS_FILE, FOLDER_VIEWS_FILE,
+    };
+    use notify::{RecommendedWatcher, RecursiveMode, Watcher};
     use std::path::Path;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn reports_reloadable_json_blobs_and_user_theme_css() {
@@ -248,5 +253,51 @@ mod tests {
             watched_config_name(dir, &dir.join(".settings.json.tmp-4242")),
             None
         );
+    }
+
+    #[test]
+    fn real_filesystem_events_queue_both_live_reload_blobs() {
+        let temp = tempfile::tempdir().expect("temporary config directory");
+        let root = temp.path().to_path_buf();
+        pending().lock().expect("pending lock").clear();
+        let (sent, received) = mpsc::channel();
+        let callback_root = root.clone();
+        let mut watcher: RecommendedWatcher = notify::recommended_watcher(
+            move |event: Result<notify::Event, notify::Error>| {
+            if let Ok(event) = event {
+                for path in event.paths {
+                    if let Some(filename) = watched_config_name(&callback_root, &path) {
+                        pending()
+                            .lock()
+                            .expect("pending lock")
+                            .insert(filename.clone(), Instant::now());
+                        let _ = sent.send(filename);
+                    }
+                }
+            }
+            },
+        )
+        .expect("watcher");
+        watcher
+            .watch(&root, RecursiveMode::Recursive)
+            .expect("watch temporary config directory");
+
+        std::fs::write(root.join(BOOKMARKS_FILE), "[]").expect("external bookmarks edit");
+        std::fs::write(root.join(FOLDER_VIEWS_FILE), "{}").expect("external folder views edit");
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut observed = Vec::new();
+        while Instant::now() < deadline && observed.len() < 2 {
+            if let Ok(filename) = received.recv_timeout(Duration::from_millis(100)) {
+                if !observed.contains(&filename) {
+                    observed.push(filename);
+                }
+            }
+        }
+        observed.sort();
+        assert_eq!(observed, [BOOKMARKS_FILE, FOLDER_VIEWS_FILE]);
+        let queued = pending().lock().expect("pending lock");
+        assert!(queued.contains_key(BOOKMARKS_FILE));
+        assert!(queued.contains_key(FOLDER_VIEWS_FILE));
     }
 }

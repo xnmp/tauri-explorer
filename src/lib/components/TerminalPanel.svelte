@@ -339,7 +339,15 @@
           const cmd = getCommand(id);
           return !cmd?.when || cmd.when();
         });
-      return isShellReservedKey(event, { coreCommandAvailable });
+      const terminalToggleChordPrefix = keybindingsStore.matchesChordPrefixForCommand(
+        event,
+        "general.openTerminal",
+      );
+      return isShellReservedKey(event, {
+        coreCommandAvailable,
+        terminalToggleChordPrefix,
+        terminalToggleChordActive: keybindingsStore.isChordActive,
+      });
     });
 
     term.open(termEl!);

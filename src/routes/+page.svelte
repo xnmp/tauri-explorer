@@ -195,7 +195,17 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
           const cmd = getCommand(id);
           return !cmd?.when || cmd.when();
         });
-      if (isShellReservedKey(event, { coreCommandAvailable })) return;
+      const terminalToggleChordPrefix = keybindingsStore.matchesChordPrefixForCommand(
+        event,
+        "general.openTerminal",
+      );
+      if (
+        isShellReservedKey(event, {
+          coreCommandAvailable,
+          terminalToggleChordPrefix,
+          terminalToggleChordActive: keybindingsStore.isChordActive,
+        })
+      ) return;
     }
 
     // Escape closes any open modal dialog

@@ -319,7 +319,10 @@ function createWindowTabsManager() {
       ? explorer.initialLoad(path)
       : explorer.navigateTo(path);
     pendingInitialLoads.add(initialLoad);
-    void initialLoad.finally(() => pendingInitialLoads.delete(initialLoad));
+    void initialLoad.then(
+      () => pendingInitialLoads.delete(initialLoad),
+      () => pendingInitialLoads.delete(initialLoad),
+    );
     return { explorerId, explorer };
   }
 

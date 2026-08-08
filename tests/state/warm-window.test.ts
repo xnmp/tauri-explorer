@@ -20,6 +20,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // for the node test environment.
 (globalThis as { window?: unknown }).window = {
   location: { origin: "http://localhost", pathname: "/", search: "" },
+  dispatchEvent: vi.fn(),
 } as unknown as Window & typeof globalThis;
 
 const evt = vi.hoisted(() => ({
@@ -147,6 +148,7 @@ import {
 } from "../../src/lib/state/warm-window";
 
 beforeEach(() => {
+  window.dispatchEvent = vi.fn();
   evt.emitToCalls.length = 0;
   evt.emitToFails = false;
   evt.listener = undefined;
@@ -249,5 +251,8 @@ describe("warm-window reveal contract", () => {
       "title:beta - Tauri Explorer",
       "show",
     ]);
+    expect(window.dispatchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "explorer:focus-address-bar" }),
+    );
   });
 });

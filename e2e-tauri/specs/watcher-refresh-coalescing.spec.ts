@@ -9,16 +9,6 @@ import os from "node:os";
 import path from "node:path";
 import { navigateTo } from "./helpers";
 
-type ProbeWindow = Window & {
-  __TAURI_INTERNALS__: {
-    invoke: (...args: unknown[]) => Promise<unknown>;
-  };
-  __watcherRefreshProbe?: {
-    snapshot: () => { calls: number; completed: number; starts: number[] };
-    restore: () => void;
-  };
-};
-
 const coalescingDir = fs.mkdtempSync(
   path.join(os.homedir(), ".tauri-explorer-e2e-watch-coalesce-"),
 );
@@ -28,52 +18,21 @@ const adaptiveDir = fs.mkdtempSync(
 
 async function listingProbe(): Promise<{ calls: number; completed: number; starts: number[] }> {
   return await browser.execute(() => {
-    return (
-      (window as unknown as ProbeWindow).__watcherRefreshProbe?.snapshot() ?? {
-        calls: -1,
-        completed: -1,
-        starts: [],
-      }
-    );
+    const snapshot = document.documentElement.dataset.e2eDirectoryListingProbe;
+    return snapshot
+      ? JSON.parse(snapshot)
+      : { calls: -1, completed: -1, starts: [] };
   });
 }
 
 async function installListingProbe(targetPath: string, delays: number[]): Promise<void> {
   await browser.execute(
     (pathToProbe: string, responseDelays: number[]) => {
-      const testWindow = window as unknown as ProbeWindow;
-      const internals = testWindow.__TAURI_INTERNALS__;
-      const originalInvoke = internals.invoke;
-      let calls = 0;
-      let completed = 0;
-      const starts: number[] = [];
-
-      internals.invoke = async (...args: unknown[]) => {
-        const [command, payload] = args;
-        const isTargetListing =
-          command === "start_streaming_directory" &&
-          (payload as { path?: string } | undefined)?.path === pathToProbe;
-        if (!isTargetListing) return originalInvoke(...args);
-
-        const callIndex = calls;
-        calls += 1;
-        starts.push(Date.now());
-        const result = await originalInvoke(...args);
-        const delay = responseDelays[callIndex] ?? 0;
-        if (delay > 0) {
-          await new Promise((resolve) => setTimeout(resolve, delay));
-        }
-        completed += 1;
-        return result;
-      };
-
-      testWindow.__watcherRefreshProbe = {
-        snapshot: () => ({ calls, completed, starts: [...starts] }),
-        restore: () => {
-          internals.invoke = originalInvoke;
-          delete testWindow.__watcherRefreshProbe;
-        },
-      };
+      window.dispatchEvent(
+        new CustomEvent("e2e-directory-listing-probe", {
+          detail: { targetPath: pathToProbe, delays: responseDelays },
+        }),
+      );
     },
     targetPath,
     delays,
@@ -102,7 +61,7 @@ describe("filesystem watcher refresh coalescing", () => {
 
   afterEach(async () => {
     await browser.execute(() => {
-      (window as unknown as ProbeWindow).__watcherRefreshProbe?.restore();
+      window.dispatchEvent(new CustomEvent("e2e-directory-listing-probe"));
     });
   });
 

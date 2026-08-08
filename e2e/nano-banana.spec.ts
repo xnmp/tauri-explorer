@@ -43,6 +43,12 @@ async function rightClickImage(page: Page) {
   return menu;
 }
 
+async function aiMenuItem(menu: ReturnType<Page["locator"]>, label: string) {
+  const aiGroup = menu.locator(":scope > .submenu-wrapper").filter({ hasText: "AI" });
+  await aiGroup.hover();
+  return aiGroup.locator(`.submenu .menu-item:has-text("${label}")`);
+}
+
 test.describe("Nano Banana plugin", () => {
   test("context-menu item (plugin-contributed) opens the edit dialog for an image", async ({ page }) => {
     await page.goto("/?path=/home/user/Downloads");
@@ -51,7 +57,7 @@ test.describe("Nano Banana plugin", () => {
     const menu = await rightClickImage(page);
 
     // Contributed by the plugin (enabled by default).
-    const nanoBananaItem = menu.locator('.menu-item:has-text("Edit with Nano Banana")');
+    const nanoBananaItem = await aiMenuItem(menu, "Edit with Nano Banana");
     await expect(nanoBananaItem).toBeVisible();
 
     // Opens the plugin's dialog.
@@ -80,7 +86,7 @@ test.describe("Nano Banana plugin", () => {
     await page.keyboard.press("Escape");
     await setNanoBananaEnabled(page, true);
     const menu2 = await rightClickImage(page);
-    await expect(menu2.locator('.menu-item:has-text("Edit with Nano Banana")')).toBeVisible();
+    await expect(await aiMenuItem(menu2, "Edit with Nano Banana")).toBeVisible();
   });
 
   test("Ctrl+J opens the jobs panel", async ({ page }) => {

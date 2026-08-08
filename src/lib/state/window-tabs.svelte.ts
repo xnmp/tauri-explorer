@@ -172,7 +172,10 @@ function createWindowTabsManager() {
   function destroyAllExplorers(): Promise<void> {
     const destroying = Array.from(explorers.values(), (explorer) => explorer.destroy());
     explorers.clear();
-    return Promise.all(destroying).then(() => undefined);
+    return Promise.allSettled(destroying).then((results) => {
+      const rejected = results.find((result) => result.status === "rejected");
+      if (rejected?.status === "rejected") throw rejected.reason;
+    });
   }
 
   function findTab(tabId: string): WindowTab | null {

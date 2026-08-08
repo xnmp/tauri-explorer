@@ -25,6 +25,10 @@ export interface ShellKeyContext {
   appBound?: boolean;
   /** The event matches its specific available core-navigation command. */
   coreCommandAvailable?: boolean;
+  /** The event starts the configured terminal-toggle chord. */
+  terminalToggleChordPrefix?: boolean;
+  /** The terminal-toggle chord has already started outside xterm. */
+  terminalToggleChordActive?: boolean;
 }
 
 export type AlwaysActiveTerminalCommandId =
@@ -36,7 +40,8 @@ export type AlwaysActiveTerminalCommandId =
 /**
  * The only Explorer shortcuts that may claim keyboard input from a focused
  * terminal. Keep this list intentionally small: terminal applications own all
- * other app-level bindings, including custom bindings and chords.
+ * other app-level bindings, including custom bindings and chords, apart from
+ * the terminal-toggle chord that controls the terminal surface itself.
  */
 export function getAlwaysActiveTerminalCommandId(
   event: KeyEventLike,
@@ -63,7 +68,11 @@ export function isAlwaysActiveTerminalShortcut(event: KeyEventLike): boolean {
  * shortcut handling may claim it.
  */
 export function isShellReservedKey(event: KeyEventLike, context?: ShellKeyContext): boolean {
-  return !(context?.coreCommandAvailable && isAlwaysActiveTerminalShortcut(event));
+  return !(
+    (context?.coreCommandAvailable && isAlwaysActiveTerminalShortcut(event)) ||
+    context?.terminalToggleChordPrefix ||
+    context?.terminalToggleChordActive
+  );
 }
 
 // ─── Configurable line-editing shortcuts (#375) ─────────────────────────────

@@ -1,4 +1,4 @@
-# ADR 0002: Windows installer trust boundary
+# ADR 0003: Windows installer trust boundary
 
 Governs: `windows_install.ps1`
 

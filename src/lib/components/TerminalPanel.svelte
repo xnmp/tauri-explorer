@@ -339,7 +339,23 @@
           const cmd = getCommand(id);
           return !cmd?.when || cmd.when();
         });
-      return isShellReservedKey(event, { coreCommandAvailable });
+      const terminalToggleChordPrefix = keybindingsStore.matchesChordPrefixForCommand(
+        event,
+        "general.openTerminal",
+      );
+      const terminalToggleChordActive = keybindingsStore.isChordActiveForCommand(
+        event,
+        "general.openTerminal",
+      );
+      const shellReserved = isShellReservedKey(event, {
+        coreCommandAvailable,
+        terminalToggleChordPrefix,
+        terminalToggleChordActive,
+      });
+      // xterm keeps terminal-owned keys from reaching the page handler, so
+      // consume a pending Explorer chord here when its suffix did not match.
+      if (shellReserved && keybindingsStore.isChordActive) keybindingsStore.cancelChord();
+      return shellReserved;
     });
 
     term.open(termEl!);

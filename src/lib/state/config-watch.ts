@@ -14,11 +14,15 @@
 
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { settingsStore } from "./settings.svelte";
+import { bookmarksStore } from "./bookmarks.svelte";
+import { folderViewsStore } from "./folder-views.svelte";
 import { themeStore } from "./theme.svelte";
 import { toastStore } from "./toast.svelte";
 
 export const CONFIG_CHANGED_EVENT = "config-file-changed";
 const SETTINGS_FILE = "settings.json";
+const BOOKMARKS_FILE = "bookmarks.json";
+const FOLDER_VIEWS_FILE = "folder-views.json";
 const THEME_PREFIX = "themes/";
 
 /**
@@ -58,6 +62,16 @@ export async function handleConfigFileChanged(filename: string): Promise<void> {
     // current id — which is also what makes an edit to the *active* theme
     // repaint rather than sit in the DOM unused.
     await themeStore.initTheme();
+    return;
+  }
+
+  if (filename === BOOKMARKS_FILE) {
+    await bookmarksStore.reloadFromDisk();
+    return;
+  }
+
+  if (filename === FOLDER_VIEWS_FILE) {
+    await folderViewsStore.reloadFromDisk();
   }
 }
 

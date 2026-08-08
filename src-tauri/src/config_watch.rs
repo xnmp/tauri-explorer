@@ -3,7 +3,8 @@
 //! Settings are a plain JSON file and user themes are plain CSS, so people
 //! edit them directly — with an editor, `sed`, or a dotfile manager. Before
 //! this module those edits only took effect on the next launch. Now a change
-//! to `settings.json` or `themes/*.css` emits `config-file-changed` to every
+//! to `settings.json`, `bookmarks.json`, `folder-views.json`, or user theme
+//! CSS emits `config-file-changed` to every
 //! window, which re-reads the file and applies it live.
 //!
 //! Two deliberate constraints:
@@ -34,6 +35,8 @@ const FLUSH_INTERVAL: Duration = Duration::from_millis(80);
 
 /// The settings blob the frontend reloads into its settings store.
 const SETTINGS_FILE: &str = "settings.json";
+const BOOKMARKS_FILE: &str = "bookmarks.json";
+const FOLDER_VIEWS_FILE: &str = "folder-views.json";
 /// User theme CSS lives one level down, in `<config>/themes/`.
 const THEMES_DIR: &str = "themes";
 
@@ -71,7 +74,11 @@ pub(crate) fn watched_config_name(config_dir: &Path, changed: &Path) -> Option<S
         .collect::<Option<Vec<_>>>()?;
 
     match parts.as_slice() {
-        [SETTINGS_FILE] => Some(SETTINGS_FILE.to_string()),
+        [name]
+            if *name == SETTINGS_FILE || *name == BOOKMARKS_FILE || *name == FOLDER_VIEWS_FILE =>
+        {
+            Some((*name).to_string())
+        }
         [THEMES_DIR, theme] if theme.ends_with(".css") => Some(format!("{THEMES_DIR}/{theme}")),
         _ => None,
     }
@@ -189,11 +196,14 @@ fn settings_path(config_dir: &Path) -> std::path::PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{settings_path, watched_config_name};
+    use super::{pending, settings_path, watched_config_name, BOOKMARKS_FILE, FOLDER_VIEWS_FILE};
+    use notify::{RecommendedWatcher, RecursiveMode, Watcher};
     use std::path::Path;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
 
     #[test]
-    fn reports_the_settings_blob_and_user_theme_css() {
+    fn reports_reloadable_json_blobs_and_user_theme_css() {
         let dir = Path::new("/home/u/.config/tauri-explorer");
         assert_eq!(
             watched_config_name(dir, &settings_path(dir)),
@@ -203,13 +213,20 @@ mod tests {
             watched_config_name(dir, &dir.join("themes").join("midnight.css")),
             Some("themes/midnight.css".to_string())
         );
+        assert_eq!(
+            watched_config_name(dir, &dir.join("bookmarks.json")),
+            Some("bookmarks.json".to_string())
+        );
+        assert_eq!(
+            watched_config_name(dir, &dir.join("folder-views.json")),
+            Some("folder-views.json".to_string())
+        );
     }
 
     #[test]
     fn ignores_files_no_listener_reacts_to() {
         let dir = Path::new("/home/u/.config/tauri-explorer");
         for path in [
-            dir.join("bookmarks.json"),
             dir.join("window-state.json"),
             dir.join("themes").join("notes.txt"),
             dir.join("themes").join("nested").join("deep.css"),
@@ -234,5 +251,50 @@ mod tests {
             watched_config_name(dir, &dir.join(".settings.json.tmp-4242")),
             None
         );
+    }
+
+    #[test]
+    fn real_filesystem_events_queue_both_live_reload_blobs() {
+        let temp = tempfile::tempdir().expect("temporary config directory");
+        let root = temp.path().to_path_buf();
+        pending().lock().expect("pending lock").clear();
+        let (sent, received) = mpsc::channel();
+        let callback_root = root.clone();
+        let mut watcher: RecommendedWatcher =
+            notify::recommended_watcher(move |event: Result<notify::Event, notify::Error>| {
+                if let Ok(event) = event {
+                    for path in event.paths {
+                        if let Some(filename) = watched_config_name(&callback_root, &path) {
+                            pending()
+                                .lock()
+                                .expect("pending lock")
+                                .insert(filename.clone(), Instant::now());
+                            let _ = sent.send(filename);
+                        }
+                    }
+                }
+            })
+            .expect("watcher");
+        watcher
+            .watch(&root, RecursiveMode::Recursive)
+            .expect("watch temporary config directory");
+
+        std::fs::write(root.join(BOOKMARKS_FILE), "[]").expect("external bookmarks edit");
+        std::fs::write(root.join(FOLDER_VIEWS_FILE), "{}").expect("external folder views edit");
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut observed = Vec::new();
+        while Instant::now() < deadline && observed.len() < 2 {
+            if let Ok(filename) = received.recv_timeout(Duration::from_millis(100)) {
+                if !observed.contains(&filename) {
+                    observed.push(filename);
+                }
+            }
+        }
+        observed.sort();
+        assert_eq!(observed, [BOOKMARKS_FILE, FOLDER_VIEWS_FILE]);
+        let queued = pending().lock().expect("pending lock");
+        assert!(queued.contains_key(BOOKMARKS_FILE));
+        assert!(queued.contains_key(FOLDER_VIEWS_FILE));
     }
 }

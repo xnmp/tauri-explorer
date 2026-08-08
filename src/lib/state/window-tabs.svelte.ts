@@ -169,11 +169,14 @@ function createWindowTabsManager() {
   );
 
   /** Destroy all registered explorers (unwatch dirs, drop listeners) and clear the registry. */
-  function destroyAllExplorers(): void {
-    for (const explorer of explorers.values()) {
-      explorer.destroy();
-    }
+  async function destroyAllExplorers(): Promise<void> {
+    const destructions = [...explorers.values()].map((explorer) => explorer.destroy());
     explorers.clear();
+    const results = await Promise.allSettled(destructions);
+    const failure = results.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (failure) throw failure.reason;
   }
 
   function findTab(tabId: string): WindowTab | null {
@@ -520,7 +523,7 @@ function createWindowTabsManager() {
 
     // Destroy before clearing — otherwise backend watch refcounts and
     // streaming listeners leak for every replaced explorer.
-    destroyAllExplorers();
+    void destroyAllExplorers();
 
     tabs = normalized.tabs.map((pt) =>
       reviveTab(pt, {
@@ -548,7 +551,7 @@ function createWindowTabsManager() {
     }
 
     // No saved state or child window — create a fresh tab
-    destroyAllExplorers();
+    void destroyAllExplorers();
     tabs = [];
     activeTabId = null;
 
@@ -1145,8 +1148,10 @@ function createWindowTabsManager() {
       // Flushes a queued write before dropping its page-lifecycle listeners,
       // so tearing the manager down can't swallow the last interaction.
       tabStatePersister.dispose();
-      destroyAllExplorers();
-      await Promise.allSettled(pendingInitialLoads);
+      const cleanup = destroyAllExplorers();
+      const loads = Promise.allSettled(pendingInitialLoads);
+      const [cleanupResult] = await Promise.allSettled([cleanup, loads]);
+      if (cleanupResult.status === "rejected") throw cleanupResult.reason;
     },
   };
 }

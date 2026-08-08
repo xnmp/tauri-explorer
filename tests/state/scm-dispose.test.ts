@@ -9,17 +9,17 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-const directoryApi = vi.hoisted(() => ({
-  startStreamingDirectory: vi.fn(),
+const directoryListing = vi.hoisted(() => ({
+  load: vi.fn(),
+  cleanup: vi.fn(),
 }));
 
-vi.mock("$lib/api/files", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("$lib/api/files")>();
-  return {
-    ...actual,
-    startStreamingDirectory: directoryApi.startStreamingDirectory,
-  };
-});
+vi.mock("$lib/state/directory-listing", () => ({
+  createDirectoryListing: () => ({
+    load: directoryListing.load,
+    cleanup: directoryListing.cleanup,
+  }),
+}));
 import {
   getScmStore,
   disposeScmStore,
@@ -29,10 +29,15 @@ import { createWindowTabsManager } from "$lib/state/window-tabs.svelte";
 
 beforeEach(() => {
   localStorage.clear();
-  directoryApi.startStreamingDirectory.mockResolvedValue({
+  directoryListing.load.mockReset();
+  directoryListing.cleanup.mockReset();
+  directoryListing.load.mockResolvedValue({
     ok: true,
-    data: { path: "/home/user", entries: [], listing_id: null },
+    path: "/home/user",
+    entries: [],
+    streaming: false,
   });
+  directoryListing.cleanup.mockResolvedValue(undefined);
 });
 
 function deferred<T>() {
@@ -82,9 +87,11 @@ describe("window-tabs pane close disposes scm stores (#439)", () => {
   it("waits for a pane's initial directory load before teardown", async () => {
     const load = deferred<{
       ok: true;
-      data: { path: string; entries: []; listing_id: null };
+      path: string;
+      entries: [];
+      streaming: false;
     }>();
-    directoryApi.startStreamingDirectory.mockReturnValueOnce(load.promise);
+    directoryListing.load.mockReturnValueOnce(load.promise);
     const manager = createWindowTabsManager();
     manager.init("/home/user", true);
     await flush();
@@ -97,9 +104,33 @@ describe("window-tabs pane close disposes scm stores (#439)", () => {
 
     load.resolve({
       ok: true,
-      data: { path: "/home/user", entries: [], listing_id: null },
+      path: "/home/user",
+      entries: [],
+      streaming: false,
     });
     await expect(disposal).resolves.toBeUndefined();
+  });
+
+  it("waits for every explorer cleanup before reporting a cleanup failure", async () => {
+    const cleanup = deferred<void>();
+    const manager = freshManager();
+    manager.splitPane("right");
+    await flush();
+    directoryListing.cleanup
+      .mockRejectedValueOnce(new Error("first cleanup failed"))
+      .mockReturnValueOnce(cleanup.promise);
+
+    const disposal = manager.dispose();
+    let settled = false;
+    void disposal.then(
+      () => { settled = true; },
+      () => { settled = true; },
+    );
+    await flush();
+    expect(settled).toBe(false);
+
+    cleanup.resolve();
+    await expect(disposal).rejects.toThrow("first cleanup failed");
   });
 
   it("closePane disposes the closed pane's scm store", async () => {

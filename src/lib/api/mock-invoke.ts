@@ -1510,6 +1510,14 @@ const mockCommands: Record<string, CommandHandler> = {
 
   fuzzy_search: (args) => {
     const query = (args.query as string).toLowerCase();
+    // Browser mode falls back to this complete-result search when Tauri event
+    // streaming is unavailable; record the same Quick Open search boundary as
+    // `start_streaming_search` below.
+    const calls = JSON.parse(localStorage.getItem("mock-streaming-searches") ?? "[]") as Array<{
+      query: string;
+    }>;
+    calls.push({ query: String(args.query ?? "") });
+    localStorage.setItem("mock-streaming-searches", JSON.stringify(calls));
     const root = (args.root as string) || "/home/user";
     const limit = args.limit as number || 20;
     const results: Array<{ name: string; path: string; relativePath: string; score: number; kind: "file" | "directory" }> = [];
@@ -1542,7 +1550,15 @@ const mockCommands: Record<string, CommandHandler> = {
     return { results: results.slice(0, limit) };
   },
 
-  start_streaming_search: () => {
+  start_streaming_search: (args) => {
+    // Browser Quick Open regressions can assert the real component's IPC
+    // boundary without replacing its search API. This stays mock-only: the
+    // production backend never reads this diagnostic key.
+    const calls = JSON.parse(localStorage.getItem("mock-streaming-searches") ?? "[]") as Array<{
+      query: string;
+    }>;
+    calls.push({ query: String(args.query ?? "") });
+    localStorage.setItem("mock-streaming-searches", JSON.stringify(calls));
     return 1; // Mock search ID
   },
 

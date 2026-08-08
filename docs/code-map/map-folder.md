@@ -200,6 +200,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `virtual-path.ts` — virtual (plugin-provided) path parsing.
 - `drives.ts` — pure removable-drive tracking (isUnderRoot).
 - `fuzzy-score.ts` — fuzzy match scorer for QuickOpen.
+- `quick-open-search.ts` — trailing scheduler for the expensive recursive Quick Open search; local results remain immediate while a rapid query produces one backend request (#600).
 - `lazy-dialog.ts` — failure-safe loading for code-split dialogs: rejected import (#584) or mount crash via svelte:boundary (#585) rolls back the dialog open-flag + notifies, preventing the hasModalOpen hotkey soft-lock.
 - `theme-list.ts` — dedupe discovered themes by id, last wins (user CSS overrides built-ins; duplicate ids crashed ThemePicker's keyed each, #585).
 - `word-boundary.ts` — word-boundary helpers (fuzzy/rename).

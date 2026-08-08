@@ -55,18 +55,41 @@ test.describe("Terminal panel", () => {
     await expect(panel).toBeAttached();
   });
 
-  test("non-core app shortcuts stay with the terminal while it is focused (#496)", async ({ page }) => {
+  test("Alt+M T toggles the terminal while it is focused (#608)", async ({ page }) => {
     await page.keyboard.press("Control+`");
     const panel = page.locator(".terminal-panel");
     await expect(panel).toBeVisible();
 
-    // The terminal application's Alt+M/T input must not invoke Explorer's
-    // matching global chord.
+    // The terminal-toggle chord remains available even though other terminal
+    // application input retains ownership.
     await panel.locator("textarea.xterm-helper-textarea").focus();
     await page.keyboard.press("Alt+m");
     await page.keyboard.press("t");
-    await expect(panel).toBeVisible();
+    await expect(panel).toBeHidden();
     await expect(panel).toBeAttached();
+    await page.screenshot({ path: "evidence/ac-1-terminal-toggle-from-focus.png" });
+  });
+
+  test("an unrelated Alt+M chord does not steal focused-terminal input (#608)", async ({ page }) => {
+    await expect(page.locator(".sidebar")).toBeVisible();
+
+    await page.keyboard.press("Control+`");
+    const panel = page.locator(".terminal-panel");
+    await expect(panel).toBeVisible();
+    await page.locator(".file-list").first().click();
+    // Alt+M B normally toggles the Files sidebar. Starting it outside the
+    // terminal must not let its suffix invoke that command after focus moves
+    // into xterm.
+    await page.keyboard.press("Alt+m");
+
+    await panel.locator("textarea.xterm-helper-textarea").focus();
+    await page.keyboard.press("b");
+    await expect(page.locator(".sidebar")).toBeVisible();
+
+    // The terminal-owned suffix also ends the pending Explorer chord. A
+    // following T must remain terminal input rather than toggling the panel.
+    await page.keyboard.press("t");
+    await expect(panel).toBeVisible();
   });
 
   test("only core navigation shortcuts fire while the terminal is focused (#496)", async ({ page }) => {

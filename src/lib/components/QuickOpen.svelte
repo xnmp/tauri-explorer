@@ -24,7 +24,7 @@
   import Modal from "./Modal.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { frecencyStore } from "$lib/state/frecency.svelte";
-  import { createQuickOpenSearchScheduler } from "$lib/domain/quick-open-search";
+  import { createQuickOpenSearchController } from "$lib/domain/quick-open-search";
 
   // Helper to convert SearchResult to FileEntry-like object for icon functions
   function toFileEntry(result: SearchResult): FileEntry {
@@ -339,8 +339,16 @@
       }
   }
 
-  const searchScheduler = createQuickOpenSearchScheduler((queryToSearch) => {
-    void startSearch(queryToSearch, searchGeneration);
+  const searchController = createQuickOpenSearchController<SearchResult>({
+    immediateMatches(queryToSearch) {
+      return [...matchFrecencyAndRecent(queryToSearch), ...matchCwdEntries(queryToSearch)];
+    },
+    startSearch(queryToSearch) {
+      void startSearch(queryToSearch, searchGeneration);
+    },
+    cancelActiveSearch() {
+      void cancelActiveSearch();
+    },
   });
 
   // Local matches render synchronously on every input. The expensive recursive
@@ -351,10 +359,8 @@
     // Invalidate events and stop filesystem work as soon as another character
     // arrives, rather than waiting for the next trailing debounce to fire.
     searchGeneration += 1;
-    void cancelActiveSearch();
-
+    const frecencyMatches = searchController.handleInput(query);
     if (!query.trim()) {
-      searchScheduler.cancel();
       results = [];
       lastRawResults = [];
       selectedIndex = 0;
@@ -367,10 +373,8 @@
     // New query → selection pins back to the top result (VSCode behavior),
     // even if hover or arrows had moved it in the previous result set.
     selectedIndex = 0;
-    const frecencyMatches = [...matchFrecencyAndRecent(query), ...matchCwdEntries(query)];
     lastRawResults = [];
     results = mergeResultsByScore([], frecencyMatches);
-    searchScheduler.schedule(query);
   }
 
   // Active display list: search results when querying, recent files otherwise
@@ -528,10 +532,9 @@
   $effect(() => {
     if (!open) {
       searchGeneration += 1;
-      searchScheduler.cancel();
+      searchController.dispose();
       pointer.disarm();
       // Cancel any active streaming search
-      void cancelActiveSearch();
       totalScanned = 0;
     }
   });

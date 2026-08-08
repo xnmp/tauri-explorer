@@ -13,6 +13,11 @@ export interface QuickOpenSearchScheduler {
 
 export type StartQuickOpenSearch = (query: string) => void;
 
+export interface QuickOpenSearchController<T> {
+  handleInput(query: string): T[];
+  dispose(): void;
+}
+
 /**
  * A trailing pause keeps normal typing from launching a full directory walk
  * for every intermediate character while still feeling immediate in the UI.
@@ -40,6 +45,40 @@ export function createQuickOpenSearchScheduler(
     cancel() {
       if (timer) clearTimeout(timer);
       timer = null;
+    },
+  };
+}
+
+/**
+ * Connects immediate in-memory matching with the delayed recursive-search
+ * boundary. Components use the returned matches immediately; only the final
+ * value from a typing burst reaches `startSearch`.
+ */
+export function createQuickOpenSearchController<T>({
+  immediateMatches,
+  startSearch,
+  cancelActiveSearch,
+}: {
+  immediateMatches: (query: string) => T[];
+  startSearch: StartQuickOpenSearch;
+  cancelActiveSearch: () => void;
+}): QuickOpenSearchController<T> {
+  const scheduler = createQuickOpenSearchScheduler(startSearch);
+
+  return {
+    handleInput(query) {
+      cancelActiveSearch();
+      if (!query.trim()) {
+        scheduler.cancel();
+        return [];
+      }
+      const matches = immediateMatches(query);
+      scheduler.schedule(query);
+      return matches;
+    },
+    dispose() {
+      scheduler.cancel();
+      cancelActiveSearch();
     },
   };
 }

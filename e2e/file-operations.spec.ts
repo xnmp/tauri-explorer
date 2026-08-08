@@ -27,7 +27,7 @@ for (const viewMode of VIEW_MODES) {
 
         const contextMenu = page.locator(".context-menu");
         await expect(contextMenu.getByText("Cut")).toBeVisible();
-        await expect(contextMenu.getByText("Copy")).toBeVisible();
+        await expect(contextMenu.getByText("Copy", { exact: true })).toBeVisible();
         await expect(contextMenu.getByText("Rename")).toBeVisible();
         await expect(contextMenu.getByText("Delete")).toBeVisible();
       });
@@ -153,7 +153,7 @@ for (const viewMode of VIEW_MODES) {
         const contextMenu = page.locator(".context-menu");
         await expect(contextMenu).toBeVisible();
 
-        await contextMenu.getByText("Copy").click();
+        await contextMenu.getByText("Copy", { exact: true }).click();
 
         const banner = page.locator(".toast.clipboard");
         await expect(banner).toBeVisible({ timeout: 2000 });

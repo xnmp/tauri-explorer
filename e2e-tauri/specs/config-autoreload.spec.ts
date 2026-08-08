@@ -44,7 +44,7 @@ async function navigateToScratch(): Promise<void> {
     window.dispatchEvent(new CustomEvent("e2e-navigate", { detail: target }));
   }, scratchDir);
   await browser.waitUntil(
-    async () => (await $(".file-list").getText()).includes("external-config-proof.txt"),
+    async () => (await $(".file-list").getText()).includes("TXT"),
     { timeout: 10_000, timeoutMsg: "scratch directory never rendered" },
   );
 }

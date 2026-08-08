@@ -31,6 +31,7 @@ test.describe("Miller columns panel", () => {
     await page.locator("[role='alertdialog']").getByRole("button", { name: /^Delete/ }).click();
 
     await expect(downloads).toHaveCount(0);
+    await page.screenshot({ path: "evidence/ac-1-deleted-folder-removed.png" });
   });
 
   test("removes a moved sibling from its Miller source column", async ({ page }) => {
@@ -44,6 +45,7 @@ test.describe("Miller columns panel", () => {
 
     await expect(downloads).toHaveCount(0);
     await expect(page.locator('.entry-item[data-path="/home/user/Documents/project/Downloads"]')).toBeVisible();
+    await page.screenshot({ path: "evidence/ac-2-moved-folder-refreshed.png" });
   });
 
   test("miller columns appear when millerLayers > 0", async ({ page }) => {

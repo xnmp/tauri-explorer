@@ -16,6 +16,21 @@ const CHANNEL_NAME = "explorer-file-changes";
 
 let channel: BroadcastChannel | null = null;
 let listener: ((dirs: string[]) => void) | null = null;
+const localMutationListeners = new Set<(dirs: string[]) => void>();
+
+/**
+ * Subscribe to mutations initiated in this window. Directory-listing panes
+ * update their entries optimistically, while independent directory caches
+ * (such as Miller columns) need to discard their own copy of those entries.
+ */
+export function subscribeToLocalFileChanges(listener: (dirs: string[]) => void): () => void {
+  localMutationListeners.add(listener);
+  return () => localMutationListeners.delete(listener);
+}
+
+function notifyLocalMutationListeners(affectedDirs: string[]): void {
+  for (const notify of localMutationListeners) notify(affectedDirs);
+}
 
 /** Initialize the file change listener. Call once per window. */
 export function initFileChangeListener(onChanged: (dirs: string[]) => void): void {
@@ -26,13 +41,15 @@ export function initFileChangeListener(onChanged: (dirs: string[]) => void): voi
 
   channel.onmessage = (event: MessageEvent<FileChangeEvent>) => {
     listener?.(event.data.affectedDirs);
+    notifyLocalMutationListeners(event.data.affectedDirs);
   };
 }
 
-/** Broadcast that directories have changed. Notifies OTHER windows. */
+/** Broadcast that directories have changed and notify local cache consumers. */
 export function broadcastFileChange(affectedDirs: string[]): void {
-  if (!channel || affectedDirs.length === 0) return;
-  channel.postMessage({ affectedDirs } satisfies FileChangeEvent);
+  if (affectedDirs.length === 0) return;
+  notifyLocalMutationListeners(affectedDirs);
+  channel?.postMessage({ affectedDirs } satisfies FileChangeEvent);
 }
 
 export { parentDir } from "$lib/domain/path";

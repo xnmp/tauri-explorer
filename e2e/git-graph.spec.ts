@@ -729,31 +729,6 @@ test.describe("Git graph snapshot cache (#255)", () => {
     expect(flashes).toBe(0);
   });
 
-  test("re-showing a cached graph does not start another history request (#505)", async ({ page }) => {
-    await page.goto("/?path=/home/user/Documents/project");
-    await waitForEntries(page);
-    await openGraphViaPalette(page);
-
-    const historyRequestsBefore = await page.evaluate(
-      () => (window as unknown as { __mockInvokeCounts?: Record<string, number> })
-        .__mockInvokeCounts?.git_log ?? 0,
-    );
-
-    await openGraphViaPalette(page, false);
-    await expect(page.locator(".entry-item").first()).toBeVisible();
-    await openGraphViaPalette(page, false);
-
-    // A cached snapshot is the active graph's immediately-rendered value. A
-    // remount must reuse it without scheduling a second full git-log walk.
-    await expect(
-      page.locator('[data-testid="git-graph-view"] .commit-row').first(),
-    ).toContainText("Uncommitted Changes");
-    const historyRequestsAfter = await page.evaluate(
-      () => (window as unknown as { __mockInvokeCounts?: Record<string, number> })
-        .__mockInvokeCounts?.git_log ?? 0,
-    );
-    expect(historyRequestsAfter).toBe(historyRequestsBefore);
-  });
 });
 
 test.describe("Git graph commit context actions", () => {

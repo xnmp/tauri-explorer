@@ -204,6 +204,7 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
           coreCommandAvailable,
           terminalToggleChordPrefix,
           terminalToggleChordActive: keybindingsStore.isChordActiveForCommand(
+            event,
             "general.openTerminal",
           ),
         })

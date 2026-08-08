@@ -36,6 +36,7 @@ let userShortcuts = $state<UserKeybindings>({});
 
 /** Chord state: when a prefix key is pressed, we wait for the suffix */
 let activeChordPrefix = $state<string | null>(null);
+let activeChordCommandIds = $state<string[] | null>(null);
 let chordTimeoutId: ReturnType<typeof setTimeout> | null = null;
 const CHORD_TIMEOUT_MS = 1500;
 
@@ -158,6 +159,7 @@ function createKeybindingsStore() {
   /** Cancel active chord waiting state */
   function cancelChord(): void {
     activeChordPrefix = null;
+    activeChordCommandIds = null;
     if (chordTimeoutId) {
       clearTimeout(chordTimeoutId);
       chordTimeoutId = null;
@@ -190,22 +192,18 @@ function createKeybindingsStore() {
     const matchOpts = superKeyHeld && !event.metaKey ? { metaHeld: true } : undefined;
 
     // If we're in chord-waiting mode, check suffix keys
-    if (activeChordPrefix !== null) {
-      const prefix = activeChordPrefix;
+    if (activeChordCommandIds !== null) {
+      const commandIds = activeChordCommandIds;
       cancelChord();
 
-      for (const commandId of Object.keys(defaultShortcuts)) {
+      for (const commandId of commandIds) {
         const shortcut = getShortcut(commandId);
         if (!shortcut || !isChordShortcut(shortcut)) continue;
 
-        // Check if this chord's prefix matches the one we stored
         const chord = getChordForCommand(commandId);
         if (!chord) continue;
 
-        // The prefix was already matched; now check if the suffix matches this event
-        const prefixStr = shortcut.substring(0, shortcut.indexOf(" ")).trim();
-        if (prefixStr.toLowerCase() !== prefix.toLowerCase()) continue;
-
+        // This command's prefix was already matched; now check its suffix.
         if (matchesShortcut(event, chord.suffix, matchOpts)) {
           if (!isAvailable || isAvailable(commandId)) {
             return commandId;
@@ -216,18 +214,25 @@ function createKeybindingsStore() {
       return undefined;
     }
 
-    // Check chord prefixes first
+    // Check chord prefixes first. Keep each eligible command identity so
+    // terminal focus can safely distinguish colliding chord suffixes.
+    const matchingChordCommandIds: string[] = [];
     for (const commandId of Object.keys(defaultShortcuts)) {
       const chord = getChordForCommand(commandId);
       if (!chord) continue;
 
       if (matchesShortcut(event, chord.prefix, matchOpts)) {
-        // A chord prefix was matched — enter waiting mode
-        const shortcut = getShortcut(commandId)!;
-        activeChordPrefix = shortcut.substring(0, shortcut.indexOf(" ")).trim();
-        chordTimeoutId = setTimeout(cancelChord, CHORD_TIMEOUT_MS);
-        return "chord:waiting";
+        if (!isAvailable || isAvailable(commandId)) {
+          matchingChordCommandIds.push(commandId);
+        }
       }
+    }
+    if (matchingChordCommandIds.length > 0) {
+      const shortcut = getShortcut(matchingChordCommandIds[0])!;
+      activeChordPrefix = shortcut.substring(0, shortcut.indexOf(" ")).trim();
+      activeChordCommandIds = matchingChordCommandIds;
+      chordTimeoutId = setTimeout(cancelChord, CHORD_TIMEOUT_MS);
+      return "chord:waiting";
     }
 
     // Normal single-key shortcut matching
@@ -289,12 +294,13 @@ function createKeybindingsStore() {
     return matchesShortcut(event, chord.prefix, matchOpts);
   }
 
-  /** Whether the active chord belongs to one specific command. */
-  function isChordActiveForCommand(commandId: string): boolean {
-    const shortcut = getShortcut(commandId);
-    if (!shortcut || !isChordShortcut(shortcut) || activeChordPrefix === null) return false;
-    const prefix = shortcut.substring(0, shortcut.indexOf(" ")).trim();
-    return prefix.toLowerCase() === activeChordPrefix.toLowerCase();
+  /** Whether this event completes one specific active chord. */
+  function isChordActiveForCommand(event: KeyboardEvent, commandId: string): boolean {
+    if (!activeChordCommandIds?.includes(commandId)) return false;
+    const chord = getChordForCommand(commandId);
+    if (!chord) return false;
+    const matchOpts = superKeyHeld && !event.metaKey ? { metaHeld: true } : undefined;
+    return matchesShortcut(event, chord.suffix, matchOpts);
   }
 
   /**
@@ -359,7 +365,7 @@ function createKeybindingsStore() {
 
     /** Whether a chord prefix is active (waiting for suffix key) */
     get isChordActive() {
-      return activeChordPrefix !== null;
+      return activeChordCommandIds !== null;
     },
 
     /** The active chord prefix string (for status bar display) */

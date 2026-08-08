@@ -347,6 +347,7 @@
         coreCommandAvailable,
         terminalToggleChordPrefix,
         terminalToggleChordActive: keybindingsStore.isChordActiveForCommand(
+          event,
           "general.openTerminal",
         ),
       });

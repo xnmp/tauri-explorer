@@ -22,7 +22,7 @@
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Serialize;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
@@ -45,6 +45,28 @@ struct ConfigChangedPayload {
     /// Config-dir-relative name, always forward-slashed: `settings.json` or
     /// `themes/<name>.css`.
     filename: String,
+}
+
+/// The filesystem locations that must be watched to observe reloadable config.
+///
+/// `config_dir` is always watched recursively. Symlink targets outside it are
+/// added to `external_roots` by the implementation that resolves this plan.
+struct WatchPlan {
+    config_dir: PathBuf,
+    external_roots: Vec<(PathBuf, RecursiveMode)>,
+}
+
+impl WatchPlan {
+    fn watched_config_name(&self, changed: &Path) -> Option<String> {
+        watched_config_name(&self.config_dir, changed)
+    }
+}
+
+fn config_watch_plan(config_dir: &Path) -> WatchPlan {
+    WatchPlan {
+        config_dir: config_dir.to_path_buf(),
+        external_roots: Vec::new(),
+    }
 }
 
 /// Keep the watcher alive for the process lifetime; dropping it stops it.

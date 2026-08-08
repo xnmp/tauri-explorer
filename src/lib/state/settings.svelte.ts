@@ -204,7 +204,6 @@ const DEFAULT_SETTINGS: Settings = {
 
 const STORAGE_KEY = "explorer-settings";
 const CONFIG_FILENAME = "settings.json";
-const CONFIG_WRITER = "settings-store";
 
 function loadSettings(): Settings {
   const saved = loadPersisted<Partial<Settings>>(STORAGE_KEY, {});
@@ -301,7 +300,7 @@ function createSettingsStore() {
     // was in flight would otherwise be clobbered by the older disk contents,
     // and a write that both starts and finishes inside the read window leaves
     // no trace in a simple "is a write pending" flag.
-    const beforeRead = configWriteActivity(CONFIG_FILENAME, CONFIG_WRITER);
+    const beforeRead = configWriteActivity(CONFIG_FILENAME);
     const result = await readConfigFile(CONFIG_FILENAME);
     if (!result.ok) return "unusable";
     const raw = result.data;
@@ -310,8 +309,8 @@ function createSettingsStore() {
       raw,
       normalized: parsed ? JSON.stringify(parsed.settings) : null,
       currentNormalized: JSON.stringify(settings),
-      lastWritten: lastWrittenConfig(CONFIG_FILENAME, CONFIG_WRITER),
-      selfWriteRaced: configWriteRaced(CONFIG_FILENAME, beforeRead, CONFIG_WRITER),
+      lastWritten: lastWrittenConfig(CONFIG_FILENAME),
+      selfWriteRaced: configWriteRaced(CONFIG_FILENAME, beforeRead),
     });
     if (!decision.apply || !parsed) return decision.reason;
     adoptSettings(parsed.settings, parsed.migrationChanged);

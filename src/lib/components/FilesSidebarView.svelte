@@ -16,6 +16,7 @@
   import { loadPersisted, savePersisted } from "$lib/state/persisted";
   import { useSidebarDrag } from "$lib/composables/use-sidebar-drag.svelte";
   import { usesPointerDrag, usesHtml5Drag } from "$lib/domain/platform";
+  import { openRecycleBin } from "$lib/api/open";
 
   const sidebarDrag = usesPointerDrag ? useSidebarDrag() : null;
 
@@ -23,6 +24,10 @@
   const navigateTo = (path: string) => {
     windowTabsManager.getActiveExplorer()?.navigateTo(path);
   };
+
+  function handleOpenRecycleBin() {
+    void openRecycleBin();
+  }
 
   const homeDir = $derived(homeDirectory.value ?? "/home");
   let isDragOver = $state(false);
@@ -438,6 +443,16 @@
             </button>
           </div>
         {/each}
+
+        {#if settingsStore.showRecycleBin}
+          <button class="nav-item recycle-bin-item" onclick={handleOpenRecycleBin} aria-label="Open Recycle Bin">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" class="nav-icon" aria-hidden="true">
+              <path d="M3.5 4.5H12.5L11.7 14H4.3L3.5 4.5ZM6 2H10L10.75 3.5H5.25L6 2ZM2.5 3.5H13.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M6.5 7V11.5M9.5 7V11.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+            </svg>
+            <span>Recycle Bin</span>
+          </button>
+        {/if}
       </div>
     {/if}
 

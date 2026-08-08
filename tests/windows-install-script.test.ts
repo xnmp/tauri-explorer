@@ -52,7 +52,7 @@ describe.skipIf(process.platform !== 'win32')('Windows installer invocation', ()
 			expect(result.gitCommands).toEqual([['clone', '--depth', '1', 'https://github.com/xnmp/tauri-explorer.git', result.temporaryCheckout]]);
 			expect(result.temporaryCheckoutRemoved).toBe(true);
 			for (const msiArgument of result.msiArguments) {
-				expect(msiArgument).toMatch(/^".* installer test .*\.msi"$/);
+				expect(msiArgument).toMatch(/^".*tauri explorer.*\.msi"$/);
 			}
 			expect(result.msiVerbs).toEqual(['RunAs', 'RunAs']);
 		} finally {

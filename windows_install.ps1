@@ -51,9 +51,11 @@ if (-not $buildTools) {
 }
 
 if ($missing.Count -gt 0) {
-    Write-Error 'error: missing prerequisites:'
-    $missing | ForEach-Object { Write-Error "  - $_" }
-    Write-Error 'Install the listed prerequisites, open a new PowerShell window, then run this installer again.'
+    # Write directly to stderr so $ErrorActionPreference does not stop after the
+    # first line and hide the remaining prerequisite setup commands.
+    [Console]::Error.WriteLine('error: missing prerequisites:')
+    $missing | ForEach-Object { [Console]::Error.WriteLine("  - $_") }
+    [Console]::Error.WriteLine('Install the listed prerequisites, open a new PowerShell window, then run this installer again.')
     exit 1
 }
 

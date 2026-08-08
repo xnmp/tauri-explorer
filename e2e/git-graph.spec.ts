@@ -728,7 +728,6 @@ test.describe("Git graph snapshot cache (#255)", () => {
     );
     expect(flashes).toBe(0);
   });
-
 });
 
 test.describe("Git graph commit context actions", () => {

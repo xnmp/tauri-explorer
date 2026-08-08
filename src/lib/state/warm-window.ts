@@ -269,6 +269,11 @@ export async function runWarmWindow(measure: boolean): Promise<void> {
       /* unsupported platform */
     }
 
+    // Unlike a fresh child window, this webview was mounted while parked, so
+    // tell its existing navigation bar to enter address-bar editing now that
+    // the native window is active.
+    window.dispatchEvent(new Event("explorer:focus-address-bar"));
+
     // Activation latency telemetry (event received → window shown), durable in
     // the app log next to the Rust `Startup:` line.
     const dt = performance.now() - tActivate;

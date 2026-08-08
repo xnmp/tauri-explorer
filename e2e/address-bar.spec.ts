@@ -30,7 +30,9 @@ test.describe("Address bar path entry", () => {
 
     const input = page.locator(".path-input");
     await expect(input).toBeFocused();
-    await expect(input).toHaveValue("/home/user");
+    await input.pressSequentially("/");
+    await expect(input).toHaveValue("/");
+    await page.screenshot({ path: "evidence/ac-1-address-bar-focus.png" });
   });
 
   test("typing a path and pressing Enter navigates the pane there", async ({ page }) => {

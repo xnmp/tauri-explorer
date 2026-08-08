@@ -55,7 +55,21 @@ describe.skipIf(process.platform !== 'win32')('Windows installer invocation', ()
 				expect(msiArgument).toMatch(/^".*tauri explorer.*\.msi"$/);
 			}
 			expect(result.msiVerbs).toEqual(['RunAs', 'RunAs']);
-			expect(result.rebootMessage).toContain('restart is required');
+		} finally {
+			await rm(sandbox, { force: true, recursive: true });
+		}
+	}, 15_000);
+
+	it('reports a successful installation that requires a reboot', async () => {
+		const sandbox = await mkdtemp(join(tmpdir(), 'tauri-explorer installer reboot '));
+		const harnessPath = join(sandbox, 'reboot-required.ps1');
+		try {
+			await writeFile(harnessPath, powershellHarness, 'utf8');
+			const result = await powershellResult(['-File', harnessPath, installerFilePath, '3010']);
+
+			expect(result.code).toBe(0);
+			expect(result.output).toContain('Installed tauri-explorer. Restart Windows before launching it.');
+			expect(result.output).not.toContain('MSI installation failed');
 		} finally {
 			await rm(sandbox, { force: true, recursive: true });
 		}
@@ -74,7 +88,7 @@ async function powershellResult(args: string[]) {
 }
 
 const powershellHarness = String.raw`
-param([string]$Installer)
+param([string]$Installer, [int]$MsiExitCode = 0)
 $ErrorActionPreference = 'Stop'
 $env:OS = 'Windows_NT'
 $global:installerBuildCalls = @()
@@ -82,9 +96,8 @@ $global:installerGitCommands = @()
 $global:installerMsiArguments = @()
 $global:installerMsiVerbs = @()
 $global:installerMessages = @()
-$global:installerMsiExitCodes = @(0, 3010)
-$global:installerMsiLaunches = 0
 $global:installerTemporaryCheckout = $null
+$global:installerMsiExitCode = $MsiExitCode
 
 function global:git {
     $global:installerGitCommands += ,@($args)
@@ -115,12 +128,11 @@ function global:Start-Process {
     param([string]$FilePath, [object[]]$ArgumentList, [string]$Verb, [switch]$Wait, [switch]$PassThru)
     $global:installerMsiArguments += $ArgumentList[1]
     $global:installerMsiVerbs += $Verb
-    $exitCode = $global:installerMsiExitCodes[$global:installerMsiLaunches]
-    $global:installerMsiLaunches += 1
-    [pscustomobject]@{ ExitCode = $exitCode }
+    [pscustomobject]@{ ExitCode = $global:installerMsiExitCode }
 }
 function global:Write-Host {
     $global:installerMessages += ($args -join ' ')
+    Microsoft.PowerShell.Utility\Write-Host @args
 }
 
 $existing = Join-Path ([System.IO.Path]::GetTempPath()) 'tauri explorer existing checkout'

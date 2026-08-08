@@ -24,7 +24,7 @@ const snap = (): GraphSnapshot => ({
 
 describe("git-graph-cache", () => {
   const repo = "/home/user/project";
-  const tabRepos = Array.from({ length: 12 }, (_, index) => `/home/user/graph-tab-${index}`);
+  const tabRepos = Array.from({ length: 17 }, (_, index) => `/home/user/graph-tab-${index}`);
 
   beforeEach(() => {
     // Clear any keys a prior test left behind.
@@ -51,7 +51,7 @@ describe("git-graph-cache", () => {
   });
 
   it("keeps snapshots for every graph in the supported 12-tab fan-out", () => {
-    const keys = tabRepos.map((tabRepo) => snapshotKey(tabRepo, null, false));
+    const keys = tabRepos.slice(0, 12).map((tabRepo) => snapshotKey(tabRepo, null, false));
 
     for (const key of keys) cacheSnapshot(key, snap());
 
@@ -59,6 +59,17 @@ describe("git-graph-cache", () => {
     // in the load-suite fan-out must therefore have a snapshot to paint from
     // instead of waiting for a new git log request during the switch.
     for (const key of keys) expect(getSnapshot(key)).toBeDefined();
+  });
+
+  it("bounds the snapshot cache and evicts the oldest graph after its capacity", () => {
+    const keys = tabRepos.map((tabRepo) => snapshotKey(tabRepo, null, false));
+
+    for (const key of keys) cacheSnapshot(key, snap());
+
+    // The tab fan-out needs headroom, but snapshots remain bounded page-0
+    // data. A seventeenth graph replaces the least recently inserted one.
+    expect(getSnapshot(keys[0])).toBeUndefined();
+    for (const key of keys.slice(1)) expect(getSnapshot(key)).toBeDefined();
   });
 
   it("evicts every filter variant for a repo but leaves other repos", () => {

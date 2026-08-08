@@ -18,8 +18,6 @@ import { describe, it, expect, afterEach } from "vitest";
 import { createWindowTabsManager } from "$lib/state/window-tabs.svelte";
 import { settingsStore } from "$lib/state/settings.svelte";
 
-const managers: Array<ReturnType<typeof createWindowTabsManager>> = [];
-
 // Mirrors mock-invoke.ts's git_repo_root mock: any path under this prefix
 // resolves to the repo root "/home/user/Documents/project".
 const REPO_ROOT = "/home/user/Documents/project";
@@ -27,12 +25,10 @@ const REPO_ROOT = "/home/user/Documents/project";
 function freshManager() {
   const manager = createWindowTabsManager();
   manager.init("/home/user", true);
-  managers.push(manager);
   return manager;
 }
 
-afterEach(async () => {
-  await Promise.all(managers.splice(0).map((manager) => manager.dispose()));
+afterEach(() => {
   // Tests below toggle the setting directly; always restore the default so
   // later tests (and other describe blocks in this file) see it on.
   settingsStore.update({ tabTitleGitRoot: true });

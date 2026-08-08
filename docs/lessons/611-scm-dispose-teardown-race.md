@@ -8,6 +8,8 @@ into an `EnvironmentTeardownError`.
 
 The manager retains initial-load promises and collects every explorer cleanup,
 including cleanup started when a pane or tab is removed from the live registry.
+If removed-pane cleanup fails before teardown begins, it is reported through
+the application error boundary rather than being silently discarded.
 Its `dispose()` waits for both groups to settle before propagating a cleanup
 failure, so one rejected cleanup cannot let a sibling cleanup or initial load
 continue after test teardown. Tests that create a manager must await

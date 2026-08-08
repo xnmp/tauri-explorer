@@ -28,6 +28,8 @@ The window-tab manager owns asynchronous pane work that it starts or destroys:
 - Synchronous restore and initialization paths cannot await replaced explorer
   cleanup. They catch and report that failure through the application console
   boundary, so it cannot become an unhandled rejection.
+- Pane-removal cleanup that rejects before disposal has a chance to observe it
+  is likewise reported through that boundary.
 
 ## Consequences
 

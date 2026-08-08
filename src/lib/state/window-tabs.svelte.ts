@@ -198,7 +198,10 @@ function createWindowTabsManager() {
     pendingRemovedExplorerCleanups.add(cleanup);
     void cleanup.then(
       () => pendingRemovedExplorerCleanups.delete(cleanup),
-      () => pendingRemovedExplorerCleanups.delete(cleanup),
+      (error) => {
+        pendingRemovedExplorerCleanups.delete(cleanup);
+        console.error("Failed to clean up removed explorer:", error);
+      },
     );
   }
 

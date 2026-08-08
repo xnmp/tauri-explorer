@@ -45,8 +45,9 @@ test("keeps image AI actions grouped while non-AI plugin actions stay top-level"
 
   const menu = page.locator(".context-menu");
   await expect(menu).toBeVisible();
-  await expect(menu.locator(":scope > .menu-item").filter({ hasText: "Edit with Nano Banana" })).toHaveCount(0);
-  await expect(menu.getByText("Create Theme from Image", { exact: true })).toBeVisible();
+  const topLevelItems = menu.locator(":scope > .menu-item");
+  await expect(topLevelItems.filter({ hasText: "Edit with Nano Banana" })).toHaveCount(0);
+  await expect(topLevelItems.getByText("Create Theme from Image", { exact: true })).toBeVisible();
 
   const aiTrigger = menu.getByRole("menuitem", { name: "AI", exact: true });
   await aiTrigger.hover();

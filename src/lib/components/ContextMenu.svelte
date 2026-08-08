@@ -273,7 +273,7 @@
     const vh = clientToFixed(window.innerHeight);
     const menuW = menuEl.offsetWidth;
     const menuH = menuEl.offsetHeight;
-    const submenuW = 180; // width of the widest submenu (AI actions)
+    const submenuW = 200; // AI minimum width plus padding and borders
     const submenuH = 280; // generous estimate for tallest submenu (List: 8 items)
     return {
       flipLeft: clampedX + menuW + submenuW > vw - 8,

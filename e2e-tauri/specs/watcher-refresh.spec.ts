@@ -110,6 +110,100 @@ describe("filesystem watcher refresh", () => {
     });
   });
 
+  it("backs off real watcher refreshes after a slow listing then restores normal cadence", async () => {
+    await navigateTo(scratchDir);
+
+    // This is intentionally installed below the browser-facing Tauri invoke
+    // bridge, not at the refresh manager: Node writes still travel through the
+    // real Rust notify watcher, the production event listener, and pane refresh.
+    // The first watcher refresh establishes a healthy baseline; the second is
+    // slow; the third is healthy again.
+    await browser.execute((watchedPath: string) => {
+      type Internals = {
+        invoke: (command: string, args?: { path?: string }, options?: unknown) => Promise<unknown>;
+        __adaptiveOriginalInvoke?: Internals["invoke"];
+        __adaptiveRefreshStarts?: number[];
+        __adaptiveDelays?: number[];
+      };
+      const internals = (window as unknown as { __TAURI_INTERNALS__: Internals }).__TAURI_INTERNALS__;
+      internals.__adaptiveOriginalInvoke = internals.invoke;
+      internals.__adaptiveRefreshStarts = [];
+      internals.__adaptiveDelays = [100, 3000, 100, 0];
+      internals.invoke = (command, args, options) => {
+        const result = internals.__adaptiveOriginalInvoke!(command, args, options);
+        if (command !== "start_streaming_directory" || args?.path !== watchedPath) return result;
+        const starts = internals.__adaptiveRefreshStarts!;
+        const delay = internals.__adaptiveDelays![starts.length] ?? 0;
+        starts.push(performance.now());
+        return new Promise((resolve, reject) => {
+          setTimeout(() => result.then(resolve, reject), delay);
+        });
+      };
+    }, scratchDir);
+
+    fs.writeFileSync(path.join(scratchDir, "adaptive-baseline.txt"), "baseline\n");
+    await browser.waitUntil(
+      async () => (await entryNames()).includes("adaptive-baseline.txt"),
+      { timeout: 25_000, timeoutMsg: "healthy baseline watcher refresh never completed" },
+    );
+
+    fs.writeFileSync(path.join(scratchDir, "adaptive-slow.txt"), "slow\n");
+    await browser.waitUntil(
+      async () =>
+        (await browser.execute(() =>
+          (window as unknown as { __TAURI_INTERNALS__: { __adaptiveRefreshStarts?: number[] } })
+            .__TAURI_INTERNALS__.__adaptiveRefreshStarts?.length ?? 0,
+        )) >= 2,
+      { timeoutMsg: "slow watcher refresh never started" },
+    );
+
+    // This separate native event arrives while the delayed second listing is
+    // in flight. A fixed two-second cadence would start a third listing soon
+    // after the slow result lands; adaptive backoff must keep it pending.
+    await browser.pause(500);
+    fs.writeFileSync(path.join(scratchDir, "adaptive-deferred.txt"), "deferred\n");
+    await browser.pause(3500);
+    const callsBeforeBackoffExpires = await browser.execute(
+      () =>
+        (window as unknown as { __TAURI_INTERNALS__: { __adaptiveRefreshStarts?: number[] } })
+          .__TAURI_INTERNALS__.__adaptiveRefreshStarts?.length ?? 0,
+    );
+    expect(callsBeforeBackoffExpires).toBe(2);
+
+    await browser.waitUntil(
+      async () => (await entryNames()).includes("adaptive-deferred.txt"),
+      { timeout: 25_000, timeoutMsg: "adaptive trailing watcher refresh never completed" },
+    );
+    const startsAfterBackoff = await browser.execute(
+      () =>
+        (window as unknown as { __TAURI_INTERNALS__: { __adaptiveRefreshStarts?: number[] } })
+          .__TAURI_INTERNALS__.__adaptiveRefreshStarts ?? [],
+    );
+    expect(startsAfterBackoff).toHaveLength(3);
+    // The capped adaptive delay is eight seconds from the slow listing start;
+    // generous headroom still distinguishes it from the normal two seconds.
+    expect(startsAfterBackoff[2] - startsAfterBackoff[1]).toBeGreaterThan(6500);
+
+    fs.writeFileSync(path.join(scratchDir, "adaptive-recovered.txt"), "recovered\n");
+    await browser.waitUntil(
+      async () => (await entryNames()).includes("adaptive-recovered.txt"),
+      { timeout: 25_000, timeoutMsg: "healthy watcher refresh never recovered normal cadence" },
+    );
+    const recoveredStarts = await browser.execute(
+      () =>
+        (window as unknown as { __TAURI_INTERNALS__: { __adaptiveRefreshStarts?: number[] } })
+          .__TAURI_INTERNALS__.__adaptiveRefreshStarts ?? [],
+    );
+    expect(recoveredStarts).toHaveLength(4);
+    expect(recoveredStarts[3] - recoveredStarts[2]).toBeLessThan(4000);
+
+    await browser.execute(() => {
+      type Internals = { invoke: unknown; __adaptiveOriginalInvoke?: unknown };
+      const internals = (window as unknown as { __TAURI_INTERNALS__: Internals }).__TAURI_INTERNALS__;
+      if (internals.__adaptiveOriginalInvoke) internals.invoke = internals.__adaptiveOriginalInvoke;
+    });
+  });
+
   it("a file deleted outside the app disappears without any UI action", async () => {
     fs.rmSync(path.join(scratchDir, "external.txt"));
 

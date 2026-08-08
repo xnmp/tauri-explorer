@@ -6,10 +6,13 @@ asynchronously. Letting either task outlive manager disposal can send diagnostic
 through Vitest after its worker RPC has closed, turning an otherwise green run
 into an `EnvironmentTeardownError`.
 
-The manager retains initial-load promises and collects every explorer cleanup.
+The manager retains initial-load promises and collects every explorer cleanup,
+including cleanup started when a pane or tab is removed from the live registry.
 Its `dispose()` waits for both groups to settle before propagating a cleanup
 failure, so one rejected cleanup cannot let a sibling cleanup or initial load
-continue after test teardown. Vitest drains factory-created managers after each
-test, so legacy tests also settle that work before their worker closes.
+continue after test teardown. Tests that create a manager must await
+`manager.dispose()`. The Vitest setup also centrally drains every initialized
+manager, preventing a newly added test from reintroducing the race by omitting
+local teardown.
 
 The ordering and cleanup-failure contract is governed by [ADR 0002](../adr/0002-window-tabs-teardown.md).

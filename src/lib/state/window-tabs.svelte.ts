@@ -116,20 +116,15 @@ type ExternalSeed = {
   viewMode: string;
 };
 
-type TestManagedWindowTabsManager = {
-  dispose(): Promise<void>;
-};
+type TestManagerRegistry = Set<{ dispose(): Promise<void> }>;
 
-type TestManagerRegistry = {
-  register(manager: TestManagedWindowTabsManager): void;
-  unregister(manager: TestManagedWindowTabsManager): void;
-};
+function testManagerRegistry(): TestManagerRegistry | undefined {
+  return (globalThis as typeof globalThis & {
+    __tauriExplorerTestManagerRegistry?: TestManagerRegistry;
+  }).__tauriExplorerTestManagerRegistry;
+}
 
-type GlobalWithTestManagerRegistry = typeof globalThis & {
-  __tauriExplorerTestManagerRegistry?: TestManagerRegistry;
-};
-
-function createWindowTabsManager(registerForTestTeardown = true) {
+function createWindowTabsManager() {
   // Explorer instances registry (keyed by explorerId)
   const explorers = new Map<string, ExplorerInstance>();
   // Initial directory loads are started when a pane is created so the UI can
@@ -140,6 +135,10 @@ function createWindowTabsManager(registerForTestTeardown = true) {
   // APIs. Retain their asynchronous cleanup so a later dispose still drains it.
   const pendingBackgroundDestructions = new Set<Promise<void>>();
   let disposal: Promise<void> | null = null;
+  // Pane close/collapse removes an explorer from the live registry before its
+  // asynchronous listener cleanup completes. Retain that cleanup separately
+  // so a later manager disposal still owns the in-flight work.
+  const pendingRemovedExplorerCleanups = new Set<Promise<void>>();
 
   // Window-level tab strip
   let tabs = $state<WindowTab[]>([]);
@@ -197,21 +196,29 @@ function createWindowTabsManager(registerForTestTeardown = true) {
     if (failure) throw failure.reason;
   }
 
-  // Restore and initialization are synchronous public APIs, so their replaced
-  // explorers cannot be awaited by the caller. Keep cleanup failures visible at
-  // the application's logging boundary instead of creating unhandled rejections.
-  function destroyExplorersInBackground(operation: string): void {
+  function destroyRemovedExplorer(explorer: ExplorerInstance | undefined): void {
+    if (!explorer) return;
+    const cleanup = explorer.destroy();
+    pendingRemovedExplorerCleanups.add(cleanup);
+    void cleanup.then(
+      () => pendingRemovedExplorerCleanups.delete(cleanup),
+      () => pendingRemovedExplorerCleanups.delete(cleanup),
+    );
+  }
+
+  // Restore and initialization are synchronous APIs, so retain replacement
+  // cleanup for a later disposal and report its failures at the app boundary.
+  function destroyExplorersInBackground(): void {
     const destruction = destroyAllExplorers();
     pendingBackgroundDestructions.add(destruction);
     void destruction.then(
       () => pendingBackgroundDestructions.delete(destruction),
       (error) => {
         pendingBackgroundDestructions.delete(destruction);
-        console.error(`Failed to clean up explorers during ${operation}:`, error);
+        console.error("Failed to clean up previous explorers:", error);
       },
     );
   }
-
   function findTab(tabId: string): WindowTab | null {
     return tabs.find((t) => t.id === tabId) ?? null;
   }
@@ -556,7 +563,7 @@ function createWindowTabsManager(registerForTestTeardown = true) {
 
     // Destroy before clearing — otherwise backend watch refcounts and
     // streaming listeners leak for every replaced explorer.
-    destroyExplorersInBackground("state restore");
+    destroyExplorersInBackground();
 
     tabs = normalized.tabs.map((pt) =>
       reviveTab(pt, {
@@ -573,6 +580,7 @@ function createWindowTabsManager(registerForTestTeardown = true) {
    *  @param overridePath - When set, the active tab navigates here instead
    *    of its saved path. Used for CLI cwd so we don't race two navigations. */
   function init(initialPath: string, skipRestore = false, overridePath?: string): WindowTab | null {
+    testManagerRegistry()?.add(manager);
     if (!skipRestore) {
       // Try to restore from localStorage (cold start / app relaunch)
       const savedState = loadState();
@@ -584,7 +592,7 @@ function createWindowTabsManager(registerForTestTeardown = true) {
     }
 
     // No saved state or child window — create a fresh tab
-    destroyExplorersInBackground("initialization");
+    destroyExplorersInBackground();
     tabs = [];
     activeTabId = null;
 
@@ -656,7 +664,7 @@ function createWindowTabsManager(registerForTestTeardown = true) {
   function destroyTabExplorers(tab: WindowTab): void {
     if (tab.kind !== "explorer") return;
     for (const [paneId, pane] of Object.entries(tab.panes)) {
-      explorers.get(pane.explorerId)?.destroy();
+      destroyRemovedExplorer(explorers.get(pane.explorerId));
       explorers.delete(pane.explorerId);
       disposeScmStore(paneId);
       disposeCommitPanelStore(paneId);
@@ -985,7 +993,7 @@ function createWindowTabsManager(registerForTestTeardown = true) {
       if (closedPanes.length > MAX_CLOSED_PANES) closedPanes.shift();
     }
 
-    explorers.get(pane.explorerId)?.destroy();
+    destroyRemovedExplorer(explorers.get(pane.explorerId));
     explorers.delete(pane.explorerId);
     disposeScmStore(target);
     disposeCommitPanelStore(target);
@@ -1028,7 +1036,7 @@ function createWindowTabsManager(registerForTestTeardown = true) {
       for (const paneId of leafIds(tab.layout)) {
         if (paneId === tab.activePaneId) continue;
         const pane = tab.panes[paneId];
-        explorers.get(pane.explorerId)?.destroy();
+        destroyRemovedExplorer(explorers.get(pane.explorerId));
         explorers.delete(pane.explorerId);
         disposeScmStore(paneId);
         disposeCommitPanelStore(paneId);
@@ -1187,29 +1195,31 @@ function createWindowTabsManager(registerForTestTeardown = true) {
       // so tearing the manager down can't swallow the last interaction.
       tabStatePersister.dispose();
       disposal = (async () => {
-        const [destroyed] = await Promise.allSettled([
+        const [destroyed, , removedCleanups] = await Promise.allSettled([
           destroyAllExplorers(),
           Promise.allSettled(pendingInitialLoads),
+          Promise.allSettled(pendingRemovedExplorerCleanups),
           Promise.allSettled(pendingBackgroundDestructions),
         ]);
         if (destroyed.status === "rejected") throw destroyed.reason;
+        if (removedCleanups.status === "fulfilled") {
+          const failure = removedCleanups.value.find(
+            (result): result is PromiseRejectedResult => result.status === "rejected",
+          );
+          if (failure) throw failure.reason;
+        }
       })();
-      const registry = (globalThis as GlobalWithTestManagerRegistry).__tauriExplorerTestManagerRegistry;
       void disposal.then(
-        () => registry?.unregister(manager),
-        () => registry?.unregister(manager),
+        () => testManagerRegistry()?.delete(manager),
+        () => testManagerRegistry()?.delete(manager),
       );
       return disposal;
     },
   };
-
-  if (registerForTestTeardown) {
-    (globalThis as GlobalWithTestManagerRegistry).__tauriExplorerTestManagerRegistry?.register(manager);
-  }
   return manager;
 }
 
 /** Factory for creating window tabs managers - exported for testing */
 export { createWindowTabsManager };
 
-export const windowTabsManager = createWindowTabsManager(false);
+export const windowTabsManager = createWindowTabsManager();

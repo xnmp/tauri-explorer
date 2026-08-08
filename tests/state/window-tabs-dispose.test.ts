@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const cleanup = vi.hoisted(() => ({
   resolve: null as (() => void) | null,
+  resolvers: [] as Array<() => void>,
   resolveInitialLoad: null as (() => void) | null,
   started: vi.fn(),
   rejectFirst: false,
@@ -35,6 +36,7 @@ vi.mock("$lib/state/explorer.svelte", () => {
         }
         return new Promise<void>((resolve) => {
           cleanup.resolve = resolve;
+          cleanup.resolvers.push(resolve);
         });
       },
     })),
@@ -46,6 +48,7 @@ import { createWindowTabsManager } from "$lib/state/window-tabs.svelte";
 describe("window-tabs disposal (#611)", () => {
   beforeEach(() => {
     cleanup.resolve = null;
+    cleanup.resolvers = [];
     cleanup.resolveInitialLoad = null;
     cleanup.started.mockClear();
     cleanup.rejectFirst = false;
@@ -120,5 +123,83 @@ describe("window-tabs disposal (#611)", () => {
     cleanup.resolveInitialLoad?.();
     await expect(disposed).rejects.toThrow("first cleanup failed");
     expect(settled).toBe(true);
+  });
+
+  it("keeps disposal pending for cleanup started by closing a pane", async () => {
+    const manager = createWindowTabsManager();
+    manager.init("/home/user", true);
+    manager.splitPane("right");
+    manager.closePane();
+    expect(cleanup.started).toHaveBeenCalledOnce();
+
+    const disposed = manager.dispose();
+    expect(cleanup.started).toHaveBeenCalledTimes(2);
+    cleanup.resolvers[1]?.();
+
+    let settled = false;
+    void disposed.then(() => {
+      settled = true;
+    });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(settled).toBe(false);
+
+    cleanup.resolvers[0]?.();
+    await expect(disposed).resolves.toBeUndefined();
+  });
+
+  it("keeps disposal pending for cleanup started by collapsing panes", async () => {
+    const manager = createWindowTabsManager();
+    manager.init("/home/user", true);
+    manager.splitPane("right");
+    manager.splitPane("down");
+    manager.toggleDualPane();
+    expect(cleanup.started).toHaveBeenCalledTimes(2);
+
+    const disposed = manager.dispose();
+    expect(cleanup.started).toHaveBeenCalledTimes(3);
+    cleanup.resolvers[2]?.();
+
+    let settled = false;
+    void disposed.then(() => {
+      settled = true;
+    });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(settled).toBe(false);
+
+    cleanup.resolvers[0]?.();
+    cleanup.resolvers[1]?.();
+    await expect(disposed).resolves.toBeUndefined();
+  });
+
+  it("reports replaced-explorer cleanup failures instead of leaking a rejection", async () => {
+    cleanup.rejectFirst = true;
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const manager = createWindowTabsManager();
+    manager.init("/home/user", true);
+    manager.init("/home/user", true);
+
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(error).toHaveBeenCalledWith(
+      "Failed to clean up previous explorers:",
+      expect.objectContaining({ message: "first cleanup failed" }),
+    );
+
+    const disposed = manager.dispose();
+    cleanup.resolve?.();
+    await expect(disposed).resolves.toBeUndefined();
+  });
+
+  it("registers initialized managers for the shared test teardown drain", async () => {
+    const manager = createWindowTabsManager();
+    manager.init("/home/user", true);
+    const registry = (globalThis as typeof globalThis & {
+      __tauriExplorerTestManagerRegistry?: Set<{ dispose(): Promise<void> }>;
+    }).__tauriExplorerTestManagerRegistry;
+    expect(registry).toContain(manager);
+
+    const disposed = manager.dispose();
+    cleanup.resolve?.();
+    await disposed;
+    expect(registry).not.toContain(manager);
   });
 });

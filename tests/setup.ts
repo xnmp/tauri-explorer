@@ -4,27 +4,17 @@
  */
 import { afterEach, vi } from "vitest";
 
-type TestManagedWindowTabsManager = {
+type TestManager = {
   dispose(): Promise<void>;
 };
 
-const testManagers = new Set<TestManagedWindowTabsManager>();
+const managerRegistry = new Set<TestManager>();
 
-// Factory-created managers register here so every test receives deterministic
-// teardown, including legacy tests that predate async explorer cleanup (#611).
+// Managers register when initialized, so every test gets the same awaited
+// lifecycle drain even when its local teardown forgets to call dispose().
 (globalThis as typeof globalThis & {
-  __tauriExplorerTestManagerRegistry?: {
-    register(manager: TestManagedWindowTabsManager): void;
-    unregister(manager: TestManagedWindowTabsManager): void;
-  };
-}).__tauriExplorerTestManagerRegistry = {
-  register(manager) {
-    testManagers.add(manager);
-  },
-  unregister(manager) {
-    testManagers.delete(manager);
-  },
-};
+  __tauriExplorerTestManagerRegistry?: Set<TestManager>;
+}).__tauriExplorerTestManagerRegistry = managerRegistry;
 
 export async function drainWindowTabsManagers(): Promise<void> {
   // A few legacy suites use fake timers. Directory-listing cleanup uses async
@@ -32,8 +22,8 @@ export async function drainWindowTabsManagers(): Promise<void> {
   // real timers and draining managers at the common environment boundary.
   if (vi.isFakeTimers()) await vi.runAllTimersAsync();
   vi.useRealTimers();
-  const managers = [...testManagers];
-  testManagers.clear();
+  const managers = [...managerRegistry];
+  managerRegistry.clear();
   const results = await Promise.allSettled(managers.map((manager) => manager.dispose()));
   const failure = results.find(
     (result): result is PromiseRejectedResult => result.status === "rejected",

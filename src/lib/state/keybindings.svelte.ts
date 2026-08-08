@@ -277,6 +277,19 @@ function createKeybindingsStore() {
   }
 
   /**
+   * Whether this event is the prefix of one specific configured chord.
+   *
+   * Terminal input ownership uses this to grant a deliberately narrow
+   * exception without allowing every Explorer chord to consume shell input.
+   */
+  function matchesChordPrefixForCommand(event: KeyboardEvent, commandId: string): boolean {
+    const chord = getChordForCommand(commandId);
+    if (!chord) return false;
+    const matchOpts = superKeyHeld && !event.metaKey ? { metaHeld: true } : undefined;
+    return matchesShortcut(event, chord.prefix, matchOpts);
+  }
+
+  /**
    * Check for shortcut conflicts.
    * Returns command IDs that would conflict with the given shortcut.
    */
@@ -330,6 +343,7 @@ function createKeybindingsStore() {
     getAllBindings,
     findMatchingCommand,
     matchesAnyBinding,
+    matchesChordPrefixForCommand,
     findConflicts,
     cancelChord,
     _clearForTesting,

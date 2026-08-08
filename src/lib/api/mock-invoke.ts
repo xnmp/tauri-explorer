@@ -1542,7 +1542,15 @@ const mockCommands: Record<string, CommandHandler> = {
     return { results: results.slice(0, limit) };
   },
 
-  start_streaming_search: () => {
+  start_streaming_search: (args) => {
+    // Browser Quick Open regressions can assert the real component's IPC
+    // boundary without replacing its search API. This stays mock-only: the
+    // production backend never reads this diagnostic key.
+    const calls = JSON.parse(localStorage.getItem("mock-streaming-searches") ?? "[]") as Array<{
+      query: string;
+    }>;
+    calls.push({ query: String(args.query ?? "") });
+    localStorage.setItem("mock-streaming-searches", JSON.stringify(calls));
     return 1; // Mock search ID
   },
 

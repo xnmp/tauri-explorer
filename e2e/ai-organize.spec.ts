@@ -25,6 +25,28 @@ async function setApiKey(page: Page, key: string) {
 }
 
 test.describe("AI destination suggestions", () => {
+  test("groups file AI actions in an AI submenu", async ({ page }) => {
+    await page.goto("/?path=/home/user/Documents");
+    await waitForEntries(page);
+
+    const entry = page.locator(".entry-item").filter({ hasText: "notes.md" }).first();
+    await entry.click();
+    await entry.click({ button: "right" });
+    const menu = page.locator(".context-menu");
+    await menu.waitFor({ state: "visible", timeout: 3000 });
+
+    await expect(menu.locator(':scope > .menu-item:has-text("Suggest destination")')).toHaveCount(0);
+
+    const aiGroup = menu.locator(":scope > .submenu-wrapper").filter({ hasText: "AI" });
+    await expect(aiGroup.getByRole("menuitem", { name: "AI", exact: true })).toBeVisible();
+    await aiGroup.hover();
+
+    const suggestDestination = aiGroup.locator('.submenu .menu-item:has-text("Suggest destination")');
+    await expect(suggestDestination).toBeVisible();
+    await suggestDestination.click();
+    await expect(page.locator('[aria-labelledby="ai-organize-title"]')).toBeVisible();
+  });
+
   test("suggests candidate folders and moves the file on accept", async ({ page }) => {
     await page.goto("/?path=/home/user/Documents");
     await waitForEntries(page);

@@ -39,12 +39,15 @@ test.describe("AI destination suggestions", () => {
 
     const aiGroup = menu.locator(":scope > .submenu-wrapper").filter({ hasText: "AI" });
     await expect(aiGroup.getByRole("menuitem", { name: "AI", exact: true })).toBeVisible();
+    await page.screenshot({ path: "evidence/ac-1-ai-submenu-entry.png" });
     await aiGroup.hover();
 
     const suggestDestination = aiGroup.locator('.submenu .menu-item:has-text("Suggest destination")');
     await expect(suggestDestination).toBeVisible();
+    await page.screenshot({ path: "evidence/ac-2-ai-actions.png" });
     await suggestDestination.click();
     await expect(page.locator('[aria-labelledby="ai-organize-title"]')).toBeVisible();
+    await page.screenshot({ path: "evidence/ac-3-suggest-destination-dialog.png" });
   });
 
   test("suggests candidate folders and moves the file on accept", async ({ page }) => {

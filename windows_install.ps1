@@ -114,10 +114,12 @@ try {
     # RunAs makes the UAC consent boundary explicit before a machine installer
     # changes system state.
     $process = Start-Process msiexec.exe -ArgumentList @('/i', $quotedMsiPath, '/passive', '/norestart') -Verb RunAs -Wait -PassThru
-    if ($process.ExitCode -eq 3010) {
-        Write-Host 'Installed tauri-explorer. A restart is required before all changes take effect.'
-    } elseif ($process.ExitCode -ne 0) {
+    if ($process.ExitCode -ne 0 -and $process.ExitCode -ne 3010) {
         Fail "MSI installation failed with exit code $($process.ExitCode)"
+    }
+
+    if ($process.ExitCode -eq 3010) {
+        Write-Host 'Installed tauri-explorer. Restart Windows before launching it.'
     } else {
         Write-Host 'Installed tauri-explorer. Launch it from the Start menu.'
     }

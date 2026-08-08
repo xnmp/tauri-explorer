@@ -6,6 +6,10 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 
 ---
 
+## Root installers — platform-specific source install entry points.
+- `windows_install.ps1` — Windows PowerShell source installer: validates Git/Rust/Bun and the VC toolchain, uses an existing checkout or temporary HTTPS clone, builds the MSI, invokes elevated `msiexec`, reports reboot-required success, and cleans temporary clones. Governed by `docs/adr/0001-windows-installer-trust-boundary.md`.
+- `tests/windows-install-script.test.ts` — README and Windows-only invocation seam for `windows_install.ps1`; mocks prerequisite, source-build, clone, and MSI outcomes (including reboot-required `3010`) without installing software.
+
 ## src/routes/ — SPA entry
 - `+page.svelte` — app root. Global keyboard shortcuts, store init, layout composition (TitleBar > toolbar > Sidebar + PaneContainer > StatusBar), overlay dialogs. Open for global shortcut wiring / top-level layout.
 - `+layout.ts` — SvelteKit adapter-static SPA config (prerender/ssr flags). Rarely touched.

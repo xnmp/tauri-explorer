@@ -318,6 +318,14 @@ backend for E2E/browser).
 - `src-tauri/src/wallpaper.rs` (setAsWallpaper), `system.rs` (get_app_info, dirs), `portal.rs` (Linux portals)
 - `src-tauri/src/files/shortcuts.rs` — .lnk/.desktop resolution
 
+## Windows source installer
+
+- `README.md` — documented one-command PowerShell invocation.
+- `windows_install.ps1` — trusted Windows source-install entry point: prerequisite checks → existing checkout or temporary HTTPS clone → Tauri MSI build → explicit-UAC `msiexec`; reports `3010` as reboot-required success and removes temporary clones in `finally`.
+- `tests/windows-install-script.test.ts` — Windows-only PowerShell invocation harness; exercises missing tools, existing and cloned checkouts, quoted MSI paths, UAC, cleanup, and reboot-required success without building or installing software.
+- `docs/adr/0001-windows-installer-trust-boundary.md` — governs the installer download/trust, elevation, failure, reboot, and cleanup boundary.
+- FLOW: README command or local `windows_install.ps1` → prerequisite/toolchain checks → checkout resolution → `bunx tauri build` → elevated `msiexec`; the Windows CI job runs the invocation harness against this seam.
+
 ---
 
 ## Cross-cutting

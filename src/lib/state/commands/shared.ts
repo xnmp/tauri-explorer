@@ -53,7 +53,7 @@ export async function openNewWindow(
     savePersisted(tabSeedKey(label), { snapshot: tabSnapshot, ts: Date.now() });
   }
   const baseUrl = window.location.origin + window.location.pathname;
-  const params = new URLSearchParams({ path });
+  const params = new URLSearchParams({ path, focusAddressBar: "1" });
   const homePath = resolveLaunchHomePath();
   if (homePath) params.set("home", homePath);
   if (viewMode) params.set("viewMode", viewMode);

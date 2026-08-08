@@ -1,4 +1,4 @@
-# ADR 0001 — Window-tab teardown owns asynchronous pane work
+# ADR 0002 — Window-tab teardown owns asynchronous pane work
 
 **Status:** Accepted
 

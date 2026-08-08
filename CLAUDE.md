@@ -40,7 +40,9 @@ Rules that bite:
 - Refresh policy is split deliberately: WHEN=`refresh-manager`, WHETHER=`pane-watch`, HOW=`pane-refresh`. Don't add a fourth gate, and don't build private refresh stacks inside components — the git graph did, and it produced #431/#432.
 - Pane focus is **state, not DOM focus**: `ExplorerPane` gates its window-level keydown listener on `windowTabsManager.activePaneId === paneId`, so moving focus between panes is `setActivePane` alone — calling `.focus()` on the pane element is neither necessary nor sufficient. Assert on `.explorer-pane.active`, not on `document.activeElement`.
 - Native window titles have two phases: every creation path (Rust main, fresh child, parked warm window) must seed the requested title before visibility, then the page's reactive `window-title` sync follows the active explorer path across navigation/tab/pane changes.
+- Recycle Bin is a native shell surface, not a portable directory path: launch it through `system::open_recycle_bin` (Windows uses `shell:RecycleBinFolder`, Linux uses `trash:///`, macOS opens `~/.Trash`) instead of sending it through directory listing.
 - Keep state machines and caches out of component-local scope (`<script module>` in a `.svelte` file is not a state layer). If it can't be unit-tested through an import, it will eventually be wrong unobserved (#444).
+- Quick Open keeps local active-pane/recent/frecency matches immediate, but its recursive backend walk goes through `domain/quick-open-search.ts`; retain its trailing debounce and invalidate an active stream on new input so large deferred trees do not compete with typing. Detach the captured stream listener before awaiting cancellation IPC, or a late cancellation can remove its replacement (#600).
 - Terminal focus gives terminal-hosted applications ownership of every key except the small, availability-aware core-navigation allowlist in `domain/terminal-keys.ts` (Quick Open, Command Palette, and previous/next tab). Keep the ownership decision shared by `+page.svelte` and `TerminalPanel.svelte`.
 - Git graph lineage is first-parent topology plus the branch paths from
   `assignLayout`, never a lane number or color: paths can curve between lanes
@@ -84,6 +86,8 @@ The public report relay under `website/api/` uses `GITHUB_ISSUE_TOKEN` only for 
 **Adversarial verification for high-risk changes.** Concurrency, caching, perf claims, and anything self-graded by its implementer gets a separate verifier (a subagent with no stake in the claims) that tries to *falsify* each claim — staleness attacks on caches, interleaving attacks on async flows, measured numbers for perf claims — and reports CONFIRMED / PLAUSIBLE / REFUTED per claim. This found real bugs both times it was run; budget for it on any structural change.
 
 **E2E tests assert outcomes**, not existence — a QuickOpen test verifies results appear for a query, not that the modal opened.
+
+Markdown preview content is inserted with `{@html}` in `PreviewPane.svelte`, so its element styles require `:global(...)`; keep heading and link colours on the existing theme variables and verify their computed colours in the browser.
 
 The Linux FileChooser portal is selected through the user's
 `~/.config/xdg-desktop-portal/portals.conf`; do not add deprecated `UseIn`

@@ -12,4 +12,4 @@ failure, so one rejected cleanup cannot let a sibling cleanup or initial load
 continue after test teardown. Tests that create a manager must await
 `manager.dispose()`.
 
-The ordering and cleanup-failure contract is governed by [ADR 0001](../adr/0001-window-tabs-teardown.md).
+The ordering and cleanup-failure contract is governed by [ADR 0002](../adr/0002-window-tabs-teardown.md).

@@ -169,7 +169,7 @@ function createWindowTabsManager() {
   );
 
   /** Destroy all registered explorers (unwatch dirs, drop listeners) and clear the registry.
-   *  Settlement and error propagation are defined by ADR 0001. */
+   *  Settlement and error propagation are defined by ADR 0002. */
   async function destroyAllExplorers(): Promise<void> {
     const destructions = [...explorers.values()].map((explorer) => explorer.destroy());
     explorers.clear();
@@ -1142,7 +1142,7 @@ function createWindowTabsManager() {
     /** Tear down this manager: remove the window focus listener and destroy
      *  all explorers. The app singleton lives for the whole session, but the
      *  factory is used in tests where undisposed managers would leak (#439).
-     *  Ordering and failure propagation are defined by ADR 0001. */
+     *  Ordering and failure propagation are defined by ADR 0002. */
     async dispose(): Promise<void> {
       if (typeof window !== "undefined") {
         window.removeEventListener("focus", onWindowFocus);

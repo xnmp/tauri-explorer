@@ -31,6 +31,16 @@ export async function openFile(path: string): Promise<ApiResult<void>> {
   }
 }
 
+/** Open the operating system's recycle bin / trash location. */
+export async function openRecycleBin(): Promise<ApiResult<void>> {
+  try {
+    await invoke("open_recycle_bin");
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: extractError(err) };
+  }
+}
+
 /**
  * Open a file at a specific line number using a known text editor.
  * Falls back to default open if no known editor is found.

@@ -51,9 +51,12 @@ if (-not $buildTools) {
 }
 
 if ($missing.Count -gt 0) {
-    Write-Error 'error: missing prerequisites:'
-    $missing | ForEach-Object { Write-Error "  - $_" }
-    Write-Error 'Install the listed prerequisites, open a new PowerShell window, then run this installer again.'
+    # ErrorActionPreference is Stop, so emit one complete error record instead
+    # of terminating on the heading before the actionable commands are shown.
+    $lines = @('error: missing prerequisites:')
+    $lines += $missing | ForEach-Object { "  - $_" }
+    $lines += 'Install the listed prerequisites, open a new PowerShell window, then run this installer again.'
+    Write-Error ($lines -join [Environment]::NewLine)
     exit 1
 }
 

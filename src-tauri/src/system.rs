@@ -1,6 +1,7 @@
 //! System-level commands: trash, launch context, window theme, log paths.
 //! Extracted from lib.rs so the entry point is pure wiring.
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 use crate::error::AppError;
@@ -16,6 +17,44 @@ fn reap_in_background(child: std::process::Child) {
         let mut child = child;
         let _ = child.wait();
     });
+}
+
+/// Immutable, platform-specific command specification for the native recycle
+/// bin surface. Keeping this separate from spawning makes the platform
+/// contract testable without launching the host desktop during tests.
+#[derive(Debug, PartialEq, Eq)]
+struct RecycleBinLauncher {
+    program: &'static str,
+    arguments: Vec<OsString>,
+}
+
+fn recycle_bin_launcher() -> RecycleBinLauncher {
+    #[cfg(target_os = "windows")]
+    {
+        RecycleBinLauncher {
+            program: "explorer.exe",
+            arguments: vec![OsString::from("shell:RecycleBinFolder")],
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        RecycleBinLauncher {
+            program: "open",
+            arguments: vec![dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("/"))
+                .join(".Trash")
+                .into_os_string()],
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        RecycleBinLauncher {
+            program: "gio",
+            arguments: vec![OsString::from("open"), OsString::from("trash:///")],
+        }
+    }
 }
 
 /// True for UNC paths (`\\server\share`, `\\wsl.localhost\Distro\...`). Windows
@@ -95,35 +134,25 @@ pub async fn move_multiple_to_trash(paths: Vec<String>) -> Result<(), AppError> 
 #[tauri::command]
 pub async fn open_recycle_bin() -> Result<(), AppError> {
     files::run_blocking(|| {
-        #[cfg(target_os = "windows")]
-        let mut command = {
-            let mut command = std::process::Command::new("explorer.exe");
-            command.arg("shell:RecycleBinFolder");
-            command
-        };
-
-        #[cfg(target_os = "macos")]
-        let mut command = {
-            let mut command = std::process::Command::new("open");
-            command.arg(
-                dirs::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("/"))
-                    .join(".Trash"),
-            );
-            command
-        };
-
-        #[cfg(target_os = "linux")]
-        let mut command = {
-            let mut command = std::process::Command::new("gio");
-            command.args(["open", "trash:///"]);
-            command
-        };
-
-        command
-            .spawn()
-            .map(reap_in_background)
-            .map_err(AppError::Io)
+        let launcher = recycle_bin_launcher();
+        log::info!(
+            "Recycle Bin: launching native surface via {} {:?}",
+            launcher.program,
+            launcher.arguments
+        );
+        let mut command = std::process::Command::new(launcher.program);
+        command.args(&launcher.arguments);
+        match command.spawn() {
+            Ok(child) => {
+                reap_in_background(child);
+                log::info!("Recycle Bin: native surface launch started");
+                Ok(())
+            }
+            Err(error) => {
+                log::warn!("Recycle Bin: failed to launch native surface: {error}");
+                Err(AppError::Io(error))
+            }
+        }
     })
     .await
 }
@@ -253,6 +282,7 @@ pub async fn restore_from_trash(_paths: Vec<String>) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::{is_launcher_artifact_cwd, recycle_bin_launcher};
+    use std::ffi::OsString;
     use std::path::Path;
 
     #[test]
@@ -281,6 +311,36 @@ mod tests {
         let launcher = recycle_bin_launcher();
 
         assert_eq!(launcher.program, "gio");
-        assert_eq!(launcher.arguments, ["open", "trash:///"]);
+        assert_eq!(
+            launcher.arguments,
+            vec![OsString::from("open"), OsString::from("trash:///")]
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn recycle_bin_launcher_uses_the_windows_shell_namespace() {
+        let launcher = recycle_bin_launcher();
+
+        assert_eq!(launcher.program, "explorer.exe");
+        assert_eq!(
+            launcher.arguments,
+            vec![OsString::from("shell:RecycleBinFolder")]
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn recycle_bin_launcher_uses_the_macos_trash_directory() {
+        let launcher = recycle_bin_launcher();
+
+        assert_eq!(launcher.program, "open");
+        assert_eq!(
+            launcher.arguments,
+            vec![dirs::home_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("/"))
+                .join(".Trash")
+                .into_os_string()]
+        );
     }
 }

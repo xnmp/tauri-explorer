@@ -40,6 +40,7 @@ async function runPaletteCommand(query: string): Promise<void> {
 }
 
 async function navigateToScratch(): Promise<void> {
+  await $(".file-list").waitForExist({ timeout: 10_000 });
   await browser.execute((target) => {
     window.dispatchEvent(new CustomEvent("e2e-navigate", { detail: target }));
   }, scratchDir);

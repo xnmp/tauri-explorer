@@ -216,9 +216,10 @@ export async function runWarmWindow(measure: boolean): Promise<void> {
     }
 
     const explorer = windowTabsManager.getActiveExplorer();
+    let navigation: Promise<void> | undefined;
     if (explorer) {
       if (viewMode) explorer.setViewMode(viewMode);
-      void explorer.navigateTo(path);
+      navigation = explorer.navigateTo(path);
     }
 
     // Geometry first (positioning after show would visibly jump), but a
@@ -270,8 +271,9 @@ export async function runWarmWindow(measure: boolean): Promise<void> {
     }
 
     // Unlike a fresh child window, this webview was mounted while parked, so
-    // tell its existing navigation bar to enter address-bar editing now that
-    // the native window is active.
+    // wait for the requested path before mounting BreadcrumbAutocomplete,
+    // which intentionally captures the explorer path only once on mount.
+    await navigation;
     window.dispatchEvent(new Event("explorer:focus-address-bar"));
 
     // Activation latency telemetry (event received → window shown), durable in

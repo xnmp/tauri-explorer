@@ -13,3 +13,9 @@ the degraded sample; a later healthy listing must restore normal cadence.
 Pending async refreshes can outlive watcher teardown. Guard completion with a
 manager generation so an old listing cannot schedule work for a newly-created
 watcher.
+
+On WebKitGTK, WebDriver-injected scripts can run in an isolated JavaScript
+world. A test-side assignment to `window.__TAURI_INTERNALS__.invoke` may appear
+to succeed and remain readable to later WebDriver scripts without affecting
+the application world's Tauri calls. Configure dev-only application probes
+through DOM `CustomEvent`s and publish observations through DOM state instead.

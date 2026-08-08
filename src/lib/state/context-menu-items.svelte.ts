@@ -14,6 +14,8 @@ export interface ContextMenuItem {
   label: string;
   /** Optional inline SVG path `d` attribute for a 16×16 icon. */
   icon?: string;
+  /** Optional top-level submenu for related plugin actions. */
+  group?: "ai";
   /** Predicate: shown only when it returns true for the current selection. */
   when: (entries: FileEntry[]) => boolean;
   handler: (entries: FileEntry[]) => void | Promise<void>;

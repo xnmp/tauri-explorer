@@ -30,6 +30,8 @@
   // Plugin-contributed context-menu items whose `when` predicate passes for the
   // current selection. Rendered in a divider-separated section below.
   const pluginMenuItems = $derived(contextMenuItems.itemsFor(explorer.getSelectedEntries()));
+  const aiPluginMenuItems = $derived(pluginMenuItems.filter((item) => item.group === "ai"));
+  const ungroupedPluginMenuItems = $derived(pluginMenuItems.filter((item) => item.group !== "ai"));
 
   function runPluginItem(item: (typeof pluginMenuItems)[number]): void {
     void item.handler(explorer.getSelectedEntries());
@@ -250,6 +252,7 @@
   let menuEl: HTMLDivElement | undefined = $state();
   let listSubmenuOpen = $state(false);
   let tilesSubmenuOpen = $state(false);
+  let aiSubmenuOpen = $state(false);
 
   const tileSizeLabels: Record<string, string> = { small: "Small", medium: "Medium", large: "Large", xlarge: "Extra Large" };
 
@@ -686,7 +689,49 @@
 
     {#if pluginMenuItems.length > 0}
       <div class="menu-divider"></div>
-      {#each pluginMenuItems as item (item.id)}
+      {#if aiPluginMenuItems.length > 0}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          class="submenu-wrapper"
+          class:flip-left={submenuFlip.flipLeft}
+          class:flip-up={submenuFlip.flipUp}
+          onmouseenter={() => aiSubmenuOpen = true}
+          onmouseleave={() => aiSubmenuOpen = false}
+        >
+          <button
+            class="menu-item"
+            onclick={() => aiSubmenuOpen = !aiSubmenuOpen}
+            role="menuitem"
+            aria-haspopup="menu"
+            aria-expanded={aiSubmenuOpen}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M8 2.5L9.5 5.5L12.5 7L9.5 8.5L8 11.5L6.5 8.5L3.5 7L6.5 5.5L8 2.5Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+            </svg>
+            <span>AI</span>
+            <svg class="submenu-arrow" width="8" height="8" viewBox="0 0 8 8" fill="none">
+              <path d="M3 1.5L6 4L3 6.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <div class="submenu ai-submenu" class:open={aiSubmenuOpen} role="menu" aria-hidden={!aiSubmenuOpen}>
+            {#each aiPluginMenuItems as item (item.id)}
+              <button class="menu-item" onclick={() => runPluginItem(item)} role="menuitem">
+                {#if item.icon}
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d={item.icon} stroke="currentColor" stroke-width="1.25" stroke-linejoin="round"/>
+                  </svg>
+                {:else}
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <circle cx="8" cy="8" r="5" stroke="currentColor" stroke-width="1.25"/>
+                  </svg>
+                {/if}
+                <span>{item.label}</span>
+              </button>
+            {/each}
+          </div>
+        </div>
+      {/if}
+      {#each ungroupedPluginMenuItems as item (item.id)}
         <button class="menu-item" onclick={() => runPluginItem(item)} role="menuitem">
           {#if item.icon}
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -830,6 +875,15 @@
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-flyout);
     animation: menuIn 100ms cubic-bezier(0, 0, 0, 1);
+  }
+
+  .ai-submenu {
+    min-width: 180px;
+    opacity: 0;
+  }
+
+  .ai-submenu.open {
+    opacity: 1;
   }
 
   /* Flip submenu to the left when it would overflow the viewport */

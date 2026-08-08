@@ -178,6 +178,7 @@ export const aiRenamePlugin: Plugin = {
     ctx.registerContextMenuItem({
       id: "ai-rename.suggest",
       label: "Suggest rename…",
+      group: "ai",
       icon: "M12 2L14 4L5 13H3V11L12 2Z",
       when: (entries) => selectedFile(entries) !== null,
       handler: (entries) => {

@@ -18,11 +18,13 @@ test("groups applicable AI actions in a submenu and keeps destination suggestion
   // AI actions must not compete with file operations in the top-level menu.
   const topLevelItems = menu.locator(":scope > .menu-item");
   await expect(topLevelItems.filter({ hasText: "Suggest destination" })).toHaveCount(0);
-  await expect(topLevelItems.filter({ hasText: /^AI$/ })).toBeVisible();
+  const aiTrigger = menu.getByRole("menuitem", { name: "AI", exact: true });
+  await expect(aiTrigger).toBeVisible();
+  await page.mouse.move(0, 0);
   await page.screenshot({ path: "evidence/ac-1-ai-submenu-entry.png" });
 
   const aiMenu = menu.locator(".ai-submenu");
-  await topLevelItems.filter({ hasText: /^AI$/ }).hover();
+  await aiTrigger.hover();
   await expect(aiMenu.getByText("Suggest destination…", { exact: true })).toBeVisible();
   await expect(aiMenu.getByText("Suggest rename…", { exact: true })).toBeVisible();
   await page.screenshot({ path: "evidence/ac-2-ai-actions.png" });

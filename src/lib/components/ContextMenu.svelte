@@ -879,10 +879,12 @@
 
   .ai-submenu {
     min-width: 180px;
+    animation: none;
     opacity: 0;
   }
 
   .ai-submenu.open {
+    animation: menuIn 100ms cubic-bezier(0, 0, 0, 1);
     opacity: 1;
   }
 

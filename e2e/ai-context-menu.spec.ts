@@ -19,11 +19,12 @@ test("groups applicable AI actions in a submenu and keeps destination suggestion
   const topLevelItems = menu.locator(":scope > .menu-item");
   await expect(topLevelItems.filter({ hasText: "Suggest destination" })).toHaveCount(0);
   const aiTrigger = menu.getByRole("menuitem", { name: "AI", exact: true });
+  const aiMenu = menu.locator(".ai-submenu");
   await expect(aiTrigger).toBeVisible();
   await page.mouse.move(0, 0);
+  await expect(aiMenu).toHaveAttribute("aria-hidden", "true");
   await page.screenshot({ path: "evidence/ac-1-ai-submenu-entry.png" });
 
-  const aiMenu = menu.locator(".ai-submenu");
   await aiTrigger.hover();
   await expect(aiMenu.getByText("Suggest destination…", { exact: true })).toBeVisible();
   await expect(aiMenu.getByText("Suggest rename…", { exact: true })).toBeVisible();

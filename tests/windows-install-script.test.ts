@@ -55,6 +55,7 @@ describe.skipIf(process.platform !== 'win32')('Windows installer invocation', ()
 				expect(msiArgument).toMatch(/^".*tauri explorer.*\.msi"$/);
 			}
 			expect(result.msiVerbs).toEqual(['RunAs', 'RunAs']);
+			expect(result.rebootMessage).toContain('restart is required');
 		} finally {
 			await rm(sandbox, { force: true, recursive: true });
 		}
@@ -80,6 +81,9 @@ $global:installerBuildCalls = @()
 $global:installerGitCommands = @()
 $global:installerMsiArguments = @()
 $global:installerMsiVerbs = @()
+$global:installerMessages = @()
+$global:installerMsiExitCodes = @(0, 3010)
+$global:installerMsiLaunches = 0
 $global:installerTemporaryCheckout = $null
 
 function global:git {
@@ -111,7 +115,12 @@ function global:Start-Process {
     param([string]$FilePath, [object[]]$ArgumentList, [string]$Verb, [switch]$Wait, [switch]$PassThru)
     $global:installerMsiArguments += $ArgumentList[1]
     $global:installerMsiVerbs += $Verb
-    [pscustomobject]@{ ExitCode = 0 }
+    $exitCode = $global:installerMsiExitCodes[$global:installerMsiLaunches]
+    $global:installerMsiLaunches += 1
+    [pscustomobject]@{ ExitCode = $exitCode }
+}
+function global:Write-Host {
+    $global:installerMessages += ($args -join ' ')
 }
 
 $existing = Join-Path ([System.IO.Path]::GetTempPath()) 'tauri explorer existing checkout'
@@ -137,6 +146,7 @@ $temporaryCheckoutRemoved = -not (Test-Path (Split-Path $global:installerTempora
     temporaryCheckoutRemoved = $temporaryCheckoutRemoved
     msiArguments = @($global:installerMsiArguments)
     msiVerbs = @($global:installerMsiVerbs)
+    rebootMessage = $global:installerMessages | Where-Object { $_ -match 'restart is required' } | Select-Object -First 1
 } | ConvertTo-Json -Compress -Depth 4 | ForEach-Object { "RESULT:$_" }
 Remove-Item -Recurse -Force $existing, $downloaded
 `;

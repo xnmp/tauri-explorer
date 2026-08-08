@@ -14,18 +14,32 @@ export interface QuickOpenSearchScheduler {
 export type StartQuickOpenSearch = (query: string) => void;
 
 /**
+ * A trailing pause keeps normal typing from launching a full directory walk
+ * for every intermediate character while still feeling immediate in the UI.
+ */
+export const QUICK_OPEN_SEARCH_DEBOUNCE_MS = 150;
+
+/**
  * Creates the search-start boundary for Quick Open.
  *
- * This initial contract intentionally invokes immediately; the red test pins
- * the required debounce behaviour before the green implementation changes it.
+ * Only the final query in a burst reaches the expensive recursive backend.
  */
 export function createQuickOpenSearchScheduler(
   startSearch: StartQuickOpenSearch,
 ): QuickOpenSearchScheduler {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
   return {
     schedule(query) {
-      startSearch(query);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        startSearch(query);
+      }, QUICK_OPEN_SEARCH_DEBOUNCE_MS);
     },
-    cancel() {},
+    cancel() {
+      if (timer) clearTimeout(timer);
+      timer = null;
+    },
   };
 }

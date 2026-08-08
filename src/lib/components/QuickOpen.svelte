@@ -24,6 +24,7 @@
   import Modal from "./Modal.svelte";
   import type { FileEntry } from "$lib/domain/file";
   import { frecencyStore } from "$lib/state/frecency.svelte";
+  import { createQuickOpenSearchScheduler } from "$lib/domain/quick-open-search";
 
   // Helper to convert SearchResult to FileEntry-like object for icon functions
   function toFileEntry(result: SearchResult): FileEntry {
@@ -66,9 +67,6 @@
   function expandTilde(path: string): string {
     return expandTildePath(path, homeDir);
   }
-
-  // Debounce timer for search
-  let searchTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Streaming search state
   let activeSearchId: number | null = null;
@@ -226,13 +224,15 @@
 
   // Cancel active search and cleanup listener
   async function cancelActiveSearch(): Promise<void> {
-    if (activeSearchId !== null) {
-      await cancelSearch(activeSearchId);
-      activeSearchId = null;
+    const searchId = activeSearchId;
+    activeSearchId = null;
+    if (searchId !== null) {
+      await cancelSearch(searchId);
     }
-    if (unlisten) {
-      unlisten();
-      unlisten = null;
+    const listener = unlisten;
+    unlisten = null;
+    if (listener) {
+      listener();
     }
   }
 
@@ -287,37 +287,15 @@
     });
   }
 
-  // Debounced streaming search
-  function handleInput(): void {
-    if (searchTimer) clearTimeout(searchTimer);
-    pointer.reset();
-
-    if (!query.trim()) {
-      cancelActiveSearch();
-      results = [];
-      lastRawResults = [];
-      selectedIndex = 0;
-      totalScanned = 0;
-      loading = false;
-      return;
-    }
-
-    loading = true;
-    // New query → selection pins back to the top result (VSCode behavior),
-    // even if hover or arrows had moved it in the previous result set.
-    selectedIndex = 0;
-    searchTimer = setTimeout(async () => {
-      // Claim a generation synchronously so debounce callbacks that
-      // interleave across the awaits below can detect they're stale.
-      const generation = ++searchGeneration;
-
-      // Cancel any previous search
+  async function startSearch(queryToSearch: string, generation: number): Promise<void> {
+      // A previous search can still be setting up when new input arrives.
+      // Cancel it before we attach the listener for this generation.
       await cancelActiveSearch();
       if (generation !== searchGeneration) return;
 
       // Show frecency/recent/cwd-listing matches immediately (before the
       // backend responds) — cwd folders appear instantly (#385).
-      const frecencyMatches = [...matchFrecencyAndRecent(query), ...matchCwdEntries(query)];
+      const frecencyMatches = [...matchFrecencyAndRecent(queryToSearch), ...matchCwdEntries(queryToSearch)];
       lastRawResults = [];
       results = mergeResultsByScore([], frecencyMatches);
 
@@ -336,7 +314,7 @@
       if (generation !== searchGeneration) return;
 
       if (streamingAvailable) {
-        const result = await startStreamingSearch(query, cwd, 20);
+        const result = await startStreamingSearch(queryToSearch, cwd, 20);
         if (generation !== searchGeneration) {
           // Superseded while awaiting: cancel the now-orphaned backend search
           if (result.ok) cancelSearch(result.data);
@@ -349,7 +327,7 @@
         }
       } else {
         // Fallback: non-streaming search
-        const result = await fuzzySearch(query, cwd, 20);
+        const result = await fuzzySearch(queryToSearch, cwd, 20);
         if (generation !== searchGeneration) return;
         if (result.ok) {
           lastRawResults = result.data;
@@ -359,7 +337,40 @@
         }
         loading = false;
       }
-    }, 50); // Shorter debounce for streaming - results come in progressively
+  }
+
+  const searchScheduler = createQuickOpenSearchScheduler((queryToSearch) => {
+    void startSearch(queryToSearch, searchGeneration);
+  });
+
+  // Local matches render synchronously on every input. The expensive recursive
+  // search is trailing-debounced so fast typing does not repeatedly walk the
+  // same large directory tree.
+  function handleInput(): void {
+    pointer.reset();
+    // Invalidate events and stop filesystem work as soon as another character
+    // arrives, rather than waiting for the next trailing debounce to fire.
+    searchGeneration += 1;
+    void cancelActiveSearch();
+
+    if (!query.trim()) {
+      searchScheduler.cancel();
+      results = [];
+      lastRawResults = [];
+      selectedIndex = 0;
+      totalScanned = 0;
+      loading = false;
+      return;
+    }
+
+    loading = true;
+    // New query → selection pins back to the top result (VSCode behavior),
+    // even if hover or arrows had moved it in the previous result set.
+    selectedIndex = 0;
+    const frecencyMatches = [...matchFrecencyAndRecent(query), ...matchCwdEntries(query)];
+    lastRawResults = [];
+    results = mergeResultsByScore([], frecencyMatches);
+    searchScheduler.schedule(query);
   }
 
   // Active display list: search results when querying, recent files otherwise
@@ -516,13 +527,11 @@
   // Cleanup on close
   $effect(() => {
     if (!open) {
-      if (searchTimer) {
-        clearTimeout(searchTimer);
-        searchTimer = null;
-      }
+      searchGeneration += 1;
+      searchScheduler.cancel();
       pointer.disarm();
       // Cancel any active streaming search
-      cancelActiveSearch();
+      void cancelActiveSearch();
       totalScanned = 0;
     }
   });

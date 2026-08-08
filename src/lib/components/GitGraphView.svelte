@@ -257,6 +257,7 @@
   // effect below still refreshes from git in the background. The cache is
   // keyed by repo + filter + local-only (#416), so a filtered remount paints
   // its own filtered snapshot — never another filter's rows (#342, #381).
+  let hasCachedSnapshot = false;
   {
     // untrack: the view is {#key}ed on repoPath, so the initial values are
     // the right ones for this instance's lifetime.
@@ -264,6 +265,7 @@
       untrack(() => snapshotKey(repoPath, branchFilter, localOnly, hideRemoteOnly)),
     );
     if (cached) {
+      hasCachedSnapshot = true;
       commits = cached.commits;
       refs = cached.refs;
       hasMore = cached.hasMore;
@@ -970,6 +972,15 @@
     void branchFilter;
     void localOnly;
     void hideRemoteOnly;
+    // PaneContainer remounts the graph whenever a tab becomes active. A
+    // snapshot has already supplied the current observable graph, and the
+    // watcher invalidates it before a remount when git changes externally, so
+    // do not immediately start the same full history walk again.
+    if (hasCachedSnapshot) {
+      hasCachedSnapshot = false;
+      void loadPrs(repoPath);
+      return;
+    }
     untrack(() => void reload());
   });
 

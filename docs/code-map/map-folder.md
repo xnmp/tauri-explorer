@@ -87,7 +87,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `git-palette.ts` — pane-scoped Git Graph branch, commit, and stash targets registered in the window-global command palette; commands are available only for the active graph pane (#520).
 - `git-graph-undo.ts` — bounded session ledger + active-pane request bus for confirmed graph-operation undo (#513); entries are repository-scoped and contain backend-produced expected-state snapshots.
 - `git-graph-file-history.ts` — per-pane SCM-to-graph handoff: buffers a repository-relative file path through a keyed graph remount, delivers directly to an already matching graph, and drops closed-pane requests (#518).
-- `git-graph-cache.ts` — per-repo git-graph snapshot cache + `warmGraphSnapshot`/`fetchPage0Snapshot`; extracted from GitGraphView so `git-warm.ts` no longer imports a component; evicts a repo's snapshots on external (watcher) git changes so a remount never paints stale history (#433, arch Finding 7).
+- `git-graph-cache.ts` — bounded per-repo git-graph snapshot cache + `warmGraphSnapshot`/`fetchPage0Snapshot`; extracted from GitGraphView so `git-warm.ts` no longer imports a component; retains the supported 12-tab fan-out. GitGraphView skips its redundant initial reload for a valid cache hit, while external watcher changes evict a repo's snapshots before remount (#433, #505, arch Finding 7).
 - `git-status.svelte.ts` — per-entry git status cache store.
 - `git-summary-cache.ts` — shared per-repo `git_status` (working-tree summary) fetch: in-flight dedup + short TTL, used by SCM store + git-graph so one change is one scan, not several (#431).
 - `scm.svelte.ts` — Source Control state (staged/unstaged/commit, #54).

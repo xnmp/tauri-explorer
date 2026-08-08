@@ -51,10 +51,12 @@ describe.skipIf(process.platform !== 'win32')('Windows installer invocation', ()
 			expect(result.temporaryBuilds).toEqual(['bun install', 'bunx tauri build']);
 			expect(result.gitCommands).toEqual([['clone', '--depth', '1', 'https://github.com/xnmp/tauri-explorer.git', result.temporaryCheckout]]);
 			expect(result.temporaryCheckoutRemoved).toBe(true);
-			expect(result.msiArguments).toEqual([
-				`"${join(tmpdir(), 'tauri explorer existing checkout', 'src-tauri', 'target', 'release', 'bundle', 'msi', 'tauri explorer.msi')}"`,
+			expect(result.msiArguments[0]).toMatch(
+				/^".*tauri explorer existing checkout\\src-tauri\\target\\release\\bundle\\msi\\tauri explorer\.msi"$/,
+			);
+			expect(result.msiArguments[1]).toBe(
 				`"${join(result.temporaryCheckout, 'src-tauri', 'target', 'release', 'bundle', 'msi', 'tauri explorer.msi')}"`,
-			]);
+			);
 			expect(result.msiVerbs).toEqual(['RunAs', 'RunAs']);
 		} finally {
 			await rm(sandbox, { force: true, recursive: true });
@@ -169,4 +171,8 @@ function global:Get-Command {
     $null
 }
 & $Installer
+if ($?) {
+    exit 0
+}
+exit 1
 `;

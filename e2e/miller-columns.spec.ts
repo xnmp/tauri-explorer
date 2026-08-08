@@ -6,6 +6,46 @@ import { test, expect } from "./fixtures";
 import { HOME_URL, waitForEntries } from "./helpers";
 
 test.describe("Miller columns panel", () => {
+  async function openProjectWithMillerColumns(page: import("./fixtures").Page): Promise<void> {
+    await page.goto("/?path=/home/user/Documents/project");
+    await waitForEntries(page);
+
+    await page.evaluate(() => {
+      const settings = JSON.parse(localStorage.getItem("explorer-settings") || "{}");
+      settings.millerLayers = 2;
+      localStorage.setItem("explorer-settings", JSON.stringify(settings));
+      location.reload();
+    });
+
+    await waitForEntries(page);
+    await expect(page.locator('.miller-col[data-path="/home/user"]')).toBeVisible();
+  }
+
+  test("removes a deleted sibling from its Miller source column", async ({ page }) => {
+    await openProjectWithMillerColumns(page);
+
+    const downloads = page.locator('.miller-col[data-path="/home/user"] .col-entry[data-path="/home/user/Downloads"]');
+    await expect(downloads).toBeVisible();
+    await downloads.click({ button: "right" });
+    await page.locator(".context-menu").getByText("Delete", { exact: true }).click();
+    await page.locator("[role='alertdialog']").getByRole("button", { name: /^Delete/ }).click();
+
+    await expect(downloads).toHaveCount(0);
+  });
+
+  test("removes a moved sibling from its Miller source column", async ({ page }) => {
+    await openProjectWithMillerColumns(page);
+
+    const downloads = page.locator('.miller-col[data-path="/home/user"] .col-entry[data-path="/home/user/Downloads"]');
+    await expect(downloads).toBeVisible();
+    await downloads.click({ button: "right" });
+    await page.locator(".context-menu").getByText("Cut", { exact: true }).click();
+    await page.keyboard.press("Control+v");
+
+    await expect(downloads).toHaveCount(0);
+    await expect(page.locator('.entry-item[data-path="/home/user/Documents/project/Downloads"]')).toBeVisible();
+  });
+
   test("miller columns appear when millerLayers > 0", async ({ page }) => {
     await page.goto(HOME_URL);
     await waitForEntries(page);

@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createQuickOpenSearchController } from "$lib/domain/quick-open-search";
+import {
+  createQuickOpenSearchController,
+  createQuickOpenStreamResources,
+} from "$lib/domain/quick-open-search";
 
 describe("Quick Open recursive-search scheduling", () => {
   beforeEach(() => vi.useFakeTimers());
@@ -35,5 +38,40 @@ describe("Quick Open recursive-search scheduling", () => {
     expect(startSearch).toHaveBeenCalledWith("capture");
     expect(immediateMatches).toHaveBeenCalledTimes(3);
     expect(cancelActiveSearch).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps the replacement stream listener when earlier cancellation resolves late", async () => {
+    let releaseCancellation: (() => void) | null = null;
+    const cancellationGate = new Promise<void>((resolve) => {
+      releaseCancellation = resolve;
+    });
+    const cancelSearch = vi.fn(async () => cancellationGate);
+    const resources = createQuickOpenStreamResources(cancelSearch);
+    const delivered: string[] = [];
+    let emit: ((searchId: number, result: string) => void) | null = null;
+
+    const installListener = () => {
+      emit = (searchId, result) => {
+        if (resources.matchesOrAdopts(searchId)) delivered.push(result);
+      };
+      resources.replaceListener(() => {
+        emit = null;
+      });
+    };
+
+    resources.setSearchId(1);
+    installListener();
+    const cancellingFirstSearch = resources.cancel();
+    expect(cancelSearch).toHaveBeenCalledWith(1);
+    expect(emit).toBeNull();
+
+    resources.setSearchId(2);
+    installListener();
+    releaseCancellation?.();
+    await cancellingFirstSearch;
+
+    emit?.(2, "final recursive result");
+    expect(resources.searchId).toBe(2);
+    expect(delivered).toEqual(["final recursive result"]);
   });
 });

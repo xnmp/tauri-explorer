@@ -11,3 +11,5 @@ Its `dispose()` waits for both groups to settle before propagating a cleanup
 failure, so one rejected cleanup cannot let a sibling cleanup or initial load
 continue after test teardown. Tests that create a manager must await
 `manager.dispose()`.
+
+The ordering and cleanup-failure contract is governed by [ADR 0002](../adr/0002-window-tabs-teardown.md).

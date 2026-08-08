@@ -1,8 +1,8 @@
-# ADR 0002 — Window-tab teardown owns asynchronous pane work
+# ADR 0002: Window-tab teardown owns asynchronous pane work
 
-**Status:** Accepted
+Status: Accepted
 
-**Governs:** `src/lib/state/window-tabs.svelte.ts`
+Governs: `src/lib/state/window-tabs.svelte.ts`
 
 ## Context
 

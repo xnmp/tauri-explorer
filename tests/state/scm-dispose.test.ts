@@ -132,7 +132,6 @@ describe("window-tabs pane close disposes scm stores (#439)", () => {
     cleanup.resolve();
     await expect(disposal).rejects.toThrow("first cleanup failed");
   });
-
   it("closePane disposes the closed pane's scm store", async () => {
     const manager = freshManager();
     manager.splitPane("right");

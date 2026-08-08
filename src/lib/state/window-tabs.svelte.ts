@@ -116,7 +116,19 @@ type ExternalSeed = {
   viewMode: string;
 };
 
-function createWindowTabsManager() {
+type TestManagedWindowTabsManager = {
+  dispose(): Promise<void>;
+};
+
+type TestManagerRegistry = {
+  register(manager: TestManagedWindowTabsManager): void;
+};
+
+type GlobalWithTestManagerRegistry = typeof globalThis & {
+  __tauriExplorerTestManagerRegistry?: TestManagerRegistry;
+};
+
+function createWindowTabsManager(registerForTestTeardown = true) {
   // Explorer instances registry (keyed by explorerId)
   const explorers = new Map<string, ExplorerInstance>();
   // Initial directory loads are started when a pane is created so the UI can
@@ -178,6 +190,15 @@ function createWindowTabsManager() {
       (result): result is PromiseRejectedResult => result.status === "rejected",
     );
     if (failure) throw failure.reason;
+  }
+
+  // Restore and initialization are synchronous public APIs, so their replaced
+  // explorers cannot be awaited by the caller. Keep cleanup failures visible at
+  // the application's logging boundary instead of creating unhandled rejections.
+  function destroyExplorersInBackground(operation: string): void {
+    void destroyAllExplorers().catch((error) => {
+      console.error(`Failed to clean up explorers during ${operation}:`, error);
+    });
   }
 
   function findTab(tabId: string): WindowTab | null {
@@ -524,7 +545,7 @@ function createWindowTabsManager() {
 
     // Destroy before clearing — otherwise backend watch refcounts and
     // streaming listeners leak for every replaced explorer.
-    void destroyAllExplorers();
+    destroyExplorersInBackground("state restore");
 
     tabs = normalized.tabs.map((pt) =>
       reviveTab(pt, {
@@ -552,7 +573,7 @@ function createWindowTabsManager() {
     }
 
     // No saved state or child window — create a fresh tab
-    void destroyAllExplorers();
+    destroyExplorersInBackground("initialization");
     tabs = [];
     activeTabId = null;
 
@@ -1042,7 +1063,7 @@ function createWindowTabsManager() {
     saveState();
   }
 
-  return {
+  const manager = {
     // Tab state getters
     get tabs() {
       return tabs;
@@ -1157,9 +1178,14 @@ function createWindowTabsManager() {
       if (destroyed.status === "rejected") throw destroyed.reason;
     },
   };
+
+  if (registerForTestTeardown) {
+    (globalThis as GlobalWithTestManagerRegistry).__tauriExplorerTestManagerRegistry?.register(manager);
+  }
+  return manager;
 }
 
 /** Factory for creating window tabs managers - exported for testing */
 export { createWindowTabsManager };
 
-export const windowTabsManager = createWindowTabsManager();
+export const windowTabsManager = createWindowTabsManager(false);

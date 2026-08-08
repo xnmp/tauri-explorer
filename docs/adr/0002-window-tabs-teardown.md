@@ -26,10 +26,12 @@ The window-tab manager owns asynchronous pane work that it starts or destroys:
 
 ## Consequences
 
-Callers that need deterministic teardown, particularly tests, must await
-`manager.dispose()`. Disposal may therefore complete later than before, but it
-cannot leave sibling cleanup or load work running after a cleanup failure has
-already been observed.
+Callers that need deterministic teardown must await `manager.dispose()`.
+Vitest registers factory-created managers and drains them after each test, so
+legacy tests cannot leave asynchronous explorer work alive when their worker
+closes. Disposal may therefore complete later than before, but it cannot leave
+sibling cleanup or load work running after a cleanup failure has already been
+observed.
 
 The regression tests must hold cleanup and load promises independently, proving
 that one rejected cleanup does not make disposal settle before the other work.

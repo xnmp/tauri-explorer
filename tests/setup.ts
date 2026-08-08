@@ -2,6 +2,42 @@
  * Vitest global setup.
  * Provides minimal browser-like globals for tests running in Node environment.
  */
+import { afterEach, vi } from "vitest";
+
+type TestManagedWindowTabsManager = {
+  dispose(): Promise<void>;
+};
+
+const testManagers = new Set<TestManagedWindowTabsManager>();
+
+// Factory-created managers register here so every test receives deterministic
+// teardown, including legacy tests that predate async explorer cleanup (#611).
+(globalThis as typeof globalThis & {
+  __tauriExplorerTestManagerRegistry?: {
+    register(manager: TestManagedWindowTabsManager): void;
+  };
+}).__tauriExplorerTestManagerRegistry = {
+  register(manager) {
+    testManagers.add(manager);
+  },
+};
+
+export async function drainWindowTabsManagers(): Promise<void> {
+  // A few legacy suites use fake timers. Directory-listing cleanup uses async
+  // work started while those timers are installed; flush it before restoring
+  // real timers and draining managers at the common environment boundary.
+  if (vi.isFakeTimers()) await vi.runAllTimersAsync();
+  vi.useRealTimers();
+  const managers = [...testManagers];
+  testManagers.clear();
+  const results = await Promise.allSettled(managers.map((manager) => manager.dispose()));
+  const failure = results.find(
+    (result): result is PromiseRejectedResult => result.status === "rejected",
+  );
+  if (failure) throw failure.reason;
+}
+
+afterEach(drainWindowTabsManagers);
 
 // Pin navigator.platform to a fixed, non-Windows/non-Mac value.
 //

@@ -16,6 +16,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createWindowTabsManager } from "$lib/state/window-tabs.svelte";
+import { drainWindowTabsManagers } from "../setup";
 
 const TABS_KEY = "explorer-tabs";
 
@@ -64,7 +65,8 @@ beforeEach(() => {
   setItem = vi.spyOn(localStorage, "setItem");
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await drainWindowTabsManagers();
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();

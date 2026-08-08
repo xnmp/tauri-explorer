@@ -47,6 +47,7 @@ const lastRefreshAt = new Map<string, number>();
 const inFlightRefreshes = new Set<string>();
 const listingBaselines = new Map<string, number>();
 const refreshIntervals = new Map<string, number>();
+let refreshGeneration = 0;
 
 function intervalFor(dirPath: string): number {
   return refreshIntervals.get(dirPath) ?? MIN_INTERVAL_MS;
@@ -86,7 +87,10 @@ function recordListingDuration(dirPath: string, duration: number): void {
   refreshIntervals.set(dirPath, MIN_INTERVAL_MS);
 }
 
-function finishRefresh(dirPath: string, startedAt: number): void {
+function finishRefresh(dirPath: string, startedAt: number, generation: number): void {
+  // Teardown may have cleared this manager while a listing was still in flight.
+  // That old completion must not schedule work for a newly created watcher.
+  if (generation !== refreshGeneration) return;
   inFlightRefreshes.delete(dirPath);
   recordListingDuration(dirPath, Date.now() - startedAt);
   const pending = pendingRefreshes.get(dirPath);
@@ -98,6 +102,7 @@ function flush(dirPath: string): void {
   if (!pending) return;
   pendingRefreshes.delete(dirPath);
   const startedAt = Date.now();
+  const generation = refreshGeneration;
   lastRefreshAt.set(dirPath, startedAt);
   inFlightRefreshes.add(dirPath);
   const completions: Promise<void>[] = [];
@@ -111,10 +116,10 @@ function flush(dirPath: string): void {
     }
   }
   if (completions.length === 0) {
-    finishRefresh(dirPath, startedAt);
+    finishRefresh(dirPath, startedAt, generation);
     return;
   }
-  void Promise.all(completions).then(() => finishRefresh(dirPath, startedAt));
+  void Promise.all(completions).then(() => finishRefresh(dirPath, startedAt, generation));
 }
 
 export function requestRefresh(
@@ -143,6 +148,7 @@ export function requestRefresh(
 }
 
 export function cancelPendingRefreshes(): void {
+  refreshGeneration += 1;
   for (const pending of pendingRefreshes.values()) {
     if (pending.timer) clearTimeout(pending.timer);
   }

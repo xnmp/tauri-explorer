@@ -196,9 +196,7 @@ fn settings_path(config_dir: &Path) -> std::path::PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        pending, settings_path, watched_config_name, BOOKMARKS_FILE, FOLDER_VIEWS_FILE,
-    };
+    use super::{pending, settings_path, watched_config_name, BOOKMARKS_FILE, FOLDER_VIEWS_FILE};
     use notify::{RecommendedWatcher, RecursiveMode, Watcher};
     use std::path::Path;
     use std::sync::mpsc;
@@ -262,22 +260,21 @@ mod tests {
         pending().lock().expect("pending lock").clear();
         let (sent, received) = mpsc::channel();
         let callback_root = root.clone();
-        let mut watcher: RecommendedWatcher = notify::recommended_watcher(
-            move |event: Result<notify::Event, notify::Error>| {
-            if let Ok(event) = event {
-                for path in event.paths {
-                    if let Some(filename) = watched_config_name(&callback_root, &path) {
-                        pending()
-                            .lock()
-                            .expect("pending lock")
-                            .insert(filename.clone(), Instant::now());
-                        let _ = sent.send(filename);
+        let mut watcher: RecommendedWatcher =
+            notify::recommended_watcher(move |event: Result<notify::Event, notify::Error>| {
+                if let Ok(event) = event {
+                    for path in event.paths {
+                        if let Some(filename) = watched_config_name(&callback_root, &path) {
+                            pending()
+                                .lock()
+                                .expect("pending lock")
+                                .insert(filename.clone(), Instant::now());
+                            let _ = sent.send(filename);
+                        }
                     }
                 }
-            }
-            },
-        )
-        .expect("watcher");
+            })
+            .expect("watcher");
         watcher
             .watch(&root, RecursiveMode::Recursive)
             .expect("watch temporary config directory");

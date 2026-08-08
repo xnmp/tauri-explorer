@@ -56,7 +56,7 @@ if ($missing.Count -gt 0) {
     [Console]::Error.WriteLine('error: missing prerequisites:')
     $missing | ForEach-Object { [Console]::Error.WriteLine("  - $_") }
     [Console]::Error.WriteLine('Install the listed prerequisites, open a new PowerShell window, then run this installer again.')
-    exit 1
+    throw 'Missing prerequisites prevent installation.'
 }
 
 $repo = 'xnmp/tauri-explorer'

@@ -28,7 +28,9 @@ test.describe("Recycle Bin sidebar entry (#603)", () => {
     await expect.poll(() => page.evaluate(() =>
       JSON.parse(localStorage.getItem("explorer-settings") ?? "{}").showRecycleBin,
     )).toBe(false);
-    await page.locator(".settings-dialog").screenshot({ path: "evidence/ac-2-recycle-bin-hidden.png" });
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".settings-dialog")).toHaveCount(0);
+    await page.locator(".sidebar").screenshot({ path: "evidence/ac-2-recycle-bin-hidden.png" });
     await page.reload();
 
     await expect(page.getByRole("button", { name: "Open Recycle Bin" })).toHaveCount(0);

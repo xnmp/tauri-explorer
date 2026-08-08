@@ -60,6 +60,21 @@ describe.skipIf(process.platform !== 'win32')('Windows installer invocation', ()
 			await rm(sandbox, { force: true, recursive: true });
 		}
 	}, 15_000);
+
+	it('reports a successful installation that requires a reboot', async () => {
+		const sandbox = await mkdtemp(join(tmpdir(), 'tauri-explorer installer reboot '));
+		const harnessPath = join(sandbox, 'reboot-required.ps1');
+		try {
+			await writeFile(harnessPath, powershellHarness, 'utf8');
+			const result = await powershellResult(['-File', harnessPath, installerFilePath, '3010']);
+
+			expect(result.code).toBe(0);
+			expect(result.output).toContain('Installed tauri-explorer. Restart Windows before launching it.');
+			expect(result.output).not.toContain('MSI installation failed');
+		} finally {
+			await rm(sandbox, { force: true, recursive: true });
+		}
+	}, 15_000);
 });
 
 async function powershellResult(args: string[]) {
@@ -74,7 +89,7 @@ async function powershellResult(args: string[]) {
 }
 
 const powershellHarness = String.raw`
-param([string]$Installer)
+param([string]$Installer, [int]$MsiExitCode = 0)
 $ErrorActionPreference = 'Stop'
 $env:OS = 'Windows_NT'
 $global:installerBuildCalls = @()
@@ -82,6 +97,7 @@ $global:installerGitCommands = @()
 $global:installerMsiArguments = @()
 $global:installerMsiVerbs = @()
 $global:installerTemporaryCheckout = $null
+$global:installerMsiExitCode = $MsiExitCode
 
 function global:git {
     $global:installerGitCommands += ,@($args)
@@ -112,7 +128,7 @@ function global:Start-Process {
     param([string]$FilePath, [object[]]$ArgumentList, [string]$Verb, [switch]$Wait, [switch]$PassThru)
     $global:installerMsiArguments += $ArgumentList[1]
     $global:installerMsiVerbs += $Verb
-    [pscustomobject]@{ ExitCode = 0 }
+    [pscustomobject]@{ ExitCode = $global:installerMsiExitCode }
 }
 
 $existing = Join-Path ([System.IO.Path]::GetTempPath()) 'tauri explorer existing checkout'

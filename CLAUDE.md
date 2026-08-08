@@ -103,3 +103,6 @@ SCM archive actions preserve each repo-relative path under `.archive/` and add
 ## Debugging
 
 When a bug resists quick diagnosis: search `docs/lessons/` + the frozen `lessons_learnt.md` archive and commit history first, then add targeted logging/instrumentation before another fix attempt. Suite-wide test timeouts (~5 s) under parallel/CPU load are a known flake mode — rerun the failing files in isolation before treating them as regressions.
+
+`createWindowTabsManager().dispose()` is asynchronous: await it in test teardown so
+explorer directory-listener cleanup settles before Vitest closes the worker (#611).

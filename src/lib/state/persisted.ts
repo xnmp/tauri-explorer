@@ -300,7 +300,11 @@ export function writeConfigQueued(
   activeConfigWriters.add(writerKey);
   if (inFlightWrites.has(filename)) {
     const replaced = pendingWrites.get(filename);
-    if (replaced) activeConfigWriters.delete(configWriterKey(filename, replaced.writer));
+    // Replacing a queued write from this same writer must not clear its
+    // activity while the earlier write is still in flight.
+    if (replaced && replaced.writer !== writer) {
+      activeConfigWriters.delete(configWriterKey(filename, replaced.writer));
+    }
     pendingWrites.set(filename, { data, writer });
     return inFlightWrites.get(filename)!;
   }

@@ -176,7 +176,7 @@ describe("refresh-manager", () => {
     let finishSlowListing!: () => void;
     const refresh = vi
       .fn<() => Promise<void>>()
-      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(() => new Promise((resolve) => setTimeout(resolve, 100)))
       .mockImplementationOnce(
         () => new Promise<void>((resolve) => {
           finishSlowListing = resolve;
@@ -186,7 +186,7 @@ describe("refresh-manager", () => {
 
     // Establish a baseline, then start a listing that remains in flight.
     requestRefresh(refresh, "/home/user/docs");
-    await vi.advanceTimersByTimeAsync(150);
+    await vi.advanceTimersByTimeAsync(250);
     requestRefresh(refresh, "/home/user/docs");
     await vi.advanceTimersByTimeAsync(2000);
     expect(refresh).toHaveBeenCalledTimes(2);

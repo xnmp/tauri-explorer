@@ -64,7 +64,7 @@ describe("externally edited config stores (#605)", () => {
     expect(settingsStore.theme).toBe("nord");
   });
 
-  it("keeps a same-writer queued bookmark save active through its second write", async () => {
+  it("keeps a same-writer replacement save active while its first write is in flight", async () => {
     const { bookmarksStore } = await freshStores();
     await bookmarksStore.init();
     const completions: Array<() => void> = [];
@@ -73,14 +73,14 @@ describe("externally edited config stores (#605)", () => {
     );
     bookmarksStore.addBookmark("/work/one", "One");
     bookmarksStore.addBookmark("/work/two", "Two");
-
-    completions.shift()?.();
-    await vi.waitFor(() => expect(writeConfigFileMock).toHaveBeenCalledTimes(2));
+    bookmarksStore.addBookmark("/work/three", "Three");
     readConfigFileMock.mockResolvedValue({ ok: true, data: "[]" });
 
     expect(await bookmarksStore.reloadFromDisk()).toBe("self-write-overlap");
-    expect(bookmarksStore.list.map((bookmark) => bookmark.name)).toEqual(["One", "Two"]);
     completions.shift()?.();
+    await vi.waitFor(() => expect(writeConfigFileMock).toHaveBeenCalledTimes(2));
+    completions.shift()?.();
+    expect(bookmarksStore.list.map((bookmark) => bookmark.name)).toEqual(["One", "Two", "Three"]);
   });
 });
 

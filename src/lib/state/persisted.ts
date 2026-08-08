@@ -215,6 +215,16 @@ function configWriterKey(filename: string, writer: string): string {
 }
 
 /**
+ * Settings predates explicit writer identities, so its store keeps the
+ * original two-argument write call while plugin migrations opt into their
+ * own identity. Other config files retain their filename as the legacy
+ * identity unless their store supplies a more specific one.
+ */
+function defaultConfigWriter(filename: string): string {
+  return filename === "settings.json" ? "settings-store" : filename;
+}
+
+/**
  * A snapshot of this process's write activity for `filename`.
  *
  * Config autoreload (#599) samples this on both sides of its read. A boolean
@@ -233,7 +243,7 @@ export interface ConfigWriteActivity {
 
 export function configWriteActivity(
   filename: string,
-  writer = filename,
+  writer = defaultConfigWriter(filename),
 ): ConfigWriteActivity {
   const key = configWriterKey(filename, writer);
   return {
@@ -252,7 +262,7 @@ export function configWriteActivity(
 export function configWriteRaced(
   filename: string,
   before: ConfigWriteActivity,
-  writer = filename,
+  writer = defaultConfigWriter(filename),
 ): boolean {
   const now = configWriteActivity(filename, writer);
   return before.pending || now.pending || now.generation !== before.generation;
@@ -266,7 +276,10 @@ export function configWriteRaced(
  * arrive as "the file changed". Comparing against this is what makes a
  * self-write a no-op instead of a reload loop.
  */
-export function lastWrittenConfig(filename: string, writer = filename): string | null {
+export function lastWrittenConfig(
+  filename: string,
+  writer = defaultConfigWriter(filename),
+): string | null {
   return lastWrittenContent.get(configWriterKey(filename, writer)) ?? null;
 }
 
@@ -283,7 +296,7 @@ export function lastWrittenConfig(filename: string, writer = filename): string |
 export function writeConfigQueued(
   filename: string,
   data: string,
-  writer = filename,
+  writer = defaultConfigWriter(filename),
 ): Promise<void> {
   const writerKey = configWriterKey(filename, writer);
   activeConfigWriters.add(writerKey);

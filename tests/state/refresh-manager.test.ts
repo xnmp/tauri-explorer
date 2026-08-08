@@ -183,16 +183,21 @@ describe("refresh-manager", () => {
         }),
       )
       .mockResolvedValue(undefined);
+    const pane = {};
+    // The watcher wraps the pane refresh on every event. Its stable explorer
+    // identity, rather than that short-lived wrapper, must deduplicate events.
+    const watcherEvent = () =>
+      requestRefresh((_opts) => refresh(), "/home/user/docs", true, pane);
 
     // Establish a baseline, then start a listing that remains in flight.
-    requestRefresh(refresh, "/home/user/docs");
+    watcherEvent();
     await vi.advanceTimersByTimeAsync(250);
-    requestRefresh(refresh, "/home/user/docs");
+    watcherEvent();
     await vi.advanceTimersByTimeAsync(2000);
     expect(refresh).toHaveBeenCalledTimes(2);
 
-    requestRefresh(refresh, "/home/user/docs");
-    requestRefresh(refresh, "/home/user/docs");
+    watcherEvent();
+    watcherEvent();
     await vi.advanceTimersByTimeAsync(5000);
     expect(refresh).toHaveBeenCalledTimes(2);
 

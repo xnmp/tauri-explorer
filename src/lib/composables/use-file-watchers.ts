@@ -41,7 +41,7 @@ export function useFileWatchers(deps: FileWatcherDeps) {
     initFileChangeListener((affectedDirs) => {
       for (const exp of deps.getAllExplorers()) {
         if (affectedDirs.includes(exp.currentPath)) {
-          requestRefresh((opts) => exp.refresh(opts), exp.currentPath);
+          requestRefresh((opts) => exp.refresh(opts), exp.currentPath, true, exp);
         }
       }
     });
@@ -54,7 +54,7 @@ export function useFileWatchers(deps: FileWatcherDeps) {
         const changedPath = event.payload.path;
         for (const exp of deps.getAllExplorers()) {
           if (exp.currentPath === changedPath) {
-            requestRefresh((opts) => exp.refresh(opts), exp.currentPath);
+            requestRefresh((opts) => exp.refresh(opts), exp.currentPath, true, exp);
           }
         }
         // Also refresh git status badges for the changed directory

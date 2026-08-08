@@ -40,6 +40,13 @@ function freshManager() {
   return manager;
 }
 
+/** Explorer loads use real async work, so release fake persistence timers
+ * before awaiting the manager teardown that owns those loads. */
+async function disposeManagers(...managers: Array<ReturnType<typeof createWindowTabsManager>>) {
+  vi.useRealTimers();
+  await Promise.all(managers.map((manager) => manager.dispose()));
+}
+
 /** An EventTarget stand-in — the unit env is `node`, with no real window. */
 function fakeEventTarget() {
   const listeners = new Map<string, Set<(e: Event) => void>>();
@@ -71,7 +78,7 @@ afterEach(() => {
 });
 
 describe("tab-state write coalescing (#481)", () => {
-  it("a burst of ten tab interactions costs one localStorage write, not ten", () => {
+  it("a burst of ten tab interactions costs one localStorage write, not ten", async () => {
     const manager = freshManager();
     setItem.mockClear(); // ignore the write from init()
 
@@ -91,10 +98,10 @@ describe("tab-state write coalescing (#481)", () => {
     vi.advanceTimersByTime(500);
     expect(tabWrites()).toHaveLength(1);
 
-    manager.dispose();
+    await disposeManagers(manager);
   });
 
-  it("the coalesced write is the state of the last interaction, so a next boot restores it", () => {
+  it("the coalesced write is the state of the last interaction, so a next boot restores it", async () => {
     const manager = freshManager();
     manager.createTab("/tmp/one");
     manager.createTab("/tmp/two");
@@ -114,11 +121,10 @@ describe("tab-state write coalescing (#481)", () => {
     expect(rebooted.tabs).toHaveLength(finalTabCount);
     expect(rebooted.getTabPath(rebooted.activeTabId!)).toBe("/tmp/three");
 
-    manager.dispose();
-    rebooted.dispose();
+    await disposeManagers(manager, rebooted);
   });
 
-  it("save() still persists synchronously for the beforeunload and interval saves", () => {
+  it("save() still persists synchronously for the beforeunload and interval saves", async () => {
     const manager = freshManager();
     manager.createTab("/tmp/urgent");
     setItem.mockClear();
@@ -133,10 +139,10 @@ describe("tab-state write coalescing (#481)", () => {
     vi.advanceTimersByTime(500);
     expect(tabWrites()).toHaveLength(1);
 
-    manager.dispose();
+    await disposeManagers(manager);
   });
 
-  it("a write still pending when the page is hidden lands before the page goes away", () => {
+  it("a write still pending when the page is hidden lands before the page goes away", async () => {
     const doc = fakeEventTarget() as ReturnType<typeof fakeEventTarget> & {
       visibilityState: string;
     };
@@ -152,10 +158,10 @@ describe("tab-state write coalescing (#481)", () => {
     expect(tabWrites()).toHaveLength(1);
     expect(storedState()!.tabs).toHaveLength(manager.tabs.length);
 
-    manager.dispose();
+    await disposeManagers(manager);
   });
 
-  it("a write still pending on pagehide is not lost", () => {
+  it("a write still pending on pagehide is not lost", async () => {
     const win = fakeEventTarget();
     vi.stubGlobal("window", win);
     const manager = freshManager();
@@ -167,10 +173,10 @@ describe("tab-state write coalescing (#481)", () => {
     expect(tabWrites()).toHaveLength(1);
     expect(storedState()!.tabs).toHaveLength(manager.tabs.length);
 
-    manager.dispose();
+    await disposeManagers(manager);
   });
 
-  it("coalescing is per burst: a later interaction writes again", () => {
+  it("coalescing is per burst: a later interaction writes again", async () => {
     const manager = freshManager();
     setItem.mockClear();
 
@@ -183,6 +189,6 @@ describe("tab-state write coalescing (#481)", () => {
     expect(tabWrites()).toHaveLength(2);
     expect(storedState()!.tabs).toHaveLength(3);
 
-    manager.dispose();
+    await disposeManagers(manager);
   });
 });

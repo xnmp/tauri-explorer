@@ -271,10 +271,10 @@ export async function runWarmWindow(measure: boolean): Promise<void> {
     }
 
     // Unlike a fresh child window, this webview was mounted while parked, so
-    // wait for the requested location to become current before mounting its
-    // autocomplete input, which captures the path once at creation.
+    // wait for the requested path before mounting BreadcrumbAutocomplete,
+    // which intentionally captures the explorer path only once on mount.
     await navigation;
-    window.dispatchEvent?.(new Event("explorer:focus-address-bar"));
+    window.dispatchEvent(new Event("explorer:focus-address-bar"));
 
     // Activation latency telemetry (event received → window shown), durable in
     // the app log next to the Rust `Startup:` line.

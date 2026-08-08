@@ -85,6 +85,11 @@ test.describe("Terminal panel", () => {
     await panel.locator("textarea.xterm-helper-textarea").focus();
     await page.keyboard.press("b");
     await expect(page.locator(".sidebar")).toBeVisible();
+
+    // The terminal-owned suffix also ends the pending Explorer chord. A
+    // following T must remain terminal input rather than toggling the panel.
+    await page.keyboard.press("t");
+    await expect(panel).toBeVisible();
   });
 
   test("only core navigation shortcuts fire while the terminal is focused (#496)", async ({ page }) => {

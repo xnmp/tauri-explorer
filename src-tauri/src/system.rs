@@ -80,6 +80,42 @@ pub async fn move_multiple_to_trash(paths: Vec<String>) -> Result<(), AppError> 
     .await
 }
 
+/// Open the operating system's recycle-bin UI rather than treating the bin as
+/// an ordinary directory. Windows exposes it as a shell namespace, while
+/// Linux and macOS provide a desktop-visible trash location.
+#[tauri::command]
+pub async fn open_recycle_bin() -> Result<(), AppError> {
+    files::run_blocking(|| {
+        #[cfg(target_os = "windows")]
+        let mut command = {
+            let mut command = std::process::Command::new("explorer.exe");
+            command.arg("shell:RecycleBinFolder");
+            command
+        };
+
+        #[cfg(target_os = "macos")]
+        let mut command = {
+            let mut command = std::process::Command::new("open");
+            command.arg(
+                dirs::home_dir()
+                    .unwrap_or_else(|| PathBuf::from("/"))
+                    .join(".Trash"),
+            );
+            command
+        };
+
+        #[cfg(target_os = "linux")]
+        let mut command = {
+            let mut command = std::process::Command::new("gio");
+            command.args(["open", "trash:///"]);
+            command
+        };
+
+        command.spawn().map(|_| ()).map_err(AppError::Io)
+    })
+    .await
+}
+
 /// Get the directory the app was launched from.
 #[tauri::command]
 pub async fn get_launch_cwd(state: tauri::State<'_, LaunchCwd>) -> Result<String, AppError> {

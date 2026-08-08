@@ -51,7 +51,7 @@ mod wsl;
 
 use system::{
     get_launch_cwd, get_log_dir, log_startup_timing, move_multiple_to_trash, move_to_trash,
-    restore_from_trash, set_window_theme, LaunchCwd,
+    open_recycle_bin, restore_from_trash, set_window_theme, LaunchCwd,
 };
 use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
 
@@ -179,6 +179,7 @@ pub fn run(launch_dir: Option<String>) {
             // Trash operations
             move_to_trash,
             move_multiple_to_trash,
+            open_recycle_bin,
             restore_from_trash,
             // File operations — directory listing
             files::dir_listing::list_directory,

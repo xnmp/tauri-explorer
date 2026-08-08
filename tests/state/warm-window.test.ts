@@ -251,5 +251,8 @@ describe("warm-window reveal contract", () => {
       "title:beta - Tauri Explorer",
       "show",
     ]);
+    expect(window.dispatchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "explorer:focus-address-bar" }),
+    );
   });
 });

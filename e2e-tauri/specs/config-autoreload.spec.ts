@@ -9,7 +9,7 @@ import { browser, $ } from "@wdio/globals";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { domTexts, navigateTo } from "./helpers";
+import { domTexts } from "./helpers";
 
 const scratchDir = fs.mkdtempSync(path.join(os.homedir(), ".tauri-explorer-e2e-config-"));
 const configDir = process.platform === "win32"
@@ -39,6 +39,16 @@ async function runPaletteCommand(query: string): Promise<void> {
   await browser.keys(["Enter"]);
 }
 
+async function navigateToScratch(): Promise<void> {
+  await browser.execute((target) => {
+    window.dispatchEvent(new CustomEvent("e2e-navigate", { detail: target }));
+  }, scratchDir);
+  await browser.waitUntil(
+    async () => (await $(".file-list").getText()).includes("external-config-proof.txt"),
+    { timeout: 10_000, timeoutMsg: "scratch directory never rendered" },
+  );
+}
+
 describe("live external config edits", () => {
   const savedBookmarks = backup(bookmarksPath);
   const savedFolderViews = backup(folderViewsPath);
@@ -55,7 +65,7 @@ describe("live external config edits", () => {
   });
 
   it("shows a bookmark written outside the running app without a restart", async () => {
-    await navigateTo(scratchDir);
+    await navigateToScratch();
     fs.writeFileSync(bookmarksPath, JSON.stringify([
       { name: "External edit 605", path: scratchDir, icon: "folder" },
     ], null, 2));
@@ -68,7 +78,7 @@ describe("live external config edits", () => {
   });
 
   it("applies an externally changed folder view to the current rendered tiles", async () => {
-    await navigateTo(scratchDir);
+    await navigateToScratch();
     await runPaletteCommand("Tiles View");
     await $(".tiles-view").waitForDisplayed({ timeout: 5_000 });
     const tileIcon = $(".tile-icon");

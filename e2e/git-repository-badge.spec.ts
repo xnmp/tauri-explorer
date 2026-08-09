@@ -30,9 +30,21 @@ test.describe("Repository folder Git badge", () => {
       const ring = repository.locator(".git-repo-badge-ring");
       await expect(ring).toBeVisible();
       await expect(ring).toHaveAttribute("stroke", "var(--icon-git-badge-glyph, #fff)");
+      await expect(repository.locator(".git-repo-badge-glyph path")).toHaveAttribute(
+        "stroke",
+        "var(--icon-git-badge-glyph, #fff)",
+      );
+      await expect(repository.locator(".git-repo-badge-glyph circle").first()).toHaveAttribute(
+        "stroke",
+        "var(--icon-git-badge-glyph, #fff)",
+      );
 
       if (mode === "details") {
-        await page.screenshot({ path: "evidence/ac-1-compact-git-badge.png" });
+        // A 3x browser zoom keeps this evidence faithful to the running SVG
+        // while making the 16px branch detail inspectable in PR review.
+        await page.evaluate(() => { document.documentElement.style.zoom = "3"; });
+        await repository.screenshot({ path: "evidence/ac-1-compact-git-badge.png", scale: "css" });
+        await page.evaluate(() => { document.documentElement.style.zoom = ""; });
       }
       if (mode === "tiles") {
         await page.screenshot({ path: "evidence/ac-2-detailed-git-badge.png" });

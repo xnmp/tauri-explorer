@@ -2730,6 +2730,12 @@ function loadMockConfigSeed(): Record<string, string> {
  * Mock invoke function for browser-based testing.
  */
 export async function mockInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  const testWindow = globalThis as { __mockInvokeCounts?: Record<string, number> };
+  if (typeof window !== "undefined") {
+    testWindow.__mockInvokeCounts ??= {};
+    testWindow.__mockInvokeCounts[cmd] = (testWindow.__mockInvokeCounts[cmd] ?? 0) + 1;
+  }
+
   // Add small delay to simulate async operation
   await new Promise((resolve) => setTimeout(resolve, 10));
 

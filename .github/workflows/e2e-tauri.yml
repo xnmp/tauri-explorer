@@ -17,7 +17,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    # Setup (including the Tauri build) happens before the bounded smoke step.
+    # Keep enough outer budget for that setup, a full 15-minute smoke run, and
+    # the always() diagnostics artifact after a timeout.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
 
@@ -109,9 +112,8 @@ jobs:
 
       - name: Run smoke suite (Windows)
         if: runner.os == 'Windows'
-        # A passing serial smoke suite needs most of the previous 25-minute
-        # budget. Stop a true stall at 15 minutes so the outer job still has
-        # ten minutes to run the always() artifact upload.
+        # Stop a true stall at 15 minutes; the 45-minute outer job budget
+        # reserves time for setup and the always() artifact upload.
         timeout-minutes: 15
         env:
           # The diagnostic run exits after the first session failure; a later

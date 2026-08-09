@@ -4,6 +4,8 @@ import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 
+// ADR 0006: Tauri E2E driver lifecycle.
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const isWindows = process.platform === "win32";
 const binaryName = isWindows ? "tauri-explorer.exe" : "tauri-explorer";

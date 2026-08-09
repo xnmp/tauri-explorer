@@ -24,6 +24,13 @@ __pycache__/
 /test-corpus/
 .vagrant/
 test-screenshots/
+# Specs screenshot acceptance-criteria proof into /evidence. That is test
+# output, not repo content — issue proof belongs in screenshots/<branch>/.
+# The ~85 files committed before this rule stay tracked so links from closed
+# issues keep resolving; this only stops new ones accumulating.
+/evidence/
+# Stray screenshots dropped at the repo root instead of screenshots/<branch>/
+/*.png
 
 # bv (beads viewer) local config and caches
 .bv/

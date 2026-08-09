@@ -45,6 +45,7 @@ test.describe("Image preview click-to-fullscreen", () => {
     // Click the image → front and center.
     await img.click();
     await expect(pane).toHaveClass(/fullscreen/);
+    await page.screenshot({ path: "evidence/ac-4-right-fullscreen.png" });
 
     // Right arrow steps to the next sibling image (the preview follows).
     await page.keyboard.press("ArrowRight");
@@ -115,12 +116,16 @@ test.describe("Image preview click-to-fullscreen", () => {
       expect(fullscreenBox!.y).toBe(0);
       expect(fullscreenBox!.width).toBe(viewport.width);
       expect(fullscreenBox!.height).toBe(viewport.height);
+      await page.screenshot({ path: `evidence/ac-${dock === "bottom" ? "1-bottom" : "2-top"}-fullscreen.png` });
 
       await page.locator(".preview-image").click();
       await expect(pane).not.toHaveClass(/fullscreen/);
       const restoredBox = await pane.boundingBox();
       expect(restoredBox).not.toBeNull();
       expect(restoredBox!.height).toBeCloseTo(dockedBox!.height, 0);
+      if (dock === "top") {
+        await page.screenshot({ path: "evidence/ac-3-restored-top-dock.png" });
+      }
     });
   }
 });

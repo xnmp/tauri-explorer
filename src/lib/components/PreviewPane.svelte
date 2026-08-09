@@ -997,7 +997,10 @@
     inset: 0;
     zoom: calc(1 / var(--app-zoom, 1));
     width: 100vw !important;
-    height: 100vh;
+    /* Vertical docks set an inline height. It must not constrain the fixed
+       fullscreen surface; the right dock already needs the equivalent width
+       override above. */
+    height: 100vh !important;
     z-index: 1000;
     background: var(--background-solid, var(--background-card-secondary));
     border-left: none;

@@ -259,17 +259,31 @@ where
         return Err(AppError::Other(NETWORK_CANCELLED.into()));
     }
 
+    let mut failures = Vec::new();
     for remote in fetch_all_eligible_remotes(repo_path)? {
-        run_git_network_sync(
+        let result = run_git_network_sync(
             repo_path,
             &["fetch", "--prune", "--atomic", &remote],
             cancelled,
             "git",
-        )?;
-        after_remote(&remote, cancelled);
+        );
         if cancelled.load(Ordering::Relaxed) {
             return Err(AppError::Other(NETWORK_CANCELLED.into()));
         }
+        match result {
+            Ok(()) => after_remote(&remote, cancelled),
+            Err(error) => failures.push(format!("{remote}: {error}")),
+        }
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(AppError::Other(NETWORK_CANCELLED.into()));
+        }
+    }
+
+    if !failures.is_empty() {
+        return Err(AppError::Other(format!(
+            "git fetch failed for one or more remotes:\n{}",
+            failures.join("\n")
+        )));
     }
     Ok(())
 }

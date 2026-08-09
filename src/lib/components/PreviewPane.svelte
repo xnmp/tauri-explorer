@@ -1156,6 +1156,10 @@
   .preview-pane.fullscreen .preview-image.zoomed {
     cursor: grab;
     transition: none;
+    /* Pan and wheel-zoom update this transform for every pointer event. Keep
+       the active image on its own compositor layer instead of repainting the
+       preview surface on each update (#635). */
+    will-change: transform;
   }
   .preview-pane.fullscreen .preview-image-container.panning,
   .preview-pane.fullscreen .preview-image-container.panning .preview-image {

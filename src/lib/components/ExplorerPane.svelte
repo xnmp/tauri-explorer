@@ -49,6 +49,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
   const paneScmVisible = $derived(windowTabsManager.getPaneScmVisible(paneId));
 
   let paneRef = $state<HTMLElement | null>(null);
+  let fileListScrollToEntry = $state<((entry: import("$lib/domain/file").FileEntry) => void) | undefined>();
 
   // All keyboard navigation is handled at window level so it works regardless
   // of focus state. Only the active pane responds.
@@ -174,6 +175,15 @@ import { nextRemovableRoot } from "$lib/domain/drives";
     windowTabsManager.setActivePane(paneId);
   }
 
+  /** Select an entry and ask FileList's active virtualized view to reveal it. */
+  function selectAndReveal(
+    entry: import("$lib/domain/file").FileEntry,
+    options: { ctrlKey: boolean; shiftKey: boolean },
+  ): void {
+    paneExplorer.selectEntry(entry, options);
+    fileListScrollToEntry?.(entry);
+  }
+
   /** Compute how many indices to jump for an arrow key in the current view.
    *  Returns 0 if the arrow key doesn't apply to this view mode.
    *
@@ -257,7 +267,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
 
       // If nothing is selected, any arrow key selects the first item
       if (currentIndex < 0) {
-        paneExplorer.selectEntry(entries[0], { ctrlKey: false, shiftKey: false });
+        selectAndReveal(entries[0], { ctrlKey: false, shiftKey: false });
         tick().then(() => {
           const el = paneRef?.querySelector<HTMLElement>(".selected");
           if (el && el !== document.activeElement) el.focus({ preventScroll: false });
@@ -286,7 +296,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
         if (newIndex < 0) return; // Already at edge
       }
 
-      paneExplorer.selectEntry(entries[newIndex], { ctrlKey: false, shiftKey: event.shiftKey });
+      selectAndReveal(entries[newIndex], { ctrlKey: false, shiftKey: event.shiftKey });
 
       // Move DOM focus to the newly selected element so focus-visible
       // tracks selection (avoids stale focus ring on the old item)
@@ -296,6 +306,17 @@ import { nextRemovableRoot } from "$lib/domain/drives";
           el.focus({ preventScroll: false });
         }
       });
+    }
+    // Ctrl+Home/Ctrl+End select the list boundaries instead of letting the
+    // browser scroll the pane without changing the file-list selection.
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey
+      && (event.key === "Home" || event.key === "End")) {
+      event.preventDefault();
+      const entries = paneExplorer.displayEntries;
+      if (entries.length === 0) return;
+
+      const newIndex = event.key === "Home" ? 0 : entries.length - 1;
+      selectAndReveal(entries[newIndex], { ctrlKey: false, shiftKey: false });
     }
     // PageUp/PageDown: jump by PAGE_STEP items (skip if any modifier held — likely a command shortcut)
     const PAGE_STEP = 8;
@@ -318,7 +339,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
         newIndex = Math.max(currentIndex - PAGE_STEP, 0);
       }
 
-      paneExplorer.selectEntry(entries[newIndex], { ctrlKey: false, shiftKey: event.shiftKey });
+      selectAndReveal(entries[newIndex], { ctrlKey: false, shiftKey: event.shiftKey });
       tick().then(() => {
         const el = paneRef?.querySelector<HTMLElement>(".selected");
         if (el && el !== document.activeElement) {
@@ -378,7 +399,7 @@ import { nextRemovableRoot } from "$lib/domain/drives";
       {#if settingsStore.showGitStatus && paneScmVisible}
         <ScmPanel />
       {/if}
-      <FileList explorer={paneExplorer} />
+      <FileList explorer={paneExplorer} bind:scrollToEntry={fileListScrollToEntry} />
     </div>
     <ContextMenu explorer={paneExplorer} />
     <DeleteDialog explorer={paneExplorer} />

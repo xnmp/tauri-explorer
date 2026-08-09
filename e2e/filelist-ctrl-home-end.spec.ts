@@ -15,7 +15,7 @@ test.describe("File list Ctrl+Home and Ctrl+End navigation", () => {
     await page.locator(".entry-item").first().click();
     await page.keyboard.press("Control+End");
 
-    await expect(selectedEntry(page)).toHaveText("tsconfig.json");
+    await expect(selectedEntry(page).locator(".entry-name")).toHaveText("tsconfig.json");
     await expect(selectedEntry(page)).toBeInViewport();
     await page.screenshot({ path: "evidence/ac-1-ctrl-end-final-entry.png" });
   });
@@ -27,7 +27,7 @@ test.describe("File list Ctrl+Home and Ctrl+End navigation", () => {
     await page.locator(".entry-item").last().click();
     await page.keyboard.press("Control+Home");
 
-    await expect(selectedEntry(page)).toHaveText("assets");
+    await expect(selectedEntry(page).locator(".entry-name")).toHaveText("assets");
     await expect(selectedEntry(page)).toBeInViewport();
     await page.screenshot({ path: "evidence/ac-2-ctrl-home-first-entry.png" });
   });
@@ -51,7 +51,7 @@ test.describe("File list Ctrl+Home and Ctrl+End navigation", () => {
 
     await page.keyboard.press("Control+End");
 
-    await expect(selectedEntry(page)).toHaveText("tsconfig.json");
+    await expect(selectedEntry(page).locator(".entry-name")).toHaveText("tsconfig.json");
     await expect(selectedEntry(page)).toBeInViewport();
     await page.screenshot({ path: "evidence/ac-4-unselected-ctrl-end.png" });
   });

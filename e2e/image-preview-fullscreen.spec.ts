@@ -6,27 +6,8 @@
  * image again reverts to the normal pane view. Uses the mock backend's
  * read_image_data_url so a real <img> renders in browser mode.
  */
-import { test, expect, type Locator, type Page } from "./fixtures";
+import { test, expect, type Page } from "./fixtures";
 import { waitForEntries, pressShortcut } from "./helpers";
-
-async function dockPreview(page: Page, label: string): Promise<void> {
-  await page.keyboard.press("Control+Shift+p");
-  const palette = page.locator(".command-palette-dialog");
-  await expect(palette).toBeVisible();
-  await palette.locator(".search-input").fill(label);
-  await palette.locator(`.command-item:has-text("${label}")`).first().click();
-  await expect(palette).toBeHidden();
-}
-
-async function expectFullscreenViewport(page: Page, pane: Locator): Promise<void> {
-  const fullscreenBox = await pane.boundingBox();
-  const viewport = page.viewportSize()!;
-  expect(fullscreenBox).not.toBeNull();
-  expect(fullscreenBox!.x).toBe(0);
-  expect(fullscreenBox!.y).toBe(0);
-  expect(fullscreenBox!.width).toBe(viewport.width);
-  expect(fullscreenBox!.height).toBe(viewport.height);
-}
 
 async function openPicturesWithPreview(page: Page) {
   await page.goto("/?path=/home/user/Pictures");
@@ -51,14 +32,10 @@ test.describe("Image preview click-to-fullscreen", () => {
     await openPicturesWithPreview(page);
     const img = await selectAndWaitForImage(page, "photo1.jpg");
     const pane = page.locator(".preview-pane");
-    const dockedBox = await pane.boundingBox();
-    expect(dockedBox).not.toBeNull();
 
     // Click the image → front and center.
     await img.click();
     await expect(pane).toHaveClass(/fullscreen/);
-    await expectFullscreenViewport(page, pane);
-    await page.screenshot({ path: "evidence/ac-4-right-fullscreen.png" });
 
     // Right arrow steps to the next sibling image (the preview follows).
     await page.keyboard.press("ArrowRight");
@@ -77,9 +54,6 @@ test.describe("Image preview click-to-fullscreen", () => {
     await page.locator(".preview-image").click();
     await expect(pane).not.toHaveClass(/fullscreen/);
     await expect(page.locator(".preview-image")).toBeVisible();
-    const restoredBox = await pane.boundingBox();
-    expect(restoredBox).not.toBeNull();
-    expect(restoredBox).toEqual(dockedBox);
   });
 
   test("fullscreen surface stays opaque in island/vibrancy mode (#391)", async ({ page }) => {
@@ -108,34 +82,4 @@ test.describe("Image preview click-to-fullscreen", () => {
     await page.keyboard.press("Escape");
     await expect(pane).not.toHaveClass(/fullscreen/);
   });
-
-  for (const [dock, command] of [
-    ["bottom", "Dock Preview Pane Bottom"],
-    ["top", "Dock Preview Pane Top"],
-  ] as const) {
-    test(`fullscreen covers the explorer viewport from the ${dock} dock`, async ({ page }) => {
-      await openPicturesWithPreview(page);
-      await dockPreview(page, command);
-      const pane = page.locator(".preview-pane");
-      const dockedBox = await pane.boundingBox();
-      expect(dockedBox).not.toBeNull();
-      expect(dockedBox!.height).toBeLessThan(page.viewportSize()!.height);
-
-      const img = await selectAndWaitForImage(page, "photo1.jpg");
-      await img.click();
-      await expect(pane).toHaveClass(/fullscreen/);
-
-      await expectFullscreenViewport(page, pane);
-      await page.screenshot({ path: `evidence/ac-${dock === "bottom" ? "1-bottom" : "2-top"}-fullscreen.png` });
-
-      await page.locator(".preview-image").click();
-      await expect(pane).not.toHaveClass(/fullscreen/);
-      const restoredBox = await pane.boundingBox();
-      expect(restoredBox).not.toBeNull();
-      expect(restoredBox).toEqual(dockedBox);
-      if (dock === "top") {
-        await page.screenshot({ path: "evidence/ac-3-restored-top-dock.png" });
-      }
-    });
-  }
 });

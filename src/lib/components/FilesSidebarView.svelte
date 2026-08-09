@@ -645,7 +645,6 @@
     text-transform: uppercase;
     letter-spacing: var(--letter-spacing-wide);
     cursor: pointer;
-    transition: background var(--transition-fast);
     text-align: left;
     width: 100%;
   }
@@ -682,7 +681,6 @@
     font-size: 13px;
     color: var(--text-primary);
     cursor: pointer;
-    transition: background var(--transition-fast);
     text-align: left;
     width: 100%;
     min-height: 34px;

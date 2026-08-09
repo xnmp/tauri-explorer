@@ -637,7 +637,6 @@
     letter-spacing: -0.01em;
     color: var(--text-secondary);
     cursor: pointer;
-    transition: all var(--transition-normal);
     flex-shrink: 0;
     max-width: 220px;
     position: relative;
@@ -669,7 +668,6 @@
       transparent 100%
     );
     opacity: 0;
-    transition: opacity var(--transition-normal);
     pointer-events: none;
   }
 
@@ -683,7 +681,6 @@
     width: 1px;
     background: var(--divider);
     opacity: 0.5;
-    transition: opacity var(--transition-fast);
   }
 
   /* Chrome-style hover: an inset rounded pill instead of a full-height
@@ -853,14 +850,12 @@
 
   .tab-icon {
     flex-shrink: 0;
-    transition: transform var(--transition-normal);
   }
 
   /* Dynamic folder icon color using CSS filter - adapts to theme accent */
   .tab-icon path {
     fill: var(--accent);
     opacity: 0.85;
-    transition: opacity var(--transition-normal);
   }
 
   .tab:hover .tab-icon {
@@ -883,7 +878,6 @@
     min-width: 0;
     overflow: hidden;
     white-space: nowrap;
-    transition: color var(--transition-fast);
   }
 
   .tab-rename-input {
@@ -956,7 +950,6 @@
     cursor: pointer;
     transform: scale(0.85);
     opacity: 0;
-    transition: all var(--transition-normal);
     flex-shrink: 0;
   }
 
@@ -1008,10 +1001,6 @@
   :global([data-vibrancy]) .tab {
     border-radius: var(--vibrancy-island-radius) var(--vibrancy-island-radius) 0
       0;
-    transition:
-      background var(--transition-normal),
-      color var(--transition-normal),
-      opacity var(--transition-normal);
   }
 
   :global([data-vibrancy]) .tab-area {

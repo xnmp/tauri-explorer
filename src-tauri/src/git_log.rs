@@ -908,6 +908,30 @@ mod tests {
     }
 
     #[test]
+    fn commit_comparison_diffs_any_two_trees_in_the_requested_direction() {
+        let (dir, repo) = init_repo();
+        fs::write(dir.path().join("shared.txt"), "older value\n").unwrap();
+        let older = commit(&repo, "older", &[]);
+        fs::write(dir.path().join("shared.txt"), "newer value\n").unwrap();
+        fs::write(dir.path().join("introduced.txt"), "introduced\n").unwrap();
+        let newer = commit(&repo, "newer", &[older]);
+
+        let files = commit_comparison_files(&repo, &older.to_string(), &newer.to_string()).unwrap();
+        assert!(files.iter().any(|file| file.path == "shared.txt" && file.status == "M"));
+        assert!(files.iter().any(|file| file.path == "introduced.txt" && file.status == "A"));
+
+        let diff = commit_comparison_file_diff(
+            &repo,
+            &older.to_string(),
+            &newer.to_string(),
+            "shared.txt",
+        )
+        .unwrap();
+        assert!(diff.contains("-older value"), "missing older tree: {diff}");
+        assert!(diff.contains("+newer value"), "missing newer tree: {diff}");
+    }
+
+    #[test]
     fn stashes_weave_in_before_their_base_commit() {
         let (dir, mut repo) = init_repo();
         std::fs::write(dir.path().join("a.txt"), "one").unwrap();

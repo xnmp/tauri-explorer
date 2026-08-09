@@ -105,7 +105,7 @@
 
   /* Icon colors - teal folder, suggest material icons */
   --icon-folder: #5de5d5;
-  --icon-git-badge: var(--accent);
+  --icon-git-badge: #fbbf24;
   --theme-icon-pack: 'material';
 
   /* Background animation - starfield with constellation lines */

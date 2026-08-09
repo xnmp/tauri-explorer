@@ -59,14 +59,14 @@ test(`Git repository folder badge follows the active theme in ${viewMode} view`,
   const auroraFolder = await renderedFolderColour(folder);
   expect(auroraBadge).not.toBe(auroraFolder);
   expect(auroraBadge).not.toBe(darkBadge);
+  if (viewMode === "tiles") {
+    await page.screenshot({ path: "evidence/ac-3-theme-change-git-badge.png" });
+  }
 
   await setTheme(page, "hacker");
   const hackerBadge = await badge.evaluate((element) => getComputedStyle(element).fill);
   const hackerFolder = await renderedFolderColour(folder);
   expect(hackerBadge).not.toBe(hackerFolder);
   expect(hackerBadge).not.toBe(darkBadge);
-  if (viewMode === "tiles") {
-    await page.screenshot({ path: "evidence/ac-3-theme-change-git-badge.png" });
-  }
 });
 }

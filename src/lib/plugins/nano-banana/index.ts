@@ -118,6 +118,7 @@ export const nanoBananaPlugin: Plugin = {
     ctx.registerContextMenuItem({
       id: "nano-banana.edit",
       label: "Edit with Nano Banana",
+      group: "ai",
       icon: "M12 2L14 4L5 13H3V11L12 2Z",
       when: (entries) => selectedImage(entries) !== null,
       handler: (entries) => {

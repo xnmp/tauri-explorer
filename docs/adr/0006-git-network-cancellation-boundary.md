@@ -2,7 +2,7 @@
 
 Status: Accepted
 
-Governs: `src-tauri/src/git_actions.rs`, `src/lib/state/git-graph-refresh.ts`, `src/lib/components/GitGraphView.svelte`
+Governs: `src-tauri/src/git_actions.rs`, `src/lib/domain/git-network-operation.ts`, `src/lib/state/git-graph-refresh.ts`, `src/lib/components/GitGraphView.svelte`
 
 ## Context
 
@@ -36,10 +36,13 @@ snapshot from frontend state.
   not mutated.
 - Pull is two phases: cancellable `git fetch --atomic`, then non-cancellable
   `git merge --ff-only @{upstream}`. The cancellation flag is checked at the
-  boundary. Cancellation before the boundary leaves HEAD/index/worktree
-  unchanged and creates no undo entry. Once the local fast-forward begins it is
-  allowed to finish; a moved HEAD returns the normal backend-authored undo
-  snapshot even if a late cancellation request arrived.
+  boundary. Before the local phase starts, the backend publishes that the task
+  is no longer cancellable. The UI keeps truthful progress visible as
+  `Finishing Git pull…` but removes Cancel, including when a cancellation click
+  races with the phase transition. Cancellation before the boundary leaves
+  HEAD/index/worktree unchanged and creates no undo entry. Once the local
+  fast-forward begins it is allowed to finish; a moved HEAD returns the normal
+  backend-authored undo snapshot even if a late cancellation request arrived.
 - Remote deletion is an at-most-once push. Cancellation never retries. If the
   remote accepted deletion before the child was terminated, the command reports
   `git network operation cancelled; remote branch may already have been deleted`.
@@ -67,7 +70,9 @@ Rust temp-repository tests exercise the real Git CLI at each boundary:
 - cancellation after pull's fetch but before fast-forward proves no HEAD move or
   undo, then proves a later pull and its undo both work;
 - a late cancellation at fast-forward start proves the local mutation completes
-  and returns a valid undo snapshot;
+  and returns a valid undo snapshot; browser coverage pauses at the same phase
+  boundary and proves Cancel disappears before completion while the resulting
+  pull still records its undo snapshot;
 - cancellation after a bare remote accepted branch deletion proves the explicit
   uncertain-result message, repository/lock consistency, and fetch/prune
   reconciliation.

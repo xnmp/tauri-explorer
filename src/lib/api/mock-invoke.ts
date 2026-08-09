@@ -6,6 +6,10 @@
 import type { DirectoryListing, FileEntry } from "$lib/domain/file";
 import { selectPreviewImages } from "$lib/domain/folder-preview";
 import { parentDir, basename } from "$lib/domain/path";
+import {
+  GIT_NETWORK_PHASE_DOM_EVENT,
+  type GitNetworkPhaseEvent,
+} from "$lib/domain/git-network-operation";
 import { emitWatcherGitChange } from "$lib/state/git-refresh";
 import type { GitFileEntry, GitStatusCode, GitStatusSummary, GitOpState } from "$lib/api/files";
 
@@ -563,7 +567,7 @@ interface MockGitCommit {
 
 const mockGitCommits: MockGitCommit[] = [];
 let pendingGitNetworkOperation:
-  | { taskId: number; reject: (reason: Error) => void }
+  | { taskId: number; cancellable: boolean; reject: (reason: Error) => void }
   | undefined;
 
 function holdGitNetworkOperation(
@@ -572,7 +576,42 @@ function holdGitNetworkOperation(
 ): Promise<never> | null {
   if (new URLSearchParams(location.search).get("mockGitNetwork") !== command) return null;
   return new Promise<never>((_resolve, reject) => {
-    pendingGitNetworkOperation = { taskId: Number(args.taskId), reject };
+    pendingGitNetworkOperation = { taskId: Number(args.taskId), cancellable: true, reject };
+  });
+}
+
+function holdGitPullAtFastForwardBoundary(
+  args: Record<string, unknown>,
+): Promise<Record<string, unknown>> | null {
+  if (new URLSearchParams(location.search).get("mockGitPullBoundary") !== "fast_forward") {
+    return null;
+  }
+
+  const taskId = Number(args.taskId);
+  const before_oid = mockHeadOid();
+  const branch = mockDetached
+    ? null
+    : ((MOCK_GRAPH_REFS[before_oid] ?? []).find((ref) => ref.kind === "LocalBranch")?.name ??
+      null);
+
+  return new Promise((resolve, reject) => {
+    pendingGitNetworkOperation = { taskId, cancellable: false, reject };
+    window.dispatchEvent(
+      new CustomEvent<GitNetworkPhaseEvent>(GIT_NETWORK_PHASE_DOM_EVENT, {
+        detail: { taskId, cancellable: false },
+      }),
+    );
+    window.addEventListener(
+      "tauri-explorer:mock-git-pull-finish",
+      () => {
+        if (pendingGitNetworkOperation?.taskId === taskId) {
+          pendingGitNetworkOperation = undefined;
+        }
+        const after_oid = mockAppendCommit("Pull from upstream");
+        resolve({ kind: "head_move", operation: "pull", branch, before_oid, after_oid });
+      },
+      { once: true },
+    );
   });
 }
 
@@ -2056,7 +2095,10 @@ const mockCommands: Record<string, CommandHandler> = {
     return holdGitNetworkOperation("git_fetch", args);
   },
   cancel_git_network_operation: (args) => {
-    if (pendingGitNetworkOperation?.taskId === Number(args.taskId)) {
+    if (
+      pendingGitNetworkOperation?.taskId === Number(args.taskId) &&
+      pendingGitNetworkOperation.cancellable
+    ) {
       const operation = pendingGitNetworkOperation;
       pendingGitNetworkOperation = undefined;
       operation.reject(new Error("git network operation cancelled"));
@@ -2064,6 +2106,8 @@ const mockCommands: Record<string, CommandHandler> = {
     return null;
   },
   git_pull: (args) => {
+    const boundary = holdGitPullAtFastForwardBoundary(args);
+    if (boundary) return boundary;
     const held = holdGitNetworkOperation("git_pull", args);
     if (held) return held;
     const before_oid = mockHeadOid();

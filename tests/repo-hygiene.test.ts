@@ -7,12 +7,13 @@ const readRepositoryFile = (path: string) =>
 describe("public repository hygiene", () => {
   it("groups routine Dependabot updates once per configured ecosystem", () => {
     const dependabot = readRepositoryFile(".github/dependabot.yml");
+    const updates = dependabot.split(/^  - package-ecosystem: /m).slice(1);
 
     for (const ecosystem of ["npm", "cargo", "github-actions"]) {
-      expect(dependabot).toMatch(
-        new RegExp(
-          `package-ecosystem: "${ecosystem}"[\\s\\S]*?groups:[\\s\\S]*?routine-dependencies:[\\s\\S]*?patterns:[\\s\\S]*?- "\\*"`,
-        ),
+      const update = updates.find((entry) => entry.startsWith(`"${ecosystem}"`));
+
+      expect(update).toMatch(
+        /groups:\n      routine-dependencies:\n        patterns:\n          - "\*"/,
       );
     }
   });

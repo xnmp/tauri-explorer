@@ -1,3 +1,5 @@
+/// <reference types="@wdio/types" />
+
 import { spawn, type ChildProcess } from "node:child_process";
 import { createWriteStream, mkdirSync, type WriteStream } from "node:fs";
 import path from "node:path";
@@ -39,6 +41,13 @@ const tauriDriverArgs = nativeDriver ? ["--native-driver", nativeDriver] : [];
 let tauriDriver: ChildProcess | undefined;
 let driverLog: WriteStream | undefined;
 
+type TauriE2eConfig = WebdriverIO.Config & {
+  autoCompileOpts: {
+    autoCompile: boolean;
+    tsNodeOpts: { project: string; transpileOnly: boolean };
+  };
+};
+
 function recordDriverOutput(
   stream: NodeJS.ReadableStream,
   destination: NodeJS.WriteStream,
@@ -49,7 +58,7 @@ function recordDriverOutput(
   });
 }
 
-export const config: WebdriverIO.Config = {
+export const config: TauriE2eConfig = {
   runner: "local",
   specs: ["./specs/**/*.spec.ts"],
   maxInstances: 1,
@@ -101,7 +110,7 @@ export const config: WebdriverIO.Config = {
         `[tauri-e2e] driver spawn failed: ${error.stack ?? error.message}\n`,
       );
     });
-    tauriDriver.once("exit", (code, signal) => {
+    tauriDriver.once("close", (code, signal) => {
       const message = `[tauri-e2e] driver exited code=${code} signal=${signal}\n`;
       console.info(message.trim());
       driverLog?.end(message);

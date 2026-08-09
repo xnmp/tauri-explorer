@@ -41,7 +41,8 @@ describe("Tauri driver lifecycle", () => {
   });
 
   it("keeps the driver transcript open until its output streams close", () => {
-    config.beforeSession?.();
+    const beforeSession = config.beforeSession as () => void;
+    beforeSession();
 
     harness.child.emit("exit", 0, null);
     expect(harness.driverLog.end).not.toHaveBeenCalled();

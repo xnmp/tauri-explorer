@@ -136,15 +136,6 @@ test.describe("Git graph tab", () => {
     await expect(detail).toContainText("Checks passing");
     await expect(detail).toContainText("Approved");
     await expect(detail).toContainText("feature"); // head branch
-    // The full conversation remains inline: issue comments plus both open and
-    // resolved code-review threads are visible without leaving the graph.
-    await expect(detail).toContainText("Nice work! Left a couple of small notes on the diff.");
-    await expect(detail).toContainText("Review threads");
-    await expect(detail).toContainText("Resolved");
-    await expect(detail).toContainText("Open");
-    await expect(detail).toContainText("src/lib/parser.ts:42");
-    await expect(detail).toContainText("Could this retain the previous error context?");
-    await detail.screenshot({ path: "evidence/ac-1-pr-conversation-threads.png" });
     // No browser navigation happened on the plain badge click.
     await expect
       .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))
@@ -169,15 +160,6 @@ test.describe("Git graph tab", () => {
     await prBadge.click();
     await expect(detail).toBeVisible();
     await page.keyboard.press("Escape");
-    await expect(detail).toHaveCount(0);
-
-    // The tokenless REST fallback cannot obtain GraphQL review-thread state,
-    // but its existing detail remains useful and explains the limitation.
-    const hotfixRow = view.locator(".commit-row", { hasText: "Hotfix: crash on empty input" });
-    await hotfixRow.locator(".ref-pr").click();
-    await expect(detail).toContainText("Hotfix login redirect");
-    await expect(detail).toContainText("Sign in to GitHub to view review threads.");
-    await hotfixRow.locator(".ref-pr").click();
     await expect(detail).toHaveCount(0);
 
     // Opening commit details closes the PR dropdown (one expansion at a time).

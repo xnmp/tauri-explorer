@@ -41,7 +41,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `ScmSidebarView.svelte` — Source Control sidebar panel (#54).
 - `ScmPanel.svelte` — standalone SCM panel (stage/unstage/commit lists).
 - `ScmDiffView.svelte` — unified diff viewer replacing FileList for a diff.
-- `GitGraphView.svelte` — commit-graph pane content (#51/#58); the uncommitted-changes node opens an inline stage/unstage/commit panel (#466, logic in `domain/commit-panel.ts`), failed GitHub Actions checks can expose their failed `gh` log inline from an open-PR badge (#521), and branch/tag delete, branch rename, merge, and pull record session undo snapshots with a confirmed Ctrl+Z inverse (#513).
+- `GitGraphView.svelte` — commit-graph pane content (#51/#58); the uncommitted-changes node opens an inline stage/unstage/commit panel (#466, logic in `domain/commit-panel.ts`), arbitrary commit comparison transitions live in `git-graph-comparison.ts` (#512), failed GitHub Actions checks can expose their failed `gh` log inline from an open-PR badge (#521), and branch/tag delete, branch rename, merge, and pull record session undo snapshots with a confirmed Ctrl+Z inverse (#513).
 - `icons/FilesIcon.svelte`, `icons/ScmIcon.svelte` — activity-bar SVG icons.
 - `CommandPalette.svelte` — Ctrl+Shift+P command palette UI.
 - `QuickOpen.svelte` — Ctrl+P fuzzy file finder.
@@ -215,6 +215,7 @@ Layout: frontend `src/lib/` (components / state / api / composables / domain / p
 - `keybinding-parser.ts` — parse/format keybinding chords.
 - `git.ts` — git status letter/indicator conversion.
 - `git-graph.ts` — commit-graph lane layout (#58/#179).
+- `git-graph-comparison.ts` — pure normal-detail/comparison transitions, chronological pair ordering, and stale-request generation checks (#512).
 - `git-graph-undo.ts` — immutable undo snapshot union, pure bounded per-repository ledger, confirmation labels, and structural action comparison (#513).
 - `commit-panel.ts` — pure state machine + derivations for the git-graph uncommitted-node inline commit panel: stage-status grouping, commit-button enablement/label, ephemeral message-editor transitions (#466).
 - `scm-tree.ts` — fold flat repo file list into a tree.

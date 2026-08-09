@@ -103,6 +103,14 @@
   import { parseUnifiedDiff, type ParsedDiff } from "$lib/domain/diff";
   import { highlightDiffLine } from "$lib/domain/syntax-highlight";
   import { compactRelativeTimeToday } from "$lib/domain/git";
+  import {
+    acceptsDetailLoad,
+    closeCommitComparison,
+    createCommitComparisonState,
+    exitCommitComparison,
+    selectComparisonCommit,
+    startCommitComparison,
+  } from "$lib/domain/git-graph-comparison";
   import { notifyLocalGitChange, subscribeGitChanges } from "$lib/state/git-refresh";
   import { gitWatchRepo, gitUnwatchRepo } from "$lib/api/git";
   import { directoryKey, splitPathForDisplay } from "$lib/domain/path";
@@ -171,16 +179,12 @@
   // row shows at the list bottom during infinite scroll (#433).
   let loadingMore = $state(false);
   let error = $state<string | null>(null);
-  let selected = $state<CommitInfo | null>(null);
-  /** First commit picked after the user explicitly starts comparison. Keeping
-   * this local to the graph instance prevents an unfinished comparison from
-   * leaking between repository tabs. */
-  let comparisonFirst = $state<CommitInfo | null>(null);
-  let comparison = $state<{ older: CommitInfo; newer: CommitInfo } | null>(null);
-  // Every async detail load captures this generation. A selection, close, or
-  // comparison transition supersedes its predecessor so old files cannot land
-  // under a different commit's detail panel.
-  let detailRequestGeneration = 0;
+  // The importable domain state machine owns commit/comparison transitions and
+  // request invalidation; this component only performs the resulting IPC.
+  let comparisonState = $state(createCommitComparisonState<CommitInfo>());
+  const selected = $derived(comparisonState.selected);
+  const comparisonFirst = $derived(comparisonState.first);
+  const comparison = $derived(comparisonState.comparison);
   let hoveredTraceOid = $state<string | null>(null);
   /** File rows in the expanded details. `staged`/`section` are set only for
    *  the synthetic uncommitted row, where they pick the right working-tree
@@ -349,10 +353,7 @@
   }
 
   function closeDetails(): void {
-    detailRequestGeneration++;
-    selected = null;
-    comparisonFirst = null;
-    comparison = null;
+    comparisonState = closeCommitComparison(comparisonState).state;
     selectedFiles = [];
     // Ephemeral editor: a fresh open starts blank (mirrors keifu's
     // commit_editor) — but NOT while a commit is in flight, so close+reopen
@@ -367,35 +368,22 @@
     // Opening commit details closes any open PR dropdown — one expansion at a
     // time (#459).
     closePrDetail();
-    if (comparisonFirst) {
-      if (commit.oid === comparisonFirst.oid || commit.oid === UNCOMMITTED) return;
-      const [older, newer] = compareChronologically(comparisonFirst, commit);
-      selectedFiles = [];
-      openDiffPath = null;
-      openDiff = null;
-      comparisonFirst = null;
-      comparison = { older, newer };
-      selected = newer;
-      const request = ++detailRequestGeneration;
-      try {
-        const files = await gitCompareCommitFiles(repoPath, older.oid, newer.oid);
-        if (detailRequestGeneration === request && comparison?.older.oid === older.oid && comparison.newer.oid === newer.oid) {
-          selectedFiles = files;
-        }
-      } catch {
-        if (detailRequestGeneration === request) selectedFiles = [];
-      }
+    const transition = selectComparisonCommit(comparisonState, commit, UNCOMMITTED);
+    comparisonState = transition.state;
+    if (!transition.clearFiles) return;
+    selectedFiles = [];
+    openDiffPath = null;
+    openDiff = null;
+    if (!transition.load) {
+      commitPanelStore.resetIfIdle();
+      detailsHeight = 0;
       return;
     }
-    if (selected?.oid === commit.oid) {
-      closeDetails();
-      return;
-    }
-    closeDetails();
-    selected = commit;
-    const request = ++detailRequestGeneration;
     try {
-      if (commit.oid === UNCOMMITTED) {
+      if (transition.load.kind === "comparison") {
+        const files = await gitCompareCommitFiles(repoPath, transition.load.older.oid, transition.load.newer.oid);
+        if (acceptsDetailLoad(comparisonState, transition.load)) selectedFiles = files;
+      } else if (transition.load.commit.oid === UNCOMMITTED) {
         // Working-tree changes: group the SCM summary buckets by stage status
         // (merge / staged / unstaged / untracked), remembering which side of
         // the index each file sits on for the diff and the stage/unstage
@@ -404,48 +392,40 @@
         // instead of re-scanning.
         const res = await fetchGitSummary(repoPath, { consumerId: summaryConsumerId });
         if (!res.ok) throw new Error(res.error);
-        if (detailRequestGeneration === request && selected?.oid === commit.oid) {
+        if (acceptsDetailLoad(comparisonState, transition.load)) {
           selectedFiles = buildStageFiles(res.data);
         }
       } else {
         // Cached per OID (#431): re-clicking or re-selecting a commit is instant.
-        const files = await cachedCommitFiles(repoPath, commit.oid);
-        if (detailRequestGeneration === request && selected?.oid === commit.oid) selectedFiles = files;
+        const files = await cachedCommitFiles(repoPath, transition.load.commit.oid);
+        if (acceptsDetailLoad(comparisonState, transition.load)) selectedFiles = files;
       }
     } catch {
-      if (detailRequestGeneration === request) selectedFiles = [];
+      if (acceptsDetailLoad(comparisonState, transition.load)) selectedFiles = [];
     }
   }
 
-  function compareChronologically(a: CommitInfo, b: CommitInfo): [CommitInfo, CommitInfo] {
-    if (a.author_time !== b.author_time) return a.author_time < b.author_time ? [a, b] : [b, a];
-    return a.oid < b.oid ? [a, b] : [b, a];
-  }
-
   function beginComparison(): void {
-    if (!selected || selected.oid === UNCOMMITTED) return;
-    comparisonFirst = selected;
-    detailRequestGeneration++;
-    comparison = null;
+    const transition = startCommitComparison(comparisonState, UNCOMMITTED);
+    comparisonState = transition.state;
+    if (!transition.clearFiles) return;
     selectedFiles = [];
     openDiffPath = null;
     openDiff = null;
   }
 
   async function exitComparison(): Promise<void> {
-    const commit = selected;
-    comparison = null;
-    comparisonFirst = null;
-    const request = ++detailRequestGeneration;
+    const transition = exitCommitComparison(comparisonState, UNCOMMITTED);
+    comparisonState = transition.state;
     selectedFiles = [];
     openDiffPath = null;
     openDiff = null;
-    if (!commit || commit.oid === UNCOMMITTED) return;
+    if (!transition.load || transition.load.kind !== "normal") return;
     try {
-      const files = await cachedCommitFiles(repoPath, commit.oid);
-      if (detailRequestGeneration === request && selected?.oid === commit.oid && !comparison) selectedFiles = files;
+      const files = await cachedCommitFiles(repoPath, transition.load.commit.oid);
+      if (acceptsDetailLoad(comparisonState, transition.load)) selectedFiles = files;
     } catch {
-      if (detailRequestGeneration === request) selectedFiles = [];
+      if (acceptsDetailLoad(comparisonState, transition.load)) selectedFiles = [];
     }
   }
 
@@ -2220,7 +2200,7 @@
                     <p class="detail-message">{commit.summary.trimStart()}</p>
                     {#if comparisonFirst}
                       <p class="compare-status">Select another commit to compare with {comparisonFirst.short_oid}.</p>
-                      <button type="button" class="compare-action" onclick={() => { comparisonFirst = null; void exitComparison(); }}>
+                      <button type="button" class="compare-action" onclick={() => void exitComparison()}>
                         Cancel comparison
                       </button>
                     {:else if comparison}

@@ -19,3 +19,7 @@ world. A test-side assignment to `window.__TAURI_INTERNALS__.invoke` may appear
 to succeed and remain readable to later WebDriver scripts without affecting
 the application world's Tauri calls. Configure dev-only application probes
 through DOM `CustomEvent`s and publish observations through DOM state instead.
+Publish hook readiness before the driver dispatches an operation, dispatch it
+once, and acknowledge completion with a matching DOM token. Re-dispatching a
+navigation on every polling interval queues duplicate directory listings that
+can begin after a watcher timing probe is installed.

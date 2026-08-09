@@ -500,8 +500,17 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     // (navigate / create_directory / rename_entry / trash) the UI flows do,
     // just without the headless-only focus race. Absent from production.
     if (import.meta.env.DEV) {
-      window.addEventListener("e2e-navigate", ((e: CustomEvent<string>) => {
-        windowTabsManager.getActiveExplorer()?.navigateTo(e.detail);
+      window.addEventListener("e2e-navigate", ((
+        e: CustomEvent<string | { path: string; token?: string }>,
+      ) => {
+        const path = typeof e.detail === "string" ? e.detail : e.detail.path;
+        const token = typeof e.detail === "string" ? undefined : e.detail.token;
+        const navigation = windowTabsManager.getActiveExplorer()?.navigateTo(path);
+        if (navigation && token) {
+          void navigation.then(() => {
+            document.documentElement.dataset.e2eNavigationComplete = token;
+          });
+        }
       }) as EventListener);
 
       // Restore the active pane to its file listing by closing any open commit
@@ -534,6 +543,13 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
           void explorer.confirmDelete([entry]);
         }
       }) as EventListener);
+
+      // WebKitWebDriver can execute injected scripts before these listeners
+      // exist. Publish readiness through the DOM (visible across WebKit's
+      // isolated JS worlds) so the driver can dispatch each navigation once
+      // and wait for its matching completion token. Repeated polling dispatches
+      // queue duplicate real listings and contaminate watcher timing probes.
+      document.documentElement.dataset.e2eHooksReady = "true";
     }
 
     // Register all commands for the command palette (deferred to next tick)

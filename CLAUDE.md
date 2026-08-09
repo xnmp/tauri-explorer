@@ -81,7 +81,9 @@ WebKitWebDriver may evaluate `browser.execute` in an isolated JavaScript world.
 Use DOM events/state to communicate with dev-only application probes; mutating
 application globals such as `window.__TAURI_INTERNALS__` from the injected
 script can remain invisible to the app even when later injected scripts read
-the mutation back.
+the mutation back. Publish hook readiness and acknowledge each operation with a
+unique DOM token before polling its result; repeatedly dispatching an operation
+while waiting can queue duplicate real backend work that outlives the poll.
 
 Anything whose failure mode involves races, watcher timing, git state, or cache staleness needs tier 3 or a Rust temp-repo test in `src-tauri` — a green mock E2E is not evidence for those.
 

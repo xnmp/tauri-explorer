@@ -123,6 +123,18 @@ fn parse_linux_block_mounts(mountinfo: &str, sys_block: &std::path::Path) -> Vec
         .collect()
 }
 
+/// Test seam for Linux mount-table fixtures. The production command reads the
+/// real mount table and sysfs roots; integration tests supply deterministic
+/// fixtures without needing to mount a device on the test host.
+#[cfg(target_os = "linux")]
+#[doc(hidden)]
+pub fn parse_linux_block_mounts_for_test(
+    mountinfo: &str,
+    sys_block: &std::path::Path,
+) -> Vec<Drive> {
+    parse_linux_block_mounts(mountinfo, sys_block)
+}
+
 #[cfg(target_os = "linux")]
 fn parse_linux_mounts(mountinfo: &str) -> Vec<LinuxMount> {
     mountinfo.lines().filter_map(parse_linux_mount).collect()

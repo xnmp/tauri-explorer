@@ -84,7 +84,10 @@ jobs:
       # embedded in the binary and there is no dev server to race.
       - name: Build Tauri binary (debug, embedded frontend, no bundle)
         shell: bash
-        run: bun run tauri build --debug --no-bundle
+        run: |
+          mkdir -p e2e-tauri/logs
+          set -o pipefail
+          bun run tauri build --debug --no-bundle 2>&1 | tee e2e-tauri/logs/tauri-build.log
 
       - name: Run smoke suite (Linux, under Xvfb)
         if: runner.os == 'Linux'
@@ -106,6 +109,9 @@ jobs:
 
       - name: Run smoke suite (Windows)
         if: runner.os == 'Windows'
+        # Keep the outer 25-minute job cap as a safeguard, but leave time for
+        # the always() artifact step when the driver/session handshake stalls.
+        timeout-minutes: 3
         env:
           # The diagnostic run exits after the first session failure; a later
           # green change removes this guard once the real handshake is fixed.

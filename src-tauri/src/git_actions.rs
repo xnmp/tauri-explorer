@@ -1511,6 +1511,60 @@ mod tests {
     }
 
     #[test]
+    fn network_operation_multi_remote_error_does_not_skip_later_remotes() {
+        let (dir, commits) = linear_repo();
+        let repo = repo_path(&dir);
+        let missing_remote = dir.path().join("missing-remote");
+        git(
+            dir.path(),
+            &["remote", "add", "broken", missing_remote.to_str().unwrap()],
+        );
+
+        let good_remote = TempDir::new().unwrap();
+        let good_remote_path = good_remote.path().to_string_lossy().into_owned();
+        git(good_remote.path(), &["init", "--bare"]);
+        git(dir.path(), &["remote", "add", "good", &good_remote_path]);
+        git(dir.path(), &["push", "good", "main"]);
+        git(
+            good_remote.path(),
+            &["symbolic-ref", "HEAD", "refs/heads/main"],
+        );
+
+        let actor = TempDir::new().unwrap();
+        git(actor.path(), &["clone", &good_remote_path, "."]);
+        git(actor.path(), &["config", "user.name", "Test"]);
+        git(actor.path(), &["config", "user.email", "t@x"]);
+        write(actor.path(), "healthy.txt", "healthy remote\n");
+        git(actor.path(), &["add", "."]);
+        git(actor.path(), &["commit", "-m", "advance healthy remote"]);
+        git(actor.path(), &["push", "origin", "main"]);
+        let good_tip = git_out(actor.path(), &["rev-parse", "HEAD"]);
+
+        assert_eq!(
+            fetch_all_eligible_remotes(&repo).unwrap(),
+            vec!["broken".to_string(), "good".to_string()]
+        );
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/good/main"]),
+            commits[1]
+        );
+
+        let cancelled = AtomicBool::new(false);
+        let mut completed = Vec::new();
+        let error = fetch_all_remotes_sync_with_hook(&repo, &cancelled, |name, _| {
+            completed.push(name.to_string());
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("broken"));
+        assert_eq!(completed, vec!["good"]);
+        assert_eq!(
+            git_out(dir.path(), &["rev-parse", "refs/remotes/good/main"]),
+            good_tip
+        );
+        assert_repo_consistent(dir.path());
+    }
+
+    #[test]
     fn network_operation_cancels_in_flight_multi_ref_fetch_without_partial_updates() {
         let (dir, commits) = linear_repo();
         let repo = repo_path(&dir);

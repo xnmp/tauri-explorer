@@ -134,14 +134,21 @@ const REVIEW_COMMENT_FETCH_CAP: usize = 50;
 const _: () =
     assert!(OPEN_PR_FETCH_CAP * REVIEW_THREAD_FETCH_CAP * REVIEW_COMMENT_FETCH_CAP < 500_000);
 
-const OPEN_PRS_QUERY: &str = "query($owner:String!,$name:String!){\
-repository(owner:$owner,name:$name){\
-pullRequests(states:OPEN,first:100){nodes{\
+/// Build the bounded GraphQL request from the same caps guarded above. Keeping
+/// the query text coupled to these constants prevents a query-only fan-out
+/// increase from bypassing the compile-time node-budget assertion.
+fn open_prs_query() -> String {
+    format!(
+        "query($owner:String!,$name:String!){{\
+repository(owner:$owner,name:$name){{\
+pullRequests(states:OPEN,first:{OPEN_PR_FETCH_CAP}){{nodes{{\
 number title url isDraft headRefName reviewDecision bodyText \
-comments(last:20){totalCount nodes{author{login} createdAt bodyText}} \
-reviewThreads(first:50){nodes{isResolved comments(first:50){nodes{author{login} createdAt bodyText path line}}}} \
-commits(last:1){nodes{commit{statusCheckRollup{state}}}}\
-}}}}";
+comments(last:{COMMENT_FETCH_CAP}){{totalCount nodes{{author{{login}} createdAt bodyText}}}} \
+reviewThreads(first:{REVIEW_THREAD_FETCH_CAP}){{nodes{{isResolved comments(first:{REVIEW_COMMENT_FETCH_CAP}){{nodes{{author{{login}} createdAt bodyText path line}}}}}}}} \
+commits(last:1){{nodes{{commit{{statusCheckRollup{{state}}}}}}}}\
+}}}}}}"
+    )
+}
 
 /// Extract `(owner, repo)` from a GitHub remote URL. Only github.com hosts
 /// are recognized (SSH scp-like syntax, `ssh://`, and `https://`); anything
@@ -310,7 +317,7 @@ fn fetch_open_prs_rest(owner: &str, repo: &str) -> Result<Vec<PrInfo>, String> {
 /// `comments.totalCount` come for free on the same node.
 fn fetch_open_prs_graphql(owner: &str, repo: &str, token: &str) -> Result<Vec<PrInfo>, String> {
     let body = serde_json::json!({
-        "query": OPEN_PRS_QUERY,
+        "query": open_prs_query(),
         "variables": { "owner": owner, "name": repo },
     });
     let resp: GqlResponse = ureq::post("https://api.github.com/graphql")
@@ -1088,13 +1095,14 @@ mod tests {
 
     #[test]
     fn open_pr_query_requests_bounded_review_thread_fields() {
-        assert!(OPEN_PRS_QUERY.contains("reviewThreads(first:50)"));
-        assert!(OPEN_PRS_QUERY.contains("comments(first:50)"));
+        let query = open_prs_query();
+        assert!(query.contains(&format!(
+            "pullRequests(states:OPEN,first:{OPEN_PR_FETCH_CAP})"
+        )));
+        assert!(query.contains(&format!("reviewThreads(first:{REVIEW_THREAD_FETCH_CAP})")));
+        assert!(query.contains(&format!("comments(first:{REVIEW_COMMENT_FETCH_CAP})")));
         for field in ["isResolved", "createdAt", "bodyText", "path", "line"] {
-            assert!(
-                OPEN_PRS_QUERY.contains(field),
-                "query should request {field}"
-            );
+            assert!(query.contains(field), "query should request {field}");
         }
     }
 

@@ -33,18 +33,18 @@ test.describe("Git graph tab", () => {
 
     // Commit rows render with the mocked history (newest first: the merge).
     const rows = view.locator(".commit-row");
-    // 17 history rows (incl. the woven stash) + the synthetic uncommitted row.
-    await expect(rows).toHaveCount(18);
+    // 18 history rows (incl. the woven stash) + the synthetic uncommitted row.
+    await expect(rows).toHaveCount(19);
     await expect(rows.first()).toContainText("Uncommitted Changes");
     // The stash's base is the tip, so it weaves in directly above it.
-    await expect(rows.nth(1)).toContainText("WIP on main");
-    await expect(rows.nth(2)).toContainText("Merge hotfix into main");
+    await expect(rows.nth(2)).toContainText("WIP on main");
+    await expect(rows.nth(3)).toContainText("Merge hotfix into main");
     await expect(rows.last()).toContainText("Initial commit");
 
     // Refs decoration: HEAD + main on the tip, tag on v1.0's commit.
     // Combined chip: local main groups its in-sync remote as a nested
     // sub-chip; the checked-out branch chip is highlighted.
-    const tipRow = rows.nth(2);
+    const tipRow = rows.nth(3);
     await expect(tipRow.locator(".ref-branch.ref-active")).toContainText("main");
     await expect(tipRow.locator(".ref-branch .ref-remote-sub")).toHaveText("origin");
     // Only the checked-out branch highlights (#433): `release` also sits on the
@@ -220,7 +220,7 @@ test.describe("Git graph tab", () => {
     await waitForEntries(page);
     await openGraphViaPalette(page);
     const view = page.locator('[data-testid="git-graph-view"]');
-    await expect(view.locator(".commit-row")).toHaveCount(18);
+  await expect(view.locator(".commit-row")).toHaveCount(19);
 
     // Open the popover; the text box filters the branch list itself.
     await page.locator('[data-testid="branch-filter-btn"]').click();
@@ -255,7 +255,7 @@ test.describe("Git graph tab", () => {
     // "All branches" restores the full graph.
     await page.locator('[data-testid="branch-filter-btn"]').click();
     await popover.locator(".bf-all").click();
-    await expect(view.locator(".commit-row")).toHaveCount(18);
+  await expect(view.locator(".commit-row")).toHaveCount(19);
   });
 
   test("F5 refreshes the graph with visible feedback (#370, #417)", async ({ page }) => {
@@ -268,7 +268,7 @@ test.describe("Git graph tab", () => {
     await expect(page.locator(".toast", { hasText: "Refreshing graph" })).toBeVisible();
     await expect(page.locator(".toast", { hasText: "Fetched from remotes" })).toBeVisible();
     // The graph is still painted after the reload.
-    await expect(page.locator('[data-testid="git-graph-view"] .commit-row')).toHaveCount(18);
+  await expect(page.locator('[data-testid="git-graph-view"] .commit-row')).toHaveCount(19);
   });
 
   test("remote-only branch chip offers a tracking checkout (#432)", async ({ page }) => {
@@ -317,7 +317,7 @@ test.describe("Git graph tab", () => {
     await waitForEntries(page);
     await openGraphViaPalette(page);
     const view = page.locator('[data-testid="git-graph-view"]');
-    await expect(view.locator(".commit-row")).toHaveCount(18);
+  await expect(view.locator(".commit-row")).toHaveCount(19);
 
     await page.locator('[data-testid="branch-filter-btn"]').click();
     const popover = page.locator('[data-testid="branch-popover"]');
@@ -356,7 +356,7 @@ test.describe("Git graph tab", () => {
 
     // Re-select all restores everything.
     await selectAll.click();
-    await expect(view.locator(".commit-row")).toHaveCount(18);
+  await expect(view.locator(".commit-row")).toHaveCount(19);
   });
 
   test("graph columns resize by dragging header handles and persist (#341)", async ({ page }) => {
@@ -517,6 +517,33 @@ test("mutes merge commits and shows compact relative dates (#458)", async ({ pag
   await page.keyboard.press("Escape");
   await expect(mergeRow).not.toHaveClass(/is-merge/);
   await expect(normalRow).not.toHaveClass(/is-merge/);
+});
+
+test("mutes only base-update merges on an open PR branch when enabled (#527)", async ({ page }) => {
+  await page.goto("/?path=/home/user/Documents/project");
+  await waitForEntries(page);
+  await openGraphViaPalette(page);
+
+  const view = page.locator('[data-testid="git-graph-view"]');
+  const baseUpdate = view.locator(".commit-row", { hasText: "Merge main into base-update branch" });
+  const unrelated = view.locator(".commit-row", { hasText: "Merge hotfix into main" });
+
+  // Disable generic merge muting: this isolates the independently persisted
+  // base-update treatment from the older all-merges preference.
+  await page.locator(".graph-header").click({ button: "right" });
+  await page.locator('[data-testid="toggle-mute-merges"]').click();
+  await expect(baseUpdate).not.toHaveClass(/is-merge/);
+
+  await page.locator(".graph-header").click({ button: "right" });
+  await expect(page.locator('[data-testid="toggle-mute-base-update-merges"]')).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+  await expect(baseUpdate).toHaveClass(/is-base-update-merge/);
+  await expect(unrelated).not.toHaveClass(/is-base-update-merge/);
+
+  await page.locator('[data-testid="toggle-mute-base-update-merges"]').click();
+  await expect(baseUpdate).not.toHaveClass(/is-base-update-merge/);
 });
 
 test("traces a hovered or selected branch lineage and can restore the undimmed graph", async ({

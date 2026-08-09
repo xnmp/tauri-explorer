@@ -964,10 +964,11 @@ mod tests {
     fn draft_flag_and_comment_count_flow_through() {
         let pr = parse_one(
             r#"{ "number": 12, "title": "wip", "url": "u", "isDraft": true,
-                 "headRefName": "experiment", "reviewDecision": "CHANGES_REQUESTED",
+                 "headRefName": "experiment", "baseRefName": "main", "reviewDecision": "CHANGES_REQUESTED",
                  "comments": { "totalCount": 0 }, "commits": { "nodes": [] } }"#,
         );
         assert!(pr.draft);
+        assert_eq!(pr.base_ref, "main");
         assert_eq!(pr.comment_count, Some(0));
         assert_eq!(pr.review_decision.as_deref(), Some("changes_requested"));
     }

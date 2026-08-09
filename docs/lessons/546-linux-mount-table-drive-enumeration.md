@@ -5,4 +5,7 @@ mount directories: desktop launch environments may omit `USER`, and valid
 mounts may live anywhere. Read `/proc/self/mountinfo`, decode its escaped mount
 paths, and resolve each `/dev` partition back to its parent `/sys/block` device
 to read the kernel's `removable` flag. Keep pseudo filesystems out of the drive
-list and use `/dev/disk/by-label` when udev provides a volume label.
+list, exclude operating-system roots such as separately mounted `/boot` and
+`/home`, and use `/dev/disk/by-label` when udev provides a volume label. Keep
+the complete production enumeration path injectable so mount/unmount behavior
+is testable without host mounts or environment variables.

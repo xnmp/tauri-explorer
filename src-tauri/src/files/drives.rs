@@ -80,16 +80,7 @@ pub async fn list_drives() -> Result<Vec<Drive>, AppError> {
 
 #[cfg(target_os = "linux")]
 fn enumerate_drives() -> Vec<Drive> {
-    let mut seen = std::collections::HashSet::new();
-    let mut drives = Vec::new();
-
-    if let Ok(mountinfo) = std::fs::read_to_string("/proc/self/mountinfo") {
-        for drive in parse_linux_block_mounts(&mountinfo, std::path::Path::new("/sys/block")) {
-            if seen.insert(drive.path.clone()) {
-                drives.push(drive);
-            }
-        }
-    }
+    let mountinfo = std::fs::read_to_string("/proc/self/mountinfo").ok();
 
     let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
         .map(std::path::PathBuf::from)
@@ -98,10 +89,33 @@ fn enumerate_drives() -> Vec<Drive> {
             let uid = unsafe { libc::geteuid() };
             std::path::PathBuf::from(format!("/run/user/{uid}"))
         });
-    for drive in linux_gvfs_google_drives(&runtime_dir.join("gvfs"))
+    let cloud_drives = linux_gvfs_google_drives(&runtime_dir.join("gvfs"))
         .into_iter()
-        .chain(linux_rclone_drives())
-    {
+        .chain(linux_rclone_drives());
+
+    enumerate_linux_drives(
+        mountinfo.as_deref(),
+        std::path::Path::new("/sys/block"),
+        cloud_drives,
+    )
+}
+
+/// The shared production enumeration path. The native command supplies the
+/// real mount table and sysfs root; tests supply fixtures through the same
+/// filtering, classification, de-duplication, and removal behavior.
+#[cfg(target_os = "linux")]
+fn enumerate_linux_drives(
+    mountinfo: Option<&str>,
+    sys_block: &std::path::Path,
+    cloud_drives: impl IntoIterator<Item = Drive>,
+) -> Vec<Drive> {
+    let mut seen = std::collections::HashSet::new();
+    let mut drives = mountinfo
+        .map(|contents| parse_linux_block_mounts(contents, sys_block))
+        .unwrap_or_default();
+    seen.extend(drives.iter().map(|drive| drive.path.clone()));
+
+    for drive in cloud_drives {
         if seen.insert(drive.path.clone()) {
             drives.push(drive);
         }
@@ -119,20 +133,19 @@ fn parse_linux_block_mounts(mountinfo: &str, sys_block: &std::path::Path) -> Vec
     parse_linux_mounts(mountinfo)
         .into_iter()
         .filter(|mount| !is_linux_pseudo_filesystem(&mount.filesystem))
+        .filter(|mount| !is_linux_system_mount(&mount.path))
         .filter_map(|mount| linux_drive_from_mount(&mount, sys_block))
         .collect()
 }
 
-/// Test seam for Linux mount-table fixtures. The production command reads the
-/// real mount table and sysfs roots; integration tests supply deterministic
-/// fixtures without needing to mount a device on the test host.
+/// Controlled input seam for the real Linux drive enumeration path.
+///
+/// This exists for integration tests that need deterministic mount-table and
+/// sysfs fixtures without mounting or unmounting hardware on the test host.
 #[cfg(target_os = "linux")]
 #[doc(hidden)]
-pub fn parse_linux_block_mounts_for_test(
-    mountinfo: &str,
-    sys_block: &std::path::Path,
-) -> Vec<Drive> {
-    parse_linux_block_mounts(mountinfo, sys_block)
+pub fn enumerate_linux_drives_for_test(mountinfo: &str, sys_block: &std::path::Path) -> Vec<Drive> {
+    enumerate_linux_drives(Some(mountinfo), sys_block, std::iter::empty())
 }
 
 #[cfg(target_os = "linux")]
@@ -181,6 +194,17 @@ fn is_linux_pseudo_filesystem(filesystem: &str) -> bool {
             | "rpc_pipefs"
             | "binfmt_misc"
             | "nsfs"
+    )
+}
+
+/// These locations are operating-system roots even when they have a real
+/// block-device backing (for example, a separately mounted `/boot` or `/home`)
+/// and must never be offered as sidebar drives.
+#[cfg(target_os = "linux")]
+fn is_linux_system_mount(path: &str) -> bool {
+    matches!(
+        path,
+        "/" | "/boot" | "/home" | "/usr" | "/var" | "/opt" | "/srv" | "/root"
     )
 }
 

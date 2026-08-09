@@ -38,6 +38,14 @@ let tauriDriver: ChildProcess | undefined;
 export const config: WebdriverIO.Config = {
   runner: "local",
   specs: ["./specs/**/*.spec.ts"],
+  // warm-window.spec asserts the parked second webview exists, so it cannot run
+  // against a build whose priming is suppressed. The Windows leg sets
+  // VITE_E2E_NO_WARM_PRIME because msedgedriver cannot create a session while a
+  // second WebView2 appears mid-attach (#457); Linux keeps the coverage.
+  exclude:
+    process.env.VITE_E2E_NO_WARM_PRIME === "1"
+      ? ["./specs/warm-window.spec.ts"]
+      : [],
   maxInstances: 1,
   capabilities: [
     {

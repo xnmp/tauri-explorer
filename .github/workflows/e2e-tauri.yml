@@ -17,7 +17,12 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    # The Windows debug build alone is ~12 minutes, so a 25-minute job cap left
+    # no room for a full suite run: a step bound generous enough to let the
+    # specs finish pushed the job past the cap and it was killed as `cancelled`
+    # with no artifacts. Cap the job well above build + suite and let the
+    # per-step bound below be the thing that actually fails a stuck run.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
 
@@ -87,10 +92,17 @@ jobs:
       # `import.meta.env.DEV`, which is what tied the suite to a dev-mode
       # binary — and therefore to a dev server — in the first place. Release
       # builds never set it, so the hooks tree-shake out of shipped binaries.
+      # VITE_E2E_NO_WARM_PRIME (Windows only): msedgedriver's "launch" approach
+      # attaches to the FIRST WebView2 instance an app creates, and Microsoft
+      # documents multi-instance apps as requiring the "attach" approach. This
+      # app parks a hidden warm window ~1.5s after boot (warmWindow defaults
+      # on), so a second WebView2 lands mid-attach and POST /session never
+      # returns. WebKitGTK tolerates it, so Linux keeps warm-window coverage.
       - name: Build Tauri binary (debug, embedded frontend, no bundle)
         shell: bash
         env:
           VITE_E2E_HOOKS: "1"
+          VITE_E2E_NO_WARM_PRIME: ${{ runner.os == 'Windows' && '1' || '' }}
         run: bun run tauri build --debug --no-bundle
 
       - name: Run smoke suite (Linux, under Xvfb)
@@ -119,6 +131,10 @@ jobs:
       - name: Run smoke suite (Windows)
         if: runner.os == 'Windows'
         timeout-minutes: 15
+        env:
+          # Must match the build flag above — wdio uses it to exclude
+          # warm-window.spec, which asserts the very window it suppresses.
+          VITE_E2E_NO_WARM_PRIME: "1"
         run: bun run test:e2e:tauri
 
       - name: Upload WDIO logs

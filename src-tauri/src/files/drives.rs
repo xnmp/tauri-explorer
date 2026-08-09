@@ -564,6 +564,58 @@ mod linux_tests {
     use super::*;
 
     #[test]
+    fn exposes_removable_mounts_from_any_mount_path_without_user_environment() {
+        let sys_block = tempfile::tempdir().expect("temporary sysfs block directory");
+        let disk = sys_block.path().join("sdb");
+        std::fs::create_dir_all(disk.join("sdb1")).expect("partition directory");
+        std::fs::write(disk.join("removable"), "1\n").expect("removable flag");
+
+        let drives = parse_linux_block_mounts(
+            "42 35 8:17 / /mnt/USB\\040BACKUP rw,relatime - ext4 /dev/sdb1 rw\n",
+            sys_block.path(),
+        );
+
+        assert_eq!(drives.len(), 1);
+        assert_eq!(drives[0].name, "USB BACKUP");
+        assert_eq!(drives[0].path, "/mnt/USB BACKUP");
+        assert!(matches!(drives[0].kind, DriveKind::Removable));
+    }
+
+    #[test]
+    fn filters_pseudo_filesystems_and_malformed_mountinfo() {
+        let sys_block = tempfile::tempdir().expect("temporary sysfs block directory");
+        let mountinfo = concat!(
+            "malformed mountinfo line\n",
+            "1 0 0:1 / /proc rw - proc proc rw\n",
+            "2 0 0:2 / /sys rw - sysfs sysfs rw\n",
+            "3 0 0:3 / /run rw - tmpfs tmpfs rw\n",
+            "4 0 0:4 / /sys/fs/cgroup rw - cgroup2 cgroup rw\n",
+            "5 0 0:5 / /dev/pts rw - devpts devpts rw\n",
+            "6 0 0:6 / / rw - overlay overlay rw\n",
+            "7 0 7:0 / /snap/example rw - squashfs /dev/loop0 rw\n",
+        );
+
+        assert!(parse_linux_block_mounts(mountinfo, sys_block.path()).is_empty());
+    }
+
+    #[test]
+    fn resolves_partition_to_its_backing_disk_removable_flag() {
+        let sys_block = tempfile::tempdir().expect("temporary sysfs block directory");
+        let disk = sys_block.path().join("mmcblk0");
+        std::fs::create_dir_all(disk.join("mmcblk0p1")).expect("partition directory");
+        std::fs::write(disk.join("removable"), "1").expect("removable flag");
+
+        assert_eq!(
+            backing_block_device("/dev/mmcblk0p1", sys_block.path()).as_deref(),
+            Some("mmcblk0")
+        );
+        assert!(is_removable_block_device(
+            "/dev/mmcblk0p1",
+            sys_block.path()
+        ));
+    }
+
+    #[test]
     fn discovers_gvfs_google_account_with_account_detail() {
         let gvfs = tempfile::tempdir().expect("temporary GVFS directory");
         let mount = gvfs.path().join("google-drive:host=user@example.com");

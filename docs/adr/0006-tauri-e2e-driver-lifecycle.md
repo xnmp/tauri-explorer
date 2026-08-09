@@ -15,8 +15,9 @@ consume the job-level timeout before GitHub Actions can upload diagnostics.
 
 - The WDIO worker owns the `tauri-driver` child it spawns. It pipes both child
   streams to the worker console and to a per-worker log file; it records spawn
-  errors and closes that log only after the child exit event.
-- Session teardown requests child termination. The child exit event is the
+  errors and closes that log only after the child close event, when both output
+  streams have drained.
+- Session teardown requests child termination. The child close event is the
   single reaping observation and records its exit code or signal.
 - Normal runs execute every smoke spec. A diagnostic environment may stop after
   the first failed session so its transcript is preserved rather than repeating

@@ -47,6 +47,7 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
   import { conflictResolver } from "$lib/state/conflict-resolver.svelte";
   import { gitStatusStore } from "$lib/state/git-status.svelte";
   import { initTabTransferListener } from "$lib/state/tab-transfer";
+  import { e2eMode } from "$lib/e2e-mode";
   import StatusBar from "$lib/components/StatusBar.svelte";
   import AnimatedBackground from "$lib/components/AnimatedBackground.svelte";
   import MillerColumns from "$lib/components/MillerColumns.svelte";
@@ -493,13 +494,14 @@ import { windowSizeStore } from "$lib/state/window-size.svelte";
     // Apply edits made to settings.json / user themes outside the app (#599).
     const stopConfigWatch = startConfigWatch();
 
-    // Dev-only e2e hooks: the tauri-driver suite runs against the vite dev
-    // server under Xvfb with no window manager, where autofocused inline
+    // E2E-only hooks: the tauri-driver suite runs against the embedded frontend
+    // under Xvfb with no window manager, where autofocused inline
     // inputs (address bar, new-folder, rename) blur — and cancel — the
     // instant they open. These hooks drive the SAME real backend operations
     // (navigate / create_directory / rename_entry / trash) the UI flows do,
-    // just without the headless-only focus race. Absent from production.
-    if (import.meta.env.DEV) {
+    // just without the headless-only focus race. The CI build opts in with
+    // VITE_TAURI_E2E=1; ordinary production builds omit them.
+    if (e2eMode) {
       window.addEventListener("e2e-navigate", ((
         e: CustomEvent<string | { path: string; token?: string }>,
       ) => {

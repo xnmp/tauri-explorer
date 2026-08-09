@@ -11,6 +11,7 @@ import { initFileChangeListener, cleanupFileChangeListener } from "$lib/state/fi
 import { requestRefresh, cancelPendingRefreshes } from "$lib/state/refresh-manager";
 import { settingsStore } from "$lib/state/settings.svelte";
 import { gitStatusStore } from "$lib/state/git-status.svelte";
+import { e2eMode } from "$lib/e2e-mode";
 
 export interface FileWatcherDeps {
   getAllExplorers: () => ExplorerInstance[];
@@ -24,12 +25,12 @@ interface WatcherReceipt {
 const watcherReceipts = new Map<string, WatcherReceipt>();
 
 function publishWatcherListenerReady(): void {
-  if (!import.meta.env.DEV || typeof document === "undefined") return;
+  if (!e2eMode || typeof document === "undefined") return;
   document.documentElement.dataset.e2eDirectoryWatcherListenerReady = "true";
 }
 
 function publishWatcherReceipt(path: string, observedAt: number | undefined): void {
-  if (!import.meta.env.DEV || typeof document === "undefined") return;
+  if (!e2eMode || typeof document === "undefined") return;
   const previous = watcherReceipts.get(path);
   watcherReceipts.set(path, {
     count: (previous?.count ?? 0) + 1,

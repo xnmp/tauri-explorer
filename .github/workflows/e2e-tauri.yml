@@ -87,6 +87,10 @@ jobs:
       # embedded in the binary and there is no dev server to race.
       - name: Build Tauri binary (debug, embedded frontend, no bundle)
         shell: bash
+        env:
+          # Preserve the test-only DOM hooks in the embedded frontend. They
+          # drive real backend operations without reintroducing a Vite server.
+          VITE_TAURI_E2E: "1"
         run: |
           mkdir -p e2e-tauri/logs
           set -o pipefail

@@ -158,7 +158,11 @@ pub(crate) fn watched_config_name(config_dir: &Path, changed: &Path) -> Option<S
         _ => {
             let changed = std::fs::canonicalize(changed).ok()?;
             for filename in [SETTINGS_FILE, BOOKMARKS_FILE, FOLDER_VIEWS_FILE] {
-                if std::fs::canonicalize(config_dir.join(filename)).ok().as_ref() == Some(&changed) {
+                if std::fs::canonicalize(config_dir.join(filename))
+                    .ok()
+                    .as_ref()
+                    == Some(&changed)
+                {
                     return Some(filename.to_string());
                 }
             }

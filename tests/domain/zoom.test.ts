@@ -81,13 +81,19 @@ describe("detectViewportZoomCoords", () => {
       expect(fixedFromClient(100, 1, false)).toBe(100);
     });
 
-    // Standardized CSS zoom (Interop 2024): fixed left L renders at L×zoom
-    // viewport px on every engine — measured live on Chromium AND the
-    // WebKitGTK-based Playwright WebKit (#227). One division, engine-agnostic.
-    it("divides once on every engine", () => {
+    it("divides once on Chromium", () => {
       expect(fixedFromClient(100, 2, true)).toBe(50);
-      expect(fixedFromClient(100, 2, false)).toBe(50);
     });
+
+    it.each([
+      [0.9, 100, 100 / 0.9 ** 2],
+      [1.25, 125, 125 / 1.25 ** 2],
+    ])(
+      "keeps a macOS WKWebView menu under its cursor at %s zoom",
+      (zoom, cursorCoord, expectedFixedCoord) => {
+        expect(fixedFromClient(cursorCoord, zoom, false)).toBeCloseTo(expectedFixedCoord);
+      },
+    );
   });
 
   describe("fixedFromRect (element-anchored overlays)", () => {
@@ -96,13 +102,20 @@ describe("detectViewportZoomCoords", () => {
       expect(fixedFromRect(100, 1, false, false)).toBe(100);
     });
 
-    // Standardized CSS zoom: rects are post-zoom viewport px everywhere —
-    // one division regardless of engine flags (#227).
-    it("divides once on every engine", () => {
+    it("divides once on Chromium and WebKitGTK", () => {
       expect(fixedFromRect(100, 2, true, true)).toBe(50);
       expect(fixedFromRect(100, 2, false, false)).toBe(50);
-      expect(fixedFromRect(100, 2, true, false)).toBe(50);
     });
+
+    it.each([
+      [0.9, 100, 100 / 0.9 ** 2],
+      [1.25, 125, 125 / 1.25 ** 2],
+    ])(
+      "keeps a macOS WKWebView element menu aligned at %s zoom",
+      (zoom, rectCoord, expectedFixedCoord) => {
+        expect(fixedFromRect(rectCoord, zoom, true, false)).toBeCloseTo(expectedFixedCoord);
+      },
+    );
   });
 
   /**

@@ -1,7 +1,7 @@
 //! Enumerate drives and volumes across platforms.
 //!
-//! Linux: scans the conventional removable-media directories, GVFS mounts,
-//! and `/proc/self/mountinfo` for rclone cloud mounts.
+//! Linux: reads the mount table for block-device volumes, plus GVFS and rclone
+//! cloud mounts.
 //! macOS: scans `/Volumes/`, skipping the root-mapped system volume.
 //! Windows: iterates drive letters that exist; volume label + provider + type
 //! are read via PowerShell `Win32_LogicalDisk` (no winapi dependency, and unlike
@@ -11,6 +11,18 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
+
+/// One real filesystem mount reported by Linux's mount table.
+///
+/// Fields stay decoded so callers can use the mount path as the sidebar route
+/// and the device source to determine whether the backing media is removable.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LinuxMount {
+    path: String,
+    filesystem: String,
+    source: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -68,33 +80,7 @@ pub async fn list_drives() -> Result<Vec<Drive>, AppError> {
 
 #[cfg(target_os = "linux")]
 fn enumerate_drives() -> Vec<Drive> {
-    let user = std::env::var("USER").unwrap_or_default();
-    let mut seen = std::collections::HashSet::new();
-    let mut drives = Vec::new();
-
-    let bases = [
-        format!("/run/media/{}", user),
-        format!("/media/{}", user),
-        "/media".to_string(),
-    ];
-
-    for base in bases.iter() {
-        let Ok(entries) = std::fs::read_dir(base) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            // In /media, skip the user's own home-like subdir (which is /media/$USER itself).
-            if !user.is_empty() && name == user {
-                continue;
-            }
-            let path = entry.path().to_string_lossy().to_string();
-            if !seen.insert(path.clone()) {
-                continue;
-            }
-            drives.push(Drive::simple(name, path, DriveKind::Removable));
-        }
-    }
+    let mountinfo = std::fs::read_to_string("/proc/self/mountinfo").ok();
 
     let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
         .map(std::path::PathBuf::from)
@@ -103,16 +89,186 @@ fn enumerate_drives() -> Vec<Drive> {
             let uid = unsafe { libc::geteuid() };
             std::path::PathBuf::from(format!("/run/user/{uid}"))
         });
-    for drive in linux_gvfs_google_drives(&runtime_dir.join("gvfs"))
+    let cloud_drives = linux_gvfs_google_drives(&runtime_dir.join("gvfs"))
         .into_iter()
-        .chain(linux_rclone_drives())
-    {
+        .chain(linux_rclone_drives());
+
+    enumerate_linux_drives(
+        mountinfo.as_deref(),
+        std::path::Path::new("/sys/block"),
+        cloud_drives,
+    )
+}
+
+/// The shared production enumeration path. The native command supplies the
+/// real mount table and sysfs root; tests supply fixtures through the same
+/// filtering, classification, de-duplication, and removal behavior.
+#[cfg(target_os = "linux")]
+fn enumerate_linux_drives(
+    mountinfo: Option<&str>,
+    sys_block: &std::path::Path,
+    cloud_drives: impl IntoIterator<Item = Drive>,
+) -> Vec<Drive> {
+    let mut seen = std::collections::HashSet::new();
+    let mut drives = mountinfo
+        .map(|contents| parse_linux_block_mounts(contents, sys_block))
+        .unwrap_or_default();
+    seen.extend(drives.iter().map(|drive| drive.path.clone()));
+
+    for drive in cloud_drives {
         if seen.insert(drive.path.clone()) {
             drives.push(drive);
         }
     }
 
     drives
+}
+
+/// Turn mountinfo records backed by physical block devices into sidebar drives.
+/// This deliberately trusts the kernel mount table rather than a desktop
+/// environment's choice of media directory, so it also covers `/mnt` and fstab
+/// mounts when the app has no `USER` environment variable.
+#[cfg(target_os = "linux")]
+fn parse_linux_block_mounts(mountinfo: &str, sys_block: &std::path::Path) -> Vec<Drive> {
+    parse_linux_mounts(mountinfo)
+        .into_iter()
+        .filter(|mount| !is_linux_pseudo_filesystem(&mount.filesystem))
+        .filter(|mount| !is_linux_system_mount(&mount.path))
+        .filter_map(|mount| linux_drive_from_mount(&mount, sys_block))
+        .collect()
+}
+
+/// Controlled input seam for the real Linux drive enumeration path.
+///
+/// This exists for integration tests that need deterministic mount-table and
+/// sysfs fixtures without mounting or unmounting hardware on the test host.
+#[cfg(target_os = "linux")]
+#[doc(hidden)]
+pub fn enumerate_linux_drives_for_test(mountinfo: &str, sys_block: &std::path::Path) -> Vec<Drive> {
+    enumerate_linux_drives(Some(mountinfo), sys_block, std::iter::empty())
+}
+
+#[cfg(target_os = "linux")]
+fn parse_linux_mounts(mountinfo: &str) -> Vec<LinuxMount> {
+    mountinfo.lines().filter_map(parse_linux_mount).collect()
+}
+
+#[cfg(target_os = "linux")]
+fn parse_linux_mount(line: &str) -> Option<LinuxMount> {
+    let (mount_fields, filesystem_fields) = line.split_once(" - ")?;
+    let encoded_path = mount_fields.split_whitespace().nth(4)?;
+    let mut filesystem_fields = filesystem_fields.split_whitespace();
+    let filesystem = filesystem_fields.next()?;
+    let source = filesystem_fields.next()?;
+
+    Some(LinuxMount {
+        path: decode_mountinfo_field(encoded_path),
+        filesystem: filesystem.to_owned(),
+        source: decode_mountinfo_field(source),
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn is_linux_pseudo_filesystem(filesystem: &str) -> bool {
+    matches!(
+        filesystem,
+        "proc"
+            | "sysfs"
+            | "tmpfs"
+            | "devtmpfs"
+            | "devpts"
+            | "overlay"
+            | "squashfs"
+            | "securityfs"
+            | "cgroup"
+            | "cgroup2"
+            | "pstore"
+            | "tracefs"
+            | "debugfs"
+            | "configfs"
+            | "fusectl"
+            | "mqueue"
+            | "hugetlbfs"
+            | "ramfs"
+            | "autofs"
+            | "rpc_pipefs"
+            | "binfmt_misc"
+            | "nsfs"
+    )
+}
+
+/// These locations are operating-system roots even when they have a real
+/// block-device backing (for example, a separately mounted `/boot`, its EFI
+/// submount, or `/home`) and must never be offered as sidebar drives.
+#[cfg(target_os = "linux")]
+fn is_linux_system_mount(path: &str) -> bool {
+    path == "/boot"
+        || path.starts_with("/boot/")
+        || matches!(
+            path,
+            "/" | "/home" | "/usr" | "/var" | "/opt" | "/srv" | "/root"
+        )
+}
+
+#[cfg(target_os = "linux")]
+fn linux_drive_from_mount(mount: &LinuxMount, sys_block: &std::path::Path) -> Option<Drive> {
+    let kind = if is_removable_block_device(&mount.source, sys_block) {
+        DriveKind::Removable
+    } else if backing_block_device(&mount.source, sys_block).is_some() {
+        DriveKind::Fixed
+    } else {
+        return None;
+    };
+    let mount_name = std::path::Path::new(&mount.path).file_name()?.to_str()?;
+    Some(Drive::simple(
+        linux_volume_label(&mount.source).unwrap_or_else(|| mount_name.to_owned()),
+        mount.path.clone(),
+        kind,
+    ))
+}
+
+/// Map a partition such as `sdb1` or `mmcblk0p1` to its parent disk, where
+/// Linux exposes the actual removable flag under `/sys/block`.
+#[cfg(target_os = "linux")]
+fn backing_block_device(source: &str, sys_block: &std::path::Path) -> Option<String> {
+    let source = std::path::Path::new(source);
+    if source.parent()? != std::path::Path::new("/dev") {
+        return None;
+    }
+    let device = source.file_name()?.to_str()?;
+    if sys_block.join(device).is_dir() {
+        return Some(device.to_owned());
+    }
+    std::fs::read_dir(sys_block)
+        .ok()?
+        .flatten()
+        .find_map(|entry| {
+            entry
+                .path()
+                .join(device)
+                .is_dir()
+                .then(|| entry.file_name().to_string_lossy().into_owned())
+        })
+}
+
+#[cfg(target_os = "linux")]
+fn is_removable_block_device(source: &str, sys_block: &std::path::Path) -> bool {
+    backing_block_device(source, sys_block)
+        .and_then(|device| std::fs::read_to_string(sys_block.join(device).join("removable")).ok())
+        .is_some_and(|flag| flag.trim() == "1")
+}
+
+/// Use udev's label aliases when available, otherwise keep the mount name.
+#[cfg(target_os = "linux")]
+fn linux_volume_label(source: &str) -> Option<String> {
+    let source = std::path::Path::new(source).canonicalize().ok()?;
+    std::fs::read_dir("/dev/disk/by-label")
+        .ok()?
+        .flatten()
+        .find_map(|entry| {
+            (entry.path().canonicalize().ok().as_ref() == Some(&source))
+                .then(|| entry.file_name().to_string_lossy().into_owned())
+        })
 }
 
 /// GVFS exposes each connected account as a child of its FUSE mount rather
@@ -550,6 +706,73 @@ mod tests {
 #[cfg(all(test, target_os = "linux"))]
 mod linux_tests {
     use super::*;
+
+    #[test]
+    fn exposes_removable_mounts_from_any_mount_path_without_user_environment() {
+        let sys_block = tempfile::tempdir().expect("temporary sysfs block directory");
+        let disk = sys_block.path().join("tauriusb546");
+        std::fs::create_dir_all(disk.join("tauriusb546p1")).expect("partition directory");
+        std::fs::write(disk.join("removable"), "1\n").expect("removable flag");
+
+        let drives = parse_linux_block_mounts(
+            "42 35 8:17 / /mnt/USB\\040BACKUP rw,relatime - ext4 /dev/tauriusb546p1 rw\n",
+            sys_block.path(),
+        );
+
+        assert_eq!(drives.len(), 1);
+        assert_eq!(drives[0].name, "USB BACKUP");
+        assert_eq!(drives[0].path, "/mnt/USB BACKUP");
+        assert!(matches!(drives[0].kind, DriveKind::Removable));
+    }
+
+    #[test]
+    fn filters_pseudo_filesystems_and_malformed_mountinfo() {
+        let sys_block = tempfile::tempdir().expect("temporary sysfs block directory");
+        let mountinfo = concat!(
+            "malformed mountinfo line\n",
+            "1 0 0:1 / /proc rw - proc proc rw\n",
+            "2 0 0:2 / /sys rw - sysfs sysfs rw\n",
+            "3 0 0:3 / /run rw - tmpfs tmpfs rw\n",
+            "4 0 0:4 / /sys/fs/cgroup rw - cgroup2 cgroup rw\n",
+            "5 0 0:5 / /dev/pts rw - devpts devpts rw\n",
+            "6 0 0:6 / / rw - overlay overlay rw\n",
+            "7 0 7:0 / /snap/example rw - squashfs /dev/loop0 rw\n",
+        );
+
+        assert!(parse_linux_block_mounts(mountinfo, sys_block.path()).is_empty());
+    }
+
+    #[test]
+    fn resolves_partition_to_its_backing_disk_removable_flag() {
+        let sys_block = tempfile::tempdir().expect("temporary sysfs block directory");
+        let disk = sys_block.path().join("taurimmedia546");
+        std::fs::create_dir_all(disk.join("taurimmedia546p1")).expect("partition directory");
+        std::fs::write(disk.join("removable"), "1").expect("removable flag");
+
+        assert_eq!(
+            backing_block_device("/dev/taurimmedia546p1", sys_block.path()).as_deref(),
+            Some("taurimmedia546")
+        );
+        assert!(is_removable_block_device(
+            "/dev/taurimmedia546p1",
+            sys_block.path()
+        ));
+    }
+
+    #[test]
+    fn keeps_non_removable_block_mounts_out_of_the_removable_sidebar_group() {
+        let sys_block = tempfile::tempdir().expect("temporary sysfs block directory");
+        let disk = sys_block.path().join("taurifixed546");
+        std::fs::create_dir_all(disk.join("taurifixed546p1")).expect("partition directory");
+        std::fs::write(disk.join("removable"), "0").expect("fixed flag");
+
+        let drives = parse_linux_block_mounts(
+            "42 35 259:1 / /mnt/data rw,relatime - ext4 /dev/taurifixed546p1 rw\n",
+            sys_block.path(),
+        );
+
+        assert!(matches!(drives[0].kind, DriveKind::Fixed));
+    }
 
     #[test]
     fn discovers_gvfs_google_account_with_account_detail() {

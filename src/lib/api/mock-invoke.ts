@@ -562,6 +562,9 @@ interface MockGitCommit {
 }
 
 const mockGitCommits: MockGitCommit[] = [];
+let pendingGitFetch:
+  | { taskId: number; reject: (reason: Error) => void }
+  | undefined;
 
 function seedGitState(): MockGitState {
   return {
@@ -2039,7 +2042,21 @@ const mockCommands: Record<string, CommandHandler> = {
     mockClearOperation();
     return null;
   },
-  git_fetch: () => null,
+  git_fetch: (args) => {
+    const pending = new URLSearchParams(location.search).get("mockGitFetch") === "pending";
+    if (!pending) return null;
+    return new Promise<never>((_resolve, reject) => {
+      pendingGitFetch = { taskId: Number(args.taskId), reject };
+    });
+  },
+  cancel_git_network_operation: (args) => {
+    if (pendingGitFetch?.taskId === Number(args.taskId)) {
+      const operation = pendingGitFetch;
+      pendingGitFetch = undefined;
+      operation.reject(new Error("git network operation cancelled"));
+    }
+    return null;
+  },
   git_pull: () => {
     const before_oid = mockHeadOid();
     const branch =

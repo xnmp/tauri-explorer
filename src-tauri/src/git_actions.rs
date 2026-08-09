@@ -19,9 +19,14 @@
 
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use crate::error::AppError;
-use crate::process_ext::NoConsole;
+use crate::process_ext::{output_cancellable, NoConsole};
+use crate::task_registry::TaskRegistry;
+
+static GIT_NETWORK_OPERATIONS: TaskRegistry = TaskRegistry::new();
 
 /// A successful graph mutation's immutable inverse + expected post-state.
 ///
@@ -117,6 +122,70 @@ async fn run_git_async(repo_path: String, args: Vec<String>) -> Result<(), AppEr
     })
     .await
     .map_err(|e| AppError::Other(format!("git action task join: {e}")))?
+}
+
+fn run_git_network_sync(
+    repo_path: &str,
+    args: &[&str],
+    cancelled: &AtomicBool,
+    program: &str,
+) -> Result<(), AppError> {
+    let dir = Path::new(repo_path);
+    if !dir.is_dir() {
+        return Err(AppError::NotFound(repo_path.to_string()));
+    }
+    let mut command = Command::new(program);
+    command.no_console().args(args).current_dir(dir);
+    let output = output_cancellable(&mut command, cancelled, "git network operation cancelled")?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(AppError::Other(if stderr.is_empty() {
+        format!("git {} failed", args.first().copied().unwrap_or_default())
+    } else {
+        stderr
+    }))
+}
+
+async fn run_git_network_task<T, F>(task_id: u64, work: F) -> Result<T, AppError>
+where
+    T: Send + 'static,
+    F: FnOnce(Arc<AtomicBool>) -> Result<T, AppError> + Send + 'static,
+{
+    let cancelled = GIT_NETWORK_OPERATIONS.start_with_id(task_id);
+    let joined = tokio::task::spawn_blocking(move || work(cancelled))
+        .await
+        .map_err(|error| AppError::Other(format!("git network task join: {error}")));
+    GIT_NETWORK_OPERATIONS.cleanup(task_id);
+    joined?
+}
+
+async fn run_git_network_with_program(
+    repo_path: String,
+    args: Vec<String>,
+    task_id: u64,
+    program: String,
+) -> Result<(), AppError> {
+    run_git_network_task(task_id, move |cancelled| {
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        run_git_network_sync(&repo_path, &refs, &cancelled, &program)
+    })
+    .await
+}
+
+async fn run_git_network(
+    repo_path: String,
+    args: Vec<String>,
+    task_id: u64,
+) -> Result<(), AppError> {
+    run_git_network_with_program(repo_path, args, task_id, "git".into()).await
+}
+
+#[tauri::command]
+pub async fn cancel_git_network_operation(task_id: u64) -> Result<(), AppError> {
+    GIT_NETWORK_OPERATIONS.cancel(task_id);
+    Ok(())
 }
 
 /// `run_git_with_env` behind `spawn_blocking`, owning its args/envs.
@@ -331,6 +400,34 @@ async fn run_head_move(
     .map_err(|e| AppError::Other(format!("git action task join: {e}")))?
 }
 
+async fn run_network_head_move(
+    repo_path: String,
+    operation: HeadMoveOperation,
+    args: Vec<String>,
+    task_id: u64,
+) -> Result<Option<GitUndoAction>, AppError> {
+    run_git_network_task(task_id, move |cancelled| {
+        let (before_oid, branch) = head_snapshot(&repo_path)?;
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        run_git_network_sync(&repo_path, &refs, &cancelled, "git")?;
+        let (after_oid, after_branch) = head_snapshot(&repo_path)?;
+        if branch != after_branch {
+            return Err(AppError::Other(
+                "git operation unexpectedly changed the checked-out branch".into(),
+            ));
+        }
+        Ok(
+            (before_oid != after_oid).then_some(GitUndoAction::HeadMove {
+                operation,
+                branch,
+                before_oid,
+                after_oid,
+            }),
+        )
+    })
+    .await
+}
+
 /// Checkout a branch (attached HEAD) or a commit OID (detached HEAD).
 #[tauri::command]
 pub async fn git_checkout(repo_path: String, target: String) -> Result<(), AppError> {
@@ -473,10 +570,11 @@ pub async fn git_revert_abort(repo_path: String) -> Result<(), AppError> {
 /// CLI so the user's credential setup (helpers, ssh agent) applies — libgit2
 /// has no access to those.
 #[tauri::command]
-pub async fn git_fetch(repo_path: String) -> Result<(), AppError> {
-    run_git_async(
+pub async fn git_fetch(repo_path: String, task_id: u64) -> Result<(), AppError> {
+    run_git_network(
         repo_path,
         vec!["fetch".into(), "--all".into(), "--prune".into()],
+        task_id,
     )
     .await
 }
@@ -484,11 +582,12 @@ pub async fn git_fetch(repo_path: String) -> Result<(), AppError> {
 /// Fast-forward pull on the current branch (#377). `--ff-only` so a diverged
 /// branch errors (surfaced verbatim) instead of creating a surprise merge.
 #[tauri::command]
-pub async fn git_pull(repo_path: String) -> Result<Option<GitUndoAction>, AppError> {
-    run_head_move(
+pub async fn git_pull(repo_path: String, task_id: u64) -> Result<Option<GitUndoAction>, AppError> {
+    run_network_head_move(
         repo_path,
         HeadMoveOperation::Pull,
         vec!["pull".into(), "--ff-only".into()],
+        task_id,
     )
     .await
 }
@@ -687,12 +786,14 @@ pub async fn git_delete_remote_branch(
     repo_path: String,
     remote: String,
     name: String,
+    task_id: u64,
 ) -> Result<(), AppError> {
     validate_arg("remote", &remote)?;
     validate_arg("branch name", &name)?;
-    run_git_async(
+    run_git_network(
         repo_path,
         vec!["push".into(), remote, "--delete".into(), name],
+        task_id,
     )
     .await
 }
@@ -931,11 +1032,37 @@ mod tests {
         })
         .expect_err("cancelling the registered operation must reject its command");
 
-        assert!(error.to_string().contains("git network operation cancelled"));
+        assert!(error
+            .to_string()
+            .contains("git network operation cancelled"));
         assert!(
             started.elapsed() < Duration::from_secs(5),
             "cancel did not terminate the network child promptly"
         );
+    }
+
+    #[test]
+    fn network_operations_fetch_pull_and_push_observe_pre_cancel() {
+        let (dir, _commits) = linear_repo();
+        let repo = repo_path(&dir);
+
+        tokio_test_block(async {
+            cancel_git_network_operation(528_010).await.unwrap();
+            let fetch = git_fetch(repo.clone(), 528_010).await.unwrap_err();
+            assert!(fetch
+                .to_string()
+                .contains("git network operation cancelled"));
+
+            cancel_git_network_operation(528_011).await.unwrap();
+            let pull = git_pull(repo.clone(), 528_011).await.unwrap_err();
+            assert!(pull.to_string().contains("git network operation cancelled"));
+
+            cancel_git_network_operation(528_012).await.unwrap();
+            let push = git_delete_remote_branch(repo, "origin".into(), "topic".into(), 528_012)
+                .await
+                .unwrap_err();
+            assert!(push.to_string().contains("git network operation cancelled"));
+        });
     }
 
     #[test]
@@ -1157,7 +1284,7 @@ mod tests {
         git(other.path(), &["push", "origin", "main"]);
         let remote_tip = git_out(other.path(), &["rev-parse", "HEAD"]);
 
-        let action = tokio_test_block(git_pull(rp.clone()))
+        let action = tokio_test_block(git_pull(rp.clone(), 528_002))
             .unwrap()
             .expect("pull should move HEAD");
         assert_eq!(git_out(dir.path(), &["rev-parse", "HEAD"]), remote_tip);
@@ -1187,6 +1314,7 @@ mod tests {
             rp,
             "origin".into(),
             "topic".into(),
+            528_003,
         ))
         .unwrap();
         assert!(git_out(dir.path(), &["ls-remote", "origin", "refs/heads/topic"]).is_empty());

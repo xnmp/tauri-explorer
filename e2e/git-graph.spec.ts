@@ -664,6 +664,39 @@ test("clicking a changed file shows its diff below the file row (#221)", async (
   await expect(diff).toHaveCount(0);
 });
 
+test("compares any two commits in chronological order and exits comparison (#512)", async ({ page }) => {
+  await page.goto("/?path=/home/user/Documents/project");
+  await waitForEntries(page);
+  await openGraphViaPalette(page);
+
+  const view = page.locator('[data-testid="git-graph-view"]');
+  const newer = view.locator(".commit-row").nth(2);
+  const older = view.locator(".commit-row").nth(6);
+  const newerOid = await newer.getAttribute("data-oid");
+  const olderOid = await older.getAttribute("data-oid");
+
+  await newer.click();
+  const detail = page.locator('[data-testid="git-graph-detail"]');
+  await detail.getByRole("button", { name: "Compare this commit" }).click();
+  await expect(detail).toContainText("Select another commit to compare");
+
+  // Choose the older commit second: the rendered comparison must still flow
+  // from that older tree to the newer tree selected first.
+  await older.click();
+  await expect(detail).toContainText(`Comparing ${olderOid} → ${newerOid}`);
+  await expect(detail.locator(".detail-file")).toContainText("src/compared.ts");
+
+  await detail.locator(".detail-file", { hasText: "src/compared.ts" }).click();
+  const diff = page.locator('[data-testid="git-graph-file-diff"]');
+  await expect(diff).toContainText("older value");
+  await expect(diff).toContainText("newer value");
+
+  await page.screenshot({ path: "evidence/ac-1-any-two-commits-compared.png" });
+  await detail.getByRole("button", { name: "Exit comparison" }).click();
+  await expect(detail).toContainText("Merge hotfix into main");
+  await expect(detail).not.toContainText("Comparing");
+});
+
 test("uncommitted-changes row expands its working-tree files and diffs (#221)", async ({ page }) => {
   await page.goto("/?path=/home/user/Documents/project");
   await waitForEntries(page);

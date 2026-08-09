@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "./fixtures";
-import { VIEW_MODES, waitForEntries, switchViewMode } from "./helpers";
+import { VIEW_MODES, waitForEntries } from "./helpers";
 
 const PROJECT_URL = "/?path=/home/user/Documents/project";
 
@@ -12,7 +12,16 @@ test.describe(`File list Ctrl+Home and Ctrl+End navigation [${viewMode}]`, () =>
   async function openProject(page: Page): Promise<void> {
     await page.goto(PROJECT_URL);
     await waitForEntries(page);
-    if (viewMode !== "details") await switchViewMode(page, viewMode);
+    if (viewMode === "details") return;
+
+    // Switch with the command palette because a dense virtualized list may
+    // leave no reliable empty area for the background context-menu helper.
+    await page.keyboard.press("Control+Shift+p");
+    const palette = page.locator(".command-palette-dialog");
+    await expect(palette).toBeVisible();
+    await palette.locator(".search-input").fill(`${viewMode} View`);
+    await palette.locator(".command-item").first().click();
+    await expect(page.locator(`.${viewMode}-view`)).toBeVisible();
   }
 
   test("Ctrl+End selects and reveals the final entry from an existing selection", async ({ page }) => {

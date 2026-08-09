@@ -25,8 +25,8 @@ sudo apt-get install -y webkit2gtk-driver
 ## Running locally
 
 ```bash
-# 1. Build the Tauri debug binary with the frontend embedded
-bun run tauri build --debug --no-bundle
+# 1. Build the Tauri debug binary with the frontend + e2e hooks embedded
+VITE_E2E_HOOKS=1 bun run tauri build --debug --no-bundle
 
 # 2. Run the smoke suite
 bun run test:e2e:tauri
@@ -35,15 +35,19 @@ bun run test:e2e:tauri
 Build through the Tauri CLI, **not** `cargo build`. A bare cargo debug build
 omits the `tauri/custom-protocol` feature, so the binary serves `build.devUrl`
 (localhost:1420) and the suite silently depends on a Vite dev server running
-alongside it. That coupling is what made the Windows CI leg hang for a month
-(#457): the webview's first paint blocks on a cold dev server transforming the
-whole module graph, and msedgedriver's `POST /session` waits for that load. Once
-the graph outgrew WDIO's 60s `connectionRetryTimeout` the handshake never
-returned. `--debug` embeds the frontend, so there is no dev server to race.
+alongside it. `--debug` embeds the frontend, so the suite exercises the shipped
+asset path with no dev server in the loop. The suite's test hooks are compiled
+in with `VITE_E2E_HOOKS=1` at build time (see `src/lib/domain/e2e-hooks.ts`);
+without it every spec fails with "dev e2e hooks never became ready".
 
 ## CI
 
-See `.github/workflows/e2e-tauri.yml`. Runs on `pull_request` and `push` to `dev`/`main` against `ubuntu-latest` and `windows-latest`.
+See `.github/workflows/e2e-tauri.yml`. Runs on `pull_request` and `push` to
+`dev`/`main` against `ubuntu-latest`. The `windows-latest` leg is manual
+dispatch only until #457 is fixed — msedgedriver's WebView2 attach times out
+while the app itself boots fine; `docs/lessons/457-windows-tauri-smoke-hang.md`
+records which hypotheses are already refuted. Windows coverage is a local run
+on real hardware instead.
 
 ## Adding specs
 

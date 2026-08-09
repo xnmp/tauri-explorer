@@ -1,114 +1,105 @@
-# #457 — Windows Tauri smoke hung because the debug binary needed a dev server
+# #457 — Windows smoke hang: what got fixed, what got refuted (issue still open)
 
 ## Symptom
 
 From 2026-07-17 the `windows-latest` leg of `Tauri binary E2E (smoke)` consumed
 its whole 25-minute `timeout-minutes` cap on every run. Build steps were green;
 only "Run smoke suite (Windows)" hung. `ubuntu-latest` ran the same suite in
-8–9 minutes. 20+ consecutive runs, no flake — a hard cliff.
+8–9 minutes. 20+ consecutive runs, no flake — a hard cliff. The leg was later
+demoted to manual dispatch, which kept the dashboard green while Windows
+coverage silently ceased to exist.
 
-## What the diagnostic run showed
+## The reliable signature
 
-Bounding the run (`bail` after the first session failure) turned the timeout
-into a readable failure in 61 seconds:
+Bounding the run (`bail` after the first session failure) turned an opaque
+25-minute burn into a readable failure in 61 seconds:
 
 ```
-[0-0] [tauri-e2e] spawning driver for ...\target\debug\tauri-explorer.exe
-[0-0] [Perf] main() pre-run: 316.6µs          <- the app process DID start
+[0-0] [Perf] main() pre-run: 316.6µs          <- the app process starts
+[0-0] [Perf] dir scan '...': 54 entries ...   <- the frontend runs and lists
 [0-0] Error serving connection: hyper::Error(IncompleteMessage)
-✖ Failed to create a session:
 WebDriverError: The operation was aborted due to timeout when running
 "http://127.0.0.1:4444/session" with method "POST"
 ```
 
-The app launched. `POST /session` then hung for exactly `connectionRetryTimeout`
-(60 s) and WDIO aborted mid-request, which is what tauri-driver's hyper server
-reports as `IncompleteMessage`. So the failure was inside the new-session
-handshake, not in spawn, not in a spec.
+The app is healthy — it boots, the webview executes the frontend, a directory
+listing completes. msedgedriver simply never finishes its WebView2 attach, and
+`POST /session` times out at exactly WDIO's 60s `connectionRetryTimeout` (the
+`IncompleteMessage` is tauri-driver's hyper server reporting the aborted
+request, not a cause).
 
-## Root cause
+## Hypotheses tested and REFUTED — do not re-litigate these
 
-`cargo build --manifest-path src-tauri/Cargo.toml` produces a **dev-mode**
-binary. Tauri gates production asset embedding on the `tauri/custom-protocol`
-feature, which only the Tauri CLI passes — a bare `cargo build` therefore leaves
-the webview pointed at `build.devUrl` (`http://localhost:1420`). The workflow
-compensated by starting a Vite dev server next to the binary.
+1. **tauri-driver release regression** — no release since May; killed for free
+   by checking crates.io before spending a CI run.
+2. **Cold Vite dev-server load** (dev-mode binary dials `devUrl`, msedgedriver
+   waits for the page) — plausible, wrong: with the frontend embedded and no
+   dev server anywhere, Windows fails identically.
+3. **Second WebView2 instance** (warm-window pool parks a hidden window ~1.5s
+   after boot; Microsoft documents the "launch" approach as attaching to the
+   _first_ instance and multi-instance apps as needing "attach") — suppressing
+   priming left one webview (a single `dir scan` in the transcript) and the
+   same 60s timeout.
+4. **Undrained stdout pipe** (debug builds push a `Stdout` log target; #424
+   added ~38 `gitstat:` sites; blocked writer ⇒ hung app) — refuted by
+   already-captured evidence: the app's `[Perf]` lines reach the wdio-side
+   `driver-*.log`, so that pipe chain IS drained. The post-boot silence is an
+   idle app, not a blocked writer.
+5. **Log volume** (`RUST_LOG=error`) — same failure.
 
-msedgedriver's `POST /session` does not return until the WebView2 page finishes
-loading. That load was a **cold** Vite dev server — started one second earlier —
-transforming the entire module graph on demand. On the Windows runner that
-exceeded 60 s; on Linux it did not. Nothing about Windows was broken. The suite
-had a hidden dependency on dev-server cold-start latency, and the module graph
-crossed the 60 s line in July.
+The break window `8fbb2a86..71a53c38` contains exactly one commit (#424, the
+gitstat logging), yet both mechanisms tried for it are refuted. Treat that
+single-commit window as an unexplained coincidence, not as evidence.
 
-The Jul 17 break window pointed at the git-graph _spec_ work, which was a red
-herring: the git-graph _feature_ work in the same window grew the module graph.
+## What DID get fixed along the way (merged; Ubuntu-verified)
 
-## Fix, part 1 — embed the frontend
+**The suite no longer needs a dev server.** The smoke binary was built with
+bare `cargo build`, which omits `tauri/custom-protocol`, so the binary served
+`build.devUrl` and the workflow ran a Vite dev server beside it. Build via
+`bun run tauri build --debug --no-bundle` instead: frontend embedded, dev
+server steps deleted, tier 3 now exercises the shipped asset path.
 
-Build the smoke binary through the Tauri CLI so the frontend is embedded and no
-dev server exists to race:
+**Testability seams no longer ride on `import.meta.env.DEV`.** The e2e hooks
+(`e2e-navigate` / `e2e-reset-view`, `data-e2e-*` markers, listing/watcher
+probes) were gated on DEV, which is what forced the dev-mode binary in the
+first place. They now sit behind `E2E_HOOKS_ENABLED`
+(`src/lib/domain/e2e-hooks.ts`), set by `VITE_E2E_HOOKS=1` only in the smoke
+workflow. Verified in both directions: `e2eHooksReady`/`e2e-navigate` appear 0
+times in a normal `bun run build` output and once each with the flag set.
 
-```bash
-bun run tauri build --debug --no-bundle
-```
+**Timeout calibration.** The Windows debug build is ~12 minutes, so a
+25-minute job cap plus a suite-sized step bound killed the job as `cancelled`
+with no artifacts. Job cap 40m; the 15m per-step bound is what fails a stuck
+run, leaving the `always()` artifact upload alive.
 
-Both dev-server steps were deleted from the workflow. This also removes the
-Linux leg's dependency on the same latency, and makes the binary under test
-closer to what actually ships.
+## Transferable lessons
 
-## Fix, part 2 — decouple the e2e hooks from DEV
+- **Do not hang testability seams off `import.meta.env.DEV`.** "Is this a dev
+  build" and "may the tests drive this app" are different questions; conflating
+  them drags a whole dev toolchain into the test environment.
+- **A harness that needs a dev server beside the binary has a timing
+  dependency**, and it will degrade silently as the app grows. Prefer the
+  shipped asset path.
+- **Bound a hanging failure before theorizing** (`bail` on first session
+  failure): "hangs" became "times out at exactly `connectionRetryTimeout`" —
+  a different, far more informative fact.
+- **Probe, don't run suites.** Every hypothesis here costs a ~12m Windows
+  build + suite serially; the actual question ("does `POST /session`
+  return?") takes seconds. Build once, fan hypotheses out as parallel matrix
+  jobs. A one-commit diagnosis loop at ~27 minutes per bit of information is a
+  process bug in itself.
+- **Check the boring external causes first** — a driver release, a runner
+  image update — before instrumenting the app. Two of five hypotheses died in
+  one HTTP request each.
 
-Part 1 alone **traded one failure for another**, and the CI run proved it: the
-Windows session handshake started succeeding, but every spec on _both_ OSes then
-failed with `dev e2e hooks never became ready` and `scratch directory never
-rendered`.
+## Where the hunt stands
 
-The suite does not drive the app through its real UI. Under Xvfb there is no
-window manager, so autofocused inline inputs blur and cancel the instant they
-open; the specs therefore dispatch `e2e-navigate` / `e2e-reset-view` and poll
-`data-e2e-*` readiness markers instead. Every one of those hooks was gated on
-`import.meta.env.DEV`, which is `false` in a production asset build.
-
-So the hooks were transitively the _reason_ the suite needed a dev-mode binary,
-which is the reason it needed a dev server, which is the reason Windows hung.
-The dev-server dependency was a symptom two levels down from the real coupling.
-
-Hooks now sit behind their own explicit build flag, `src/lib/domain/e2e-hooks.ts`:
-
-```ts
-export const E2E_HOOKS_ENABLED =
-  import.meta.env.DEV || import.meta.env.VITE_E2E_HOOKS === "1";
-```
-
-The smoke workflow builds with `VITE_E2E_HOOKS=1`. Both operands are statically
-replaced by Vite, so a normal build folds the constant to `false` and the
-guarded code is tree-shaken out — verified in both directions: `e2eHooksReady`
-and `e2e-navigate` appear **0** times in a normal `bun run build` output and
-once each with the flag set. Release builds are unaffected.
-
-Two `import.meta.env.DEV` gates were deliberately left alone — the startup-timing
-`console.info` and the shortcut-conflict validator are dev diagnostics, not
-testability seams.
-
-## Transferable lesson
-
-A test harness that needs a dev server alongside the binary has a **timing**
-dependency, not just a setup dependency — it will degrade silently as the app
-grows and then fail as a cliff. Prefer the shipped asset path.
-
-More general: **do not hang testability seams off `import.meta.env.DEV`.** "Is
-this a dev build" and "may the tests drive this app" are different questions,
-and conflating them silently drags a whole dev toolchain into the test
-environment. Give the seam its own flag.
-
-Corollary already recorded elsewhere in this repo, now with a second victim:
-`cargo build [--release]` never yields a production-mode Tauri binary. If you
-did not go through the Tauri CLI, the webview is dialing localhost.
-
-## Diagnosing hangs like this
-
-Do not raise the timeout. Bound the failure instead (`bail` on first session
-failure) so the job produces a transcript in ~1 minute rather than burning the
-cap; the difference between "hangs" and "times out at exactly
-`connectionRetryTimeout`" is the whole diagnosis.
+Everything app-side is exonerated; the failure lives in msedgedriver's attach
+(or the runner's WebView2/driver pairing — the runner image updated in the
+same July window). Next probes, in order of information value: plain headless
+Edge with no app (if that hangs, the runner pairing is broken and the app was
+never at fault); msedgedriver spoken to directly with Microsoft's documented
+WebView2 capabilities and `--verbose --log-path` for the driver's own account;
+the documented "attach" approach via `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`
+remote-debugging-port. A local Windows machine turns each iteration from ~25
+CI minutes into seconds.

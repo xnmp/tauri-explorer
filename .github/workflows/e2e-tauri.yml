@@ -10,12 +10,18 @@ on:
 # Note: macOS is deliberately omitted. Official `tauri-driver` has no
 # WKWebView support (tauri-apps/tauri#7068). Re-add when a stable driver
 # exists or if macOS regressions justify the CrabNebula subscription.
+# The windows-latest leg still fails at msedgedriver's WebView2 attach —
+# POST /session times out while the app itself boots fine (#457; refuted so
+# far: tauri-driver release, dev-server cold start, second warm-window
+# WebView2, stdout pipe blocking, log volume). Until that is fixed it runs on
+# manual dispatch only; Windows coverage is a local run on real hardware:
+# pull on the Windows machine and `bun run test:e2e:tauri`.
 jobs:
   smoke:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: ${{ github.event_name == 'workflow_dispatch' && fromJSON('["ubuntu-latest", "windows-latest"]') || fromJSON('["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     # The Windows debug build alone is ~12 minutes, so a 25-minute job cap left
     # no room for a full suite run: a step bound generous enough to let the
@@ -79,14 +85,13 @@ jobs:
 
       # Build through the Tauri CLI, not `cargo build`. A bare cargo debug
       # build omits the `tauri/custom-protocol` feature, so the binary serves
-      # `build.devUrl` (localhost:1420) and the suite needs a Vite dev server
-      # alongside it. That coupling is what broke Windows (#457): the webview's
-      # first paint blocks on a cold dev server transforming the whole module
-      # graph, msedgedriver's new-session waits for that load, and once the
-      # graph outgrew the 60s connectionRetryTimeout the handshake never
-      # returned — the session POST died with hyper IncompleteMessage on every
-      # run. `tauri build --debug` passes custom-protocol, so the frontend is
-      # embedded in the binary and there is no dev server to race.
+      # `build.devUrl` (localhost:1420) and the suite silently needs a Vite dev
+      # server running alongside it. `tauri build --debug` passes
+      # custom-protocol, so the frontend is embedded and the suite tests the
+      # shipped asset path with no dev server to race. (This did NOT fix the
+      # Windows hang — #457's session timeout reproduces with the dev server
+      # gone — but it removes a real timing dependency and a whole toolchain
+      # from the test environment.)
       # VITE_E2E_HOOKS compiles in the `e2e-navigate` / `e2e-reset-view` hooks
       # and the listing/watcher probes the specs drive. They used to ride on
       # `import.meta.env.DEV`, which is what tied the suite to a dev-mode

@@ -102,7 +102,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Start-Process bun -ArgumentList 'run','dev' -WindowStyle Hidden
+          Start-Process bun -ArgumentList 'run','dev' -WindowStyle Hidden -RedirectStandardOutput "$env:RUNNER_TEMP\vite.log" -RedirectStandardError "$env:RUNNER_TEMP\vite-error.log"
           foreach ($i in 1..60) {
             try {
               Invoke-WebRequest -UseBasicParsing http://localhost:1420 | Out-Null
@@ -131,14 +131,20 @@ jobs:
 
       - name: Run smoke suite (Windows)
         if: runner.os == 'Windows'
+        env:
+          # The diagnostic run exits after the first session failure; a later
+          # green change removes this guard once the real handshake is fixed.
+          TAURI_E2E_DIAGNOSTIC: "1"
         run: bun run test:e2e:tauri
 
-      - name: Upload WDIO logs on failure
-        if: failure()
+      - name: Upload WDIO lifecycle logs
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: wdio-logs-${{ matrix.os }}
           path: |
             logs/
             e2e-tauri/logs/
+            ${{ runner.temp }}/vite.log
+            ${{ runner.temp }}/vite-error.log
           if-no-files-found: ignore

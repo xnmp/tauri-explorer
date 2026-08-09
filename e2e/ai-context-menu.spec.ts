@@ -24,11 +24,22 @@ test("groups applicable AI actions in a submenu and keeps destination suggestion
   await expect(aiMenu).toHaveCount(0);
   await page.screenshot({ path: "evidence/ac-1-ai-submenu-entry.png" });
 
-  await aiTrigger.hover();
+  // Clicking the trigger must open the submenu even though the pointer also
+  // enters its hover target.
+  await aiTrigger.click();
   await expect(aiMenu.getByText("Suggest destination…", { exact: true })).toBeVisible();
   await expect(aiMenu.getByText("Suggest rename…", { exact: true })).toBeVisible();
   await page.screenshot({ path: "evidence/ac-2-ai-actions.png" });
 
+  // Closing the root menu must not leave the component's local submenu state
+  // open for the next right-click.
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await entry.click({ button: "right" });
+  await expect(menu).toBeVisible();
+  await expect(aiMenu).toHaveCount(0);
+
+  await aiTrigger.click();
   await aiMenu.getByText("Suggest destination…", { exact: true }).click();
   const dialog = page.locator('[aria-labelledby="ai-organize-title"]');
   await expect(dialog).toBeVisible();

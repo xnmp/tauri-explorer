@@ -254,6 +254,12 @@
   let tilesSubmenuOpen = $state(false);
   let aiSubmenuOpen = $state(false);
 
+  // ContextMenu stays mounted while the global menu is closed. Reset this
+  // local state so a fresh right-click always starts with AI collapsed.
+  $effect(() => {
+    if (!contextMenuStore.isOpen) aiSubmenuOpen = false;
+  });
+
   const tileSizeLabels: Record<string, string> = { small: "Small", medium: "Medium", large: "Large", xlarge: "Extra Large" };
 
   const effectiveThumbnailSize = $derived(
@@ -700,7 +706,7 @@
         >
           <button
             class="menu-item"
-            onclick={() => aiSubmenuOpen = !aiSubmenuOpen}
+            onclick={() => aiSubmenuOpen = true}
             role="menuitem"
             aria-haspopup="menu"
             aria-expanded={aiSubmenuOpen}

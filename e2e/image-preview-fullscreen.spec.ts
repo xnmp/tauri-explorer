@@ -9,6 +9,15 @@
 import { test, expect, type Page } from "./fixtures";
 import { waitForEntries, pressShortcut } from "./helpers";
 
+async function dockPreview(page: Page, label: string): Promise<void> {
+  await page.keyboard.press("Control+Shift+p");
+  const palette = page.locator(".command-palette-dialog");
+  await expect(palette).toBeVisible();
+  await palette.locator(".search-input").fill(label);
+  await palette.locator(`.command-item:has-text("${label}")`).first().click();
+  await expect(palette).toBeHidden();
+}
+
 async function openPicturesWithPreview(page: Page) {
   await page.goto("/?path=/home/user/Pictures");
   await waitForEntries(page);
@@ -82,4 +91,36 @@ test.describe("Image preview click-to-fullscreen", () => {
     await page.keyboard.press("Escape");
     await expect(pane).not.toHaveClass(/fullscreen/);
   });
+
+  for (const [dock, command] of [
+    ["bottom", "Dock Preview Pane Bottom"],
+    ["top", "Dock Preview Pane Top"],
+  ] as const) {
+    test(`fullscreen covers the explorer viewport from the ${dock} dock`, async ({ page }) => {
+      await openPicturesWithPreview(page);
+      await dockPreview(page, command);
+      const pane = page.locator(".preview-pane");
+      const dockedBox = await pane.boundingBox();
+      expect(dockedBox).not.toBeNull();
+      expect(dockedBox!.height).toBeLessThan(page.viewportSize()!.height);
+
+      const img = await selectAndWaitForImage(page, "photo1.jpg");
+      await img.click();
+      await expect(pane).toHaveClass(/fullscreen/);
+
+      const fullscreenBox = await pane.boundingBox();
+      const viewport = page.viewportSize()!;
+      expect(fullscreenBox).not.toBeNull();
+      expect(fullscreenBox!.x).toBe(0);
+      expect(fullscreenBox!.y).toBe(0);
+      expect(fullscreenBox!.width).toBe(viewport.width);
+      expect(fullscreenBox!.height).toBe(viewport.height);
+
+      await page.locator(".preview-image").click();
+      await expect(pane).not.toHaveClass(/fullscreen/);
+      const restoredBox = await pane.boundingBox();
+      expect(restoredBox).not.toBeNull();
+      expect(restoredBox!.height).toBeCloseTo(dockedBox!.height, 0);
+    });
+  }
 });

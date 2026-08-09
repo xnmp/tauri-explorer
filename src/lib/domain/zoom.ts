@@ -126,29 +126,24 @@ export function cssToRect(value: number): number {
 export function fixedFromClient(
   clientCoord: number,
   zoom: number,
-  _chromium: boolean,
+  chromium: boolean,
 ): number {
   if (zoom === 1) return clientCoord;
-  // Standardized CSS zoom (Interop 2024; Chromium ≥128, WebKitGTK ≥2.44,
-  // Safari ≥17.4): a fixed element at `left: L` renders at L×zoom viewport px
-  // on EVERY engine, and clientX/Y are raw viewport px — so one division,
-  // engine-independent. Measured live on Chromium and the WebKitGTK-based
-  // Playwright WebKit (fixed left:100 → rect 130 at zoom 1.3 on both); the
-  // old "÷zoom² on WebKit" model predates the standardization and put menus
-  // at cursor/zoom (#227).
-  return clientCoord / zoom;
+  return chromium ? clientCoord / zoom : clientCoord / zoom ** 2;
 }
 
 export function fixedFromRect(
   rectCoord: number,
   zoom: number,
-  _viewportCoords: boolean,
-  _chromium: boolean,
+  viewportCoords: boolean,
+  chromium: boolean,
 ): number {
   if (zoom === 1) return rectCoord;
-  // getBoundingClientRect is post-zoom viewport px under standardized CSS
-  // zoom — same single division as fixedFromClient.
-  return rectCoord / zoom;
+  // WKWebView reports a post-zoom rect and applies zoom twice to fixed
+  // overlays. WebKitGTK's rect is already CSS-space, so its second scale is
+  // already accounted for; Chromium only scales fixed overlays once.
+  const divisions = viewportCoords && !chromium ? 2 : 1;
+  return rectCoord / zoom ** divisions;
 }
 
 /** Live wrapper of {@link fixedFromClient} using the current zoom/engine. */

@@ -144,6 +144,7 @@ test.describe("Git graph tab", () => {
     await expect(detail).toContainText("Open");
     await expect(detail).toContainText("src/lib/parser.ts:42");
     await expect(detail).toContainText("Could this retain the previous error context?");
+    await detail.screenshot({ path: "evidence/ac-1-pr-conversation-threads.png" });
     // No browser navigation happened on the plain badge click.
     await expect
       .poll(() => page.evaluate(() => localStorage.getItem("mock-opened-url")))

@@ -311,6 +311,9 @@ export interface OpenPr {
   /** Most-recent PR issue comments (capped backend-side). Empty on the
    *  tokenless REST path, which can't fetch comment bodies. */
   comments?: PrComment[];
+  /** `null` when GitHub GraphQL data is unavailable (for example, the
+   * tokenless REST fallback); otherwise every review thread and its comments. */
+  reviewThreads?: PrReviewThread[] | null;
 }
 
 /** A single PR issue comment surfaced in the details dropdown. */
@@ -321,6 +324,18 @@ export interface PrComment {
   createdAt: string;
   /** Plain-text comment body. */
   body: string;
+}
+
+/** A code-review conversation associated with a pull request. */
+export interface PrReviewThread {
+  resolved: boolean;
+  comments: PrReviewComment[];
+}
+
+/** One comment in a review thread, with its optional diff location. */
+export interface PrReviewComment extends PrComment {
+  path: string | null;
+  line: number | null;
 }
 
 /** Open PRs for the repo's GitHub remote. Degrades to `[]` — never

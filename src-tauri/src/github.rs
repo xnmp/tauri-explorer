@@ -63,6 +63,11 @@ pub struct PrInfo {
     /// consistent with the module's best-effort philosophy).
     #[serde(default)]
     pub comments: Vec<PrComment>,
+    /// Review threads from GraphQL, including their resolution state and
+    /// per-line discussion. `None` means the REST fallback could not obtain
+    /// this token-only data; an empty vector means GraphQL found no threads.
+    #[serde(rename = "reviewThreads", default)]
+    pub review_threads: Option<Vec<PrReviewThread>>,
 }
 
 /// A single issue comment on a PR, as surfaced to the frontend.
@@ -77,6 +82,24 @@ pub struct PrComment {
     pub created_at: String,
     /// Comment text (GraphQL `bodyText` — plain text, no markdown markup).
     pub body: String,
+}
+
+/// A GitHub pull-request review thread, as rendered in the inline PR detail.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct PrReviewThread {
+    pub resolved: bool,
+    pub comments: Vec<PrReviewComment>,
+}
+
+/// A single comment belonging to a review thread.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct PrReviewComment {
+    pub author: Option<String>,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+    pub body: String,
+    pub path: Option<String>,
+    pub line: Option<u64>,
 }
 
 /// A failed GitHub Actions job associated with an open PR. The opaque IDs are
@@ -212,6 +235,7 @@ impl From<GhPull> for PrInfo {
             // separate endpoint), so comments degrade to empty here.
             body: p.body.filter(|b| !b.is_empty()),
             comments: Vec::new(),
+            review_threads: None,
         }
     }
 }
@@ -273,6 +297,7 @@ repository(owner:$owner,name:$name){\
 pullRequests(states:OPEN,first:100){nodes{\
 number title url isDraft headRefName reviewDecision bodyText \
 comments(last:20){totalCount nodes{author{login} createdAt bodyText}} \
+reviewThreads(first:100){nodes{isResolved comments(first:100){nodes{author{login} createdAt bodyText path line}}} } \
 commits(last:1){nodes{commit{statusCheckRollup{state}}}}\
 }}}}";
     let body = serde_json::json!({
@@ -366,6 +391,8 @@ struct GqlPrNode {
     body_text: String,
     #[serde(default)]
     comments: GqlComments,
+    #[serde(rename = "reviewThreads", default)]
+    review_threads: GqlReviewThreads,
     #[serde(default)]
     commits: GqlCommits,
 }
@@ -387,6 +414,40 @@ struct GqlCommentNode {
     created_at: String,
     #[serde(rename = "bodyText", default)]
     body_text: String,
+}
+
+#[derive(Deserialize, Default)]
+struct GqlReviewThreads {
+    #[serde(default)]
+    nodes: Vec<GqlReviewThreadNode>,
+}
+
+#[derive(Deserialize)]
+struct GqlReviewThreadNode {
+    #[serde(rename = "isResolved", default)]
+    is_resolved: bool,
+    #[serde(default)]
+    comments: GqlReviewComments,
+}
+
+#[derive(Deserialize, Default)]
+struct GqlReviewComments {
+    #[serde(default)]
+    nodes: Vec<GqlReviewCommentNode>,
+}
+
+#[derive(Deserialize)]
+struct GqlReviewCommentNode {
+    #[serde(default)]
+    author: Option<GqlAuthor>,
+    #[serde(rename = "createdAt", default)]
+    created_at: String,
+    #[serde(rename = "bodyText", default)]
+    body_text: String,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    line: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -443,6 +504,26 @@ impl From<GqlPrNode> for PrInfo {
                 body: c.body_text,
             })
             .collect();
+        let review_threads = n
+            .review_threads
+            .nodes
+            .into_iter()
+            .map(|thread| PrReviewThread {
+                resolved: thread.is_resolved,
+                comments: thread
+                    .comments
+                    .nodes
+                    .into_iter()
+                    .map(|comment| PrReviewComment {
+                        author: comment.author.map(|author| author.login),
+                        created_at: comment.created_at,
+                        body: comment.body_text,
+                        path: comment.path,
+                        line: comment.line,
+                    })
+                    .collect(),
+            })
+            .collect();
         PrInfo {
             number: n.number,
             title: n.title,
@@ -457,6 +538,7 @@ impl From<GqlPrNode> for PrInfo {
             // Empty description reads as "no body"; normalize to None.
             body: Some(n.body_text).filter(|b| !b.is_empty()),
             comments,
+            review_threads: Some(review_threads),
         }
     }
 }
@@ -915,6 +997,7 @@ mod tests {
             comment_count: None,
             body: None,
             comments: Vec::new(),
+            review_threads: None,
         };
         let v = serde_json::to_value(&pr).unwrap();
         assert!(v.get("ciStatus").unwrap().is_null());

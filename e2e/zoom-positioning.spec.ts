@@ -63,6 +63,27 @@ test.describe("Overlay positioning under zoom", () => {
     const rect = (await viewportRect(page, ".context-menu"))!;
     expect(Math.abs(rect.x - clickX)).toBeLessThan(TOLERANCE);
     expect(Math.abs(rect.y - clickY)).toBeLessThan(TOLERANCE);
+    // Playwright screenshots omit the OS cursor. Mark the coordinate from the
+    // actual right-click so the committed capture proves the measured menu
+    // placement instead of merely showing an open menu.
+    await page.evaluate(({ x, y }) => {
+      const marker = document.createElement("div");
+      marker.dataset.testid = "context-menu-invoking-cursor";
+      marker.setAttribute("aria-label", "Invoking cursor");
+      marker.textContent = "⊕";
+      Object.assign(marker.style, {
+        position: "fixed",
+        left: `${x}px`,
+        top: `${y}px`,
+        transform: "translate(-50%, -50%)",
+        zIndex: "10000",
+        color: "#e11d48",
+        font: "700 30px/1 system-ui",
+        textShadow: "0 0 3px white, 0 0 3px white",
+        pointerEvents: "none",
+      });
+      document.body.append(marker);
+    }, { x: clickX, y: clickY });
     await page.screenshot({ path: "evidence/ac-1-context-menu-at-cursor.png" });
   });
 

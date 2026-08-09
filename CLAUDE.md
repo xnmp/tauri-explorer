@@ -77,6 +77,7 @@ Rules that bite:
 - Branch ↔ issue convention: branch `feat/my-feature` must match an **open GitHub issue** whose title contains `my-feature`; a hook validates this at branch creation. Prefixes: `feat/`, `fix/`, `refactor/`, `docs/`, `test/`, `chore/`.
 - Relationship tooling (blocking, sub-issues) is the `jwilger/gh-issue-ext` extension (`gh issue-ext …`).
 - Issue bodies need a `## Screenshots` section with checkboxes; files go in `screenshots/<branch>/` and the merge hook verifies they exist. "None required" is only for changes with no user-visible effect; behavioral fixes still need one showing the corrected behavior. Verify a screenshot actually demonstrates the feature before counting it.
+- Keep `evidence/` available for committed image-only PR acceptance proof: the automated review gate renders those files directly from the PR. It is distinct from issue screenshots, so do not add a blanket `evidence/` ignore rule.
 - The merge hook does **not** close issues — close them yourself (`gh issue close N --comment`) when the work lands on dev.
 - Before ending a session that merged UI work: `ALL_VIEW_MODES=1 npx playwright test`.
 
